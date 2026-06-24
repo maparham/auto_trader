@@ -231,3 +231,6 @@ app_state.db-shm
 # (frontend/src/lib). Re-include it so the app's client logic isn't silently dropped.
 !frontend/src/lib/
 !frontend/src/lib/**
+
+# Claude Code local config (custom commands, local settings)
+.claude/
