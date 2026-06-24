@@ -1,0 +1,1381 @@
+.app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+.toolbar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.toolbar label { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
+.toolbar input, .toolbar select {
+  background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
+}
+.toolbar button {
+  background: var(--accent); color: var(--accent-text); border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer;
+}
+.toolbar button:disabled { opacity: 0.6; cursor: default; }
+.toolbar button.ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+.stats { color: var(--text-dim); margin-left: auto; }
+.stats .pos { color: var(--pos); }
+.stats .neg { color: var(--neg); }
+.error { color: var(--neg); }
+/* Horizontal row holding the chart and (optionally) the alerts sidebar. Takes
+   all remaining vertical space below the toolbar. min-height:0 lets the chart
+   flex-shrink so its inner canvas can size correctly. */
+.workspace { flex: 1; display: flex; min-height: 0; }
+.chart { flex: 1; position: relative; min-width: 0; }
+
+/* Multi-chart layout grid (TradingView-style split). Fills .chart; each cell is an
+   independent ChartCore. Thin separators between cells; the focused cell carries a
+   subtle accent ring (inset, so it never shifts layout — and no drop-shadow). */
+.chart-grid { gap: 1px; background: var(--border); }
+.chart-cell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+/* The focus ring sits above the chart canvases but must not eat pointer events. */
+.chart-cell.focused::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
+  z-index: 20;
+}
+.placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-faint); }
+
+/* TradingView-style chart tabs along the top (topmost strip, above the toolbar).
+   Each tab = one chart view (instrument + interval). The active tab carries an
+   accent bottom border (TV-style underline). Tabs drag-to-reorder. */
+.tab-bar {
+  display: flex; align-items: stretch;
+  flex-shrink: 0; padding: 0 6px; min-height: 34px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+/* The tabs scroll horizontally on overflow; the trailing workspace actions stay
+   pinned to the right and never scroll out of view. */
+.tab-bar-tabs {
+  display: flex; align-items: stretch; gap: 2px;
+  flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden;
+}
+/* Workspace-level controls (Backtest, named layouts, split picker, theme) pinned
+   to the right of the bar. A faint divider separates them from the tabs. */
+.tab-bar-actions {
+  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+  padding-left: 8px; margin-left: 4px;
+  border-left: 1px solid var(--border);
+}
+.tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 10px; cursor: pointer; user-select: none;
+  color: var(--text-dim); font-size: 12px; white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+.tab:hover { background: var(--input-bg); }
+.tab.on {
+  color: var(--text); background: var(--input-bg);
+  border-bottom-color: var(--accent);
+}
+/* Drag-to-reorder: dim the tab being dragged; show a drop line at the target. */
+.tab.dragging { opacity: 0.4; }
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+.tab-icon {
+  position: relative; flex-shrink: 0; width: 16px; height: 16px;
+  border-radius: 50%; overflow: hidden;
+}
+.tab-icon-glyph {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, var(--accent), #1c47c0);
+  color: #fff; font-size: 9px; font-weight: 700;
+}
+.tab-icon-img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  background: #fff; object-fit: contain; padding: 1px;
+}
+.tab-symbol { font-weight: 600; }
+.tab-period { color: var(--text-faint); }
+/* Cell-count badge on a multi-chart (split) tab. */
+.tab-count {
+  font-size: 10px; font-weight: 700; line-height: 1;
+  padding: 1px 4px; border-radius: 7px;
+  background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border);
+}
+.tab-close {
+  background: none; border: none; color: var(--text-faint); cursor: pointer;
+  padding: 0; width: 16px; height: 16px; line-height: 1; border-radius: 3px;
+  font-size: 14px; opacity: 0; transition: opacity 0.1s;
+}
+.tab:hover .tab-close, .tab.on .tab-close { opacity: 1; }
+.tab-close:hover { background: var(--border); color: var(--text); }
+.tab-add {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 0 10px; flex-shrink: 0;
+}
+.tab-add:hover { color: var(--text); }
+
+/* Workspace actions in the tab bar (Backtest, split picker, theme). Compact,
+   borderless, TV-style: transparent with a subtle gray rounded hover. Sized to
+   the 34px bar (smaller than the chunky accent toolbar buttons). */
+.tab-bar-actions .tabbar-action {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: transparent; color: var(--text-dim); border: none;
+  border-radius: 6px; padding: 4px 8px; cursor: pointer;
+  font-size: 12px; line-height: 1; transition: background 0.12s, color 0.12s;
+}
+.tab-bar-actions .tabbar-action:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.tab-bar-actions .tabbar-action.on { background: var(--hover-strong); color: var(--text); }
+.tab-bar-actions .tabbar-action:disabled { opacity: 0.5; cursor: default; }
+/* Icon-only actions (theme toggle): square, centered glyph. */
+.tab-bar-actions .tabbar-action.icon-only {
+  padding: 5px; width: 30px; height: 30px; justify-content: center;
+}
+.tab-bar-actions .tabbar-action.icon-only svg { display: block; }
+/* The gear glyph (⚙) renders small/light at the 12px base; size it up and give
+   it the full text color so it reads as clearly as the SVG icons beside it. */
+.tab-bar-actions .tabbar-action.icon-only { font-size: 22px; }
+.tab-bar-actions .tabbar-action.gear { color: var(--text); }
+.tab-bar-actions .tabbar-action.gear:hover { color: var(--text); }
+.tab-bar-actions .layout-glyph { display: block; }
+/* The picker/layout dropdowns open below the bar; right-aligned so they don't
+   spill off the right edge where the actions sit. */
+.tab-bar-actions .menu { display: inline-flex; }
+.tab-bar-actions .layout-dropdown,
+.tab-bar-actions .layout-mgr-menu { left: auto; right: 0; }
+/* Backtest summary chip sits inline after the button; keep it compact so it
+   doesn't blow out the 34px row. */
+.tab-bar-actions .backtest { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Alerts sidebar (right). TradingView-style collapsible panel: live alerts on
+   the current symbol + cross-symbol triggered history. */
+.alerts-panel {
+  width: 300px; flex-shrink: 0; display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--border);
+  font-size: 13px; overflow: hidden;
+}
+.ap-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+.ap-tabs { display: flex; gap: 4px; }
+.ap-tabs button {
+  background: transparent; color: var(--text-dim); border: none;
+  border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 12px;
+}
+.ap-tabs button.on { background: var(--input-bg); color: var(--text); }
+/* Unseen-history count chip, shown before the "History" label. */
+.ap-unseen {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px; margin-right: 5px;
+  border-radius: 8px; background: var(--accent); color: var(--accent-text);
+  font-size: 10px; font-weight: 700; line-height: 1; vertical-align: middle;
+}
+.ap-close {
+  background: transparent; border: none; color: var(--text-dim);
+  cursor: pointer; font-size: 14px; padding: 2px 6px;
+}
+.ap-list { flex: 1; overflow-y: auto; padding: 6px; }
+.ap-empty { color: var(--text-faint); text-align: center; padding: 28px 14px; line-height: 1.6; }
+.ap-row {
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+  margin-bottom: 6px; background: var(--input-bg);
+}
+.ap-row-clickable { cursor: pointer; }
+/* `.hovered` (chart line hovered → mirror it here) reads the same as :hover so the
+   highlight is identical whether the pointer is on the row or on the line. */
+.ap-row-clickable:hover,
+.ap-row-clickable.hovered { border-color: var(--text-faint); }
+.ap-row.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.ap-row-hist { background: transparent; }
+.ap-row-main { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ap-sym { font-weight: 600; color: var(--text); }
+.ap-time { color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
+.ap-cond { color: var(--text-dim); margin-top: 2px; }
+.ap-at { color: var(--text-faint); }
+.ap-msg { color: var(--text-dim); margin-top: 4px; font-size: 12px; font-style: italic; }
+.ap-row-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+.ap-badge {
+  font-size: 11px; color: var(--text-faint); border: 1px solid var(--border);
+  border-radius: 3px; padding: 1px 6px;
+}
+.ap-del { background: transparent; border: none; cursor: pointer; opacity: 0.6; padding: 0 4px; }
+.ap-del:hover { opacity: 1; }
+.ap-row-actions { display: flex; align-items: center; gap: 2px; }
+.ap-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer; padding: 3px;
+  color: var(--text-faint); border-radius: 4px;
+}
+.ap-icon-btn:hover { color: var(--text); background: var(--hover); }
+.ap-clear-row { display: flex; justify-content: flex-end; padding: 2px 4px 8px; }
+.ap-clear {
+  background: transparent; color: var(--text-dim); border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 10px; cursor: pointer; font-size: 12px;
+}
+.ap-head-actions { display: flex; align-items: center; gap: 2px; }
+/* Icon-only action buttons in the alerts panel header */
+.ap-head-actions .ap-icon-btn {
+  position: relative; width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 5px;
+}
+.ap-head-actions .ap-icon-btn.on { color: var(--accent); }
+.ap-head-actions .ap-icon-btn.open { background: var(--hover); color: var(--text); }
+/* Small accent dot — indicates a non-default state is active */
+.ap-icon-dot {
+  position: absolute; top: 3px; right: 3px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent); pointer-events: none;
+}
+.ap-menu-wrap { position: relative; }
+.ap-menu {
+  position: absolute; top: calc(100% + 4px); right: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 28px var(--shadow); min-width: 170px; z-index: 200;
+  display: flex; flex-direction: column; padding: 6px;
+}
+.ap-menu-item {
+  background: transparent; border: none; color: var(--text-dim); text-align: left;
+  padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  white-space: nowrap;
+}
+.ap-menu-item:hover { background: var(--hover-strong); color: var(--text); }
+.ap-menu-item.on { color: var(--text); font-weight: 600; }
+.ap-menu-item-sort {
+  display: flex; align-items: center; gap: 7px;
+}
+.ap-sort-icon { flex-shrink: 0; opacity: 0.7; }
+.ap-menu-item-sort.on .ap-sort-icon { opacity: 1; }
+.ap-group-header {
+  font-size: 11px; font-weight: 600; color: var(--text-faint); text-transform: uppercase;
+  letter-spacing: 0.05em; padding: 4px 2px 4px; margin-top: 4px;
+}
+
+/* Symbol-search modal (TradingView-style); opened from the editable .sym button. */
+.modal.symsearch {
+  width: 640px; max-width: 94vw; display: flex; flex-direction: column;
+  border-radius: 12px; overflow: hidden;
+}
+/* The modal renders inside <header className="toolbar">, so reset the global
+   `.toolbar button` accent fill — modal buttons style themselves below. */
+.toolbar .symsearch button { background: transparent; border: none; border-radius: 0; padding: 0; }
+.symsearch-head {
+  cursor: default; padding: 18px 20px 14px; border-bottom: none; font-size: 17px; font-weight: 600;
+}
+.symsearch-head .modal-close { font-size: 18px; line-height: 1; }
+.symsearch-head .modal-close:hover { color: var(--text); }
+
+.symsearch-input {
+  display: flex; align-items: center; gap: 10px; margin: 0 20px;
+  padding: 11px 14px; background: var(--input-bg);
+  border: 1px solid var(--border); border-radius: 8px; color: var(--text-faint);
+  transition: border-color 0.12s;
+}
+.symsearch-input:focus-within { border-color: var(--accent); }
+.symsearch-input input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--text); font-size: 16px;
+}
+.symsearch-input input::placeholder { color: var(--text-faint); }
+.symsearch .symsearch-clear {
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: transparent; border: none; color: var(--text-faint);
+  cursor: pointer; font-size: 11px;
+}
+.symsearch .symsearch-clear:hover { background: var(--hover); color: var(--text); }
+
+.symsearch-cats {
+  display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 20px 14px;
+}
+.symsearch .symsearch-cats button {
+  padding: 6px 14px; border-radius: 999px; border: none;
+  background: var(--surface-2); color: var(--text-dim);
+  cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.12s, color 0.12s;
+}
+.symsearch .symsearch-cats button:hover { background: var(--hover-strong); color: var(--text); }
+.symsearch .symsearch-cats button.on { background: var(--accent); color: var(--accent-text); }
+
+.symsearch-results {
+  list-style: none; margin: 0; padding: 0; min-height: 160px;
+  max-height: 420px; overflow-y: auto; border-top: 1px solid var(--border);
+}
+.symsearch-results li {
+  display: flex; align-items: center; gap: 14px; padding: 11px 20px;
+  cursor: pointer; color: var(--text); font-size: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.symsearch-results li:last-child { border-bottom: none; }
+.symsearch-results li:hover { background: var(--hover); }
+.symsearch-results li.selected { background: var(--hover-strong); }
+
+.symsearch-results li.closed { opacity: 0.55; }
+/* Icon wrapper: a 32px round well holding the glyph base layer and, once loaded,
+   the real logo on top (SymbolIcon). */
+.ss-icon {
+  position: relative; flex-shrink: 0; width: 32px; height: 32px;
+  border-radius: 50%; overflow: hidden;
+}
+.ss-icon-glyph {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, var(--accent), #1c47c0);
+  color: #fff; font-size: 12px; font-weight: 700;
+}
+/* Real logo overlay: SVGs are square with their own bg; a white pad makes
+   dark-on-transparent marks legible on either theme. */
+.ss-icon-img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  background: #fff; object-fit: contain; padding: 2px;
+}
+.ss-epic { font-weight: 600; min-width: 128px; color: var(--text); flex-shrink: 0; }
+.ss-name {
+  flex: 1; min-width: 0; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ss-type {
+  color: var(--text-faint); font-size: 12px;
+  min-width: 92px; text-align: right; white-space: nowrap;
+}
+.ss-exch {
+  color: var(--text); font-weight: 400; font-size: 12px;
+  min-width: 96px; text-align: right; letter-spacing: 0.02em;
+}
+.ss-badge {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+}
+
+/* Trailing favourite star. Hidden until row-hover unless the symbol is already
+   a favourite (then always shown, gold). Mirrors TradingView's watchlist star. */
+.symsearch .ss-star {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 26px; height: 26px; padding: 0; border: none; border-radius: 50%;
+  background: transparent; cursor: pointer; color: var(--text-faint);
+  opacity: 0; transition: opacity 0.1s, color 0.1s, background 0.1s;
+}
+.symsearch .ss-star svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.symsearch-results li:hover .ss-star { opacity: 1; }
+.symsearch .ss-star:hover { background: var(--hover-strong); color: var(--text); }
+.symsearch .ss-star.on { opacity: 1; color: #f5b301; }
+.symsearch .ss-star.on svg { fill: currentColor; stroke: currentColor; }
+.symsearch .ss-star.on:hover { background: var(--hover-strong); }
+
+.symsearch-empty {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-faint); font-size: 13px; padding: 40px 20px; cursor: default;
+}
+.symsearch-empty:hover { background: transparent; }
+
+.toolbar button.live-on { background: var(--danger); }
+
+.ctxmenu {
+  position: fixed; z-index: 1000; width: max-content; min-width: 140px; padding: 6px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 28px var(--shadow); font-size: 13px;
+}
+/* Scope under .ctxmenu so these win over `.toolbar button` (the drawing menu is
+   rendered inside the Toolbar DOM, and that base rule paints every button blue). */
+.ctxmenu .ctx-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  width: 100%; padding: 7px 10px; border: none; border-radius: 5px;
+  background: transparent; color: var(--text); cursor: pointer; text-align: left;
+}
+.ctxmenu .ctx-item:hover:not(:disabled) { background: var(--accent); color: var(--accent-text); }
+.ctxmenu .ctx-item:disabled { color: var(--text-faint); cursor: default; }
+.ctxmenu .ctx-item.danger:hover { background: var(--danger); color: #fff; }
+.ctxmenu .ctx-item-label { display: flex; align-items: center; gap: 10px; }
+.ctxmenu .ctx-item-icon { display: inline-flex; color: var(--text-dim); flex: 0 0 auto; }
+.ctxmenu .ctx-item:hover:not(:disabled) .ctx-item-icon { color: var(--accent-text); }
+.ctxmenu .ctx-item.danger:hover .ctx-item-icon { color: #fff; }
+.ctxmenu .ctx-item kbd { font-family: inherit; font-size: 11px; color: var(--text-dim); background: transparent; }
+.ctxmenu .ctx-item:hover:not(:disabled) kbd { color: var(--accent-text); }
+.ctx-sep { height: 1px; margin: 6px 4px; background: var(--border); }
+
+/* Date label beside an editable coordinate price in the drawing settings modal. */
+.ind-coord-date { color: var(--text-faint); font-size: 12px; white-space: nowrap; align-self: center; }
+
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-backdrop--clear { background: transparent; }
+.modal {
+  width: 420px; max-width: 90vw; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 48px var(--shadow);
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+  cursor: move; user-select: none;
+}
+.modal-close { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; }
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px;
+}
+.setting-row label { color: var(--text-dim); }
+.tz-select {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
+}
+.alert-modal { width: 460px; }
+.alert-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.al-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.al-row > span { color: var(--text-dim); width: 90px; flex-shrink: 0; }
+.al-row select, .al-row input {
+  flex: 1; background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
+}
+.al-note { color: var(--text-faint); font-size: 12px; }
+/* Rows whose control is taller than one line (message, expiration, notifications)
+   align their label to the top. */
+.al-row-top { align-items: flex-start; }
+.al-row-top > span { padding-top: 6px; }
+.al-source { flex: 1; max-width: 140px; }
+.al-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.al-message {
+  flex: 1; resize: vertical; min-height: 34px; font: inherit;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
+}
+/* Per-alert expiration: a custom dropdown (resolved-time button + two-column menu),
+   with the custom-date picker below when chosen. */
+.al-expiry { flex: 1; position: relative; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.al-expiry-trigger {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--input-bg); color: var(--text); text-align: left;
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; cursor: pointer;
+}
+.al-expiry-trigger.open { border-color: var(--accent); }
+.al-expiry-caret { color: var(--text-dim); font-size: 12px; }
+.al-expiry-menu {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin-top: 4px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px; display: flex; flex-direction: column;
+}
+.al-expiry-opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  background: none; border: 1px solid transparent; border-radius: 4px;
+  padding: 7px 10px; cursor: pointer; color: var(--text); text-align: left;
+}
+.al-expiry-opt:hover { background: var(--hover); }
+.al-expiry-opt.sel { border-color: var(--accent); }
+.al-expiry-opt-time { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.al-expiry-opt.custom { margin-top: 4px; background: var(--hover); }
+.al-datetime {
+  flex: none; width: 100%; background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
+}
+/* Compact wrap-friendly segmented control for the expiry presets. */
+.expiry-seg { flex-wrap: wrap; }
+.expiry-seg button { padding: 5px 10px; font-size: 12px; }
+/* Notification channel checkboxes. */
+.notify-toggles { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.notify-toggle {
+  display: flex; align-items: center; gap: 5px; width: auto; color: var(--text);
+  cursor: pointer; font-size: 13px;
+}
+.notify-toggle input { flex: none; cursor: pointer; }
+/* Sub-header inside a settings tab. */
+.setting-sub { padding: 14px 16px 4px; color: var(--text-dim); font-size: 12px; font-weight: 600; }
+.modal-foot {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 12px 16px; border-top: 1px solid var(--border);
+}
+.modal-foot .ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+/* Edit-mode delete button, pinned to the footer's far left (TradingView). */
+.modal-foot .al-trash {
+  margin-right: auto; background: transparent; border: 1px solid var(--border);
+  color: var(--text-dim); cursor: pointer;
+}
+.modal-foot .al-trash:hover { color: var(--danger, #e5534b); border-color: var(--danger, #e5534b); }
+/* TradingView-style "Defaults" menu in the indicator settings footer. Pinned to the
+   far left (Cancel/Ok stay right); its dropdown opens UPWARD since the footer sits at
+   the modal's bottom edge. */
+.ind-def-menu { position: relative; margin-right: auto; }
+/* Opens downward from the footer button. Scoped under the parent so these win
+   over the later, equal-specificity base `.dropdown { top: 115% }` rule —
+   without the scope, `top` would resolve alongside `bottom` and stretch the
+   panel. */
+.ind-def-menu .ind-def-dropdown {
+  position: absolute; top: calc(100% + 2px); bottom: auto; left: 0;
+  min-width: 190px; z-index: 10;
+}
+.ind-def-preset { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ind-def-preset > span { flex: 1; }
+.ind-def-del {
+  background: transparent; border: none; color: var(--text-faint); cursor: pointer;
+  padding: 0 2px; font-size: 12px; line-height: 1; border-radius: 3px;
+}
+.ind-def-del:hover { color: var(--text); background: var(--border); }
+.ind-def-name { display: flex; align-items: center; gap: 6px; }
+.ind-def-name input {
+  flex: 1; min-width: 0;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+}
+.ind-def-name button {
+  background: var(--accent); color: var(--accent-text); border: none;
+  border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 12px;
+}
+
+/* Per-indicator settings modal (TradingView-style gear). */
+.ind-settings { width: 360px; }
+/* Info icon (ⓘ) + its left-side wrapper, used for the explanatory tooltips inside
+   the settings modal (the portaled tooltip itself reuses .ind-tooltip). */
+.ind-settings .ind-info {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 16px; height: 16px; padding: 0; border: none; border-radius: 50%;
+  background: transparent; cursor: help; color: var(--text-faint);
+}
+.ind-settings .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.7; }
+.ind-settings .ind-info:hover { color: var(--text); }
+/* Keeps a row's label + its ⓘ together on the left (controls stay right). */
+.ind-row-head { display: inline-flex; align-items: center; gap: 5px; }
+.ind-group-head { display: flex; align-items: center; gap: 5px; }
+/* PREV_HL pairs High+Low controls on one row, which the default width can't hold.
+   Sized to the measured natural width of the widest row (Style pair + Inputs
+   lookback both need ~351px content + 32px padding) — no slack. */
+.ind-settings-wide { width: 386px; }
+.ind-tabs { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
+.ind-tab {
+  background: transparent; color: var(--text-dim); border: none; border-bottom: 2px solid transparent;
+  padding: 8px 10px; cursor: pointer; font-size: 13px; margin-bottom: -1px;
+}
+.ind-tab.on { color: var(--text); border-bottom-color: var(--accent); }
+.ind-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 120px; }
+.ind-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.ind-row > label { color: var(--text-dim); }
+.ind-row input[type="number"], .ind-row input[type="text"], .ind-row select,
+.ind-row input[type="datetime-local"] {
+  width: 130px; background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px;
+}
+/* The anchor date-time needs more room than the 130px default. */
+.ind-row input[type="datetime-local"].ind-anchor-input { width: 190px; }
+.ind-row input[type="datetime-local"]:disabled { opacity: 0.5; cursor: not-allowed; }
+.ind-row input[type="number"]:disabled, .ind-row select:disabled { opacity: 0.5; cursor: not-allowed; }
+.ind-line-controls { display: inline-flex; align-items: center; gap: 8px; }
+.ind-line-controls input[type="color"] {
+  width: 36px; height: 26px; padding: 0; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--input-bg); cursor: pointer;
+}
+.ind-line-controls select { width: 64px; }
+/* PREV_HL lookback row: compact period count + a wider aggregation-function select
+   (Max/Min · Average · Median) than the Style-tab thickness select. */
+.ind-prevhl-controls input[type="number"] { width: 56px; }
+.ind-prevhl-controls select { width: 104px; }
+/* Intraday unit (minutes/hours) is narrow — it shouldn't take the agg-select width. */
+.ind-prevhl-controls .ind-unit-select { width: 74px; }
+/* PREV_HL Style row pairs High + Low on one line: boundary label, then a
+   "High [color][size]  Low [color][size]" group, packed left (not space-between). */
+.ind-style-pair { justify-content: flex-start; gap: 10px; }
+.ind-style-pair .ind-pair-boundary {
+  flex: 0 0 78px; color: var(--text-dim);
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.ind-style-pair .ind-pair-side { color: var(--text-faint); font-size: 12px; }
+.ind-style-pair .ind-pair-side-lo { margin-left: 6px; }
+.ind-style-pair .ind-line-controls select { width: 52px; }
+/* RSI Style tab: lay every row's controls on ONE fixed grid — swatch | level — so
+   the columns line up across rows (TradingView-style). Colour + line style now live
+   inside the single picker swatch; band rows add a level, others leave it empty. */
+.ind-rsi-style .ind-line-controls {
+  display: grid;
+  grid-template-columns: 28px 56px;
+  gap: 8px;
+  align-items: center;
+}
+.ind-rsi-style .ind-line-controls > input[type="number"] { width: 100%; }
+.ind-line-controls input[type="number"]:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Color + line-style picker (TradingView-style swatch + popover) ─────────── */
+/* The swatch trigger: a small rounded chip showing the current colour over a
+   checkerboard (so a faint line reads faint). */
+.clsp-swatch {
+  width: 28px; height: 24px; padding: 2px; flex: 0 0 auto;
+  border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+  background:
+    linear-gradient(45deg, var(--border) 25%, transparent 25%, transparent 75%, var(--border) 75%) 0 0 / 8px 8px,
+    var(--input-bg);
+}
+.clsp-swatch:hover, .clsp-swatch.on { border-color: var(--accent); }
+.clsp-swatch:disabled { opacity: 0.4; cursor: not-allowed; }
+.clsp-swatch-fill { display: block; width: 100%; height: 100%; border-radius: 2px; }
+
+/* TradingView's combined field: a colour chip on the left + a live line preview on
+   the right, in one bordered control. */
+.clsp-swatch--line {
+  width: auto; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 6px 3px 3px;
+  background: var(--input-bg);
+}
+.clsp-swatch--line .clsp-swatch-fill { width: 18px; height: 18px; flex: 0 0 auto; }
+.clsp-swatch-line { display: block; width: 36px; height: 16px; flex: 0 0 auto; }
+
+/* The portaled panel: solid surface + border (NO drop shadow, per house style) so
+   it reads as a distinct floating layer against the modal beneath it. */
+.clsp-panel {
+  position: fixed; z-index: 2600; width: max-content;
+  padding: 10px; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.clsp-grid {
+  display: grid; grid-template-columns: repeat(10, 16px); gap: 4px;
+}
+.clsp-cell {
+  width: 16px; height: 16px; padding: 0; border-radius: 3px; cursor: pointer;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+}
+.clsp-cell:hover { transform: scale(1.15); }
+.clsp-cell.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+.clsp-custom { margin-top: 8px; }
+.clsp-add {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; cursor: pointer;
+  border: 1px dashed var(--border); border-radius: 4px;
+  background: var(--input-bg); color: var(--text-dim);
+}
+.clsp-add:hover { color: var(--text); border-color: var(--accent); }
+.clsp-add svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+/* The native colour input sits invisible over the "+" so clicking it opens the OS
+   picker (the escape hatch for an arbitrary hue). */
+.clsp-add input[type="color"] {
+  position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: none; padding: 0;
+}
+.clsp-section { margin-top: 10px; }
+.clsp-label {
+  color: var(--text-faint); font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.06em; margin-bottom: 5px;
+}
+.clsp-opacity-row { display: flex; align-items: center; gap: 8px; }
+.clsp-opacity { flex: 1; accent-color: var(--accent); cursor: pointer; }
+.clsp-opacity-val { color: var(--text-dim); font-size: 12px; min-width: 34px; text-align: right; }
+.clsp-presets { display: flex; gap: 6px; }
+.clsp-preset {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 4px 6px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--input-bg);
+}
+.clsp-preset:hover { border-color: var(--accent); }
+.clsp-preset.sel { border-color: var(--accent); background: var(--input-bg); }
+.clsp-preset svg { stroke: var(--text); fill: none; }
+.clsp-preset.sel svg { stroke: var(--accent); }
+/* A band line whose multiplier is OFF in Inputs: grey the whole row. Also a
+   PREV_HL boundary row whose checkbox is off (its label stays full-strength so
+   the user can still find and re-enable it; only the disabled controls fade). */
+.ind-style-row.is-off { opacity: 0.5; }
+.ind-style-row.is-off .ind-check-inline { cursor: not-allowed; }
+.ind-row.is-off .ind-line-controls { opacity: 0.5; }
+.ind-group {
+  margin-top: 4px; color: var(--text-faint); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.ind-check { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
+.ind-check input { cursor: pointer; }
+/* AVWAP band rows: checkbox+label on the left of an .ind-row, multiplier on the
+   right. Inline so it doesn't grow to full width and push the input off-row. */
+.ind-check-inline { flex: 0 0 auto; color: var(--text-dim); }
+.ind-note { color: var(--text-faint); font-size: 12px; margin: 0; }
+.ind-interval-grid { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 8px; }
+.ind-interval-group-label { color: var(--text-faint); font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
+
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { background: var(--input-bg); color: var(--text); border: none; padding: 6px 14px; cursor: pointer; }
+.seg button.seg-on { background: var(--accent); color: var(--accent-text); }
+
+/* Alert toasts (bottom-right). */
+#toast-container {
+  position: fixed; bottom: 16px; right: 16px; z-index: 3000;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.toast {
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-left: 3px solid #f5a623; border-radius: 6px; padding: 10px 14px; font-size: 13px;
+  box-shadow: 0 8px 28px var(--shadow); max-width: 320px;
+  opacity: 0; transform: translateY(8px); transition: opacity 0.25s, transform 0.25s;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+
+/* TradingView-style live price + countdown pill, overlaying the axis numbers.
+   EVEN heights (40px with countdown / 20px without): the pill centers with
+   transform: translateY(-50%), so an odd/fractional height would put -50% on a
+   half-pixel and blur the text. Fixed even heights keep -50% an integer. */
+.price-tag {
+  /* Width is set imperatively (ChartCore) to the price-axis column width so the
+     pill fills the column and never spills left into the chart. */
+  position: absolute; right: 0; z-index: 45; transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 40px; padding: 0 6px; border-radius: 3px; pointer-events: none; overflow: hidden;
+  background: var(--accent); color: var(--accent-text);
+  font-variant-numeric: tabular-nums; line-height: 1.25; text-align: center;
+}
+/* Price-only (no countdown): half the height, still even. */
+.price-tag:not(:has(.pt-cd)) { height: 20px; }
+.price-tag.stale { background: var(--text-faint); }
+.price-tag .pt-price { font-size: 12px; font-weight: 700; }
+.price-tag .pt-cd { font-size: 10px; opacity: 0.95; text-align: center; }
+
+/* Live bid (sell) and ask (buy) labels, TradingView two-tone. Anchored right:0 with
+   the price box sized (inline) to the price-axis column, so the "Bid"/"Ask" side tag
+   PROTRUDES LEFT of the axis into the chart — same trick as the "+" axis affordance.
+   Colors are set inline from the bid/ask style (ChartCore); this owns layout. */
+.ba-tag {
+  position: absolute; right: 0; z-index: 44; transform: translateY(-50%);
+  display: flex; align-items: stretch;
+  height: 18px; border-radius: 3px; pointer-events: none; overflow: hidden;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ba-tag .ba-side {
+  display: inline-flex; align-items: center; flex-shrink: 0; padding: 0 4px;
+  font-size: 9px; font-weight: 700; color: #fff; text-transform: uppercase;
+}
+.ba-tag .ba-price {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 6px; font-size: 11px; font-weight: 700;
+}
+/* The two bid/ask color swatches sit side by side in their settings row. */
+.ba-style-pickers { display: flex; gap: 8px; align-items: center; }
+
+/* TradingView-style alert label on the axis (one per alert line; tracks drags).
+   Even height (20px) for the same translateY(-50%) crispness reason. */
+.alert-tag {
+  position: absolute; right: 0; z-index: 45; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 3px; pointer-events: none;
+  height: 20px; padding: 0 5px 0 4px; border-radius: 3px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.alert-tag .at-bell { font-size: 9px; line-height: 1; }
+
+/* TV-style descriptive pill on the alert line (hover/selected). Unlike the
+   axis tag this is interactive (delete button), so it opts back into pointer
+   events. Its `left` is set imperatively to track the cursor's x. */
+.alert-pill {
+  position: absolute; left: 0; z-index: 46; transform: translateY(-50%);
+  display: flex; align-items: stretch; pointer-events: auto;
+  border-radius: 4px; white-space: nowrap; overflow: hidden;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); box-shadow: 0 1px 4px var(--shadow);
+  font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
+}
+/* Drag affordance: hovering an alert line shows the up/down-arrow resize cursor
+   over the canvas, signalling the line drags vertically (klinecharts sets an
+   inline crosshair cursor, so override with !important). */
+.chart-wrap.alert-hover canvas { cursor: ns-resize !important; }
+/* Indicator-selection cursor affordances (same !important-over-canvas trick as
+   above, since klinecharts sets an inline crosshair cursor on its container):
+   a hand over a selectable indicator curve, a normal arrow over the legend strip
+   (instead of the chart's crosshair). */
+.chart-wrap.cur-pointer canvas { cursor: pointer !important; }
+.chart-wrap.cur-default canvas { cursor: default !important; }
+/* Over the AVWAP anchor handle: grab to signal it drags; grabbing while held. */
+.chart-wrap.cur-grab canvas { cursor: grab !important; }
+.chart-wrap.cur-grabbing canvas { cursor: grabbing !important; }
+.alert-pill .ap-text { display: flex; align-items: center; padding: 3px 8px; }
+.alert-pill .ap-del {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; flex-shrink: 0; padding: 0;
+  border: none; border-left: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); cursor: pointer;
+}
+.alert-pill .ap-del:hover { background: rgba(127, 127, 127, 0.12); color: var(--text); }
+.alert-pill .ap-del svg { width: 13px; height: 13px; display: block; }
+/* Clickable one-time (1×) / permanent (∞) toggle. Always shown on the pill. */
+.alert-pill .ap-trigger {
+  display: flex; align-items: center; justify-content: center;
+  min-width: 22px; flex-shrink: 0; padding: 0 6px;
+  border: none; border-left: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); cursor: pointer; font-size: 12px; font-weight: 600;
+}
+.alert-pill .ap-trigger.every { font-size: 14px; line-height: 1; }
+.alert-pill .ap-trigger:hover { background: rgba(127, 127, 127, 0.12); color: var(--text); }
+/* Remaining-time-to-expiry chip. */
+.alert-pill .ap-remaining {
+  display: flex; align-items: center; padding: 0 8px; flex-shrink: 0;
+  border-left: 1px solid var(--border); color: var(--text-dim); font-weight: 500;
+}
+
+/* TradingView-style "+" affordance on the price axis (follows the cursor). The
+   "+" is a circle sitting in the chart area; the price label fills the price-axis
+   column to its right. The circle's right edge lands on the column's left border
+   (its width is set imperatively to the axis width in ChartCore onMove). */
+.axis-plus {
+  position: absolute; right: 0; z-index: 46; transform: translateY(-50%);
+  display: flex; align-items: center; cursor: pointer;
+  /* Even height so translateY(-50%) stays on whole pixels (crisp price label). */
+  height: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.axis-plus-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%;
+  /* Dark circle with a fully-white "+" in both themes (TV quick-create button). */
+  background: #131722; color: #ffffff; border: 1px solid #434651;
+}
+/* Even size + even circle/border so the plus lands on integer pixels (content box
+   16px, svg 12px -> 2px margins), keeping it crisp and truly centered. */
+.axis-plus-icon svg { width: 12px; height: 12px; display: block; }
+.axis-plus-price {
+  display: flex; align-items: center; justify-content: center;
+  /* Match the canvas price-axis tick labels exactly (chartTheme AXIS_FONT, 12px
+     normal) so the pill price reads identically. */
+  font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+  padding: 4px 6px; font-size: 12px; font-weight: 400;
+  white-space: nowrap; overflow: hidden;
+  /* TV crosshair price label: solid near-black, regular-weight white text. */
+  background: #131722; color: #ffffff;
+  border: 1px solid #434651; border-radius: 3px;
+}
+
+/* TradingView-style top-left legend, rendered as crisp DOM (not klinecharts'
+   blurry canvas legend) — see ChartLegend.tsx. The container sits over the candle
+   pane and is click-through (pointer-events:none) so curve clicks/hover reach the
+   chart; only the indicator rows + their icons opt back into pointer events. The
+   symbol/OHLC row is non-interactive. z-index 11 keeps it above the selection
+   overlay canvas (z-index 10) so the rows are hoverable and on top. */
+.chart-legend {
+  position: absolute; top: 6px; left: 6px; z-index: 11;
+  display: flex; flex-direction: column; gap: 0;
+  /* flex-start so each row shrink-wraps its own content instead of stretching to
+     the widest row's width (otherwise the indicator card would track the OHLC
+     row's width and resize as the live numbers change). */
+  align-items: flex-start;
+  pointer-events: none;
+  font-family: "Helvetica Neue", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px; line-height: 1; color: var(--text);
+  max-width: 70%;
+}
+/* Sub-pane indicator legend (Volume/MACD/RSI…): same card as the candle legend, but
+   positioned at each pane's top (set inline by ChartCore from getSize). The `top:6px`
+   from .chart-legend is overridden inline; a small inset keeps it off the separator
+   line. No symbol/OHLC row, so the whole strip is just the interactive indicator
+   rows (pointer-events come from .cl-ind). */
+.sub-pane-legend { top: 0; padding-top: 2px; }
+
+.cl-row {
+  display: flex; align-items: center; flex-wrap: nowrap; white-space: nowrap;
+  /* Even height (22px) with the text vertically centered so glyphs land on whole
+     pixels (no half-pixel blur). The 1px transparent border reserves space so the
+     hover/selected border doesn't shift the row. */
+  height: 22px; padding: 0 6px;
+  border: 1px solid transparent; border-radius: 3px;
+}
+/* Tiny gap between adjacent segments, TradingView-tight. */
+.cl-row > * + * { margin-left: 6px; }
+.cl-row > .cl-ohlc-item + .cl-ohlc-item,
+.cl-row > .cl-fig + .cl-fig { margin-left: 8px; }
+
+/* Symbol / interval / OHLC row. pointer-events:auto so hovering the symbol/OHLC
+   strip also fires the legend's mouseenter → crosshair-hide (TradingView hides the
+   crosshair over the whole legend, not just the indicator rows). It's a thin strip
+   at the very top, so capturing the pointer here doesn't meaningfully block curve
+   interaction. The row itself isn't clickable (no cursor:pointer / onClick). */
+.cl-ohlc { pointer-events: auto; }
+.cl-sym { font-weight: 600; }
+.cl-meta { color: var(--text-dim); }
+.cl-ohlc-item { display: inline-flex; align-items: center; gap: 3px; }
+.cl-ohlc-label { color: var(--text-dim); }
+.cl-ohlc-val { font-variant-numeric: tabular-nums; }
+.cl-change { font-variant-numeric: tabular-nums; }
+
+/* Indicator rows are interactive: hover/click to select, icons to act. */
+.cl-ind {
+  pointer-events: auto; cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.cl-name { font-weight: 400; }
+/* Amber ⚠ badge: shown on a legend row when some of the indicator's lines draw
+   nothing at the current timeframe (PREV_HL degenerate boundaries). It's an InfoTip
+   trigger (a <button>), so reset the native button chrome to read as a bare icon. */
+.cl-warn {
+  display: inline-flex; align-items: center; color: #e0a000; cursor: help;
+  background: none; border: none; padding: 0; margin: 0; line-height: 0;
+}
+.cl-warn svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
+/* Dimmed lookback summary after the Prev HL name (e.g. "1 day, since …"). */
+.cl-summary { color: var(--text-dim); }
+.cl-fig { display: inline-flex; align-items: center; }
+.cl-fig-title { opacity: 0.85; }
+.cl-fig-val { font-variant-numeric: tabular-nums; }
+/* A hidden indicator's name dims (it's still listed, just not plotted), but the
+   legend values stay shown as-is. */
+.cl-ind.cl-hidden .cl-name { opacity: 0.5; }
+
+/* TradingView-style highlight: an opaque card with a border on hover/selection
+   (gray = hover, blue = selected). Opaque bg so it reads as a solid card over the
+   candles in any theme. No shadow (flat look). */
+.cl-ind:hover,
+.cl-ind.cl-curve-hover,
+.cl-ind.cl-selected {
+  background: var(--surface);
+  border-color: var(--text-dim);
+}
+/* After the gray rule so a selected indicator keeps its blue border even while its
+   curve (or row) is hovered. */
+.cl-ind.cl-selected { border-color: var(--accent); }
+
+/* Action icons (eye/gear/trash): hidden until the row is hovered/selected. A
+   HIDDEN indicator always keeps just its unhide eye visible (cl-icons-hidden-eye),
+   so it's re-showable even when idle. */
+.cl-icons {
+  display: inline-flex; align-items: center; margin-left: 8px;
+  opacity: 0; transition: opacity 0.08s;
+}
+.cl-ind:hover .cl-icons,
+.cl-ind.cl-curve-hover .cl-icons,
+.cl-ind.cl-selected .cl-icons { opacity: 1; }
+.cl-icons.cl-icons-hidden-eye { opacity: 1; }
+/* When idle (row not hovered/selected) a hidden indicator shows ONLY its first
+   icon (the unhide eye); the gear/trash stay hidden until hover/selection. */
+.cl-icons.cl-icons-hidden-eye .cl-icon:not(:first-child) { opacity: 0; pointer-events: none; }
+.cl-ind:hover .cl-icons.cl-icons-hidden-eye .cl-icon:not(:first-child),
+.cl-ind.cl-curve-hover .cl-icons.cl-icons-hidden-eye .cl-icon:not(:first-child),
+.cl-ind.cl-selected .cl-icons.cl-icons-hidden-eye .cl-icon:not(:first-child) {
+  opacity: 1; pointer-events: auto;
+}
+.cl-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0;
+  border: none; background: transparent; cursor: pointer;
+  color: var(--text-dim);
+  font-family: "Material Symbols Outlined"; font-size: 16px; line-height: 1;
+  -webkit-font-smoothing: antialiased;
+}
+.cl-icon:hover { color: var(--text); }
+/* The ⋯ "more" button uses an SVG (the Material Symbols subset lacks more_horiz),
+   so size the glyph here instead of via font-size. */
+.cl-icon-svg svg { width: 16px; height: 16px; fill: currentColor; }
+
+/* Floating settings button over the Pro chart shell. */
+/* Settings gear, parked in the bottom-right corner gutter where the price axis
+   meets the time axis (TradingView-style). */
+
+/* --- core-chart shell additions --- */
+/* Editable symbol chip. Scoped to .toolbar to beat the global `.toolbar button`
+   accent fill (equal specificity otherwise → white-on-white). A resting border +
+   search icon + caret make it read as a clickable control, not plain text. */
+.toolbar button.sym {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-weight: 700; color: var(--text); cursor: pointer;
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 10px; font-size: 14px; transition: background 0.12s, border-color 0.12s;
+}
+.toolbar button.sym:hover { background: var(--hover-strong); border-color: var(--accent); }
+.toolbar button.sym .sym-caret { color: var(--text-dim); transition: color 0.12s; margin-left: 1px; }
+.toolbar button.sym:hover .sym-caret { color: var(--accent); }
+/* Instrument logo / glyph in the chip (18px round): glyph base + logo overlay. */
+.toolbar button.sym .sym-logo {
+  position: relative; flex-shrink: 0; width: 18px; height: 18px;
+  border-radius: 50%; overflow: hidden;
+}
+.toolbar button.sym .sym-logo-glyph {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; color: #fff;
+  background: linear-gradient(180deg, var(--accent), #1c47c0);
+}
+.toolbar button.sym .sym-logo-img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  background: #fff; object-fit: contain; padding: 1px;
+}
+.periods { display: inline-flex; gap: 2px; }
+.periods button {
+  background: var(--input-bg); color: var(--text-dim); border: 1px solid var(--border);
+  border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;
+}
+.periods button:hover:not(.on) { background: var(--hover); color: var(--text); }
+/* Selected timeframe: monochrome gray fill (toolbar stays black/white/gray), not
+   the blue accent. Brighter text + border so it still reads as "selected". */
+.periods button.on { background: var(--hover-strong); color: var(--text); border-color: var(--text-dim); }
+
+.menu { position: relative; }
+/* TradingView-style: borderless, transparent; subtle gray rounded highlight on
+   hover and while the dropdown is open (.on). */
+.menu > button {
+  background: transparent; color: var(--text); border: none;
+  border-radius: 6px; padding: 5px 10px; cursor: pointer; transition: background 0.12s;
+}
+.menu > button:hover { background: var(--hover); }
+.menu > button.on { background: var(--hover-strong); }
+.dropdown {
+  position: absolute; top: 115%; left: 0; z-index: 100; min-width: 220px; padding: 6px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 28px var(--shadow);
+}
+.dropdown input {
+  width: 100%; margin-bottom: 6px; background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px;
+}
+/* Indicator search box: relative wrapper so the clear button can sit inside the
+   right edge of the input. The generic `.dropdown input` width:100% still applies. */
+.dropdown .ind-search { position: relative; }
+.dropdown .ind-search input { padding-right: 26px; }
+.dropdown .ind-search-clear {
+  position: absolute; top: 0; bottom: 6px; right: 4px; margin: auto 0;
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: transparent; border: none; color: var(--text-faint);
+  cursor: pointer; font-size: 10px; padding: 0;
+}
+.dropdown .ind-search-clear:hover { background: var(--hover); color: var(--text); }
+
+.dropdown ul { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
+.dropdown li {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px;
+  cursor: pointer; color: var(--text); font-size: 13px;
+}
+.dropdown li:hover { background: var(--hover-strong); color: var(--text); }
+.dropdown li.empty { color: var(--text-faint); cursor: default; }
+.dropdown li.empty:hover { background: transparent; color: var(--text-faint); }
+/* Thin rule between menu sections (e.g. per-symbol vs. global default template). */
+.dropdown li.sep {
+  height: 1px; padding: 0; margin: 4px 4px; background: var(--border);
+  cursor: default; pointer-events: none;
+}
+.dropdown li.sep:hover { background: var(--border); }
+.dropdown .check { width: 12px; color: var(--pos); }
+/* Template-menu row icons: dimmed by default, accent on row hover (matches the
+   context-menu icon treatment). Empty/placeholder rows have no icon, so indent
+   them to align their text with the iconed rows above. */
+.dropdown .tmpl-ic { display: inline-flex; flex: 0 0 16px; color: var(--text-dim); }
+.dropdown li:hover .tmpl-ic { color: var(--accent-text); }
+/* Size the template menu to its widest row and never wrap a label to a second
+   line (labels carry the live epic, so width varies). */
+.dropdown.tmpl-dropdown { width: max-content; min-width: 200px; }
+.dropdown.tmpl-dropdown li { white-space: nowrap; }
+.dropdown.tmpl-dropdown li.empty { padding-left: 32px; }
+
+/* The indicator menu shows full names (e.g. "Relative Strength Index (RSI)"), so
+   size it to its content rather than a fixed width: hug the widest row, clamped
+   so it neither collapses nor sprawls. The rows themselves don't wrap. */
+.dropdown.dropdown-ind {
+  width: max-content; min-width: 200px; max-width: 400px;
+}
+.dropdown.dropdown-ind li.ind-row { white-space: nowrap; }
+
+/* Indicator menu rows: a leading favourite star, the name, and a trailing ⓘ that
+   reveals a description tooltip on hover. Star/info are visible on row hover (and
+   the star stays visible when active). */
+.dropdown li.ind-row { gap: 6px; }
+.dropdown li.ind-section {
+  cursor: default; color: var(--text-faint); font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 8px 8px 4px; font-weight: 600;
+}
+.dropdown li.ind-section:hover { background: transparent; color: var(--text-faint); }
+.ind-name { flex: 1; min-width: 0; }
+/* These live inside .toolbar, where `.toolbar button` paints an accent fill;
+   scope under .dropdown li so we out-specify it and keep them borderless. */
+.dropdown li .ind-star, .dropdown li .ind-info {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 4px;
+  background: transparent; cursor: pointer; color: var(--text-faint);
+  opacity: 0; transition: opacity 0.1s, color 0.1s, background 0.1s;
+}
+.dropdown li .ind-star svg,
+.dropdown li .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.dropdown li.ind-row:hover .ind-star,
+.dropdown li.ind-row:hover .ind-info { opacity: 1; }
+.dropdown li .ind-star:hover,
+.dropdown li .ind-info:hover { background: var(--hover); color: var(--text); }
+.dropdown li .ind-star.on { opacity: 1; color: #f5b301; }
+.dropdown li .ind-star.on svg { fill: currentColor; stroke: currentColor; }
+
+/* Description tooltip — portaled to <body> and fixed-positioned so the menu's
+   overflow-scroll list can't clip it. Anchored to the right of the ⓘ icon. */
+.ind-tooltip {
+  position: fixed; transform: translateY(-50%); z-index: 2500; /* above the modal (2000) */
+  max-width: 260px; padding: 8px 10px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 24px var(--shadow); pointer-events: none;
+}
+.ind-tooltip-title { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
+.ind-tooltip-desc { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.ind-tooltip-desc + .ind-tooltip-desc { margin-top: 6px; }
+
+/* Layout picker dropdown: per-option glyph + the per-tab sync toggles below.
+   Right-aligned (the picker sits at the toolbar's right edge) so it never spills. */
+.layout-dropdown { min-width: 200px; left: auto; right: 0; }
+.layout-dropdown li.on { background: var(--hover); }
+.layout-glyph { flex: 0 0 16px; display: block; color: var(--text-dim); }
+.layout-dropdown li.on .layout-glyph,
+.layout-dropdown li:hover .layout-glyph { color: var(--text); }
+/* The picker button shows the active layout's glyph beside its caret. */
+.layout-menu > button .layout-glyph { display: inline-block; vertical-align: -3px; color: inherit; }
+.layout-sync {
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.layout-sync label {
+  display: flex; align-items: center; gap: 8px; padding: 4px 4px;
+  font-size: 12px; color: var(--text-dim); cursor: pointer; white-space: nowrap;
+}
+/* The generic `.dropdown input { width:100% }` (for the indicator search box) would
+   otherwise stretch these checkboxes full-width and shove the label off. */
+.layout-sync input {
+  width: auto; margin: 0; flex: 0 0 auto; cursor: pointer;
+}
+/* Info icon: pushed to the row's right edge, muted, with a help cursor + tooltip. */
+.layout-sync .ls-info {
+  margin-left: auto; color: var(--text-faint); font-size: 12px; cursor: help;
+}
+.layout-sync .ls-info:hover { color: var(--text-dim); }
+
+/* Grouped interval (timeframe) menu. The toggle is a slim chevron sized to sit
+   flush with the quick-bar buttons; the dropdown groups intervals TV-style. */
+.interval-menu { display: inline-flex; }
+.interval-toggle {
+  background: transparent; color: var(--text-dim); border: none;
+  border-radius: 6px; padding: 4px 6px; cursor: pointer; font-size: 12px; line-height: 1;
+  transition: background 0.12s;
+}
+.interval-toggle:hover { background: var(--hover); color: var(--text); }
+.interval-toggle.on { background: var(--hover-strong); color: var(--text); }
+.interval-dropdown { min-width: 150px; max-height: 360px; overflow-y: auto; }
+.interval-group + .interval-group { margin-top: 4px; border-top: 1px solid var(--border); padding-top: 4px; }
+.interval-group-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-faint); padding: 4px 8px 2px;
+}
+.interval-dropdown li { justify-content: space-between; }
+.interval-dropdown li.on { background: var(--hover-strong); color: var(--text); }
+.interval-dropdown .live-only {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-faint); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px;
+}
+
+/* TradingView-style borderless toolbar button (Alert): transparent with a subtle
+   gray rounded highlight on hover / when selected. Scoped under .toolbar to beat
+   the `.toolbar button { background: var(--accent) }` base rule's specificity. */
+.toolbar .anchor-btn {
+  background: transparent; color: var(--text); border: none;
+  border-radius: 6px; padding: 5px 10px; cursor: pointer; transition: background 0.12s;
+}
+.toolbar .anchor-btn:hover:not(:disabled) { background: var(--hover); }
+.toolbar .anchor-btn.on { background: var(--hover-strong); }
+.toolbar .anchor-btn:disabled { opacity: 0.5; cursor: default; }
+/* Icon + label buttons (e.g. Alert): align the inline SVG with its text, kept
+   monochrome since the svg inherits the button's gray `color` via currentColor. */
+.toolbar .icon-btn { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); }
+.toolbar .icon-btn:hover { color: var(--text); }
+.toolbar .icon-btn svg { display: block; }
+/* Theme toggle: icon-only, square so the sun/moon sits centered like a TV button.
+   margin-left:auto pushes it (and nothing after it) to the far right of the bar. */
+/* Theme toggle: a visible round bordered icon button (more noticeable than a
+   bare borderless emoji), pinned to the far right. Keeps the gray hover. */
+.toolbar .theme-toggle,
+.toolbar .alerts-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 0; font-size: 16px; line-height: 1;
+  border: 1px solid var(--border); border-radius: 50%;
+  background: var(--surface-2);
+}
+/* The alerts bell is now the last (and only) item pushed to the far right of the
+   toolbar; the workspace-level controls moved up to the tab bar. */
+.toolbar .alerts-toggle { margin-left: auto; }
+/* Trigger button: icon + label + caret inline (the icon inherits the dimmed/
+   accent treatment from .tmpl-ic; caret matches the symbol button's). */
+.toolbar .tmpl-menu button { display: inline-flex; align-items: center; gap: 6px; }
+.toolbar .tmpl-menu .tmpl-caret { color: var(--text-dim); font-size: 10px; }
+.toolbar .tmpl-menu button:hover .tmpl-caret,
+.toolbar .tmpl-menu button.on .tmpl-caret { color: var(--accent); }
+/* Right-aligned dropdown (opens toward the bar's left so it doesn't spill off the
+   right edge); shared by the template + layout pickers. */
+.dropdown-right { left: auto; right: 0; }
+.toolbar .alerts-toggle { color: var(--text-dim); }
+.toolbar .alerts-toggle svg { display: block; }
+.toolbar .theme-toggle:hover:not(:disabled),
+.toolbar .alerts-toggle:hover:not(:disabled) { background: var(--hover-strong); border-color: var(--text-dim); }
+/* Active (panel open): accent fill so it reads as "on", like other toggles. */
+.toolbar .alerts-toggle.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+/* Crosshair cue while picking an AVWAP anchor bar. */
+.anchoring, .anchoring canvas { cursor: crosshair !important; }
+
+.backtest { display: inline-flex; align-items: center; gap: 8px; }
+/* TradingView-style borderless Backtest button (scoped under .toolbar to beat the
+   `.toolbar button { background: var(--accent) }` base rule). */
+.toolbar .backtest > button {
+  background: transparent; color: var(--text); border: none;
+  border-radius: 6px; padding: 5px 10px; cursor: pointer; transition: background 0.12s;
+}
+.toolbar .backtest > button:hover:not(:disabled) { background: var(--hover); }
+.toolbar .backtest > button:disabled { opacity: 0.5; cursor: default; }
+.bt-summary {
+  display: inline-flex; align-items: center; gap: 10px; font-size: 12px;
+  color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.bt-summary .pos { color: var(--pos); font-weight: 600; }
+.bt-summary .neg { color: var(--neg); font-weight: 600; }
+.bt-clear {
+  background: transparent; color: var(--text-dim); border: none;
+  border-radius: 6px; padding: 2px 6px; cursor: pointer; font-size: 11px; transition: background 0.12s;
+}
+.bt-clear:hover { background: var(--hover); color: var(--text); }
+.bt-error { color: var(--neg); font-size: 12px; }
+
+.scale { display: inline-flex; gap: 2px; margin-left: 4px; }
+.scale button {
+  width: 26px; height: 26px; padding: 0; background: transparent; color: var(--text-dim);
+  border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.12s;
+}
+.scale button:hover { background: var(--hover); color: var(--text); }
+.scale button.on { background: var(--hover-strong); color: var(--text); }
+
+/* --- workspace layout manager (named layouts — split button) ---------------- */
+/* Container: the name button + caret button sit side by side, sharing a border. */
+.layout-mgr {
+  display: inline-flex; align-items: center; position: relative;
+}
+
+/* Shared base for both halves of the split button. */
+.layout-mgr-name-btn,
+.layout-mgr-caret-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: transparent; color: var(--text-dim); border: none;
+  cursor: pointer; font-size: 12px; line-height: 1;
+  transition: background 0.12s, color 0.12s;
+}
+
+/* Name half: layout name + optional ★ + optional dirty dot. */
+.layout-mgr-name-btn {
+  padding: 4px 6px 4px 8px; border-radius: 6px 0 0 6px; max-width: 160px;
+}
+.layout-mgr-name-btn .layout-mgr-label {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.layout-mgr-name-btn .layout-mgr-star { color: var(--accent); font-size: 11px; }
+.layout-mgr-name-btn .layout-mgr-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0;
+}
+
+/* Caret half: the ▾ arrow that opens the full dropdown. */
+.layout-mgr-caret-btn {
+  padding: 4px 6px; border-radius: 0 6px 6px 0; font-size: 10px; color: var(--text-dim);
+  border-left: 1px solid transparent;
+}
+
+/* Hover / active states. */
+.layout-mgr-name-btn:hover,
+.layout-mgr-caret-btn:hover { background: var(--hover); color: var(--text); }
+.layout-mgr-name-btn.on,
+.layout-mgr-caret-btn.on { background: var(--hover-strong); color: var(--text); }
+.layout-mgr-name-btn:hover,
+.layout-mgr-name-btn.on { border-radius: 6px 0 0 6px; }
+.layout-mgr-caret-btn:hover,
+.layout-mgr-caret-btn.on { color: var(--accent); border-left-color: var(--border); }
+/* When dirty + autosave off, tint the label to signal pending changes. */
+.layout-mgr-name-btn.dirty .layout-mgr-label { color: var(--accent); }
+
+/* Dropdown: right-aligned below the caret. */
+.layout-mgr-menu { left: auto; right: 0; min-width: 270px; }
+
+/* ── Top action rows (Save / Autosave / Rename / Make a copy) ── */
+.layout-mgr-actions-list { list-style: none; padding: 4px 0; margin: 0; }
+.layout-mgr-action {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--text);
+  user-select: none;
+}
+.layout-mgr-action:hover { background: var(--hover); }
+.layout-mgr-action.highlight { color: var(--accent); }
+.layout-mgr-action.disabled { color: var(--text-faint); cursor: default; }
+.layout-mgr-action.disabled:hover { background: transparent; }
+.layout-mgr-action-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+.layout-mgr-action-text { flex: 1; }
+.layout-mgr-action-kbd { font-size: 11px; color: var(--text-dim); }
+.layout-mgr-unsaved { color: var(--accent); margin-left: 2px; }
+
+/* Autosave toggle row: cursor on the row itself is default; the switch is the target. */
+.layout-mgr-toggle { cursor: default; }
+.layout-mgr-toggle:hover { background: transparent; }
+
+/* Toggle switch (pill). */
+.layout-mgr-switch {
+  width: 30px; height: 16px; border-radius: 8px; border: none; cursor: pointer;
+  background: var(--border); position: relative; flex-shrink: 0; padding: 0;
+  transition: background 0.15s;
+}
+.layout-mgr-switch.on { background: var(--accent); }
+.layout-mgr-switch-thumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%; background: #fff;
+  transition: transform 0.15s;
+}
+.layout-mgr-switch.on .layout-mgr-switch-thumb { transform: translateX(14px); }
+
+/* Inline rename input for the active layout (from top actions). */
+.layout-mgr-rename {
+  padding: 4px 12px;
+}
+.layout-mgr-rename input {
+  width: 100%; padding: 3px 6px; font-size: 13px; background: var(--surface-2);
+  border: 1px solid var(--accent); border-radius: 4px; color: var(--text); outline: none;
+}
+
+/* Save-as inline input. */
+.layout-mgr-saveas {
+  gap: 6px; padding: 6px 12px; cursor: default;
+}
+.layout-mgr-saveas:hover { background: transparent; }
+.layout-mgr-saveas input {
+  flex: 1; padding: 3px 6px; font-size: 13px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 4px; color: var(--text); outline: none;
+}
+.layout-mgr-saveas input:focus { border-color: var(--accent); }
+.layout-mgr-saveas button {
+  flex: none; padding: 3px 10px; background: var(--accent); color: #fff;
+  border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.layout-mgr-saveas button:disabled { opacity: 0.5; cursor: default; }
+
+/* Divider between action rows and layout list. */
+.layout-mgr-divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+
+/* ── Layout list ── */
+.layout-mgr-list { list-style: none; padding: 4px 0; margin: 0; max-height: 240px; overflow-y: auto; }
+.layout-mgr-list li {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; cursor: pointer; font-size: 13px; color: var(--text);
+}
+.layout-mgr-list li:hover { background: var(--hover); }
+.layout-mgr-list li.on .layout-mgr-check { color: var(--pos); }
+.layout-mgr-check { width: 14px; flex: none; font-size: 12px; }
+.layout-mgr-list-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layout-mgr-list li input { flex: 1; margin: 0; padding: 2px 6px; font-size: 13px; }
+
+/* Per-row hover actions (★ rename delete). */
+.layout-mgr-row-actions {
+  display: flex; gap: 2px; flex: none; opacity: 0; transition: opacity 0.1s;
+}
+.layout-mgr-list li:hover .layout-mgr-row-actions { opacity: 1; }
+.layout-mgr-row-actions .act {
+  width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center;
+  justify-content: center; background: transparent; border: none; border-radius: 4px;
+  color: var(--text-dim); cursor: pointer; font-size: 12px;
+}
+.layout-mgr-row-actions .act:hover { background: var(--hover-strong); color: var(--text); }
+.layout-mgr-row-actions .act.on { color: var(--accent); opacity: 1; }
+.layout-mgr-list li .layout-mgr-row-actions .act.on { opacity: 1; }
+.layout-mgr-list li:has(.act.on) .layout-mgr-row-actions { opacity: 1; }
+
+/* Empty state. */
+.layout-mgr-empty {
+  padding: 8px 12px; font-size: 13px; color: var(--text-faint);
+}
+
+/* Empty toolbar (blank workspace): just push the layout manager to the right. */
+.toolbar-empty .tb-spacer { flex: 1; }
+
+/* --- blank workspace (no default layout, nothing open) -------------------- */
+.empty-workspace {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; height: 100%; color: var(--text-dim);
+}
+.empty-workspace p { margin: 0; font-size: 15px; }
+.empty-workspace .empty-workspace-hint { font-size: 13px; color: var(--text-faint); }
+.empty-workspace button {
+  margin-top: 4px; padding: 7px 16px; background: var(--accent); color: #fff;
+  border: none; border-radius: 6px; cursor: pointer; font-size: 13px;
+}

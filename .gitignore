@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Tick recorder sqlite store (sub-minute history)
+tick_history.db
+tick_history.db-wal
+tick_history.db-shm
+
+# Chart workspace state sqlite store (localStorage mirror)
+app_state.db
+app_state.db-wal
+app_state.db-shm
+
+# The Python `lib/` rule near the top also matches the frontend's source directory
+# (frontend/src/lib). Re-include it so the app's client logic isn't silently dropped.
+!frontend/src/lib/
+!frontend/src/lib/**

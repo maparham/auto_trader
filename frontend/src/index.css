@@ -1,0 +1,59 @@
+/* Material Symbols subset (offline woff2: visibility E8F4, visibility_off E8F5,
+   settings E8B8, delete E872) — used for the TradingView-style indicator legend
+   icons, which klinecharts draws as font glyphs onto the canvas. font-display:
+   block avoids a flash of fallback boxes before it loads. */
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/material-symbols-subset.woff2') format('woff2');
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+
+/* Theme variables. Dark is the default; [data-theme="light"] overrides. */
+:root {
+  --bg: #101418;
+  --surface: #161a1f;
+  --surface-2: #1c2127;
+  --input-bg: #0d1014;
+  --border: #2a2f36;
+  --text: #d1d4dc;
+  --text-dim: #8a93a0;
+  --text-faint: #6b7480;
+  --accent: #2962ff;
+  --accent-text: #ffffff;
+  --pos: #26a69a;
+  --neg: #ef5350;
+  --danger: #c62828;
+  --shadow: rgba(0,0,0,0.45);
+  /* TradingView-style subtle gray highlight for borderless toolbar buttons. */
+  --hover: rgba(255, 255, 255, 0.08);
+  --hover-strong: rgba(255, 255, 255, 0.14);
+}
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --surface: #f5f7fa;
+  --surface-2: #ffffff;
+  --input-bg: #ffffff;
+  --border: #cfd6df;
+  --text: #1f2933;
+  --text-dim: #5a6573;
+  --text-faint: #8a93a0;
+  --accent: #2962ff;
+  --accent-text: #ffffff;
+  --pos: #0f9d8a;
+  --neg: #e53935;
+  --danger: #c62828;
+  --shadow: rgba(0,0,0,0.18);
+  --hover: rgba(19, 23, 34, 0.08);
+  --hover-strong: rgba(19, 23, 34, 0.14);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, system-ui, sans-serif;
+}
