@@ -3,7 +3,7 @@
 //
 // Data model: the full instrument catalogue (~4000) is fetched once and cached;
 // category chips filter it client-side by instrumentType. The modal opens on the
-// account's FAVORITES watchlist. Typing runs a live keyword search instead.
+// RECENT list (recently-opened symbols). Typing runs a live keyword search instead.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -17,6 +17,7 @@ import {
 import CloseButton from "./CloseButton";
 import SymbolIcon from "./SymbolIcon";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
+import { loadRecentSymbols, pushRecentSymbol } from "./lib/persist";
 
 interface Props {
   current: Instrument;
@@ -27,6 +28,7 @@ interface Props {
 // Category chips. "favorites"/"all" are special; the rest filter by the market's
 // Capital.com instrumentType. Order/labels mirror TradingView.
 const CHIPS: { key: string; label: string; type?: string }[] = [
+  { key: "recent", label: "Recent" },
   { key: "favorites", label: "Favorites" },
   { key: "all", label: "All" },
   { key: "SHARES", label: "Stocks", type: "SHARES" },
@@ -57,12 +59,16 @@ function typeLabel(type: string | null | undefined): string {
 
 export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
   const [query, setQuery] = useState("");
-  const [cat, setCat] = useState("favorites"); // opening view
+  const [cat, setCat] = useState("recent"); // opening view
   const [all, setAll] = useState<Instrument[]>([]);
   const [favorites, setFavorites] = useState<Instrument[]>([]);
   const [catalogueLoading, setCatalogueLoading] = useState(true);
   const [searchHits, setSearchHits] = useState<Instrument[]>([]);
   const [searching, setSearching] = useState(false);
+  // Epics of recently-opened symbols, most-recent-first; resolved against `all`.
+  const [recentEpics, setRecentEpics] = useState<string[]>(() =>
+    loadRecentSymbols(),
+  );
   const inputRef = useRef<HTMLInputElement>(null);
   // Guards against a slow earlier search landing after a newer one.
   const reqId = useRef(0);
@@ -135,13 +141,23 @@ export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
   const shown = useMemo(() => {
     if (query.trim()) return searchHits;
     if (cat === "favorites") return favorites;
+    if (cat === "recent") {
+      // Map epics → catalogue instruments, preserving MRU order; drop any epic
+      // no longer in the catalogue.
+      const byEpic = new Map(all.map((m) => [m.epic, m]));
+      return recentEpics
+        .map((e) => byEpic.get(e))
+        .filter((m): m is Instrument => m !== undefined);
+    }
     if (cat === "all") return all;
     return all.filter((m) => m.type === cat);
-  }, [query, searchHits, cat, all, favorites]);
+  }, [query, searchHits, cat, all, favorites, recentEpics]);
 
   const loading = query.trim() ? searching : catalogueLoading;
 
   function pick(s: Instrument) {
+    pushRecentSymbol(s.epic);
+    setRecentEpics(loadRecentSymbols());
     onPick(s);
     onClose();
   }
@@ -230,7 +246,9 @@ export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
                 ? `No symbols match “${query.trim()}”.`
                 : cat === "favorites"
                   ? "No favorites yet — search above, then tap the ☆ on any symbol."
-                  : "No symbols in this category."}
+                  : cat === "recent"
+                    ? "No recently opened symbols yet."
+                    : "No symbols in this category."}
             </li>
           )}
         </ul>

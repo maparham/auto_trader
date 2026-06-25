@@ -3,7 +3,7 @@ import type { Chart } from "klinecharts";
 import ChartGrid from "./ChartGrid";
 import Toolbar from "./Toolbar";
 import LayoutPicker from "./LayoutPicker";
-import { rangeSync, readVisibleRange } from "./lib/chartSync";
+import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor } from "./lib/chartSync";
 import ThemeToggle from "./ThemeToggle";
 import SettingsModal from "./Settings";
 import AlertModal from "./AlertModal";
@@ -34,6 +34,7 @@ import {
   cellScope,
   LAYOUT_CELLS,
   migrateToNamedLayouts,
+  migrateAlertsToGlobal,
   loadLayouts,
   loadLayout,
   saveLayout,
@@ -241,6 +242,10 @@ export default function App() {
       // layout to reach the backend, and only now is `tabs` the backend-synced
       // copy (so two upgrading devices derive the same layout id and converge).
       migrateToNamedLayouts();
+      // Collapse legacy per-tab alert keys into the global per-epic form. AFTER
+      // hydrate so the deletes of the orphaned scoped keys reach the backend (else
+      // the next hydrate re-seeds them). Idempotent once migrated.
+      const alertsMigrated = migrateAlertsToGlobal();
       // ALWAYS reconcile to the resolved workspace — not only when hydrate reports a
       // change. The useState initializers ran before hydration (so a fresh device
       // with a synced default rendered blank); resolving again here applies it. It's
@@ -248,6 +253,10 @@ export default function App() {
       // (where the 2nd hydrate sees localStorage already written and reports no
       // change, yet React state from the cancelled 1st mount must still be set).
       reseedFromLocal();
+      // The alert migration rewrote per-epic keys without changing the tab array, so
+      // reseedFromLocal's workspace-diff won't have remounted the grid. Force it so
+      // the already-mounted cells rehydrate against the populated global keys.
+      if (alertsMigrated) setHydrateEpoch((n) => n + 1);
       // Subscribe AFTER hydration so we don't apply live pushes onto a not-yet-
       // reconciled localStorage. Remote edits (other tabs/devices) re-seed + remount
       // only when they touch THIS view; our own edits are filtered by origin.
@@ -494,7 +503,9 @@ export default function App() {
       const turningOn = !active.syncTime;
       if (turningOn) {
         const src = readyRef.current.get(focusedCell.id);
-        const r = src ? readVisibleRange(src.chart) : null;
+        // Plain date-range link (lock off): no extent clamp — if the master sits in
+        // whitespace past its last bar, don't snap siblings; they self-heal on scroll.
+        const r = src ? readVisibleRange(src.chart, false) : null;
         if (r) rangeSync.publish(active.id, { sourceCellId: focusedCell.id, ...r });
       }
       setTabs((ts) => ts.map((t) => (t.id === active.id ? { ...t, syncTime: turningOn } : t)));
@@ -540,7 +551,15 @@ export default function App() {
     const broadcastMasterWindow = () => {
       const src = readyRef.current.get(masterId);
       const r = src ? readVisibleRange(src.chart) : null;
-      if (r) rangeSync.publish(tabId, { sourceCellId: masterId, ...r });
+      // Carry the exact-mode anchor so siblings mirror the master's window pixel-for-
+      // pixel (lock forces them onto its interval) — same payload as ChartCore's onRange.
+      // Honour any sticky align anchor (defaults to right edge): the deferred re-broadcast
+      // below can land AFTER the user has hovered a candle, and without this it would
+      // snap siblings back to the right edge, transiently undoing that alignment.
+      if (r) {
+        const exact = readExactAnchor(src!.chart, getAlignAnchor(tabId));
+        rangeSync.publish(tabId, { sourceCellId: masterId, ...r, ...exact });
+      }
     };
     if (turningOn) {
       // Snap siblings to the master's window now (covers cells already on the
@@ -551,6 +570,10 @@ export default function App() {
       // sibling that still misses the snap self-heals on the first pan/zoom.
       broadcastMasterWindow();
       setTimeout(broadcastMasterWindow, 350);
+    } else {
+      // Turning lock off: drop the sticky (hover-driven) align anchor so the next lock
+      // session starts fresh at the right edge rather than a stale hovered timestamp.
+      clearAlignAnchor(tabId);
     }
     setTabs((ts) =>
       ts.map((t) =>
@@ -600,6 +623,7 @@ export default function App() {
   // user explicitly closed it; the layout body simply records one fewer tab.
   const closeTab = (id: string) => {
     purgeTabScope(id);
+    clearAlignAnchor(id); // drop this tab's sticky lock anchor so the map doesn't leak
     setTabs((ts) => {
       const idx = ts.findIndex((t) => t.id === id);
       const next = ts.filter((t) => t.id !== id);
@@ -807,6 +831,7 @@ export default function App() {
               crosshair={settings.crosshair}
               syncCrosshair={effectiveSyncCrosshair(active)}
               syncTime={effectiveSyncTime(active)}
+              locked={!!active.locked}
               onReady={onCellReady}
               onFocus={onCellFocus}
             />

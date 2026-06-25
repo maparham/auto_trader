@@ -702,6 +702,26 @@ export function saveFavoriteIndicators(list: string[]): void {
   save(FAVORITE_INDICATORS_KEY, list);
 }
 
+// --- recently opened symbols (global, mirrored) ------------------------------
+//
+// A personal MRU list like the favourites above: the epics of symbols the user
+// recently opened from the symbol-search modal, most-recent-first, capped. Stores
+// epics only (not Instrument snapshots) so the rendered name/status/type stay fresh
+// off the catalogue, and resolves to nothing for an epic that left the catalogue.
+const RECENT_SYMBOLS_KEY = `${PREFIX}.recentSymbols`;
+const RECENT_SYMBOLS_MAX = 12;
+
+export function loadRecentSymbols(): string[] {
+  return load<string[]>(RECENT_SYMBOLS_KEY, []);
+}
+export function pushRecentSymbol(epic: string): void {
+  const next = [epic, ...loadRecentSymbols().filter((e) => e !== epic)].slice(
+    0,
+    RECENT_SYMBOLS_MAX,
+  );
+  save(RECENT_SYMBOLS_KEY, next);
+}
+
 // --- per-indicator presets (global, keyed by indicator TYPE) -----------------
 //
 // TradingView's indicator settings "Defaults" menu. GLOBAL (not per-cell, not
@@ -983,36 +1003,127 @@ export function normalizeAlert(
   };
 }
 
-const alertsKey = (scope: string, epic: string) => ns(scope, `alerts.${epic}`);
+// Alerts are GLOBAL per instrument (epic), NOT per-cell/per-tab — unlike drawings,
+// indicators, and avwap anchors, which stay scoped to their cell. An alert belongs
+// to the symbol: open US100 in any chart, on any tab, and the same alerts show. This
+// matches how the firing engine (one feed per epic) and the side panel (grouped by
+// epic) already treat them. Key shape: `auto-trader.alerts.<epic>` — no scope.
+const alertsKey = (epic: string) => `${PREFIX}.alerts.${epic}`;
 
-// All alert access is scope-explicit (the background alert engine spans every
-// cell, and overlay managers each address their own scope).
-export function loadAlerts(scope: string, epic: string): SavedAlert[] {
-  return load<SavedAlert[]>(alertsKey(scope, epic), []);
+export function loadAlerts(epic: string): SavedAlert[] {
+  return load<SavedAlert[]>(alertsKey(epic), []);
 }
-export function saveAlerts(scope: string, epic: string, list: SavedAlert[]): void {
-  save(alertsKey(scope, epic), list);
+// Raw stored JSON for an epic's alerts (null if unset). The hot-path alert engine
+// uses this as a cheap per-tick cache key: a getItem + string compare avoids a
+// JSON.parse + per-alert normalize allocation on every tick when nothing changed,
+// and the raw string flips whenever ANYONE writes (engine, peer cell, /ws/state).
+export function loadAlertsRaw(epic: string): string | null {
+  try {
+    return localStorage.getItem(alertsKey(epic));
+  } catch {
+    return null;
+  }
+}
+export function saveAlerts(epic: string, list: SavedAlert[]): void {
+  save(alertsKey(epic), list);
 }
 
-// Returns every {scope, epic, alerts} tuple found in localStorage across all cells.
-// Scans keys matching: auto-trader.<scope>.alerts.<epic>
-export function loadAllAlerts(): { scope: string; epic: string; alerts: SavedAlert[] }[] {
+// Returns every {epic, alerts} tuple stored. Scans keys matching the GLOBAL form
+// `auto-trader.alerts.<epic>` only — the scoped legacy form `auto-trader.<scope>.
+// alerts.<epic>` is collapsed away by migrateAlertsToGlobal() at startup, so it
+// won't appear here on a migrated install.
+export function loadAllAlerts(): { epic: string; alerts: SavedAlert[] }[] {
+  const prefix = `${PREFIX}.alerts.`;
+  const results: { epic: string; alerts: SavedAlert[] }[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith(prefix)) continue;
+    const epic = k.slice(prefix.length); // "US100"
+    if (!epic) continue;
+    const alerts = load<SavedAlert[]>(k, []);
+    if (alerts.length > 0) results.push({ epic, alerts });
+  }
+  return results;
+}
+
+// One-time migration: collapse the OLD per-tab/per-cell alert keys
+// (`auto-trader.<scope>.alerts.<epic>`) into the GLOBAL per-epic key
+// (`auto-trader.alerts.<epic>`). Alerts used to be scoped to the cell, so a new
+// tab minted a fresh scope and reopening the same instrument lost its lines (the
+// alerts orphaned under the closed tab's scope — still listed in the side panel's
+// all-symbols scan, but never re-drawn). Merging per epic, de-duped by stable id,
+// makes alerts follow the instrument. Runs AFTER hydrateFromBackend so the deletes
+// of the orphan keys propagate to the backend (else the next hydrate re-seeds them).
+// Idempotent: once no scoped alert keys remain, this is a no-op. Returns true if it
+// migrated anything, so the caller can force a grid remount (the already-mounted
+// cells rehydrated against the empty pre-migration global keys and must re-read).
+//
+// Caveat (LEGACY only): de-dupe is by stable id, which is correct for modern `al-…`
+// ids (disjoint union across scopes). Pre-stable-id rows have no id, so to avoid two
+// DISTINCT legacy alerts (same fields + list index, different scopes) colliding on one
+// derived id and dropping one (data loss), each id-less row is given a FRESH unique id
+// at migration (see `merge` below). Trade-off: the same legacy alert genuinely saved
+// under two scopes now survives as two lines rather than de-duping to one — a harmless,
+// user-deletable dup, and only for alerts created before stable ids existed.
+//
+// NOTE: the global key shape `auto-trader.alerts.<epic>` is byte-identical to the
+// pre-tabs v0 un-namespaced alert key that migrateLegacyLayout() relocates into a
+// cell scope. Safe only because the App calls migrateToNamedLayouts() (which gates
+// migrateLegacyLayout behind the one-time `loadLayouts().length === 0` path) BEFORE
+// this; within that single startup the v0 alerts round-trip global→scoped→global.
+export function migrateAlertsToGlobal(): boolean {
   const prefix = `${PREFIX}.`;
   const marker = `.alerts.`;
-  const results: { scope: string; epic: string; alerts: SavedAlert[] }[] = [];
+  // Gather every SCOPED alert key. The global form (`auto-trader.alerts.<epic>`,
+  // inner = "alerts.<epic>") has no leading-dot ".alerts." so it isn't matched here.
+  const scoped: { key: string; epic: string }[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
     if (!k || !k.startsWith(prefix)) continue;
     const inner = k.slice(prefix.length); // e.g. "tab.abc.alerts.US100"
     const idx = inner.indexOf(marker);
-    if (idx === -1) continue;
-    const scope = inner.slice(0, idx);
+    if (idx <= 0) continue; // -1 = not an alert key; 0 = already global form
     const epic = inner.slice(idx + marker.length);
-    if (!scope || !epic) continue;
-    const alerts = load<SavedAlert[]>(k, []);
-    if (alerts.length > 0) results.push({ scope, epic, alerts });
+    if (epic) scoped.push({ key: k, epic });
   }
-  return results;
+  if (scoped.length === 0) return false; // nothing to migrate
+
+  // Merge each scoped list into its epic's global bucket, seeded with whatever the
+  // global key already holds, de-duped by (normalized) stable id so the same alert
+  // saved under two scopes collapses to one entry.
+  const byEpic = new Map<string, Map<string, SavedAlert>>();
+  // Merge a raw row into the epic bucket, keyed by its (normalized) stable id.
+  // Legacy rows (no stored id) get a deterministic content+index id, so two DISTINCT
+  // legacy alerts living under different scopes — but at the same list index with the
+  // same fields — would collide on one key and one would be silently dropped (data
+  // loss). Migration writes the id out immediately (locking identity), so mint a fresh
+  // unique id for legacy rows instead: no cross-scope collision, both survive.
+  const merge = (b: Map<string, SavedAlert>, r: SavedAlert, i: number): void => {
+    const a = normalizeAlert(r, i);
+    if (!r.id) a.id = newAlertId();
+    b.set(a.id, a);
+  };
+  const bucket = (epic: string): Map<string, SavedAlert> => {
+    let b = byEpic.get(epic);
+    if (!b) {
+      b = new Map();
+      // Seed from any existing global alerts for this epic (e.g. legacy v0 keys).
+      loadAlerts(epic).forEach((r, i) => merge(b!, r, i));
+      byEpic.set(epic, b);
+    }
+    return b;
+  };
+  for (const { key, epic } of scoped) {
+    const b = bucket(epic);
+    load<SavedAlert[]>(key, []).forEach((r, i) => merge(b, r, i));
+  }
+  // Write the merged global lists (skip empties so we don't leave inert `[]` keys),
+  // then drop every scoped key everywhere (local + backend) so the orphans are gone.
+  for (const [epic, b] of byEpic) {
+    if (b.size > 0) saveAlerts(epic, [...b.values()]);
+  }
+  for (const { key } of scoped) removeKeyEverywhere(key);
+  return true;
 }
 
 // --- triggered alert history (global chronological log) ----------------------

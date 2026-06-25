@@ -44,6 +44,7 @@ import {
   drawingSettingsRequest,
   alertsChanged,
   openSettings,
+  requestSymbolSearch,
 } from "./lib/signals";
 import {
   loadAvwapAnchor,
@@ -68,7 +69,7 @@ import {
   curveLabelConfig,
   curveLabelPosFor,
 } from "./lib/customIndicators";
-import { chartSync, rangeSync, readVisibleRange, applyVisibleRange, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
+import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
 import { BellIcon, MenuIcons } from "./lib/menuIcons";
@@ -400,6 +401,10 @@ interface Props {
   // When on, scrolling/zooming the time axis here matches the same wall-clock
   // window on the tab's sibling cells (date-range link; mapped by timestamp).
   syncTime?: boolean;
+  // "Lock charts" master mode. Same effect as syncTime/Crosshair/Interval combined,
+  // but the date-range broadcast carries this cell's barSpace so siblings (forced to
+  // the same interval) reproduce the window EXACTLY rather than approximately.
+  locked?: boolean;
   // Published once the chart instance + controller are live, so App can route the
   // FOCUSED cell's chart/controller to the Toolbar / AlertsSidebar / modals.
   onReady?: (cellId: string, chart: Chart, controller: ChartController) => void;
@@ -431,6 +436,7 @@ export default function ChartCore({
   crosshair,
   syncCrosshair,
   syncTime,
+  locked,
   onReady,
   onFocus,
 }: Props) {
@@ -488,6 +494,13 @@ export default function ChartCore({
   // echo back — see the broadcast effect and isGestureCell in chartSync.
   const syncTimeRef = useRef<boolean>(!!syncTime);
   syncTimeRef.current = !!syncTime;
+  // "Lock charts" exact mode: when set, the date-range broadcast carries this cell's
+  // barSpace so siblings reproduce the window pixel-for-pixel (see onRange below).
+  const lockedRef = useRef<boolean>(!!locked);
+  lockedRef.current = !!locked;
+  // Last timestamp this cell published as the live (cursor-driven) align anchor, so
+  // the hover handler only re-broadcasts when the hovered BAR changes, not every move.
+  const lastHoverAnchorTsRef = useRef<number | null>(null);
   // AVWAP anchor drag: the handle's current pixel (when AVWAP is selected and the
   // anchor is on-screen), whether a drag is in progress, and guards so a drag
   // doesn't also fire the click→deselect at mouseup. pendingAnchorX/raf throttle
@@ -1133,13 +1146,25 @@ export default function ChartCore({
           if (id !== selectedId) positionPill(node);
         }
       }
-      // While a live alert line is being dragged OR merely hovered, that alert owns
-      // this price row and shows its own descriptive pill. Hide the whole alert-setter
-      // affordance — the "+" button, its following price pill, AND the dashed guide
-      // line — which sits at the same price and would otherwise show through (orange)
-      // under the alert's pill. Placed AFTER the pill-tracking block above so the
-      // hovered pill still follows the cursor's x.
-      if (overlays.isDraggingAlert() || overlays.getHoveredAlertId()) {
+      // While a live alert line is being dragged, OR the cursor sits on an alert
+      // line's price row, that alert owns this row and shows its own descriptive
+      // pill. Hide the whole alert-setter affordance — the "+" button, its following
+      // price pill, AND the dashed guide line — which sits at the same price and
+      // would otherwise show through (orange) under the alert's pill. Critically,
+      // the "+" circle protrudes into the candle pane with pointer-events:auto, so
+      // leaving it visible over an alert line swallows the mousedown and makes the
+      // line non-selectable / non-draggable in that sliver. We OR a DIRECT DOM
+      // hit-test (alertHitTest) onto the native hover flag rather than replacing it:
+      // getHoveredAlertId() rides klinecharts' native onMouseEnter for these
+      // priceLines, whose only documented failure is FALSE NEGATIVES (it sometimes
+      // doesn't fire — the same reason selection and double-click are custom
+      // hit-tested above), so the hit-test backfills the missed-fire case. Keeping
+      // the native flag too covers the converse: if klinecharts' hover tolerance is
+      // wider than HIT_TOLERANCE_PX, the pill (which still keys off the native flag)
+      // could show while the hit-test misses, re-exposing the orange "+" under it.
+      // The union suppresses the "+" in both bands. Placed AFTER the pill-tracking
+      // block so the hovered pill still follows the cursor's x.
+      if (overlays.isDraggingAlert() || overlays.getHoveredAlertId() || alertHitTest(x, y) != null) {
         btn.style.display = "none";
         setPlusCrosshair(null);
         return;
@@ -1426,7 +1451,18 @@ export default function ChartCore({
     emptyStreakRef.current = 0;
 
     (async () => {
-      const bars = await fetchRecent(symbol.epic, period.resolution, 500, priceSide);
+      // Tolerate a failed initial load (offline/DNS/refused/CORS make fetchRecent
+      // REJECT, not return []): fall back to no history and carry on. Crucially this
+      // still reaches rehydrate() below, which advances overlays.hydratedEpic — skip
+      // it and persist() stays gated on the stale epic forever, silently dropping
+      // every alert/drawing the user adds until they switch symbol again.
+      let bars: KLineData[];
+      try {
+        bars = await fetchRecent(symbol.epic, period.resolution, 500, priceSide);
+      } catch (err) {
+        console.warn(`[chart] initial load failed for ${symbol.epic}; continuing with no history`, err);
+        bars = [];
+      }
       if (cancelled || !chartRef.current) return;
       // Cursor starts at the oldest loaded bar; scroll-back requests older windows.
       cursorSecRef.current = bars.length
@@ -1944,10 +1980,29 @@ export default function ChartCore({
       }
       // Crosshair link: broadcast the hovered bar's timestamp to sibling cells (or
       // null when the cursor leaves this chart, so their guides clear).
+      const dl = chart?.getDataList();
+      const ts = idx != null && dl && dl[idx] ? dl[idx].timestamp : null;
       if (syncCrosshairRef.current) {
-        const dl = chart?.getDataList();
-        const ts = idx != null && dl && dl[idx] ? dl[idx].timestamp : null;
         chartSync.publish(tabIdRef.current, { sourceCellId: cellId, timestamp: ts });
+      }
+      // Lock: the alignment anchor FOLLOWS THE CURSOR. Hovering a bar makes it the
+      // tab's anchor and re-aligns siblings live (no click needed) — only when the
+      // hovered bar changes. On cursor-leave (ts null) the anchor stays put (sticky),
+      // so a later pan/zoom keeps the last-hovered candle aligned. Skipped mid-drawing
+      // so placing a drawing's points doesn't yank the other charts around.
+      if (lockedRef.current && !overlays.isDrawing()) {
+        if (ts == null) {
+          lastHoverAnchorTsRef.current = null; // re-assert on the next hover
+        } else if (ts !== lastHoverAnchorTsRef.current && chart) {
+          lastHoverAnchorTsRef.current = ts;
+          setGestureCell(cellId); // the hovered cell is the master → siblings can't echo
+          setAlignAnchor(tabIdRef.current, ts);
+          const r = readVisibleRange(chart);
+          const exact = readExactAnchor(chart, ts);
+          if (r && exact) {
+            rangeSync.publish(tabIdRef.current, { sourceCellId: cellId, ...r, ...exact });
+          }
+        }
       }
     };
     chart?.subscribeAction(ActionType.OnCrosshairChange, onCrosshair);
@@ -1994,8 +2049,19 @@ export default function ChartCore({
     // not event timing — is what prevents the echo loop.
     const onRange = () => {
       if (!syncTimeRef.current || !isGestureCell(cellId)) return;
-      const r = readVisibleRange(chart);
-      if (r) rangeSync.publish(tabIdRef.current, { sourceCellId: cellId, ...r });
+      // Lock mode needs a window even at a whitespace edge (to keep mirroring siblings
+      // pixel-for-pixel); the plain link skips broadcasting there so siblings stay put.
+      const r = readVisibleRange(chart, lockedRef.current);
+      if (!r) return;
+      // Under lock, carry the exact-mode anchor (barSpace + reference bar + its pixel)
+      // so siblings on the same interval mirror the window pixel-for-pixel; the plain
+      // date-range link omits it (cross-interval, synthesised from fromTs/toTs). The
+      // anchor is the tab's sticky align timestamp (last hovered bar) when set, else
+      // the right-edge bar — so a hover-aligned offset is preserved through pan/zoom.
+      const exact = lockedRef.current
+        ? readExactAnchor(chart, getAlignAnchor(tabIdRef.current))
+        : null;
+      rangeSync.publish(tabIdRef.current, { sourceCellId: cellId, ...r, ...exact });
     };
     container.addEventListener("pointerenter", claim);
     container.addEventListener("pointerdown", claim);
@@ -2029,7 +2095,15 @@ export default function ChartCore({
     const unsub = rangeSync.subscribe(tabId, (m) => {
       if (m.sourceCellId === cellId) return; // ignore our own broadcasts
       const chart = chartRef.current;
-      if (chart) applyVisibleRange(chart, m.fromTs, m.toTs);
+      if (!chart) return;
+      // Exact anchor present = "lock charts" mode (siblings share the interval):
+      // reproduce the master's window pixel-for-pixel. Absent = cross-interval date-
+      // range link, which synthesises the window from the two edge timestamps.
+      if (m.barSpace != null && m.anchorTs != null && m.anchorX != null) {
+        applyVisibleRangeExact(chart, m.anchorTs, m.anchorX, m.barSpace);
+      } else {
+        applyVisibleRange(chart, m.fromTs, m.toTs);
+      }
     });
     return unsub;
   }, [tabId, cellId]);
@@ -2417,6 +2491,10 @@ export default function ChartCore({
         onSelectRow={onLegendSelectRow}
         onOpenMenu={onLegendOpenMenu}
         onOpenDetails={() => setDetailsOpen(true)}
+        // Clicking the symbol name swaps the instrument (TradingView-style). The
+        // wrap's onPointerDownCapture has already focused this cell, so the shared
+        // symbol-search modal targets this cell's symbol.
+        onChangeSymbol={requestSymbolSearch}
       />
 
       {detailsOpen && (

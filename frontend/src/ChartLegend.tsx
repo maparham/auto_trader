@@ -103,8 +103,11 @@ interface Props {
   onRemove: (name: string) => void;
   // Click a row body to select the indicator (TradingView-style), like a curve click.
   onSelectRow: (name: string) => void;
-  // Click the symbol name to open the instrument-details modal (TradingView-style).
+  // Click the ⓘ button to open the instrument-details modal (TradingView-style).
   onOpenDetails: () => void;
+  // Click the symbol name itself to change the instrument on this chart (opens the
+  // symbol-search modal, TradingView-style).
+  onChangeSymbol: () => void;
   // Open the indicator context menu (anchored at the ⋯ button) — TradingView's
   // "more" affordance at the end of the legend row.
   onOpenMenu: (name: string, x: number, y: number) => void;
@@ -137,6 +140,7 @@ export default function ChartLegend({
   onSelectRow,
   onOpenMenu,
   onOpenDetails,
+  onChangeSymbol,
   handleRef,
 }: Props) {
   const { legendHovered, legendHoverName } = controller;
@@ -245,19 +249,21 @@ export default function ChartLegend({
     >
       {/* Row 0: symbol · interval · source + OHLC + change. */}
       <div className="cl-row cl-ohlc">
+        {/* Live "ping" dot — signals streaming without overloading the symbol with the
+            UP/green color (green on a down bar reads as a mixed signal). */}
+        {ctx.live && <span className="cl-live-dot" title="Live" aria-hidden="true" />}
         <span
           className="cl-sym cl-sym-clickable"
-          style={{ color: ctx.live ? UP : "var(--text)" }}
-          title="Instrument details"
+          title="Change instrument"
           onClick={(e) => {
             e.stopPropagation();
-            onOpenDetails();
+            onChangeSymbol();
           }}
         >
           {ctx.symbol}
         </span>
-        {/* Explicit affordance for the instrument-details modal — the symbol name
-            is clickable too, but the ⓘ makes that discoverable. */}
+        {/* The symbol name now changes the instrument (symbol search); the ⓘ button
+            is the affordance for the instrument-details modal. */}
         <button
           className="cl-info"
           aria-label="Instrument details"
@@ -267,11 +273,10 @@ export default function ChartLegend({
             onOpenDetails();
           }}
         >
-          <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" />
-            <line x1="12" y1="11" x2="12" y2="16" />
-            <circle cx="12" cy="7.5" r="0.6" fill="currentColor" stroke="none" />
-          </svg>
+          {/* A rounded-square accent chip with a serif "i" — non-round so it never
+              competes with the circular chart markers, and avoids the old "bullseye"
+              (a ringed ⓘ glyph inside a ringed circle). */}
+          <span aria-hidden="true">i</span>
         </button>
         <span className="cl-meta">
           · {ctx.period} · Capital.com

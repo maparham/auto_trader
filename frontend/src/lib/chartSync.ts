@@ -66,6 +66,22 @@ export interface RangeMsg {
   sourceCellId: string;
   fromTs: number; // wall-clock time at the left pixel edge
   toTs: number; //   wall-clock time at the right pixel edge
+  // The three fields below are present ONLY when the source is in "lock charts" mode
+  // (see App.tsx) — their presence is the "exact mode" flag. Lock forces every cell
+  // onto the master's interval, so the master's bar pixel-width (barSpace) is directly
+  // meaningful on a receiver: copying it verbatim, then scrolling so the reference bar
+  // `anchorTs` lands on the SAME pixel `anchorX` it occupies on the master, reproduces
+  // the window pixel-for-pixel (verified 0px across the view for matching bars). The
+  // plain cross-interval date-range link omits all three, so a barSpace/pixel from a
+  // different timeframe can never be misapplied — that path synthesises from fromTs/toTs.
+  //
+  // Why a real bar's exact pixel and not just toTs: convertFromPixel SNAPS to the
+  // nearest bar, so toTs alone discards the sub-bar offset between that bar's centre
+  // and the pixel edge — anchoring it cost a constant ~½-bar drift. anchorX carries
+  // that offset back, eliminating it.
+  barSpace?: number;
+  anchorTs?: number; // timestamp of the reference bar (hovered candle, else right edge)
+  anchorX?: number; //  that bar's exact pixel x on the master's candle pane
 }
 
 export const rangeSync = new TabChannel<RangeMsg>();
@@ -130,16 +146,89 @@ export function releaseGestureCell(id: string): void {
   if (gestureCellId === id) gestureCellId = null;
 }
 
-// Read the time window currently on screen as its two pixel-edge timestamps. Uses
-// the candle pane's true left/right pixel edges so empty space (scrolled past the
-// last bar) is captured faithfully. Returns null if the chart isn't measurable yet.
-export function readVisibleRange(chart: Chart): { fromTs: number; toTs: number } | null {
+// Sticky alignment anchor per tab (lock mode). Hovering a bar (cursor-driven, see
+// ChartCore's crosshair handler) sets the tab's anchor to that timestamp; from then
+// on EVERY pan/zoom mirror anchors on it instead of the right-edge bar, so the
+// hovered candle stays vertically aligned across rows through all subsequent gestures
+// (the link no longer reverts to the right edge). It stays put when the cursor leaves
+// (sticky). Unset (default) → readExactAnchor falls back to the right edge. Cleared
+// when lock turns off so a future lock session starts fresh. Keyed by tab so each tab
+// keeps its own reference point.
+const alignAnchorByTab = new Map<string, number>();
+export function setAlignAnchor(tabId: string, ts: number): void {
+  alignAnchorByTab.set(tabId, ts);
+}
+export function getAlignAnchor(tabId: string): number | undefined {
+  return alignAnchorByTab.get(tabId);
+}
+export function clearAlignAnchor(tabId: string): void {
+  alignAnchorByTab.delete(tabId);
+}
+
+// Read the time window currently on screen as its two pixel-edge timestamps.
+// When the chart is scrolled so an edge sits in the empty space past the first/last
+// bar, convertFromPixel at that pixel maps to NO bar and returns null.
+//
+// `extentFallback` (default true) governs what happens at such a null edge:
+//  - true  — fall back to the data extent so a window is ALWAYS reported. CRUCIAL for
+//            lock mode: returning null would make the broadcast bail, so a master
+//            scrolled into right-edge whitespace would stop driving its followers and
+//            they'd freeze out of alignment (the trap that desynced locked charts).
+//  - false — return null, so the caller broadcasts NOTHING. The plain cross-interval
+//            date-range link uses this: clamping to the extent would yank linked
+//            siblings to re-frame when the user merely scrolls past the last bar into
+//            whitespace, where they should simply stay put.
+export function readVisibleRange(
+  chart: Chart,
+  extentFallback = true,
+): { fromTs: number; toTs: number } | null {
   const w = mainWidth(chart);
   if (w <= 1) return null;
-  const fromTs = tsAtX(chart, 1);
-  const toTs = tsAtX(chart, w - 1);
-  if (fromTs == null || toTs == null || !(toTs > fromTs)) return null;
+  const data = chart.getDataList();
+  if (!data || data.length < 1) return null;
+  let fromTs = tsAtX(chart, 1);
+  let toTs = tsAtX(chart, w - 1);
+  if (fromTs == null || toTs == null) {
+    if (!extentFallback) return null;
+    if (fromTs == null) fromTs = data[0].timestamp;
+    if (toTs == null) toTs = data[data.length - 1].timestamp;
+  }
+  if (!(toTs > fromTs)) return null;
   return { fromTs, toTs };
+}
+
+// Exact-mode payload for "lock charts": the master's barSpace plus a reference bar
+// near the right edge and that bar's exact pixel. Receivers on the same interval use
+// these to reproduce the window pixel-for-pixel (see applyVisibleRangeExact). Returns
+// null if the chart isn't measurable yet; callers then fall back to the plain range.
+export function readExactAnchor(
+  chart: Chart,
+  preferredTs?: number,
+): { barSpace: number; anchorTs: number; anchorX: number } | null {
+  const w = mainWidth(chart);
+  if (w <= 1) return null;
+  const data = chart.getDataList();
+  if (!data || data.length < 1) return null;
+  let anchorTs: number | null;
+  if (preferredTs != null) {
+    // Sticky alignment anchor (the last hovered timestamp): anchor on the master's bar
+    // nearest it so the hovered candle stays aligned across rows on every gesture,
+    // instead of the link reverting to the right edge. Snapping to a real bar makes
+    // anchorX a true candle centre. The anchor holds even when it's scrolled off
+    // screen (xAtTs still extrapolates its pixel, so the offset is preserved).
+    anchorTs = data[nearestIdx(data, preferredTs)].timestamp;
+  } else {
+    // Default anchor: the bar nearest the right pixel edge (latest visible) — a REAL
+    // data point (convertFromPixel snaps to it), so its convertToPixel is that bar's
+    // true centre. If the right edge is in whitespace past the last bar, that pixel
+    // maps to no bar (null) — fall back to the last bar so the link survives a master
+    // scrolled past its last bar instead of silently dying (see readVisibleRange).
+    anchorTs = tsAtX(chart, w - 1);
+    if (anchorTs == null) anchorTs = data[data.length - 1].timestamp;
+  }
+  const anchorX = xAtTs(chart, anchorTs);
+  if (anchorX == null) return null;
+  return { barSpace: chart.getBarSpace(), anchorTs, anchorX };
 }
 
 // Pan/zoom `chart` so its left edge ≈ fromTs and right edge ≈ toTs, mapping the
@@ -175,3 +264,59 @@ export function applyVisibleRange(chart: Chart, fromTs: number, toTs: number): v
   const x = xAtTs(chart, toTs);
   if (x != null) chart.scrollByDistance(w - x, 0);
 }
+
+// Exact mirror for "lock charts": the sibling shares the master's interval, so we
+// copy its barSpace verbatim and scroll so the reference bar `anchorTs` lands on the
+// exact pixel `anchorX` it holds on the master — no bar-count re-derivation. With
+// matching bars (same instrument, or the same trading session) this lands EVERY
+// column on the same pixel (measured 0px across the view). The approximate path's
+// ~1-bar left drift came from re-deriving zoom from a bar count, which this skips.
+// If the two instruments' sessions differ the bars themselves don't line up, so
+// columns can still diverge away from the anchor — a data limit, not a math one.
+//
+// The scroll is iterated: scrollToTimestamp parks the bar ~2 bars from the right, and
+// a single scrollByDistance can leave a sub-pixel residual, so we nudge until the bar
+// sits within ½px of anchorX (converges in 1–2 passes; capped so a chart that lacks
+// the history to reach the target degrades gracefully instead of looping).
+export function applyVisibleRangeExact(
+  chart: Chart,
+  anchorTs: number,
+  anchorX: number,
+  barSpace: number,
+): void {
+  const w = mainWidth(chart);
+  if (w <= 1 || !(barSpace > 0)) return;
+  const data = chart.getDataList();
+  if (!data || data.length < 2) return;
+  // Snap the broadcast anchor to THIS chart's nearest real bar. Same instrument →
+  // the same bar (pixel-perfect). Different instrument whose session lacks that exact
+  // time → its closest candle, so the clicked/anchored candle still lines up rather
+  // than landing between bars.
+  const nearTs = data[nearestIdx(data, anchorTs)].timestamp;
+  const target = clampBarSpace(barSpace);
+  // Already aligned (same zoom AND anchor bar already on the target pixel)? Skip — the
+  // anchor follows the cursor, so this fires on every hovered-bar change; without this
+  // a sibling that's already in place would needlessly re-scroll each time.
+  if (Math.abs(chart.getBarSpace() - target) < 0.01) {
+    const cur = xAtTs(chart, nearTs);
+    if (cur != null && Math.abs(cur - anchorX) < 0.5) return;
+  }
+  chart.setBarSpace(target);
+  chart.scrollToTimestamp(nearTs, 0);
+  scrollBarToPixel(chart, nearTs, anchorX);
+}
+
+// Pan (no zoom change) so the chart's view puts the bar at `ts` on pixel `x`. Nudges
+// iteratively because scrollByDistance can leave a sub-pixel residual; converges in
+// 1–2 passes, capped so a chart that can't scroll far enough (not enough history)
+// degrades gracefully instead of looping.
+function scrollBarToPixel(chart: Chart, ts: number, x: number): void {
+  for (let i = 0; i < 6; i++) {
+    const cur = xAtTs(chart, ts);
+    if (cur == null) break;
+    const d = x - cur;
+    if (Math.abs(d) < 0.5) break;
+    chart.scrollByDistance(d, 0);
+  }
+}
+

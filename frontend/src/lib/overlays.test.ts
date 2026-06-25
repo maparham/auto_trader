@@ -22,6 +22,7 @@ class MemStorage {
 
 const { OverlayManager, asDrawingExtra } = await import("./overlays");
 const P = await import("./persist");
+const { alertsChanged } = await import("./signals");
 
 // Minimal faithful stand-in for a klinecharts Chart: the only 4 methods
 // OverlayManager calls (createOverlay/getOverlayById/overrideOverlay/removeOverlay),
@@ -39,11 +40,32 @@ class FakeChart {
     const cur = this.overlays.get(o.id);
     if (cur) this.overlays.set(o.id, { ...cur, ...o });
   }
-  removeOverlay(id: string) { this.overlays.delete(id); }
-  // hoverAlert toggles the crosshair's horizontal guide via setStyles; the mock
-  // records the last styles so it stays faithful (no assertions need it yet).
+  removeOverlay(id: string) {
+    const cur = this.overlays.get(id);
+    this.overlays.delete(id); // delete first so the onRemoved → persist doesn't see it
+    const cb = cur?.onRemoved;
+    if (typeof cb === "function") (cb as (e: { overlay: unknown }) => void)({ overlay: cur });
+  }
+  // hoverAlert toggles the crosshair's horizontal guide. It does so by merging into
+  // the chart STORE (not chart.setStyles, which would jolt the whole view via
+  // adjustPaneViewport). Model both: _chartStore.setOptions is the real path, and
+  // setStyles is the fallback. setStylesCalls counts the fallback so a regression
+  // back to the heavyweight call is caught.
+  crosshairHorizontalShow: boolean | undefined;
+  setStylesCalls = 0;
+  _chartStore = {
+    setOptions: (o: { styles?: { crosshair?: { horizontal?: { show?: boolean } } } }) => {
+      const show = o?.styles?.crosshair?.horizontal?.show;
+      if (typeof show === "boolean") this.crosshairHorizontalShow = show;
+    },
+  };
   styles: Record<string, unknown> = {};
-  setStyles(s: Record<string, unknown>) { this.styles = { ...this.styles, ...s }; }
+  setStyles(s: { crosshair?: { horizontal?: { show?: boolean } } } & Record<string, unknown>) {
+    this.setStylesCalls += 1;
+    const show = s?.crosshair?.horizontal?.show;
+    if (typeof show === "boolean") this.crosshairHorizontalShow = show;
+    this.styles = { ...this.styles, ...s };
+  }
 }
 
 function setup() {
@@ -51,8 +73,9 @@ function setup() {
   const m = new OverlayManager();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   m.attach(chart as any);
-  m.setEpic("US100");
   m.setScope("tab.A");
+  m.setEpic("US100");
+  m.rehydrate(); // real cells always rehydrate on mount; arms persist()'s epic guard
   return { chart, m };
 }
 
@@ -109,10 +132,17 @@ describe("OverlayManager alert hover/select line-weight sync (sidebar ↔ chart)
     m.hoverAlert(id);
     expect(lineSize(chart, id)).toBe(2); // emphasized on hover
     expect(m.getAlerts().find((a) => a.id === id)!.hovered).toBe(true);
+    expect(chart.crosshairHorizontalShow).toBe(false); // horizontal guide hidden over the line
 
     m.hoverAlert(null);
     expect(lineSize(chart, id)).toBe(1); // back to resting
     expect(m.getAlerts().find((a) => a.id === id)!.hovered).toBe(false);
+    expect(chart.crosshairHorizontalShow).toBe(true); // guide restored on un-hover
+
+    // The crosshair toggle must NOT go through chart.setStyles — that runs
+    // adjustPaneViewport(forceY) and jolts the whole view on every hover. It must
+    // route through the store instead (regression guard for the hover-jolt fix).
+    expect(chart.setStylesCalls).toBe(0);
   });
 
   it("un-hovering a SELECTED line keeps it emphasized (states don't fight)", () => {
@@ -176,11 +206,11 @@ describe("OverlayManager alert identity (stable id survives drag/edit)", () => {
   it("addAlert persists a stable id and updateAlert keeps it across a move", () => {
     const { m } = setup();
     const ovId = m.addAlert(100, cfg)!;
-    const id1 = P.loadAlerts("tab.A", "US100")[0].id;
+    const id1 = P.loadAlerts("US100")[0].id;
     expect(id1).toBeTruthy();
 
     m.updateAlert(ovId, 104, { ...cfg, trigger: "once" }); // move + reconfigure
-    const saved = P.loadAlerts("tab.A", "US100");
+    const saved = P.loadAlerts("US100");
     expect(saved).toHaveLength(1);
     expect(saved[0].id).toBe(id1); // identity survives the edit
     expect(saved[0].level).toBe(104);
@@ -192,9 +222,141 @@ describe("OverlayManager alert identity (stable id survives drag/edit)", () => {
     expect(chart.getOverlayById(ovId)).not.toBeNull();
 
     // Engine fired a "once" and wrote survivors=[] (the id is gone from storage).
-    P.saveAlerts("tab.A", "US100", []);
+    P.saveAlerts("US100", []);
     m.reconcileAlerts();
     expect(chart.getOverlayById(ovId)).toBeNull(); // line removed off the id mismatch
+  });
+});
+
+// Alerts are GLOBAL per epic: two cells of one tab showing the SAME epic (a split
+// layout, both mounted at once) share one stored list. reconcileAlerts must keep
+// each cell's lines in sync with that list — add a peer's new alert, follow a moved
+// level — AND a cell's persist() must write the COMPLETE list so it never drops a
+// peer's alert. This is the regression the per-epic redesign introduced and this
+// reconcile-as-full-resync fixes.
+describe("OverlayManager global alerts shared across same-epic cells", () => {
+  const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const priceLines = (c: FakeChart) => [...c.overlays.values()].filter((o: any) => o.name === "priceLine");
+
+  function twoCells() {
+    const ca = new FakeChart();
+    const a = new OverlayManager();
+    a.attach(ca as unknown as Parameters<OverlayManager["attach"]>[0]);
+    a.setScope("tab.T"); // primary cell
+    a.setEpic("US100");
+    a.rehydrate();
+    const cb = new FakeChart();
+    const b = new OverlayManager();
+    b.attach(cb as unknown as Parameters<OverlayManager["attach"]>[0]);
+    b.setScope("tab.T.cell.c1"); // second cell, SAME epic, different scope
+    b.setEpic("US100");
+    b.rehydrate();
+    return { a, ca, b, cb };
+  }
+
+  it("an alert added in one cell materialises in the other on reconcile", () => {
+    const { a, b, cb } = twoCells();
+    a.addAlert(100, cfg);
+    expect(priceLines(cb)).toHaveLength(0); // B hasn't reconciled yet
+    b.reconcileAlerts(); // the alerts signal would call this
+    const lines = priceLines(cb);
+    expect(lines).toHaveLength(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((lines[0] as any).points[0].value).toBe(100);
+  });
+
+  it("a second cell's persist() does NOT drop the first cell's alert", () => {
+    const { a, b } = twoCells();
+    a.addAlert(100, cfg); // storage: [100]
+    b.reconcileAlerts(); // B now mirrors [100]
+    b.addAlert(200, cfg); // B persists its full set — must still include 100
+    expect(P.loadAlerts("US100").map((x) => x.level).sort((p, q) => p - q)).toEqual([100, 200]);
+  });
+
+  it("a level moved in one cell re-levels the line in the other", () => {
+    const { a, b, cb } = twoCells();
+    const ovId = a.addAlert(100, cfg)!;
+    b.reconcileAlerts();
+    a.updateAlert(ovId, 105, cfg); // drag/edit in A → storage 105
+    b.reconcileAlerts();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((priceLines(cb)[0] as any).points[0].value).toBe(105);
+  });
+
+  it("an alert deleted in one cell disappears from the other", () => {
+    const { a, b, cb } = twoCells();
+    const ovId = a.addAlert(100, cfg)!;
+    b.reconcileAlerts();
+    expect(priceLines(cb)).toHaveLength(1);
+    a.remove(ovId); // delete in A
+    b.reconcileAlerts();
+    expect(priceLines(cb)).toHaveLength(0);
+  });
+
+  it("a notify-only edit in one cell is synced to the other (not reverted on its next persist)", () => {
+    const { a, b } = twoCells();
+    const ovId = a.addAlert(100, cfg)!; // notify defaults: all on
+    b.reconcileAlerts(); // B mirrors [100] with notify all-on
+    // A mutes ONLY the sound channel (level/condition/trigger/message unchanged).
+    a.updateAlert(ovId, 100, { ...cfg, notify: { toast: true, browser: true, sound: false } });
+    b.reconcileAlerts(); // B must pull the notify change in...
+    // ...so when B persists (adds another alert), it writes the muted notify, not stale all-on.
+    b.addAlert(200, cfg);
+    const at100 = P.loadAlerts("US100").find((x) => x.level === 100)!;
+    expect(at100.notify.sound).toBe(false);
+  });
+});
+
+// The symbol-change window: setEpic advances this.epic, but the old epic's overlays
+// linger in `entries` until the async data load + rehydrate(). A stray persist() in
+// that window must NOT write the old overlays under the NEW epic's (global, shared)
+// alert key. persist() bails while hydratedEpic !== epic.
+describe("OverlayManager symbol-change persist guard", () => {
+  const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
+
+  it("a persist during the setEpic→rehydrate window does not corrupt the new epic's alerts", () => {
+    const { m } = setup(); // US100, rehydrated
+    m.addAlert(100, cfg); // US100 storage = [100]
+    expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100]);
+
+    // Symbol changes: epic advances, but rehydrate() hasn't run for BTCUSD yet.
+    m.setEpic("BTCUSD");
+    m.addAlert(200, cfg); // triggers persist() while hydratedEpic=US100 != BTCUSD
+
+    // BTCUSD's shared list must be untouched (not clobbered with US100's overlays).
+    expect(P.loadAlerts("BTCUSD")).toEqual([]);
+    // US100's list is likewise not rewritten in the window.
+    expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100]);
+
+    // After BTCUSD rehydrates, persistence resumes normally.
+    m.rehydrate();
+    m.addAlert(300, cfg);
+    expect(P.loadAlerts("BTCUSD").map((x) => x.level)).toEqual([300]);
+  });
+});
+
+// reconcileAlerts removes overlays whose onRemoved synchronously re-fires the alerts
+// signal this cell subscribes to (ChartCore wires `alertsChanged -> reconcileAlerts`).
+// The re-entrancy guard must keep that from recursing into itself / leaking the
+// hydrating guard and writing a half-removed list back to the shared key.
+describe("OverlayManager reconcile re-entrancy (self-triggered alerts signal)", () => {
+  const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const priceLines = (c: FakeChart) => [...c.overlays.values()].filter((o: any) => o.name === "priceLine");
+
+  it("removing multiple alerts via a wired signal terminates and doesn't resurrect storage", () => {
+    const { chart, m } = setup();
+    m.addAlert(100, cfg);
+    m.addAlert(200, cfg); // US100 storage = [100, 200], two lines drawn
+    // Wire the cell's reconcile to the GLOBAL signal exactly as ChartCore does.
+    const unsub = alertsChanged.subscribe(() => m.reconcileAlerts());
+    // Engine clears the stored list, then signals a reconcile.
+    P.saveAlerts("US100", []);
+    expect(() => m.reconcileAlerts()).not.toThrow(); // no infinite recursion
+    unsub();
+    expect(priceLines(chart)).toHaveLength(0); // both lines removed
+    expect(P.loadAlerts("US100")).toEqual([]); // not rewritten by a mid-removal persist
   });
 });
 

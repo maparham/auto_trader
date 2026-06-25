@@ -2,8 +2,14 @@
 // Each chart cell owns ONE instance (created by its ChartController); the focused
 // cell's instance is routed to Toolbar / AlertsSidebar / the alert modals. Every
 // overlay goes through one createOverlay path, one registry, one persistence
-// subscription, and one right-click hook — but scoped to the cell, not global, so
-// two cells mounted at once never stomp each other's drawings/alerts.
+// subscription, and one right-click hook.
+//
+// DRAWINGS are scoped to the cell (keyed by scope+epic), so two cells never stomp
+// each other's drawings. ALERTS are GLOBAL per epic (keyed by epic alone — they
+// belong to the instrument, see persist.alertsKey): two cells showing the same
+// epic share one stored list. reconcileAlerts() keeps every same-epic cell's lines
+// in sync with that shared list on the alerts signal, which is what makes the
+// shared list safe (each cell renders, and persists, the complete set).
 
 import { LineType } from "klinecharts";
 import type { Chart, Overlay, OverlayEvent, DeepPartial, OverlayStyle } from "klinecharts";
@@ -57,6 +63,22 @@ export interface DrawingExtra {
 // Narrow unknown extendData to our shape (never throws; non-objects → {}).
 export function asDrawingExtra(v: unknown): DrawingExtra {
   return v && typeof v === "object" ? (v as DrawingExtra) : {};
+}
+
+// True when a cell's cached alert config already matches a saved row — every
+// firing-relevant field PLUS the notify channels (absent channel = on). Used by
+// reconcileAlerts to decide whether a peer's edit needs pulling in; omitting notify
+// here lets a notify-only edit drift and get reverted on this cell's next persist().
+function sameAlertCfg(cfg: AlertConfig, a: SavedAlert): boolean {
+  return (
+    cfg.condition === a.condition &&
+    cfg.trigger === a.trigger &&
+    cfg.message === a.message &&
+    (cfg.expiresAt ?? null) === (a.expiresAt ?? null) &&
+    (cfg.notify?.toast ?? true) === (a.notify?.toast ?? true) &&
+    (cfg.notify?.browser ?? true) === (a.notify?.browser ?? true) &&
+    (cfg.notify?.sound ?? true) === (a.notify?.sound ?? true)
+  );
 }
 
 
@@ -128,6 +150,16 @@ export class OverlayManager {
   private pricePrecision: number | null = null;
   // Echo guard: suppress persistence while we programmatically rebuild overlays.
   private hydrating = false;
+  // Re-entrancy guard for reconcileAlerts: its removeOverlay/notifyAlerts churn
+  // synchronously re-fires the alerts signal this cell is subscribed to, so the
+  // method can recurse into itself; bail on re-entry (see reconcileAlerts).
+  private reconciling = false;
+  // The epic whose overlays `entries` currently reflect — set ONLY by rehydrate().
+  // setEpic() changes `this.epic` synchronously but the old epic's overlays linger
+  // until the async data load + rehydrate(); persist() bails while these disagree so
+  // a stray overlay edit in that window can't write the OLD epic's alerts under the
+  // NEW epic's (now GLOBAL, shared, mirrored) alert key. null until first rehydrate.
+  private hydratedEpic: string | null = null;
   private rightClick: ((e: OverlayEvent) => void) | null = null;
   private alertsListener: (() => void) | null = null;
   // ChartCore subscribes to react to drawing selection changes (clear keyboard
@@ -148,9 +180,13 @@ export class OverlayManager {
     this.hoveredDrawingId = null;
     this.selectedDrawingId = null;
     this.draggingAlert = false;
+    this.drawingInProgress = false;
+    this.hydratedEpic = null;
   }
   setEpic(epic: string): void {
     this.epic = epic;
+    // Leave hydratedEpic stale until rehydrate() rebuilds for the new epic — that's
+    // what gates persist() during the symbol-change data-load window (see field).
   }
   setScope(scope: string): void {
     this.scope = scope;
@@ -202,6 +238,16 @@ export class OverlayManager {
     return this.draggingAlert;
   }
 
+  // True while an interactive drawing is mid-creation (a Draw tool is armed and
+  // collecting click points). ChartCore's lock hover-align reads this so moving the
+  // cursor to place a drawing's points doesn't also re-anchor the other charts. Set
+  // when addDrawing is called without points (interactive), cleared on the overlay's
+  // onDrawEnd (completed) or onRemoved (cancelled).
+  private drawingInProgress = false;
+  isDrawing(): boolean {
+    return this.drawingInProgress;
+  }
+
   // Apply an alert line's resting/emphasized weight. A line is emphasized (thick)
   // while it is EITHER click-selected OR hovered (from the chart or the sidebar), so
   // this single rule keeps the two states from fighting — un-hovering a selected
@@ -251,8 +297,20 @@ export class OverlayManager {
     // guide stays). klineStyles() doesn't carry horizontal.show, so this flag is
     // ours alone to toggle: set it back to true on un-hover. Independent of the
     // legend's whole-crosshair `show` toggle (a different key), so they coexist.
-    this.chart?.setStyles({ crosshair: { horizontal: { show: id == null } } });
+    this.setCrosshairHorizontalShow(id == null);
     this.notifyAlerts();
+  }
+
+  // Toggle the chart's horizontal crosshair guide WITHOUT chart.setStyles(), which
+  // would run adjustPaneViewport(…, forceY=true) and jolt the whole view (see
+  // hoverAlert). Merging straight into the store skips that; the crosshair repaints
+  // on the next mousemove. Falls back to setStyles if the private store shape ever
+  // changes (klinecharts ^9.8).
+  private setCrosshairHorizontalShow(show: boolean): void {
+    const store = (this.chart as unknown as { _chartStore?: { setOptions?: (o: unknown) => void } })
+      ?._chartStore;
+    if (store?.setOptions) store.setOptions({ styles: { crosshair: { horizontal: { show } } } });
+    else this.chart?.setStyles({ crosshair: { horizontal: { show } } });
   }
 
   // --- drawing selection / hover ---------------------------------------------
@@ -397,6 +455,7 @@ export class OverlayManager {
         return true;
       },
       onDrawEnd: () => {
+        this.drawingInProgress = false;
         this.persist();
         if (isAlert) this.notifyAlerts();
         return false;
@@ -432,11 +491,15 @@ export class OverlayManager {
         // Removing an alert mid-drag won't fire onPressedMoveEnd, so clear the drag
         // flag here too — otherwise it sticks true and the "+" setter stays hidden.
         this.draggingAlert = false;
+        // Cancelling a drawing mid-creation (Escape / switching tools) removes the
+        // in-progress overlay and fires THIS, not onDrawEnd — so clear the flag here
+        // too, or it sticks true and the lock hover-align stays silently disabled.
+        this.drawingInProgress = false;
         if (this.hoveredAlertId === e.overlay.id) {
           // Removing the hovered alert won't fire onMouseLeave, so restore the
           // crosshair's horizontal guide here or it stays stuck hidden.
           this.hoveredAlertId = null;
-          this.chart?.setStyles({ crosshair: { horizontal: { show: true } } });
+          this.setCrosshairHorizontalShow(true);
         }
         if (this.selectedAlertId === e.overlay.id) this.selectedAlertId = null;
         if (this.hoveredDrawingId === e.overlay.id) this.hoveredDrawingId = null;
@@ -503,8 +566,13 @@ export class OverlayManager {
   // Place a drawing. With points it's created in place (e.g. a horizontal line
   // at a price from the "+" menu); without, klinecharts enters interactive draw.
   addDrawing(name: string, points?: SavedOverlay["points"]): string | null {
+    // No points = interactive draw (klinecharts collects clicks until the figure is
+    // complete). Flag it so a lock click-to-align doesn't fire on those clicks; the
+    // onDrawEnd in create() clears it.
+    if (!points) this.drawingInProgress = true;
     const id = this.create("drawing", name, points);
     if (id && points) this.persist(); // interactive draws persist via onDrawEnd
+    else if (!id) this.drawingInProgress = false; // creation failed → don't get stuck
     return id;
   }
 
@@ -750,30 +818,87 @@ export class OverlayManager {
     this.chart?.removeOverlay(id); // onRemoved unregisters + persists
   }
 
-  // Reconcile on-chart alert lines against saved storage. The background
-  // alertEngine fires/removes alerts (incl. on the active epic) and writes the
-  // result to storage; ChartCore calls this on the alerts signal so a "once" alert
-  // the engine deleted also disappears from the chart. Matches lines to saved rows
-  // by STABLE id (not by value — two alerts can share a level, and a dragged line
-  // would otherwise self-match the wrong row); any overlay alert whose id is gone
-  // from storage is removed. Removal runs under the `hydrating` guard so onRemoved
-  // does NOT re-persist (the engine already owns the stored list).
+  // Full resync of this cell's alert lines to storage, matched by STABLE id (not by
+  // value — two alerts can share a level, and a dragged line would otherwise
+  // self-match the wrong row). Called on the alerts signal, which fires when ANYONE
+  // changes the epic's (now GLOBAL) alert list: the background engine removing a
+  // fired "once", OR another cell showing the same epic in a split layout adding /
+  // moving / deleting / re-configuring one. So this must do three things, not just
+  // remove:
+  //   - remove overlays whose id is gone from storage,
+  //   - ADD overlays for saved alerts this cell doesn't have yet (a peer cell added
+  //     them) — without this, a same-epic split cell shows the alert in the side
+  //     panel but never draws the line, AND its next persist() would drop it,
+  //   - re-level / re-config overlays whose stored value drifted (moved elsewhere) —
+  //     INCLUDING the notify channels, or a notify-only edit in a peer cell gets
+  //     reverted when this stale cell next persists.
+  // Keeping every same-epic cell's overlays == storage is also what makes persist()
+  // safe: each cell writes the COMPLETE list, so cells never stomp each other.
+  // Runs under the `hydrating` guard so the create/remove/override churn does NOT
+  // re-persist (storage is the source of truth here). The `reconciling` re-entrancy
+  // guard is essential: removeOverlay → onRemoved → notifyAlerts → bumpAlerts fires
+  // this same cell's signal subscription synchronously; without the guard that
+  // re-entrant call's own guarded() finally would clear `hydrating` for the call
+  // still in progress, and a later onRemoved would persist a half-removed list to
+  // the shared global key. notifyAlerts (redraw + cross-cell bump) fires only when
+  // something changed, so peers converge instead of looping.
   reconcileAlerts(): void {
-    if (!this.chart) return;
-    const savedIds = new Set(
-      loadAlerts(this.scope, this.epic).map((a, i) => normalizeAlert(a, i).id),
-    );
-    const doomed: string[] = [];
-    for (const [id, kind] of this.entries) {
-      if (kind !== "alert") continue;
-      const aid = this.alertIds.get(id);
-      if (aid == null || !savedIds.has(aid)) doomed.push(id); // no saved row → engine removed it
+    if (!this.chart || this.reconciling) return;
+    // Guard the symbol-change window: setEpic() advanced this.epic but the old epic's
+    // overlays still render until rehydrate() rebuilds. Reconciling now would draw the
+    // NEW epic's saved alert lines on top of the OLD epic's bars (a flash of wrong-
+    // instrument lines) until rehydrate self-corrects. rehydrate() re-reads storage, so
+    // nothing is lost by skipping — a peer's edit lands when this cell finishes loading.
+    if (this.hydratedEpic !== this.epic) return;
+    this.reconciling = true;
+    try {
+      const saved = loadAlerts(this.epic).map((a, i) => normalizeAlert(a, i));
+      const savedById = new Map(saved.map((a) => [a.id, a]));
+      // Stable id -> this cell's overlay id, for the alerts we currently render.
+      const haveByAid = new Map<string, string>();
+      for (const [id, kind] of this.entries) {
+        if (kind !== "alert") continue;
+        const aid = this.alertIds.get(id);
+        if (aid != null) haveByAid.set(aid, id);
+      }
+
+      let changed = false;
+      this.guarded(() => {
+        // Drop overlays no longer in storage (engine removed / peer cell deleted).
+        for (const [id, kind] of [...this.entries]) {
+          if (kind !== "alert") continue;
+          const aid = this.alertIds.get(id);
+          if (aid == null || !savedById.has(aid)) {
+            this.chart!.removeOverlay(id); // onRemoved cleans the id maps + entries
+            changed = true;
+          }
+        }
+        // Add or re-sync each saved alert.
+        for (const a of saved) {
+          const ovId = haveByAid.get(a.id);
+          if (ovId == null) {
+            // A peer cell added this alert — materialise the line here too.
+            if (this.materializeSavedAlert(a)) changed = true;
+            continue;
+          }
+          // Already present — pull the level/config forward if it drifted elsewhere.
+          const ov = this.chart!.getOverlayById(ovId);
+          if (ov && ov.points?.[0]?.value !== a.level) {
+            this.chart!.overrideOverlay({ id: ovId, points: [{ value: a.level }] });
+            changed = true;
+          }
+          const cfg = this.alertCfg.get(ovId);
+          if (!cfg || !sameAlertCfg(cfg, a)) {
+            this.alertCfg.set(ovId, this.cfgFromSaved(a));
+            changed = true;
+          }
+          this.alertCreatedAt.set(ovId, a.createdAt ?? 0);
+        }
+      });
+      if (changed) this.notifyAlerts();
+    } finally {
+      this.reconciling = false;
     }
-    if (!doomed.length) return;
-    this.guarded(() => {
-      for (const id of doomed) this.chart!.removeOverlay(id);
-    });
-    this.notifyAlerts();
   }
 
   clearDrawings(): void {
@@ -804,6 +929,34 @@ export class OverlayManager {
     }
   }
 
+  // The single SavedAlert -> AlertConfig mapping. Shared by materializeSavedAlert and
+  // reconcileAlerts' re-sync branch so the cached config can't drift between them;
+  // sameAlertCfg() compares against exactly these fields.
+  private cfgFromSaved(a: SavedAlert): AlertConfig {
+    return {
+      condition: a.condition,
+      trigger: a.trigger,
+      message: a.message,
+      expiresAt: a.expiresAt ?? null,
+      notify: a.notify,
+    };
+  }
+
+  // Materialise a saved alert row as this cell's on-chart line and register its id
+  // maps. The ONE place a SavedAlert becomes an overlay — shared by rehydrate (full
+  // rebuild) and reconcileAlerts (a peer cell added it), so both render identically.
+  // Returns the overlay id, or null if create() declined (e.g. no chart).
+  private materializeSavedAlert(a: SavedAlert): string | null {
+    const id = this.create("alert", "priceLine", [{ value: a.level }], ALERT_LINE_STYLE);
+    if (!id) return null;
+    this.alertCfg.set(id, this.cfgFromSaved(a));
+    // Carry the stored stable id (normalizeAlert backfills legacy rows). The next
+    // persist() writes it back explicitly, locking a backfilled id.
+    this.alertIds.set(id, a.id);
+    this.alertCreatedAt.set(id, a.createdAt ?? 0);
+    return id;
+  }
+
   // --- rehydration (called by ChartCore after applyNewData) ------------------
 
   // Rebuild this epic's overlays. Must run AFTER data is loaded so timestamped
@@ -821,7 +974,7 @@ export class OverlayManager {
         // Wiping overlays on rehydrate (e.g. symbol change) won't fire
         // onMouseLeave, so restore the crosshair's horizontal guide.
         this.hoveredAlertId = null;
-        this.chart.setStyles({ crosshair: { horizontal: { show: true } } });
+        this.setCrosshairHorizontalShow(true);
       }
       this.selectedAlertId = null;
       this.hoveredDrawingId = null;
@@ -842,24 +995,12 @@ export class OverlayManager {
           extendData: extra,
         });
       }
-      const rawAlerts = loadAlerts(this.scope, this.epic);
+      const rawAlerts = loadAlerts(this.epic);
       for (let ai = 0; ai < rawAlerts.length; ai++) {
-        const a = normalizeAlert(rawAlerts[ai], ai);
-        const id = this.create("alert", "priceLine", [{ value: a.level }], ALERT_LINE_STYLE);
-        if (id) {
-          this.alertCfg.set(id, {
-            condition: a.condition,
-            trigger: a.trigger,
-            message: a.message,
-            expiresAt: a.expiresAt ?? null,
-            notify: a.notify,
-          });
-          // Carry the stored stable id (normalizeAlert backfills legacy rows). The
-          // next persist() writes it back explicitly, locking a backfilled id.
-          this.alertIds.set(id, a.id);
-          this.alertCreatedAt.set(id, a.createdAt ?? 0);
-        }
+        this.materializeSavedAlert(normalizeAlert(rawAlerts[ai], ai));
       }
+      // entries now reflect this.epic — let persist() write through again.
+      this.hydratedEpic = this.epic;
     } finally {
       this.hydrating = false;
     }
@@ -875,6 +1016,10 @@ export class OverlayManager {
 
   private persist(): void {
     if (this.hydrating || !this.chart) return;
+    // Guard the symbol-change window: setEpic() advanced this.epic but the old
+    // epic's overlays are still in `entries` until rehydrate() rebuilds. Writing now
+    // would save the OLD overlays under the NEW epic's shared global alert key.
+    if (this.hydratedEpic !== this.epic) return;
     const drawings: SavedOverlay[] = [];
     const alerts: SavedAlert[] = [];
     for (const [id, kind] of this.entries) {
@@ -915,6 +1060,6 @@ export class OverlayManager {
       }
     }
     saveDrawings(this.scope, this.epic, drawings);
-    saveAlerts(this.scope, this.epic, alerts);
+    saveAlerts(this.epic, alerts);
   }
 }

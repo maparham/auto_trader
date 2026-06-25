@@ -19,7 +19,6 @@ import {
   clearTriggered,
   loadTriggeredSeen,
   saveTriggeredSeen,
-  loadAlerts,
   normalizeAlert,
   CONDITION_LABELS,
   type TriggeredAlert,
@@ -144,16 +143,17 @@ export default function AlertsSidebar({ controller, epic, precision, tabs }: Pro
       for (const c of t.cells)
         precMap.set(c.symbol.epic, c.symbol.pricePrecision ?? 2);
 
-    // Merge per-cell alerts into per-epic buckets (a symbol may appear in
-    // multiple cells; de-dupe alerts by id so they don't show twice).
+    // Alerts are global per epic now — one stored list per symbol, whether or not a
+    // chart is open for it. So a single localStorage scan covers everything; no
+    // per-cell loop and no cross-source de-dupe.
     const byEpic = new Map<string, Map<string, SavedAlert>>();
-    // loadAlerts/loadAllAlerts return RAW stored rows (no normalizeAlert), so legacy
-    // alerts can lack id/condition. We must normalize before bucketing: keying the
-    // dedup Map on a missing id collapses every id-less row onto one entry (they'd
-    // vanish from the list and count) and breaks React keys / condition labels. We
-    // also drop already-expired alerts — a closed symbol has no engine feed to prune
-    // them, so otherwise a past-expiry alert is shown and counted forever. `index`
-    // keeps the backfilled legacy id deterministic (matches the engine's own id).
+    // loadAllAlerts returns RAW stored rows (no normalizeAlert), so legacy alerts can
+    // lack id/condition. We normalize before bucketing: keying the dedup Map on a
+    // missing id collapses every id-less row onto one entry (they'd vanish from the
+    // list and count) and breaks React keys / condition labels. We also drop
+    // already-expired alerts — a closed symbol has no engine feed to prune them, so
+    // otherwise a past-expiry alert is shown and counted forever. `index` keeps the
+    // backfilled legacy id deterministic (matches the engine's own id).
     const addToBucket = (ep: string, raw: SavedAlert[]) => {
       let bucket = byEpic.get(ep);
       if (!bucket) { bucket = new Map(); byEpic.set(ep, bucket); }
@@ -163,18 +163,7 @@ export default function AlertsSidebar({ controller, epic, precision, tabs }: Pro
         bucket!.set(a.id, a);
       });
     };
-    for (const t of tabs) {
-      for (const c of t.cells) {
-        const cellAlerts = loadAlerts(c.scope, c.symbol.epic);
-        if (cellAlerts.length) addToBucket(c.symbol.epic, cellAlerts);
-      }
-    }
-    // Also include any alerts from cells not currently open (localStorage scan).
-    for (const { scope, epic: ep, alerts } of loadAllAlerts()) {
-      // Skip if already covered by the tab loop above (avoid double-counting).
-      const alreadyCovered = tabs.some(t => t.cells.some(c => c.scope === scope && c.symbol.epic === ep));
-      if (!alreadyCovered) addToBucket(ep, alerts);
-    }
+    for (const { epic: ep, alerts } of loadAllAlerts()) addToBucket(ep, alerts);
 
     // Fractional digit count of a level (capped), to format symbols with no open cell.
     const decimalsOf = (n: number): number => {

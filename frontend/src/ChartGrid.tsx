@@ -44,6 +44,8 @@ interface Props {
   syncCrosshair: boolean;
   // Per-tab date-range link: scroll/zoom in one cell matches the time window on the others.
   syncTime: boolean;
+  // "Lock charts" master mode: full mirroring with pixel-exact (barSpace) date range.
+  locked: boolean;
   onReady: (cellId: string, chart: Chart, controller: ChartController) => void;
   onFocus: (cellId: string) => void;
 }
@@ -64,6 +66,7 @@ export default function ChartGrid({
   crosshair,
   syncCrosshair,
   syncTime,
+  locked,
   onReady,
   onFocus,
 }: Props) {
@@ -105,6 +108,8 @@ export default function ChartGrid({
             syncCrosshair={syncCrosshair && cells.length > 1}
             // Date-range link only matters with >1 cell.
             syncTime={syncTime && cells.length > 1}
+            // Lock's exact-mirror barSpace only matters with >1 cell.
+            locked={locked && cells.length > 1}
             onReady={onReady}
             onFocus={onFocus}
           />

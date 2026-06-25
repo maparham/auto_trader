@@ -44,15 +44,47 @@ describe("persist scoping", () => {
     expect(localStorage.getItem("auto-trader.tab.A.drawings.US100")).not.toBeNull();
   });
 
-  it("alerts and avwap anchors are scope+epic keyed", () => {
-    P.saveAlerts("tab.A", "US100", [
+  it("alerts are global per epic (scope-independent); avwap anchors are scope+epic keyed", () => {
+    P.saveAlerts("US100", [
       { id: "a1", level: 5, condition: "crossing", trigger: "every", message: "" },
     ]);
     P.saveAvwapAnchor("tab.A", "US100", "AVWAP", 123);
-    expect(P.loadAlerts("tab.A", "US100")).toHaveLength(1);
-    expect(P.loadAlerts("tab.B", "US100")).toEqual([]);
+    // Alerts belong to the instrument, not a cell — readable without a scope, and a
+    // different epic is separate.
+    expect(P.loadAlerts("US100")).toHaveLength(1);
+    expect(P.loadAlerts("BTC")).toEqual([]);
+    expect(localStorage.getItem("auto-trader.alerts.US100")).not.toBeNull();
+    // AVWAP anchors stay per-scope.
     expect(P.loadAvwapAnchor("tab.A", "US100", "AVWAP")).toBe(123);
     expect(P.loadAvwapAnchor("tab.B", "US100", "AVWAP")).toBe(0);
+  });
+
+  it("migrateAlertsToGlobal collapses scoped alert keys into the global per-epic key", () => {
+    // Two old per-tab keys for the same epic + one for another epic.
+    localStorage.setItem("auto-trader.tab.A.alerts.US100", JSON.stringify([
+      { id: "a1", level: 5, condition: "crossing", trigger: "every", message: "" },
+    ]));
+    localStorage.setItem("auto-trader.tab.B.alerts.US100", JSON.stringify([
+      { id: "a2", level: 7, condition: "crossing", trigger: "every", message: "" },
+    ]));
+    localStorage.setItem("auto-trader.tab.A.alerts.BTC", JSON.stringify([
+      { id: "b1", level: 9, condition: "crossing", trigger: "every", message: "" },
+    ]));
+    expect(P.migrateAlertsToGlobal()).toBe(true);
+    // Merged by epic, de-duped by id; scoped keys removed.
+    expect(P.loadAlerts("US100").map((a) => a.id).sort()).toEqual(["a1", "a2"]);
+    expect(P.loadAlerts("BTC").map((a) => a.id)).toEqual(["b1"]);
+    expect(localStorage.getItem("auto-trader.tab.A.alerts.US100")).toBeNull();
+    expect(localStorage.getItem("auto-trader.tab.B.alerts.US100")).toBeNull();
+    // Idempotent: a second run finds nothing to do.
+    expect(P.migrateAlertsToGlobal()).toBe(false);
+  });
+
+  it("migrateAlertsToGlobal collapses an empty scoped key without leaving an inert global key", () => {
+    localStorage.setItem("auto-trader.tab.A.alerts.US100", JSON.stringify([]));
+    expect(P.migrateAlertsToGlobal()).toBe(true); // the scoped key still gets removed
+    expect(localStorage.getItem("auto-trader.tab.A.alerts.US100")).toBeNull();
+    expect(localStorage.getItem("auto-trader.alerts.US100")).toBeNull(); // no empty global key written
   });
 
   it("primaryCellScope / cellScope produce the documented prefixes", () => {

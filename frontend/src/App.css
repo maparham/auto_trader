@@ -60,21 +60,27 @@
    surface rather than a twin of the tab bar. No bottom border: the fill step
    between --bg and the toolbar's --surface is the separation. */
 .tab-bar {
-  display: flex; align-items: stretch;
+  display: flex; align-items: flex-start;
   flex-shrink: 0; padding: 0 6px; min-height: 34px;
   background: var(--bg);
 }
-/* The tabs scroll horizontally on overflow; the trailing workspace actions stay
-   pinned to the right and never scroll out of view. */
+/* The tabs WRAP onto as many rows as needed so every tab is always visible at
+   full size — no horizontal scroll. The bar grows taller as rows are added
+   (it's flex-shrink:0 in the column layout, so it pushes the chart down); the
+   trailing workspace actions stay pinned to the right. */
 .tab-bar-tabs {
-  display: flex; align-items: center; gap: 6px;
-  flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  flex: 1; min-width: 0;
+  /* Vertical padding gives wrapped rows breathing room and keeps the first/last
+     rows off the bar's top/bottom edges. */
+  padding: 4px 0 4px 6px;
 }
 /* Workspace-level controls (Backtest, named layouts, split picker, theme) pinned
-   to the right of the bar. A faint divider separates them from the tabs. */
+   top-right of the bar, divided from the tabs by a faint border. Sized to one tab
+   row so they line up with the first row of tabs even when the strip wraps. */
 .tab-bar-actions {
   display: flex; align-items: center; gap: 4px; flex-shrink: 0;
-  padding-left: 8px; margin-left: 4px;
+  min-height: 34px; padding-left: 8px; margin-left: 4px;
   border-left: 1px solid var(--border);
 }
 /* Pill/card tabs: each tab is a self-contained rounded chip with its own
@@ -920,8 +926,12 @@
    "+" is a circle sitting in the chart area; the price label fills the price-axis
    column to its right. The circle's right edge lands on the column's left border
    (its width is set imperatively to the axis width in ChartCore onMove). */
+/* z-index 49 keeps the cursor-following "+" price label above the live price tag
+   (47) and the selected alert tag/pill (48): it tracks the pointer, so it must
+   never be obstructed by a static axis label parked at the same price (TV-style —
+   the cursor's price label always reads on top of the fixed last-price label). */
 .axis-plus {
-  position: absolute; right: 0; z-index: 46; transform: translateY(-50%);
+  position: absolute; right: 0; z-index: 49; transform: translateY(-50%);
   display: flex; align-items: center; cursor: pointer;
   /* Even height so translateY(-50%) stays on whole pixels (crisp price label). */
   height: 22px;
@@ -1004,14 +1014,40 @@
 /* The symbol name opens the instrument-details modal (TradingView-style). */
 .cl-sym-clickable { cursor: pointer; }
 .cl-sym-clickable:hover { text-decoration: underline; }
-/* ⓘ button next to the symbol — the discoverable way into the details modal. */
+/* Small live "ping" dot before the symbol — signals streaming. Sits in the legend's
+   own accent-free zone so the symbol can stay neutral (var(--text)); green only ever
+   means "up" on the price, never on the ticker. */
+.cl-live-dot {
+  width: 6px; height: 6px; flex: none; border-radius: 50%;
+  background: var(--pos); position: relative;
+}
+.cl-live-dot::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: var(--pos);
+  animation: cl-live-ping 2s ease-out infinite;
+}
+@keyframes cl-live-ping {
+  0% { transform: scale(1); opacity: 0.55; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cl-live-dot::after { animation: none; }
+}
+/* Info button next to the symbol — the discoverable way into the details modal.
+   A rounded-square accent chip with a serif "i": being non-round, it never competes
+   with the circular markers on the chart, and avoids the old "bullseye" (a ringed ⓘ
+   glyph inside a ringed circle). With the symbol now neutral, accent-blue is the only
+   blue in the cluster, so it reads as "the info button". Fills solid on hover. */
 .cl-info {
   display: inline-flex; align-items: center; justify-content: center;
-  margin-left: 2px; padding: 0; background: transparent; border: none;
-  color: var(--text-faint); cursor: pointer; vertical-align: middle;
+  margin-left: 5px; padding: 0; width: 16px; height: 16px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 0; border-radius: 4px; box-sizing: border-box;
+  color: var(--accent); cursor: pointer; vertical-align: middle;
+  font: italic 700 11px/1 Georgia, "Times New Roman", serif;
+  transition: background 0.12s ease, color 0.12s ease;
 }
-.cl-info svg { fill: none; stroke: currentColor; stroke-width: 1.7; display: block; }
-.cl-info:hover { color: var(--text); }
+.cl-info:hover { background: var(--accent); color: #fff; }
 .cl-meta { color: var(--text-dim); }
 .cl-ohlc-item { display: inline-flex; align-items: center; gap: 3px; }
 .cl-ohlc-label { color: var(--text-dim); }

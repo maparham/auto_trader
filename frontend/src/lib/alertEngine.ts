@@ -31,6 +31,7 @@
 import { openLive, type LiveHandle } from "./feed";
 import {
   loadAlerts,
+  loadAlertsRaw,
   saveAlerts,
   pushTriggered,
   normalizeAlert,
@@ -51,11 +52,11 @@ interface FeedState {
   handle: LiveHandle;
 }
 
-// State-key: scope+epic+id. Keyed by the cell SCOPE (not tab id) so two cells in
-// the same tab arm independently; keyed by the alert's stable id (not its content)
-// so a level/condition edit MUTATES the alert's state instead of orphaning it.
-const stateKey = (scope: string, epic: string, id: string): string =>
-  `${scope}|${epic}|${id}`;
+// State-key: epic+id. Alerts are GLOBAL per instrument (no cell scope), so one
+// arming/baseline entry exists per alert regardless of how many tabs show the epic.
+// Keyed by the alert's stable id (not its content) so a level/condition edit
+// MUTATES the alert's state instead of orphaning it.
+const stateKey = (epic: string, id: string): string => `${epic}|${id}`;
 
 // Identity of an alert's firing-relevant config. A change here (level moved, or
 // condition/trigger edited) means the alert was reconfigured: reset its baseline so
@@ -63,12 +64,17 @@ const stateKey = (scope: string, epic: string, id: string): string =>
 const alertSig = (a: SavedAlert): string => `${a.level}|${a.condition}|${a.trigger}`;
 
 class AlertEngine {
-  private tabs: ChartTab[] = [];
   private feeds = new Map<string, FeedState>(); // epic -> feed
   private armed = new Map<string, boolean>(); // state-key -> armed
   private baseline = new Map<string, number | null>(); // state-key -> prev price sample
   private sig = new Map<string, string>(); // state-key -> last-seen config signature
   private precision = new Map<string, number>(); // epic -> price precision
+  // Hot-path cache: epic -> {raw stored JSON, normalized list}. onTick fires per
+  // price tick, so reparsing + re-normalizing the alert list every time is pure
+  // main-thread garbage. Cache the normalized list and reuse it while the raw stored
+  // string is unchanged; any writer (this engine, a peer cell, /ws/state) flips the
+  // string and forces a single reparse. Per-tick steady state is getItem + a compare.
+  private alertCache = new Map<string, { raw: string; normalized: SavedAlert[] }>();
   // Spread side the alert feeds price against — kept in lockstep with the chart's
   // global setting so an alert fires on the same price the user sees on the chart.
   private priceSide: PriceSide = "mid";
@@ -88,12 +94,12 @@ class AlertEngine {
     }
   }
 
-  // Re-sync feeds to the current tabs: one feed per distinct epic that has ≥1
-  // alert (deduped across ALL cells of ALL tabs); close feeds whose epic no longer
-  // needs one. Call whenever tabs change or an alert is added/removed (App bumps it
-  // via the alerts signal).
+  // Re-sync feeds to the current tabs: one feed per distinct OPEN epic that has ≥1
+  // alert; close feeds whose epic no longer needs one. Alerts are global per epic,
+  // but we still only feed epics that are on-screen somewhere (a closed symbol has
+  // no chart to fire onto). Call whenever tabs change or an alert is added/removed
+  // (App bumps it via the alerts signal).
   setTabs(tabs: ChartTab[]): void {
-    this.tabs = tabs;
     for (const t of tabs)
       for (const c of t.cells)
         this.precision.set(c.symbol.epic, c.symbol.pricePrecision ?? 2);
@@ -101,7 +107,7 @@ class AlertEngine {
     const needed = new Set<string>();
     for (const t of tabs) {
       for (const c of t.cells) {
-        if (loadAlerts(c.scope, c.symbol.epic).length > 0) needed.add(c.symbol.epic);
+        if (loadAlerts(c.symbol.epic).length > 0) needed.add(c.symbol.epic);
       }
     }
     for (const epic of needed) {
@@ -127,81 +133,87 @@ class AlertEngine {
     this.feeds.set(epic, state);
   }
 
-  // Evaluate every alert on `epic` (across all tabs showing it) against a tick.
+  // The epic's normalized alert list for this tick, served from cache while the raw
+  // stored JSON is unchanged (see alertCache). Only a write — by this engine, a peer
+  // cell, or /ws/state — changes the string and triggers a single reparse+normalize.
+  private alertsForTick(epic: string): SavedAlert[] {
+    const raw = loadAlertsRaw(epic) ?? "";
+    const cached = this.alertCache.get(epic);
+    if (cached && cached.raw === raw) return cached.normalized;
+    const normalized = loadAlerts(epic).map((a, i) => normalizeAlert(a, i));
+    this.alertCache.set(epic, { raw, normalized });
+    return normalized;
+  }
+
+  // Evaluate every alert on `epic` against a tick. Alerts are global per epic, so we
+  // load the single stored list ONCE (no per-cell loop) — that's also what keeps a
+  // "once" alert from firing N times when N tabs show the same epic.
   private onTick(epic: string, price: number): void {
     const feed = this.feeds.get(epic);
     if (!feed) return;
     const now = Date.now();
 
-    // One ping per tick, not per cell: N cells showing the same epic would otherwise
-    // each fire playPing() for the same tick, stacking N simultaneous sounds.
+    const alerts = this.alertsForTick(epic);
+    if (!alerts.length) return;
+
     let firedSound = false;
+    const survivors: SavedAlert[] = [];
+    let removed = false;
 
-    for (const tab of this.tabs) {
-      for (const cell of tab.cells) {
-        if (cell.symbol.epic !== epic) continue;
-        const alerts = loadAlerts(cell.scope, epic).map(normalizeAlert);
-        if (!alerts.length) continue;
-
-        const survivors: SavedAlert[] = [];
-        let removed = false;
-
-        for (const a of alerts) {
-          const key = stateKey(cell.scope, epic, a.id);
-          // Expired alerts are pruned WITHOUT firing (client-side enforcement —
-          // only checked while a tab is open). Treated like a fired "once".
-          if (a.expiresAt != null && now > a.expiresAt) {
-            removed = true;
-            this.forget(key);
-            continue;
-          }
-          // Moved / reconfigured? Same id, changed level|condition|trigger. Reset
-          // the baseline (so the relocated level needs two fresh samples before it
-          // can read as a crossing — no spurious fire off the stale sample) and
-          // re-arm (an edited alert may fire again). A first sighting (no prior
-          // signature) is NOT a move — it's a new alert, already armed with an
-          // empty baseline, which the same two-sample guard already protects.
-          const sig = alertSig(a);
-          const prevSig = this.sig.get(key);
-          if (prevSig !== undefined && prevSig !== sig) {
-            this.baseline.set(key, null);
-            this.armed.set(key, true);
-          }
-          this.sig.set(key, sig);
-
-          // Per-alert prev sample (the crossing baseline), advanced every tick.
-          const prev = this.baseline.get(key) ?? null;
-          this.baseline.set(key, price);
-
-          const armed = this.armed.get(key) ?? true;
-          const r = evaluateAlert(prev, price, a.level, {
-            condition: a.condition,
-            trigger: a.trigger,
-            armed,
-          });
-          if (r.fired) {
-            if (a.notify?.sound ?? true) firedSound = true;
-            this.fire(epic, a, price);
-          }
-          if (r.remove) {
-            removed = true;
-            this.forget(key);
-            continue; // dropped from survivors → removed from storage below
-          }
-          if (r.nextArmed !== armed) this.armed.set(key, r.nextArmed);
-          survivors.push(a);
-        }
-
-        if (removed) {
-          // Persist removal of fired "once" alerts; the active cell's overlay
-          // reconciles off the alerts signal (drops lines no longer in storage).
-          saveAlerts(cell.scope, epic, survivors);
-          bumpAlerts();
-        }
+    for (const a of alerts) {
+      const key = stateKey(epic, a.id);
+      // Expired alerts are pruned WITHOUT firing (client-side enforcement —
+      // only checked while a tab is open). Treated like a fired "once".
+      if (a.expiresAt != null && now > a.expiresAt) {
+        removed = true;
+        this.forget(key);
+        continue;
       }
+      // Moved / reconfigured? Same id, changed level|condition|trigger. Reset
+      // the baseline (so the relocated level needs two fresh samples before it
+      // can read as a crossing — no spurious fire off the stale sample) and
+      // re-arm (an edited alert may fire again). A first sighting (no prior
+      // signature) is NOT a move — it's a new alert, already armed with an
+      // empty baseline, which the same two-sample guard already protects.
+      const sig = alertSig(a);
+      const prevSig = this.sig.get(key);
+      if (prevSig !== undefined && prevSig !== sig) {
+        this.baseline.set(key, null);
+        this.armed.set(key, true);
+      }
+      this.sig.set(key, sig);
+
+      // Per-alert prev sample (the crossing baseline), advanced every tick.
+      const prev = this.baseline.get(key) ?? null;
+      this.baseline.set(key, price);
+
+      const armed = this.armed.get(key) ?? true;
+      const r = evaluateAlert(prev, price, a.level, {
+        condition: a.condition,
+        trigger: a.trigger,
+        armed,
+      });
+      if (r.fired) {
+        if (a.notify?.sound ?? true) firedSound = true;
+        this.fire(epic, a, price);
+      }
+      if (r.remove) {
+        removed = true;
+        this.forget(key);
+        continue; // dropped from survivors → removed from storage below
+      }
+      if (r.nextArmed !== armed) this.armed.set(key, r.nextArmed);
+      survivors.push(a);
     }
 
-    if (firedSound) playPing(); // once, after every cell on this epic is evaluated
+    if (removed) {
+      // Persist removal of fired "once"/expired alerts; the active cell's overlay
+      // reconciles off the alerts signal (drops lines no longer in storage).
+      saveAlerts(epic, survivors);
+      bumpAlerts();
+    }
+
+    if (firedSound) playPing(); // once per tick, regardless of how many tabs show it
   }
 
   private fire(epic: string, a: SavedAlert, price: number): void {
@@ -237,6 +249,7 @@ class AlertEngine {
     this.armed.clear();
     this.baseline.clear();
     this.sig.clear();
+    this.alertCache.clear();
   }
 }
 

@@ -16,16 +16,19 @@ vi.mock("./feed", () => ({
   },
 }));
 
-// In-memory alert store keyed `${scope}|${epic}`.
+// In-memory alert store keyed by epic (alerts are global per instrument).
 const store = new Map<string, unknown[]>();
 const saveSpy = vi.fn();
 const pushSpy = vi.fn();
 
 vi.mock("./persist", () => ({
-  loadAlerts: (scope: string, epic: string) => store.get(`${scope}|${epic}`) ?? [],
-  saveAlerts: (scope: string, epic: string, list: unknown[]) => {
-    saveSpy(scope, epic, list);
-    store.set(`${scope}|${epic}`, list);
+  loadAlerts: (epic: string) => store.get(epic) ?? [],
+  // Raw cache key for onTick: stringify the stored list so it flips whenever the
+  // list changes (mirrors the real localStorage-backed getItem).
+  loadAlertsRaw: (epic: string) => (store.has(epic) ? JSON.stringify(store.get(epic)) : null),
+  saveAlerts: (epic: string, list: unknown[]) => {
+    saveSpy(epic, list);
+    store.set(epic, list);
   },
   pushTriggered: (e: unknown) => pushSpy(e),
   normalizeAlert: (a: Record<string, unknown>) => ({
@@ -46,8 +49,8 @@ vi.mock("./signals", () => ({ bumpAlerts: vi.fn() }));
 // Import AFTER mocks are registered.
 const { alertEngine } = await import("./alertEngine");
 
-// Build a one-cell tab; the cell's scope is the tab id so the in-memory store
-// keys (`${scope}|${epic}`) line up with the test fixtures above.
+// Build a one-cell tab. Alerts are stored by epic (global), so the in-memory store
+// is keyed by the cell's epic; the scope here is incidental.
 const tab = (id: string, epic: string) => ({
   id,
   layout: "1" as const,
@@ -73,7 +76,7 @@ beforeEach(() => {
 
 describe("alertEngine (background firing)", () => {
   it("fires an alert on a BACKGROUND tab (the whole point)", () => {
-    store.set("bg|BTC", [{ level: 100, condition: "crossing", trigger: "every", message: "" }]);
+    store.set("BTC", [{ level: 100, condition: "crossing", trigger: "every", message: "" }]);
     // Active tab is something else; the BTC tab is in the background.
     alertEngine.setTabs([tab("active", "US100"), tab("bg", "BTC")]);
     expect(emit).toBeTypeOf("function"); // a feed opened for BTC
@@ -86,14 +89,14 @@ describe("alertEngine (background firing)", () => {
   });
 
   it("a 'once' alert fires exactly once, is removed from storage, and never re-fires", () => {
-    store.set("t|BTC", [{ level: 100, condition: "crossing", trigger: "once", message: "" }]);
+    store.set("BTC", [{ level: 100, condition: "crossing", trigger: "once", message: "" }]);
     alertEngine.setTabs([tab("t", "BTC")]);
 
     emit!({ close: 99 });
     emit!({ close: 101 }); // fires once
     expect(pushSpy).toHaveBeenCalledTimes(1);
     // Persisted with the alert removed.
-    expect(saveSpy).toHaveBeenCalledWith("t", "BTC", []);
+    expect(saveSpy).toHaveBeenCalledWith("BTC", []);
 
     // Subsequent crossings must NOT re-fire (it's gone from storage).
     emit!({ close: 99 });
@@ -102,7 +105,7 @@ describe("alertEngine (background firing)", () => {
   });
 
   it("an 'every' alert disarms after firing and does not re-fire on jitter", () => {
-    store.set("t|BTC", [{ level: 100, condition: "crossing", trigger: "every", message: "" }]);
+    store.set("BTC", [{ level: 100, condition: "crossing", trigger: "every", message: "" }]);
     alertEngine.setTabs([tab("t", "BTC")]);
 
     emit!({ close: 99 });
@@ -116,15 +119,15 @@ describe("alertEngine (background firing)", () => {
   });
 
   it("dedupes feeds by epic and closes them when alerts/tabs go away", () => {
-    store.set("a|BTC", [{ level: 100 }]);
-    store.set("b|BTC", [{ level: 200 }]);
+    store.set("BTC", [{ level: 100 }]);
+    store.set("BTC", [{ level: 200 }]);
     // Two tabs on BTC → exactly one feed (dedup by epic).
     alertEngine.setTabs([tab("a", "BTC"), tab("b", "BTC")]);
     expect(emit).toBeTypeOf("function");
 
     // Remove all BTC alerts → feed should close.
-    store.set("a|BTC", []);
-    store.set("b|BTC", []);
+    store.set("BTC", []);
+    store.set("BTC", []);
     alertEngine.setTabs([tab("a", "BTC"), tab("b", "BTC")]);
     expect(closeSpy).toHaveBeenCalled();
   });
@@ -132,7 +135,7 @@ describe("alertEngine (background firing)", () => {
   it("prunes an expired alert WITHOUT firing it", () => {
     // Expires in the past → must be removed on the next tick, never fired, even
     // though the price crosses its level.
-    store.set("t|BTC", [
+    store.set("BTC", [
       { level: 100, condition: "crossing", trigger: "every", message: "", expiresAt: 1 },
     ]);
     alertEngine.setTabs([tab("t", "BTC")]);
@@ -140,11 +143,11 @@ describe("alertEngine (background firing)", () => {
     emit!({ close: 99 });
     emit!({ close: 101 }); // crosses 100 — but the alert is expired
     expect(pushSpy).not.toHaveBeenCalled();
-    expect(saveSpy).toHaveBeenCalledWith("t", "BTC", []); // pruned from storage
+    expect(saveSpy).toHaveBeenCalledWith("BTC", []); // pruned from storage
   });
 
   it("does not fire on the very first tick (two-sample crossing guard)", () => {
-    store.set("t|BTC", [{ level: 100, condition: "crossing", trigger: "every", message: "" }]);
+    store.set("BTC", [{ level: 100, condition: "crossing", trigger: "every", message: "" }]);
     alertEngine.setTabs([tab("t", "BTC")]);
     emit!({ close: 101 }); // only one sample so far
     expect(pushSpy).not.toHaveBeenCalled();
@@ -157,18 +160,18 @@ describe("alertEngine (background firing)", () => {
     const alert = (level: number) => [
       { id: "A1", level, condition: "crossing", trigger: "once", message: "" },
     ];
-    store.set("t|BTC", alert(110));
+    store.set("BTC", alert(110));
     alertEngine.setTabs([tab("t", "BTC")]);
 
     emit!({ close: 105 }); // seed baseline
     emit!({ close: 106 }); // no crossing of 110; baseline now 106
 
     // User drags the alert down to 104 (overlay persists the new level).
-    store.set("t|BTC", alert(104));
+    store.set("BTC", alert(104));
     emit!({ close: 103 }); // 106 -> 103 would cross a stale 104; must NOT fire
     expect(pushSpy).not.toHaveBeenCalled();
-    expect(saveSpy).not.toHaveBeenCalledWith("t", "BTC", []); // not wiped
-    expect(store.get("t|BTC")).toHaveLength(1); // alert survives
+    expect(saveSpy).not.toHaveBeenCalledWith("BTC", []); // not wiped
+    expect(store.get("BTC")).toHaveLength(1); // alert survives
 
     // A GENUINE crossing after the move still fires (we re-seeded, didn't mute).
     emit!({ close: 103.5 }); // baseline 103
