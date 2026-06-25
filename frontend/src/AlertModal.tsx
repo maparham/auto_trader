@@ -4,6 +4,7 @@
 // signal, and from the sidebar/line for editing via alertEditRequest.
 
 import { useEffect, useRef, useState } from "react";
+import CloseButton from "./CloseButton";
 import type { AlertCondition, AlertNotifyChannels, AlertTrigger } from "./lib/persist";
 import type { AlertDefaults } from "./theme";
 import { useDraggable } from "./lib/useDraggable";
@@ -17,6 +18,7 @@ import {
   localInputToMs,
   msToLocalInput,
   resolveExpiry,
+  type ExpiryOption,
 } from "./lib/alertUi";
 
 export interface AlertDraft {
@@ -99,33 +101,38 @@ export default function AlertModal({
             {isEdit ? "Edit alert on " : "Create alert on "}
             <strong>{epic}</strong>
           </span>
-          <button className="modal-close" onClick={onClose}>
-            ✕
-          </button>
+          <CloseButton onClick={onClose} />
         </div>
 
         <div className="alert-body">
-          {/* Condition block, TradingView-style: source (Price) + operator + value. */}
-          <label className="al-row">
+          {/* Condition block, TradingView-style: source (Price) + operator share one
+              row under a single label, value below. Not a <label> — it wraps two
+              controls, so each carries its own aria-label instead. */}
+          <div className="al-row">
             <span>Condition</span>
-            <select className="al-source" value="price" disabled>
-              <option value="price">Price</option>
-            </select>
-          </label>
-
-          <label className="al-row">
-            <span />
-            <select
-              value={condition}
-              onChange={(e) => setCondition(e.target.value as AlertCondition)}
-            >
-              {CONDITIONS.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="al-cond">
+              <select
+                className="al-source"
+                value="price"
+                disabled
+                aria-label="Alert source"
+              >
+                <option value="price">Price</option>
+              </select>
+              <select
+                className="al-operator"
+                aria-label="Alert condition"
+                value={condition}
+                onChange={(e) => setCondition(e.target.value as AlertCondition)}
+              >
+                {CONDITIONS.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
 
           <label className="al-row">
             <span>Value</span>
@@ -188,7 +195,13 @@ export default function AlertModal({
         <div className="modal-foot">
           {isEdit && onDelete && (
             <button className="al-trash" onClick={onDelete} title="Delete alert" aria-label="Delete alert">
-              🗑
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <line x1="10" y1="11" x2="10" y2="17" />
+                <line x1="14" y1="11" x2="14" y2="17" />
+              </svg>
             </button>
           )}
           <button className="ghost" onClick={onClose}>
@@ -241,7 +254,12 @@ function ExpiryField({
     if (!opt || opt.id === "custom") {
       setCustom(true);
       // Seed the custom picker from the current value, or end of day if open-ended.
-      if (expiresAt == null) onChange(options.find((o) => o.id === "eod")!.expiresAt!);
+      if (expiresAt == null) {
+        const eod = options.find(
+          (o): o is Extract<ExpiryOption, { expiresAt: number }> => o.id === "eod",
+        )!;
+        onChange(eod.expiresAt);
+      }
     } else {
       setCustom(false);
       onChange("expiresAt" in opt ? opt.expiresAt : null);
@@ -257,7 +275,11 @@ function ExpiryField({
         onClick={() => setOpen((o) => !o)}
       >
         <span>{formatExpiryLong(expiresAt)}</span>
-        <span className="al-expiry-caret">⌄</span>
+        <svg className="al-expiry-caret" viewBox="0 0 24 24" width="11" height="11" fill="none"
+          stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+          aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
       </button>
       {open && (
         <div className="al-expiry-menu">
@@ -272,11 +294,19 @@ function ExpiryField({
             >
               <span className="al-expiry-opt-label">{o.label}</span>
               <span className="al-expiry-opt-time">
-                {o.id === "open"
-                  ? "Won't expire"
-                  : o.id === "custom"
-                    ? "📅"
-                    : formatExpiryShort(o.expiresAt)}
+                {o.id === "open" ? (
+                  "Won't expire"
+                ) : o.id === "custom" ? (
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+                    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="4.5" width="18" height="16" rx="2" />
+                    <line x1="3" y1="9.5" x2="21" y2="9.5" />
+                    <line x1="8" y1="2.5" x2="8" y2="6" />
+                    <line x1="16" y1="2.5" x2="16" y2="6" />
+                  </svg>
+                ) : (
+                  formatExpiryShort(o.expiresAt)
+                )}
               </span>
             </button>
           ))}

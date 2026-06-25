@@ -12,7 +12,10 @@ interface Props {
   syncSymbol: boolean;
   syncInterval: boolean;
   syncCrosshair: boolean;
-  onToggleSync: (kind: "symbol" | "interval" | "crosshair") => void;
+  syncTime: boolean;
+  locked: boolean;
+  onToggleSync: (kind: "symbol" | "interval" | "crosshair" | "time") => void;
+  onToggleLock: () => void;
 }
 
 // A tiny SVG that draws an outer frame plus the dividers for a given split, so
@@ -65,7 +68,10 @@ export default function LayoutPicker({
   syncSymbol,
   syncInterval,
   syncCrosshair,
+  syncTime,
+  locked,
   onToggleSync,
+  onToggleLock,
 }: Props) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -107,12 +113,30 @@ export default function LayoutPicker({
             ))}
           </ul>
           {/* Per-tab sync ("link") toggles — only meaningful with >1 cell. Each
-              carries an info icon whose tooltip explains what it links. */}
+              carries an info icon whose tooltip explains what it links. "Lock
+              charts" is a master override: while on, the individual toggles are
+              forced (interval/crosshair/date-range on, symbol off) and greyed. */}
           <div className="layout-sync">
+            <label className="ls-lock">
+              <input
+                type="checkbox"
+                checked={locked}
+                onChange={() => onToggleLock()}
+              />
+              <span className="ls-label">Lock charts</span>
+              <span
+                className="ls-info"
+                title="Locks the charts together: panning, zooming, or changing the timeframe on any chart applies to all of them, as if your cursor were on each. Each chart keeps its own symbol."
+              >
+                ⓘ
+              </span>
+            </label>
+            <div className={`ls-group${locked ? " ls-disabled" : ""}`}>
             <label>
               <input
                 type="checkbox"
-                checked={syncSymbol}
+                checked={locked ? false : syncSymbol}
+                disabled={locked}
                 onChange={() => onToggleSync("symbol")}
               />
               <span className="ls-label">Sync symbol</span>
@@ -126,7 +150,8 @@ export default function LayoutPicker({
             <label>
               <input
                 type="checkbox"
-                checked={syncInterval}
+                checked={locked ? true : syncInterval}
+                disabled={locked}
                 onChange={() => onToggleSync("interval")}
               />
               <span className="ls-label">Sync interval</span>
@@ -140,7 +165,8 @@ export default function LayoutPicker({
             <label>
               <input
                 type="checkbox"
-                checked={syncCrosshair}
+                checked={locked ? true : syncCrosshair}
+                disabled={locked}
                 onChange={() => onToggleSync("crosshair")}
               />
               <span className="ls-label">Sync crosshair</span>
@@ -151,6 +177,22 @@ export default function LayoutPicker({
                 ⓘ
               </span>
             </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={locked ? true : syncTime}
+                disabled={locked}
+                onChange={() => onToggleSync("time")}
+              />
+              <span className="ls-label">Sync date range</span>
+              <span
+                className="ls-info"
+                title="Scrolling or zooming the time axis in one chart shows the same date range on the others (matched by time, across intervals)."
+              >
+                ⓘ
+              </span>
+            </label>
+            </div>
           </div>
         </div>
       )}

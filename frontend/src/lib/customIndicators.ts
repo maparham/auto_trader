@@ -11,13 +11,14 @@ import {
   IndicatorSeries,
   LineType,
   type Indicator,
-  type IndicatorCreate,
+  type IndicatorTemplate,
   type IndicatorDrawParams,
   type IndicatorTooltipData,
   type KLineData,
   type SmoothLineStyle,
 } from "klinecharts";
 import { maSeries, alignHtfToChart, priceOf, type MaOptions, type PriceSource } from "./mtf";
+import { hexToRgba } from "./lineStyle";
 
 // Per-indicator legend behavior, attached to every indicator at creation
 // (Toolbar.createIndicatorOn). klinecharts only exposes per-indicator legend
@@ -374,11 +375,11 @@ export interface PrevHlExtend {
 //               week, flat across the current period and stepping at its boundary.
 //  - "anchor": the cumulative high/low since a user-picked date-time (extendData
 //               .anchorTs). Like an Anchored VWAP but for high/low; no line before it.
-const PREV_HL_PERIODS = [
-  { kind: "rolling" as const, hi: "rollingHigh", lo: "rollingLow" },
-  { kind: "day" as const, hi: "dayHigh", lo: "dayLow" },
-  { kind: "week" as const, hi: "weekHigh", lo: "weekLow" },
-  { kind: "anchor" as const, hi: "anchorHigh", lo: "anchorLow" },
+const PREV_HL_PERIODS: PrevHlBoundary[] = [
+  { kind: "rolling", hi: "rollingHigh", lo: "rollingLow" },
+  { kind: "day", hi: "dayHigh", lo: "dayLow" },
+  { kind: "week", hi: "weekHigh", lo: "weekLow" },
+  { kind: "anchor", hi: "anchorHigh", lo: "anchorLow" },
 ];
 
 // Period boundaries are bucketed in the CHART'S timezone (the same IANA zone the
@@ -577,7 +578,7 @@ function estimateBarMs(dataList: KLineData[]): number {
   return deltas[deltas.length >> 1];
 }
 
-type PrevHlBoundary = { kind: PeriodKind; hi: string; lo: string };
+type PrevHlBoundary = { kind: PeriodKind; hi: keyof PrevHlPoint; lo: keyof PrevHlPoint };
 
 // ANCHORED count mode (day / week): the window is the last N COMPLETED calendar
 // buckets that actually have data — empty buckets are skipped, so a Monday's
@@ -819,6 +820,132 @@ export function prevHlLegendSummary(ext: PrevHlExtend): string {
     if (ts > 0) parts.push(`since ${prevHlAnchorToInput(ts, ext.tz).replace("T", " ")}`);
   }
   return parts.join(", ");
+}
+
+// ---------------------------------------------------------------------------
+// Curve-end labels (generic, all indicators)
+// ---------------------------------------------------------------------------
+// When an indicator is selected or highlighted, a small DOM pill is drawn at the
+// right (or left) end of each plotted curve showing that curve's KEY parameter —
+// e.g. Prev HL's day-high/low curves get "1d", week gets "1w", a 4-hour rolling
+// window gets "4h". The text is per-figure; the position (side + vertical align)
+// is configured per instance in the settings modal and lives on extendData under
+// the generic `curveLabels` key. Enabled by default.
+
+export type CurveLabelSide = "right" | "left";
+export type CurveLabelAlign = "above" | "center" | "below";
+
+// A pill's placement: which end of the curve it sits past + its vertical align.
+export interface CurveLabelPos {
+  side?: CurveLabelSide; // which end of the curve the pill sits past (default right)
+  align?: CurveLabelAlign; // vertical placement vs the curve end (default center)
+}
+
+export interface CurveLabelConfig {
+  // Default-ON: treat absent as enabled, but an explicit false must persist (the
+  // rehydrate guard in the settings modal writes false rather than deleting).
+  enabled?: boolean;
+  // When true, labels stay visible permanently; otherwise (default) they show only
+  // while the indicator is selected or highlighted (hover/legend).
+  always?: boolean;
+  // Position is configured SEPARATELY for the High curves and the Low curves, so a
+  // user can e.g. put High labels above-right and Low labels below-right.
+  high?: CurveLabelPos;
+  low?: CurveLabelPos;
+  // LEGACY flat fields (pre-split). Read-only back-compat: an old config with a
+  // single side/align seeds BOTH high and low. New saves use high/low only.
+  side?: CurveLabelSide;
+  align?: CurveLabelAlign;
+}
+
+export interface ResolvedCurveLabels {
+  enabled: boolean;
+  always: boolean;
+  high: Required<CurveLabelPos>;
+  low: Required<CurveLabelPos>;
+}
+
+// Read the curve-label config off any indicator's extendData with defaults applied.
+// A legacy flat side/align seeds both high and low (so older saved instances keep
+// their look); otherwise each defaults to right/center.
+export function curveLabelConfig(extendData: unknown): ResolvedCurveLabels {
+  const c = (extendData as { curveLabels?: CurveLabelConfig } | undefined)?.curveLabels ?? {};
+  const resolve = (pos: CurveLabelPos | undefined): Required<CurveLabelPos> => ({
+    side: pos?.side ?? c.side ?? "right",
+    align: pos?.align ?? c.align ?? "center",
+  });
+  return {
+    enabled: c.enabled ?? true,
+    always: c.always ?? false,
+    high: resolve(c.high),
+    low: resolve(c.low),
+  };
+}
+
+// Which placement (high vs low) a figure uses, by its key convention (…High/…Low).
+// Indicators without a Low curve fall through to the high placement.
+export function curveLabelPosFor(cfg: ResolvedCurveLabels, figKey: string): Required<CurveLabelPos> {
+  return /low$/i.test(figKey) ? cfg.low : cfg.high;
+}
+
+// Abbreviate a rolling unit, matching the chart's own interval buttons (1m / 4H /
+// 3D / 1W — lowercase minute, uppercase H/D/W). "bars" has no interval button, so
+// "bar" reads clearest.
+const ROLLING_UNIT_ABBR: Record<PrevHlRollingUnit, string> = {
+  minute: "m",
+  hour: "H",
+  day: "D",
+  week: "W",
+  bars: "bar",
+};
+
+// Per-FIGURE key parameter, as a readable tag (e.g. "3D range low"). Returns null
+// for figures/indicators that have no meaningful per-curve parameter (no pill drawn).
+// that have no meaningful per-curve parameter (no pill drawn). This is the one
+// generic seam: a switch on indType, each indicator contributing its own mapping.
+// Prev HL is the first consumer; add cases here for other indicators over time.
+export function curveLabel(
+  indType: string,
+  figKey: string,
+  extendData: unknown,
+): string | null {
+  if (indType === "PREV_HL") return prevHlCurveLabel(figKey, extendData as PrevHlExtend);
+  return null;
+}
+
+// Prev HL: each curve's tag spells out its kind + lookback + which extreme — e.g.
+// "3D range low" (low of a 3-day rolling window), "prev 1D high" (previous day's
+// high), "prev 2W low", "since 02-01 high" (anchored). The kind/length is shared by
+// the boundary's High/Low pair; the trailing "high"/"low" comes from the figure key.
+function prevHlCurveLabel(figKey: string, ext: PrevHlExtend): string | null {
+  const lengths = ext.lengths ?? {};
+  const rollingUnit: PrevHlRollingUnit = ext.rollingUnit ?? "hour";
+  const count = (k: PeriodKind) => Math.max(1, Math.floor(lengths[k] ?? 1));
+  const p = PREV_HL_PERIODS.find((x) => x.hi === figKey || x.lo === figKey);
+  if (!p) return null;
+  const side = p.hi === figKey ? "high" : "low";
+  let base: string;
+  switch (p.kind) {
+    case "rolling":
+      base = `${count("rolling")}${ROLLING_UNIT_ABBR[rollingUnit]} range`;
+      break;
+    case "day":
+      base = `prev ${count("day")}D`;
+      break;
+    case "week":
+      base = `prev ${count("week")}W`;
+      break;
+    case "anchor": {
+      const ts = Number(ext.anchorTs) || 0;
+      if (ts <= 0) return null;
+      // Month-day of the anchor (the curve runs from that date); keep it compact.
+      base = `since ${prevHlAnchorToInput(ts, ext.tz).slice(5, 10)}`;
+      break;
+    }
+    default:
+      return null;
+  }
+  return `${base} ${side}`;
 }
 
 // One hue per boundary so minute/hour/day/week/interval read apart at a glance; the
@@ -1243,14 +1370,6 @@ function dashFor(style: RsiLineStyle): number[] {
   return style === "dashed" ? [5, 4] : style === "dotted" ? [1, 3] : [];
 }
 
-// "#RRGGBB" → "rgba(r,g,b,a)"; passes through anything that isn't a 6-digit hex.
-function hexToRgba(hex: string, alpha: number): string {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
-  if (!m) return hex;
-  const n = parseInt(m[1], 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
-}
-
 // TradingView's RSI pane background: a faint purple region between the upper/lower
 // levels, solid boundary lines at each band level, and a faint midline. Pane-local
 // coords (see the convertToPixel note in the divergence draw); clamped to the pane.
@@ -1440,7 +1559,7 @@ function drawRsiDivergences(params: IndicatorDrawParams<RsiPoint>): boolean {
 // extendData (MaExtend).
 export type CustomIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI";
 
-export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorCreate, "name">> = {
+export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate, "name">> = {
   EMA: {
     shortName: "EMA",
     series: IndicatorSeries.Price,

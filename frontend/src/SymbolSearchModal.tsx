@@ -14,6 +14,7 @@ import {
   searchInstruments,
   type Instrument,
 } from "./lib/feed";
+import CloseButton from "./CloseButton";
 import SymbolIcon from "./SymbolIcon";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 
@@ -150,9 +151,7 @@ export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
       <div className="modal symsearch" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head symsearch-head">
           <span>Symbol search</span>
-          <button className="modal-close" onClick={onClose} title="Close">
-            ✕
-          </button>
+          <CloseButton onClick={onClose} />
         </div>
 
         <div className="symsearch-input">

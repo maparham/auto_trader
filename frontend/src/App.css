@@ -1,7 +1,14 @@
 .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
 .toolbar {
-  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px;
+}
+/* Hairline rule separating functional clusters (symbol | intervals | study tools |
+   chart actions). Group spacing is tight (6px); these dividers carry the grouping
+   so controls read as related sets rather than one equidistant float. */
+.toolbar .tb-div {
+  flex: 0 0 auto; width: 1px; height: 20px; margin: 0 4px;
+  background: var(--border);
 }
 .toolbar label { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
 .toolbar input, .toolbar select {
@@ -47,10 +54,15 @@
 /* TradingView-style chart tabs along the top (topmost strip, above the toolbar).
    Each tab = one chart view (instrument + interval). Tabs are carded pills; the
    active tab carries an accent-tinted fill + full accent border. Drag-to-reorder. */
+/* The tab bar rides on --bg (the app's frame color), one step below the chips'
+   --surface-2 fill, so the tabs read as raised cards and the strip recedes. This
+   lets the toolbar below — on the lighter --surface — be the leading control
+   surface rather than a twin of the tab bar. No bottom border: the fill step
+   between --bg and the toolbar's --surface is the separation. */
 .tab-bar {
   display: flex; align-items: stretch;
   flex-shrink: 0; padding: 0 6px; min-height: 34px;
-  background: var(--surface); border-bottom: 1px solid var(--border);
+  background: var(--bg);
 }
 /* The tabs scroll horizontally on overflow; the trailing workspace actions stay
    pinned to the right and never scroll out of view. */
@@ -81,8 +93,9 @@
    and non-interactive — it rides above the tab content. */
 .tab-closed-badge {
   position: absolute; top: 1px; left: 2px;
-  font-size: 9px; line-height: 1; pointer-events: none;
+  line-height: 0; pointer-events: none; color: var(--text-dim);
 }
+.tab-closed-badge svg { display: block; }
 /* Hover: layer the translucent --hover overlay ON TOP of the card's own fill
    (not replace it) so the chip stays a card and reads as raised, not receding —
    the single-value shorthand would composite --hover over the bar instead. */
@@ -439,7 +452,13 @@
   padding: 14px 16px; border-bottom: 1px solid var(--border);
   cursor: move; user-select: none;
 }
-.modal-close { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; }
+.modal-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border-radius: 4px;
+  background: transparent; border: none; color: var(--text-dim); cursor: pointer;
+}
+.modal-close svg { display: block; }
+.modal-close:hover { background: var(--hover); color: var(--text); }
 .setting-row {
   display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px;
 }
@@ -483,7 +502,12 @@
    align their label to the top. */
 .al-row-top { align-items: flex-start; }
 .al-row-top > span { padding-top: 6px; }
-.al-source { flex: 1; max-width: 140px; }
+/* Condition row: source + operator side by side under one label (no zigzag /
+   orphaned right-floated select). Source is a fixed narrow width; the operator
+   takes the rest. */
+.al-cond { flex: 1; display: flex; gap: 8px; align-items: center; }
+.al-cond .al-source { flex: 0 0 110px; }
+.al-cond .al-operator { flex: 1; }
 .al-divider { height: 1px; background: var(--border); margin: 4px 0; }
 .al-message {
   flex: 1; resize: vertical; min-height: 34px; font: inherit;
@@ -499,7 +523,7 @@
   border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; cursor: pointer;
 }
 .al-expiry-trigger.open { border-color: var(--accent); }
-.al-expiry-caret { color: var(--text-dim); font-size: 12px; }
+.al-expiry-caret { flex: 0 0 auto; color: var(--text-dim); display: block; }
 .al-expiry-menu {
   position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin-top: 4px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
@@ -512,7 +536,11 @@
 }
 .al-expiry-opt:hover { background: var(--hover); }
 .al-expiry-opt.sel { border-color: var(--accent); }
-.al-expiry-opt-time { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.al-expiry-opt-time {
+  display: inline-flex; align-items: center; justify-content: flex-end;
+  color: var(--text-dim); font-size: 12px; white-space: nowrap;
+}
+.al-expiry-opt-time svg { display: block; }
 .al-expiry-opt.custom { margin-top: 4px; background: var(--hover); }
 .al-datetime {
   flex: none; width: 100%; background: var(--input-bg); color: var(--text);
@@ -537,9 +565,11 @@
 .modal-foot .ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
 /* Edit-mode delete button, pinned to the footer's far left (TradingView). */
 .modal-foot .al-trash {
-  margin-right: auto; background: transparent; border: 1px solid var(--border);
+  margin-right: auto; display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--border);
   color: var(--text-dim); cursor: pointer;
 }
+.modal-foot .al-trash svg { display: block; }
 .modal-foot .al-trash:hover { color: var(--danger, #e5534b); border-color: var(--danger, #e5534b); }
 /* TradingView-style "Defaults" menu in the indicator settings footer. Pinned to the
    far left (Cancel/Ok stay right); its dropdown opens UPWARD since the footer sits at
@@ -598,6 +628,9 @@
 .ind-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 120px; }
 .ind-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .ind-row > label { color: var(--text-dim); }
+/* Labels never wrap to a second line — the row's controls absorb the squeeze. */
+.ind-row > label, .ind-row-head label, .ind-row-head > span { white-space: nowrap; flex-shrink: 0; }
+.ind-row-head { flex-shrink: 0; }
 .ind-row input[type="number"], .ind-row input[type="text"], .ind-row select,
 .ind-row input[type="datetime-local"] {
   width: 130px; background: var(--input-bg); color: var(--text);
@@ -605,6 +638,9 @@
 }
 /* The anchor date-time needs more room than the 130px default. */
 .ind-row input[type="datetime-local"].ind-anchor-input { width: 190px; }
+/* Selects whose longest option doesn't fit the 130px default (e.g. AVWAP's
+   "Standard Deviation"). Stays within the 360px modal's right column. */
+.ind-row select.ind-wide-select { width: 160px; }
 .ind-row input[type="datetime-local"]:disabled { opacity: 0.5; cursor: not-allowed; }
 .ind-row input[type="number"]:disabled, .ind-row select:disabled { opacity: 0.5; cursor: not-allowed; }
 .ind-line-controls { display: inline-flex; align-items: center; gap: 8px; }
@@ -616,9 +652,9 @@
 /* PREV_HL lookback row: compact period count + a wider aggregation-function select
    (Max/Min · Average · Median) than the Style-tab thickness select. */
 .ind-prevhl-controls input[type="number"] { width: 56px; }
-.ind-prevhl-controls select { width: 104px; }
+.ind-prevhl-controls select { width: 96px; }
 /* Intraday unit (minutes/hours) is narrow — it shouldn't take the agg-select width. */
-.ind-prevhl-controls .ind-unit-select { width: 74px; }
+.ind-prevhl-controls .ind-unit-select { width: 70px; }
 /* PREV_HL Style row pairs High + Low on one line: boundary label, then a
    "High [color][size]  Low [color][size]" group, packed left (not space-between). */
 .ind-style-pair { justify-content: flex-start; gap: 10px; }
@@ -629,6 +665,17 @@
 .ind-style-pair .ind-pair-side { color: var(--text-faint); font-size: 12px; }
 .ind-style-pair .ind-pair-side-lo { margin-left: 6px; }
 .ind-style-pair .ind-line-controls select { width: 52px; }
+/* PREV_HL Style rows align to a 3-column grid: label | High | Low. The Show/Position
+   rows left-anchor their controls at the same x as the "High" swatch column (the
+   124px label gutter), so the whole Style tab reads as one consistent grid. */
+.ind-prevhl-grid { justify-content: flex-start; }
+.ind-prevhl-grid > .ind-row-head { flex: 0 0 108px; }
+/* Single-control row (Show): span both grid columns so it left-aligns with High. */
+.ind-prevhl-grid > select { width: 198px; }
+/* Curve-label "Position": two side-by-side selects (end + alignment), each sized to
+   one grid column (High / Low) so they line up under those swatches. */
+.ind-curvelabel-pos .ind-curvelabel-selects { display: flex; gap: 6px; }
+.ind-curvelabel-pos .ind-curvelabel-selects select { width: 96px; }
 /* RSI Style tab: lay every row's controls on ONE fixed grid — swatch | level — so
    the columns line up across rows (TradingView-style). Colour + line style now live
    inside the single picker swatch; band rows add a level, others leave it empty. */
@@ -756,7 +803,10 @@
 .price-tag {
   /* Width is set imperatively (ChartCore) to the price-axis column width so the
      pill fills the column and never spills left into the chart. */
-  position: absolute; right: 0; z-index: 45; transform: translateY(-50%);
+  /* z-index 47 keeps the live price label above the alert axis tag (45) and the
+     descriptive alert pill (46) so it's never hidden when an alert level lands at
+     the same price — the live price is the authoritative read and stays on top. */
+  position: absolute; right: 0; z-index: 47; transform: translateY(-50%);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 40px; padding: 0 6px; border-radius: 3px; pointer-events: none; overflow: hidden;
   background: var(--accent); color: var(--accent-text);
@@ -764,6 +814,11 @@
 }
 /* Price-only (no countdown): half the height, still even. */
 .price-tag:not(:has(.pt-cd)) { height: 20px; }
+/* Live pill matches the dotted last-price line's up/down color (TradingView keeps
+   the line and its axis label one color), instead of a fixed accent. --accent above
+   stays as the fallback if direction is ever unknown. */
+.price-tag.up { background: var(--pos); }
+.price-tag.down { background: var(--neg); }
 .price-tag.stale { background: var(--text-faint); }
 .price-tag .pt-price { font-size: 12px; font-weight: 700; }
 .price-tag .pt-cd { font-size: 10px; opacity: 0.95; text-align: center; }
@@ -791,14 +846,22 @@
 
 /* TradingView-style alert label on the axis (one per alert line; tracks drags).
    Even height (20px) for the same translateY(-50%) crispness reason. */
+/* The tag carries the alert line's amber identity (border + bell) so the gray-bodied
+   tag reads as belonging to its amber dashed line, not a neutral chip. The amber here
+   mirrors ALERT_LINE_COLOR (#f5a623) in lib/overlays.ts — keep them in sync. */
 .alert-tag {
   position: absolute; right: 0; z-index: 45; transform: translateY(-50%);
   display: flex; align-items: center; gap: 3px; pointer-events: none;
   height: 20px; padding: 0 5px 0 4px; border-radius: 3px;
-  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); border: 1px solid #f5a623;
   font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
-.alert-tag .at-bell { font-size: 9px; line-height: 1; }
+.alert-tag .at-bell { display: inline-flex; align-items: center; color: #f5a623; }
+.alert-tag .at-bell svg { display: block; }
+/* While its line is click-selected the alert axis tag rises above the live price
+   label (47) so the selected alert reads clearly; otherwise it stays at 45, below
+   the price label, which always wins. Mirrors .alert-pill.selected. */
+.alert-tag.selected { z-index: 48; }
 
 /* TV-style descriptive pill on the alert line (hover/selected). Unlike the
    axis tag this is interactive (delete button), so it opts back into pointer
@@ -811,6 +874,11 @@
   border: 1px solid var(--border); box-shadow: 0 1px 4px var(--shadow);
   font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
 }
+/* While the alert line is click-selected it's the active interaction, so its
+   descriptive pill (with the reachable delete/toggle controls) rises above the
+   live price label (47). A merely-hovered pill stays at 46 — below the price
+   label — so a passing cursor never hides the live price. */
+.alert-pill.selected { z-index: 48; }
 /* Drag affordance: hovering an alert line shows the up/down-arrow resize cursor
    over the canvas, signalling the line drags vertically (klinecharts sets an
    inline crosshair cursor, so override with !important). */
@@ -897,6 +965,14 @@
   font-family: "Helvetica Neue", -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 12px; line-height: 1; color: var(--text);
   max-width: 70%;
+  /* Legibility halo: the idle legend overlays the candles directly (transparent,
+     pointer-events:none), so dim mid-tone text can clash with green/red bodies in
+     scroll states where price sits top-left. A soft bg-colored halo lifts the text
+     off whatever's behind it — invisible over the empty dark/light background, only
+     doing work over candles. The glyphs themselves stay crisp (only a halo is added
+     behind). Hover/selected rows get a solid --surface plate instead, so they drop
+     the halo below. */
+  text-shadow: 0 0 2px var(--bg), 0 0 2px var(--bg);
 }
 /* Sub-pane indicator legend (Volume/MACD/RSI…): same card as the candle legend, but
    positioned at each pane's top (set inline by ChartCore from getSize). The `top:6px`
@@ -973,6 +1049,9 @@
 .cl-ind.cl-selected {
   background: var(--surface);
   border-color: var(--text-dim);
+  /* Solid plate now backs the text, so the over-candles halo is redundant — drop
+     it so the card reads clean. */
+  text-shadow: none;
 }
 /* After the gray rule so a selected indicator keeps its blue border even while its
    curve (or row) is hovered. */
@@ -1021,10 +1100,10 @@
 .toolbar button.sym {
   display: inline-flex; align-items: center; gap: 7px;
   font-weight: 700; color: var(--text); cursor: pointer;
-  background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 5px 10px; font-size: 14px; transition: background 0.12s, border-color 0.12s;
+  background: transparent; border: none; border-radius: 6px;
+  padding: 5px 10px; font-size: 14px; transition: background 0.12s;
 }
-.toolbar button.sym:hover { background: var(--hover-strong); border-color: var(--accent); }
+.toolbar button.sym:hover { background: var(--hover-strong); }
 .toolbar button.sym .sym-caret { color: var(--text-dim); transition: color 0.12s; margin-left: 1px; }
 .toolbar button.sym:hover .sym-caret { color: var(--accent); }
 /* Instrument logo / glyph in the chip (18px round): glyph base + logo overlay. */
@@ -1043,23 +1122,29 @@
 }
 .periods { display: inline-flex; gap: 2px; }
 .periods button {
-  background: var(--input-bg); color: var(--text-dim); border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim); border: none;
   border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;
 }
 .periods button:hover:not(.on) { background: var(--hover); color: var(--text); }
 /* Selected timeframe: monochrome gray fill (toolbar stays black/white/gray), not
-   the blue accent. Brighter text + border so it still reads as "selected". */
-.periods button.on { background: var(--hover-strong); color: var(--text); border-color: var(--text-dim); }
+   the blue accent — matches the borderless .menu/.scale active state. */
+.periods button.on { background: var(--hover-strong); color: var(--text); }
 
 .menu { position: relative; }
 /* TradingView-style: borderless, transparent; subtle gray rounded highlight on
    hover and while the dropdown is open (.on). */
 .menu > button {
+  display: inline-flex; align-items: center; gap: 4px;
   background: transparent; color: var(--text); border: none;
   border-radius: 6px; padding: 5px 10px; cursor: pointer; transition: background 0.12s;
 }
 .menu > button:hover { background: var(--hover); }
 .menu > button.on { background: var(--hover-strong); }
+/* Dropdown caret (shared SVG chevron). Dimmed at rest like the symbol chip's,
+   brightening when the menu is hovered or open. */
+.toolbar .tb-caret { flex: 0 0 auto; color: var(--text-dim); transition: color 0.12s; }
+.menu > button:hover .tb-caret,
+.menu > button.on .tb-caret { color: var(--text); }
 .dropdown {
   position: absolute; top: 115%; left: 0; z-index: 100; min-width: 220px; padding: 6px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
@@ -1184,11 +1269,23 @@
   margin-left: auto; color: var(--text-faint); font-size: 12px; cursor: help;
 }
 .layout-sync .ls-info:hover { color: var(--text-dim); }
+/* "Lock charts" master toggle sits above the four individual links, slightly
+   emphasised, with a divider separating it from the group it overrides. */
+.layout-sync .ls-lock .ls-label { font-weight: 600; color: var(--text); }
+.layout-sync .ls-group {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--border);
+}
+/* While locked the four links are forced and shown greyed/non-interactive. */
+.layout-sync .ls-group.ls-disabled { opacity: 0.45; }
+.layout-sync .ls-group.ls-disabled label,
+.layout-sync .ls-group.ls-disabled input { cursor: not-allowed; }
 
 /* Grouped interval (timeframe) menu. The toggle is a slim chevron sized to sit
    flush with the quick-bar buttons; the dropdown groups intervals TV-style. */
 .interval-menu { display: inline-flex; }
 .interval-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
   background: transparent; color: var(--text-dim); border: none;
   border-radius: 6px; padding: 4px 6px; cursor: pointer; font-size: 12px; line-height: 1;
   transition: background 0.12s;
@@ -1228,15 +1325,16 @@
 /* Theme toggle: a visible round bordered icon button (more noticeable than a
    bare borderless emoji), pinned to the far right. Keeps the gray hover. */
 .toolbar .theme-toggle,
-.toolbar .alerts-toggle {
+.toolbar .alerts-toggle,
+.toolbar .maximize-toggle {
   display: inline-flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; padding: 0; font-size: 16px; line-height: 1;
   border: 1px solid var(--border); border-radius: 50%;
   background: var(--surface-2);
 }
-/* The alerts bell is now the last (and only) item pushed to the far right of the
-   toolbar; the workspace-level controls moved up to the tab bar. */
-.toolbar .alerts-toggle { margin-left: auto; }
+/* Right-aligned cluster: Backtest is the first item pushed to the far right, so
+   it + the bell + the maximize toggle group together at the bar's end. */
+.toolbar .backtest { margin-left: auto; }
 /* Trigger button: icon + label + caret inline (the icon inherits the dimmed/
    accent treatment from .tmpl-ic; caret matches the symbol button's). */
 .toolbar .tmpl-menu button { display: inline-flex; align-items: center; gap: 6px; }
@@ -1246,12 +1344,16 @@
 /* Right-aligned dropdown (opens toward the bar's left so it doesn't spill off the
    right edge); shared by the template + layout pickers. */
 .dropdown-right { left: auto; right: 0; }
-.toolbar .alerts-toggle { color: var(--text-dim); }
-.toolbar .alerts-toggle svg { display: block; }
+.toolbar .alerts-toggle,
+.toolbar .maximize-toggle { color: var(--text-dim); }
+.toolbar .alerts-toggle svg,
+.toolbar .maximize-toggle svg { display: block; }
 .toolbar .theme-toggle:hover:not(:disabled),
-.toolbar .alerts-toggle:hover:not(:disabled) { background: var(--hover-strong); border-color: var(--text-dim); }
-/* Active (panel open): accent fill so it reads as "on", like other toggles. */
-.toolbar .alerts-toggle.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.toolbar .alerts-toggle:hover:not(:disabled),
+.toolbar .maximize-toggle:hover:not(:disabled) { background: var(--hover-strong); border-color: var(--text-dim); }
+/* Active (panel open / maximized): accent fill so it reads as "on". */
+.toolbar .alerts-toggle.on,
+.toolbar .maximize-toggle.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 /* Crosshair cue while picking an AVWAP anchor bar. */
 .anchoring, .anchoring canvas { cursor: crosshair !important; }
 
@@ -1332,7 +1434,7 @@
 .layout-mgr-name-btn.dirty .layout-mgr-label { color: var(--accent); }
 
 /* Dropdown: right-aligned below the caret. */
-.layout-mgr-menu { left: auto; right: 0; min-width: 270px; }
+.layout-mgr-menu { left: auto; right: 0; min-width: 210px; }
 
 /* ── Top action rows (Save / Autosave / Rename / Make a copy) ── */
 .layout-mgr-actions-list { list-style: none; padding: 4px 0; margin: 0; }
@@ -1410,9 +1512,11 @@
 
 /* Per-row hover actions (★ rename delete). */
 .layout-mgr-row-actions {
-  display: flex; gap: 2px; flex: none; opacity: 0; transition: opacity 0.1s;
+  display: flex; gap: 2px; flex: none;
 }
-.layout-mgr-list li:hover .layout-mgr-row-actions { opacity: 1; }
+/* Rename/delete fade in on row hover; the default-star (.act-star) stays put. */
+.layout-mgr-row-actions .act:not(.act-star) { opacity: 0; transition: opacity 0.1s; }
+.layout-mgr-list li:hover .layout-mgr-row-actions .act:not(.act-star) { opacity: 1; }
 .layout-mgr-row-actions .act {
   width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center;
   justify-content: center; background: transparent; border: none; border-radius: 4px;
@@ -1421,7 +1525,16 @@
 .layout-mgr-row-actions .act:hover { background: var(--hover-strong); color: var(--text); }
 .layout-mgr-row-actions .act.on { color: var(--accent); opacity: 1; }
 .layout-mgr-list li .layout-mgr-row-actions .act.on { opacity: 1; }
-.layout-mgr-list li:has(.act.on) .layout-mgr-row-actions { opacity: 1; }
+
+/* The default-star toggle stays visible even when the row isn't hovered, and
+   reads clearly: a dim hollow ☆ to invite a click, a bright gold ★ when set. */
+.layout-mgr-row-actions .act-star { opacity: 0.55; font-size: 14px; }
+.layout-mgr-list li:hover .layout-mgr-row-actions .act-star { opacity: 0.85; }
+.layout-mgr-row-actions .act-star:hover { color: #f5c518; opacity: 1; }
+.layout-mgr-row-actions .act-star.on,
+.layout-mgr-list li:hover .layout-mgr-row-actions .act-star.on {
+  color: #f5c518; opacity: 1; text-shadow: 0 0 6px rgba(245, 197, 24, 0.5);
+}
 
 /* Empty state. */
 .layout-mgr-empty {

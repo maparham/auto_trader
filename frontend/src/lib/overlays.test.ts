@@ -40,6 +40,10 @@ class FakeChart {
     if (cur) this.overlays.set(o.id, { ...cur, ...o });
   }
   removeOverlay(id: string) { this.overlays.delete(id); }
+  // hoverAlert toggles the crosshair's horizontal guide via setStyles; the mock
+  // records the last styles so it stays faithful (no assertions need it yet).
+  styles: Record<string, unknown> = {};
+  setStyles(s: Record<string, unknown>) { this.styles = { ...this.styles, ...s }; }
 }
 
 function setup() {

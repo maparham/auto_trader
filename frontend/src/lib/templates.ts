@@ -27,6 +27,7 @@ import {
   loadDefaultTemplate,
   type SymbolTemplate,
   type DefaultTemplate,
+  type SavedIndicatorConfig,
 } from "./persist";
 import { applyIndicator, removeIndicatorById } from "./indicators";
 

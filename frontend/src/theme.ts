@@ -74,6 +74,10 @@ export interface Settings {
   // Time-axis timestamp format (ticks + crosshair label).
   clock: Clock;
   dateFormat: DateFormat;
+  // Prefix day-granularity timestamps with the weekday ("Fri 2026-07-10"),
+  // orthogonal to dateFormat. Off by default so the default preset stays
+  // byte-for-byte identical to klinecharts' built-in formatter.
+  showWeekday: boolean;
   // Which side of the spread candles render from (bid/mid/ask). Global.
   priceSide: PriceSide;
   // Live bid & ask display: off / axis labels / labels + lines. Global.
@@ -115,6 +119,7 @@ export const DEFAULT_SETTINGS: Settings = {
   timezone: "",
   clock: "24h",
   dateFormat: "ymd",
+  showWeekday: true,
   priceSide: "mid",
   bidAsk: "off",
   bidAskStyle: DEFAULT_BID_ASK_STYLE,

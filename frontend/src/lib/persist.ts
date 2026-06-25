@@ -359,6 +359,16 @@ export interface ChartTab {
   syncSymbol?: boolean;
   syncInterval?: boolean;
   syncCrosshair?: boolean;
+  // When on, scrolling/zooming the time axis in the focused chart matches the same
+  // wall-clock window on the tab's other cells (cross-interval; mapped by timestamp).
+  syncTime?: boolean;
+  // Master "lock charts" override. When on, every interaction with the cell under
+  // the cursor (TF change, pan, zoom, crosshair) mirrors to the tab's other cells
+  // as if the cursor were on each of them — each cell keeps its own symbol. It's a
+  // derived override of the four flags above (interval/crosshair/time forced on,
+  // symbol forced off) so unlocking restores their prior state for free; the flags
+  // themselves are never mutated. See the effective* helpers in App.tsx.
+  locked?: boolean;
 }
 
 // Pre-cells persisted tab shape (one chart per tab). Kept only to migrate.
@@ -587,6 +597,8 @@ export function cloneWorkspace(
       syncSymbol: t.syncSymbol,
       syncInterval: t.syncInterval,
       syncCrosshair: t.syncCrosshair,
+      syncTime: t.syncTime,
+      locked: t.locked,
     };
   });
   const srcActiveIdx = src.tabs.findIndex((t) => t.id === src.activeTabId);

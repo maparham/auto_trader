@@ -121,7 +121,17 @@ class BacktestEngine:
         )
         result.net_pnl = realized + final_unrealized
         result.n_trades = len(result.trades)
-        wins = sum(1 for t in result.trades if t.pnl > 0)
+        # Trade.pnl is GROSS (price move only); net_pnl is net of per-fill
+        # commission. Count a trade as a win only if it clears its round-trip cost
+        # (one commission on entry + one on exit), so win_rate stays consistent
+        # with net_pnl instead of counting commission-eaten trades as wins.
+        # NB: this 2*commission cost is exact for full-close exits (every strategy
+        # here closes its whole position per fill). A strategy that scales out in
+        # partial closes would book one shared entry commission across several exit
+        # trades, so each would carry less than a full round trip — revisit this if
+        # such a strategy is added.
+        round_trip_cost = 2 * self.commission
+        wins = sum(1 for t in result.trades if t.pnl > round_trip_cost)
         result.win_rate = wins / result.n_trades if result.n_trades else 0.0
         return result
 

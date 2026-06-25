@@ -2,8 +2,8 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Chart } from "klinecharts";
 import ChartGrid from "./ChartGrid";
 import Toolbar from "./Toolbar";
-import BacktestButton from "./BacktestButton";
 import LayoutPicker from "./LayoutPicker";
+import { rangeSync, readVisibleRange } from "./lib/chartSync";
 import ThemeToggle from "./ThemeToggle";
 import SettingsModal from "./Settings";
 import AlertModal from "./AlertModal";
@@ -85,6 +85,16 @@ function newCellId(): string {
 
 // Build a one-cell tab. The first cell reuses the tab's primary scope (`tab.<id>`)
 // so it lines up with the pre-cells / migrated key namespace.
+// Effective per-tab sync flags. The "lock charts" master override doesn't mutate
+// the four underlying toggles — it derives over them — so unlocking restores their
+// prior state for free. Locked = interval/crosshair/date-range forced on (full
+// mirror) and symbol forced off (each cell keeps its own instrument). Every place
+// that consumes a sync flag reads through these instead of the raw field.
+const effectiveSyncSymbol = (t: ChartTab) => !t.locked && !!t.syncSymbol;
+const effectiveSyncInterval = (t: ChartTab) => !!t.locked || !!t.syncInterval;
+const effectiveSyncCrosshair = (t: ChartTab) => !!t.locked || !!t.syncCrosshair;
+const effectiveSyncTime = (t: ChartTab) => !!t.locked || !!t.syncTime;
+
 function makeTab(symbol: Instrument, period: Period): ChartTab {
   const id = newTabId();
   const cid = newCellId();
@@ -124,6 +134,10 @@ function resolveStartup(): { ws: Workspace; activeLayoutId: string | null } {
 export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
+  // Maximized view: hides the tab bar so the focused tab's chart reclaims that
+  // vertical space. The per-chart toolbar stays (it carries the un-maximize
+  // toggle + Backtest), so this is the only chrome that survives the switch.
+  const [maximized, setMaximized] = useState(false);
   // Toolbar gear + chart context menu request the Settings modal via a signal.
   useEffect(() => settingsRequest.subscribe(() => setShowSettings(true)), []);
   const [alertReq, setAlertReq] = useState(alertModalRequest.value);
@@ -286,7 +300,10 @@ export default function App() {
       const lead = t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0];
       if (lead) epics.add(lead.symbol.epic);
     }
-    return [...epics].sort().join(",");
+    // JSON (not a delimiter-joined string) so the key round-trips cleanly back to
+    // an array regardless of what characters an epic contains — a comma in an epic
+    // would corrupt a comma-joined key.
+    return JSON.stringify([...epics].sort());
   }, [tabs]);
 
   // Poll open/closed status for every tab's lead epic, so the closed badge stays
@@ -295,7 +312,7 @@ export default function App() {
   // shared-broker polling can trigger. Prunes epicClosed to the current epics so
   // entries for closed tabs don't leak.
   useEffect(() => {
-    const epics = leadEpicsKey ? leadEpicsKey.split(",") : [];
+    const epics: string[] = leadEpicsKey ? JSON.parse(leadEpicsKey) : [];
     let cancelled = false;
     const poll = async () => {
       const entries = await Promise.all(
@@ -393,6 +410,9 @@ export default function App() {
   // change broadcasts to every cell in the tab (TradingView's "link" control).
   const setSymbol = (s: Instrument) => {
     if (!active || !focusedCell) return;
+    // Lock keeps each cell's own symbol (effectiveSyncSymbol forces sync OFF), so
+    // only the focused cell changes symbol even when syncSymbol was on underneath.
+    const broadcast = effectiveSyncSymbol(active);
     setTabs((ts) =>
       ts.map((t) =>
         t.id !== active.id
@@ -400,7 +420,7 @@ export default function App() {
           : {
               ...t,
               cells: t.cells.map((c) =>
-                t.syncSymbol || c.id === focusedCell.id ? { ...c, symbol: s } : c,
+                broadcast || c.id === focusedCell.id ? { ...c, symbol: s } : c,
               ),
             },
       ),
@@ -408,6 +428,9 @@ export default function App() {
   };
   const setPeriod = (p: Period) => {
     if (!active || !focusedCell) return;
+    // Lock forces interval sync on, so the master cell's TF propagates to every
+    // cell — that's what keeps same-timestamp candles vertically aligned.
+    const broadcast = effectiveSyncInterval(active);
     setTabs((ts) =>
       ts.map((t) =>
         t.id !== active.id
@@ -415,7 +438,7 @@ export default function App() {
           : {
               ...t,
               cells: t.cells.map((c) =>
-                t.syncInterval || c.id === focusedCell.id ? { ...c, period: p } : c,
+                broadcast || c.id === focusedCell.id ? { ...c, period: p } : c,
               ),
             },
       ),
@@ -461,8 +484,22 @@ export default function App() {
   // interval sync applies IMMEDIATELY — every cell adopts the focused cell's symbol /
   // timeframe right away (TradingView behaviour), not just on the next change.
   // Crosshair sync is live, so there's nothing to back-fill.
-  const toggleSync = (kind: "symbol" | "interval" | "crosshair") => {
+  const toggleSync = (kind: "symbol" | "interval" | "crosshair" | "time") => {
     if (!active || !focusedCell) return;
+    // Date-range link: enabling snaps the siblings to the focused cell's current
+    // window once (read it now and broadcast); from then on the focused cell live-
+    // broadcasts on every scroll/zoom (see ChartCore). The cells share only the
+    // flag, so siblings always apply what's published — no per-cell back-fill here.
+    if (kind === "time") {
+      const turningOn = !active.syncTime;
+      if (turningOn) {
+        const src = readyRef.current.get(focusedCell.id);
+        const r = src ? readVisibleRange(src.chart) : null;
+        if (r) rangeSync.publish(active.id, { sourceCellId: focusedCell.id, ...r });
+      }
+      setTabs((ts) => ts.map((t) => (t.id === active.id ? { ...t, syncTime: turningOn } : t)));
+      return;
+    }
     setTabs((ts) =>
       ts.map((t) => {
         if (t.id !== active.id) return t;
@@ -486,6 +523,47 @@ export default function App() {
             : t.cells,
         };
       }),
+    );
+  };
+
+  // Master "lock charts" toggle. Lock is a derived override (see effective* helpers),
+  // so the four underlying flags aren't touched — unlock just returns to whatever
+  // they were. Turning ON applies once, from the focused cell as the initial master:
+  // every cell adopts its TF (so same-timestamp candles line up), and its current
+  // window is broadcast on the date-range channel so siblings snap to it (from then
+  // on the cell under the cursor live-broadcasts every scroll/zoom).
+  const toggleLock = () => {
+    if (!active || !focusedCell) return;
+    const turningOn = !active.locked;
+    const tabId = active.id;
+    const masterId = focusedCell.id;
+    const broadcastMasterWindow = () => {
+      const src = readyRef.current.get(masterId);
+      const r = src ? readVisibleRange(src.chart) : null;
+      if (r) rangeSync.publish(tabId, { sourceCellId: masterId, ...r });
+    };
+    if (turningOn) {
+      // Snap siblings to the master's window now (covers cells already on the
+      // master's TF). Cells whose TF actually changes refetch history and reset to
+      // the latest bars (applyNewData in ChartCore), which wipes this snap — so
+      // re-broadcast after that reload settles. The master's own TF never changes,
+      // so its window is stable to read on the deferred pass. Belt-and-braces: a
+      // sibling that still misses the snap self-heals on the first pan/zoom.
+      broadcastMasterWindow();
+      setTimeout(broadcastMasterWindow, 350);
+    }
+    setTabs((ts) =>
+      ts.map((t) =>
+        t.id !== tabId
+          ? t
+          : {
+              ...t,
+              locked: turningOn,
+              cells: turningOn
+                ? t.cells.map((c) => ({ ...c, period: focusedCell.period }))
+                : t.cells,
+            },
+      ),
     );
   };
 
@@ -619,14 +697,27 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeLayoutId, layoutName, tabs, active?.id]);
 
+  // Esc leaves maximized view (matches the fullscreen idiom). Only bound while
+  // maximized so it doesn't swallow Esc elsewhere.
+  useEffect(() => {
+    if (!maximized) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMaximized(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [maximized]);
+
   const focusedController = focused?.controller ?? null;
 
   return (
     <div className="app">
       {/* TradingView-style chart tabs: topmost strip, above the toolbar. The
-          workspace-level controls (Backtest, named layouts, split picker, theme)
-          ride at the right of this bar — they act on the tab/workspace, not on a
-          single chart, so they don't belong in the per-chart toolbar below. */}
+          workspace-level controls (named layouts, split picker, theme) ride at
+          the right of this bar — they act on the tab/workspace, not on a single
+          chart, so they don't belong in the per-chart toolbar below. Hidden in
+          maximized view; Backtest lives in the toolbar so it survives that. */}
+      {!maximized && (
       <TabBar
         tabs={tabs}
         activeId={active?.id ?? ""}
@@ -637,11 +728,6 @@ export default function App() {
         onReorder={reorderTab}
         trailing={
           <>
-            <BacktestButton
-              controller={focusedController}
-              period={period}
-              epic={symbol?.epic}
-            />
             <LayoutManager
               activeLayoutId={activeLayoutId}
               hasWorkspace={tabs.length > 0}
@@ -661,7 +747,10 @@ export default function App() {
                 syncSymbol={!!active.syncSymbol}
                 syncInterval={!!active.syncInterval}
                 syncCrosshair={!!active.syncCrosshair}
+                syncTime={!!active.syncTime}
+                locked={!!active.locked}
                 onToggleSync={toggleSync}
+                onToggleLock={toggleLock}
               />
             )}
             <ThemeToggle
@@ -683,12 +772,15 @@ export default function App() {
           </>
         }
       />
+      )}
       <Toolbar
         controller={focusedController}
         symbol={symbol}
         period={period}
         onSymbol={setSymbol}
         onPeriod={setPeriod}
+        maximized={maximized}
+        onToggleMaximize={() => setMaximized((m) => !m)}
       />
       <div className="workspace">
         <main className="chart">
@@ -708,11 +800,13 @@ export default function App() {
               timezone={settings.timezone}
               clock={settings.clock}
               dateFormat={settings.dateFormat}
+              showWeekday={settings.showWeekday}
               priceSide={settings.priceSide}
               bidAsk={settings.bidAsk}
               bidAskStyle={settings.bidAskStyle}
               crosshair={settings.crosshair}
-              syncCrosshair={!!active.syncCrosshair}
+              syncCrosshair={effectiveSyncCrosshair(active)}
+              syncTime={effectiveSyncTime(active)}
               onReady={onCellReady}
               onFocus={onCellFocus}
             />

@@ -47,9 +47,10 @@ import { indicatorInfo } from "./lib/indicatorMeta";
 import IndicatorRow from "./IndicatorRow";
 import type { ChartController } from "./lib/chartController";
 import ContextMenu from "./ContextMenu";
-import { MenuIcons } from "./lib/menuIcons";
+import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
 import SymbolSearchModal from "./SymbolSearchModal";
+import BacktestButton from "./BacktestButton";
 
 interface DrawMenu {
   x: number;
@@ -68,6 +69,10 @@ interface Props {
   period?: Period;
   onSymbol: (s: Instrument) => void;
   onPeriod: (p: Period) => void;
+  // Maximized view hides the tab bar; this toggle (the only chrome that survives)
+  // flips it back. Backtest also lives here now so it stays reachable when maxed.
+  maximized: boolean;
+  onToggleMaximize: () => void;
 }
 
 // A few friendly labels for the most-used drawing overlays.
@@ -82,12 +87,30 @@ const DRAW_TOOLS: { name: string; label: string }[] = [
   { name: "fibonacciLine", label: "Fibonacci retracement" },
 ];
 
+// Shared dropdown caret — the same SVG chevron the symbol chip uses, so every
+// toolbar caret renders identically (replacing the plain "▾" text triangles that
+// rendered in a different style beside the SVG one).
+function Caret({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className ? `tb-caret ${className}` : "tb-caret"}
+      viewBox="0 0 24 24" width="11" height="11" fill="none"
+      stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
 export default function Toolbar({
   controller,
   symbol,
   period,
   onSymbol,
   onPeriod,
+  maximized,
+  onToggleMaximize,
 }: Props) {
   // The toolbar drives the focused cell's chart + overlays.
   const chart = controller?.chart ?? null;
@@ -404,6 +427,8 @@ export default function Toolbar({
         </svg>
       </button>
 
+      <span className="tb-div" aria-hidden="true" />
+
       <div className="periods">
         {PERIODS.map((p) => (
           <button
@@ -433,7 +458,7 @@ export default function Toolbar({
             title="Chart interval"
             onClick={() => setIntervalOpen((v) => !v)}
           >
-            ▾
+            <Caret />
           </button>
           {intervalOpen && (
             <div className="dropdown interval-dropdown">
@@ -462,6 +487,8 @@ export default function Toolbar({
         </div>
       </div>
 
+      <span className="tb-div" aria-hidden="true" />
+
       {/* Searchable indicator menu */}
       <div className="menu" ref={indMenuRef}>
         <button
@@ -469,7 +496,7 @@ export default function Toolbar({
           title="Indicators, metrics, and strategies"
           onClick={() => setIndOpen((v) => !v)}
         >
-          ƒ Indicators ▾
+          ƒ Indicators<Caret />
         </button>
         {indOpen && (
           <div className="dropdown dropdown-ind">
@@ -529,7 +556,7 @@ export default function Toolbar({
           title="Drawing tools"
           onClick={() => setDrawOpen((v) => !v)}
         >
-          ✎ Draw ▾
+          ✎ Draw<Caret />
         </button>
         {drawOpen && (
           <div className="dropdown">
@@ -547,6 +574,8 @@ export default function Toolbar({
           </div>
         )}
       </div>
+
+      <span className="tb-div" aria-hidden="true" />
 
       {/* Open the TV-style alert modal, prefilled with the last price. The bell is
           an inline SVG (currentColor) so it stays monochrome, not a colored emoji. */}
@@ -610,7 +639,7 @@ export default function Toolbar({
         >
           <span className="tmpl-ic">{MenuIcons.clone}</span>
           Template
-          <span className="tmpl-caret">▾</span>
+          <Caret className="tmpl-caret" />
         </button>
         {tmplOpen && (
           <div className="dropdown dropdown-right tmpl-dropdown">
@@ -660,19 +689,43 @@ export default function Toolbar({
         )}
       </div>
 
-      {/* Alerts panel toggle (bell). Last item in the toolbar now that the
-          workspace-level controls have moved up to the tab bar. */}
+      {/* Backtest lives here (moved off the tab bar) so it survives maximized
+          view. controller/period/symbol are already in toolbar scope. */}
+      <BacktestButton
+        controller={controller}
+        period={period}
+        epic={symbol.epic}
+      />
+
+      {/* Alerts panel toggle (bell). */}
       <button
         className={`anchor-btn alerts-toggle${panelOpen ? " on" : ""}`}
         title="Show alerts panel"
         onClick={() => alertsPanelOpen.set(!alertsPanelOpen.value)}
       >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true">
-          <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-          <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-        </svg>
+        <BellIcon size={16} />
+      </button>
+
+      {/* Maximize / restore: hides the tab bar to focus the active tab. Icon
+          reflects state (expand when normal, compress when maximized). */}
+      <button
+        className={`anchor-btn maximize-toggle${maximized ? " on" : ""}`}
+        title={maximized ? "Exit maximized view (Esc)" : "Maximize view"}
+        onClick={onToggleMaximize}
+      >
+        {maximized ? (
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true">
+            <path d="M9 9H4m5 0V4m0 5L4 4m11 5h5m-5 0V4m0 5 5-5M9 15H4m5 0v5m0-5-5 5m11-5h5m-5 0v5m0-5 5 5" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true">
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+          </svg>
+        )}
       </button>
 
       {symModalOpen && (

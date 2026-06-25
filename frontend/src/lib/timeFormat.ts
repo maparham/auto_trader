@@ -16,7 +16,8 @@
 // byte-for-byte identical to klinecharts' built-in formatter.
 
 export type Clock = "24h" | "12h";
-// ymd/dmy/mdy = numeric orders; med = textual "Fri Jul 10 '26".
+// ymd/dmy/mdy = numeric orders; med = textual "Jul 10 '26". An optional weekday
+// prefix ("Fri …") is orthogonal — see makeFormatDate's showWeekday.
 export type DateFormat = "ymd" | "dmy" | "mdy" | "med";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -60,34 +61,41 @@ function extract(dtf: Intl.DateTimeFormat, ts: number): Parts {
   return p;
 }
 
-function renderDate(p: Parts, fmt: string, format: DateFormat): string {
+// Weekday abbreviation for the date Y/M/D resolve to. They're already in the
+// axis timezone, so UTC-midnight of that date gives the right weekday.
+function weekday(p: Parts): string {
+  return WEEKDAYS[new Date(Date.UTC(+p.YYYY, +p.MM - 1, +p.DD)).getUTCDay()];
+}
+
+function renderDate(p: Parts, fmt: string, format: DateFormat, showWeekday: boolean): string {
   const wantY = fmt.includes("YYYY");
   const wantM = fmt.includes("MM");
   const wantD = fmt.includes("DD");
   if (!wantY && !wantM && !wantD) return "";
+  // Weekday only makes sense at day granularity (not month/year ticks). When on,
+  // it prefixes every format the same way ("Fri 2026-07-10", "Fri Jul 10 '26").
+  const wd = showWeekday && wantD ? `${weekday(p)} ` : "";
   if (format === "med") {
-    // Textual "Fri Jul 10 '26" — by granularity bucket: day -> "Fri Jul 10",
-    // month -> "Jul '26", year -> "2026". Y/M/D are already resolved in the
-    // axis timezone, so UTC-midnight of that date gives the right weekday.
+    // Textual order — by granularity bucket: day -> "Jul 10", month -> "Jul '26",
+    // year -> "2026". Weekday prefix (when on) makes day -> "Fri Jul 10".
     const mon = MONTHS[+p.MM - 1] ?? p.MM;
     const yr = `'${p.YYYY.slice(-2)}`;
     if (wantD) {
-      const wd = WEEKDAYS[new Date(Date.UTC(+p.YYYY, +p.MM - 1, +p.DD)).getUTCDay()];
       const day = `${mon} ${+p.DD}`;
-      return wantY ? `${wd} ${day} ${yr}` : `${wd} ${day}`;
+      return wd + (wantY ? `${day} ${yr}` : day);
     }
     if (wantM) return `${mon} ${yr}`;
     return p.YYYY;
   }
   if (format === "ymd") {
-    // Hyphen-joined ISO order — matches klinecharts' default exactly.
-    return [wantY && p.YYYY, wantM && p.MM, wantD && p.DD].filter(Boolean).join("-");
+    // Hyphen-joined ISO order — matches klinecharts' default exactly (weekday off).
+    return wd + [wantY && p.YYYY, wantM && p.MM, wantD && p.DD].filter(Boolean).join("-");
   }
   const seq =
     format === "dmy"
       ? [wantD && p.DD, wantM && p.MM, wantY && p.YYYY]
       : [wantM && p.MM, wantD && p.DD, wantY && p.YYYY];
-  return seq.filter(Boolean).join("/");
+  return wd + seq.filter(Boolean).join("/");
 }
 
 function renderTime(p: Parts, fmt: string, clock: Clock): string {
@@ -104,10 +112,10 @@ function renderTime(p: Parts, fmt: string, clock: Clock): string {
 }
 
 // Builds a klinecharts FormatDate function for the chosen clock + date format.
-export function makeFormatDate(clock: Clock, format: DateFormat) {
+export function makeFormatDate(clock: Clock, format: DateFormat, showWeekday = false) {
   return (dtf: Intl.DateTimeFormat, ts: number, fmt: string): string => {
     const p = extract(dtf, ts);
-    const date = renderDate(p, fmt, format);
+    const date = renderDate(p, fmt, format, showWeekday);
     const time = renderTime(p, fmt, clock);
     return date && time ? `${date} ${time}` : date || time;
   };

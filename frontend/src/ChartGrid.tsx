@@ -30,6 +30,8 @@ interface Props {
   // Time-axis timestamp format (clock + date format).
   clock: Clock;
   dateFormat: DateFormat;
+  // Prefix day-granularity timestamps with the weekday. Global.
+  showWeekday: boolean;
   // Which side of the spread candles render from (bid/mid/ask). Global.
   priceSide: PriceSide;
   // Live bid & ask display: off / labels / lines. Global.
@@ -40,6 +42,8 @@ interface Props {
   crosshair: CrosshairStyle;
   // Per-tab crosshair-link toggle (drives the cross-cell vertical time guide).
   syncCrosshair: boolean;
+  // Per-tab date-range link: scroll/zoom in one cell matches the time window on the others.
+  syncTime: boolean;
   onReady: (cellId: string, chart: Chart, controller: ChartController) => void;
   onFocus: (cellId: string) => void;
 }
@@ -53,11 +57,13 @@ export default function ChartGrid({
   timezone,
   clock,
   dateFormat,
+  showWeekday,
   priceSide,
   bidAsk,
   bidAskStyle,
   crosshair,
   syncCrosshair,
+  syncTime,
   onReady,
   onFocus,
 }: Props) {
@@ -90,12 +96,15 @@ export default function ChartGrid({
             timezone={timezone}
             clock={clock}
             dateFormat={dateFormat}
+            showWeekday={showWeekday}
             priceSide={priceSide}
             bidAsk={bidAsk}
             bidAskStyle={bidAskStyle}
             crosshair={crosshair}
             // Crosshair link only matters with >1 cell.
             syncCrosshair={syncCrosshair && cells.length > 1}
+            // Date-range link only matters with >1 cell.
+            syncTime={syncTime && cells.length > 1}
             onReady={onReady}
             onFocus={onFocus}
           />

@@ -2,6 +2,7 @@
 // (defaults a freshly-created alert inherits). Structured so more tabs/rows drop in.
 
 import { useState } from "react";
+import CloseButton from "./CloseButton";
 import type {
   AlertDefaults,
   AlertExpiry,
@@ -38,7 +39,7 @@ const DATE_FORMATS: { value: DateFormat; label: string }[] = [
   { value: "ymd", label: "2026-07-10" },
   { value: "dmy", label: "10/07/2026" },
   { value: "mdy", label: "07/10/2026" },
-  { value: "med", label: "Fri Jul 10 '26" },
+  { value: "med", label: "Jul 10 '26" },
 ];
 
 // Which side of the spread candles draw from. "bid" matches the capital.com
@@ -79,9 +80,7 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
       <div className="modal" style={drag.style} onMouseDown={(e) => e.stopPropagation()}>
         <header className="modal-head" {...drag.handleProps}>
           <strong>Settings</strong>
-          <button className="modal-close" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
+          <CloseButton onClick={onClose} />
         </header>
 
         <div className="ind-tabs">
@@ -255,6 +254,24 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div className="setting-row">
+              <label>Weekday</label>
+              <div className="seg">
+                {[
+                  [false, "Off"],
+                  [true, "On"],
+                ].map(([value, label]) => (
+                  <button
+                    key={String(value)}
+                    className={settings.showWeekday === value ? "seg-on" : ""}
+                    onClick={() => onChange({ ...settings, showWeekday: value as boolean })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </>
         )}

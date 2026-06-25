@@ -11,9 +11,11 @@ from __future__ import annotations
 import asyncio
 import json
 
+from datetime import datetime, timezone
+
 from auto_trader.brokers import capital_stream
 from auto_trader.brokers.capital_stream import _BarState, _TickBar, stream_candles
-from auto_trader.core.models import Resolution
+from auto_trader.core.models import Candle, Resolution
 
 
 def _ohlc(price_type: str, t: int, o, h, l, c, vol=None) -> dict:
@@ -197,6 +199,83 @@ def _run_stream(frames: list[str], n: int):
             capital_stream.websockets.connect = orig
 
     return asyncio.run(go())
+
+
+# --- forming-bar seed on (re)connect -----------------------------------------
+
+
+class _SeedBroker(_FakeBroker):
+    """Fake broker that serves a current-bucket REST candle for the connect seed."""
+
+    def __init__(self, seed: Candle | None):
+        super().__init__()
+        self._seed = seed
+        self.calls = 0
+
+    async def get_recent_candles(self, epic, resolution, count, price_side="mid"):
+        self.calls += 1
+        return [self._seed] if self._seed is not None else []
+
+
+def _run_stream_seeded(broker, frames: list[str], n: int, now_s: float):
+    """Run stream_candles with the connect-time clock pinned to `now_s` so the
+    seed's bucket-alignment guard is deterministic."""
+
+    async def go():
+        ws = _FakeWS(frames)
+        orig_ws = capital_stream.websockets.connect
+        orig_time = capital_stream.time.time
+        capital_stream.websockets.connect = lambda url, **kw: ws
+        capital_stream.time.time = lambda: now_s
+        try:
+            gen = stream_candles(broker, "BTCUSD", Resolution.MINUTE)
+            out = [(await anext(gen)).candle for _ in range(n)]
+            await gen.aclose()
+            return out
+        finally:
+            capital_stream.websockets.connect = orig_ws
+            capital_stream.time.time = orig_time
+
+    return asyncio.run(go())
+
+
+def test_connect_seeds_forming_bar_open_and_volume():
+    # On (re)connect the bar is seeded from the latest REST candle so its open and
+    # volume are correct from the FIRST frame — before Capital's lazy (~13s) OHLC
+    # event. Pre-fix the bar cold-started from the connect-time tick: open jumped to
+    # the current price and volume read 0, collapsing the full forming candle the
+    # client had just loaded from /api/candles. Regression for that disappear-on-reload.
+    seed = Candle(
+        time=datetime.fromtimestamp(60, tz=timezone.utc),  # bucket 60_000 ms
+        open=100, high=110, low=90, close=105, volume=42,
+    )
+    # A single tick at 103 lands in the seeded bucket (now=60.5s -> bucket 60_000).
+    frames = [json.dumps({"destination": "quote",
+                          "payload": {"bid": 103, "ofr": 103, "timestamp": 60_500}})]
+    candles = _run_stream_seeded(_SeedBroker(seed), frames, 1, now_s=60.5)
+    c = candles[0]
+    assert c.time.timestamp() == 60.0
+    assert c.open == 100  # seeded bucket open, NOT the 103 tick (no collapse)
+    assert c.volume == 42  # seeded bucket volume, NOT 0
+    assert c.close == 103  # close still moves live with the tick
+    assert c.high == 110  # seeded high preserved (tick didn't exceed it)
+
+
+def test_connect_seed_skipped_when_bucket_already_rolled():
+    # If the bucket rolls over in the fetch gap, the REST bar is a now-closed bucket.
+    # Seeding it would pin the live bar to a stale bucket, so the guard rejects it and
+    # the tick path opens the current bucket fresh instead.
+    stale = Candle(
+        time=datetime.fromtimestamp(60, tz=timezone.utc),  # bucket 60_000 ms
+        open=100, high=110, low=90, close=105, volume=42,
+    )
+    # Clock has advanced to the NEXT minute (120_500 ms): seed bucket 60_000 != 120_000.
+    frames = [json.dumps({"destination": "quote",
+                          "payload": {"bid": 103, "ofr": 103, "timestamp": 120_500}})]
+    candles = _run_stream_seeded(_SeedBroker(stale), frames, 1, now_s=120.5)
+    c = candles[0]
+    assert c.time.timestamp() == 120.0  # current bucket, not the stale seed's 60s
+    assert c.open == 103 and c.volume == 0.0  # cold-started fresh; seed ignored
 
 
 def test_subscribes_to_both_channels():

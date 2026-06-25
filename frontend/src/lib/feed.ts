@@ -326,11 +326,20 @@ export function openLive(
           onStatus?.("live");
           onCandle(toKLine(msg.candle), msg.bid ?? null, msg.ask ?? null);
         } else if (msg.type === "error") {
-          // The server sends an error frame then closes (e.g. a bad/unknown
-          // resolution). It's fatal — don't let onclose reconnect to the same
-          // bad URL forever; stop and report down.
-          console.warn(`[live] stream error for ${epic}/${resolution}:`, msg.detail);
-          closed = true;
+          // The server sends an error frame then closes. `fatal` distinguishes a
+          // permanent fault the client must NOT retry (e.g. a bad/unknown
+          // resolution — reconnecting hits the same bad URL forever) from a
+          // recoverable one (the server exhausted its reconnect attempts during a
+          // sustained outage). For a recoverable error we leave `closed` false so
+          // onclose reconnects and the chart self-heals when connectivity returns;
+          // only a fatal frame stops. Default a missing flag to fatal so an
+          // untagged error frame keeps the conservative stop-and-report behavior.
+          const fatal = msg.fatal !== false;
+          console.warn(
+            `[live] stream error for ${epic}/${resolution} (fatal=${fatal}):`,
+            msg.detail,
+          );
+          if (fatal) closed = true;
           onStatus?.("down");
         }
       } catch (e) {

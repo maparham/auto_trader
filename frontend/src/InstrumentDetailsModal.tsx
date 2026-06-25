@@ -7,6 +7,7 @@
 // and skip empties.
 
 import { useEffect, useState } from "react";
+import CloseButton from "./CloseButton";
 import { fetchMarketDetail, type MarketDetail } from "./lib/feed";
 import { useDraggable } from "./lib/useDraggable";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
@@ -135,9 +136,7 @@ export default function InstrumentDetailsModal({ epic, title, onClose }: Props) 
       >
         <div className="modal-head" {...drag.handleProps}>
           <span className="instrument-title">{title || epic}</span>
-          <button className="modal-close" onClick={onClose}>
-            ✕
-          </button>
+          <CloseButton onClick={onClose} />
         </div>
         <div className="instrument-body">
           {state === "loading" && <p className="instrument-note">Loading…</p>}

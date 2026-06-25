@@ -167,6 +167,29 @@ export default function LayoutManager({
             </li>
             {active && (
               <li
+                className={`layout-mgr-action${active.id === defaultId ? " highlight" : ""}`}
+                onClick={() => {
+                  setDefault(active.id === defaultId ? null : active.id);
+                }}
+                title={
+                  active.id === defaultId
+                    ? "This layout opens on launch — click to clear"
+                    : "Open this layout on launch instead of blank"
+                }
+              >
+                <span className="layout-mgr-action-icon">★</span>
+                <span className="layout-mgr-action-text">
+                  {active.id === defaultId
+                    ? "Default layout"
+                    : "Set as default layout"}
+                </span>
+                {active.id === defaultId && (
+                  <span className="layout-mgr-action-kbd">✓</span>
+                )}
+              </li>
+            )}
+            {active && (
+              <li
                 className="layout-mgr-action"
                 onClick={() => {
                   setEditing(active.id);
@@ -261,11 +284,15 @@ export default function LayoutManager({
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
-                        className={l.id === defaultId ? "act on" : "act"}
-                        title={l.id === defaultId ? "Default layout" : "Set as default"}
+                        className={`act act-star${l.id === defaultId ? " on" : ""}`}
+                        title={
+                          l.id === defaultId
+                            ? "Default layout — opens on launch"
+                            : "Set as default (opens on launch)"
+                        }
                         onClick={() => setDefault(l.id === defaultId ? null : l.id)}
                       >
-                        ★
+                        {l.id === defaultId ? "★" : "☆"}
                       </button>
                       <button
                         className="act"

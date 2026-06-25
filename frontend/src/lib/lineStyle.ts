@@ -34,8 +34,12 @@ export function toKLineStyle(opt: LineStyleOpt): KLineStyleFields {
 // into the color string. Passes anything that isn't a 6-digit hex straight through
 // (e.g. an already-rgba string, or "" to mean "no override").
 export function hexToRgba(hex: string, alpha: number): string {
-  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return hex;
-  const n = parseInt(hex.slice(1), 16);
+  // Leading '#' optional so a bare "rrggbb" still converts (the prior home of this
+  // helper accepted it; requiring '#' would silently pass such a color through
+  // unconverted, dropping the alpha and rendering an opaque fill).
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 

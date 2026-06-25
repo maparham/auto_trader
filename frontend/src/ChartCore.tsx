@@ -35,6 +35,7 @@ import ChartLegend, {
 } from "./ChartLegend";
 import { ChartController } from "./lib/chartController";
 import InstrumentDetailsModal from "./InstrumentDetailsModal";
+import CurveLabels, { type CurveLabelsHandle, type CurveLabelPill } from "./CurveLabels";
 import { clearBacktest } from "./lib/backtest";
 import { toast } from "./lib/notify";
 import {
@@ -60,11 +61,17 @@ import {
   removeIndicatorById,
 } from "./lib/indicators";
 import { maybeAutoApplyTemplate } from "./lib/templates";
-import { indTypeOf, setIndicatorTimezone } from "./lib/customIndicators";
-import { chartSync } from "./lib/chartSync";
+import {
+  indTypeOf,
+  setIndicatorTimezone,
+  curveLabel,
+  curveLabelConfig,
+  curveLabelPosFor,
+} from "./lib/customIndicators";
+import { chartSync, rangeSync, readVisibleRange, applyVisibleRange, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
-import { MenuIcons } from "./lib/menuIcons";
+import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import { chartColors, loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
 import { hexToRgba, DASH_DASHED, DASH_DOTTED } from "./lib/lineStyle";
 import { makeFormatDate } from "./lib/timeFormat";
@@ -112,6 +119,11 @@ const ANCHOR_GRAB_PX = 11; // mousedown hit radius (forgiving)
 interface LineCache {
   paneId: string;
   name: string;
+  // The figure key of this specific line (e.g. "dayHigh") and the indicator's
+  // type — together they resolve the curve's key-parameter tag for the end label.
+  figKey: string;
+  indType: string;
+  extendData: unknown; // carries per-curve label text + config (curveLabels)
   color: string;
   coords: Array<{ x: number; y: number; t: number }>;
 }
@@ -149,6 +161,7 @@ function buildLineCache(chart: Chart): LineCache[] {
     for (const [name, ind] of inds) {
       if (ind.visible === false) continue;
       const result = ind.result as Array<Record<string, number | undefined>>;
+      const indType = indTypeOf(ind);
       let lineIdx = 0;
       for (const fig of ind.figures) {
         if (fig.type !== "line") continue;
@@ -171,7 +184,15 @@ function buildLineCache(chart: Chart): LineCache[] {
           ind.styles?.lines?.[styleIdx]?.color ??
           lineStyles[styleIdx % lineStyles.length]?.color ??
           "#FF9600";
-        out.push({ paneId, name, color, coords });
+        out.push({
+          paneId,
+          name,
+          figKey: fig.key,
+          indType,
+          extendData: ind.extendData,
+          color,
+          coords,
+        });
       }
     }
   }
@@ -237,6 +258,44 @@ function paintSelectionDots(
       ctx.stroke();
     }
   }
+}
+
+// Build the curve-end label pills. A line gets a pill when its labels are enabled
+// AND either (a) its config is "always" (permanent) or (b) the indicator is ACTIVE
+// — selected/legend-hovered/curve-hovered, the same triggers that show the selection
+// handles. One pill per figure that resolves a non-empty key-parameter tag. Anchored
+// to the curve's last coord for side:"right", its first for side:"left" — both in
+// container space.
+function buildCurveLabelPills(
+  cache: LineCache[],
+  targets: Array<{ paneId: string; name: string }>,
+  maxX: number, // right edge of the main plot, so right-side pills stay on-chart
+): CurveLabelPill[] {
+  const active = (paneId: string, name: string) =>
+    targets.some((t) => t.paneId === paneId && t.name === name);
+  const pills: CurveLabelPill[] = [];
+  for (const line of cache) {
+    if (line.coords.length === 0) continue;
+    const cfg = curveLabelConfig(line.extendData);
+    if (!cfg.enabled) continue;
+    if (!cfg.always && !active(line.paneId, line.name)) continue;
+    const text = curveLabel(line.indType, line.figKey, line.extendData);
+    if (!text) continue;
+    // High and Low curves get independently-configured positions.
+    const pos = curveLabelPosFor(cfg, line.figKey);
+    const end = pos.side === "right" ? line.coords[line.coords.length - 1] : line.coords[0];
+    pills.push({
+      key: `${line.paneId}:${line.name}:${line.figKey}`,
+      text,
+      x: end.x,
+      y: end.y,
+      color: line.color,
+      side: pos.side,
+      align: pos.align,
+      maxX,
+    });
+  }
+  return pills;
 }
 
 // Resolve the AVWAP anchor bar to a pixel point on the candle pane, or null when
@@ -324,6 +383,8 @@ interface Props {
   // Time-axis timestamp format: clock (24h/12h) + date format.
   clock: Clock;
   dateFormat: DateFormat;
+  // Prefix day-granularity timestamps with the weekday. Global.
+  showWeekday: boolean;
   // Which side of the spread candles render from (bid/mid/ask). Global setting;
   // a change refetches history and reconnects the live stream for this cell.
   priceSide: PriceSide;
@@ -336,6 +397,9 @@ interface Props {
   // When on, broadcast this cell's hovered timestamp to its tab's sibling cells
   // and paint their broadcasts as a vertical time guide (crosshair link).
   syncCrosshair?: boolean;
+  // When on, scrolling/zooming the time axis here matches the same wall-clock
+  // window on the tab's sibling cells (date-range link; mapped by timestamp).
+  syncTime?: boolean;
   // Published once the chart instance + controller are live, so App can route the
   // FOCUSED cell's chart/controller to the Toolbar / AlertsSidebar / modals.
   onReady?: (cellId: string, chart: Chart, controller: ChartController) => void;
@@ -360,11 +424,13 @@ export default function ChartCore({
   timezone,
   clock,
   dateFormat,
+  showWeekday,
   priceSide,
   bidAsk,
   bidAskStyle,
   crosshair,
   syncCrosshair,
+  syncTime,
   onReady,
   onFocus,
 }: Props) {
@@ -393,6 +459,10 @@ export default function ChartCore({
   // line in pixel space (rebuilt each redraw, read by the click/hover hit-test).
   const selCanvasRef = useRef<HTMLCanvasElement>(null);
   const lineCacheRef = useRef<LineCache[]>([]);
+  // Imperative handle to the curve-end label pills (a sibling DOM overlay). Pills
+  // are recomputed from the line cache each redraw and pushed here, mirroring the
+  // legend's imperative-update pattern (no React churn per crosshair pixel).
+  const curveLabelsRef = useRef<CurveLabelsHandle>(null);
   // While the cursor is parked over the "+" affordance, klinecharts has lost the
   // canvas hover and dropped its crosshair. We redraw just the HORIZONTAL crosshair
   // line ourselves at this y (the vertical one is intentionally gone — x is
@@ -405,8 +475,19 @@ export default function ChartCore({
   const syncedTsRef = useRef<number | null>(null);
   const syncCrosshairRef = useRef<boolean>(!!syncCrosshair);
   syncCrosshairRef.current = !!syncCrosshair;
+  // Formats a timestamp for the synced crosshair's x-axis label, mirroring
+  // klinecharts' own crosshair label (identical dtf options + the user's
+  // clock/date format), so a linked chart's time pill reads the same as the
+  // chart under the cursor. Rebuilt by the format effect below.
+  const crosshairLabelFmtRef = useRef<(ts: number) => string>(() => "");
   const tabIdRef = useRef(tabId);
   tabIdRef.current = tabId;
+  // Date-range link: syncTimeRef mirrors the prop so the once-mounted scroll/zoom
+  // subscription can read it. A cell only broadcasts the gestures it owns (the cell
+  // the cursor is on); a sibling merely applying a range never owns one, so it can't
+  // echo back — see the broadcast effect and isGestureCell in chartSync.
+  const syncTimeRef = useRef<boolean>(!!syncTime);
+  syncTimeRef.current = !!syncTime;
   // AVWAP anchor drag: the handle's current pixel (when AVWAP is selected and the
   // anchor is on-screen), whether a drag is in progress, and guards so a drag
   // doesn't also fire the click→deselect at mouseup. pendingAnchorX/raf throttle
@@ -481,6 +562,9 @@ export default function ChartCore({
     price: number;
     countdown: string | null;
     w: number; // price-axis column width, so the pill fits inside it
+    // Last candle's body direction, so the pill matches the dotted last-price
+    // line's up/down color (TradingView keeps the line and its label one color).
+    dir: "up" | "down";
   } | null>(null);
   // Live bid & ask axis pills (TradingView's bid/ask price labels). Each is null
   // when the bid/ask display is off, the feed is down, or the side is unknown.
@@ -496,6 +580,7 @@ export default function ChartCore({
       expiresAt: number | null;
       hovered: boolean;
       active: boolean;
+      selected: boolean;
     }>
   >([]);
   // The on-line pill is shown while the line is hovered/selected (driven by
@@ -590,7 +675,8 @@ export default function ChartCore({
     name: string;
   } | null>(null);
   // TradingView-style right-click menu for the CHART itself (empty space) — Paste an
-  // indicator copied earlier. Opened by a right-click that isn't on an indicator curve.
+  // indicator or drawing copied earlier. Opened by a right-click that isn't on an
+  // indicator curve.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number } | null>(null);
   // status read inside the once-mounted countdown interval without re-subscribing.
   const statusRef = useRef<LiveStatus>(status);
@@ -651,7 +737,7 @@ export default function ChartCore({
     if (!chart) return;
     chartRef.current = chart;
     chart.setTimezone(timezone || browserTimezone());
-    chart.setCustomApi({ formatDate: makeFormatDate(clock, dateFormat) });
+    chart.setCustomApi({ formatDate: makeFormatDate(clock, dateFormat, showWeekday) });
 
     // Preload the Material Symbols subset the legend icons are drawn from, then
     // nudge a redraw — otherwise the first hover can paint before the canvas font
@@ -1047,6 +1133,17 @@ export default function ChartCore({
           if (id !== selectedId) positionPill(node);
         }
       }
+      // While a live alert line is being dragged OR merely hovered, that alert owns
+      // this price row and shows its own descriptive pill. Hide the whole alert-setter
+      // affordance — the "+" button, its following price pill, AND the dashed guide
+      // line — which sits at the same price and would otherwise show through (orange)
+      // under the alert's pill. Placed AFTER the pill-tracking block above so the
+      // hovered pill still follows the cursor's x.
+      if (overlays.isDraggingAlert() || overlays.getHoveredAlertId()) {
+        btn.style.display = "none";
+        setPlusCrosshair(null);
+        return;
+      }
       // Hide the "+" pill the moment the cursor crosses onto the price-axis strip
       // (x > mainW), even when it's over the "+" itself. The axis is a drag/scale
       // gesture zone; a DOM button sitting there with pointer-events:auto would
@@ -1288,9 +1385,29 @@ export default function ChartCore({
   useEffect(() => {
     const c = chartRef.current;
     if (!c) return;
-    c.setCustomApi({ formatDate: makeFormatDate(clock, dateFormat) });
+    const fmt = makeFormatDate(clock, dateFormat, showWeekday);
+    c.setCustomApi({ formatDate: fmt });
     c.setStyles(klineStyles(themeRef.current, legendHovered.value, crosshairRef.current));
-  }, [clock, dateFormat]);
+    // Mirror klinecharts' dtf (same options) so our synced-crosshair label matches
+    // the source chart's. "YYYY-MM-DD HH:mm" is the format klinecharts hands to
+    // formatDate for the crosshair; makeFormatDate re-renders it per clock/date pref.
+    let dtf: Intl.DateTimeFormat | null = null;
+    try {
+      dtf = new Intl.DateTimeFormat("en", {
+        hour12: false,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZone: timezone || browserTimezone(),
+      });
+    } catch {
+      dtf = null;
+    }
+    crosshairLabelFmtRef.current = dtf ? (ts: number) => fmt(dtf!, ts, "YYYY-MM-DD HH:mm") : () => "";
+  }, [clock, dateFormat, showWeekday, timezone]);
 
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
   useEffect(() => {
@@ -1443,7 +1560,8 @@ export default function ChartCore({
         // edge lands on the column border) instead of spilling into the chart.
         const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? 0;
         const totalW = containerRef.current?.clientWidth ?? mainW;
-        setPriceTag({ y, price: last.close, countdown, w: Math.max(0, totalW - mainW) });
+        const dir = last.close >= last.open ? "up" : "down";
+        setPriceTag({ y, price: last.close, countdown, w: Math.max(0, totalW - mainW), dir });
         lastPriceY = y;
         priceTagHeight = countdown ? 40 : 20;
       }
@@ -1491,6 +1609,7 @@ export default function ChartCore({
       expiresAt: number | null;
       hovered: boolean;
       active: boolean;
+      selected: boolean;
     }> = [];
     for (const a of overlays.getAlerts()) {
       const y = yOf(a.level);
@@ -1504,6 +1623,7 @@ export default function ChartCore({
           expiresAt: a.expiresAt,
           hovered: a.hovered,
           active: a.active,
+          selected: a.selected,
         });
     }
     setAlertTags(tags);
@@ -1552,12 +1672,13 @@ export default function ChartCore({
             ctx.restore();
           }
         }
-        // Crosshair link: a vertical time guide at a sibling cell's hovered bar.
+        // Crosshair link: a vertical time guide AND its x-axis time label at a
+        // sibling cell's hovered bar — so every linked chart shows the matching
+        // timestamp pill, TradingView-style, not just the chart under the cursor.
         const syncTs = syncCrosshairRef.current ? syncedTsRef.current : null;
         if (syncTs != null) {
           const cs = chart.getStyles().crosshair;
-          const vl = cs.vertical.line;
-          if (cs.show !== false && cs.vertical.show !== false && vl.show !== false) {
+          if (cs.show !== false && cs.vertical.show !== false) {
             const sx = first(
               chart.convertToPixel([{ timestamp: syncTs }], {
                 paneId: "candle_pane",
@@ -1565,16 +1686,59 @@ export default function ChartCore({
               }),
             ).x;
             if (sx != null) {
-              ctx.save();
-              ctx.strokeStyle = vl.color;
-              ctx.lineWidth = vl.size || 1;
-              if (vl.style === "dashed") ctx.setLineDash(vl.dashedValue ?? [4, 2]);
-              const xx = Math.round(sx) + 0.5;
-              ctx.beginPath();
-              ctx.moveTo(xx, 0);
-              ctx.lineTo(xx, h);
-              ctx.stroke();
-              ctx.restore();
+              const vl = cs.vertical.line;
+              if (vl.show !== false) {
+                ctx.save();
+                ctx.strokeStyle = vl.color;
+                ctx.lineWidth = vl.size || 1;
+                if (vl.style === "dashed") ctx.setLineDash(vl.dashedValue ?? [4, 2]);
+                const xx = Math.round(sx) + 0.5;
+                ctx.beginPath();
+                ctx.moveTo(xx, 0);
+                ctx.lineTo(xx, h);
+                ctx.stroke();
+                ctx.restore();
+              }
+              // The x-axis time label pill, mirroring klinecharts' own crosshair
+              // label (read the resolved style + reuse the same formatter). The
+              // x-axis is the bottom strip; its height comes from its own pane.
+              const txt = cs.vertical.text;
+              const label = txt.show !== false ? crosshairLabelFmtRef.current(syncTs) : "";
+              const xAxisH = chart.getSize("x_axis_pane", DomPosition.Root)?.height ?? 0;
+              if (label && xAxisH > 1) {
+                ctx.save();
+                ctx.font = `${txt.weight} ${txt.size}px ${txt.family}`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                const boxW = ctx.measureText(label).width + txt.paddingLeft + txt.paddingRight;
+                const boxH = txt.size + txt.paddingTop + txt.paddingBottom;
+                // Center on the guide x, clamped to stay within the plot width. The
+                // upper bound is floored at boxW/2 so a label wider than the pane
+                // (very narrow cell + long timestamp) pins to the left edge rather
+                // than overflowing off it (w - boxW/2 would otherwise go negative).
+                const cx = Math.min(Math.max(sx, boxW / 2), Math.max(boxW / 2, w - boxW / 2));
+                const cy = h - xAxisH / 2; // vertically centered in the x-axis strip
+                const left = cx - boxW / 2;
+                const top = cy - boxH / 2;
+                const r = Math.min(txt.borderRadius, boxH / 2);
+                ctx.beginPath();
+                ctx.moveTo(left + r, top);
+                ctx.arcTo(left + boxW, top, left + boxW, top + boxH, r);
+                ctx.arcTo(left + boxW, top + boxH, left, top + boxH, r);
+                ctx.arcTo(left, top + boxH, left, top, r);
+                ctx.arcTo(left, top, left + boxW, top, r);
+                ctx.closePath();
+                ctx.fillStyle = txt.backgroundColor as string;
+                ctx.fill();
+                if (txt.borderSize > 0) {
+                  ctx.lineWidth = txt.borderSize;
+                  ctx.strokeStyle = txt.borderColor;
+                  ctx.stroke();
+                }
+                ctx.fillStyle = txt.color;
+                ctx.fillText(label, cx, cy);
+                ctx.restore();
+              }
             }
           }
         }
@@ -1656,6 +1820,27 @@ export default function ChartCore({
         if (anchor) {
           paintAnchorHandle(ctx, anchor.x, anchor.y, anchor.color, chartColors[themeRef.current].bg);
         }
+        // Curve-end key-parameter labels for the SAME active indicators that show
+        // selection handles (selected + legend-hover candle row + curve-hover any
+        // pane). DOM pills, pushed imperatively — see <CurveLabels>.
+        const labelTargets: Array<{ paneId: string; name: string }> = [];
+        if (sel) labelTargets.push(sel);
+        if (hovName && !(sel?.paneId === "candle_pane" && sel.name === hovName)) {
+          labelTargets.push({ paneId: "candle_pane", name: hovName });
+        }
+        if (curveHov && !(sel?.paneId === curveHov.paneId && sel.name === curveHov.name)) {
+          labelTargets.push(curveHov);
+        }
+        // Always rebuild — pills can show with no selection at all (an "always"
+        // indicator) or for the selected/hovered targets. buildCurveLabelPills
+        // returns [] when nothing qualifies, clearing the overlay.
+        curveLabelsRef.current?.setPills(
+          buildCurveLabelPills(
+            lineCacheRef.current,
+            labelTargets,
+            chart.getSize("candle_pane", DomPosition.Main)?.width ?? w,
+          ),
+        );
       }
     }
 
@@ -1748,6 +1933,15 @@ export default function ChartCore({
       const idx = typeof data?.dataIndex === "number" ? data.dataIndex : null;
       crosshairIdxRef.current = idx;
       legendHandleRef.current?.updateValues(idx);
+      // While the cursor is over THIS chart it's the link source, not a receiver, so
+      // drop any sibling guide it was painting and repaint — otherwise that guide
+      // stays frozen under this cell's own crosshair when the pointer crosses straight
+      // from a sibling (which doesn't reliably fire its own "cursor left" event). Our
+      // redraw isn't wired to crosshair changes, so clear it here explicitly.
+      if (idx != null && syncedTsRef.current != null) {
+        syncedTsRef.current = null;
+        redrawRef.current();
+      }
       // Crosshair link: broadcast the hovered bar's timestamp to sibling cells (or
       // null when the cursor leaves this chart, so their guides clear).
       if (syncCrosshairRef.current) {
@@ -1779,6 +1973,66 @@ export default function ChartCore({
       }
     };
   }, [tabId, cellId, syncCrosshair]);
+
+  // Date-range link — BROADCAST. When the link is on, publish this cell's visible
+  // time window (the two pixel-edge timestamps) to the tab's sibling cells on every
+  // scroll/zoom, coalesced to one publish per frame. Only the cell the cursor is
+  // driving broadcasts: pointer-enter / pointer-down / wheel mark this cell as the
+  // gesture owner, and onRange bails unless it still owns the gesture. A sibling
+  // that merely applies a range gets no pointer events, so it never owns and never
+  // echoes — that's what prevents the A→B→A feedback loop (no reliance on klinecharts'
+  // scroll-callback timing). Live data ticks fire no scroll/zoom, so an untouched
+  // cell never broadcasts on its own.
+  useEffect(() => {
+    const chart = chartRef.current;
+    const container = containerRef.current;
+    if (!chart || !container) return;
+    const claim = () => setGestureCell(cellId);
+    // klinecharts fires OnScroll/OnZoom roughly once per frame, so publish straight
+    // away rather than coalescing through requestAnimationFrame (rAF is paused while
+    // the tab is hidden, which would silently stall the link). Gesture ownership —
+    // not event timing — is what prevents the echo loop.
+    const onRange = () => {
+      if (!syncTimeRef.current || !isGestureCell(cellId)) return;
+      const r = readVisibleRange(chart);
+      if (r) rangeSync.publish(tabIdRef.current, { sourceCellId: cellId, ...r });
+    };
+    container.addEventListener("pointerenter", claim);
+    container.addEventListener("pointerdown", claim);
+    // Capture phase: klinecharts fires OnScroll SYNCHRONOUSLY from its own wheel
+    // handler on an inner container div, before a bubbling wheel reaches us. A
+    // capture-phase listener on this ancestor runs first, so `claim` lands before
+    // onRange even on the very first wheel after a remount. Programmatic scrolls
+    // (a receiver applying a range) dispatch no DOM wheel event, so this only ever
+    // claims on real user input — preserving the user-vs-programmatic distinction
+    // that keeps the A→B→A echo loop closed.
+    container.addEventListener("wheel", claim, { capture: true, passive: true });
+    chart.subscribeAction(ActionType.OnScroll, onRange);
+    chart.subscribeAction(ActionType.OnZoom, onRange);
+    return () => {
+      container.removeEventListener("pointerenter", claim);
+      container.removeEventListener("pointerdown", claim);
+      container.removeEventListener("wheel", claim, { capture: true });
+      chart.unsubscribeAction(ActionType.OnScroll, onRange);
+      chart.unsubscribeAction(ActionType.OnZoom, onRange);
+      // Drop ownership if this (unmounting) cell held it, so the global never points
+      // at a dead cell and a freshly-mounted cell's first scroll isn't suppressed.
+      releaseGestureCell(cellId);
+    };
+  }, [cellId]);
+
+  // Date-range link — RECEIVE. Match a sibling cell's broadcast window onto this
+  // cell's own bars (handles a different interval). Always applies: publishing is
+  // already gated on the source being linked, so a message only ever arrives when
+  // this cell should follow it.
+  useEffect(() => {
+    const unsub = rangeSync.subscribe(tabId, (m) => {
+      if (m.sourceCellId === cellId) return; // ignore our own broadcasts
+      const chart = chartRef.current;
+      if (chart) applyVisibleRange(chart, m.fromTs, m.toTs);
+    });
+    return unsub;
+  }, [tabId, cellId]);
 
   const precision = effPrecision;
   // Hovering an alert line swaps the crosshair for a drag cursor (TV-style).
@@ -2137,6 +2391,9 @@ export default function ChartCore({
           pointerEvents: "none",
         }}
       />
+      {/* Curve-end key-parameter labels (DOM pills, crisp text) for the selected/
+          highlighted indicator. z-index 11 sits just above the handle overlay. */}
+      <CurveLabels handleRef={curveLabelsRef} />
       {/* Top-left legend as crisp DOM (the candle/OHLC row + one row per candle-pane
           indicator), replacing klinecharts' blurry canvas legend. Row membership is
           React state (signature-gated); values update imperatively via the handle. */}
@@ -2184,7 +2441,16 @@ export default function ChartCore({
           x={chartMenu.x}
           y={chartMenu.y}
           items={[
-            { label: "Paste indicator", icon: MenuIcons.paste, onClick: () => void pasteIndicator() },
+            {
+              label: "Paste",
+              icon: MenuIcons.paste,
+              // Mirror the Ctrl/Cmd+V handler: a copied drawing or indicator can be
+              // on the clipboard, so try drawing first and fall back to indicator.
+              onClick: () =>
+                void pasteDrawing().then((did) => {
+                  if (!did) void pasteIndicator();
+                }),
+            },
             { label: "Settings", icon: MenuIcons.settings, onClick: () => openSettings() },
           ]}
           onClose={() => setChartMenu(null)}
@@ -2193,7 +2459,7 @@ export default function ChartCore({
 
       {priceTag && (
         <div
-          className={`price-tag ${status === "live" ? "live" : "stale"}`}
+          className={`price-tag ${status === "live" ? `live ${priceTag.dir}` : "stale"}`}
           style={{ top: priceTag.y, width: priceTag.w }}
         >
           <span className="pt-price">
@@ -2231,8 +2497,12 @@ export default function ChartCore({
       )}
 
       {alertTags.map((t) => (
-        <div key={t.id} className="alert-tag" style={{ top: t.y }} title="Price alert">
-          <span className="at-bell">🔔</span>
+        <div key={t.id} className={`alert-tag${t.selected ? " selected" : ""}`} style={{ top: t.y }} title="Price alert">
+          {/* Inline SVG bell (currentColor → amber via .at-bell) so the tag stays in
+              the monochrome SVG-icon language, not a colored 🔔 emoji. */}
+          <span className="at-bell" aria-hidden="true">
+            <BellIcon size={11} />
+          </span>
           <span className="at-price">{t.level.toFixed(precision)}</span>
         </div>
       ))}
@@ -2249,7 +2519,7 @@ export default function ChartCore({
             key={t.id}
             ref={registerPill}
             data-alert-id={t.id}
-            className="alert-pill"
+            className={`alert-pill${t.selected ? " selected" : ""}`}
             // Seed `left` from the last imperative position so a re-render (e.g.
             // moving the cursor onto the sidebar) doesn't reset a frozen pill to 0.
             style={{ top: t.y, left: pillLeftRef.current.get(t.id) ?? undefined }}

@@ -463,23 +463,42 @@ async def ws_candles(websocket: WebSocket) -> None:
         try:
             resolution = Resolution(res_raw)
         except ValueError:
-            await websocket.send_json({"type": "error", "detail": f"bad resolution {res_raw}"})
+            # A malformed resolution param can never succeed on retry — fatal, so
+            # the client stops reconnecting to the same bad URL.
+            await websocket.send_json(
+                {"type": "error", "detail": f"bad resolution {res_raw}", "fatal": True}
+            )
             await websocket.close()
             return
         stream = stream_candles(get_broker(), epic, resolution, price_side)
 
     async def forward() -> None:
-        async for bar in stream:
-            # bid/ask ride alongside the candle so the client can draw the optional
-            # bid & ask price lines; they're null until the first quote names them.
-            await websocket.send_json(
-                {
-                    "type": "candle",
-                    "candle": _candle_dto(bar.candle).model_dump(),
-                    "bid": bar.bid,
-                    "ask": bar.ask,
-                }
-            )
+        try:
+            async for bar in stream:
+                # bid/ask ride alongside the candle so the client can draw the optional
+                # bid & ask price lines; they're null until the first quote names them.
+                await websocket.send_json(
+                    {
+                        "type": "candle",
+                        "candle": _candle_dto(bar.candle).model_dump(),
+                        "bid": bar.bid,
+                        "ask": bar.ask,
+                    }
+                )
+        except RuntimeError as e:
+            # stream_candles/stream_tick_candles raise RuntimeError after
+            # RECONNECT_MAX_FAILURES. That bundles a permanent fault (missing creds)
+            # with a *recoverable* one (a sustained network/Capital outage) — and at
+            # this point the two are indistinguishable. Surface it as a RECOVERABLE
+            # error frame (fatal=False): the client reports the feed down but keeps
+            # reconnecting, so the chart self-heals once connectivity returns instead
+            # of staying frozen until a full page reload. A genuinely-bad config then
+            # also reconnects forever (a slow ~6.5-min server-side cycle, not a
+            # storm), surfacing in the server logs rather than wedging the UI.
+            with suppress(Exception):
+                await websocket.send_json(
+                    {"type": "error", "detail": str(e), "fatal": False}
+                )
 
     async def watch_disconnect() -> None:
         # We never expect client messages; receive() returns/raises on disconnect.

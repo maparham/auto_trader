@@ -12,6 +12,7 @@
 // layout matches TV, with those fields noted as coming soon.
 
 import { useMemo, useState } from "react";
+import CloseButton from "./CloseButton";
 import { LineType } from "klinecharts";
 import type { DeepPartial, OverlayStyle } from "klinecharts";
 import { type OverlayManager, asDrawingExtra } from "./lib/overlays";
@@ -213,9 +214,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
       <div className="modal ind-settings" style={drag.style} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head" {...drag.handleProps}>
           <strong>{title}</strong>
-          <button className="modal-close" onClick={cancel} title="Cancel">
-            ✕
-          </button>
+          <CloseButton onClick={cancel} label="Cancel" />
         </div>
 
         <div className="ind-tabs">

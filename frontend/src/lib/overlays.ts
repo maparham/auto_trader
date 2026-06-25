@@ -102,6 +102,12 @@ export class OverlayManager {
   // onDeselected; we just mirror its id so ChartCore can render the DOM pill.
   private hoveredAlertId: string | null = null;
   private selectedAlertId: string | null = null;
+  // True while an alert line is being dragged (between onPressedMoving and
+  // onPressedMoveEnd; also cleared on remove/reset so it can't stick). ChartCore's
+  // mousemove handler reads it imperatively to suppress the "+" axis affordance
+  // during a drag — it would otherwise sit at the cursor's price, overlapping the
+  // dragged line's own pill.
+  private draggingAlert = false;
   // Drawing selection/hover (TV-style). klinecharts DOES fire onSelected/
   // onMouseEnter for drawings (verified), so unlike alerts these come straight from
   // its callbacks — no manual hit-test. `hoveredDrawingId` lets ChartCore's DOM
@@ -141,6 +147,7 @@ export class OverlayManager {
     this.selectedAlertId = null;
     this.hoveredDrawingId = null;
     this.selectedDrawingId = null;
+    this.draggingAlert = false;
   }
   setEpic(epic: string): void {
     this.epic = epic;
@@ -180,6 +187,19 @@ export class OverlayManager {
   // pill in place — a selected pill must stay put so its delete button is reachable.
   getSelectedAlertId(): string | null {
     return this.selectedAlertId;
+  }
+
+  // The alert line the cursor is currently over (null when none). ChartCore hides
+  // the "+" alert-setter affordance while hovering a live alert — the setter would
+  // otherwise sit at the same price and show through the alert's own pill.
+  getHoveredAlertId(): string | null {
+    return this.hoveredAlertId;
+  }
+
+  // True while an alert line is mid-drag. ChartCore hides the "+" axis affordance
+  // for the duration so it doesn't sit over the dragged line's pill.
+  isDraggingAlert(): boolean {
+    return this.draggingAlert;
   }
 
   // Apply an alert line's resting/emphasized weight. A line is emphasized (thick)
@@ -382,7 +402,10 @@ export class OverlayManager {
         return false;
       },
       onPressedMoving: () => {
-        if (isAlert) this.notifyAlerts(); // keep the label glued during a drag
+        if (isAlert) {
+          this.draggingAlert = true;
+          this.notifyAlerts(); // keep the label glued during a drag
+        }
         return false;
       },
       onPressedMoveEnd: (e) => {
@@ -390,6 +413,7 @@ export class OverlayManager {
         // back to the instrument precision BEFORE persisting, so the stored level
         // matches the rendered pill (and reconcileAlerts' String(level) key agrees).
         if (isAlert) {
+          this.draggingAlert = false;
           const raw = e.overlay.points?.[0]?.value;
           if (raw != null) {
             const rounded = this.roundLevel(raw);
@@ -405,6 +429,9 @@ export class OverlayManager {
         this.alertCfg.delete(e.overlay.id);
         this.alertIds.delete(e.overlay.id);
         this.alertCreatedAt.delete(e.overlay.id);
+        // Removing an alert mid-drag won't fire onPressedMoveEnd, so clear the drag
+        // flag here too — otherwise it sticks true and the "+" setter stays hidden.
+        this.draggingAlert = false;
         if (this.hoveredAlertId === e.overlay.id) {
           // Removing the hovered alert won't fire onMouseLeave, so restore the
           // crosshair's horizontal guide here or it stays stuck hidden.

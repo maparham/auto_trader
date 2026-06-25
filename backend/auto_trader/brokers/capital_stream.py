@@ -220,7 +220,10 @@ class _BarState:
         # Open is fixed for the life of the bar: Capital's true OHLC open once it
         # arrives, otherwise the FIRST tick's price (a tick-rolled bar has no OHLC
         # yet). Never `tick_close`, which would make the open crawl every tick.
-        open_ = (_mid_field(self.bid, self.ask, "o", side) if have_ohlc else None) or self.tick_open
+        ohlc_o = _mid_field(self.bid, self.ask, "o", side) if have_ohlc else None
+        # Explicit None check, not `or`: a legitimate 0.0 open must not fall through
+        # to tick_open (_mid_field preserves 0.0 and returns None only when absent).
+        open_ = ohlc_o if ohlc_o is not None else self.tick_open
         ohlc_c = _mid_field(self.bid, self.ask, "c", side) if have_ohlc else None
         close = self.tick_close if self.tick_close is not None else ohlc_c
         if open_ is None or close is None:
@@ -302,6 +305,35 @@ async def stream_candles(
                 ping_task = asyncio.create_task(_ping_loop(ws, cst, token))
 
                 bar = _BarState()
+                # Seed the forming bar from the latest REST candle so it carries the
+                # in-progress bucket's real open/high/low/close/volume from the first
+                # frame. Capital pushes the authoritative OHLC event lazily (~13s after
+                # subscribe), and `quote` ticks carry neither open nor volume — so
+                # without this the bar cold-starts from the connect-time tick: its open
+                # jumps to the current price and volume reads 0, collapsing the full
+                # forming candle the client just loaded from /api/candles until the
+                # first OHLC arrives. Best-effort: a failed/slow fetch must not stall or
+                # kill the stream (this runs on every (re)connect — see the loop). Only
+                # seed the CURRENT bucket; a stale bar from a rollover in the fetch gap
+                # must not pin the live bar to an already-closed bucket (the tick path
+                # rolls forward instead).
+                if resolution.seconds < Resolution.DAY.seconds:
+                    try:
+                        recent = await broker.get_recent_candles(epic, resolution, 1, price_side)
+                    except Exception:  # noqa: BLE001 — best-effort; fall back to cold start
+                        recent = []
+                    if recent:
+                        seed = recent[-1]
+                        step = resolution.seconds * 1000
+                        seed_t = int(seed.time.timestamp() * 1000)
+                        now_ms = int(time.time() * 1000)
+                        if (now_ms // step) * step == seed_t:
+                            bar.t = seed_t
+                            bar.tick_open = seed.open
+                            bar.tick_high = seed.high
+                            bar.tick_low = seed.low
+                            bar.tick_close = seed.close
+                            bar.volume = seed.volume
                 dbg = _StreamDebug(epic, resolution.value) if _DEBUG else None
                 # Freshest raw spread sides for the optional bid & ask price lines.
                 # Independent of price_side and the forming bar; None until known.

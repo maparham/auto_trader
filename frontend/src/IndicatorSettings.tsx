@@ -12,6 +12,7 @@
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import CloseButton from "./CloseButton";
 import type { Chart, Indicator } from "klinecharts";
 import {
   resolveInputs,
@@ -32,6 +33,8 @@ import type {
   RsiSmoothType,
   RsiStyle,
   RsiElement,
+  CurveLabelSide,
+  CurveLabelAlign,
 } from "./lib/customIndicators";
 import {
   AVWAP_DEFAULT_BANDS,
@@ -41,6 +44,7 @@ import {
   indTypeOf,
   prevHlAnchorToInput,
   prevHlInputToAnchor,
+  curveLabelConfig,
 } from "./lib/customIndicators";
 import { PERIODS, RESOLUTION_SECONDS } from "./lib/feed";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
@@ -362,6 +366,78 @@ export default function IndicatorSettings({
     Number(prevHlExt0.anchorTs) || 0,
   );
 
+  // --- Curve-end labels (generic; shown for indicators that map a per-curve tag) ---
+  // The pill shown past each curve's end when the indicator is selected/highlighted.
+  // Enabled by DEFAULT — an explicit `false` must persist (so it isn't re-defaulted
+  // to on at reload), hence we always store the full object once the user touches it.
+  const curveLabelExt0 = curveLabelConfig((ind?.extendData ?? {}) as unknown);
+  const [curveLabelEnabled, setCurveLabelEnabled] = useState<boolean>(curveLabelExt0.enabled);
+  // Position is configured separately for High vs Low curves (side + vertical align).
+  const [curveLabelHighSide, setCurveLabelHighSide] = useState<CurveLabelSide>(curveLabelExt0.high.side);
+  const [curveLabelHighAlign, setCurveLabelHighAlign] = useState<CurveLabelAlign>(curveLabelExt0.high.align);
+  const [curveLabelLowSide, setCurveLabelLowSide] = useState<CurveLabelSide>(curveLabelExt0.low.side);
+  const [curveLabelLowAlign, setCurveLabelLowAlign] = useState<CurveLabelAlign>(curveLabelExt0.low.align);
+  // "always" = labels stay visible permanently; false (default) = only when the
+  // indicator is selected/highlighted.
+  const [curveLabelAlways, setCurveLabelAlways] = useState<boolean>(curveLabelExt0.always);
+  // Whether this indicator type has a per-curve key parameter to label. Keep in sync
+  // with curveLabel()'s switch in customIndicators; ones without a case show no pills,
+  // so we hide the controls for them rather than offer a no-op toggle.
+  const hasCurveLabels = type === "PREV_HL";
+  // Whether a high/low position is at its default (right/center) — used both for the
+  // omit-when-default rehydrate guard and to drop a default sub-object from the save.
+  const isPosDefault = (side: CurveLabelSide, align: CurveLabelAlign) =>
+    side === "right" && align === "center";
+  // Build the curve-label config object from the current state, omitting default
+  // sub-positions but ALWAYS keeping enabled (so an explicit `false` persists).
+  function curveLabelObj(next: {
+    enabled: boolean;
+    always: boolean;
+    highSide: CurveLabelSide;
+    highAlign: CurveLabelAlign;
+    lowSide: CurveLabelSide;
+    lowAlign: CurveLabelAlign;
+  }) {
+    const obj: {
+      enabled: boolean;
+      always?: boolean;
+      high?: { side: CurveLabelSide; align: CurveLabelAlign };
+      low?: { side: CurveLabelSide; align: CurveLabelAlign };
+    } = { enabled: next.enabled };
+    if (next.always) obj.always = true;
+    if (!isPosDefault(next.highSide, next.highAlign))
+      obj.high = { side: next.highSide, align: next.highAlign };
+    if (!isPosDefault(next.lowSide, next.lowAlign))
+      obj.low = { side: next.lowSide, align: next.lowAlign };
+    return obj;
+  }
+  // Whether the whole config round-trips to nothing (so we can drop the key entirely).
+  const curveLabelIsDefault = (next: Parameters<typeof curveLabelObj>[0]) =>
+    next.enabled &&
+    !next.always &&
+    isPosDefault(next.highSide, next.highAlign) &&
+    isPosDefault(next.lowSide, next.lowAlign);
+  // Write the curve-label config onto extendData and re-preview (no recompute needed;
+  // labels are drawn in ChartCore's redraw from extendData). Persisted by the snapshot
+  // effect. The whole key is dropped when fully default; otherwise legacy flat side/
+  // align are removed and the high/low form is written.
+  function applyCurveLabels(next: Parameters<typeof curveLabelObj>[0]) {
+    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const ext = { ...((live?.extendData as object) ?? {}) } as { curveLabels?: unknown };
+    if (curveLabelIsDefault(next)) delete ext.curveLabels;
+    else ext.curveLabels = curveLabelObj(next);
+    chart.overrideIndicator({ name, extendData: ext }, paneId);
+  }
+  // The current state as the applyCurveLabels/curveLabelObj argument shape.
+  const curveLabelState = () => ({
+    enabled: curveLabelEnabled,
+    always: curveLabelAlways,
+    highSide: curveLabelHighSide,
+    highAlign: curveLabelHighAlign,
+    lowSide: curveLabelLowSide,
+    lowAlign: curveLabelLowAlign,
+  });
+
   const inputs = resolveInputs(type, ind?.calcParams as unknown[] | undefined);
 
   // --- Generic extendData inputs (e.g. LR's Source select) ---
@@ -613,6 +689,13 @@ export default function IndicatorSettings({
       if (!isDefault) extendData.divergence = rsiDiv;
       if (JSON.stringify(rsiStyle) !== JSON.stringify(RSI_STYLE_DEFAULTS)) extendData.style = rsiStyle;
     }
+    if (hasCurveLabels) {
+      // Curve-end labels: omit when fully default so a plain instance carries no key;
+      // otherwise store the high/low form (enabled is always kept, so an explicit
+      // `false` stays off on reload).
+      const st = curveLabelState();
+      if (!curveLabelIsDefault(st)) extendData.curveLabels = curveLabelObj(st);
+    }
     if (!showValue) extendData.hideLegendValue = true;
     return {
       calcParams: isAvwap ? undefined : isMa ? [maLength] : calcParams,
@@ -632,7 +715,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways]);
 
   // Push a moving-average config (chart-TF or MTF) through the coordinator, which
   // refetches HTF data when a timeframe is set. Reads explicit overrides so it
@@ -882,6 +965,113 @@ export default function IndicatorSettings({
     ? (AVWAP_STYLE_ORDER.map((k) => lines.find((l) => l.key === k)).filter(Boolean) as LineDraft[])
     : lines;
 
+  // One curve (High or Low) position row: side + align selects. The two curves
+  // differ only in their state cell and which curveLabelState key they patch, so
+  // render this parameterized rather than copy-pasting the markup twice.
+  const curveLabelPosRow = (
+    label: string,
+    side: CurveLabelSide,
+    setSide: (s: CurveLabelSide) => void,
+    align: CurveLabelAlign,
+    setAlign: (a: CurveLabelAlign) => void,
+    sideKey: "highSide" | "lowSide",
+    alignKey: "highAlign" | "lowAlign",
+  ) => (
+    <div className={`ind-row ind-prevhl-grid ind-curvelabel-pos${curveLabelEnabled ? "" : " is-off"}`}>
+      <span className="ind-row-head">
+        <label>{label}</label>
+      </span>
+      <span className="ind-curvelabel-selects">
+        <select
+          value={side}
+          disabled={!curveLabelEnabled}
+          onChange={(e) => {
+            const v = e.target.value as CurveLabelSide;
+            setSide(v);
+            applyCurveLabels({ ...curveLabelState(), [sideKey]: v });
+          }}
+        >
+          <option value="right">Right end</option>
+          <option value="left">Left end</option>
+        </select>
+        <select
+          value={align}
+          disabled={!curveLabelEnabled}
+          onChange={(e) => {
+            const v = e.target.value as CurveLabelAlign;
+            setAlign(v);
+            applyCurveLabels({ ...curveLabelState(), [alignKey]: v });
+          }}
+        >
+          <option value="above">Above line</option>
+          <option value="center">On line</option>
+          <option value="below">Below line</option>
+        </select>
+      </span>
+    </div>
+  );
+
+  // Curve-end labels: a small tag past each curve's end naming its key parameter
+  // (e.g. "1d") while the indicator is selected/highlighted. Purely visual, so it
+  // lives in the Style tab (TradingView convention). Show + Position stay visible
+  // but disabled when the toggle is off, so the section's shape doesn't jump.
+  const renderCurveLabels = () => (
+    <>
+      <div className="ind-row">
+        <label className="ind-check">
+          <input
+            type="checkbox"
+            checked={curveLabelEnabled}
+            onChange={(e) => {
+              setCurveLabelEnabled(e.target.checked);
+              applyCurveLabels({ ...curveLabelState(), enabled: e.target.checked });
+            }}
+          />
+          <span>Curve labels</span>
+        </label>
+        <InfoTip
+          title="Curve labels"
+          text="Shows each curve's key parameter (e.g. 3D range high, prev 1D low) at its end. By default they appear while the indicator is selected or highlighted; set Show to Always to keep them on permanently. The High and Low curves can be positioned separately."
+        />
+      </div>
+      <div className={`ind-row ind-prevhl-grid${curveLabelEnabled ? "" : " is-off"}`}>
+        <span className="ind-row-head">
+          <label>Show</label>
+        </span>
+        <select
+          value={curveLabelAlways ? "always" : "selected"}
+          disabled={!curveLabelEnabled}
+          onChange={(e) => {
+            const always = e.target.value === "always";
+            setCurveLabelAlways(always);
+            applyCurveLabels({ ...curveLabelState(), always });
+          }}
+        >
+          <option value="selected">When selected</option>
+          <option value="always">Always</option>
+        </select>
+      </div>
+      {curveLabelPosRow(
+        "High position",
+        curveLabelHighSide,
+        setCurveLabelHighSide,
+        curveLabelHighAlign,
+        setCurveLabelHighAlign,
+        "highSide",
+        "highAlign",
+      )}
+      {curveLabelPosRow(
+        "Low position",
+        curveLabelLowSide,
+        setCurveLabelLowSide,
+        curveLabelLowAlign,
+        setCurveLabelLowAlign,
+        "lowSide",
+        "lowAlign",
+      )}
+    </>
+  );
+
   return (
     <div className="modal-backdrop modal-backdrop--clear" onMouseDown={cancel}>
       <div
@@ -891,9 +1081,7 @@ export default function IndicatorSettings({
       >
         <div className="modal-head" {...drag.handleProps}>
           <strong>{shortName}</strong>
-          <button className="modal-close" onClick={cancel} title="Cancel">
-            ✕
-          </button>
+          <CloseButton onClick={cancel} label="Cancel" />
         </div>
 
         <div className="ind-tabs">
@@ -1022,8 +1210,9 @@ export default function IndicatorSettings({
             <>
               <div className="ind-group">Bands Settings</div>
               <div className="ind-row">
-                <label>Bands Calculation Mode</label>
+                <label>Mode</label>
                 <select
+                  className="ind-wide-select"
                   value={bandMode}
                   onChange={(e) => {
                     const v = e.target.value as BandMode;
@@ -1420,17 +1609,18 @@ export default function IndicatorSettings({
 
           {tab === "style" && (
             <>
-              {/* PREV_HL shows a lookback summary in the legend (e.g. "1 day, since …")
-                  instead of per-bar values; the toggle controls that. Other indicators
-                  toggle their figure values. */}
-              <label className="ind-check">
-                <input
-                  type="checkbox"
-                  checked={showValue}
-                  onChange={(e) => toggleShowValue(e.target.checked)}
-                />
-                <span>{type === "PREV_HL" ? "Show lookback in legend" : "Show value in legend"}</span>
-              </label>
+              {/* Non-PREV_HL toggles its figure values at the top. PREV_HL shows a
+                  range summary instead, and that toggle lives at the bottom (below). */}
+              {type !== "PREV_HL" && (
+                <label className="ind-check">
+                  <input
+                    type="checkbox"
+                    checked={showValue}
+                    onChange={(e) => toggleShowValue(e.target.checked)}
+                  />
+                  <span>Show value in legend</span>
+                </label>
+              )}
               {/* PREV_HL: pair each boundary's High and Low on ONE row —
                   "Day  High [color][size]  Low [color][size]" — halving the list.
                   The boundary is greyed when deactivated in the Inputs tab. */}
@@ -1651,6 +1841,30 @@ export default function IndicatorSettings({
                     </div>
                   );
                 })()}
+              {/* Curve-end labels live on the Style tab — they're presentation, not
+                  a calculation input (TradingView convention). */}
+              {hasCurveLabels && (
+                <>
+                  <div className="ind-group">Labels</div>
+                  {renderCurveLabels()}
+                </>
+              )}
+              {/* PREV_HL shows a range summary in the legend (e.g. "1 day, since …")
+                  instead of per-bar values; this toggle controls that. Kept at the
+                  bottom of the Style tab. */}
+              {type === "PREV_HL" && (
+                <>
+                  <div className="ind-group">Legend</div>
+                  <label className="ind-check">
+                    <input
+                      type="checkbox"
+                      checked={showValue}
+                      onChange={(e) => toggleShowValue(e.target.checked)}
+                    />
+                    <span>Show ranges in legend</span>
+                  </label>
+                </>
+              )}
             </>
           )}
 
