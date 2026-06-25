@@ -34,6 +34,43 @@ export async function seedSingleChartDefault(page: Page, tabId = "t1"): Promise<
   }, tabId);
 }
 
+// Seed TWO tabs, each a single-cell chart on a distinct epic, with the first
+// active. Used to prove the tab closed-badge is sourced from an App-level per-epic
+// poll (live for background tabs too), not from the active tab's mounted ChartCore.
+export async function seedTwoChartTabs(
+  page: Page,
+  epicA = "US100",
+  epicB = "OIL_CRUDE",
+): Promise<void> {
+  await page.addInitScript(
+    ([a, b]: [string, string]) => {
+      if (sessionStorage.getItem("__seeded")) return;
+      localStorage.clear();
+      const period = { resolution: "HOUR", label: "1H" };
+      const tab = (id: string, epic: string) => ({
+        id,
+        layout: "1",
+        activeCellId: `${id}-c0`,
+        cells: [
+          {
+            id: `${id}-c0`,
+            symbol: { epic, name: epic, status: null, pricePrecision: 2 },
+            period,
+            scope: `tab.${id}`,
+          },
+        ],
+      });
+      const ws = { tabs: [tab("t1", a), tab("t2", b)], activeTabId: "t1" };
+      localStorage.setItem("auto-trader.layouts", JSON.stringify([{ id: "L0", name: "Default" }]));
+      localStorage.setItem("auto-trader.layout.L0", JSON.stringify(ws));
+      localStorage.setItem("auto-trader.defaultLayoutId", JSON.stringify("L0"));
+      localStorage.setItem("auto-trader.activeLayoutId", JSON.stringify("L0"));
+      sessionStorage.setItem("__seeded", "1");
+    },
+    [epicA, epicB] as [string, string],
+  );
+}
+
 // Stub the backend state API so a spec runs hermetically (no real backend, no
 // cross-test bleed): GET returns an empty snapshot (so seeded localStorage wins),
 // PUT/DELETE succeed silently. Use in specs that don't exercise sync itself.

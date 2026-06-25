@@ -183,15 +183,41 @@ async def all_markets() -> list[MarketDTO]:
 
 
 @app.get("/api/market/{epic}")
-async def market_precision(epic: str) -> dict[str, object]:
-    # Authoritative display precision for one epic (the platform's own decimals).
-    # The chart calls this on load so a symbol persisted without precision (the
-    # bulk list omits it, e.g. OIL_CRUDE) still renders at the right scale.
+async def market_meta(epic: str) -> dict[str, object]:
+    # Display precision + open/closed status for one epic, from the platform's own
+    # single-market snapshot (one upstream call). The chart calls this on load so a
+    # symbol persisted without precision (the bulk list omits it, e.g. OIL_CRUDE)
+    # still renders at the right scale, and polls it so the tab badge / price label
+    # flip when the market closes while the chart is open.
     try:
-        precision = await get_broker().get_market_precision(epic)
+        meta = await get_broker().get_market_meta(epic)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"market lookup failed: {e}") from e
-    return {"epic": epic, "pricePrecision": precision}
+    meta = meta or {}
+    return {
+        "epic": epic,
+        "pricePrecision": meta.get("pricePrecision"),
+        # `closed` is derived from the instrument's opening hours (authoritative on
+        # both demo and live); `status` is the raw marketStatus, kept for reference.
+        "closed": meta.get("closed"),
+        "nextOpen": meta.get("nextOpen"),
+        "status": meta.get("status"),
+    }
+
+
+@app.get("/api/market/{epic}/details")
+async def market_details(epic: str) -> dict[str, object]:
+    # Full broker-provided instrument detail (instrument + dealingRules + snapshot),
+    # passed through verbatim for the chart's instrument-details modal. Fetched once
+    # on modal-open — NOT polled (unlike /api/market/{epic}); the snapshot section is
+    # a point-in-time quote and that's fine for a click-to-open view.
+    try:
+        detail = await get_broker().get_market_detail(epic)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"market lookup failed: {e}") from e
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"unknown market '{epic}'")
+    return detail
 
 
 @app.get("/api/favorites", response_model=list[MarketDTO])

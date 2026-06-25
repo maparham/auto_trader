@@ -7,9 +7,31 @@ import { useState, type ReactNode } from "react";
 import type { ChartTab } from "./lib/persist";
 import SymbolIcon from "./SymbolIcon";
 
+// Format an ISO-8601 UTC next-open time for the closed-badge tooltip, in the
+// viewer's local zone. "today"/"tomorrow" when near; otherwise a dated weekday
+// (e.g. "Mon, Jun 29 22:00") since the next open can be up to a week out and the
+// weekday alone can't tell this week from next. Falls back to the raw string if
+// it doesn't parse.
+function fmtNextOpen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const time = d.toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const startOfDay = (x: Date) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOfDay(d) - startOfDay(new Date())) / 86_400_000);
+  if (days <= 0) return `today ${time}`;
+  if (days === 1) return `tomorrow ${time}`;
+  const date = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return `${date} ${time}`;
+}
+
 interface Props {
   tabs: ChartTab[];
   activeId: string;
+  // Market-closed state keyed by EPIC (polled at the App level for every tab's
+  // lead epic, so it's live for background tabs too). A tab shows a crescent-moon
+  // badge when its lead cell's epic is closed; nextOpen feeds the badge tooltip.
+  closedEpics: Record<string, { closed: boolean; nextOpen: string | null }>;
   onSelect: (id: string) => void;
   onAdd: () => void;
   onClose: (id: string) => void;
@@ -22,6 +44,7 @@ interface Props {
 export default function TabBar({
   tabs,
   activeId,
+  closedEpics,
   onSelect,
   onAdd,
   onClose,
@@ -52,6 +75,13 @@ export default function TabBar({
         // multi-cell layout adds a small count badge. The title lists every cell.
         const lead =
           t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0];
+        const leadMeta = closedEpics[lead.symbol.epic];
+        const leadClosed = !!leadMeta?.closed;
+        const closedTip = leadClosed
+          ? leadMeta?.nextOpen
+            ? `Market closed · opens ${fmtNextOpen(leadMeta.nextOpen)}`
+            : "Market closed"
+          : null;
         const titleText = t.cells
           .map((c) => `${c.symbol.name} · ${c.period.label}`)
           .join("   |   ");
@@ -73,7 +103,7 @@ export default function TabBar({
             .filter(Boolean)
             .join(" ")}
           onClick={() => onSelect(t.id)}
-          title={titleText}
+          title={closedTip ? `${titleText} — ${closedTip}` : titleText}
           draggable
           onDragStart={(e) => {
             setDragIdx(i);
@@ -106,6 +136,18 @@ export default function TabBar({
           <span className="tab-symbol">{lead.symbol.epic}</span>
           <span className="tab-period">{lead.period.label}</span>
           {t.cells.length > 1 && <span className="tab-count">{t.cells.length}</span>}
+          {/* Crescent-moon badge pinned to the tab's top-right when the lead
+              cell's market is closed (CSS positions it absolutely). The tooltip
+              names the next opening time when known. */}
+          {leadClosed && (
+            <span
+              className="tab-closed-badge"
+              title={closedTip ?? "Market closed"}
+              aria-label={closedTip ?? "Market closed"}
+            >
+              🌙
+            </span>
+          )}
           <button
             className="tab-close"
             // Closing must not also select the tab.

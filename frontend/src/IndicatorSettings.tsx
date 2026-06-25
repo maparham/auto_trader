@@ -58,6 +58,7 @@ import {
 import { applyIndicator, removeIndicatorById } from "./lib/indicators";
 import { toast } from "./lib/notify";
 import { useDraggable } from "./lib/useDraggable";
+import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import InfoTip from "./InfoTip";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
@@ -801,12 +802,7 @@ export default function IndicatorSettings({
     onClose();
   }
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && cancel();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useCloseOnEscape(cancel);
 
   // --- TradingView-style "Defaults" menu (footer) ----------------------------
   // Global per-TYPE presets: a single default that seeds freshly-added instances,

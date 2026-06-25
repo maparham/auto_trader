@@ -103,6 +103,8 @@ interface Props {
   onRemove: (name: string) => void;
   // Click a row body to select the indicator (TradingView-style), like a curve click.
   onSelectRow: (name: string) => void;
+  // Click the symbol name to open the instrument-details modal (TradingView-style).
+  onOpenDetails: () => void;
   // Open the indicator context menu (anchored at the ⋯ button) — TradingView's
   // "more" affordance at the end of the legend row.
   onOpenMenu: (name: string, x: number, y: number) => void;
@@ -134,6 +136,7 @@ export default function ChartLegend({
   onRemove,
   onSelectRow,
   onOpenMenu,
+  onOpenDetails,
   handleRef,
 }: Props) {
   const { legendHovered, legendHoverName } = controller;
@@ -243,12 +246,33 @@ export default function ChartLegend({
       {/* Row 0: symbol · interval · source + OHLC + change. */}
       <div className="cl-row cl-ohlc">
         <span
-          className="cl-sym"
+          className="cl-sym cl-sym-clickable"
           style={{ color: ctx.live ? UP : "var(--text)" }}
-          title={ctx.live ? "live" : "connecting…"}
+          title="Instrument details"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenDetails();
+          }}
         >
           {ctx.symbol}
         </span>
+        {/* Explicit affordance for the instrument-details modal — the symbol name
+            is clickable too, but the ⓘ makes that discoverable. */}
+        <button
+          className="cl-info"
+          aria-label="Instrument details"
+          title="Instrument details"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenDetails();
+          }}
+        >
+          <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <line x1="12" y1="11" x2="12" y2="16" />
+            <circle cx="12" cy="7.5" r="0.6" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
         <span className="cl-meta">
           · {ctx.period} · Capital.com
         </span>
@@ -383,7 +407,10 @@ function IndicatorRow({
         )}
       {/* Action icons. A hidden indicator always keeps its unhide eye even when
           idle; the rest reveal on row hover/selection (CSS .cl-icons). */}
-      <span className={`cl-icons${row.visible ? "" : " cl-icons-hidden-eye"}`}>
+      <span
+        className={`cl-icons${row.visible ? "" : " cl-icons-hidden-eye"}`}
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
         <button
           className="cl-icon"
           title={row.visible ? "Hide" : "Show"}

@@ -15,6 +15,7 @@ import {
   type Instrument,
 } from "./lib/feed";
 import SymbolIcon from "./SymbolIcon";
+import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 
 interface Props {
   current: Instrument;
@@ -96,11 +97,7 @@ export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
 
   useEffect(() => inputRef.current?.focus(), []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useCloseOnEscape(onClose);
 
   // Load the catalogue + favorites once (both cached for the session).
   useEffect(() => {

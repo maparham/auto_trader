@@ -182,18 +182,70 @@ export async function removeFavorite(epic: string): Promise<void> {
   invalidateFavorites();
 }
 
-/** Authoritative display precision (decimals) for an epic, or null if unknown.
- * The chart calls this on load: a symbol persisted without pricePrecision (the
- * bulk markets list omits it) would otherwise fall back to 2 (e.g. oil at 71.88
- * instead of 71.884). */
-export async function fetchPrecision(epic: string): Promise<number | null> {
+export interface MarketMeta {
+  // Authoritative display precision (decimals), or null if unknown. The chart
+  // uses this on load: a symbol persisted without pricePrecision (the bulk
+  // markets list omits it) would otherwise fall back to 2 (e.g. oil at 71.88
+  // instead of 71.884).
+  pricePrecision: number | null;
+  // Whether the market is currently closed, derived server-side from the
+  // instrument's opening hours (authoritative on both demo and live, unlike the
+  // raw marketStatus which can wrongly report CLOSED on demo). null = unknown
+  // (failed lookup) — the chart treats unknown as open so a failed fetch never
+  // badges a live market closed.
+  closed: boolean | null;
+  // When closed, the next opening time as an ISO-8601 UTC string (else null) —
+  // shown in the closed-badge tooltip.
+  nextOpen: string | null;
+}
+
+// The full broker instrument detail, passed through verbatim. Three sections of
+// raw key/value data (the field set varies per instrument), rendered generically
+// in the instrument-details modal — so this is intentionally untyped beyond the
+// section shape.
+export interface MarketDetail {
+  instrument: Record<string, unknown>;
+  dealingRules: Record<string, unknown>;
+  snapshot: Record<string, unknown>;
+}
+
+/** Full instrument detail for the details modal. Fetched once on open (not
+ * polled). Returns null on any failure so the caller can show an error/empty. */
+export async function fetchMarketDetail(epic: string): Promise<MarketDetail | null> {
   try {
-    const res = await fetch(`${BASE}/api/market/${encodeURIComponent(epic)}`);
+    const res = await fetch(`${BASE}/api/market/${encodeURIComponent(epic)}/details`);
     if (!res.ok) return null;
-    const d = (await res.json()) as { pricePrecision?: number | null };
-    return typeof d.pricePrecision === "number" ? d.pricePrecision : null;
+    const d = (await res.json()) as Partial<MarketDetail>;
+    return {
+      instrument: d.instrument ?? {},
+      dealingRules: d.dealingRules ?? {},
+      snapshot: d.snapshot ?? {},
+    };
   } catch {
     return null;
+  }
+}
+
+/** Display precision + open/closed status for an epic, from one snapshot call.
+ * Returns nulls (never throws) so callers can keep their existing fallbacks.
+ * The chart fetches this on load and polls it so the tab badge / price label
+ * flip when a market closes while the chart is open. */
+export async function fetchMarketMeta(epic: string): Promise<MarketMeta> {
+  try {
+    const res = await fetch(`${BASE}/api/market/${encodeURIComponent(epic)}`);
+    if (!res.ok) return { pricePrecision: null, closed: null, nextOpen: null };
+    const d = (await res.json()) as {
+      pricePrecision?: number | null;
+      closed?: boolean | null;
+      nextOpen?: string | null;
+    };
+    return {
+      pricePrecision: typeof d.pricePrecision === "number" ? d.pricePrecision : null,
+      closed: typeof d.closed === "boolean" ? d.closed : null,
+      nextOpen: typeof d.nextOpen === "string" ? d.nextOpen : null,
+    };
+  } catch {
+    return { pricePrecision: null, closed: null, nextOpen: null };
   }
 }
 

@@ -17,7 +17,7 @@ import {
 import {
   fetchRecent,
   fetchRange,
-  fetchPrecision,
+  fetchMarketMeta,
   openLive,
   RESOLUTION_SECONDS,
   type Instrument,
@@ -34,6 +34,7 @@ import ChartLegend, {
   type SubPaneLegendData,
 } from "./ChartLegend";
 import { ChartController } from "./lib/chartController";
+import InstrumentDetailsModal from "./InstrumentDetailsModal";
 import { clearBacktest } from "./lib/backtest";
 import { toast } from "./lib/notify";
 import {
@@ -601,6 +602,17 @@ export default function ChartCore({
   const effPrecision = fetchedPrecision ?? symbol.pricePrecision ?? 2;
   const precisionRef = useRef(effPrecision);
   precisionRef.current = effPrecision;
+  // Whether this epic's market is currently closed (derived from opening hours),
+  // fetched with precision and polled (see effect below). Drives the price label's
+  // "closed" text in place of the candle countdown; the ref lets the once-mounted
+  // countdown logic read it without re-subscribing. (The tab badge's closed/next-open
+  // state is sourced separately by an App-level epic poll, so this cell tracks only
+  // the boolean it needs for its own price label.)
+  const [marketClosed, setMarketClosed] = useState(false);
+  const marketClosedRef = useRef(marketClosed);
+  marketClosedRef.current = marketClosed;
+  // Instrument-details modal (opened by clicking the legend symbol).
+  const [detailsOpen, setDetailsOpen] = useState(false);
   // Current epic/resolution, readable from once-mounted callbacks without re-subscribing.
   const epicRef = useRef(symbol.epic);
   epicRef.current = symbol.epic;
@@ -1205,17 +1217,42 @@ export default function ChartCore({
     chartRef.current?.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current));
   }, [theme, symbol.epic, effPrecision, period.label, status, crosshair]);
 
-  // Resolve the epic's authoritative precision on symbol change (see fetchPrecision).
+  // Resolve the epic's authoritative precision + open/closed status on symbol
+  // change, then poll the status so the tab badge and price label flip when the
+  // market closes (or reopens) while the chart stays open. One snapshot call
+  // yields both (fetchMarketMeta); precision is stable so we only apply it once,
+  // but status is re-read each tick. The interval is modest (60s) to stay clear of
+  // the /session 429 storm that shared-broker polling can trigger.
   useEffect(() => {
     let cancelled = false;
     setFetchedPrecision(null); // drop the previous epic's value while we re-resolve
-    void fetchPrecision(symbol.epic).then((p) => {
-      if (!cancelled && p != null) setFetchedPrecision(p);
-    });
+    // Also clear the previous epic's closed state: the effect re-runs in place on
+    // an in-cell symbol switch (cells key on cell.id, not epic), so without this a
+    // now-open symbol would flash "closed" on the price pill until apply(true)
+    // resolves. Default to open; the fetch corrects it a round-trip later.
+    setMarketClosed(false);
+    const apply = (gotPrecision: boolean) =>
+      fetchMarketMeta(symbol.epic).then((meta) => {
+        if (cancelled) return;
+        if (gotPrecision && meta.pricePrecision != null) setFetchedPrecision(meta.pricePrecision);
+        // null `closed` (failed lookup) is treated as open, so a failed fetch never
+        // shows a live market closed.
+        setMarketClosed(meta.closed === true);
+      });
+    void apply(true);
+    const id = setInterval(() => void apply(false), 60_000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, [symbol.epic]);
+
+  // A market open/closed change must repaint the price pill (the redraw reads the
+  // ref, so a re-render alone won't). The tab badge is sourced separately by an
+  // App-level epic poll, so this cell only needs to refresh its own price label.
+  useEffect(() => {
+    redrawRef.current();
+  }, [marketClosed]);
 
   // Apply precision to the chart whenever it resolves (the async fetch lands after
   // the symbol/period effect's initial setPriceVolumePrecision).
@@ -1390,7 +1427,11 @@ export default function ChartCore({
         setPriceTag(null);
       } else {
         let countdown: string | null = null;
-        if (statusRef.current === "live") {
+        if (marketClosedRef.current) {
+          // Closed market: the WS still connects (status "live"), so the timer
+          // would otherwise tick to 0:00 and freeze. Show "closed" in its place.
+          countdown = "closed";
+        } else if (statusRef.current === "live") {
           const resSec = RESOLUTION_SECONDS[resRef.current] ?? 60;
           const rem = Math.max(
             0,
@@ -2118,7 +2159,16 @@ export default function ChartCore({
         onRemove={onLegendRemove}
         onSelectRow={onLegendSelectRow}
         onOpenMenu={onLegendOpenMenu}
+        onOpenDetails={() => setDetailsOpen(true)}
       />
+
+      {detailsOpen && (
+        <InstrumentDetailsModal
+          epic={symbol.epic}
+          title={symbol.name ?? symbol.epic}
+          onClose={() => setDetailsOpen(false)}
+        />
+      )}
 
       {indMenu && (
         <ContextMenu

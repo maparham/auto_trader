@@ -45,8 +45,8 @@
 .placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-faint); }
 
 /* TradingView-style chart tabs along the top (topmost strip, above the toolbar).
-   Each tab = one chart view (instrument + interval). The active tab carries an
-   accent bottom border (TV-style underline). Tabs drag-to-reorder. */
+   Each tab = one chart view (instrument + interval). Tabs are carded pills; the
+   active tab carries an accent-tinted fill + full accent border. Drag-to-reorder. */
 .tab-bar {
   display: flex; align-items: stretch;
   flex-shrink: 0; padding: 0 6px; min-height: 34px;
@@ -55,7 +55,7 @@
 /* The tabs scroll horizontally on overflow; the trailing workspace actions stay
    pinned to the right and never scroll out of view. */
 .tab-bar-tabs {
-  display: flex; align-items: stretch; gap: 2px;
+  display: flex; align-items: center; gap: 6px;
   flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden;
 }
 /* Workspace-level controls (Backtest, named layouts, split picker, theme) pinned
@@ -65,21 +65,51 @@
   padding-left: 8px; margin-left: 4px;
   border-left: 1px solid var(--border);
 }
+/* Pill/card tabs: each tab is a self-contained rounded chip with its own
+   surface + border, separated by the .tab-bar-tabs gap, so adjacent tabs read
+   as clearly distinct (rather than one flush strip). */
 .tab {
-  display: flex; align-items: center; gap: 7px;
-  padding: 0 10px; cursor: pointer; user-select: none;
+  position: relative; /* anchors the closed-market badge to the corner */
+  display: flex; align-items: center; gap: 7px; flex-shrink: 0;
+  min-height: 26px; padding: 0 10px; cursor: pointer; user-select: none;
   color: var(--text-dim); font-size: 12px; white-space: nowrap;
-  border-bottom: 2px solid transparent;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 7px;
 }
-.tab:hover { background: var(--input-bg); }
+/* Crescent-moon badge in the top-LEFT corner when the lead cell's market is
+   closed. Top-left keeps it clear of the close button in the top-right. Small
+   and non-interactive — it rides above the tab content. */
+.tab-closed-badge {
+  position: absolute; top: 1px; left: 2px;
+  font-size: 9px; line-height: 1; pointer-events: none;
+}
+/* Hover: layer the translucent --hover overlay ON TOP of the card's own fill
+   (not replace it) so the chip stays a card and reads as raised, not receding —
+   the single-value shorthand would composite --hover over the bar instead. */
+.tab:hover { background: linear-gradient(var(--hover), var(--hover)), var(--surface-2); }
+/* Active tab: accent-tinted fill + accent border so the live chart's tab is
+   unmistakable among the neutral chips. The plain --surface-2 line is a fallback
+   for engines without color-mix() (active tab then relies on the accent border). */
 .tab.on {
-  color: var(--text); background: var(--input-bg);
-  border-bottom-color: var(--accent);
+  color: var(--text);
+  background: var(--surface-2);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
 }
-/* Drag-to-reorder: dim the tab being dragged; show a drop line at the target. */
+/* The active tab still needs hover feedback; .tab:hover has equal specificity and
+   loses the cascade to .tab.on, so deepen the accent tint here explicitly. */
+.tab.on:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* Drag-to-reorder: dim the tab being dragged; show a drop line at the target.
+   The line is a pseudo-element bar sitting in the inter-tab gap rather than an
+   inset shadow, which the pill's border-radius would clip to rounded stubs. */
 .tab.dragging { opacity: 0.4; }
-.tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
-.tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+.tab.drop-before::before,
+.tab.drop-after::after {
+  content: ""; position: absolute; top: 3px; bottom: 3px; width: 2px;
+  border-radius: 1px; background: var(--accent);
+}
+.tab.drop-before::before { left: -4px; }
+.tab.drop-after::after { right: -4px; }
 .tab-icon {
   position: relative; flex-shrink: 0; width: 16px; height: 16px;
   border-radius: 50%; overflow: hidden;
@@ -419,6 +449,28 @@
   border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
 }
 .alert-modal { width: 460px; }
+
+/* Instrument-details modal: grouped key/value sections, scrollable if long. */
+.instrument-modal { width: 460px; }
+.instrument-title { font-weight: 600; }
+.instrument-body { padding: 8px 16px 16px; max-height: 70vh; overflow-y: auto; }
+.instrument-note { color: var(--text-dim); padding: 12px 0; }
+.instrument-section { margin-top: 12px; }
+.instrument-section-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-faint); margin-bottom: 6px;
+}
+.instrument-grid { margin: 0; }
+.instrument-row {
+  display: flex; justify-content: space-between; gap: 16px;
+  padding: 4px 0; border-bottom: 1px solid var(--border);
+}
+.instrument-row:last-child { border-bottom: none; }
+.instrument-row dt { color: var(--text-dim); flex-shrink: 0; }
+/* Values right-aligned; opening-hours keeps its newlines. */
+.instrument-row dd {
+  margin: 0; text-align: right; white-space: pre-line; color: var(--text);
+}
 .alert-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .al-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .al-row > span { color: var(--text-dim); width: 90px; flex-shrink: 0; }
@@ -873,6 +925,17 @@
    interaction. The row itself isn't clickable (no cursor:pointer / onClick). */
 .cl-ohlc { pointer-events: auto; }
 .cl-sym { font-weight: 600; }
+/* The symbol name opens the instrument-details modal (TradingView-style). */
+.cl-sym-clickable { cursor: pointer; }
+.cl-sym-clickable:hover { text-decoration: underline; }
+/* ⓘ button next to the symbol — the discoverable way into the details modal. */
+.cl-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: 2px; padding: 0; background: transparent; border: none;
+  color: var(--text-faint); cursor: pointer; vertical-align: middle;
+}
+.cl-info svg { fill: none; stroke: currentColor; stroke-width: 1.7; display: block; }
+.cl-info:hover { color: var(--text); }
 .cl-meta { color: var(--text-dim); }
 .cl-ohlc-item { display: inline-flex; align-items: center; gap: 3px; }
 .cl-ohlc-label { color: var(--text-dim); }

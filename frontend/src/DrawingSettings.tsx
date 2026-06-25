@@ -11,12 +11,13 @@
 // built-in overlays have fixed figure rendering); the tab shell is present so the
 // layout matches TV, with those fields noted as coming soon.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { LineType } from "klinecharts";
 import type { DeepPartial, OverlayStyle } from "klinecharts";
 import { type OverlayManager, asDrawingExtra } from "./lib/overlays";
 import { PERIOD_GROUPS } from "./lib/feed";
 import { useDraggable } from "./lib/useDraggable";
+import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 
 interface Props {
@@ -203,12 +204,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     onClose();
   }
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && cancel();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useCloseOnEscape(cancel);
 
   if (!live && !original) return null;
 

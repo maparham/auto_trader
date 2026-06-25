@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Chart } from "klinecharts";
 import ChartGrid from "./ChartGrid";
 import Toolbar from "./Toolbar";
@@ -24,7 +24,7 @@ import {
   settingsRequest,
 } from "./lib/signals";
 import { alertEngine } from "./lib/alertEngine";
-import { PERIODS, type Instrument, type Period } from "./lib/feed";
+import { PERIODS, fetchMarketMeta, type Instrument, type Period } from "./lib/feed";
 import {
   hydrateFromBackend,
   subscribeToBackendUpdates,
@@ -265,6 +265,62 @@ export default function App() {
     readyRef.current.set(cellId, { chart, controller });
     bumpReady();
   };
+  // Market open/closed status (+ next-open time) keyed by EPIC, for the tab
+  // closed badge. Polled at the App level (below) for every tab's lead epic, not
+  // just the active tab's — only the active tab mounts a ChartGrid/ChartCore, so
+  // sourcing the badge from per-cell ChartCore state left background tabs stale
+  // (a moon stuck on after a market reopened) or unbadged. Keying by epic also
+  // bounds the map to distinct lead symbols and lets us prune it to the tabs that
+  // currently exist.
+  const [epicClosed, setEpicClosed] = useState<
+    Record<string, { closed: boolean; nextOpen: string | null }>
+  >({});
+
+  // The distinct lead epics across all tabs (the lead cell is the focused-or-first
+  // one, matching how TabBar picks the chip). Joined into a stable string so the
+  // poll effect below only re-subscribes when the SET of lead epics changes, not
+  // on every unrelated tab edit.
+  const leadEpicsKey = useMemo(() => {
+    const epics = new Set<string>();
+    for (const t of tabs) {
+      const lead = t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0];
+      if (lead) epics.add(lead.symbol.epic);
+    }
+    return [...epics].sort().join(",");
+  }, [tabs]);
+
+  // Poll open/closed status for every tab's lead epic, so the closed badge stays
+  // live on background tabs too (their ChartCore isn't mounted). 60s cadence, in
+  // step with ChartCore's own poll, to stay clear of the /session 429 storm that
+  // shared-broker polling can trigger. Prunes epicClosed to the current epics so
+  // entries for closed tabs don't leak.
+  useEffect(() => {
+    const epics = leadEpicsKey ? leadEpicsKey.split(",") : [];
+    let cancelled = false;
+    const poll = async () => {
+      const entries = await Promise.all(
+        epics.map(async (epic) => {
+          const meta = await fetchMarketMeta(epic);
+          // null `closed` (failed lookup) is treated as open, never badging a live
+          // market closed on a transient error.
+          return [
+            epic,
+            { closed: meta.closed === true, nextOpen: meta.closed === true ? meta.nextOpen : null },
+          ] as const;
+        }),
+      );
+      if (cancelled) return;
+      // Replace wholesale (not merge) so epics no longer present are dropped.
+      setEpicClosed(Object.fromEntries(entries));
+    };
+    void poll();
+    const id = setInterval(() => void poll(), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [leadEpicsKey]);
+
   // Pointer-down in a cell focuses it (routes the chrome to that cell).
   const onCellFocus = (cellId: string) => {
     if (!active || cellId === active.activeCellId) return;
@@ -574,6 +630,7 @@ export default function App() {
       <TabBar
         tabs={tabs}
         activeId={active?.id ?? ""}
+        closedEpics={epicClosed}
         onSelect={setActiveId}
         onAdd={addTab}
         onClose={closeTab}

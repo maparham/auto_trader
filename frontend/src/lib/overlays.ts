@@ -226,6 +226,12 @@ export class OverlayManager {
     this.hoveredAlertId = id;
     this.applyAlertLineWeight(prev); // resting weight unless it's still selected
     this.applyAlertLineWeight(id);
+    // Hide the crosshair's horizontal guide while over an alert line — it would
+    // sit right on top of the dashed alert line and read as noise (the vertical
+    // guide stays). klineStyles() doesn't carry horizontal.show, so this flag is
+    // ours alone to toggle: set it back to true on un-hover. Independent of the
+    // legend's whole-crosshair `show` toggle (a different key), so they coexist.
+    this.chart?.setStyles({ crosshair: { horizontal: { show: id == null } } });
     this.notifyAlerts();
   }
 
@@ -399,7 +405,12 @@ export class OverlayManager {
         this.alertCfg.delete(e.overlay.id);
         this.alertIds.delete(e.overlay.id);
         this.alertCreatedAt.delete(e.overlay.id);
-        if (this.hoveredAlertId === e.overlay.id) this.hoveredAlertId = null;
+        if (this.hoveredAlertId === e.overlay.id) {
+          // Removing the hovered alert won't fire onMouseLeave, so restore the
+          // crosshair's horizontal guide here or it stays stuck hidden.
+          this.hoveredAlertId = null;
+          this.chart?.setStyles({ crosshair: { horizontal: { show: true } } });
+        }
         if (this.selectedAlertId === e.overlay.id) this.selectedAlertId = null;
         if (this.hoveredDrawingId === e.overlay.id) this.hoveredDrawingId = null;
         if (this.selectedDrawingId === e.overlay.id) {
@@ -779,7 +790,12 @@ export class OverlayManager {
       this.alertCfg.clear();
       this.alertIds.clear();
       this.alertCreatedAt.clear();
-      this.hoveredAlertId = null;
+      if (this.hoveredAlertId !== null) {
+        // Wiping overlays on rehydrate (e.g. symbol change) won't fire
+        // onMouseLeave, so restore the crosshair's horizontal guide.
+        this.hoveredAlertId = null;
+        this.chart.setStyles({ crosshair: { horizontal: { show: true } } });
+      }
       this.selectedAlertId = null;
       this.hoveredDrawingId = null;
       this.selectedDrawingId = null;

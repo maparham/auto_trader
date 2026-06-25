@@ -1,7 +1,7 @@
 // App settings modal. Tabbed: "General" (theme + time formatting) and "Alerts"
 // (defaults a freshly-created alert inherits). Structured so more tabs/rows drop in.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type {
   AlertDefaults,
   AlertExpiry,
@@ -16,6 +16,7 @@ import type { AlertCondition, AlertTrigger } from "./lib/persist";
 import { chartColors } from "./theme";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 import { useDraggable } from "./lib/useDraggable";
+import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import { CONDITIONS, DURATION_PRESETS } from "./lib/alertUi";
 
@@ -63,11 +64,7 @@ const TRIGGERS: { value: AlertTrigger; label: string }[] = [
 export default function SettingsModal({ settings, onChange, onClose }: Props) {
   const drag = useDraggable();
   const [tab, setTab] = useState<Tab>("general");
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useCloseOnEscape(onClose);
 
   const ad = settings.alertDefaults;
   const setAd = (patch: Partial<AlertDefaults>) =>

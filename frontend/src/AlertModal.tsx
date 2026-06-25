@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AlertCondition, AlertNotifyChannels, AlertTrigger } from "./lib/persist";
 import type { AlertDefaults } from "./theme";
 import { useDraggable } from "./lib/useDraggable";
+import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import {
   CONDITIONS,
   expiryOptions,
@@ -78,11 +79,7 @@ export default function AlertModal({
   );
   const drag = useDraggable();
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useCloseOnEscape(onClose);
 
   const num = Number(value);
   const valid = value.trim() !== "" && Number.isFinite(num);
