@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Chart } from "klinecharts";
 import ChartGrid from "./ChartGrid";
 import Toolbar from "./Toolbar";
@@ -9,18 +9,27 @@ import SettingsModal from "./Settings";
 import AlertModal from "./AlertModal";
 import IndicatorSettings from "./IndicatorSettings";
 import DrawingSettings from "./DrawingSettings";
-import AlertsSidebar from "./AlertsSidebar";
+import AlertsSidebar, { type AlertNavTarget, type VisibleCell } from "./AlertsSidebar";
+import ConfirmDialog from "./ConfirmDialog";
+import OrderTicket from "./OrderTicket";
+import PositionsPanel from "./PositionsPanel";
 import { registerCustomIndicators } from "./lib/customIndicators";
 import { registerBacktestIndicators } from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
+import { registerPositionLine } from "./lib/positionLines";
 import type { ChartController } from "./lib/chartController";
 import {
   alertModalRequest,
   alertEditRequest,
+  alertGlobalEditRequest,
+  confirmRequest,
+  requestConfirm,
   indicatorSettingsRequest,
   drawingSettingsRequest,
   alertsPanelOpen,
+  tradePanelOpen,
   alertsChanged,
+  bumpAlerts,
   settingsRequest,
 } from "./lib/signals";
 import { alertEngine } from "./lib/alertEngine";
@@ -35,6 +44,9 @@ import {
   LAYOUT_CELLS,
   migrateToNamedLayouts,
   migrateAlertsToGlobal,
+  loadStoredAlert,
+  updateStoredAlert,
+  deleteStoredAlert,
   loadLayouts,
   loadLayout,
   saveLayout,
@@ -63,6 +75,7 @@ import "./App.css";
 registerCustomIndicators();
 registerBacktestIndicators();
 registerCustomOverlays();
+registerPositionLine();
 
 const DEFAULT_SYMBOL: Instrument = {
   epic: "US100",
@@ -139,12 +152,18 @@ export default function App() {
   // vertical space. The per-chart toolbar stays (it carries the un-maximize
   // toggle + Backtest), so this is the only chrome that survives the switch.
   const [maximized, setMaximized] = useState(false);
+  // The trading dock maximized to fill the chart view (the workspace is hidden).
+  const [dockMaximized, setDockMaximized] = useState(false);
   // Toolbar gear + chart context menu request the Settings modal via a signal.
   useEffect(() => settingsRequest.subscribe(() => setShowSettings(true)), []);
   const [alertReq, setAlertReq] = useState(alertModalRequest.value);
   useEffect(() => alertModalRequest.subscribe(setAlertReq), []);
   const [alertEdit, setAlertEdit] = useState(alertEditRequest.value);
   useEffect(() => alertEditRequest.subscribe(setAlertEdit), []);
+  const [alertGlobalEdit, setAlertGlobalEdit] = useState(alertGlobalEditRequest.value);
+  useEffect(() => alertGlobalEditRequest.subscribe(setAlertGlobalEdit), []);
+  const [confirm, setConfirm] = useState(confirmRequest.value);
+  useEffect(() => confirmRequest.subscribe(setConfirm), []);
   const [indSettings, setIndSettings] = useState(indicatorSettingsRequest.value);
   useEffect(() => indicatorSettingsRequest.subscribe(setIndSettings), []);
   const [drawSettings, setDrawSettings] = useState(drawingSettingsRequest.value);
@@ -281,12 +300,86 @@ export default function App() {
   // Live chart instances + controllers, keyed by cell id. A ready/focus change
   // bumps a counter so the derived `focused` recomputes (the map itself is a ref).
   const readyRef = useRef(new Map<string, { chart: Chart; controller: ChartController }>());
-  const [, bumpReady] = useReducer((n: number) => n + 1, 0);
+  const [readyTick, bumpReady] = useReducer((n: number) => n + 1, 0);
   const focused = focusedCell ? readyRef.current.get(focusedCell.id) ?? null : null;
+
+  // --- alert → chart navigation (sidebar "go to chart" icon) ------------------
+  // A deferred select: when the sidebar asks to open an alert, we switch to / create
+  // the cell that shows its epic and stash the request here. The target cell's overlay
+  // lines don't exist until it mounts AND rehydrates (rehydrate even nulls any early
+  // select), so we can't select synchronously across tabs — we resolve once the
+  // cell's overlays report hydratedEpic === the target epic. `savedId` is the stable
+  // alert id (all-symbols rows / stamped history); `hint` is the content match for
+  // older history rows. Either may resolve to nothing (a "once" alert that already
+  // fired and was removed) — then we just leave the freshly-opened chart unselected.
+  const pendingSelectRef = useRef<
+    { epic: string; cellId: string } & AlertNavTarget | null
+  >(null);
+  const resolvePendingSelect = useCallback(() => {
+    const p = pendingSelectRef.current;
+    if (!p) return;
+    const entry = readyRef.current.get(p.cellId);
+    if (!entry) return; // cell not mounted yet (will retry on ready / alertsChanged)
+    const ov = entry.controller.overlays;
+    if (ov.getHydratedEpic() !== p.epic) return; // rehydrate hasn't run yet
+    const ovId = p.savedId
+      ? ov.findAlertOverlayId(p.savedId)
+      : p.hint
+        ? ov.findAlertOverlayIdByMatch(p.hint.condition, p.hint.level, p.hint.precision)
+        : null;
+    pendingSelectRef.current = null; // clear BEFORE select so its alertsChanged bump can't loop
+    if (ovId) ov.selectAlert(ovId);
+  }, []);
+  // rehydrate() ends with notifyAlerts() → alertsChanged, so a remounted target cell
+  // resolves here. (The ready + readyTick effect covers the already-mounted case.)
+  useEffect(() => alertsChanged.subscribe(resolvePendingSelect), [resolvePendingSelect]);
+  useEffect(() => resolvePendingSelect(), [readyTick, resolvePendingSelect]);
 
   const onCellReady = (cellId: string, chart: Chart, controller: ChartController) => {
     readyRef.current.set(cellId, { chart, controller });
     bumpReady();
+  };
+
+  // Focus (or open) a chart showing `epic` and return its focused cell. Search
+  // order for an existing cell: the active tab first (its focused cell, then its
+  // other cells), then every other tab — so a chart already on screen is reused
+  // before we touch tabs the user can't see. Nothing open for the epic → spin up a
+  // fresh tab. We only know the epic and a precision guess; the chart fetches its
+  // own market meta on mount, so a minimal instrument is enough to render. Shared
+  // by alert navigation and the trading dock's whole-book rows (clicking a position
+  // re-scopes the order ticket + chart lines to its symbol).
+  const jumpToEpic = (epic: string, precisionGuess = 2): { cellId: string } => {
+    const ordered = active ? [active, ...tabs.filter((t) => t.id !== active.id)] : tabs;
+    for (const t of ordered) {
+      const lead = t.cells.find((c) => c.id === t.activeCellId);
+      const cells = lead ? [lead, ...t.cells.filter((c) => c.id !== lead.id)] : t.cells;
+      const hit = cells.find((c) => c.symbol.epic === epic);
+      if (hit) {
+        // Focus that cell so the chrome (and the panel's "current chart" scope)
+        // follow it, and bring its tab to the front.
+        setTabs((ts) => ts.map((tt) => (tt.id === t.id ? { ...tt, activeCellId: hit.id } : tt)));
+        setActiveId(t.id);
+        return { cellId: hit.id };
+      }
+    }
+    const t = makeTab(
+      { epic, name: epic, status: null, pricePrecision: precisionGuess },
+      DEFAULT_PERIOD,
+    );
+    setTabs((ts) => [...ts, t]);
+    setActiveId(t.id);
+    return { cellId: t.cells[0].id };
+  };
+
+  // Open (or reuse) the chart for an alert and select its line. The select is
+  // deferred via pendingSelectRef (see resolvePendingSelect) — resolvePendingSelect
+  // is idempotent and guarded, so calling it now resolves an already-mounted cell
+  // and harmlessly no-ops for a freshly-opened tab (the alertsChanged/ready path
+  // resolves that later).
+  const openAlert = (epic: string, target: AlertNavTarget, precisionGuess: number) => {
+    const { cellId } = jumpToEpic(epic, precisionGuess);
+    pendingSelectRef.current = { epic, cellId, ...target };
+    resolvePendingSelect();
   };
   // Market open/closed status (+ next-open time) keyed by EPIC, for the tab
   // closed badge. Polled at the App level (below) for every tab's lead epic, not
@@ -357,6 +450,8 @@ export default function App() {
 
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
+  const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
+  useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
@@ -734,6 +829,32 @@ export default function App() {
 
   const focusedController = focused?.controller ?? null;
 
+  // Per-epic price precision for the whole-book trading dock: its rows span every
+  // symbol that has an open position/order, not just the focused chart, so each row
+  // formats prices with its own symbol's precision (gleaned from any open cell on
+  // that epic) rather than the focused chart's.
+  const epicPrecision = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of tabs)
+      for (const c of t.cells)
+        if (c.symbol.pricePrecision != null) m.set(c.symbol.epic, c.symbol.pricePrecision);
+    return m;
+  }, [tabs]);
+  const precisionForEpic = (epic: string) =>
+    epicPrecision.get(epic) ?? symbol?.pricePrecision ?? 2;
+
+  // The active tab's on-screen cells that have a live controller, for the alerts
+  // panel's cross-cell hover/select: an alert whose epic is shown in ANY visible
+  // split cell (not only the focused one) highlights that cell's line. Recomputed
+  // on readyTick so a cell mounting after the panel opens is picked up.
+  const visibleCells: VisibleCell[] = (active?.cells ?? [])
+    .map((c) => {
+      const entry = readyRef.current.get(c.id);
+      return entry ? { epic: c.symbol.epic, overlays: entry.controller.overlays } : null;
+    })
+    .filter((v): v is VisibleCell => v !== null);
+  void readyTick; // visibleCells reads the mutable readyRef; readyTick forces the recompute
+
   return (
     <div className="app">
       {/* TradingView-style chart tabs: topmost strip, above the toolbar. The
@@ -806,7 +927,7 @@ export default function App() {
         maximized={maximized}
         onToggleMaximize={() => setMaximized((m) => !m)}
       />
-      <div className="workspace">
+      <div className={`workspace${dockMaximized ? " dock-hidden" : ""}`}>
         <main className="chart">
           {active ? (
             /* Multi-chart grid for the active tab. Switching tabs swaps the cell
@@ -855,8 +976,42 @@ export default function App() {
             epic={symbol.epic}
             precision={symbol.pricePrecision ?? 2}
             tabs={tabs}
+            visibleCells={visibleCells}
+            onOpenAlert={openAlert}
           />
         )}
+        {/* Order ticket (paper): compose a new order for the focused symbol. The
+            open book lives in the bottom dock, not here. Toggled by the toolbar's
+            trade button. */}
+        {tradeOpen && symbol && (
+          <aside className="trade-sidebar">
+            <OrderTicket
+              epic={symbol.epic}
+              env="paper"
+              precision={symbol.pricePrecision ?? 2}
+              instrumentType={symbol.type}
+              trading={settings.trading}
+            />
+          </aside>
+        )}
+      </div>
+      {/* Trading dock (paper): the whole open book — positions + resting orders
+          across ALL symbols — docked full-width under the chart, TV-style. ALWAYS
+          shown (the book is global, independent of the order ticket) but
+          collapsible to its header bar. Double-clicking a row focuses that symbol's
+          chart and opens its edit ticket in the (revealed) sidebar. */}
+      <div className={`trading-dock${dockMaximized ? " maximized" : ""}`}>
+        <PositionsPanel
+          env="paper"
+          focusedEpic={symbol?.epic}
+          precisionFor={precisionForEpic}
+          trading={settings.trading}
+          confirmLineEdits={settings.trading.confirmLineEdits}
+          onJumpToEpic={jumpToEpic}
+          onOpenTradePanel={() => tradePanelOpen.set(true)}
+          maximized={dockMaximized}
+          onToggleMaximize={() => setDockMaximized((m) => !m)}
+        />
       </div>
 
       {showSettings && (
@@ -903,10 +1058,63 @@ export default function App() {
                 alertEditRequest.set(null);
               }}
               onDelete={() => {
-                focusedController?.overlays.remove(alertEdit.id);
-                alertEditRequest.set(null);
+                const id = alertEdit.id;
+                // Confirm over the still-open edit modal; on confirm, delete + close it.
+                requestConfirm({
+                  message: `Delete this alert on ${symbol.epic}?`,
+                  onConfirm: () => {
+                    focusedController?.overlays.remove(id);
+                    alertEditRequest.set(null);
+                  },
+                });
               }}
               onClose={() => alertEditRequest.set(null)}
+            />
+          );
+        })()}
+
+      {/* Global alert edit: the all-symbols panel rows edit alerts whose chart may
+          not be open, so this reads/writes storage directly (no overlay/controller).
+          bumpAlerts() makes every open cell + the engine reconcile the change. */}
+      {alertGlobalEdit &&
+        (() => {
+          const a = loadStoredAlert(alertGlobalEdit.epic, alertGlobalEdit.savedId);
+          if (!a) {
+            alertGlobalEditRequest.set(null);
+            return null;
+          }
+          const { epic: ep, savedId, precision } = alertGlobalEdit;
+          const round = (n: number) => Number(n.toFixed(precision));
+          return (
+            <AlertModal
+              epic={ep}
+              price={a.level}
+              mode="edit"
+              initial={{
+                condition: a.condition,
+                trigger: a.trigger,
+                message: a.message,
+                expiresAt: a.expiresAt,
+                notify: a.notify,
+              }}
+              defaults={settings.alertDefaults}
+              now={Date.now()}
+              onCreate={(level, cfg) => {
+                updateStoredAlert(ep, savedId, round(level), cfg);
+                bumpAlerts();
+                alertGlobalEditRequest.set(null);
+              }}
+              onDelete={() => {
+                requestConfirm({
+                  message: `Delete this alert on ${ep}?`,
+                  onConfirm: () => {
+                    deleteStoredAlert(ep, savedId);
+                    bumpAlerts();
+                    alertGlobalEditRequest.set(null);
+                  },
+                });
+              }}
+              onClose={() => alertGlobalEditRequest.set(null)}
             />
           );
         })()}
@@ -929,6 +1137,18 @@ export default function App() {
           id={drawSettings.id}
           onIdChange={(id) => drawingSettingsRequest.set({ id })}
           onClose={() => drawingSettingsRequest.set(null)}
+        />
+      )}
+
+      {/* Confirmation dialog — rendered LAST so it stacks above any modal that opened
+          it (e.g. the alert edit modal's delete button). */}
+      {confirm && (
+        <ConfirmDialog
+          title={confirm.title}
+          message={confirm.message}
+          confirmLabel={confirm.confirmLabel}
+          onConfirm={confirm.onConfirm}
+          onClose={() => confirmRequest.set(null)}
         />
       )}
     </div>

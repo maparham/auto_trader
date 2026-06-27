@@ -232,6 +232,7 @@ class AlertEngine {
       price,
       message: a.message,
       precision: prec,
+      alertId: a.id,
     });
   }
 

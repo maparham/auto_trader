@@ -228,6 +228,56 @@ describe("OverlayManager alert identity (stable id survives drag/edit)", () => {
   });
 });
 
+// The alerts sidebar's "go to chart" navigation selects a line on a (possibly
+// just-opened) chart. Two guards: the saved-id ↔ overlay-id lookups the sidebar/App
+// use to find the line, and selection SURVIVING a same-epic rehydrate — without
+// that, a dev double-mount (or a live data refresh) re-mints overlay ids and
+// silently drops the just-applied selection (the bug this navigation feature hit).
+describe("OverlayManager alert lookup + selection survives rehydrate (sidebar nav)", () => {
+  const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
+
+  it("findAlertOverlayId maps a stored saved-id to the live overlay id", () => {
+    const { m } = setup();
+    const ovId = m.addAlert(100, cfg)!;
+    const savedId = P.loadAlerts("US100")[0].id;
+    expect(m.findAlertOverlayId(savedId)).toBe(ovId);
+    expect(m.findAlertOverlayId("no-such-id")).toBeNull();
+  });
+
+  it("findAlertOverlayIdByMatch resolves a history row by condition + level", () => {
+    const { m } = setup();
+    m.setPricePrecision(2);
+    const ovId = m.addAlert(70.64, cfg)!;
+    expect(m.findAlertOverlayIdByMatch("crossing", 70.64, 2)).toBe(ovId);
+    expect(m.findAlertOverlayIdByMatch("less", 70.64, 2)).toBeNull(); // condition differs
+    expect(m.findAlertOverlayIdByMatch("crossing", 71, 2)).toBeNull(); // level differs
+  });
+
+  it("a selected alert stays selected (by saved id) across a same-epic rehydrate", () => {
+    const { chart, m } = setup();
+    const ovId = m.addAlert(100, cfg)!;
+    m.selectAlert(ovId);
+    expect(m.getSelectedAlertId()).toBe(ovId);
+
+    // A second rehydrate (dev double-mount / live data refresh) re-mints overlay ids.
+    m.rehydrate();
+    const newOvId = m.findAlertOverlayId(P.loadAlerts("US100")[0].id)!;
+    expect(newOvId).not.toBe(ovId); // id was genuinely re-minted
+    expect(m.getSelectedAlertId()).toBe(newOvId); // selection followed the alert
+    const size = (chart.getOverlayById(newOvId)!.styles as { line?: { size?: number } }).line?.size;
+    expect(size).toBe(2); // and the line is drawn emphasized
+  });
+
+  it("selection drops cleanly if the selected alert is gone after rehydrate", () => {
+    const { m } = setup();
+    const ovId = m.addAlert(100, cfg)!;
+    m.selectAlert(ovId);
+    P.saveAlerts("US100", []); // alert removed (e.g. a fired "once")
+    m.rehydrate();
+    expect(m.getSelectedAlertId()).toBeNull();
+  });
+});
+
 // Alerts are GLOBAL per epic: two cells of one tab showing the SAME epic (a split
 // layout, both mounted at once) share one stored list. reconcileAlerts must keep
 // each cell's lines in sync with that list — add a peer's new alert, follow a moved

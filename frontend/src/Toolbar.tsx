@@ -22,6 +22,7 @@ import { EQUITY_INDICATOR } from "./lib/backtest";
 import {
   alertModalRequest,
   alertsPanelOpen,
+  tradePanelOpen,
   symbolSearchRequest,
   drawingSettingsRequest,
 } from "./lib/signals";
@@ -155,6 +156,8 @@ export default function Toolbar({
   }, [controller]);
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
+  const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
+  useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
 
   // App opens a fresh tab → prompt for its symbol (the new tab starts empty).
   useEffect(() => symbolSearchRequest.subscribe(() => setSymModalOpen(true)), []);
@@ -704,6 +707,19 @@ export default function Toolbar({
         onClick={() => alertsPanelOpen.set(!alertsPanelOpen.value)}
       >
         <BellIcon size={16} />
+      </button>
+
+      {/* Trading panel toggle (order ticket + positions). Paper trading. */}
+      <button
+        className={`anchor-btn trade-toggle${tradeOpen ? " on" : ""}`}
+        title="Show trading panel (paper)"
+        onClick={() => tradePanelOpen.set(!tradePanelOpen.value)}
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+          aria-hidden="true">
+          <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
+        </svg>
       </button>
 
       {/* Maximize / restore: hides the tab bar to focus the active tab. Icon

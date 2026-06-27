@@ -88,6 +88,52 @@ export interface Settings {
   crosshair: CrosshairStyle;
   // Defaults applied to new alerts (Settings → Alerts tab).
   alertDefaults: AlertDefaults;
+  // Trading preferences (Settings → Trading tab).
+  trading: TradingSettings;
+}
+
+export interface TradingSettings {
+  // Require a confirmation (combined Apply on the panel) after dragging a line on
+  // an existing trade/order. When false, a drag applies the new level immediately.
+  confirmLineEdits: boolean;
+  // Simple paper account, used only to compute the order-ticket info block
+  // (margin / leverage / trade value / reward). Approximate: trade value is
+  // quantity × price (no contract-size / FX conversion), so figures won't match a
+  // real broker — they're internally coherent, not precise.
+  accountBalance: number;
+  accountCurrency: string;
+  // Leverage per Capital.com instrumentType; `defaultLeverage` covers any type
+  // not listed (and used to approximate other positions' used margin).
+  defaultLeverage: number;
+  leverage: Record<string, number>;
+}
+
+// The instrument types we expose a leverage row for (Capital's instrumentType).
+export const LEVERAGE_TYPES = [
+  "CURRENCIES",
+  "INDICES",
+  "COMMODITIES",
+  "SHARES",
+  "CRYPTOCURRENCIES",
+] as const;
+
+export const DEFAULT_TRADING_SETTINGS: TradingSettings = {
+  confirmLineEdits: true,
+  accountBalance: 100_000,
+  accountCurrency: "USD",
+  defaultLeverage: 10,
+  leverage: {
+    CURRENCIES: 30,
+    INDICES: 20,
+    COMMODITIES: 10,
+    SHARES: 5,
+    CRYPTOCURRENCIES: 2,
+  },
+};
+
+/** Leverage for an instrument type, falling back to the default. */
+export function leverageFor(t: TradingSettings, type: string | undefined): number {
+  return (type && t.leverage[type]) || t.defaultLeverage;
 }
 
 export const DEFAULT_ALERT_DEFAULTS: AlertDefaults = {
@@ -125,6 +171,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bidAskStyle: DEFAULT_BID_ASK_STYLE,
   crosshair: DEFAULT_CROSSHAIR,
   alertDefaults: DEFAULT_ALERT_DEFAULTS,
+  trading: DEFAULT_TRADING_SETTINGS,
 };
 
 export function loadSettings(): Settings {
@@ -141,6 +188,14 @@ export function loadSettings(): Settings {
       notify: {
         ...DEFAULT_ALERT_DEFAULTS.notify,
         ...(stored.alertDefaults?.notify ?? {}),
+      },
+    },
+    trading: {
+      ...DEFAULT_TRADING_SETTINGS,
+      ...(stored.trading ?? {}),
+      leverage: {
+        ...DEFAULT_TRADING_SETTINGS.leverage,
+        ...(stored.trading?.leverage ?? {}),
       },
     },
   };

@@ -93,6 +93,47 @@ describe("persist scoping", () => {
   });
 });
 
+// Overlay-less edits of a stored alert (the alerts panel's all-symbols rows act on
+// alerts whose chart may not be open). Keyed by the NORMALIZED stable id so legacy
+// rows (no stored id) match by their deterministic backfilled id too.
+describe("stored-alert direct edits (loadStoredAlert / updateStoredAlert / deleteStoredAlert)", () => {
+  const A = { id: "a1", level: 5, condition: "crossing" as const, trigger: "every" as const, message: "" };
+  const B = { id: "a2", level: 7, condition: "less" as const, trigger: "once" as const, message: "hi" };
+
+  it("loadStoredAlert finds by id (incl. a legacy row by its backfilled id)", () => {
+    P.saveAlerts("US100", [A]);
+    expect(P.loadStoredAlert("US100", "a1")!.level).toBe(5);
+    expect(P.loadStoredAlert("US100", "nope")).toBeNull();
+    // Legacy row (no stored id): match by the same id normalizeAlert backfills.
+    localStorage.setItem("auto-trader.alerts.BTC", JSON.stringify([{ level: 3, condition: "crossing" }]));
+    const legacyId = P.normalizeAlert({ level: 3, condition: "crossing" }, 0).id;
+    expect(P.loadStoredAlert("BTC", legacyId)!.level).toBe(3);
+  });
+
+  it("updateStoredAlert replaces level + cfg in place, keeps id, leaves siblings untouched", () => {
+    P.saveAlerts("US100", [A, B]);
+    P.updateStoredAlert("US100", "a1", 9, {
+      condition: "greater", trigger: "once", message: "edited", expiresAt: null,
+      notify: { toast: true, browser: false, sound: true },
+    });
+    const list = P.loadAlerts("US100");
+    const a1 = list.find((x) => x.id === "a1")!;
+    expect(a1.level).toBe(9);
+    expect(a1.condition).toBe("greater");
+    expect(a1.message).toBe("edited");
+    expect(a1.notify).toEqual({ toast: true, browser: false, sound: true });
+    expect(list.find((x) => x.id === "a2")).toEqual(B); // sibling unchanged
+  });
+
+  it("deleteStoredAlert removes only the matching id", () => {
+    P.saveAlerts("US100", [A, B]);
+    P.deleteStoredAlert("US100", "a1");
+    expect(P.loadAlerts("US100").map((x) => x.id)).toEqual(["a2"]);
+    P.deleteStoredAlert("US100", "ghost"); // no-op
+    expect(P.loadAlerts("US100").map((x) => x.id)).toEqual(["a2"]);
+  });
+});
+
 describe("loadTabs migration (v1 single-chart → cell-based)", () => {
   it("wraps a pre-cells tab into one primary cell, preserving symbol/period", () => {
     localStorage.setItem(

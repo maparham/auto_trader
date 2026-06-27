@@ -14,7 +14,7 @@ import type {
   Theme,
 } from "./theme";
 import type { AlertCondition, AlertTrigger } from "./lib/persist";
-import { chartColors } from "./theme";
+import { chartColors, LEVERAGE_TYPES } from "./theme";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 import { useDraggable } from "./lib/useDraggable";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
@@ -27,7 +27,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = "general" | "alerts";
+type Tab = "general" | "alerts" | "trading";
 
 const THEMES: Theme[] = ["dark", "light"];
 const CLOCKS: { value: Clock; label: string }[] = [
@@ -75,6 +75,10 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
   const setBA = (patch: Partial<typeof ba>) =>
     onChange({ ...settings, bidAskStyle: { ...ba, ...patch } });
 
+  const tr = settings.trading;
+  const setTr = (patch: Partial<typeof tr>) =>
+    onChange({ ...settings, trading: { ...tr, ...patch } });
+
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal" style={drag.style} onMouseDown={(e) => e.stopPropagation()}>
@@ -87,6 +91,7 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
           {([
             ["general", "General"],
             ["alerts", "Alerts"],
+            ["trading", "Trading"],
           ] as [Tab, string][]).map(([t, label]) => (
             <button
               key={t}
@@ -330,6 +335,78 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
                 ))}
               </div>
             </div>
+          </>
+        )}
+
+        {tab === "trading" && (
+          <>
+            <div className="setting-sub">Order line editing</div>
+            <div className="setting-row">
+              <label>Confirm line edits</label>
+              <label className="notify-toggle">
+                <input
+                  type="checkbox"
+                  checked={tr.confirmLineEdits}
+                  onChange={(e) => setTr({ confirmLineEdits: e.target.checked })}
+                />
+                Ask before applying a dragged level
+              </label>
+            </div>
+            <div className="setting-hint">
+              When off, dragging a stop, target, or order line on the chart applies
+              the new price immediately instead of showing Apply / Discard.
+            </div>
+
+            <div className="setting-sub">Paper account</div>
+            <div className="setting-hint">
+              Used only to estimate the order ticket's margin / trade value /
+              reward. Approximate — not a real balance.
+            </div>
+            <div className="setting-row">
+              <label>Balance</label>
+              <input
+                className="num-input"
+                type="number"
+                min="0"
+                step="any"
+                value={tr.accountBalance}
+                onChange={(e) => setTr({ accountBalance: Number(e.target.value) })}
+              />
+            </div>
+            <div className="setting-row">
+              <label>Currency</label>
+              <input
+                className="num-input"
+                value={tr.accountCurrency}
+                onChange={(e) => setTr({ accountCurrency: e.target.value })}
+              />
+            </div>
+            <div className="setting-row">
+              <label>Default leverage</label>
+              <input
+                className="num-input"
+                type="number"
+                min="1"
+                step="1"
+                value={tr.defaultLeverage}
+                onChange={(e) => setTr({ defaultLeverage: Number(e.target.value) })}
+              />
+            </div>
+            {LEVERAGE_TYPES.map((t) => (
+              <div className="setting-row" key={t}>
+                <label>{t.charAt(0) + t.slice(1).toLowerCase()} leverage</label>
+                <input
+                  className="num-input"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={tr.leverage[t] ?? tr.defaultLeverage}
+                  onChange={(e) =>
+                    setTr({ leverage: { ...tr.leverage, [t]: Number(e.target.value) } })
+                  }
+                />
+              </div>
+            ))}
           </>
         )}
       </div>

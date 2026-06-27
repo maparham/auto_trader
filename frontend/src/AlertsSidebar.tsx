@@ -11,19 +11,87 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ChartController } from "./lib/chartController";
-import type { ChartTab } from "./lib/persist";
-import { alertsChanged, alertsPanelOpen, alertEditRequest } from "./lib/signals";
+import type { ChartTab, AlertCondition } from "./lib/persist";
+import type { OverlayManager } from "./lib/overlays";
+import {
+  alertsChanged,
+  alertsPanelOpen,
+  alertEditRequest,
+  alertGlobalEditRequest,
+  bumpAlerts,
+  requestConfirm,
+} from "./lib/signals";
 import {
   loadTriggered,
   loadAllAlerts,
   clearTriggered,
   loadTriggeredSeen,
   saveTriggeredSeen,
+  deleteStoredAlert,
   normalizeAlert,
   CONDITION_LABELS,
   type TriggeredAlert,
   type SavedAlert,
 } from "./lib/persist";
+
+// A live, on-screen cell whose alert lines the panel can highlight directly. The
+// active tab can show several (split layouts), so an alert whose epic matches ANY
+// of them — not only the focused cell — goes into hover/select mode inline.
+export interface VisibleCell {
+  epic: string;
+  overlays: OverlayManager;
+}
+
+// How to find a specific alert line once its chart is open. `savedId` is the stable
+// per-epic alert id (all-symbols rows, and history rows stamped with it); `hint`
+// is a content match for older history rows that predate the id. Resolving either
+// to nothing is fine — the alert may have been a fired "once" that no longer exists.
+export interface AlertNavTarget {
+  savedId?: string;
+  hint?: { condition: AlertCondition; level: number; precision: number };
+}
+
+// Resolve a nav target to the live overlay id within one cell's overlay manager.
+function overlayIdFor(ov: OverlayManager, t: AlertNavTarget): string | null {
+  if (t.savedId) return ov.findAlertOverlayId(t.savedId);
+  if (t.hint) return ov.findAlertOverlayIdByMatch(t.hint.condition, t.hint.level, t.hint.precision);
+  return null;
+}
+
+// "Locate on chart" icon — a crosshair/target, reading as "find this line".
+function GoToIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="7" />
+      <line x1="12" y1="1.5" x2="12" y2="4.5" />
+      <line x1="12" y1="19.5" x2="12" y2="22.5" />
+      <line x1="1.5" y1="12" x2="4.5" y2="12" />
+      <line x1="19.5" y1="12" x2="22.5" y2="12" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
 
 interface Props {
   // The focused cell's controller — its overlay manager owns the live alert lines
@@ -33,6 +101,11 @@ interface Props {
   precision: number;
   // All open tabs/cells so we can show alerts across every symbol.
   tabs: ChartTab[];
+  // The active tab's on-screen cells with live overlays, for cross-cell hover/select.
+  visibleCells: VisibleCell[];
+  // Open (or reuse) the chart for an alert and select its line. precisionGuess seeds
+  // a freshly-opened tab when no chart for the epic is on screen.
+  onOpenAlert: (epic: string, target: AlertNavTarget, precisionGuess: number) => void;
 }
 
 type Tab = "live" | "history";
@@ -48,8 +121,50 @@ function ago(ms: number, now: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
-export default function AlertsSidebar({ controller, epic, precision, tabs }: Props) {
+export default function AlertsSidebar({
+  controller,
+  epic,
+  precision,
+  tabs,
+  visibleCells,
+  onOpenAlert,
+}: Props) {
   const overlays = controller?.overlays ?? null;
+
+  // --- cross-cell highlight helpers (all-symbols + history rows) --------------
+  // An alert "belongs to the currently visible chart" when its epic is shown in any
+  // on-screen cell AND that cell has a live line for it (a history alert may be gone).
+  // These mirror the focused-cell hover/select that current-chart rows already do,
+  // but fan out to every visible cell on that symbol.
+  const cellsForEpic = (ep: string) => visibleCells.filter((v) => v.epic === ep);
+  const targetVisible = (ep: string, t: AlertNavTarget) =>
+    cellsForEpic(ep).some((c) => overlayIdFor(c.overlays, t) != null);
+  const targetSelected = (ep: string, t: AlertNavTarget) =>
+    cellsForEpic(ep).some((c) => {
+      const id = overlayIdFor(c.overlays, t);
+      return !!id && c.overlays.getSelectedAlertId() === id;
+    });
+  const targetHovered = (ep: string, t: AlertNavTarget) =>
+    cellsForEpic(ep).some((c) => {
+      const id = overlayIdFor(c.overlays, t);
+      return !!id && c.overlays.getHoveredAlertId() === id;
+    });
+  const hoverTarget = (ep: string, t: AlertNavTarget, on: boolean) => {
+    for (const c of cellsForEpic(ep)) {
+      const id = overlayIdFor(c.overlays, t);
+      if (id) c.overlays.hoverAlert(on ? id : null);
+      else if (!on) c.overlays.hoverAlert(null);
+    }
+  };
+  const toggleSelectTarget = (ep: string, t: AlertNavTarget) => {
+    // Decide once (matches targetSelected's `.some`), then drive every matching cell
+    // to the same state — so two same-epic split cells don't desync on each click.
+    const turnOff = targetSelected(ep, t);
+    for (const c of cellsForEpic(ep)) {
+      const id = overlayIdFor(c.overlays, t);
+      if (id) c.overlays.selectAlert(turnOff ? null : id);
+    }
+  };
   const [tab, setTab] = useState<Tab>("live");
   const [showAll, setShowAll] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -315,16 +430,28 @@ export default function AlertsSidebar({ controller, epic, precision, tabs }: Pro
       {tab === "live" ? (
         <div className="ap-list">
           {showAll ? (
-            // All-symbols mode: grouped by epic, read from persisted store.
-            // No hover/select interaction (alerts may not be on-screen).
+            // All-symbols mode: grouped by epic, read from persisted store. Rows whose
+            // symbol is on a visible chart support inline hover/select (fanned out to
+            // every matching cell); the go-to icon opens/reuses the chart for any row.
             allGroups.length === 0 ? (
               <div className="ap-empty">No active alerts across any symbol.</div>
             ) : (
               allGroups.map((g) => (
                 <div key={g.epic}>
                   <div className="ap-group-header">{g.epic}</div>
-                  {g.alerts.map((a) => (
-                    <div key={a.id} className="ap-row">
+                  {g.alerts.map((a) => {
+                    const target: AlertNavTarget = { savedId: a.id };
+                    const onChart = targetVisible(g.epic, target);
+                    return (
+                    <div
+                      key={a.id}
+                      className={`ap-row${onChart ? " ap-row-clickable" : ""}${
+                        targetSelected(g.epic, target) ? " selected" : ""
+                      }${targetHovered(g.epic, target) ? " hovered" : ""}`}
+                      onClick={onChart ? () => toggleSelectTarget(g.epic, target) : undefined}
+                      onMouseEnter={onChart ? () => hoverTarget(g.epic, target, true) : undefined}
+                      onMouseLeave={onChart ? () => hoverTarget(g.epic, target, false) : undefined}
+                    >
                       <div className="ap-row-main">
                         <span className="ap-cond">
                           {CONDITION_LABELS[a.condition]} {a.level.toFixed(g.precision)}
@@ -335,9 +462,54 @@ export default function AlertsSidebar({ controller, epic, precision, tabs }: Pro
                         <span className="ap-badge">
                           {a.trigger === "once" ? "Once" : "Every time"}
                         </span>
+                        <div className="ap-row-actions">
+                          <button
+                            className="ap-icon-btn"
+                            title="Go to chart"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenAlert(g.epic, target, g.precision);
+                            }}
+                          >
+                            <GoToIcon />
+                          </button>
+                          <button
+                            className="ap-icon-btn"
+                            title="Edit alert"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              alertGlobalEditRequest.set({
+                                epic: g.epic,
+                                savedId: a.id,
+                                precision: g.precision,
+                              });
+                            }}
+                          >
+                            <EditIcon />
+                          </button>
+                          <button
+                            className="ap-icon-btn"
+                            title="Delete alert"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              requestConfirm({
+                                message: `Delete alert ${CONDITION_LABELS[a.condition]} ${a.level.toFixed(g.precision)} on ${g.epic}?`,
+                                onConfirm: () => {
+                                  // Storage-level delete (the alert's chart may be
+                                  // closed); open cells + the engine reconcile off the bump.
+                                  deleteStoredAlert(g.epic, a.id);
+                                  bumpAlerts();
+                                },
+                              });
+                            }}
+                          >
+                            <TrashIcon />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ))
             )
@@ -375,33 +547,38 @@ export default function AlertsSidebar({ controller, epic, precision, tabs }: Pro
                     <div className="ap-row-actions">
                       <button
                         className="ap-icon-btn"
+                        title="Go to chart"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Already the focused, on-screen chart — a.id is the live
+                          // overlay id, so just select it (no tab switch needed).
+                          overlays?.selectAlert(a.id);
+                        }}
+                      >
+                        <GoToIcon />
+                      </button>
+                      <button
+                        className="ap-icon-btn"
                         title="Edit alert"
                         onClick={(e) => {
                           e.stopPropagation();
                           alertEditRequest.set({ id: a.id });
                         }}
                       >
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
-                          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                          aria-hidden="true">
-                          <path d="M12 20h9" />
-                          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
-                        </svg>
+                        <EditIcon />
                       </button>
                       <button
                         className="ap-icon-btn"
                         title="Delete alert"
                         onClick={(e) => {
                           e.stopPropagation();
-                          overlays?.remove(a.id);
+                          requestConfirm({
+                            message: `Delete alert ${CONDITION_LABELS[a.condition]} ${a.level.toFixed(precision)} on ${epic}?`,
+                            onConfirm: () => overlays?.remove(a.id),
+                          });
                         }}
                       >
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
-                          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                          aria-hidden="true">
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        </svg>
+                        <TrashIcon />
                       </button>
                     </div>
                   </div>
@@ -421,8 +598,25 @@ export default function AlertsSidebar({ controller, epic, precision, tabs }: Pro
                   Clear history
                 </button>
               </div>
-              {historyState.map((t, i) => (
-                <div key={`${t.time}-${i}`} className="ap-row ap-row-hist">
+              {historyState.map((t, i) => {
+                // Jump back to the alert that fired. Prefer the stamped stable id;
+                // older rows match by condition+level. The alert may be gone (a fired
+                // "once") — then onChart is false and we just open the chart unselected.
+                const hp = t.precision ?? precision;
+                const target: AlertNavTarget = t.alertId
+                  ? { savedId: t.alertId }
+                  : { hint: { condition: t.condition, level: t.level, precision: hp } };
+                const onChart = targetVisible(t.epic, target);
+                return (
+                <div
+                  key={`${t.time}-${i}`}
+                  className={`ap-row ap-row-hist${onChart ? " ap-row-clickable" : ""}${
+                    targetSelected(t.epic, target) ? " selected" : ""
+                  }${targetHovered(t.epic, target) ? " hovered" : ""}`}
+                  onClick={onChart ? () => toggleSelectTarget(t.epic, target) : undefined}
+                  onMouseEnter={onChart ? () => hoverTarget(t.epic, target, true) : undefined}
+                  onMouseLeave={onChart ? () => hoverTarget(t.epic, target, false) : undefined}
+                >
                   <div className="ap-row-main">
                     <span className="ap-sym">{t.epic}</span>
                     <span className="ap-time">{ago(t.time, now)}</span>
@@ -430,12 +624,27 @@ export default function AlertsSidebar({ controller, epic, precision, tabs }: Pro
                   <div className="ap-cond">
                     {/* History is cross-symbol: format with the firing's own
                         precision, falling back to the focused one for old rows. */}
-                    {CONDITION_LABELS[t.condition]} {t.level.toFixed(t.precision ?? precision)}
-                    <span className="ap-at"> @ {t.price.toFixed(t.precision ?? precision)}</span>
+                    {CONDITION_LABELS[t.condition]} {t.level.toFixed(hp)}
+                    <span className="ap-at"> @ {t.price.toFixed(hp)}</span>
                   </div>
                   {t.message && <div className="ap-msg">{t.message}</div>}
+                  <div className="ap-row-meta ap-row-meta-end">
+                    <div className="ap-row-actions">
+                      <button
+                        className="ap-icon-btn"
+                        title="Go to chart"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenAlert(t.epic, target, hp);
+                        }}
+                      >
+                        <GoToIcon />
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              ))}
+                );
+              })}
             </>
           )}
         </div>

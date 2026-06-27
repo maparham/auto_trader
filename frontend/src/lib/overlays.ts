@@ -124,6 +124,9 @@ export class OverlayManager {
   // onDeselected; we just mirror its id so ChartCore can render the DOM pill.
   private hoveredAlertId: string | null = null;
   private selectedAlertId: string | null = null;
+  // True while ChartCore's snap is active (cursor within ALERT_SNAP_PX of a line):
+  // suppresses the klinecharts native horizontal crosshair so ours can replace it.
+  private snapNativeSuppressed = false;
   // True while an alert line is being dragged (between onPressedMoving and
   // onPressedMoveEnd; also cleared on remove/reset so it can't stick). ChartCore's
   // mousemove handler reads it imperatively to suppress the "+" axis affordance
@@ -273,6 +276,9 @@ export class OverlayManager {
     this.selectedAlertId = id;
     this.applyAlertLineWeight(prev); // resting weight unless it's still hovered
     this.applyAlertLineWeight(id);
+    // Selection feeds the crosshair-label rule: if the cursor is on the alert being
+    // (de)selected, its axis label must hide/restore in lockstep (see hoverAlert).
+    this.applyCrosshairForAlert();
     this.notifyAlerts();
   }
 
@@ -292,25 +298,47 @@ export class OverlayManager {
     this.hoveredAlertId = id;
     this.applyAlertLineWeight(prev); // resting weight unless it's still selected
     this.applyAlertLineWeight(id);
-    // Hide the crosshair's horizontal guide while over an alert line — it would
-    // sit right on top of the dashed alert line and read as noise (the vertical
-    // guide stays). klineStyles() doesn't carry horizontal.show, so this flag is
-    // ours alone to toggle: set it back to true on un-hover. Independent of the
-    // legend's whole-crosshair `show` toggle (a different key), so they coexist.
-    this.setCrosshairHorizontalShow(id == null);
+    // Reconcile the crosshair: hide its horizontal LINE over any alert; hide its axis
+    // LABEL only over the SELECTED alert (see applyCrosshairForAlert). Independent of
+    // the legend's whole-crosshair `show` toggle (a different key), so they coexist.
+    this.applyCrosshairForAlert();
     this.notifyAlerts();
   }
 
-  // Toggle the chart's horizontal crosshair guide WITHOUT chart.setStyles(), which
-  // would run adjustPaneViewport(…, forceY=true) and jolt the whole view (see
-  // hoverAlert). Merging straight into the store skips that; the crosshair repaints
-  // on the next mousemove. Falls back to setStyles if the private store shape ever
-  // changes (klinecharts ^9.8).
-  private setCrosshairHorizontalShow(show: boolean): void {
+  // Reconcile the horizontal crosshair (line + its y-axis price label) with the current
+  // alert hover. Both the native LINE and the native LABEL are hidden whenever the cursor
+  // is over ANY alert line (selected or not), symmetrically: the line would sit right on
+  // top of the amber dashed alert line and read as redundant noise, and the readout is
+  // already owned by ChartCore's cursor-following price box (the z-49 `.axis-plus-price`,
+  // which sits on top of the amber tag), so the native label is redundant too.
+  // CRITICAL: klinecharts gates BOTH the line and the label on `horizontal.show` (it's
+  // a master switch — see CrosshairLineView._drawLine and the label view, both of which
+  // require horizontal.show first). So we must NOT toggle horizontal.show (that hides
+  // the label too); keep it true and toggle the child flags `line.show` / `text.show`.
+  // Applied WITHOUT chart.setStyles(), which would run adjustPaneViewport(…, forceY=
+  // true) and jolt the whole view; merging straight into the store skips that and the
+  // crosshair repaints on the next mousemove. Falls back to setStyles if the private
+  // store shape ever changes (klinecharts ^9.8).
+  // Called by ChartCore when cursor enters/leaves the snap band (within ALERT_SNAP_PX).
+  // Hides the klinecharts native horizontal line so ChartCore's own drawn line can
+  // replace it at the snapped y without two lines appearing.
+  setSuppressNativeLine(v: boolean): void {
+    if (v === this.snapNativeSuppressed) return;
+    this.snapNativeSuppressed = v;
+    this.applyCrosshairForAlert();
+  }
+
+  private applyCrosshairForAlert(): void {
+    const overAlert = this.hoveredAlertId != null || this.snapNativeSuppressed;
+    const styles = {
+      crosshair: {
+        horizontal: { show: true, line: { show: !overAlert }, text: { show: !overAlert } },
+      },
+    };
     const store = (this.chart as unknown as { _chartStore?: { setOptions?: (o: unknown) => void } })
       ?._chartStore;
-    if (store?.setOptions) store.setOptions({ styles: { crosshair: { horizontal: { show } } } });
-    else this.chart?.setStyles({ crosshair: { horizontal: { show } } });
+    if (store?.setOptions) store.setOptions({ styles });
+    else this.chart?.setStyles(styles);
   }
 
   // --- drawing selection / hover ---------------------------------------------
@@ -412,6 +440,40 @@ export class OverlayManager {
     return out;
   }
 
+  // The epic whose overlays are currently materialized (set only at the end of
+  // rehydrate()). Navigation from the alerts sidebar uses this as the "safe to
+  // select" gate: a freshly-mounted cell appears in App's ready map BEFORE
+  // rehydrate runs, and a select fired then is wiped (rehydrate nulls
+  // selectedAlertId). Callers wait until this matches the target epic.
+  getHydratedEpic(): string | null {
+    return this.hydratedEpic;
+  }
+
+  // Resolve a stable SavedAlert id (the `al-…`/`lg-…` form stored per epic) to the
+  // LIVE overlay id in this cell, or null if no alert line currently carries it.
+  // The two id spaces differ — createOverlay mints the overlay id; `alertIds` maps
+  // overlayId → savedId — so cross-symbol navigation (which only knows the saved id)
+  // must translate before selectAlert()/hoverAlert(), which speak overlay ids.
+  findAlertOverlayId(savedId: string): string | null {
+    for (const [ovId, sid] of this.alertIds) if (sid === savedId) return ovId;
+    return null;
+  }
+
+  // Resolve an alert line by content match (condition + level at the given
+  // precision) to its overlay id, or null. Used for History rows, whose firing
+  // record predates stable ids (or was dragged since) — a best-effort match that
+  // simply finds nothing when the alert no longer exists (per spec: no highlight).
+  findAlertOverlayIdByMatch(
+    condition: AlertCondition,
+    level: number,
+    precision: number,
+  ): string | null {
+    const want = level.toFixed(precision);
+    for (const a of this.getAlerts())
+      if (a.condition === condition && a.level.toFixed(precision) === want) return a.id;
+    return null;
+  }
+
   // Flip an alert's trigger (once ↔ every) in place — the pill's clickable toggle.
   // Persists + notifies; the alert keeps its stable id, so the background engine
   // sees the changed signature (level|condition|trigger) and re-arms + re-seeds it.
@@ -497,9 +559,9 @@ export class OverlayManager {
         this.drawingInProgress = false;
         if (this.hoveredAlertId === e.overlay.id) {
           // Removing the hovered alert won't fire onMouseLeave, so restore the
-          // crosshair's horizontal guide here or it stays stuck hidden.
+          // crosshair (line + label) here or it stays stuck hidden.
           this.hoveredAlertId = null;
-          this.setCrosshairHorizontalShow(true);
+          this.applyCrosshairForAlert();
         }
         if (this.selectedAlertId === e.overlay.id) this.selectedAlertId = null;
         if (this.hoveredDrawingId === e.overlay.id) this.hoveredDrawingId = null;
@@ -963,6 +1025,12 @@ export class OverlayManager {
   // points map onto the timescale. Guarded so the rebuild doesn't re-persist.
   rehydrate(): void {
     if (!this.chart) return;
+    // Remember WHICH alert was selected by its stable saved id (not the overlay id,
+    // which this rebuild re-mints). A same-epic rehydrate — a live data refresh, or
+    // React's dev double-mount — must not silently drop the user's (or a navigation's)
+    // selection; we re-select the line that still carries this saved id below.
+    const prevSelectedSavedId =
+      this.selectedAlertId != null ? this.alertIds.get(this.selectedAlertId) ?? null : null;
     this.hydrating = true;
     try {
       for (const id of [...this.entries.keys()]) this.chart.removeOverlay(id);
@@ -972,9 +1040,9 @@ export class OverlayManager {
       this.alertCreatedAt.clear();
       if (this.hoveredAlertId !== null) {
         // Wiping overlays on rehydrate (e.g. symbol change) won't fire
-        // onMouseLeave, so restore the crosshair's horizontal guide.
+        // onMouseLeave, so restore the crosshair (line + label).
         this.hoveredAlertId = null;
-        this.setCrosshairHorizontalShow(true);
+        this.applyCrosshairForAlert();
       }
       this.selectedAlertId = null;
       this.hoveredDrawingId = null;
@@ -998,6 +1066,13 @@ export class OverlayManager {
       const rawAlerts = loadAlerts(this.epic);
       for (let ai = 0; ai < rawAlerts.length; ai++) {
         this.materializeSavedAlert(normalizeAlert(rawAlerts[ai], ai));
+      }
+      // Re-select the line that still carries the previously-selected saved id (gone
+      // if its alert was removed). Restores selection across a same-epic rebuild.
+      if (prevSelectedSavedId != null) {
+        const restored = this.findAlertOverlayId(prevSelectedSavedId);
+        this.selectedAlertId = restored;
+        if (restored) this.applyAlertLineWeight(restored);
       }
       // entries now reflect this.epic — let persist() write through again.
       this.hydratedEpic = this.epic;

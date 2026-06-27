@@ -10,21 +10,35 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from auto_trader.brokers.base import ExecutionBroker
 from auto_trader.brokers.capital import CapitalComBroker
 from auto_trader.brokers.capital_stream import (
     SECONDS_INTERVALS,
     stream_candles,
     stream_tick_candles,
 )
-from auto_trader.core.models import Candle, Resolution
+from auto_trader.brokers.paper_exec import PaperExecutionBroker
+from auto_trader.core.models import (
+    Candle,
+    Order,
+    OrderResult,
+    OrderSource,
+    OrderStatus,
+    OrderType,
+    Resolution,
+    Side,
+)
 from auto_trader.core.state_store import STATE_STORE
 from auto_trader.core.tick_store import TICK_STORE
 from auto_trader.engine.backtest import BacktestEngine
@@ -35,26 +49,67 @@ from auto_trader.strategy.sma_cross import SmaCross
 # rate limit (1 req/s on /session).
 _broker: CapitalComBroker | None = None
 
+# Execution brokers, keyed by environment. P1 ships the paper executor only;
+# "demo"/"live" Capital.com dealing executors are added in later phases. Built in
+# lifespan so they share the market-data broker's session.
+_exec: dict[str, ExecutionBroker] = {}
+
 
 def get_broker() -> CapitalComBroker:
     assert _broker is not None, "broker not initialised"
     return _broker
 
 
+def get_exec(env: str) -> ExecutionBroker:
+    """The execution broker for an environment ("paper" for now).
+
+    Env is an explicit per-call parameter — never an ambient server default — so
+    a request can't be routed to the wrong environment by stale shared state."""
+    try:
+        return _exec[env]
+    except KeyError:
+        raise HTTPException(status_code=422, detail=f"unknown trade env: {env}") from None
+
+
+# How often the paper trigger driver checks resting limits / SL / TP against the
+# latest tick. 0.5s keeps fills/closes feeling prompt without busy-looping; finer
+# than this can't help much since paper marks off the (≤1s) tick stream anyway.
+_TRIGGER_INTERVAL = 0.5
+
+
+async def _run_paper_triggers(broker: PaperExecutionBroker) -> None:
+    """Drive the paper executor's limit/SL/TP triggers off the live tick stream."""
+    while True:
+        await asyncio.sleep(_TRIGGER_INTERVAL)
+        try:
+            await broker.check_triggers()
+        except Exception:  # never let one bad tick kill the driver
+            log.exception("paper trigger check failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _broker
     _broker = CapitalComBroker()
+    # Paper executor prices fills from the (demo) market-data broker's snapshot.
+    paper = PaperExecutionBroker(_broker)
+    _exec["paper"] = paper
     # Periodic batch-flush of recorded ticks to sqlite (sub-minute history).
     flusher = asyncio.create_task(TICK_STORE.run_flusher())
+    # Paper limit/SL/TP trigger driver.
+    triggers = asyncio.create_task(_run_paper_triggers(paper))
     try:
         yield
     finally:
-        flusher.cancel()
+        for task in (flusher, triggers):
+            task.cancel()
         with suppress(asyncio.CancelledError):
             await flusher  # lets run_flusher do its final flush
+        with suppress(asyncio.CancelledError):
+            await triggers
         await _broker.aclose()
         _broker = None
+        _exec.clear()
 
 
 app = FastAPI(title="Auto Trader API", version="0.1.0", lifespan=lifespan)
@@ -246,6 +301,264 @@ async def remove_favorite(epic: str) -> None:
         await get_broker().remove_favorite(epic)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"remove favorite failed: {e}") from e
+
+
+# --- order execution (paper now; demo/live later) ----------------------------
+
+
+class OrderRequest(BaseModel):
+    epic: str
+    side: str  # "buy" | "sell"
+    quantity: float
+    client_order_id: str  # caller-generated idempotency key (UUID)
+    env: str = "paper"
+    source: str = "manual"  # "manual" | "strategy"
+    type: str = "market"  # "market" | "limit"
+    limit_level: float | None = None  # required when type == "limit"
+    stop_level: float | None = None
+    take_profit_level: float | None = None
+    confirm: bool = False  # required for real-money (live) orders
+
+
+class LevelsRequest(BaseModel):
+    # Body for editing an open position's or resting order's levels. None = leave
+    # unchanged (a combined Apply sends whichever lines the user dragged). To
+    # REMOVE a level (the edit form's toggle-off), set its clear_* flag — None
+    # alone can't mean "clear" without breaking partial drag updates.
+    limit_level: float | None = None
+    stop_level: float | None = None
+    take_profit_level: float | None = None
+    clear_stop: bool = False
+    clear_take_profit: bool = False
+
+
+class WorkingOrderDTO(BaseModel):
+    epic: str
+    side: str
+    quantity: float
+    limit_level: float
+    order_id: str
+    stop_level: float | None = None
+    take_profit_level: float | None = None
+    created_at: datetime | None = None
+
+
+class OrderResultDTO(BaseModel):
+    client_order_id: str
+    status: str
+    deal_reference: str | None = None
+    deal_id: str | None = None
+    filled_quantity: float = 0.0
+    fill_price: float | None = None
+    reason: str = ""
+
+
+class PositionDTO(BaseModel):
+    epic: str
+    side: str
+    quantity: float
+    open_level: float
+    deal_id: str
+    stop_level: float | None = None
+    take_profit_level: float | None = None
+    upnl: float | None = None
+    created_at: datetime | None = None
+
+
+def _order_result_dto(r: OrderResult) -> OrderResultDTO:
+    return OrderResultDTO(
+        client_order_id=r.client_order_id,
+        status=r.status.value,
+        deal_reference=r.deal_reference,
+        deal_id=r.deal_id,
+        filled_quantity=r.filled_quantity,
+        fill_price=r.fill_price,
+        reason=r.reason,
+    )
+
+
+def _position_dto(p) -> PositionDTO:
+    return PositionDTO(
+        epic=p.epic,
+        side=p.side.value,
+        quantity=p.quantity,
+        open_level=p.open_level,
+        deal_id=p.deal_id,
+        stop_level=p.stop_level,
+        take_profit_level=p.take_profit_level,
+        upnl=p.upnl,
+        created_at=p.created_at,
+    )
+
+
+@app.post("/api/orders", response_model=OrderResultDTO)
+async def place_order(req: OrderRequest) -> OrderResultDTO:
+    try:
+        side = Side(req.side)
+        source = OrderSource(req.source)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    broker = get_exec(req.env)
+
+    # Real-money safety gates (no live executor exists in P1, but enforce here so
+    # the contract holds the moment one is added):
+    if broker.is_real_money:
+        if not req.confirm:
+            raise HTTPException(
+                status_code=422, detail="live orders require confirm=true"
+            )
+        if source is OrderSource.STRATEGY:
+            raise HTTPException(
+                status_code=403, detail="automated orders are not allowed on live"
+            )
+
+    try:
+        order_type = OrderType(req.type)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    order = Order(
+        epic=req.epic,
+        side=side,
+        quantity=req.quantity,
+        client_order_id=req.client_order_id,
+        type=order_type,
+        limit_level=req.limit_level,
+        stop_level=req.stop_level,
+        take_profit_level=req.take_profit_level,
+        source=source,
+    )
+    try:
+        result = await broker.place_order(order)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"order failed: {e}") from e
+    if result.status is OrderStatus.REJECTED:
+        raise HTTPException(status_code=422, detail=result.reason or "order rejected")
+    return _order_result_dto(result)
+
+
+class QuoteDTO(BaseModel):
+    bid: float | None = None
+    ask: float | None = None
+    mid: float | None = None
+
+
+@app.get("/api/quote/{epic}", response_model=QuoteDTO)
+async def quote(epic: str, env: str = Query("paper")) -> QuoteDTO:
+    broker = get_exec(env)
+    q = getattr(broker, "quote", None)
+    if q is None:  # only the paper executor exposes a synthetic quote in P1
+        raise HTTPException(status_code=404, detail="quote unavailable for env")
+    try:
+        return QuoteDTO(**await q(epic))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"quote failed: {e}") from e
+
+
+@app.get("/api/positions", response_model=list[PositionDTO])
+async def positions(env: str = Query("paper"), epic: str = Query("")) -> list[PositionDTO]:
+    broker = get_exec(env)
+    try:
+        found = await broker.get_positions(epic or None)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"positions failed: {e}") from e
+    return [_position_dto(p) for p in found]
+
+
+@app.delete("/api/positions/{deal_id}", response_model=OrderResultDTO)
+async def close_position(
+    deal_id: str, env: str = Query("paper"), quantity: float | None = Query(None)
+) -> OrderResultDTO:
+    broker = get_exec(env)
+    try:
+        result = await broker.close_position(deal_id, quantity)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"close failed: {e}") from e
+    if result.status is OrderStatus.REJECTED:
+        raise HTTPException(status_code=404, detail=result.reason or "close rejected")
+    return _order_result_dto(result)
+
+
+@app.put("/api/positions/{deal_id}", response_model=OrderResultDTO)
+async def modify_position(
+    deal_id: str, req: LevelsRequest, env: str = Query("paper")
+) -> OrderResultDTO:
+    # Edit an open position's SL/TP (the combined Apply after dragging lines).
+    broker = get_exec(env)
+    try:
+        result = await broker.modify_position(
+            deal_id,
+            stop_level=req.stop_level,
+            take_profit_level=req.take_profit_level,
+            clear_stop=req.clear_stop,
+            clear_take_profit=req.clear_take_profit,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"modify failed: {e}") from e
+    if result.status is OrderStatus.REJECTED:
+        raise HTTPException(status_code=422, detail=result.reason or "modify rejected")
+    return _order_result_dto(result)
+
+
+def _working_order_dto(w) -> WorkingOrderDTO:
+    return WorkingOrderDTO(
+        epic=w.epic,
+        side=w.side.value,
+        quantity=w.quantity,
+        limit_level=w.limit_level,
+        order_id=w.order_id,
+        stop_level=w.stop_level,
+        take_profit_level=w.take_profit_level,
+        created_at=w.created_at,
+    )
+
+
+@app.get("/api/orders/working", response_model=list[WorkingOrderDTO])
+async def working_orders(
+    env: str = Query("paper"), epic: str = Query("")
+) -> list[WorkingOrderDTO]:
+    broker = get_exec(env)
+    try:
+        found = await broker.get_working_orders(epic or None)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"working orders failed: {e}") from e
+    return [_working_order_dto(w) for w in found]
+
+
+@app.put("/api/orders/working/{order_id}", response_model=OrderResultDTO)
+async def modify_working_order(
+    order_id: str, req: LevelsRequest, env: str = Query("paper")
+) -> OrderResultDTO:
+    broker = get_exec(env)
+    try:
+        result = await broker.modify_working_order(
+            order_id,
+            limit_level=req.limit_level,
+            stop_level=req.stop_level,
+            take_profit_level=req.take_profit_level,
+            clear_stop=req.clear_stop,
+            clear_take_profit=req.clear_take_profit,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"modify failed: {e}") from e
+    if result.status is OrderStatus.REJECTED:
+        raise HTTPException(status_code=422, detail=result.reason or "modify rejected")
+    return _order_result_dto(result)
+
+
+@app.delete("/api/orders/working/{order_id}", response_model=OrderResultDTO)
+async def cancel_working_order(
+    order_id: str, env: str = Query("paper")
+) -> OrderResultDTO:
+    broker = get_exec(env)
+    try:
+        result = await broker.cancel_working_order(order_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"cancel failed: {e}") from e
+    if result.status is OrderStatus.REJECTED:  # unknown order
+        raise HTTPException(status_code=404, detail=result.reason or "no such order")
+    return _order_result_dto(result)
 
 
 # --- chart workspace state (localStorage mirror, backend-wins-on-load sync) --

@@ -84,6 +84,36 @@ def test_unknown_epic_is_empty(tmp_path):
     assert asyncio.run(store.bars("NOPE", 5, 10)) == []
 
 
+def test_latest_returns_freshest_buffered_tick(tmp_path):
+    store = TickStore(str(tmp_path / "t.db"))
+    store.record("E", 60_000, 100.0)
+    store.record("E", 61_000, 105.0)
+    assert store.latest("E") == (61_000, 105.0)
+    assert store.latest("NOPE") is None
+
+
+def test_latest_falls_back_to_flushed_tick(tmp_path):
+    store = TickStore(str(tmp_path / "t.db"))
+    base = (int(time.time() * 1000) // 5000) * 5000
+    store.record("E", base, 100.0)
+    store.record("E", base + 1_000, 105.0)
+    asyncio.run(store.flush())  # buffer now empty
+    reopened = TickStore(str(tmp_path / "t.db"))
+    assert reopened.latest("E") == (base + 1_000, 105.0)
+
+
+def test_latest_survives_flush_from_memory(tmp_path):
+    # flush() empties the write buffer, but the freshest tick stays cached in
+    # memory so latest() answers a streamed epic without a disk read (it runs on
+    # the event loop's hot path). Same store as recorded — not a reopen.
+    store = TickStore(str(tmp_path / "t.db"))
+    store.record("E", 60_000, 100.0)
+    store.record("E", 61_000, 105.0)
+    asyncio.run(store.flush())
+    assert store._buffer == []  # buffer drained by the flush
+    assert store.latest("E") == (61_000, 105.0)  # still served from the cache
+
+
 def test_out_of_order_ticks_dropped(tmp_path):
     store = TickStore(str(tmp_path / "t.db"))
     store.record("E", 61_000, 100.0)

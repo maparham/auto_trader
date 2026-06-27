@@ -243,6 +243,8 @@
 .ap-at { color: var(--text-faint); }
 .ap-msg { color: var(--text-dim); margin-top: 4px; font-size: 12px; font-style: italic; }
 .ap-row-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+/* History rows have no badge — push their lone go-to action to the right edge. */
+.ap-row-meta-end { justify-content: flex-end; }
 .ap-badge {
   font-size: 11px; color: var(--text-faint); border: 1px solid var(--border);
   border-radius: 3px; padding: 1px 6px;
@@ -569,6 +571,15 @@
   padding: 12px 16px; border-top: 1px solid var(--border);
 }
 .modal-foot .ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+/* Confirmation dialog (deletes etc.): narrower than the form modals, not draggable,
+   with a destructive primary button. */
+.confirm-modal { width: 360px; }
+.confirm-head { cursor: default; }
+.confirm-body { padding: 18px 16px; color: var(--text-dim); line-height: 1.45; }
+.modal-foot .confirm-danger {
+  background: var(--danger, #e5534b); border: 1px solid var(--danger, #e5534b); color: #fff;
+}
+.modal-foot .confirm-danger:hover { filter: brightness(1.08); }
 /* Edit-mode delete button, pinned to the footer's far left (TradingView). */
 .modal-foot .al-trash {
   margin-right: auto; display: inline-flex; align-items: center; justify-content: center;
@@ -895,6 +906,10 @@
    (instead of the chart's crosshair). */
 .chart-wrap.cur-pointer canvas { cursor: pointer !important; }
 .chart-wrap.cur-default canvas { cursor: default !important; }
+/* Snapped within the band of a draggable trade/alert line: ns-resize. Same
+   specificity as cur-pointer but mutually exclusive (single cursorMode), so a
+   snapped line's drag cursor cleanly replaces the curve-hover hand. */
+.chart-wrap.cur-ns canvas { cursor: ns-resize !important; }
 /* Over the AVWAP anchor handle: grab to signal it drags; grabbing while held. */
 .chart-wrap.cur-grab canvas { cursor: grab !important; }
 .chart-wrap.cur-grabbing canvas { cursor: grabbing !important; }
@@ -937,6 +952,13 @@
   height: 22px;
   font-variant-numeric: tabular-nums;
 }
+/* Over ANY alert line (selected or not): keep the WHOLE "+" affordance (circle + price
+   box) looking identical to a normal hover, but go non-interactive (pointer-events:none)
+   so the mousedown passes THROUGH to the canvas — selecting/dragging the line underneath —
+   instead of being swallowed by the "+" circle that protrudes into the pane. The box
+   (z-49) still reads on top of the never-hidden amber alert tag (ChartCore toggles this
+   class). */
+.axis-plus.passthrough { pointer-events: none; }
 .axis-plus-icon {
   display: flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%;
@@ -1591,3 +1613,382 @@
   margin-top: 4px; padding: 7px 16px; background: var(--accent); color: #fff;
   border: none; border-radius: 6px; cursor: pointer; font-size: 13px;
 }
+
+/* --- trading: order ticket + positions (paper) -----------------------------
+   Designed as a trading terminal, not a form. Signature: the Sell/Buy buttons
+   ARE the live quote (bid on Sell, ask on Buy). All numerics use tabular figures
+   so prices/sizes/P&L stay column-aligned and don't jitter as digits change.
+   Colour comes only from direction (var(--pos)/var(--neg)); everything else is
+   quiet. color-mix tints adapt to the active light/dark theme. */
+.trade-sidebar {
+  width: 268px; flex-shrink: 0; display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+.trade-sidebar .num { font-variant-numeric: tabular-nums; }
+
+/* shared eyebrow: small, tracked, uppercase section/field label */
+.ot-field > span,
+.ot-side-verb,
+.pp-head {
+  font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* order ticket — TradingView-style */
+.ot { display: flex; flex-direction: column; gap: 11px; padding: 12px; }
+
+/* Sell / Buy quote strip (selects side) */
+.ot-strip {
+  display: flex; align-items: stretch; position: relative;
+  border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+}
+.ot-strip-side {
+  flex: 1; display: flex; flex-direction: column; gap: 1px; padding: 7px 10px;
+  background: var(--input-bg); border: none; cursor: pointer; color: var(--text-dim);
+  transition: background 0.12s ease;
+}
+.ot-strip-buy { align-items: flex-end; }
+.ot-strip-label { font-size: 11px; }
+.ot-strip-px { font-size: 16px; font-weight: 600; line-height: 1.1; }
+.ot-strip-sell.on { background: color-mix(in srgb, var(--neg) 16%, transparent); color: var(--neg); }
+.ot-strip-buy.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.ot-strip-spread {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: 10px; color: var(--text-faint); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 9px; padding: 1px 7px; pointer-events: none;
+}
+
+/* order type tabs */
+.ot-types { display: flex; border-bottom: 1px solid var(--border); }
+.ot-type-tab {
+  flex: 1; background: transparent; border: none; padding: 7px 0; cursor: pointer;
+  font-size: 12px; color: var(--text-dim); border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.ot-type-tab.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.ot-type-tab:disabled { opacity: 0.4; cursor: default; }
+
+/* labelled input blocks */
+.ot-field-block { display: flex; flex-direction: column; gap: 4px; }
+.ot-flabel { font-size: 11px; color: var(--text-dim); }
+.ot-input-row {
+  display: flex; align-items: center; gap: 8px; background: var(--input-bg);
+  border: 1px solid var(--border); border-radius: 5px; padding: 0 9px;
+}
+.ot-input-row:focus-within { border-color: var(--accent); }
+.ot-input-row.disabled { opacity: 0.5; }
+.ot-input {
+  flex: 1; min-width: 0; background: transparent; border: none; color: var(--text);
+  padding: 7px 0; font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.ot-input:focus { outline: none; }
+.ot-input-aux { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+
+/* exits */
+.ot-exits { display: flex; flex-direction: column; gap: 8px; }
+.ot-exits-head {
+  display: flex; align-items: center; justify-content: space-between; background: none;
+  border: none; padding: 0; cursor: pointer; color: var(--text); font-size: 13px;
+  font-weight: 600;
+}
+.ot-chevron { color: var(--text-faint); transition: transform 0.15s ease; }
+.ot-chevron.open { transform: rotate(180deg); }
+.ot-exit { display: flex; flex-direction: column; gap: 4px; }
+.ot-exit-head { display: flex; align-items: center; justify-content: space-between; }
+.ot-switch {
+  width: 34px; height: 18px; border-radius: 9px; border: none; cursor: pointer;
+  background: var(--border); position: relative; transition: background 0.15s ease; padding: 0;
+}
+.ot-switch.on { background: var(--accent); }
+.ot-switch-knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; transition: transform 0.15s ease;
+}
+.ot-switch.on .ot-switch-knob { transform: translateX(16px); }
+
+/* order info */
+.ot-info { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+.ot-info-row { display: flex; justify-content: space-between; color: var(--text-dim); }
+.ot-info-row .num { color: var(--text); }
+.ot-info-bar { height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.ot-info-bar-fill { height: 100%; background: var(--accent); transition: width 0.15s ease; }
+.ot-info-bar-fill.over { background: var(--neg); }
+
+/* big action button */
+.ot-action {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; border: none;
+  border-radius: 6px; padding: 10px 0; cursor: pointer; color: #fff;
+}
+.ot-action:disabled { opacity: 0.6; cursor: default; }
+.ot-action-buy { background: var(--accent); }
+.ot-action-sell { background: var(--neg); }
+.ot-action-verb { font-size: 15px; font-weight: 600; }
+.ot-action-detail { font-size: 11px; opacity: 0.9; }
+
+.ot-msg {
+  min-height: 14px; font-size: 11px; color: var(--text-dim);
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.ot-msg.show { opacity: 1; }
+
+/* Trading dock: the whole open book, docked full-width under the chart — TV-style.
+   Content-sized (collapses to just its header bar); the table scrolls internally. */
+.trading-dock {
+  flex-shrink: 0; background: var(--surface); border-top: 1px solid var(--border);
+}
+/* Maximized: the dock fills the chart view (App hides .workspace). The table grows
+   to take all the freed height instead of its capped scroll window. */
+.trading-dock.maximized {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+}
+.workspace.dock-hidden { display: none; }
+.trading-dock.maximized .pp { flex: 1; min-height: 0; }
+.trading-dock.maximized .pp-table-wrap { max-height: none; flex: 1; }
+.trading-dock.maximized .pp-empty { flex: 1; }
+.pp { display: flex; flex-direction: column; }
+
+/* Account strip — now a FOOTER below the table. Collapse toggle + account identity
+   on the left; the stat row (or, collapsed, a live ticker) on the right. The top
+   border separates it from the table; collapsed it's the lone bar (no border, the
+   dock's own top border carries it). */
+.pp-bar {
+  display: flex; align-items: center; gap: 18px; padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+.pp-collapsed .pp-bar { border-top: none; }
+/* Window controls (maximize / close) ride at the far right of the tab row.
+   Borderless (TV-style), but kept prominent: a brighter-than-row-icons glyph at a
+   larger size, a gray hover fill, and an accent fill while maximized. */
+.pp-winctl { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.pp-winctl .pp-iconbtn { color: var(--text-dim); padding: 5px; }
+.pp-winctl .pp-iconbtn svg { width: 16px; height: 16px; }
+.pp-winctl .pp-iconbtn:hover:not(:disabled) {
+  color: var(--text); background: var(--hover);
+}
+.pp-winctl .pp-iconbtn[aria-pressed="true"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.pp-collapse {
+  display: flex; align-items: center; gap: 8px; background: none; border: none;
+  padding: 2px 0; cursor: pointer; color: var(--text-dim);
+}
+.pp-collapse:hover { color: var(--text); }
+.pp-bar-title {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;
+  white-space: nowrap;
+}
+.pp-chevron {
+  color: var(--text-faint); font-size: 13px; line-height: 1;
+  transition: transform 0.18s ease;
+}
+.pp-chevron.open { transform: rotate(180deg); }
+
+/* Expanded: TradingView's account strip — an even, right-pinned row of stats.
+   Wraps instead of overflowing on a narrow window. */
+.pp-acct {
+  margin-left: auto; display: flex; align-items: baseline; gap: 18px;
+  flex-wrap: wrap; justify-content: flex-end;
+}
+.pp-caret { font-size: 0.7em; line-height: 1; }
+.pp-stat { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.pp-stat-label {
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint);
+}
+.pp-stat-val {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 12px; font-weight: 500; color: var(--text);
+}
+
+/* Collapsed: the same facts as one live ticker line. */
+.pp-ticker {
+  margin-left: auto; display: flex; align-items: center; gap: 10px;
+  font-size: 12px; color: var(--text-dim);
+}
+.pp-ticker-pnl {
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600;
+  color: var(--text-dim); display: inline-flex; align-items: baseline; gap: 4px;
+}
+.pp-ticker-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-faint); }
+
+/* Positions / Orders tabs with live counts. */
+.pp-tabs { display: flex; gap: 18px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.pp-tab {
+  display: flex; align-items: center; gap: 6px; background: none; border: none;
+  padding: 8px 0; margin-bottom: -1px; cursor: pointer; font-size: 12px;
+  color: var(--text-dim); border-bottom: 2px solid transparent;
+}
+.pp-tab.on { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.pp-count {
+  font-size: 10px; font-weight: 600; min-width: 16px; text-align: center;
+  padding: 0 5px; border-radius: 8px; background: var(--border); color: var(--text-dim);
+}
+.pp-tab.on .pp-count {
+  background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent);
+}
+
+.pp-empty { color: var(--text-faint); font-size: 12px; padding: 14px 12px; }
+.pp-error { color: var(--danger); font-size: 11px; padding: 6px 12px 0; }
+
+/* The open book as a scrollable table. Cap relative to the viewport too, so on a
+   short window the table scrolls internally instead of pushing the last row off the
+   bottom edge; the padding keeps that last row off the dock's edge when at rest. */
+.pp-table-wrap {
+  overflow: auto; min-height: 0; max-height: min(192px, 32vh); padding-bottom: 8px;
+}
+.pp-table {
+  /* Fills the dock with TV's full column set. A fixed floor keeps the columns
+     from crushing on a narrow window — below it the wrap scrolls sideways like TV. */
+  width: 100%; min-width: 1024px; border-collapse: collapse; font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.pp-table thead th {
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
+  text-align: left; font-weight: 500; font-size: 10px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-faint);
+  padding: 5px 10px 6px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.pp-table .pp-c-num {
+  text-align: right; font-family: var(--mono); color: var(--text);
+}
+.pp-table .pp-c-act { width: 1%; }
+.pp-table td {
+  padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+/* First column carries the ledger edge-rule, so it sits a little further in. */
+.pp-table th:first-child { padding-left: 14px; }
+.pp-table td:first-child { padding-left: 14px; }
+.pp-table th:last-child, .pp-table td:last-child { padding-right: 14px; }
+.pp-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.pp-table .pp-c-sym { font-weight: 600; color: var(--text); letter-spacing: 0.01em; }
+.pp-side-long { color: var(--accent); font-weight: 600; }
+.pp-side-short { color: var(--neg); font-weight: 600; }
+.pp-pnl { font-weight: 600; color: var(--text-dim); }
+.pp-pos { color: var(--pos); }
+.pp-neg { color: var(--neg); }
+/* Time column — opened/placed timestamp, quiet mono, left-aligned. */
+.pp-table .pp-c-time { font-family: var(--mono); color: var(--text-dim); }
+/* Leverage reads as quiet context, not a headline figure. */
+.pp-table .pp-c-lev { color: var(--text-dim); }
+
+/* Sortable column header: inherits the th's quiet uppercase label, brightens on
+   hover, and shows a caret on the active column. */
+.pp-sort {
+  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+  background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.pp-sort:hover { color: var(--text-dim); }
+.pp-sort.on { color: var(--text); }
+.pp-sort-caret { font-size: 7px; line-height: 1; }
+.pp-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* trade-line editing: pending-changes bar + row controls */
+.pp-apply {
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+  border-radius: 6px; padding: 8px 9px; margin: 8px 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.pp-apply-title {
+  font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--text-faint); margin-bottom: 5px;
+}
+.pp-apply-list { list-style: none; margin: 0 0 7px; padding: 0; font-size: 11px; color: var(--text); }
+.pp-apply-list li { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.pp-apply-actions { display: flex; gap: 6px; }
+.pp-apply-btn {
+  flex: 1; border: none; border-radius: 5px; padding: 6px 0; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: #fff; background: var(--accent);
+}
+.pp-apply-btn:disabled { opacity: 0.55; cursor: default; }
+.pp-discard-btn {
+  flex: 1; border: 1px solid var(--border); border-radius: 5px; padding: 6px 0;
+  cursor: pointer; font-size: 12px; color: var(--text-dim); background: transparent;
+}
+.pp-discard-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+
+.pp-lvl-sl { color: var(--neg); }
+.pp-lvl-tp { color: var(--pos); }
+.pp-dash { color: var(--text-faint); }
+.pp-resting { font-size: 11px; color: var(--text-faint); font-style: italic; }
+
+/* Ledger edge-rule: a left bar on every row encodes the position's DIRECTION
+   (blue long / red short) — readable peripherally without parsing the Side cell.
+   The same device intensifies to mark the focused symbol and the row being edited,
+   so one mark carries side + state. Inset box-shadow, so it never shifts layout.
+   Single-click opens the chart, double-click edits. */
+.pp-row { cursor: pointer; transition: background 0.12s ease, box-shadow 0.15s ease; }
+.pp-row:hover { background: var(--hover); }
+.pp-dir-long { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
+.pp-dir-short { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--neg) 50%, transparent); }
+/* Focused (chart on screen) — the rule brightens to full hue. */
+.pp-row.pp-dir-long.pp-focused { box-shadow: inset 3px 0 0 var(--accent); }
+.pp-row.pp-dir-short.pp-focused { box-shadow: inset 3px 0 0 var(--neg); }
+/* Editing — full rule in its direction colour + a faint plate, so the open row is
+   unmistakable while its levels are being dragged. */
+.pp-row.pp-dir-long.pp-editing {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.pp-row.pp-dir-short.pp-editing {
+  box-shadow: inset 3px 0 0 var(--neg);
+  background: color-mix(in srgb, var(--neg) 9%, transparent);
+}
+.pp-apply-sym { font-weight: 600; color: var(--text); }
+/* Per-row icon actions: lines toggle (eye), edit (pencil), close/cancel (✕). */
+.pp-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; padding: 4px; cursor: pointer; border-radius: 4px;
+  color: var(--text-faint); transition: color 0.12s ease, background 0.12s ease;
+}
+.pp-iconbtn:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+.pp-iconbtn:disabled { opacity: 0.5; cursor: default; }
+.pp-iconbtn.off { opacity: 0.6; }
+.pp-iconbtn-x:hover:not(:disabled) { color: var(--neg); }
+
+.pp-collapse:focus-visible,
+.pp-tab:focus-visible,
+.pp-iconbtn:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pp-margin-fill, .pp-chevron, .pp-row, .pp-iconbtn { transition: none; }
+}
+
+/* Edit form shown in place of the new-order ticket. */
+.ot-edit { gap: 12px; }
+.ot-edit-head { display: flex; align-items: center; gap: 8px; }
+.ot-edit-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.ot-edit-long { color: var(--pos); }
+.ot-edit-short { color: var(--neg); }
+.ot-edit-x {
+  margin-left: auto; background: transparent; border: none; cursor: pointer;
+  color: var(--text-faint); font-size: 13px; line-height: 1; padding: 2px 4px;
+}
+.ot-edit-x:hover { color: var(--text); }
+.ot-edit-actions { display: flex; gap: 6px; }
+.ot-edit-update {
+  flex: 1; padding: 10px 0; font-size: 13px; font-weight: 600;
+  background: var(--accent);
+}
+.ot-edit-cancel {
+  flex: 1; border: 1px solid var(--border); border-radius: 6px; padding: 0;
+  cursor: pointer; font-size: 13px; color: var(--text-dim); background: transparent;
+}
+.ot-edit-cancel:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.ot-edit-cancel:disabled { opacity: 0.5; cursor: default; }
+
+/* ns-resize cursor while hovering ON a draggable trade line (set by PositionLines).
+   The in-band snap case uses the cursorMode `.cur-ns` instead (see cursor modes). */
+.trade-line-grab canvas { cursor: ns-resize !important; }
+
+.setting-hint { font-size: 11px; color: var(--text-faint); line-height: 1.45; margin-top: 2px; }
+
+.num-input {
+  background: var(--input-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 5px; padding: 5px 8px; font-size: 13px; width: 120px;
+  box-sizing: border-box; font-variant-numeric: tabular-nums;
+}
+.num-input:focus { outline: none; border-color: var(--accent); }

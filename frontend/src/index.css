@@ -32,6 +32,9 @@ html, body, #root { margin: 0; height: 100%; }
   /* TradingView-style subtle gray highlight for borderless toolbar buttons. */
   --hover: rgba(255, 255, 255, 0.08);
   --hover-strong: rgba(255, 255, 255, 0.14);
+  /* Monospaced tabular readout for prices / P&L / sizes — the trading-desk
+     convention so digits column-align and don't jitter as values tick. */
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 :root[data-theme="light"] {
   --bg: #ffffff;

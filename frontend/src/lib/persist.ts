@@ -1028,6 +1028,56 @@ export function saveAlerts(epic: string, list: SavedAlert[]): void {
   save(alertsKey(epic), list);
 }
 
+// --- direct (overlay-less) edits of a stored alert, keyed by its stable id --------
+// The alerts panel's all-symbols rows act on alerts whose chart may not be open, so
+// they can't go through a cell's OverlayManager. These mutate the global per-epic
+// list directly; callers bump alertsChanged so every open cell's reconcileAlerts and
+// the background engine pick up the change. The id is the NORMALIZED id (legacy rows
+// are matched by their deterministic backfilled id, same as the engine/sidebar see).
+
+// Find a stored alert by its (normalized) stable id, or null.
+export function loadStoredAlert(epic: string, id: string): SavedAlert | null {
+  const raw = loadAlerts(epic);
+  for (let i = 0; i < raw.length; i++) {
+    const n = normalizeAlert(raw[i], i);
+    if (n.id === id) return n;
+  }
+  return null;
+}
+
+// Replace a stored alert's level + config in place, keeping its id/createdAt. No-op if
+// the id isn't found. Other rows are left exactly as stored (not re-normalized) so an
+// edit to one alert never rewrites a sibling's identity/defaults.
+export function updateStoredAlert(
+  epic: string,
+  id: string,
+  level: number,
+  cfg: {
+    condition: AlertCondition;
+    trigger: AlertTrigger;
+    message: string;
+    expiresAt: number | null;
+    notify: AlertNotifyChannels;
+  },
+): void {
+  const raw = loadAlerts(epic);
+  let changed = false;
+  const next = raw.map((r, i) => {
+    const n = normalizeAlert(r, i);
+    if (n.id !== id) return r;
+    changed = true;
+    return { ...n, level, ...cfg };
+  });
+  if (changed) saveAlerts(epic, next);
+}
+
+// Remove a stored alert by its (normalized) stable id. No-op if absent.
+export function deleteStoredAlert(epic: string, id: string): void {
+  const raw = loadAlerts(epic);
+  const survivors = raw.filter((r, i) => normalizeAlert(r, i).id !== id);
+  if (survivors.length !== raw.length) saveAlerts(epic, survivors);
+}
+
 // Returns every {epic, alerts} tuple stored. Scans keys matching the GLOBAL form
 // `auto-trader.alerts.<epic>` only — the scoped legacy form `auto-trader.<scope>.
 // alerts.<epic>` is collapsed away by migrateAlertsToGlobal() at startup, so it
@@ -1143,6 +1193,11 @@ export interface TriggeredAlert {
   // the panel's currently-focused one. Optional: records saved before this
   // field existed fall back to the focused precision.
   precision?: number;
+  // The stable SavedAlert id this firing came from, so the History row can jump
+  // to (and select) the exact alert line even if it was dragged since firing.
+  // Optional: rows saved before this field — and any whose alert was a "once"
+  // that has since been removed — match by condition+level instead, or not at all.
+  alertId?: string;
 }
 
 const TRIGGERED_KEY = `${PREFIX}.triggered`;

@@ -40,11 +40,18 @@ import { clearBacktest } from "./lib/backtest";
 import { toast } from "./lib/notify";
 import {
   alertEditRequest,
+  requestConfirm,
   indicatorSettingsRequest,
   drawingSettingsRequest,
   alertsChanged,
   openSettings,
   requestSymbolSearch,
+  pendingEditsSignal,
+  draftOrderSignal,
+  tradeLineUiSignal,
+  type PendingEdit,
+  type DraftOrder,
+  type TradeLineUi,
 } from "./lib/signals";
 import {
   loadAvwapAnchor,
@@ -71,6 +78,8 @@ import {
 } from "./lib/customIndicators";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
+import { PositionLines, tradeLineSpecs, DRAFT_ID } from "./lib/positionLines";
+import { subscribeTrades, type TradeView } from "./lib/trading";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
 import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import { chartColors, loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
@@ -97,6 +106,10 @@ function first<T>(r: T | T[]): T {
 
 // How close (px) a click/cursor must be to a curve to select/hover it.
 const HIT_TOLERANCE_PX = 6;
+// How close (px) the cursor must come to an alert line for the price guide (the "+"
+// affordance + its price) to MAGNET onto that line's exact level. Wider than the hit
+// tolerance so it locks on well before you're dead-on.
+const ALERT_SNAP_PX = 5;
 const DOT_RADIUS = 3.5; // selection marker radius
 // Selection markers are anchored to fixed BARS (every DOT_STEP-th bar by
 // timestamp phase), NOT to fixed screen spacing — so they stay glued to the
@@ -125,6 +138,7 @@ interface LineCache {
   figKey: string;
   indType: string;
   extendData: unknown; // carries per-curve label text + config (curveLabels)
+  calcParams?: unknown[]; // lengths/multipliers, for name+params curve labels
   color: string;
   coords: Array<{ x: number; y: number; t: number }>;
 }
@@ -191,6 +205,7 @@ function buildLineCache(chart: Chart): LineCache[] {
           figKey: fig.key,
           indType,
           extendData: ind.extendData,
+          calcParams: ind.calcParams,
           color,
           coords,
         });
@@ -280,7 +295,7 @@ function buildCurveLabelPills(
     const cfg = curveLabelConfig(line.extendData);
     if (!cfg.enabled) continue;
     if (!cfg.always && !active(line.paneId, line.name)) continue;
-    const text = curveLabel(line.indType, line.figKey, line.extendData);
+    const text = curveLabel(line.indType, line.figKey, line.extendData, line.calcParams);
     if (!text) continue;
     // High and Low curves get independently-configured positions.
     const pos = curveLabelPosFor(cfg, line.figKey);
@@ -460,6 +475,23 @@ export default function ChartCore({
   const chartRef = useRef<Chart | null>(null);
   const wsRef = useRef<LiveHandle | null>(null);
   const inited = useRef(false);
+  // On-chart trade lines (entry/SL/TP for positions + resting orders). Server-
+  // owned, non-persisted; see positionLines.ts.
+  const posLinesRef = useRef<PositionLines | null>(null);
+  // Latest trades + pending drags from the shared signals, so an epic change can
+  // re-filter/re-merge without waiting for the next poll tick.
+  const tradesRef = useRef<TradeView[]>([]);
+  const pendingRef = useRef<Record<string, PendingEdit>>({});
+  const draftRef = useRef<DraftOrder | null>(null);
+  // Per-trade line UI (hidden ids + hovered id) from the positions panel, so
+  // hide/hover re-filter the drawn lines without waiting for a poll tick.
+  const tradeUiRef = useRef<TradeLineUi>({ hidden: [], hovered: null });
+  // Redraw trade lines filtered to the current epic. Set in chart init; called
+  // again after a symbol-change rehydrate so the new epic's lines appear at once.
+  const posDrawRef = useRef<() => void>(() => {});
+  // Unsubscribe from the shared trades/pending subscriptions (stored in a ref so
+  // the effect's outer teardown can reach it; the subscribe happens in init).
+  const posUnsubRef = useRef<() => void>(() => {});
   // Indicator-selection overlay: a canvas above klinecharts' canvases on which we
   // paint the hollow selection handles, plus a cache of every visible indicator
   // line in pixel space (rebuilt each redraw, read by the click/hover hit-test).
@@ -472,8 +504,12 @@ export default function ChartCore({
   // While the cursor is parked over the "+" affordance, klinecharts has lost the
   // canvas hover and dropped its crosshair. We redraw just the HORIZONTAL crosshair
   // line ourselves at this y (the vertical one is intentionally gone — x is
-  // meaningless on the axis strip). null = not over the "+".
+  // meaningless on the axis strip). Also used to draw the snapped crosshair when the
+  // cursor is within ALERT_SNAP_PX of an alert line. null = neither case active.
   const plusCrosshairYRef = useRef<number | null>(null);
+  // Tracks whether the snap was active on the last onMove so we only call
+  // setSuppressNativeLine when the state actually changes.
+  const snapActiveRef = useRef(false);
   // Crosshair-link: the timestamp broadcast by a SIBLING cell (null = none). When
   // set, redraw paints a vertical time guide at that bar. syncCrosshairRef mirrors
   // the prop so the once-mounted crosshair subscription can read it without
@@ -567,8 +603,10 @@ export default function ChartCore({
   // curve, "cur-default" (arrow) over the legend strip, "" = klinecharts crosshair.
   // A class (not inline style) because klinecharts sets cursor on the canvas itself,
   // which beats an ancestor's inline cursor; updated only on boundary crossings.
-  const [cursorMode, setCursorMode] = useState<"" | "cur-pointer" | "cur-default" | "cur-grab" | "cur-grabbing">("");
-  const cursorModeRef = useRef<"" | "cur-pointer" | "cur-default" | "cur-grab" | "cur-grabbing">("");
+  // "cur-ns" (ns-resize) when snapped to a draggable line — single-select so it
+  // cleanly overrides "cur-pointer" (a line drag beats curve selection).
+  const [cursorMode, setCursorMode] = useState<"" | "cur-pointer" | "cur-default" | "cur-grab" | "cur-grabbing" | "cur-ns">("");
+  const cursorModeRef = useRef<"" | "cur-pointer" | "cur-default" | "cur-grab" | "cur-grabbing" | "cur-ns">("");
   // Live price label + candle countdown, anchored at the last close on the axis.
   const [priceTag, setPriceTag] = useState<{
     y: number;
@@ -606,6 +644,13 @@ export default function ChartCore({
   // affordance (a DOM sibling that makes klinecharts drop the canvas hover) we can
   // keep that pill alive instead of letting it vanish.
   const lastActivePillIdRef = useRef<string | null>(null);
+  // Whether the dotted last-price line is currently suppressed (klinecharts style).
+  // We hide it — and the live price axis pill — while an alert line is click-selected
+  // so the selected alert reads cleanly with nothing layered over its price row. A
+  // mere hover does NOT trigger this (the live price stays the authoritative read);
+  // only selection does. Tracked as a ref so redraw() (runs every tick) only calls
+  // setStyles on an actual transition, not on every frame.
+  const lastPriceHiddenRef = useRef(false);
   // True while the cursor is over the price-axis column (right strip). Hides the
   // alert pill outright — the axis is a no-interaction zone, so the descriptive
   // pill (and its delete button) shouldn't ride along there. Toggled on transition
@@ -1146,29 +1191,85 @@ export default function ChartCore({
           if (id !== selectedId) positionPill(node);
         }
       }
-      // While a live alert line is being dragged, OR the cursor sits on an alert
-      // line's price row, that alert owns this row and shows its own descriptive
-      // pill. Hide the whole alert-setter affordance — the "+" button, its following
-      // price pill, AND the dashed guide line — which sits at the same price and
-      // would otherwise show through (orange) under the alert's pill. Critically,
-      // the "+" circle protrudes into the candle pane with pointer-events:auto, so
-      // leaving it visible over an alert line swallows the mousedown and makes the
-      // line non-selectable / non-draggable in that sliver. We OR a DIRECT DOM
-      // hit-test (alertHitTest) onto the native hover flag rather than replacing it:
-      // getHoveredAlertId() rides klinecharts' native onMouseEnter for these
-      // priceLines, whose only documented failure is FALSE NEGATIVES (it sometimes
-      // doesn't fire — the same reason selection and double-click are custom
-      // hit-tested above), so the hit-test backfills the missed-fire case. Keeping
-      // the native flag too covers the converse: if klinecharts' hover tolerance is
-      // wider than HIT_TOLERANCE_PX, the pill (which still keys off the native flag)
-      // could show while the hit-test misses, re-exposing the orange "+" under it.
-      // The union suppresses the "+" in both bands. Placed AFTER the pill-tracking
-      // block so the hovered pill still follows the cursor's x.
-      if (overlays.isDraggingAlert() || overlays.getHoveredAlertId() || alertHitTest(x, y) != null) {
+      // Over ANY alert line — selected or not — the WHOLE "+" affordance (circle + price
+      // box) stays and looks IDENTICAL to a normal hover: the price readout is ALWAYS
+      // visible (the box, z-49, reads on top of the never-hidden amber tag), the shape
+      // never changes as the cursor crosses a line. We only make it click-THROUGH
+      // (`.passthrough` → pointer-events:none) over a line so the mousedown reaches the
+      // canvas and selects/drags the line underneath instead of being swallowed by the
+      // "+" circle that protrudes into the pane. We union getHoveredAlertId (klinecharts'
+      // native onMouseEnter, which can FALSE-NEGATIVE) with a direct alertHitTest so the
+      // line is detected in both bands. ONLY EXCEPTION: while DRAGGING a line, hide the
+      // affordance entirely (the price box would fight the drag).
+      const overAlertId = overlays.getHoveredAlertId() ?? alertHitTest(x, y);
+      // Magnet: the nearest alert line within ALERT_SNAP_PX of the cursor. When set, the
+      // price guide snaps onto that line's exact level/y below (so the readout locks to the
+      // alert's price and the "+" aligns dead-on the line), and the affordance also goes
+      // click-through (so a click there still selects/drags the line under it).
+      // Snap targets: alert lines PLUS every trade line (entry/limit, SL, TP for
+      // open positions, resting orders, and the staged draft) on this epic — built
+      // from the same tradeLineSpecs that draws them, so the magnet locks onto the
+      // exact level shown. The price guide snaps to the nearest within ALERT_SNAP_PX.
+      // Each target carries whether its line is draggable, so when the crosshair
+      // snaps to a draggable one we can show the ns-resize cursor right away (even
+      // a few px off the line), matching the on-line hover affordance. Alert lines
+      // are draggable; trade lines use their spec's `draggable` (a filled
+      // position's entry is not).
+      const snapTargets = [
+        ...overlays.getAlerts().map((a) => ({ level: a.level, draggable: true })),
+        ...tradeLineSpecs({
+          trades: tradesRef.current,
+          pending: pendingRef.current,
+          epic: epicRef.current,
+          precision: precisionRef.current,
+          levelsDraggable: true,
+          onDrag: () => {},
+          draft: draftRef.current,
+          // Don't magnet to a line that isn't drawn (hidden, not hovered).
+          hidden: new Set(tradeUiRef.current.hidden),
+          hovered: tradeUiRef.current.hovered,
+        }).map((s) => ({ level: s.level, draggable: s.draggable })),
+      ];
+      let snapTarget: { y: number; level: number; draggable: boolean } | null = null;
+      for (const t of snapTargets) {
+        const ay = first(
+          c.convertToPixel([{ value: t.level }], { paneId: "candle_pane", absolute: true }),
+        ).y;
+        if (ay != null && Math.abs(ay - y) <= ALERT_SNAP_PX &&
+            (snapTarget == null || Math.abs(ay - y) < Math.abs(snapTarget.y - y))) {
+          snapTarget = { y: ay, level: t.level, draggable: t.draggable };
+        }
+      }
+      if (overlays.isDraggingAlert()) {
+        btn.classList.remove("passthrough");
         btn.style.display = "none";
         setPlusCrosshair(null);
+        if (snapActiveRef.current) { overlays.setSuppressNativeLine(false); snapActiveRef.current = false; }
         return;
       }
+      // Suppress the klinecharts native horizontal crosshair line while snapping. The
+      // native line tracks the cursor's y (a few px off the snapped line), so leaving
+      // it on would double the alert/trade line. We DON'T replace it with our own line
+      // either (see setPlusCrosshair below) — the alert/trade line is the only guide.
+      const nextSnap = snapTarget != null;
+      if (nextSnap !== snapActiveRef.current) {
+        snapActiveRef.current = nextSnap;
+        overlays.setSuppressNativeLine(nextSnap);
+      }
+      // Snapped to a DRAGGABLE line (within the band, not just on it): show the
+      // ns-resize cursor immediately, like the on-line hover affordance. Done via
+      // the single-select cursorMode (not a CSS class) so it OVERRIDES the curve-
+      // hover "pointer" — dragging a line beats selecting a curve — rather than
+      // losing a specificity fight. Off on the axis (x > mainW).
+      if (
+        snapTarget?.draggable === true &&
+        x <= mainW &&
+        (cursorModeRef.current as string) !== "cur-ns"
+      ) {
+        cursorModeRef.current = "cur-ns";
+        setCursorMode("cur-ns");
+      }
+      btn.classList.toggle("passthrough", overAlertId != null || snapTarget != null);
       // Hide the "+" pill the moment the cursor crosses onto the price-axis strip
       // (x > mainW), even when it's over the "+" itself. The axis is a drag/scale
       // gesture zone; a DOM button sitting there with pointer-events:auto would
@@ -1187,23 +1288,30 @@ export default function ChartCore({
         c.convertFromPixel([{ y }], { paneId: "candle_pane", absolute: true }),
       );
       if (pt.value == null) return;
-      plusPriceRef.current = pt.value;
+      // Snapped onto an alert line: lock the guide to the alert's exact level + y; else
+      // it tracks the cursor's price/y as usual.
+      const guideY = snapTarget ? snapTarget.y : y;
+      const guideVal = snapTarget ? snapTarget.level : pt.value;
+      plusPriceRef.current = guideVal;
       if (plusPriceLabelRef.current) {
-        plusPriceLabelRef.current.textContent = pt.value.toFixed(precisionRef.current);
+        plusPriceLabelRef.current.textContent = guideVal.toFixed(precisionRef.current);
         // Size the price box to the y-axis column so the number sits inside the
         // axis and the "+" circle's right edge lands on the column's left border.
         plusPriceLabelRef.current.style.width = `${Math.max(0, rect.width - mainW)}px`;
       }
       // Round so the "+" pill (translateY(-50%), even height) stays crisp.
-      btn.style.top = `${Math.round(y)}px`;
+      btn.style.top = `${Math.round(guideY)}px`;
       btn.style.display = "flex";
-      // Over the "+", klinecharts dropped its crosshair (cursor left the canvas);
-      // keep the horizontal guide alive at this y. On the canvas it owns the
-      // crosshair, so clear ours.
-      setPlusCrosshair(overPlus ? y : null);
+      // Over the "+", klinecharts dropped its crosshair; keep our guide alive at the
+      // cursor's y. But NOT when snapped onto an alert/trade line: the native line is
+      // already suppressed, and drawing ours at the snapped y would sit right on top of
+      // that line and read as a doubled/messy line. The alert/trade line is its own
+      // guide there, so leave the crosshair line hidden when snapped.
+      setPlusCrosshair(overPlus && snapTarget == null ? guideY : null);
     };
     const onLeave = () => {
-      setPlusCrosshair(null); // leaving the chart: drop our horizontal guide
+      setPlusCrosshair(null);
+      if (snapActiveRef.current) { overlays.setSuppressNativeLine(false); snapActiveRef.current = false; }
       // onMove stops firing past the canvas edge, so clear the curve-hover highlight.
       if (curveHover.value !== null) curveHover.set(null);
       if (onAxisRef.current) {
@@ -1215,6 +1323,7 @@ export default function ChartCore({
         setCursorMode("");
       }
       if (!plusMenuOpenRef.current && plusBtnRef.current) {
+        plusBtnRef.current.classList.remove("passthrough");
         plusBtnRef.current.style.display = "none";
       }
     };
@@ -1286,6 +1395,69 @@ export default function ChartCore({
           });
       });
       overlays.attach(chart);
+      // On-chart trade lines for this cell. Subscribes to the shared trades poll
+      // AND pending drags, and redraws (filtered to THIS cell's epic, pending
+      // merged over server levels) on every update. Bound to this chart instance,
+      // so it lives and dies with the chart (remount-safe). Stage 2 renders
+      // read-only; drag/edit wiring lands in Stage 3.
+      const posLines = new PositionLines(chart, precisionRef.current, (hovering) =>
+        containerRef.current?.classList.toggle("trade-line-grab", hovering),
+      );
+      posLinesRef.current = posLines;
+      // A dropped line stages a pending edit (merged over server level so the
+      // poll can't snap it back). The panel shows a combined Apply/Cancel.
+      const onDrag = (
+        id: string,
+        field: "price" | "stop" | "takeProfit",
+        level: number,
+      ) => {
+        if (id === DRAFT_ID) {
+          // Dragging a draft line just sets that value (Submit commits it).
+          const d = draftOrderSignal.value;
+          if (d) draftOrderSignal.set({ ...d, [field]: level });
+          return;
+        }
+        const cur = pendingEditsSignal.value;
+        pendingEditsSignal.set({ ...cur, [id]: { ...cur[id], [field]: level } });
+      };
+      const drawPositions = () => {
+        posLines.render(
+          tradeLineSpecs({
+            trades: tradesRef.current,
+            pending: pendingRef.current,
+            epic: epicRef.current,
+            precision: precisionRef.current,
+            levelsDraggable: true,
+            onDrag,
+            draft: draftRef.current,
+            hidden: new Set(tradeUiRef.current.hidden),
+            hovered: tradeUiRef.current.hovered,
+          }),
+        );
+      };
+      posDrawRef.current = drawPositions;
+      const unsubTrades = subscribeTrades((t) => {
+        tradesRef.current = t;
+        drawPositions();
+      });
+      const unsubPending = pendingEditsSignal.subscribe((p) => {
+        pendingRef.current = p;
+        drawPositions();
+      });
+      const unsubDraft = draftOrderSignal.subscribe((d) => {
+        draftRef.current = d;
+        drawPositions();
+      });
+      const unsubTradeUi = tradeLineUiSignal.subscribe((ui) => {
+        tradeUiRef.current = ui;
+        drawPositions();
+      });
+      posUnsubRef.current = () => {
+        unsubTrades();
+        unsubPending();
+        unsubDraft();
+        unsubTradeUi();
+      };
       // Prime precision synchronously at attach so alert-level rounding never sees a
       // null precision: fetchPrecision() resolves async, and an alert created/edited in
       // that window would otherwise be stored/read raw. effPrecision already has a
@@ -1320,6 +1492,11 @@ export default function ChartCore({
       wrapRef.current?.removeEventListener("mousemove", onMove);
       wrapRef.current?.removeEventListener("mouseleave", onLeave);
       containerRef.current?.removeEventListener("mousemove", onMove);
+      posUnsubRef.current();
+      posUnsubRef.current = () => {};
+      posLinesRef.current?.clear();
+      posLinesRef.current = null;
+      posDrawRef.current = () => {};
       overlays.detach();
       controller.chart = null;
       const w = window as unknown as { __charts?: Map<string, Chart> };
@@ -1337,6 +1514,13 @@ export default function ChartCore({
   // settings change shows at once instead of waiting for the next mouse move.
   useEffect(() => {
     chartRef.current?.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current));
+    // A full base-style re-apply resets priceMark.last.line.show to its default
+    // (visible). If an alert is selected the last-price line must stay hidden, so
+    // re-assert it here. lastPriceHiddenRef already reflects the desired state, so
+    // a single re-apply keeps it in sync without waiting for the next redraw().
+    if (lastPriceHiddenRef.current) {
+      chartRef.current?.setStyles({ candle: { priceMark: { last: { line: { show: false } } } } });
+    }
   }, [theme, symbol.epic, effPrecision, period.label, status, crosshair]);
 
   // Resolve the epic's authoritative precision + open/closed status on symbol
@@ -1413,6 +1597,11 @@ export default function ChartCore({
     const fmt = makeFormatDate(clock, dateFormat, showWeekday);
     c.setCustomApi({ formatDate: fmt });
     c.setStyles(klineStyles(themeRef.current, legendHovered.value, crosshairRef.current));
+    // The full base-style re-apply un-hides the last-price line; if an alert is
+    // selected it must stay hidden, so re-assert (see the theme effect's rationale).
+    if (lastPriceHiddenRef.current) {
+      c.setStyles({ candle: { priceMark: { last: { line: { show: false } } } } });
+    }
     // Mirror klinecharts' dtf (same options) so our synced-crosshair label matches
     // the source chart's. "YYYY-MM-DD HH:mm" is the format klinecharts hands to
     // formatDate for the crosshair; makeFormatDate re-renders it per clock/date pref.
@@ -1478,6 +1667,9 @@ export default function ChartCore({
       // Rehydrate this symbol's saved drawings + alerts now that the data (and
       // therefore the timescale their points map onto) is loaded.
       overlays.rehydrate();
+      // Redraw position lines for the (possibly new) epic at the current precision.
+      posLinesRef.current?.setPrecision(effPrecision);
+      posDrawRef.current();
       // Record the current resolution and derive each drawing's effective
       // visibility (a drawing can be pinned to specific intervals). This effect
       // re-runs on period.resolution, so switching timeframe re-evaluates here.
@@ -1662,6 +1854,25 @@ export default function ChartCore({
           selected: a.selected,
         });
     }
+    // When a click-SELECTED alert sits ON the live-price row, the live price line and
+    // its axis pill step aside so the selected alert owns that row unobstructed
+    // (TV-style). This is SCOPED to overlap: selecting an alert on a different row
+    // must NOT hide the live price (you still want the live read) — only the alert
+    // the user is actively working at the price level does. Hover never counts —
+    // only selection — so a passing cursor never hides the live price. The overlap
+    // band is half the price pill plus half an alert tag (~20px): within it the two
+    // axis pills visually collide. Suppress the dotted last-price line via klinecharts
+    // styles (guarded by a ref so we only setStyles on a transition) and drop the DOM
+    // price pill here.
+    const ALERT_TAG_HALF = 10; // .alert-tag is 20px tall (App.css)
+    const priceObscured =
+      lastPriceY != null &&
+      tags.some((t) => t.selected && Math.abs(t.y - lastPriceY!) <= priceTagHeight / 2 + ALERT_TAG_HALF);
+    if (priceObscured !== lastPriceHiddenRef.current) {
+      lastPriceHiddenRef.current = priceObscured;
+      chart.setStyles({ candle: { priceMark: { last: { line: { show: !priceObscured } } } } });
+    }
+    if (priceObscured) setPriceTag(null);
     setAlertTags(tags);
     const act = tags.find((t) => t.active);
     if (act) lastActivePillIdRef.current = act.id;
@@ -1687,14 +1898,17 @@ export default function ChartCore({
       if (ctx) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
-        // Self-drawn horizontal crosshair while the cursor is parked over the "+"
-        // (klinecharts has dropped its own). Mirrors the chart's crosshair line
-        // style; spans only the main pane (stops at the price axis).
+        // Self-drawn horizontal crosshair: only when the cursor is parked over the "+"
+        // and NOT snapped (klinecharts dropped its own there, and we don't want a line
+        // doubling an alert/trade line under a snap). Mirrors the chart's crosshair line style.
+        // We gate only on the top-level show flags, NOT hl.show — that flag is what
+        // setSuppressNativeLine writes to hide the native line, so reading it here would
+        // cancel our own draw. cs.show / cs.horizontal.show still honor user preference.
         const py = plusCrosshairYRef.current;
         if (py != null) {
           const cs = chart.getStyles().crosshair;
           const hl = cs.horizontal.line;
-          if (cs.show !== false && cs.horizontal.show !== false && hl.show !== false) {
+          if (cs.show !== false && cs.horizontal.show !== false) {
             const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? w;
             ctx.save();
             ctx.strokeStyle = hl.color;
@@ -2574,7 +2788,25 @@ export default function ChartCore({
         </div>
       )}
 
-      {alertTags.map((t) => (
+      {alertTags.map((t) => {
+        // Hide an alert's axis tag when it shares the live-price row and isn't
+        // selected: the live price pill owns that row on hover/idle. The alert tag
+        // is WIDER than the price pill (its bell protrudes left), so even at a lower
+        // z-index its left edge shows past the pill and reads as overlapping it. This
+        // is the counterpart to redraw()'s rule that hides the price pill when an
+        // alert IS selected on that row — together: not-selected ⇒ price wins the row,
+        // selected ⇒ the alert wins it. (When the alert is selected and overlaps,
+        // priceTag is already null, so the band test below is moot.) The band matches
+        // redraw's priceObscured: half the price pill (40px with countdown, else 20)
+        // plus half an alert tag (10).
+        if (
+          !t.selected &&
+          priceTag &&
+          Math.abs(t.y - priceTag.y) <= (priceTag.countdown ? 20 : 10) + 10
+        ) {
+          return null;
+        }
+        return (
         <div key={t.id} className={`alert-tag${t.selected ? " selected" : ""}`} style={{ top: t.y }} title="Price alert">
           {/* Inline SVG bell (currentColor → amber via .at-bell) so the tag stays in
               the monochrome SVG-icon language, not a colored 🔔 emoji. */}
@@ -2583,7 +2815,8 @@ export default function ChartCore({
           </span>
           <span className="at-price">{t.level.toFixed(precision)}</span>
         </div>
-      ))}
+        );
+      })}
 
       {/* TV-style descriptive pill on the line itself — shown while the line is
           hovered/selected (or the pill itself is hovered). Follows the cursor's x
@@ -2628,8 +2861,13 @@ export default function ChartCore({
               className="ap-del"
               title="Delete alert"
               onClick={() => {
-                overlays.remove(t.id);
-                setPillHoverId((cur) => (cur === t.id ? null : cur));
+                requestConfirm({
+                  message: `Delete alert ${CONDITION_LABELS[t.condition]} ${t.level.toFixed(precision)} on ${symbol.epic}?`,
+                  onConfirm: () => {
+                    overlays.remove(t.id);
+                    setPillHoverId((cur) => (cur === t.id ? null : cur));
+                  },
+                });
               }}
               onDoubleClick={(e) => e.stopPropagation()}
             >

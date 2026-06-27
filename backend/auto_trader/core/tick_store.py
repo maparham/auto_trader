@@ -87,7 +87,11 @@ class TickStore:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._buffer: list[tuple[str, int, float]] = []  # (epic, ts, price)
-        self._last_ts: dict[str, int] = {}  # per-epic monotonic guard
+        # Per-epic freshest accepted tick (ts_ms, price). Doubles as the monotonic
+        # record() guard AND the `latest()` fast path: it survives a flush (which
+        # empties `_buffer`), so a streamed epic never needs a disk read to be
+        # priced — keeping `latest()` off the event loop's sqlite path.
+        self._last_tick: dict[str, tuple[int, float]] = {}
         self._connect().close()  # create the db file + schema up front
 
     def _connect(self) -> sqlite3.Connection:
@@ -110,10 +114,10 @@ class TickStore:
         """Buffer a tick. Drops out-of-order (older) AND duplicate-timestamp ticks to
         keep buckets clean: a reconnect can replay the last timestamp, and recording
         it again would corrupt that bucket's close price."""
-        last = self._last_ts.get(epic)
-        if last is not None and ts_ms <= last:
+        last = self._last_tick.get(epic)
+        if last is not None and ts_ms <= last[0]:
             return
-        self._last_ts[epic] = ts_ms
+        self._last_tick[epic] = (ts_ms, price)
         self._buffer.append((epic, ts_ms, price))
 
     async def flush(self) -> None:
@@ -136,6 +140,29 @@ class TickStore:
             cutoff = int(time.time() * 1000) - RETENTION_MS
             conn.execute("DELETE FROM ticks WHERE ts < ?", (cutoff,))
             conn.commit()
+        finally:
+            conn.close()
+
+    def latest(self, epic: str) -> tuple[int, float] | None:
+        """The freshest recorded tick for `epic` as (ts_ms, price), or None.
+
+        Checks the in-memory last-tick cache first (held per epic across flushes,
+        so a streamed epic answers without touching disk), then falls back to the
+        last flushed tick in sqlite for an epic seen only in a prior process.
+        Synchronous and cheap on the cache path — used to price paper fills at a
+        live price rather than a possibly-stale REST snapshot, and called from the
+        event loop (trigger driver / quote poll), so it must not block on I/O when
+        a live tick exists."""
+        cached = self._last_tick.get(epic)
+        if cached is not None:
+            return cached
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT ts, price FROM ticks WHERE epic = ? ORDER BY ts DESC LIMIT 1",
+                (epic,),
+            ).fetchone()
+            return (row[0], row[1]) if row else None
         finally:
             conn.close()
 

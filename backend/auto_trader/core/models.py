@@ -88,3 +88,112 @@ class Fill:
     price: float
     quantity: float
     reason: str = ""
+
+
+# --- order execution (paper / live) -----------------------------------------
+#
+# These model the ExecutionBroker seam (see brokers/base.py). The same Order /
+# OrderResult / Position types flow through the paper executor and the real
+# Capital.com dealing executor, so the API and frontend speak one shape.
+
+
+class OrderType(str, Enum):
+    MARKET = "market"  # fills now at the live price
+    LIMIT = "limit"  # rests until price reaches `limit_level`, then fills
+
+
+class OrderSource(str, Enum):
+    """Who originated the order. STRATEGY orders are blocked on real money."""
+
+    MANUAL = "manual"
+    STRATEGY = "strategy"
+
+
+class OrderStatus(str, Enum):
+    """Lifecycle of a submitted order.
+
+    UNKNOWN is distinct from REJECTED: it means the submission itself raised
+    (timeout / dropped connection) so we DON'T know whether it filled. The caller
+    must reconcile via the broker (confirms / positions) and must never blindly
+    re-submit, or it risks a double fill.
+    """
+
+    PENDING = "pending"
+    FILLED = "filled"
+    PARTIALLY_FILLED = "partially_filled"
+    REJECTED = "rejected"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class Order:
+    """An intent to trade. `client_order_id` is caller-generated and is the
+    idempotency key — a retried submit with the same id must not double-fill."""
+
+    epic: str
+    side: Side
+    quantity: float
+    client_order_id: str
+    type: OrderType = OrderType.MARKET
+    # Resting price for a LIMIT order (ignored for MARKET).
+    limit_level: float | None = None
+    stop_level: float | None = None
+    take_profit_level: float | None = None
+    source: OrderSource = OrderSource.MANUAL
+    reason: str = ""
+
+
+@dataclass(slots=True)
+class OrderResult:
+    """The outcome of submitting an Order."""
+
+    client_order_id: str
+    status: OrderStatus
+    deal_reference: str | None = None
+    deal_id: str | None = None
+    filled_quantity: float = 0.0
+    fill_price: float | None = None
+    reason: str = ""
+    submitted_at: datetime | None = None
+    resolved_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Position:
+    """One open position. Capital.com is multi-position-per-epic (hedging), so a
+    position is keyed by `deal_id`; net exposure for an epic is the sum of
+    `signed_size` across its positions (see `net_position`)."""
+
+    epic: str
+    side: Side
+    quantity: float  # unsigned size of this deal
+    open_level: float
+    deal_id: str
+    stop_level: float | None = None
+    take_profit_level: float | None = None
+    upnl: float | None = None
+    created_at: datetime | None = None
+
+    @property
+    def signed_size(self) -> float:
+        return self.quantity if self.side is Side.BUY else -self.quantity
+
+
+def net_position(positions: list[Position], epic: str) -> float:
+    """Net signed exposure for `epic` across all its (possibly hedged) deals."""
+    return sum(p.signed_size for p in positions if p.epic == epic)
+
+
+@dataclass(frozen=True, slots=True)
+class WorkingOrder:
+    """A resting limit order: waits until the market reaches `limit_level`, then
+    fills into a Position (carrying its SL/TP). Keyed by `order_id`."""
+
+    epic: str
+    side: Side
+    quantity: float
+    limit_level: float
+    order_id: str
+    stop_level: float | None = None
+    take_profit_level: float | None = None
+    created_at: datetime | None = None

@@ -899,18 +899,103 @@ const ROLLING_UNIT_ABBR: Record<PrevHlRollingUnit, string> = {
   bars: "bar",
 };
 
-// Per-FIGURE key parameter, as a readable tag (e.g. "3D range low"). Returns null
-// for figures/indicators that have no meaningful per-curve parameter (no pill drawn).
-// that have no meaningful per-curve parameter (no pill drawn). This is the one
-// generic seam: a switch on indType, each indicator contributing its own mapping.
-// Prev HL is the first consumer; add cases here for other indicators over time.
+// Per-FIGURE key parameter, as a readable tag (e.g. "3D range low", "EMA 20",
+// "AVWAP +1σ"). Returns null for figures/indicators that have no meaningful
+// per-curve parameter (no pill drawn). This is the one generic seam: a switch on
+// indType, each indicator contributing its own mapping. `calcParams` carries the
+// per-instance lengths/multipliers (length in [0], mult in [1] where applicable).
 export function curveLabel(
   indType: string,
   figKey: string,
   extendData: unknown,
+  calcParams?: unknown[],
 ): string | null {
-  if (indType === "PREV_HL") return prevHlCurveLabel(figKey, extendData as PrevHlExtend);
+  switch (indType) {
+    case "PREV_HL":
+      return prevHlCurveLabel(figKey, extendData as PrevHlExtend);
+    case "EMA":
+      return maCurveLabel("EMA", figKey, calcParams);
+    case "MA":
+      return maCurveLabel("MA", figKey, calcParams);
+    case "LR":
+      return lrCurveLabel(figKey, calcParams);
+    case "VWAP":
+      return figKey === "vwap" ? "VWAP" : null;
+    case "AVWAP":
+      return avwapCurveLabel(figKey, extendData as AvwapExtend);
+    case "RSI":
+      return figKey === "rsi" ? `RSI ${maLen(calcParams, 14)}` : null;
+    // klinecharts built-in overlays (no extendData beyond indType). Figure keys are
+    // klinecharts' own; lengths in calcParams[0]. None end in "low" → high slot.
+    case "SMA":
+      return figKey === "sma" ? `SMA ${maLen(calcParams, 12)}` : null;
+    case "BBI":
+      // BBI averages four periods (3/6/12/24) — too many to spell out, so just "BBI".
+      return figKey === "bbi" ? "BBI" : null;
+    case "BOLL":
+      return bollCurveLabel(figKey, calcParams);
+    default:
+      return null;
+  }
+}
+
+// BOLL (Bollinger Bands): basis "BOLL 20"; the ±mult·σ bands as "BOLL 20 upper"/"lower".
+function bollCurveLabel(figKey: string, calcParams?: unknown[]): string | null {
+  const base = `BOLL ${maLen(calcParams, 20)}`;
+  switch (figKey) {
+    case "mid":
+      return base;
+    case "up":
+      return `${base} upper`;
+    case "dn":
+      return `${base} lower`;
+    default:
+      return null;
+  }
+}
+
+// Pull a positive integer length/param from calcParams[i], falling back to `def`.
+function maLen(calcParams: unknown[] | undefined, def: number, i = 0): number {
+  const n = Number(calcParams?.[i]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : def;
+}
+
+// EMA/MA: base line gets "EMA 20"; the separate smoothing MA gets "EMA 20 MA".
+// (The smoothing line only produces coords when smoothing is on, so a "none"
+// smoothing never reaches here.)
+function maCurveLabel(label: "EMA" | "MA", figKey: string, calcParams?: unknown[]): string | null {
+  const base = `${label} ${maLen(calcParams, label === "EMA" ? 9 : 20)}`;
+  if (figKey === "ma") return base;
+  if (figKey === "smoothingMa") return `${base} MA`;
   return null;
+}
+
+// LR: regression line "LR 100"; the ±mult·σ channel lines as "LR 100 upper"/"lower".
+function lrCurveLabel(figKey: string, calcParams?: unknown[]): string | null {
+  const base = `LR ${maLen(calcParams, 100)}`;
+  switch (figKey) {
+    case "lr":
+      return base;
+    case "up":
+      return `${base} upper`;
+    case "dn":
+      return `${base} lower`;
+    default:
+      return null;
+  }
+}
+
+// AVWAP: value line "AVWAP"; each band line "AVWAP ±Nσ" (or "±N%" in percentage
+// mode), N being that band's multiplier from extendData.bands.
+function avwapCurveLabel(figKey: string, ext: AvwapExtend): string | null {
+  if (figKey === "vwap") return "AVWAP";
+  const m = /^(up|dn)([123])$/.exec(figKey);
+  if (!m) return null;
+  const bands = ext.bands ?? AVWAP_DEFAULT_BANDS;
+  const band = bands[Number(m[2]) - 1];
+  const mult = band?.mult ?? Number(m[2]);
+  const unit = ext.bandMode === "percentage" ? "%" : "σ";
+  return `AVWAP ${m[1] === "up" ? "+" : "−"}${mult}${unit}`;
 }
 
 // Prev HL: each curve's tag spells out its kind + lookback + which extreme — e.g.

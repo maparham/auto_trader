@@ -82,6 +82,22 @@ type Tab = "inputs" | "style" | "visibility";
 
 const DEFAULT_LINE_PALETTE = ["#FF9600", "#935EBD", "#2962ff", "#E11D74", "#01C5C4"];
 
+// Indicator types that plot curves and have a per-curve key parameter to label.
+// Keep in sync with curveLabel()'s switch in customIndicators.ts. Includes the
+// klinecharts built-in overlays (SMA/BBI/BOLL) alongside our custom indicators.
+const CURVE_LABEL_TYPES = new Set([
+  "EMA",
+  "MA",
+  "LR",
+  "VWAP",
+  "AVWAP",
+  "PREV_HL",
+  "RSI",
+  "SMA",
+  "BBI",
+  "BOLL",
+]);
+
 // Line-style options for the RSI band / MA selectors (canvas-drawn elements).
 type RsiLineStyleOpt = "solid" | "dashed" | "dotted";
 type RsiHiddenKey = RsiElement;
@@ -383,7 +399,11 @@ export default function IndicatorSettings({
   // Whether this indicator type has a per-curve key parameter to label. Keep in sync
   // with curveLabel()'s switch in customIndicators; ones without a case show no pills,
   // so we hide the controls for them rather than offer a no-op toggle.
-  const hasCurveLabels = type === "PREV_HL";
+  const hasCurveLabels = CURVE_LABEL_TYPES.has(type);
+  // Only PREV_HL plots High/Low curve PAIRS that benefit from independently-placed
+  // labels; every other type's curves route to the single "high" position slot
+  // (none of their figKeys end in "low"), so they show one "Label position" row.
+  const hasHighLowSplit = type === "PREV_HL";
   // Whether a high/low position is at its default (right/center) — used both for the
   // omit-when-default rehydrate guard and to drop a default sub-object from the save.
   const isPosDefault = (side: CurveLabelSide, align: CurveLabelAlign) =>
@@ -1031,7 +1051,11 @@ export default function IndicatorSettings({
         </label>
         <InfoTip
           title="Curve labels"
-          text="Shows each curve's key parameter (e.g. 3D range high, prev 1D low) at its end. By default they appear while the indicator is selected or highlighted; set Show to Always to keep them on permanently. The High and Low curves can be positioned separately."
+          text={`Shows each curve's key parameter (e.g. ${
+            hasHighLowSplit ? "3D range high, prev 1D low" : "EMA 20, AVWAP +1σ"
+          }) at its end. By default they appear while the indicator is selected or highlighted; set Show to Always to keep them on permanently.${
+            hasHighLowSplit ? " The High and Low curves can be positioned separately." : ""
+          }`}
         />
       </div>
       <div className={`ind-row ind-prevhl-grid${curveLabelEnabled ? "" : " is-off"}`}>
@@ -1051,8 +1075,10 @@ export default function IndicatorSettings({
           <option value="always">Always</option>
         </select>
       </div>
+      {/* Only PREV_HL has High/Low curve pairs worth placing separately. Other
+          types route every curve to the "high" slot, so they get one row. */}
       {curveLabelPosRow(
-        "High position",
+        hasHighLowSplit ? "High position" : "Label position",
         curveLabelHighSide,
         setCurveLabelHighSide,
         curveLabelHighAlign,
@@ -1060,15 +1086,16 @@ export default function IndicatorSettings({
         "highSide",
         "highAlign",
       )}
-      {curveLabelPosRow(
-        "Low position",
-        curveLabelLowSide,
-        setCurveLabelLowSide,
-        curveLabelLowAlign,
-        setCurveLabelLowAlign,
-        "lowSide",
-        "lowAlign",
-      )}
+      {hasHighLowSplit &&
+        curveLabelPosRow(
+          "Low position",
+          curveLabelLowSide,
+          setCurveLabelLowSide,
+          curveLabelLowAlign,
+          setCurveLabelLowAlign,
+          "lowSide",
+          "lowAlign",
+        )}
     </>
   );
 
