@@ -22,7 +22,7 @@ import {
   subscribeTrades,
   tradeLabel,
   type TradeView,
-  type TradeEnv,
+  type TradeAccount,
 } from "./lib/trading";
 import {
   pendingEditsSignal,
@@ -36,7 +36,7 @@ import { usedMargin } from "./lib/orderInfo";
 import type { TradingSettings } from "./theme";
 
 interface Props {
-  env?: TradeEnv;
+  account?: TradeAccount;
   // The focused chart's symbol — used ONLY to highlight its rows, never to filter:
   // this panel shows the WHOLE book (every symbol with an open position/order).
   focusedEpic?: string;
@@ -98,7 +98,7 @@ function fmtTime(ms: number | null): string {
 }
 
 export default function PositionsPanel({
-  env = "paper",
+  account = "capital:paper",
   focusedEpic,
   precisionFor,
   precision = 2,
@@ -296,7 +296,7 @@ export default function PositionsPanel({
             stop_level: edit.stop ?? null,
             take_profit_level: edit.takeProfit ?? null,
           },
-          env,
+          account,
         );
       }
       clearStaged();
@@ -314,8 +314,8 @@ export default function PositionsPanel({
   async function act(t: TradeView) {
     setBusy(t.id);
     try {
-      if (t.kind === "position") await closePosition(t.id, env);
-      else await cancelWorkingOrder(t.id, env);
+      if (t.kind === "position") await closePosition(t.id, account);
+      else await cancelWorkingOrder(t.id, account);
       refreshTrades();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed.");

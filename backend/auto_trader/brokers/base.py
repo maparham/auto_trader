@@ -23,7 +23,20 @@ from auto_trader.core.models import (
 
 
 class MarketDataBroker(ABC):
-    """Read-only market data. Implemented per broker (capital.com first)."""
+    """Read-only market data: candles, quotes, the instrument catalogue and the
+    favourites watchlist. Implemented per broker (capital.com first).
+
+    Only the three pricing primitives — `get_candles`, `get_recent_candles`,
+    `get_quote` — are abstract: that's the floor a broker must clear for the chart
+    and paper trading to work at all. The catalogue / meta / favourites surface
+    (which the symbol-search modal uses) ships with graceful defaults — empty
+    catalogue, no favourites — so a minimal or watchlist-less broker can register
+    without stubbing six methods. A full-featured broker (Capital) overrides them.
+
+    `price_side` is one of "bid" | "mid" | "ask". Catalogue/meta/favourite calls
+    return loosely-typed dicts in the shapes the routes pass through (see
+    `CapitalComBroker` for the canonical shapes).
+    """
 
     @abstractmethod
     async def get_candles(
@@ -32,9 +45,63 @@ class MarketDataBroker(ABC):
         resolution: Resolution,
         start: datetime,
         end: datetime,
+        price_side: str = "mid",
     ) -> list[Candle]:
         """Return candles in [start, end], ascending by time. UTC throughout."""
         raise NotImplementedError
+
+    @abstractmethod
+    async def get_recent_candles(
+        self,
+        epic: str,
+        resolution: Resolution,
+        count: int,
+        price_side: str = "mid",
+    ) -> list[Candle]:
+        """Most recent `count` candles regardless of date (robust on closed markets)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
+        """Latest (bid, ask) snapshot for `epic`, or (None, None) if unavailable.
+
+        The paper executor prices simulated fills off this, so every data broker
+        must provide it — that's what keeps paper trading broker-agnostic rather
+        than welded to one broker's internals.
+        """
+        raise NotImplementedError
+
+    # --- catalogue / favourites: optional, default to empty -----------------
+    # Override per broker that has a searchable catalogue + watchlist. The
+    # defaults let a data-only broker register and chart without a catalogue.
+
+    async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
+        """Keyword instrument search → [{epic, name, status, type}], tradeable first."""
+        return []
+
+    async def all_markets(self) -> list[dict]:
+        """The full instrument catalogue (the symbol-search modal filters it client-side)."""
+        return []
+
+    async def get_market_meta(self, epic: str) -> dict | None:
+        """Display precision + open/closed status for one epic, or None if unknown."""
+        return None
+
+    async def get_market_detail(self, epic: str) -> dict | None:
+        """Full instrument detail for the details modal, or None if unknown."""
+        return None
+
+    async def favorites(self) -> list[dict]:
+        """The account's favourites watchlist (the modal's opening view)."""
+        return []
+
+    async def add_favorite(self, epic: str) -> None:
+        """Add `epic` to the favourites watchlist. No-op if unsupported."""
+        return None
+
+    async def remove_favorite(self, epic: str) -> None:
+        """Remove `epic` from the favourites watchlist. No-op if unsupported."""
+        return None
 
 
 class ExecutionBroker(ABC):

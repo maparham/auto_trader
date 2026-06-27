@@ -18,9 +18,13 @@ import CloseButton from "./CloseButton";
 import SymbolIcon from "./SymbolIcon";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { loadRecentSymbols, pushRecentSymbol } from "./lib/persist";
+import { brokerLabel } from "./lib/trading";
 
 interface Props {
   current: Instrument;
+  // Active data broker id ("capital"). The catalogue, search and favourites are
+  // all broker-specific, so every call carries it and a change reloads the modal.
+  brokerId: string;
   onPick: (s: Instrument) => void;
   onClose: () => void;
 }
@@ -57,7 +61,7 @@ function typeLabel(type: string | null | undefined): string {
   }
 }
 
-export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
+export default function SymbolSearchModal({ current, brokerId, onPick, onClose }: Props) {
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("recent"); // opening view
   const [all, setAll] = useState<Instrument[]>([]);
@@ -90,8 +94,8 @@ export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
         was ? prev.filter((f) => f.epic !== s.epic) : [...prev, s],
       );
       try {
-        if (was) await removeFavorite(s.epic);
-        else await addFavorite(s.epic);
+        if (was) await removeFavorite(s.epic, brokerId);
+        else await addFavorite(s.epic, brokerId);
       } catch {
         // Roll back on failure.
         setFavorites((prev) =>
@@ -99,26 +103,30 @@ export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
         );
       }
     },
-    [favEpics],
+    [favEpics, brokerId],
   );
 
   useEffect(() => inputRef.current?.focus(), []);
 
   useCloseOnEscape(onClose);
 
-  // Load the catalogue + favorites once (both cached for the session).
+  // Load the active broker's catalogue + favorites (both cached per broker for the
+  // session). Reloads if the broker changes while the modal is open.
   useEffect(() => {
     let alive = true;
-    void Promise.all([fetchAllMarkets(), fetchFavorites()]).then(([a, f]) => {
-      if (!alive) return;
-      setAll(a);
-      setFavorites(f);
-      setCatalogueLoading(false);
-    });
+    setCatalogueLoading(true);
+    void Promise.all([fetchAllMarkets(brokerId), fetchFavorites(brokerId)]).then(
+      ([a, f]) => {
+        if (!alive) return;
+        setAll(a);
+        setFavorites(f);
+        setCatalogueLoading(false);
+      },
+    );
     return () => {
       alive = false;
     };
-  }, []);
+  }, [brokerId]);
 
   // Debounced keyword search (broker-side). Only runs when there's a query;
   // with no query `loading` reads catalogueLoading, so `searching` is moot here.
@@ -128,13 +136,13 @@ export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
     setSearching(true);
     const id = ++reqId.current;
     const t = setTimeout(async () => {
-      const found = await searchInstruments(q);
+      const found = await searchInstruments(q, brokerId);
       if (id !== reqId.current) return; // a newer query superseded this one
       setSearchHits(found);
       setSearching(false);
     }, 300);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [query, brokerId]);
 
   // What to show: keyword search wins; otherwise the active chip filters the
   // cached catalogue (Favorites/All are special; the rest match by type).
@@ -166,7 +174,10 @@ export default function SymbolSearchModal({ current, onPick, onClose }: Props) {
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal symsearch" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head symsearch-head">
-          <span>Symbol search</span>
+          <span>
+            Symbol search
+            <span className="symsearch-broker"> · {brokerLabel(brokerId)}</span>
+          </span>
           <CloseButton onClick={onClose} />
         </div>
 

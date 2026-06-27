@@ -72,6 +72,8 @@ interface Props {
   // The focused cell's storage scope — per-indicator config is stored per cell.
   scope: string;
   epic: string;
+  // Active data broker id — MTF (higher-timeframe) data is fetched against it.
+  brokerId: string;
   chartResolution: string;
   paneId: string;
   name: string;
@@ -226,6 +228,7 @@ export default function IndicatorSettings({
   chart,
   scope,
   epic,
+  brokerId,
   chartResolution,
   paneId,
   name,
@@ -766,6 +769,7 @@ export default function IndicatorSettings({
       paneId,
       { kind: type === "EMA" ? "ema" : "sma", length, options },
       tf === "chart" ? null : tf,
+      brokerId,
     );
   }
 

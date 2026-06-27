@@ -17,9 +17,13 @@ import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
-from auto_trader.brokers.base import ExecutionBroker
-from auto_trader.brokers.capital import CapitalComBroker, pick_side
+from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
+from auto_trader.brokers.capital import pick_side
+
+if TYPE_CHECKING:
+    from auto_trader.brokers.registry import BrokerRegistry
 from auto_trader.core.models import (
     Order,
     OrderResult,
@@ -116,7 +120,7 @@ class PaperExecutionBroker(ExecutionBroker):
 
     def __init__(
         self,
-        market_broker: CapitalComBroker,
+        market_broker: MarketDataBroker,
         slippage: float = 0.0,
         tick_store=TICK_STORE,
     ) -> None:
@@ -153,19 +157,12 @@ class PaperExecutionBroker(ExecutionBroker):
     # --- pricing ----------------------------------------------------------
 
     async def _snapshot_quote(self, epic: str) -> tuple[float | None, float | None]:
-        """(bid, ask) from the REST market snapshot, or (None, None).
+        """(bid, ask) from the data broker's snapshot, or (None, None).
 
-        NB: `_fetch_market_raw` is served from a ~30s per-epic cache, so this is a
-        fallback only — for a streamed epic the tick store has a far fresher
-        price (see `_fill_price`)."""
-        raw = await self._market._fetch_market_raw(epic)
-        snap = (raw or {}).get("snapshot") or {}
-        bid = snap.get("bid")
-        ask = snap.get("offer")
-        return (
-            float(bid) if bid is not None else None,
-            float(ask) if ask is not None else None,
-        )
+        Delegates to the broker's `get_quote` so paper pricing stays agnostic to
+        which broker feeds it. The snapshot is a fallback only — for a streamed
+        epic the tick store has a far fresher price (see `_fill_price`)."""
+        return await self._market.get_quote(epic)
 
     async def _fill_price(self, epic: str, side: Side) -> float | None:
         """Fill at the side that crosses the spread, plus slippage against us.
@@ -627,3 +624,12 @@ class PaperExecutionBroker(ExecutionBroker):
                             )
                         elif action.kind == "close":
                             self._close_at(action.id, action.price)
+
+
+def register(
+    registry: "BrokerRegistry", market: MarketDataBroker, broker_id: str = "capital"
+) -> "PaperExecutionBroker":
+    """Register a paper executor priced off `market`, under "{broker_id}:paper"."""
+    paper = PaperExecutionBroker(market)
+    registry.add_exec(f"{broker_id}:paper", paper)
+    return paper

@@ -900,6 +900,62 @@
    over the canvas, signalling the line drags vertically (klinecharts sets an
    inline crosshair cursor, so override with !important). */
 .chart-wrap.alert-hover canvas { cursor: ns-resize !important; }
+/* Data-unavailable banner — centred card over the (blank) chart when no candles
+   load within the grace period (broker maintenance / auth / offline). */
+.chart-nodata {
+  position: absolute; inset: 0; z-index: 12;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; pointer-events: none;
+}
+.chart-nodata-card {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 22px 26px; text-align: center; max-width: 380px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  pointer-events: auto; /* re-enable clicks for the error-details toggle */
+}
+/* Amber warning badge — noticeable without the alarm of red (it auto-retries). */
+.chart-nodata-icon {
+  color: #e0a82e;
+  background: color-mix(in srgb, #e0a82e 14%, transparent);
+  border-radius: 50%; padding: 9px; width: 46px; height: 46px;
+}
+.chart-nodata-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.chart-nodata-hint {
+  font-size: 12.5px; color: var(--text-dim); max-width: 300px; line-height: 1.45;
+}
+/* Inline (short) error detail. */
+.chart-nodata-err {
+  font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  max-width: 320px; word-break: break-word; line-height: 1.4;
+}
+/* Collapsible (long) error detail. */
+.chart-nodata-details { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.chart-nodata-toggle {
+  background: transparent; border: none; padding: 0; cursor: pointer;
+  font-size: 11px; color: var(--accent); text-decoration: underline;
+}
+.chart-nodata-toggle:hover { opacity: 0.8; }
+.chart-nodata-errbox {
+  margin: 0; max-width: 332px; max-height: 96px; overflow: auto; text-align: left;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.4; color: var(--text-dim);
+  white-space: pre-wrap; word-break: break-word;
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px;
+}
+.chart-nodata-retry {
+  display: inline-flex; align-items: center; gap: 7px; margin-top: 2px;
+  font-size: 11px; color: var(--text-faint);
+}
+.chart-nodata-spinner {
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 1.6px solid var(--border); border-top-color: var(--text-dim);
+  animation: chart-nodata-spin 0.8s linear infinite;
+}
+@keyframes chart-nodata-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .chart-nodata-spinner { animation: none; }
+}
 /* Indicator-selection cursor affordances (same !important-over-canvas trick as
    above, since klinecharts sets an inline crosshair cursor on its container):
    a hand over a selectable indicator curve, a normal arrow over the legend strip
@@ -1373,6 +1429,40 @@
 .toolbar .anchor-btn:hover:not(:disabled) { background: var(--hover); }
 .toolbar .anchor-btn.on { background: var(--hover-strong); }
 .toolbar .anchor-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Broker / trading-account selector. Compact pill in the toolbar; a green dot for
+   paper, a red dot + red text for a real-money (live) account so it's unmistakable. */
+.env-selector { position: relative; display: inline-flex; }
+.toolbar .env-selector-btn {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  white-space: nowrap;
+}
+.toolbar .env-selector-btn.live { color: var(--danger); }
+.env-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #26a69a; flex: none;
+}
+.env-dot.live { background: var(--danger); }
+.env-label { font-weight: 500; }
+.env-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 50;
+  min-width: 160px; padding: 4px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+.env-menu-empty { padding: 8px 10px; color: var(--text-dim); font-size: 12px; }
+.env-menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 9px; background: transparent; border: none; border-radius: 4px;
+  color: var(--text); font-size: 12px; cursor: pointer; text-align: left;
+}
+.env-menu-item:hover { background: var(--hover); }
+.env-menu-item.active { background: var(--hover-strong); }
+.env-menu-label { flex: 1; }
+.env-menu-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.05em;
+  color: var(--danger); border: 1px solid var(--danger); border-radius: 3px; padding: 0 3px;
+}
+.symsearch-broker { color: var(--text-dim); font-weight: 400; }
 /* Icon + label buttons (e.g. Alert): align the inline SVG with its text, kept
    monochrome since the svg inherits the button's gray `color` via currentColor. */
 .toolbar .icon-btn { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); }

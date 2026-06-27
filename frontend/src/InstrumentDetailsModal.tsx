@@ -14,6 +14,8 @@ import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 
 interface Props {
   epic: string;
+  // Active data broker id — the detail is broker-specific (epics aren't portable).
+  brokerId: string;
   // Friendly title (e.g. the legend symbol) shown in the header; falls back to epic.
   title?: string;
   onClose: () => void;
@@ -101,7 +103,7 @@ const SECTIONS: Array<{ key: keyof MarketDetail; title: string }> = [
   { key: "snapshot", title: "Market snapshot" },
 ];
 
-export default function InstrumentDetailsModal({ epic, title, onClose }: Props) {
+export default function InstrumentDetailsModal({ epic, brokerId, title, onClose }: Props) {
   const drag = useDraggable();
   const [detail, setDetail] = useState<MarketDetail | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -111,7 +113,7 @@ export default function InstrumentDetailsModal({ epic, title, onClose }: Props) 
   useEffect(() => {
     let cancelled = false;
     setState("loading");
-    void fetchMarketDetail(epic).then((d) => {
+    void fetchMarketDetail(epic, brokerId).then((d) => {
       if (cancelled) return;
       if (d) {
         setDetail(d);
@@ -123,7 +125,7 @@ export default function InstrumentDetailsModal({ epic, title, onClose }: Props) 
     return () => {
       cancelled = true;
     };
-  }, [epic]);
+  }, [epic, brokerId]);
 
   useCloseOnEscape(onClose);
 

@@ -12,7 +12,17 @@ import { tradesSignal } from "./signals";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
-export type TradeEnv = "paper" | "demo" | "live";
+// A registry account key "{broker}:{env}", e.g. "capital:paper". Opaque to the
+// frontend — it comes from GET /api/brokers and routes orders/positions.
+export type TradeAccount = string;
+export const DEFAULT_ACCOUNT: TradeAccount = "capital:paper";
+
+// Display name for a broker id (the id is a lowercase opaque key; this is UI only).
+// Unknown ids fall back to a capitalized id so a new broker still reads sensibly.
+const BROKER_LABELS: Record<string, string> = { capital: "Capital.com" };
+export function brokerLabel(brokerId: string): string {
+  return BROKER_LABELS[brokerId] ?? brokerId.charAt(0).toUpperCase() + brokerId.slice(1);
+}
 export type OrderSide = "buy" | "sell";
 export type OrderKind = "market" | "limit";
 
@@ -20,13 +30,32 @@ export interface OrderRequest {
   epic: string;
   side: OrderSide;
   quantity: number;
-  env?: TradeEnv;
+  account?: TradeAccount;
   source?: "manual" | "strategy";
   type?: OrderKind;
   limit_level?: number | null;
   stop_level?: number | null;
   take_profit_level?: number | null;
   confirm?: boolean; // required for real-money (live) orders
+}
+
+// Selector payload from GET /api/brokers: registered data brokers + accounts.
+export interface BrokerAccount {
+  key: TradeAccount; // "capital:paper"
+  broker: string; // "capital"
+  env: string; // "paper" | "demo" | "live"
+  isRealMoney: boolean;
+}
+export interface BrokerInfo {
+  data: string[];
+  exec: BrokerAccount[];
+}
+
+/** The selector list: which brokers/accounts the backend has registered. */
+export async function fetchBrokers(): Promise<BrokerInfo> {
+  const res = await fetch(`${BASE}/api/brokers`);
+  if (!res.ok) throw new Error(`brokers failed (${res.status})`);
+  return res.json();
 }
 
 export interface OrderResult {
@@ -98,9 +127,10 @@ export function newClientOrderId(): string {
 
 export async function fetchQuote(
   epic: string,
-  env: TradeEnv = "paper",
+  account: TradeAccount = DEFAULT_ACCOUNT,
 ): Promise<Quote> {
-  const res = await fetch(`${BASE}/api/quote/${encodeURIComponent(epic)}?env=${env}`);
+  const url = `${BASE}/api/quote/${encodeURIComponent(epic)}?account=${encodeURIComponent(account)}`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`quote failed (${res.status})`);
   return res.json();
 }
@@ -110,7 +140,7 @@ export async function placeOrder(req: OrderRequest): Promise<OrderResult> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      env: "paper",
+      account: DEFAULT_ACCOUNT,
       source: "manual",
       type: "market",
       client_order_id: newClientOrderId(),
@@ -124,14 +154,15 @@ export async function placeOrder(req: OrderRequest): Promise<OrderResult> {
   return res.json();
 }
 
-async function fetchPositions(env: TradeEnv): Promise<Position[]> {
-  const res = await fetch(`${BASE}/api/positions?env=${env}`);
+async function fetchPositions(account: TradeAccount): Promise<Position[]> {
+  const res = await fetch(`${BASE}/api/positions?account=${encodeURIComponent(account)}`);
   if (!res.ok) throw new Error(`positions failed (${res.status})`);
   return res.json();
 }
 
-async function fetchWorkingOrders(env: TradeEnv): Promise<WorkingOrder[]> {
-  const res = await fetch(`${BASE}/api/orders/working?env=${env}`);
+async function fetchWorkingOrders(account: TradeAccount): Promise<WorkingOrder[]> {
+  const url = `${BASE}/api/orders/working?account=${encodeURIComponent(account)}`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`working orders failed (${res.status})`);
   return res.json();
 }
@@ -180,13 +211,30 @@ let _pollTimer: ReturnType<typeof setInterval> | null = null;
 let _pollRefs = 0;
 const POLL_MS = 3000;
 
+// The account the shared poll fetches. Set by the App when the user switches the
+// active broker/account, so positions/orders follow the selection.
+let _pollAccount: TradeAccount = DEFAULT_ACCOUNT;
+
+/** Point the shared trades poll at a different account and refresh immediately.
+ *  Call when the active broker/account changes. */
+export function setTradesAccount(account: TradeAccount): void {
+  if (account === _pollAccount) return;
+  _pollAccount = account;
+  // Clear stale trades from the previous account so lines/rows don't linger.
+  tradesSignal.set([]);
+  void _pollOnce();
+}
+
 async function _pollOnce(): Promise<void> {
+  const account = _pollAccount;
   try {
     const [positions, orders] = await Promise.all([
-      fetchPositions("paper"),
-      fetchWorkingOrders("paper"),
+      fetchPositions(account),
+      fetchWorkingOrders(account),
     ]);
-    tradesSignal.set(toTrades(positions, orders));
+    // A switch mid-flight would publish the wrong account's trades; drop a
+    // response whose account is no longer active.
+    if (account === _pollAccount) tradesSignal.set(toTrades(positions, orders));
   } catch {
     // Transient: keep the last known trades rather than clearing the chart.
   }
@@ -220,10 +268,10 @@ export function subscribeTrades(fn: (t: TradeView[]) => void): () => void {
 
 export async function closePosition(
   dealId: string,
-  env: TradeEnv = "paper",
+  account: TradeAccount = DEFAULT_ACCOUNT,
   quantity?: number,
 ): Promise<OrderResult> {
-  const qs = new URLSearchParams({ env });
+  const qs = new URLSearchParams({ account });
   if (quantity != null) qs.set("quantity", String(quantity));
   const res = await fetch(
     `${BASE}/api/positions/${encodeURIComponent(dealId)}?${qs}`,
@@ -251,13 +299,13 @@ export interface LevelEdit {
 export async function applyLevels(
   trade: { kind: "position" | "order"; id: string },
   edit: LevelEdit,
-  env: TradeEnv = "paper",
+  account: TradeAccount = DEFAULT_ACCOUNT,
 ): Promise<OrderResult> {
   const path =
     trade.kind === "position"
       ? `/api/positions/${encodeURIComponent(trade.id)}`
       : `/api/orders/working/${encodeURIComponent(trade.id)}`;
-  const res = await fetch(`${BASE}${path}?env=${env}`, {
+  const res = await fetch(`${BASE}${path}?account=${encodeURIComponent(account)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(edit),
@@ -271,12 +319,10 @@ export async function applyLevels(
 
 export async function cancelWorkingOrder(
   orderId: string,
-  env: TradeEnv = "paper",
+  account: TradeAccount = DEFAULT_ACCOUNT,
 ): Promise<OrderResult> {
-  const res = await fetch(
-    `${BASE}/api/orders/working/${encodeURIComponent(orderId)}?env=${env}`,
-    { method: "DELETE" },
-  );
+  const url = `${BASE}/api/orders/working/${encodeURIComponent(orderId)}?account=${encodeURIComponent(account)}`;
+  const res = await fetch(url, { method: "DELETE" });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
     throw new Error(detail.detail ?? `cancel failed (${res.status})`);

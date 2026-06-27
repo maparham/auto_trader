@@ -392,6 +392,9 @@ interface Props {
   tabId: string;
   scope: string;
   symbol: Instrument;
+  // Active data broker id ("capital"). Epics are broker-specific, so candle
+  // history + the live stream are fetched against this broker; a change refetches.
+  brokerId: string;
   period: Period;
   theme: Theme;
   // IANA timezone for the time axis ("" = browser local).
@@ -439,6 +442,7 @@ export default function ChartCore({
   tabId,
   scope,
   symbol,
+  brokerId,
   period,
   theme,
   timezone,
@@ -598,6 +602,19 @@ export default function ChartCore({
 
   const [status, setStatus] = useState<LiveStatus>("connecting");
   const [lastPrice, setLastPrice] = useState<number | null>(null);
+  // True once the chart has candles to show (history loaded or a live tick arrived).
+  const [hasData, setHasData] = useState(false);
+  // Banner gate: no data for a grace period. Gated on time, NOT the live status —
+  // the WS connects to OUR backend (which stays up), so it reports "live" even when
+  // the upstream broker delivers nothing (maintenance / auth). A healthy load sets
+  // hasData within ~1-2s, well under the grace, so this never flashes normally.
+  const [noData, setNoData] = useState(false);
+  // The backend's error detail from the last failed history load (e.g. a broker
+  // 401/maintenance), shown in the no-data banner. null when the load just returned
+  // empty (404 / closed market) with no error to report.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Whether the (long) error detail is expanded in the banner.
+  const [errorOpen, setErrorOpen] = useState(false);
   const [anchoring, setAnchoring] = useState(false);
   // Cursor over the chart canvas: "cur-pointer" (hand) over a selectable indicator
   // curve, "cur-default" (arrow) over the legend strip, "" = klinecharts crosshair.
@@ -739,6 +756,17 @@ export default function ChartCore({
   // status read inside the once-mounted countdown interval without re-subscribing.
   const statusRef = useRef<LiveStatus>(status);
   statusRef.current = status;
+  // Flip the no-data banner on only after a grace period with no candles, so a
+  // normal load (history lands in ~1-2s) never shows it; a switch resets hasData
+  // false → this re-arms. Cleared the instant data arrives.
+  useEffect(() => {
+    if (hasData) {
+      setNoData(false);
+      return;
+    }
+    const t = setTimeout(() => setNoData(true), 6000);
+    return () => clearTimeout(t);
+  }, [hasData, symbol.epic, period.resolution, brokerId]);
   // Authoritative display precision fetched per epic. Symbols persisted from the
   // bulk markets list can lack pricePrecision (e.g. oil), so we don't trust the
   // stored value: fetch the platform's own decimals and prefer them.
@@ -762,6 +790,9 @@ export default function ChartCore({
   epicRef.current = symbol.epic;
   const resRef = useRef(period.resolution);
   resRef.current = period.resolution;
+  // Active broker, readable from once-mounted callbacks (scroll-back) without re-subscribing.
+  const brokerIdRef = useRef(brokerId);
+  brokerIdRef.current = brokerId;
   // Scroll-back (getBars) reads refs, not props, so keep the live price side here.
   const priceSideRef = useRef(priceSide);
   priceSideRef.current = priceSide;
@@ -1367,10 +1398,15 @@ export default function ChartCore({
         const boundary = params.data.timestamp;
         const epic = epicRef.current;
         const resolution = resRef.current;
-        fetchRange(epic, resolution, fromSec, toSec, priceSideRef.current)
+        const broker = brokerIdRef.current;
+        fetchRange(epic, resolution, fromSec, toSec, priceSideRef.current, broker)
           .then((older) => {
-            // Defend against the symbol changing mid-flight.
-            if (epic !== epicRef.current || resolution !== resRef.current) {
+            // Defend against the symbol/broker changing mid-flight.
+            if (
+              epic !== epicRef.current ||
+              resolution !== resRef.current ||
+              broker !== brokerIdRef.current
+            ) {
               params.callback([], true);
               return;
             }
@@ -1538,7 +1574,7 @@ export default function ChartCore({
     // resolves. Default to open; the fetch corrects it a round-trip later.
     setMarketClosed(false);
     const apply = (gotPrecision: boolean) =>
-      fetchMarketMeta(symbol.epic).then((meta) => {
+      fetchMarketMeta(symbol.epic, brokerId).then((meta) => {
         if (cancelled) return;
         if (gotPrecision && meta.pricePrecision != null) setFetchedPrecision(meta.pricePrecision);
         // null `closed` (failed lookup) is treated as open, so a failed fetch never
@@ -1551,7 +1587,7 @@ export default function ChartCore({
       cancelled = true;
       clearInterval(id);
     };
-  }, [symbol.epic]);
+  }, [symbol.epic, brokerId]);
 
   // A market open/closed change must repaint the price pill (the redraw reads the
   // ref, so a re-render alone won't). The tab badge is sourced separately by an
@@ -1638,6 +1674,12 @@ export default function ChartCore({
     loadingRef.current = false;
     exhaustedRef.current = false;
     emptyStreakRef.current = 0;
+    // No data for the new series until history loads or a live tick arrives. The
+    // banner is grace-gated, so this can't flash during a normal load — only when
+    // the broker is genuinely unreachable.
+    setHasData(false);
+    setLoadError(null);
+    setErrorOpen(false);
 
     (async () => {
       // Tolerate a failed initial load (offline/DNS/refused/CORS make fetchRecent
@@ -1647,10 +1689,11 @@ export default function ChartCore({
       // every alert/drawing the user adds until they switch symbol again.
       let bars: KLineData[];
       try {
-        bars = await fetchRecent(symbol.epic, period.resolution, 500, priceSide);
+        bars = await fetchRecent(symbol.epic, period.resolution, 500, priceSide, brokerId);
       } catch (err) {
         console.warn(`[chart] initial load failed for ${symbol.epic}; continuing with no history`, err);
         bars = [];
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
       }
       if (cancelled || !chartRef.current) return;
       // Cursor starts at the oldest loaded bar; scroll-back requests older windows.
@@ -1662,6 +1705,11 @@ export default function ChartCore({
       // Live-only (seconds) intervals have no history, so disable scroll-back to
       // avoid firing empty fetchRange windows that walk back for nothing.
       chartRef.current.applyNewData(bars, !period.liveOnly);
+      // Live-only (seconds) intervals legitimately start empty and fill from the
+      // stream, so don't badge them no-data on the empty history; the first tick
+      // below flips hasData true. Native intervals with no history are genuinely
+      // empty until proven otherwise.
+      setHasData(bars.length > 0);
       // Anchor to the latest bars so the live/forming candle is on-screen.
       chartRef.current.scrollToRealTime();
       // Rehydrate this symbol's saved drawings + alerts now that the data (and
@@ -1689,7 +1737,7 @@ export default function ChartCore({
       }
       // Re-fetch HTF data for any EMA/MA pinned to a higher timeframe — the
       // stashed series belonged to the previous epic/range (no-op otherwise).
-      void refreshMtfIndicators(chartRef.current, symbol.epic);
+      void refreshMtfIndicators(chartRef.current, symbol.epic, brokerId);
 
       // Auto-apply this symbol's default template onto a FRESH cell (no saved
       // indicators or drawings yet). Runs after rehydrate so the empty-cell gate
@@ -1721,6 +1769,7 @@ export default function ChartCore({
             return;
           }
           chart.updateData(k);
+          setHasData(true); // a flowing stream clears the no-data banner (React no-ops if unchanged)
           setLastPrice(k.close);
           redraw(); // keep the price/alert pills glued as the bar moves
           // NOTE: alert FIRING is owned by the background alertEngine (the single
@@ -1730,6 +1779,7 @@ export default function ChartCore({
         },
         setStatus,
         priceSide,
+        brokerId,
       );
     })();
 
@@ -1739,7 +1789,7 @@ export default function ChartCore({
       wsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol.epic, period.resolution, priceSide]);
+  }, [symbol.epic, period.resolution, priceSide, brokerId]);
 
   // Recompute the axis overlays (live price+countdown pill, alert label pills)
   // from the chart's current geometry. Stable (reads refs), so it can be wired to
@@ -2679,6 +2729,52 @@ export default function ChartCore({
           pointerEvents: "none",
         }}
       />
+      {/* Data-unavailable banner: no candles after a grace period (broker maintenance,
+          auth failure, offline, or an unknown epic). Generic on purpose — a 401 can't
+          be told apart from expired creds, so we don't claim a specific cause. */}
+      {noData && (
+        <div className="chart-nodata" role="status">
+          <div className="chart-nodata-card">
+            <svg
+              className="chart-nodata-icon"
+              viewBox="0 0 24 24" width="28" height="28" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <span className="chart-nodata-title">No data to display</span>
+            <span className="chart-nodata-hint">
+              Couldn’t load {symbol.epic} — the broker may be temporarily unavailable.
+            </span>
+            {loadError &&
+              (loadError.length <= 90 ? (
+                // Short enough to read inline.
+                <span className="chart-nodata-err">{loadError}</span>
+              ) : (
+                // Long / multi-line detail — collapse behind a toggle.
+                <div className="chart-nodata-details">
+                  <button
+                    type="button"
+                    className="chart-nodata-toggle"
+                    aria-expanded={errorOpen}
+                    onClick={() => setErrorOpen((o) => !o)}
+                  >
+                    {errorOpen ? "Hide error details" : "Show error details"}
+                  </button>
+                  {errorOpen && <pre className="chart-nodata-errbox">{loadError}</pre>}
+                </div>
+              ))}
+            <span className="chart-nodata-retry">
+              <span className="chart-nodata-spinner" aria-hidden="true" />
+              Retrying automatically…
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Curve-end key-parameter labels (DOM pills, crisp text) for the selected/
           highlighted indicator. z-index 11 sits just above the handle overlay. */}
       <CurveLabels handleRef={curveLabelsRef} />
@@ -2714,6 +2810,7 @@ export default function ChartCore({
       {detailsOpen && (
         <InstrumentDetailsModal
           epic={symbol.epic}
+          brokerId={brokerId}
           title={symbol.name ?? symbol.epic}
           onClose={() => setDetailsOpen(false)}
         />

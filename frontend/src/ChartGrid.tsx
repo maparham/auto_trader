@@ -24,6 +24,8 @@ interface Props {
   cells: ChartCell[];
   layout: LayoutKind;
   focusedCellId: string;
+  // Active data broker id ("capital") — every cell's feed is fetched against it.
+  brokerId: string;
   theme: Theme;
   // IANA timezone for the chart time axis ("" = browser local).
   timezone: string;
@@ -55,6 +57,7 @@ export default function ChartGrid({
   cells,
   layout,
   focusedCellId,
+  brokerId,
   theme,
   timezone,
   clock,
@@ -94,6 +97,7 @@ export default function ChartGrid({
             tabId={tabId}
             scope={cell.scope}
             symbol={cell.symbol}
+            brokerId={brokerId}
             period={cell.period}
             theme={theme}
             timezone={timezone}

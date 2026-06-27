@@ -33,7 +33,20 @@ import {
   settingsRequest,
 } from "./lib/signals";
 import { alertEngine } from "./lib/alertEngine";
-import { PERIODS, fetchMarketMeta, type Instrument, type Period } from "./lib/feed";
+import {
+  PERIODS,
+  fetchMarketMeta,
+  searchInstruments,
+  type Instrument,
+  type Period,
+} from "./lib/feed";
+import {
+  fetchBrokers,
+  setTradesAccount,
+  DEFAULT_ACCOUNT,
+  type BrokerAccount,
+  type TradeAccount,
+} from "./lib/trading";
 import {
   hydrateFromBackend,
   subscribeToBackendUpdates,
@@ -47,6 +60,7 @@ import {
   loadStoredAlert,
   updateStoredAlert,
   deleteStoredAlert,
+  moveAlerts,
   loadLayouts,
   loadLayout,
   saveLayout,
@@ -186,6 +200,103 @@ export default function App() {
   // Autosave: when off, edits accumulate as dirty until the user manually saves.
   const [autosave, setAutosaveState] = useState<boolean>(loadAutosave);
   const [isDirty, setIsDirty] = useState(false);
+
+  // Active broker / trading account (registry key "{broker}:{env}"). Drives BOTH
+  // the chart data feed (epics are broker-specific) and order/position routing.
+  // Device-local; the list of selectable accounts comes from GET /api/brokers.
+  const [accounts, setAccounts] = useState<BrokerAccount[]>([]);
+  const [activeAccount, setActiveAccount] = useState<TradeAccount>(
+    () => localStorage.getItem("activeAccount") ?? DEFAULT_ACCOUNT,
+  );
+  const brokerId = activeAccount.split(":")[0];
+
+  // Load the selectable accounts once. If the persisted active account is no longer
+  // registered (e.g. config changed), fall back to the first available.
+  useEffect(() => {
+    let alive = true;
+    void fetchBrokers()
+      .then((info) => {
+        if (!alive) return;
+        setAccounts(info.exec);
+        if (info.exec.length && !info.exec.some((a) => a.key === activeAccount)) {
+          setActiveAccount(info.exec[0].key);
+        }
+      })
+      .catch(() => {
+        /* leave the default account; the backend may be momentarily down */
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist the active account and point the shared trades poll at it, so the
+  // positions/orders dock follows the selection.
+  useEffect(() => {
+    localStorage.setItem("activeAccount", activeAccount);
+    setTradesAccount(activeAccount);
+  }, [activeAccount]);
+
+  // When the BROKER changes (not just the env), every open cell's symbol must be
+  // re-resolved against the new broker: epics aren't portable across brokers. We
+  // re-search each unique epic by ticker and swap to a confident match; an epic
+  // with no match is left as-is, so its chart simply blanks (no candles) until the
+  // user picks a symbol from the now broker-scoped search modal. Per-epic alerts
+  // are carried to the re-resolved epic (they fire in the background). NOTE: the
+  // remaining per-epic state — drawings, symbol templates, avwap anchors — still
+  // assumes the active broker; revisit at broker #2.
+  const prevBrokerRef = useRef(brokerId);
+  useEffect(() => {
+    const prev = prevBrokerRef.current;
+    prevBrokerRef.current = brokerId;
+    if (prev === brokerId) return; // initial mount or env-only change
+    let cancelled = false;
+    (async () => {
+      // The original symbols (by epic), keeping the full Instrument: we search the
+      // new broker by the human ticker/name (more portable across brokers than the
+      // broker-specific epic id) and match a hit back against that same name.
+      const originals = new Map<string, Instrument>();
+      for (const t of tabs) for (const c of t.cells) originals.set(c.symbol.epic, c.symbol);
+      const resolved = new Map<string, Instrument>();
+      await Promise.all(
+        [...originals].map(async ([epic, sym]) => {
+          const hits = await searchInstruments(sym.name || epic, brokerId);
+          const match =
+            hits.find((h) => h.epic === epic) ??
+            (sym.name
+              ? hits.find((h) => h.name?.toLowerCase() === sym.name!.toLowerCase())
+              : undefined);
+          if (match) resolved.set(epic, match);
+        }),
+      );
+      if (cancelled || resolved.size === 0) return;
+      // Alerts are stored per-epic and fire in the background, so when a symbol
+      // re-resolves to a DIFFERENT epic, carry its alerts to the new key — otherwise
+      // they'd be orphaned under the old epic (the alert engine drops that feed once
+      // no open cell references it). Drawings/templates/anchors stay per-epic and are
+      // left for broker #2 (their cross-broker semantics aren't settled yet).
+      let alertsMoved = false;
+      for (const [oldEpic, sym] of resolved) {
+        if (sym.epic !== oldEpic) alertsMoved = moveAlerts(oldEpic, sym.epic) || alertsMoved;
+      }
+      setTabs((prevTabs) =>
+        prevTabs.map((t) => ({
+          ...t,
+          cells: t.cells.map((c) =>
+            resolved.has(c.symbol.epic)
+              ? { ...c, symbol: resolved.get(c.symbol.epic)! }
+              : c,
+          ),
+        })),
+      );
+      if (alertsMoved) bumpAlerts();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brokerId]);
 
   // Backend-wins startup hydration. hydrateFromBackend() pulls the snapshot,
   // overwrites localStorage where the backend differs, and (crucially) gates
@@ -419,7 +530,7 @@ export default function App() {
     const poll = async () => {
       const entries = await Promise.all(
         epics.map(async (epic) => {
-          const meta = await fetchMarketMeta(epic);
+          const meta = await fetchMarketMeta(epic, brokerId);
           // null `closed` (failed lookup) is treated as open, never badging a live
           // market closed on a transient error.
           return [
@@ -438,7 +549,7 @@ export default function App() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [leadEpicsKey]);
+  }, [leadEpicsKey, brokerId]);
 
   // Pointer-down in a cell focuses it (routes the chrome to that cell).
   const onCellFocus = (cellId: string) => {
@@ -502,6 +613,12 @@ export default function App() {
   useEffect(() => {
     alertEngine.setPriceSide(settings.priceSide);
   }, [settings.priceSide]);
+  // Keep the alert feeds on the same data broker as the charts — epics are
+  // broker-specific, so a feed must stream from the active broker. setBrokerId
+  // no-ops when unchanged.
+  useEffect(() => {
+    alertEngine.setBrokerId(brokerId);
+  }, [brokerId]);
   // Keep activeId valid (heal to first tab) and persist this device's active layout.
   useEffect(() => {
     if (active && active.id !== activeId) setActiveId(active.id);
@@ -924,6 +1041,10 @@ export default function App() {
         period={period}
         onSymbol={setSymbol}
         onPeriod={setPeriod}
+        brokerId={brokerId}
+        accounts={accounts}
+        activeAccount={activeAccount}
+        onAccountChange={setActiveAccount}
         maximized={maximized}
         onToggleMaximize={() => setMaximized((m) => !m)}
       />
@@ -941,6 +1062,7 @@ export default function App() {
               cells={active.cells}
               layout={active.layout}
               focusedCellId={active.activeCellId}
+              brokerId={brokerId}
               theme={settings.theme}
               timezone={settings.timezone}
               clock={settings.clock}
@@ -987,7 +1109,7 @@ export default function App() {
           <aside className="trade-sidebar">
             <OrderTicket
               epic={symbol.epic}
-              env="paper"
+              account={activeAccount}
               precision={symbol.pricePrecision ?? 2}
               instrumentType={symbol.type}
               trading={settings.trading}
@@ -1002,7 +1124,7 @@ export default function App() {
           chart and opens its edit ticket in the (revealed) sidebar. */}
       <div className={`trading-dock${dockMaximized ? " maximized" : ""}`}>
         <PositionsPanel
-          env="paper"
+          account={activeAccount}
           focusedEpic={symbol?.epic}
           precisionFor={precisionForEpic}
           trading={settings.trading}
@@ -1124,6 +1246,7 @@ export default function App() {
           chart={focused.chart}
           scope={focusedCell.scope}
           epic={symbol.epic}
+          brokerId={brokerId}
           chartResolution={period.resolution}
           paneId={indSettings.paneId}
           name={indSettings.name}

@@ -1028,6 +1028,24 @@ export function saveAlerts(epic: string, list: SavedAlert[]): void {
   save(alertsKey(epic), list);
 }
 
+// Move an epic's alerts to a new epic key. Used when a cell's symbol re-resolves
+// to a different epic (e.g. a broker switch): alerts are stored per-epic and have
+// firing consequences, so they must follow the symbol rather than be orphaned
+// under the old key. No-op if `from`/`to` are equal or the source is empty/unset;
+// merges onto any alerts already at `to` (de-duped by id). Returns whether it
+// moved anything so the caller can bump alertsChanged.
+export function moveAlerts(fromEpic: string, toEpic: string): boolean {
+  if (fromEpic === toEpic) return false;
+  const src = loadAlerts(fromEpic);
+  if (src.length === 0) return false;
+  const dest = loadAlerts(toEpic);
+  const seen = new Set(dest.map((a, i) => normalizeAlert(a, i).id));
+  const merged = [...dest, ...src.filter((a, i) => !seen.has(normalizeAlert(a, i).id))];
+  saveAlerts(toEpic, merged);
+  saveAlerts(fromEpic, []);
+  return true;
+}
+
 // --- direct (overlay-less) edits of a stored alert, keyed by its stable id --------
 // The alerts panel's all-symbols rows act on alerts whose chart may not be open, so
 // they can't go through a cell's OverlayManager. These mutate the global per-epic

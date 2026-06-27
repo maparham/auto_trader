@@ -131,55 +131,77 @@ function toKLine(c: RawCandle): KLineData {
   };
 }
 
+// Every market call carries the active broker id (epics are broker-specific).
+// Defaults to "capital" so existing call sites keep working; the chart and
+// symbol-search modal pass the user's active broker explicitly.
+export const DEFAULT_BROKER = "capital";
+
 // Keyword search against the broker (used while the user types). Category
 // browsing instead filters the cached full catalogue (fetchAllMarkets).
-export async function searchInstruments(q: string): Promise<Instrument[]> {
-  const res = await fetch(`${BASE}/api/markets?q=${encodeURIComponent(q.trim())}`);
+export async function searchInstruments(
+  q: string,
+  brokerId: string = DEFAULT_BROKER,
+): Promise<Instrument[]> {
+  const qs = new URLSearchParams({ q: q.trim(), broker: brokerId });
+  const res = await fetch(`${BASE}/api/markets?${qs}`);
   if (!res.ok) return [];
   return res.json();
 }
 
 // The full instrument catalogue (~4000) in one call, cached for the session: the
 // symbol-search modal filters it client-side by `type` for the category chips.
-let allMarketsCache: Promise<Instrument[]> | null = null;
-export function fetchAllMarkets(): Promise<Instrument[]> {
-  allMarketsCache ??= fetch(`${BASE}/api/markets/all`)
-    .then((r) => (r.ok ? r.json() : []))
-    .catch(() => []);
-  return allMarketsCache;
+// Keyed by broker so switching brokers can't serve the wrong broker's catalogue.
+const allMarketsCache = new Map<string, Promise<Instrument[]>>();
+export function fetchAllMarkets(brokerId: string = DEFAULT_BROKER): Promise<Instrument[]> {
+  let cached = allMarketsCache.get(brokerId);
+  if (!cached) {
+    cached = fetch(`${BASE}/api/markets/all?broker=${encodeURIComponent(brokerId)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .catch(() => []);
+    allMarketsCache.set(brokerId, cached);
+  }
+  return cached;
 }
 
-// The account's FAVORITES watchlist — the modal's opening view. Cached too.
-let favoritesCache: Promise<Instrument[]> | null = null;
-export function fetchFavorites(): Promise<Instrument[]> {
-  favoritesCache ??= fetch(`${BASE}/api/favorites`)
-    .then((r) => (r.ok ? r.json() : []))
-    .catch(() => []);
-  return favoritesCache;
+// The account's FAVORITES watchlist — the modal's opening view. Cached per broker.
+const favoritesCache = new Map<string, Promise<Instrument[]>>();
+export function fetchFavorites(brokerId: string = DEFAULT_BROKER): Promise<Instrument[]> {
+  let cached = favoritesCache.get(brokerId);
+  if (!cached) {
+    cached = fetch(`${BASE}/api/favorites?broker=${encodeURIComponent(brokerId)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .catch(() => []);
+    favoritesCache.set(brokerId, cached);
+  }
+  return cached;
 }
 
-// Drop the session cache so the next fetchFavorites() re-reads from the broker.
-// Call after a mutation so a later modal open reflects the edit.
-export function invalidateFavorites(): void {
-  favoritesCache = null;
+// Drop one broker's favorites cache so the next fetchFavorites() re-reads from
+// the broker. Call after a mutation so a later modal open reflects the edit.
+export function invalidateFavorites(brokerId: string = DEFAULT_BROKER): void {
+  favoritesCache.delete(brokerId);
 }
 
 /** Add an epic to the FAVORITES watchlist. Throws on failure (caller rolls back). */
-export async function addFavorite(epic: string): Promise<void> {
-  const r = await fetch(`${BASE}/api/favorites/${encodeURIComponent(epic)}`, {
-    method: "PUT",
-  });
+export async function addFavorite(
+  epic: string,
+  brokerId: string = DEFAULT_BROKER,
+): Promise<void> {
+  const url = `${BASE}/api/favorites/${encodeURIComponent(epic)}?broker=${encodeURIComponent(brokerId)}`;
+  const r = await fetch(url, { method: "PUT" });
   if (!r.ok) throw new Error(`add favorite failed: ${r.status}`);
-  invalidateFavorites();
+  invalidateFavorites(brokerId);
 }
 
 /** Remove an epic from the FAVORITES watchlist. Throws on failure. */
-export async function removeFavorite(epic: string): Promise<void> {
-  const r = await fetch(`${BASE}/api/favorites/${encodeURIComponent(epic)}`, {
-    method: "DELETE",
-  });
+export async function removeFavorite(
+  epic: string,
+  brokerId: string = DEFAULT_BROKER,
+): Promise<void> {
+  const url = `${BASE}/api/favorites/${encodeURIComponent(epic)}?broker=${encodeURIComponent(brokerId)}`;
+  const r = await fetch(url, { method: "DELETE" });
   if (!r.ok) throw new Error(`remove favorite failed: ${r.status}`);
-  invalidateFavorites();
+  invalidateFavorites(brokerId);
 }
 
 export interface MarketMeta {
@@ -211,9 +233,13 @@ export interface MarketDetail {
 
 /** Full instrument detail for the details modal. Fetched once on open (not
  * polled). Returns null on any failure so the caller can show an error/empty. */
-export async function fetchMarketDetail(epic: string): Promise<MarketDetail | null> {
+export async function fetchMarketDetail(
+  epic: string,
+  brokerId: string = DEFAULT_BROKER,
+): Promise<MarketDetail | null> {
   try {
-    const res = await fetch(`${BASE}/api/market/${encodeURIComponent(epic)}/details`);
+    const url = `${BASE}/api/market/${encodeURIComponent(epic)}/details?broker=${encodeURIComponent(brokerId)}`;
+    const res = await fetch(url);
     if (!res.ok) return null;
     const d = (await res.json()) as Partial<MarketDetail>;
     return {
@@ -230,9 +256,13 @@ export async function fetchMarketDetail(epic: string): Promise<MarketDetail | nu
  * Returns nulls (never throws) so callers can keep their existing fallbacks.
  * The chart fetches this on load and polls it so the tab badge / price label
  * flip when a market closes while the chart is open. */
-export async function fetchMarketMeta(epic: string): Promise<MarketMeta> {
+export async function fetchMarketMeta(
+  epic: string,
+  brokerId: string = DEFAULT_BROKER,
+): Promise<MarketMeta> {
   try {
-    const res = await fetch(`${BASE}/api/market/${encodeURIComponent(epic)}`);
+    const url = `${BASE}/api/market/${encodeURIComponent(epic)}?broker=${encodeURIComponent(brokerId)}`;
+    const res = await fetch(url);
     if (!res.ok) return { pricePrecision: null, closed: null, nextOpen: null };
     const d = (await res.json()) as {
       pricePrecision?: number | null;
@@ -255,11 +285,54 @@ export async function fetchRecent(
   resolution: string,
   bars = 500,
   priceSide: PriceSide = "mid",
+  brokerId: string = DEFAULT_BROKER,
 ): Promise<KLineData[]> {
-  const qs = new URLSearchParams({ epic, resolution, bars: String(bars), priceSide });
-  const res = await fetch(`${BASE}/api/candles?${qs}`);
-  if (!res.ok) return [];
-  return ((await res.json()) as RawCandle[]).map(toKLine);
+  const qs = new URLSearchParams({
+    epic,
+    resolution,
+    bars: String(bars),
+    priceSide,
+    broker: brokerId,
+  });
+  const res = await fetchWithTimeout(`${BASE}/api/candles?${qs}`);
+  if (res.ok) return ((await res.json()) as RawCandle[]).map(toKLine);
+  // 404 = no data for this epic (unknown / no history) — empty, not an error.
+  if (res.status === 404) return [];
+  // Anything else (e.g. 502 from a broker auth / maintenance failure) carries a
+  // detail worth surfacing — throw it so the chart can show why it's blank.
+  throw new Error(await errorDetail(res));
+}
+
+// History fetch timeout. A hung backend (broker maintenance) would otherwise leave
+// the request pending forever — no candles, no error. Aborting after this surfaces
+// a clear "timed out" message in the chart's no-data banner.
+const HISTORY_TIMEOUT_MS = 10_000;
+
+/** fetch() that aborts after HISTORY_TIMEOUT_MS, throwing a readable timeout error. */
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), HISTORY_TIMEOUT_MS);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } catch (err) {
+    if (ctrl.signal.aborted) {
+      throw new Error(`Request timed out after ${HISTORY_TIMEOUT_MS / 1000}s`);
+    }
+    throw err; // genuine network error (refused / DNS / offline) — surface as-is
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Pull the FastAPI `{detail}` string from a failed response, else status text. */
+async function errorDetail(res: Response): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body && typeof body.detail === "string") return body.detail;
+  } catch {
+    /* non-JSON body — fall through to status */
+  }
+  return `${res.status} ${res.statusText}`.trim();
 }
 
 /** Candles in [fromSec, toSec]. Used for scroll-back pagination. */
@@ -269,6 +342,7 @@ export async function fetchRange(
   fromSec: number,
   toSec: number,
   priceSide: PriceSide = "mid",
+  brokerId: string = DEFAULT_BROKER,
 ): Promise<KLineData[]> {
   const qs = new URLSearchParams({
     epic,
@@ -276,6 +350,7 @@ export async function fetchRange(
     from_ts: String(fromSec),
     to_ts: String(toSec),
     priceSide,
+    broker: brokerId,
   });
   const res = await fetch(`${BASE}/api/candles?${qs}`);
   if (!res.ok) return [];
@@ -303,9 +378,10 @@ export function openLive(
   onCandle: (k: KLineData, bid: number | null, ask: number | null) => void,
   onStatus?: (s: LiveStatus) => void,
   priceSide: PriceSide = "mid",
+  brokerId: string = DEFAULT_BROKER,
 ): LiveHandle {
   const wsBase = BASE.replace(/^http/, "ws");
-  const url = `${wsBase}/ws/candles?epic=${encodeURIComponent(epic)}&resolution=${resolution}&priceSide=${priceSide}`;
+  const url = `${wsBase}/ws/candles?epic=${encodeURIComponent(epic)}&resolution=${resolution}&priceSide=${priceSide}&broker=${encodeURIComponent(brokerId)}`;
   let ws: WebSocket | null = null;
   let closed = false;
   let retry = 0;

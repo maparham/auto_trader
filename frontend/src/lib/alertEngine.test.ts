@@ -10,6 +10,7 @@ let emit: ((k: { close: number }) => void) | undefined;
 const closeSpy = vi.fn();
 
 vi.mock("./feed", () => ({
+  DEFAULT_BROKER: "capital",
   openLive: (_epic: string, _res: string, onCandle: (k: { close: number }) => void) => {
     emit = onCandle;
     return { close: closeSpy };

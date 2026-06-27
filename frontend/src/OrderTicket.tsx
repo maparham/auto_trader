@@ -22,7 +22,7 @@ import {
   subscribeTrades,
   tradeLabel,
   type Quote,
-  type TradeEnv,
+  type TradeAccount,
   type TradeView,
 } from "./lib/trading";
 import {
@@ -37,11 +37,15 @@ import { leverageFor, type TradingSettings } from "./theme";
 
 interface Props {
   epic: string;
-  env?: TradeEnv;
+  account?: TradeAccount;
   precision?: number;
   instrumentType?: string | null;
   trading: TradingSettings;
 }
+
+// Real-money accounts are the live env (key "{broker}:live"); the backend enforces
+// the same gate, this just drives the extra client-side confirm.
+const isRealMoneyAccount = (account: TradeAccount) => account.endsWith(":live");
 
 const QUOTE_POLL_MS = 1500;
 const DEFAULT_BRACKET = 0.005; // seed staged SL/TP / limit offset at ±0.5%
@@ -49,7 +53,7 @@ type OrderType = "market" | "limit" | "stop";
 
 export default function OrderTicket({
   epic,
-  env = "paper",
+  account = "capital:paper",
   precision = 2,
   instrumentType,
   trading,
@@ -108,7 +112,7 @@ export default function OrderTicket({
     let alive = true;
     setQuote(null);
     const tick = () =>
-      fetchQuote(epic, env)
+      fetchQuote(epic, account)
         .then((q) => alive && setQuote(q))
         .catch(() => alive && setQuote(null));
     tick();
@@ -117,7 +121,7 @@ export default function OrderTicket({
       alive = false;
       clearInterval(id);
     };
-  }, [epic, env]);
+  }, [epic, account]);
 
   useEffect(() => {
     if (!msg) return;
@@ -223,7 +227,8 @@ export default function OrderTicket({
       setMsg("Enter a valid size.");
       return;
     }
-    if (env === "live" && !confirm(`Place a REAL-money ${side.toUpperCase()} of ${qty} ${epic}?`))
+    const realMoney = isRealMoneyAccount(account);
+    if (realMoney && !confirm(`Place a REAL-money ${side.toUpperCase()} of ${qty} ${epic}?`))
       return;
     submittingRef.current = true;
     setBusy(true);
@@ -233,12 +238,12 @@ export default function OrderTicket({
         epic,
         side,
         quantity: qty,
-        env,
+        account,
         type: isLimit ? "limit" : "market",
         limit_level: isLimit ? entryPrice : null,
         stop_level: slVal,
         take_profit_level: tpVal,
-        confirm: env === "live",
+        confirm: realMoney,
       });
       if (result.status === "rejected") {
         setMsg(`Rejected — ${result.reason || "unknown"}`);
@@ -272,7 +277,7 @@ export default function OrderTicket({
   if (editTrade) {
     // Keyed by id so switching rows remounts (re-seeds the edit state cleanly).
     return (
-      <EditTicket key={editTrade.id} trade={editTrade} env={env} precision={precision} />
+      <EditTicket key={editTrade.id} trade={editTrade} account={account} precision={precision} />
     );
   }
 
@@ -447,11 +452,11 @@ export default function OrderTicket({
 // resting order also reprices its entry.
 function EditTicket({
   trade,
-  env,
+  account,
   precision,
 }: {
   trade: TradeView;
-  env: TradeEnv;
+  account: TradeAccount;
   precision: number;
 }) {
   const [pending, setPending] = useState<PendingEdit>(
@@ -539,7 +544,7 @@ function EditTicket({
           clear_stop: stop == null,
           clear_take_profit: tp == null,
         },
-        env,
+        account,
       );
       refreshTrades();
       exit();

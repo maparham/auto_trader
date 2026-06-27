@@ -33,6 +33,9 @@ export async function applyMaTimeframe(
   paneId: string,
   config: MaConfig,
   timeframe: string | null,
+  // HTF candles are broker-specific (epics aren't portable); fetch from the chart's
+  // active broker. Defaults to "capital" via fetchRecent when omitted.
+  brokerId?: string,
 ): Promise<void> {
   const ind = chart.getIndicatorByPaneId(paneId, name) as { extendData?: MaExtend } | null;
   const ext: MaExtend = { ...(ind?.extendData ?? {}), ...config.options };
@@ -44,7 +47,14 @@ export async function applyMaTimeframe(
   }
 
   const htfMs = (RESOLUTION_SECONDS[timeframe] ?? 0) * 1000;
-  const htf: KLineData[] = await fetchRecent(epic, timeframe, HTF_BARS);
+  // Best-effort: a failed HTF fetch (broker down) shouldn't reject and break the
+  // base indicator — just skip the MTF overlay this round.
+  let htf: KLineData[] = [];
+  try {
+    htf = await fetchRecent(epic, timeframe, HTF_BARS, "mid", brokerId);
+  } catch {
+    htf = [];
+  }
   // MTF carries the base line only (smoothing is not shown under MTF — see
   // computeMa's MTF branch), so take the base series here.
   const { base } = maSeries(htf, config.kind, config.length, config.options);
@@ -62,7 +72,11 @@ export async function applyMaTimeframe(
  * after the symbol or chart timeframe changes, since the stashed HTF series
  * belongs to the previous epic/range. No-op for chart-timeframe indicators.
  */
-export async function refreshMtfIndicators(chart: Chart, epic: string): Promise<void> {
+export async function refreshMtfIndicators(
+  chart: Chart,
+  epic: string,
+  brokerId?: string,
+): Promise<void> {
   const byPane = chart.getIndicatorByPaneId() as Map<string, Map<string, unknown>> | null;
   if (!byPane) return;
   const jobs: Promise<void>[] = [];
@@ -91,6 +105,7 @@ export async function refreshMtfIndicators(chart: Chart, epic: string): Promise<
             options: { source: ext.source, offset: ext.offset, smoothing: ext.smoothing },
           },
           tf,
+          brokerId,
         ),
       );
     });

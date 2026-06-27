@@ -134,6 +134,35 @@ describe("stored-alert direct edits (loadStoredAlert / updateStoredAlert / delet
   });
 });
 
+// Carrying alerts to a re-resolved epic (a broker switch swaps a cell's epic).
+describe("moveAlerts (epic re-resolution)", () => {
+  const A = { id: "a1", level: 5, condition: "crossing" as const, trigger: "every" as const, message: "" };
+  const B = { id: "a2", level: 7, condition: "less" as const, trigger: "once" as const, message: "" };
+
+  it("moves the source epic's alerts to the destination and clears the source", () => {
+    P.saveAlerts("OLD", [A, B]);
+    expect(P.moveAlerts("OLD", "NEW")).toBe(true);
+    expect(P.loadAlerts("NEW").map((x) => x.id)).toEqual(["a1", "a2"]);
+    expect(P.loadAlerts("OLD")).toEqual([]);
+  });
+
+  it("merges onto existing destination alerts, de-duped by id", () => {
+    P.saveAlerts("OLD", [A, B]);
+    P.saveAlerts("NEW", [A]); // a1 already present at destination
+    expect(P.moveAlerts("OLD", "NEW")).toBe(true);
+    expect(P.loadAlerts("NEW").map((x) => x.id).sort()).toEqual(["a1", "a2"]);
+    expect(P.loadAlerts("OLD")).toEqual([]);
+  });
+
+  it("no-ops (returns false) when from===to or the source is empty", () => {
+    P.saveAlerts("OLD", [A]);
+    expect(P.moveAlerts("OLD", "OLD")).toBe(false);
+    expect(P.loadAlerts("OLD").map((x) => x.id)).toEqual(["a1"]); // untouched
+    expect(P.moveAlerts("EMPTY", "NEW")).toBe(false);
+    expect(localStorage.getItem("auto-trader.alerts.NEW")).toBeNull(); // no empty key written
+  });
+});
+
 describe("loadTabs migration (v1 single-chart → cell-based)", () => {
   it("wraps a pre-cells tab into one primary cell, preserving symbol/period", () => {
     localStorage.setItem(

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -20,6 +21,9 @@ import httpx
 from auto_trader.brokers.base import MarketDataBroker
 from auto_trader.config import settings
 from auto_trader.core.models import Candle, Resolution
+
+if TYPE_CHECKING:
+    from auto_trader.brokers.registry import BrokerRegistry
 
 # Capital.com caps a single /prices request; paginate by time for longer windows.
 MAX_BARS_PER_REQUEST = 1000
@@ -477,6 +481,21 @@ class CapitalComBroker(MarketDataBroker):
         self._market_cache[epic] = (now, data)
         return data
 
+    async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
+        """(bid, ask) from the REST market snapshot, or (None, None).
+
+        NB: `_fetch_market_raw` is served from a ~30s per-epic cache, so for a
+        streamed epic the tick store has a far fresher price; this is the
+        fallback the paper executor falls back to when no tick is present."""
+        raw = await self._fetch_market_raw(epic)
+        snap = (raw or {}).get("snapshot") or {}
+        bid = snap.get("bid")
+        ask = snap.get("offer")
+        return (
+            float(bid) if bid is not None else None,
+            float(ask) if ask is not None else None,
+        )
+
     async def get_market_detail(self, epic: str) -> dict | None:
         """The full broker-provided instrument detail, passed through as-is for the
         chart's instrument-details modal: the three raw sections (instrument,
@@ -617,6 +636,14 @@ class CapitalComBroker(MarketDataBroker):
         # de-dup by time (overlapping windows) and sort ascending
         dedup: dict[datetime, Candle] = {c.time: c for c in out}
         return [dedup[t] for t in sorted(dedup)]
+
+
+def register(registry: "BrokerRegistry") -> "CapitalComBroker":
+    """Register Capital.com as the "capital" data broker. Returns the instance so
+    the caller can wire executors (e.g. the paper executor) onto its feed."""
+    broker = CapitalComBroker()
+    registry.add_data("capital", broker)
+    return broker
 
 
 def _parse_prices(

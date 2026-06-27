@@ -52,6 +52,8 @@ import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
 import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
+import EnvSelector from "./EnvSelector";
+import type { BrokerAccount, TradeAccount } from "./lib/trading";
 
 interface DrawMenu {
   x: number;
@@ -70,6 +72,14 @@ interface Props {
   period?: Period;
   onSymbol: (s: Instrument) => void;
   onPeriod: (p: Period) => void;
+  // Active data broker id ("capital"), derived from the active account. Passed to
+  // the symbol-search modal so it browses the right broker's catalogue.
+  brokerId: string;
+  // The registered broker/trading accounts (from GET /api/brokers) and the active
+  // one; the selector switches the chart feed + order routing together.
+  accounts: BrokerAccount[];
+  activeAccount: TradeAccount;
+  onAccountChange: (account: TradeAccount) => void;
   // Maximized view hides the tab bar; this toggle (the only chrome that survives)
   // flips it back. Backtest also lives here now so it stays reachable when maxed.
   maximized: boolean;
@@ -110,6 +120,10 @@ export default function Toolbar({
   period,
   onSymbol,
   onPeriod,
+  brokerId,
+  accounts,
+  activeAccount,
+  onAccountChange,
   maximized,
   onToggleMaximize,
 }: Props) {
@@ -709,10 +723,17 @@ export default function Toolbar({
         <BellIcon size={16} />
       </button>
 
-      {/* Trading panel toggle (order ticket + positions). Paper trading. */}
+      {/* Active broker / trading account — switches the chart feed + order routing. */}
+      <EnvSelector
+        accounts={accounts}
+        activeAccount={activeAccount}
+        onChange={onAccountChange}
+      />
+
+      {/* Trading panel toggle (order ticket + positions). */}
       <button
         className={`anchor-btn trade-toggle${tradeOpen ? " on" : ""}`}
-        title="Show trading panel (paper)"
+        title="Show trading panel"
         onClick={() => tradePanelOpen.set(!tradePanelOpen.value)}
       >
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
@@ -747,6 +768,7 @@ export default function Toolbar({
       {symModalOpen && (
         <SymbolSearchModal
           current={symbol}
+          brokerId={brokerId}
           onPick={onSymbol}
           onClose={() => setSymModalOpen(false)}
         />

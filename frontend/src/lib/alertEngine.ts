@@ -28,7 +28,7 @@
 // (tick-state doesn't belong in localStorage); on reload every alert starts armed
 // with an empty baseline (its first tick re-seeds, so it can't fire on a jump).
 
-import { openLive, type LiveHandle } from "./feed";
+import { openLive, DEFAULT_BROKER, type LiveHandle } from "./feed";
 import {
   loadAlerts,
   loadAlertsRaw,
@@ -78,6 +78,23 @@ class AlertEngine {
   // Spread side the alert feeds price against — kept in lockstep with the chart's
   // global setting so an alert fires on the same price the user sees on the chart.
   private priceSide: PriceSide = "mid";
+  // Active data broker the alert feeds stream from — kept in lockstep with the
+  // chart's active broker (epics are broker-specific). Defaults to "capital".
+  private brokerId: string = DEFAULT_BROKER;
+
+  // Apply the active broker. Epics are broker-specific, so a broker change means
+  // every open feed is now pointed at the wrong upstream: reopen them against the
+  // new broker and drop baselines so the price discontinuity can't read as a
+  // crossing (mirrors setPriceSide).
+  setBrokerId(brokerId: string): void {
+    if (brokerId === this.brokerId) return;
+    this.brokerId = brokerId;
+    this.baseline.clear();
+    for (const epic of [...this.feeds.keys()]) {
+      this.feeds.get(epic)!.handle.close();
+      this.openFeed(epic); // replaces the map entry with a fresh feed
+    }
+  }
 
   // Apply the global bid/mid/ask setting. Changing the side shifts every price by
   // ~half a spread, so reopen the feeds AND drop every alert's baseline — the next
@@ -129,6 +146,7 @@ class AlertEngine {
       (k) => this.onTick(epic, k.close),
       undefined,
       this.priceSide,
+      this.brokerId,
     );
     this.feeds.set(epic, state);
   }

@@ -1,14 +1,15 @@
 """PaperExecutionBroker: simulated fills, netted book, idempotency.
 
-The market broker's quote source (`_fetch_market_raw`) is stubbed so no session
-or network is involved. Matches the project's test style (asyncio.run, no plugin).
+The market broker is a tiny `get_quote` stub (the only data-broker method paper
+uses for pricing), so no session or network is involved — and it proves paper
+runs against any `MarketDataBroker`, not just Capital. Matches the project's test
+style (asyncio.run, no plugin).
 """
 
 from __future__ import annotations
 
 import asyncio
 
-from auto_trader.brokers.capital import CapitalComBroker
 from auto_trader.brokers.paper_exec import PaperExecutionBroker
 from auto_trader.core.models import (
     Order,
@@ -29,18 +30,23 @@ class _FakeTicks:
         return (1, self.tick) if self.tick is not None else None
 
 
+class _FakeMarket:
+    """Minimal MarketDataBroker for paper pricing: just a mutable (bid, ask) quote."""
+
+    def __init__(self, bid: float | None, ask: float | None) -> None:
+        self.bid = bid
+        self.ask = ask
+
+    async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
+        return (self.bid, self.ask)
+
+
 def _broker(
     bid: float | None = 100.0,
     ask: float | None = 100.2,
     tick: float | None = None,
 ) -> PaperExecutionBroker:
-    market = CapitalComBroker.__new__(CapitalComBroker)  # bypass __init__
-
-    async def fake_raw(epic: str):
-        return {"snapshot": {"bid": bid, "offer": ask}}
-
-    market._fetch_market_raw = fake_raw  # type: ignore[method-assign]
-    return PaperExecutionBroker(market, tick_store=_FakeTicks(tick))
+    return PaperExecutionBroker(_FakeMarket(bid, ask), tick_store=_FakeTicks(tick))
 
 
 def _order(side: Side, qty: float, coid: str, epic: str = "EURUSD") -> Order:
@@ -127,10 +133,7 @@ def test_adding_blends_entry_level() -> None:
     broker = _broker(bid=100.0, ask=100.2)
     asyncio.run(broker.place_order(_order(Side.BUY, 1, "a")))
 
-    async def fake_raw(epic: str):
-        return {"snapshot": {"bid": 100.4, "offer": 100.6}}
-
-    broker._market._fetch_market_raw = fake_raw  # type: ignore[method-assign]
+    broker._market.bid, broker._market.ask = 100.4, 100.6  # quote moves up
     asyncio.run(broker.place_order(_order(Side.BUY, 1, "b")))
 
     [pos] = asyncio.run(broker.get_positions("EURUSD"))
@@ -238,10 +241,7 @@ def test_upnl_none_without_price() -> None:
     asyncio.run(broker.place_order(_order(Side.BUY, 1, "o")))
     broker._ticks = _FakeTicks(None)
 
-    async def no_quote(epic: str):
-        return {"snapshot": {}}
-
-    broker._market._fetch_market_raw = no_quote  # type: ignore[method-assign]
+    broker._market.bid, broker._market.ask = None, None  # no quote available
     [pos] = asyncio.run(broker.get_positions("EURUSD"))
     assert pos.upnl is None
 
@@ -483,12 +483,7 @@ def test_gapped_limit_fill_stops_out_same_cycle() -> None:
 def test_quote_no_tick_applies_slippage_matching_fill() -> None:
     # With slippage and no live tick, the quoted price must already include the
     # slippage the fill applies — the displayed price is the price you get.
-    market = CapitalComBroker.__new__(CapitalComBroker)
-
-    async def fake_raw(epic: str):
-        return {"snapshot": {"bid": 100.0, "offer": 100.2}}
-
-    market._fetch_market_raw = fake_raw  # type: ignore[method-assign]
+    market = _FakeMarket(bid=100.0, ask=100.2)
     broker = PaperExecutionBroker(market, slippage=0.05, tick_store=_FakeTicks(None))
 
     q = asyncio.run(broker.quote("EURUSD"))

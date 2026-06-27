@@ -21,14 +21,14 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from auto_trader.brokers.base import ExecutionBroker
-from auto_trader.brokers.capital import CapitalComBroker
+from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.brokers.capital_stream import (
     SECONDS_INTERVALS,
     stream_candles,
     stream_tick_candles,
 )
 from auto_trader.brokers.paper_exec import PaperExecutionBroker
+from auto_trader.brokers.registry import BrokerRegistry, build_registry
 from auto_trader.core.models import (
     Candle,
     Order,
@@ -44,31 +44,28 @@ from auto_trader.core.tick_store import TICK_STORE
 from auto_trader.engine.backtest import BacktestEngine
 from auto_trader.strategy.sma_cross import SmaCross
 
-# A single shared broker reuses its ~10-min session across requests. Creating a
-# new one per request would re-authenticate every time and trip the session
-# rate limit (1 req/s on /session).
-_broker: CapitalComBroker | None = None
-
-# Execution brokers, keyed by environment. P1 ships the paper executor only;
-# "demo"/"live" Capital.com dealing executors are added in later phases. Built in
-# lifespan so they share the market-data broker's session.
-_exec: dict[str, ExecutionBroker] = {}
+# The broker registry: named data brokers (keyed "capital") and execution brokers
+# (keyed "capital:paper"). Built once in lifespan so each broker reuses its
+# ~10-min session across requests — a fresh broker per request would re-auth every
+# time and trip the session rate limit (1 req/s on /session). Adding a broker is a
+# new register() in build_registry(), no route edits.
+_registry: BrokerRegistry | None = None
 
 
-def get_broker() -> CapitalComBroker:
-    assert _broker is not None, "broker not initialised"
-    return _broker
+def get_data(broker_id: str) -> MarketDataBroker:
+    """The market-data broker for a broker id ("capital"). 404 if unknown."""
+    assert _registry is not None, "registry not initialised"
+    return _registry.get_data(broker_id)
 
 
-def get_exec(env: str) -> ExecutionBroker:
-    """The execution broker for an environment ("paper" for now).
+def get_exec(account: str) -> ExecutionBroker:
+    """The execution broker for an account key ("capital:paper").
 
-    Env is an explicit per-call parameter — never an ambient server default — so
-    a request can't be routed to the wrong environment by stale shared state."""
-    try:
-        return _exec[env]
-    except KeyError:
-        raise HTTPException(status_code=422, detail=f"unknown trade env: {env}") from None
+    The account is an explicit per-call parameter — never an ambient server
+    default — so a request can't be routed to the wrong account by stale shared
+    state. 422 if unknown."""
+    assert _registry is not None, "registry not initialised"
+    return _registry.get_exec(account)
 
 
 # How often the paper trigger driver checks resting limits / SL / TP against the
@@ -89,14 +86,13 @@ async def _run_paper_triggers(broker: PaperExecutionBroker) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _broker
-    _broker = CapitalComBroker()
-    # Paper executor prices fills from the (demo) market-data broker's snapshot.
-    paper = PaperExecutionBroker(_broker)
-    _exec["paper"] = paper
+    global _registry
+    _registry = build_registry()
     # Periodic batch-flush of recorded ticks to sqlite (sub-minute history).
     flusher = asyncio.create_task(TICK_STORE.run_flusher())
-    # Paper limit/SL/TP trigger driver.
+    # Paper limit/SL/TP trigger driver. Resolved from the registry by key so it
+    # stays correct regardless of registration order.
+    paper = _registry.get_exec("capital:paper")
     triggers = asyncio.create_task(_run_paper_triggers(paper))
     try:
         yield
@@ -107,9 +103,8 @@ async def lifespan(app: FastAPI):
             await flusher  # lets run_flusher do its final flush
         with suppress(asyncio.CancelledError):
             await triggers
-        await _broker.aclose()
-        _broker = None
-        _exec.clear()
+        await _registry.aclose()
+        _registry = None
 
 
 app = FastAPI(title="Auto Trader API", version="0.1.0", lifespan=lifespan)
@@ -191,12 +186,16 @@ def _candle_dto(c: Candle) -> CandleDTO:
 
 
 async def _load_candles(
-    epic: str, resolution: Resolution, bars: int, price_side: str = "mid"
+    broker_id: str,
+    epic: str,
+    resolution: Resolution,
+    bars: int,
+    price_side: str = "mid",
 ) -> list[Candle]:
     """Most-recent `bars` candles. Recent-bars mode is weekend-proof: a fixed
     date window returns 404 when the market is closed, whereas `max` without
     from/to always returns the latest available data."""
-    return await get_broker().get_recent_candles(epic, resolution, bars, price_side)
+    return await get_data(broker_id).get_recent_candles(epic, resolution, bars, price_side)
 
 
 def _parse_resolution(raw: str) -> Resolution:
@@ -215,37 +214,54 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/api/brokers")
+async def brokers() -> dict:
+    # Selector payload: registered data brokers + execution accounts. The frontend
+    # populates the toolbar broker/account dropdown from this.
+    assert _registry is not None, "registry not initialised"
+    return _registry.describe()
+
+
 @app.get("/api/markets", response_model=list[MarketDTO])
-async def markets(q: str = Query("")) -> list[MarketDTO]:
+async def markets(
+    q: str = Query(""), broker_id: str = Query("capital", alias="broker")
+) -> list[MarketDTO]:
     # Keyword search. The symbol-search modal uses this while the user types; its
     # default/category browsing comes from /api/markets/all (filtered client-side).
+    broker = get_data(broker_id)  # 404 on unknown broker — surface, don't mask as 502
     try:
-        found = await get_broker().search_markets(q)
+        found = await broker.search_markets(q)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"market search failed: {e}") from e
     return [MarketDTO(**m) for m in found]
 
 
 @app.get("/api/markets/all", response_model=list[MarketDTO])
-async def all_markets() -> list[MarketDTO]:
+async def all_markets(
+    broker_id: str = Query("capital", alias="broker"),
+) -> list[MarketDTO]:
     # The full instrument catalogue (~4000), one upstream call. The modal caches
     # this and filters by instrumentType for its category chips.
+    broker = get_data(broker_id)
     try:
-        found = await get_broker().all_markets()
+        found = await broker.all_markets()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"market list failed: {e}") from e
     return [MarketDTO(**m) for m in found]
 
 
 @app.get("/api/market/{epic}")
-async def market_meta(epic: str) -> dict[str, object]:
+async def market_meta(
+    epic: str, broker_id: str = Query("capital", alias="broker")
+) -> dict[str, object]:
     # Display precision + open/closed status for one epic, from the platform's own
     # single-market snapshot (one upstream call). The chart calls this on load so a
     # symbol persisted without precision (the bulk list omits it, e.g. OIL_CRUDE)
     # still renders at the right scale, and polls it so the tab badge / price label
     # flip when the market closes while the chart is open.
+    broker = get_data(broker_id)
     try:
-        meta = await get_broker().get_market_meta(epic)
+        meta = await broker.get_market_meta(epic)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"market lookup failed: {e}") from e
     meta = meta or {}
@@ -261,13 +277,16 @@ async def market_meta(epic: str) -> dict[str, object]:
 
 
 @app.get("/api/market/{epic}/details")
-async def market_details(epic: str) -> dict[str, object]:
+async def market_details(
+    epic: str, broker_id: str = Query("capital", alias="broker")
+) -> dict[str, object]:
     # Full broker-provided instrument detail (instrument + dealingRules + snapshot),
     # passed through verbatim for the chart's instrument-details modal. Fetched once
     # on modal-open — NOT polled (unlike /api/market/{epic}); the snapshot section is
     # a point-in-time quote and that's fine for a click-to-open view.
+    broker = get_data(broker_id)
     try:
-        detail = await get_broker().get_market_detail(epic)
+        detail = await broker.get_market_detail(epic)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"market lookup failed: {e}") from e
     if detail is None:
@@ -276,29 +295,38 @@ async def market_details(epic: str) -> dict[str, object]:
 
 
 @app.get("/api/favorites", response_model=list[MarketDTO])
-async def favorites() -> list[MarketDTO]:
+async def favorites(
+    broker_id: str = Query("capital", alias="broker"),
+) -> list[MarketDTO]:
     # The account's FAVORITES watchlist — the modal's opening view.
+    broker = get_data(broker_id)
     try:
-        found = await get_broker().favorites()
+        found = await broker.favorites()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"favorites failed: {e}") from e
     return [MarketDTO(**m) for m in found]
 
 
 @app.put("/api/favorites/{epic}", status_code=204)
-async def add_favorite(epic: str) -> None:
+async def add_favorite(
+    epic: str, broker_id: str = Query("capital", alias="broker")
+) -> None:
     # Add an epic to the FAVORITES watchlist (creates the list on first add).
+    broker = get_data(broker_id)
     try:
-        await get_broker().add_favorite(epic)
+        await broker.add_favorite(epic)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"add favorite failed: {e}") from e
 
 
 @app.delete("/api/favorites/{epic}", status_code=204)
-async def remove_favorite(epic: str) -> None:
+async def remove_favorite(
+    epic: str, broker_id: str = Query("capital", alias="broker")
+) -> None:
     # Remove an epic from the FAVORITES watchlist.
+    broker = get_data(broker_id)
     try:
-        await get_broker().remove_favorite(epic)
+        await broker.remove_favorite(epic)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"remove favorite failed: {e}") from e
 
@@ -311,7 +339,7 @@ class OrderRequest(BaseModel):
     side: str  # "buy" | "sell"
     quantity: float
     client_order_id: str  # caller-generated idempotency key (UUID)
-    env: str = "paper"
+    account: str = "capital:paper"  # registry key "{broker_id}:{env}"
     source: str = "manual"  # "manual" | "strategy"
     type: str = "market"  # "market" | "limit"
     limit_level: float | None = None  # required when type == "limit"
@@ -399,7 +427,7 @@ async def place_order(req: OrderRequest) -> OrderResultDTO:
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
-    broker = get_exec(req.env)
+    broker = get_exec(req.account)
 
     # Real-money safety gates (no live executor exists in P1, but enforce here so
     # the contract holds the moment one is added):
@@ -445,11 +473,11 @@ class QuoteDTO(BaseModel):
 
 
 @app.get("/api/quote/{epic}", response_model=QuoteDTO)
-async def quote(epic: str, env: str = Query("paper")) -> QuoteDTO:
-    broker = get_exec(env)
+async def quote(epic: str, account: str = Query("capital:paper")) -> QuoteDTO:
+    broker = get_exec(account)
     q = getattr(broker, "quote", None)
     if q is None:  # only the paper executor exposes a synthetic quote in P1
-        raise HTTPException(status_code=404, detail="quote unavailable for env")
+        raise HTTPException(status_code=404, detail="quote unavailable for account")
     try:
         return QuoteDTO(**await q(epic))
     except Exception as e:
@@ -457,8 +485,10 @@ async def quote(epic: str, env: str = Query("paper")) -> QuoteDTO:
 
 
 @app.get("/api/positions", response_model=list[PositionDTO])
-async def positions(env: str = Query("paper"), epic: str = Query("")) -> list[PositionDTO]:
-    broker = get_exec(env)
+async def positions(
+    account: str = Query("capital:paper"), epic: str = Query("")
+) -> list[PositionDTO]:
+    broker = get_exec(account)
     try:
         found = await broker.get_positions(epic or None)
     except Exception as e:
@@ -468,9 +498,11 @@ async def positions(env: str = Query("paper"), epic: str = Query("")) -> list[Po
 
 @app.delete("/api/positions/{deal_id}", response_model=OrderResultDTO)
 async def close_position(
-    deal_id: str, env: str = Query("paper"), quantity: float | None = Query(None)
+    deal_id: str,
+    account: str = Query("capital:paper"),
+    quantity: float | None = Query(None),
 ) -> OrderResultDTO:
-    broker = get_exec(env)
+    broker = get_exec(account)
     try:
         result = await broker.close_position(deal_id, quantity)
     except Exception as e:
@@ -482,10 +514,10 @@ async def close_position(
 
 @app.put("/api/positions/{deal_id}", response_model=OrderResultDTO)
 async def modify_position(
-    deal_id: str, req: LevelsRequest, env: str = Query("paper")
+    deal_id: str, req: LevelsRequest, account: str = Query("capital:paper")
 ) -> OrderResultDTO:
     # Edit an open position's SL/TP (the combined Apply after dragging lines).
-    broker = get_exec(env)
+    broker = get_exec(account)
     try:
         result = await broker.modify_position(
             deal_id,
@@ -516,9 +548,9 @@ def _working_order_dto(w) -> WorkingOrderDTO:
 
 @app.get("/api/orders/working", response_model=list[WorkingOrderDTO])
 async def working_orders(
-    env: str = Query("paper"), epic: str = Query("")
+    account: str = Query("capital:paper"), epic: str = Query("")
 ) -> list[WorkingOrderDTO]:
-    broker = get_exec(env)
+    broker = get_exec(account)
     try:
         found = await broker.get_working_orders(epic or None)
     except Exception as e:
@@ -528,9 +560,9 @@ async def working_orders(
 
 @app.put("/api/orders/working/{order_id}", response_model=OrderResultDTO)
 async def modify_working_order(
-    order_id: str, req: LevelsRequest, env: str = Query("paper")
+    order_id: str, req: LevelsRequest, account: str = Query("capital:paper")
 ) -> OrderResultDTO:
-    broker = get_exec(env)
+    broker = get_exec(account)
     try:
         result = await broker.modify_working_order(
             order_id,
@@ -549,9 +581,9 @@ async def modify_working_order(
 
 @app.delete("/api/orders/working/{order_id}", response_model=OrderResultDTO)
 async def cancel_working_order(
-    order_id: str, env: str = Query("paper")
+    order_id: str, account: str = Query("capital:paper")
 ) -> OrderResultDTO:
-    broker = get_exec(env)
+    broker = get_exec(account)
     try:
         result = await broker.cancel_working_order(order_id)
     except Exception as e:
@@ -660,6 +692,7 @@ async def candles(
     from_ts: int | None = Query(None, description="window start, unix seconds"),
     to_ts: int | None = Query(None, description="window end, unix seconds"),
     price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
+    broker_id: str = Query("capital", alias="broker"),
 ) -> list[CandleDTO]:
     """Candles for an epic. With from_ts/to_ts -> that date window (used by the
     chart's scroll-back). Without -> most-recent `bars` (weekend-proof).
@@ -687,9 +720,11 @@ async def candles(
                 end = datetime.fromtimestamp(to_ts, tz=timezone.utc)
             except (OverflowError, OSError, ValueError) as e:
                 raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
-            loaded = await get_broker().get_candles(epic, resolution, start, end, price_side)
+            loaded = await get_data(broker_id).get_candles(
+                epic, resolution, start, end, price_side
+            )
         else:
-            loaded = await _load_candles(epic, resolution, bars, price_side)
+            loaded = await _load_candles(broker_id, epic, resolution, bars, price_side)
     except HTTPException:
         raise  # already a deliberate client error (e.g. 422 validation); don't mask as 502
     except Exception as e:  # surface broker/auth errors as 502
@@ -711,11 +746,12 @@ async def backtest(
     quantity: float = Query(1.0, gt=0),
     commission_per_side: float = Query(0.0, ge=0),
     slippage: float = Query(0.0, ge=0),
+    broker_id: str = Query("capital", alias="broker"),
 ) -> BacktestResponse:
     if fast >= slow:
         raise HTTPException(422, "fast period must be < slow period")
     try:
-        candle_data = await _load_candles(epic, resolution, bars)
+        candle_data = await _load_candles(broker_id, epic, resolution, bars)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"data fetch failed: {e}") from e
     if not candle_data:
@@ -764,14 +800,25 @@ async def ws_candles(websocket: WebSocket) -> None:
     await websocket.accept()
     epic = websocket.query_params.get("epic", "")
     res_raw = websocket.query_params.get("resolution", Resolution.MINUTE.value)
+    broker_id = websocket.query_params.get("broker", "capital")
     # Bid (sell) / mid / ask (buy) — global chart setting; unknown values fall
     # back to mid in pick_side, so a bad param can't break the stream.
     price_side = websocket.query_params.get("priceSide", "mid")
+    # Resolve the data broker by id. An unknown broker can never succeed on retry,
+    # so it's fatal — the client stops reconnecting to the same bad URL.
+    assert _registry is not None, "registry not initialised"
+    broker = _registry.data.get(broker_id)
+    if broker is None:
+        await websocket.send_json(
+            {"type": "error", "detail": f"unknown broker {broker_id}", "fatal": True}
+        )
+        await websocket.close()
+        return
     # Sub-minute intervals are built by bucketing the tick stream; native ones
     # merge the OHLC + tick channels. Sub-minute is mid-only (served from the
     # single-price TICK_STORE), so price_side intentionally doesn't apply there.
     if res_raw in SECONDS_INTERVALS:
-        stream = stream_tick_candles(get_broker(), epic, SECONDS_INTERVALS[res_raw])
+        stream = stream_tick_candles(broker, epic, SECONDS_INTERVALS[res_raw])
     else:
         try:
             resolution = Resolution(res_raw)
@@ -783,7 +830,7 @@ async def ws_candles(websocket: WebSocket) -> None:
             )
             await websocket.close()
             return
-        stream = stream_candles(get_broker(), epic, resolution, price_side)
+        stream = stream_candles(broker, epic, resolution, price_side)
 
     async def forward() -> None:
         try:
