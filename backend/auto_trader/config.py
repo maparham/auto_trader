@@ -47,3 +47,54 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# IG (labs.ig.com Web API) — the upstream API Capital.com forked. Demo and live
+# are genuinely separate: different hosts, different API keys, different logins,
+# different data. They register as two independent data brokers (ig-demo /
+# ig-live), each carrying a paper executor + a real IG dealing executor.
+IG_HOSTS = {
+    "demo": "https://demo-api.ig.com/gateway/deal",
+    "live": "https://api.ig.com/gateway/deal",
+}
+
+
+class IGSettings(BaseSettings):
+    """IG credentials, demo + live in one block (env-prefixed IG_DEMO_/IG_LIVE_).
+
+    A side (demo/live) registers only when its api_key + identifier + password are
+    all present (see `has(side)`), so a half-configured or absent IG account never
+    shows a dead entry in the broker selector. The dealing account id is derived
+    from the login response, so it isn't required here."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="IG_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    demo_api_key: str = ""
+    demo_identifier: str = ""
+    demo_password: str = ""
+    live_api_key: str = ""
+    live_identifier: str = ""
+    live_password: str = ""
+
+    def creds(self, side: str) -> tuple[str, str, str]:
+        """(api_key, identifier, password) for "demo" | "live"."""
+        return (
+            getattr(self, f"{side}_api_key"),
+            getattr(self, f"{side}_identifier"),
+            getattr(self, f"{side}_password"),
+        )
+
+    def has(self, side: str) -> bool:
+        """True only when every credential for `side` is set (gates registration)."""
+        return all(self.creds(side))
+
+    def base_url(self, side: str) -> str:
+        return IG_HOSTS[side]
+
+
+ig_settings = IGSettings()

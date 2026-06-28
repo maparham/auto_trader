@@ -262,7 +262,9 @@ export async function fetchMarketMeta(
 ): Promise<MarketMeta> {
   try {
     const url = `${BASE}/api/market/${encodeURIComponent(epic)}?broker=${encodeURIComponent(brokerId)}`;
-    const res = await fetch(url);
+    // Bounded: a hung poll must free its connection fast (see META_TIMEOUT_MS). A
+    // timeout/throw lands in the catch below and is treated as "unknown" (open).
+    const res = await fetchWithTimeout(url, META_TIMEOUT_MS);
     if (!res.ok) return { pricePrecision: null, closed: null, nextOpen: null };
     const d = (await res.json()) as {
       pricePrecision?: number | null;
@@ -308,15 +310,25 @@ export async function fetchRecent(
 // a clear "timed out" message in the chart's no-data banner.
 const HISTORY_TIMEOUT_MS = 10_000;
 
-/** fetch() that aborts after HISTORY_TIMEOUT_MS, throwing a readable timeout error. */
-async function fetchWithTimeout(url: string): Promise<Response> {
+// Status-poll timeout. Shorter than the history one: the per-tab open/closed poll
+// fans out one request per open tab, so a hung broker must release each connection
+// quickly or it saturates the browser's per-host connection budget and starves the
+// other brokers (and the account-selector fetch). The backend circuit breaker
+// fast-fails a down broker, but this bounds the client side too.
+const META_TIMEOUT_MS = 6_000;
+
+/** fetch() that aborts after `timeoutMs`, throwing a readable timeout error. */
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number = HISTORY_TIMEOUT_MS,
+): Promise<Response> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), HISTORY_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await fetch(url, { signal: ctrl.signal });
   } catch (err) {
     if (ctrl.signal.aborted) {
-      throw new Error(`Request timed out after ${HISTORY_TIMEOUT_MS / 1000}s`);
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s`);
     }
     throw err; // genuine network error (refused / DNS / offline) — surface as-is
   } finally {

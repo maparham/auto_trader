@@ -71,6 +71,7 @@ export interface LegendCtx {
   period: string;
   precision: number;
   live: boolean;
+  broker: string; // display name of the data source ("Capital.com", "IG (demo)")
 }
 
 // Imperative handle ChartCore drives on the live tick / crosshair change.
@@ -279,7 +280,7 @@ export default function ChartLegend({
           <span aria-hidden="true">i</span>
         </button>
         <span className="cl-meta">
-          · {ctx.period} · Capital.com
+          · {ctx.period} · {ctx.broker}
         </span>
         {(["O", "H", "L", "C"] as const).map((k) => (
           <span className="cl-ohlc-item" key={k}>

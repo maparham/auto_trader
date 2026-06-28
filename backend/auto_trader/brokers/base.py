@@ -38,6 +38,13 @@ class MarketDataBroker(ABC):
     `CapitalComBroker` for the canonical shapes).
     """
 
+    # Whether this broker has a live tick/candle stream wired (the /ws/candles
+    # route + the paper trigger driver depend on it). Capital does; IG does not yet
+    # (its Lightstreamer feed is a deferred follow-up), so IG charts load REST
+    # history but don't tick live. A broker flips this to True when it gains a
+    # `capital_stream`-style generator.
+    supports_streaming: bool = False
+
     @abstractmethod
     async def get_candles(
         self,

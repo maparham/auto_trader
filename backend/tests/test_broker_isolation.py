@@ -1,0 +1,127 @@
+"""End-to-end isolation: one down/slow broker must not block the others.
+
+Drives the real market route (`market_meta`) with a stub registry holding a SLOW
+broker (hangs past the call budget) and a FAST one, and asserts that the slow
+broker fast-fails (504 then 503 once the breaker opens) while the fast broker
+stays quick even when called concurrently with the slow one. This pins the fix
+for the 'capital is down so the whole app — including ig-demo — looks dead' bug.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+
+import pytest
+from fastapi import HTTPException
+
+from auto_trader.api import app as app_module
+from auto_trader.brokers.base import MarketDataBroker
+from auto_trader.brokers.registry import BrokerRegistry
+from auto_trader.core.broker_health import BrokerHealth
+
+
+class _StubBroker(MarketDataBroker):
+    def __init__(self, delay: float) -> None:
+        self._delay = delay
+
+    async def get_market_meta(self, epic: str) -> dict:
+        await asyncio.sleep(self._delay)
+        return {"pricePrecision": 2, "closed": False, "nextOpen": None, "status": "OK"}
+
+    # Unused abstract methods for this test.
+    async def get_candles(self, *a, **k):  # type: ignore[override]
+        return []
+
+    async def get_recent_candles(self, *a, **k):  # type: ignore[override]
+        return []
+
+    async def get_quote(self, epic: str):  # type: ignore[override]
+        return (None, None)
+
+
+def _install(monkeypatch, *, call_timeout: float, fail_threshold: int) -> None:
+    reg = BrokerRegistry()
+    reg.add_data("slow", _StubBroker(delay=10.0))  # "down" broker: hangs
+    reg.add_data("fast", _StubBroker(delay=0.0))  # healthy broker
+    monkeypatch.setattr(app_module, "_registry", reg)
+    monkeypatch.setattr(
+        app_module,
+        "BROKER_HEALTH",
+        BrokerHealth(call_timeout=call_timeout, fail_threshold=fail_threshold),
+    )
+
+
+def test_slow_broker_times_out_then_fast_fails(monkeypatch) -> None:
+    _install(monkeypatch, call_timeout=0.05, fail_threshold=1)
+
+    async def scenario():
+        t0 = time.monotonic()
+        with pytest.raises(HTTPException) as e1:
+            await app_module.market_meta("E", "slow")
+        assert e1.value.status_code == 504  # bounded, didn't hang 10s
+        assert time.monotonic() - t0 < 1.0
+        # Breaker now open: the next call fast-fails as 503 without waiting.
+        t1 = time.monotonic()
+        with pytest.raises(HTTPException) as e2:
+            await app_module.market_meta("E", "slow")
+        assert e2.value.status_code == 503
+        assert time.monotonic() - t1 < 0.05
+
+    asyncio.run(scenario())
+
+
+def test_fast_broker_not_blocked_by_concurrent_slow_broker(monkeypatch) -> None:
+    """The crux: a hung 'slow' broker call running concurrently must not delay or
+    fail the healthy 'fast' broker."""
+    _install(monkeypatch, call_timeout=0.05, fail_threshold=1)
+
+    async def scenario():
+        t0 = time.monotonic()
+        slow = asyncio.create_task(_swallow(app_module.market_meta("E", "slow")))
+        fast = await app_module.market_meta("E", "fast")
+        elapsed = time.monotonic() - t0
+        await slow
+        assert fast["pricePrecision"] == 2  # healthy broker returned its data
+        assert elapsed < 0.5  # not stuck behind the slow broker's hang/timeout
+
+    asyncio.run(scenario())
+
+
+async def _swallow(coro):
+    with pytest.raises(HTTPException):
+        await coro
+
+
+def test_backtest_allowance_error_is_429_not_502(monkeypatch) -> None:
+    """The backtest route now runs through the same breaker as the candles route, so
+    IG's spent weekly allowance surfaces as an actionable 429 (the broker is healthy;
+    live prices still stream) instead of the old generic 502 — and it must not trip
+    the breaker."""
+    from auto_trader.brokers.ig import IGAllowanceExceeded
+    from auto_trader.core.models import Resolution
+
+    class _AllowanceBroker(_StubBroker):
+        def __init__(self) -> None:
+            super().__init__(delay=0.0)
+
+        async def get_recent_candles(self, *a, **k):  # type: ignore[override]
+            raise IGAllowanceExceeded()
+
+    reg = BrokerRegistry()
+    reg.add_data("ig-demo", _AllowanceBroker())
+    monkeypatch.setattr(app_module, "_registry", reg)
+    monkeypatch.setattr(app_module, "BROKER_HEALTH", BrokerHealth())
+
+    async def scenario():
+        with pytest.raises(HTTPException) as e:
+            await app_module.backtest(
+                epic="EURUSD", resolution=Resolution.MINUTE_5, bars=50,
+                fast=9, slow=21, quantity=1.0, commission_per_side=0.0,
+                slippage=0.0, broker_id="ig-demo",
+            )
+        assert e.value.status_code == 429  # actionable, not a generic 502
+
+    asyncio.run(scenario())
+    # Allowance is a healthy-broker signal — the breaker must stay closed.
+    assert app_module.BROKER_HEALTH.is_open("ig-demo") is False

@@ -19,7 +19,13 @@ export const DEFAULT_ACCOUNT: TradeAccount = "capital:paper";
 
 // Display name for a broker id (the id is a lowercase opaque key; this is UI only).
 // Unknown ids fall back to a capitalized id so a new broker still reads sensibly.
-const BROKER_LABELS: Record<string, string> = { capital: "Capital.com" };
+const BROKER_LABELS: Record<string, string> = {
+  capital: "Capital.com",
+  // IG demo and live are separate data brokers (different host/feed), so they get
+  // distinct labels — the env suffix ("· Demo"/"· Paper") is a different axis.
+  "ig-demo": "IG (demo)",
+  "ig-live": "IG (live)",
+};
 export function brokerLabel(brokerId: string): string {
   return BROKER_LABELS[brokerId] ?? brokerId.charAt(0).toUpperCase() + brokerId.slice(1);
 }
@@ -51,11 +57,47 @@ export interface BrokerInfo {
   exec: BrokerAccount[];
 }
 
-/** The selector list: which brokers/accounts the backend has registered. */
+// The account list is purely descriptive (no broker network call), so it should
+// never be the thing that's unavailable. But it shares the browser's per-host
+// connection budget with the chart/poll requests, so when a broker is down those
+// hanging requests can make this one-shot fetch time out. We therefore (a) bound
+// it with an abort timeout and (b) cache the last-good list so a transient failure
+// still renders the selector instead of showing "no accounts".
+const BROKERS_CACHE_KEY = "brokersCache";
+const BROKERS_TIMEOUT_MS = 6_000;
+
+/** Last-good broker list from a previous successful fetch, or null. Lets the
+ * selector populate instantly on load and survive a transient backend hiccup. */
+export function cachedBrokers(): BrokerInfo | null {
+  try {
+    const raw = localStorage.getItem(BROKERS_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as BrokerInfo) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The selector list: which brokers/accounts the backend has registered. Bounded
+ * by a timeout and cached on success (see cachedBrokers). */
 export async function fetchBrokers(): Promise<BrokerInfo> {
-  const res = await fetch(`${BASE}/api/brokers`);
-  if (!res.ok) throw new Error(`brokers failed (${res.status})`);
-  return res.json();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), BROKERS_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE}/api/brokers`, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`brokers failed (${res.status})`);
+    const info = (await res.json()) as BrokerInfo;
+    try {
+      localStorage.setItem(BROKERS_CACHE_KEY, JSON.stringify(info));
+    } catch {
+      /* storage full / unavailable — caching is best-effort */
+    }
+    return info;
+  } catch (err) {
+    if (ctrl.signal.aborted) throw new Error(`brokers timed out`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface OrderResult {

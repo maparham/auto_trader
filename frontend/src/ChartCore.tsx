@@ -79,7 +79,7 @@ import {
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID } from "./lib/positionLines";
-import { subscribeTrades, type TradeView } from "./lib/trading";
+import { brokerLabel, subscribeTrades, type TradeView } from "./lib/trading";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
 import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import { chartColors, loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
@@ -2789,6 +2789,7 @@ export default function ChartCore({
           period: period.label,
           precision,
           live: status === "live",
+          broker: brokerLabel(brokerId),
         }}
         rows={legendRows}
         subPanes={subPaneLegends}

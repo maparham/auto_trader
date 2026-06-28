@@ -42,6 +42,7 @@ import {
 } from "./lib/feed";
 import {
   fetchBrokers,
+  cachedBrokers,
   setTradesAccount,
   DEFAULT_ACCOUNT,
   type BrokerAccount,
@@ -214,6 +215,12 @@ export default function App() {
   // registered (e.g. config changed), fall back to the first available.
   useEffect(() => {
     let alive = true;
+    // Seed from the last-good cache so the selector is populated immediately and
+    // survives a transient backend hiccup — a fresh fetch then refreshes it. This
+    // is why one broker being down (which can make the live fetch time out behind
+    // saturated connections) no longer leaves the account list empty.
+    const cached = cachedBrokers();
+    if (cached) setAccounts(cached.exec);
     void fetchBrokers()
       .then((info) => {
         if (!alive) return;
@@ -223,7 +230,7 @@ export default function App() {
         }
       })
       .catch(() => {
-        /* leave the default account; the backend may be momentarily down */
+        /* keep the cached/default accounts; the backend may be momentarily down */
       });
     return () => {
       alive = false;

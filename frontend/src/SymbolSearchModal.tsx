@@ -230,8 +230,10 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
               <span className="ss-epic">{m.epic}</span>
               <span className="ss-name">{m.name}</span>
               <span className="ss-type">{typeLabel(m.type)}</span>
-              <span className="ss-exch">CAPITAL.COM</span>
-              <span className="ss-badge" aria-hidden="true">C</span>
+              <span className="ss-exch">{brokerLabel(brokerId).toUpperCase()}</span>
+              <span className="ss-badge" aria-hidden="true">
+                {brokerId.charAt(0).toUpperCase()}
+              </span>
               <button
                 className={"ss-star" + (favEpics.has(m.epic) ? " on" : "")}
                 title={favEpics.has(m.epic) ? "Remove from favorites" : "Add to favorites"}
@@ -259,7 +261,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
                   ? "No favorites yet — search above, then tap the ☆ on any symbol."
                   : cat === "recent"
                     ? "No recently opened symbols yet."
-                    : "No symbols in this category."}
+                    : "Nothing to browse here — search by name above."}
             </li>
           )}
         </ul>

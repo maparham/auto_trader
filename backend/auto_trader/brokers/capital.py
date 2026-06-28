@@ -230,6 +230,9 @@ def _market_hours_state(
 
 
 class CapitalComBroker(MarketDataBroker):
+    # Capital has a live WebSocket stream wired (capital_stream.py).
+    supports_streaming = True
+
     def __init__(
         self,
         api_key: str | None = None,

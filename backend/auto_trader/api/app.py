@@ -11,9 +11,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypeVar
 
 log = logging.getLogger(__name__)
 
@@ -21,14 +22,21 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from auto_trader.brokers import ig_stream
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.brokers.capital_stream import (
     SECONDS_INTERVALS,
     stream_candles,
     stream_tick_candles,
 )
+from auto_trader.brokers.ig import IGAllowanceExceeded, IGBroker
 from auto_trader.brokers.paper_exec import PaperExecutionBroker
 from auto_trader.brokers.registry import BrokerRegistry, build_registry
+from auto_trader.core.broker_health import (
+    BrokerHealth,
+    BrokerTimeout,
+    BrokerUnavailable,
+)
 from auto_trader.core.models import (
     Candle,
     Order,
@@ -56,6 +64,47 @@ def get_data(broker_id: str) -> MarketDataBroker:
     """The market-data broker for a broker id ("capital"). 404 if unknown."""
     assert _registry is not None, "registry not initialised"
     return _registry.get_data(broker_id)
+
+
+# Per-broker circuit breaker shared by every data-broker route. Keeps one down or
+# slow broker from holding shared connection slots and starving the others — see
+# auto_trader.core.broker_health.
+BROKER_HEALTH = BrokerHealth()
+
+T = TypeVar("T")
+
+
+async def guarded(
+    broker_id: str, factory: Callable[[], Awaitable[T]], label: str
+) -> T:
+    """Run a data-broker call under the circuit breaker, mapping its states to HTTP.
+
+    A broker whose breaker is open fast-fails as 503 (so its requests don't hold
+    connections and block healthy brokers); a call that exceeds the wall-clock
+    budget is a 504; other broker errors stay 502. Deliberate HTTPExceptions
+    (e.g. a 404 from an unknown epic) pass through unchanged. IG's historical-data
+    allowance being spent is a 429 with a clear, actionable message — and it does
+    NOT trip the breaker (the broker is healthy; only REST history is locked out)."""
+    try:
+        return await BROKER_HEALTH.run(
+            broker_id, factory, ignore=(IGAllowanceExceeded,)
+        )
+    except IGAllowanceExceeded as e:
+        raise HTTPException(
+            429,
+            "IG historical-data limit reached — resets weekly. "
+            "Live prices still stream.",
+        ) from e
+    except BrokerUnavailable as e:
+        raise HTTPException(
+            503, f"{label}: broker '{broker_id}' temporarily unavailable"
+        ) from e
+    except BrokerTimeout as e:
+        raise HTTPException(504, f"{label}: broker '{broker_id}' timed out") from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"{label} failed: {e}") from e
 
 
 def get_exec(account: str) -> ExecutionBroker:
@@ -90,19 +139,25 @@ async def lifespan(app: FastAPI):
     _registry = build_registry()
     # Periodic batch-flush of recorded ticks to sqlite (sub-minute history).
     flusher = asyncio.create_task(TICK_STORE.run_flusher())
-    # Paper limit/SL/TP trigger driver. Resolved from the registry by key so it
-    # stays correct regardless of registration order.
-    paper = _registry.get_exec("capital:paper")
-    triggers = asyncio.create_task(_run_paper_triggers(paper))
+    # Paper limit/SL/TP trigger driver — one per registered paper executor, so
+    # every broker's paper account triggers (not just Capital's). Discovered by
+    # type from the registry, so adding a broker needs no edit here. (A paper
+    # executor only fills resting orders for epics with a live tick, so IG paper
+    # triggers wait on IG streaming — deferred — while Capital's work today.)
+    paper_brokers = [
+        b for b in _registry.exec.values() if isinstance(b, PaperExecutionBroker)
+    ]
+    triggers = [asyncio.create_task(_run_paper_triggers(p)) for p in paper_brokers]
     try:
         yield
     finally:
-        for task in (flusher, triggers):
+        for task in (flusher, *triggers):
             task.cancel()
         with suppress(asyncio.CancelledError):
             await flusher  # lets run_flusher do its final flush
-        with suppress(asyncio.CancelledError):
-            await triggers
+        for task in triggers:
+            with suppress(asyncio.CancelledError):
+                await task
         await _registry.aclose()
         _registry = None
 
@@ -185,19 +240,6 @@ def _candle_dto(c: Candle) -> CandleDTO:
     )
 
 
-async def _load_candles(
-    broker_id: str,
-    epic: str,
-    resolution: Resolution,
-    bars: int,
-    price_side: str = "mid",
-) -> list[Candle]:
-    """Most-recent `bars` candles. Recent-bars mode is weekend-proof: a fixed
-    date window returns 404 when the market is closed, whereas `max` without
-    from/to always returns the latest available data."""
-    return await get_data(broker_id).get_recent_candles(epic, resolution, bars, price_side)
-
-
 def _parse_resolution(raw: str) -> Resolution:
     """Validate a native Capital resolution string (422 on anything else).
 
@@ -229,10 +271,7 @@ async def markets(
     # Keyword search. The symbol-search modal uses this while the user types; its
     # default/category browsing comes from /api/markets/all (filtered client-side).
     broker = get_data(broker_id)  # 404 on unknown broker — surface, don't mask as 502
-    try:
-        found = await broker.search_markets(q)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"market search failed: {e}") from e
+    found = await guarded(broker_id, lambda: broker.search_markets(q), "market search")
     return [MarketDTO(**m) for m in found]
 
 
@@ -243,10 +282,7 @@ async def all_markets(
     # The full instrument catalogue (~4000), one upstream call. The modal caches
     # this and filters by instrumentType for its category chips.
     broker = get_data(broker_id)
-    try:
-        found = await broker.all_markets()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"market list failed: {e}") from e
+    found = await guarded(broker_id, lambda: broker.all_markets(), "market list")
     return [MarketDTO(**m) for m in found]
 
 
@@ -260,10 +296,7 @@ async def market_meta(
     # still renders at the right scale, and polls it so the tab badge / price label
     # flip when the market closes while the chart is open.
     broker = get_data(broker_id)
-    try:
-        meta = await broker.get_market_meta(epic)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"market lookup failed: {e}") from e
+    meta = await guarded(broker_id, lambda: broker.get_market_meta(epic), "market lookup")
     meta = meta or {}
     return {
         "epic": epic,
@@ -285,10 +318,7 @@ async def market_details(
     # on modal-open — NOT polled (unlike /api/market/{epic}); the snapshot section is
     # a point-in-time quote and that's fine for a click-to-open view.
     broker = get_data(broker_id)
-    try:
-        detail = await broker.get_market_detail(epic)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"market lookup failed: {e}") from e
+    detail = await guarded(broker_id, lambda: broker.get_market_detail(epic), "market lookup")
     if detail is None:
         raise HTTPException(status_code=404, detail=f"unknown market '{epic}'")
     return detail
@@ -300,10 +330,7 @@ async def favorites(
 ) -> list[MarketDTO]:
     # The account's FAVORITES watchlist — the modal's opening view.
     broker = get_data(broker_id)
-    try:
-        found = await broker.favorites()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"favorites failed: {e}") from e
+    found = await guarded(broker_id, lambda: broker.favorites(), "favorites")
     return [MarketDTO(**m) for m in found]
 
 
@@ -707,28 +734,32 @@ async def candles(
             for c in await TICK_STORE.bars(epic, SECONDS_INTERVALS[resolution], bars)
         ]
     resolution = _parse_resolution(resolution)
-    try:
-        if from_ts is not None and to_ts is not None:
-            # Validate the window before hitting the broker: an out-of-range
-            # epoch would crash datetime.fromtimestamp (surfaced as a confusing
-            # 502), and an inverted window would silently return an empty 200.
-            # Both are client errors -> 422.
-            if from_ts > to_ts:
-                raise HTTPException(422, "from_ts must be <= to_ts")
-            try:
-                start = datetime.fromtimestamp(from_ts, tz=timezone.utc)
-                end = datetime.fromtimestamp(to_ts, tz=timezone.utc)
-            except (OverflowError, OSError, ValueError) as e:
-                raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
-            loaded = await get_data(broker_id).get_candles(
-                epic, resolution, start, end, price_side
-            )
-        else:
-            loaded = await _load_candles(broker_id, epic, resolution, bars, price_side)
-    except HTTPException:
-        raise  # already a deliberate client error (e.g. 422 validation); don't mask as 502
-    except Exception as e:  # surface broker/auth errors as 502
-        raise HTTPException(status_code=502, detail=f"data fetch failed: {e}") from e
+    broker = get_data(broker_id)  # 404 on unknown broker (not a breaker failure)
+    if from_ts is not None and to_ts is not None:
+        # Validate the window before hitting the broker: an out-of-range epoch
+        # would crash datetime.fromtimestamp (surfaced as a confusing 502), and an
+        # inverted window would silently return an empty 200. Both are client
+        # errors -> 422.
+        if from_ts > to_ts:
+            raise HTTPException(422, "from_ts must be <= to_ts")
+        try:
+            start = datetime.fromtimestamp(from_ts, tz=timezone.utc)
+            end = datetime.fromtimestamp(to_ts, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError) as e:
+            raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
+        # The circuit breaker bounds the call + fast-fails a down broker, so one
+        # broker's outage can't hold a connection slot and starve the others.
+        loaded = await guarded(
+            broker_id,
+            lambda: broker.get_candles(epic, resolution, start, end, price_side),
+            "data fetch",
+        )
+    else:
+        loaded = await guarded(
+            broker_id,
+            lambda: broker.get_recent_candles(epic, resolution, bars, price_side),
+            "data fetch",
+        )
     # A date window may legitimately be empty (market closed); only 404 when no
     # window was requested at all (likely a bad epic).
     if not loaded and from_ts is None:
@@ -750,10 +781,15 @@ async def backtest(
 ) -> BacktestResponse:
     if fast >= slow:
         raise HTTPException(422, "fast period must be < slow period")
-    try:
-        candle_data = await _load_candles(broker_id, epic, resolution, bars)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"data fetch failed: {e}") from e
+    # Same breaker as the candles route: bounds the call, fast-fails a down broker
+    # so it can't starve the others, and maps IG's spent allowance to an actionable
+    # 429 (not a generic 502). Recent-bars mode is weekend-proof (see candles).
+    broker = get_data(broker_id)  # 404 on unknown broker (not a breaker failure)
+    candle_data = await guarded(
+        broker_id,
+        lambda: broker.get_recent_candles(epic, resolution, bars),
+        "backtest data fetch",
+    )
     if not candle_data:
         raise HTTPException(404, f"no data for epic '{epic}' (unknown epic or no history)")
 
@@ -814,10 +850,29 @@ async def ws_candles(websocket: WebSocket) -> None:
         )
         await websocket.close()
         return
-    # Sub-minute intervals are built by bucketing the tick stream; native ones
-    # merge the OHLC + tick channels. Sub-minute is mid-only (served from the
-    # single-price TICK_STORE), so price_side intentionally doesn't apply there.
+    # Only brokers with a live stream wired can be streamed. A non-streaming broker
+    # would otherwise be dialed against the wrong upstream, looping reconnects. Send
+    # a fatal so the client stops retrying; the chart still shows its REST history.
+    if not broker.supports_streaming:
+        await websocket.send_json(
+            {"type": "error", "detail": f"{broker_id} has no live stream", "fatal": True}
+        )
+        await websocket.close()
+        return
+
+    async def _fatal(detail: str) -> None:
+        await websocket.send_json({"type": "error", "detail": detail, "fatal": True})
+        await websocket.close()
+
+    is_ig = isinstance(broker, IGBroker)
+    # Sub-minute intervals are built by bucketing the tick stream; native ones merge
+    # the OHLC + tick channels. Sub-minute is mid-only (served from the single-price
+    # TICK_STORE), so price_side intentionally doesn't apply there.
     if res_raw in SECONDS_INTERVALS:
+        if is_ig:
+            # IG sub-minute streaming + tick history aren't built yet (the chart
+            # disables scroll-back for these anyway); stop the client retrying.
+            return await _fatal(f"{broker_id}: seconds intervals not streamed yet")
         stream = stream_tick_candles(broker, epic, SECONDS_INTERVALS[res_raw])
     else:
         try:
@@ -825,12 +880,15 @@ async def ws_candles(websocket: WebSocket) -> None:
         except ValueError:
             # A malformed resolution param can never succeed on retry — fatal, so
             # the client stops reconnecting to the same bad URL.
-            await websocket.send_json(
-                {"type": "error", "detail": f"bad resolution {res_raw}", "fatal": True}
-            )
-            await websocket.close()
-            return
-        stream = stream_candles(broker, epic, resolution, price_side)
+            return await _fatal(f"bad resolution {res_raw}")
+        if is_ig:
+            if not ig_stream.streamable(resolution.seconds):
+                # IG streams intraday only (daily bars open at 22–23:00 UTC, so a
+                # live midnight bucket wouldn't align with REST history).
+                return await _fatal(f"{broker_id}: {res_raw} is not streamed live")
+            stream = ig_stream.stream_candles(broker, epic, resolution, price_side)
+        else:
+            stream = stream_candles(broker, epic, resolution, price_side)
 
     async def forward() -> None:
         try:

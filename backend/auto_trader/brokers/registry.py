@@ -77,9 +77,15 @@ class BrokerRegistry:
 def build_registry() -> BrokerRegistry:
     """Wire every broker the app ships with. Adding a broker is one block here:
     register its data broker, then register the executors that price off it."""
-    from auto_trader.brokers import capital, paper_exec
+    from auto_trader.brokers import capital, ig, paper_exec
+    from auto_trader.config import ig_settings
 
     registry = BrokerRegistry()
     capital_broker = capital.register(registry)
     paper_exec.register(registry, capital_broker, broker_id="capital")
+    # IG demo/live each register only when fully credentialed, so a half-configured
+    # or absent IG account never shows a dead entry in the broker selector.
+    for side in ("demo", "live"):
+        if ig_settings.has(side):
+            ig.register(registry, side)
     return registry
