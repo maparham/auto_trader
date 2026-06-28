@@ -252,6 +252,12 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
 let _pollRefs = 0;
 const POLL_MS = 3000;
+// When the book is EMPTY (no positions, no working orders) nothing can change
+// until the user acts (placing an order forces an immediate refresh), so we skip
+// most ticks and effectively poll every (IDLE_SKIP+1)*POLL_MS ≈ 15s instead of 3s.
+// With anything open we poll fast so P&L stays live and trigger fills surface.
+const IDLE_SKIP = 4;
+let _idleSkips = 0;
 
 // The account the shared poll fetches. Set by the App when the user switches the
 // active broker/account, so positions/orders follow the selection.
@@ -264,10 +270,28 @@ export function setTradesAccount(account: TradeAccount): void {
   _pollAccount = account;
   // Clear stale trades from the previous account so lines/rows don't linger.
   tradesSignal.set([]);
-  void _pollOnce();
+  void _pollOnce(true);
 }
 
-async function _pollOnce(): Promise<void> {
+// Refresh as soon as the tab is shown again, rather than waiting up to POLL_MS.
+function _onVisible(): void {
+  if (typeof document !== "undefined" && !document.hidden) void _pollOnce(true);
+}
+
+async function _pollOnce(force = false): Promise<void> {
+  // Skip the network while the tab is hidden — a positions/orders dock nobody's
+  // looking at doesn't need refreshing, and this is the bulk of idle traffic. The
+  // interval keeps ticking (cheap, no request); visibilitychange refreshes on return.
+  if (typeof document !== "undefined" && document.hidden) return;
+  // Back off while flat: with nothing open there's nothing to update until the user
+  // places an order (which forces a refresh), so poll ~1/15s instead of 1/3s.
+  if (!force && tradesSignal.value.length === 0) {
+    if (_idleSkips < IDLE_SKIP) {
+      _idleSkips += 1;
+      return;
+    }
+  }
+  _idleSkips = 0;
   const account = _pollAccount;
   try {
     const [positions, orders] = await Promise.all([
@@ -284,7 +308,7 @@ async function _pollOnce(): Promise<void> {
 
 /** Force an immediate refresh (after a fill / close / edit). */
 export function refreshTrades(): void {
-  void _pollOnce();
+  void _pollOnce(true);
 }
 
 /** Subscribe to the shared trades poll; the returned unsubscribe stops the
@@ -296,6 +320,9 @@ export function subscribeTrades(fn: (t: TradeView[]) => void): () => void {
   if (_pollTimer === null) {
     void _pollOnce();
     _pollTimer = setInterval(() => void _pollOnce(), POLL_MS);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", _onVisible);
+    }
   }
   return () => {
     unsub();
@@ -304,6 +331,9 @@ export function subscribeTrades(fn: (t: TradeView[]) => void): () => void {
       clearInterval(_pollTimer);
       _pollTimer = null;
       _pollRefs = 0;
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", _onVisible);
+      }
     }
   };
 }
