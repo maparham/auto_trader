@@ -5,7 +5,14 @@ the resolution-aggregation depend on."""
 
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+
+from auto_trader.brokers import ig_stream
+from auto_trader.brokers.capital_stream import StreamFatalError
 from auto_trader.brokers.ig_stream import _Aggregator, _source_scale, streamable
+from auto_trader.core.models import Resolution
 
 
 class _FakeUpdate:
@@ -88,3 +95,68 @@ def test_price_side_selects_bid_or_ask() -> None:
     assert _Aggregator(60, "bid").update(upd).candle.close == 11.0
     assert _Aggregator(60, "ask").update(upd).candle.close == 12.0
     assert _Aggregator(60, "mid").update(upd).candle.close == 11.5
+
+
+def test_subscription_error_raises_fatal_to_stop_reconnect_storm(monkeypatch) -> None:
+    """An IG Lightstreamer subscription error (e.g. an unknown epic — a persisted
+    Capital symbol viewed under IG) must raise StreamFatalError so the /ws relay
+    tells the client to STOP. A recoverable error would reopen the socket forever
+    (the open/close storm seen in the logs)."""
+    captured: dict = {}
+
+    class _FakeSub:
+        def __init__(self, mode, items, fields):
+            pass
+
+        def addListener(self, listener):
+            captured["listener"] = listener
+
+    class _CD:
+        def setUser(self, u):
+            pass
+
+        def setPassword(self, p):
+            pass
+
+    class _FakeClient:
+        def __init__(self, *a):
+            self._cd = _CD()
+
+        @property
+        def connectionDetails(self):
+            return self._cd
+
+        def subscribe(self, sub):
+            pass
+
+        def connect(self):
+            pass
+
+        def unsubscribe(self, sub):
+            pass
+
+        def disconnect(self):
+            pass
+
+    class _FakeBroker:
+        _ls_endpoint = "https://ls.test"
+        _account_id = "ACC"
+        _cst = "c"
+        _security_token = "x"
+
+        async def _ensure_session(self):
+            pass
+
+    monkeypatch.setattr(ig_stream, "LightstreamerClient", _FakeClient)
+    monkeypatch.setattr(ig_stream, "Subscription", _FakeSub)
+
+    async def scenario():
+        gen = ig_stream.stream_candles(_FakeBroker(), "BADEPIC", Resolution.MINUTE, "mid")
+        task = asyncio.ensure_future(gen.__anext__())
+        await asyncio.sleep(0.02)  # let the generator subscribe and await the queue
+        captured["listener"].onSubscriptionError(17, "rejected: unknown item")
+        with pytest.raises(StreamFatalError):
+            await task
+        await gen.aclose()
+
+    asyncio.run(scenario())

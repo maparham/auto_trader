@@ -26,6 +26,7 @@ from auto_trader.brokers import ig_stream
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.brokers.capital_stream import (
     SECONDS_INTERVALS,
+    StreamFatalError,
     stream_candles,
     stream_tick_candles,
 )
@@ -902,6 +903,15 @@ async def ws_candles(websocket: WebSocket) -> None:
                         "bid": bar.bid,
                         "ask": bar.ask,
                     }
+                )
+        except StreamFatalError as e:
+            # A permanent stream fault (e.g. an unknown/invalid epic — a persisted
+            # Capital symbol viewed under IG) would fail identically on every
+            # reconnect. Send fatal=True so the client STOPS retrying instead of
+            # storming the socket open/closed forever; the chart keeps its REST view.
+            with suppress(Exception):
+                await websocket.send_json(
+                    {"type": "error", "detail": str(e), "fatal": True}
                 )
         except RuntimeError as e:
             # stream_candles/stream_tick_candles raise RuntimeError after

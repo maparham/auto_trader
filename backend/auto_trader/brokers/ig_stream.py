@@ -35,7 +35,7 @@ from lightstreamer.client import (  # type: ignore[import-untyped]
 )
 
 from auto_trader.brokers.capital import pick_side
-from auto_trader.brokers.capital_stream import LiveBar
+from auto_trader.brokers.capital_stream import LiveBar, StreamFatalError
 from auto_trader.core.models import Candle
 from auto_trader.core.tick_store import TICK_STORE
 
@@ -85,7 +85,8 @@ def _mid(u, suffix: str, side: str) -> float | None:
 
 class _StreamError:
     """Sentinel pushed onto the queue when the subscription fails, so the async
-    generator raises (and the /ws relay reports a recoverable error → reconnect)."""
+    generator raises StreamFatalError (the /ws relay then tells the client to STOP
+    retrying — a subscription error is permanent, not a transient blip)."""
 
     def __init__(self, msg: str) -> None:
         self.msg = msg
@@ -183,7 +184,11 @@ async def stream_candles(
         while True:
             item = await queue.get()
             if isinstance(item, _StreamError):
-                raise RuntimeError(item.msg)
+                # A Lightstreamer subscription error is permanent (unknown/invalid
+                # epic, bad schema, no permission) — it would fail identically on
+                # every reconnect. Raise FATAL so the client stops retrying instead
+                # of opening/closing the socket in a tight loop.
+                raise StreamFatalError(item.msg)
             TICK_STORE.record(epic, int(time.time() * 1000), item.candle.close)
             yield item
     finally:

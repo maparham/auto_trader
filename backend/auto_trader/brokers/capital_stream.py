@@ -155,6 +155,14 @@ def _quote_mid(payload: dict, side: PriceSide = "mid") -> float | None:
     return pick_side(payload.get("bid"), payload.get("ofr"), side)
 
 
+class StreamFatalError(RuntimeError):
+    """A PERMANENT stream fault the client must NOT retry — e.g. an unknown/invalid
+    epic whose subscription will fail identically forever. The /ws relay surfaces it
+    as a fatal error frame so the browser stops reconnecting (a plain RuntimeError
+    stays recoverable: a transient outage the client should keep retrying). Without
+    this an invalid epic produces an endless open/close reconnect storm."""
+
+
 class LiveBar(NamedTuple):
     """One forming candle plus the current raw bid/ask, for the live socket frame.
 
