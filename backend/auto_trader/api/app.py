@@ -124,19 +124,51 @@ def get_exec(account: str) -> ExecutionBroker:
 _TRIGGER_INTERVAL = 0.5
 
 
-async def _run_paper_triggers(broker: PaperExecutionBroker) -> None:
-    """Drive the paper executor's limit/SL/TP triggers off the live tick stream."""
+# Key prefix for the trades-changed push on the /ws/state channel. The frontend
+# refetches positions/orders only when it sees this — replacing the periodic poll.
+TRADES_DIRTY_PREFIX = "__trades__:"
+
+
+async def _run_paper_triggers(broker: PaperExecutionBroker, account: str) -> None:
+    """Drive the paper executor's limit/SL/TP triggers off the live tick stream.
+    When a trigger changes the book, push a 'trades changed' notification so the
+    frontend refetches once — no periodic polling."""
     while True:
         await asyncio.sleep(_TRIGGER_INTERVAL)
         try:
-            await broker.check_triggers()
+            if await broker.check_triggers():
+                await _broadcast_state(
+                    {"key": f"{TRADES_DIRTY_PREFIX}{account}", "origin": ""}
+                )
         except Exception:  # never let one bad tick kill the driver
             log.exception("paper trigger check failed")
+
+
+def _configure_logging() -> None:
+    """Prefix every log line with a timestamp. uvicorn's default access/error
+    formatters omit it; we override them in place, and give the app's own
+    `auto_trader.*` logger a timestamped handler — so request logs AND app messages
+    are all timestamped. Run from lifespan (after uvicorn has installed its
+    handlers) so we override the live formatters."""
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        for handler in logging.getLogger(name).handlers:
+            handler.setFormatter(fmt)
+    app_log = logging.getLogger("auto_trader")
+    if not app_log.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(fmt)
+        app_log.addHandler(handler)
+        app_log.setLevel(logging.INFO)
+        app_log.propagate = False  # the handler above logs it; don't double via root
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _registry
+    _configure_logging()
     _registry = build_registry()
     # Periodic batch-flush of recorded ticks to sqlite (sub-minute history).
     flusher = asyncio.create_task(TICK_STORE.run_flusher())
@@ -145,10 +177,11 @@ async def lifespan(app: FastAPI):
     # type from the registry, so adding a broker needs no edit here. (A paper
     # executor only fills resting orders for epics with a live tick, so IG paper
     # triggers wait on IG streaming — deferred — while Capital's work today.)
-    paper_brokers = [
-        b for b in _registry.exec.values() if isinstance(b, PaperExecutionBroker)
+    triggers = [
+        asyncio.create_task(_run_paper_triggers(b, key))
+        for key, b in _registry.exec.items()
+        if isinstance(b, PaperExecutionBroker)
     ]
-    triggers = [asyncio.create_task(_run_paper_triggers(p)) for p in paper_brokers]
     try:
         yield
     finally:

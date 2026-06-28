@@ -580,13 +580,17 @@ class PaperExecutionBroker(ExecutionBroker):
 
     # --- trigger driver (paper-only; real brokers trigger server-side) -----
 
-    async def check_triggers(self) -> None:
+    async def check_triggers(self) -> bool:
         """Fill resting limits and close positions whose SL/TP the market reached.
 
         Thin driver around the pure `evaluate_triggers`: reads the latest tick
         (synchronously) per epic and applies the resulting fills/closes under the
         book lock. Only epics with a live tick are evaluated — a limit/SL/TP on an
-        epic that isn't being streamed won't trigger (documented paper limit)."""
+        epic that isn't being streamed won't trigger (documented paper limit).
+
+        Returns True if the book changed (a fill/close happened), so the caller can
+        push a 'trades changed' notification instead of the frontend polling."""
+        changed = False
         async with self._lock:
             epics = {p.epic for p in self._book.values()}
             epics |= {w.epic for w in self._working.values()}
@@ -606,6 +610,7 @@ class PaperExecutionBroker(ExecutionBroker):
                     actions = evaluate_triggers(price, positions, working)
                     if not actions:
                         break
+                    changed = True
                     for action in actions:
                         if action.kind == "fill":
                             wo = self._working.pop(action.id, None)
@@ -624,6 +629,7 @@ class PaperExecutionBroker(ExecutionBroker):
                             )
                         elif action.kind == "close":
                             self._close_at(action.id, action.price)
+        return changed
 
 
 def register(

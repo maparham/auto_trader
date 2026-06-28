@@ -79,7 +79,7 @@ import {
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID } from "./lib/positionLines";
-import { brokerLabel, subscribeTrades, type TradeView } from "./lib/trading";
+import { brokerLabel, setLivePrice, subscribeTrades, type TradeView } from "./lib/trading";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
 import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import { chartColors, loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
@@ -1771,6 +1771,9 @@ export default function ChartCore({
           chart.updateData(k);
           setHasData(true); // a flowing stream clears the no-data banner (React no-ops if unchanged)
           setLastPrice(k.close);
+          // Publish the price so the positions dock can mark P&L to market without
+          // polling the server (see trading.setLivePrice / PositionsPanel).
+          setLivePrice(symbol.epic, k.close);
           redraw(); // keep the price/alert pills glued as the bar moves
           // NOTE: alert FIRING is owned by the background alertEngine (the single
           // authority across all tabs, active included) — not here. This chart feed

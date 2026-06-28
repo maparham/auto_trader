@@ -18,7 +18,9 @@ import {
   applyLevels,
   cancelWorkingOrder,
   closePosition,
+  getLivePrice,
   refreshTrades,
+  subscribeLivePrices,
   subscribeTrades,
   tradeLabel,
   type TradeView,
@@ -126,6 +128,10 @@ export default function PositionsPanel({
   });
 
   useEffect(() => subscribeTrades(setAll), []);
+  // Re-render on each streamed price so P&L marks to market live — without polling
+  // the server (the dock fetches positions only on actual changes; see trading.ts).
+  const [, setPriceTick] = useState(0);
+  useEffect(() => subscribeLivePrices(() => setPriceTick((n) => n + 1)), []);
   useEffect(() => pendingEditsSignal.subscribe(setPending), []);
   useEffect(() => editTradeSignal.subscribe(setEditId), []);
   useEffect(() => tradeLineUiSignal.subscribe((ui) => setHidden(ui.hidden)), []);
@@ -146,7 +152,16 @@ export default function PositionsPanel({
   // and order. All from usedMargin + paper balance + summed upnl; Realized P&L is
   // the one TV stat we can't show yet (the paper book doesn't track closed trades).
   const lev = trading.defaultLeverage > 0 ? trading.defaultLeverage : 1;
-  const pnl = positions.reduce((s, p) => s + (p.upnl ?? 0), 0);
+  // Mark a position to market from the live streamed price when we have one (the
+  // chart is feeding this epic); else fall back to the server-computed uPnL from
+  // the last fetch. This is what keeps P&L live without a positions poll.
+  const liveUpnl = (t: TradeView): number | null => {
+    if (t.kind !== "position" || t.quantity <= 0) return t.upnl;
+    const live = getLivePrice(t.epic);
+    if (live == null) return t.upnl;
+    return (t.side === "buy" ? 1 : -1) * t.quantity * (live - t.priceLevel);
+  };
+  const pnl = positions.reduce((s, p) => s + (liveUpnl(p) ?? 0), 0);
   const accountMargin = usedMargin(positions, lev); // margin held by open positions
   const ordersMargin = usedMargin(orders, lev); // margin reserved by resting orders
   const balance = trading.accountBalance;
@@ -161,23 +176,24 @@ export default function PositionsPanel({
   const caret = pnl > 0 ? "▲" : pnl < 0 ? "▼" : "";
   const posCount = positions.length;
 
-  // Enrich each row with the derived figures TV shows. Last price is backed out of
-  // our own P&L (no separate price feed here) so it stays consistent with the P&L
-  // column; market/trade value + per-row margin follow from it. Orders have no P&L,
-  // so their last/market/% are blank.
+  // Enrich each row with the derived figures TV shows. P&L is marked to market from
+  // the live price when available (see liveUpnl); last price is backed out of it so
+  // it stays consistent with the P&L column; market/trade value + per-row margin
+  // follow. Orders have no P&L, so their last/market/% are blank.
   const enrich = (t: TradeView): RowExt => {
     const tradeValue = t.priceLevel * t.quantity;
     const margin = tradeValue / lev;
     let last: number | null = null;
     let marketValue: number | null = null;
     let pnlPct: number | null = null;
-    if (t.kind === "position" && t.upnl != null && t.quantity > 0) {
+    const upnl = liveUpnl(t);
+    if (t.kind === "position" && upnl != null && t.quantity > 0) {
       const sign = t.side === "buy" ? 1 : -1;
-      last = t.priceLevel + (sign * t.upnl) / t.quantity;
+      last = t.priceLevel + (sign * upnl) / t.quantity;
       marketValue = last * t.quantity;
-      pnlPct = tradeValue !== 0 ? (t.upnl / tradeValue) * 100 : null;
+      pnlPct = tradeValue !== 0 ? (upnl / tradeValue) * 100 : null;
     }
-    return { ...t, last, marketValue, pnlPct, tradeValue, margin, leverage: lev };
+    return { ...t, upnl, last, marketValue, pnlPct, tradeValue, margin, leverage: lev };
   };
 
   // Sorted view of the active tab. Nulls (no TP/SL/P&L/last/value/time) always sink

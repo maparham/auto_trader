@@ -8,6 +8,7 @@
 // keyed on a trade (lines, pending edits) uses the unified `id` (deal_id for a
 // position, order_id for a resting order).
 
+import { onTradesDirty } from "./persist";
 import { tradesSignal } from "./signals";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
@@ -242,57 +243,35 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
   ];
 }
 
-// --- shared trades poller ---------------------------------------------------
+// --- shared trades feed (event-driven, no polling) --------------------------
 //
-// One poll for the whole app fetches positions AND working orders together
-// (Promise.all = one fan-out), normalizes to TradeView[], and publishes on
-// tradesSignal. Reference-counted: the interval runs while at least one consumer
-// is subscribed.
+// Positions + working orders are fetched ONCE per change, never on a timer:
+//   - on first subscribe and on account switch,
+//   - after a user action (place/close/modify → refreshTrades),
+//   - when the backend pushes a "trades changed" event (a paper trigger filled or
+//     closed) over /ws/state (see onTradesDirty).
+// Live P&L doesn't need a fetch: the dock marks positions to market client-side
+// from `livePrices`, fed by the chart's price stream (setLivePrice). Together this
+// removes the periodic positions/orders poll entirely.
 
-let _pollTimer: ReturnType<typeof setInterval> | null = null;
-let _pollRefs = 0;
-const POLL_MS = 3000;
-// When the book is EMPTY (no positions, no working orders) nothing can change
-// until the user acts (placing an order forces an immediate refresh), so we skip
-// most ticks and effectively poll every (IDLE_SKIP+1)*POLL_MS ≈ 15s instead of 3s.
-// With anything open we poll fast so P&L stays live and trigger fills surface.
-const IDLE_SKIP = 4;
-let _idleSkips = 0;
+let _refs = 0;
+let _unsubDirty: (() => void) | null = null;
 
-// The account the shared poll fetches. Set by the App when the user switches the
-// active broker/account, so positions/orders follow the selection.
-let _pollAccount: TradeAccount = DEFAULT_ACCOUNT;
+// The account the feed fetches. Set by the App when the active broker/account
+// changes, so positions/orders follow the selection.
+let _account: TradeAccount = DEFAULT_ACCOUNT;
 
-/** Point the shared trades poll at a different account and refresh immediately.
- *  Call when the active broker/account changes. */
+/** Point the trades feed at a different account and refresh immediately. */
 export function setTradesAccount(account: TradeAccount): void {
-  if (account === _pollAccount) return;
-  _pollAccount = account;
+  if (account === _account) return;
+  _account = account;
   // Clear stale trades from the previous account so lines/rows don't linger.
   tradesSignal.set([]);
-  void _pollOnce(true);
+  void _refresh();
 }
 
-// Refresh as soon as the tab is shown again, rather than waiting up to POLL_MS.
-function _onVisible(): void {
-  if (typeof document !== "undefined" && !document.hidden) void _pollOnce(true);
-}
-
-async function _pollOnce(force = false): Promise<void> {
-  // Skip the network while the tab is hidden — a positions/orders dock nobody's
-  // looking at doesn't need refreshing, and this is the bulk of idle traffic. The
-  // interval keeps ticking (cheap, no request); visibilitychange refreshes on return.
-  if (typeof document !== "undefined" && document.hidden) return;
-  // Back off while flat: with nothing open there's nothing to update until the user
-  // places an order (which forces a refresh), so poll ~1/15s instead of 1/3s.
-  if (!force && tradesSignal.value.length === 0) {
-    if (_idleSkips < IDLE_SKIP) {
-      _idleSkips += 1;
-      return;
-    }
-  }
-  _idleSkips = 0;
-  const account = _pollAccount;
+async function _refresh(): Promise<void> {
+  const account = _account;
   try {
     const [positions, orders] = await Promise.all([
       fetchPositions(account),
@@ -300,7 +279,7 @@ async function _pollOnce(force = false): Promise<void> {
     ]);
     // A switch mid-flight would publish the wrong account's trades; drop a
     // response whose account is no longer active.
-    if (account === _pollAccount) tradesSignal.set(toTrades(positions, orders));
+    if (account === _account) tradesSignal.set(toTrades(positions, orders));
   } catch {
     // Transient: keep the last known trades rather than clearing the chart.
   }
@@ -308,34 +287,58 @@ async function _pollOnce(force = false): Promise<void> {
 
 /** Force an immediate refresh (after a fill / close / edit). */
 export function refreshTrades(): void {
-  void _pollOnce(true);
+  void _refresh();
 }
 
-/** Subscribe to the shared trades poll; the returned unsubscribe stops the
- *  interval when the last consumer leaves. */
+/** Subscribe to the shared trades feed. Fetches once on the first subscriber and
+ *  then only on events; the returned unsubscribe detaches the backend push when
+ *  the last consumer leaves. */
 export function subscribeTrades(fn: (t: TradeView[]) => void): () => void {
   fn(tradesSignal.value); // deliver the current value immediately
   const unsub = tradesSignal.subscribe(fn);
-  _pollRefs += 1;
-  if (_pollTimer === null) {
-    void _pollOnce();
-    _pollTimer = setInterval(() => void _pollOnce(), POLL_MS);
-    if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", _onVisible);
-    }
+  _refs += 1;
+  if (_refs === 1) {
+    void _refresh(); // initial load
+    // Refetch when the backend reports a server-side change (paper trigger fill)
+    // for the active account — event-driven, no polling.
+    _unsubDirty = onTradesDirty((account) => {
+      if (account === _account) void _refresh();
+    });
   }
   return () => {
     unsub();
-    _pollRefs -= 1;
-    if (_pollRefs <= 0 && _pollTimer !== null) {
-      clearInterval(_pollTimer);
-      _pollTimer = null;
-      _pollRefs = 0;
-      if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", _onVisible);
-      }
+    _refs -= 1;
+    if (_refs <= 0) {
+      _refs = 0;
+      _unsubDirty?.();
+      _unsubDirty = null;
     }
   };
+}
+
+// --- live prices (client-side mark-to-market) -------------------------------
+//
+// The chart's live feed publishes the latest mid price per epic here; the
+// positions dock reads it to update P&L without re-fetching from the server.
+
+const _livePrices = new Map<string, number>();
+const _priceListeners = new Set<() => void>();
+
+/** Publish the latest streamed price for an epic (called by the chart feed). */
+export function setLivePrice(epic: string, price: number): void {
+  _livePrices.set(epic, price);
+  for (const fn of _priceListeners) fn();
+}
+
+/** Latest streamed price for an epic, or undefined if none is flowing. */
+export function getLivePrice(epic: string): number | undefined {
+  return _livePrices.get(epic);
+}
+
+/** Notify on any live-price change (the dock re-marks P&L). Returns unsubscribe. */
+export function subscribeLivePrices(fn: () => void): () => void {
+  _priceListeners.add(fn);
+  return () => _priceListeners.delete(fn);
 }
 
 export async function closePosition(

@@ -276,6 +276,19 @@ type StateMessage =
   | { key: string; value: unknown; origin?: string }
   | { key: string; deleted: true; origin?: string };
 
+// Backend "trades changed" push (a paper trigger filled/closed). It rides the
+// /ws/state channel under this key prefix but ISN'T workspace state — listeners
+// (the trades layer) refetch positions/orders once instead of polling. Mirrors
+// TRADES_DIRTY_PREFIX in the backend.
+const TRADES_DIRTY_PREFIX = "__trades__:";
+const _tradesDirty = new Set<(account: string) => void>();
+
+/** Subscribe to backend trades-changed pushes; `cb` gets the affected account. */
+export function onTradesDirty(cb: (account: string) => void): () => void {
+  _tradesDirty.add(cb);
+  return () => _tradesDirty.delete(cb);
+}
+
 export function subscribeToBackendUpdates(onChange: () => void): () => void {
   if (typeof WebSocket === "undefined") return () => {};
   const url = `${API_BASE.replace(/^http/, "ws")}/ws/state`;
@@ -294,6 +307,13 @@ export function subscribeToBackendUpdates(onChange: () => void): () => void {
       try {
         msg = JSON.parse(ev.data as string) as StateMessage;
       } catch {
+        return;
+      }
+      // Trades-changed push (not workspace state): fan out to the trades layer so it
+      // refetches once, and stop — it has no value to mirror into localStorage.
+      if (typeof msg.key === "string" && msg.key.startsWith(TRADES_DIRTY_PREFIX)) {
+        const account = msg.key.slice(TRADES_DIRTY_PREFIX.length);
+        for (const fn of _tradesDirty) fn(account);
         return;
       }
       if (msg.origin === CLIENT_ID) return; // ignore our own echo

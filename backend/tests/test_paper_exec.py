@@ -313,6 +313,23 @@ def test_limit_order_rests_then_fills_when_price_reached() -> None:
     assert asyncio.run(broker.get_working_orders("EURUSD")) == []
 
 
+def test_check_triggers_reports_whether_the_book_changed() -> None:
+    """check_triggers returns True only when it actually fills/closes something, so
+    the API can push a 'trades changed' event instead of the frontend polling."""
+    broker = _broker(tick=100.0)
+    asyncio.run(broker.place_order(_limit(Side.BUY, 2, 99.0, "L1")))
+
+    broker._ticks.tick = 99.5  # above the limit — nothing happens
+    assert asyncio.run(broker.check_triggers()) is False
+
+    broker._ticks.tick = 99.0  # reaches the limit — fills
+    assert asyncio.run(broker.check_triggers()) is True
+
+    # Now flat-of-orders with just the position; a quiet tick changes nothing.
+    broker._ticks.tick = 99.0
+    assert asyncio.run(broker.check_triggers()) is False
+
+
 def test_limit_carries_sl_tp_onto_filled_position() -> None:
     broker = _broker(tick=100.0)
     asyncio.run(
