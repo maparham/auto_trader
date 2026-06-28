@@ -526,35 +526,50 @@ export default function App() {
     return JSON.stringify([...epics].sort());
   }, [tabs]);
 
-  // Poll open/closed status for every tab's lead epic, so the closed badge stays
-  // live on background tabs too (their ChartCore isn't mounted). 60s cadence, in
-  // step with ChartCore's own poll, to stay clear of the /session 429 storm that
-  // shared-broker polling can trigger. Prunes epicClosed to the current epics so
-  // entries for closed tabs don't leak.
+  // Open/closed badge for every tab's lead epic, so background tabs (whose
+  // ChartCore isn't mounted) still show a closed crescent. Event-driven, NOT
+  // polled: fetch each epic once when the tab set / broker changes, then for a
+  // CLOSED epic schedule a single re-check exactly at `nextOpen` (rescheduling
+  // itself). An open background tab that later closes shows stale until it's
+  // activated — at which point the active chart's ChartCore corrects it live from
+  // the stream. This trades a little background-badge latency for zero polling.
   useEffect(() => {
     const epics: string[] = leadEpicsKey ? JSON.parse(leadEpicsKey) : [];
     let cancelled = false;
-    const poll = async () => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    const toEntry = (meta: Awaited<ReturnType<typeof fetchMarketMeta>>) => ({
+      closed: meta.closed === true,
+      nextOpen: meta.closed === true ? meta.nextOpen : null,
+    });
+
+    // Re-check a closed epic exactly when it should reopen — an event, not a poll.
+    const scheduleReopen = (epic: string, meta: Awaited<ReturnType<typeof fetchMarketMeta>>) => {
+      if (meta.closed !== true || !meta.nextOpen) return;
+      const ms = Math.min(Math.max(1000, Date.parse(meta.nextOpen) - Date.now()), 2_000_000_000);
+      timers.push(
+        setTimeout(async () => {
+          const m = await fetchMarketMeta(epic, brokerId).catch(() => null);
+          if (cancelled || !m) return;
+          setEpicClosed((prev) => ({ ...prev, [epic]: toEntry(m) }));
+          scheduleReopen(epic, m);
+        }, ms),
+      );
+    };
+
+    void (async () => {
       const entries = await Promise.all(
-        epics.map(async (epic) => {
-          const meta = await fetchMarketMeta(epic, brokerId);
-          // null `closed` (failed lookup) is treated as open, never badging a live
-          // market closed on a transient error.
-          return [
-            epic,
-            { closed: meta.closed === true, nextOpen: meta.closed === true ? meta.nextOpen : null },
-          ] as const;
-        }),
+        epics.map(async (epic) => [epic, await fetchMarketMeta(epic, brokerId)] as const),
       );
       if (cancelled) return;
       // Replace wholesale (not merge) so epics no longer present are dropped.
-      setEpicClosed(Object.fromEntries(entries));
-    };
-    void poll();
-    const id = setInterval(() => void poll(), 60_000);
+      setEpicClosed(Object.fromEntries(entries.map(([e, m]) => [e, toEntry(m)])));
+      for (const [epic, meta] of entries) scheduleReopen(epic, meta);
+    })();
+
     return () => {
       cancelled = true;
-      clearInterval(id);
+      timers.forEach(clearTimeout);
     };
   }, [leadEpicsKey, brokerId]);
 

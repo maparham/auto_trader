@@ -783,6 +783,10 @@ export default function ChartCore({
   const [marketClosed, setMarketClosed] = useState(false);
   const marketClosedRef = useRef(marketClosed);
   marketClosedRef.current = marketClosed;
+  // When the live stream last delivered a candle. Lets the open/closed check be
+  // event-driven: a ticking stream means the market is open (no server call), so
+  // we only re-check status when the stream falls silent (see the effect below).
+  const lastCandleAtRef = useRef(0);
   // Instrument-details modal (opened by clicking the legend symbol).
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Current epic/resolution, readable from once-mounted callbacks without re-subscribing.
@@ -1562,30 +1566,69 @@ export default function ChartCore({
   // Resolve the epic's authoritative precision + open/closed status on symbol
   // change, then poll the status so the tab badge and price label flip when the
   // market closes (or reopens) while the chart stays open. One snapshot call
-  // yields both (fetchMarketMeta); precision is stable so we only apply it once,
-  // but status is re-read each tick. The interval is modest (60s) to stay clear of
-  // the /session 429 storm that shared-broker polling can trigger.
+  // yields both (fetchMarketMeta); precision is stable so we only apply it once.
+  //
+  // Event-driven, NOT polled: fetch once for precision + the initial state, then
+  // re-check only on an event —
+  //   - closed market: a single re-check scheduled exactly at `nextOpen`;
+  //   - open market: nothing, unless the live stream falls silent for a while (a
+  //     possible close), then ONE fallback re-check confirms it.
+  // A market that's ticking (even slowly) keeps the badge open with zero server
+  // calls; a reopened market flips instantly on its first tick (stream handler).
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Only consulted while the stream is silent; an active stream never triggers it.
+    const FALLBACK_MS = 180_000;
     setFetchedPrecision(null); // drop the previous epic's value while we re-resolve
-    // Also clear the previous epic's closed state: the effect re-runs in place on
-    // an in-cell symbol switch (cells key on cell.id, not epic), so without this a
-    // now-open symbol would flash "closed" on the price pill until apply(true)
-    // resolves. Default to open; the fetch corrects it a round-trip later.
+    // Default to open on an in-cell symbol switch so a now-open symbol doesn't flash
+    // "closed" until the first fetch resolves a round-trip later.
     setMarketClosed(false);
-    const apply = (gotPrecision: boolean) =>
-      fetchMarketMeta(symbol.epic, brokerId).then((meta) => {
+
+    const schedule = (closed: boolean, nextOpen: string | null): void => {
+      clearTimeout(timer);
+      if (cancelled) return;
+      if (closed && nextOpen) {
+        // Re-check exactly when it should reopen — an event, not a poll.
+        const ms = Math.min(Math.max(1000, Date.parse(nextOpen) - Date.now()), 2_000_000_000);
+        timer = setTimeout(() => void recheck(false), ms);
+        return;
+      }
+      // Open (or closed with no known reopen): re-check only if the stream goes
+      // quiet — a ticking market needs no server call.
+      const fallback = (): void => {
         if (cancelled) return;
-        if (gotPrecision && meta.pricePrecision != null) setFetchedPrecision(meta.pricePrecision);
-        // null `closed` (failed lookup) is treated as open, so a failed fetch never
-        // shows a live market closed.
-        setMarketClosed(meta.closed === true);
-      });
-    void apply(true);
-    const id = setInterval(() => void apply(false), 60_000);
+        if (Date.now() - lastCandleAtRef.current < FALLBACK_MS) {
+          if (marketClosedRef.current) setMarketClosed(false); // ticks ⇒ open
+          timer = setTimeout(fallback, FALLBACK_MS);
+        } else {
+          void recheck(false); // silent for a while → confirm open/closed
+        }
+      };
+      timer = setTimeout(fallback, FALLBACK_MS);
+    };
+
+    const recheck = async (wantPrecision: boolean): Promise<void> => {
+      let meta: Awaited<ReturnType<typeof fetchMarketMeta>>;
+      try {
+        meta = await fetchMarketMeta(symbol.epic, brokerId);
+      } catch {
+        schedule(false, null); // transient: treat as open, re-arm the silence check
+        return;
+      }
+      if (cancelled) return;
+      if (wantPrecision && meta.pricePrecision != null) setFetchedPrecision(meta.pricePrecision);
+      // null `closed` (failed lookup) is treated as open, so it never shows a live
+      // market closed.
+      const closed = meta.closed === true;
+      setMarketClosed(closed);
+      schedule(closed, meta.nextOpen);
+    };
+
+    void recheck(true);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      clearTimeout(timer);
     };
   }, [symbol.epic, brokerId]);
 
@@ -1774,6 +1817,10 @@ export default function ChartCore({
           // Publish the price so the positions dock can mark P&L to market without
           // polling the server (see trading.setLivePrice / PositionsPanel).
           setLivePrice(symbol.epic, k.close);
+          // A live candle proves the market is open: record it (so the status check
+          // stays event-driven) and flip the badge open instantly if it was closed.
+          lastCandleAtRef.current = Date.now();
+          if (marketClosedRef.current) setMarketClosed(false);
           redraw(); // keep the price/alert pills glued as the bar moves
           // NOTE: alert FIRING is owned by the background alertEngine (the single
           // authority across all tabs, active included) — not here. This chart feed
