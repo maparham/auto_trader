@@ -57,6 +57,9 @@ export interface ConfirmRequest {
   title?: string;
   message: string;
   confirmLabel?: string; // default "Delete"
+  // Optional key/value rows shown beneath the message (e.g. all the details of a
+  // position about to be closed, with the realized P/L toned green/red).
+  details?: Array<{ label: string; value: string; tone?: "pos" | "neg" }>;
   onConfirm: () => void;
 }
 export const confirmRequest = new Signal<ConfirmRequest | null>(null);
@@ -100,16 +103,44 @@ export const pendingEditsSignal = new Signal<Record<string, PendingEdit>>({});
 // symbol). null = not editing.
 export const editTradeSignal = new Signal<string | null>(null);
 
-// Per-trade chart-line UI state, driven by the positions panel:
-//   hidden  — trade ids whose lines the user toggled off (the row's eye icon).
-//   hovered — the trade id whose row is currently hovered, if any.
-// A hidden trade's lines are skipped on the chart UNLESS it's the hovered trade
-// (hover temporarily reveals them); a hovered trade's lines render highlighted.
+// Mirrors settings.trading.confirmLineEdits so the chart — which doesn't receive the
+// settings prop — can decide what a line drag does: in confirm mode a drag SELECTS
+// its trade (so the on-chart pill + edit ticket appear with Apply/Discard); in
+// no-confirm mode it leaves selection alone so the dock's auto-apply effect commits
+// the drag at once (selecting would mark it editId and exclude it from that effect).
+// Set by App from the live settings.
+export const confirmLineEditsSignal = new Signal<boolean>(true);
+
+// True while the user is actively dragging a trade line on the chart. In no-confirm
+// mode the dock auto-applies staged drags; this pauses that until the drag ENDS, so
+// a live drag doesn't fire one broker write per pixel. Set by ChartCore's manual
+// line drag; read by PositionsPanel's auto-apply effect.
+export const draggingLineSignal = new Signal<boolean>(false);
+
+// Per-trade chart-line UI state, driven by BOTH the positions panel and the chart:
+//   hidden   — trade ids whose lines the user toggled off (the row's eye icon).
+//   hovered  — the trade id under the cursor (a panel row OR a chart line), if any.
+//   selected — the trade id click-selected (sticky until cleared), if any.
+// A hidden trade's lines are skipped on the chart UNLESS it's hovered OR selected
+// (either temporarily reveals them). Hover renders the lines emphasised (dashed,
+// thicker); selection renders them solid (a stronger, sticky emphasis). Hovering
+// or selecting a chart line mirrors onto the dock row and vice-versa, so the two
+// views stay in lockstep. There is at most one selected trade app-wide.
+// Which of a selected trade's lines is the ACTIVE one — only that line's pill shows
+// on the chart, and a drag makes the dragged line active so Apply/Discard land on it.
+export type TradeLineField = "price" | "stop" | "tp";
 export interface TradeLineUi {
   hidden: string[];
   hovered: string | null;
+  selected: string | null;
+  selectedField: TradeLineField | null;
 }
-export const tradeLineUiSignal = new Signal<TradeLineUi>({ hidden: [], hovered: null });
+export const tradeLineUiSignal = new Signal<TradeLineUi>({
+  hidden: [],
+  hovered: null,
+  selected: null,
+  selectedField: null,
+});
 
 export function toggleTradeHidden(id: string): void {
   const cur = tradeLineUiSignal.value;
@@ -119,14 +150,88 @@ export function toggleTradeHidden(id: string): void {
     : cur.hidden.filter((x) => x !== id);
   // When hiding, also drop this trade from `hovered`: the eye click happens while
   // the cursor is over the row, and the hover-reveal rule would otherwise keep the
-  // lines on screen (highlighted) — making the hide look like a no-op. Clearing
-  // hovered hides them at once; re-hovering the row later still peeks them.
+  // lines on screen — making the hide look like a no-op.
   const hovered = willHide && cur.hovered === id ? null : cur.hovered;
   tradeLineUiSignal.set({ ...cur, hidden, hovered });
+  // Hiding the selected trade also deselects it — routed through setTradeSelected so
+  // edit mode clears in lockstep (selection is the single writer of editTradeSignal).
+  if (willHide && cur.selected === id) setTradeSelected(null);
+}
+// Drop a single staged field (e.g. the dragged line's Discard) — clearing the whole
+// trade's pending only if that was the last staged field.
+export function discardPendingField(id: string, key: "price" | "stop" | "takeProfit"): void {
+  const cur = pendingEditsSignal.value;
+  const entry = cur[id];
+  if (!entry || !(key in entry)) return;
+  const next = { ...entry };
+  delete next[key];
+  const all = { ...cur };
+  if (Object.keys(next).length === 0) delete all[id];
+  else all[id] = next;
+  pendingEditsSignal.set(all);
 }
 export function setTradeHovered(id: string | null): void {
   if (tradeLineUiSignal.value.hovered === id) return;
   tradeLineUiSignal.set({ ...tradeLineUiSignal.value, hovered: id });
+}
+// Drop a trade's staged (un-applied) drag edits. Exported so the chart pill's
+// Discard and the Esc handler can clear them too.
+export function discardPendingEdit(id: string): void {
+  const cur = pendingEditsSignal.value;
+  if (!(id in cur)) return;
+  const next = { ...cur };
+  delete next[id];
+  pendingEditsSignal.set(next);
+}
+// Selecting a trade is the SINGLE source of truth for "which trade is active": it
+// also loads that trade into the order ticket's edit mode (editTradeSignal) and
+// reveals the trading panel, so the chart pill, the dock row, and the ticket all
+// track one selection. THIS is the only function that writes editTradeSignal — every
+// other edit-mode entry/exit routes through here so the two never desync. Switching
+// away from a trade with un-applied DRAG edits discards them (never confirmed) — the
+// per-switch discard the old dock "Pending changes" bar used to do. Selecting opens
+// the trading panel (edit mode); DEselecting closes it (since with single-select a
+// deselect means no trade is active — the panel has nothing to edit).
+// openPanel = false: visual-only select (highlight + pill) without opening the edit
+// ticket. Used by chart-line single-click so the panel is only opened on double-click.
+// Deselect (id == null) always closes the panel regardless of this flag.
+export function setTradeSelected(id: string | null, field: TradeLineField = "price", openPanel = true): void {
+  const cur = tradeLineUiSignal.value;
+  const nextField = id ? field : null;
+  if (cur.selected === id && cur.selectedField === nextField) return;
+  const idChanged = cur.selected !== id;
+  if (cur.selected && idChanged) discardPendingEdit(cur.selected);
+  tradeLineUiSignal.set({ ...cur, selected: id, selectedField: nextField });
+  // Edit-mode + panel only follow the TRADE, not the per-line focus. Selecting opens
+  // the panel (unless openPanel=false); deselecting always closes it.
+  if (idChanged) {
+    editTradeSignal.set(id);
+    if (id == null) tradePanelOpen.set(false);
+    else if (openPanel) tradePanelOpen.set(true);
+  }
+}
+// Dock-row click — selects/deselects the whole trade (its entry line's pill shows).
+export function toggleTradeSelected(id: string): void {
+  const cur = tradeLineUiSignal.value;
+  if (cur.selected === id) setTradeSelected(null);
+  else setTradeSelected(id, "price");
+}
+// Chart line click — focuses THAT line (its pill shows); clicking the already-active
+// line clears the whole selection. Pass openPanel=false for single-click (highlight
+// only); double-click uses the default (true) to open the edit ticket.
+export function selectTradeLine(id: string, field: TradeLineField, openPanel = true): void {
+  const cur = tradeLineUiSignal.value;
+  if (cur.selected === id && cur.selectedField === field) setTradeSelected(null);
+  else setTradeSelected(id, field, openPanel);
+}
+// Double-click-to-edit: force the panel open regardless of current selection state.
+// A dblclick is preceded by two clicks (which may have toggled selection back and
+// forth), so we can't rely on the current state — unconditionally set selected + open.
+export function openTradeEditor(id: string, field: TradeLineField): void {
+  setTradeSelected(id, field, true);
+  // Force open even if setTradeSelected's early-return or openPanel=false left it closed.
+  editTradeSignal.set(id);
+  tradePanelOpen.set(true);
 }
 
 // A new order being STAGED on the chart before submit (limit orders always; a

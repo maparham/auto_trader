@@ -108,6 +108,10 @@ export class OverlayManager {
   // Opaque per-cell storage prefix (see persist.ns). Set once by the owning
   // ChartController before rehydrate so every load/save addresses this cell's keys.
   private scope = "";
+  // The data broker this cell streams from (set by ChartCore). Alerts are stored
+  // per broker; "" until set, in which case the alert helpers fall back to the
+  // active broker (correct before the first setBroker).
+  private broker = "";
   private entries = new Map<string, Kind>();
   private alertCfg = new Map<string, AlertConfig>();
   // klinecharts overlay id -> the alert's STABLE id (SavedAlert.id). The overlay id
@@ -193,6 +197,15 @@ export class OverlayManager {
   }
   setScope(scope: string): void {
     this.scope = scope;
+  }
+  // The data broker this cell belongs to. Alerts are stored PER BROKER, and this
+  // cell can save an alert from an async callback that may fire mid broker-switch —
+  // so we address the alert store with the cell's OWN broker (set by ChartCore in
+  // lockstep with setEpic), never the ambient persistBroker which the toolbar
+  // selector may already have flipped. Empty until ChartCore sets it (then load/
+  // save fall back to the active broker, which is correct before the first set).
+  setBroker(broker: string): void {
+    this.broker = broker;
   }
   // Keep in lockstep with the chart's setPriceVolumePrecision (ChartCore's
   // effPrecision effect) so alert-level rounding uses the same decimals the axis does.
@@ -914,7 +927,7 @@ export class OverlayManager {
     if (this.hydratedEpic !== this.epic) return;
     this.reconciling = true;
     try {
-      const saved = loadAlerts(this.epic).map((a, i) => normalizeAlert(a, i));
+      const saved = loadAlerts(this.epic, this.broker || undefined).map((a, i) => normalizeAlert(a, i));
       const savedById = new Map(saved.map((a) => [a.id, a]));
       // Stable id -> this cell's overlay id, for the alerts we currently render.
       const haveByAid = new Map<string, string>();
@@ -1063,7 +1076,7 @@ export class OverlayManager {
           extendData: extra,
         });
       }
-      const rawAlerts = loadAlerts(this.epic);
+      const rawAlerts = loadAlerts(this.epic, this.broker || undefined);
       for (let ai = 0; ai < rawAlerts.length; ai++) {
         this.materializeSavedAlert(normalizeAlert(rawAlerts[ai], ai));
       }
@@ -1135,6 +1148,6 @@ export class OverlayManager {
       }
     }
     saveDrawings(this.scope, this.epic, drawings);
-    saveAlerts(this.epic, alerts);
+    saveAlerts(this.epic, alerts, this.broker || undefined);
   }
 }

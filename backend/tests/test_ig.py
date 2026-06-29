@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from auto_trader.brokers import ig
+from auto_trader.brokers import _dealing
 from auto_trader.config import IGSettings
 from auto_trader.brokers.ig import IGBroker, IGExecutionBroker
 from auto_trader.core.models import Order, OrderStatus, OrderType, Resolution, Side
@@ -357,8 +358,8 @@ def test_rejected_confirm_maps_to_rejected_with_reason(monkeypatch) -> None:
 def test_confirm_never_arrives_is_unknown_not_filled(monkeypatch) -> None:
     """A deal that submits but never confirms must be UNKNOWN — never FILLED — so
     the caller reconciles instead of assuming success."""
-    monkeypatch.setattr(ig, "_CONFIRM_ATTEMPTS", 2)
-    monkeypatch.setattr(ig, "_CONFIRM_BACKOFF", 0.0)
+    monkeypatch.setattr(_dealing, "CONFIRM_ATTEMPTS", 2)
+    monkeypatch.setattr(_dealing, "CONFIRM_BACKOFF", 0.0)
 
     def handler(req: httpx.Request) -> httpx.Response:
         p = req.url.path
@@ -459,6 +460,33 @@ def test_get_positions_computes_signed_upnl(monkeypatch) -> None:
     assert pos.stop_level == 95.0 and pos.take_profit_level == 110.0
     # long marks at bid: uPnL = 2 * (104 - 100) = 8
     assert pos.upnl == pytest.approx(8.0)
+
+
+def test_account_summary_picks_preferred_account(monkeypatch) -> None:
+    """A live IG account exposes real balance/available/currency from GET /accounts
+    (version 1), so the dock shows its true figures instead of paper ones. Pins the
+    assumed IG payload shape: accounts[].balance.{balance,available,...} + currency."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/session":
+            return _session_response()
+        if req.url.path == "/accounts":
+            assert req.headers.get("Version") == "1"
+            return httpx.Response(200, json={"accounts": [
+                {"preferred": False, "currency": "USD", "balance": {"balance": 1.0, "available": 1.0}},
+                {"preferred": True, "currency": "GBP",
+                 "balance": {"balance": 750.0, "available": 700.0, "deposit": 50.0, "profitLoss": -3.0}},
+            ]})
+        raise AssertionError(req.url.path)
+
+    b = _broker(handler, monkeypatch)
+    ex = IGExecutionBroker(b)
+    summary = asyncio.run(ex.get_account_summary())
+    asyncio.run(b.aclose())
+
+    assert summary["currency"] == "GBP"
+    assert summary["balance"] == 750.0
+    assert summary["available"] == 700.0
+    assert summary["profitLoss"] == -3.0
 
 
 def test_limit_order_rests_as_working_order_pending(monkeypatch) -> None:

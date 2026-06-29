@@ -23,8 +23,13 @@ import {
   subscribeLivePrices,
   subscribeTrades,
   tradeLabel,
+  brokerLabel,
+  brokerOf,
+  isRealMoneyAccount,
   type TradeView,
   type TradeAccount,
+  type BrokerAccount,
+  type AccountSummary,
 } from "./lib/trading";
 import {
   pendingEditsSignal,
@@ -32,6 +37,9 @@ import {
   tradeLineUiSignal,
   toggleTradeHidden,
   setTradeHovered,
+  toggleTradeSelected,
+  setTradeSelected,
+  draggingLineSignal,
   type PendingEdit,
 } from "./lib/signals";
 import { usedMargin } from "./lib/orderInfo";
@@ -39,6 +47,14 @@ import type { TradingSettings } from "./theme";
 
 interface Props {
   account?: TradeAccount;
+  // All registered accounts (from GET /api/brokers). The dock's account strip shows
+  // a tab per account OF THE ACTIVE BROKER so you can switch env (paper/demo/live)
+  // WITHOUT changing the workspace; switching broker is the tab-bar selector's job.
+  accounts?: BrokerAccount[];
+  onAccountChange?: (account: TradeAccount) => void;
+  // Real per-account balance/currency for a live account (null for paper → the strip
+  // uses the configured paper balance). Lets the dock show the account's TRUE figures.
+  accountSummary?: AccountSummary | null;
   // The focused chart's symbol — used ONLY to highlight its rows, never to filter:
   // this panel shows the WHOLE book (every symbol with an open position/order).
   focusedEpic?: string;
@@ -47,9 +63,9 @@ interface Props {
   precision?: number;
   // Account math for the header stats strip (balance / leverage / currency).
   trading: TradingSettings;
-  // Editing a row re-scopes the chart to its symbol and opens the order ticket.
+  // Editing a row re-scopes the chart to its symbol; selecting then opens the order
+  // ticket in edit mode (setTradeSelected reveals the panel — no separate callback).
   onJumpToEpic?: (epic: string) => void;
-  onOpenTradePanel?: () => void;
   // When false, a dragged level applies immediately (no Apply/Discard bar).
   confirmLineEdits?: boolean;
   // Dock maximized to fill the chart view (owned by App, which hides the workspace).
@@ -91,6 +107,16 @@ const COLLAPSE_KEY = "tradeDockCollapsed";
 // Text columns read more naturally A→Z; numbers and time most-recent/largest-first.
 const defaultDir = (key: SortKey): SortDir => (key === "epic" || key === "side" ? "asc" : "desc");
 
+// Env tab label (paper/demo/live → Paper/Demo/Live) and its risk tier, mirroring the
+// broker selector's old tiering so a real-money tab still reads red.
+function envLabel(env: string): string {
+  return env.charAt(0).toUpperCase() + env.slice(1);
+}
+function acctTier(a: BrokerAccount): "paper" | "demo" | "live" {
+  if (a.isRealMoney) return "live";
+  return a.env === "paper" ? "paper" : "demo";
+}
+
 function fmtTime(ms: number | null): string {
   if (ms == null) return "—";
   const d = new Date(ms);
@@ -101,12 +127,14 @@ function fmtTime(ms: number | null): string {
 
 export default function PositionsPanel({
   account = "capital:paper",
+  accounts = [],
+  onAccountChange,
+  accountSummary,
   focusedEpic,
   precisionFor,
   precision = 2,
   trading,
   onJumpToEpic,
-  onOpenTradePanel,
   confirmLineEdits = true,
   maximized = false,
   onToggleMaximize,
@@ -117,6 +145,12 @@ export default function PositionsPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(editTradeSignal.value);
   const [hidden, setHidden] = useState<string[]>(tradeLineUiSignal.value.hidden);
+  // Hovered/selected trade ids, mirrored from the chart so a line hover/select
+  // lights up its dock row (and vice-versa — the row writes these too).
+  const [hoveredId, setHoveredId] = useState<string | null>(tradeLineUiSignal.value.hovered);
+  const [selectedId, setSelectedId] = useState<string | null>(tradeLineUiSignal.value.selected);
+  // Paused auto-apply while a chart line is being dragged (no-confirm mode).
+  const [lineDragging, setLineDragging] = useState<boolean>(draggingLineSignal.value);
   const [tab, setTab] = useState<Tab>("positions");
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "openedAt", dir: "desc" });
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -132,9 +166,28 @@ export default function PositionsPanel({
   // the server (the dock fetches positions only on actual changes; see trading.ts).
   const [, setPriceTick] = useState(0);
   useEffect(() => subscribeLivePrices(() => setPriceTick((n) => n + 1)), []);
+  useEffect(() => draggingLineSignal.subscribe(setLineDragging), []);
   useEffect(() => pendingEditsSignal.subscribe(setPending), []);
   useEffect(() => editTradeSignal.subscribe(setEditId), []);
-  useEffect(() => tradeLineUiSignal.subscribe((ui) => setHidden(ui.hidden)), []);
+  useEffect(
+    () =>
+      tradeLineUiSignal.subscribe((ui) => {
+        setHidden(ui.hidden);
+        setHoveredId(ui.hovered);
+        setSelectedId(ui.selected);
+      }),
+    [],
+  );
+
+  // Account tabs for the active broker. Always render at least the active account
+  // (so a single-account broker still shows its tab) even before /api/brokers loads.
+  const activeBroker = brokerOf(account);
+  const brokerAccounts =
+    accounts.filter((a) => a.broker === activeBroker);
+  const acctTabs: BrokerAccount[] =
+    brokerAccounts.length > 0
+      ? brokerAccounts
+      : [{ key: account, broker: activeBroker, env: account.split(":")[1] ?? "paper", isRealMoney: false }];
 
   const trades = all; // whole book — every symbol, not just the focused chart
   const positions = trades.filter((t) => t.kind === "position");
@@ -145,32 +198,77 @@ export default function PositionsPanel({
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: defaultDir(key) }));
   const precOf = (e: string) => precisionFor?.(e) ?? precision;
   const fmt = (n: number, p = precision) => n.toFixed(p);
-  const cur = trading.accountCurrency;
+  // A live account reports its real currency; otherwise the configured paper one.
+  const isLive = isRealMoneyAccount(account);
+  const cur = accountSummary?.currency ?? trading.accountCurrency;
   const cash = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-  // Account stats (approximate, paper) — modelled on TV's account strip, same set
-  // and order. All from usedMargin + paper balance + summed upnl; Realized P&L is
-  // the one TV stat we can't show yet (the paper book doesn't track closed trades).
+  // Account stats — modelled on TV's account strip. For a LIVE account the balance/
+  // available/currency are the broker's real figures (accountSummary); for paper they
+  // come from usedMargin + the configured balance + summed upnl. Realized P&L is the
+  // one TV stat we can't show yet (the book doesn't track closed trades).
   const lev = trading.defaultLeverage > 0 ? trading.defaultLeverage : 1;
-  // Mark a position to market from the live streamed price when we have one (the
-  // chart is feeding this epic); else fall back to the server-computed uPnL from
-  // the last fetch. This is what keeps P&L live without a positions poll.
+  // P&L per position. For a LIVE account, trust the broker's server uPnL (`t.upnl`),
+  // which is already in the ACCOUNT currency — client-side marking from the chart's
+  // price stream would compute it in the INSTRUMENT currency and mis-mix currencies
+  // (e.g. a USD stock in a EUR account). Paper marks to market from the live price
+  // (same currency throughout) so P&L stays live without a poll.
   const liveUpnl = (t: TradeView): number | null => {
     if (t.kind !== "position" || t.quantity <= 0) return t.upnl;
+    if (isLive) return t.upnl; // server-marked, account currency (refreshed by the live poll)
     const live = getLivePrice(t.epic);
     if (live == null) return t.upnl;
     return (t.side === "buy" ? 1 : -1) * t.quantity * (live - t.priceLevel);
   };
   const pnl = positions.reduce((s, p) => s + (liveUpnl(p) ?? 0), 0);
-  const accountMargin = usedMargin(positions, lev); // margin held by open positions
   const ordersMargin = usedMargin(orders, lev); // margin reserved by resting orders
-  const balance = trading.accountBalance;
-  const equity = balance + pnl;
-  // Free capital = equity minus margin held by open positions AND reserved by
-  // resting orders, so "Available" reconciles with the Account/Orders margin stats.
-  const available = Math.max(0, equity - accountMargin - ordersMargin);
-  // Margin buffer: how much of equity is still free of position + orders margin.
+  const balance = accountSummary?.balance ?? trading.accountBalance;
+  const brokerMarginAllKnown =
+    positions.length > 0 && positions.every((p) => p.margin != null);
+  // Available: the broker's real free margin for a live account; for paper derive it
+  // from the configured balance + open P&L less the leverage-based margin.
+  const available =
+    accountSummary?.available ??
+    Math.max(0, balance + pnl - usedMargin(positions, lev) - ordersMargin);
+  // Does the LIVE broker's `balance` already include open P&L? Capital's does (balance
+  // = account value incl uPnL); IG / cash-balance brokers report a cash balance that
+  // EXCLUDES it. This decides whether adding `pnl` would double-count it. (Capital's
+  // `deposit` field is unrelated to used margin — see position-margin notes — so we
+  // derive used margin from balance/available, not deposit.)
+  const liveBalanceInclPnl = accountSummary != null && activeBroker === "capital";
+  // Account margin (deposit tied up by open positions). When the broker reports
+  // per-position margin (Capital) sum those rows so the strip footer adds up to the
+  // MARGIN column exactly. Otherwise derive used margin from the broker's balance −
+  // available, adding `pnl` ONLY for cash-balance brokers (for Capital the balance
+  // already includes it). For paper, compute from leverage.
+  const accountMargin = accountSummary
+    ? brokerMarginAllKnown
+      ? positions.reduce((s, p) => s + (p.margin ?? 0), 0) + ordersMargin
+      : Math.max(0, balance + (liveBalanceInclPnl ? 0 : pnl) - available - ordersMargin)
+    : usedMargin(positions, lev);
+  // Equity (account value). When the broker's per-position margin is known, equity =
+  // available + margin-in-use (broker-agnostic). Otherwise: Capital's `balance` IS the
+  // equity (already includes uPnL) — adding `pnl` would double-count it (the bug);
+  // a cash balance (IG / paper) needs balance + open P&L.
+  const equity =
+    accountSummary && brokerMarginAllKnown
+      ? available + accountMargin
+      : liveBalanceInclPnl
+        ? balance
+        : balance + pnl;
+  // Margin buffer: free margin as a share of equity (available ÷ equity).
   const marginBuffer = equity > 0 ? (available / equity) * 100 : 0;
+  // Margin level: equity as a share of margin in use (equity ÷ account margin) — this
+  // is Capital's "CFD Margin %"; null when nothing is at margin (no open positions).
+  const marginLevel = accountMargin > 0 ? (equity / accountMargin) * 100 : null;
+  // The broker's margin-call / close-out thresholds on the margin level above (a tooltip
+  // note so a trader knows how far the % can fall). Capital.com publishes these; other
+  // brokers omit the note until their levels are known.
+  // https://capital.com/en-eu/ways-to-trade/margin-calls
+  const marginCallNote =
+    activeBroker === "capital"
+      ? " Capital.com issues a margin call at 100% (no new trades) and again at 75%; at 50% or below it starts closing positions (margin close-out)."
+      : "";
   // P&L carries a directional caret + sign-driven tone (the one coloured stat).
   const pnlTone = pnl > 0 ? "pp-pos" : pnl < 0 ? "pp-neg" : "";
   const caret = pnl > 0 ? "▲" : pnl < 0 ? "▼" : "";
@@ -182,18 +280,35 @@ export default function PositionsPanel({
   // follow. Orders have no P&L, so their last/market/% are blank.
   const enrich = (t: TradeView): RowExt => {
     const tradeValue = t.priceLevel * t.quantity;
-    const margin = tradeValue / lev;
+    // Prefer the broker's real per-position leverage + margin (Capital varies the
+    // ratio per instrument, and its margin is in the account currency); fall back to
+    // the configured leverage estimate for paper / brokers that don't report them.
+    const leverage = t.leverage ?? lev;
+    const margin = t.margin ?? tradeValue / leverage;
     let last: number | null = null;
     let marketValue: number | null = null;
     let pnlPct: number | null = null;
     const upnl = liveUpnl(t);
-    if (t.kind === "position" && upnl != null && t.quantity > 0) {
+    if (t.kind === "position" && t.quantity > 0) {
       const sign = t.side === "buy" ? 1 : -1;
-      last = t.priceLevel + (sign * upnl) / t.quantity;
-      marketValue = last * t.quantity;
-      pnlPct = tradeValue !== 0 ? (upnl / tradeValue) * 100 : null;
+      if (isLive) {
+        // `upnl` is account-currency, so we can't back out a price from it. Use the
+        // real streamed price as `last`; P&L% is a price move (currency-invariant).
+        const live = getLivePrice(t.epic);
+        last = live ?? null;
+        marketValue = last != null ? last * t.quantity : null;
+        pnlPct =
+          last != null && t.priceLevel !== 0
+            ? (sign * (last - t.priceLevel)) / t.priceLevel * 100
+            : null;
+      } else if (upnl != null) {
+        // Paper: P&L is instrument-currency, so back out `last` to stay consistent.
+        last = t.priceLevel + (sign * upnl) / t.quantity;
+        marketValue = last * t.quantity;
+        pnlPct = tradeValue !== 0 ? (upnl / tradeValue) * 100 : null;
+      }
     }
-    return { ...t, upnl, last, marketValue, pnlPct, tradeValue, margin, leverage: lev };
+    return { ...t, upnl, last, marketValue, pnlPct, tradeValue, margin, leverage };
   };
 
   // Sorted view of the active tab. Nulls (no TP/SL/P&L/last/value/time) always sink
@@ -219,9 +334,6 @@ export default function PositionsPanel({
       /* ignore */
     }
   }
-  function toggleCollapsed() {
-    applyCollapsed(!collapsed);
-  }
   // Maximize fills the chart view with the dock; expand first if collapsed so there
   // is something to fill.
   function clickMaximize() {
@@ -242,30 +354,13 @@ export default function PositionsPanel({
         (x.edit.price != null || x.edit.stop != null || x.edit.takeProfit != null),
     );
 
-  // Switch the edit ticket to trade `next` (or close it). Discards the OUTGOING
-  // trade's un-applied pending edits SYNCHRONOUSLY first — before the panel
-  // recomputes `staged` for the new editId — so with confirmLineEdits=false the
-  // auto-apply effect can't commit the abandoned trade's unconfirmed levels in
-  // the switch window. (EditTicket's unmount cleanup is a backstop for panel-close.)
-  function openEdit(next: string | null) {
-    const prev = editTradeSignal.value;
-    if (prev && prev !== next) {
-      const cur = { ...pendingEditsSignal.value };
-      if (prev in cur) {
-        delete cur[prev];
-        pendingEditsSignal.set(cur);
-      }
-    }
-    editTradeSignal.set(next);
-  }
-
   // Open the order ticket in edit mode for `t`: re-scope the chart to its symbol
-  // (so the draggable SL/TP lines are visible), reveal the ticket sidebar, and put
-  // it into edit. Triggered by a row double-click or its pencil.
+  // (so the draggable SL/TP lines are visible), then SELECT it — setTradeSelected is
+  // the single path that loads edit mode + reveals the panel + discards the outgoing
+  // trade's un-applied edits. Triggered by a row click, double-click, or its pencil.
   function edit(t: TradeView) {
     onJumpToEpic?.(t.epic);
-    onOpenTradePanel?.();
-    openEdit(t.id);
+    setTradeSelected(t.id);
   }
 
   function clearStaged() {
@@ -289,6 +384,7 @@ export default function PositionsPanel({
   useEffect(() => {
     if (
       !confirmLineEdits &&
+      !lineDragging && // wait for the drag to END (no per-pixel broker writes)
       staged.length > 0 &&
       busy == null &&
       autoAppliedKey.current !== stagedKey
@@ -297,7 +393,7 @@ export default function PositionsPanel({
       void applyAll();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmLineEdits, stagedKey, busy]);
+  }, [confirmLineEdits, stagedKey, busy, lineDragging]);
 
   async function applyAll() {
     setBusy("apply");
@@ -373,34 +469,9 @@ export default function PositionsPanel({
             </div>
           </nav>
 
-          {staged.length > 0 && confirmLineEdits && (
-            <div className="pp-apply">
-              <div className="pp-apply-title">Pending changes</div>
-              <ul className="pp-apply-list">
-                {staged.map(({ trade, edit }) => {
-                  const p = precOf(trade.epic);
-                  return (
-                    <li key={trade.id} className="num">
-                      <span className="pp-apply-sym">{trade.epic}</span>{" "}
-                      {edit.price != null && trade.kind === "order" && (
-                        <span>Price → {fmt(edit.price, p)} </span>
-                      )}
-                      {edit.stop != null && <span>SL → {fmt(edit.stop, p)} </span>}
-                      {edit.takeProfit != null && <span>TP → {fmt(edit.takeProfit, p)}</span>}
-                    </li>
-                  );
-                })}
-              </ul>
-              <div className="pp-apply-actions">
-                <button className="pp-apply-btn" disabled={busy === "apply"} onClick={applyAll}>
-                  Apply
-                </button>
-                <button className="pp-discard-btn" disabled={busy === "apply"} onClick={clearStaged}>
-                  Discard
-                </button>
-              </div>
-            </div>
-          )}
+          {/* The old "Pending changes" Apply/Discard bar lived here. Drag-staged
+              edits now surface on the on-chart pill for the (auto-)selected trade,
+              and confirmLineEdits=false still auto-applies via the effect below. */}
 
           {error && <div className="pp-error">{error}</div>}
 
@@ -413,20 +484,20 @@ export default function PositionsPanel({
               <table className="pp-table">
                 <thead>
                   <tr>
-                    <th className="pp-c-sym"><SortHeader label="Symbol" col="epic" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-side"><SortHeader label="Side" col="side" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="Qty" col="quantity" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label={entryLabel} col="priceLevel" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="TP" col="takeProfit" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="SL" col="stop" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="Last" col="last" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="P&L" col="upnl" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="Trade val" col="tradeValue" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="Mkt val" col="marketValue" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="Lev" col="leverage" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-num"><SortHeader label="Margin" col="margin" sort={sort} onSort={toggleSort} /></th>
-                    <th className="pp-c-time"><SortHeader label="Time" col="openedAt" sort={sort} onSort={toggleSort} /></th>
+                    <th className="pp-c-sym"><SortHeader label="Symbol" col="epic" sort={sort} onSort={toggleSort} title="Instrument" /></th>
+                    <th className="pp-c-side"><SortHeader label="Side" col="side" sort={sort} onSort={toggleSort} title="Direction — long (buy) profits when price rises, short (sell) when it falls" /></th>
+                    <th className="pp-c-num"><SortHeader label="Qty" col="quantity" sort={sort} onSort={toggleSort} title="Position size (number of contracts / shares)" /></th>
+                    <th className="pp-c-num"><SortHeader label={entryLabel} col="priceLevel" sort={sort} onSort={toggleSort} title={tab === "positions" ? "Average price you opened the position at" : "Limit price the resting order will fill at"} /></th>
+                    <th className="pp-c-num"><SortHeader label="TP" col="takeProfit" sort={sort} onSort={toggleSort} title="Take-profit — auto-closes the position in profit at this price" /></th>
+                    <th className="pp-c-num"><SortHeader label="SL" col="stop" sort={sort} onSort={toggleSort} title="Stop-loss — auto-closes the position to cap the loss at this price" /></th>
+                    <th className="pp-c-num"><SortHeader label="Last" col="last" sort={sort} onSort={toggleSort} title="Latest market price" /></th>
+                    <th className="pp-c-num"><SortHeader label="P&L" col="upnl" sort={sort} onSort={toggleSort} title="Unrealized profit / loss in the account currency (broker-reported for live accounts)" /></th>
+                    <th className="pp-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={toggleSort} title="Unrealized P&L as a percentage of the price move from entry" /></th>
+                    <th className="pp-c-num"><SortHeader label="Trade val" col="tradeValue" sort={sort} onSort={toggleSort} title="Notional at entry = entry price × quantity (instrument currency)" /></th>
+                    <th className="pp-c-num"><SortHeader label="Mkt val" col="marketValue" sort={sort} onSort={toggleSort} title="Current notional = last price × quantity (instrument currency)" /></th>
+                    <th className="pp-c-num"><SortHeader label="Lev" col="leverage" sort={sort} onSort={toggleSort} title="Leverage on this position — from the broker for live accounts (Capital varies it by instrument, e.g. 5:1 on US shares)" /></th>
+                    <th className="pp-c-num"><SortHeader label="Margin" col="margin" sort={sort} onSort={toggleSort} title="Deposit required to hold this position, in the account currency = current notional ÷ leverage (broker figure for live accounts)" /></th>
+                    <th className="pp-c-time"><SortHeader label="Time" col="openedAt" sort={sort} onSort={toggleSort} title={tab === "positions" ? "When the position was opened" : "When the order was placed"} /></th>
                     <th className="pp-c-act" />
                   </tr>
                 </thead>
@@ -441,11 +512,17 @@ export default function PositionsPanel({
                       <tr
                         className={`pp-row pp-dir-${long ? "long" : "short"}${
                           editId === t.id ? " pp-editing" : ""
-                        }${isFocused ? " pp-focused" : ""}`}
+                        }${isFocused ? " pp-focused" : ""}${
+                          selectedId === t.id ? " pp-selected" : ""
+                        }${hoveredId === t.id ? " pp-hovered" : ""}`}
                         key={t.id}
-                        // Single click → just open/focus the chart for this trade's
-                        // symbol. Double click → also reveal the ticket in edit mode.
-                        onClick={() => onJumpToEpic?.(t.epic)}
+                        // Single click → open/focus the chart for this trade's symbol
+                        // AND (de)select the trade, so its chart lines + this row light
+                        // up together. Double click → also reveal the ticket in edit mode.
+                        onClick={() => {
+                          onJumpToEpic?.(t.epic);
+                          toggleTradeSelected(t.id);
+                        }}
                         onDoubleClick={() => edit(t)}
                         onMouseEnter={() => setTradeHovered(t.id)}
                         onMouseLeave={() => {
@@ -537,15 +614,49 @@ export default function PositionsPanel({
           identity on the left, TV's dense stat row on the right. Collapsed, the dock is
           just this bar and the stats compress to one live ticker line. */}
       <div className="pp-bar">
-        <button
-          className="pp-collapse"
-          onClick={toggleCollapsed}
-          aria-expanded={!collapsed}
-          title={collapsed ? "Expand book" : "Collapse book"}
-        >
-          <span className={`pp-chevron${collapsed ? " open" : ""}`}>⌄</span>
-          <span className="pp-bar-title">Paper account</span>
-        </button>
+        {/* Account tabs — switch env (paper/demo/live) WITHIN the active broker
+            without changing the workspace. Always shown, even for a single-account
+            broker, so the active env always reads clearly. Each tab carries its own
+            open/close chevron: the active tab's toggles the dock, an inactive tab's
+            switches to that account and opens its book. */}
+        <div className="pp-acct-tabs" role="tablist" aria-label="Account">
+          {acctTabs.map((a) => {
+            const isActive = a.key === account;
+            const t = acctTier(a);
+            // The book is on screen only for the active env while expanded; that's
+            // the lone case the chevron points "down" (collapse). Every other tab
+            // shows the "up" (open) affordance.
+            const bookVisible = isActive && !collapsed;
+            return (
+              <button
+                key={a.key}
+                className={`pp-acct-tab ${t}${isActive ? " active" : ""}`}
+                role="tab"
+                aria-selected={isActive}
+                aria-expanded={bookVisible}
+                // The whole tab toggles its book: the active tab opens/closes the
+                // dock, an inactive tab switches to that account and opens it.
+                onClick={() => {
+                  if (!isActive) onAccountChange?.(a.key);
+                  applyCollapsed(isActive ? !collapsed : false);
+                }}
+                title={
+                  bookVisible
+                    ? `Collapse ${brokerLabel(a.broker)} · ${envLabel(a.env)} book`
+                    : isActive
+                      ? `Expand ${brokerLabel(a.broker)} · ${envLabel(a.env)} book`
+                      : `Show ${brokerLabel(a.broker)} · ${envLabel(a.env)} book`
+                }
+              >
+                <span className={`env-dot ${t}`} aria-hidden="true" />
+                {envLabel(a.env)}
+                <span className={`pp-chevron${bookVisible ? "" : " open"}`}>
+                  <ChevronIcon />
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
         {collapsed ? (
           <div className="pp-ticker">
@@ -562,9 +673,24 @@ export default function PositionsPanel({
           </div>
         ) : (
           <div className="pp-acct">
-            <Stat label="Balance" value={`${cash(balance)} ${cur}`} />
-            <Stat label="Equity" value={`${cash(equity)} ${cur}`} />
-            <div className="pp-stat">
+            <Stat
+              label="Balance"
+              value={`${cash(balance)} ${cur}`}
+              title={
+                isLive
+                  ? "Account value reported by the broker (cash plus open P&L)"
+                  : "Configured paper-trading cash balance"
+              }
+            />
+            <Stat
+              label="Equity"
+              value={`${cash(equity)} ${cur}`}
+              title="Account value = available margin + margin in use (cash plus open P&L). What the account is worth right now."
+            />
+            <div
+              className="pp-stat"
+              title="Open profit / loss across all positions, marked to live prices (broker-reported for live accounts)"
+            >
               <span className="pp-stat-label">Unrealized P&amp;L</span>
               <span className={`pp-stat-val num ${pnlTone}`}>
                 {caret && <span className="pp-caret">{caret}</span>}
@@ -572,10 +698,31 @@ export default function PositionsPanel({
                 {cash(Math.abs(pnl))} {cur}
               </span>
             </div>
-            <Stat label="Account margin" value={`${cash(accountMargin)} ${cur}`} />
-            <Stat label="Available" value={`${cash(available)} ${cur}`} />
-            <Stat label="Orders margin" value={`${cash(ordersMargin)} ${cur}`} />
-            <Stat label="Margin buffer" value={`${marginBuffer.toFixed(2)}%`} />
+            <Stat
+              label="Account margin"
+              value={`${cash(accountMargin)} ${cur}`}
+              title="Total deposit currently tied up by open positions — the sum of each position's MARGIN (broker figures for live accounts)"
+            />
+            <Stat
+              label="Available"
+              value={`${cash(available)} ${cur}`}
+              title="Free margin available to open new positions (broker-reported for live accounts)"
+            />
+            <Stat
+              label="Orders margin"
+              value={`${cash(ordersMargin)} ${cur}`}
+              title="Margin reserved by resting (not-yet-filled) working orders"
+            />
+            <Stat
+              label="Margin buffer"
+              value={`${marginBuffer.toFixed(2)}%`}
+              title={`Free margin as a share of equity (available ÷ equity). Higher = more headroom before a margin call.${marginCallNote}`}
+            />
+            <Stat
+              label="Margin level"
+              value={marginLevel != null ? `${marginLevel.toFixed(2)}%` : "—"}
+              title={`Equity as a share of margin in use (equity ÷ account margin) — Capital's 'CFD Margin %'. Falls toward 100% as risk rises.${marginCallNote}`}
+            />
           </div>
         )}
       </div>
@@ -583,9 +730,19 @@ export default function PositionsPanel({
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "pos" | "neg" }) {
+function Stat({
+  label,
+  value,
+  tone,
+  title,
+}: {
+  label: string;
+  value: string;
+  tone?: "pos" | "neg";
+  title?: string;
+}) {
   return (
-    <div className="pp-stat">
+    <div className="pp-stat" title={title}>
       <span className="pp-stat-label">{label}</span>
       <span className={`pp-stat-val num${tone ? ` pp-${tone}` : ""}`}>{value}</span>
     </div>
@@ -599,17 +756,20 @@ function SortHeader({
   col,
   sort,
   onSort,
+  title,
 }: {
   label: string;
   col: SortKey;
   sort: { key: SortKey; dir: SortDir };
   onSort: (key: SortKey) => void;
+  title?: string;
 }) {
   const active = sort.key === col;
   return (
     <button
       className={`pp-sort${active ? " on" : ""}`}
       onClick={() => onSort(col)}
+      title={title}
       aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
     >
       <span>{label}</span>
@@ -676,6 +836,23 @@ function PencilIcon() {
         fill="none"
         stroke="currentColor"
         strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// Chevron: a down-pointing V (collapse). Rotated 180° via `.open` to point up
+// (expand) — the dock lives above the strip, so up = reveal, down = tuck away.
+function ChevronIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+      <path
+        d="M6 9l6 6 6-6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
     </svg>

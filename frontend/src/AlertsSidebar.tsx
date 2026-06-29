@@ -103,6 +103,9 @@ interface Props {
   tabs: ChartTab[];
   // The active tab's on-screen cells with live overlays, for cross-cell hover/select.
   visibleCells: VisibleCell[];
+  // The active data broker. Alerts are stored per broker, so the all-symbols scan +
+  // direct edits below address THIS broker's alert store (each broker is isolated).
+  brokerId: string;
   // Open (or reuse) the chart for an alert and select its line. precisionGuess seeds
   // a freshly-opened tab when no chart for the epic is on screen.
   onOpenAlert: (epic: string, target: AlertNavTarget, precisionGuess: number) => void;
@@ -127,6 +130,7 @@ export default function AlertsSidebar({
   precision,
   tabs,
   visibleCells,
+  brokerId,
   onOpenAlert,
 }: Props) {
   const overlays = controller?.overlays ?? null;
@@ -278,7 +282,7 @@ export default function AlertsSidebar({
         bucket!.set(a.id, a);
       });
     };
-    for (const { epic: ep, alerts } of loadAllAlerts()) addToBucket(ep, alerts);
+    for (const { epic: ep, alerts } of loadAllAlerts(brokerId)) addToBucket(ep, alerts);
 
     // Fractional digit count of a level (capped), to format symbols with no open cell.
     const decimalsOf = (n: number): number => {
@@ -497,7 +501,7 @@ export default function AlertsSidebar({
                                 onConfirm: () => {
                                   // Storage-level delete (the alert's chart may be
                                   // closed); open cells + the engine reconcile off the bump.
-                                  deleteStoredAlert(g.epic, a.id);
+                                  deleteStoredAlert(g.epic, a.id, brokerId);
                                   bumpAlerts();
                                 },
                               });

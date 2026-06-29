@@ -10,6 +10,7 @@ interface Props {
   title?: string;
   message: string;
   confirmLabel?: string;
+  details?: Array<{ label: string; value: string; tone?: "pos" | "neg" }>;
   onConfirm: () => void;
   onClose: () => void;
 }
@@ -18,6 +19,7 @@ export default function ConfirmDialog({
   title = "Confirm",
   message,
   confirmLabel = "Delete",
+  details,
   onConfirm,
   onClose,
 }: Props) {
@@ -29,7 +31,19 @@ export default function ConfirmDialog({
           <span>{title}</span>
           <CloseButton onClick={onClose} label="Cancel" />
         </div>
-        <div className="confirm-body">{message}</div>
+        <div className="confirm-body">
+          {message}
+          {details && details.length > 0 && (
+            <dl className="confirm-details">
+              {details.map((d) => (
+                <div key={d.label} className="confirm-detail-row">
+                  <dt>{d.label}</dt>
+                  <dd className={d.tone ? `cd-${d.tone}` : undefined}>{d.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
         <div className="modal-foot">
           <button className="ghost" onClick={onClose}>
             Cancel

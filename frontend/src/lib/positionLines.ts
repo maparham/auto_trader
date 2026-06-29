@@ -26,8 +26,12 @@ export interface LineSpec {
   color: string;
   label: string;
   draggable: boolean;
-  // Drawn emphasised (thicker) — set while the trade's panel row is hovered.
+  // Drawn emphasised (dashed, thicker) — set while the trade is hovered (panel row
+  // or the line itself).
   highlight?: boolean;
+  // Drawn click-selected (solid, sticky) — a stronger emphasis than hover. When both
+  // are true, selected wins.
+  selected?: boolean;
   onDragEnd?: (newLevel: number) => void;
 }
 
@@ -50,8 +54,10 @@ export interface SpecBuildOpts {
   // Trade ids whose lines the user hid (eye icon). Their lines are skipped unless
   // that trade is also `hovered` (hover temporarily reveals a hidden trade).
   hidden?: Set<string>;
-  // The trade id whose panel row is hovered: its lines render highlighted.
+  // The hovered trade id (panel row or chart line): its lines render highlighted.
   hovered?: string | null;
+  // The click-selected trade id: its lines render solid (sticky emphasis).
+  selected?: string | null;
   // A new order being staged on this epic. Its lines are always draggable and
   // report under the id "draft".
   draft?: DraftOrder | null;
@@ -66,10 +72,11 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
   const fmt = (n: number) => n.toFixed(o.precision);
   for (const t of o.trades) {
     if (t.epic !== o.epic) continue;
+    const selected = o.selected === t.id;
     const highlight = o.hovered === t.id;
-    // Hidden lines are skipped — unless this is the hovered trade, in which case
-    // hover temporarily reveals them.
-    if (o.hidden?.has(t.id) && !highlight) continue;
+    // Hidden lines are skipped — unless this trade is hovered or selected, in which
+    // case it's temporarily revealed.
+    if (o.hidden?.has(t.id) && !highlight && !selected) continue;
     const pend = o.pending[t.id] ?? {};
     // Merge by PRESENCE (not `??`): a pending field set to `null` means "removed".
     const price = pend.price !== undefined ? pend.price : t.priceLevel;
@@ -77,15 +84,21 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
     const tp = pend.takeProfit !== undefined ? pend.takeProfit : t.takeProfit;
     const word = tradeLabel(t.kind, t.side);
     if (price != null) {
+      // Show unrealized P/L on the entry label for open positions (not orders).
+      const pnlStr =
+        t.kind === "position" && t.upnl != null
+          ? ` (${t.upnl >= 0 ? "+" : ""}${t.upnl.toFixed(2)})`
+          : "";
       specs.push({
         key: `${t.id}:price`,
         level: price,
         color: PRICE_COLOR,
-        label: `${word} ${t.quantity} @ ${fmt(price)}`,
+        label: `${word} ${t.quantity} @ ${fmt(price)}${pnlStr}`,
         // A resting order's price line is draggable to reprice it; a filled
         // position's entry is fixed (you can't change a fill), so never draggable.
         draggable: t.kind === "order",
         highlight,
+        selected,
         onDragEnd: (lvl) => o.onDrag(t.id, "price", lvl),
       });
     }
@@ -97,6 +110,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         label: `SL ${fmt(stop)}`,
         draggable: o.levelsDraggable,
         highlight,
+        selected,
         onDragEnd: (lvl) => o.onDrag(t.id, "stop", lvl),
       });
     }
@@ -108,6 +122,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         label: `TP ${fmt(tp)}`,
         draggable: o.levelsDraggable,
         highlight,
+        selected,
         onDragEnd: (lvl) => o.onDrag(t.id, "takeProfit", lvl),
       });
     }
@@ -155,12 +170,13 @@ interface LineExtra {
   label: string;
   color: string;
   highlight?: boolean;
+  selected?: boolean;
 }
 
 function asLineExtra(v: unknown): LineExtra {
   return v && typeof v === "object"
     ? (v as LineExtra)
-    : { label: "", color: "#888", highlight: false };
+    : { label: "", color: "#888", highlight: false, selected: false };
 }
 
 // One-point horizontal line spanning the chart width, with a left-anchored label
@@ -184,13 +200,15 @@ const tradeLine: OverlayTemplate = {
       {
         type: "line",
         attrs: { coordinates: [{ x: 0, y }, { x: bounding.width, y }] },
-        // Hovered (highlighted) lines stay dashed but draw thicker (2px) so the
-        // row↔line link reads at a glance; the rest are thin (1px).
+        // Emphasised (hovered OR selected) lines stay dashed but draw thicker (2px)
+        // so the row↔line link reads at a glance; the rest are thin (1px). Selection
+        // looks identical to hover on the chart — it just persists after the cursor
+        // leaves (the dock row carries the distinct sticky-selected styling).
         styles: {
           style: "dashed",
           dashedValue: [4, 4],
           color: extra.color,
-          size: extra.highlight ? 2 : 1,
+          size: extra.selected || extra.highlight ? 2 : 1,
         },
         ignoreEvent: !grabbable,
       },
@@ -229,6 +247,9 @@ export function registerPositionLine(): void {
 interface DrawnLine {
   overlayId: string;
   sig: string;
+  // The level the line currently sits at (server/pending), so a drop that didn't
+  // actually move the line reports nothing — see onMoveEnd.
+  level: number;
   onDragEnd?: (newLevel: number) => void;
 }
 
@@ -262,20 +283,23 @@ export class PositionLines {
   }
 
   private sig(s: LineSpec): string {
-    return `${s.level}|${s.label}|${s.color}|${s.draggable}|${s.highlight ?? false}`;
+    return `${s.level}|${s.label}|${s.color}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}`;
   }
 
   private onMoveEnd = (e: OverlayEvent): boolean => {
     // Find the line by overlay id, quantize the dropped level, report it. We snap
     // the overlay back to the server/spec level on the next render (the caller's
     // pending state drives where it actually sits), so dragging never silently
-    // commits — it just reports intent.
+    // commits — it just reports intent. A plain CLICK on a draggable line also fires
+    // this (klinecharts ends a zero-distance press), so we report only when the
+    // level actually CHANGED — otherwise selecting a line would stage a no-op edit.
     const entry = [...this.lines.entries()].find(
       ([, l]) => l.overlayId === e.overlay.id,
     );
     const raw = e.overlay.points?.[0]?.value;
     if (entry && raw != null && entry[1].onDragEnd) {
-      entry[1].onDragEnd(this.round(raw));
+      const dropped = this.round(raw);
+      if (dropped !== this.round(entry[1].level)) entry[1].onDragEnd(dropped);
     }
     return false;
   };
@@ -289,13 +313,14 @@ export class PositionLines {
       const existing = this.lines.get(spec.key);
       if (existing) {
         existing.onDragEnd = spec.onDragEnd; // always use the latest closure
+        existing.level = spec.level; // track where the line now sits (drop-vs-click)
         if (existing.sig !== sig) {
           this.chart.overrideOverlay({
             id: existing.overlayId,
             points: [{ value: spec.level }],
             lock: !spec.draggable,
             needDefaultPointFigure: spec.draggable,
-            extendData: { label: spec.label, color: spec.color, highlight: spec.highlight ?? false },
+            extendData: { label: spec.label, color: spec.color, highlight: spec.highlight ?? false, selected: spec.selected ?? false },
           });
           existing.sig = sig;
         }
@@ -308,7 +333,7 @@ export class PositionLines {
         // The default point figure is klinecharts' drag handle — only show/enable
         // it for a draggable line (a locked line has none, can't be moved).
         needDefaultPointFigure: spec.draggable,
-        extendData: { label: spec.label, color: spec.color, highlight: spec.highlight ?? false },
+        extendData: { label: spec.label, color: spec.color, highlight: spec.highlight ?? false, selected: spec.selected ?? false },
         styles: { line: { color: spec.color } },
         onRightClick: () => true, // suppress klinecharts' default delete menu
         onPressedMoveEnd: this.onMoveEnd,
@@ -323,7 +348,7 @@ export class PositionLines {
         },
       });
       if (typeof overlayId === "string") {
-        this.lines.set(spec.key, { overlayId, sig, onDragEnd: spec.onDragEnd });
+        this.lines.set(spec.key, { overlayId, sig, level: spec.level, onDragEnd: spec.onDragEnd });
       }
     }
     for (const [key, line] of this.lines) {

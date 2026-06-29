@@ -17,6 +17,70 @@ import type { Instrument, Period } from "./feed";
 
 const PREFIX = "auto-trader";
 
+// --- per-broker workspace isolation ------------------------------------------
+//
+// Each DATA-BROKER (capital / ig-demo / ig-live) is its own isolated platform
+// instance: its own tabs, named layouts, scratch, recent symbols, templates and
+// alerts. We get that by prefixing every WORKSPACE-ROOT key with the broker id —
+// `auto-trader.b.<broker>.<suffix>`. Switching brokers swaps the whole workspace.
+//
+// What is and isn't broker-scoped:
+//  - ROOTS (this file's tabs/layouts/scratch/recent/template/alerts)  -> per broker
+//  - SCOPED per-cell keys (drawings/indicators/avwap/indicatorConfig) -> NOT prefixed.
+//    They're addressed by a globally-unique tab/cell `scope` that only ever lives
+//    inside one broker's workspace, so they're isolated transitively — and a chart's
+//    async unmount-save can't write them under the wrong broker (the key carries no
+//    broker, so a mid-switch flip is irrelevant to them).
+//  - GLOBAL PREFERENCES (settings, indicator defaults/presets, favourites) -> shared.
+//
+// `persistBroker` names the broker whose App-owned roots read/write.
+// INVARIANT — SINGLE WRITER: it is assigned in EXACTLY TWO places — the eager init
+// just below (module load) and App's broker-switch handler via setPersistBroker().
+// The whole correctness argument rests on this; do NOT add a third writer. App-level
+// roots are only ever mutated through App's controlled flow, which swaps the visible
+// tabs and persistBroker TOGETHER in one handler — so the persistence namespace
+// always tracks the CONTENT owner, never the transient UI selection mid-switch. The
+// one root written from a remounting chart subtree is ALERTS, so those take an
+// EXPLICIT `broker` argument instead of reading persistBroker (see alert helpers).
+function brokerFromActiveAccount(): string {
+  try {
+    // App persists the active account as "{broker}:{env}" under this bare key.
+    const acct = localStorage.getItem("activeAccount");
+    if (acct) return acct.split(":")[0];
+  } catch {
+    /* test/node env without localStorage → default below */
+  }
+  return "capital"; // feed.ts DEFAULT_BROKER; literal to avoid an import cycle
+}
+let persistBroker = brokerFromActiveAccount();
+export function setPersistBroker(broker: string): void {
+  persistBroker = broker;
+}
+export function getPersistBroker(): string {
+  return persistBroker;
+}
+// A workspace-root key for the ACTIVE broker. Dynamic (reads persistBroker on every
+// call) so it always tracks the current broker — never freeze it into a const.
+const root = (suffix: string) => `${PREFIX}.b.${persistBroker}.${suffix}`;
+// A workspace-root key for an EXPLICIT broker (used by the per-cell/engine alert
+// paths, which must not depend on the ambient persistBroker — see invariant above).
+const brokerRoot = (broker: string, suffix: string) =>
+  `${PREFIX}.b.${broker}.${suffix}`;
+
+// Per-broker roots that are intentionally DEVICE-LOCAL (written via saveLocal, never
+// mirrored): which named layout this device shows, the unsaved scratch workspace,
+// and the autosave toggle. hydrateFromBackend's prune/seed must skip them — the
+// backend snapshot never carries them, so pruning would wipe this device's open
+// layout. Suffix-matched because each broker has its own copy (the old exact-string
+// Set couldn't span brokers).
+const DEVICE_LOCAL_SUFFIXES = ["activeLayoutId", "scratch", "autosave"] as const;
+function isDeviceLocalKey(k: string): boolean {
+  return (
+    k.startsWith(`${PREFIX}.b.`) &&
+    DEVICE_LOCAL_SUFFIXES.some((s) => k.endsWith(`.${s}`))
+  );
+}
+
 // --- backend mirror ----------------------------------------------------------
 //
 // localStorage stays the synchronous source for rendering (load() is unchanged),
@@ -240,7 +304,7 @@ export async function hydrateFromBackend(): Promise<boolean> {
   const own = `${PREFIX}.`;
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const k = localStorage.key(i);
-    if (!k || !k.startsWith(own) || present.has(k) || DEVICE_LOCAL_KEYS.has(k)) continue;
+    if (!k || !k.startsWith(own) || present.has(k) || isDeviceLocalKey(k)) continue;
     localStorage.removeItem(k);
     changed = true;
   }
@@ -256,7 +320,7 @@ function seedBackendFromLocal(): void {
   const own = `${PREFIX}.`;
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (!k || !k.startsWith(own) || DEVICE_LOCAL_KEYS.has(k)) continue;
+    if (!k || !k.startsWith(own) || isDeviceLocalKey(k)) continue;
     const v = localStorage.getItem(k);
     if (v != null) mirrorSet(k, v);
   }
@@ -398,8 +462,9 @@ interface ChartTabV1 {
   period: Period;
 }
 
-const TABS_KEY = `${PREFIX}.tabs`;
-const ACTIVE_TAB_KEY = `${PREFIX}.activeTab`;
+// Per-broker workspace roots (see root() — addresses the ACTIVE broker).
+const tabsKey = () => root("tabs");
+const activeTabKey = () => root("activeTab");
 
 // The migrated cell reuses the tab's own prefix so its keys are byte-identical to
 // the pre-cells layout — existing drawings/alerts/indicators survive the upgrade.
@@ -432,18 +497,18 @@ function migrateTabs(list: Array<ChartTab | ChartTabV1>): ChartTab[] {
 }
 
 export function loadTabs(): ChartTab[] | null {
-  const list = load<Array<ChartTab | ChartTabV1> | null>(TABS_KEY, null);
+  const list = load<Array<ChartTab | ChartTabV1> | null>(tabsKey(), null);
   if (!Array.isArray(list) || list.length === 0) return null;
   return migrateTabs(list);
 }
 export function saveTabs(tabs: ChartTab[]): void {
-  save(TABS_KEY, tabs);
+  save(tabsKey(), tabs);
 }
 export function loadActiveTab(): string | null {
-  return load<string | null>(ACTIVE_TAB_KEY, null);
+  return load<string | null>(activeTabKey(), null);
 }
 export function saveActiveTab(id: string): void {
-  save(ACTIVE_TAB_KEY, id);
+  save(activeTabKey(), id);
 }
 
 // --- named workspace layouts -------------------------------------------------
@@ -465,21 +530,15 @@ export function saveActiveTab(id: string): void {
 // generate fresh tab/cell ids AND copy each cell's scope content to the new scopes
 // (see cloneWorkspace) — otherwise two layouts alias the same drawings.
 
-const LAYOUTS_KEY = `${PREFIX}.layouts`;
-const DEFAULT_LAYOUT_KEY = `${PREFIX}.defaultLayoutId`;
-const ACTIVE_LAYOUT_KEY = `${PREFIX}.activeLayoutId`; // device-local
-const SCRATCH_KEY = `${PREFIX}.scratch`; // device-local
-
-// PREFIX-owned keys that are intentionally NEVER mirrored (written via saveLocal).
-// hydrateFromBackend's prune must skip these: the backend snapshot never contains
-// them, so pruning them would wipe this device's open layout / scratch on startup.
-const AUTOSAVE_KEY = `${PREFIX}.autosave`; // device-local
-const DEVICE_LOCAL_KEYS: ReadonlySet<string> = new Set([
-  ACTIVE_LAYOUT_KEY,
-  SCRATCH_KEY,
-  AUTOSAVE_KEY,
-]);
-const layoutKey = (id: string) => `${PREFIX}.layout.${id}`;
+// Per-broker named-layout roots. The MIRRORED ones (index/body/default) sync across
+// devices; the DEVICE-LOCAL ones (activeLayoutId/scratch/autosave) don't (see
+// isDeviceLocalKey + saveLocal). All address the ACTIVE broker via root().
+const layoutsKey = () => root("layouts");
+const defaultLayoutKey = () => root("defaultLayoutId");
+const activeLayoutKey = () => root("activeLayoutId"); // device-local
+const scratchKey = () => root("scratch"); // device-local
+const autosaveKey = () => root("autosave"); // device-local
+const layoutKey = (id: string) => root(`layout.${id}`);
 
 export interface LayoutMeta {
   id: string;
@@ -492,7 +551,7 @@ export interface Workspace {
 }
 
 export function loadLayouts(): LayoutMeta[] {
-  return load<LayoutMeta[]>(LAYOUTS_KEY, []);
+  return load<LayoutMeta[]>(layoutsKey(), []);
 }
 export function loadLayout(id: string): Workspace | null {
   const w = load<Workspace | null>(layoutKey(id), null);
@@ -510,7 +569,7 @@ export function saveLayout(id: string, name: string, ws: Workspace): void {
   const idx = list.findIndex((l) => l.id === id);
   if (idx >= 0) list[idx] = { id, name };
   else list.push({ id, name });
-  save(LAYOUTS_KEY, list);
+  save(layoutsKey(), list);
 }
 
 export function renameLayout(id: string, name: string): void {
@@ -518,7 +577,7 @@ export function renameLayout(id: string, name: string): void {
   const idx = list.findIndex((l) => l.id === id);
   if (idx < 0) return;
   list[idx] = { id, name };
-  save(LAYOUTS_KEY, list);
+  save(layoutsKey(), list);
 }
 
 // Delete a layout: drop its index entry, its body, every cell scope it owned, and
@@ -526,51 +585,51 @@ export function renameLayout(id: string, name: string): void {
 export function deleteLayout(id: string): void {
   const ws = loadLayout(id);
   const list = loadLayouts().filter((l) => l.id !== id);
-  save(LAYOUTS_KEY, list);
+  save(layoutsKey(), list);
   removeKeyEverywhere(layoutKey(id));
   if (ws) for (const t of ws.tabs) purgeTabScope(t.id);
   if (loadDefaultLayoutId() === id) saveDefaultLayoutId(null);
 }
 
 export function loadDefaultLayoutId(): string | null {
-  return load<string | null>(DEFAULT_LAYOUT_KEY, null);
+  return load<string | null>(defaultLayoutKey(), null);
 }
 export function saveDefaultLayoutId(id: string | null): void {
   if (id == null) {
-    removeKeyEverywhere(DEFAULT_LAYOUT_KEY);
+    removeKeyEverywhere(defaultLayoutKey());
   } else {
-    save(DEFAULT_LAYOUT_KEY, id);
+    save(defaultLayoutKey(), id);
   }
 }
 
 // Device-local: which layout this browser/tab currently shows. null = scratch.
 export function loadActiveLayoutId(): string | null {
-  return load<string | null>(ACTIVE_LAYOUT_KEY, null);
+  return load<string | null>(activeLayoutKey(), null);
 }
 export function saveActiveLayoutId(id: string | null): void {
-  if (id == null) removeLocal(ACTIVE_LAYOUT_KEY);
-  else saveLocal(ACTIVE_LAYOUT_KEY, id);
+  if (id == null) removeLocal(activeLayoutKey());
+  else saveLocal(activeLayoutKey(), id);
 }
 
 // Device-local: the unsaved workspace shown before the user names a layout.
 export function loadScratch(): Workspace | null {
-  const w = load<Workspace | null>(SCRATCH_KEY, null);
+  const w = load<Workspace | null>(scratchKey(), null);
   if (!w || !Array.isArray(w.tabs)) return null;
   return { tabs: migrateTabs(w.tabs), activeTabId: w.activeTabId };
 }
 export function saveScratch(ws: Workspace): void {
-  saveLocal(SCRATCH_KEY, ws);
+  saveLocal(scratchKey(), ws);
 }
 export function clearScratch(): void {
-  removeLocal(SCRATCH_KEY);
+  removeLocal(scratchKey());
 }
 
 // Device-local: whether autosave is enabled (default true, matching TV).
 export function loadAutosave(): boolean {
-  return load<boolean>(AUTOSAVE_KEY, true);
+  return load<boolean>(autosaveKey(), true);
 }
 export function saveAutosave(enabled: boolean): void {
-  saveLocal(AUTOSAVE_KEY, enabled);
+  saveLocal(autosaveKey(), enabled);
 }
 
 // Remove a mirrored key from this device AND tell the backend/other tabs to drop
@@ -722,24 +781,25 @@ export function saveFavoriteIndicators(list: string[]): void {
   save(FAVORITE_INDICATORS_KEY, list);
 }
 
-// --- recently opened symbols (global, mirrored) ------------------------------
+// --- recently opened symbols (PER BROKER, mirrored) --------------------------
 //
-// A personal MRU list like the favourites above: the epics of symbols the user
-// recently opened from the symbol-search modal, most-recent-first, capped. Stores
-// epics only (not Instrument snapshots) so the rendered name/status/type stay fresh
-// off the catalogue, and resolves to nothing for an epic that left the catalogue.
-const RECENT_SYMBOLS_KEY = `${PREFIX}.recentSymbols`;
+// A personal MRU list: the epics of symbols the user recently opened from the
+// symbol-search modal, most-recent-first, capped. Stores epics only (not Instrument
+// snapshots) so the rendered name/status/type stay fresh off the catalogue, and
+// resolves to nothing for an epic that left the catalogue. PER BROKER because epics
+// are broker-specific (a Capital MRU is meaningless on IG) — keyed via root().
+const recentSymbolsKey = () => root("recentSymbols");
 const RECENT_SYMBOLS_MAX = 12;
 
 export function loadRecentSymbols(): string[] {
-  return load<string[]>(RECENT_SYMBOLS_KEY, []);
+  return load<string[]>(recentSymbolsKey(), []);
 }
 export function pushRecentSymbol(epic: string): void {
   const next = [epic, ...loadRecentSymbols().filter((e) => e !== epic)].slice(
     0,
     RECENT_SYMBOLS_MAX,
   );
-  save(RECENT_SYMBOLS_KEY, next);
+  save(recentSymbolsKey(), next);
 }
 
 // --- per-indicator presets (global, keyed by indicator TYPE) -----------------
@@ -806,8 +866,9 @@ export function deleteIndicatorPreset(type: string, name: string): void {
 // same blobs the per-cell stores already hold — no new serialization. AVWAP anchors
 // (deliberately NOT inside SavedIndicatorConfig — they live under avwap.<epic>.<id>)
 // are captured separately so a templated AVWAP keeps its anchor. Stored under a
-// global (un-scoped) key so it's shared across cells/tabs and mirrored to the
-// backend like everything else.
+// PER-BROKER key (root()) so it's shared across cells/tabs of one broker and
+// mirrored to the backend; epics are broker-specific, so templates don't cross
+// brokers.
 export interface SymbolTemplate {
   epic: string;
   indicators: IndicatorInstance[];
@@ -817,7 +878,7 @@ export interface SymbolTemplate {
   savedAt: number;
 }
 
-const templateKey = (epic: string) => `${PREFIX}.template.${epic}`;
+const templateKey = (epic: string) => root(`template.${epic}`);
 
 export function loadSymbolTemplate(epic: string): SymbolTemplate | null {
   return load<SymbolTemplate | null>(templateKey(epic), null);
@@ -1023,47 +1084,36 @@ export function normalizeAlert(
   };
 }
 
-// Alerts are GLOBAL per instrument (epic), NOT per-cell/per-tab — unlike drawings,
-// indicators, and avwap anchors, which stay scoped to their cell. An alert belongs
-// to the symbol: open US100 in any chart, on any tab, and the same alerts show. This
-// matches how the firing engine (one feed per epic) and the side panel (grouped by
-// epic) already treat them. Key shape: `auto-trader.alerts.<epic>` — no scope.
-const alertsKey = (epic: string) => `${PREFIX}.alerts.${epic}`;
+// Alerts are per instrument (epic) and PER BROKER, NOT per-cell/per-tab — unlike
+// drawings/indicators/avwap, which stay scoped to their cell. Within a broker an
+// alert belongs to the symbol: open US100 in any chart, on any tab, and the same
+// alerts show. Key shape: `auto-trader.b.<broker>.alerts.<epic>`.
+//
+// Alerts are the ONE workspace root written from a remounting chart subtree
+// (overlays.ts, per cell), so every alert helper takes the broker EXPLICITLY rather
+// than reading the ambient persistBroker — a cell's async save during a broker
+// switch must address the broker it belongs to, not whatever the selector just
+// flipped to (see the persistBroker invariant). It DEFAULTS to getPersistBroker()
+// for the non-racy callers (the alerts panel, tests) that act on the active broker.
+const alertsKey = (epic: string, broker: string = getPersistBroker()) =>
+  brokerRoot(broker, `alerts.${epic}`);
 
-export function loadAlerts(epic: string): SavedAlert[] {
-  return load<SavedAlert[]>(alertsKey(epic), []);
+export function loadAlerts(epic: string, broker: string = getPersistBroker()): SavedAlert[] {
+  return load<SavedAlert[]>(alertsKey(epic, broker), []);
 }
 // Raw stored JSON for an epic's alerts (null if unset). The hot-path alert engine
 // uses this as a cheap per-tick cache key: a getItem + string compare avoids a
 // JSON.parse + per-alert normalize allocation on every tick when nothing changed,
 // and the raw string flips whenever ANYONE writes (engine, peer cell, /ws/state).
-export function loadAlertsRaw(epic: string): string | null {
+export function loadAlertsRaw(epic: string, broker: string = getPersistBroker()): string | null {
   try {
-    return localStorage.getItem(alertsKey(epic));
+    return localStorage.getItem(alertsKey(epic, broker));
   } catch {
     return null;
   }
 }
-export function saveAlerts(epic: string, list: SavedAlert[]): void {
-  save(alertsKey(epic), list);
-}
-
-// Move an epic's alerts to a new epic key. Used when a cell's symbol re-resolves
-// to a different epic (e.g. a broker switch): alerts are stored per-epic and have
-// firing consequences, so they must follow the symbol rather than be orphaned
-// under the old key. No-op if `from`/`to` are equal or the source is empty/unset;
-// merges onto any alerts already at `to` (de-duped by id). Returns whether it
-// moved anything so the caller can bump alertsChanged.
-export function moveAlerts(fromEpic: string, toEpic: string): boolean {
-  if (fromEpic === toEpic) return false;
-  const src = loadAlerts(fromEpic);
-  if (src.length === 0) return false;
-  const dest = loadAlerts(toEpic);
-  const seen = new Set(dest.map((a, i) => normalizeAlert(a, i).id));
-  const merged = [...dest, ...src.filter((a, i) => !seen.has(normalizeAlert(a, i).id))];
-  saveAlerts(toEpic, merged);
-  saveAlerts(fromEpic, []);
-  return true;
+export function saveAlerts(epic: string, list: SavedAlert[], broker: string = getPersistBroker()): void {
+  save(alertsKey(epic, broker), list);
 }
 
 // --- direct (overlay-less) edits of a stored alert, keyed by its stable id --------
@@ -1074,8 +1124,12 @@ export function moveAlerts(fromEpic: string, toEpic: string): boolean {
 // are matched by their deterministic backfilled id, same as the engine/sidebar see).
 
 // Find a stored alert by its (normalized) stable id, or null.
-export function loadStoredAlert(epic: string, id: string): SavedAlert | null {
-  const raw = loadAlerts(epic);
+export function loadStoredAlert(
+  epic: string,
+  id: string,
+  broker: string = getPersistBroker(),
+): SavedAlert | null {
+  const raw = loadAlerts(epic, broker);
   for (let i = 0; i < raw.length; i++) {
     const n = normalizeAlert(raw[i], i);
     if (n.id === id) return n;
@@ -1097,8 +1151,9 @@ export function updateStoredAlert(
     expiresAt: number | null;
     notify: AlertNotifyChannels;
   },
+  broker: string = getPersistBroker(),
 ): void {
-  const raw = loadAlerts(epic);
+  const raw = loadAlerts(epic, broker);
   let changed = false;
   const next = raw.map((r, i) => {
     const n = normalizeAlert(r, i);
@@ -1106,22 +1161,28 @@ export function updateStoredAlert(
     changed = true;
     return { ...n, level, ...cfg };
   });
-  if (changed) saveAlerts(epic, next);
+  if (changed) saveAlerts(epic, next, broker);
 }
 
 // Remove a stored alert by its (normalized) stable id. No-op if absent.
-export function deleteStoredAlert(epic: string, id: string): void {
-  const raw = loadAlerts(epic);
+export function deleteStoredAlert(
+  epic: string,
+  id: string,
+  broker: string = getPersistBroker(),
+): void {
+  const raw = loadAlerts(epic, broker);
   const survivors = raw.filter((r, i) => normalizeAlert(r, i).id !== id);
-  if (survivors.length !== raw.length) saveAlerts(epic, survivors);
+  if (survivors.length !== raw.length) saveAlerts(epic, survivors, broker);
 }
 
-// Returns every {epic, alerts} tuple stored. Scans keys matching the GLOBAL form
-// `auto-trader.alerts.<epic>` only — the scoped legacy form `auto-trader.<scope>.
-// alerts.<epic>` is collapsed away by migrateAlertsToGlobal() at startup, so it
-// won't appear here on a migrated install.
-export function loadAllAlerts(): { epic: string; alerts: SavedAlert[] }[] {
-  const prefix = `${PREFIX}.alerts.`;
+// Returns every {epic, alerts} tuple stored for `broker` (default: active). Scans
+// keys matching that broker's per-epic form `auto-trader.b.<broker>.alerts.<epic>`,
+// so the alerts panel lists only the active broker's alerts (each broker is its own
+// isolated instance).
+export function loadAllAlerts(
+  broker: string = getPersistBroker(),
+): { epic: string; alerts: SavedAlert[] }[] {
+  const prefix = brokerRoot(broker, "alerts.");
   const results: { epic: string; alerts: SavedAlert[] }[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
@@ -1134,84 +1195,48 @@ export function loadAllAlerts(): { epic: string; alerts: SavedAlert[] }[] {
   return results;
 }
 
-// One-time migration: collapse the OLD per-tab/per-cell alert keys
-// (`auto-trader.<scope>.alerts.<epic>`) into the GLOBAL per-epic key
-// (`auto-trader.alerts.<epic>`). Alerts used to be scoped to the cell, so a new
-// tab minted a fresh scope and reopening the same instrument lost its lines (the
-// alerts orphaned under the closed tab's scope — still listed in the side panel's
-// all-symbols scan, but never re-drawn). Merging per epic, de-duped by stable id,
-// makes alerts follow the instrument. Runs AFTER hydrateFromBackend so the deletes
-// of the orphan keys propagate to the backend (else the next hydrate re-seeds them).
-// Idempotent: once no scoped alert keys remain, this is a no-op. Returns true if it
-// migrated anything, so the caller can force a grid remount (the already-mounted
-// cells rehydrated against the empty pre-migration global keys and must re-read).
-//
-// Caveat (LEGACY only): de-dupe is by stable id, which is correct for modern `al-…`
-// ids (disjoint union across scopes). Pre-stable-id rows have no id, so to avoid two
-// DISTINCT legacy alerts (same fields + list index, different scopes) colliding on one
-// derived id and dropping one (data loss), each id-less row is given a FRESH unique id
-// at migration (see `merge` below). Trade-off: the same legacy alert genuinely saved
-// under two scopes now survives as two lines rather than de-duping to one — a harmless,
-// user-deletable dup, and only for alerts created before stable ids existed.
-//
-// NOTE: the global key shape `auto-trader.alerts.<epic>` is byte-identical to the
-// pre-tabs v0 un-namespaced alert key that migrateLegacyLayout() relocates into a
-// cell scope. Safe only because the App calls migrateToNamedLayouts() (which gates
-// migrateLegacyLayout behind the one-time `loadLayouts().length === 0` path) BEFORE
-// this; within that single startup the v0 alerts round-trip global→scoped→global.
-export function migrateAlertsToGlobal(): boolean {
-  const prefix = `${PREFIX}.`;
-  const marker = `.alerts.`;
-  // Gather every SCOPED alert key. The global form (`auto-trader.alerts.<epic>`,
-  // inner = "alerts.<epic>") has no leading-dot ".alerts." so it isn't matched here.
-  const scoped: { key: string; epic: string }[] = [];
+
+// One-time cleanup for the per-broker isolation rollout. The workspace USED to be
+// GLOBAL (one shared set of tabs/layouts/scratch/recent/templates/alerts). It's now
+// ISOLATED PER BROKER (`auto-trader.b.<broker>.*`), and the rollout is a FRESH START
+// (no carry-over — each broker begins blank), so the old global ROOT keys are
+// abandoned. Remove them ONCE so they don't linger as dead weight in localStorage and
+// the backend. PRESERVED: global PREFERENCES (settings, indicator defaults/presets/
+// favourites, triggered history) and every new `auto-trader.b.*` key. NOT pruned: the
+// old per-cell `auto-trader.tab.*` scope content — a boot-time prune could race a
+// freshly-mounted cell's mount-save of an identically-shaped key; the orphans are
+// harmless (never referenced, new tabs mint new ids) and match today's tab-scope GC.
+// Gated by a sentinel → runs exactly once; call AFTER hydrateFromBackend so the
+// deletes reach the backend (else the next hydrate re-seeds them).
+const PER_BROKER_SENTINEL = `${PREFIX}.perBrokerMigrated`;
+export function pruneLegacyGlobalWorkspace(): boolean {
+  try {
+    if (localStorage.getItem(PER_BROKER_SENTINEL) != null) return false;
+  } catch {
+    return false; // no localStorage (test/node) → nothing to prune
+  }
+  const exact = new Set([
+    `${PREFIX}.tabs`,
+    `${PREFIX}.activeTab`,
+    `${PREFIX}.layouts`,
+    `${PREFIX}.defaultLayoutId`,
+    `${PREFIX}.activeLayoutId`,
+    `${PREFIX}.scratch`,
+    `${PREFIX}.autosave`,
+    `${PREFIX}.recentSymbols`,
+  ]);
+  // Old GLOBAL per-id / per-epic roots. (New forms live under `auto-trader.b.*`, which
+  // none of these prefixes match — `auto-trader.layout.` ≠ `auto-trader.b.<broker>.layout.`.)
+  const prefixes = [`${PREFIX}.layout.`, `${PREFIX}.template.`, `${PREFIX}.alerts.`];
+  const doomed: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (!k || !k.startsWith(prefix)) continue;
-    const inner = k.slice(prefix.length); // e.g. "tab.abc.alerts.US100"
-    const idx = inner.indexOf(marker);
-    if (idx <= 0) continue; // -1 = not an alert key; 0 = already global form
-    const epic = inner.slice(idx + marker.length);
-    if (epic) scoped.push({ key: k, epic });
+    if (!k) continue;
+    if (exact.has(k) || prefixes.some((p) => k.startsWith(p))) doomed.push(k);
   }
-  if (scoped.length === 0) return false; // nothing to migrate
-
-  // Merge each scoped list into its epic's global bucket, seeded with whatever the
-  // global key already holds, de-duped by (normalized) stable id so the same alert
-  // saved under two scopes collapses to one entry.
-  const byEpic = new Map<string, Map<string, SavedAlert>>();
-  // Merge a raw row into the epic bucket, keyed by its (normalized) stable id.
-  // Legacy rows (no stored id) get a deterministic content+index id, so two DISTINCT
-  // legacy alerts living under different scopes — but at the same list index with the
-  // same fields — would collide on one key and one would be silently dropped (data
-  // loss). Migration writes the id out immediately (locking identity), so mint a fresh
-  // unique id for legacy rows instead: no cross-scope collision, both survive.
-  const merge = (b: Map<string, SavedAlert>, r: SavedAlert, i: number): void => {
-    const a = normalizeAlert(r, i);
-    if (!r.id) a.id = newAlertId();
-    b.set(a.id, a);
-  };
-  const bucket = (epic: string): Map<string, SavedAlert> => {
-    let b = byEpic.get(epic);
-    if (!b) {
-      b = new Map();
-      // Seed from any existing global alerts for this epic (e.g. legacy v0 keys).
-      loadAlerts(epic).forEach((r, i) => merge(b!, r, i));
-      byEpic.set(epic, b);
-    }
-    return b;
-  };
-  for (const { key, epic } of scoped) {
-    const b = bucket(epic);
-    load<SavedAlert[]>(key, []).forEach((r, i) => merge(b, r, i));
-  }
-  // Write the merged global lists (skip empties so we don't leave inert `[]` keys),
-  // then drop every scoped key everywhere (local + backend) so the orphans are gone.
-  for (const [epic, b] of byEpic) {
-    if (b.size > 0) saveAlerts(epic, [...b.values()]);
-  }
-  for (const { key } of scoped) removeKeyEverywhere(key);
-  return true;
+  for (const k of doomed) removeKeyEverywhere(k);
+  save(PER_BROKER_SENTINEL, true);
+  return doomed.length > 0;
 }
 
 // --- triggered alert history (global chronological log) ----------------------
@@ -1315,100 +1340,3 @@ export function purgeTabScope(id: string): void {
   purgeScope(primaryCellScope(id));
 }
 
-// One-time migration to named layouts. Existing users have a bare `tabs` key (and
-// maybe `activeTab`) but no `layouts` index. Wrap that workspace into a single
-// named layout, make it the default, and adopt it as this device's active layout —
-// so the upgrade is seamless (no blank screen, no lost work). New installs (no
-// `tabs`) skip this and get the blank-until-named scratch behaviour. Idempotent:
-// once a `layouts` index exists, this is a no-op. Returns true if it migrated
-// (caller re-seeds React state). MUST run AFTER hydrateFromBackend so (a) the
-// saveLayout/default writes mirror to the backend (mirrorEnabled is true by then)
-// and (b) the layout id is derived from the BACKEND-synced `tabs` — so two devices
-// converge on the same `layout-<id>` instead of each minting its own.
-export function migrateToNamedLayouts(): boolean {
-  if (loadLayouts().length > 0) return false; // already migrated
-  let tabs = loadTabs();
-  let activeTabId = loadActiveTab();
-  // No `tabs` key, but a PRE-tabs (v0) install may have a single-chart workspace
-  // under `auto-trader.symbol`/`.period` + un-namespaced indicators/drawings. Wrap
-  // it into a first tab (deterministic id so devices converge) and pull the legacy
-  // un-namespaced layout keys into that tab's primary scope (migrateLegacyLayout).
-  if (!tabs || tabs.length === 0) {
-    const v0 = loadLegacyV0Workspace();
-    if (!v0) return false; // truly fresh install → stays on scratch (blank launch)
-    migrateLegacyLayout(v0.id);
-    tabs = [v0];
-    activeTabId = v0.id;
-  }
-  const id = `layout-${tabs[0].id}`;
-  saveLayout(id, "My Workspace", { tabs, activeTabId: activeTabId ?? tabs[0].id });
-  saveDefaultLayoutId(id);
-  saveActiveLayoutId(id);
-  // Retire the bare keys so we don't double-source the workspace.
-  removeKeyEverywhere(TABS_KEY);
-  removeKeyEverywhere(ACTIVE_TAB_KEY);
-  return true;
-}
-
-// Read a pre-tabs (v0) single-chart workspace from `auto-trader.symbol`/`.period`,
-// returning a one-cell tab with a DETERMINISTIC id (so two upgrading devices that
-// hydrate the same legacy keys produce the same layout). Returns null if there's no
-// v0 symbol key (i.e. nothing to migrate). The un-namespaced indicators/drawings
-// are moved into this tab's primary scope by the caller via migrateLegacyLayout.
-function loadLegacyV0Workspace(): ChartTab | null {
-  const symbol = load<Instrument | null>(`${PREFIX}.symbol`, null);
-  if (!symbol) return null;
-  const period = load<Period | null>(`${PREFIX}.period`, null);
-  if (!period) return null;
-  const id = "legacy-v0";
-  const cellId = `${id}-c0`;
-  // Retire the v0 chart keys (the layout keys are handled by migrateLegacyLayout).
-  removeKeyEverywhere(`${PREFIX}.symbol`);
-  removeKeyEverywhere(`${PREFIX}.period`);
-  return {
-    id,
-    layout: "1",
-    activeCellId: cellId,
-    cells: [{ id: cellId, symbol, period, scope: primaryCellScope(id) }],
-  };
-}
-
-// One-time migration: pre-tabs builds stored layout under un-namespaced keys
-// (`${PREFIX}.drawings.${epic}`, `.indicators`, `.indicatorConfig`,
-// `.alerts.${epic}`, `.avwap.${epic}`). Copy them into the given (first) tab's
-// primary cell scope so existing users keep their work, then drop the originals.
-// Idempotent (a missing source key is simply skipped); safe to call on startup.
-export function migrateLegacyLayout(firstTabId: string): void {
-  const dest = primaryCellScope(firstTabId); // `tab.<firstTabId>`
-  const legacyExact = ["indicators", "indicatorConfig"];
-  const legacyPrefixed = ["drawings.", "alerts.", "avwap."];
-  const moved: Array<[string, string]> = []; // [from, to]
-
-  // Exact (global) keys.
-  for (const suffix of legacyExact) {
-    const from = `${PREFIX}.${suffix}`;
-    if (localStorage.getItem(from) != null)
-      moved.push([from, `${PREFIX}.${dest}.${suffix}`]);
-  }
-  // Per-epic keys: scan for any `${PREFIX}.<prefix><epic>`.
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (!k) continue;
-    for (const p of legacyPrefixed) {
-      const head = `${PREFIX}.${p}`;
-      // Exclude already-namespaced keys (`${PREFIX}.tab.…`).
-      if (k.startsWith(head) && !k.startsWith(`${PREFIX}.tab.`)) {
-        const rest = k.slice(`${PREFIX}.`.length); // e.g. "drawings.US100"
-        moved.push([k, `${PREFIX}.${dest}.${rest}`]);
-      }
-    }
-  }
-  for (const [from, to] of moved) {
-    const v = localStorage.getItem(from);
-    if (v != null) {
-      // Don't clobber an existing namespaced value (re-run safety).
-      if (localStorage.getItem(to) == null) localStorage.setItem(to, v);
-      localStorage.removeItem(from);
-    }
-  }
-}

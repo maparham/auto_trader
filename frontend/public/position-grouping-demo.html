@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Position Grouping — Design Options</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0f1117;
+  color: #d1d4dc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  padding: 24px;
+  min-height: 100vh;
+}
+
+h1 { font-size: 13px; font-weight: 600; color: #d1d4dc; margin-bottom: 3px; }
+.subtitle { font-size: 11px; color: #464b5a; margin-bottom: 18px; }
+
+/* ── Tab strip ────────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.tab {
+  background: #1a1e2d;
+  border: 1px solid #252a3a;
+  color: #787b86;
+  font: 11px/1 -apple-system, system-ui, sans-serif;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color .12s, background .12s, border-color .12s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tab:hover { color: #d1d4dc; background: #222638; }
+.tab.active {
+  background: rgba(41,98,255,0.14);
+  border-color: rgba(41,98,255,0.5);
+  color: #5b84ff;
+}
+.tab-letter {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(41,98,255,0.2);
+  color: #5b84ff;
+  padding: 1px 5px;
+  border-radius: 2px;
+  letter-spacing: .05em;
+}
+.tab.active .tab-letter { background: rgba(41,98,255,0.35); }
+.tab-sep {
+  width: 1px; height: 24px; background: #252a3a;
+  align-self: center; margin: 0 4px;
+}
+
+/* ── Full-chart view ──────────────────────────────────────────────── */
+#main-wrap {
+  position: relative;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #1a1e2d;
+}
+#main-canvas {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+}
+.opt-label {
+  position: absolute;
+  top: 10px; right: 12px;
+  font-size: 11px;
+  color: #464b5a;
+  pointer-events: none;
+}
+.drag-hint {
+  font-size: 10px;
+  color: #363b4d;
+  margin-bottom: 24px;
+}
+
+/* ── Comparison grid ──────────────────────────────────────────────── */
+.section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #363b4d;
+  margin-bottom: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #1a1e2d;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 300px));
+  gap: 14px;
+}
+.panel { display: flex; flex-direction: column; gap: 6px; }
+.panel-hdr { display: flex; align-items: center; gap: 6px; }
+.panel-id {
+  font-size: 9px; font-weight: 700; letter-spacing: .06em;
+  color: #5b84ff;
+  background: rgba(41,98,255,.12);
+  padding: 2px 6px; border-radius: 2px;
+}
+.panel-name { font-size: 10px; color: #505565; }
+.panel canvas {
+  display: block; width: 100%;
+  border-radius: 5px; border: 1px solid #1a1e2d;
+  cursor: default; user-select: none; -webkit-user-select: none; touch-action: none;
+}
+</style>
+</head>
+<body>
+
+<h1>Position Grouping — Design Options</h1>
+<p class="subtitle">Bracket-family designs (A, H–K) + alternatives (D–G) · Long position</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div id="main-wrap">
+  <canvas id="main-canvas"></canvas>
+  <span class="opt-label" id="opt-label"></span>
+</div>
+<p class="drag-hint">Drag the TP (green) or SL (red) line to preview dynamic updates</p>
+
+<p class="section-title">All options — comparison</p>
+<div class="grid" id="grid"></div>
+
+<script>
+'use strict';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+const COLOR = {
+  entry : '#2962ff',
+  sl    : '#f23645',
+  tp    : '#089981',
+  conn  : 'rgba(155,160,185,0.45)',
+  bg    : '#131722',
+};
+
+// Price mapping (shared)
+const ENTRY  = 1.3313;
+const PRANGE = 0.030;
+const MAX_P  = ENTRY + PRANGE * 0.40;
+const MIN_P  = ENTRY - PRANGE * 0.60;
+
+function p2y(price, H) { return ((MAX_P - price) / (MAX_P - MIN_P)) * H; }
+function y2p(y, H)     { return MAX_P - (y / H) * (MAX_P - MIN_P); }
+
+const INIT_TP_PCT = +PRANGE * 0.28;
+const INIT_SL_PCT = -PRANGE * 0.18;
+
+// ─── Number helpers ───────────────────────────────────────────────────────────
+
+const fmt = p => p.toFixed(4);
+function pct(base, level) {
+  const v = ((level - base) / base) * 100;
+  return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+}
+function rrLabel(entry, sl, tp) {
+  const risk = Math.abs(entry - sl), reward = Math.abs(tp - entry);
+  return risk > 0 ? '1:' + (reward / risk).toFixed(1) : '—';
+}
+
+// ─── Canvas helpers ───────────────────────────────────────────────────────────
+
+function rrect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y,     x + w, y + r,     r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x,     y + h, x,     y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x,     y,     x + r, y,         r);
+  ctx.closePath();
+}
+
+function pill(ctx, x, y, text, color, { size = 11, px = 6, py = 3, radius = 3, alpha = 1 } = {}) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.font = `${size}px -apple-system,system-ui,sans-serif`;
+  const tw = ctx.measureText(text).width;
+  const pw = tw + px * 2, ph = size + py * 2;
+  rrect(ctx, x, y - ph / 2, pw, ph, radius);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x + px, y);
+  ctx.restore();
+}
+
+function pillR(ctx, x, y, text, color, opts = {}) {
+  const { size = 11, px = 6, py = 3, radius = 3, alpha = 1 } = opts;
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.font = `${size}px -apple-system,system-ui,sans-serif`;
+  const tw = ctx.measureText(text).width;
+  const pw = tw + px * 2, ph = size + py * 2;
+  rrect(ctx, x - pw, y - ph / 2, pw, ph, radius);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x - pw + px, y);
+  ctx.restore();
+}
+
+function pillC(ctx, cx, y, text, color, { size = 10, px = 7, py = 3, radius = 8, alpha = 1 } = {}) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.font = `${size}px -apple-system,system-ui,sans-serif`;
+  const tw = ctx.measureText(text).width;
+  const pw = tw + px * 2, ph = size + py * 2;
+  rrect(ctx, cx - pw / 2, y - ph / 2, pw, ph, radius);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, cx, y);
+  ctx.restore();
+}
+
+function dot(ctx, x, y, r, color) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color; ctx.fill();
+}
+
+function diamond(ctx, x, y, r, color) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - r); ctx.lineTo(x + r, y);
+  ctx.lineTo(x, y + r); ctx.lineTo(x - r, y);
+  ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+}
+
+function hline(ctx, y, color, W, { dash = [4, 4], lw = 1 } = {}) {
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = lw;
+  ctx.setLineDash(dash); ctx.beginPath();
+  ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  ctx.setLineDash([]); ctx.restore();
+}
+
+function vline(ctx, x, y1, y2, color, { dash = [], lw = 1.5 } = {}) {
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = lw;
+  if (dash.length) ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(x, y2); ctx.stroke();
+  ctx.setLineDash([]); ctx.restore();
+}
+
+function seg(ctx, x1, y1, x2, y2, color, lw, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  ctx.restore();
+}
+
+function arrowTip(ctx, x, y, dir, color, size) {
+  // dir: 'up' = pointing up (toward top of canvas), 'down' = pointing down
+  ctx.save(); ctx.fillStyle = color;
+  ctx.beginPath();
+  if (dir === 'up') {
+    ctx.moveTo(x - size / 2, y + size); ctx.lineTo(x + size / 2, y + size); ctx.lineTo(x, y);
+  } else {
+    ctx.moveTo(x - size / 2, y - size); ctx.lineTo(x + size / 2, y - size); ctx.lineTo(x, y);
+  }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+// ─── Background ───────────────────────────────────────────────────────────────
+
+// Deterministic pseudo-random (LCG)
+function lcg(seed) {
+  let s = seed >>> 0;
+  return () => { s = (Math.imul(1664525, s) + 1013904223) >>> 0; return s / 0x100000000; };
+}
+
+function drawBg(ctx, W, H, candleZoneRight = 70) {
+  ctx.fillStyle = COLOR.bg; ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.lineWidth = 1;
+  for (let i = 1; i < 8; i++) {
+    const gy = (H / 8) * i;
+    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+  }
+
+  // Candles
+  const rnd = lcg(42);
+  const candleW = Math.max(5, Math.floor(W / 55));
+  const gap = candleW + 2;
+  const count = Math.floor((W - candleZoneRight) / gap);
+  let price = ENTRY * 0.997;
+  for (let i = 0; i < count; i++) {
+    const r1 = rnd(), r2 = rnd(), r3 = rnd(), r4 = rnd();
+    const open = price;
+    const change = (r1 - 0.48) * PRANGE * 0.12;
+    const close = open + change;
+    const high = Math.max(open, close) + r2 * PRANGE * 0.06;
+    const low  = Math.min(open, close) - r3 * PRANGE * 0.04;
+    const up = close >= open;
+    const cx = i * gap + gap / 2;
+    const oy = p2y(open, H), cy2 = p2y(close, H);
+    const hy = p2y(high, H), ly = p2y(low, H);
+    const bodyT = Math.min(oy, cy2), bodyH = Math.max(1, Math.abs(oy - cy2));
+    ctx.fillStyle   = up ? 'rgba(8,153,129,.20)' : 'rgba(242,54,69,.18)';
+    ctx.strokeStyle = up ? 'rgba(8,153,129,.28)' : 'rgba(242,54,69,.25)';
+    ctx.fillRect(cx - candleW / 2, bodyT, candleW, bodyH);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx, hy); ctx.lineTo(cx, bodyT); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, bodyT + bodyH); ctx.lineTo(cx, ly); ctx.stroke();
+    price = close + (r4 - 0.5) * PRANGE * 0.01;
+  }
+}
+
+// Y-axis price labels (full-chart view only)
+function drawYAxis(ctx, W, H) {
+  const steps = 6;
+  ctx.save();
+  ctx.font = '9px -apple-system,system-ui,sans-serif';
+  ctx.fillStyle = 'rgba(120,123,134,0.55)';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let i = 0; i <= steps; i++) {
+    const price = MIN_P + (MAX_P - MIN_P) * (i / steps);
+    const y = p2y(price, H);
+    if (y < 6 || y > H - 6) continue;
+    ctx.fillText(price.toFixed(4), W - 4, y);
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W - 38, y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ─── Base lines + left labels ─────────────────────────────────────────────────
+
+function drawBaseLines(ctx, st, W, H) {
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  hline(ctx, st.tpY,    COLOR.tp,    W);
+  hline(ctx, st.entryY, COLOR.entry, W);
+  hline(ctx, st.slY,    COLOR.sl,    W);
+  pill(ctx, 6, st.tpY,    `TP ${fmt(tp)}`,            COLOR.tp);
+  pill(ctx, 6, st.entryY, `Long 1 @ ${fmt(ENTRY)}`,   COLOR.entry);
+  pill(ctx, 6, st.slY,    `SL ${fmt(sl)}`,             COLOR.sl);
+}
+
+// ─── Option A: Right-Rail Bracket ─────────────────────────────────────────────
+
+function drawA(ctx, st, W, H) {
+  drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  const bx = W - 88, lx = bx + 9;
+  vline(ctx, bx, st.tpY, st.slY, COLOR.conn);
+  ctx.lineWidth = 2;
+  [[st.tpY, COLOR.tp], [st.entryY, COLOR.entry], [st.slY, COLOR.sl]].forEach(([y, c]) => {
+    ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(bx - 5, y); ctx.lineTo(bx + 5, y); ctx.stroke();
+  });
+  pill(ctx, lx, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    { size: 10, py: 2 });
+  pill(ctx, lx, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
+  pill(ctx, lx, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    { size: 10, py: 2 });
+}
+
+// ─── Option D: Entry-Anchored Fork ────────────────────────────────────────────
+
+function drawD(ctx, st, W, H) {
+  drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  const ox = W - 95, tx = W - 20;
+  seg(ctx, ox, st.entryY, tx, st.tpY, COLOR.tp, 1.5, .60);
+  seg(ctx, ox, st.entryY, tx, st.slY, COLOR.sl, 1.5, .60);
+  dot(ctx, tx, st.tpY, 3.5, COLOR.tp);
+  dot(ctx, tx, st.slY, 3.5, COLOR.sl);
+  diamond(ctx, ox, st.entryY, 5, COLOR.entry);
+  const mx = (ox + tx) / 2;
+  pillC(ctx, mx, (st.entryY + st.tpY) / 2 - 10, pct(ENTRY, tp), COLOR.tp, { size: 10, py: 2, radius: 3 });
+  pillC(ctx, mx, (st.entryY + st.slY) / 2 + 10, pct(ENTRY, sl), COLOR.sl, { size: 10, py: 2, radius: 3 });
+  pillR(ctx, ox - 6, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
+}
+
+// ─── Option E: Measurement Arms ───────────────────────────────────────────────
+
+function drawE(ctx, st, W, H) {
+  drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  const ax = W - 80, capW = 7;
+  ctx.save();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = COLOR.tp; ctx.globalAlpha = .65;
+  ctx.beginPath(); ctx.moveTo(ax, st.entryY); ctx.lineTo(ax, st.tpY); ctx.stroke();
+  ctx.lineWidth = 2; ctx.globalAlpha = 1;
+  ctx.beginPath(); ctx.moveTo(ax - capW, st.tpY); ctx.lineTo(ax + capW, st.tpY); ctx.stroke();
+  ctx.globalAlpha = .30;
+  ctx.beginPath(); ctx.moveTo(ax - capW*.65, st.entryY); ctx.lineTo(ax + capW*.65, st.entryY); ctx.stroke();
+  ctx.lineWidth = 1.5; ctx.globalAlpha = .65; ctx.strokeStyle = COLOR.sl;
+  ctx.beginPath(); ctx.moveTo(ax, st.entryY); ctx.lineTo(ax, st.slY); ctx.stroke();
+  ctx.lineWidth = 2; ctx.globalAlpha = 1;
+  ctx.beginPath(); ctx.moveTo(ax - capW, st.slY); ctx.lineTo(ax + capW, st.slY); ctx.stroke();
+  ctx.globalAlpha = .30;
+  ctx.beginPath(); ctx.moveTo(ax - capW*.65, st.entryY); ctx.lineTo(ax + capW*.65, st.entryY); ctx.stroke();
+  ctx.restore();
+  diamond(ctx, ax, st.entryY, 5, COLOR.entry);
+  const lx = ax + 12;
+  pill(ctx, lx, (st.entryY + st.tpY) / 2, pct(ENTRY, tp), COLOR.tp,    { size: 10, py: 2 });
+  pill(ctx, lx, (st.entryY + st.slY) / 2, pct(ENTRY, sl), COLOR.sl,    { size: 10, py: 2 });
+  pill(ctx, lx, st.entryY,                `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
+}
+
+// ─── Option F: Spine + Ribs ───────────────────────────────────────────────────
+
+function drawF(ctx, st, W, H) {
+  drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  const spX = W - 14, ribLen = 26, entRib = 40;
+  vline(ctx, spX, st.tpY, st.slY, 'rgba(155,160,185,0.28)');
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = COLOR.tp;
+  ctx.beginPath(); ctx.moveTo(spX, st.tpY);    ctx.lineTo(spX - ribLen, st.tpY);    ctx.stroke();
+  ctx.strokeStyle = COLOR.entry;
+  ctx.beginPath(); ctx.moveTo(spX, st.entryY); ctx.lineTo(spX - entRib, st.entryY); ctx.stroke();
+  ctx.strokeStyle = COLOR.sl;
+  ctx.beginPath(); ctx.moveTo(spX, st.slY);    ctx.lineTo(spX - ribLen, st.slY);    ctx.stroke();
+  dot(ctx, spX, st.tpY,    3, COLOR.tp);
+  dot(ctx, spX, st.entryY, 3, COLOR.entry);
+  dot(ctx, spX, st.slY,    3, COLOR.sl);
+  const s = { size: 10, py: 2 };
+  pillR(ctx, spX - ribLen - 6, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    s);
+  pillR(ctx, spX - entRib - 6, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, s);
+  pillR(ctx, spX - ribLen - 6, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    s);
+}
+
+// ─── Option G: Floating Segment Pills ─────────────────────────────────────────
+
+function drawG(ctx, st, W, H) {
+  drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  const traceX = Math.floor(W * 0.62), connX = W - 22;
+  [[st.tpY, COLOR.tp], [st.entryY, COLOR.entry], [st.slY, COLOR.sl]].forEach(([y, c]) => {
+    ctx.save(); ctx.strokeStyle = c; ctx.lineWidth = 1;
+    ctx.globalAlpha = .18; ctx.setLineDash([3, 5]);
+    ctx.beginPath(); ctx.moveTo(traceX, y); ctx.lineTo(W - 4, y); ctx.stroke();
+    ctx.setLineDash([]); ctx.restore();
+  });
+  vline(ctx, connX, st.tpY, st.slY, 'rgba(155,160,185,0.18)', { dash: [2, 4], lw: 1 });
+  dot(ctx, connX, st.tpY,    2.5, `${COLOR.tp}88`);
+  dot(ctx, connX, st.entryY, 2.5, `${COLOR.entry}88`);
+  dot(ctx, connX, st.slY,    2.5, `${COLOR.sl}88`);
+  const pillX = W * 0.53 + 24;
+  pillC(ctx, pillX, (st.entryY + st.tpY) / 2, pct(ENTRY, tp) + '  TP', COLOR.tp,
+    { size: 10, py: 3, px: 8, radius: 9 });
+  pillC(ctx, pillX, (st.entryY + st.slY) / 2, pct(ENTRY, sl) + '  SL', COLOR.sl,
+    { size: 10, py: 3, px: 8, radius: 9 });
+  pillR(ctx, W - 6, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
+}
+
+// ─── Option H: Split-Color Spine ──────────────────────────────────────────────
+
+function drawH(ctx, st, W, H) {
+  drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  const bx = W - 88, lx = bx + 9;
+
+  // Two-tone spine: green above entry, red below
+  vline(ctx, bx, st.tpY,    st.entryY, COLOR.tp, { lw: 2 });
+  vline(ctx, bx, st.entryY, st.slY,    COLOR.sl, { lw: 2 });
+
+  // Ticks
+  ctx.lineWidth = 2;
+  [[st.tpY, COLOR.tp], [st.entryY, COLOR.entry], [st.slY, COLOR.sl]].forEach(([y, c]) => {
+    ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(bx - 5, y); ctx.lineTo(bx + 5, y); ctx.stroke();
+  });
+
+  pill(ctx, lx, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    { size: 10, py: 2 });
+  pill(ctx, lx, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
+  pill(ctx, lx, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    { size: 10, py: 2 });
+}
+
+// ─── Option I: End-Cap Bracket ────────────────────────────────────────────────
+
+function drawI(ctx, st, W, H) {
+  drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  const bx = W - 88, lx = bx + 9, capW = 9;
+
+  // Colored spine segments
+  vline(ctx, bx, st.tpY,    st.entryY, COLOR.tp, { lw: 1.5 });
+  vline(ctx, bx, st.entryY, st.slY,    COLOR.sl, { lw: 1.5 });
+
+  // Thick end-caps at TP and SL only
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = COLOR.tp;
+  ctx.beginPath(); ctx.moveTo(bx - capW, st.tpY); ctx.lineTo(bx + capW, st.tpY); ctx.stroke();
+  ctx.strokeStyle = COLOR.sl;
+  ctx.beginPath(); ctx.moveTo(bx - capW, st.slY); ctx.lineTo(bx + capW, st.slY); ctx.stroke();
+
+  // Small diamond at entry (origin, not an end-cap)
+  diamond(ctx, bx, st.entryY, 4, COLOR.entry);
+
+  // Labels centered in each segment
+  pill(ctx, lx, (st.entryY + st.tpY) / 2, pct(ENTRY, tp),                  COLOR.tp,    { size: 10, py: 2 });
+  pill(ctx, lx, st.entryY,                 `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
+  pill(ctx, lx, (st.entryY + st.slY) / 2, pct(ENTRY, sl),                  COLOR.sl,    { size: 10, py: 2 });
+}
+
+// ─── Option J: Inside Bracket (labels face inward) ────────────────────────────
+
+function drawJ(ctx, st, W, H) {
+  drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  const bx = W - 10;   // spine at far-right edge
+
+  // Neutral spine
+  vline(ctx, bx, st.tpY, st.slY, COLOR.conn);
+
+  // Inward-facing ticks (go LEFT only)
+  ctx.lineWidth = 2;
+  [[st.tpY, COLOR.tp], [st.entryY, COLOR.entry], [st.slY, COLOR.sl]].forEach(([y, c]) => {
+    ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(bx - 9, y); ctx.lineTo(bx + 2, y); ctx.stroke();
+  });
+
+  // Labels right-anchored to the ticks (pointing inward into the chart)
+  const s = { size: 10, py: 2 };
+  pillR(ctx, bx - 12, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    s);
+  pillR(ctx, bx - 12, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, s);
+  pillR(ctx, bx - 12, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    s);
+}
+
+// ─── Option K: Arrow Ruler ────────────────────────────────────────────────────
+
+function drawK(ctx, st, W, H) {
+  drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
+  const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
+  const bx = W - 88, lx = bx + 9, arrSz = 7;
+
+  // Spine
+  vline(ctx, bx, st.tpY, st.slY, COLOR.conn);
+
+  // Arrowheads: TP points DOWN toward entry; SL points UP toward entry
+  arrowTip(ctx, bx, st.tpY,    'down', COLOR.tp, arrSz);
+  arrowTip(ctx, bx, st.slY,    'up',   COLOR.sl, arrSz);
+
+  // Entry: two small outward "origin" dashes (← →)
+  ctx.lineWidth = 2; ctx.strokeStyle = COLOR.entry;
+  ctx.beginPath(); ctx.moveTo(bx - 8, st.entryY); ctx.lineTo(bx - 3, st.entryY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(bx + 3, st.entryY); ctx.lineTo(bx + 8, st.entryY); ctx.stroke();
+  dot(ctx, bx, st.entryY, 2.5, COLOR.entry);
+
+  pill(ctx, lx, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    { size: 10, py: 2 });
+  pill(ctx, lx, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
+  pill(ctx, lx, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    { size: 10, py: 2 });
+}
+
+// ─── Option registry ──────────────────────────────────────────────────────────
+
+const OPTIONS = [
+  { id: 'A', name: 'Right-Rail Bracket',    draw: drawA, group: 'bracket' },
+  { id: 'H', name: 'Split-Color Spine',     draw: drawH, group: 'bracket' },
+  { id: 'I', name: 'End-Cap Bracket',       draw: drawI, group: 'bracket' },
+  { id: 'J', name: 'Inside Bracket',        draw: drawJ, group: 'bracket' },
+  { id: 'K', name: 'Arrow Ruler',           draw: drawK, group: 'bracket' },
+  { id: 'D', name: 'Entry-Anchored Fork',   draw: drawD, group: 'alt' },
+  { id: 'E', name: 'Measurement Arms',      draw: drawE, group: 'alt' },
+  { id: 'F', name: 'Spine + Ribs',          draw: drawF, group: 'alt' },
+  { id: 'G', name: 'Floating Segment Pills',draw: drawG, group: 'alt' },
+];
+
+// ─── Shared state factory ─────────────────────────────────────────────────────
+
+function makeState(H) {
+  return {
+    entryY : p2y(ENTRY, H),
+    tpY    : p2y(ENTRY + INIT_TP_PCT, H),
+    slY    : p2y(ENTRY + INIT_SL_PCT, H),
+    drag   : null,
+  };
+}
+
+// ─── Main (full-chart) view ────────────────────────────────────────────────────
+
+const MAIN_W = 960, MAIN_H = 480;
+const mainCanvas = document.getElementById('main-canvas');
+mainCanvas.width  = MAIN_W * DPR;
+mainCanvas.height = MAIN_H * DPR;
+mainCanvas.style.height = MAIN_H + 'px';
+const mctx = mainCanvas.getContext('2d');
+mctx.scale(DPR, DPR);
+
+const mainState = makeState(MAIN_H);
+let activeOpt = OPTIONS[0];
+
+function renderMain() {
+  mctx.clearRect(0, 0, MAIN_W, MAIN_H);
+  activeOpt.draw(mctx, mainState, MAIN_W, MAIN_H);
+  drawYAxis(mctx, MAIN_W, MAIN_H);
+  document.getElementById('opt-label').textContent =
+    `${activeOpt.id} — ${activeOpt.name}`;
+}
+renderMain();
+
+// Main canvas drag
+function mainCanvasY(e) {
+  const r = mainCanvas.getBoundingClientRect();
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY);
+  return (cy - r.top) * (MAIN_H / r.height);
+}
+mainCanvas.addEventListener('mousedown', e => {
+  const y = mainCanvasY(e);
+  const HIT = 12;
+  if (Math.abs(y - mainState.slY) < HIT)      mainState.drag = 'sl';
+  else if (Math.abs(y - mainState.tpY) < HIT) mainState.drag = 'tp';
+  if (mainState.drag) { e.preventDefault(); mainCanvas.style.cursor = 'ns-resize'; }
+});
+mainCanvas.addEventListener('mousemove', e => {
+  const y = mainCanvasY(e);
+  if (mainState.drag === 'sl') {
+    mainState.slY = Math.min(MAIN_H - 20, Math.max(mainState.entryY + 12, y));
+    renderMain();
+  } else if (mainState.drag === 'tp') {
+    mainState.tpY = Math.max(20, Math.min(mainState.entryY - 12, y));
+    renderMain();
+  } else {
+    const HIT = 10;
+    mainCanvas.style.cursor =
+      (Math.abs(y - mainState.slY) < HIT || Math.abs(y - mainState.tpY) < HIT)
+        ? 'ns-resize' : 'default';
+  }
+});
+mainCanvas.addEventListener('touchstart', e => {
+  const y = mainCanvasY(e);
+  const HIT = 14;
+  if (Math.abs(y - mainState.slY) < HIT)      mainState.drag = 'sl';
+  else if (Math.abs(y - mainState.tpY) < HIT) mainState.drag = 'tp';
+  if (mainState.drag) e.preventDefault();
+}, { passive: false });
+mainCanvas.addEventListener('touchmove', e => {
+  const y = mainCanvasY(e);
+  if (mainState.drag === 'sl') { mainState.slY = Math.min(MAIN_H - 20, Math.max(mainState.entryY + 12, y)); renderMain(); }
+  if (mainState.drag === 'tp') { mainState.tpY = Math.max(20, Math.min(mainState.entryY - 12, y));          renderMain(); }
+  if (mainState.drag) e.preventDefault();
+}, { passive: false });
+window.addEventListener('mouseup',  () => { if (mainState.drag) { mainState.drag = null; mainCanvas.style.cursor = 'default'; } });
+window.addEventListener('touchend', () => { mainState.drag = null; });
+
+// ─── Tab strip ────────────────────────────────────────────────────────────────
+
+const tabStrip = document.getElementById('tabs');
+OPTIONS.forEach((opt, i) => {
+  if (i > 0 && opt.group !== OPTIONS[i - 1].group) {
+    const sep = document.createElement('div');
+    sep.className = 'tab-sep';
+    tabStrip.appendChild(sep);
+  }
+  const btn = document.createElement('button');
+  btn.className = 'tab' + (opt === activeOpt ? ' active' : '');
+  btn.innerHTML = `<span class="tab-letter">${opt.id}</span>${opt.name}`;
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    activeOpt = opt;
+    renderMain();
+  });
+  tabStrip.appendChild(btn);
+});
+
+// ─── Comparison grid (small panels) ───────────────────────────────────────────
+
+const PANEL_W = 260, PANEL_H = 290;
+
+function makePanel(opt) {
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  const hdr = document.createElement('div');
+  hdr.className = 'panel-hdr';
+  hdr.innerHTML = `<span class="panel-id">${opt.id}</span><span class="panel-name">${opt.name}</span>`;
+  panel.appendChild(hdr);
+  const canvas = document.createElement('canvas');
+  canvas.width  = PANEL_W * DPR;
+  canvas.height = PANEL_H * DPR;
+  canvas.style.width  = PANEL_W + 'px';
+  canvas.style.height = PANEL_H + 'px';
+  panel.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(DPR, DPR);
+  const st = makeState(PANEL_H);
+  const render = () => { ctx.clearRect(0, 0, PANEL_W, PANEL_H); opt.draw(ctx, st, PANEL_W, PANEL_H); };
+  render();
+
+  function cY(e) {
+    const r = canvas.getBoundingClientRect();
+    return ((e.touches ? e.touches[0].clientY : e.clientY) - r.top) * (PANEL_H / r.height);
+  }
+  canvas.addEventListener('mousedown', e => {
+    const y = cY(e); const HIT = 10;
+    if (Math.abs(y - st.slY) < HIT)      st.drag = 'sl';
+    else if (Math.abs(y - st.tpY) < HIT) st.drag = 'tp';
+    if (st.drag) { e.preventDefault(); canvas.style.cursor = 'ns-resize'; }
+  });
+  canvas.addEventListener('mousemove', e => {
+    const y = cY(e);
+    if (st.drag === 'sl') { st.slY = Math.min(PANEL_H - 14, Math.max(st.entryY + 8, y)); render(); }
+    else if (st.drag === 'tp') { st.tpY = Math.max(14, Math.min(st.entryY - 8, y)); render(); }
+    else {
+      const HIT = 8;
+      canvas.style.cursor =
+        (Math.abs(y - st.slY) < HIT || Math.abs(y - st.tpY) < HIT) ? 'ns-resize' : 'default';
+    }
+  });
+  canvas.addEventListener('touchstart', e => {
+    const y = cY(e); const HIT = 10;
+    if (Math.abs(y - st.slY) < HIT)      st.drag = 'sl';
+    else if (Math.abs(y - st.tpY) < HIT) st.drag = 'tp';
+    if (st.drag) e.preventDefault();
+  }, { passive: false });
+  canvas.addEventListener('touchmove', e => {
+    const y = cY(e);
+    if (st.drag === 'sl') { st.slY = Math.min(PANEL_H - 14, Math.max(st.entryY + 8, y)); render(); }
+    if (st.drag === 'tp') { st.tpY = Math.max(14, Math.min(st.entryY - 8, y));            render(); }
+    if (st.drag) e.preventDefault();
+  }, { passive: false });
+  window.addEventListener('mouseup',  () => { if (st.drag) { st.drag = null; canvas.style.cursor = 'default'; } });
+  window.addEventListener('touchend', () => { st.drag = null; });
+
+  // Click panel → activate in main view
+  canvas.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab')[OPTIONS.indexOf(opt)]?.classList.add('active');
+    activeOpt = opt;
+    renderMain();
+    document.getElementById('main-wrap').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  canvas.title = 'Click to view full-size';
+  canvas.style.cursor = 'default';
+
+  return panel;
+}
+
+const grid = document.getElementById('grid');
+OPTIONS.forEach(opt => grid.appendChild(makePanel(opt)));
+</script>
+</body>
+</html>

@@ -67,8 +67,10 @@ class BrokerRegistry:
         }
 
     async def aclose(self) -> None:
-        """Close every data broker that holds a network client."""
-        for broker in self.data.values():
+        """Close every broker that holds a network client. Execution brokers are
+        included because a real-dealing account (e.g. capital:live) owns its own
+        live session, which isn't reachable through the data namespace."""
+        for broker in (*self.data.values(), *self.exec.values()):
             aclose = getattr(broker, "aclose", None)
             if aclose is not None:
                 await aclose()
@@ -80,9 +82,16 @@ def build_registry() -> BrokerRegistry:
     from auto_trader.brokers import capital, ig, paper_exec
     from auto_trader.config import ig_settings
 
+    from auto_trader.config import settings
+
     registry = BrokerRegistry()
     capital_broker = capital.register(registry)
     paper_exec.register(registry, capital_broker, broker_id="capital")
+    # Real-money Capital dealing as the "capital:live" ACCOUNT (not a second broker):
+    # it deals against the live host with its own session while the chart keeps the
+    # demo "capital" feed. Registers only when the live credentials are present.
+    if settings.has_live():
+        capital.register_live_exec(registry)
     # IG demo/live each register only when fully credentialed, so a half-configured
     # or absent IG account never shows a dead entry in the broker selector.
     for side in ("demo", "live"):

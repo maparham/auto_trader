@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // vitest runs in the 'node' env (see vite.config.ts), so provide a tiny in-memory
 // localStorage before importing the module under test.
@@ -53,38 +53,10 @@ describe("persist scoping", () => {
     // different epic is separate.
     expect(P.loadAlerts("US100")).toHaveLength(1);
     expect(P.loadAlerts("BTC")).toEqual([]);
-    expect(localStorage.getItem("auto-trader.alerts.US100")).not.toBeNull();
+    expect(localStorage.getItem("auto-trader.b.capital.alerts.US100")).not.toBeNull();
     // AVWAP anchors stay per-scope.
     expect(P.loadAvwapAnchor("tab.A", "US100", "AVWAP")).toBe(123);
     expect(P.loadAvwapAnchor("tab.B", "US100", "AVWAP")).toBe(0);
-  });
-
-  it("migrateAlertsToGlobal collapses scoped alert keys into the global per-epic key", () => {
-    // Two old per-tab keys for the same epic + one for another epic.
-    localStorage.setItem("auto-trader.tab.A.alerts.US100", JSON.stringify([
-      { id: "a1", level: 5, condition: "crossing", trigger: "every", message: "" },
-    ]));
-    localStorage.setItem("auto-trader.tab.B.alerts.US100", JSON.stringify([
-      { id: "a2", level: 7, condition: "crossing", trigger: "every", message: "" },
-    ]));
-    localStorage.setItem("auto-trader.tab.A.alerts.BTC", JSON.stringify([
-      { id: "b1", level: 9, condition: "crossing", trigger: "every", message: "" },
-    ]));
-    expect(P.migrateAlertsToGlobal()).toBe(true);
-    // Merged by epic, de-duped by id; scoped keys removed.
-    expect(P.loadAlerts("US100").map((a) => a.id).sort()).toEqual(["a1", "a2"]);
-    expect(P.loadAlerts("BTC").map((a) => a.id)).toEqual(["b1"]);
-    expect(localStorage.getItem("auto-trader.tab.A.alerts.US100")).toBeNull();
-    expect(localStorage.getItem("auto-trader.tab.B.alerts.US100")).toBeNull();
-    // Idempotent: a second run finds nothing to do.
-    expect(P.migrateAlertsToGlobal()).toBe(false);
-  });
-
-  it("migrateAlertsToGlobal collapses an empty scoped key without leaving an inert global key", () => {
-    localStorage.setItem("auto-trader.tab.A.alerts.US100", JSON.stringify([]));
-    expect(P.migrateAlertsToGlobal()).toBe(true); // the scoped key still gets removed
-    expect(localStorage.getItem("auto-trader.tab.A.alerts.US100")).toBeNull();
-    expect(localStorage.getItem("auto-trader.alerts.US100")).toBeNull(); // no empty global key written
   });
 
   it("primaryCellScope / cellScope produce the documented prefixes", () => {
@@ -105,7 +77,7 @@ describe("stored-alert direct edits (loadStoredAlert / updateStoredAlert / delet
     expect(P.loadStoredAlert("US100", "a1")!.level).toBe(5);
     expect(P.loadStoredAlert("US100", "nope")).toBeNull();
     // Legacy row (no stored id): match by the same id normalizeAlert backfills.
-    localStorage.setItem("auto-trader.alerts.BTC", JSON.stringify([{ level: 3, condition: "crossing" }]));
+    localStorage.setItem("auto-trader.b.capital.alerts.BTC", JSON.stringify([{ level: 3, condition: "crossing" }]));
     const legacyId = P.normalizeAlert({ level: 3, condition: "crossing" }, 0).id;
     expect(P.loadStoredAlert("BTC", legacyId)!.level).toBe(3);
   });
@@ -134,39 +106,10 @@ describe("stored-alert direct edits (loadStoredAlert / updateStoredAlert / delet
   });
 });
 
-// Carrying alerts to a re-resolved epic (a broker switch swaps a cell's epic).
-describe("moveAlerts (epic re-resolution)", () => {
-  const A = { id: "a1", level: 5, condition: "crossing" as const, trigger: "every" as const, message: "" };
-  const B = { id: "a2", level: 7, condition: "less" as const, trigger: "once" as const, message: "" };
-
-  it("moves the source epic's alerts to the destination and clears the source", () => {
-    P.saveAlerts("OLD", [A, B]);
-    expect(P.moveAlerts("OLD", "NEW")).toBe(true);
-    expect(P.loadAlerts("NEW").map((x) => x.id)).toEqual(["a1", "a2"]);
-    expect(P.loadAlerts("OLD")).toEqual([]);
-  });
-
-  it("merges onto existing destination alerts, de-duped by id", () => {
-    P.saveAlerts("OLD", [A, B]);
-    P.saveAlerts("NEW", [A]); // a1 already present at destination
-    expect(P.moveAlerts("OLD", "NEW")).toBe(true);
-    expect(P.loadAlerts("NEW").map((x) => x.id).sort()).toEqual(["a1", "a2"]);
-    expect(P.loadAlerts("OLD")).toEqual([]);
-  });
-
-  it("no-ops (returns false) when from===to or the source is empty", () => {
-    P.saveAlerts("OLD", [A]);
-    expect(P.moveAlerts("OLD", "OLD")).toBe(false);
-    expect(P.loadAlerts("OLD").map((x) => x.id)).toEqual(["a1"]); // untouched
-    expect(P.moveAlerts("EMPTY", "NEW")).toBe(false);
-    expect(localStorage.getItem("auto-trader.alerts.NEW")).toBeNull(); // no empty key written
-  });
-});
-
 describe("loadTabs migration (v1 single-chart → cell-based)", () => {
   it("wraps a pre-cells tab into one primary cell, preserving symbol/period", () => {
     localStorage.setItem(
-      "auto-trader.tabs",
+      "auto-trader.b.capital.tabs",
       JSON.stringify([{ id: "t1", symbol: SYMBOL, period: PERIOD }]),
     );
     const tabs = P.loadTabs();
@@ -188,7 +131,7 @@ describe("loadTabs migration (v1 single-chart → cell-based)", () => {
       JSON.stringify([{ name: "trend", points: [{ value: 1 }] }]),
     );
     localStorage.setItem(
-      "auto-trader.tabs",
+      "auto-trader.b.capital.tabs",
       JSON.stringify([{ id: "t1", symbol: SYMBOL, period: PERIOD }]),
     );
     const t = P.loadTabs()![0];
@@ -207,7 +150,7 @@ describe("loadTabs migration (v1 single-chart → cell-based)", () => {
         ],
       },
     ];
-    localStorage.setItem("auto-trader.tabs", JSON.stringify(cellBased));
+    localStorage.setItem("auto-trader.b.capital.tabs", JSON.stringify(cellBased));
     expect(P.loadTabs()).toEqual(cellBased);
   });
 });
@@ -251,7 +194,7 @@ describe("per-symbol templates", () => {
     // Global, not scope-prefixed: another symbol sees nothing.
     expect(P.loadSymbolTemplate("BTC")).toBeNull();
     // Key shape.
-    expect(localStorage.getItem("auto-trader.template.US100")).not.toBeNull();
+    expect(localStorage.getItem("auto-trader.b.capital.template.US100")).not.toBeNull();
     P.deleteSymbolTemplate("US100");
     expect(P.loadSymbolTemplate("US100")).toBeNull();
   });
@@ -404,32 +347,80 @@ describe("cloneWorkspace — scope isolation (the Save-as correctness rule)", ()
   });
 });
 
-describe("migrateToNamedLayouts", () => {
-  it("wraps an existing bare `tabs` workspace into a named default and retires the bare keys", () => {
-    localStorage.setItem(
-      "auto-trader.tabs",
-      JSON.stringify([{ id: "t1", symbol: SYMBOL, period: PERIOD }]),
-    );
-    localStorage.setItem("auto-trader.activeTab", JSON.stringify("t1"));
+// Per-broker workspace isolation: each data-broker (capital / ig-demo / ig-live) is
+// its own platform instance. Roots (tabs/layouts/scratch/recent/templates/alerts)
+// are namespaced by broker; scoped per-cell keys and global preferences are not.
+describe("per-broker workspace isolation", () => {
+  // setPersistBroker is module state; restore the default so later tests are unaffected.
+  afterEach(() => P.setPersistBroker("capital"));
 
-    expect(P.migrateToNamedLayouts()).toBe(true);
-    const layouts = P.loadLayouts();
-    expect(layouts).toHaveLength(1);
-    expect(P.loadDefaultLayoutId()).toBe(layouts[0].id);
-    expect(P.loadActiveLayoutId()).toBe(layouts[0].id);
-    // Bare keys retired so the workspace isn't double-sourced.
-    expect(localStorage.getItem("auto-trader.tabs")).toBeNull();
-    expect(localStorage.getItem("auto-trader.activeTab")).toBeNull();
-    // The migrated layout body carries the (migrated, cell-based) tab.
-    expect(P.loadLayout(layouts[0].id)?.tabs[0].cells).toHaveLength(1);
+  it("roots (tabs) are isolated per broker", () => {
+    P.setPersistBroker("capital");
+    P.saveTabs([seedTab("cap1")]);
+    P.setPersistBroker("ig-demo");
+    expect(P.loadTabs()).toBeNull(); // ig-demo starts empty — capital's tabs don't leak
+    P.saveTabs([seedTab("ig1")]);
+    expect(P.loadTabs()!.map((t) => t.id)).toEqual(["ig1"]);
+    // Each broker's tabs live under its own key; switching back restores capital's.
+    P.setPersistBroker("capital");
+    expect(P.loadTabs()!.map((t) => t.id)).toEqual(["cap1"]);
+    expect(localStorage.getItem("auto-trader.b.capital.tabs")).not.toBeNull();
+    expect(localStorage.getItem("auto-trader.b.ig-demo.tabs")).not.toBeNull();
   });
 
-  it("is a no-op once a layouts index exists, and for a fresh install", () => {
-    P.saveLayout("L1", "X", { tabs: [seedTab("t1")], activeTabId: "t1" });
-    expect(P.migrateToNamedLayouts()).toBe(false);
+  it("alerts are isolated per broker (explicit broker arg)", () => {
+    const A = { id: "a1", level: 5, condition: "crossing" as const, trigger: "every" as const, message: "" };
+    P.saveAlerts("CS.D.EURUSD.CFD.IP", [A], "ig-demo");
+    // Same epic on a different broker (ig-live) is a separate store.
+    expect(P.loadAlerts("CS.D.EURUSD.CFD.IP", "ig-live")).toEqual([]);
+    expect(P.loadAlerts("CS.D.EURUSD.CFD.IP", "ig-demo").map((a) => a.id)).toEqual(["a1"]);
+    expect(localStorage.getItem("auto-trader.b.ig-demo.alerts.CS.D.EURUSD.CFD.IP")).not.toBeNull();
+    // loadAllAlerts only scans the requested broker.
+    expect(P.loadAllAlerts("ig-demo").map((g) => g.epic)).toEqual(["CS.D.EURUSD.CFD.IP"]);
+    expect(P.loadAllAlerts("ig-live")).toEqual([]);
+  });
 
-    localStorage.clear();
-    expect(P.migrateToNamedLayouts()).toBe(false); // fresh install → stays blank
-    expect(P.loadLayouts()).toEqual([]);
+  it("recent symbols and templates are isolated per broker", () => {
+    P.setPersistBroker("capital");
+    P.pushRecentSymbol("US100");
+    P.saveSymbolTemplate({ epic: "US100", indicators: [], indicatorConfigs: {}, drawings: [], avwapAnchors: {}, savedAt: 1 });
+    P.setPersistBroker("ig-demo");
+    expect(P.loadRecentSymbols()).toEqual([]);
+    expect(P.loadSymbolTemplate("US100")).toBeNull();
+  });
+
+  it("global preferences are SHARED across brokers (not isolated)", () => {
+    P.setPersistBroker("capital");
+    P.saveIndicatorDefault("EMA", { calcParams: [21] });
+    P.saveFavoriteIndicators(["EMA", "RSI"]);
+    P.setPersistBroker("ig-live");
+    // Preferences follow the user across brokers — they're not workspace state.
+    expect(P.loadIndicatorDefault("EMA")).toEqual({ calcParams: [21] });
+    expect(P.loadFavoriteIndicators()).toEqual(["EMA", "RSI"]);
+  });
+
+  it("pruneLegacyGlobalWorkspace removes old global roots once, preserving prefs + per-broker keys", () => {
+    // Old GLOBAL workspace (pre per-broker) + a global preference + a per-broker key.
+    localStorage.setItem("auto-trader.tabs", JSON.stringify([{ id: "t1", symbol: SYMBOL, period: PERIOD }]));
+    localStorage.setItem("auto-trader.layout.L1", JSON.stringify({ tabs: [], activeTabId: "" }));
+    localStorage.setItem("auto-trader.alerts.US100", JSON.stringify([{ id: "x", level: 1, condition: "crossing" }]));
+    localStorage.setItem("auto-trader.template.US100", JSON.stringify({ epic: "US100" }));
+    localStorage.setItem("auto-trader.settings", JSON.stringify({ theme: "dark" })); // global pref
+    localStorage.setItem("auto-trader.indicatorDefault.EMA", JSON.stringify({ calcParams: [9] })); // global pref
+    localStorage.setItem("auto-trader.b.capital.tabs", JSON.stringify([{ id: "c1" }])); // new per-broker key
+
+    expect(P.pruneLegacyGlobalWorkspace()).toBe(true);
+    // Old global roots gone.
+    expect(localStorage.getItem("auto-trader.tabs")).toBeNull();
+    expect(localStorage.getItem("auto-trader.layout.L1")).toBeNull();
+    expect(localStorage.getItem("auto-trader.alerts.US100")).toBeNull();
+    expect(localStorage.getItem("auto-trader.template.US100")).toBeNull();
+    // Global preferences preserved.
+    expect(localStorage.getItem("auto-trader.settings")).not.toBeNull();
+    expect(localStorage.getItem("auto-trader.indicatorDefault.EMA")).not.toBeNull();
+    // Per-broker key preserved.
+    expect(localStorage.getItem("auto-trader.b.capital.tabs")).not.toBeNull();
+    // Idempotent: a second run is a sentinel-gated no-op.
+    expect(P.pruneLegacyGlobalWorkspace()).toBe(false);
   });
 });

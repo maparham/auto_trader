@@ -104,6 +104,20 @@ describe("PositionLines.render", () => {
     handler({ overlay: { id: "ov-1", points: [{ value: 1.234567 }] } });
     expect(dropped).toEqual([1.23457]);
   });
+
+  it("a drop at the unchanged level reports nothing (a click is not an edit)", () => {
+    const dropped: number[] = [];
+    lines.render([
+      spec({ key: "k1", level: 100, draggable: true, onDragEnd: (l) => dropped.push(l) }),
+    ]);
+    const create = chart.calls.find((c) => c.fn === "create");
+    const handler = (create?.arg as { onPressedMoveEnd: (e: unknown) => void })
+      .onPressedMoveEnd;
+    // A plain click ends a zero-distance press at the same level (sub-precision
+    // jitter rounds away) — must NOT stage an edit.
+    handler({ overlay: { id: "ov-1", points: [{ value: 100.000001 }] } });
+    expect(dropped).toEqual([]);
+  });
 });
 
 describe("tradeLineSpecs", () => {
@@ -262,6 +276,29 @@ describe("tradeLineSpecs", () => {
       "D1:stop",
     ]);
     expect(specs.find((s) => s.key === "D2:price")?.highlight).toBe(false);
+  });
+
+  it("select overrides hide (a hidden trade's lines reappear while selected)", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ stop: 95 })],
+      hidden: new Set(["D1"]),
+      selected: "D1",
+    });
+    expect(specs.map((s) => s.key)).toEqual(["D1:price", "D1:stop"]);
+  });
+
+  it("marks the selected trade's lines selected (others not)", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ id: "D1", stop: 95 }), trade({ id: "D2", priceLevel: 200 })],
+      selected: "D1",
+    });
+    expect(specs.filter((s) => s.selected).map((s) => s.key)).toEqual([
+      "D1:price",
+      "D1:stop",
+    ]);
+    expect(specs.find((s) => s.key === "D2:price")?.selected).toBe(false);
   });
 });
 

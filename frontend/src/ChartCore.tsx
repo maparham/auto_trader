@@ -49,7 +49,16 @@ import {
   pendingEditsSignal,
   draftOrderSignal,
   tradeLineUiSignal,
+  setTradeHovered,
+  setTradeSelected,
+  selectTradeLine,
+  openTradeEditor,
+  discardPendingEdit,
+  discardPendingField,
+  confirmLineEditsSignal,
+  draggingLineSignal,
   type PendingEdit,
+  type TradeLineField,
   type DraftOrder,
   type TradeLineUi,
 } from "./lib/signals";
@@ -79,7 +88,22 @@ import {
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID } from "./lib/positionLines";
-import { brokerLabel, setLivePrice, subscribeTrades, type TradeView } from "./lib/trading";
+import {
+  brokerLabel,
+  setLivePrice,
+  subscribeTrades,
+  tradeLabel,
+  mergeTradeLevels,
+  clampLevelToPrice,
+  applyEditedLevels,
+  closePosition,
+  cancelWorkingOrder,
+  refreshTrades,
+  getTradesAccount,
+  getLivePrice,
+  type TradeView,
+  type OrderSide,
+} from "./lib/trading";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
 import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import { chartColors, loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
@@ -487,12 +511,19 @@ export default function ChartCore({
   const tradesRef = useRef<TradeView[]>([]);
   const pendingRef = useRef<Record<string, PendingEdit>>({});
   const draftRef = useRef<DraftOrder | null>(null);
-  // Per-trade line UI (hidden ids + hovered id) from the positions panel, so
-  // hide/hover re-filter the drawn lines without waiting for a poll tick.
-  const tradeUiRef = useRef<TradeLineUi>({ hidden: [], hovered: null });
+  // Per-trade line UI (hidden ids + hovered + selected) from the positions panel /
+  // chart, so hide/hover/select re-filter the drawn lines without waiting for a poll.
+  const tradeUiRef = useRef<TradeLineUi>({ hidden: [], hovered: null, selected: null, selectedField: null });
+  // Mirrors confirmLineEditsSignal so the drag handler (below) can decide whether a
+  // drag should select the trade (confirm mode) or just stage for auto-apply.
+  const confirmLineEditsRef = useRef<boolean>(confirmLineEditsSignal.value);
   // Redraw trade lines filtered to the current epic. Set in chart init; called
   // again after a symbol-change rehydrate so the new epic's lines appear at once.
   const posDrawRef = useRef<() => void>(() => {});
+  // Coalesces the heavy overlay redraw triggered by pending-edit changes to one per
+  // animation frame, so a line drag (which restages the pending price on every
+  // mousemove) repaints the overlay once per frame, not once per pixel.
+  const pendingRedrawRafRef = useRef(0);
   // Unsubscribe from the shared trades/pending subscriptions (stored in a ref so
   // the effect's outer teardown can reach it; the subscribe happens in init).
   const posUnsubRef = useRef<() => void>(() => {});
@@ -551,6 +582,12 @@ export default function ChartCore({
   const justDraggedRef = useRef(false);
   const pendingAnchorXRef = useRef(0);
   const anchorRafRef = useRef(0);
+  // Manual trade-line drag (SL/TP/order-entry). klinecharts only drags these once
+  // they're already selected; we drive the drag ourselves so a press anywhere the
+  // ns-resize cursor shows grabs the nearest draggable line on the FIRST press
+  // (selected or not). `field` is "price" | "stop" | "tp".
+  const draggingTradeRef = useRef<{ id: string; field: TradeLineField } | null>(null);
+  const tradeDragMovedRef = useRef(false);
   // redraw() is defined far below (useCallback); the once-mounted click handler
   // needs to trigger a repaint after changing the selection, so reach it via ref.
   const redrawRef = useRef<() => void>(() => {});
@@ -651,6 +688,28 @@ export default function ChartCore({
       selected: boolean;
     }>
   >([]);
+  // The ACTIVE line's pill for the selected trade (at most one): the entry, SL, or TP
+  // line the user clicked/dragged. The entry pill shows symbol + summary + uPnL +
+  // close; the SL/TP pills show symbol + level + the P/L that level would realise if
+  // hit + remove. Any pill shows Apply/Discard when ITS OWN line has a staged drag.
+  // Anchored at the line's pixel y (recomputed in redraw); x frozen at selection.
+  const [tradePills, setTradePills] = useState<
+    Array<{
+      tradeId: string;
+      field: TradeLineField;
+      y: number;
+      epic: string;
+      kind: "position" | "order";
+      side: OrderSide;
+      qty: number;
+      level: number;
+      pl: number | null; // entry: uPnL; SL/TP: P/L if that level is hit
+      changed: boolean; // this line has an un-applied drag → show Apply/Discard
+    }>
+  >([]);
+  // Shared x for the trade pill, frozen at selection so the buttons sit still. null
+  // until a trade is selected (mirrors pillLeftRef's "don't snap to 0" intent).
+  const tradePillLeftRef = useRef<number | null>(null);
   // The on-line pill is shown while the line is hovered/selected (driven by
   // klinecharts via overlays) OR while the cursor is over the pill itself —
   // moving cursor from canvas line onto the DOM pill ends the line hover, so this
@@ -732,9 +791,24 @@ export default function ChartCore({
     [positionPill],
   );
 
+  // Freeze the trade pills' shared x near where the cursor sits when a trade becomes
+  // selected (fallback: a third across, e.g. selected from a dock row with no chart
+  // cursor). Called from the selection subscription so all pills share one x.
+  const freezeTradePillX = useCallback(() => {
+    const c = chartRef.current;
+    const cont = containerRef.current;
+    const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width ?? cont?.clientWidth ?? 0;
+    const cx = cursorXRef.current > 0 ? cursorXRef.current : Math.round(mainW / 3);
+    let left = cx + 14;
+    if (mainW && left > mainW - 230) left = Math.max(4, cx - 230);
+    tradePillLeftRef.current = left;
+  }, []);
+
   // "+" axis affordance: positioned imperatively on mousemove (no per-move state).
   const wrapRef = useRef<HTMLDivElement>(null);
   const plusBtnRef = useRef<HTMLDivElement>(null);
+  // "Double click to edit" tooltip, shown imperatively when hovering a trade line.
+  const tradeTooltipRef = useRef<HTMLDivElement>(null);
   const plusPriceLabelRef = useRef<HTMLSpanElement>(null);
   const plusPriceRef = useRef(0);
   const [plusMenu, setPlusMenu] = useState<{ x: number; y: number; price: number } | null>(null);
@@ -935,6 +1009,12 @@ export default function ChartCore({
       // mirror the indicator/alert deselect here. Skip when a drawing is under the
       // cursor — that click is selecting it (onSelected handles that).
       if (!hit && !alertHit && !overlays.getHoveredDrawingId()) overlays.selectDrawing(null);
+      // Trade-line selection (chart -> dock). Single-click focuses THAT line (its pill
+      // shows + dock row lights up) without opening the edit ticket — double-click
+      // opens it. A click on empty space drops the trade.
+      const tradeHit = tradeLineHitTest(x, y);
+      if (tradeHit) selectTradeLine(tradeHit.id, tradeHit.field, false /* openPanel */);
+      else setTradeSelected(null);
     };
 
     // Shared alert-line hit-test (used by single-click select and double-click
@@ -954,6 +1034,71 @@ export default function ChartCore({
       return null;
     };
 
+    // This cell's trade lines, each resolved to a pixel-y ONCE — the single source
+    // for the hover hit-test, the drag-grab test, AND the magnet/snap. Built from the
+    // SAME tradeLineSpecs that draws the lines (current hidden/hovered/selected
+    // applied) so a hidden, un-revealed line isn't hittable and it matches exactly
+    // what's on screen. The draft (un-submitted) order is included (it has no dock
+    // row but IS a snap target); consumers that don't want it filter on DRAFT_ID.
+    // Computing it once per mousemove avoids rebuilding the spec list and re-running
+    // convertToPixel per line in two separate places on the hot path.
+    type TradeLinePx = {
+      id: string;
+      field: TradeLineField;
+      level: number;
+      draggable: boolean;
+      y: number | undefined;
+    };
+    const tradeLinePixels = (): TradeLinePx[] => {
+      const c = chartRef.current;
+      if (!c) return [];
+      const specs = tradeLineSpecs({
+        trades: tradesRef.current,
+        pending: pendingRef.current,
+        epic: epicRef.current,
+        precision: precisionRef.current,
+        levelsDraggable: true,
+        onDrag: () => {},
+        draft: draftRef.current,
+        hidden: new Set(tradeUiRef.current.hidden),
+        hovered: tradeUiRef.current.hovered,
+        selected: tradeUiRef.current.selected,
+      });
+      return specs.map((s) => {
+        const sep = s.key.lastIndexOf(":");
+        return {
+          id: s.key.slice(0, sep),
+          field: s.key.slice(sep + 1) as TradeLineField, // "price" | "stop" | "tp"
+          level: s.level,
+          draggable: s.draggable,
+          y: first(
+            c.convertToPixel([{ value: s.level }], { paneId: "candle_pane", absolute: true }),
+          ).y,
+        };
+      });
+    };
+
+    // Trade-line hit-test (chart -> dock, for hover + click-select): the TRADE id +
+    // field of the entry/SL/TP line within HIT_TOLERANCE_PX of (x,y) in the candle
+    // pane, or null. A locked position-entry line ignores klinecharts overlay events,
+    // so this manual test (not onMouseEnter) covers every line. Excludes the draft.
+    const tradeLineHitTest = (
+      x: number,
+      y: number,
+    ): { id: string; field: TradeLineField } | null => {
+      const c = chartRef.current;
+      if (!c) return null;
+      const mainW = c.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      if (x > mainW) return null;
+      let best: { id: string; field: TradeLineField; d: number } | null = null;
+      for (const t of tradeLinePixels()) {
+        if (t.id === DRAFT_ID || t.y == null) continue;
+        const d = Math.abs(t.y - y);
+        if (d <= HIT_TOLERANCE_PX && (!best || d < best.d)) best = { id: t.id, field: t.field, d };
+      }
+      return best ? { id: best.id, field: best.field } : null;
+    };
+
     // Double-click an alert line -> open the edit modal (prefilled). Uses the same
     // DOM hit-test (klinecharts' overlay dblclick is unreliable for these lines).
     const onDblClick = (e: MouseEvent) => {
@@ -962,6 +1107,14 @@ export default function ChartCore({
       const rect = el.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
+      // Double-click a trade line -> force the edit ticket open. Using openTradeEditor
+      // rather than selectTradeLine because a dblclick is preceded by two clicks that
+      // may have toggled selection back to its start state — force-set unconditionally.
+      const tradeHit = tradeLineHitTest(x, y);
+      if (tradeHit) {
+        openTradeEditor(tradeHit.id, tradeHit.field);
+        return;
+      }
       const id = alertHitTest(x, y);
       if (id) {
         alertEditRequest.set({ id });
@@ -1079,6 +1232,88 @@ export default function ChartCore({
       window.addEventListener("mouseup", onAnchorUp, true);
     };
 
+    // --- Manual trade-line drag (SL / TP / order-entry) ---
+    // klinecharts only drags these overlays once they're already selected (a first
+    // press on an unselected line reads as a click), so we drive the drag ourselves:
+    // a press anywhere the ns-resize cursor shows grabs the nearest draggable line on
+    // the FIRST press, selected or not. Nearest DRAGGABLE line within ALERT_SNAP_PX of
+    // pixel y — the same band that shows the cursor. Draft lines keep klinecharts'
+    // native drag (they have no dock row / pill).
+    const grabbableTradeLine = (yPix: number): { id: string; field: TradeLineField } | null => {
+      let best: { id: string; field: TradeLineField; d: number } | null = null;
+      for (const t of tradeLinePixels()) {
+        if (!t.draggable || t.id === DRAFT_ID || t.y == null) continue;
+        const d = Math.abs(t.y - yPix);
+        if (d <= ALERT_SNAP_PX && (!best || d < best.d)) best = { id: t.id, field: t.field, d };
+      }
+      return best ? { id: best.id, field: best.field } : null;
+    };
+    const onTradeLineMove = (ev: MouseEvent) => {
+      const drag = draggingTradeRef.current;
+      const c = chartRef.current;
+      if (!drag || !c) return;
+      const r = el.getBoundingClientRect();
+      const pt = first(
+        c.convertFromPixel([{ y: ev.clientY - r.top }], { paneId: "candle_pane", absolute: true }),
+      );
+      if (pt.value == null) return;
+      if (!tradeDragMovedRef.current) {
+        tradeDragMovedRef.current = true;
+        draggingLineSignal.set(true); // pause no-confirm auto-apply until the drop
+      }
+      let level = Number(pt.value.toFixed(precisionRef.current));
+      // Keep SL/TP on the valid side of the latest price (long: SL below / TP above;
+      // short: reversed) — clamp so the line can't be dragged across it.
+      const trade = tradesRef.current.find((t) => t.id === drag.id);
+      if (trade && (drag.field === "stop" || drag.field === "tp")) {
+        const last = getLivePrice(epicRef.current) ?? c.getDataList().at(-1)?.close;
+        if (last != null) {
+          const tick = Number((10 ** -precisionRef.current).toFixed(precisionRef.current));
+          level = Number(
+            clampLevelToPrice(drag.field, trade.side, last, level, tick).toFixed(precisionRef.current),
+          );
+        }
+      }
+      const pendKey = drag.field === "tp" ? "takeProfit" : drag.field;
+      const cur = pendingEditsSignal.value;
+      pendingEditsSignal.set({ ...cur, [drag.id]: { ...cur[drag.id], [pendKey]: level } });
+      // Confirm mode: focus the dragged line so its pill (Apply/Discard) shows. No-
+      // confirm mode leaves selection alone (the dock auto-applies on the drop).
+      if (confirmLineEditsRef.current) setTradeSelected(drag.id, drag.field);
+    };
+    const onTradeLineUp = () => {
+      if (!draggingTradeRef.current) return;
+      draggingTradeRef.current = null;
+      window.removeEventListener("mousemove", onTradeLineMove);
+      window.removeEventListener("mouseup", onTradeLineUp, true);
+      if (tradeDragMovedRef.current) {
+        draggingLineSignal.set(false); // let no-confirm auto-apply commit the final level
+        // A real drag must not also fire the trailing click (which would toggle the
+        // just-focused line's selection back off).
+        justDraggedRef.current = true;
+        setTimeout(() => { justDraggedRef.current = false; }, 0);
+      }
+    };
+    const onTradeLineDown = (e: MouseEvent) => {
+      if (e.button !== 0 || avwapAnchorMode.value || e.metaKey || e.ctrlKey) return;
+      const c = chartRef.current;
+      if (!c) return;
+      const r = el.getBoundingClientRect();
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      const mainW = c.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      if (x > mainW) return; // the y-axis strip is a scale gesture, not a line grab
+      const hit = grabbableTradeLine(y);
+      if (!hit) return;
+      // Grab it: block klinecharts' pan AND its own (selection-gated) overlay drag.
+      e.preventDefault();
+      e.stopPropagation();
+      draggingTradeRef.current = hit;
+      tradeDragMovedRef.current = false;
+      window.addEventListener("mousemove", onTradeLineMove);
+      window.addEventListener("mouseup", onTradeLineUp, true);
+    };
+
     // ⌘/Ctrl-drag clone (TradingView-style): pressing ⌘ on a drawing leaves a copy
     // behind and drags the original. We clone IN PLACE on the ⌘-mousedown and do
     // NOT stopPropagation — klinecharts then drags the overlay the press targeted,
@@ -1152,7 +1387,7 @@ export default function ChartCore({
       const c = chartRef.current;
       const btn = plusBtnRef.current;
       if (!c) return;
-      if (draggingAnchorRef.current) return; // window listeners drive the drag
+      if (draggingAnchorRef.current || draggingTradeRef.current) return; // window listeners drive the drag
       const r = el.getBoundingClientRect();
       const lx = e.clientX - r.left;
       const ly = e.clientY - r.top;
@@ -1226,6 +1461,24 @@ export default function ChartCore({
           if (id !== selectedId) positionPill(node);
         }
       }
+      // This cell's trade lines, resolved to pixel-y ONCE for both the dock-hover
+      // mirror just below AND the magnet/snap further down (was built twice/move).
+      const tlp = tradeLinePixels();
+      // Chart -> dock hover: highlight the dock row for the trade line under the
+      // cursor (null over the axis or empty space). Mirrors the dock row's own
+      // onMouseEnter so hovering a line and hovering a row light up the same pair.
+      // The cursor is over EITHER the chart or a dock row at any moment (never
+      // both), so this and the row handler never fight over `hovered`.
+      let hoverTradeId: string | null = null;
+      if (!nextOnAxis) {
+        let bestD = Infinity;
+        for (const t of tlp) {
+          if (t.id === DRAFT_ID || t.y == null) continue; // the draft has no dock row
+          const d = Math.abs(t.y - y);
+          if (d <= HIT_TOLERANCE_PX && d < bestD) { bestD = d; hoverTradeId = t.id; }
+        }
+      }
+      setTradeHovered(hoverTradeId);
       // Over ANY alert line — selected or not — the WHOLE "+" affordance (circle + price
       // box) stays and looks IDENTICAL to a normal hover: the price readout is ALWAYS
       // visible (the box, z-49, reads on top of the never-hidden amber tag), the shape
@@ -1250,29 +1503,23 @@ export default function ChartCore({
       // a few px off the line), matching the on-line hover affordance. Alert lines
       // are draggable; trade lines use their spec's `draggable` (a filled
       // position's entry is not).
-      const snapTargets = [
-        ...overlays.getAlerts().map((a) => ({ level: a.level, draggable: true })),
-        ...tradeLineSpecs({
-          trades: tradesRef.current,
-          pending: pendingRef.current,
-          epic: epicRef.current,
-          precision: precisionRef.current,
-          levelsDraggable: true,
-          onDrag: () => {},
-          draft: draftRef.current,
-          // Don't magnet to a line that isn't drawn (hidden, not hovered).
-          hidden: new Set(tradeUiRef.current.hidden),
-          hovered: tradeUiRef.current.hovered,
-        }).map((s) => ({ level: s.level, draggable: s.draggable })),
-      ];
-      let snapTarget: { y: number; level: number; draggable: boolean } | null = null;
-      for (const t of snapTargets) {
+      const snapTargets: { y: number; level: number; draggable: boolean; isTrade?: boolean }[] = [];
+      for (const al of overlays.getAlerts()) {
         const ay = first(
-          c.convertToPixel([{ value: t.level }], { paneId: "candle_pane", absolute: true }),
+          c.convertToPixel([{ value: al.level }], { paneId: "candle_pane", absolute: true }),
         ).y;
-        if (ay != null && Math.abs(ay - y) <= ALERT_SNAP_PX &&
-            (snapTarget == null || Math.abs(ay - y) < Math.abs(snapTarget.y - y))) {
-          snapTarget = { y: ay, level: t.level, draggable: t.draggable };
+        if (ay != null) snapTargets.push({ y: ay, level: al.level, draggable: true });
+      }
+      // Trade lines reuse tlp's already-resolved pixel-y (no re-convert). Hidden,
+      // un-revealed lines are absent from tlp, so the magnet won't lock onto them.
+      for (const t of tlp) {
+        if (t.y != null) snapTargets.push({ y: t.y, level: t.level, draggable: t.draggable, isTrade: true });
+      }
+      let snapTarget: { y: number; level: number; draggable: boolean; isTrade?: boolean } | null = null;
+      for (const t of snapTargets) {
+        if (Math.abs(t.y - y) <= ALERT_SNAP_PX &&
+            (snapTarget == null || Math.abs(t.y - y) < Math.abs(snapTarget.y - y))) {
+          snapTarget = t;
         }
       }
       if (overlays.isDraggingAlert()) {
@@ -1303,6 +1550,22 @@ export default function ChartCore({
       ) {
         cursorModeRef.current = "cur-ns";
         setCursorMode("cur-ns");
+      }
+      // "Double click to edit" tooltip: show whenever hovering any trade line
+      // (draggable or not — position entry lines are non-draggable but still dblclick-editable).
+      const tt = tradeTooltipRef.current;
+      if (tt) {
+        const hoveredTradeY = hoverTradeId != null
+          ? tlp.find((t) => t.id === hoverTradeId)?.y ?? null
+          : null;
+        const showTt = hoveredTradeY != null && x <= mainW;
+        if (showTt) {
+          tt.style.left = `${x + 18}px`;
+          tt.style.top = `${hoveredTradeY - 22}px`;
+          tt.style.display = "block";
+        } else {
+          tt.style.display = "none";
+        }
       }
       btn.classList.toggle("passthrough", overAlertId != null || snapTarget != null);
       // Hide the "+" pill the moment the cursor crosses onto the price-axis strip
@@ -1347,8 +1610,13 @@ export default function ChartCore({
     const onLeave = () => {
       setPlusCrosshair(null);
       if (snapActiveRef.current) { overlays.setSuppressNativeLine(false); snapActiveRef.current = false; }
+      if (tradeTooltipRef.current) tradeTooltipRef.current.style.display = "none";
       // onMove stops firing past the canvas edge, so clear the curve-hover highlight.
       if (curveHover.value !== null) curveHover.set(null);
+      // Drop any chart-driven trade-line hover as the cursor leaves the chart. If
+      // it's heading for a dock row, that row's onMouseEnter re-sets it (mouseleave
+      // here fires before the row's mouseenter), so the highlight lands correctly.
+      setTradeHovered(null);
       if (onAxisRef.current) {
         onAxisRef.current = false;
         setOnAxis(false);
@@ -1374,6 +1642,7 @@ export default function ChartCore({
       el.addEventListener("mousedown", onAnchorDown, true);
       el.addEventListener("mousedown", onClonePress, true);
       el.addEventListener("mousedown", onAxisDown, true);
+      el.addEventListener("mousedown", onTradeLineDown, true);
       el.addEventListener("dblclick", onAxisDblClick, true);
       const wrap = wrapRef.current;
       wrap?.addEventListener("mousemove", onMove);
@@ -1451,6 +1720,10 @@ export default function ChartCore({
         field: "price" | "stop" | "takeProfit",
         level: number,
       ) => {
+        // A line drag ends with a trailing DOM click; swallow it (same flag AVWAP
+        // uses) so it doesn't toggle the trade's selection back off. A PURE click on
+        // a line fires no onDrag, so click-to-select still works.
+        justDraggedRef.current = true;
         if (id === DRAFT_ID) {
           // Dragging a draft line just sets that value (Submit commits it).
           const d = draftOrderSignal.value;
@@ -1459,6 +1732,13 @@ export default function ChartCore({
         }
         const cur = pendingEditsSignal.value;
         pendingEditsSignal.set({ ...cur, [id]: { ...cur[id], [field]: level } });
+        // Confirm mode: dragging a line selects its trade AND focuses the dragged line
+        // (so Apply/Discard land on THAT line's pill), and opens the edit ticket. No-
+        // confirm mode leaves selection alone so the dock's auto-apply effect commits
+        // the drag at once (selecting would mark it editId and exclude it).
+        if (confirmLineEditsRef.current) {
+          setTradeSelected(id, field === "takeProfit" ? "tp" : field);
+        }
       };
       const drawPositions = () => {
         posLines.render(
@@ -1472,6 +1752,7 @@ export default function ChartCore({
             draft: draftRef.current,
             hidden: new Set(tradeUiRef.current.hidden),
             hovered: tradeUiRef.current.hovered,
+            selected: tradeUiRef.current.selected,
           }),
         );
       };
@@ -1479,24 +1760,63 @@ export default function ChartCore({
       const unsubTrades = subscribeTrades((t) => {
         tradesRef.current = t;
         drawPositions();
+        redrawRef.current(); // refresh the selected-trade pill (label/uPnL/levels)
       });
       const unsubPending = pendingEditsSignal.subscribe((p) => {
         pendingRef.current = p;
-        drawPositions();
+        drawPositions(); // move the line now (cheap — reconciles just the changed line)
+        // Coalesce the heavier overlay redraw (pill follow + P/L + selection canvas)
+        // to one per frame: a line drag restages pending every mousemove, and redrawing
+        // the whole overlay per pixel is wasteful (and laggy on slower machines).
+        if (pendingRedrawRafRef.current) return;
+        pendingRedrawRafRef.current = requestAnimationFrame(() => {
+          pendingRedrawRafRef.current = 0;
+          redrawRef.current();
+        });
       });
       const unsubDraft = draftOrderSignal.subscribe((d) => {
         draftRef.current = d;
         drawPositions();
       });
+      const unsubConfirm = confirmLineEditsSignal.subscribe((v) => {
+        confirmLineEditsRef.current = v;
+      });
       const unsubTradeUi = tradeLineUiSignal.subscribe((ui) => {
+        const prevSelected = tradeUiRef.current.selected;
+        const prevField = tradeUiRef.current.selectedField;
+        const selectedChanged = ui.selected !== prevSelected;
+        const fieldChanged = ui.selectedField !== prevField;
         tradeUiRef.current = ui;
+        // Trade selection is mutually exclusive with this cell's alert/drawing/
+        // indicator selection. We clear here (not only in onClick) so selecting a
+        // trade via a DOCK ROW — whose click never reaches the chart's onClick —
+        // still drops the chart's other selection. Guard on the transition TO a
+        // non-null selection so a pure hover update doesn't re-clear every move.
+        if (ui.selected && selectedChanged) {
+          overlays.selectAlert(null);
+          overlays.selectDrawing(null);
+          if (selectedIndicator.value) selectedIndicator.set(null);
+        }
         drawPositions();
+        // Re-anchor / show / hide the active-line pill when the selected TRADE or the
+        // focused LINE changes — not on every hover tick. Freeze the pill's x at the
+        // cursor only on a new trade selection; clear it on deselect.
+        if (selectedChanged) {
+          if (ui.selected) freezeTradePillX();
+          else tradePillLeftRef.current = null;
+        }
+        if (selectedChanged || fieldChanged) redrawRef.current();
       });
       posUnsubRef.current = () => {
         unsubTrades();
         unsubPending();
         unsubDraft();
+        unsubConfirm();
         unsubTradeUi();
+        if (pendingRedrawRafRef.current) {
+          cancelAnimationFrame(pendingRedrawRafRef.current);
+          pendingRedrawRafRef.current = 0;
+        }
       };
       // Prime precision synchronously at attach so alert-level rounding never sees a
       // null precision: fetchPrecision() resolves async, and an alert created/edited in
@@ -1526,6 +1846,7 @@ export default function ChartCore({
       el.removeEventListener("mousedown", onAnchorDown, true);
       el.removeEventListener("mousedown", onClonePress, true);
       el.removeEventListener("mousedown", onAxisDown, true);
+      el.removeEventListener("mousedown", onTradeLineDown, true);
       el.removeEventListener("dblclick", onAxisDblClick, true);
       window.removeEventListener("mousemove", onAnchorMove);
       window.removeEventListener("mouseup", onAnchorUp, true);
@@ -1711,6 +2032,9 @@ export default function ChartCore({
     chart.setPriceVolumePrecision(effPrecision, 0);
     overlays.setPricePrecision(effPrecision); // keep alert-level rounding in lockstep
     overlays.setEpic(symbol.epic);
+    // Alerts are stored per broker; address them with THIS cell's broker (not the
+    // ambient persistBroker the toolbar may flip mid-switch). In lockstep with setEpic.
+    overlays.setBroker(brokerId);
     // Backtest markers/equity belong to the previous series — drop them.
     clearBacktest(chart);
     // Reset scroll-back state for the new series.
@@ -1761,6 +2085,11 @@ export default function ChartCore({
       // Redraw position lines for the (possibly new) epic at the current precision.
       posLinesRef.current?.setPrecision(effPrecision);
       posDrawRef.current();
+      // Re-evaluate the selected-trade pill against the now-current epic: selecting a
+      // dock row for an OFF-chart symbol switches the epic here, and the pill only
+      // shows for a trade on this epic — so refresh once the rehydrate lands rather
+      // than waiting for the next live tick.
+      redrawRef.current();
       // Record the current resolution and derive each drawing's effective
       // visibility (a drawing can be pinned to specific intervals). This effect
       // re-runs on period.resolution, so switching timeframe re-evaluates here.
@@ -1976,6 +2305,40 @@ export default function ChartCore({
     setAlertTags(tags);
     const act = tags.find((t) => t.active);
     if (act) lastActivePillIdRef.current = act.id;
+
+    // The ACTIVE line's pill, only for a trade on THIS cell's epic. Levels merge
+    // pending over server (so a dragged line is tracked); recomputed here so the pill
+    // follows its line through scroll/zoom/live ticks. Only the focused line shows.
+    const selId = tradeUiRef.current.selected;
+    const field = tradeUiRef.current.selectedField;
+    const sel = selId
+      ? tradesRef.current.find((t) => t.id === selId && t.epic === epicRef.current)
+      : null;
+    if (!sel || !field) {
+      setTradePills([]);
+    } else {
+      const pend = pendingRef.current[sel.id] ?? {};
+      const merged = mergeTradeLevels(sel, pend);
+      const dir = sel.side === "buy" ? 1 : -1;
+      // P/L a level would realise if price reached it (from the fixed open level).
+      const plAt = (lvl: number) => dir * sel.quantity * (lvl - sel.priceLevel);
+      const common = {
+        tradeId: sel.id, epic: sel.epic, kind: sel.kind, side: sel.side, qty: sel.quantity,
+      };
+      let pill: (typeof tradePills)[number] | null = null;
+      if (field === "price") {
+        const lvl = merged.price ?? sel.priceLevel;
+        const y = yOf(lvl);
+        if (y != null) pill = { ...common, field, y, level: lvl, pl: sel.upnl, changed: pend.price !== undefined };
+      } else if (field === "stop" && merged.stop != null) {
+        const y = yOf(merged.stop);
+        if (y != null) pill = { ...common, field, y, level: merged.stop, pl: plAt(merged.stop), changed: pend.stop !== undefined };
+      } else if (field === "tp" && merged.takeProfit != null) {
+        const y = yOf(merged.takeProfit);
+        if (y != null) pill = { ...common, field, y, level: merged.takeProfit, pl: plAt(merged.takeProfit), changed: pend.takeProfit !== undefined };
+      }
+      setTradePills(pill ? [pill] : []);
+    }
 
     // Indicator-selection overlay (one canvas above klinecharts'): the hollow
     // selection handles on the curve, plus the white legend CARDS for hovered/
@@ -2735,6 +3098,8 @@ export default function ChartCore({
         // Don't hijack copy/paste/delete while typing in a field.
         const t = e.target as HTMLElement;
         if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return;
+        // Escape on a selected trade (discard pending → deselect) is handled by a
+        // window listener in App, so it works even when focus isn't on the chart.
         // Delete / Backspace removes the selected drawing (no modifier).
         if (e.key === "Delete" || e.key === "Backspace") {
           if (deleteSelectedDrawing()) e.preventDefault();
@@ -3038,6 +3403,152 @@ export default function ChartCore({
           );
         })}
 
+      {/* The ACTIVE line's pill (entry / SL / TP — only one shows). It carries the
+          symbol + level; the entry pill adds uPnL + close, the SL/TP pills add the P/L
+          that level would realise if hit + remove. ANY pill shows Apply/Discard when
+          ITS OWN line has a staged drag. Anchored at the line's y, frozen x. */}
+      {tradePills.map((p) => {
+        const prec = precisionRef.current;
+        const isEntry = p.field === "price";
+        const pendKey = p.field === "tp" ? "takeProfit" : p.field; // pendingEdits key
+        const label = isEntry
+          ? `${tradeLabel(p.kind, p.side)} ${p.qty} @ ${p.level.toFixed(prec)}`
+          : `${p.field === "stop" ? "SL" : "TP"} ${p.level.toFixed(prec)}`;
+        const sign = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
+        // Remove this SL/TP line: commit the level cleared right away (an explicit
+        // action, like delete), then focus the entry pill since this line is gone.
+        const removeLevel = async () => {
+          const t = tradesRef.current.find((x) => x.id === p.tradeId);
+          if (!t) return;
+          const merged = mergeTradeLevels(t, pendingRef.current[t.id] ?? {});
+          if (p.field === "stop") merged.stop = null;
+          else merged.takeProfit = null;
+          try {
+            await applyEditedLevels(t, merged, getTradesAccount());
+            discardPendingEdit(t.id);
+            refreshTrades();
+            setTradeSelected(t.id, "price");
+          } catch (err) {
+            toast(err instanceof Error ? err.message : "Remove failed");
+          }
+        };
+        return (
+          <div
+            key={`${p.tradeId}:${p.field}`}
+            className={`trade-pill tp-line-${p.field}${p.changed ? " has-changes" : ""}`}
+            style={{ top: p.y, left: tradePillLeftRef.current ?? undefined }}
+          >
+            <span className="tp-sym">{p.epic}</span>
+            <span className="tp-text">{label}</span>
+            {p.pl != null && (
+              <span
+                className={`tp-upnl ${p.pl >= 0 ? "pos" : "neg"}`}
+                title={isEntry ? "Unrealised P&L" : "P&L if this level is hit"}
+              >
+                {sign(p.pl)}
+              </span>
+            )}
+            {p.changed && (
+              <>
+                <button
+                  className="tp-btn tp-apply"
+                  title="Apply changes"
+                  onClick={async () => {
+                    const t = tradesRef.current.find((x) => x.id === p.tradeId);
+                    if (!t) return;
+                    const merged = mergeTradeLevels(t, pendingRef.current[t.id] ?? {});
+                    try {
+                      await applyEditedLevels(t, merged, getTradesAccount());
+                      discardPendingEdit(t.id); // committed → clear the staged copy
+                      refreshTrades();
+                    } catch (err) {
+                      toast(err instanceof Error ? err.message : "Apply failed");
+                    }
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </button>
+                <button
+                  className="tp-btn tp-discard"
+                  title="Discard changes"
+                  onClick={() => discardPendingField(p.tradeId, pendKey)}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </>
+            )}
+            {/* Close (entry) / remove (SL·TP) only when the line ISN'T mid-edit — while
+                a drag is staged the pill shows just Apply (✓) / Discard (✕). */}
+            {!p.changed && (isEntry ? (
+              <button
+                className="tp-btn tp-close"
+                title={p.kind === "order" ? "Cancel order" : "Close position"}
+                onClick={() => {
+                  const t = tradesRef.current.find((x) => x.id === p.tradeId);
+                  if (!t) return;
+                  const isOrder = t.kind === "order";
+                  const f = (n: number) => n.toFixed(prec);
+                  const details: NonNullable<Parameters<typeof requestConfirm>[0]["details"]> = [
+                    { label: "Symbol", value: t.epic },
+                    { label: "Side", value: tradeLabel(t.kind, t.side) },
+                    { label: "Quantity", value: String(t.quantity) },
+                    { label: isOrder ? "Limit" : "Avg fill", value: f(t.priceLevel) },
+                  ];
+                  if (t.takeProfit != null) details.push({ label: "Take profit", value: f(t.takeProfit) });
+                  if (t.stop != null) details.push({ label: "Stop loss", value: f(t.stop) });
+                  if (!isOrder && t.upnl != null) {
+                    details.push({
+                      label: "Realized P&L",
+                      value: sign(t.upnl),
+                      tone: t.upnl >= 0 ? "pos" : "neg",
+                    });
+                  }
+                  requestConfirm({
+                    title: isOrder ? "Cancel order" : "Close position",
+                    message: isOrder
+                      ? `Cancel this ${tradeLabel(t.kind, t.side)} order on ${t.epic}?`
+                      : `Close this ${tradeLabel(t.kind, t.side)} position on ${t.epic} at market?`,
+                    confirmLabel: isOrder ? "Cancel order" : "Close position",
+                    details,
+                    onConfirm: async () => {
+                      try {
+                        if (isOrder) await cancelWorkingOrder(t.id, getTradesAccount());
+                        else await closePosition(t.id, getTradesAccount());
+                        setTradeSelected(null);
+                        refreshTrades();
+                      } catch (err) {
+                        toast(err instanceof Error ? err.message : "Action failed");
+                      }
+                    },
+                  });
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                className="tp-btn tp-remove"
+                title={p.field === "stop" ? "Remove stop loss" : "Remove take profit"}
+                onClick={removeLevel}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+              </button>
+            ))}
+          </div>
+        );
+      })}
+
       <div
         ref={plusBtnRef}
         className="axis-plus"
@@ -3067,6 +3578,14 @@ export default function ChartCore({
           </svg>
         </span>
         <span className="axis-plus-price" ref={plusPriceLabelRef} />
+      </div>
+
+      <div
+        ref={tradeTooltipRef}
+        className="trade-line-tooltip"
+        style={{ display: "none" }}
+      >
+        Double click to edit
       </div>
 
       {plusMenu && (

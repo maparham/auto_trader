@@ -24,6 +24,30 @@ class Settings(BaseSettings):
     identifier: str = ""
     password: str = ""
 
+    # Live (real-money) dealing account. Capital.com runs paper/demo/live as
+    # ACCOUNTS of the one "capital" broker (the chart feed is shared — demo carries
+    # real market quotes), so this is NOT a second data broker like IG's split: it's
+    # an extra execution account that deals against the live host with its own
+    # session. Registered as "capital:live" only when fully credentialed (see
+    # has_live), so a half-configured account never shows a dead tab. The login
+    # (identifier) is the same Capital account as demo, so live_identifier falls back
+    # to `identifier`; only the API key + its custom password are env-specific.
+    live_api_key: str = ""
+    live_password: str = ""
+    live_identifier: str = ""
+
+    def has_live(self) -> bool:
+        """True only when the live dealing account is fully credentialed."""
+        return bool(self.live_api_key and self.live_password and (self.live_identifier or self.identifier))
+
+    def live_creds(self) -> tuple[str, str, str]:
+        """(api_key, identifier, password) for the live dealing session."""
+        return (self.live_api_key, self.live_identifier or self.identifier, self.live_password)
+
+    @property
+    def live_base_url(self) -> str:
+        return CAPITAL_HOSTS["live"]
+
     # Where the tick recorder persists sub-minute history (Capital has no
     # sub-minute history endpoint, so we record live ticks ourselves). Set
     # CAPITAL_TICK_DB_PATH to relocate; defaults to a file in the backend cwd.

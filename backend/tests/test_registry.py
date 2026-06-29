@@ -13,15 +13,17 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from auto_trader.config import IGSettings
+from auto_trader.config import IGSettings, Settings
 from auto_trader.brokers.registry import BrokerRegistry, build_registry
 
 
 @pytest.fixture(autouse=True)
 def _no_ig(monkeypatch):
-    """Default: pretend IG is unconfigured so the base assertions are deterministic
-    regardless of the local .env. Tests that want IG opt back in explicitly."""
+    """Default: pretend IG and Capital-live are unconfigured so the base assertions
+    are deterministic regardless of the local .env. Tests that want them opt back in
+    explicitly."""
     monkeypatch.setattr(IGSettings, "has", lambda self, side: False)
+    monkeypatch.setattr(Settings, "has_live", lambda self: False)
 
 
 def test_build_registry_ships_capital_and_paper() -> None:
@@ -33,6 +35,25 @@ def test_build_registry_ships_capital_and_paper() -> None:
         "broker": "capital",
         "env": "paper",
         "isRealMoney": False,
+    }
+
+
+def test_capital_live_registers_as_real_money_account(monkeypatch) -> None:
+    """Live creds present adds a "capital:live" real-money account on the SAME capital
+    broker (not a second data broker) — env "live", isRealMoney True."""
+    monkeypatch.setattr(Settings, "has_live", lambda self: True)
+    monkeypatch.setattr(
+        Settings, "live_creds", lambda self: ("livekey", "user@email.com", "livepass")
+    )
+    described = build_registry().describe()
+    assert described["data"] == ["capital"]  # still one Capital broker, not two
+    keys = {e["key"]: e for e in described["exec"]}
+    assert keys["capital:paper"]["isRealMoney"] is False
+    assert keys["capital:live"] == {
+        "key": "capital:live",
+        "broker": "capital",
+        "env": "live",
+        "isRealMoney": True,
     }
 
 

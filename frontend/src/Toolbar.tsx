@@ -52,8 +52,8 @@ import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
 import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
-import EnvSelector from "./EnvSelector";
-import type { BrokerAccount, TradeAccount } from "./lib/trading";
+import BrokerSelector from "./BrokerSelector";
+import type { BrokerAccount } from "./lib/trading";
 
 interface DrawMenu {
   x: number;
@@ -73,13 +73,14 @@ interface Props {
   onSymbol: (s: Instrument) => void;
   onPeriod: (p: Period) => void;
   // Active data broker id ("capital"), derived from the active account. Passed to
-  // the symbol-search modal so it browses the right broker's catalogue.
+  // the symbol-search modal so it browses the right broker's catalogue. The broker
+  // SELECTOR normally lives in the tab bar (switching broker swaps the whole
+  // workspace — a tab-bar/workspace-scope action), but the tab bar is hidden when
+  // maximized, so we ALSO render the selector here in that case (see below) so the
+  // broker stays switchable. `accounts` + `onSelectBroker` feed that fallback.
   brokerId: string;
-  // The registered broker/trading accounts (from GET /api/brokers) and the active
-  // one; the selector switches the chart feed + order routing together.
   accounts: BrokerAccount[];
-  activeAccount: TradeAccount;
-  onAccountChange: (account: TradeAccount) => void;
+  onSelectBroker: (broker: string) => void;
   // Maximized view hides the tab bar; this toggle (the only chrome that survives)
   // flips it back. Backtest also lives here now so it stays reachable when maxed.
   maximized: boolean;
@@ -122,8 +123,7 @@ export default function Toolbar({
   onPeriod,
   brokerId,
   accounts,
-  activeAccount,
-  onAccountChange,
+  onSelectBroker,
   maximized,
   onToggleMaximize,
 }: Props) {
@@ -706,6 +706,18 @@ export default function Toolbar({
         )}
       </div>
 
+      {/* Broker selector — ONLY when maximized. It normally lives in the tab bar
+          (a workspace-scope control), but maximizing hides the tab bar, so we
+          surface it here (the surviving chrome) so the broker stays switchable.
+          Omitted in normal view to avoid two selectors. */}
+      {maximized && (
+        <BrokerSelector
+          accounts={accounts}
+          activeBroker={brokerId}
+          onChange={onSelectBroker}
+        />
+      )}
+
       {/* Backtest lives here (moved off the tab bar) so it survives maximized
           view. controller/period/symbol are already in toolbar scope. */}
       <BacktestButton
@@ -722,13 +734,6 @@ export default function Toolbar({
       >
         <BellIcon size={16} />
       </button>
-
-      {/* Active broker / trading account — switches the chart feed + order routing. */}
-      <EnvSelector
-        accounts={accounts}
-        activeAccount={activeAccount}
-        onChange={onAccountChange}
-      />
 
       {/* Trading panel toggle (order ticket + positions). */}
       <button

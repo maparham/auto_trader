@@ -124,7 +124,7 @@ class AlertEngine {
     const needed = new Set<string>();
     for (const t of tabs) {
       for (const c of t.cells) {
-        if (loadAlerts(c.symbol.epic).length > 0) needed.add(c.symbol.epic);
+        if (loadAlerts(c.symbol.epic, this.brokerId).length > 0) needed.add(c.symbol.epic);
       }
     }
     for (const epic of needed) {
@@ -155,10 +155,10 @@ class AlertEngine {
   // stored JSON is unchanged (see alertCache). Only a write — by this engine, a peer
   // cell, or /ws/state — changes the string and triggers a single reparse+normalize.
   private alertsForTick(epic: string): SavedAlert[] {
-    const raw = loadAlertsRaw(epic) ?? "";
+    const raw = loadAlertsRaw(epic, this.brokerId) ?? "";
     const cached = this.alertCache.get(epic);
     if (cached && cached.raw === raw) return cached.normalized;
-    const normalized = loadAlerts(epic).map((a, i) => normalizeAlert(a, i));
+    const normalized = loadAlerts(epic, this.brokerId).map((a, i) => normalizeAlert(a, i));
     this.alertCache.set(epic, { raw, normalized });
     return normalized;
   }
@@ -227,7 +227,7 @@ class AlertEngine {
     if (removed) {
       // Persist removal of fired "once"/expired alerts; the active cell's overlay
       // reconciles off the alerts signal (drops lines no longer in storage).
-      saveAlerts(epic, survivors);
+      saveAlerts(epic, survivors, this.brokerId);
       bumpAlerts();
     }
 

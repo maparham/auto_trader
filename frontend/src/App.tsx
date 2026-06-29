@@ -3,6 +3,7 @@ import type { Chart } from "klinecharts";
 import ChartGrid from "./ChartGrid";
 import Toolbar from "./Toolbar";
 import LayoutPicker from "./LayoutPicker";
+import BrokerSelector from "./BrokerSelector";
 import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor } from "./lib/chartSync";
 import ThemeToggle from "./ThemeToggle";
 import SettingsModal from "./Settings";
@@ -31,12 +32,16 @@ import {
   alertsChanged,
   bumpAlerts,
   settingsRequest,
+  confirmLineEditsSignal,
+  tradeLineUiSignal,
+  pendingEditsSignal,
+  setTradeSelected,
+  discardPendingEdit,
 } from "./lib/signals";
 import { alertEngine } from "./lib/alertEngine";
 import {
   PERIODS,
   fetchMarketMeta,
-  searchInstruments,
   type Instrument,
   type Period,
 } from "./lib/feed";
@@ -45,8 +50,14 @@ import {
   cachedBrokers,
   setTradesAccount,
   DEFAULT_ACCOUNT,
+  brokerOf,
+  isRealMoneyAccount,
+  fetchAccountSummary,
+  loadLastAccountByBroker,
+  saveLastAccountByBroker,
   type BrokerAccount,
   type TradeAccount,
+  type AccountSummary,
 } from "./lib/trading";
 import {
   hydrateFromBackend,
@@ -56,12 +67,12 @@ import {
   primaryCellScope,
   cellScope,
   LAYOUT_CELLS,
-  migrateToNamedLayouts,
-  migrateAlertsToGlobal,
+  pruneLegacyGlobalWorkspace,
+  setPersistBroker,
+  getPersistBroker,
   loadStoredAlert,
   updateStoredAlert,
   deleteStoredAlert,
-  moveAlerts,
   loadLayouts,
   loadLayout,
   saveLayout,
@@ -101,6 +112,20 @@ const DEFAULT_SYMBOL: Instrument = {
 const DEFAULT_PERIOD: Period =
   PERIODS.find((p) => p.resolution === "HOUR") ?? PERIODS[0];
 
+// The first instrument a brand-new broker workspace opens on (each broker is an
+// isolated instance with a FRESH START — no carry-over). Epics are broker-specific,
+// so a per-broker default; pricePrecision is just a render seed (the chart fetches
+// real market meta on mount). A synchronous map (not a network call) so the empty
+// workspace renders instantly — see resolveStartup / the broker-switch handler.
+const DEFAULT_SYMBOL_BY_BROKER: Record<string, Instrument> = {
+  capital: DEFAULT_SYMBOL,
+  "ig-demo": { epic: "CS.D.EURUSD.CFD.IP", name: "EUR/USD", status: null, pricePrecision: 5 },
+  "ig-live": { epic: "CS.D.EURUSD.CFD.IP", name: "EUR/USD", status: null, pricePrecision: 5 },
+};
+function defaultInstrument(broker: string): Instrument {
+  return DEFAULT_SYMBOL_BY_BROKER[broker] ?? DEFAULT_SYMBOL;
+}
+
 let tabSeq = 0;
 function newTabId(): string {
   tabSeq += 1;
@@ -135,15 +160,26 @@ function makeTab(symbol: Instrument, period: Period): ChartTab {
   };
 }
 
+// A fresh single-tab workspace on `broker`'s default instrument — what a brand-new
+// broker (no saved workspace) lands on, so the user sees a usable chart instead of a
+// blank screen. Synchronous (no network) for an instant switch.
+function defaultWorkspace(broker: string): Workspace {
+  const t = makeTab(defaultInstrument(broker), DEFAULT_PERIOD);
+  return { tabs: [t], activeTabId: t.id };
+}
+
 // Resolve which workspace this device shows on launch. Precedence:
 //   1. this device's last-open layout (activeLayoutId), if it still exists
 //   2. the synced default layout, if set
 //   3. the unsaved scratch workspace, if the user had one
-//   4. nothing — blank (no tabs) until the user opens/creates a layout
-// Returns the workspace plus the active layout id (null = scratch/blank).
+//   4. a BRAND-NEW broker (no layouts, no scratch) -> a fresh default-symbol tab
+//   5. otherwise blank (has layouts but none selected — pick one from the manager)
+// Returns the workspace plus the active layout id (null = scratch/blank). Reads the
+// ACTIVE broker's keys (persistBroker), so each broker resolves its own workspace.
 function resolveStartup(): { ws: Workspace; activeLayoutId: string | null } {
   const blank: Workspace = { tabs: [], activeTabId: "" };
-  const known = new Set(loadLayouts().map((l) => l.id));
+  const layouts = loadLayouts();
+  const known = new Set(layouts.map((l) => l.id));
 
   const activeId = loadActiveLayoutId();
   if (activeId && known.has(activeId)) {
@@ -157,6 +193,12 @@ function resolveStartup(): { ws: Workspace; activeLayoutId: string | null } {
   if (scratch && scratch.tabs.length > 0) {
     return { ws: scratch, activeLayoutId: null };
   }
+  // Nothing saved for this broker at all → seed a default-symbol workspace so a
+  // first-time broker lands on a usable chart (not a blank screen). If the broker
+  // HAS layouts but none is selected, keep blank — the user picks one.
+  if (layouts.length === 0) {
+    return { ws: defaultWorkspace(getPersistBroker()), activeLayoutId: null };
+  }
   return { ws: blank, activeLayoutId: null };
 }
 
@@ -169,6 +211,10 @@ export default function App() {
   const [maximized, setMaximized] = useState(false);
   // The trading dock maximized to fill the chart view (the workspace is hidden).
   const [dockMaximized, setDockMaximized] = useState(false);
+  // Mirror confirmLineEdits onto a signal so the chart (no settings prop) can read it.
+  useEffect(() => {
+    confirmLineEditsSignal.set(settings.trading.confirmLineEdits);
+  }, [settings.trading.confirmLineEdits]);
   // Toolbar gear + chart context menu request the Settings modal via a signal.
   useEffect(() => settingsRequest.subscribe(() => setShowSettings(true)), []);
   const [alertReq, setAlertReq] = useState(alertModalRequest.value);
@@ -183,18 +229,37 @@ export default function App() {
   useEffect(() => indicatorSettingsRequest.subscribe(setIndSettings), []);
   const [drawSettings, setDrawSettings] = useState(drawingSettingsRequest.value);
   useEffect(() => drawingSettingsRequest.subscribe(setDrawSettings), []);
+  // Esc on the selected trade: discard un-applied drag edits first (keeping it
+  // selected), then a second Esc deselects. Window-level so it fires even when focus
+  // isn't on the chart (e.g. selected via a dock row). Yields to any open modal/
+  // dialog — those own Esc — so a close-position confirm isn't pre-empted. (Placed
+  // after the modal-state declarations so its dep array can read them.)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (showSettings || alertReq || alertEdit || alertGlobalEdit || confirm) return;
+      const sel = tradeLineUiSignal.value.selected;
+      if (!sel) return;
+      if (pendingEditsSignal.value[sel]) discardPendingEdit(sel);
+      else setTradeSelected(null);
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showSettings, alertReq, alertEdit, alertGlobalEdit, confirm]);
 
   // The workspace = the current set of tabs + which tab is active. It belongs to a
   // NAMED layout (activeLayoutId) or to the device-local unsaved scratch (null).
   // `tabs` MAY be empty (blank launch with no default) — every consumer below is
-  // written to tolerate zero tabs and an undefined active/focusedCell.
-  const [tabs, setTabs] = useState<ChartTab[]>(() => resolveStartup().ws.tabs);
-  const [activeId, setActiveId] = useState<string>(
-    () => resolveStartup().ws.activeTabId,
-  );
+  // written to tolerate zero tabs and an undefined active/focusedCell. Resolved ONCE
+  // (a brand-new broker seeds a fresh default workspace with newly-minted ids, so the
+  // three slices must share ONE resolveStartup() call, not three divergent ones).
+  const [startup] = useState(resolveStartup);
+  const [tabs, setTabs] = useState<ChartTab[]>(() => startup.ws.tabs);
+  const [activeId, setActiveId] = useState<string>(() => startup.ws.activeTabId);
   // The named layout this device currently shows (null = scratch). Device-local.
   const [activeLayoutId, setActiveLayoutId] = useState<string | null>(
-    () => resolveStartup().activeLayoutId,
+    () => startup.activeLayoutId,
   );
   // Bumped after any layout mutation so LayoutManager re-reads the persisted index.
   const [layoutRev, setLayoutRev] = useState(0);
@@ -209,7 +274,45 @@ export default function App() {
   const [activeAccount, setActiveAccount] = useState<TradeAccount>(
     () => localStorage.getItem("activeAccount") ?? DEFAULT_ACCOUNT,
   );
-  const brokerId = activeAccount.split(":")[0];
+  const brokerId = brokerOf(activeAccount);
+
+  // Remember the last-used account PER broker, so switching brokers in the tab-bar
+  // selector returns to the env you were last on for that broker (not always paper).
+  // Device-local; a plain {broker: "{broker}:{env}"} map. Updated on every active-
+  // account change (effect below); read by selectBroker.
+  const lastAccountByBroker = useRef<Record<string, TradeAccount>>(null!);
+  if (lastAccountByBroker.current === null) {
+    lastAccountByBroker.current = loadLastAccountByBroker();
+  }
+
+  // Switch the active BROKER (tab-bar selector). Picks the account to land on within
+  // that broker: the last one used there (if still registered), else its paper
+  // account, else its first registered account. brokerId is derived from the account,
+  // so this is the single lever that drives the per-broker workspace swap.
+  const selectBroker = (broker: string) => {
+    if (broker === brokerId) return;
+    const ofBroker = accounts.filter((a) => a.broker === broker);
+    const remembered = lastAccountByBroker.current[broker];
+    const next =
+      (remembered && ofBroker.some((a) => a.key === remembered) && remembered) ||
+      ofBroker.find((a) => a.env === "paper")?.key ||
+      ofBroker[0]?.key ||
+      `${broker}:paper`;
+    // Switching broker swaps the WHOLE workspace (the broker-switch effect reseeds
+    // from the incoming broker's saved state), which discards in-memory edits that
+    // autosave-off mode deliberately left unsaved. `isDirty` is true ONLY in that
+    // case (the persist effect sets it nowhere else), so confirm before discarding
+    // — a silent drop of unsaved named-layout work was the bug. Cancel = stay put
+    // (the user can ⌘S first); autosave-on / scratch never reach here (not dirty).
+    if (isDirty) {
+      requestConfirm({
+        message: "You have unsaved changes to this layout. Switch broker and discard them?",
+        onConfirm: () => setActiveAccount(next),
+      });
+    } else {
+      setActiveAccount(next);
+    }
+  };
 
   // Load the selectable accounts once. If the persisted active account is no longer
   // registered (e.g. config changed), fall back to the first available.
@@ -243,67 +346,37 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("activeAccount", activeAccount);
     setTradesAccount(activeAccount);
-  }, [activeAccount]);
+    // Remember this as the broker's last-used account (read when the tab-bar selector
+    // switches back to this broker).
+    lastAccountByBroker.current[brokerId] = activeAccount;
+    saveLastAccountByBroker(lastAccountByBroker.current);
+  }, [activeAccount, brokerId]);
 
-  // When the BROKER changes (not just the env), every open cell's symbol must be
-  // re-resolved against the new broker: epics aren't portable across brokers. We
-  // re-search each unique epic by ticker and swap to a confident match; an epic
-  // with no match is left as-is, so its chart simply blanks (no candles) until the
-  // user picks a symbol from the now broker-scoped search modal. Per-epic alerts
-  // are carried to the re-resolved epic (they fire in the background). NOTE: the
-  // remaining per-epic state — drawings, symbol templates, avwap anchors — still
-  // assumes the active broker; revisit at broker #2.
-  const prevBrokerRef = useRef(brokerId);
+  // Real per-account balance/currency for the dock's stats strip — a LIVE account
+  // shows its true figures instead of the global paper balance. Only real-money
+  // accounts have a summary (paper → null → dock keeps its paper math). Like the
+  // trades feed, real accounts get no server push, so poll (paused when hidden);
+  // paper clears it. Refetches on every account switch.
+  const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
   useEffect(() => {
-    const prev = prevBrokerRef.current;
-    prevBrokerRef.current = brokerId;
-    if (prev === brokerId) return; // initial mount or env-only change
-    let cancelled = false;
-    (async () => {
-      // The original symbols (by epic), keeping the full Instrument: we search the
-      // new broker by the human ticker/name (more portable across brokers than the
-      // broker-specific epic id) and match a hit back against that same name.
-      const originals = new Map<string, Instrument>();
-      for (const t of tabs) for (const c of t.cells) originals.set(c.symbol.epic, c.symbol);
-      const resolved = new Map<string, Instrument>();
-      await Promise.all(
-        [...originals].map(async ([epic, sym]) => {
-          const hits = await searchInstruments(sym.name || epic, brokerId);
-          const match =
-            hits.find((h) => h.epic === epic) ??
-            (sym.name
-              ? hits.find((h) => h.name?.toLowerCase() === sym.name!.toLowerCase())
-              : undefined);
-          if (match) resolved.set(epic, match);
-        }),
-      );
-      if (cancelled || resolved.size === 0) return;
-      // Alerts are stored per-epic and fire in the background, so when a symbol
-      // re-resolves to a DIFFERENT epic, carry its alerts to the new key — otherwise
-      // they'd be orphaned under the old epic (the alert engine drops that feed once
-      // no open cell references it). Drawings/templates/anchors stay per-epic and are
-      // left for broker #2 (their cross-broker semantics aren't settled yet).
-      let alertsMoved = false;
-      for (const [oldEpic, sym] of resolved) {
-        if (sym.epic !== oldEpic) alertsMoved = moveAlerts(oldEpic, sym.epic) || alertsMoved;
-      }
-      setTabs((prevTabs) =>
-        prevTabs.map((t) => ({
-          ...t,
-          cells: t.cells.map((c) =>
-            resolved.has(c.symbol.epic)
-              ? { ...c, symbol: resolved.get(c.symbol.epic)! }
-              : c,
-          ),
-        })),
-      );
-      if (alertsMoved) bumpAlerts();
-    })();
-    return () => {
-      cancelled = true;
+    if (!isRealMoneyAccount(activeAccount)) {
+      setAccountSummary(null);
+      return;
+    }
+    let alive = true;
+    const load = () => {
+      if (document.hidden) return; // pause when the tab is hidden
+      fetchAccountSummary(activeAccount)
+        .then((s) => alive && setAccountSummary(s))
+        .catch(() => {/* keep last-known figures on a transient error */});
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brokerId]);
+    load();
+    const timer = setInterval(load, 6_000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [activeAccount]);
 
   // Backend-wins startup hydration. hydrateFromBackend() pulls the snapshot,
   // overwrites localStorage where the backend differs, and (crucially) gates
@@ -336,6 +409,28 @@ export default function App() {
     // unchanged so we don't trip the save() effect into a redundant re-mirror.
     syncSettingsFromLocal();
   };
+
+  // Broker switch: each DATA-BROKER is an isolated platform instance with its own
+  // workspace. Switching brokers swaps the WHOLE workspace to that broker's last
+  // state — no symbol remapping, no stale epics. (Env-only changes, e.g. paper↔real
+  // on the same broker, share the chart workspace and are ignored here.)
+  //
+  // Ordering is the correctness crux (see persistBroker's single-writer invariant in
+  // persist.ts): the OUTGOING broker's workspace is already saved under ITS namespace
+  // — the autosave effect ran under the old persistBroker on every prior render — so
+  // we just FLIP the namespace, then reload the incoming broker's saved workspace (or
+  // a fresh default for a first-time broker) and remount the grid onto its charts.
+  // The alert engine follows via its own setBrokerId/setTabs effects below.
+  const prevBrokerRef = useRef(brokerId);
+  useEffect(() => {
+    const prev = prevBrokerRef.current;
+    if (prev === brokerId) return; // initial mount or env-only change
+    prevBrokerRef.current = brokerId;
+    setPersistBroker(brokerId);
+    reseedFromLocal(); // resolves the new broker's workspace + forces a remount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brokerId]);
+
   // Live cross-device push. A change to a key OUTSIDE the active workspace (a
   // sibling editing another layout) must NOT remount this view — only refresh the
   // LayoutManager index. We can't cheaply know which key changed (persist applies
@@ -375,25 +470,19 @@ export default function App() {
     let unsubscribe: (() => void) | undefined;
     hydrateFromBackend().then(() => {
       if (cancelled) return;
-      // Migrate AFTER hydration: only now does mirrorEnabled allow the migrated
-      // layout to reach the backend, and only now is `tabs` the backend-synced
-      // copy (so two upgrading devices derive the same layout id and converge).
-      migrateToNamedLayouts();
-      // Collapse legacy per-tab alert keys into the global per-epic form. AFTER
-      // hydrate so the deletes of the orphaned scoped keys reach the backend (else
-      // the next hydrate re-seeds them). Idempotent once migrated.
-      const alertsMigrated = migrateAlertsToGlobal();
+      // Per-broker isolation rollout: the workspace is now ISOLATED PER BROKER and
+      // this is a FRESH START (each broker begins blank). Drop the abandoned old
+      // GLOBAL workspace roots once — AFTER hydrate so the deletes reach the backend
+      // (else the next hydrate re-seeds them). Idempotent (sentinel-gated); preserves
+      // global preferences and every per-broker `auto-trader.b.*` key.
+      pruneLegacyGlobalWorkspace();
       // ALWAYS reconcile to the resolved workspace — not only when hydrate reports a
       // change. The useState initializers ran before hydration (so a fresh device
-      // with a synced default rendered blank); resolving again here applies it. It's
-      // idempotent when nothing changed, and robust to StrictMode's double-mount
+      // with a synced workspace rendered its default); resolving again here applies
+      // it. Idempotent when nothing changed, and robust to StrictMode's double-mount
       // (where the 2nd hydrate sees localStorage already written and reports no
       // change, yet React state from the cancelled 1st mount must still be set).
       reseedFromLocal();
-      // The alert migration rewrote per-epic keys without changing the tab array, so
-      // reseedFromLocal's workspace-diff won't have remounted the grid. Force it so
-      // the already-mounted cells rehydrate against the populated global keys.
-      if (alertsMigrated) setHydrateEpoch((n) => n + 1);
       // Subscribe AFTER hydration so we don't apply live pushes onto a not-yet-
       // reconciled localStorage. Remote edits (other tabs/devices) re-seed + remount
       // only when they touch THIS view; our own edits are filtered by origin.
@@ -585,6 +674,12 @@ export default function App() {
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
   const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
   useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
+  // Closing the trading panel exits edit mode AND drops the trade selection (the
+  // chart pills + row highlight clear). Done here — a state transition — rather than
+  // in OrderTicket's unmount cleanup, which StrictMode fires spuriously on mount.
+  useEffect(() => {
+    if (!tradeOpen) setTradeSelected(null);
+  }, [tradeOpen]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
@@ -620,6 +715,19 @@ export default function App() {
     }
   }, [tabs, active?.id, activeLayoutId, layoutName, autosave]);
 
+  // Keep the alert feeds on the same data broker as the charts — epics are
+  // broker-specific, so a feed must stream from the active broker. setBrokerId
+  // no-ops when unchanged.
+  //
+  // ORDER MATTERS: this effect MUST precede the setTabs effect below. setTabs arms
+  // feeds via `loadAlerts(epic, this.brokerId)`, and setBrokerId only reopens
+  // ALREADY-OPEN feeds (none on mount) — so if setTabs ran first on mount, it would
+  // arm with the stale default broker and a non-default broker's alerts would never
+  // get a feed. Setting the broker first means the initial setTabs reads the right
+  // store. Do NOT reorder these two effects.
+  useEffect(() => {
+    alertEngine.setBrokerId(brokerId);
+  }, [brokerId]);
   // Drive the background alert engine — the single firing authority across ALL
   // cells of ALL tabs. Re-sync whenever the tab set changes OR an alert is added/
   // removed/fired (alertsChanged), so it opens/closes one live feed per distinct
@@ -635,12 +743,6 @@ export default function App() {
   useEffect(() => {
     alertEngine.setPriceSide(settings.priceSide);
   }, [settings.priceSide]);
-  // Keep the alert feeds on the same data broker as the charts — epics are
-  // broker-specific, so a feed must stream from the active broker. setBrokerId
-  // no-ops when unchanged.
-  useEffect(() => {
-    alertEngine.setBrokerId(brokerId);
-  }, [brokerId]);
   // Keep activeId valid (heal to first tab) and persist this device's active layout.
   useEffect(() => {
     if (active && active.id !== activeId) setActiveId(active.id);
@@ -997,10 +1099,12 @@ export default function App() {
   return (
     <div className="app">
       {/* TradingView-style chart tabs: topmost strip, above the toolbar. The
-          workspace-level controls (named layouts, split picker, theme) ride at
-          the right of this bar — they act on the tab/workspace, not on a single
-          chart, so they don't belong in the per-chart toolbar below. Hidden in
-          maximized view; Backtest lives in the toolbar so it survives that. */}
+          workspace-level controls (broker selector, named layouts, split picker,
+          theme) ride at the right of this bar — they act on the tab/workspace, not
+          on a single chart, so they don't belong in the per-chart toolbar below.
+          The broker selector especially: switching broker swaps the ENTIRE
+          workspace. Hidden in maximized view; Backtest lives in the toolbar so it
+          survives that. */}
       {!maximized && (
       <TabBar
         tabs={tabs}
@@ -1053,6 +1157,15 @@ export default function App() {
             >
               ⚙
             </button>
+            {/* Active broker / trading account, pinned to the FAR RIGHT of the tab
+                bar. Lives here (not the chart toolbar) because switching broker swaps
+                the WHOLE workspace — a workspace-scope action; the toolbar holds only
+                chart-scope actions. */}
+            <BrokerSelector
+              accounts={accounts}
+              activeBroker={brokerId}
+              onChange={selectBroker}
+            />
           </>
         }
       />
@@ -1065,8 +1178,7 @@ export default function App() {
         onPeriod={setPeriod}
         brokerId={brokerId}
         accounts={accounts}
-        activeAccount={activeAccount}
-        onAccountChange={setActiveAccount}
+        onSelectBroker={selectBroker}
         maximized={maximized}
         onToggleMaximize={() => setMaximized((m) => !m)}
       />
@@ -1121,6 +1233,7 @@ export default function App() {
             precision={symbol.pricePrecision ?? 2}
             tabs={tabs}
             visibleCells={visibleCells}
+            brokerId={brokerId}
             onOpenAlert={openAlert}
           />
         )}
@@ -1147,12 +1260,14 @@ export default function App() {
       <div className={`trading-dock${dockMaximized ? " maximized" : ""}`}>
         <PositionsPanel
           account={activeAccount}
+          accounts={accounts}
+          onAccountChange={setActiveAccount}
+          accountSummary={accountSummary}
           focusedEpic={symbol?.epic}
           precisionFor={precisionForEpic}
           trading={settings.trading}
           confirmLineEdits={settings.trading.confirmLineEdits}
           onJumpToEpic={jumpToEpic}
-          onOpenTradePanel={() => tradePanelOpen.set(true)}
           maximized={dockMaximized}
           onToggleMaximize={() => setDockMaximized((m) => !m)}
         />
@@ -1222,7 +1337,7 @@ export default function App() {
           bumpAlerts() makes every open cell + the engine reconcile the change. */}
       {alertGlobalEdit &&
         (() => {
-          const a = loadStoredAlert(alertGlobalEdit.epic, alertGlobalEdit.savedId);
+          const a = loadStoredAlert(alertGlobalEdit.epic, alertGlobalEdit.savedId, brokerId);
           if (!a) {
             alertGlobalEditRequest.set(null);
             return null;
@@ -1244,7 +1359,7 @@ export default function App() {
               defaults={settings.alertDefaults}
               now={Date.now()}
               onCreate={(level, cfg) => {
-                updateStoredAlert(ep, savedId, round(level), cfg);
+                updateStoredAlert(ep, savedId, round(level), cfg, brokerId);
                 bumpAlerts();
                 alertGlobalEditRequest.set(null);
               }}
@@ -1252,7 +1367,7 @@ export default function App() {
                 requestConfirm({
                   message: `Delete this alert on ${ep}?`,
                   onConfirm: () => {
-                    deleteStoredAlert(ep, savedId);
+                    deleteStoredAlert(ep, savedId, brokerId);
                     bumpAlerts();
                     alertGlobalEditRequest.set(null);
                   },
@@ -1292,6 +1407,7 @@ export default function App() {
           title={confirm.title}
           message={confirm.message}
           confirmLabel={confirm.confirmLabel}
+          details={confirm.details}
           onConfirm={confirm.onConfirm}
           onClose={() => confirmRequest.set(null)}
         />

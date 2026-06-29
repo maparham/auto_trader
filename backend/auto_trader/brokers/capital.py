@@ -19,8 +19,25 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from auto_trader.brokers.base import MarketDataBroker
+from auto_trader.brokers._dealing import (
+    AsyncConfirmExecutionBroker,
+    account_summary_from_accounts,
+    amend_result as _amend_result,
+    clean as _clean,
+    to_float as _f,
+)
 from auto_trader.config import settings
-from auto_trader.core.models import Candle, Resolution
+from auto_trader.core.models import (
+    Candle,
+    Order,
+    OrderResult,
+    OrderStatus,
+    OrderType,
+    Position,
+    Resolution,
+    Side,
+    WorkingOrder,
+)
 
 if TYPE_CHECKING:
     from auto_trader.brokers.registry import BrokerRegistry
@@ -254,6 +271,9 @@ class CapitalComBroker(MarketDataBroker):
         # Per-epic cache of the raw single-market detail: epic -> (fetched_at, payload).
         # A None payload caches a 404 so repeated unknown-epic polls don't re-hit upstream.
         self._market_cache: dict[str, tuple[datetime, dict | None]] = {}
+        # FX-rate cache keyed "FROM->TO": (fetched_at, factor). Used to convert a
+        # position's instrument-currency margin into the account currency.
+        self._fx_cache: dict[str, tuple[datetime, float]] = {}
 
     def _is_live_env(self) -> bool:
         """True only for Capital's LIVE host (api-capital…), not demo or test hosts.
@@ -499,6 +519,35 @@ class CapitalComBroker(MarketDataBroker):
             float(ask) if ask is not None else None,
         )
 
+    async def fx_rate(self, frm: str, to: str) -> float | None:
+        """Factor to multiply an amount in `frm` currency to get `to` currency, from a
+        Capital FX market snapshot. 1.0 when the currencies match; None when no pair is
+        found (so the caller can decline to show a wrong-currency figure). Cached ~60s.
+
+        Capital lists majors as e.g. `EURUSD` whose price is USD-per-EUR, so to convert
+        USD→EUR we quote `EURUSD` (= `{to}{frm}`) and invert; if only the reverse epic
+        exists we use it directly."""
+        if not frm or not to:
+            return None
+        if frm == to:
+            return 1.0
+        key = f"{frm}->{to}"
+        now = datetime.now(timezone.utc)
+        hit = self._fx_cache.get(key)
+        if hit and (now - hit[0]).total_seconds() < 60:
+            return hit[1]
+        factor: float | None = None
+        bid, ask = await self.get_quote(f"{to}{frm}")  # e.g. EURUSD for USD→EUR
+        if bid and ask:
+            factor = 1.0 / ((bid + ask) / 2)
+        else:
+            bid, ask = await self.get_quote(f"{frm}{to}")
+            if bid and ask:
+                factor = (bid + ask) / 2
+        if factor is not None:
+            self._fx_cache[key] = (now, factor)
+        return factor
+
     async def get_market_detail(self, epic: str) -> dict | None:
         """The full broker-provided instrument detail, passed through as-is for the
         chart's instrument-details modal: the three raw sections (instrument,
@@ -641,12 +690,423 @@ class CapitalComBroker(MarketDataBroker):
         return [dedup[t] for t in sorted(dedup)]
 
 
+# --- real dealing (live account) -----------------------------------------
+#
+# Capital dealing is asynchronous like IG's (the API it forked): every write
+# returns a `dealReference`, and the outcome is polled from /confirms/{ref}. But
+# the deltas from IG are exactly where real money breaks, so they're called out:
+#   - paths are /api/v1/positions|workingorders|confirms (no `/otc`, no version hdr);
+#   - opening a position is MARKET by default (POST /positions, no orderType) — none
+#     of IG's marketable-limit fallback machinery is needed;
+#   - SL is `stopLevel`, TP is `profitLevel` on BOTH the request and the read-back
+#     (IG reads TP back as `limitLevel`);
+#   - the dealt id (the position id for a market fill, the working-order id for a
+#     resting LIMIT) is `confirm.affectedDeals[0].dealId` — the confirm's top-level
+#     `dealId` is the deal-REQUEST id (it shows up as a position's `workingOrderId`),
+#     the INVERSE of IG. Using the wrong one 404s every close/modify.
+# All four shapes above were verified against the demo host before this was written.
+# The async-confirm polling, the lost-submit/lost-confirm -> UNKNOWN mapping, and the
+# per-client_order_id idempotency guard are shared with IG in AsyncConfirmExecutionBroker;
+# only the two HTTP seams below (paths, no version header) differ.
+
+
+class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
+    """Real Capital.com dealing, composed over a dedicated live-host `CapitalComBroker`
+    so it owns its own session (the chart keeps using the demo "capital" data feed —
+    Capital demo carries real market quotes, so the view stays coherent while only
+    execution is routed live).
+
+    `client_order_id` is a *local* idempotency guard (Capital has none): a repeated id
+    returns the recorded result, defusing double-clicks and retried-after-success
+    submits. A lost response resolves to UNKNOWN, which the caller must reconcile —
+    never blindly resubmit (a resubmit risks a double fill)."""
+
+    def __init__(self, broker: "CapitalComBroker") -> None:
+        super().__init__()
+        self._broker = broker
+        # Cached account currency (for converting position margin into account terms).
+        # It effectively never changes, so a long TTL keeps get_positions cheap.
+        self._account_ccy: str | None = None
+        self._account_ccy_at: "datetime | None" = None
+
+    async def _account_currency(self) -> str | None:
+        now = datetime.now(timezone.utc)
+        if (
+            self._account_ccy is not None
+            and self._account_ccy_at is not None
+            and (now - self._account_ccy_at).total_seconds() < 300
+        ):
+            return self._account_ccy
+        try:
+            summary = await self.get_account_summary()
+        except Exception:
+            return self._account_ccy
+        self._account_ccy = summary.get("currency")
+        self._account_ccy_at = now
+        return self._account_ccy
+
+    @property
+    def env(self) -> str:
+        return "live"
+
+    @property
+    def is_real_money(self) -> bool:
+        return True
+
+    async def aclose(self) -> None:
+        """Close the live session's HTTP client (the registry calls this on shutdown
+        — without it the live session would leak, since it's not a data broker)."""
+        await self._broker.aclose()
+
+    # --- HTTP seams for the shared confirm/idempotency scaffold -----------
+
+    async def _deal_request(
+        self, method: str, path: str, body: dict | None, **_: object
+    ) -> httpx.Response:
+        # Capital has no per-call version/header; an empty/None body sends no JSON.
+        return await self._broker._request(method, path, json=body or None)
+
+    async def _confirm_request(self, deal_reference: str) -> httpx.Response:
+        return await self._broker._request(
+            "GET", f"/api/v1/confirms/{deal_reference}"
+        )
+
+    # --- ExecutionBroker: orders -----------------------------------------
+
+    async def place_order(self, order: Order) -> OrderResult:
+        # Per-id lock: serialize retries of THIS order, let unrelated orders deal
+        # concurrently (see AsyncConfirmExecutionBroker._lock_for).
+        async with self._lock_for(order.client_order_id):
+            existing = self._idempotent_hit(order.client_order_id)
+            if existing is not None:
+                return existing  # idempotent: don't deal twice on a retried id
+
+            submitted = datetime.now(timezone.utc)
+            direction = "BUY" if order.side is Side.BUY else "SELL"
+            if order.type is OrderType.LIMIT:
+                if order.limit_level is None:
+                    return self._reject(order, "limit order requires a level", submitted)
+                body = _clean({
+                    "epic": order.epic, "direction": direction, "size": order.quantity,
+                    "level": order.limit_level, "type": "LIMIT", "guaranteedStop": False,
+                    "stopLevel": order.stop_level, "profitLevel": order.take_profit_level,
+                })
+                status, confirm = await self._submit_and_confirm(
+                    "POST", "/api/v1/workingorders", body
+                )
+                result = self._result_from_confirm(order, status, confirm, submitted, resting=True)
+            else:  # MARKET — fills now (Capital opens at market by default)
+                body = _clean({
+                    "epic": order.epic, "direction": direction, "size": order.quantity,
+                    "guaranteedStop": False, "stopLevel": order.stop_level,
+                    "profitLevel": order.take_profit_level,
+                })
+                status, confirm = await self._submit_and_confirm(
+                    "POST", "/api/v1/positions", body
+                )
+                result = self._result_from_confirm(order, status, confirm, submitted, resting=False)
+
+            self._store_result(order.client_order_id, result)
+            return result
+
+    def _result_from_confirm(
+        self, order: Order, status: OrderStatus, confirm: dict, submitted: datetime, *, resting: bool
+    ) -> OrderResult:
+        """Build the OrderResult from a resolved confirm. An accepted resting order is
+        PENDING; an accepted market order is FILLED at the confirmed level."""
+        deal_id = _deal_id(confirm)
+        if status is OrderStatus.PENDING and not resting:
+            status = OrderStatus.FILLED
+        # Trust the confirm's dealt size over the requested quantity (a partial fill
+        # recorded as full corrupts position/PnL reconciliation); fall back to the
+        # requested quantity only if the confirm omits it.
+        dealt = _f(confirm.get("size"))
+        return OrderResult(
+            client_order_id=order.client_order_id,
+            status=status,
+            deal_reference=confirm.get("dealReference"),
+            deal_id=deal_id,
+            filled_quantity=(dealt if dealt is not None else order.quantity)
+            if status is OrderStatus.FILLED else 0.0,
+            fill_price=_f(confirm.get("level")) if status is OrderStatus.FILLED else None,
+            reason=confirm.get("reason", "") or "",
+            submitted_at=submitted,
+            resolved_at=datetime.now(timezone.utc),
+        )
+
+    # --- ExecutionBroker: positions --------------------------------------
+
+    async def get_positions(self, epic: str | None = None) -> list[Position]:
+        resp = await self._broker._request("GET", "/api/v1/positions")
+        account_ccy = await self._account_currency()
+        out: list[Position] = []
+        for row in resp.json().get("positions", []):
+            pos = row.get("position") or {}
+            mkt = row.get("market") or {}
+            if epic is not None and mkt.get("epic") != epic:
+                continue
+            side = Side.BUY if pos.get("direction") == "BUY" else Side.SELL
+            open_level = _f(pos.get("level")) or 0.0
+            size = _f(pos.get("size")) or 0.0
+            # Capital reports unrealized P&L directly (`upl`); fall back to marking
+            # against the position's embedded quote (long marks at bid, short at offer).
+            upnl = _f(pos.get("upl"))
+            if upnl is None:
+                mark = mkt.get("bid") if side is Side.BUY else mkt.get("offer")
+                signed = size if side is Side.BUY else -size
+                upnl = signed * (float(mark) - open_level) if mark is not None else None
+            leverage = _f(pos.get("leverage"))
+            margin = await self._position_margin(
+                mkt, size, open_level, leverage,
+                _f(pos.get("contractSize")) or 1.0, pos.get("currency"), account_ccy,
+            )
+            out.append(
+                Position(
+                    epic=mkt.get("epic"),
+                    side=side,
+                    quantity=size,
+                    open_level=open_level,
+                    deal_id=pos.get("dealId"),
+                    stop_level=_f(pos.get("stopLevel")),
+                    take_profit_level=_f(pos.get("profitLevel")),
+                    upnl=upnl,
+                    created_at=_parse_dt(pos.get("createdDateUTC")),
+                    leverage=leverage,
+                    margin=margin,
+                )
+            )
+        return out
+
+    async def _position_margin(
+        self, mkt: dict, size: float, open_level: float, leverage: float | None,
+        contract: float, ccy: str | None, account_ccy: str | None,
+    ) -> float | None:
+        """The deposit requirement in the ACCOUNT currency. Capital margins the
+        *current* notional (not the entry), so we use the position's embedded mid
+        quote (falling back to the open level when the quote is absent), divide by the
+        broker's real per-position leverage, then FX-convert from the instrument
+        currency. None when leverage is missing or the FX pair can't be resolved —
+        the dock then falls back to its own leverage estimate rather than show a
+        wrong-currency figure. Summing this across positions reconciles with the
+        broker's used margin (balance − available)."""
+        if not leverage:
+            return None
+        bid = _f(mkt.get("bid"))
+        ask = _f(mkt.get("offer"))
+        mid = (bid + ask) / 2 if bid is not None and ask is not None else open_level
+        margin = mid * size * contract / leverage  # instrument currency
+        if ccy and account_ccy and ccy != account_ccy:
+            fx = await self._broker.fx_rate(ccy, account_ccy)
+            if fx is None:
+                return None
+            margin *= fx
+        return margin
+
+    async def close_position(
+        self, deal_id: str, quantity: float | None = None
+    ) -> OrderResult:
+        pos = next((p for p in await self.get_positions() if p.deal_id == deal_id), None)
+        if pos is None:
+            return OrderResult(client_order_id="", status=OrderStatus.REJECTED, reason="no such position")
+        # Capital's DELETE closes the FULL position; there is no partial-close param.
+        # Emulating a partial via an opposite deal would OPEN a hedge in hedging mode
+        # (real money), so reject a partial cleanly rather than guess.
+        if quantity is not None and quantity < pos.quantity:
+            return OrderResult(
+                client_order_id="", status=OrderStatus.REJECTED,
+                reason="partial close not supported on Capital.com — close the full position",
+            )
+        status, confirm = await self._submit_and_confirm(
+            "DELETE", f"/api/v1/positions/{deal_id}", None
+        )
+        if status is OrderStatus.PENDING:
+            status = OrderStatus.FILLED
+        dealt = _f(confirm.get("size"))
+        return OrderResult(
+            client_order_id="",
+            status=status,
+            deal_reference=confirm.get("dealReference"),
+            deal_id=deal_id,
+            filled_quantity=(dealt if dealt is not None else pos.quantity)
+            if status is OrderStatus.FILLED else 0.0,
+            fill_price=_f(confirm.get("level")) if status is OrderStatus.FILLED else None,
+            reason=confirm.get("reason", "") or "",
+            resolved_at=datetime.now(timezone.utc),
+        )
+
+    async def modify_position(
+        self,
+        deal_id: str,
+        *,
+        stop_level: float | None = None,
+        take_profit_level: float | None = None,
+        clear_stop: bool = False,
+        clear_take_profit: bool = False,
+    ) -> OrderResult:
+        # Fetch the raw position so we see its current levels AND its stop FLAGS in
+        # one call (get_positions drops the flags). Capital's PUT REPLACES levels — an
+        # omitted level is cleared (confirmed on demo) — so we always resend both,
+        # sending the kept one's current value and literal null for a clear (hence the
+        # body is NOT _clean'd, which would drop the null and defeat the removal).
+        resp = await self._broker._request("GET", "/api/v1/positions")
+        row = next(
+            (r for r in resp.json().get("positions", [])
+             if (r.get("position") or {}).get("dealId") == deal_id),
+            None,
+        )
+        if row is None:
+            return OrderResult(client_order_id="", status=OrderStatus.REJECTED, reason="no such position")
+        p = row["position"]
+        # A guaranteed or trailing stop can't be faithfully round-tripped through this
+        # plain SL/TP amend (the replace would reset it to false), so rather than
+        # silently disable a risk control on a position opened elsewhere, refuse.
+        if p.get("guaranteedStop") or p.get("trailingStop"):
+            return OrderResult(
+                client_order_id="", status=OrderStatus.REJECTED,
+                reason="can't edit SL/TP on a guaranteed- or trailing-stop position here",
+            )
+        new_stop = None if clear_stop else (stop_level if stop_level is not None else _f(p.get("stopLevel")))
+        new_tp = None if clear_take_profit else (take_profit_level if take_profit_level is not None else _f(p.get("profitLevel")))
+        body = {"stopLevel": new_stop, "profitLevel": new_tp, "guaranteedStop": False, "trailingStop": False}
+        status, confirm = await self._submit_and_confirm(
+            "PUT", f"/api/v1/positions/{deal_id}", body
+        )
+        return _amend_result(status, confirm, deal_id)
+
+    # --- ExecutionBroker: working orders ---------------------------------
+
+    async def get_working_orders(self, epic: str | None = None) -> list[WorkingOrder]:
+        resp = await self._broker._request("GET", "/api/v1/workingorders")
+        out: list[WorkingOrder] = []
+        for row in resp.json().get("workingOrders", []):
+            wod = row.get("workingOrderData") or {}
+            if epic is not None and wod.get("epic") != epic:
+                continue
+            out.append(
+                WorkingOrder(
+                    epic=wod.get("epic"),
+                    side=Side.BUY if wod.get("direction") == "BUY" else Side.SELL,
+                    quantity=_f(wod.get("orderSize")) or 0.0,
+                    limit_level=_f(wod.get("orderLevel")) or 0.0,
+                    order_id=wod.get("dealId"),
+                    stop_level=_f(wod.get("stopLevel")),
+                    take_profit_level=_f(wod.get("profitLevel")),
+                    created_at=_parse_dt(wod.get("createdDateUTC")),
+                )
+            )
+        return out
+
+    async def modify_working_order(
+        self,
+        order_id: str,
+        *,
+        limit_level: float | None = None,
+        stop_level: float | None = None,
+        take_profit_level: float | None = None,
+        clear_stop: bool = False,
+        clear_take_profit: bool = False,
+    ) -> OrderResult:
+        # Raw fetch for current level + SL/TP + stop FLAGS in one call (see
+        # modify_position for why). Capital's PUT replaces, so resend every kept field.
+        resp = await self._broker._request("GET", "/api/v1/workingorders")
+        row = next(
+            (r for r in resp.json().get("workingOrders", [])
+             if (r.get("workingOrderData") or {}).get("dealId") == order_id),
+            None,
+        )
+        if row is None:
+            return OrderResult(client_order_id="", status=OrderStatus.REJECTED, reason="no such order")
+        wod = row["workingOrderData"]
+        if wod.get("guaranteedStop") or wod.get("trailingStop"):
+            return OrderResult(
+                client_order_id="", status=OrderStatus.REJECTED,
+                reason="can't edit a guaranteed- or trailing-stop order here",
+            )
+        new_level = limit_level if limit_level is not None else _f(wod.get("orderLevel"))
+        new_stop = None if clear_stop else (stop_level if stop_level is not None else _f(wod.get("stopLevel")))
+        new_tp = None if clear_take_profit else (take_profit_level if take_profit_level is not None else _f(wod.get("profitLevel")))
+        # As with modify_position: kept fields resend their value, a clear sends null,
+        # and the body is sent raw (NOT _clean'd) so a null clear isn't dropped. `type`
+        # is fixed at creation, so the amend only carries level + SL/TP.
+        body = {"level": new_level, "stopLevel": new_stop, "profitLevel": new_tp, "guaranteedStop": False, "trailingStop": False}
+        status, confirm = await self._submit_and_confirm(
+            "PUT", f"/api/v1/workingorders/{order_id}", body
+        )
+        if status is OrderStatus.PENDING:
+            return OrderResult(client_order_id="", status=OrderStatus.PENDING, deal_id=order_id,
+                               deal_reference=confirm.get("dealReference"))
+        return _amend_result(status, confirm, order_id)
+
+    async def cancel_working_order(self, order_id: str) -> OrderResult:
+        status, confirm = await self._submit_and_confirm(
+            "DELETE", f"/api/v1/workingorders/{order_id}", None
+        )
+        if status is OrderStatus.PENDING:  # accepted
+            return OrderResult(client_order_id="", status=OrderStatus.FILLED, deal_id=order_id)
+        return _amend_result(status, confirm, order_id)
+
+    # --- order-ticket quote (parity with paper) ---------------------------
+
+    async def quote(self, epic: str) -> dict[str, float | None]:
+        """bid/ask/mid for the order ticket, from the live broker's snapshot."""
+        bid, ask = await self._broker.get_quote(epic)
+        return {"bid": bid, "ask": ask, "mid": pick_side(bid, ask, "mid")}
+
+    async def get_account_summary(self) -> dict:
+        """Real balance/available/currency for the session's active account (GET
+        /accounts), so the dock can show the LIVE account's true figures instead of
+        the global paper balance. Picks the session's preferred account (this user has
+        one); `profitLoss` is Capital's own open-P&L snapshot."""
+        resp = await self._broker._request("GET", "/api/v1/accounts")
+        return account_summary_from_accounts(resp.json())
+
+
+def _deal_id(confirm: dict) -> str | None:
+    """The dealt id from a confirm: `affectedDeals[0].dealId` — the opened position
+    for a market fill, the working-order id for a resting LIMIT. Returns None when no
+    affected deal carries an id, rather than falling back to the confirm's top-level
+    `dealId`: that is the deal-REQUEST id (it shows up as a position's
+    `workingOrderId`), the INVERSE of IG, and using it 404s every close/modify. A
+    None id is honest ('no usable id') — handing back the request id is a trap."""
+    affected = confirm.get("affectedDeals") or []
+    if affected and affected[0].get("dealId"):
+        return affected[0]["dealId"]
+    return None
+
+
+def _parse_dt(s: str | None) -> "datetime | None":
+    """Capital's createdDateUTC ('2026-06-28T17:15:11.288', already UTC) -> datetime."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
 def register(registry: "BrokerRegistry") -> "CapitalComBroker":
     """Register Capital.com as the "capital" data broker. Returns the instance so
     the caller can wire executors (e.g. the paper executor) onto its feed."""
     broker = CapitalComBroker()
     registry.add_data("capital", broker)
     return broker
+
+
+def register_live_exec(registry: "BrokerRegistry") -> "CapitalExecutionBroker":
+    """Register the real-money "capital:live" dealing account. It deals against the
+    live host with its OWN session (independent of the demo-hosted "capital" data
+    feed), so it's an extra ACCOUNT on the capital broker, not a second broker.
+    Caller gates this on settings.has_live()."""
+    api_key, identifier, password = settings.live_creds()
+    live_broker = CapitalComBroker(
+        api_key=api_key,
+        identifier=identifier,
+        password=password,
+        base_url=settings.live_base_url,
+    )
+    exec_broker = CapitalExecutionBroker(live_broker)
+    registry.add_exec("capital:live", exec_broker)
+    return exec_broker
 
 
 def _parse_prices(

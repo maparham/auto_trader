@@ -18,6 +18,41 @@ const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 export type TradeAccount = string;
 export const DEFAULT_ACCOUNT: TradeAccount = "capital:paper";
 
+// The broker id half of a "{broker}:{env}" account key. The single place that knows
+// the key shape — callers holding a BrokerAccount object should read its `.broker`
+// field instead; this is for the raw-string account (the active-account string).
+export function brokerOf(account: TradeAccount): string {
+  return account.split(":")[0];
+}
+
+// A real-money (live) account moves real funds. The backend enforces the guards
+// (confirm=true, no strategy orders), but the frontend also needs this to know an
+// account has no server-side push — so its dock must POLL (see the trades feed) —
+// and to fetch the account's real balance/currency (see fetchAccountSummary).
+export function isRealMoneyAccount(account: TradeAccount): boolean {
+  return account.endsWith(":live");
+}
+
+// Last-used account per broker (device-local). The tab-bar broker selector picks the
+// broker; this map lets it land back on the env you last used for that broker (paper
+// / demo / live) instead of always resetting to paper. Keyed by broker id.
+const LAST_ACCOUNT_BY_BROKER_KEY = "lastAccountByBroker";
+export function loadLastAccountByBroker(): Record<string, TradeAccount> {
+  try {
+    const raw = localStorage.getItem(LAST_ACCOUNT_BY_BROKER_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, TradeAccount>) : {};
+  } catch {
+    return {};
+  }
+}
+export function saveLastAccountByBroker(map: Record<string, TradeAccount>): void {
+  try {
+    localStorage.setItem(LAST_ACCOUNT_BY_BROKER_KEY, JSON.stringify(map));
+  } catch {
+    /* storage full / unavailable — best-effort */
+  }
+}
+
 // Display name for a broker id (the id is a lowercase opaque key; this is UI only).
 // Unknown ids fall back to a capitalized id so a new broker still reads sensibly.
 const BROKER_LABELS: Record<string, string> = {
@@ -121,6 +156,8 @@ export interface Position {
   take_profit_level: number | null;
   upnl: number | null;
   created_at: string | null;
+  leverage: number | null; // broker's real per-position leverage (null for paper)
+  margin: number | null; // broker deposit requirement, account currency (null for paper)
 }
 
 export interface WorkingOrder {
@@ -147,12 +184,37 @@ export interface TradeView {
   takeProfit: number | null;
   upnl: number | null; // positions only
   openedAt: number | null; // created_at as epoch ms (position open / order placed)
+  leverage: number | null; // broker per-position leverage (null → fall back to configured)
+  margin: number | null; // broker deposit requirement, account currency (null → estimate)
 }
 
 export interface Quote {
   bid: number | null;
   ask: number | null;
   mid: number | null;
+}
+
+// Real per-account figures from the broker (live dealing accounts). null fields when
+// the broker omits them; the whole call returns null for accounts with no real
+// summary (paper sim), so the dock keeps its configured paper balance.
+export interface AccountSummary {
+  balance: number | null;
+  available: number | null;
+  deposit: number | null;
+  profitLoss: number | null;
+  currency: string | null;
+}
+
+/** The account's real balance/available/currency (live dealing accounts). Returns
+ *  null for a paper account (no real summary → 404), so the dock falls back to its
+ *  configured paper figures. */
+export async function fetchAccountSummary(
+  account: TradeAccount,
+): Promise<AccountSummary | null> {
+  const res = await fetch(`${BASE}/api/account?account=${encodeURIComponent(account)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`account summary failed (${res.status})`);
+  return res.json();
 }
 
 /** The human label for a position or resting order — used identically by the
@@ -224,6 +286,8 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
         takeProfit: p.take_profit_level,
         upnl: p.upnl,
         openedAt: p.created_at ? Date.parse(p.created_at) : null,
+        leverage: p.leverage,
+        margin: p.margin,
       }),
     ),
     ...orders.map(
@@ -238,6 +302,8 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
         takeProfit: o.take_profit_level,
         upnl: null,
         openedAt: o.created_at ? Date.parse(o.created_at) : null,
+        leverage: null,
+        margin: null,
       }),
     ),
   ];
@@ -261,6 +327,36 @@ let _unsubDirty: (() => void) | null = null;
 // changes, so positions/orders follow the selection.
 let _account: TradeAccount = DEFAULT_ACCOUNT;
 
+// Real-money accounts get NO server-side push (the onTradesDirty event only fires
+// for paper triggers), so a fill / SL-TP hit / close-on-another-device would leave
+// the dock stale. For those accounts only, fall back to a light poll (paused when
+// the tab is hidden). Paper stays fully event-driven.
+const LIVE_POLL_MS = 6_000;
+let _pollTimer: ReturnType<typeof setInterval> | null = null;
+
+function _stopPoll(): void {
+  if (_pollTimer !== null) {
+    clearInterval(_pollTimer);
+    _pollTimer = null;
+  }
+}
+
+function _syncPoll(): void {
+  _stopPoll();
+  if (_refs <= 0 || !isRealMoneyAccount(_account)) return;
+  _pollTimer = setInterval(() => {
+    if (typeof document !== "undefined" && document.hidden) return; // pause when hidden
+    void _refresh();
+  }, LIVE_POLL_MS);
+}
+
+/** The account the trades feed currently targets. For actions taken from the chart
+ *  (the trade pill's Apply / Close / Cancel) that don't receive `account` as a prop —
+ *  the selected trade was fetched for this account, so it's the one to act against. */
+export function getTradesAccount(): TradeAccount {
+  return _account;
+}
+
 /** Point the trades feed at a different account and refresh immediately. */
 export function setTradesAccount(account: TradeAccount): void {
   if (account === _account) return;
@@ -268,6 +364,7 @@ export function setTradesAccount(account: TradeAccount): void {
   // Clear stale trades from the previous account so lines/rows don't linger.
   tradesSignal.set([]);
   void _refresh();
+  _syncPoll(); // start/stop the live poll for the new account
 }
 
 async function _refresh(): Promise<void> {
@@ -304,6 +401,7 @@ export function subscribeTrades(fn: (t: TradeView[]) => void): () => void {
     _unsubDirty = onTradesDirty((account) => {
       if (account === _account) void _refresh();
     });
+    _syncPoll(); // plus a light poll while a real-money account is active
   }
   return () => {
     unsub();
@@ -312,6 +410,7 @@ export function subscribeTrades(fn: (t: TradeView[]) => void): () => void {
       _refs = 0;
       _unsubDirty?.();
       _unsubDirty = null;
+      _stopPoll();
     }
   };
 }
@@ -390,6 +489,60 @@ export async function applyLevels(
     throw new Error(detail.detail ?? `update failed (${res.status})`);
   }
   return res.json();
+}
+
+/** Keep an SL/TP on the valid side of the latest price: a long's stop must sit BELOW
+ *  the price and its take-profit ABOVE it; a short's are reversed. Clamps `level` to
+ *  one `tick` past the price so a dragged line can't cross (the broker rejects it
+ *  anyway). Returns `level` unchanged when it's already on the right side. */
+export function clampLevelToPrice(
+  field: "stop" | "tp",
+  side: OrderSide,
+  latest: number,
+  level: number,
+  tick: number,
+): number {
+  const long = side === "buy";
+  const below = field === "stop" ? long : !long; // must this line stay below the price?
+  return below ? Math.min(level, latest - tick) : Math.max(level, latest + tick);
+}
+
+/** Merge a trade's pending (un-applied) edits over its server levels, BY PRESENCE
+ *  (a field set to `null` means "removed", `undefined` means "unchanged"). Returns
+ *  the resolved entry/stop/tp the user currently sees on the chart lines. Shared by
+ *  the order ticket's edit form and the chart pill so both read one source of truth. */
+export function mergeTradeLevels(
+  trade: { priceLevel: number; stop: number | null; takeProfit: number | null },
+  pending: { price?: number | null; stop?: number | null; takeProfit?: number | null },
+): { price: number | null; stop: number | null; takeProfit: number | null } {
+  const has = (k: "price" | "stop" | "takeProfit") => pending[k] !== undefined;
+  return {
+    price: (has("price") ? pending.price : trade.priceLevel) ?? null,
+    stop: (has("stop") ? pending.stop : trade.stop) ?? null,
+    takeProfit: (has("takeProfit") ? pending.takeProfit : trade.takeProfit) ?? null,
+  };
+}
+
+/** Commit the MERGED levels as the trade's authoritative final state: a null SL/TP
+ *  here means "remove it" (clear_*), unlike the drag path where null means "leave
+ *  unchanged". Used by BOTH the edit ticket's Update and the chart pill's Apply, so
+ *  the two can't diverge (e.g. ticket toggles SL off → Apply must actually clear it). */
+export async function applyEditedLevels(
+  trade: { kind: "position" | "order"; id: string },
+  merged: { price: number | null; stop: number | null; takeProfit: number | null },
+  account: TradeAccount = DEFAULT_ACCOUNT,
+): Promise<OrderResult> {
+  return applyLevels(
+    trade,
+    {
+      limit_level: trade.kind === "order" ? merged.price : null,
+      stop_level: merged.stop,
+      take_profit_level: merged.takeProfit,
+      clear_stop: merged.stop == null,
+      clear_take_profit: merged.takeProfit == null,
+    },
+    account,
+  );
 }
 
 export async function cancelWorkingOrder(

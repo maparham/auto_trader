@@ -40,7 +40,13 @@ from auto_trader.brokers.capital import (
     _to_utc,
     pick_side,
 )
-from auto_trader.brokers.base import ExecutionBroker
+from auto_trader.brokers._dealing import (
+    AsyncConfirmExecutionBroker,
+    account_summary_from_accounts,
+    amend_result as _amend_result,
+    clean as _clean,
+    to_float as _f,
+)
 from auto_trader.config import ig_settings
 from auto_trader.core.models import (
     Candle,
@@ -425,14 +431,7 @@ class IGBroker(MarketDataBroker):
         return _currency_from_raw(await self._market_raw(epic))
 
 
-# How long to poll /confirms before giving up and returning UNKNOWN. IG usually
-# confirms a deal within a second; a deal that never confirms must NOT be treated
-# as filled or rejected — the caller reconciles via /positions.
-_CONFIRM_ATTEMPTS = 6
-_CONFIRM_BACKOFF = 0.4  # seconds between confirm polls
-
-
-class IGExecutionBroker(ExecutionBroker):
+class IGExecutionBroker(AsyncConfirmExecutionBroker):
     """Real IG dealing for one side (demo or live), composed over its `IGBroker`
     so both share one session and the account selected at login.
 
@@ -447,15 +446,10 @@ class IGExecutionBroker(ExecutionBroker):
     returns the recorded result, defusing double-clicks and retried-after-success
     submits. It cannot defuse a lost response — that resolves to UNKNOWN."""
 
-    _RESULTS_MAX = 4096
-
     def __init__(self, broker: "IGBroker") -> None:
+        super().__init__()
         self._broker = broker
         self._side = broker._side  # "demo" | "live"
-        from collections import OrderedDict
-
-        self._results: OrderedDict[str, OrderResult] = OrderedDict()
-        self._lock = asyncio.Lock()
 
     @property
     def env(self) -> str:
@@ -465,70 +459,30 @@ class IGExecutionBroker(ExecutionBroker):
     def is_real_money(self) -> bool:
         return self._side == "live"
 
-    def _store_result(self, client_order_id: str, result: OrderResult) -> None:
-        self._results[client_order_id] = result
-        self._results.move_to_end(client_order_id)
-        while len(self._results) > self._RESULTS_MAX:
-            self._results.popitem(last=False)
+    # --- HTTP seams for the shared confirm/idempotency scaffold -----------
 
-    # --- confirm polling --------------------------------------------------
+    async def _deal_request(
+        self, method: str, path: str, body: dict | None, *, version: str = "2",
+        headers: dict | None = None,
+    ) -> httpx.Response:
+        return await self._broker._request(
+            method, path, version=version, json=body, extra_headers=headers
+        )
 
-    async def _confirm(self, deal_reference: str) -> dict:
-        """Poll /confirms/{ref} until the deal is processed. IG 404s while the
-        deal is still in-flight, so a 404 is retried (not a failure). Returns the
-        confirm payload; an all-404 timeout returns {} (→ UNKNOWN upstream)."""
-        for attempt in range(_CONFIRM_ATTEMPTS):
-            try:
-                resp = await self._broker._request(
-                    "GET", f"/confirms/{deal_reference}", version="1"
-                )
-                return resp.json()
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404 and attempt < _CONFIRM_ATTEMPTS - 1:
-                    await asyncio.sleep(_CONFIRM_BACKOFF)
-                    continue
-                if e.response.status_code == 404:
-                    return {}  # never processed in time → UNKNOWN
-                raise
-        return {}
-
-    async def _submit_and_confirm(
-        self, method: str, path: str, body: dict, *, version: str = "2", headers: dict | None = None
-    ) -> tuple[OrderStatus, dict]:
-        """Run a dealing write and resolve it via /confirms. Returns (status, confirm).
-
-        status is FILLED/PENDING decided by the caller from the confirm; here we
-        return REJECTED (confirm says so), UNKNOWN (no/!accepted-less confirm or a
-        lost submit), or PENDING as a neutral 'accepted' marker the caller refines."""
-        try:
-            resp = await self._broker._request(
-                method, path, version=version, json=body, extra_headers=headers
-            )
-            deal_ref = resp.json().get("dealReference")
-        except httpx.HTTPStatusError as e:
-            # A 4xx with a body is a business rejection (margin, distance, closed).
-            reason = _error_reason(e.response)
-            return OrderStatus.REJECTED, {"reason": reason}
-        except httpx.HTTPError:
-            # Transport failure: we don't know if IG received it. Never resubmit.
-            return OrderStatus.UNKNOWN, {"reason": "submit failed (no response)"}
-        if not deal_ref:
-            return OrderStatus.UNKNOWN, {"reason": "no dealReference returned"}
-        confirm = await self._confirm(deal_ref)
-        confirm["dealReference"] = deal_ref
-        if not confirm or "dealStatus" not in confirm:
-            return OrderStatus.UNKNOWN, confirm
-        if confirm.get("dealStatus") == "ACCEPTED":
-            return OrderStatus.PENDING, confirm  # caller refines to FILLED/PENDING
-        return OrderStatus.REJECTED, confirm
+    async def _confirm_request(self, deal_reference: str) -> httpx.Response:
+        # IG 404s while the deal is still in-flight (the base loop retries the 404).
+        return await self._broker._request(
+            "GET", f"/confirms/{deal_reference}", version="1"
+        )
 
     # --- ExecutionBroker: orders -----------------------------------------
 
     async def place_order(self, order: Order) -> OrderResult:
-        async with self._lock:
-            existing = self._results.get(order.client_order_id)
+        # Per-id lock: serialize retries of THIS order, let unrelated orders deal
+        # concurrently (see AsyncConfirmExecutionBroker._lock_for).
+        async with self._lock_for(order.client_order_id):
+            existing = self._idempotent_hit(order.client_order_id)
             if existing is not None:
-                self._results.move_to_end(order.client_order_id)
                 return existing  # idempotent: don't deal twice on a retried id
 
             submitted = datetime.now(timezone.utc)
@@ -591,17 +545,6 @@ class IGExecutionBroker(ExecutionBroker):
             submitted_at=submitted,
             resolved_at=datetime.now(timezone.utc),
         )
-
-    def _reject(self, order: Order, reason: str, submitted: datetime) -> OrderResult:
-        r = OrderResult(
-            client_order_id=order.client_order_id,
-            status=OrderStatus.REJECTED,
-            reason=reason,
-            submitted_at=submitted,
-            resolved_at=datetime.now(timezone.utc),
-        )
-        self._store_result(order.client_order_id, r)
-        return r
 
     # --- ExecutionBroker: positions --------------------------------------
 
@@ -767,20 +710,13 @@ class IGExecutionBroker(ExecutionBroker):
         mid = pick_side(bid, ask, "mid")
         return {"bid": bid, "ask": ask, "mid": mid}
 
-
-def _amend_result(status: OrderStatus, confirm: dict, deal_id: str) -> OrderResult:
-    """OrderResult for an amend/cancel: FILLED == 'action completed' (mirrors the
-    paper executor's convention), REJECTED/UNKNOWN passed through with the reason."""
-    if status is OrderStatus.PENDING:
-        status = OrderStatus.FILLED
-    return OrderResult(
-        client_order_id="",
-        status=status,
-        deal_reference=confirm.get("dealReference"),
-        deal_id=deal_id,
-        reason=confirm.get("reason", "") or "",
-        resolved_at=datetime.now(timezone.utc),
-    )
+    async def get_account_summary(self) -> dict:
+        """Real balance/available/currency for the session's active IG account (GET
+        /accounts), so the dock shows a LIVE IG account's true figures instead of the
+        configured paper balance. Without this, a real-money ig-live account 404s on
+        /api/account and the dock silently falls back to paper numbers."""
+        resp = await self._broker._request("GET", "/accounts", version="1")
+        return account_summary_from_accounts(resp.json())
 
 
 def _currency_from_raw(raw: dict | None) -> str | None:
@@ -889,27 +825,9 @@ def _quantize_level(level: float, precision: int | None, *, up: bool) -> float:
     return rounded / factor
 
 
-def _clean(body: dict) -> dict:
-    """Drop None-valued keys so optional stop/limit/currency fields are omitted
-    rather than sent as null (IG rejects null where it wants the field absent)."""
-    return {k: v for k, v in body.items() if v is not None}
-
-
-def _f(v) -> float | None:
-    return float(v) if v is not None else None
-
-
 def _first_affected(confirm: dict) -> str | None:
     affected = confirm.get("affectedDeals") or []
     return affected[0].get("dealId") if affected else None
-
-
-def _error_reason(resp: httpx.Response) -> str:
-    """IG error bodies are {"errorCode": "error.x.y"}; surface that as the reason."""
-    try:
-        return resp.json().get("errorCode") or f"HTTP {resp.status_code}"
-    except Exception:
-        return f"HTTP {resp.status_code}"
 
 
 def register(registry: "BrokerRegistry", side: str) -> "IGBroker":

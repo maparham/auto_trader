@@ -173,6 +173,13 @@ class Position:
     take_profit_level: float | None = None
     upnl: float | None = None
     created_at: datetime | None = None
+    # Broker-reported margin facts (None when the broker doesn't supply them, e.g.
+    # the paper sim). `leverage` is the broker's real per-position leverage (Capital
+    # applies different ratios per instrument — 5:1 on US shares, 10:1 elsewhere);
+    # `margin` is the deposit requirement in the ACCOUNT currency (current notional /
+    # leverage, FX-converted), so the dock shows the broker's figure, not a guess.
+    leverage: float | None = None
+    margin: float | None = None
 
     @property
     def signed_size(self) -> float:

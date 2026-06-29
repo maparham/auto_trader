@@ -15,7 +15,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  applyLevels,
+  applyEditedLevels,
+  mergeTradeLevels,
+  clampLevelToPrice,
+  getLivePrice,
   fetchQuote,
   placeOrder,
   refreshTrades,
@@ -29,6 +32,7 @@ import {
   draftOrderSignal,
   editTradeSignal,
   pendingEditsSignal,
+  setTradeSelected,
   type DraftOrder,
   type PendingEdit,
 } from "./lib/signals";
@@ -84,8 +88,11 @@ export default function OrderTicket({
   // Clear the staged draft AND any open edit when the ticket unmounts (panel closed).
   useEffect(
     () => () => {
+      // Only clear the staged DRAFT here. Deselecting on panel-close is owned by an
+      // App effect watching the panel-open flag — doing it in this unmount cleanup
+      // misfires under React StrictMode (which runs the cleanup once on mount),
+      // wiping the selection the instant the panel opens.
       draftOrderSignal.set(null);
-      editTradeSignal.set(null);
     },
     [],
   );
@@ -97,9 +104,13 @@ export default function OrderTicket({
 
   // The edited trade can vanish mid-edit (a position hits SL/TP, an order fills or
   // is cancelled elsewhere) — it drops from the poll. Fall back to the new-order
-  // form rather than render against stale data.
+  // form rather than render against stale data. Guard on a NON-EMPTY book: when the
+  // panel first opens from a chart selection its trades haven't loaded yet (empty
+  // list), and firing this then would instantly clear the just-made selection.
   useEffect(() => {
-    if (editId && !positions.some((t) => t.id === editId)) editTradeSignal.set(null);
+    if (editId && positions.length > 0 && !positions.some((t) => t.id === editId)) {
+      setTradeSelected(null);
+    }
   }, [editId, positions]);
 
   // Entering edit mode clears the new-order draft so its lines disappear; leaving
@@ -489,10 +500,7 @@ function EditTicket({
   const long = trade.side === "buy";
 
   // Merge pending (present field, incl. null = removed) over the server level.
-  const has = (k: keyof PendingEdit) => pending[k] !== undefined;
-  const price = (has("price") ? pending.price : trade.priceLevel) ?? null;
-  const stop = (has("stop") ? pending.stop : trade.stop) ?? null;
-  const tp = (has("takeProfit") ? pending.takeProfit : trade.takeProfit) ?? null;
+  const { price, stop, takeProfit: tp } = mergeTradeLevels(trade, pending);
   // Distance reference: a repriced order measures from its (edited) entry; a
   // position from its fixed open level.
   const ref = isOrder ? price ?? trade.priceLevel : trade.priceLevel;
@@ -508,12 +516,22 @@ function EditTicket({
   }
   function exit() {
     clearPending();
-    editTradeSignal.set(null);
+    setTradeSelected(null);
   }
 
+  // Default SL/TP when first toggled on: a fixed % away from the reference — the
+  // LATEST price for an open position (so the bracket starts a sensible distance from
+  // where the market is now), the order's own limit for a resting order. Then clamp
+  // to the valid side of the latest price so it can never start on the wrong side
+  // (long SL below / TP above; short reversed) — the same rule that bounds dragging.
   function bracket(kind: "tp" | "sl"): number {
+    const latest = getLivePrice(trade.epic);
+    const base = isOrder ? ref : latest ?? ref;
     const up = kind === "tp" ? long : !long;
-    return round(up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET));
+    const v = round(up ? base * (1 + DEFAULT_BRACKET) : base * (1 - DEFAULT_BRACKET));
+    if (latest == null) return v;
+    const tick = Number((10 ** -precision).toFixed(precision));
+    return round(clampLevelToPrice(kind === "sl" ? "stop" : "tp", trade.side, latest, v, tick));
   }
   function toggleExit(kind: "tp" | "sl", on: boolean) {
     patch(
@@ -529,23 +547,38 @@ function EditTicket({
   const pct = (level: number | null) =>
     level != null && ref ? ((level - ref) / ref) * 100 : null;
 
+  // A typed SL/TP must stay on the valid side of the latest price (long: SL below /
+  // TP above; short reversed). When set on the wrong side we flag the field red,
+  // show why, and block Update — rather than bounce off the broker. Price source: the
+  // live stream when available, else the position's marked price backed out of its
+  // uPnL (so validation still works between live ticks). null → can't judge → skip
+  // (let the broker have the final say).
+  const mark =
+    trade.kind === "position" && trade.upnl != null && trade.quantity > 0
+      ? trade.priceLevel + (long ? 1 : -1) * (trade.upnl / trade.quantity)
+      : null;
+  const latest = getLivePrice(trade.epic) ?? mark;
+  const sideValid = (field: "stop" | "tp", level: number | null): boolean => {
+    if (level == null || latest == null) return true;
+    const below = field === "stop" ? long : !long;
+    return below ? level < latest : level > latest;
+  };
+  const stopValid = sideValid("stop", stop);
+  const tpValid = sideValid("tp", tp);
+  const levelError =
+    latest == null
+      ? null
+      : !stopValid
+        ? `Stop loss must be ${long ? "below" : "above"} the current price (${latest.toFixed(precision)})`
+        : !tpValid
+          ? `Take profit must be ${long ? "above" : "below"} the current price (${latest.toFixed(precision)})`
+          : null;
+
   async function update() {
     setBusy(true);
     setMsg(null);
     try {
-      await applyLevels(
-        trade,
-        {
-          limit_level: isOrder ? price : null,
-          stop_level: stop,
-          take_profit_level: tp,
-          // The edit form is the authoritative final state, so a null level here
-          // means "remove it" (not "leave unchanged" as in the drag path).
-          clear_stop: stop == null,
-          clear_take_profit: tp == null,
-        },
-        account,
-      );
+      await applyEditedLevels(trade, { price, stop, takeProfit: tp }, account);
       refreshTrades();
       exit();
     } catch (e) {
@@ -592,6 +625,7 @@ function EditTicket({
           on={tp != null}
           value={tp}
           pct={pct(tp)}
+          invalid={!tpValid}
           onToggle={(on) => toggleExit("tp", on)}
           onChange={(v) => setExit("tp", v)}
         />
@@ -600,13 +634,18 @@ function EditTicket({
           on={stop != null}
           value={stop}
           pct={pct(stop)}
+          invalid={!stopValid}
           onToggle={(on) => toggleExit("sl", on)}
           onChange={(v) => setExit("sl", v)}
         />
       </div>
 
       <div className="ot-edit-actions">
-        <button className="ot-action ot-edit-update" disabled={busy} onClick={update}>
+        <button
+          className="ot-action ot-edit-update"
+          disabled={busy || levelError != null}
+          onClick={update}
+        >
           Update {isOrder ? "order" : "position"}
         </button>
         <button className="ot-edit-cancel" disabled={busy} onClick={exit}>
@@ -614,7 +653,9 @@ function EditTicket({
         </button>
       </div>
 
-      <div className={`ot-msg${msg ? " show" : ""}`}>{msg ?? ""}</div>
+      <div className={`ot-msg${msg || levelError ? " show ot-msg-err" : ""}`}>
+        {msg ?? levelError ?? ""}
+      </div>
     </div>
   );
 }
@@ -624,6 +665,7 @@ function ExitRow({
   on,
   value,
   pct,
+  invalid = false,
   onToggle,
   onChange,
 }: {
@@ -631,6 +673,7 @@ function ExitRow({
   on: boolean;
   value: number | null;
   pct: number | null;
+  invalid?: boolean;
   onToggle: (on: boolean) => void;
   onChange: (v: string) => void;
 }) {
@@ -647,7 +690,7 @@ function ExitRow({
           <span className="ot-switch-knob" />
         </button>
       </div>
-      <div className={`ot-input-row${on ? "" : " disabled"}`}>
+      <div className={`ot-input-row${on ? "" : " disabled"}${invalid ? " invalid" : ""}`}>
         <input
           className="ot-input num"
           type="number"
@@ -655,6 +698,7 @@ function ExitRow({
           disabled={!on}
           value={on && value != null ? value : ""}
           placeholder="—"
+          aria-invalid={invalid}
           onChange={(e) => onChange(e.target.value)}
         />
         <span className="ot-input-aux num">

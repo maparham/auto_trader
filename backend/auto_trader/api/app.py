@@ -452,6 +452,8 @@ class PositionDTO(BaseModel):
     take_profit_level: float | None = None
     upnl: float | None = None
     created_at: datetime | None = None
+    leverage: float | None = None
+    margin: float | None = None
 
 
 def _order_result_dto(r: OrderResult) -> OrderResultDTO:
@@ -477,6 +479,8 @@ def _position_dto(p) -> PositionDTO:
         take_profit_level=p.take_profit_level,
         upnl=p.upnl,
         created_at=p.created_at,
+        leverage=p.leverage,
+        margin=p.margin,
     )
 
 
@@ -543,6 +547,31 @@ async def quote(epic: str, account: str = Query("capital:paper")) -> QuoteDTO:
         return QuoteDTO(**await q(epic))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"quote failed: {e}") from e
+
+
+class AccountSummaryDTO(BaseModel):
+    # Real per-account figures from the broker (live dealing accounts only). Paper/IG
+    # accounts have no summary → 404, and the dock falls back to its configured paper
+    # balance. All optional so a partial broker payload still renders.
+    balance: float | None = None
+    available: float | None = None
+    deposit: float | None = None
+    profitLoss: float | None = None
+    currency: str | None = None
+
+
+@app.get("/api/account", response_model=AccountSummaryDTO)
+async def account_summary(account: str = Query("capital:paper")) -> AccountSummaryDTO:
+    """The account's real balance/available/currency (live dealing accounts). 404 when
+    the account has no real summary (paper sim), so the dock keeps its paper figures."""
+    broker = get_exec(account)
+    fn = getattr(broker, "get_account_summary", None)
+    if fn is None:
+        raise HTTPException(status_code=404, detail="account summary unavailable")
+    try:
+        return AccountSummaryDTO(**await fn())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"account summary failed: {e}") from e
 
 
 @app.get("/api/positions", response_model=list[PositionDTO])
