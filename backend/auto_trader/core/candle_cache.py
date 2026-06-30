@@ -35,6 +35,12 @@ def _to_candle(ts: int, o: float, h: float, l: float, c: float, v: float) -> Can
     )
 
 
+def _bucket_start(now_s: float, res_seconds: int) -> int:
+    """Open time (unix s) of the bucket containing now_s — the forming bar's open.
+    Bars with ts < this are closed; the bar at/after it is still forming."""
+    return (int(now_s) // res_seconds) * res_seconds
+
+
 class CandleCache:
     """Sqlite-backed closed-bar cache. Fresh connection per op (cheap for sqlite,
     sidesteps the one-connection-per-thread rule; public async methods run the sync
@@ -182,10 +188,51 @@ class CandleCache:
             if cached:
                 return cached
             raise
-        cutoff = int(now if now is not None else time.time()) - res_seconds
+        cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
         await asyncio.to_thread(self._store_closed, key, fetched, cutoff)
         # Record the requested span as covered even if the fetch was empty (closed
         # market): mirrors the frontend's "keep walking back past the gap" so we
         # don't re-fetch the hole forever.
         await asyncio.to_thread(self._extend_coverage, key, from_ts, to_ts)
         return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+
+    async def recent(
+        self,
+        key: CandleKey,
+        res_seconds: int,
+        count: int,
+        fetch_recent: Callable[[int], Awaitable[list[Candle]]],
+        *,
+        tail: int = 3,
+        now: float | None = None,
+    ) -> list[Candle]:
+        """Most-recent `count` bars. Cold/short cache -> one full fetch. Warm cache
+        -> a small `tail` fetch to anchor 'now' + carry the forming bar, with the
+        rest served from cache. The forming bar (ts >= cutoff) is always passed
+        through so the chart shows current price immediately, as before."""
+        cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
+        cov = await asyncio.to_thread(self._coverage, key)
+        cached_n = await asyncio.to_thread(self._cached_count, key)
+        # Warm path needs `count - 1` closed bars cached: the forming bar fills the
+        # final slot. Fewer than that (or cold) -> one full fetch.
+        if cov is None or cached_n < count - 1:
+            try:
+                fetched = await fetch_recent(count)
+            except Exception:
+                cached = await asyncio.to_thread(self._read_back, key, count, cutoff + res_seconds)
+                if cached:
+                    return cached
+                raise
+            await asyncio.to_thread(self._store_closed, key, fetched, cutoff)
+            return fetched[-count:]
+        try:
+            tail_bars = await fetch_recent(tail)
+        except Exception:
+            cached = await asyncio.to_thread(self._read_back, key, count, cutoff + res_seconds)
+            if cached:
+                return cached
+            raise
+        await asyncio.to_thread(self._store_closed, key, tail_bars, cutoff)
+        forming = [b for b in tail_bars if int(b.time.timestamp()) >= cutoff]
+        closed = await asyncio.to_thread(self._read_back, key, count - len(forming), cutoff)
+        return closed + forming
