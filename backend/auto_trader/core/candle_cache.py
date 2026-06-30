@@ -169,6 +169,7 @@ class CandleCache:
         (or the whole window when cold), store closed bars, mark covered, serve."""
         from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
         cov = await asyncio.to_thread(self._coverage, key)
+        # Scroll-back/replay windows never extend above newest, so we only backfill below oldest.
         if cov is not None and cov[0] <= from_ts and cov[1] >= to_ts:
             return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
         # Backfill from `start` up to the current oldest (gap-free), or the whole

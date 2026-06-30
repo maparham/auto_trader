@@ -1,6 +1,7 @@
 # backend/tests/test_candle_cache.py
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from auto_trader.core.candle_cache import CandleCache
@@ -50,9 +51,6 @@ def test_coverage_none_on_empty_cache(tmp_path):
 def test_read_back_zero_is_empty(tmp_path):
     cache = CandleCache(str(tmp_path / "c.db"))
     assert cache._read_back(KEY, n=0, before_ts=10_000) == []
-
-
-import asyncio
 
 
 class FakeFetcher:
@@ -128,11 +126,13 @@ def test_window_empty_gap_advances_oldest_no_refetch(tmp_path):
 
 def test_window_serves_cache_when_fetch_errors(tmp_path):
     cache = CandleCache(str(tmp_path / "c.db"))
-    good = FakeFetcher([_c(t, float(t)) for t in (100, 160, 220)])
-    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(220), good.range, now=10_000))
+    # Seed bars + coverage directly: coverage becomes (100, 220).
+    cache._store_closed(KEY, [_c(t, float(t)) for t in (100, 160, 220)], cutoff_ts=10_000)
+    # Request [40, 160]: from_ts=40 < oldest=100 -> MISS -> fetch_range(40,100) is called and throws.
     boom = FakeFetcher(error=RuntimeError("breaker open"))
-    out = asyncio.run(cache.window(KEY, 60, _dt(100), _dt(160), boom.range, now=10_000))
-    assert [int(c.time.timestamp()) for c in out] == [100, 160]  # cache served despite error
+    out = asyncio.run(cache.window(KEY, 60, _dt(40), _dt(160), boom.range, now=10_000))
+    assert boom.range_calls == [(40, 100)]          # the fetch WAS attempted (error path entered)
+    assert [int(c.time.timestamp()) for c in out] == [100, 160]  # cache served despite the error
 
 
 def test_window_reraises_when_cache_empty_and_fetch_errors(tmp_path):
