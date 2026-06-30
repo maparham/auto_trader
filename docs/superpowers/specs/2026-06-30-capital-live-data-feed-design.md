@@ -56,17 +56,28 @@ selected). Rejected alternatives:
 
 ## Architecture
 
-Capital splits into two **feeds**, each with its own accounts:
+Capital splits into two **feeds**, each with a paper simulator AND a real
+broker-dealing account — the full IG-style parallel (`ig-{side}:paper` +
+`ig-{side}:{side}`):
 
 | Feed (data broker id) | Data host | Accounts (exec keys) |
 |-----------------------|-----------|----------------------|
-| `capital` (unchanged, default) | demo | `capital:paper` |
-| `capital-live` (new) | live | `capital-live:paper`, `capital-live:live` |
+| `capital` (default) | demo | `capital:paper` (in-app sim), **`capital:demo`** (real Capital demo dealing — NEW) |
+| `capital-live` (new) | live | `capital-live:paper` (in-app sim — NEW), `capital-live:live` (real live dealing — renamed from `capital:live`) |
 
 - Selecting the `capital-live` feed routes symbol search + quotes + candles +
   streaming to the live host → SPCX appears and charts.
-- `capital-live:paper` is the safe default account on the live feed (browse and
-  paper-trade live-only instruments, no real money).
+- **`capital:demo`** is a real account on Capital's **demo platform** — it opens and
+  manages positions/working orders there (real broker behavior, fake money), just
+  like the live account does on the live platform. Verified: the demo host accepts
+  dealing with the existing demo credentials (`GET /accounts`/`/positions`/
+  `/workingorders` all 200). This corrects today's setup, where demo trading was
+  only ever an in-app simulation that never touched Capital.
+- The **in-app paper** simulator stays on both feeds. On the live feed it is the
+  *only* risk-free way to test live-only instruments: SPCX does not exist on the
+  demo platform, so `capital:demo` cannot trade it — `capital-live:paper` (paper
+  priced off the live feed) can.
+- `capital:paper` is unchanged and stays the default account.
 - `capital-live:live` is the existing real-money dealing account, **renamed** from
   `capital:live`.
 
@@ -88,20 +99,30 @@ Capital splits into two **feeds**, each with its own accounts:
 
 ### 1. Backend wiring — `registry.py`, `capital.py`
 
-- `build_registry()`: build a live-host `CapitalComBroker` (reuse
-  `settings.live_creds()` + `settings.live_base_url`), `add_data("capital-live", …)`,
-  register a paper executor on it (`paper_exec.register(…, broker_id="capital-live")`
-  → `capital-live:paper`), and register the real dealing executor as
-  `capital-live:live`. Gate the whole block on `settings.has_live()`.
-- Replace today's `register_live_exec` (which added `capital:live` as exec-only).
-  The live dealing executor now prices off the `capital-live` data broker instead
-  of the demo `capital` feed.
-- **One live broker instance, one live session.** The `capital-live` data broker
-  and the `capital-live:live` exec must wrap the **same** `CapitalComBroker`
-  instance (as IG's `register` shares one broker across data + paper + real exec).
-  This codebase has a documented live `/session` 429-storm history, so a careless
-  split that spins up two live sessions on the same credentials must be avoided.
-- The demo `capital` + `capital:paper` block is unchanged.
+Mirror IG's `register(registry, side)` (one shared broker per feed → paper exec +
+real dealing exec on it):
+
+- **Demo feed** (`capital.register`): keep `add_data("capital", broker)` and the
+  paper exec (`capital:paper`); **add** `registry.add_exec("capital:demo",
+  CapitalExecutionBroker(broker))` — real Capital demo dealing on the *same* demo
+  broker instance.
+- **Live feed** (replace `register_live_exec` with `capital.register_live`, gated on
+  `settings.has_live()`): build one live-host `CapitalComBroker` (reuse
+  `settings.live_creds()` + `settings.live_base_url`), then on that **same instance**:
+  `add_data("capital-live", live_broker)`, `paper_exec.register(…,
+  broker_id="capital-live")` → `capital-live:paper`, and
+  `add_exec("capital-live:live", CapitalExecutionBroker(live_broker))`.
+- **`CapitalExecutionBroker.env` / `.is_real_money`** are currently hardcoded
+  `"live"` / `True` (`capital.py:748-754`). Derive them from the host:
+  `env = "live" if self._broker._is_live_env() else "demo"`,
+  `is_real_money = self._broker._is_live_env()`. So the demo-host executor reports
+  `env="demo", isRealMoney=False` and the live one `env="live", isRealMoney=True`
+  — which is what `registry.describe()` and the selector's risk tier read.
+- **One broker instance per feed, one session.** The data broker, the paper exec's
+  market, and the real dealing exec for a feed all wrap the **same**
+  `CapitalComBroker` (as IG does). This codebase has a documented live `/session`
+  429-storm history, so a split that spins up two sessions on the same credentials
+  must be avoided.
 
 ### 2. Tick store isolation — `core/tick_store.py` (the one real coupling)
 
@@ -141,7 +162,8 @@ once) but is included because it is the only thing preventing true feed isolatio
 account strip filters to the active feed: `brokerAccounts = accounts.filter(a =>
 a.broker === activeBroker)` (`PositionsPanel.tsx:186`). So account tabs are shown
 **per feed**, not globally:
-- On **Capital.com (demo)**: one tab — `capital:paper`.
+- On **Capital.com (demo)**: two tabs — `capital:paper` (in-app sim) and
+  `capital:demo` (real Capital demo dealing).
 - On **Capital.com (live)**: two tabs — `capital-live:paper` and the real-money
   `capital-live:live`, switchable in the dock as today.
 
@@ -197,9 +219,11 @@ independently (acceptable for v1; a future global layout library could unify the
 ## Testing
 
 - **Backend — `test_registry.py`:** registry wires two Capital data brokers
-  (`capital`, `capital-live`) and three Capital exec accounts (`capital:paper`,
-  `capital-live:paper`, `capital-live:live`) when `has_live()`; only `capital` +
-  `capital:paper` when not.
+  (`capital`, `capital-live`) and four Capital exec accounts (`capital:paper`,
+  `capital:demo`, `capital-live:paper`, `capital-live:live`) when `has_live()`; just
+  the `capital` feed with `capital:paper` + `capital:demo` when not. Assert the
+  `capital:demo` executor reports `env="demo"`/`isRealMoney=False` and
+  `capital-live:live` reports `env="live"`/`isRealMoney=True`.
 - **Backend — `tick_store` isolation test:** record the same epic under two brokers;
   `bars`/`latest` for each broker return only that broker's ticks.
 - **Backend — `test_broker_isolation.py`:** candle cache already isolates by broker
