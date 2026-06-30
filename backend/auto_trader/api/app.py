@@ -999,6 +999,30 @@ async def ws_candles(websocket: WebSocket) -> None:
             # disables scroll-back for these anyway); stop the client retrying.
             return await _fatal(f"{broker_id}: seconds intervals not streamed yet")
         stream = stream_tick_candles(broker, epic, SECONDS_INTERVALS[res_raw])
+    elif is_derived(res_raw):
+        # Derived timeframes stream by re-folding the native base (DAY/WEEK) stream
+        # into the forming aggregate bucket. IG base-bar streaming for these isn't
+        # wired, so it keeps its REST view (fatal stops the client retrying).
+        if is_ig:
+            return await _fatal(f"{broker_id}: {res_raw} is not streamed live")
+        rule = DERIVED[res_raw]
+        base = rule.base
+
+        async def _seed(bucket_ts: int) -> list[Candle]:
+            # Closed base bars already elapsed in the current bucket (reconnect
+            # mid-bucket); empty at a live rollover.
+            start = datetime.fromtimestamp(bucket_ts, tz=timezone.utc)
+            now = datetime.now(timezone.utc)
+            base_key = (broker_id, epic, base.value, price_side)
+
+            async def fetch_range(s, e):
+                return await broker.get_candles(epic, base, s, e, price_side)
+
+            return await CANDLE_CACHE.window(base_key, base.seconds, start, now, fetch_range)
+
+        stream = aggregate_candle_stream(
+            stream_candles(broker, epic, base, price_side), rule, _seed
+        )
     else:
         try:
             resolution = Resolution(res_raw)
