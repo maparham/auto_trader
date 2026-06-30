@@ -62,7 +62,12 @@ export async function pageHistoryBack<T extends BarLike>(
     if (isStale()) return "aborted";
     if (cursorSec * 1000 <= fromTs) break; // history now reaches the period start
     const toSec = cursorSec - 1;
-    const fromSec = toSec - pageBars * resSec;
+    // Never page older than the target left edge. Without this, a high/derived
+    // timeframe (resSec = a year) makes pageBars*resSec span centuries in one
+    // page — the backend would fold that from DAY base bars, looping ~180
+    // sequential broker requests before the loop's fromTs break ever fires.
+    // Clamping bounds each page to the requested [fromTs, toTs] window.
+    const fromSec = Math.max(Math.floor(fromTs / 1000), toSec - pageBars * resSec);
 
     let older: T[];
     try {
