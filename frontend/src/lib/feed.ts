@@ -25,6 +25,19 @@ export const PERIODS: Period[] = [
   { resolution: "WEEK", label: "1W" },
 ];
 
+// Derived (non-native) timeframes: the backend folds cached DAY/WEEK base bars
+// into calendar buckets — full history + live, but not Capital resolutions. Like
+// the seconds group, these live only in the grouped dropdown, not the quick-bar.
+const DERIVED_PERIODS: Period[] = [
+  { resolution: "WEEK_2", label: "2W" },
+  { resolution: "WEEK_3", label: "3W" },
+  { resolution: "WEEK_6", label: "6W" },
+  { resolution: "MONTH", label: "1M" },
+  { resolution: "MONTH_2", label: "2M" },
+  { resolution: "MONTH_3", label: "3M" },
+  { resolution: "YEAR", label: "1Y" },
+];
+
 // Sub-minute intervals, built live by bucketing the tick stream (no history).
 // Keys must match the backend's SECONDS_INTERVALS.
 const SECONDS_PERIODS: Period[] = [
@@ -56,6 +69,18 @@ export const PERIOD_GROUPS: PeriodGroup[] = [
   {
     label: "Days",
     periods: PERIODS.filter((p) => p.resolution === "DAY" || p.resolution === "WEEK"),
+  },
+  {
+    label: "Weeks",
+    periods: DERIVED_PERIODS.filter((p) => p.resolution.startsWith("WEEK_")),
+  },
+  {
+    label: "Months",
+    periods: DERIVED_PERIODS.filter((p) => p.resolution.startsWith("MONTH")),
+  },
+  {
+    label: "Years",
+    periods: DERIVED_PERIODS.filter((p) => p.resolution === "YEAR"),
   },
 ];
 
@@ -465,4 +490,13 @@ export const RESOLUTION_SECONDS: Record<string, number> = {
   HOUR_4: 14400,
   DAY: 86400,
   WEEK: 604800,
+  // Derived timeframes — approximate widths (months/years aren't fixed); used
+  // only for scroll-back window math, never for bucketing (the backend folds).
+  WEEK_2: 1209600,
+  WEEK_3: 1814400,
+  WEEK_6: 3628800,
+  MONTH: 2592000,
+  MONTH_2: 5184000,
+  MONTH_3: 7776000,
+  YEAR: 31536000,
 };
