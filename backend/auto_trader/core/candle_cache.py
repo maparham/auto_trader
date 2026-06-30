@@ -175,14 +175,19 @@ class CandleCache:
         (or the whole window when cold), store closed bars, mark covered, serve."""
         from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
         cov = await asyncio.to_thread(self._coverage, key)
-        # Scroll-back/replay windows never extend above newest, so we only backfill below oldest.
+        # A cache hit needs the window fully inside coverage. We only backfill BELOW
+        # oldest; fetching a gap ABOVE newest (the live edge) is out of scope for v1 —
+        # recent()/the stream own the live edge — so we never push the newest
+        # watermark past the closed cutoff here (see the coverage cap below).
         if cov is not None and cov[0] <= from_ts and cov[1] >= to_ts:
             return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
         # Backfill from `start` up to the current oldest (gap-free), or the whole
         # window when cold. End the fetch at oldest so we don't re-pull covered bars.
         fetch_end = datetime.fromtimestamp(cov[0], tz=timezone.utc) if cov else end
         try:
-            fetched = await fetch_range(start, fetch_end)
+            # Skip a degenerate/inverted call when the miss is purely above newest
+            # (start >= oldest): there is nothing below oldest to backfill.
+            fetched = await fetch_range(start, fetch_end) if start < fetch_end else []
         except Exception:
             cached = await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
             if cached:
@@ -190,10 +195,16 @@ class CandleCache:
             raise
         cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
         await asyncio.to_thread(self._store_closed, key, fetched, cutoff)
-        # Record the requested span as covered even if the fetch was empty (closed
-        # market): mirrors the frontend's "keep walking back past the gap" so we
-        # don't re-fetch the hole forever.
-        await asyncio.to_thread(self._extend_coverage, key, from_ts, to_ts)
+        # Mark the requested span covered even on an empty fetch (closed market) so we
+        # don't re-fetch the hole forever. Cap the NEWEST watermark: a cold fetch pulled
+        # the whole window so we have every closed bar up to `cutoff`, but the forming
+        # bar (>= cutoff) was filtered out by _store_closed and must stay re-fetchable;
+        # a warm fetch only backfilled below oldest, so newest stays cov[1]. Skip the
+        # write entirely if there's no valid closed span (an entirely-future window),
+        # which would otherwise record an inverted oldest>newest row.
+        hi = cov[1] if cov is not None else min(to_ts, cutoff)
+        if hi >= from_ts:
+            await asyncio.to_thread(self._extend_coverage, key, from_ts, hi)
         return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
 
     async def recent(

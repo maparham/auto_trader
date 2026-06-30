@@ -198,3 +198,26 @@ def test_route_window_short_circuits_repeat(tmp_path, monkeypatch):
     asyncio.run(cache.window(KEY, 60, _dt(100), _dt(220), f.range, now=10_000))
     asyncio.run(cache.window(KEY, 60, _dt(100), _dt(220), f.range, now=10_000))
     assert len(f.range_calls) == 1  # second window served from cache
+
+
+def test_window_does_not_cover_forming_region(tmp_path):
+    # A cold window whose end reaches the forming region must NOT mark that region
+    # covered — else the bar forming now would be served as a permanent hole once it
+    # closes. The newest watermark is capped at the closed cutoff.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]  # 280 is forming at now=280
+    f = FakeFetcher(src)
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(280), f.range, now=280))  # cutoff=240
+    assert cache._coverage(KEY)[1] <= 240  # newest capped at cutoff, not 280
+    stored = [int(c.time.timestamp()) for c in cache._read_window(KEY, 0, 10_000)]
+    assert 280 not in stored  # forming bar never persisted
+
+
+def test_window_future_window_no_inverted_coverage(tmp_path):
+    # An entirely-future window (from_ts > now) has no closed bars to store and must
+    # not write an inverted (oldest > newest) coverage row.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f = FakeFetcher([])
+    asyncio.run(cache.window(KEY, 60, _dt(300), _dt(400), f.range, now=280))  # cutoff=240
+    cov = cache._coverage(KEY)
+    assert cov is None or cov[0] <= cov[1]  # never inverted
