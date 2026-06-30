@@ -41,7 +41,7 @@ const PRICE_COLOR = "#2962ff";
 const STOP_COLOR = "#f23645";
 const TP_COLOR = "#089981";
 
-export type LineField = "price" | "stop" | "takeProfit";
+type LineField = "price" | "stop" | "takeProfit";
 
 export interface SpecBuildOpts {
   trades: TradeView[];
@@ -58,6 +58,10 @@ export interface SpecBuildOpts {
   hovered?: string | null;
   // The click-selected trade id: its lines render solid (sticky emphasis).
   selected?: string | null;
+  // The focused LINE of the selected trade (the one whose DOM pill is showing). That
+  // line's own canvas label is blanked so the richer pill can take its place WITHOUT
+  // doubling the text — the label "grows" into the pill at the same spot.
+  selectedField?: "price" | "stop" | "tp" | null;
   // A new order being staged on this epic. Its lines are always draggable and
   // report under the id "draft".
   draft?: DraftOrder | null;
@@ -74,6 +78,9 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
     if (t.epic !== o.epic) continue;
     const selected = o.selected === t.id;
     const highlight = o.hovered === t.id;
+    // The focused line whose pill is up (only for the selected trade) — its label is
+    // suppressed so the pill replaces it in place rather than overlapping it.
+    const focusedField = selected ? o.selectedField ?? null : null;
     // Hidden lines are skipped — unless this trade is hovered or selected, in which
     // case it's temporarily revealed.
     if (o.hidden?.has(t.id) && !highlight && !selected) continue;
@@ -93,7 +100,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         key: `${t.id}:price`,
         level: price,
         color: PRICE_COLOR,
-        label: `${word} ${t.quantity} @ ${fmt(price)}${pnlStr}`,
+        label: focusedField === "price" ? "" : `${word} ${t.quantity} @ ${fmt(price)}${pnlStr}`,
         // A resting order's price line is draggable to reprice it; a filled
         // position's entry is fixed (you can't change a fill), so never draggable.
         draggable: t.kind === "order",
@@ -107,7 +114,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         key: `${t.id}:stop`,
         level: stop,
         color: STOP_COLOR,
-        label: `SL ${fmt(stop)}`,
+        label: focusedField === "stop" ? "" : `SL ${fmt(stop)}`,
         draggable: o.levelsDraggable,
         highlight,
         selected,
@@ -119,7 +126,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         key: `${t.id}:tp`,
         level: tp,
         color: TP_COLOR,
-        label: `TP ${fmt(tp)}`,
+        label: focusedField === "tp" ? "" : `TP ${fmt(tp)}`,
         draggable: o.levelsDraggable,
         highlight,
         selected,
@@ -365,4 +372,175 @@ export class PositionLines {
     }
     this.lines.clear();
   }
+}
+
+// ── H bracket: split-color spine grouping SL/TP to the entry, cursor-tracked ──────
+//
+// A sleek visual link between a trade's entry line and its SL/TP, drawn on a dedicated
+// overlay canvas in ChartCore (NOT a klinecharts overlay) so it can follow the cursor's
+// x cheaply on every mousemove. Shown only for the SELECTED trade or the staged draft,
+// and only when an SL or TP exists — with neither, the plain lines render exactly as
+// before. Percentages are unsigned MAGNITUDES (colour carries the gain/loss meaning,
+// like TradingView's position tool), so they read correctly for shorts too: the TP leg
+// is always green, the SL leg always red, regardless of which sits above the entry.
+
+export interface BracketGeom {
+  // Entry/anchor price: a position's open level, an order/limit-draft's price, or the
+  // live price for a market draft (which has no entry line of its own).
+  entry: number | null;
+  stop: number | null;
+  tp: number | null;
+}
+
+export interface BracketLabelData {
+  tpPct: number | null; // |TP − entry| / entry, %
+  slPct: number | null; // |SL − entry| / entry, %
+  rr: number | null; // reward / risk (only when both legs are present)
+}
+
+/** Distance of each leg from the entry as an unsigned percentage, plus reward/risk.
+ *  Side-agnostic by design (magnitudes), so a short reads the same as a long. */
+export function bracketLabels(g: BracketGeom): BracketLabelData {
+  const { entry, stop, tp } = g;
+  const pctOf = (lvl: number | null) =>
+    entry != null && entry !== 0 && lvl != null
+      ? Math.abs((lvl - entry) / entry) * 100
+      : null;
+  const rr =
+    entry != null && stop != null && tp != null && Math.abs(entry - stop) > 0
+      ? Math.abs(tp - entry) / Math.abs(entry - stop)
+      : null;
+  return { tpPct: pctOf(tp), slPct: pctOf(stop), rr };
+}
+
+const fmtPct = (v: number) => `${v.toFixed(2)}%`;
+const fmtRr = (v: number) => `1:${v.toFixed(1)}`;
+
+function roundRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number,
+): void {
+  const r = Math.min(radius, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// A small filled pill with white text, sitting to the RIGHT of the spine — or to the
+// LEFT (`flip`) when the spine is close to the right edge so it never spills off-pane.
+// Semibold tabular-ish numerals so the figures read crisply against the chart.
+function bracketPill(
+  ctx: CanvasRenderingContext2D,
+  spineX: number,
+  y: number,
+  text: string,
+  color: string,
+  flip: boolean,
+): void {
+  const size = 11,
+    padX = 7,
+    padY = 3,
+    cr = 4,
+    gap = 10;
+  ctx.save();
+  ctx.font = `600 ${size}px -apple-system, system-ui, sans-serif`;
+  const tw = ctx.measureText(text).width;
+  const pw = Math.round(tw) + padX * 2;
+  const ph = size + padY * 2 + 1;
+  const left = Math.round(flip ? spineX - gap - pw : spineX + gap);
+  const top = Math.round(y - ph / 2);
+  roundRectPath(ctx, left, top, pw, ph, cr);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, left + padX, top + ph / 2 + 0.5);
+  ctx.restore();
+}
+
+export interface BracketDrawArgs {
+  ctx: CanvasRenderingContext2D;
+  // Pixel ys for each level (null = absent or off-pane). The caller (ChartCore) maps
+  // price→y via the chart and clears the canvas before calling.
+  entryY: number | null;
+  stopY: number | null;
+  tpY: number | null;
+  spineX: number; // where the spine sits — the cursor's x, clamped to the pane
+  mainW: number; // main-pane width, for the badge flip near the right edge
+  labels: BracketLabelData;
+}
+
+/** Draw the split-colour spine + origin ring + %/R:R badges. No-op without an entry
+ *  anchor and at least one of SL/TP (so a bare trade shows nothing extra).
+ *
+ *  Design: the spine reads as a measurement caliper. Its two legs emanate from a hollow
+ *  ORIGIN RING at the entry — the pivot where reward (green, up to TP) meets risk (red,
+ *  down to SL) — and terminate in filled end-handles at the levels. Rounded caps keep it
+ *  feeling precise rather than blunt. The R:R, the one number a trader reads first, is
+ *  anchored on the ring; the leg %s sit on their handles. Colour carries gain/loss, so
+ *  the figures stay unsigned and a short reads identically to a long. */
+export function drawPositionBracket(a: BracketDrawArgs): void {
+  const { ctx, entryY, stopY, tpY, spineX, mainW, labels } = a;
+  if (entryY == null || (stopY == null && tpY == null)) return;
+  const bx = Math.round(spineX) + 0.5; // crisp stroke
+  const flip = spineX > mainW - 130;
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineWidth = 2;
+  // Split-colour spine emanating from the entry: reward leg up to TP (green), risk leg
+  // down to SL (red) — role-based, so a short reads correctly (TP below, SL above).
+  if (tpY != null) {
+    ctx.strokeStyle = TP_COLOR;
+    ctx.beginPath();
+    ctx.moveTo(bx, entryY);
+    ctx.lineTo(bx, tpY);
+    ctx.stroke();
+  }
+  if (stopY != null) {
+    ctx.strokeStyle = STOP_COLOR;
+    ctx.beginPath();
+    ctx.moveTo(bx, entryY);
+    ctx.lineTo(bx, stopY);
+    ctx.stroke();
+  }
+  // Filled end-handle at each target level.
+  const handle = (y: number, color: string) => {
+    ctx.beginPath();
+    ctx.arc(bx, y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  };
+  if (tpY != null) handle(tpY, TP_COLOR);
+  if (stopY != null) handle(stopY, STOP_COLOR);
+  // The signature: a hollow origin ring with a small centre dot — a precise pivot that
+  // frames exactly where risk turns into reward.
+  ctx.beginPath();
+  ctx.arc(bx, entryY, 4, 0, Math.PI * 2);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = PRICE_COLOR;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(bx, entryY, 1.5, 0, Math.PI * 2);
+  ctx.fillStyle = PRICE_COLOR;
+  ctx.fill();
+  ctx.restore();
+
+  // Badges — suppressed where the % is unknown (a market draft with no live price).
+  if (tpY != null && labels.tpPct != null)
+    bracketPill(ctx, bx, tpY, fmtPct(labels.tpPct), TP_COLOR, flip);
+  if (stopY != null && labels.slPct != null)
+    bracketPill(ctx, bx, stopY, fmtPct(labels.slPct), STOP_COLOR, flip);
+  // The R:R last, so it sits on top at the origin ring.
+  if (labels.rr != null)
+    bracketPill(ctx, bx, entryY, fmtRr(labels.rr), PRICE_COLOR, flip);
 }

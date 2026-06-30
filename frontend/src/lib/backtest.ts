@@ -73,7 +73,3 @@ export function clearBacktest(chart: Chart): void {
   }
   equityByTs = new Map();
 }
-
-export function hasBacktest(): boolean {
-  return markerIds.length > 0 || equityPaneId != null;
-}

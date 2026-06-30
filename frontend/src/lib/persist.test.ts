@@ -424,3 +424,30 @@ describe("per-broker workspace isolation", () => {
     expect(P.pruneLegacyGlobalWorkspace()).toBe(false);
   });
 });
+
+// The active tab is per-instance, never synced. pickActiveTabId is the rule that
+// keeps THIS instance on its own tab when a sibling's edit pushes new tabs in.
+describe("pickActiveTabId (per-instance active tab)", () => {
+  const tab = (id: string) => ({ id }) as unknown as import("./persist").ChartTab;
+  const ws = (ids: string[], seed = "") =>
+    ({ tabs: ids.map(tab), activeTabId: seed }) as import("./persist").Workspace;
+
+  it("keeps the instance's own selection when that tab still exists", () => {
+    // A sibling renamed a tab → body re-pushed with the SAME tab ids; we must stay put.
+    expect(P.pickActiveTabId("b", ws(["a", "b", "c"], "a"))).toBe("b");
+  });
+
+  it("falls back to the body seed when the prior selection is gone", () => {
+    // e.g. layout/broker switch: prior id belongs to a different workspace.
+    expect(P.pickActiveTabId("gone", ws(["a", "b"], "b"))).toBe("b");
+  });
+
+  it("falls back to the first tab when neither prior nor seed is valid", () => {
+    expect(P.pickActiveTabId("gone", ws(["a", "b"], "alsoGone"))).toBe("a");
+    expect(P.pickActiveTabId("", ws(["a", "b"]))).toBe("a");
+  });
+
+  it("returns empty for an empty workspace", () => {
+    expect(P.pickActiveTabId("anything", ws([]))).toBe("");
+  });
+});

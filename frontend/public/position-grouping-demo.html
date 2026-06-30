@@ -129,7 +129,7 @@ h1 { font-size: 13px; font-weight: 600; color: #d1d4dc; margin-bottom: 3px; }
   <canvas id="main-canvas"></canvas>
   <span class="opt-label" id="opt-label"></span>
 </div>
-<p class="drag-hint">Drag the TP (green) or SL (red) line to preview dynamic updates</p>
+<p class="drag-hint">Move your cursor across the chart — the bracket follows it. Drag the TP (green) or SL (red) line to adjust levels.</p>
 
 <p class="section-title">All options — comparison</p>
 <div class="grid" id="grid"></div>
@@ -258,6 +258,23 @@ function seg(ctx, x1, y1, x2, y2, color, lw, alpha = 1) {
   ctx.restore();
 }
 
+// Resolve where the bracket spine sits. It TRACKS the cursor's x (TradingView-style)
+// when the cursor is over the chart; otherwise it rests near the right edge. Returns
+// `flip` so the badges hop to the LEFT of the spine when it's close to the right edge
+// (keeps them from clipping off-canvas).
+function bracketX(st, W) {
+  const rest = W - 88;
+  if (st.mouseX == null) return { x: rest, flip: false };
+  const x = Math.max(130, Math.min(W - 12, st.mouseX)); // clear the left entry pill / right edge
+  return { x, flip: x > W - 130 };
+}
+
+// Place a badge to the right of the spine, or to the left when `flip` (near right edge).
+function badge(ctx, bx, y, text, color, flip, pad = 9) {
+  if (flip) pillR(ctx, bx - pad, y, text, color, { size: 10, py: 2 });
+  else      pill (ctx, bx + pad, y, text, color, { size: 10, py: 2 });
+}
+
 function arrowTip(ctx, x, y, dir, color, size) {
   // dir: 'up' = pointing up (toward top of canvas), 'down' = pointing down
   ctx.save(); ctx.fillStyle = color;
@@ -352,15 +369,15 @@ function drawBaseLines(ctx, st, W, H) {
 function drawA(ctx, st, W, H) {
   drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
   const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
-  const bx = W - 88, lx = bx + 9;
+  const { x: bx, flip } = bracketX(st, W);
   vline(ctx, bx, st.tpY, st.slY, COLOR.conn);
   ctx.lineWidth = 2;
   [[st.tpY, COLOR.tp], [st.entryY, COLOR.entry], [st.slY, COLOR.sl]].forEach(([y, c]) => {
     ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(bx - 5, y); ctx.lineTo(bx + 5, y); ctx.stroke();
   });
-  pill(ctx, lx, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    { size: 10, py: 2 });
-  pill(ctx, lx, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
-  pill(ctx, lx, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    { size: 10, py: 2 });
+  badge(ctx, bx, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    flip);
+  badge(ctx, bx, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, flip);
+  badge(ctx, bx, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    flip);
 }
 
 // ─── Option D: Entry-Anchored Fork ────────────────────────────────────────────
@@ -460,9 +477,9 @@ function drawG(ctx, st, W, H) {
 function drawH(ctx, st, W, H) {
   drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
   const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
-  const bx = W - 88, lx = bx + 9;
+  const { x: bx, flip } = bracketX(st, W);
 
-  // Two-tone spine: green above entry, red below
+  // Two-tone spine: green above entry, red below — tracks the cursor's x.
   vline(ctx, bx, st.tpY,    st.entryY, COLOR.tp, { lw: 2 });
   vline(ctx, bx, st.entryY, st.slY,    COLOR.sl, { lw: 2 });
 
@@ -472,9 +489,9 @@ function drawH(ctx, st, W, H) {
     ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(bx - 5, y); ctx.lineTo(bx + 5, y); ctx.stroke();
   });
 
-  pill(ctx, lx, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    { size: 10, py: 2 });
-  pill(ctx, lx, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
-  pill(ctx, lx, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    { size: 10, py: 2 });
+  badge(ctx, bx, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    flip);
+  badge(ctx, bx, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, flip);
+  badge(ctx, bx, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    flip);
 }
 
 // ─── Option I: End-Cap Bracket ────────────────────────────────────────────────
@@ -482,7 +499,8 @@ function drawH(ctx, st, W, H) {
 function drawI(ctx, st, W, H) {
   drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
   const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
-  const bx = W - 88, lx = bx + 9, capW = 9;
+  const { x: bx, flip } = bracketX(st, W);
+  const capW = 9;
 
   // Colored spine segments
   vline(ctx, bx, st.tpY,    st.entryY, COLOR.tp, { lw: 1.5 });
@@ -499,9 +517,9 @@ function drawI(ctx, st, W, H) {
   diamond(ctx, bx, st.entryY, 4, COLOR.entry);
 
   // Labels centered in each segment
-  pill(ctx, lx, (st.entryY + st.tpY) / 2, pct(ENTRY, tp),                  COLOR.tp,    { size: 10, py: 2 });
-  pill(ctx, lx, st.entryY,                 `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
-  pill(ctx, lx, (st.entryY + st.slY) / 2, pct(ENTRY, sl),                  COLOR.sl,    { size: 10, py: 2 });
+  badge(ctx, bx, (st.entryY + st.tpY) / 2, pct(ENTRY, tp),                  COLOR.tp,    flip, 12);
+  badge(ctx, bx, st.entryY,                `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, flip, 12);
+  badge(ctx, bx, (st.entryY + st.slY) / 2, pct(ENTRY, sl),                  COLOR.sl,    flip, 12);
 }
 
 // ─── Option J: Inside Bracket (labels face inward) ────────────────────────────
@@ -532,7 +550,8 @@ function drawJ(ctx, st, W, H) {
 function drawK(ctx, st, W, H) {
   drawBg(ctx, W, H); drawBaseLines(ctx, st, W, H);
   const sl = y2p(st.slY, H), tp = y2p(st.tpY, H);
-  const bx = W - 88, lx = bx + 9, arrSz = 7;
+  const { x: bx, flip } = bracketX(st, W);
+  const arrSz = 7;
 
   // Spine
   vline(ctx, bx, st.tpY, st.slY, COLOR.conn);
@@ -547,9 +566,9 @@ function drawK(ctx, st, W, H) {
   ctx.beginPath(); ctx.moveTo(bx + 3, st.entryY); ctx.lineTo(bx + 8, st.entryY); ctx.stroke();
   dot(ctx, bx, st.entryY, 2.5, COLOR.entry);
 
-  pill(ctx, lx, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    { size: 10, py: 2 });
-  pill(ctx, lx, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, { size: 10, py: 2 });
-  pill(ctx, lx, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    { size: 10, py: 2 });
+  badge(ctx, bx, st.tpY,    pct(ENTRY, tp),                  COLOR.tp,    flip);
+  badge(ctx, bx, st.entryY, `R:R ${rrLabel(ENTRY, sl, tp)}`, COLOR.entry, flip);
+  badge(ctx, bx, st.slY,    pct(ENTRY, sl),                  COLOR.sl,    flip);
 }
 
 // ─── Option registry ──────────────────────────────────────────────────────────
@@ -574,6 +593,7 @@ function makeState(H) {
     tpY    : p2y(ENTRY + INIT_TP_PCT, H),
     slY    : p2y(ENTRY + INIT_SL_PCT, H),
     drag   : null,
+    mouseX : null,   // live cursor x → the bracket spine tracks it (null = rest at right)
   };
 }
 
@@ -588,7 +608,7 @@ const mctx = mainCanvas.getContext('2d');
 mctx.scale(DPR, DPR);
 
 const mainState = makeState(MAIN_H);
-let activeOpt = OPTIONS[0];
+let activeOpt = OPTIONS.find(o => o.id === 'H') ?? OPTIONS[0];
 
 function renderMain() {
   mctx.clearRect(0, 0, MAIN_W, MAIN_H);
@@ -599,11 +619,16 @@ function renderMain() {
 }
 renderMain();
 
-// Main canvas drag
+// Main canvas drag + cursor tracking
 function mainCanvasY(e) {
   const r = mainCanvas.getBoundingClientRect();
   const cy = (e.touches ? e.touches[0].clientY : e.clientY);
   return (cy - r.top) * (MAIN_H / r.height);
+}
+function mainCanvasX(e) {
+  const r = mainCanvas.getBoundingClientRect();
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+  return (cx - r.left) * (MAIN_W / r.width);
 }
 mainCanvas.addEventListener('mousedown', e => {
   const y = mainCanvasY(e);
@@ -614,30 +639,37 @@ mainCanvas.addEventListener('mousedown', e => {
 });
 mainCanvas.addEventListener('mousemove', e => {
   const y = mainCanvasY(e);
+  mainState.mouseX = mainCanvasX(e);   // bracket spine follows the cursor
   if (mainState.drag === 'sl') {
     mainState.slY = Math.min(MAIN_H - 20, Math.max(mainState.entryY + 12, y));
-    renderMain();
   } else if (mainState.drag === 'tp') {
     mainState.tpY = Math.max(20, Math.min(mainState.entryY - 12, y));
-    renderMain();
   } else {
     const HIT = 10;
     mainCanvas.style.cursor =
       (Math.abs(y - mainState.slY) < HIT || Math.abs(y - mainState.tpY) < HIT)
-        ? 'ns-resize' : 'default';
+        ? 'ns-resize' : 'crosshair';
   }
+  renderMain();   // redraw every move so the spine tracks live
+});
+mainCanvas.addEventListener('mouseleave', () => {
+  if (!mainState.drag) { mainState.mouseX = null; renderMain(); } // rest at right edge
 });
 mainCanvas.addEventListener('touchstart', e => {
   const y = mainCanvasY(e);
+  mainState.mouseX = mainCanvasX(e);
   const HIT = 14;
   if (Math.abs(y - mainState.slY) < HIT)      mainState.drag = 'sl';
   else if (Math.abs(y - mainState.tpY) < HIT) mainState.drag = 'tp';
+  renderMain();
   if (mainState.drag) e.preventDefault();
 }, { passive: false });
 mainCanvas.addEventListener('touchmove', e => {
   const y = mainCanvasY(e);
-  if (mainState.drag === 'sl') { mainState.slY = Math.min(MAIN_H - 20, Math.max(mainState.entryY + 12, y)); renderMain(); }
-  if (mainState.drag === 'tp') { mainState.tpY = Math.max(20, Math.min(mainState.entryY - 12, y));          renderMain(); }
+  mainState.mouseX = mainCanvasX(e);
+  if (mainState.drag === 'sl') mainState.slY = Math.min(MAIN_H - 20, Math.max(mainState.entryY + 12, y));
+  if (mainState.drag === 'tp') mainState.tpY = Math.max(20, Math.min(mainState.entryY - 12, y));
+  renderMain();
   if (mainState.drag) e.preventDefault();
 }, { passive: false });
 window.addEventListener('mouseup',  () => { if (mainState.drag) { mainState.drag = null; mainCanvas.style.cursor = 'default'; } });

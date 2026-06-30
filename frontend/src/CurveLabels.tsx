@@ -8,8 +8,8 @@
 
 import { useImperativeHandle, useRef, useState, type Ref } from "react";
 
-export type CurveLabelSide = "right" | "left";
-export type CurveLabelAlign = "above" | "center" | "below";
+type CurveLabelSide = "right" | "left";
+type CurveLabelAlign = "above" | "center" | "below";
 
 // One resolved pill: text + the curve-end pixel anchor (container-absolute, the
 // same space as the selection overlay) + its style + placement.

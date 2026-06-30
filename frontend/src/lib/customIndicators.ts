@@ -108,7 +108,7 @@ const fullLine = (color: string, style: LineType): SmoothLineStyle => ({
 const BAND_C1 = "rgba(255, 150, 0, 0.9)";
 const BAND_C2 = "rgba(255, 150, 0, 0.6)";
 const BAND_C3 = "rgba(255, 150, 0, 0.4)";
-export const AVWAP_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
+const AVWAP_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
   fullLine("#FF9600", LineType.Solid), // vwap
   fullLine(BAND_C1, LineType.Dashed), // up1
   fullLine(BAND_C1, LineType.Dashed), // dn1
@@ -235,7 +235,7 @@ interface LrPoint {
   dn?: number; // lower channel (lr − mult·σ)
 }
 
-export interface LrExtend {
+interface LrExtend {
   source?: PriceSource; // default close (TV default for LR)
   hideLegendValue?: boolean;
   // Per-line show/hide (Style tab), keyed by figure key (lr/up/dn).
@@ -246,7 +246,7 @@ export interface LrExtend {
 // opacity so they read as the regression's envelope, not separate lines.
 const LR_C = "#FF9600";
 const LR_BAND = "rgba(255, 150, 0, 0.6)";
-export const LR_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
+const LR_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
   fullLine(LR_C, LineType.Solid), // lr
   { ...fullLine(LR_BAND, LineType.Solid), dashedValue: [0, 0] }, // up (solid, faint)
   { ...fullLine(LR_BAND, LineType.Solid), dashedValue: [0, 0] }, // dn
@@ -331,7 +331,7 @@ export type PrevHlAgg = "extreme" | "avg" | "median";
 // 24 hr = 1 day, …) all live on ONE rolling axis, so they're one control with a unit
 // selector — "rolling 1 hour" ≡ "rolling 60 minutes". "bars" = the chart's own bars
 // (absorbs the old Interval boundary: rolling, measured in bars).
-export type PrevHlRollingUnit = "bars" | "minute" | "hour" | "day" | "week";
+type PrevHlRollingUnit = "bars" | "minute" | "hour" | "day" | "week";
 
 // Whether the rolling clock-span counts closed-market time (time units only):
 //  - "trading":  skip gaps — the span is N units of TRADING time (= a fixed bar
@@ -339,7 +339,7 @@ export type PrevHlRollingUnit = "bars" | "minute" | "hour" | "day" | "week";
 //                overnight. Stable bar count regardless of gaps.
 //  - "wallclock": consume gaps — the span is N units of REAL elapsed time, so near
 //                a session open it reaches across the gap and catches fewer bars.
-export type PrevHlGapMode = "trading" | "wallclock";
+type PrevHlGapMode = "trading" | "wallclock";
 
 export interface PrevHlExtend {
   hideLegendValue?: boolean;
@@ -841,7 +841,7 @@ export interface CurveLabelPos {
   align?: CurveLabelAlign; // vertical placement vs the curve end (default center)
 }
 
-export interface CurveLabelConfig {
+interface CurveLabelConfig {
   // Default-ON: treat absent as enabled, but an explicit false must persist (the
   // rehydrate guard in the settings modal writes false rather than deleting).
   enabled?: boolean;
@@ -1040,7 +1040,7 @@ const PREV_HL_C_ROLLING = "#089981"; // green
 const PREV_HL_C_DAY = "#2962ff"; // blue
 const PREV_HL_C_WEEK = "#FF9600"; // orange
 const PREV_HL_C_ANCHOR = "#E11D74"; // pink
-export const PREV_HL_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
+const PREV_HL_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
   fullLine(PREV_HL_C_ROLLING, LineType.Dashed), // rollingHigh
   fullLine(PREV_HL_C_ROLLING, LineType.Dashed), // rollingLow
   fullLine(PREV_HL_C_DAY, LineType.Dashed), // dayHigh
@@ -1091,12 +1091,12 @@ function computeMa(
 // curve matches TV rather than klinecharts' built-in. Length in calcParams[0];
 // divergence config on extendData (RsiExtend).
 // ---------------------------------------------------------------------------
-export type DivergenceKind = "bullish" | "bearish" | "hiddenBullish" | "hiddenBearish";
+type DivergenceKind = "bullish" | "bearish" | "hiddenBullish" | "hiddenBearish";
 
 // One divergence line to draw on the RSI pane: from a previous RSI pivot to the
 // confirmed pivot at this bar. Stashed on the right-pivot bar's result point as a
 // NON-figure field (klinecharts only reads figure keys, so it ignores `divs`).
-export interface DivSegment {
+interface DivSegment {
   kind: DivergenceKind;
   fromIndex: number; // previous pivot bar (data index)
   fromValue: number; // RSI at the previous pivot
@@ -1392,7 +1392,7 @@ const DIV_LABEL: Record<DivergenceKind, string> = {
 // Per-instance RSI visual style (the Style tab), carried on extendData.style and
 // resolved over RSI_STYLE_DEFAULTS at draw time. Colours are hex; the three bands
 // pair a colour with an editable level + line style (TV's RSI Upper/Middle/Lower Band).
-export type RsiLineStyle = "solid" | "dashed" | "dotted";
+type RsiLineStyle = "solid" | "dashed" | "dotted";
 // The togglable RSI elements (Style-tab visibility checkboxes), keyed in style.hidden.
 export type RsiElement =
   | "rsi"
@@ -1405,7 +1405,7 @@ export type RsiElement =
   | "bg"
   | "ob"
   | "os";
-export interface RsiBandStyle {
+interface RsiBandStyle {
   color: string;
   level: number;
   lineStyle: RsiLineStyle;

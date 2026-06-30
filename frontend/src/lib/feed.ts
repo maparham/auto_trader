@@ -59,11 +59,6 @@ export const PERIOD_GROUPS: PeriodGroup[] = [
   },
 ];
 
-// Every selectable period, by resolution key — used to resolve a chosen interval.
-export const PERIOD_BY_RESOLUTION: Record<string, Period> = Object.fromEntries(
-  PERIOD_GROUPS.flatMap((g) => g.periods).map((p) => [p.resolution, p]),
-);
-
 export interface Instrument {
   epic: string;
   name: string;
@@ -178,7 +173,7 @@ export function fetchFavorites(brokerId: string = DEFAULT_BROKER): Promise<Instr
 
 // Drop one broker's favorites cache so the next fetchFavorites() re-reads from
 // the broker. Call after a mutation so a later modal open reflects the edit.
-export function invalidateFavorites(brokerId: string = DEFAULT_BROKER): void {
+function invalidateFavorites(brokerId: string = DEFAULT_BROKER): void {
   favoritesCache.delete(brokerId);
 }
 

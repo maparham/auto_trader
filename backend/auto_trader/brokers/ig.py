@@ -426,10 +426,6 @@ class IGBroker(MarketDataBroker):
             "snapshot": raw.get("snapshot") or {},
         }
 
-    async def currency_code(self, epic: str) -> str | None:
-        """Dealable currency code for `epic` (IG deal bodies need `currencyCode`)."""
-        return _currency_from_raw(await self._market_raw(epic))
-
 
 class IGExecutionBroker(AsyncConfirmExecutionBroker):
     """Real IG dealing for one side (demo or live), composed over its `IGBroker`

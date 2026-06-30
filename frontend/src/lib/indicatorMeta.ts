@@ -8,7 +8,7 @@
 // reshape. Anything not listed here falls back to generic numeric inputs read
 // from the live indicator's calcParams (see `resolveInputs`).
 
-export type IndicatorInputType = "number" | "select";
+type IndicatorInputType = "number" | "select";
 
 export interface IndicatorInputDef {
   key: string;
@@ -27,7 +27,7 @@ export interface IndicatorInputDef {
   options?: Array<{ value: string | number; label: string }>;
 }
 
-export interface IndicatorMetaDef {
+interface IndicatorMetaDef {
   inputs: IndicatorInputDef[];
   // Human-friendly name + one-line description shown in the indicator menu's
   // info tooltip. Optional: indicators without these fall back to the raw code.
@@ -77,7 +77,7 @@ export const SMOOTHING_TYPES: Array<{ value: string; label: string }> = [
   { value: "ema", label: "EMA" },
 ];
 
-export const INDICATOR_META: Record<string, IndicatorMetaDef> = {
+const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   // EMA/MA are our TV-style single-line moving averages (see customIndicators);
   // their Source / Offset / Smoothing / Timeframe inputs are rendered by a
   // dedicated panel in the settings modal (they write extendData + drive an

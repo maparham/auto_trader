@@ -33,7 +33,7 @@ export function priceOf(k: KLineData, src: PriceSource): number {
 }
 
 /** Exponential moving average. out[i] is undefined only for an empty input. */
-export function ema(values: number[], length: number): Array<number | undefined> {
+function ema(values: number[], length: number): Array<number | undefined> {
   const out: Array<number | undefined> = new Array(values.length).fill(undefined);
   if (length < 1) return out;
   const k = 2 / (length + 1);
@@ -47,7 +47,7 @@ export function ema(values: number[], length: number): Array<number | undefined>
 }
 
 /** Simple moving average over `length` (undefined until enough samples). */
-export function sma(values: number[], length: number): Array<number | undefined> {
+function sma(values: number[], length: number): Array<number | undefined> {
   const out: Array<number | undefined> = new Array(values.length).fill(undefined);
   if (length < 1) return out;
   let sum = 0;
@@ -118,7 +118,7 @@ export function maSeries(
 }
 
 /** Shift a series forward (offset > 0 plots it `offset` bars later). */
-export function applyOffset(
+function applyOffset(
   series: Array<number | undefined>,
   offset: number,
 ): Array<number | undefined> {

@@ -2,7 +2,7 @@
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
-export interface Candle {
+interface Candle {
   time: number; // unix seconds (UTC)
   open: number;
   high: number;
@@ -11,14 +11,14 @@ export interface Candle {
   volume: number;
 }
 
-export interface Marker {
+interface Marker {
   time: number;
   side: "buy" | "sell";
   price: number;
   reason: string;
 }
 
-export interface Trade {
+interface Trade {
   side: string;
   quantity: number;
   entry_time: number;
@@ -28,7 +28,7 @@ export interface Trade {
   pnl: number;
 }
 
-export interface EquityPoint {
+interface EquityPoint {
   time: number;
   value: number;
 }

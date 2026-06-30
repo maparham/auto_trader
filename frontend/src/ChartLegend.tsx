@@ -32,7 +32,7 @@ const UP = "#26a69a";
 const DOWN = "#ef5350";
 
 // One candle-pane indicator figure shown in the legend (a "title value" pair).
-export interface LegendFigure {
+interface LegendFigure {
   key: string; // result key, for the imperative value lookup
   title: string; // e.g. "EMA: " / "Value: "
   color: string; // plot color (line figures) or the legend text color
@@ -66,7 +66,7 @@ export interface SubPaneLegendData {
   rows: LegendRow[];
 }
 
-export interface LegendCtx {
+interface LegendCtx {
   symbol: string;
   period: string;
   precision: number;
@@ -477,7 +477,7 @@ function IndicatorRow({
 // Values fill imperatively through the SAME figureValuesRef as the candle legend
 // (the parent <ChartLegend>'s handle loops all panes), so these stay live on the
 // crosshair/tick with no extra wiring. selectedName drives the same blue highlight.
-export function SubPaneLegend({
+function SubPaneLegend({
   data,
   selectedName,
   highlightedName,

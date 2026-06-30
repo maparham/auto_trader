@@ -53,7 +53,7 @@ export type AlertExpiry =
   | { kind: "duration"; ms: number }
   | { kind: "datetime"; at: number };
 
-export interface AlertNotify {
+interface AlertNotify {
   toast: boolean;
   browser: boolean;
   sound: boolean;
@@ -117,7 +117,7 @@ export const LEVERAGE_TYPES = [
   "CRYPTOCURRENCIES",
 ] as const;
 
-export const DEFAULT_TRADING_SETTINGS: TradingSettings = {
+const DEFAULT_TRADING_SETTINGS: TradingSettings = {
   confirmLineEdits: true,
   accountBalance: 100_000,
   accountCurrency: "USD",
@@ -136,7 +136,7 @@ export function leverageFor(t: TradingSettings, type: string | undefined): numbe
   return (type && t.leverage[type]) || t.defaultLeverage;
 }
 
-export const DEFAULT_ALERT_DEFAULTS: AlertDefaults = {
+const DEFAULT_ALERT_DEFAULTS: AlertDefaults = {
   condition: "crossing",
   trigger: "once",
   expiry: { kind: "open" },
@@ -145,7 +145,7 @@ export const DEFAULT_ALERT_DEFAULTS: AlertDefaults = {
 
 // Dashed, black at half opacity (so it reads as a muted grey over the chart) at the
 // default less-dense spacing. A picked color overrides; "" would follow the theme.
-export const DEFAULT_CROSSHAIR: CrosshairStyle = {
+const DEFAULT_CROSSHAIR: CrosshairStyle = {
   lineStyle: "dashed",
   color: "#000000",
   opacity: 0.5,
@@ -153,14 +153,14 @@ export const DEFAULT_CROSSHAIR: CrosshairStyle = {
 
 // TradingView's bid (blue) / ask (red), drawn as faint dotted lines (opacity 0.5)
 // so they read as a light guide rather than competing with the candles.
-export const DEFAULT_BID_ASK_STYLE: BidAskStyle = {
+const DEFAULT_BID_ASK_STYLE: BidAskStyle = {
   bidColor: "#2962ff",
   askColor: "#f23645",
   opacity: 0.5,
   lineStyle: "dotted",
 };
 
-export const DEFAULT_SETTINGS: Settings = {
+const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   timezone: "",
   clock: "24h",

@@ -84,6 +84,7 @@ import {
   saveScratch,
   clearScratch,
   cloneWorkspace,
+  pickActiveTabId,
   loadAutosave,
   saveAutosave,
   type ChartTab,
@@ -396,11 +397,13 @@ export default function App() {
     const r = resolveStartup();
     // Skip the remount if the resolved workspace already matches what's on screen
     // (avoids an unnecessary grid remount on the common no-change startup).
+    // Compare TABS ONLY — the active tab is per-instance (see pickActiveTabId), so a
+    // sibling's selection must never register as a view change here.
     const same =
       r.activeLayoutId === activeLayoutIdRef.current &&
-      JSON.stringify(r.ws) === JSON.stringify(workspaceRef.current);
+      JSON.stringify(r.ws.tabs) === JSON.stringify(workspaceRef.current.tabs);
     setTabs(r.ws.tabs);
-    setActiveId(r.ws.activeTabId);
+    setActiveId((prev) => pickActiveTabId(prev, r.ws));
     setActiveLayoutId(r.activeLayoutId);
     setLayoutRev((n) => n + 1);
     if (!same) setHydrateEpoch((n) => n + 1);
@@ -440,7 +443,7 @@ export default function App() {
     const r = resolveStartup();
     const sameView =
       r.activeLayoutId === activeLayoutIdRef.current &&
-      JSON.stringify(r.ws) === JSON.stringify(workspaceRef.current);
+      JSON.stringify(r.ws.tabs) === JSON.stringify(workspaceRef.current.tabs);
     if (sameView) {
       setLayoutRev((n) => n + 1); // index/default may have changed; view didn't
       // The push may have been a settings change (which never touches the view).
@@ -700,7 +703,11 @@ export default function App() {
   // pending change and the user must hit Save (⌘S) to commit.
   const layoutName = loadLayouts().find((l) => l.id === activeLayoutId)?.name;
   useEffect(() => {
-    const ws: Workspace = { tabs, activeTabId: active?.id ?? "" };
+    // activeTabId is deliberately "" — the active tab is per-instance and never
+    // persisted to the (mirrored) body, so a selection here can't sync to a sibling.
+    // `active?.id` is NOT a dependency for the same reason: selecting a tab must not
+    // trigger a save/mirror at all.
+    const ws: Workspace = { tabs, activeTabId: "" };
     if (activeLayoutId && layoutName != null) {
       if (autosave) {
         saveLayout(activeLayoutId, layoutName, ws);
@@ -713,7 +720,7 @@ export default function App() {
     } else {
       clearScratch();
     }
-  }, [tabs, active?.id, activeLayoutId, layoutName, autosave]);
+  }, [tabs, activeLayoutId, layoutName, autosave]);
 
   // Keep the alert feeds on the same data broker as the charts — epics are
   // broker-specific, so a feed must stream from the active broker. setBrokerId
@@ -978,7 +985,7 @@ export default function App() {
     const target = loadLayout(id);
     if (!target) return;
     setTabs(target.tabs);
-    setActiveId(target.activeTabId);
+    setActiveId(pickActiveTabId("", target));
     setActiveLayoutId(id);
     setHydrateEpoch((n) => n + 1);
     setLayoutRev((n) => n + 1);
@@ -989,7 +996,7 @@ export default function App() {
   // thing that commits edits and clears the dirty flag.
   const saveActiveLayout = () => {
     if (!activeLayoutId || layoutName == null) return;
-    saveLayout(activeLayoutId, layoutName, { tabs, activeTabId: active?.id ?? "" });
+    saveLayout(activeLayoutId, layoutName, { tabs, activeTabId: "" });
     setIsDirty(false);
     setLayoutRev((n) => n + 1);
   };
@@ -1004,10 +1011,12 @@ export default function App() {
       newTabId,
       newCellId,
     );
-    saveLayout(id, name, cloned);
+    // Persist with "" (active tab is per-instance, never synced), but keep THIS
+    // instance on the cloned-and-remapped active tab so "Save as…" doesn't jump.
+    saveLayout(id, name, { ...cloned, activeTabId: "" });
     clearScratch();
     setTabs(cloned.tabs);
-    setActiveId(cloned.activeTabId);
+    setActiveId(pickActiveTabId(cloned.activeTabId, cloned));
     setActiveLayoutId(id);
     setHydrateEpoch((n) => n + 1);
     setLayoutRev((n) => n + 1);
@@ -1038,7 +1047,7 @@ export default function App() {
     if (next) {
       // Turning autosave back on: immediately persist any pending dirty edits.
       if (activeLayoutId && layoutName != null) {
-        saveLayout(activeLayoutId, layoutName, { tabs, activeTabId: active?.id ?? "" });
+        saveLayout(activeLayoutId, layoutName, { tabs, activeTabId: "" });
         setIsDirty(false);
       }
     }

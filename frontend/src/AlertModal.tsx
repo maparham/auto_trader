@@ -21,7 +21,7 @@ import {
   type ExpiryOption,
 } from "./lib/alertUi";
 
-export interface AlertDraft {
+interface AlertDraft {
   condition: AlertCondition;
   trigger: AlertTrigger;
   message: string;

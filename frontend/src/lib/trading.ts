@@ -66,7 +66,7 @@ export function brokerLabel(brokerId: string): string {
   return BROKER_LABELS[brokerId] ?? brokerId.charAt(0).toUpperCase() + brokerId.slice(1);
 }
 export type OrderSide = "buy" | "sell";
-export type OrderKind = "market" | "limit";
+type OrderKind = "market" | "limit";
 
 export interface OrderRequest {
   epic: string;
@@ -146,7 +146,7 @@ export interface OrderResult {
   reason: string;
 }
 
-export interface Position {
+interface Position {
   epic: string;
   side: OrderSide;
   quantity: number;
@@ -160,7 +160,7 @@ export interface Position {
   margin: number | null; // broker deposit requirement, account currency (null for paper)
 }
 
-export interface WorkingOrder {
+interface WorkingOrder {
   epic: string;
   side: OrderSide;
   quantity: number;
@@ -226,7 +226,7 @@ export function tradeLabel(kind: TradeView["kind"], side: OrderSide): string {
 }
 
 // A fresh idempotency key per submit so a retried request can't double-fill.
-export function newClientOrderId(): string {
+function newClientOrderId(): string {
   return crypto.randomUUID();
 }
 

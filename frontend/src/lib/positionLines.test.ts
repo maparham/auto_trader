@@ -1,7 +1,7 @@
 // PositionLines reconcile + tradeLineSpecs (pending-merge, labels, draggability).
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { PositionLines, tradeLineSpecs, type LineSpec } from "./positionLines";
+import { PositionLines, tradeLineSpecs, bracketLabels, type LineSpec } from "./positionLines";
 import type { TradeView } from "./trading";
 
 interface Call {
@@ -299,6 +299,42 @@ describe("tradeLineSpecs", () => {
       "D1:stop",
     ]);
     expect(specs.find((s) => s.key === "D2:price")?.selected).toBe(false);
+  });
+});
+
+describe("bracketLabels", () => {
+  it("reports unsigned magnitude %s and reward/risk for a long", () => {
+    // entry 100, TP 110 (+10%), SL 95 (−5%) → R:R = 10/5 = 2
+    const l = bracketLabels({ entry: 100, stop: 95, tp: 110 });
+    expect(l.tpPct).toBeCloseTo(10);
+    expect(l.slPct).toBeCloseTo(5);
+    expect(l.rr).toBeCloseTo(2);
+  });
+
+  it("is side-agnostic: a short's TP (below entry) still reads as a positive %", () => {
+    // Short entry 100: TP 90 (target, BELOW), SL 105 (stop, ABOVE). Magnitudes stay
+    // positive — colour, not sign, carries gain/loss. R:R = 10/5 = 2 (same as the long).
+    const l = bracketLabels({ entry: 100, stop: 105, tp: 90 });
+    expect(l.tpPct).toBeCloseTo(10);
+    expect(l.slPct).toBeCloseTo(5);
+    expect(l.rr).toBeCloseTo(2);
+  });
+
+  it("yields R:R only when both legs are present", () => {
+    expect(bracketLabels({ entry: 100, stop: null, tp: 110 }).rr).toBeNull();
+    expect(bracketLabels({ entry: 100, stop: 95, tp: null }).rr).toBeNull();
+    expect(bracketLabels({ entry: 100, stop: 95, tp: 110 }).rr).not.toBeNull();
+  });
+
+  it("suppresses everything without an entry anchor (market draft, no live price)", () => {
+    const l = bracketLabels({ entry: null, stop: 95, tp: 110 });
+    expect(l).toEqual({ tpPct: null, slPct: null, rr: null });
+  });
+
+  it("guards a zero entry (no divide-by-zero)", () => {
+    const l = bracketLabels({ entry: 0, stop: -5, tp: 5 });
+    expect(l.tpPct).toBeNull();
+    expect(l.slPct).toBeNull();
   });
 });
 

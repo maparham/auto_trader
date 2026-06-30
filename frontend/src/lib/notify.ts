@@ -7,13 +7,6 @@
 
 export type NotifyPermission = "default" | "granted" | "denied" | "unsupported";
 
-// Current permission, normalized. "unsupported" when the API is missing (e.g.
-// some embedded webviews) so the UI can hint at toast-only mode.
-export function notifyPermission(): NotifyPermission {
-  if (!("Notification" in window)) return "unsupported";
-  return Notification.permission;
-}
-
 // Ask for notification permission. Must be called from a user gesture (e.g. the
 // "Add alert" click), or browsers ignore it. Resolves to the resulting state so
 // the caller can react (e.g. toast "alerts will show in this tab only").

@@ -39,7 +39,7 @@ import {
 } from "./persist";
 
 const CUSTOM_TYPES = Object.keys(BASE_TEMPLATES) as CustomIndicatorType[];
-export const isCustomType = (type: string): type is CustomIndicatorType =>
+const isCustomType = (type: string): type is CustomIndicatorType =>
   (CUSTOM_TYPES as string[]).includes(type);
 
 // calcParams we override on built-in klinecharts indicators at creation, to match
@@ -61,7 +61,7 @@ const SUBPANE_HEIGHT = 120;
 // instance (so storage stays byte-identical for single-instance users and the
 // migration that maps old name → {id:name,type:name} lines up); later instances get
 // a "#<rand>" suffix. The id must be a valid, unique klinecharts indicator name.
-export function mintInstanceId(chart: Chart, type: string): string {
+function mintInstanceId(chart: Chart, type: string): string {
   const taken = new Set<string>();
   const panes = chart.getIndicatorByPaneId() as
     | Map<string, Map<string, Indicator>>

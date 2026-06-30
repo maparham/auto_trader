@@ -464,7 +464,6 @@ interface ChartTabV1 {
 
 // Per-broker workspace roots (see root() — addresses the ACTIVE broker).
 const tabsKey = () => root("tabs");
-const activeTabKey = () => root("activeTab");
 
 // The migrated cell reuses the tab's own prefix so its keys are byte-identical to
 // the pre-cells layout — existing drawings/alerts/indicators survive the upgrade.
@@ -504,12 +503,6 @@ export function loadTabs(): ChartTab[] | null {
 export function saveTabs(tabs: ChartTab[]): void {
   save(tabsKey(), tabs);
 }
-export function loadActiveTab(): string | null {
-  return load<string | null>(activeTabKey(), null);
-}
-export function saveActiveTab(id: string): void {
-  save(activeTabKey(), id);
-}
 
 // --- named workspace layouts -------------------------------------------------
 //
@@ -547,7 +540,24 @@ export interface LayoutMeta {
 // The persisted body of one layout: the workspace it captures.
 export interface Workspace {
   tabs: ChartTab[];
+  // The active tab is intentionally NOT a synced concept — it's per-instance and
+  // lives in React state (see App.tsx). The persisted value is only a seed for the
+  // very first render after load; live selection is never written back. We keep the
+  // field so older bodies (which DID carry a real id) still seed gracefully.
   activeTabId: string;
+}
+
+// Which tab should be active given the workspace `ws` and the instance's CURRENT
+// in-memory selection `prevId`. The active tab is per-instance, so we KEEP the
+// instance's own selection whenever that tab still exists in `ws` (this is what
+// stops a sibling browser tab's selection from hijacking ours on a backend push).
+// Only when `prevId` is gone (e.g. broker switch, layout switch, tab closed) do we
+// fall back to the body's seed, then the first tab.
+export function pickActiveTabId(prevId: string, ws: Workspace): string {
+  if (prevId && ws.tabs.some((t) => t.id === prevId)) return prevId;
+  if (ws.activeTabId && ws.tabs.some((t) => t.id === ws.activeTabId))
+    return ws.activeTabId;
+  return ws.tabs[0]?.id ?? "";
 }
 
 export function loadLayouts(): LayoutMeta[] {

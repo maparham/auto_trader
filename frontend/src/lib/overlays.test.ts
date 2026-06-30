@@ -159,6 +159,25 @@ describe("OverlayManager alert hover/select line-weight sync (sidebar ↔ chart)
     m.selectAlert(null); // now neither → thin
     expect(lineSize(chart, id)).toBe(1);
   });
+
+  it("keeps a dragged alert's pill `active` even when native hover drops mid-drag", () => {
+    const { m } = setup();
+    const id = m.addAlert(50, { condition: "crossing", trigger: "once", message: "" })!;
+    // Grab and drag it — the common flow grabs on the FIRST press, so the line is
+    // neither selected nor (reliably) hovered while dragging.
+    m.beginAlertDrag(id);
+    m.dragAlertTo(id, 55);
+    // klinecharts' native onMouseLeave can fire as the line moves under the cursor,
+    // dropping the hover. Without the drag-glue this flips `active` off and the on-line
+    // pill mounts/unmounts → flicker.
+    m.hoverAlert(null);
+    const mid = m.getAlerts().find((a) => a.id === id)!;
+    expect(mid.active).toBe(true); // glued for the whole drag — pill stays put
+    expect(mid.level).toBe(55); // live level still tracks the drag
+    // Releasing the drag lifts the glue (back to hover/selection rules).
+    m.endAlertDrag(id);
+    expect(m.getAlerts().find((a) => a.id === id)!.active).toBe(false);
+  });
 });
 
 describe("OverlayManager alert-level rounding (no raw cursor-pixel floats)", () => {

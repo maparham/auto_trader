@@ -137,6 +137,12 @@ export class OverlayManager {
   // during a drag — it would otherwise sit at the cursor's price, overlapping the
   // dragged line's own pill.
   private draggingAlert = false;
+  // The alert id currently being dragged (null when none). getAlerts() reports it as
+  // `active` for the whole gesture so its on-line pill stays glued: while dragging, the
+  // reliable snap-driven hover is suppressed and only klinecharts' flaky native
+  // onMouseEnter/onMouseLeave feeds hoveredAlertId — which toggles as the line moves
+  // under the cursor, so a pill gated on hover alone would flicker.
+  private draggingAlertId: string | null = null;
   // Drawing selection/hover (TV-style). klinecharts DOES fire onSelected/
   // onMouseEnter for drawings (verified), so unlike alerts these come straight from
   // its callbacks — no manual hit-test. `hoveredDrawingId` lets ChartCore's DOM
@@ -187,6 +193,7 @@ export class OverlayManager {
     this.hoveredDrawingId = null;
     this.selectedDrawingId = null;
     this.draggingAlert = false;
+    this.draggingAlertId = null;
     this.drawingInProgress = false;
     this.hydratedEpic = null;
   }
@@ -252,6 +259,33 @@ export class OverlayManager {
   // for the duration so it doesn't sit over the dragged line's pill.
   isDraggingAlert(): boolean {
     return this.draggingAlert;
+  }
+
+  // Manual alert drag, driven by ChartCore (not klinecharts' native overlay drag)
+  // so a press anywhere within the magnet band grabs the line on the FIRST press —
+  // identical to trade lines. begin → dragAlertTo… → end mirror the native
+  // onPressedMoving / onPressedMoveEnd handlers below.
+  beginAlertDrag(id: string): void {
+    this.draggingAlert = true;
+    this.draggingAlertId = id; // keep this line `active` (pill glued) for the gesture
+    this.notifyAlerts(); // glue the on-line label while dragging
+  }
+  dragAlertTo(id: string, rawLevel: number): void {
+    this.chart?.overrideOverlay({ id, points: [{ value: rawLevel }] });
+    this.notifyAlerts();
+  }
+  endAlertDrag(id: string): void {
+    this.draggingAlert = false;
+    this.draggingAlertId = null;
+    // Quantize the raw cursor-pixel price to instrument precision before persisting,
+    // so the stored level matches the rendered pill (mirrors onPressedMoveEnd).
+    const raw = this.chart?.getOverlayById(id)?.points?.[0]?.value;
+    if (raw != null) {
+      const rounded = this.roundLevel(raw);
+      if (rounded !== raw) this.chart?.overrideOverlay({ id, points: [{ value: rounded }] });
+    }
+    this.persist();
+    this.notifyAlerts();
   }
 
   // True while an interactive drawing is mid-creation (a Draw tool is armed and
@@ -437,6 +471,9 @@ export class OverlayManager {
       if (level == null) continue;
       const cfg = this.alertCfg.get(id);
       const hovered = id === this.hoveredAlertId;
+      // A line being dragged stays `active` even if native hover momentarily drops, so
+      // its on-line pill doesn't flicker mid-drag (see draggingAlertId).
+      const dragging = this.draggingAlert && id === this.draggingAlertId;
       out.push({
         id,
         level,
@@ -446,7 +483,7 @@ export class OverlayManager {
         expiresAt: cfg?.expiresAt ?? null,
         createdAt: this.alertCreatedAt.get(id) ?? 0,
         hovered,
-        active: hovered || id === this.selectedAlertId,
+        active: hovered || dragging || id === this.selectedAlertId,
         selected: id === this.selectedAlertId,
       });
     }
@@ -548,6 +585,7 @@ export class OverlayManager {
         // matches the rendered pill (and reconcileAlerts' String(level) key agrees).
         if (isAlert) {
           this.draggingAlert = false;
+          this.draggingAlertId = null;
           const raw = e.overlay.points?.[0]?.value;
           if (raw != null) {
             const rounded = this.roundLevel(raw);
@@ -566,6 +604,7 @@ export class OverlayManager {
         // Removing an alert mid-drag won't fire onPressedMoveEnd, so clear the drag
         // flag here too — otherwise it sticks true and the "+" setter stays hidden.
         this.draggingAlert = false;
+        this.draggingAlertId = null;
         // Cancelling a drawing mid-creation (Escape / switching tools) removes the
         // in-progress overlay and fires THIS, not onDrawEnd — so clear the flag here
         // too, or it sticks true and the lock hover-align stays silently disabled.
@@ -925,6 +964,11 @@ export class OverlayManager {
     // instrument lines) until rehydrate self-corrects. rehydrate() re-reads storage, so
     // nothing is lost by skipping — a peer's edit lands when this cell finishes loading.
     if (this.hydratedEpic !== this.epic) return;
+    // Don't fight an in-progress drag on this cell: dragAlertTo moves the line ahead
+    // of storage (it only persists on drop), so reconciling against the saved level
+    // here would snap the dragged line back to its old price on every move. The drop
+    // (endAlertDrag) persists + notifies, which reconciles peers to the final level.
+    if (this.draggingAlert) return;
     this.reconciling = true;
     try {
       const saved = loadAlerts(this.epic, this.broker || undefined).map((a, i) => normalizeAlert(a, i));

@@ -179,7 +179,7 @@ def test_market_order_accepted_confirm_is_filled(monkeypatch) -> None:
         p = req.url.path
         if p == "/session":
             return _session_response()
-        if p == "/markets/EPIC1":  # currency_code lookup
+        if p == "/markets/EPIC1":  # deal-body currency lookup
             return httpx.Response(200, json={"instrument": {"currencies": [{"code": "USD", "isDefault": True}]}, "dealingRules": {"marketOrderPreference": "AVAILABLE_DEFAULT_OFF"}, "snapshot": {}})
         if p == "/positions/otc":
             calls.append("submit")

@@ -904,7 +904,11 @@
    a drag stages a change. Sits just above the hovered alert pill (47). */
 .trade-pill {
   position: absolute; z-index: 47; transform: translateY(-50%);
-  display: flex; align-items: stretch; pointer-events: auto;
+  display: flex; align-items: stretch;
+  /* The pill BODY is click-through (pointer-events:none) so it can't steal the second
+     click of a double-click on the line it sits over (which would break dblclick→edit
+     ticket) or block a line grab. Only its buttons opt back in (see .tp-btn). */
+  pointer-events: none;
   border-radius: 4px; white-space: nowrap; overflow: hidden;
   background: var(--surface); color: var(--text);
   border: 1px solid var(--border); box-shadow: 0 1px 4px var(--shadow);
@@ -926,6 +930,7 @@
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: none; border-left: 1px solid var(--border);
   cursor: pointer; color: var(--text-faint); padding: 0 7px;
+  pointer-events: auto; /* buttons stay clickable though the pill body is pass-through */
 }
 .trade-pill .tp-btn svg { width: 14px; height: 14px; display: block; }
 .trade-pill .tp-btn:hover { background: rgba(127, 127, 127, 0.12); color: var(--text); }
@@ -934,12 +939,6 @@
 .trade-pill .tp-close:hover,
 .trade-pill .tp-remove:hover { background: color-mix(in srgb, var(--neg) 14%, transparent); color: var(--neg); }
 /* Hover tooltip shown when cursor is over a draggable trade line. */
-.trade-line-tooltip {
-  position: absolute; pointer-events: none; z-index: 60;
-  background: var(--bg-panel); color: var(--text-faint);
-  border: 1px solid var(--border); border-radius: 4px;
-  font-size: 11px; padding: 3px 7px; white-space: nowrap;
-}
 /* Confirm-dialog detail rows (e.g. the full position breakdown shown before close). */
 .confirm-details {
   margin: 12px 0 0; display: flex; flex-direction: column; gap: 4px;
