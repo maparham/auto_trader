@@ -124,15 +124,15 @@ class CandleCache:
         return (row[0], row[1]) if row else None
 
     def _extend_coverage(self, key: CandleKey, lo: int, hi: int) -> None:
-        cur = self._coverage(key)
-        if cur is not None:
-            lo, hi = min(lo, cur[0]), max(hi, cur[1])
         conn = self._connect()
         try:
             conn.execute(
-                "INSERT OR REPLACE INTO coverage "
+                "INSERT INTO coverage "
                 "(broker, epic, resolution, side, oldest_ts, newest_ts) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (broker, epic, resolution, side) DO UPDATE SET "
+                "oldest_ts = MIN(oldest_ts, excluded.oldest_ts), "
+                "newest_ts = MAX(newest_ts, excluded.newest_ts)",
                 (*key, lo, hi),
             )
             conn.commit()

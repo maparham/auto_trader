@@ -40,3 +40,13 @@ def test_extend_coverage_unions_range(tmp_path):
     cache._store_closed(KEY, [_c(200, 1.0)], cutoff_ts=10_000)  # coverage (200,200)
     cache._extend_coverage(KEY, 50, 200)  # backfilled an empty gap down to 50
     assert cache._coverage(KEY) == (50, 200)
+
+
+def test_coverage_none_on_empty_cache(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    assert cache._coverage(KEY) is None
+
+
+def test_read_back_zero_is_empty(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    assert cache._read_back(KEY, n=0, before_ts=10_000) == []
