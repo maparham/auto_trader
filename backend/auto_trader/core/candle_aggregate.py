@@ -61,6 +61,20 @@ def bucket_open(ts: int, rule: BucketRule) -> int:
     return _utc_ts(datetime(dt.year, start_month, 1, tzinfo=timezone.utc))
 
 
+def bucket_end(ts: int, rule: BucketRule) -> int:
+    """UTC open timestamp of the bucket AFTER the one containing `ts` (exclusive
+    upper edge). Used to snap a scroll-back window outward so every folded bucket
+    is complete — partial edge buckets would corrupt the chart on prepend."""
+    if rule.kind == "week":
+        return bucket_open(ts, rule) + rule.group * _WEEK
+    dt = datetime.fromtimestamp(bucket_open(ts, rule), tz=timezone.utc)
+    if rule.kind == "year":
+        return _utc_ts(datetime(dt.year + 1, 1, 1, tzinfo=timezone.utc))
+    # advance `group` months from the bucket's start month, carrying into years.
+    total = (dt.year * 12 + (dt.month - 1)) + rule.group
+    return _utc_ts(datetime(total // 12, total % 12 + 1, 1, tzinfo=timezone.utc))
+
+
 def _emit(bucket_ts: int, o: float, h: float, l: float, c: float, v: float) -> Candle:
     return Candle(datetime.fromtimestamp(bucket_ts, tz=timezone.utc), o, h, l, c, v)
 

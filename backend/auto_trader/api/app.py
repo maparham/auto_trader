@@ -55,6 +55,8 @@ from auto_trader.core.candle_aggregate import (
     DERIVED,
     aggregate_candle_stream,
     base_count_for,
+    bucket_end,
+    bucket_open,
     fold,
     is_derived,
 )
@@ -831,9 +833,15 @@ async def candles(
         if from_ts is not None and to_ts is not None:
             if from_ts > to_ts:
                 raise HTTPException(422, "from_ts must be <= to_ts")
+            # Snap the window OUTWARD to whole bucket boundaries so every folded
+            # bucket is complete. Otherwise a window cutting mid-month yields a
+            # partial month bar that collides (same open ts, different OHLC) with
+            # the full one on scroll-back prepend — chart corruption. `end` stops
+            # 1s short of the next bucket so the next bucket's first base bar isn't
+            # pulled into a spurious partial.
             try:
-                start = datetime.fromtimestamp(from_ts, tz=timezone.utc)
-                end = datetime.fromtimestamp(to_ts, tz=timezone.utc)
+                start = datetime.fromtimestamp(bucket_open(from_ts, rule), tz=timezone.utc)
+                end = datetime.fromtimestamp(bucket_end(to_ts, rule) - 1, tz=timezone.utc)
             except (OverflowError, OSError, ValueError) as e:
                 raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
             base_bars = await CANDLE_CACHE.window(

@@ -5,6 +5,7 @@ from auto_trader.core.candle_aggregate import (
     DERIVED,
     aggregate_candle_stream,
     base_count_for,
+    bucket_end,
     bucket_open,
     fold,
     is_derived,
@@ -65,6 +66,21 @@ def test_bucket_open_week_multiple_groups_consecutive_weeks():
     b0 = bucket_open(base, r)
     assert bucket_open(base + week, r) == b0
     assert bucket_open(base + 2 * week, r) == b0 + 2 * week
+
+
+def test_bucket_end_is_next_bucket_open():
+    # month: end of March's bucket is April 1
+    assert bucket_end(_ts(2026, 3, 15), DERIVED["MONTH"]) == _ts(2026, 4, 1)
+    # quarter containing Feb -> next quarter opens April 1
+    assert bucket_end(_ts(2026, 2, 15), DERIVED["MONTH_3"]) == _ts(2026, 4, 1)
+    # December rolls the year over
+    assert bucket_end(_ts(2026, 12, 10), DERIVED["MONTH"]) == _ts(2027, 1, 1)
+    # year
+    assert bucket_end(_ts(2026, 7, 1), DERIVED["YEAR"]) == _ts(2027, 1, 1)
+    # week multiple: open + group weeks
+    r = DERIVED["WEEK_2"]
+    base = _ts(2026, 1, 1)
+    assert bucket_end(base, r) == bucket_open(base, r) + 2 * 604800
 
 
 def test_fold_month_reduces_ohlcv():
