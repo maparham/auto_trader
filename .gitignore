@@ -222,6 +222,11 @@ tick_history.db
 tick_history.db-wal
 tick_history.db-shm
 
+# Backend candle-history cache sqlite store
+candle_history.db
+candle_history.db-wal
+candle_history.db-shm
+
 # Chart workspace state sqlite store (localStorage mirror)
 app_state.db
 app_state.db-wal

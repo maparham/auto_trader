@@ -50,6 +50,7 @@ from auto_trader.core.models import (
 )
 from auto_trader.core.state_store import STATE_STORE
 from auto_trader.core.tick_store import TICK_STORE
+from auto_trader.core.candle_cache import CANDLE_CACHE
 from auto_trader.engine.backtest import BacktestEngine
 from auto_trader.strategy.sma_cross import SmaCross
 
@@ -798,8 +799,27 @@ async def candles(
         ]
     resolution = _parse_resolution(resolution)
     broker = get_data(broker_id)  # 404 on unknown broker (not a breaker failure)
+    key = (broker_id, epic, resolution.value, price_side)
+    res_seconds = resolution.seconds
+
+    async def fetch_range(start_dt, end_dt):
+        # Keep the circuit breaker around the actual broker call so one down broker
+        # can't starve the others (see guarded()).
+        return await guarded(
+            broker_id,
+            lambda: broker.get_candles(epic, resolution, start_dt, end_dt, price_side),
+            "data fetch",
+        )
+
+    async def fetch_recent(n):
+        return await guarded(
+            broker_id,
+            lambda: broker.get_recent_candles(epic, resolution, n, price_side),
+            "data fetch",
+        )
+
     if from_ts is not None and to_ts is not None:
-        # Validate the window before hitting the broker: an out-of-range epoch
+        # Validate the window before hitting the cache/broker: an out-of-range epoch
         # would crash datetime.fromtimestamp (surfaced as a confusing 502), and an
         # inverted window would silently return an empty 200. Both are client
         # errors -> 422.
@@ -810,19 +830,9 @@ async def candles(
             end = datetime.fromtimestamp(to_ts, tz=timezone.utc)
         except (OverflowError, OSError, ValueError) as e:
             raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
-        # The circuit breaker bounds the call + fast-fails a down broker, so one
-        # broker's outage can't hold a connection slot and starve the others.
-        loaded = await guarded(
-            broker_id,
-            lambda: broker.get_candles(epic, resolution, start, end, price_side),
-            "data fetch",
-        )
+        loaded = await CANDLE_CACHE.window(key, res_seconds, start, end, fetch_range)
     else:
-        loaded = await guarded(
-            broker_id,
-            lambda: broker.get_recent_candles(epic, resolution, bars, price_side),
-            "data fetch",
-        )
+        loaded = await CANDLE_CACHE.recent(key, res_seconds, bars, fetch_recent)
     # A date window may legitimately be empty (market closed); only 404 when no
     # window was requested at all (likely a bad epic).
     if not loaded and from_ts is None:

@@ -15,23 +15,41 @@ Cache chart history (minute-and-above candles) on the backend so that:
 Sub-minute (seconds) intervals are **out of scope** — they keep flowing through the
 existing `TICK_STORE` unchanged.
 
+### Secondary goal (future): chart replay
+
+A planned future feature lets the user **replay the chart from any point in the past** —
+jump to an arbitrary historical date and play bars forward. This cache is the substrate
+for it: replay reads **closed** bars (exactly what we store) **forward and continuously**
+from the chosen start. We do not build replay here, but the storage model is chosen so it
+won't need to be reworked when replay arrives (see Coverage model below).
+
 ## Approach (chosen)
 
 **Bar store + coverage watermarks, populated by broker REST fetches.** Rejected
 alternatives: a request-keyed response cache with TTL (overlapping-but-not-identical
 scroll-back windows miss, so it barely reduces broker calls).
 
-### Why watermarks (not an interval-set)
+### Coverage model: two watermarks + contiguous backfill
 
-The frontend's access pattern is strictly:
+Coverage per series is described by **two watermarks** `[oldest_ts, newest_ts]`, not a
+general interval-set. Today's access pattern fits this:
 
 - **Initial load:** most-recent N bars (`fetchRecent`, 500).
 - **Scroll-back:** contiguous leftward windows — the cursor walks backward by fixed
-  pages (`fetchRange` in `ChartCore.tsx`), never arbitrary date jumps. There is no
-  go-to-arbitrary-date feature.
+  pages (`fetchRange` in `ChartCore.tsx`), never arbitrary date jumps.
 
-So coverage per series is fully described by **two watermarks** `[oldest_ts, newest_ts]`,
-not a general interval-set. This keeps merge logic trivial.
+**Replay compatibility — contiguous backfill.** The future replay feature jumps to an
+arbitrary start date D. To keep the simple watermark model, the cache uses a
+**contiguous backfill** fill policy: whenever a request needs data below `oldest_ts`
+(a scroll-back page *or* a replay jump to D), the cache fetches the entire gap
+`[D, oldest_ts]` and merges it, so coverage stays a single gap-free range. Replay then
+plays forward through exactly that backfilled history. We never create holes, so we never
+need an interval-set.
+
+This is only insufficient if a future feature reads *truly disjoint* windows (jump to D,
+fetch a small isolated window, leave a hole above it). Replay does not — it plays forward
+continuously — so an interval-set is YAGNI. If such a feature ever appears, upgrade
+`coverage` to an interval-set then.
 
 ## Architecture
 
@@ -68,9 +86,11 @@ PK: `(broker, epic, resolution, side, ts)`.
 
 ## Data flow
 
-**Closed cutoff:** a bar is "closed" once its next bar has opened, i.e.
-`cutoff = now - resolution.seconds`. Nothing at/after `cutoff` is ever written. The
-forming bar never enters the cache.
+**Closed cutoff:** a bar at open-time `ts` spanning `[ts, ts+res)` is "closed" once
+`now` has left its interval. The cutoff is the forming bucket's open time,
+`cutoff = (int(now) // res) * res`; bars with `ts < cutoff` are stored, so the forming
+bar (whose interval contains `now`) is never written. Both paths share this via the
+`_bucket_start` helper.
 
 ### Recent-N path (no `from_ts`/`to_ts`)
 
@@ -87,8 +107,10 @@ forming bar never enters the cache.
 
 1. If `[from_ts, to_ts] ⊆ [oldest_ts, newest_ts]` → serve from cache, **zero broker
    calls**.
-2. Else fetch only the uncovered slice (the part below `oldest_ts`) via `get_candles`,
-   store closed bars, extend `oldest_ts`. Serve the merged window from cache.
+2. Else fetch the uncovered slice **below `oldest_ts` down to `from_ts`** (contiguous
+   backfill — fill the whole gap, never an isolated window) via `get_candles`, store
+   closed bars, extend `oldest_ts` to cover `from_ts`. Serve the merged window from
+   cache. (For a replay jump to date D, `from_ts = D`; the same backfill applies.)
 3. An empty fetched slice still advances `oldest_ts` past the gap (mirrors the
    frontend's "keep walking back past the gap" logic) so closed-market gaps don't cause
    re-fetch loops.
@@ -124,6 +146,9 @@ canned candles):
 - Closed cutoff excludes the forming bar.
 - Gap window advances `oldest_ts` without looping.
 - Recent-N always makes exactly one tail call.
+- **Replay backfill:** a jump to a date D far below `oldest_ts` fetches the whole gap
+  `[D, oldest_ts]` and leaves coverage contiguous (`oldest_ts == D`'s bar); a second
+  read anywhere in `[D, newest_ts]` makes zero fetch calls.
 
 Plus a route-level test that a repeat scroll-back window short-circuits (no broker call).
 Existing broker/parse tests (`test_parse_prices`, etc.) stay green.
