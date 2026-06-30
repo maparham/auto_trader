@@ -119,11 +119,16 @@ class CandleCache:
             return []
         conn = self._connect()
         try:
+            # Floor at coverage.oldest_ts so rows orphaned by a disjoint reset (which
+            # leaves stale bars below the new oldest, INSERT OR REPLACE never deletes)
+            # can't be spliced into the result as if contiguous with the fresh block.
             rows = conn.execute(
                 "SELECT ts, open, high, low, close, volume FROM bars "
                 "WHERE broker=? AND epic=? AND resolution=? AND side=? AND ts < ? "
+                "AND ts >= COALESCE((SELECT oldest_ts FROM coverage "
+                "WHERE broker=? AND epic=? AND resolution=? AND side=?), 0) "
                 "ORDER BY ts DESC LIMIT ?",
-                (*key, before_ts, n),
+                (*key, before_ts, *key, n),
             ).fetchall()
         finally:
             conn.close()
@@ -174,12 +179,16 @@ class CandleCache:
             conn.close()
 
     def _cached_count(self, key: CandleKey) -> int:
+        # Count only bars within the live coverage window: rows orphaned by a disjoint
+        # reset must not inflate the count and misclassify a near-empty series as warm.
         conn = self._connect()
         try:
             (n,) = conn.execute(
                 "SELECT COUNT(*) FROM bars "
-                "WHERE broker=? AND epic=? AND resolution=? AND side=?",
-                key,
+                "WHERE broker=? AND epic=? AND resolution=? AND side=? "
+                "AND ts >= COALESCE((SELECT oldest_ts FROM coverage "
+                "WHERE broker=? AND epic=? AND resolution=? AND side=?), 0)",
+                (*key, *key),
             ).fetchone()
         finally:
             conn.close()

@@ -224,6 +224,21 @@ def test_recent_warm_huge_gap_resets_coverage(tmp_path):
     assert cache._coverage(KEY) == (9760, 9940)  # reset to fresh block, NOT (100, 9940)
 
 
+def test_recent_warm_thin_fetch_no_orphan_splice(tmp_path):
+    # A stale cache plus a THIN bridging fetch (fewer than count-1 fresh closed bars)
+    # must not splice orphaned pre-gap bars into the response. After the disjoint
+    # reset, reads are floored at coverage.oldest_ts, so the stranded rows are invisible.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    seed = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    asyncio.run(cache.recent(KEY, 60, 5, FakeFetcher(seed).recent, tail=3, now=340))
+    # cache {100,160,220,280}, coverage (100,280), cached_n=4 -> next call is warm.
+    thin = [_c(t, float(t)) for t in (9880, 9940, 10000)]  # broker returns only a thin block
+    out = asyncio.run(cache.recent(KEY, 60, 5, FakeFetcher(thin).recent, tail=3, now=10_000))
+    ts = [int(c.time.timestamp()) for c in out]
+    assert ts == [9880, 9940, 10000]  # fresh block only; no orphaned (220, 280) spliced in
+    assert cache._coverage(KEY) == (9880, 9940)
+
+
 def test_route_window_short_circuits_repeat(tmp_path, monkeypatch):
     """The /api/candles window path serves a repeated window from cache (no 2nd
     broker call). Uses the cache directly with a counting fetcher to prove the
