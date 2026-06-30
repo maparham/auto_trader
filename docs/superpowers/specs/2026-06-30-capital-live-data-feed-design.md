@@ -96,6 +96,11 @@ Capital splits into two **feeds**, each with its own accounts:
 - Replace today's `register_live_exec` (which added `capital:live` as exec-only).
   The live dealing executor now prices off the `capital-live` data broker instead
   of the demo `capital` feed.
+- **One live broker instance, one live session.** The `capital-live` data broker
+  and the `capital-live:live` exec must wrap the **same** `CapitalComBroker`
+  instance (as IG's `register` shares one broker across data + paper + real exec).
+  This codebase has a documented live `/session` 429-storm history, so a careless
+  split that spins up two live sessions on the same credentials must be avoided.
 - The demo `capital` + `capital:paper` block is unchanged.
 
 ### 2. Tick store isolation — `core/tick_store.py` (the one real coupling)
@@ -132,6 +137,21 @@ once) but is included because it is the only thing preventing true feed isolatio
   no structural change. `isRealMoneyAccount` (`account.endsWith(":live")`) still
   correctly flags `capital-live:live`.
 
+**Positions dock behavior (account tabs grouped by the active feed).** The dock
+account strip filters to the active feed: `brokerAccounts = accounts.filter(a =>
+a.broker === activeBroker)` (`PositionsPanel.tsx:186`). So account tabs are shown
+**per feed**, not globally:
+- On **Capital.com (demo)**: one tab — `capital:paper`.
+- On **Capital.com (live)**: two tabs — `capital-live:paper` and the real-money
+  `capital-live:live`, switchable in the dock as today.
+
+This is a deliberate behavior change from today, where `capital:paper` and
+`capital:live` both show as tabs under the single `capital` feed. After the split
+the real-money account moves under the live feed, so demo and live account
+positions are no longer shown together in one dock — switching feed switches which
+account tabs (and their positions) appear. This matches how IG demo/live already
+behave and keeps each feed's accounts with their own data/quotes.
+
 ### 4. Migration — `App.tsx`, `lib/trading.ts`, `lib/persist.ts`
 
 One-time, sentinel-gated, mirroring `persist.ts:pruneLegacyGlobalWorkspace`
@@ -143,6 +163,15 @@ One-time, sentinel-gated, mirroring `persist.ts:pruneLegacyGlobalWorkspace`
 - Rewrite the `lastAccountByBroker` map (`trading.ts:39-54`): move the
   `capital → capital:live` entry to `capital-live → capital-live:live`; keep
   `capital → capital:paper`.
+
+**No backend migration needed (verified).** `capital:live` appears in the backend
+only in registration code/comments and tests. Paper working orders/triggers are
+held in-memory (`paper_exec.py:133 self._working`), not persisted by account; the
+renamed account is the **real-money** one, whose positions/working orders live
+natively at Capital and are refetched from the broker. So the rename orphans no
+persisted backend state. (Escape hatch if this ever changes: an explicit per-exec
+data-broker override that breaks the `key.split(":")[0]` routing for one account,
+keeping `capital:live` as-is — not needed here.)
 
 ### 5. Live workspace — blank, but saved layouts applicable
 
