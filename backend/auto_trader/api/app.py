@@ -51,6 +51,13 @@ from auto_trader.core.models import (
 from auto_trader.core.state_store import STATE_STORE
 from auto_trader.core.tick_store import TICK_STORE
 from auto_trader.core.candle_cache import CANDLE_CACHE
+from auto_trader.core.candle_aggregate import (
+    DERIVED,
+    aggregate_candle_stream,
+    base_count_for,
+    fold,
+    is_derived,
+)
 from auto_trader.engine.backtest import BacktestEngine
 from auto_trader.strategy.sma_cross import SmaCross
 
@@ -797,6 +804,51 @@ async def candles(
             _candle_dto(c)
             for c in await TICK_STORE.bars(epic, SECONDS_INTERVALS[resolution], bars)
         ]
+    if is_derived(resolution):
+        # 2W/3W/6W, 1M/2M/3M, 1Y aren't native resolutions: fold the cached DAY/WEEK
+        # base series into calendar buckets on read. The cache only ever sees the
+        # native base series (no derived rows), so its backfill gives us full history.
+        rule = DERIVED[resolution]
+        base = rule.base
+        base_key = (broker_id, epic, base.value, price_side)
+        base_seconds = base.seconds
+        broker = get_data(broker_id)  # 404 on unknown broker (not a breaker failure)
+
+        async def fetch_range(start_dt, end_dt):
+            return await guarded(
+                broker_id,
+                lambda: broker.get_candles(epic, base, start_dt, end_dt, price_side),
+                "data fetch",
+            )
+
+        async def fetch_recent(n):
+            return await guarded(
+                broker_id,
+                lambda: broker.get_recent_candles(epic, base, n, price_side),
+                "data fetch",
+            )
+
+        if from_ts is not None and to_ts is not None:
+            if from_ts > to_ts:
+                raise HTTPException(422, "from_ts must be <= to_ts")
+            try:
+                start = datetime.fromtimestamp(from_ts, tz=timezone.utc)
+                end = datetime.fromtimestamp(to_ts, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError) as e:
+                raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
+            base_bars = await CANDLE_CACHE.window(
+                base_key, base_seconds, start, end, fetch_range
+            )
+            return [_candle_dto(c) for c in fold(base_bars, rule)]
+        base_bars = await CANDLE_CACHE.recent(
+            base_key, base_seconds, base_count_for(rule, bars), fetch_recent
+        )
+        folded = fold(base_bars, rule)
+        if not folded:
+            raise HTTPException(
+                404, f"no data for epic '{epic}' (unknown epic or no history)"
+            )
+        return [_candle_dto(c) for c in folded[-bars:]]
     resolution = _parse_resolution(resolution)
     broker = get_data(broker_id)  # 404 on unknown broker (not a breaker failure)
     key = (broker_id, epic, resolution.value, price_side)
