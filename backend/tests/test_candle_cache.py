@@ -143,3 +143,46 @@ def test_window_reraises_when_cache_empty_and_fetch_errors(tmp_path):
         assert False, "expected RuntimeError"
     except RuntimeError as e:
         assert str(e) == "breaker open"
+
+
+def test_recent_cold_fetches_full_and_returns_with_forming(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    # ts 280 is the forming bar (>= cutoff 240); 100/160/220 are closed.
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    f = FakeFetcher(src)
+    out = asyncio.run(cache.recent(KEY, 60, 4, f.recent, tail=3, now=280))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160, 220, 280]  # forming kept
+    assert f.recent_calls == [4]  # cold -> one full fetch
+    assert cache._cached_count(KEY) == 3  # only the 3 closed bars stored
+
+
+def test_recent_warm_makes_one_tail_call_and_appends_forming(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    asyncio.run(cache.recent(KEY, 60, 4, FakeFetcher(src).recent, tail=3, now=280))
+    # Warm: forming bar now at 340 (>= cutoff 300); 280 is closed and newly fetched.
+    tail_src = [_c(t, float(t)) for t in (220, 280, 340)]
+    f = FakeFetcher(tail_src)
+    out = asyncio.run(cache.recent(KEY, 60, 4, f.recent, tail=3, now=340))
+    assert f.recent_calls == [3]  # only the small tail, not a full 4
+    assert [int(c.time.timestamp()) for c in out] == [160, 220, 280, 340]  # closed+forming
+    assert cache._cached_count(KEY) == 4  # 280 now stored as closed
+
+
+def test_recent_serves_cache_when_fetch_errors(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    asyncio.run(cache.recent(KEY, 60, 4, FakeFetcher(src).recent, tail=3, now=280))
+    boom = FakeFetcher(error=RuntimeError("offline"))
+    out = asyncio.run(cache.recent(KEY, 60, 3, boom.recent, tail=3, now=340))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160, 220]  # cache served
+
+
+def test_recent_reraises_when_cache_empty_and_fetch_errors(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    boom = FakeFetcher(error=RuntimeError("offline"))
+    try:
+        asyncio.run(cache.recent(KEY, 60, 4, boom.recent, tail=3, now=280))
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert str(e) == "offline"
