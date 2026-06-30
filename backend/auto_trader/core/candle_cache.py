@@ -48,7 +48,25 @@ class CandleCache:
 
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
+        self._locks: dict[CandleKey, asyncio.Lock] = {}
         self._connect().close()  # create db file + schema up front
+
+    def _key_lock(self, key: CandleKey) -> asyncio.Lock:
+        """Per-series lock. window() and recent() each snapshot coverage BEFORE their
+        broker await, then write it after — so two concurrent calls on the SAME key can
+        interleave such that a disjoint recent() reset is clobbered by a window() union
+        re-injecting a stale watermark, silently claiming an unfetched gap as covered.
+        All requests share this in-process singleton, so the lock serializes that
+        critical section across every user/chart on the same series; different keys stay
+        fully concurrent. Created lazily on the running loop — the get/set pair has no
+        await between it, so it's race-free on the single-threaded event loop.
+
+        NB: this guards a single backend process. Running multiple worker processes
+        against one cache db would need DB-level coordination instead."""
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = self._locks[key] = asyncio.Lock()
+        return lock
 
     def _connect(self) -> sqlite3.Connection:
         # Ensure schema on EVERY connection (robust to an older db file / cwd change),
@@ -204,6 +222,20 @@ class CandleCache:
         *,
         now: float | None = None,
     ) -> list[Candle]:
+        """Candles in [start, end]. Serializes per-key with recent() (see _key_lock)."""
+        async with self._key_lock(key):
+            return await self._window(key, res_seconds, start, end, fetch_range, now=now)
+
+    async def _window(
+        self,
+        key: CandleKey,
+        res_seconds: int,
+        start: datetime,
+        end: datetime,
+        fetch_range: Callable[[datetime, datetime], Awaitable[list[Candle]]],
+        *,
+        now: float | None = None,
+    ) -> list[Candle]:
         """Candles in [start, end]. Cache hit when the window is fully covered.
         Otherwise contiguous-backfill: fetch the gap below oldest down to `start`
         (or the whole window when cold), store closed bars, mark covered, serve."""
@@ -242,6 +274,20 @@ class CandleCache:
         return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
 
     async def recent(
+        self,
+        key: CandleKey,
+        res_seconds: int,
+        count: int,
+        fetch_recent: Callable[[int], Awaitable[list[Candle]]],
+        *,
+        tail: int = 3,
+        now: float | None = None,
+    ) -> list[Candle]:
+        """Most-recent `count` bars. Serializes per-key with window() (see _key_lock)."""
+        async with self._key_lock(key):
+            return await self._recent(key, res_seconds, count, fetch_recent, tail=tail, now=now)
+
+    async def _recent(
         self,
         key: CandleKey,
         res_seconds: int,

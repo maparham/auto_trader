@@ -239,6 +239,56 @@ def test_recent_warm_thin_fetch_no_orphan_splice(tmp_path):
     assert cache._coverage(KEY) == (9880, 9940)
 
 
+def test_same_key_calls_are_serialized(tmp_path):
+    # Concurrent calls on the SAME key must not overlap their fetch+coverage critical
+    # section (else a disjoint reset can race a union and silently claim an unfetched
+    # gap). The per-key lock serializes them; a fetch that yields proves it.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    active = {"n": 0, "max": 0}
+
+    async def slow_recent(count):
+        active["n"] += 1
+        active["max"] = max(active["max"], active["n"])
+        await asyncio.sleep(0)  # yield: an unlocked sibling would interleave here
+        active["n"] -= 1
+        return [_c(t, float(t)) for t in (100, 160, 220, 280)]
+
+    async def run():
+        await asyncio.gather(
+            cache.recent(KEY, 60, 4, slow_recent, now=280),
+            cache.recent(KEY, 60, 4, slow_recent, now=280),
+        )
+
+    asyncio.run(run())
+    assert active["max"] == 1  # never two same-key fetches in flight at once
+
+
+def test_different_keys_run_concurrently(tmp_path):
+    # Different series must NOT serialize against each other — the lock is per-key.
+    # Both fetches must be in flight at once; a barrier each waits on proves it (and a
+    # 1s timeout fails the test if the lock wrongly blocked the second).
+    cache = CandleCache(str(tmp_path / "c.db"))
+    k2 = ("capital", "GBPUSD", "MINUTE", "mid")
+
+    async def run():
+        both_in = asyncio.Event()
+        inside = {"n": 0}
+
+        async def slow_recent(count):
+            inside["n"] += 1
+            if inside["n"] >= 2:
+                both_in.set()  # both fetches are concurrently active
+            await asyncio.wait_for(both_in.wait(), timeout=1.0)
+            return [_c(t, float(t)) for t in (100, 160, 220, 280)]
+
+        await asyncio.gather(
+            cache.recent(KEY, 60, 4, slow_recent, now=280),
+            cache.recent(k2, 60, 4, slow_recent, now=280),
+        )
+
+    asyncio.run(run())  # completes only if both fetches overlapped (else wait_for times out)
+
+
 def test_route_window_short_circuits_repeat(tmp_path, monkeypatch):
     """The /api/candles window path serves a repeated window from cache (no 2nd
     broker call). Uses the cache directly with a counting fetcher to prove the
