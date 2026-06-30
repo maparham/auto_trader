@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     # sub-minute history endpoint, so we record live ticks ourselves). Set
     # CAPITAL_TICK_DB_PATH to relocate; defaults to a file in the backend cwd.
     tick_db_path: str = "tick_history.db"
+    candle_db_path: str = "candle_history.db"
 
     # Where chart workspace state (tabs/layouts, drawings, indicators, alerts) is
     # persisted so it survives across browsers/devices. A key-value mirror of the

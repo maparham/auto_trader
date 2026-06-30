@@ -186,3 +186,15 @@ def test_recent_reraises_when_cache_empty_and_fetch_errors(tmp_path):
         assert False, "expected RuntimeError"
     except RuntimeError as e:
         assert str(e) == "offline"
+
+
+def test_route_window_short_circuits_repeat(tmp_path, monkeypatch):
+    """The /api/candles window path serves a repeated window from cache (no 2nd
+    broker call). Uses the cache directly with a counting fetcher to prove the
+    short-circuit the route relies on."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in (100, 160, 220)]
+    f = FakeFetcher(src)
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(220), f.range, now=10_000))
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(220), f.range, now=10_000))
+    assert len(f.range_calls) == 1  # second window served from cache

@@ -236,3 +236,8 @@ class CandleCache:
         forming = [b for b in tail_bars if int(b.time.timestamp()) >= cutoff]
         closed = await asyncio.to_thread(self._read_back, key, count - len(forming), cutoff)
         return closed + forming
+
+
+from auto_trader.config import settings  # noqa: E402  (singleton at module load, mirrors tick_store)
+
+CANDLE_CACHE = CandleCache(settings.candle_db_path)
