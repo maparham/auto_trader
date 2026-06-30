@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rangeWindow, RANGE_KEYS, TRAILING_KEYS } from "./rangeWindow";
+import { rangeWindow, goToDateTs, RANGE_KEYS, TRAILING_KEYS } from "./rangeWindow";
 
 const DAY = 86_400_000;
 // Fixed "now": 2026-06-30T12:00:00Z (June → month index 5; Q2; first half of year).
@@ -77,5 +77,26 @@ describe("rangeWindow", () => {
     expect(rangeWindow("-1M", NOWH, "UTC").fromTs).toBe(Date.UTC(2026, 4, 30, 14, 30));
     expect(rangeWindow("-1Y", NOWH, "UTC").fromTs).toBe(Date.UTC(2025, 5, 30, 14, 30));
     for (const k of TRAILING_KEYS) expect(rangeWindow(k, NOWH, "UTC").toTs).toBe(NOWH);
+  });
+
+  it("clamps -1M / -1Y day-of-month so it can't overflow", () => {
+    // May 31 → "1 month ago" has no Apr 31; clamp to Apr 30 (not May 1).
+    const may31 = Date.UTC(2026, 4, 31, 9, 0);
+    expect(rangeWindow("-1M", may31, "UTC").fromTs).toBe(Date.UTC(2026, 3, 30, 9, 0));
+    // Leap day → "1 year ago" clamps Feb 29 to Feb 28.
+    const feb29 = Date.UTC(2024, 1, 29, 9, 0);
+    expect(rangeWindow("-1Y", feb29, "UTC").fromTs).toBe(Date.UTC(2023, 1, 28, 9, 0));
+  });
+});
+
+describe("goToDateTs", () => {
+  it("resolves a YYYY-MM-DD to the start of that civil day in UTC", () => {
+    expect(goToDateTs("2026-03-15", "UTC")).toBe(Date.UTC(2026, 2, 15));
+  });
+
+  it("anchors the day in the chart timezone, not UTC (matches the range buttons)", () => {
+    // Etc/GMT-2 is UTC+2, so the start of Mar 15 there is Mar 14 22:00 UTC —
+    // the same tz-aware boundary periodStart uses, NOT Date.UTC midnight.
+    expect(goToDateTs("2026-03-15", "Etc/GMT-2")).toBe(Date.UTC(2026, 2, 14, 22, 0));
   });
 });

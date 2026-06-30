@@ -125,14 +125,31 @@ function periodStart(key: RangeKey, nowMs: number, tz: string): number {
     case "-1W":
       return nowMs - 7 * DAY;
     case "-1M":
-      return zonedWallToUTC(tz, y, mo - 1, d, h, mi); // same wall-clock 1 month ago
+      // Clamp the day so May 31 → Apr 30 (not May 1 via overflow).
+      return zonedWallToUTC(tz, y, mo - 1, clampDay(y, mo - 1, d), h, mi);
     case "-1Y":
-      return zonedWallToUTC(tz, y - 1, mo, d, h, mi); // same wall-clock 1 year ago
+      return zonedWallToUTC(tz, y - 1, mo, clampDay(y - 1, mo, d), h, mi); // Feb 29 → Feb 28
   }
+}
+
+// Last valid day-of-month for (year, month), so a "same day last month/year"
+// computation can't overflow into the next month.
+function clampDay(y: number, mo: number, d: number): number {
+  const lastDay = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+  return Math.min(d, lastDay);
 }
 
 // `timeZone` is an IANA zone (the chart's display timezone). Pass "UTC" for
 // UTC-aligned boundaries.
 export function rangeWindow(key: RangeKey, nowMs: number, timeZone: string): RangeWindow {
   return { resolution: RESOLUTION[key], fromTs: periodStart(key, nowMs, timeZone), toTs: nowMs };
+}
+
+// The "go to date" calendar value (a "YYYY-MM-DD" string from <input type=date>)
+// resolved to the start of that civil day in the CHART's timezone — the same
+// tz-aware anchoring the range buttons use, so the calendar and the buttons agree
+// on where a day starts (rather than UTC midnight, which is hours off elsewhere).
+export function goToDateTs(dateStr: string, timeZone: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return zonedWallToUTC(timeZone, y, m - 1, d);
 }

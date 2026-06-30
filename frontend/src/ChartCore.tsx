@@ -27,7 +27,8 @@ import {
   PERIODS,
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
-import { rangeWindow, type RangeKey } from "./lib/rangeWindow";
+import { rangeWindow, goToDateTs, type RangeKey } from "./lib/rangeWindow";
+import { pageHistoryBack } from "./lib/historyPaging";
 import { klineStyles } from "./lib/chartTheme";
 import ChartLegend, {
   buildLegendRows,
@@ -460,9 +461,10 @@ interface Props {
   onReady?: (cellId: string, chart: Chart, controller: ChartController) => void;
   // Fired on pointer-down anywhere in the cell, so App can mark it focused.
   onFocus?: (cellId: string) => void;
-  // Switch the focused cell's interval (used by the quick-range bar when a preset
-  // needs a coarser/finer resolution than the current one).
-  onPeriod?: (p: Period) => void;
+  // Switch THIS cell's interval (used by the quick-range bar when a preset needs a
+  // coarser/finer resolution than the current one). Cell-scoped so a keyboard-
+  // activated preset targets the owning cell even without a prior pointer-down.
+  onPeriod?: (cellId: string, p: Period) => void;
 }
 
 const BA_TAG_H = 18; // .ba-tag height; used to stack bid/ask clear of the price pill
@@ -518,11 +520,23 @@ export default function ChartCore({
   // Active quick-range button (null once the user manually zooms/scrolls or
   // changes interval). Transient — not persisted.
   const [activeRange, setActiveRange] = useState<RangeKey | null>(null);
-  // The in-flight quick-range request (resolution + window). Acts as an ownership
-  // token: ensureCoverageAndFit bails if a newer pick replaces it. The data-load
-  // effect consumes it once the (possibly new-resolution) bars land.
-  type RangeReq = { resolution: string; fromTs: number; toTs: number };
+  // The in-flight quick-range request (resolution + window + the series identity it
+  // was issued for). Acts as an ownership token: ensureCoverageAndFit bails if a
+  // newer pick replaces it OR the epic/broker/side drifts from what it captured.
+  // The data-load effect consumes it once the (possibly new-resolution) bars land.
+  type RangeReq = {
+    resolution: string;
+    fromTs: number;
+    toTs: number;
+    epic: string;
+    broker: string;
+    side: PriceSide;
+  };
   const pendingRangeRef = useRef<RangeReq | null>(null);
+  // The token a walk-back has already been launched for, so a re-run of the
+  // data-load effect (priceSide/broker change, same pending pick) can't start a
+  // second concurrent walk over the same token.
+  const launchedTokenRef = useRef<RangeReq | null>(null);
   // True while a range pick is programmatically moving the view, so the
   // scroll/zoom listener doesn't treat it as a manual gesture and clear the pill.
   const programmaticMoveRef = useRef(false);
@@ -542,41 +556,74 @@ export default function ChartCore({
   // window (e.g. a month of 30m bars ≈ 1400) won't fit in one request — we walk
   // back in PAGE_BARS windows (mirroring the scroll-back driver, gaps and all).
   // `token` is the pendingRangeRef object; we abort if a newer pick replaces it.
+  //
+  // DESIGN DEBT: this and the setLoadDataCallback scroll-back loader are TWO paging
+  // paths coordinating through loose shared refs (cursorSecRef/exhaustedRef/
+  // loadingRef/emptyStreakRef). We close the races here with the loadingRef mutex +
+  // wait-out + identity guard, but a third consumer (chart replay) should collapse
+  // both into one HistoryPager owner — see the "Known design debt" note in
+  // docs/superpowers/plans/2026-06-30-visible-range-selector.md.
   const ensureCoverageAndFit = async (token: RangeReq) => {
+    // Re-entry guard: the data-load effect can re-run (priceSide/broker change)
+    // and call this again with the SAME pending token while a walk is in flight.
+    if (launchedTokenRef.current === token) return;
+    launchedTokenRef.current = token;
     const { resolution, fromTs, toTs } = token;
-    const resSec = RESOLUTION_SECONDS[resolution] ?? 60;
-    const MAX_PAGES = 16; // bounds the walk-back (16 * PAGE_BARS bars)
-    let cursorSec = Math.floor((chartRef.current?.getDataList()?.[0]?.timestamp ?? toTs) / 1000);
-    let empties = 0;
-    for (let page = 0; page < MAX_PAGES; page++) {
-      if (pendingRangeRef.current !== token || !chartRef.current) return;
-      if (cursorSec * 1000 <= fromTs) break; // history now reaches the period start
-      const toSec = cursorSec - 1;
-      const fromSec = toSec - PAGE_BARS * resSec;
-      let older: KLineData[];
-      try {
-        older = await fetchRange(symbol.epic, resolution, fromSec, toSec, priceSide, brokerId);
-      } catch (err) {
-        console.warn(`[chart] range history paging failed for ${symbol.epic}`, err);
-        break;
-      }
-      if (pendingRangeRef.current !== token || !chartRef.current) return;
-      cursorSec = fromSec; // advance back even across gaps
-      const cur = chartRef.current.getDataList();
-      const oldestMs = cur?.[0]?.timestamp ?? Infinity;
-      const fresh = older.filter((b) => b.timestamp < oldestMs);
-      if (fresh.length) {
-        empties = 0;
-        chartRef.current.applyNewData([...fresh, ...cur], true);
-        cursorSecRef.current = Math.floor(fresh[0].timestamp / 1000);
-        exhaustedRef.current = false;
-      } else if (++empties >= 4) {
-        break; // walked past too many empty windows — broker is out of history
-      }
+    // Stale once a newer pick replaces the token, the chart is torn down, or the
+    // series identity drifts from what this pick captured (epic/broker/side/
+    // resolution) — the same defence the scroll-back loader applies.
+    const isStale = () =>
+      pendingRangeRef.current !== token ||
+      !chartRef.current ||
+      epicRef.current !== token.epic ||
+      brokerIdRef.current !== token.broker ||
+      priceSideRef.current !== token.side ||
+      resRef.current !== token.resolution;
+    // Take the scroll-back loader's mutex so klinecharts' own Forward-load (which
+    // our applyNewData(more=true) keeps arming) can't page concurrently and race us
+    // over cursorSecRef/exhaustedRef. If a scroll-back page is ALREADY in flight,
+    // wait it out first — otherwise its .finally would flip loadingRef false partway
+    // through our walk and reopen the gate. (Bounded so active scrolling can't wedge
+    // us; once we hold the mutex, further scroll-back loads bail.)
+    for (let i = 0; loadingRef.current && i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      if (isStale()) return;
     }
-    if (chartRef.current && pendingRangeRef.current === token) {
-      fitVisibleRange(chartRef.current, fromTs, toTs);
-      pendingRangeRef.current = null;
+    loadingRef.current = true;
+    try {
+      const result = await pageHistoryBack<KLineData>({
+        fromTs,
+        toTs,
+        resSec: RESOLUTION_SECONDS[resolution] ?? 60,
+        pageBars: PAGE_BARS,
+        maxPages: 16,
+        maxEmpty: 4,
+        isStale,
+        getData: () => chartRef.current?.getDataList(),
+        fetchOlder: (fromSec, toSec) =>
+          fetchRange(token.epic, resolution, fromSec, toSec, token.side, token.broker),
+        applyData: (merged) => chartRef.current?.applyNewData(merged, true),
+        onCursor: (sec) => {
+          cursorSecRef.current = sec;
+        },
+        onProgress: () => {
+          exhaustedRef.current = false;
+        },
+        onExhausted: () => {
+          exhaustedRef.current = true;
+        },
+      });
+      if (result !== "aborted" && chartRef.current && pendingRangeRef.current === token) {
+        fitVisibleRange(chartRef.current, fromTs, toTs);
+        pendingRangeRef.current = null;
+      }
+    } finally {
+      // Release the mutex only if a newer pick hasn't taken ownership (it holds the
+      // mutex for its own walk); the current owner — or a settled idle state —
+      // releases it.
+      if (pendingRangeRef.current === token || pendingRangeRef.current === null) {
+        loadingRef.current = false;
+      }
     }
   };
 
@@ -585,6 +632,11 @@ export default function ChartCore({
   const onRangePick = (key: RangeKey) => {
     const chart = chartRef.current;
     if (!chart) return;
+    // Keyboard activation (Enter/Space) fires no pointer-down, so focus this cell
+    // explicitly — otherwise an interval switch would target whatever cell was
+    // focused before (the period setter is cell-scoped, so this also makes the
+    // marker/pill land on the cell the user actually clicked).
+    onFocus?.(cellId);
     const { resolution, fromTs, toTs } = rangeWindow(
       key,
       Date.now(),
@@ -594,11 +646,18 @@ export default function ChartCore({
     // Mark the period start for the on-chart separator (fromTs=0 for "All" sits
     // off the left edge, so paintSeparator just won't draw it — intended).
     separatorTsRef.current = fromTs;
-    const token: RangeReq = { resolution, fromTs, toTs };
+    const token: RangeReq = {
+      resolution,
+      fromTs,
+      toTs,
+      epic: symbol.epic,
+      broker: brokerId,
+      side: priceSide,
+    };
     pendingRangeRef.current = token;
     if (resolution !== period.resolution) {
       const target = PERIODS.find((p) => p.resolution === resolution);
-      if (target) onPeriod?.(target);
+      if (target) onPeriod?.(cellId, target);
       return;
     }
     void ensureCoverageAndFit(token);
@@ -606,9 +665,12 @@ export default function ChartCore({
 
   // Calendar "go to date": center the chosen date in the current window, keeping
   // the interval. Degrades to the loaded extent if the date predates history.
-  const onGoToDate = (dateMs: number) => {
+  const onGoToDate = (dateStr: string) => {
     const chart = chartRef.current;
     if (!chart) return;
+    // Resolve the picked day in the chart timezone (consistent with the range
+    // buttons / separator), not UTC midnight.
+    const dateMs = goToDateTs(dateStr, timezone || browserTimezone());
     const cur = readVisibleRange(chart);
     const span = cur ? cur.toTs - cur.fromTs : 30 * 86_400_000;
     setActiveRange(null);
@@ -663,6 +725,15 @@ export default function ChartCore({
   const sepCanvasRef = useRef<HTMLCanvasElement>(null);
   const separatorTsRef = useRef<number | null>(null);
   const paintSeparatorRef = useRef<() => void>(() => {});
+  // Detect epic vs interval changes in the data-load effect so a stale quick-range
+  // (separator + pill + in-flight fit) doesn't bleed onto a different series/interval.
+  const prevEpicRef = useRef(symbol.epic);
+  const prevResRef = useRef(period.resolution);
+  // Cache for the separator's label + accent so paintSeparator doesn't rebuild an
+  // Intl formatter / read getComputedStyle every redraw (it runs on every tick).
+  const sepCacheRef = useRef<{ ts: number; tz: string; theme: string; label: string; accent: string } | null>(
+    null,
+  );
   // Imperative handle to the curve-end label pills (a sibling DOM overlay). Pills
   // are recomputed from the line cache each redraw and pushed here, mirroring the
   // legend's imperative-update pattern (no React churn per crosshair pixel).
@@ -772,6 +843,9 @@ export default function ChartCore({
   const [lastPrice, setLastPrice] = useState<number | null>(null);
   // True once the chart has candles to show (history loaded or a live tick arrived).
   const [hasData, setHasData] = useState(false);
+  // Chart instance exists (init effect ran). State, not a ref read in render, so the
+  // quick-range bar enables the moment the chart is live even on a static frame.
+  const [chartReady, setChartReady] = useState(false);
   // Banner gate: no data for a grace period. Gated on time, NOT the live status —
   // the WS connects to OUR backend (which stays up), so it reports "live" even when
   // the upstream broker delivers nothing (maintenance / auth). A healthy load sets
@@ -1029,6 +1103,7 @@ export default function ChartCore({
     const chart = init(el);
     if (!chart) return;
     chartRef.current = chart;
+    setChartReady(true);
     chart.setTimezone(timezone || browserTimezone());
     chart.setCustomApi({ formatDate: makeFormatDate(clock, dateFormat, showWeekday) });
 
@@ -1940,6 +2015,9 @@ export default function ChartCore({
       // to the left) when the user scrolls to the left edge. We answer with a
       // window of older bars; returning more=false stops further requests. Guards
       // prevent the old infinite loop (each prepend re-triggering a load).
+      // NOTE: shares cursorSecRef/exhaustedRef/loadingRef with the quick-range walk
+      // (ensureCoverageAndFit) — see its "DESIGN DEBT" comment before adding a third
+      // paging consumer.
       chart.setLoadDataCallback((params) => {
         if (params.type !== LoadDataType.Forward) {
           params.callback([], params.type === LoadDataType.Backward ? false : true);
@@ -2340,6 +2418,25 @@ export default function ChartCore({
     loadingRef.current = false;
     exhaustedRef.current = false;
     emptyStreakRef.current = 0;
+
+    // Drop a stale quick-range when this re-run isn't the range pick itself.
+    // - Epic change: the boundary belongs to the OLD instrument's timeline — clear
+    //   the separator, the pill, and any in-flight fit (it targeted the old series).
+    // - Manual interval change (toolbar, no pending pick): the view no longer
+    //   matches the preset, so drop the pill; the separator stays (a "start of
+    //   today" marker is still valid at any interval).
+    const epicChanged = prevEpicRef.current !== symbol.epic;
+    const resChanged = prevResRef.current !== period.resolution;
+    prevEpicRef.current = symbol.epic;
+    prevResRef.current = period.resolution;
+    if (epicChanged) {
+      separatorTsRef.current = null;
+      sepCacheRef.current = null;
+      pendingRangeRef.current = null;
+      setActiveRange(null);
+    } else if (resChanged && !pendingRangeRef.current) {
+      setActiveRange(null);
+    }
     // No data for the new series until history loads or a live tick arrives. The
     // banner is grace-gated, so this can't flash during a normal load — only when
     // the broker is genuinely unreachable.
@@ -2588,25 +2685,20 @@ export default function ChartCore({
   // Recompute the axis overlays (live price+countdown pill, alert label pills)
   // from the chart's current geometry. Stable (reads refs), so it can be wired to
   // the 1s tick, scroll/zoom, live ticks, and overlay changes without churn.
-  // Format the separator's date pill in the chart's timezone (so it matches the
-  // time axis): "30 Jun", plus "HH:mm" when the boundary isn't midnight (trailing
-  // offsets like -1D land at the current wall-clock time, not a day boundary).
+  // Format the separator's pill in the chart's timezone (so it matches the time
+  // axis): always date + "HH:mm", e.g. "1 Jun 00:00".
   const fmtSeparatorLabel = useCallback(
-    (ts: number): string => {
-      const tz = timezone || undefined;
-      const date = new Intl.DateTimeFormat("en-GB", {
-        timeZone: tz,
+    (ts: number): string =>
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: timezone || undefined,
         day: "numeric",
         month: "short",
-      }).format(ts);
-      const hm = new Intl.DateTimeFormat("en-GB", {
-        timeZone: tz,
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
-      }).format(ts);
-      return hm === "00:00" ? date : `${date} ${hm}`;
-    },
+      })
+        .format(ts)
+        .replace(",", ""),
     [timezone],
   );
 
@@ -2631,16 +2723,40 @@ export default function ChartCore({
     ctx.clearRect(0, 0, w, h);
     const ts = separatorTsRef.current;
     if (ts == null || !chart) return;
+    // Don't draw a boundary the loaded history doesn't actually reach: klinecharts
+    // clamps an out-of-range timestamp to the OLDEST bar's x (it doesn't extrapolate),
+    // which would plant the line on the wrong bar with the true period date — a
+    // confident-looking lie. Allow up to one bar of slack for exact-edge snapping.
+    const data = chart.getDataList();
+    const oldest = data?.[0]?.timestamp;
+    const resMs = (RESOLUTION_SECONDS[resRef.current] ?? 60) * 1000;
+    if (oldest != null && ts < oldest - resMs) return;
     const x = first(
       chart.convertToPixel([{ timestamp: ts }], { paneId: "candle_pane", absolute: true }),
     )?.x;
-    if (x == null || x < 0 || x > w) return; // boundary is off-screen
-    const xr = Math.round(x) + 0.5;
+    if (!Number.isFinite(x) || x < 0 || x > w) return; // off-screen / unmappable
+    const xr = Math.round(x as number) + 0.5;
     // Stop the line at the bottom of the candle pane (above the time axis), so the
     // pill sits in the axis gutter like a TradingView session marker.
     const mainH = chart.getSize("candle_pane", DomPosition.Main)?.height ?? h;
-    const accent =
-      getComputedStyle(wrap).getPropertyValue("--accent").trim() || "#2962ff";
+
+    // Label + accent are derived from (ts, tz, theme) only — cache so a live-ticking
+    // chart doesn't rebuild an Intl formatter / flush style on every frame.
+    if (
+      !sepCacheRef.current ||
+      sepCacheRef.current.ts !== ts ||
+      sepCacheRef.current.tz !== timezone ||
+      sepCacheRef.current.theme !== theme
+    ) {
+      sepCacheRef.current = {
+        ts,
+        tz: timezone,
+        theme,
+        label: fmtSeparatorLabel(ts),
+        accent: getComputedStyle(wrap).getPropertyValue("--accent").trim() || "#2962ff",
+      };
+    }
+    const { label, accent } = sepCacheRef.current;
 
     ctx.save();
     ctx.strokeStyle = accent;
@@ -2654,7 +2770,6 @@ export default function ChartCore({
     ctx.restore();
 
     // Date pill anchored at the boundary, just above the time axis.
-    const label = fmtSeparatorLabel(ts);
     ctx.save();
     ctx.font = '10px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
     const tw = ctx.measureText(label).width;
@@ -2676,7 +2791,7 @@ export default function ChartCore({
     ctx.textBaseline = "middle";
     ctx.fillText(label, pillX + padX, pillY + pillH / 2 + 0.5);
     ctx.restore();
-  }, [fmtSeparatorLabel]);
+  }, [fmtSeparatorLabel, timezone, theme]);
   paintSeparatorRef.current = paintSeparator;
 
   const redraw = useCallback(() => {
@@ -3647,7 +3762,7 @@ export default function ChartCore({
       />
       <ChartRangeBar
         activeKey={activeRange}
-        disabled={!chartRef.current}
+        disabled={!chartReady}
         onPick={onRangePick}
         onGoToDate={onGoToDate}
       />

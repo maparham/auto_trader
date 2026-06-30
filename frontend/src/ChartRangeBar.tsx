@@ -5,7 +5,7 @@ export interface ChartRangeBarProps {
   activeKey: RangeKey | null;
   disabled?: boolean;
   onPick(key: RangeKey): void;
-  onGoToDate(dateMs: number): void;
+  onGoToDate(dateStr: string): void;
 }
 
 export default function ChartRangeBar({
@@ -82,9 +82,9 @@ export default function ChartRangeBar({
   const submitDate = (e: FormEvent) => {
     e.preventDefault();
     if (!date) return;
-    // <input type=date> value is "YYYY-MM-DD"; parse as UTC midnight.
-    const [y, m, d] = date.split("-").map(Number);
-    onGoToDate(Date.UTC(y, m - 1, d));
+    // Hand the raw "YYYY-MM-DD" up; ChartCore resolves it in the chart timezone
+    // (the same anchoring the range buttons use), not UTC midnight.
+    onGoToDate(date);
     closeCalendar();
   };
 

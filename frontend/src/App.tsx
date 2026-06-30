@@ -778,10 +778,12 @@ export default function App() {
       ),
     );
   };
-  const setPeriod = (p: Period) => {
-    if (!active || !focusedCell) return;
-    // Lock forces interval sync on, so the master cell's TF propagates to every
-    // cell — that's what keeps same-timestamp candles vertically aligned.
+  // Switch a SPECIFIC cell's interval. The quick-range bar uses this (it knows the
+  // cell that owns it) so a keyboard-activated preset still targets the right cell
+  // even when no pointer-down moved focus there first. Lock/interval-sync forces
+  // the TF onto every cell — that's what keeps same-timestamp candles aligned.
+  const setCellPeriod = (cellId: string, p: Period) => {
+    if (!active) return;
     const broadcast = effectiveSyncInterval(active);
     setTabs((ts) =>
       ts.map((t) =>
@@ -790,11 +792,16 @@ export default function App() {
           : {
               ...t,
               cells: t.cells.map((c) =>
-                broadcast || c.id === focusedCell.id ? { ...c, period: p } : c,
+                broadcast || c.id === cellId ? { ...c, period: p } : c,
               ),
             },
       ),
     );
+  };
+
+  const setPeriod = (p: Period) => {
+    if (!active || !focusedCell) return;
+    setCellPeriod(focusedCell.id, p);
   };
 
   // Change the active tab's layout: add cells (cloning the focused cell's symbol/
@@ -1220,7 +1227,7 @@ export default function App() {
               locked={!!active.locked}
               onReady={onCellReady}
               onFocus={onCellFocus}
-              onPeriod={setPeriod}
+              onPeriod={setCellPeriod}
             />
           ) : (
             /* Blank workspace: no default layout and nothing open. Offer the two

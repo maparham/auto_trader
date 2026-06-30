@@ -51,7 +51,7 @@ interface Props {
   locked: boolean;
   onReady: (cellId: string, chart: Chart, controller: ChartController) => void;
   onFocus: (cellId: string) => void;
-  onPeriod: (p: Period) => void;
+  onPeriod: (cellId: string, p: Period) => void;
 }
 
 export default function ChartGrid({

@@ -193,3 +193,98 @@ test("trailing offset -1W switches to 5m and buttons carry tooltips", async ({ p
   // /^5m$/ so it doesn't also match "15m".
   await expect(page.locator(".periods button", { hasText: /^5m$/ })).toHaveClass(/\bon\b/);
 });
+
+// Adversarial guard for the history-paging race (code-review finding #1, reverse
+// order): the quick-range "cover back" walk shares cursor/exhausted/loading state
+// with klinecharts' scroll-back loader. The fix makes the walk take the scroll-back
+// loader's mutex (and wait out any in-flight page), so the two can NEVER page
+// concurrently — which keeps the bar list from being corrupted (skipped/duplicated
+// windows). Because the mutex serialises under every interleaving, this is
+// deterministic: we assert ≤1 candle request is ever in flight, and the loaded data
+// stays strictly ascending with no duplicate timestamps.
+test("range walk + scroll-back never page concurrently (no corruption)", async ({ page }) => {
+  await seedSingleChartDefault(page);
+  await stubStateApi(page);
+
+  const HOUR = 3600;
+  let inFlight = 0;
+  let maxInFlight = 0;
+  // Window-honouring, delayed candle stub. Initial load (no from_ts) → 50 recent
+  // hourly bars; paging requests (from_ts/to_ts) → up to 500 hourly bars inside the
+  // window. The delay makes concurrent loaders overlap in time IF the mutex failed.
+  await page.route("**/api/candles**", async (route) => {
+    const url = new URL(route.request().url());
+    const fromTs = url.searchParams.get("from_ts");
+    const toTs = url.searchParams.get("to_ts");
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise((r) => setTimeout(r, 120));
+    let candles: Array<Record<string, number>>;
+    if (fromTs && toTs) {
+      const from = Number(fromTs);
+      const to = Number(toTs);
+      const start = to - (to % HOUR);
+      candles = [];
+      for (let t = start; t >= from && candles.length < 500; t -= HOUR) {
+        candles.unshift({ time: t, open: 100, high: 101, low: 99, close: 100, volume: 1 });
+      }
+    } else {
+      const now = Math.floor(Date.now() / 1000);
+      const base = now - (now % HOUR);
+      candles = Array.from({ length: 50 }, (_, i) => ({
+        time: base - (49 - i) * HOUR,
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+        volume: 1,
+      }));
+    }
+    inFlight -= 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(candles),
+    });
+  });
+
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+  await waitForChart(page);
+
+  // Ignore the concurrency seen during the initial boot load — measure only the
+  // walk-vs-scroll-back window below.
+  maxInFlight = 0;
+
+  const cell = page.locator(".chart-wrap").first();
+  await revealBar(page, cell);
+  const bar = cell.getByTestId("chart-range-bar");
+  await expect(bar).toBeVisible();
+
+  // Reverse-order trigger: kick a scroll-back load by jumping to the oldest bar,
+  // THEN immediately pick a same-resolution preset (3M ⇒ HOUR, no interval switch)
+  // so its walk starts while the scroll-back fetch is still in flight.
+  await page.evaluate(() => {
+    const c = (window as unknown as { __chart?: { scrollToDataIndex?: (i: number) => void } })
+      .__chart;
+    c?.scrollToDataIndex?.(0);
+  });
+  await bar.getByRole("button", { name: "3M", exact: true }).click();
+
+  // Let the multi-page walk finish (≈5 pages × 120ms) and settle.
+  await expect.poll(() => inFlight, { timeout: 8000 }).toBe(0);
+  await page.waitForTimeout(300);
+
+  // The mutex serialised the two loaders: at most one candle request in flight.
+  expect(maxInFlight).toBeLessThanOrEqual(1);
+
+  // And the loaded bars are uncorrupted: strictly ascending, no duplicate stamps.
+  const stamps = await page.evaluate(() => {
+    const c = (window as unknown as { __chart?: { getDataList(): Array<{ timestamp: number }> } })
+      .__chart;
+    return (c?.getDataList() ?? []).map((b) => b.timestamp);
+  });
+  expect(stamps.length).toBeGreaterThan(50); // the walk actually paged older history
+  const sortedUnique = [...new Set(stamps)].sort((a, b) => a - b);
+  expect(stamps).toEqual(sortedUnique);
+});
