@@ -819,6 +819,10 @@ async def candles(
         )
 
     if from_ts is not None and to_ts is not None:
+        # Validate the window before hitting the cache/broker: an out-of-range epoch
+        # would crash datetime.fromtimestamp (surfaced as a confusing 502), and an
+        # inverted window would silently return an empty 200. Both are client
+        # errors -> 422.
         if from_ts > to_ts:
             raise HTTPException(422, "from_ts must be <= to_ts")
         try:

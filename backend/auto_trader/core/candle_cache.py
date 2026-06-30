@@ -240,4 +240,5 @@ class CandleCache:
 
 from auto_trader.config import settings  # noqa: E402  (singleton at module load, mirrors tick_store)
 
+# Must come after CandleCache is defined; mirrors the TICK_STORE singleton in tick_store.py.
 CANDLE_CACHE = CandleCache(settings.candle_db_path)
