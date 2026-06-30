@@ -152,6 +152,9 @@ const DOT_RADIUS = 3.5; // selection marker radius
 // base step), so they still never slide.
 const DOT_STEP = 6; // ~48px apart at the default bar spacing (8px)
 const MIN_DOT_GAP_PX = 30;
+// klinecharts' own initial bar spacing (its DEFAULT_BAR_SPACE, not exported) — used to
+// restore the time axis on double-click, matching what a freshly loaded chart starts at.
+const DEFAULT_BAR_SPACE = 8;
 
 // AVWAP anchor drag handle: a larger solid grab handle painted at the anchor bar
 // when AVWAP is selected, draggable left/right to re-anchor (TradingView-style).
@@ -1711,6 +1714,33 @@ export default function ChartCore({
       chartRef.current?.setStyles({ yAxis: { type } });
       autoScale.set(true);
     };
+    // True when the pointer y is within the time-axis strip (below the candle
+    // pane's main area). Mirrors overPriceAxis but for the bottom edge.
+    const overTimeAxis = (e: MouseEvent): boolean => {
+      const c = chartRef.current;
+      const xAxisH = c?.getSize("x_axis_pane", DomPosition.Root)?.height ?? 0;
+      if (!xAxisH) return false;
+      const rect = el.getBoundingClientRect();
+      return e.clientY - rect.top > rect.height - xAxisH;
+    };
+    // Double-clicking the time-axis strip resets the bar spacing to its
+    // default (TV behaviour) WITHOUT moving the view — mirrors onAxisDblClick,
+    // which only re-fits the price axis and never pans it either. Anchored at
+    // the pane's right edge (matching plain setBarSpace's natural anchor, which
+    // holds the right-offset fixed) via zoomAtCoordinate rather than
+    // chart.setBarSpace directly: setBarSpace never fires klinecharts'
+    // ActionType.OnZoom, so the lock-charts date-range sync below (subscribed
+    // to OnZoom/OnScroll) would silently fail to mirror this reset to sibling
+    // cells. zoomAtCoordinate goes through the same zoom() path a wheel-zoom
+    // gesture does, so it fires OnZoom like any other zoom.
+    const onTimeAxisDblClick = (e: MouseEvent) => {
+      if (e.button !== 0 || !overTimeAxis(e)) return;
+      const c = chartRef.current;
+      const cur = c?.getBarSpace();
+      const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width;
+      if (!c || !cur || !mainW) return;
+      c.zoomAtCoordinate(DEFAULT_BAR_SPACE / cur, { x: mainW });
+    };
 
     // A removed indicator (legend trash icon) must drop its selection, or a
     // re-added same-name indicator would appear pre-selected.
@@ -2004,6 +2034,7 @@ export default function ChartCore({
       el.addEventListener("mousedown", onAxisDown, true);
       el.addEventListener("mousedown", onLineDown, true);
       el.addEventListener("dblclick", onAxisDblClick, true);
+      el.addEventListener("dblclick", onTimeAxisDblClick, true);
       const wrap = wrapRef.current;
       wrap?.addEventListener("mousemove", onMove);
       wrap?.addEventListener("mouseleave", onLeave);
@@ -2232,6 +2263,7 @@ export default function ChartCore({
       // for onUp (it fires on window and may never come if the cell unmounts mid-drag).
       lineDrags.forEach((d) => d.dispose());
       el.removeEventListener("dblclick", onAxisDblClick, true);
+      el.removeEventListener("dblclick", onTimeAxisDblClick, true);
       window.removeEventListener("mousemove", onAnchorMove);
       window.removeEventListener("mouseup", onAnchorUp, true);
       wrapRef.current?.removeEventListener("mousemove", onMove);
