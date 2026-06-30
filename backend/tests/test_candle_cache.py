@@ -50,3 +50,96 @@ def test_coverage_none_on_empty_cache(tmp_path):
 def test_read_back_zero_is_empty(tmp_path):
     cache = CandleCache(str(tmp_path / "c.db"))
     assert cache._read_back(KEY, n=0, before_ts=10_000) == []
+
+
+import asyncio
+
+
+class FakeFetcher:
+    """Records calls; returns canned candles. Stand-in for the broker."""
+
+    def __init__(self, bars: list[Candle] | None = None, error: Exception | None = None):
+        self._bars = bars or []
+        self._error = error
+        self.range_calls: list[tuple[int, int]] = []
+        self.recent_calls: list[int] = []
+
+    async def range(self, start: datetime, end: datetime) -> list[Candle]:
+        self.range_calls.append((int(start.timestamp()), int(end.timestamp())))
+        if self._error:
+            raise self._error
+        s, e = int(start.timestamp()), int(end.timestamp())
+        return [b for b in self._bars if s <= int(b.time.timestamp()) <= e]
+
+    async def recent(self, count: int) -> list[Candle]:
+        self.recent_calls.append(count)
+        if self._error:
+            raise self._error
+        return self._bars[-count:]
+
+
+def _dt(ts: int) -> datetime:
+    return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
+def test_window_cold_fetches_and_stores(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    f = FakeFetcher(src)
+    out = asyncio.run(cache.window(KEY, 60, _dt(100), _dt(280), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160, 220, 280]
+    assert len(f.range_calls) == 1  # cold miss -> one fetch
+
+
+def test_window_warm_hit_makes_zero_calls(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    f = FakeFetcher(src)
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(280), f.range, now=10_000))
+    f.range_calls.clear()
+    again = asyncio.run(cache.window(KEY, 60, _dt(160), _dt(220), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in again] == [160, 220]
+    assert f.range_calls == []  # fully covered -> no fetch
+
+
+def test_window_replay_backfill_fills_gap_below_oldest(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    # Warm coverage to [220, 280].
+    f0 = FakeFetcher([_c(t, float(t)) for t in (220, 280)])
+    asyncio.run(cache.window(KEY, 60, _dt(220), _dt(280), f0.range, now=10_000))
+    # Replay jump to ts=40: must backfill the whole gap [40, 220].
+    src = [_c(t, float(t)) for t in (40, 100, 160, 220, 280)]
+    f = FakeFetcher(src)
+    out = asyncio.run(cache.window(KEY, 60, _dt(40), _dt(120), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in out] == [40, 100]
+    # Backfill fetched down to oldest (220), not just the tiny [40,120] window.
+    assert f.range_calls == [(40, 220)]
+    assert cache._coverage(KEY) == (40, 280)
+
+
+def test_window_empty_gap_advances_oldest_no_refetch(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f = FakeFetcher([])  # broker has nothing in this range (closed market)
+    asyncio.run(cache.window(KEY, 60, _dt(40), _dt(100), f.range, now=10_000))
+    assert cache._coverage(KEY) == (40, 100)  # recorded as covered (empty)
+    asyncio.run(cache.window(KEY, 60, _dt(40), _dt(100), f.range, now=10_000))
+    assert len(f.range_calls) == 1  # second call served from cache, no refetch
+
+
+def test_window_serves_cache_when_fetch_errors(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    good = FakeFetcher([_c(t, float(t)) for t in (100, 160, 220)])
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(220), good.range, now=10_000))
+    boom = FakeFetcher(error=RuntimeError("breaker open"))
+    out = asyncio.run(cache.window(KEY, 60, _dt(100), _dt(160), boom.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160]  # cache served despite error
+
+
+def test_window_reraises_when_cache_empty_and_fetch_errors(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    boom = FakeFetcher(error=RuntimeError("breaker open"))
+    try:
+        asyncio.run(cache.window(KEY, 60, _dt(100), _dt(160), boom.range, now=10_000))
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert str(e) == "breaker open"

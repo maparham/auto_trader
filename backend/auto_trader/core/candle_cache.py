@@ -14,8 +14,11 @@ needs (play forward continuously from an arbitrary past point).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
+import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from auto_trader.core.models import Candle
@@ -150,3 +153,38 @@ class CandleCache:
         finally:
             conn.close()
         return n
+
+    async def window(
+        self,
+        key: CandleKey,
+        res_seconds: int,
+        start: datetime,
+        end: datetime,
+        fetch_range: Callable[[datetime, datetime], Awaitable[list[Candle]]],
+        *,
+        now: float | None = None,
+    ) -> list[Candle]:
+        """Candles in [start, end]. Cache hit when the window is fully covered.
+        Otherwise contiguous-backfill: fetch the gap below oldest down to `start`
+        (or the whole window when cold), store closed bars, mark covered, serve."""
+        from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
+        cov = await asyncio.to_thread(self._coverage, key)
+        if cov is not None and cov[0] <= from_ts and cov[1] >= to_ts:
+            return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+        # Backfill from `start` up to the current oldest (gap-free), or the whole
+        # window when cold. End the fetch at oldest so we don't re-pull covered bars.
+        fetch_end = datetime.fromtimestamp(cov[0], tz=timezone.utc) if cov else end
+        try:
+            fetched = await fetch_range(start, fetch_end)
+        except Exception:
+            cached = await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+            if cached:
+                return cached
+            raise
+        cutoff = int(now if now is not None else time.time()) - res_seconds
+        await asyncio.to_thread(self._store_closed, key, fetched, cutoff)
+        # Record the requested span as covered even if the fetch was empty (closed
+        # market): mirrors the frontend's "keep walking back past the gap" so we
+        # don't re-fetch the hole forever.
+        await asyncio.to_thread(self._extend_coverage, key, from_ts, to_ts)
+        return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
