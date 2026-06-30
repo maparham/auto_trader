@@ -16,7 +16,11 @@ from typing import Any
 from auto_trader.core.models import Candle, Resolution
 
 _WEEK = 604800
-_MAX_BASE = 5000  # ceiling on a single base fetch (a derived chart never needs more)
+# Ceiling on a single base fetch. Capital's get_recent_candles hard-clamps to
+# 1000 bars/request (no pagination), so a larger value would only defeat the
+# cache warm-path (cached_n < count-1 stays true forever -> every recent() refetches
+# the full page). Deeper history comes from scroll-back, not a bigger recent fetch.
+_MAX_BASE = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,10 +52,11 @@ def _utc_ts(dt: datetime) -> int:
 def bucket_open(ts: int, rule: BucketRule) -> int:
     """UTC open timestamp of the bucket containing a base bar opening at `ts`."""
     if rule.kind == "week":
-        # Weekly bars share a fixed weekday offset; group by absolute week index so
-        # subtracting whole weeks always lands on another weekly bar's open.
+        # Weekly bars share a fixed weekday offset; group by absolute week index and
+        # subtract whole weeks from `ts` itself so the result PRESERVES that offset
+        # (lands on the group's first real weekly-bar open, not epoch-Thursday).
         idx = ts // _WEEK
-        return (idx - idx % rule.group) * _WEEK
+        return ts - (idx % rule.group) * _WEEK
     dt = datetime.fromtimestamp(ts, tz=timezone.utc)
     if rule.kind == "year":
         return _utc_ts(datetime(dt.year, 1, 1, tzinfo=timezone.utc))
@@ -141,5 +146,7 @@ async def aggregate_candle_stream(
             cur_bo = bo
             closed = await seed_loader(bo)
         prev = bc
-        bar.candle = fold(closed + [bc], rule)[-1]
-        yield bar
+        # The relay yields LiveBar, an immutable NamedTuple — never assign to
+        # `bar.candle` (raises AttributeError). Emit a copy with the folded candle,
+        # preserving bid/ask so the relay's JSON frame is unchanged.
+        yield bar._replace(candle=fold(closed + [bc], rule)[-1])

@@ -2030,7 +2030,14 @@ export default function ChartCore({
         loadingRef.current = true;
         const resSec = RESOLUTION_SECONDS[resRef.current] ?? 60;
         const toSec = cursorSecRef.current - 1;
-        const fromSec = toSec - PAGE_BARS * resSec;
+        // Cap the per-page span. For high/derived timeframes PAGE_BARS*resSec is
+        // enormous (a 1Y page = 500 years), and the backend folds that from DAY
+        // base bars — Capital.get_candles would loop ~180 sequential requests for
+        // one page, stalling the chart and tripping the breaker. Bounding the span
+        // just makes pages smaller (more of them); it stays hole-free because the
+        // cursor follows fromSec exactly. ~6yr keeps the base fetch to a few pages.
+        const MAX_PAGE_SPAN_SEC = 6 * 365 * 86400;
+        const fromSec = toSec - Math.min(PAGE_BARS * resSec, MAX_PAGE_SPAN_SEC);
         const boundary = params.data.timestamp;
         const epic = epicRef.current;
         const resolution = resRef.current;

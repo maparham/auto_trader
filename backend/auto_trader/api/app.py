@@ -815,6 +815,14 @@ async def candles(
         base_key = (broker_id, epic, base.value, price_side)
         base_seconds = base.seconds
         broker = get_data(broker_id)  # 404 on unknown broker (not a breaker failure)
+        # IG daily bars open at 22:00–23:00 UTC the prior calendar day, so folding
+        # them by calendar date would shift every month/year bucket a session early
+        # (wrong OHLC). Block derived on IG until session-aware bucketing exists —
+        # matches the /ws/candles derived guard; the chart keeps its native view.
+        if isinstance(broker, IGBroker):
+            raise HTTPException(
+                422, f"{resolution}: derived timeframes not supported for IG yet"
+            )
 
         async def fetch_range(start_dt, end_dt):
             return await guarded(
@@ -852,7 +860,10 @@ async def candles(
             base_key, base_seconds, base_count_for(rule, bars), fetch_recent
         )
         folded = fold(base_bars, rule)
-        if not folded:
+        # Match the native path: only 404 when no window was requested at all (a
+        # bad epic). A partial-window request (from_ts only) may legitimately be
+        # empty and should return an empty 200, not a hard error.
+        if not folded and from_ts is None:
             raise HTTPException(
                 404, f"no data for epic '{epic}' (unknown epic or no history)"
             )
@@ -1018,7 +1029,11 @@ async def ws_candles(websocket: WebSocket) -> None:
 
         async def _seed(bucket_ts: int) -> list[Candle]:
             # Closed base bars already elapsed in the current bucket (reconnect
-            # mid-bucket); empty at a live rollover.
+            # mid-bucket); empty at a live rollover. Best-effort: a broker/breaker
+            # failure here must NOT propagate into the relay's `async for` (forward()
+            # only catches StreamFatalError/RuntimeError, so anything else would kill
+            # the socket silently). Degrade to an unseeded bucket instead — the
+            # forming aggregate then builds from live base bars going forward.
             start = datetime.fromtimestamp(bucket_ts, tz=timezone.utc)
             now = datetime.now(timezone.utc)
             base_key = (broker_id, epic, base.value, price_side)
@@ -1026,7 +1041,11 @@ async def ws_candles(websocket: WebSocket) -> None:
             async def fetch_range(s, e):
                 return await broker.get_candles(epic, base, s, e, price_side)
 
-            return await CANDLE_CACHE.window(base_key, base.seconds, start, now, fetch_range)
+            try:
+                return await CANDLE_CACHE.window(base_key, base.seconds, start, now, fetch_range)
+            except Exception:
+                log.warning("derived seed fetch failed for %s %s; unseeded", epic, res_raw)
+                return []
 
         stream = aggregate_candle_stream(
             stream_candles(broker, epic, base, price_side), rule, _seed

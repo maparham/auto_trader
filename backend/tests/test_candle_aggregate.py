@@ -107,14 +107,17 @@ def test_base_count_for():
     assert base_count_for(DERIVED["MONTH"], 4) == 4 * 31
     assert base_count_for(DERIVED["MONTH_3"], 2) == 2 * 3 * 31
     assert base_count_for(DERIVED["YEAR"], 2) == 2 * 366
-    assert base_count_for(DERIVED["YEAR"], 100) == 5000
+    # Clamped to the broker's 1000-bar/request cap (no point asking for more).
+    assert base_count_for(DERIVED["YEAR"], 100) == 1000
 
 
-class _Bar:
-    def __init__(self, candle, bid=None, ask=None):
-        self.candle = candle
-        self.bid = bid
-        self.ask = ask
+# Use the REAL LiveBar (an immutable NamedTuple) the relay actually yields — a
+# mutable stand-in would hide the AttributeError that bar.candle assignment raises.
+from auto_trader.brokers.capital_stream import LiveBar
+
+
+def _Bar(candle, bid=None, ask=None):
+    return LiveBar(candle=candle, bid=bid, ask=ask)
 
 
 def _drain(rule, bars, seed):
