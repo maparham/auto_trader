@@ -645,3 +645,38 @@ git commit -m "test(chart): e2e for the date-range bar"
 - **Intraday cap:** `3M@1h` calendar bars (~2160) and any preset whose calendar count exceeds `MAX_BARS=2500` fetch up to the cap; with market-hours gaps the returned history usually still covers the window. If a preset visibly underfills in the smoke test, raise `MAX_BARS` in `rangeWindow.ts` (single constant).
 - **Sibling propagation:** window changes reach siblings only through the existing `onRange` broadcast when "Sync date range" is on; the interval switch is deliberately local to the focused cell.
 - **No backend cache:** this feature uses the broker path as today; wiring `candle_cache.py` into `/api/candles` is out of scope (separate effort).
+
+## Known design debt — history paging has two owners (revisit with replay)
+
+There are now **two code paths that page older candle history**, and they coordinate
+through loose shared refs rather than a single owner:
+
+1. `ChartCore.setLoadDataCallback(...)` — the scroll-back loader (klinecharts fires it
+   at the left edge).
+2. `ChartCore.ensureCoverageAndFit(...)` — the quick-range "cover back to `fromTs`" walk
+   (extracted core in `lib/historyPaging.ts`).
+
+Both read/write the same `cursorSecRef` / `exhaustedRef` / `loadingRef` / `emptyStreakRef`.
+The code-review found this could race (concurrent paging → skipped/duplicated windows,
+exhausted-flag flip-flop) and that the walk could prepend stale-series bars on a
+broker/side switch.
+
+**What we did (the quick fix, shipped):** the range walk now (a) takes the scroll-back
+loader's `loadingRef` mutex and waits out any in-flight page before acquiring it, so the
+two can't run concurrently; (b) guards same-token re-entry via `launchedTokenRef`; and
+(c) captures epic/broker/side in the range token and aborts the walk if any drifts. Bugs
+are closed and tested (`historyPaging.test.ts` + `range-bar.spec.ts`).
+
+**The proper fix (deferred):** give the paging state a single owner — a per-chart
+`HistoryPager` class (mirrors `PositionLines`) that privately holds cursor/exhausted/
+loading and exposes `onForward(params)` (driver 1) and `ensureBack(fromTs)` (driver 2),
+both funnelling through one internal `loadPage()`. That removes the shared refs (race
+impossible by construction), the wait-out loop, and the dedup/exhaustion duplication.
+It is deferred because it also rewrites the battle-tested scroll-back loader — higher
+risk than the live bug warrants right now.
+
+**Trigger to do it:** when **chart replay** (built on `candle_cache.py`) adds a *third*
+consumer of history paging. Three paths sharing loose refs is genuinely unsafe, and the
+`HistoryPager` owner is the right substrate to build replay on — so fold this refactor
+into step 1 of the replay work and verify it against the new replay tests, not as
+standalone churn. See `2026-06-30-candle-history-cache.md`.

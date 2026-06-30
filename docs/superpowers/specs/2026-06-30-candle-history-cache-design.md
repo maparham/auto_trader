@@ -86,9 +86,11 @@ PK: `(broker, epic, resolution, side, ts)`.
 
 ## Data flow
 
-**Closed cutoff:** a bar is "closed" once its next bar has opened, i.e.
-`cutoff = now - resolution.seconds`. Nothing at/after `cutoff` is ever written. The
-forming bar never enters the cache.
+**Closed cutoff:** a bar at open-time `ts` spanning `[ts, ts+res)` is "closed" once
+`now` has left its interval. The cutoff is the forming bucket's open time,
+`cutoff = (int(now) // res) * res`; bars with `ts < cutoff` are stored, so the forming
+bar (whose interval contains `now`) is never written. Both paths share this via the
+`_bucket_start` helper.
 
 ### Recent-N path (no `from_ts`/`to_ts`)
 

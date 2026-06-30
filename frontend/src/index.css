@@ -60,3 +60,105 @@ body {
   color: var(--text);
   font-family: -apple-system, system-ui, sans-serif;
 }
+
+/* Quick date-range bar — a glass instrument readout that floats over the live
+   chart. Hover-revealed; tabular-mono labels; one accent for the active range.
+   All colour derives from the app theme tokens so it tracks dark/light. */
+.chart-range-bar {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 11; /* above klinecharts canvases (z2) and bracket/sel overlays (z9/10) */
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 4px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 0;
+  transform: translateY(2px);
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+/* Revealed only when the cursor is near the cell's bottom edge (.peek, set by a
+   pointer-proximity listener in ChartRangeBar), or pinned while the calendar
+   popover is up (.cal-open) so it doesn't vanish if the cursor drifts off mid-
+   date-entry. NOT .chart-wrap:hover — that kept it up across the whole chart; NOT
+   :focus-within — a clicked range button keeps focus and would pin it after leave. */
+.chart-range-bar.peek,
+.chart-range-bar.cal-open {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.crb-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.4px;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.1s ease, background-color 0.1s ease;
+}
+.crb-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+.crb-btn.active {
+  color: var(--accent);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.crb-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+.crb-btn:disabled { color: var(--text-faint); cursor: default; }
+/* Divider: separates the window/interval presets from the calendar (a distinct
+   "navigate to any date" action) — structural, not decorative. */
+.crb-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 3px;
+  background: var(--border);
+}
+.crb-cal { display: inline-flex; align-items: center; padding: 4px 6px; }
+.crb-cal svg { display: block; }
+.crb-cal-pop {
+  position: absolute;
+  right: 4px;
+  bottom: 32px;
+  display: flex;
+  gap: 5px;
+  padding: 6px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.crb-cal-pop input[type="date"] {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 3px 6px;
+}
+.crb-cal-pop input[type="date"]:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chart-range-bar { transition: opacity 0.14s ease; transform: none; }
+}

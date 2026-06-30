@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Closed bars only in storage.** A bar is closed once its successor opened: `cutoff_ts = int(now) - res_seconds`. Never store a bar with `ts >= cutoff_ts`.
+- **Closed bars only in storage.** A bar at open-time `ts` spanning `[ts, ts+res_seconds)` is closed once `now` has left its interval. The cutoff is the **forming bucket's open time**: `cutoff_ts = (int(now) // res_seconds) * res_seconds`. Never store a bar with `ts >= cutoff_ts` (strict `<`), so the bar whose interval contains `now` (the forming bar) is excluded while the one that just closed is kept. Both `window()` and `recent()` derive the cutoff from the shared helper `_bucket_start(now_s, res_seconds)` so the two paths agree on "closed" while writing the same table. (NB: an earlier draft used `now - res_seconds`, which wrongly dropped the just-closed bar — see Task 3.)
 - **`ts` is bar-open unix seconds (int, UTC).** Convert `Candle.time` ↔ `ts` with `int(c.time.timestamp())` / `datetime.fromtimestamp(ts, tz=timezone.utc)`.
 - **Cache is never load-bearing for correctness.** On any broker-fetch exception, serve whatever the cache holds; re-raise the original exception only when the cache yields nothing.
 - **Per-side rows.** Series key is `(broker, epic, resolution, side)` — bid/mid/ask cached independently.
