@@ -70,14 +70,20 @@ class CandleCache:
         conn.commit()
         return conn
 
-    def _store_closed(self, key: CandleKey, bars: list[Candle], cutoff_ts: int) -> None:
+    def _store_closed(
+        self, key: CandleKey, bars: list[Candle], cutoff_ts: int, extend_coverage: bool = True
+    ) -> tuple[int, int] | None:
+        """Persist the closed bars (ts < cutoff_ts). Returns the stored [min, max] ts
+        span (or None if nothing qualified). When `extend_coverage` is True (the
+        window() default) the span is unioned into coverage; recent() passes False so
+        it can decide between union and reset depending on contiguity."""
         rows = [
             (*key, int(b.time.timestamp()), b.open, b.high, b.low, b.close, b.volume)
             for b in bars
             if int(b.time.timestamp()) < cutoff_ts
         ]
         if not rows:
-            return
+            return None
         conn = self._connect()
         try:
             conn.executemany(
@@ -90,7 +96,10 @@ class CandleCache:
         finally:
             conn.close()
         ts_vals = [r[4] for r in rows]
-        self._extend_coverage(key, min(ts_vals), max(ts_vals))
+        span = (min(ts_vals), max(ts_vals))
+        if extend_coverage:
+            self._extend_coverage(key, *span)
+        return span
 
     def _read_window(self, key: CandleKey, from_ts: int, to_ts: int) -> list[Candle]:
         conn = self._connect()
@@ -142,6 +151,22 @@ class CandleCache:
                 "ON CONFLICT (broker, epic, resolution, side) DO UPDATE SET "
                 "oldest_ts = MIN(oldest_ts, excluded.oldest_ts), "
                 "newest_ts = MAX(newest_ts, excluded.newest_ts)",
+                (*key, lo, hi),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _set_coverage(self, key: CandleKey, lo: int, hi: int) -> None:
+        """Overwrite coverage (NOT union). Used when a fresh recent-N block lands
+        disjoint from stale coverage — unioning would falsely claim the gap between
+        them as covered, so we drop the stale range and keep only the fresh block."""
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO coverage "
+                "(broker, epic, resolution, side, oldest_ts, newest_ts) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (*key, lo, hi),
             )
             conn.commit()
@@ -224,27 +249,39 @@ class CandleCache:
         cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
         cov = await asyncio.to_thread(self._coverage, key)
         cached_n = await asyncio.to_thread(self._cached_count, key)
-        # Warm path needs `count - 1` closed bars cached: the forming bar fills the
-        # final slot. Fewer than that (or cold) -> one full fetch.
-        if cov is None or cached_n < count - 1:
-            try:
-                fetched = await fetch_recent(count)
-            except Exception:
-                cached = await asyncio.to_thread(self._read_back, key, count, cutoff + res_seconds)
-                if cached:
-                    return cached
-                raise
-            await asyncio.to_thread(self._store_closed, key, fetched, cutoff)
-            return fetched[-count:]
+        newest = cov[1] if cov is not None else None
+        # Cold/short cache (no coverage, or fewer than `count - 1` closed bars — the
+        # forming bar fills the final slot) -> one full `count` page. Warm cache -> a
+        # small tail, but sized to BRIDGE from the cached newest bar up to now: a fixed
+        # tail would leave a hole whenever `now` has advanced more than `tail` bars past
+        # newest (e.g. after a restart with a stale cache). Bounded by `count`.
+        cold = cov is None or cached_n < count - 1
+        if cold:
+            fetch_n = count
+        else:
+            bridge = (cutoff - newest) // res_seconds + 1  # bars between newest and now
+            fetch_n = min(count, max(tail, bridge))
         try:
-            tail_bars = await fetch_recent(tail)
+            fetched = await fetch_recent(fetch_n)
         except Exception:
             cached = await asyncio.to_thread(self._read_back, key, count, cutoff + res_seconds)
             if cached:
                 return cached
             raise
-        await asyncio.to_thread(self._store_closed, key, tail_bars, cutoff)
-        forming = [b for b in tail_bars if int(b.time.timestamp()) >= cutoff]
+        # Store without auto-extending coverage, then set it ourselves: a block that
+        # connects to the existing coverage (its oldest is within one bar of newest)
+        # unions; a block that lands disjoint (the gap was bigger than we could bridge)
+        # RESETS coverage to just the fresh block, so the unfetched gap is never claimed.
+        span = await asyncio.to_thread(self._store_closed, key, fetched, cutoff, False)
+        if span is not None:
+            lo, hi = span
+            if newest is not None and lo <= newest + res_seconds:
+                await asyncio.to_thread(self._extend_coverage, key, lo, hi)
+            else:
+                await asyncio.to_thread(self._set_coverage, key, lo, hi)
+        if cold:
+            return fetched[-count:]
+        forming = [b for b in fetched if int(b.time.timestamp()) >= cutoff]
         closed = await asyncio.to_thread(self._read_back, key, count - len(forming), cutoff)
         return closed + forming
 

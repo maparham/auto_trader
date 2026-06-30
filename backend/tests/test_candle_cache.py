@@ -188,6 +188,42 @@ def test_recent_reraises_when_cache_empty_and_fetch_errors(tmp_path):
         assert str(e) == "offline"
 
 
+def test_recent_warm_bridges_gap_contiguous(tmp_path):
+    # Warm path must fetch enough to BRIDGE from the cached newest bar up to now, not
+    # a fixed `tail`. If `now` has advanced more than `tail` bars past newest (e.g.
+    # after a restart), a fixed 3-bar tail would leave a hole. Here the gap fits in
+    # `count`, so the fetched block connects and coverage stays one contiguous range.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    seed = [_c(t, float(t)) for t in range(100, 341, 60)]  # 100,160,220,280,340
+    asyncio.run(cache.recent(KEY, 60, 5, FakeFetcher(seed).recent, tail=3, now=340))
+    # cold: stores 100,160,220,280 (340 forming, cutoff 300); coverage (100,280); cached_n=4.
+    full = [_c(t, float(t)) for t in range(100, 521, 60)]  # 100..520 contiguous
+    f = FakeFetcher(full)
+    out = asyncio.run(cache.recent(KEY, 60, 5, f.recent, tail=3, now=520))  # cutoff 480
+    ts = [int(c.time.timestamp()) for c in out]
+    assert ts == [280, 340, 400, 460, 520]  # contiguous, no hole
+    assert all(ts[i + 1] - ts[i] == 60 for i in range(len(ts) - 1))
+    assert f.recent_calls == [4]  # bridged to 4 bars (not a fixed tail of 3)
+    assert cache._coverage(KEY) == (100, 460)  # single contiguous range, no phantom gap
+
+
+def test_recent_warm_huge_gap_resets_coverage(tmp_path):
+    # When the cache is so stale that `count` bars can't bridge to the cached newest
+    # (e.g. days-old cache after a restart), the fresh block is genuinely disjoint.
+    # Coverage must RESET to the fresh block — never union across the gap (which would
+    # falsely mark thousands of unfetched bars covered and serve scroll-back holes).
+    cache = CandleCache(str(tmp_path / "c.db"))
+    seed = [_c(t, float(t)) for t in range(100, 341, 60)]  # 100..340
+    asyncio.run(cache.recent(KEY, 60, 5, FakeFetcher(seed).recent, tail=3, now=340))
+    # cache {100,160,220,280}, coverage (100,280), cached_n=4.
+    recent_block = [_c(t, float(t)) for t in range(9700, 10001, 60)]  # 9700..10000
+    f = FakeFetcher(recent_block)
+    out = asyncio.run(cache.recent(KEY, 60, 5, f.recent, tail=3, now=10_000))  # cutoff 9960
+    ts = [int(c.time.timestamp()) for c in out]
+    assert ts == [9760, 9820, 9880, 9940, 10000]  # hole-free fresh block, no gap pulled in
+    assert cache._coverage(KEY) == (9760, 9940)  # reset to fresh block, NOT (100, 9940)
+
+
 def test_route_window_short_circuits_repeat(tmp_path, monkeypatch):
     """The /api/candles window path serves a repeated window from cache (no 2nd
     broker call). Uses the cache directly with a counting fetcher to prove the
