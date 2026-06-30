@@ -8,6 +8,7 @@ import ChartCore from "./ChartCore";
 import type { Chart } from "klinecharts";
 import type { ChartController } from "./lib/chartController";
 import type { ChartCell, LayoutKind } from "./lib/persist";
+import type { Period } from "./lib/feed";
 import type { BidAsk, BidAskStyle, Clock, CrosshairStyle, DateFormat, PriceSide, Theme } from "./theme";
 
 // CSS grid template per layout. "3" is three equal columns; "4" is a 2x2 quad.
@@ -50,6 +51,7 @@ interface Props {
   locked: boolean;
   onReady: (cellId: string, chart: Chart, controller: ChartController) => void;
   onFocus: (cellId: string) => void;
+  onPeriod: (p: Period) => void;
 }
 
 export default function ChartGrid({
@@ -72,6 +74,7 @@ export default function ChartGrid({
   locked,
   onReady,
   onFocus,
+  onPeriod,
 }: Props) {
   const grid = GRID[layout] ?? GRID["1"];
   return (
@@ -116,6 +119,7 @@ export default function ChartGrid({
             locked={locked && cells.length > 1}
             onReady={onReady}
             onFocus={onFocus}
+            onPeriod={onPeriod}
           />
         </div>
       ))}

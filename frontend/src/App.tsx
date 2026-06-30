@@ -1220,6 +1220,7 @@ export default function App() {
               locked={!!active.locked}
               onReady={onCellReady}
               onFocus={onCellFocus}
+              onPeriod={setPeriod}
             />
           ) : (
             /* Blank workspace: no default layout and nothing open. Offer the two
