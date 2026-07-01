@@ -1837,8 +1837,12 @@ export default function ChartCore({
       }
       if (!nextOnAxis && pillNodesRef.current.size) {
         const selectedId = overlays.getSelectedAlertId();
+        // A pill freezes the instant its line is hovered (same as a click-selected
+        // pill) so reaching its delete button is a straight line, not a chase — see
+        // registerPill's initial placement above for the one-time position on mount.
+        const hoveredId = overlays.getHoveredAlertId();
         for (const [id, node] of pillNodesRef.current) {
-          if (id !== selectedId) positionPill(node);
+          if (id !== selectedId && id !== hoveredId) positionPill(node);
         }
       }
       // This cell's trade lines, resolved to pixel-y ONCE for both the dock-hover
