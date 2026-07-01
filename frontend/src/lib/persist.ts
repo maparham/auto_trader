@@ -52,20 +52,63 @@ function brokerFromActiveAccount(): string {
   }
   return "capital"; // feed.ts DEFAULT_BROKER; literal to avoid an import cycle
 }
-let persistBroker = brokerFromActiveAccount();
+// Lazily initialized (NOT at module eval time): App.tsx's one-time key migration
+// (capital:live -> capital-live:live) also runs at its own module's top level, and
+// import evaluation order can run this module's top-level code first — reading
+// "activeAccount" here before the migration rewrites it would freeze persistBroker
+// on the stale pre-migration broker id for the rest of the session. Deferring the
+// read to first use guarantees the migration has already run by then.
+let persistBroker: string | null = null;
+function ensurePersistBroker(): string {
+  if (persistBroker === null) persistBroker = brokerFromActiveAccount();
+  return persistBroker;
+}
 export function setPersistBroker(broker: string): void {
   persistBroker = broker;
 }
 export function getPersistBroker(): string {
-  return persistBroker;
+  return ensurePersistBroker();
 }
 // A workspace-root key for the ACTIVE broker. Dynamic (reads persistBroker on every
 // call) so it always tracks the current broker — never freeze it into a const.
-const root = (suffix: string) => `${PREFIX}.b.${persistBroker}.${suffix}`;
+const root = (suffix: string) => `${PREFIX}.b.${ensurePersistBroker()}.${suffix}`;
 // A workspace-root key for an EXPLICIT broker (used by the per-cell/engine alert
 // paths, which must not depend on the ambient persistBroker — see invariant above).
 const brokerRoot = (broker: string, suffix: string) =>
   `${PREFIX}.b.${broker}.${suffix}`;
+
+// Named layouts are SHARED across the two Capital feeds (the demo `capital` host
+// and the live `capital-live` host are one broker, Capital.com, with two data
+// feeds): the saved-layout library is keyed by the broker FAMILY, not the per-feed
+// id, so both feeds show the same list. Only the layout INDEX and BODIES use this;
+// every other per-broker root (tabs, default/active layout, scratch, autosave,
+// recents, templates, alerts) stays per-feed, so the live feed still opens blank.
+//
+// Scoped to Capital ON PURPOSE: Capital is the only broker that splits into two
+// data feeds. IG's demo/live register as fully independent brokers (ig-demo /
+// ig-live) and ALREADY hold their own saved layouts under their own per-feed keys;
+// folding them into one "ig" family would orphan those existing keys. So every
+// non-Capital broker keeps its own namespace (family == its own id).
+// The single source of truth for "is this broker one of the two Capital feeds" —
+// trading.ts's isCapital() re-exports this rather than re-listing the ids, so the
+// two places that need to agree on Capital's membership (money-display logic in
+// PositionsPanel and layout-family scoping here) can't drift out of sync.
+// Exported from here (not trading.ts) because trading.ts already imports from this
+// module (onTradesDirty), so the reverse import would be circular.
+export function isCapitalBroker(brokerId: string): boolean {
+  return brokerId === "capital" || brokerId === "capital-live";
+}
+const CAPITAL_FAMILY_MEMBERS = ["capital", "capital-live"];
+const layoutFamily = () => {
+  const broker = ensurePersistBroker();
+  return isCapitalBroker(broker) ? "capital" : broker;
+};
+const familyRoot = (suffix: string) => `${PREFIX}.b.${layoutFamily()}.${suffix}`;
+// Every per-feed broker id that shares the current broker's layout family — used to
+// keep per-feed roots (like defaultLayoutId) in sync when a family-shared layout
+// they point at is deleted from a sibling feed.
+const familyMembers = () =>
+  layoutFamily() === "capital" ? CAPITAL_FAMILY_MEMBERS : [ensurePersistBroker()];
 
 // Per-broker roots that are intentionally DEVICE-LOCAL (written via saveLocal, never
 // mirrored): which named layout this device shows, the unsaved scratch workspace,
@@ -526,12 +569,14 @@ export function saveTabs(tabs: ChartTab[]): void {
 // Per-broker named-layout roots. The MIRRORED ones (index/body/default) sync across
 // devices; the DEVICE-LOCAL ones (activeLayoutId/scratch/autosave) don't (see
 // isDeviceLocalKey + saveLocal). All address the ACTIVE broker via root().
-const layoutsKey = () => root("layouts");
+// layoutsKey/layoutKey are namespaced by broker FAMILY (see layoutFamily above) so
+// the saved-layout library is shared between e.g. capital and capital-live.
+const layoutsKey = () => familyRoot("layouts");
 const defaultLayoutKey = () => root("defaultLayoutId");
 const activeLayoutKey = () => root("activeLayoutId"); // device-local
 const scratchKey = () => root("scratch"); // device-local
 const autosaveKey = () => root("autosave"); // device-local
-const layoutKey = (id: string) => root(`layout.${id}`);
+const layoutKey = (id: string) => familyRoot(`layout.${id}`);
 
 export interface LayoutMeta {
   id: string;
@@ -592,13 +637,21 @@ export function renameLayout(id: string, name: string): void {
 
 // Delete a layout: drop its index entry, its body, every cell scope it owned, and
 // clear the default if it pointed here. (activeLayoutId is healed by the caller.)
+//
+// The layout body/index are family-shared (layoutFamily), but defaultLayoutId is
+// per-feed — so a shared layout can be someone's default under a SIBLING feed even
+// though it's being deleted from the current one. Clear it there too, or that
+// feed's default silently and permanently points at a layout that no longer exists.
 export function deleteLayout(id: string): void {
   const ws = loadLayout(id);
   const list = loadLayouts().filter((l) => l.id !== id);
   save(layoutsKey(), list);
   removeKeyEverywhere(layoutKey(id));
   if (ws) for (const t of ws.tabs) purgeTabScope(t.id);
-  if (loadDefaultLayoutId() === id) saveDefaultLayoutId(null);
+  for (const broker of familyMembers()) {
+    const key = brokerRoot(broker, "defaultLayoutId");
+    if (load<string | null>(key, null) === id) removeKeyEverywhere(key);
+  }
 }
 
 export function loadDefaultLayoutId(): string | null {

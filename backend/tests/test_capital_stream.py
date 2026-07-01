@@ -172,6 +172,10 @@ class _FakeWS:
 
 
 class _FakeBroker:
+    # stream_candles keys the tick store by the broker's id (set on a real broker
+    # by BrokerRegistry.add_data); the fake carries a stand-in.
+    broker_id = "capital"
+
     def __init__(self):
         self._cst = "cst"
         self._security_token = "tok"

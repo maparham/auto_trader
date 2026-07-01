@@ -1,0 +1,14 @@
+diff --git a/node_modules/klinecharts/dist/index.esm.js b/node_modules/klinecharts/dist/index.esm.js
+index e09fd4c..35e66c4 100644
+--- a/node_modules/klinecharts/dist/index.esm.js
++++ b/node_modules/klinecharts/dist/index.esm.js
+@@ -10306,6 +10306,9 @@ var YAxisImp = /** @class */ (function (_super) {
+         var indicators = chartStore.getIndicatorStore().getInstances(parent.getId());
+         indicators.forEach(function (indicator) {
+             var _a, _b, _c;
++            if (!indicator.visible) {
++                return;
++            }
+             if (!shouldOhlc) {
+                 shouldOhlc = (_a = indicator.shouldOhlc) !== null && _a !== void 0 ? _a : false;
+             }

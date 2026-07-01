@@ -24,14 +24,14 @@ class Settings(BaseSettings):
     identifier: str = ""
     password: str = ""
 
-    # Live (real-money) dealing account. Capital.com runs paper/demo/live as
-    # ACCOUNTS of the one "capital" broker (the chart feed is shared — demo carries
-    # real market quotes), so this is NOT a second data broker like IG's split: it's
-    # an extra execution account that deals against the live host with its own
-    # session. Registered as "capital:live" only when fully credentialed (see
-    # has_live), so a half-configured account never shows a dead tab. The login
-    # (identifier) is the same Capital account as demo, so live_identifier falls back
-    # to `identifier`; only the API key + its custom password are env-specific.
+    # Live (real-money) dealing account. The live host is promoted to its own data
+    # broker, "capital-live" (its own session/quotes, independent of the demo
+    # "capital" feed), carrying both an in-app paper sim ("capital-live:paper") and
+    # the real-money dealing account ("capital-live:live"). Registered only when
+    # fully credentialed (see has_live), so a half-configured account never shows a
+    # dead tab. The login (identifier) is the same Capital account as demo, so
+    # live_identifier falls back to `identifier`; only the API key + its custom
+    # password are env-specific.
     live_api_key: str = ""
     live_password: str = ""
     live_identifier: str = ""

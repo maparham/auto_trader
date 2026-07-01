@@ -10,10 +10,12 @@ is in the developer's .env.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
-from auto_trader.config import IGSettings, Settings
+from auto_trader.config import IGSettings, Settings, settings
 from auto_trader.brokers.registry import BrokerRegistry, build_registry
 
 
@@ -21,40 +23,62 @@ from auto_trader.brokers.registry import BrokerRegistry, build_registry
 def _no_ig(monkeypatch):
     """Default: pretend IG and Capital-live are unconfigured so the base assertions
     are deterministic regardless of the local .env. Tests that want them opt back in
-    explicitly."""
+    explicitly. Capital-live is cleared via the underlying creds (not a has_live()
+    override) so tests can still exercise the real has_live() gating logic."""
     monkeypatch.setattr(IGSettings, "has", lambda self, side: False)
-    monkeypatch.setattr(Settings, "has_live", lambda self: False)
+    monkeypatch.setattr(settings, "live_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "live_password", "", raising=False)
 
 
 def test_build_registry_ships_capital_and_paper() -> None:
     described = build_registry().describe()
     assert described["data"] == ["capital"]
-    [exec_acct] = described["exec"]
-    assert exec_acct == {
+    keys = {e["key"]: e for e in described["exec"]}
+    assert keys["capital:paper"] == {
         "key": "capital:paper",
         "broker": "capital",
         "env": "paper",
         "isRealMoney": False,
     }
-
-
-def test_capital_live_registers_as_real_money_account(monkeypatch) -> None:
-    """Live creds present adds a "capital:live" real-money account on the SAME capital
-    broker (not a second data broker) — env "live", isRealMoney True."""
-    monkeypatch.setattr(Settings, "has_live", lambda self: True)
-    monkeypatch.setattr(
-        Settings, "live_creds", lambda self: ("livekey", "user@email.com", "livepass")
-    )
-    described = build_registry().describe()
-    assert described["data"] == ["capital"]  # still one Capital broker, not two
-    keys = {e["key"]: e for e in described["exec"]}
-    assert keys["capital:paper"]["isRealMoney"] is False
-    assert keys["capital:live"] == {
-        "key": "capital:live",
+    assert keys["capital:demo"] == {
+        "key": "capital:demo",
         "broker": "capital",
-        "env": "live",
-        "isRealMoney": True,
+        "env": "demo",
+        "isRealMoney": False,
     }
+
+
+def test_capital_demo_and_live_feeds(monkeypatch):
+    monkeypatch.setattr(settings, "api_key", "k", raising=False)
+    monkeypatch.setattr(settings, "identifier", "i", raising=False)
+    monkeypatch.setattr(settings, "password", "p", raising=False)
+    monkeypatch.setattr(settings, "live_api_key", "lk", raising=False)
+    monkeypatch.setattr(settings, "live_password", "lp", raising=False)
+    monkeypatch.setattr(settings, "live_identifier", "", raising=False)
+
+    reg = build_registry()
+    assert "capital" in reg.data
+    assert "capital-live" in reg.data
+    for key in ("capital:paper", "capital:demo", "capital-live:paper", "capital-live:live"):
+        assert key in reg.exec, key
+    assert reg.exec["capital:demo"].env == "demo"
+    assert reg.exec["capital:demo"].is_real_money is False
+    assert reg.exec["capital-live:live"].env == "live"
+    assert reg.exec["capital-live:live"].is_real_money is True
+
+
+def test_no_live_creds_registers_only_demo_feed(monkeypatch):
+    monkeypatch.setattr(settings, "api_key", "k", raising=False)
+    monkeypatch.setattr(settings, "identifier", "i", raising=False)
+    monkeypatch.setattr(settings, "password", "p", raising=False)
+    monkeypatch.setattr(settings, "live_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "live_password", "", raising=False)
+
+    reg = build_registry()
+    assert set(reg.data) == {"capital"}
+    assert "capital:paper" in reg.exec
+    assert "capital:demo" in reg.exec
+    assert "capital-live:live" not in reg.exec
 
 
 def test_ig_demo_registers_data_paper_and_dealing(monkeypatch) -> None:
@@ -101,6 +125,8 @@ def test_add_exec_rejects_keys_without_env() -> None:
 
 def test_duplicate_registration_raises() -> None:
     reg = BrokerRegistry()
-    reg.add_data("capital", object())  # type: ignore[arg-type]
+    # add_data stamps broker_id onto the broker, so the stub must accept attributes
+    # (a bare object() can't) — SimpleNamespace stands in for a MarketDataBroker.
+    reg.add_data("capital", SimpleNamespace())  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        reg.add_data("capital", object())  # type: ignore[arg-type]
+        reg.add_data("capital", SimpleNamespace())  # type: ignore[arg-type]

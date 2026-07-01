@@ -45,6 +45,12 @@ class MarketDataBroker(ABC):
     # `capital_stream`-style generator.
     supports_streaming: bool = False
 
+    # Set once by BrokerRegistry.add_data to the id the broker is registered under
+    # ("capital", "capital-live", ...). Lets streams/paper key the shared tick
+    # store by feed instead of epic alone, so a shared epic (e.g. GOLD) doesn't mix
+    # demo and live ticks.
+    broker_id: str | None = None
+
     @abstractmethod
     async def get_candles(
         self,

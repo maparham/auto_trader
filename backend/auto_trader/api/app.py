@@ -804,7 +804,7 @@ async def candles(
     if resolution in SECONDS_INTERVALS:
         return [
             _candle_dto(c)
-            for c in await TICK_STORE.bars(epic, SECONDS_INTERVALS[resolution], bars)
+            for c in await TICK_STORE.bars(broker_id, epic, SECONDS_INTERVALS[resolution], bars)
         ]
     if is_derived(resolution):
         # 2W/3W/6W, 1M/2M/3M, 1Y aren't native resolutions: fold the cached DAY/WEEK

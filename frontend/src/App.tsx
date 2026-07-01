@@ -55,6 +55,7 @@ import {
   fetchAccountSummary,
   loadLastAccountByBroker,
   saveLastAccountByBroker,
+  migrateCapitalLiveAccountKeys,
   type BrokerAccount,
   type TradeAccount,
   type AccountSummary,
@@ -96,6 +97,12 @@ import { requestSymbolSearch } from "./lib/signals";
 import { loadSettings, saveSettings, type Settings } from "./theme";
 import TabBar from "./TabBar";
 import "./App.css";
+
+// One-time rename of the persisted real-money Capital account key
+// ("capital:live" -> "capital-live:live"). Must run before the activeAccount
+// useState initializer below reads localStorage, else an unrecognized old key
+// bounces the user to paper and swaps their whole workspace.
+migrateCapitalLiveAccountKeys();
 
 // Register VWAP / AVWAP and the backtest EQUITY indicator once, before any chart
 // mounts, so they're available to the chart and the indicator menu.

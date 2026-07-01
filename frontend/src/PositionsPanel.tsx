@@ -26,6 +26,7 @@ import {
   brokerLabel,
   brokerOf,
   isRealMoneyAccount,
+  isCapital,
   type TradeView,
   type TradeAccount,
   type BrokerAccount,
@@ -235,7 +236,7 @@ export default function PositionsPanel({
   // EXCLUDES it. This decides whether adding `pnl` would double-count it. (Capital's
   // `deposit` field is unrelated to used margin — see position-margin notes — so we
   // derive used margin from balance/available, not deposit.)
-  const liveBalanceInclPnl = accountSummary != null && activeBroker === "capital";
+  const liveBalanceInclPnl = accountSummary != null && isCapital(activeBroker);
   // Account margin (deposit tied up by open positions). When the broker reports
   // per-position margin (Capital) sum those rows so the strip footer adds up to the
   // MARGIN column exactly. Otherwise derive used margin from the broker's balance −
@@ -266,7 +267,7 @@ export default function PositionsPanel({
   // brokers omit the note until their levels are known.
   // https://capital.com/en-eu/ways-to-trade/margin-calls
   const marginCallNote =
-    activeBroker === "capital"
+    isCapital(activeBroker)
       ? " Capital.com issues a margin call at 100% (no new trades) and again at 75%; at 50% or below it starts closing positions (margin close-out)."
       : "";
   // P&L carries a directional caret + sign-driven tone (the one coloured stat).

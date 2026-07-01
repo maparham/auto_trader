@@ -8,7 +8,7 @@
 // keyed on a trade (lines, pending edits) uses the unified `id` (deal_id for a
 // position, order_id for a resting order).
 
-import { onTradesDirty } from "./persist";
+import { isCapitalBroker, onTradesDirty } from "./persist";
 import { tradesSignal } from "./signals";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
@@ -53,17 +53,58 @@ export function saveLastAccountByBroker(map: Record<string, TradeAccount>): void
   }
 }
 
+const CAPITAL_LIVE_MIGRATION_KEY = "migratedCapitalLiveKeys";
+
+// One-time rename of the real-money Capital account from "capital:live" to
+// "capital-live:live" when the live host became its own data feed. Idempotent and
+// sentinel-gated. Must run BEFORE App reads activeAccount (else the unknown-account
+// fallback bounces the user to paper and swaps their whole workspace).
+export function migrateCapitalLiveAccountKeys(): void {
+  try {
+    if (localStorage.getItem(CAPITAL_LIVE_MIGRATION_KEY)) return;
+    if (localStorage.getItem("activeAccount") === "capital:live") {
+      localStorage.setItem("activeAccount", "capital-live:live");
+    }
+    const raw = localStorage.getItem(LAST_ACCOUNT_BY_BROKER_KEY);
+    if (raw) {
+      const map = JSON.parse(raw) as Record<string, TradeAccount>;
+      // ONLY migrate the live entry for a user who actually used the real-money
+      // account (their "capital" last-used was "capital:live"). Seeding
+      // "capital-live" unconditionally would make a demo-only user land on the
+      // real-money account the first time they open the live feed — never default
+      // someone into real money they didn't choose.
+      if (map["capital"] === "capital:live") {
+        delete map["capital"];
+        map["capital-live"] = "capital-live:live";
+        localStorage.setItem(LAST_ACCOUNT_BY_BROKER_KEY, JSON.stringify(map));
+      }
+    }
+    localStorage.setItem(CAPITAL_LIVE_MIGRATION_KEY, "1");
+  } catch {
+    /* storage unavailable — best effort, retry next load */
+  }
+}
+
 // Display name for a broker id (the id is a lowercase opaque key; this is UI only).
 // Unknown ids fall back to a capitalized id so a new broker still reads sensibly.
 const BROKER_LABELS: Record<string, string> = {
-  capital: "Capital.com",
-  // IG demo and live are separate data brokers (different host/feed), so they get
-  // distinct labels — the env suffix ("· Demo"/"· Paper") is a different axis.
+  // Two Capital feeds: demo (default data host) and live (live host). Distinct
+  // labels because they're separate data brokers; the env suffix (Paper/Demo/Live)
+  // is a different axis shown on the dock account tabs.
+  capital: "Capital.com (demo)",
+  "capital-live": "Capital.com (live)",
   "ig-demo": "IG (demo)",
   "ig-live": "IG (live)",
 };
 export function brokerLabel(brokerId: string): string {
   return BROKER_LABELS[brokerId] ?? brokerId.charAt(0).toUpperCase() + brokerId.slice(1);
+}
+
+// True for any Capital.com feed (demo or live). Capital's reported account balance
+// ALREADY includes unrealized P&L, unlike cash-balance brokers — code that decides
+// whether to add `pnl` must treat both Capital feeds the same (see PositionsPanel).
+export function isCapital(brokerId: string): boolean {
+  return isCapitalBroker(brokerId);
 }
 export type OrderSide = "buy" | "sell";
 type OrderKind = "market" | "limit";

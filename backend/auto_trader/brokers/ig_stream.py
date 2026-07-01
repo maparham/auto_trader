@@ -189,7 +189,7 @@ async def stream_candles(
                 # every reconnect. Raise FATAL so the client stops retrying instead
                 # of opening/closing the socket in a tight loop.
                 raise StreamFatalError(item.msg)
-            TICK_STORE.record(epic, int(time.time() * 1000), item.candle.close)
+            TICK_STORE.record(broker.broker_id, epic, int(time.time() * 1000), item.candle.close)
             yield item
     finally:
         for stop in (lambda: client.unsubscribe(sub), client.disconnect):

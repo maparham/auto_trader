@@ -711,10 +711,12 @@ class CapitalComBroker(MarketDataBroker):
 
 
 class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
-    """Real Capital.com dealing, composed over a dedicated live-host `CapitalComBroker`
-    so it owns its own session (the chart keeps using the demo "capital" data feed —
-    Capital demo carries real market quotes, so the view stays coherent while only
-    execution is routed live).
+    """Real Capital.com dealing, composed over a dedicated `CapitalComBroker`
+    (demo or live host) so it owns its own session. Used for both the demo dealing
+    account (`capital:demo`, demo host) and the real-money one (`capital-live:live`,
+    live host); `env`/`is_real_money` derive from the wrapped broker's host. Each
+    feed's data broker, paper sim, and dealing executor share ONE `CapitalComBroker`
+    instance (one session per feed) — see capital.register / register_live.
 
     `client_order_id` is a *local* idempotency guard (Capital has none): a repeated id
     returns the recorded result, defusing double-clicks and retried-after-success
@@ -747,11 +749,14 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
 
     @property
     def env(self) -> str:
-        return "live"
+        # The dealing account's env follows its host: the live host is a real-money
+        # account, the demo host is Capital's demo dealing account (real broker
+        # positions, fake money) — see registry wiring.
+        return "live" if self._broker._is_live_env() else "demo"
 
     @property
     def is_real_money(self) -> bool:
-        return True
+        return self._broker._is_live_env()
 
     async def aclose(self) -> None:
         """Close the live session's HTTP client (the registry calls this on shutdown
@@ -1084,29 +1089,54 @@ def _parse_dt(s: str | None) -> "datetime | None":
         return None
 
 
-def register(registry: "BrokerRegistry") -> "CapitalComBroker":
-    """Register Capital.com as the "capital" data broker. Returns the instance so
-    the caller can wire executors (e.g. the paper executor) onto its feed."""
-    broker = CapitalComBroker()
-    registry.add_data("capital", broker)
+def _register_capital_feed(
+    registry: "BrokerRegistry",
+    feed_id: str,
+    exec_env: str,
+    *,
+    api_key: str | None = None,
+    identifier: str | None = None,
+    password: str | None = None,
+    base_url: str | None = None,
+) -> "CapitalComBroker":
+    """Wire one Capital.com feed: its data broker, the in-app paper simulator
+    (`{feed_id}:paper`), and a real Capital dealing account (`{feed_id}:{exec_env}`).
+    Shared by `register`/`register_live` so the demo and live feeds can't drift out
+    of sync on the wiring sequence."""
+    from auto_trader.brokers import paper_exec
+
+    broker = CapitalComBroker(
+        api_key=api_key, identifier=identifier, password=password, base_url=base_url
+    )
+    registry.add_data(feed_id, broker)
+    paper_exec.register(registry, broker, broker_id=feed_id)  # {feed_id}:paper
+    registry.add_exec(f"{feed_id}:{exec_env}", CapitalExecutionBroker(broker))
     return broker
 
 
-def register_live_exec(registry: "BrokerRegistry") -> "CapitalExecutionBroker":
-    """Register the real-money "capital:live" dealing account. It deals against the
-    live host with its OWN session (independent of the demo-hosted "capital" data
-    feed), so it's an extra ACCOUNT on the capital broker, not a second broker.
-    Caller gates this on settings.has_live()."""
+def register(registry: "BrokerRegistry") -> "CapitalComBroker":
+    """Register Capital.com's DEMO feed: the "capital" data broker plus two
+    executors on its session — the in-app paper simulator ("capital:paper") and a
+    real Capital DEMO dealing account ("capital:demo", real broker positions on the
+    demo platform, fake money). Returns the broker so callers can wire more on it."""
+    return _register_capital_feed(registry, "capital", "demo")  # demo host (settings.base_url)
+
+
+def register_live(registry: "BrokerRegistry") -> "CapitalComBroker":
+    """Register Capital.com's LIVE feed as the "capital-live" data broker (live host,
+    its own session) plus the in-app paper simulator ("capital-live:paper") and the
+    real-money dealing account ("capital-live:live"). One shared broker instance, so
+    only one live session exists. Caller gates this on settings.has_live()."""
     api_key, identifier, password = settings.live_creds()
-    live_broker = CapitalComBroker(
+    return _register_capital_feed(
+        registry,
+        "capital-live",
+        "live",
         api_key=api_key,
         identifier=identifier,
         password=password,
         base_url=settings.live_base_url,
     )
-    exec_broker = CapitalExecutionBroker(live_broker)
-    registry.add_exec("capital:live", exec_broker)
-    return exec_broker
 
 
 def _parse_prices(

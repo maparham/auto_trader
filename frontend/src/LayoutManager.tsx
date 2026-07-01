@@ -230,22 +230,6 @@ export default function LayoutManager({
             )}
           </ul>
 
-          {/* Rename inline input for the active layout */}
-          {editing === active?.id && (
-            <div className="layout-mgr-rename" onClick={(e) => e.stopPropagation()}>
-              <input
-                autoFocus
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitRename(active.id);
-                  if (e.key === "Escape") setEditing(null);
-                }}
-                onBlur={() => commitRename(active.id)}
-              />
-            </div>
-          )}
-
           {/* ── Layout list ── */}
           {layouts.length > 0 && (
             <>

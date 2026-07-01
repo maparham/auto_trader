@@ -173,7 +173,7 @@ class PaperExecutionBroker(ExecutionBroker):
         to the broker's market-detail cache. The tick store records mid prices, so
         a tick-based fill crosses from the mid by half the snapshot spread when we
         have one, else just applies slippage."""
-        tick = self._ticks.latest(epic)
+        tick = self._ticks.latest(self._market.broker_id, epic)
         bid, ask = await self._snapshot_quote(epic)
         if tick is not None:
             mid = tick[1]
@@ -356,7 +356,7 @@ class PaperExecutionBroker(ExecutionBroker):
 
     async def _current_mid(self, epic: str) -> float | None:
         """Current mid price for marking positions to market."""
-        tick = self._ticks.latest(epic)
+        tick = self._ticks.latest(self._market.broker_id, epic)
         if tick is not None:
             return tick[1]
         bid, ask = await self._snapshot_quote(epic)
@@ -371,7 +371,7 @@ class PaperExecutionBroker(ExecutionBroker):
         Live because the mid comes from the tick stream; the spread comes from the
         (coarser) snapshot. mid/bid/ask are None when no price is available."""
         bid, ask = await self._snapshot_quote(epic)
-        tick = self._ticks.latest(epic)
+        tick = self._ticks.latest(self._market.broker_id, epic)
         if tick is None:
             # No live tick: price off the snapshot bid/ask, but widen by slippage
             # the SAME way `_fill_price` does (BUY fills at ask+slippage, SELL at
@@ -595,7 +595,7 @@ class PaperExecutionBroker(ExecutionBroker):
             epics = {p.epic for p in self._book.values()}
             epics |= {w.epic for w in self._working.values()}
             for epic in epics:
-                tick = self._ticks.latest(epic)
+                tick = self._ticks.latest(self._market.broker_id, epic)
                 if tick is None:
                     continue
                 price = tick[1]

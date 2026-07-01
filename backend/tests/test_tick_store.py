@@ -57,10 +57,10 @@ def test_aggregate_matches_live_tickbar():
 
 def test_history_from_buffer_before_flush(tmp_path):
     store = TickStore(str(tmp_path / "t.db"))
-    store.record("E", 60_000, 100.0)
-    store.record("E", 61_000, 105.0)
-    store.record("E", 66_000, 98.0)
-    bars = asyncio.run(store.bars("E", 5, 10))  # un-flushed: served from buffer
+    store.record("capital", "E", 60_000, 100.0)
+    store.record("capital", "E", 61_000, 105.0)
+    store.record("capital", "E", 66_000, 98.0)
+    bars = asyncio.run(store.bars("capital", "E", 5, 10))  # un-flushed: served from buffer
     assert [b.time.timestamp() for b in bars] == [60.0, 65.0]
     assert (bars[0].open, bars[0].high, bars[0].close) == (100, 105, 105)
 
@@ -70,36 +70,36 @@ def test_history_survives_flush(tmp_path):
     # Recent, 5s-aligned timestamps so retention (now - 48h) doesn't prune them.
     base = (int(time.time() * 1000) // 5000) * 5000
     for off, p in [(0, 100.0), (1_000, 105.0), (6_000, 98.0)]:
-        store.record("E", base + off, p)
+        store.record("capital", "E", base + off, p)
     asyncio.run(store.flush())
     # A fresh store on the same db sees the flushed ticks (durable across restart).
     reopened = TickStore(str(tmp_path / "t.db"))
-    bars = asyncio.run(reopened.bars("E", 5, 10))
+    bars = asyncio.run(reopened.bars("capital", "E", 5, 10))
     assert [b.time.timestamp() for b in bars] == [base / 1000, base / 1000 + 5]
     assert (bars[0].open, bars[0].high, bars[0].close) == (100, 105, 105)
 
 
 def test_unknown_epic_is_empty(tmp_path):
     store = TickStore(str(tmp_path / "t.db"))
-    assert asyncio.run(store.bars("NOPE", 5, 10)) == []
+    assert asyncio.run(store.bars("capital", "NOPE", 5, 10)) == []
 
 
 def test_latest_returns_freshest_buffered_tick(tmp_path):
     store = TickStore(str(tmp_path / "t.db"))
-    store.record("E", 60_000, 100.0)
-    store.record("E", 61_000, 105.0)
-    assert store.latest("E") == (61_000, 105.0)
-    assert store.latest("NOPE") is None
+    store.record("capital", "E", 60_000, 100.0)
+    store.record("capital", "E", 61_000, 105.0)
+    assert store.latest("capital", "E") == (61_000, 105.0)
+    assert store.latest("capital", "NOPE") is None
 
 
 def test_latest_falls_back_to_flushed_tick(tmp_path):
     store = TickStore(str(tmp_path / "t.db"))
     base = (int(time.time() * 1000) // 5000) * 5000
-    store.record("E", base, 100.0)
-    store.record("E", base + 1_000, 105.0)
+    store.record("capital", "E", base, 100.0)
+    store.record("capital", "E", base + 1_000, 105.0)
     asyncio.run(store.flush())  # buffer now empty
     reopened = TickStore(str(tmp_path / "t.db"))
-    assert reopened.latest("E") == (base + 1_000, 105.0)
+    assert reopened.latest("capital", "E") == (base + 1_000, 105.0)
 
 
 def test_latest_survives_flush_from_memory(tmp_path):
@@ -107,26 +107,26 @@ def test_latest_survives_flush_from_memory(tmp_path):
     # memory so latest() answers a streamed epic without a disk read (it runs on
     # the event loop's hot path). Same store as recorded — not a reopen.
     store = TickStore(str(tmp_path / "t.db"))
-    store.record("E", 60_000, 100.0)
-    store.record("E", 61_000, 105.0)
+    store.record("capital", "E", 60_000, 100.0)
+    store.record("capital", "E", 61_000, 105.0)
     asyncio.run(store.flush())
     assert store._buffer == []  # buffer drained by the flush
-    assert store.latest("E") == (61_000, 105.0)  # still served from the cache
+    assert store.latest("capital", "E") == (61_000, 105.0)  # still served from the cache
 
 
 def test_out_of_order_ticks_dropped(tmp_path):
     store = TickStore(str(tmp_path / "t.db"))
-    store.record("E", 61_000, 100.0)
-    store.record("E", 60_000, 999.0)  # older than last seen -> dropped
-    bars = asyncio.run(store.bars("E", 5, 10))
+    store.record("capital", "E", 61_000, 100.0)
+    store.record("capital", "E", 60_000, 999.0)  # older than last seen -> dropped
+    bars = asyncio.run(store.bars("capital", "E", 5, 10))
     assert len(bars) == 1 and bars[0].close == 100
 
 
 def test_count_limits_returned_bars(tmp_path):
     store = TickStore(str(tmp_path / "t.db"))
     for i in range(10):
-        store.record("E", 60_000 + i * 5_000, float(i))  # 10 distinct 5s buckets
-    bars = asyncio.run(store.bars("E", 5, 3))
+        store.record("capital", "E", 60_000 + i * 5_000, float(i))  # 10 distinct 5s buckets
+    bars = asyncio.run(store.bars("capital", "E", 5, 3))
     assert len(bars) == 3
     assert [b.close for b in bars] == [7.0, 8.0, 9.0]  # the most recent 3
 
@@ -143,7 +143,7 @@ def test_bars_survives_missing_table(tmp_path):
         conn.commit()
     finally:
         conn.close()
-    assert asyncio.run(store.bars("E", 5, 10)) == []  # no exception
+    assert asyncio.run(store.bars("capital", "E", 5, 10)) == []  # no exception
 
 
 def test_failed_flush_requeues_batch_not_lost(tmp_path):
@@ -151,7 +151,7 @@ def test_failed_flush_requeues_batch_not_lost(tmp_path):
     # flush retries it, instead of swapping the buffer empty and dropping ticks.
     store = TickStore(str(tmp_path / "t.db"))
     ts = (int(time.time() * 1000) // 5000) * 5000  # recent, so retention won't prune
-    store.record("E", ts, 100.0)
+    store.record("capital", "E", ts, 100.0)
 
     real = store._flush_sync
     calls = {"n": 0}
@@ -169,7 +169,7 @@ def test_failed_flush_requeues_batch_not_lost(tmp_path):
 
     asyncio.run(store.flush())  # retry succeeds
     assert store._buffer == []
-    bars = asyncio.run(store.bars("E", 5, 10))
+    bars = asyncio.run(store.bars("capital", "E", 5, 10))
     assert bars and bars[0].close == 100
 
 
@@ -177,8 +177,8 @@ def test_retention_prunes_old_ticks(tmp_path):
     db = str(tmp_path / "t.db")
     store = TickStore(db)
     now = int(time.time() * 1000)
-    store.record("E", now - RETENTION_MS - 10_000, 1.0)  # older than retention
-    store.record("E", now, 2.0)
+    store.record("capital", "E", now - RETENTION_MS - 10_000, 1.0)  # older than retention
+    store.record("capital", "E", now, 2.0)
     asyncio.run(store.flush())  # prune runs on flush
     conn = sqlite3.connect(db)
     try:

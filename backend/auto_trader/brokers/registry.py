@@ -1,9 +1,10 @@
 """Broker registry: the named lookup the API routes through.
 
 Two namespaces, keyed by id:
-  - `data`  — `MarketDataBroker` per broker, keyed by `broker_id` ("capital").
+  - `data`  — `MarketDataBroker` per broker, keyed by `broker_id` ("capital",
+              "capital-live").
   - `exec`  — `ExecutionBroker` per account, keyed by "{broker_id}:{env}"
-              ("capital:paper", "capital:live", ...).
+              ("capital:paper", "capital:demo", "capital-live:live", ...).
 
 The data broker for an exec key is the part before the colon, so the frontend
 picks one account and both order routing and the chart feed follow from it.
@@ -29,6 +30,7 @@ class BrokerRegistry:
     def add_data(self, broker_id: str, broker: MarketDataBroker) -> None:
         if broker_id in self.data:
             raise ValueError(f"data broker already registered: {broker_id}")
+        broker.broker_id = broker_id  # so streams/paper can key the tick store by feed
         self.data[broker_id] = broker
 
     def add_exec(self, key: str, broker: ExecutionBroker) -> None:
@@ -68,8 +70,8 @@ class BrokerRegistry:
 
     async def aclose(self) -> None:
         """Close every broker that holds a network client. Execution brokers are
-        included because a real-dealing account (e.g. capital:live) owns its own
-        live session, which isn't reachable through the data namespace."""
+        included because a real-dealing account (e.g. capital-live:live) owns its
+        own live session, which isn't reachable through the data namespace."""
         for broker in (*self.data.values(), *self.exec.values()):
             aclose = getattr(broker, "aclose", None)
             if aclose is not None:
@@ -79,19 +81,18 @@ class BrokerRegistry:
 def build_registry() -> BrokerRegistry:
     """Wire every broker the app ships with. Adding a broker is one block here:
     register its data broker, then register the executors that price off it."""
-    from auto_trader.brokers import capital, ig, paper_exec
+    from auto_trader.brokers import capital, ig
     from auto_trader.config import ig_settings
 
     from auto_trader.config import settings
 
     registry = BrokerRegistry()
-    capital_broker = capital.register(registry)
-    paper_exec.register(registry, capital_broker, broker_id="capital")
-    # Real-money Capital dealing as the "capital:live" ACCOUNT (not a second broker):
-    # it deals against the live host with its own session while the chart keeps the
-    # demo "capital" feed. Registers only when the live credentials are present.
+    capital.register(registry)  # demo feed: capital data + capital:paper + capital:demo
+    # Live feed: capital-live data + capital-live:paper + capital-live:live. Only when
+    # the live credentials are present, so a half-configured account never shows a
+    # dead tab.
     if settings.has_live():
-        capital.register_live_exec(registry)
+        capital.register_live(registry)
     # IG demo/live each register only when fully credentialed, so a half-configured
     # or absent IG account never shows a dead entry in the broker selector.
     for side in ("demo", "live"):

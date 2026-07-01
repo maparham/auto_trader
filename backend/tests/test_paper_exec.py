@@ -26,12 +26,17 @@ class _FakeTicks:
     def __init__(self, tick: float | None = None) -> None:
         self.tick = tick
 
-    def latest(self, epic: str):
+    def latest(self, broker: str | None, epic: str):
         return (1, self.tick) if self.tick is not None else None
 
 
 class _FakeMarket:
     """Minimal MarketDataBroker for paper pricing: just a mutable (bid, ask) quote."""
+
+    # The paper executor keys the tick store by its market's broker id (see
+    # PaperExecutionBroker.latest call sites). A real broker gets this from
+    # BrokerRegistry.add_data; the fake just carries a stand-in.
+    broker_id: str | None = "capital"
 
     def __init__(self, bid: float | None, ask: float | None) -> None:
         self.bid = bid

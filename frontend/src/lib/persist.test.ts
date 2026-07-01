@@ -1,29 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { installMemStorage } from "./testMemStorage";
 
 // vitest runs in the 'node' env (see vite.config.ts), so provide a tiny in-memory
 // localStorage before importing the module under test.
-class MemStorage {
-  private m = new Map<string, string>();
-  get length(): number {
-    return this.m.size;
-  }
-  key(i: number): string | null {
-    return [...this.m.keys()][i] ?? null;
-  }
-  getItem(k: string): string | null {
-    return this.m.has(k) ? this.m.get(k)! : null;
-  }
-  setItem(k: string, v: string): void {
-    this.m.set(k, v);
-  }
-  removeItem(k: string): void {
-    this.m.delete(k);
-  }
-  clear(): void {
-    this.m.clear();
-  }
-}
-(globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
+installMemStorage();
 
 const P = await import("./persist");
 
@@ -449,5 +429,69 @@ describe("pickActiveTabId (per-instance active tab)", () => {
 
   it("returns empty for an empty workspace", () => {
     expect(P.pickActiveTabId("anything", ws([]))).toBe("");
+  });
+});
+
+// The named-layout library (index + bodies) is SHARED across accounts of the same
+// broker family (capital/capital-live, ig-demo/ig-live) — see Task 6. Everything
+// else (active layout, scratch, autosave, tabs) stays per-feed so each feed still
+// opens blank.
+describe("named-layout library is shared across a broker family", () => {
+  afterEach(() => P.setPersistBroker("capital"));
+  beforeEach(() => localStorage.clear());
+
+  const body = (tabId: string) =>
+    ({
+      tabs: [
+        {
+          id: tabId,
+          layout: "single",
+          cells: [{ id: `${tabId}-c0`, symbol: "GOLD", period: "1D", scope: `tab.${tabId}` }],
+          activeCellId: `${tabId}-c0`,
+          syncSymbol: false, syncInterval: false, syncCrosshair: false, syncTime: false,
+          locked: false,
+        },
+      ],
+      activeTabId: tabId,
+    }) as unknown as P.Workspace;
+
+  it("capital-live sees the same layouts saved under capital, and vice versa", () => {
+    P.setPersistBroker("capital");
+    P.saveLayout("L1", "Demo Layout", body("tabA"));
+
+    // capital-live (same family "capital") reads the SAME list
+    P.setPersistBroker("capital-live");
+    const list = P.loadLayouts();
+    expect(list.map((l) => l.name)).toEqual(["Demo Layout"]);
+    expect(P.loadLayout("L1")).not.toBeNull();
+
+    // a layout saved on live shows up on demo too (shared)
+    P.saveLayout("L2", "Live Layout", body("tabB"));
+    P.setPersistBroker("capital");
+    expect(P.loadLayouts().map((l) => l.name).sort()).toEqual(["Demo Layout", "Live Layout"]);
+  });
+
+  it("a different broker family (ig) does NOT see capital's layouts", () => {
+    P.setPersistBroker("capital");
+    P.saveLayout("L1", "Demo Layout", body("tabA"));
+    P.setPersistBroker("ig-live");
+    expect(P.loadLayouts()).toHaveLength(0);
+  });
+
+  it("IG keeps its own per-feed layout library (sharing is Capital-only)", () => {
+    // ig-demo registers as its own broker with its own saved layouts — the
+    // Capital family-share must NOT fold IG into a shared "ig" namespace (that
+    // would orphan a user's existing IG layouts). ig-demo reads its OWN layouts,
+    // and Capital never sees them.
+    P.setPersistBroker("ig-demo");
+    P.saveLayout("IG1", "IG Layout", body("tabIg"));
+    expect(P.loadLayouts().map((l) => l.name)).toEqual(["IG Layout"]);
+
+    P.setPersistBroker("capital");
+    expect(P.loadLayouts()).toHaveLength(0);
+
+    // ig-demo still sees its own layout after the capital round-trip
+    P.setPersistBroker("ig-demo");
+    expect(P.loadLayouts().map((l) => l.name)).toEqual(["IG Layout"]);
   });
 });

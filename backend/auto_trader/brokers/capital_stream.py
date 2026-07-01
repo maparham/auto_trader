@@ -416,7 +416,7 @@ async def stream_candles(
                         if ts is not None:
                             store_mid = mid if price_side == "mid" else _quote_mid(p)
                             if store_mid is not None:
-                                TICK_STORE.record(epic, ts, store_mid)
+                                TICK_STORE.record(broker.broker_id, epic, ts, store_mid)
                         # Drive rollover off the TICK CLOCK for intraday resolutions.
                         # The OHLC channel pushes a new bar's first event lazily
                         # (seconds-to-a-minute late), so without this the forming
@@ -565,7 +565,7 @@ async def stream_tick_candles(
                     mid = _quote_mid(p)  # canonical mid; sub-minute is mid-only
                     if ts is None or mid is None:
                         continue
-                    TICK_STORE.record(epic, ts, mid)  # warm sub-minute history
+                    TICK_STORE.record(broker.broker_id, epic, ts, mid)  # warm sub-minute history
                     candle = bar.apply_tick(ts, mid)
                     if candle is None:
                         continue  # stale out-of-order tick; nothing to emit
