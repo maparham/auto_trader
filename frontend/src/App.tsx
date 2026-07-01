@@ -96,6 +96,7 @@ import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
 import { loadSettings, saveSettings, type Settings } from "./theme";
 import TabBar from "./TabBar";
+import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import "./App.css";
 
 // One-time rename of the persisted real-money Capital account key
@@ -219,6 +220,10 @@ export default function App() {
   const [maximized, setMaximized] = useState(false);
   // The trading dock maximized to fill the chart view (the workspace is hidden).
   const [dockMaximized, setDockMaximized] = useState(false);
+  // Per-cell maximize: one cell of a multi-cell layout expanded to fill the grid.
+  // Transient view state (like `maximized` above) — never persisted. Siblings stay
+  // mounted (hidden via CSS) so their live sockets/drawings/scroll survive restore.
+  const [maximizedCellId, setMaximizedCellId] = useState<string | null>(null);
   // Mirror confirmLineEdits onto a signal so the chart (no settings prop) can read it.
   useEffect(() => {
     confirmLineEditsSignal.set(settings.trading.confirmLineEdits);
@@ -1080,16 +1085,28 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeLayoutId, layoutName, tabs, active?.id]);
 
-  // Esc leaves maximized view (matches the fullscreen idiom). Only bound while
-  // maximized so it doesn't swallow Esc elsewhere.
+  // Esc leaves maximized view (matches the fullscreen idiom). Deferred while a
+  // cell is maximized so nested Esc presses unwind the cell first.
   useEffect(() => {
     if (!maximized) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMaximized(false);
+      if (e.key === "Escape" && !maximizedCellId) setMaximized(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [maximized]);
+  }, [maximized, maximizedCellId]);
+
+  // Esc restores a maximized cell. Takes priority over the workspace-maximize
+  // Esc handler above so nested maximizes unwind one level at a time.
+  useCloseOnEscape(() => {
+    if (maximizedCellId) setMaximizedCellId(null);
+  });
+
+  // A maximized cell is a transient view; switching tabs or changing the layout
+  // must clear it so a now-hidden/absent cell can't strand the grid blank.
+  useEffect(() => {
+    setMaximizedCellId(null);
+  }, [active?.id, active?.layout]);
 
   const focusedController = focused?.controller ?? null;
 
@@ -1235,6 +1252,10 @@ export default function App() {
               onReady={onCellReady}
               onFocus={onCellFocus}
               onPeriod={setCellPeriod}
+              maximizedCellId={maximizedCellId}
+              onToggleMaximizeCell={(cellId) =>
+                setMaximizedCellId((cur) => (cur === cellId ? null : cellId))
+              }
             />
           ) : (
             /* Blank workspace: no default layout and nothing open. Offer the two

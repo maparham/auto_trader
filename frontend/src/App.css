@@ -49,6 +49,36 @@
   box-shadow: inset 0 0 0 1px var(--accent);
   z-index: 20;
 }
+/* Per-cell maximize control: top-right corner, revealed on cell hover, kept
+   visible while that cell is maximized. Sits above the chart canvas and the
+   focus ring (z 20). No drop-shadow, per project style. */
+.chart-cell-maximize {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease, background 0.1s ease;
+}
+.chart-cell:hover .chart-cell-maximize,
+.chart-cell.maximized .chart-cell-maximize {
+  opacity: 1;
+}
+.chart-cell-maximize:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
 .placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-faint); }
 
 /* TradingView-style chart tabs along the top (topmost strip, above the toolbar).
