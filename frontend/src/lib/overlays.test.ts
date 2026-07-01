@@ -1,4 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { defaultVisibility, isVisibleOnResolution, barsSpanned, applyPreset } from "./visibility";
+
+// Test helper: a model visible ONLY on `res` (mirrors the "Only this timeframe"
+// preset) — the shorthand these tests use in place of hand-building a full model.
+function onlyVisibleOn(res: string) {
+  return applyPreset(defaultVisibility(), res, "only");
+}
 
 // klinecharts' runtime enums (LineType) aren't resolvable under the node test env,
 // and overlays.ts reads LineType.Dashed at module load. We only need the enum value
@@ -27,18 +34,57 @@ const { alertsChanged } = await import("./signals");
 // Minimal faithful stand-in for a klinecharts Chart: the only 4 methods
 // OverlayManager calls (createOverlay/getOverlayById/overrideOverlay/removeOverlay),
 // backed by an in-memory overlay map that mirrors klinecharts' merge-on-override.
+// NOTE: verified against klinecharts' own source (OverlayImp) that a never-customized
+// overlay's real `.styles` is actually `{}` — concrete colors are resolved only at
+// PAINT time from getDefaultOverlayStyle(), not stored on the instance. So a raw
+// `{ ...spec }` (styles possibly undefined/empty) would be the MORE faithful mock.
+// We seed a populated default here anyway purely so the ghost-stub fade/restore
+// tests below can assert an exact solid-color round-trip by value; the production
+// fade()/unfade() logic (overlays.ts) does NOT rely on this — it always writes back
+// an explicit, concretely-resolved `line.color` itself (see DEFAULT_LINE_COLOR),
+// so restoring works correctly even when `.styles` starts genuinely empty (this was
+// deliberately verified with this seeding removed before landing the fix).
+const DEFAULT_OVERLAY_STYLES = { line: { color: "#1677FF", size: 1, style: "solid" } };
+
+// Local deep clone for seeding each overlay's own default styles object below (mirrors
+// overlays.ts's private cloneStyles — not exported, so re-declared here for the mock).
+function cloneStyles<T>(styles: T): T {
+  return styles == null ? styles : (JSON.parse(JSON.stringify(styles)) as T);
+}
+
 class FakeChart {
   overlays = new Map<string, Record<string, unknown>>();
   private seq = 0;
   createOverlay(spec: Record<string, unknown>) {
     const id = `ov_${++this.seq}`;
-    this.overlays.set(id, { id, ...spec });
+    // Clone the default styles per-overlay: DEFAULT_OVERLAY_STYLES is a single shared
+    // const, and overrideOverlay below now mutates `styles` objects in place (to match
+    // real klinecharts). Without cloning, every overlay that never got an explicit
+    // style would share ONE styles object, so fading overlay A would corrupt the
+    // "default" styles read by every other never-styled overlay B too.
+    this.overlays.set(id, { id, ...spec, styles: spec.styles ?? cloneStyles(DEFAULT_OVERLAY_STYLES) });
     return id;
   }
   getOverlayById(id: string) { return this.overlays.get(id) ?? null; }
   overrideOverlay(o: { id: string } & Record<string, unknown>) {
     const cur = this.overlays.get(o.id);
-    if (cur) this.overlays.set(o.id, { ...cur, ...o });
+    if (!cur) return;
+    const { styles, ...rest } = o;
+    const merged: Record<string, unknown> = { ...cur, ...rest };
+    if (styles && typeof styles === "object") {
+      // Real klinecharts mutates the overlay's existing `styles` object IN PLACE
+      // (Object.assign-style, one level deep — matching the `{line: {...}}`-shaped
+      // patches mergeStyles/fade/unfade build) rather than replacing the reference.
+      // A shallow `{...cur, ...o}` (the old mock behavior) silently swapped in a
+      // brand-new styles object instead, which could never reproduce the real
+      // reference-aliasing bug where a stashed "canonical" styles object gets
+      // corrupted by a later fade() because it points at the SAME object klinecharts
+      // then mutates.
+      const curStyles = (cur.styles as Record<string, unknown>) ?? {};
+      Object.assign(curStyles, styles as Record<string, unknown>);
+      merged.styles = curStyles;
+    }
+    this.overlays.set(o.id, merged);
   }
   removeOverlay(id: string) {
     const cur = this.overlays.get(id);
@@ -82,31 +128,46 @@ function setup() {
 beforeEach(() => localStorage.clear());
 
 describe("OverlayManager per-interval visibility (data-corruption guards)", () => {
-  it("visible intent survives an interval where the drawing is filtered out", () => {
+  it("visible intent survives an interval where the drawing is filtered out (rendered as a ghost, not hidden)", () => {
     const { chart, m } = setup();
     m.setResolution("HOUR");
     const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
 
     // User pins the drawing to 1H only, and wants it visible.
-    m.setVisibleIntervals(id, ["HOUR"]);
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
     m.setVisible(id, true);
     expect(chart.getOverlayById(id)!.visible).toBe(true); // effective: on, 1H matches
+    const solidColor = (chart.getOverlayById(id)!.styles as { line?: { color?: string } } | undefined)
+      ?.line?.color;
 
-    // Switch to a 5m chart → effective visibility goes false (filtered out)...
+    // Switch to a 5m chart → interval filter excludes it, but the user still wants it
+    // on: it stays visible (a ghost) so it's still clickable, just faded...
     m.setResolution("MINUTE_5");
-    expect(chart.getOverlayById(id)!.visible).toBe(false);
+    const ghosted = chart.getOverlayById(id)!;
+    expect(ghosted.visible).toBe(true);
+    expect((ghosted.styles as { line?: { color?: string } } | undefined)?.line?.color).toMatch(
+      /^rgba\(/,
+    );
 
-    // ...and ANY edit fires persist() here. If persist sampled the effective flag,
-    // it would save visible=false and corrupt the user's intent. Trigger one:
+    // ...and ANY edit fires persist() here. If persist sampled the ghosted style, it
+    // would save the faded color and corrupt the user's drawing. Trigger one:
     m.setText(id, "noted");
 
-    // Switch back to 1H → the drawing must REAPPEAR (intent was preserved).
+    // Switch back to 1H → the drawing must return to its SOLID canonical style.
     m.setResolution("HOUR");
-    expect(chart.getOverlayById(id)!.visible).toBe(true);
+    const restored = chart.getOverlayById(id)!;
+    expect(restored.visible).toBe(true);
+    expect((restored.styles as { line?: { color?: string } } | undefined)?.line?.color).toBe(
+      solidColor,
+    );
 
-    // And the persisted record carries INTENT (true), not the filtered flag.
+    // And the persisted record carries INTENT (true) and the CANONICAL (unfaded) style,
+    // not the filtered visible flag or the ghost color.
     const saved = P.loadDrawings("tab.A", "US100").find((d) => d.extendData);
     expect(asDrawingExtra(saved!.extendData).userVisible).toBe(true);
+    expect((saved!.styles as { line?: { color?: string } } | undefined)?.line?.color).not.toMatch(
+      /^rgba\(/,
+    );
   });
 
   it("getDrawing().visible returns intent, not the interval-filtered flag", () => {
@@ -114,7 +175,7 @@ describe("OverlayManager per-interval visibility (data-corruption guards)", () =
     m.setResolution("HOUR");
     const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
     m.setVisible(id, true);
-    m.setVisibleIntervals(id, ["MINUTE_5"]); // not the current interval → effective off
+    m.setVisibilityModel(id, onlyVisibleOn("MINUTE_5")); // not the current interval → effective off
     expect(m.getDrawing(id)!.visible).toBe(true); // checkbox/clone must see intent
   });
 });
@@ -436,19 +497,269 @@ describe("OverlayManager setExtend preserves extendData (text + intervals surviv
     let id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
     m.setText(id, "LABEL");
     m.setShowMiddle(id, true);
-    m.setVisibleIntervals(id, ["HOUR"]);
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
 
     // Extend right (segment -> rayLine): new id, but extendData must survive.
     id = m.setExtend(id, "ray")!;
     let ex = asDrawingExtra(m.getDrawing(id)!.extendData);
     expect(ex.text).toBe("LABEL");
     expect(ex.showMiddle).toBe(true);
-    expect(ex.intervals).toEqual(["HOUR"]);
+    expect(ex.visibility).toEqual(onlyVisibleOn("HOUR"));
 
     // Extend both (rayLine -> straightLine): still survives.
     id = m.setExtend(id, "both")!;
     ex = asDrawingExtra(m.getDrawing(id)!.extendData);
     expect(ex.text).toBe("LABEL");
-    expect(ex.intervals).toEqual(["HOUR"]);
+    expect(ex.visibility).toEqual(onlyVisibleOn("HOUR"));
+  });
+});
+
+describe("drawing effective visibility", () => {
+  // effectiveVisible mirrors: userVisible AND interval AND NOT(autoHide && bars<min).
+  function effective(
+    userVisible: boolean,
+    model: ReturnType<typeof defaultVisibility>,
+    res: string,
+    span?: { t1: number; t2: number },
+  ): boolean {
+    if (!(userVisible && isVisibleOnResolution(model, res))) return false;
+    if (model.autoHide.on && span) {
+      if (barsSpanned(span.t1, span.t2, res) < model.autoHide.minBars) return false;
+    }
+    return true;
+  }
+
+  it("auto-hides a short-span drawing on a coarse timeframe but not a fine one", () => {
+    const m = defaultVisibility();
+    m.autoHide = { on: true, minBars: 3 };
+    const span = { t1: 0, t2: 3_600_000 }; // 1 hour
+    expect(effective(true, m, "MINUTE", span)).toBe(true); // 60 bars
+    expect(effective(true, m, "HOUR", span)).toBe(false); // 1 bar < 3
+  });
+});
+
+// There is no object-list panel: a drawing that becomes invisible (visible:false) can
+// never be clicked again to reopen its settings. So a drawing hidden ONLY by the
+// interval/auto-hide filter (userVisible still true) must render as a faint, still-
+// hittable "ghost" instead of being fully removed from the paint list — while a drawing
+// the user explicitly turned off (userVisible:false) hides completely, same as before.
+describe("ghost stub", () => {
+  it("ghosts an interval-hidden but user-visible drawing (decision-table pin)", () => {
+    const m = defaultVisibility();
+    m.units.minutes.on = false; // hidden on minute timeframes
+    // decision table the manager implements:
+    const userVisible = true;
+    const intervalOk = false; // minutes off, on a minute resolution
+    const ghost = userVisible && !intervalOk;
+    expect(ghost).toBe(true);
+  });
+});
+
+describe("OverlayManager ghost-stub for interval/auto-hidden drawings", () => {
+  it("renders an interval-filtered but user-visible drawing faded (not hidden) and clickable", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
+    m.setVisible(id, true);
+    expect(chart.getOverlayById(id)!.visible).toBe(true);
+
+    m.setResolution("MINUTE_5"); // filtered out, but the user still wants it on
+    const ov = chart.getOverlayById(id)!;
+    expect(ov.visible).toBe(true); // ghosted, not hidden — stays clickable
+    const lineColor = (ov.styles as { line?: { color?: string } } | undefined)?.line?.color;
+    expect(lineColor).toMatch(/^rgba\(/); // faded
+
+    m.setResolution("HOUR"); // back to a matching interval → solid again
+    const restored = chart.getOverlayById(id)!;
+    expect(restored.visible).toBe(true);
+    expect((restored.styles as { line?: { color?: string } } | undefined)?.line?.color).not.toMatch(
+      /^rgba\(/,
+    );
+  });
+
+  it("a user-hidden drawing (Show on chart off) is fully hidden, never ghosted", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisible(id, false);
+    expect(chart.getOverlayById(id)!.visible).toBe(false);
+  });
+
+  it("ghosting survives rehydrate (loads on a filtered interval → renders as a ghost, not invisible)", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
+    m.setVisible(id, true);
+
+    m.setResolution("MINUTE_5"); // filtered on this interval
+    m.rehydrate(); // reload while on a filtered interval (e.g. app restart)
+    const newId = [...chart.overlays.keys()].find((k) => chart.overlays.get(k)?.name === "segment")!;
+    const ov = chart.getOverlayById(newId)!;
+    expect(ov.visible).toBe(true); // ghosted on load, not hidden
+    expect((ov.styles as { line?: { color?: string } } | undefined)?.line?.color).toMatch(/^rgba\(/);
+  });
+
+  // getDrawing() feeds copy/clone (placeDrawing) and the settings modal's color
+  // picker — if it read the LIVE (faded) styles off a ghosted drawing, cloning it
+  // would bake the ghost rgba in as the clone's own "canonical" style, and every
+  // future ghost/restore cycle on the clone would re-fade an already-faded color:
+  // a drawing that can never become solid again.
+  it("getDrawing() returns the canonical (unfaded) style even while a drawing is ghosted", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
+    const solidColor = (m.getDrawing(id)!.styles as { line?: { color?: string } } | null)?.line?.color;
+
+    m.setResolution("MINUTE_5"); // now ghosted
+    expect((chart.getOverlayById(id)!.styles as { line?: { color?: string } })?.line?.color).toMatch(
+      /^rgba\(/,
+    );
+    const snapshot = m.getDrawing(id)!;
+    expect((snapshot.styles as { line?: { color?: string } } | null)?.line?.color).toBe(solidColor);
+    expect((snapshot.styles as { line?: { color?: string } } | null)?.line?.color).not.toMatch(
+      /^rgba\(/,
+    );
+
+    // A clone (placeDrawing) built from that snapshot must persist the real color.
+    const cloneId = m.placeDrawing({
+      name: snapshot.name,
+      points: [{ value: 3 }, { value: 4 }],
+      styles: snapshot.styles,
+      extendData: snapshot.extendData,
+    })!;
+    const saved = P.loadDrawings("tab.A", "US100").find((d) => d.points?.[0]?.value === 3);
+    expect((saved!.styles as { line?: { color?: string } } | undefined)?.line?.color).not.toMatch(
+      /^rgba\(/,
+    );
+    expect(cloneId).toBeTruthy();
+  });
+
+  // setExtend (segment -> rayLine -> straightLine) removes and recreates the overlay
+  // under a new id. If it copied the LIVE styles off a ghosted drawing, the extended
+  // line would persist with the faded color baked in as canonical.
+  it("setExtend on a ghosted drawing carries the canonical style, not the faded one, and stays ghosted", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    let id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
+
+    m.setResolution("MINUTE_5"); // ghosted
+    id = m.setExtend(id, "ray")!;
+    const ov = chart.getOverlayById(id)!;
+    expect(ov.visible).toBe(true); // still rendered (ghost), not hidden
+    expect((ov.styles as { line?: { color?: string } } | undefined)?.line?.color).toMatch(/^rgba\(/); // still visibly faded
+
+    const saved = P.loadDrawings("tab.A", "US100").find((d) => d.extendData);
+    expect((saved!.styles as { line?: { color?: string } } | undefined)?.line?.color).not.toMatch(
+      /^rgba\(/,
+    ); // but the persisted style is the real color
+  });
+
+  // setStyle() is the Style-tab handler in DrawingSettings.tsx — the exact modal a
+  // user reaches by clicking a ghost to reopen its settings and change its color. If
+  // it writes the new color straight onto the live (faded) overlay, canonicalStyles()
+  // still sees a stashed pre-edit fadedStyles entry and persist() (which setStyle
+  // itself triggers) saves that STALE color instead of the user's edit — discarding it
+  // on the spot, and re-applying it live the moment the drawing naturally un-ghosts.
+  it("setStyle on a ghosted drawing persists the NEW color, not the stale pre-ghost one, and un-ghosts to the NEW color", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
+
+    m.setResolution("MINUTE_5"); // filtered out -> ghosted (fadedStyles stashes the OLD color)
+    const ghosted = chart.getOverlayById(id)!;
+    expect(ghosted.visible).toBe(true);
+    expect((ghosted.styles as { line?: { color?: string } })?.line?.color).toMatch(/^rgba\(/);
+
+    // Edit the color while ghosted (exactly what DrawingSettings' Style tab does).
+    m.setStyle(id, { line: { color: "#ff0000", size: 2, style: "solid" } });
+
+    // Still rendered as a ghost (faded), but with the NEW hue baked into the fade —
+    // not the pre-edit default blue.
+    const stillGhosted = chart.getOverlayById(id)!;
+    expect(stillGhosted.visible).toBe(true);
+    const fadedColor = (stillGhosted.styles as { line?: { color?: string } })?.line?.color;
+    expect(fadedColor).toMatch(/^rgba\(/);
+    expect(fadedColor?.toLowerCase()).toContain("255, 0, 0"); // red, faded — not the stale blue
+
+    // persist() (triggered by setStyle itself) must save the NEW canonical color, not
+    // the stashed pre-edit one.
+    const saved = P.loadDrawings("tab.A", "US100").find((d) => d.name === "segment");
+    expect((saved!.styles as { line?: { color?: string } } | undefined)?.line?.color).toBe("#ff0000");
+
+    // Un-ghost (back to an allowed interval) — must render with the NEW color, not a
+    // stale stash.
+    m.setResolution("HOUR");
+    const restored = chart.getOverlayById(id)!;
+    expect(restored.visible).toBe(true);
+    expect((restored.styles as { line?: { color?: string } } | undefined)?.line?.color).toBe("#ff0000");
+  });
+
+  // Regression test for the reference-aliasing bug: applyDisplay's fade branch used
+  // to stash `ov.styles` by REFERENCE (`this.fadedStyles.set(id, ov.styles)`) as the
+  // "canonical" unfaded backup. Real klinecharts mutates an overlay's `.styles` object
+  // IN PLACE on overrideOverlay, so the very next fade() call (which patches
+  // `line.color` to the ghost rgba) corrupted the stashed canonical too, since it was
+  // the SAME object. Every later un-fade then restored the GHOST color, not the true
+  // original — a drawing that, once ghosted even once, stayed faded forever. Fixed by
+  // deep-cloning the styles at stash time (cloneStyles). This must exercise a drawing
+  // that was NEVER explicitly styled (default color), because that's exactly the
+  // real-world repro: draw a line, never touch its color, switch timeframes.
+  it("a never-explicitly-styled drawing restores its TRUE original color after a ghost/un-ghost cycle, not the ghost rgba (reference-aliasing regression)", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
+
+    const originalColor = (chart.getOverlayById(id)!.styles as { line?: { color?: string } })?.line
+      ?.color;
+    expect(originalColor).toBeTruthy();
+    expect(originalColor).not.toMatch(/^rgba\(/); // sanity: starts solid/concrete
+
+    m.setResolution("MINUTE_5"); // filtered out -> ghosted (first-ever fade for this id)
+    const ghosted = chart.getOverlayById(id)!;
+    expect((ghosted.styles as { line?: { color?: string } })?.line?.color).toMatch(/^rgba\(/);
+
+    m.setResolution("HOUR"); // back to a matching interval -> should un-ghost to solid
+    const restored = chart.getOverlayById(id)!;
+    const restoredColor = (restored.styles as { line?: { color?: string } })?.line?.color;
+    expect(restoredColor).not.toMatch(/^rgba\(/); // must not still be the ghost color
+    expect(restoredColor).toBe(originalColor); // must be the EXACT true original, not a mutated copy
+
+    // The bug wasn't limited to a single cycle — the corrupted canonical stayed
+    // corrupted, so repeat the round trip once more for good measure.
+    m.setResolution("MINUTE_5");
+    m.setResolution("HOUR");
+    const restoredAgain = chart.getOverlayById(id)!;
+    expect(
+      (restoredAgain.styles as { line?: { color?: string } })?.line?.color,
+    ).toBe(originalColor);
+  });
+
+  // Same reference-aliasing bug, but in the ORDINARY (never-ghosted) path this time.
+  // getDrawing() is DrawingSettings.tsx's Cancel-button snapshot source
+  // (`useState(() => overlays.getDrawing(id))`). If it returns `ov.styles` by
+  // reference (canonicalStyles' non-ghosted branch used to), a later setStyle() edit
+  // mutates that SAME object in place (klinecharts' overrideOverlay merges into
+  // `ov.styles`), silently corrupting the earlier snapshot too — so Cancel, which
+  // re-applies the stashed snapshot's styles, just re-applies the post-edit value and
+  // never actually reverts anything.
+  it("getDrawing() snapshot is unaffected by a LATER setStyle edit (Cancel-button aliasing regression)", () => {
+    const { m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+
+    const snapshot = m.getDrawing(id)!;
+    const originalColor = (snapshot.styles as { line?: { color?: string } } | null)?.line?.color;
+    expect(originalColor).toBeTruthy();
+
+    m.setStyle(id, { line: { color: "#00ff00", size: 3, style: "solid" } });
+
+    // The EARLIER snapshot must still read the pre-edit color, not the new one.
+    expect((snapshot.styles as { line?: { color?: string } } | null)?.line?.color).toBe(
+      originalColor,
+    );
   });
 });

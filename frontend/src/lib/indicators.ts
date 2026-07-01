@@ -29,6 +29,11 @@ import {
   type CustomIndicatorType,
 } from "./customIndicators";
 import {
+  type VisibilityModel,
+  defaultVisibility,
+  isVisibleOnResolution,
+} from "./visibility";
+import {
   loadIndicators,
   loadIndicatorConfigs,
   loadIndicatorDefault,
@@ -229,6 +234,31 @@ export function applyIndicator(
       paneId,
     );
   return paneId;
+}
+
+// Re-derive every indicator's effective on-chart visibility against the current
+// resolution. Mirrors OverlayManager.applyIntervalVisibility for drawings: user intent
+// (extendData.userVisible, default true) AND the model's interval match. Iterates ALL
+// panes — the candle pane plus every sub-pane (Volume/MACD/RSI/…) — via
+// chart.getIndicatorByPaneId() with no args, which returns every pane's indicator map
+// (same enumerator removeIndicatorById already uses; klinecharts has no getPanes()/
+// no-name-per-pane array API). A VIEW reaction to a period change, not a user edit: it
+// does not persist (intent is already stored in extendData by the settings modal).
+export function applyIndicatorIntervalVisibility(chart: Chart, resolution: string): void {
+  const panes = chart.getIndicatorByPaneId() as
+    | Map<string, Map<string, Indicator>>
+    | null
+    | undefined;
+  for (const [paneId, inds] of panes ?? []) {
+    for (const ind of inds.values()) {
+      if (!ind?.name) continue;
+      const ext = (ind.extendData ?? {}) as { userVisible?: boolean; visibility?: VisibilityModel };
+      const intent = ext.userVisible ?? ind.visible ?? true;
+      const model = ext.visibility ?? defaultVisibility();
+      const visible = intent && isVisibleOnResolution(model, resolution);
+      chart.overrideIndicator({ name: ind.name, visible }, paneId);
+    }
+  }
 }
 
 // Add a fresh instance of `type` (mints a new id). Returns the new instance, or

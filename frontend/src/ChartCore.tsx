@@ -80,9 +80,11 @@ import {
 } from "./lib/persist";
 import {
   addIndicatorInstance,
+  applyIndicatorIntervalVisibility,
   hydrateIndicators,
   removeIndicatorById,
 } from "./lib/indicators";
+import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
 import { maybeAutoApplyTemplate } from "./lib/templates";
 import {
   indTypeOf,
@@ -2529,6 +2531,12 @@ export default function ChartCore({
       // visibility (a drawing can be pinned to specific intervals). This effect
       // re-runs on period.resolution, so switching timeframe re-evaluates here.
       overlays.setResolution(period.resolution);
+      // Mirror the drawings' interval filter for indicators: re-derive each
+      // indicator's effective visibility (user intent AND interval match) against
+      // the now-current resolution. Runs here so both a fresh rehydrate (above)
+      // and a plain period switch (this effect re-runs on period.resolution) land
+      // on the right on-chart state — a view reaction only, nothing persisted.
+      applyIndicatorIntervalVisibility(chartRef.current, period.resolution);
       // A quick-range pick that switched interval parked its window here; the
       // initial new-resolution bars are loaded, so page back to the period start
       // (if needed) and fit. ensureCoverageAndFit clears pendingRangeRef when done.
@@ -3498,14 +3506,27 @@ export default function ChartCore({
     const c = chartRef.current;
     if (!c) return;
     const paneId = paneIdOf(name);
-    const ind = c.getIndicatorByPaneId(paneId, name) as { visible?: boolean } | null;
+    const ind = c.getIndicatorByPaneId(paneId, name) as
+      | { visible?: boolean; extendData?: unknown }
+      | null;
     const next = !(ind?.visible ?? true);
-    c.overrideIndicator({ name, visible: next }, paneId);
+    // Also write extendData.userVisible in the SAME operation (never separately) —
+    // applyIndicatorIntervalVisibility (lib/indicators.ts) recomputes intent from
+    // extendData.userVisible on every period change and does NOT fall back to the
+    // live `visible` flag once userVisible has ever been explicitly set. Toggling
+    // only the live flag here would make this eye icon appear to self-revert on the
+    // next timeframe switch, since the stale userVisible would win again.
+    const ext = { ...((ind?.extendData as object) ?? {}), userVisible: next };
+    const vis = (ext as { visibility?: VisibilityModel }).visibility ?? defaultVisibility();
+    c.overrideIndicator(
+      { name, extendData: ext, visible: next && isVisibleOnResolution(vis, period.resolution) },
+      paneId,
+    );
     // Visibility persists by scope+name (pane-agnostic) and is re-applied on hydrate,
     // so sub-pane indicators now keep their hidden state across reloads too.
     saveIndicatorVisible(scope, name, next);
     redrawRef.current();
-  }, [paneIdOf]);
+  }, [paneIdOf, period.resolution]);
   const onLegendOpenSettings = useCallback((name: string) => {
     indicatorSettingsRequest.set({ paneId: paneIdOf(name), name });
   }, [paneIdOf]);

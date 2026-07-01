@@ -29,18 +29,33 @@ export function toKLineStyle(opt: LineStyleOpt): KLineStyleFields {
   }
 }
 
-// "#RRGGBB" + 0..1 alpha → "rgba(r,g,b,a)". klinecharts line styles have no
-// separate opacity field, so callers that want a translucent line fold the alpha
-// into the color string. Passes anything that isn't a 6-digit hex straight through
-// (e.g. an already-rgba string, or "" to mean "no override").
+// "#RGB" / "#RRGGBB" / "rgb(...)" / "rgba(...)" + 0..1 alpha → "rgba(r,g,b,a)".
+// klinecharts line styles have no separate opacity field, so callers that want a
+// translucent line fold the alpha into the color string. Re-alphas an already-rgba(o)
+// string too (preserving its hue, dropping its old alpha) rather than passing it
+// through unconverted, so re-fading an already-translucent color still lands on the
+// requested alpha. Falls back to the original string for any other format (named
+// colors, unparseable input, "" to mean "no override") rather than guessing wrong.
 export function hexToRgba(hex: string, alpha: number): string {
-  // Leading '#' optional so a bare "rrggbb" still converts (the prior home of this
-  // helper accepted it; requiring '#' would silently pass such a color through
-  // unconverted, dropping the alpha and rendering an opaque fill).
-  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
-  if (!m) return hex;
-  const n = parseInt(m[1], 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  if (!hex) return hex;
+  // Leading '#' optional so a bare "rrggbb"/"rgb" still converts (the prior home of
+  // this helper accepted a bare 6-digit form; requiring '#' would silently pass such
+  // a color through unconverted, dropping the alpha and rendering an opaque fill).
+  let m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  }
+  m = /^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/.exec(hex);
+  if (m) {
+    const [r, g, b] = [m[1], m[2], m[3]].map((c) => parseInt(c + c, 16));
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*[\d.]+\s*)?\)$/.exec(hex);
+  if (m) {
+    return `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${alpha})`;
+  }
+  return hex;
 }
 
 // klinecharts {style, dashedValue} → our option. Solid wins on style; among dashed,

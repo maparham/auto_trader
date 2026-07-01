@@ -16,10 +16,11 @@ import CloseButton from "./CloseButton";
 import { LineType } from "klinecharts";
 import type { DeepPartial, OverlayStyle } from "klinecharts";
 import { type OverlayManager, asDrawingExtra } from "./lib/overlays";
-import { PERIOD_GROUPS } from "./lib/feed";
 import { useDraggable } from "./lib/useDraggable";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
+import VisibilityTab from "./VisibilityTab";
+import { type VisibilityModel, defaultVisibility } from "./lib/visibility";
 
 interface Props {
   overlays: OverlayManager;
@@ -35,8 +36,6 @@ type Tab = "style" | "text" | "coordinates" | "visibility";
 
 // Trend-line family whose endpoints define a line we can "extend" by swapping the
 // built-in (segment = no extend, rayLine = one side, straightLine = both).
-const ALL_RESOLUTIONS = PERIOD_GROUPS.flatMap((g) => g.periods.map((p) => p.resolution));
-
 const TREND = new Set(["segment", "rayLine", "straightLine"]);
 const EXTEND_OF: Record<string, "none" | "ray" | "both"> = {
   segment: "none",
@@ -87,10 +86,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   // Text tab (trend lines only — the overridden custom overlays render these).
   const [text, setText] = useState<string>(extra0.text ?? "");
   const [showMiddle, setShowMiddle] = useState<boolean>(extra0.showMiddle ?? false);
-  // null sentinel = "all intervals"; a Set means a specific allow-list.
-  const [intervals, setIntervals] = useState<Set<string> | null>(
-    extra0.intervals && extra0.intervals.length ? new Set(extra0.intervals) : null,
-  );
+  const [vis, setVis] = useState<VisibilityModel>(extra0.visibility ?? defaultVisibility());
 
   // Coordinates: editable price per point, with the timestamp shown as a date.
   const [points, setPoints] = useState(() =>
@@ -147,25 +143,9 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     overlays.setShowMiddle(curId, v);
   }
 
-  // "Show on all intervals" toggle. On → clear the allow-list (null); off → seed it
-  // with the current interval set, or all known intervals if none was pinned.
-  function applyAllIntervals(all: boolean) {
-    if (all) {
-      setIntervals(null);
-      overlays.setVisibleIntervals(curId, null);
-    } else {
-      const seed = new Set(intervals ?? ALL_RESOLUTIONS);
-      setIntervals(seed);
-      overlays.setVisibleIntervals(curId, [...seed]);
-    }
-  }
-
-  function toggleInterval(resolution: string, on: boolean) {
-    const next = new Set(intervals ?? ALL_RESOLUTIONS);
-    if (on) next.add(resolution);
-    else next.delete(resolution);
-    setIntervals(next);
-    overlays.setVisibleIntervals(curId, [...next]);
+  function applyVis(next: VisibilityModel) {
+    setVis(next);
+    overlays.setVisibilityModel(curId, next);
   }
 
   function applyPointValue(i: number, value: number) {
@@ -195,7 +175,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
         const oExtra = asDrawingExtra(o.extendData);
         overlays.setStyle(curId, o.styles ?? {});
         overlays.updatePoints(curId, o.points);
-        overlays.setVisibleIntervals(curId, oExtra.intervals ?? null);
+        overlays.setVisibilityModel(curId, oExtra.visibility ?? defaultVisibility());
         overlays.setPriceLabels(curId, oExtra.priceLabels ?? true);
         overlays.setText(curId, oExtra.text ?? "");
         overlays.setShowMiddle(curId, oExtra.showMiddle ?? false);
@@ -340,35 +320,12 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                 <span>Show price label on axis</span>
               </label>
 
-              <div className="ind-row" style={{ marginTop: 8 }}>
-                <label>Intervals</label>
-                <select
-                  value={intervals == null ? "all" : "custom"}
-                  onChange={(e) => applyAllIntervals(e.target.value === "all")}
-                >
-                  <option value="all">All intervals</option>
-                  <option value="custom">Specific intervals…</option>
-                </select>
-              </div>
-              {intervals != null && (
-                <div className="ind-interval-grid">
-                  {PERIOD_GROUPS.map((g) => (
-                    <div className="ind-interval-group" key={g.label}>
-                      <div className="ind-interval-group-label">{g.label}</div>
-                      {g.periods.map((p) => (
-                        <label className="ind-check" key={p.resolution}>
-                          <input
-                            type="checkbox"
-                            checked={intervals.has(p.resolution)}
-                            onChange={(e) => toggleInterval(p.resolution, e.target.checked)}
-                          />
-                          <span>{p.label}</span>
-                        </label>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
+              <VisibilityTab
+                model={vis}
+                onChange={applyVis}
+                showAutoHide
+                currentResolution={overlays.getResolution()}
+              />
             </>
           )}
         </div>

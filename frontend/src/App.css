@@ -2229,3 +2229,69 @@
   box-sizing: border-box; font-variant-numeric: tabular-nums;
 }
 .num-input:focus { outline: none; border-color: var(--accent); }
+
+/* Visibility tab (drawings + indicators): one row per time unit — enable
+   checkbox, min, a range slider, max. The preset select above it does the same
+   job in one click; the grid is for the "Custom" case. */
+.vis-preset-row { margin-bottom: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+/* Column captions over the min/max number boxes only — the label and slider
+   columns stay blank (nothing to caption). Mirrors the grid's own column widths
+   so the numbers land dead-center under "Min"/"Max". */
+.vis-col-heads {
+  display: grid; grid-template-columns: 92px 56px 1fr 56px; gap: 8px;
+  padding: 0 0 2px; margin-top: 2px;
+}
+.vis-col-heads span {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-faint); text-align: center;
+}
+.vis-grid { display: flex; flex-direction: column; gap: 2px; }
+.vis-row {
+  display: grid; grid-template-columns: 92px 56px 1fr 56px; align-items: center; gap: 8px;
+  padding: 4px 0; border-radius: 4px; transition: opacity 0.12s ease;
+}
+.vis-row.is-off { opacity: 0.45; }
+.vis-unit { margin: 0; }
+.vis-num { width: 100%; text-align: center; }
+.vis-num:focus { outline: none; border-color: var(--accent); }
+
+/* Thin flat track + small accent thumb (webkit/moz) so the one native range
+   input in the app doesn't read as an unstyled foreign control next to the
+   custom checkboxes/selects around it. No shadows, matches the house flat look. */
+.vis-slider {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 16px;
+  background: transparent; cursor: pointer;
+}
+.vis-slider:disabled { cursor: not-allowed; }
+.vis-slider::-webkit-slider-runnable-track {
+  height: 3px; border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.vis-slider:disabled::-webkit-slider-runnable-track { background: var(--border); }
+.vis-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4.5px;
+  border-radius: 50%; background: var(--accent); border: 2px solid var(--surface);
+}
+.vis-slider:disabled::-webkit-slider-thumb { background: var(--text-faint); }
+.vis-slider::-moz-range-track {
+  height: 3px; border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.vis-slider:disabled::-moz-range-track { background: var(--border); }
+.vis-slider::-moz-range-thumb {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface);
+}
+.vis-slider:disabled::-moz-range-thumb { background: var(--text-faint); }
+.vis-slider:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+.vis-slider:focus-visible::-moz-range-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Auto-hide: a distinct settled control, not a run-on checkbox sentence — a
+   hairline above + a faint accent-tinted chip echoes .al-expiry-opt.custom's
+   "this row is a config block" treatment used elsewhere in the settings modals. */
+.vis-autohide {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 12px; padding: 10px; border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.vis-autohide .vis-num { width: 48px; }

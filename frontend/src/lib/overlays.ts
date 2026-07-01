@@ -27,8 +27,50 @@ import {
   type AlertNotifyChannels,
 } from "./persist";
 import { bumpAlerts } from "./signals";
+import { hexToRgba } from "./lineStyle";
+import {
+  type VisibilityModel,
+  defaultVisibility,
+  isVisibleOnResolution,
+  barsSpanned,
+} from "./visibility";
 
 type Kind = "drawing" | "alert";
+
+// One-level-deep merge of a style patch onto a base style: for each top-level style
+// category present in the patch (line, text, ...), shallow-merge its fields over the
+// base's, so a partial category edit doesn't drop sibling fields the patch didn't
+// mention. Mirrors the granularity every other style write in this file already uses
+// (e.g. `{ line: { ...(styles?.line ?? {}), color: ... } }` in fade/unfade below).
+function mergeStyles(
+  base: DeepPartial<OverlayStyle> | null | undefined,
+  patch: DeepPartial<OverlayStyle>,
+): DeepPartial<OverlayStyle> {
+  const merged: Record<string, unknown> = { ...(base ?? {}) };
+  for (const [key, value] of Object.entries(patch)) {
+    const baseVal = (base as Record<string, unknown> | null | undefined)?.[key];
+    merged[key] =
+      value && typeof value === "object" && !Array.isArray(value) &&
+      baseVal && typeof baseVal === "object"
+        ? { ...baseVal, ...value }
+        : value;
+  }
+  return merged as DeepPartial<OverlayStyle>;
+}
+
+// Deep-clone a style object before stashing it as a ghost's "canonical" backup.
+// klinecharts mutates an overlay's `styles` in place when overrideOverlay is called
+// (verified empirically), so a shallow/reference stash of `ov.styles` gets silently
+// corrupted the moment the next override (e.g. the fade itself) touches the same
+// object — permanently baking the ghost color in as if it were the original. A plain
+// JSON round-trip is sufficient here: overlay styles are plain data (colors, sizes,
+// dash arrays), never functions/class instances/circular refs.
+// Exported so other snapshot-then-later-mutate call sites (e.g. IndicatorSettings.tsx's
+// Cancel-button snapshot of an indicator's live `styles`) can reuse the exact same
+// deep-clone instead of re-deriving the technique.
+export function cloneStyles<T>(styles: T): T {
+  return styles == null ? styles : (JSON.parse(JSON.stringify(styles)) as T);
+}
 
 export interface AlertConfig {
   condition: AlertCondition;
@@ -41,11 +83,12 @@ export interface AlertConfig {
 }
 
 // Per-drawing config stashed on the overlay's `extendData` (persisted as-is via
-// SavedOverlay.extendData). Everything is optional so an older drawing with no
-// extendData behaves as all-defaults. Shared by the second-pass features:
-//   intervals   — resolutions this drawing shows on (null/absent = every interval).
-//                 The user's own Visibility checkbox is the separate `visible` flag;
-//                 the EFFECTIVE on-chart visibility is (visible && interval matches).
+// SavedOverlay.extendData). Everything is optional so a drawing with no extendData
+// behaves as all-defaults.
+//   visibility  — per-timeframe visibility model (TV Visibility tab). Absent ⇒
+//                 default (all intervals). The user's own Visibility checkbox is the
+//                 separate `visible` flag; the EFFECTIVE on-chart visibility is
+//                 (visible && interval matches).
 //   text        — a label drawn near the drawing (custom-overlay feature).
 //   showMiddle  — draw a marker at the segment midpoint (custom-overlay feature).
 //   priceLabels — show the built-in y-axis value tag(s) for this drawing.
@@ -54,7 +97,8 @@ export interface DrawingExtra {
   // `visible` flag is the EFFECTIVE value (intent AND interval), so intent must
   // live here where interval-filtering never overwrites it.
   userVisible?: boolean;
-  intervals?: string[] | null;
+  // Per-timeframe visibility model (TV Visibility tab). Absent ⇒ default (all intervals).
+  visibility?: VisibilityModel;
   text?: string;
   showMiddle?: boolean;
   priceLabels?: boolean;
@@ -151,8 +195,13 @@ export class OverlayManager {
   // delete / copy and the "Settings…" target without a right-click.
   private hoveredDrawingId: string | null = null;
   private selectedDrawingId: string | null = null;
+  // Overlay id -> the CANONICAL (unfaded) styles for drawings currently rendered as a
+  // ghost stub (see displayFor/applyDisplay). Stashed the moment a drawing first fades
+  // so persist() can always write the real color back, never the faded one, even
+  // while the drawing is rendered faint. Cleared once the drawing is solid again.
+  private fadedStyles = new Map<string, DeepPartial<OverlayStyle> | null | undefined>();
   // Current chart resolution (e.g. "1", "5", "60", "1D"). Drives per-drawing
-  // interval visibility (extendData.intervals). Set by ChartCore on every period
+  // interval visibility (extendData.visibility). Set by ChartCore on every period
   // change and once after rehydrate.
   private resolution = "";
   // Instrument price precision (decimals). Set by ChartCore in lockstep with the
@@ -188,6 +237,7 @@ export class OverlayManager {
     this.alertCfg.clear();
     this.alertIds.clear();
     this.alertCreatedAt.clear();
+    this.fadedStyles.clear();
     this.hoveredAlertId = null;
     this.selectedAlertId = null;
     this.hoveredDrawingId = null;
@@ -424,7 +474,7 @@ export class OverlayManager {
     return {
       name: ov.name,
       points: (ov.points ?? []).map((p) => ({ timestamp: p.timestamp, value: p.value })),
-      styles: ov.styles ?? null,
+      styles: this.canonicalStyles(id, ov) ?? null,
       lock: !!ov.lock,
       // INTENT, not the live (effective) flag — the overlay's `visible` is the
       // interval-filtered render state, but the checkbox + clone/paste/setExtend
@@ -601,6 +651,8 @@ export class OverlayManager {
         this.alertCfg.delete(e.overlay.id);
         this.alertIds.delete(e.overlay.id);
         this.alertCreatedAt.delete(e.overlay.id);
+        this.fadedStyles.delete(e.overlay.id); // drop any stashed ghost-canonical style
+
         // Removing an alert mid-drag won't fire onPressedMoveEnd, so clear the drag
         // flag here too — otherwise it sticks true and the "+" setter stays hidden.
         this.draggingAlert = false;
@@ -717,15 +769,132 @@ export class OverlayManager {
 
   // --- drawing edits (called by the settings modal / context menu) ------------
 
-  // Effective on-chart visibility = user intent AND the current interval is allowed.
-  // userVisible (the Visibility checkbox) and intervals (the Visibility tab's
-  // per-interval list) both live in extendData so persist() can read intent without
-  // the interval filter corrupting it.
-  private effectiveVisible(extra: DrawingExtra): boolean {
+  // Effective on-chart visibility = user intent AND the current interval is allowed AND
+  // (auto-hide off OR the drawing spans >= minBars at the current resolution). Intent
+  // and the model live in extendData so persist() reads intent without the filter
+  // corrupting it. `pts` are the overlay's anchor points (for the bar-span check).
+  private effectiveVisible(
+    extra: DrawingExtra,
+    pts?: ReadonlyArray<{ timestamp?: number }>,
+  ): boolean {
     const intent = extra.userVisible ?? true;
-    const ints = extra.intervals;
-    const match = ints == null || ints.length === 0 || ints.includes(this.resolution);
-    return intent && match;
+    const model = extra.visibility ?? defaultVisibility();
+    if (!(intent && isVisibleOnResolution(model, this.resolution))) return false;
+    if (model.autoHide.on && pts && pts.length >= 2) {
+      const ts = pts.map((p) => p.timestamp ?? NaN).filter((n) => Number.isFinite(n));
+      if (ts.length >= 2) {
+        const span = barsSpanned(Math.min(...ts), Math.max(...ts), this.resolution);
+        if (span < model.autoHide.minBars) return false;
+      }
+    }
+    return true;
+  }
+
+  // Split the visibility decision into render + fade:
+  //   visible:false        — the user turned it off (Show on chart unchecked) → fully
+  //                          hidden, same as before.
+  //   { visible, faded }   — interval/auto-hide says hide but the user wants it on →
+  //                          stay rendered, but faded (ghost), so it's still clickable
+  //                          to reopen its settings and undo the filter (there's no
+  //                          object-list panel to find it otherwise).
+  private displayFor(
+    extra: DrawingExtra,
+    pts?: ReadonlyArray<{ timestamp?: number }>,
+  ): { visible: boolean; faded: boolean } {
+    const intent = extra.userVisible ?? true;
+    if (!intent) return { visible: false, faded: false };
+    const effective = this.effectiveVisible({ ...extra, userVisible: true }, pts);
+    return { visible: true, faded: !effective };
+  }
+
+  private readonly GHOST_OPACITY = 0.18;
+  // Fallback line color when a drawing carries no explicit override. klinecharts
+  // itself leaves a never-customized overlay's `.styles` as `{}` (verified against
+  // its source: OverlayImp only resolves concrete colors at PAINT time, merging
+  // `getDefaultOverlayStyle()` in) — so `line.color` can legitimately be absent here
+  // (see hexToRgba/fade/unfade). This mirrors that same default (getDefaultOverlayStyle's
+  // line.color, klinecharts ^9.8) so a restored default-colored drawing matches what it
+  // looked like before it was ever faded, not an arbitrary blue.
+  private readonly DEFAULT_LINE_COLOR = "#1677FF";
+
+  private resolveLineColor(styles: DeepPartial<OverlayStyle> | null | undefined): string {
+    return (styles?.line as { color?: string } | undefined)?.color ?? this.DEFAULT_LINE_COLOR;
+  }
+
+  // The CANONICAL (unfaded) styles for a drawing — `ov.styles` while solid, or the
+  // stashed pre-fade value while it's a ghost. `ov.styles` on a ghosted overlay holds
+  // the faded rgba, so every reader that copies/persists a drawing's styles (persist,
+  // getDrawing, setExtend) MUST go through this, or a clone/extend/save of a currently-
+  // ghosted drawing would bake the faded color in as if it were the real one.
+  private canonicalStyles(id: string, ov: Overlay): DeepPartial<OverlayStyle> | null | undefined {
+    if (this.fadedStyles.has(id)) return this.fadedStyles.get(id);
+    // klinecharts mutates `ov.styles` IN PLACE on overrideOverlay (verified empirically —
+    // see cloneStyles above), and every caller here (getDrawing, setExtend, persist) wants
+    // a snapshot "by value" that a later style edit must not retroactively corrupt. Clone
+    // it so callers never alias the live, mutable object.
+    return cloneStyles(ov.styles);
+  }
+
+  // Reduce a style's line color opacity to GHOST_OPACITY without losing its hue.
+  private fade(styles: DeepPartial<OverlayStyle> | null | undefined): DeepPartial<OverlayStyle> {
+    const lineColor = this.resolveLineColor(styles);
+    return { line: { ...(styles?.line ?? {}), color: hexToRgba(lineColor, this.GHOST_OPACITY) } };
+  }
+
+  // Inverse of fade(): write back a CONCRETE resolved color (never omit it), so
+  // restoring is not at the mercy of whether overrideOverlay deep-merges or replaces
+  // `styles`, and works even when the canonical style never had an explicit
+  // `line.color` (the common case — a drawing left at its default color). Persisted
+  // styles (fadedStyles / SavedOverlay) still keep the ORIGINAL canonical value
+  // as-is — this only concerns the live, on-chart override.
+  private unfade(styles: DeepPartial<OverlayStyle> | null | undefined): DeepPartial<OverlayStyle> {
+    return { line: { ...(styles?.line ?? {}), color: this.resolveLineColor(styles) } };
+  }
+
+  // Apply the visible/faded decision for one drawing to the live overlay, keeping
+  // `fadedStyles` in sync so persist() always has the canonical style on hand.
+  private applyDisplay(id: string, ov: Overlay, extra: DrawingExtra): void {
+    const { visible, faded } = this.displayFor(extra, ov.points);
+    const wasFaded = this.fadedStyles.has(id);
+    if (!visible) {
+      // Restore the canonical (concrete-color) style before hiding (if this id was
+      // mid-ghost), so a stray read of ov.styles — including persist() — never sees
+      // the faded color.
+      const canonical = this.fadedStyles.get(id);
+      this.fadedStyles.delete(id);
+      this.chart?.overrideOverlay({
+        id,
+        extendData: extra,
+        visible: false,
+        ...(wasFaded ? { styles: this.unfade(canonical) } : {}),
+      });
+      return;
+    }
+    if (faded) {
+      // Stash the canonical (unfaded) styles ONCE so persist() never saves the ghost.
+      // MUST be a deep clone: klinecharts mutates an overlay's `styles` object in
+      // place on overrideOverlay (verified empirically), so stashing `ov.styles` by
+      // reference would let the very next line's fade() call corrupt this same
+      // object — permanently baking the ghost color in as "canonical" and making
+      // every later un-fade attempt restore the ghost color instead of the original.
+      if (!wasFaded) this.fadedStyles.set(id, cloneStyles(ov.styles));
+      const canonical = this.fadedStyles.get(id);
+      this.chart?.overrideOverlay({
+        id,
+        extendData: extra,
+        visible: true,
+        styles: this.fade(canonical),
+      });
+    } else if (wasFaded) {
+      // Restore the canonical (concrete-color) style — write it back explicitly so
+      // the un-fade doesn't depend on overrideOverlay's styles merge semantics.
+      const canonical = this.fadedStyles.get(id);
+      this.fadedStyles.delete(id);
+      this.chart?.overrideOverlay({ id, extendData: extra, visible: true, styles: this.unfade(canonical) });
+    } else {
+      // Never faded — just keep extendData/visible in sync, styles untouched.
+      this.chart?.overrideOverlay({ id, extendData: extra, visible: true });
+    }
   }
 
   setVisible(id: string, visible: boolean): void {
@@ -733,17 +902,17 @@ export class OverlayManager {
     const ov = this.chart?.getOverlayById(id);
     if (!ov) return;
     const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), userVisible: visible };
-    this.chart?.overrideOverlay({ id, extendData: extra, visible: this.effectiveVisible(extra) });
+    this.applyDisplay(id, ov, extra);
     this.persist();
   }
 
-  // The intervals (resolutions) a drawing shows on; null/[] = every interval.
-  setVisibleIntervals(id: string, intervals: string[] | null): void {
+  // The per-timeframe visibility model for a drawing (TV Visibility tab).
+  setVisibilityModel(id: string, model: VisibilityModel): void {
     if (this.entries.get(id) !== "drawing") return;
     const ov = this.chart?.getOverlayById(id);
     if (!ov) return;
-    const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), intervals };
-    this.chart?.overrideOverlay({ id, extendData: extra, visible: this.effectiveVisible(extra) });
+    const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), visibility: model };
+    this.applyDisplay(id, ov, extra);
     this.persist();
   }
 
@@ -789,13 +958,18 @@ export class OverlayManager {
     this.resolution = resolution;
     this.applyIntervalVisibility();
   }
+  // The live chart resolution (e.g. "MINUTE_5"). Lets UI (the settings modal's
+  // preset dropdown) read the current interval without re-deriving it.
+  getResolution(): string {
+    return this.resolution;
+  }
   private applyIntervalVisibility(): void {
     if (!this.chart) return;
     for (const [id, kind] of this.entries) {
       if (kind !== "drawing") continue;
       const ov = this.chart.getOverlayById(id);
       if (!ov) continue;
-      this.chart.overrideOverlay({ id, visible: this.effectiveVisible(asDrawingExtra(ov.extendData)) });
+      this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
     }
   }
 
@@ -859,24 +1033,30 @@ export class OverlayManager {
     const spec = {
       name: target,
       points: (ov.points ?? []).map((p) => ({ timestamp: p.timestamp, value: p.value })),
-      styles: ov.styles ?? null,
+      // The CANONICAL style, never the faded ghost color — the recreated overlay must
+      // look identical to the (possibly currently-ghosted) original, not bake the fade
+      // in as if it were the real one (see canonicalStyles/fadedStyles).
+      styles: this.canonicalStyles(id, ov) ?? null,
       lock: !!ov.lock,
-      visible: ov.visible !== false,
       zLevel: ov.zLevel ?? 0,
       extendData: ov.extendData,
     };
     // Remove + recreate under the hydrating guard so the transient remove doesn't
     // persist an empty intermediate state; persist once after.
     const newId = this.guarded(() => {
-      this.chart!.removeOverlay(id);
+      this.chart!.removeOverlay(id); // onRemoved drops entries + any stashed fadedStyles
       this.entries.delete(id);
       return this.create("drawing", spec.name, spec.points, spec.styles, spec.lock, {
-        visible: spec.visible,
         zLevel: spec.zLevel,
         extendData: spec.extendData,
       });
     });
     if (newId) {
+      // Re-derive visible/faded for the new id from the current resolution (rather
+      // than carrying over the OLD overlay's live `visible`/style verbatim) so a
+      // ghosted drawing extends as a ghost, not a solid one.
+      const newOv = this.chart.getOverlayById(newId);
+      if (newOv) this.applyDisplay(newId, newOv, asDrawingExtra(newOv.extendData));
       this.selectedDrawingId = newId;
       this.persist();
       this.drawingListener?.();
@@ -1032,8 +1212,22 @@ export class OverlayManager {
     }
   }
 
+  // The Style tab's handler (DrawingSettings.tsx) — reachable by clicking a ghost to
+  // reopen its settings, so this MUST interact correctly with fadedStyles: writing the
+  // patch straight onto the live overlay (as if it were always solid) would corrupt a
+  // ghost's fade, and canonicalStyles() would still return the stale pre-edit stash on
+  // the persist() this method itself triggers, silently discarding the user's edit. If
+  // this id is currently ghosted, fold the patch into the stash instead — it becomes
+  // the new canonical (persists correctly, survives un-ghosting later) — then replay
+  // applyDisplay so the live overlay repaints faded using the NEW color.
   setStyle(id: string, styles: DeepPartial<OverlayStyle>): void {
-    this.chart?.overrideOverlay({ id, styles });
+    if (this.fadedStyles.has(id)) {
+      this.fadedStyles.set(id, mergeStyles(this.fadedStyles.get(id), styles));
+      const ov = this.chart?.getOverlayById(id);
+      if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
+    } else {
+      this.chart?.overrideOverlay({ id, styles });
+    }
     this.persist();
   }
 
@@ -1095,6 +1289,7 @@ export class OverlayManager {
       this.alertCfg.clear();
       this.alertIds.clear();
       this.alertCreatedAt.clear();
+      this.fadedStyles.clear(); // old epic's ids are gone; a fresh rebuild starts unfaded
       if (this.hoveredAlertId !== null) {
         // Wiping overlays on rehydrate (e.g. symbol change) won't fire
         // onMouseLeave, so restore the crosshair (line + label).
@@ -1106,20 +1301,28 @@ export class OverlayManager {
       this.selectedDrawingId = null;
 
       for (const d of loadDrawings(this.scope, this.epic)) {
-        // Seed userVisible from the persisted intent (migration-safe: a drawing
-        // saved before per-interval visibility has `visible` but no
-        // extendData.userVisible — adopt `visible` as the intent). The overlay's
-        // live `visible` flag is then the EFFECTIVE value (intent AND interval).
+        // Seed userVisible from the persisted top-level `visible` when extendData
+        // hasn't recorded intent yet (the common case for a drawing whose Show-on-
+        // chart toggle was never touched — persist() always writes the top-level
+        // field, but only writes extendData.userVisible once the user interacts
+        // with it). The overlay's live `visible` flag is then the EFFECTIVE value
+        // (intent AND interval).
+        const base = asDrawingExtra(d.extendData);
         const extra: DrawingExtra = {
-          ...asDrawingExtra(d.extendData),
-          userVisible: asDrawingExtra(d.extendData).userVisible ?? d.visible ?? true,
+          ...base,
+          userVisible: base.userVisible ?? d.visible ?? true,
+          visibility: base.visibility ?? defaultVisibility(),
         };
         this.create("drawing", d.name, d.points, d.styles, d.lock, {
-          visible: this.effectiveVisible(extra),
+          visible: this.effectiveVisible(extra, d.points),
           zLevel: d.zLevel,
           extendData: extra,
         });
       }
+      // Repaint any drawing that loaded on a filtered interval as a ghost stub (rather
+      // than the plain effectiveVisible above, which would leave it invisible) — so a
+      // reload on e.g. a minute chart still shows a faint, clickable stand-in.
+      this.applyIntervalVisibility();
       const rawAlerts = loadAlerts(this.epic, this.broker || undefined);
       for (let ai = 0; ai < rawAlerts.length; ai++) {
         this.materializeSavedAlert(normalizeAlert(rawAlerts[ai], ai));
@@ -1180,7 +1383,10 @@ export class OverlayManager {
             timestamp: p.timestamp,
             value: p.value,
           })),
-          styles: ov.styles,
+          // The stashed canonical style while this id is a ghost (faded interval/
+          // auto-hide stub) — ov.styles is the FADED color in that state, and
+          // persist() must never write that; see canonicalStyles/fadedStyles.
+          styles: this.canonicalStyles(id, ov) ?? undefined,
           lock: ov.lock,
           // Persist INTENT, not the live (effective) flag — the overlay's `visible`
           // is interval-filtered, so reading it here would corrupt the user's choice

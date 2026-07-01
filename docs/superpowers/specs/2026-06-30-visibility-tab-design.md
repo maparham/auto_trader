@@ -38,6 +38,7 @@ the current timeframe, hide it automatically.
 | Auto-hide heuristic | Visible-bar count, **interval-driven** (not zoom/pan) |
 | Auto-hide threshold | Per-object number `N`, default 3 |
 | Auto-hide scope | **Finite-extent objects only**: all drawings + *anchored* indicators (AVWAP-style). Full-width indicators don't get the toggle. |
+| Quick-set presets | A "Visible on:" dropdown above the grid: All / This timeframe & finer / This timeframe & coarser / Only this timeframe / Custom. Picking a preset rewrites the grid against the current resolution; manual edits → "Custom". |
 | Unit rows shown | Only units the app has intervals for: **Seconds, Minutes, Hours, Days, Weeks**. Omit Ticks/Months/Ranges. |
 | Defaults | All units `on`, full ranges, auto-hide off — exactly reproduces today's "show on all intervals". |
 | Hidden-drawing reachability | Hidden drawings render as a faint, clickable **ghost stub** (no object-list panel exists to reach them otherwise). |
@@ -72,6 +73,10 @@ function parseResolution(res: string): { unit: Unit; value: number };  // "MINUT
 function isVisibleOnResolution(m: VisibilityModel, res: string): boolean;
 function barsSpanned(t1: number, t2: number, res: string): number;     // |t2-t1| / RESOLUTION_SECONDS[res]
 function migrateIntervals(intervals: string[] | null): VisibilityModel; // back-compat for drawings
+
+type VisPreset = "all" | "finer" | "coarser" | "only" | "custom";
+function applyPreset(m: VisibilityModel, res: string, preset: VisPreset): VisibilityModel; // rewrites units, keeps autoHide
+function detectPreset(m: VisibilityModel, res: string): VisPreset;                          // for the dropdown's current value
 ```
 
 **Visibility rule:** object shown on `res` iff the unit's row is `on` AND
@@ -80,6 +85,19 @@ function migrateIntervals(intervals: string[] | null): VisibilityModel; // back-
 **`parseResolution`** derives unit from the resolution prefix (`SECOND`/`MINUTE`/`HOUR`/
 `DAY`/`WEEK`) and value from the numeric suffix (default 1: `"MINUTE"` → value 1,
 `"HOUR_4"` → value 4). Source of truth for the resolution set is `lib/feed.ts`.
+
+**Quick-set presets.** Resolutions have a total fine→coarse order: by unit
+(`seconds < minutes < hours < days < weeks`) then by value within a unit. Given the
+current resolution `res` with unit `U` and value `v`:
+
+- **all** — every unit on, full range (= `defaultVisibility` units).
+- **only** — only unit `U` on with `min = max = v`; all other units off.
+- **finer** — units finer than `U` fully on; unit `U` `min = 1, max = v`; coarser units off.
+- **coarser** — units coarser than `U` fully on; unit `U` `min = v, max = unitMax`; finer units off.
+
+`applyPreset` preserves `autoHide` untouched. `detectPreset` returns the preset whose
+generated units equal the model's units, else `"custom"`. Unknown/unparseable `res` →
+the dropdown shows "Custom" and presets are inert (no-op).
 
 ### `VisibilityTab.tsx` (new — shared React component)
 

@@ -1028,10 +1028,15 @@ export function saveIndicatorConfig(scope: string, id: string, cfg: SavedIndicat
 }
 // Patch only the `visible` flag, preserving the rest of the snapshot. Used by the
 // legend / tooltip eye toggle, which (unlike the settings modal) doesn't have a
-// full config to write.
+// full config to write. Also patches extendData.userVisible to the same value —
+// applyIndicatorIntervalVisibility (lib/indicators.ts) reads intent from THAT field
+// on every period change, so leaving it stale here would make the eye toggle appear
+// to self-revert on the next reload (the top-level `visible` patched above only
+// seeds the initial creation flag, per applyIndicator's `cfg?.visible === false` check).
 export function saveIndicatorVisible(scope: string, id: string, visible: boolean): void {
   const all = loadIndicatorConfigs(scope);
-  all[id] = { ...all[id], visible };
+  const prev = all[id];
+  all[id] = { ...prev, visible, extendData: { ...prev?.extendData, userVisible: visible } };
   save(indicatorCfgKey(scope), all);
 }
 // Drop a removed instance's config so it doesn't leak storage (instances are now

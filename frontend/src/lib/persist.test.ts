@@ -159,6 +159,33 @@ describe("per-indicator presets (global, keyed by type)", () => {
   });
 });
 
+describe("saveIndicatorVisible (legend eye-icon toggle)", () => {
+  it("patches extendData.userVisible alongside the legacy visible flag", () => {
+    // Regression: applyIndicatorIntervalVisibility (lib/indicators.ts) reads intent
+    // from extendData.userVisible on every period change and does not fall back to
+    // the legacy `visible` flag once userVisible has ever been explicitly set — so
+    // the eye icon must keep both in sync, or it silently self-reverts on the next
+    // timeframe switch.
+    P.saveIndicatorConfig("scope1", "EMA#1", {
+      visible: true,
+      extendData: { userVisible: true, someOtherKey: "keep-me" },
+    });
+    P.saveIndicatorVisible("scope1", "EMA#1", false);
+    const cfg = P.loadIndicatorConfigs("scope1")["EMA#1"];
+    expect(cfg.visible).toBe(false);
+    expect((cfg.extendData as { userVisible?: boolean }).userVisible).toBe(false);
+    // Doesn't clobber unrelated extendData keys.
+    expect((cfg.extendData as { someOtherKey?: string }).someOtherKey).toBe("keep-me");
+  });
+
+  it("works when no prior config exists for this id", () => {
+    P.saveIndicatorVisible("scope1", "RSI#1", true);
+    const cfg = P.loadIndicatorConfigs("scope1")["RSI#1"];
+    expect(cfg.visible).toBe(true);
+    expect((cfg.extendData as { userVisible?: boolean }).userVisible).toBe(true);
+  });
+});
+
 describe("per-symbol templates", () => {
   it("save/load/delete round-trips and is keyed globally by epic", () => {
     const t = {

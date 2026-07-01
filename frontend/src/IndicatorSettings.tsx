@@ -14,6 +14,8 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import CloseButton from "./CloseButton";
 import type { Chart, Indicator } from "klinecharts";
+import VisibilityTab from "./VisibilityTab";
+import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
 import {
   resolveInputs,
   isMovingAverage,
@@ -66,6 +68,7 @@ import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import InfoTip from "./InfoTip";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
+import { cloneStyles } from "./lib/overlays";
 
 interface Props {
   chart: Chart;
@@ -252,17 +255,41 @@ export default function IndicatorSettings({
   const original = useRef({
     calcParams: ((ind?.calcParams ?? []) as unknown[]).map((v) => Number(v)),
     visible: ind?.visible ?? true,
-    styles: ind?.styles ?? null,
+    // klinecharts mutates an indicator's `.styles` object IN PLACE on
+    // overrideIndicator (verified empirically — see overlays.ts's cloneStyles), and
+    // getIndicatorByPaneId returns that SAME live object. A later Style-tab edit
+    // (apply()/setLine()) would otherwise mutate this "original" snapshot too,
+    // making Cancel just re-apply the already-edited value instead of reverting it.
+    styles: cloneStyles(ind?.styles ?? null),
     extendData: (ind?.extendData ?? null) as MaExtend | null,
   });
 
   const [tab, setTab] = useState<Tab>("inputs");
   const drag = useDraggable();
   const [calcParams, setCalcParams] = useState<number[]>(original.current.calcParams);
-  const [visible, setVisible] = useState<boolean>(original.current.visible);
+  // Intent, not the live effective flag: `ind.visible` can be false merely because
+  // the interval filter (applyIndicatorIntervalVisibility) hid it on this
+  // timeframe. Read the persisted intent (extendData.userVisible) first, falling
+  // back to the legacy `visible` flag only when userVisible is genuinely absent
+  // (fresh/legacy indicator) — mirrors overlays.ts's rehydrate seed.
+  const [visible, setVisible] = useState<boolean>(
+    (original.current.extendData as { userVisible?: boolean } | null)?.userVisible ??
+      original.current.visible,
+  );
   const [showValue, setShowValue] = useState<boolean>(
     !(original.current.extendData as { hideLegendValue?: boolean } | null)?.hideLegendValue,
   );
+
+  // --- Per-timeframe visibility (TV Visibility tab), shared with drawings ---
+  const visExt0 = (original.current.extendData ?? {}) as { visibility?: VisibilityModel };
+  const [vis, setVis] = useState<VisibilityModel>(visExt0.visibility ?? defaultVisibility());
+  // Auto-hide (bar-count) is only wired up for drawings so far — indicators.ts's
+  // applyIndicatorIntervalVisibility never evaluates barsSpanned/autoHide, so
+  // showing this control for AVWAP (an anchored, finite-extent indicator that
+  // conceptually should get it) would expose a toggle that silently does nothing.
+  // TODO: wire indicator bar-span (anchor timestamp -> current bar count) and
+  // flip this back to `isAvwap` once that lands.
+  const showAutoHide = false;
 
   // --- RSI divergence config (extendData.divergence), OFF by default ---
   const rsiExt0 = (ind?.extendData ?? {}) as RsiExtend;
@@ -720,6 +747,11 @@ export default function IndicatorSettings({
       if (!curveLabelIsDefault(st)) extendData.curveLabels = curveLabelObj(st);
     }
     if (!showValue) extendData.hideLegendValue = true;
+    // Per-timeframe visibility (TV Visibility tab) — model only when non-default,
+    // but userVisible (the intent) is always written once touched, so a later read
+    // of intent never falls back to the interval-filtered effective `visible`.
+    if (JSON.stringify(vis) !== JSON.stringify(defaultVisibility())) extendData.visibility = vis;
+    extendData.userVisible = visible;
     return {
       calcParams: isAvwap ? undefined : isMa ? [maLength] : calcParams,
       visible,
@@ -738,7 +770,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis]);
 
   // Push a moving-average config (chart-TF or MTF) through the coordinator, which
   // refetches HTF data when a timeframe is set. Reads explicit overrides so it
@@ -800,11 +832,16 @@ export default function IndicatorSettings({
   function apply(next: { calcParams?: number[]; visible?: boolean; lines?: LineDraft[] }) {
     const cp = next.calcParams ?? calcParams;
     const ls = next.lines ?? lines;
+    // Gate the live effective `visible` by the interval model too, so editing
+    // calcParams/lines on an indicator that's currently interval-hidden (e.g. a
+    // "Hours" auto-hide on this timeframe) can't pop it back visible as a
+    // side effect — only the intent (`visible` state) is meant to change here.
+    const eff = (next.visible ?? visible) && isVisibleOnResolution(vis, chartResolution);
     chart.overrideIndicator(
       {
         name,
         calcParams: cp,
-        visible: next.visible ?? visible,
+        visible: eff,
         styles: { lines: lineOverrides(ls) },
       },
       paneId,
@@ -876,9 +913,31 @@ export default function IndicatorSettings({
     return lines.some((l) => (l.key === `${kind}High` || l.key === `${kind}Low`) && l.visible);
   }
 
+  // Toggle the "Show on chart" checkbox: records intent in extendData.userVisible
+  // (never falls back to reading the live effective `visible`) and applies the
+  // interval filter against the model already in state, so a hidden-by-timeframe
+  // indicator isn't accidentally forced visible by this checkbox alone.
   function toggleVisible(v: boolean) {
     setVisible(v);
-    apply({ visible: v });
+    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const ext = { ...((live?.extendData as object) ?? {}), userVisible: v, visibility: vis };
+    chart.overrideIndicator(
+      { name, extendData: ext, visible: v && isVisibleOnResolution(vis, chartResolution) },
+      paneId,
+    );
+  }
+
+  // Per-timeframe visibility grid (VisibilityTab onChange): persists the model AND
+  // re-writes userVisible in the SAME operation (never separately), so a future
+  // read of intent never falls back to the interval-filtered effective `visible`.
+  function applyVisibility(next: VisibilityModel) {
+    setVis(next);
+    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const ext = { ...((live?.extendData as object) ?? {}), userVisible: visible, visibility: next };
+    chart.overrideIndicator(
+      { name, extendData: ext, visible: visible && isVisibleOnResolution(next, chartResolution) },
+      paneId,
+    );
   }
 
   // Show/hide this indicator's value in the legend. Stored on extendData
@@ -1900,14 +1959,22 @@ export default function IndicatorSettings({
           )}
 
           {tab === "visibility" && (
-            <label className="ind-check">
-              <input
-                type="checkbox"
-                checked={visible}
-                onChange={(e) => toggleVisible(e.target.checked)}
+            <>
+              <label className="ind-check">
+                <input
+                  type="checkbox"
+                  checked={visible}
+                  onChange={(e) => toggleVisible(e.target.checked)}
+                />
+                <span>Show on chart</span>
+              </label>
+              <VisibilityTab
+                model={vis}
+                onChange={applyVisibility}
+                showAutoHide={showAutoHide}
+                currentResolution={chartResolution}
               />
-              <span>Show on chart</span>
-            </label>
+            </>
           )}
         </div>
 

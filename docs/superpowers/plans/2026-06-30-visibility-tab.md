@@ -55,6 +55,9 @@
   - `isVisibleOnResolution(m: VisibilityModel, res: string): boolean`
   - `barsSpanned(t1: number, t2: number, res: string): number`
   - `migrateIntervals(intervals: string[] | null | undefined): VisibilityModel`
+  - `type VisPreset = "all" | "finer" | "coarser" | "only" | "custom"`
+  - `applyPreset(m: VisibilityModel, res: string, preset: VisPreset): VisibilityModel`
+  - `detectPreset(m: VisibilityModel, res: string): VisPreset`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -153,7 +156,56 @@ describe("migrateIntervals", () => {
     expect(new Set(visibleNow)).toEqual(new Set(allowed));
   });
 });
+
+describe("applyPreset / detectPreset", () => {
+  const visset = (m: ReturnType<typeof defaultVisibility>) =>
+    new Set(ALL_RES.filter((r) => isVisibleOnResolution(m, r)));
+
+  it("'finer' shows the current timeframe and everything finer", () => {
+    const m = applyPreset(defaultVisibility(), "MINUTE_15", "finer");
+    // finer-or-equal to 15m: all seconds + 1m,5m,15m; NOT 30m/hours/days/weeks
+    expect(visset(m)).toEqual(new Set(["SECOND_5", "MINUTE", "MINUTE_5", "MINUTE_15"]));
+  });
+
+  it("'coarser' shows the current timeframe and everything coarser", () => {
+    const m = applyPreset(defaultVisibility(), "MINUTE_15", "coarser");
+    expect(visset(m)).toEqual(new Set(["MINUTE_15", "MINUTE_30", "HOUR", "HOUR_4", "DAY", "WEEK"]));
+  });
+
+  it("'only' shows just the current timeframe", () => {
+    const m = applyPreset(defaultVisibility(), "HOUR", "only");
+    expect(visset(m)).toEqual(new Set(["HOUR"]));
+  });
+
+  it("'all' shows every timeframe", () => {
+    const m = applyPreset(defaultVisibility(), "HOUR", "all");
+    expect(visset(m)).toEqual(new Set(ALL_RES));
+  });
+
+  it("preserves autoHide across a preset", () => {
+    const base = defaultVisibility();
+    base.autoHide = { on: true, minBars: 7 };
+    expect(applyPreset(base, "MINUTE_15", "finer").autoHide).toEqual({ on: true, minBars: 7 });
+  });
+
+  it("detectPreset round-trips each preset, else 'custom'", () => {
+    for (const p of ["all", "finer", "coarser", "only"] as const) {
+      expect(detectPreset(applyPreset(defaultVisibility(), "MINUTE_15", p), "MINUTE_15")).toBe(p);
+    }
+    const custom = defaultVisibility();
+    custom.units.minutes = { on: true, min: 5, max: 5 };
+    expect(detectPreset(custom, "MINUTE_15")).toBe("custom");
+  });
+
+  it("unknown resolution => preset inert, detect 'custom'", () => {
+    const m = defaultVisibility();
+    expect(applyPreset(m, "MONTH", "only")).toEqual(m);
+    expect(detectPreset(m, "MONTH")).toBe("custom");
+  });
+});
 ```
+
+Add these imports to the test's import list: `applyPreset, detectPreset`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -267,6 +319,64 @@ export function migrateIntervals(intervals: string[] | null | undefined): Visibi
   }
   return m;
 }
+
+// --- quick-set presets ------------------------------------------------------
+// Resolutions have a total fine->coarse order: by unit (seconds<minutes<hours<days<
+// weeks) then by value within a unit. Presets rewrite the unit ranges relative to the
+// current resolution; autoHide is preserved untouched.
+
+export type VisPreset = "all" | "finer" | "coarser" | "only" | "custom";
+
+const UNIT_INDEX: Record<VisUnit, number> = Object.fromEntries(
+  VISIBILITY_UNITS.map((u, i) => [u.unit, i]),
+) as Record<VisUnit, number>;
+
+function fullUnits(): VisibilityModel["units"] {
+  return defaultVisibility().units;
+}
+
+export function applyPreset(m: VisibilityModel, res: string, preset: VisPreset): VisibilityModel {
+  const parsed = parseResolution(res);
+  if (preset === "custom" || !parsed) return m; // inert
+  const units = fullUnits();
+  const ci = UNIT_INDEX[parsed.unit];
+  for (const u of VISIBILITY_UNITS) {
+    const bound = u.max;
+    const ui = UNIT_INDEX[u.unit];
+    if (preset === "all") {
+      units[u.unit] = { on: true, min: 1, max: bound };
+    } else if (preset === "only") {
+      units[u.unit] =
+        u.unit === parsed.unit
+          ? { on: true, min: parsed.value, max: parsed.value }
+          : { on: false, min: 1, max: bound };
+    } else if (preset === "finer") {
+      if (ui < ci) units[u.unit] = { on: true, min: 1, max: bound };
+      else if (ui === ci) units[u.unit] = { on: true, min: 1, max: parsed.value };
+      else units[u.unit] = { on: false, min: 1, max: bound };
+    } else {
+      // coarser
+      if (ui > ci) units[u.unit] = { on: true, min: 1, max: bound };
+      else if (ui === ci) units[u.unit] = { on: true, min: parsed.value, max: bound };
+      else units[u.unit] = { on: false, min: 1, max: bound };
+    }
+  }
+  return { units, autoHide: { ...m.autoHide } };
+}
+
+export function detectPreset(m: VisibilityModel, res: string): VisPreset {
+  if (!parseResolution(res)) return "custom";
+  const sameUnits = (a: VisibilityModel) =>
+    VISIBILITY_UNITS.every((u) => {
+      const x = a.units[u.unit];
+      const y = m.units[u.unit];
+      return x.on === y.on && x.min === y.min && x.max === y.max;
+    });
+  for (const p of ["all", "finer", "coarser", "only"] as const) {
+    if (sameUnits(applyPreset(m, res, p))) return p;
+  }
+  return "custom";
+}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -292,8 +402,8 @@ git commit -m "feat(visibility): shared per-timeframe visibility model + tests"
 - Modify: the CSS file with `.ind-interval-grid` (search: `grep -rl "ind-interval-grid" frontend/src`)
 
 **Interfaces:**
-- Consumes: `VisibilityModel`, `VISIBILITY_UNITS`, `VisUnit` from `./lib/visibility`.
-- Produces: `export default function VisibilityTab(props: { model: VisibilityModel; onChange(next: VisibilityModel): void; showAutoHide: boolean }): JSX.Element`
+- Consumes: `VisibilityModel`, `VISIBILITY_UNITS`, `VisUnit`, `VisPreset`, `applyPreset`, `detectPreset` from `./lib/visibility`.
+- Produces: `export default function VisibilityTab(props: { model: VisibilityModel; onChange(next: VisibilityModel): void; showAutoHide: boolean; currentResolution: string }): JSX.Element`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -303,12 +413,14 @@ Create `frontend/src/VisibilityTab.test.tsx`:
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import VisibilityTab from "./VisibilityTab";
-import { defaultVisibility } from "./lib/visibility";
+import { defaultVisibility, applyPreset } from "./lib/visibility";
+
+const RES = "MINUTE_15";
 
 describe("VisibilityTab", () => {
   it("toggling a unit off emits a model with that unit disabled", () => {
     const onChange = vi.fn();
-    render(<VisibilityTab model={defaultVisibility()} onChange={onChange} showAutoHide={false} />);
+    render(<VisibilityTab model={defaultVisibility()} onChange={onChange} showAutoHide={false} currentResolution={RES} />);
     // The Minutes row enable checkbox.
     fireEvent.click(screen.getByLabelText("Minutes"));
     expect(onChange).toHaveBeenCalled();
@@ -318,7 +430,7 @@ describe("VisibilityTab", () => {
 
   it("editing a unit max emits the clamped value", () => {
     const onChange = vi.fn();
-    render(<VisibilityTab model={defaultVisibility()} onChange={onChange} showAutoHide={false} />);
+    render(<VisibilityTab model={defaultVisibility()} onChange={onChange} showAutoHide={false} currentResolution={RES} />);
     const maxInput = screen.getByLabelText("Hours max");
     fireEvent.change(maxInput, { target: { value: "12" } });
     const next = onChange.mock.calls.at(-1)![0];
@@ -326,16 +438,33 @@ describe("VisibilityTab", () => {
   });
 
   it("hides the auto-hide row when showAutoHide is false", () => {
-    render(<VisibilityTab model={defaultVisibility()} onChange={vi.fn()} showAutoHide={false} />);
+    render(<VisibilityTab model={defaultVisibility()} onChange={vi.fn()} showAutoHide={false} currentResolution={RES} />);
     expect(screen.queryByLabelText(/auto-hide/i)).toBeNull();
   });
 
   it("shows + toggles auto-hide when showAutoHide is true", () => {
     const onChange = vi.fn();
-    render(<VisibilityTab model={defaultVisibility()} onChange={onChange} showAutoHide />);
+    render(<VisibilityTab model={defaultVisibility()} onChange={onChange} showAutoHide currentResolution={RES} />);
     fireEvent.click(screen.getByLabelText(/auto-hide/i));
     const next = onChange.mock.calls.at(-1)![0];
     expect(next.autoHide.on).toBe(true);
+  });
+
+  it("the preset dropdown rewrites the grid (this & finer)", () => {
+    const onChange = vi.fn();
+    render(<VisibilityTab model={defaultVisibility()} onChange={onChange} showAutoHide={false} currentResolution={RES} />);
+    fireEvent.change(screen.getByLabelText("Visible on"), { target: { value: "finer" } });
+    const next = onChange.mock.calls.at(-1)![0];
+    // 15m & finer: minutes capped at 15, hours/days/weeks off.
+    expect(next.units.minutes).toEqual({ on: true, min: 1, max: 15 });
+    expect(next.units.hours.on).toBe(false);
+    expect(next.units.seconds.on).toBe(true);
+  });
+
+  it("the dropdown reflects the model's detected preset", () => {
+    const m = applyPreset(defaultVisibility(), RES, "coarser");
+    render(<VisibilityTab model={m} onChange={vi.fn()} showAutoHide={false} currentResolution={RES} />);
+    expect((screen.getByLabelText("Visible on") as HTMLSelectElement).value).toBe("coarser");
   });
 });
 ```
@@ -360,14 +489,26 @@ import { useMemo } from "react";
 import {
   type VisibilityModel,
   type VisUnit,
+  type VisPreset,
   VISIBILITY_UNITS,
+  applyPreset,
+  detectPreset,
 } from "./lib/visibility";
 
 interface Props {
   model: VisibilityModel;
   onChange: (next: VisibilityModel) => void;
   showAutoHide: boolean;
+  currentResolution: string;
 }
+
+const PRESET_LABELS: { value: VisPreset; label: string }[] = [
+  { value: "all", label: "All intervals" },
+  { value: "finer", label: "This timeframe & finer" },
+  { value: "coarser", label: "This timeframe & coarser" },
+  { value: "only", label: "Only this timeframe" },
+  { value: "custom", label: "Custom" },
+];
 
 // Shallow-clone the model so callers always get a new object (React state churn).
 function clone(m: VisibilityModel): VisibilityModel {
@@ -376,8 +517,14 @@ function clone(m: VisibilityModel): VisibilityModel {
   return { units, autoHide: { ...m.autoHide } };
 }
 
-export default function VisibilityTab({ model, onChange, showAutoHide }: Props) {
+export default function VisibilityTab({ model, onChange, showAutoHide, currentResolution }: Props) {
   const rows = useMemo(() => VISIBILITY_UNITS, []);
+  const preset = detectPreset(model, currentResolution);
+
+  function choosePreset(p: VisPreset) {
+    if (p === "custom") return; // "Custom" is a display-only state, not a setter
+    onChange(applyPreset(model, currentResolution, p));
+  }
 
   function patchUnit(unit: VisUnit, patch: Partial<VisibilityModel["units"][VisUnit]>) {
     const next = clone(model);
@@ -404,6 +551,21 @@ export default function VisibilityTab({ model, onChange, showAutoHide }: Props) 
 
   return (
     <div className="vis-tab">
+      <div className="ind-row vis-preset-row">
+        <label htmlFor="vis-preset">Visible on</label>
+        <select
+          id="vis-preset"
+          aria-label="Visible on"
+          value={preset}
+          onChange={(e) => choosePreset(e.target.value as VisPreset)}
+        >
+          {PRESET_LABELS.filter((o) => o.value !== "custom" || preset === "custom").map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="vis-grid">
         {rows.map((r) => {
           const u = model.units[r.unit];
@@ -681,9 +843,22 @@ In `cancel()` (line ~198), replace `overlays.setVisibleIntervals(curId, oExtra.i
 
 Replace the visibility tab body's interval block (lines ~343-371, the `Intervals` row + `ind-interval-grid`) with:
 ```tsx
-              <VisibilityTab model={vis} onChange={applyVis} showAutoHide />
+              <VisibilityTab
+                model={vis}
+                onChange={applyVis}
+                showAutoHide
+                currentResolution={overlays.getResolution()}
+              />
 ```
 (Keep the "Show on chart" and "Show price label on axis" checkboxes above it.)
+
+Add a getter on `OverlayManager` (next to `setResolution`, ~line 788) so the modal can
+read the live resolution for the preset dropdown:
+```ts
+  getResolution(): string {
+    return this.resolution;
+  }
+```
 
 - [ ] **Step 7: Run tests + manual check, then commit**
 
@@ -872,7 +1047,12 @@ Replace lines ~1902-1911 with the "Show on chart" checkbox retained plus the sha
                 />
                 <span>Show on chart</span>
               </label>
-              <VisibilityTab model={vis} onChange={applyVisibility} showAutoHide={showAutoHide} />
+              <VisibilityTab
+                model={vis}
+                onChange={applyVisibility}
+                showAutoHide={showAutoHide}
+                currentResolution={chartResolution}
+              />
             </>
           )}
 ```
@@ -1048,7 +1228,8 @@ git add -A && git commit -m "test(visibility): full-suite + manual verification 
 
 ## Self-Review Notes
 
-- **Spec coverage:** §1 shared units → Tasks 1–2; §2 semantics/defaults/migration → Tasks 1, 3; §3 indicator wiring → Tasks 4–5; §4 auto-hide → Tasks 1 (`barsSpanned`), 2 (UI), 3 (drawings), 5 (anchored indicators only); §5 ghost stub → Task 6; §6 persistence/testing → every task's persist + test steps.
+- **Spec coverage:** §1 shared units → Tasks 1–2; §2 semantics/defaults/migration → Tasks 1, 3; quick-set presets (`applyPreset`/`detectPreset` + dropdown) → Tasks 1–2, surfaced in 3 & 5 via `currentResolution`; §3 indicator wiring → Tasks 4–5; §4 auto-hide → Tasks 1 (`barsSpanned`), 2 (UI), 3 (drawings), 5 (anchored indicators only); §5 ghost stub → Task 6; §6 persistence/testing → every task's persist + test steps.
+- **Preset ↔ resolution:** drawings read the live resolution via the new `OverlayManager.getResolution()`; indicators use the existing `chartResolution` prop. Presets rewrite only unit ranges and preserve `autoHide`.
 - **Intent vs effective:** drawings keep `userVisible` in extendData (existing); indicators gain `userVisible` in extendData (Task 5) so the interval filter never overwrites persisted intent — the advisor's corruption concern.
 - **All-panes:** Task 4 iterates `getPanes()` not just `candle_pane`.
 - **Risk flags called out inline:** klinecharts pane/indicator enumeration API (Task 4 Step 3), Cancel-restores-extendData (Task 5 Step 4), `withAlpha` parsing fallback (Task 6 Step 3). Each has a verify instruction rather than a placeholder.
