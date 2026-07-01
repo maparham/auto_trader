@@ -7,6 +7,8 @@ import {
   type BacktestConfig,
 } from "./backtestConfig";
 
+const EMPTY_GROUP = { combine: "AND" as const, rules: [] };
+
 describe("seriesName", () => {
   it("keys MA/RSI/VOLMA by indicator_length", () => {
     expect(seriesName({ kind: "indicator", indicator: "EMA", length: 9 })).toBe("EMA_9");
@@ -27,10 +29,10 @@ describe("seriesName", () => {
 });
 
 describe("collectSeriesOperands", () => {
-  it("dedupes the same indicator referenced in both entry and exit", () => {
+  it("dedupes the same indicator referenced across long/short entry/exit", () => {
     const cfg: BacktestConfig = {
       range: { mode: "bars", bars: 500 },
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [
           {
@@ -40,7 +42,8 @@ describe("collectSeriesOperands", () => {
           },
         ],
       },
-      exit: {
+      longExit: EMPTY_GROUP,
+      shortEntry: {
         combine: "AND",
         rules: [
           {
@@ -50,6 +53,7 @@ describe("collectSeriesOperands", () => {
           },
         ],
       },
+      shortExit: EMPTY_GROUP,
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     const names = collectSeriesOperands(cfg).map(seriesName).sort();
@@ -59,11 +63,13 @@ describe("collectSeriesOperands", () => {
   it("excludes price/const operands", () => {
     const cfg: BacktestConfig = {
       range: { mode: "bars", bars: 500 },
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [{ left: { kind: "price", field: "close" }, op: "gt", right: { kind: "const", value: 1 } }],
       },
-      exit: { combine: "AND", rules: [] },
+      longExit: EMPTY_GROUP,
+      shortEntry: EMPTY_GROUP,
+      shortExit: EMPTY_GROUP,
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     expect(collectSeriesOperands(cfg)).toEqual([]);
@@ -71,20 +77,22 @@ describe("collectSeriesOperands", () => {
 });
 
 describe("defaultBacktestConfig", () => {
-  it("is EMA-9 crossesAbove EMA-21 entry, crossesBelow exit, bars=500, zero costs", () => {
+  it("has four populated groups: long entry/exit + short entry/exit (mirror)", () => {
     const cfg = defaultBacktestConfig();
     expect(cfg.range).toEqual({ mode: "bars", bars: 500, history: "full" });
-    expect(cfg.entry.rules[0].op).toBe("crossesAbove");
-    expect(cfg.exit.rules[0].op).toBe("crossesBelow");
+    expect(cfg.longEntry.rules[0].op).toBe("crossesAbove");
+    expect(cfg.longExit.rules[0].op).toBe("crossesBelow");
+    expect(cfg.shortEntry.rules[0].op).toBe("crossesBelow"); // mirror of long entry
+    expect(cfg.shortExit.rules[0].op).toBe("crossesAbove");
     expect(cfg.costs).toEqual({ quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 });
   });
 });
 
 describe("longestIndicatorLength", () => {
-  it("is the longest length across entry and exit, defaulting length-less indicators to 1", () => {
+  it("is the longest length across all four groups, defaulting length-less indicators to 1", () => {
     const cfg: BacktestConfig = {
       range: { mode: "bars", bars: 500 },
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [
           {
@@ -94,10 +102,12 @@ describe("longestIndicatorLength", () => {
           },
         ],
       },
-      exit: {
+      longExit: {
         combine: "AND",
         rules: [{ left: { kind: "indicator", indicator: "AVWAP" }, op: "gt", right: { kind: "const", value: 0 } }],
       },
+      shortEntry: EMPTY_GROUP,
+      shortExit: EMPTY_GROUP,
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     expect(longestIndicatorLength(cfg)).toBe(200);
@@ -106,8 +116,10 @@ describe("longestIndicatorLength", () => {
   it("is 1 when there are no indicator operands", () => {
     const cfg: BacktestConfig = {
       range: { mode: "bars", bars: 500 },
-      entry: { combine: "AND", rules: [{ left: { kind: "price", field: "close" }, op: "gt", right: { kind: "const", value: 1 } }] },
-      exit: { combine: "AND", rules: [] },
+      longEntry: { combine: "AND", rules: [{ left: { kind: "price", field: "close" }, op: "gt", right: { kind: "const", value: 1 } }] },
+      longExit: EMPTY_GROUP,
+      shortEntry: EMPTY_GROUP,
+      shortExit: EMPTY_GROUP,
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     expect(longestIndicatorLength(cfg)).toBe(1);

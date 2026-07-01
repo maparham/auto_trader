@@ -20,6 +20,14 @@ export const EQUITY_INDICATOR = "EQUITY";
 const BUY_COLOR = "#26a69a";
 const SELL_COLOR = "#ef5350";
 
+/** Chart marker label: "+" opens a position, "-" closes it; the letter is the
+ * order side (B/S). open-long=B+, close-long=S-, open-short=S+, close-short=B-. */
+export function markerLabel(side: "buy" | "sell", leg: "long" | "short"): string {
+  const letter = side === "buy" ? "B" : "S";
+  const opening = (leg === "long" && side === "buy") || (leg === "short" && side === "sell");
+  return `${letter}${opening ? "+" : "-"}`;
+}
+
 let equityByTs = new Map<number, number>();
 let equityPaneId: string | null = null;
 let markerIds: string[] = [];
@@ -56,7 +64,7 @@ export async function runAndRender(
       name: "simpleAnnotation",
       points: [{ timestamp: m.time * 1000, value: m.price }],
       lock: true, // backtest artifacts: not user-editable
-      extendData: m.side === "buy" ? "B" : "S",
+      extendData: markerLabel(m.side, m.leg),
       styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
     });
     if (typeof id === "string") markerIds.push(id);

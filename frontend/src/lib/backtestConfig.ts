@@ -49,8 +49,10 @@ export interface Costs {
 
 export interface BacktestConfig {
   range: RangeConfig;
-  entry: RuleGroup;
-  exit: RuleGroup;
+  longEntry: RuleGroup;
+  longExit: RuleGroup;
+  shortEntry: RuleGroup;
+  shortExit: RuleGroup;
   costs: Costs;
 }
 
@@ -63,11 +65,12 @@ export function seriesName(op: Operand): string | null {
   return `${op.indicator}_${op.length}`;
 }
 
-/** Every indicator operand referenced by entry or exit, deduped by series name,
- * so the caller computes each series once regardless of how many rules use it. */
+/** Every indicator operand referenced by any of the four rule groups, deduped by
+ * series name, so the caller computes each series once regardless of how many
+ * rules use it. */
 export function collectSeriesOperands(cfg: BacktestConfig): Operand[] {
   const seen = new Map<string, Operand>();
-  for (const group of [cfg.entry, cfg.exit]) {
+  for (const group of [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit]) {
     for (const rule of group.rules) {
       for (const op of [rule.left, rule.right]) {
         const name = seriesName(op);
@@ -88,28 +91,22 @@ export function longestIndicatorLength(cfg: BacktestConfig): number {
 }
 
 export function defaultBacktestConfig(): BacktestConfig {
+  const cross = (op: Operator): RuleGroup => ({
+    combine: "AND",
+    rules: [
+      {
+        left: { kind: "indicator", indicator: "EMA", length: 9 },
+        op,
+        right: { kind: "indicator", indicator: "EMA", length: 21 },
+      },
+    ],
+  });
   return {
     range: { mode: "bars", bars: 500, history: "full" },
-    entry: {
-      combine: "AND",
-      rules: [
-        {
-          left: { kind: "indicator", indicator: "EMA", length: 9 },
-          op: "crossesAbove",
-          right: { kind: "indicator", indicator: "EMA", length: 21 },
-        },
-      ],
-    },
-    exit: {
-      combine: "AND",
-      rules: [
-        {
-          left: { kind: "indicator", indicator: "EMA", length: 9 },
-          op: "crossesBelow",
-          right: { kind: "indicator", indicator: "EMA", length: 21 },
-        },
-      ],
-    },
+    longEntry: cross("crossesAbove"),
+    longExit: cross("crossesBelow"),
+    shortEntry: cross("crossesBelow"),
+    shortExit: cross("crossesAbove"),
     costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
   };
 }

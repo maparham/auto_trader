@@ -18,6 +18,7 @@ interface Marker {
   side: "buy" | "sell";
   price: number;
   reason: string;
+  leg: "long" | "short";
 }
 
 interface Trade {
@@ -28,6 +29,7 @@ interface Trade {
   exit_time: number;
   exit_price: number;
   pnl: number;
+  leg: "long" | "short";
 }
 
 interface EquityPoint {
@@ -55,8 +57,10 @@ export interface BacktestRequest {
   resolution: string;
   candles: Candle[];
   series: Record<string, Array<number | null>>;
-  entry: RuleGroup;
-  exit: RuleGroup;
+  longEntry: RuleGroup;
+  longExit: RuleGroup;
+  shortEntry: RuleGroup;
+  shortExit: RuleGroup;
   costs: Costs;
   tradeFromTime: number; // unix seconds — the window's start (D6)
 }

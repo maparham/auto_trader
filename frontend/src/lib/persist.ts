@@ -925,8 +925,11 @@ export function deleteIndicatorPreset(type: string, name: string): void {
 // useful on any chart.
 export type SavedBacktestConfig = BacktestConfig;
 
-const BACKTEST_PRESETS_KEY = `${PREFIX}.backtestPresets`;
-const BACKTEST_LAST_USED_KEY = `${PREFIX}.backtestLastUsed`;
+// v2: config shape changed from entry/exit to four groups (hedging). Old keys
+// are abandoned rather than migrated — a stale long-only config would be missing
+// the short groups, so callers fall back to defaultBacktestConfig().
+const BACKTEST_PRESETS_KEY = `${PREFIX}.backtestPresets.v2`;
+const BACKTEST_LAST_USED_KEY = `${PREFIX}.backtestLastUsed.v2`;
 
 export function loadBacktestPresets(): Record<string, SavedBacktestConfig> {
   return load<Record<string, SavedBacktestConfig>>(BACKTEST_PRESETS_KEY, {});
