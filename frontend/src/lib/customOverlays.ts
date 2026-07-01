@@ -22,6 +22,8 @@ import type {
 } from "klinecharts";
 import { asDrawingExtra } from "./overlays";
 import { measureMetrics } from "./measureMetrics";
+import { UP, DOWN } from "./chartTheme";
+import { hexToRgba } from "./lineStyle";
 
 // --- line geometry, replicated from klinecharts' (non-exported) built-ins so the
 // overridden variants paint byte-identically to the originals. ---------------
@@ -149,14 +151,37 @@ const straightLine: OverlayTemplate = {
 
 // --- measure: the transient TradingView-style ruler ------------------------
 // A two-point overlay that paints a translucent box between the anchors, arrows
-// for the price + time direction, and a colored pill with the price/%/ticks and
-// bars/duration readout. It is NEVER persisted (OverlayManager owns its transient
+// for the price + time direction, and a readout pill with the price/%/ticks and
+// bars/duration. It is NEVER persisted (OverlayManager owns its transient
 // lifecycle); it just renders whatever two points it currently holds. All figures
 // are ignoreEvent so the ruler is fully non-interactive (no hover/select/drag) —
 // OverlayManager drives it directly via override.
-const MEASURE_UP = { fill: "rgba(38,166,154,0.18)", stroke: "rgba(38,166,154,0.9)", pill: "#26a69a" };
-const MEASURE_DOWN = { fill: "rgba(239,83,80,0.18)", stroke: "rgba(239,83,80,0.9)", pill: "#ef5350" };
-const MEASURE_TEXT = "#ffffff";
+//
+// The readout is designed as a precision-caliper display: the box color IS the
+// chart's own candle up/down language (imported UP/DOWN, not lookalike constants),
+// and the pill gives the price MAGNITUDE primacy — 12px/700 — over the bars·time
+// context line — 10.5px/500 at reduced opacity — so the number you measured for
+// reads first. The pill is snapped to its real text width (measured, not estimated)
+// and clamped inside the pane so it never clips off an edge.
+const MEASURE_UP = { fill: hexToRgba(UP, 0.14), stroke: hexToRgba(UP, 0.9), pill: UP };
+const MEASURE_DOWN = { fill: hexToRgba(DOWN, 0.14), stroke: hexToRgba(DOWN, 0.9), pill: DOWN };
+const MEASURE_FONT = "-apple-system, system-ui, sans-serif";
+// Readout type scale: primary = the magnitude line, secondary = bars·time context.
+const PRIMARY = { size: 12, weight: "700", color: "#ffffff" };
+const SECONDARY = { size: 10.5, weight: "500", color: "rgba(255,255,255,0.78)" };
+
+// One shared offscreen 2D context for text metrics — the figure builder gets no
+// canvas, and a measured pill (snug, symmetric) beats a char-count estimate. Lazily
+// created; falls back to an em-estimate where no DOM canvas exists (e.g. SSR/tests).
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+function textWidth(text: string, size: number, weight: string): number {
+  if (measureCtx === undefined) {
+    measureCtx = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
+  }
+  if (!measureCtx) return text.length * size * 0.6;
+  measureCtx.font = `${weight} ${size}px ${MEASURE_FONT}`;
+  return measureCtx.measureText(text).width;
+}
 
 // Shaft + a two-stroke arrowhead at `to`, pointing from `from` toward `to`.
 function arrow(from: Coordinate, to: Coordinate, color: string): OverlayFigure[] {
@@ -188,7 +213,7 @@ const measure: OverlayTemplate = {
   needDefaultXAxisFigure: false,
   needDefaultYAxisFigure: false,
   createPointFigures: (params) => {
-    const { overlay, coordinates, precision } = params;
+    const { overlay, coordinates, precision, bounding } = params;
     if (coordinates.length < 2) return [];
     const [c0, c1] = coordinates;
     const p0 = overlay.points?.[0] ?? {};
@@ -233,40 +258,55 @@ const measure: OverlayTemplate = {
       time1: p1.timestamp ?? 0,
       precision: precision.price,
     });
-    const fontSize = 11;
-    const padX = 8;
-    const padY = 5;
-    const lineH = fontSize + 4;
-    // No canvas text metrics in the figure builder, so estimate the pill width
-    // from the longer line at ~0.6em/char (bold system font) — close enough.
-    const textW = Math.max(m.line1.length, m.line2.length) * fontSize * 0.6;
-    const pillW = textW + padX * 2;
-    const pillH = lineH * 2 + padY * 2;
-    const pillY = bottom + 8;
+    // Snug the pill to whichever line is actually wider (primary is bigger type but
+    // the bars·time line can run longer), measured at each line's own font.
+    const padX = 11;
+    const padTop = 6;
+    const padBottom = 7;
+    const gap = 3; // breathing room between the two lines
+    const textW = Math.max(
+      textWidth(m.line1, PRIMARY.size, PRIMARY.weight),
+      textWidth(m.line2, SECONDARY.size, SECONDARY.weight),
+    );
+    const pillW = Math.ceil(textW) + padX * 2;
+    const pillH = padTop + PRIMARY.size + gap + SECONDARY.size + padBottom;
+
+    // Center under the box; below it, but flip above if it would fall off the pane
+    // bottom. Clamp x so a box near an edge keeps the whole readout on-screen.
+    const belowY = bottom + 10;
+    const pillY = belowY + pillH <= bounding.height ? belowY : top - 10 - pillH;
+    const half = pillW / 2;
+    const pillCX = Math.min(Math.max(midX, half + 2), bounding.width - half - 2);
+
     figures.push({
       type: "rect",
-      attrs: { x: midX - pillW / 2, y: pillY, width: pillW, height: pillH },
-      styles: { style: "fill", color: palette.pill, borderRadius: 4 },
+      attrs: { x: pillCX - half, y: pillY, width: pillW, height: pillH },
+      styles: { style: "fill", color: palette.pill, borderRadius: 7 },
       ignoreEvent: true,
     });
-    const textStyle = {
-      color: MEASURE_TEXT,
-      size: fontSize,
-      weight: "bold",
-      family: "-apple-system, system-ui, sans-serif",
-    };
-    figures.push({
+    // The two readout lines. klinecharts' default overlay-text style paints a BLUE
+    // box (backgroundColor + borderColor), so every text figure must null those out
+    // explicitly — the red/green rect above is the pill; the text just sits on it.
+    const line = (text: string, y: number, tier: typeof PRIMARY): OverlayFigure => ({
       type: "text",
-      attrs: { x: midX, y: pillY + padY + lineH / 2, text: m.line1, align: "center", baseline: "middle" },
-      styles: textStyle,
+      attrs: { x: pillCX, y, text, align: "center", baseline: "top" },
+      styles: {
+        color: tier.color,
+        size: tier.size,
+        weight: tier.weight,
+        family: MEASURE_FONT,
+        backgroundColor: "transparent",
+        borderColor: "transparent",
+        borderSize: 0,
+        paddingLeft: 0,
+        paddingRight: 0,
+        paddingTop: 0,
+        paddingBottom: 0,
+      },
       ignoreEvent: true,
     });
-    figures.push({
-      type: "text",
-      attrs: { x: midX, y: pillY + padY + lineH + lineH / 2, text: m.line2, align: "center", baseline: "middle" },
-      styles: textStyle,
-      ignoreEvent: true,
-    });
+    figures.push(line(m.line1, pillY + padTop, PRIMARY));
+    figures.push(line(m.line2, pillY + padTop + PRIMARY.size + gap, SECONDARY));
     return figures;
   },
 };

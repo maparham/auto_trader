@@ -6,6 +6,7 @@
 // Everything drives the Chart instance directly via its public API.
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   getSupportedIndicators,
   getSupportedOverlays,
@@ -45,6 +46,7 @@ import {
   applyDefaultTemplate,
 } from "./lib/templates";
 import { indicatorInfo } from "./lib/indicatorMeta";
+import { magnetSignal, toggleMagnet, setMagnetStrength } from "./lib/magnet";
 import IndicatorRow from "./IndicatorRow";
 import type { ChartController } from "./lib/chartController";
 import ContextMenu from "./ContextMenu";
@@ -115,6 +117,61 @@ function Caret({ className }: { className?: string }) {
   );
 }
 
+// Horseshoe magnet (TV-style) — stroke icon (currentColor) so it inherits the
+// toolbar's mono treatment and the .on highlight, matching the bell/ruler icons.
+function MagnetIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M6 4v7a6 6 0 0 0 12 0V4" />
+      <path d="M3 4h6v3H3z" />
+      <path d="M15 4h6v3h-6z" />
+    </svg>
+  );
+}
+
+// A trailing ⓘ that reveals a description tooltip on hover, mirroring the indicator
+// menu's info icon (same .ind-info / .ind-tooltip styling). The tooltip is portaled
+// to <body> so the dropdown's own clipping/stacking can't hide it. onClick is
+// swallowed so clicking the icon inside a menu row never triggers the row's action.
+function InfoTip({ title, desc }: { title: string; desc: string }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setTip({ x: r.right + 8, y: r.top + r.height / 2 });
+  };
+  return (
+    <>
+      <button
+        ref={ref}
+        className="ind-info"
+        aria-label={`About ${title}`}
+        onClick={(e) => e.stopPropagation()}
+        onMouseEnter={show}
+        onMouseLeave={() => setTip(null)}
+        onFocus={show}
+        onBlur={() => setTip(null)}
+      >
+        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <line x1="12" y1="11" x2="12" y2="16" />
+          <circle cx="12" cy="7.5" r="0.6" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+      {tip &&
+        createPortal(
+          <div className="ind-tooltip" style={{ left: tip.x, top: tip.y }} role="tooltip">
+            <div className="ind-tooltip-title">{title}</div>
+            <div className="ind-tooltip-desc">{desc}</div>
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
+
 export default function Toolbar({
   controller,
   symbol,
@@ -159,6 +216,13 @@ export default function Toolbar({
   const [drawOpen, setDrawOpen] = useState(false);
   const [drawMenu, setDrawMenu] = useState<DrawMenu | null>(null);
 
+  // Magnet mode (GLOBAL, persisted) — mirror the signal; on = highlighted button.
+  // The caret opens a Weak/Strong strength menu.
+  const [magnet, setMagnet] = useState(magnetSignal.value);
+  useEffect(() => magnetSignal.subscribe(setMagnet), []);
+  const [magnetOpen, setMagnetOpen] = useState(false);
+  const magnetMenuRef = useRef<HTMLDivElement>(null);
+
   // price-scale
   const [log, setLog] = useState(false);
   // "A" auto-scale mode (mirrors the focused cell's signal; on = highlighted).
@@ -192,7 +256,7 @@ export default function Toolbar({
   // Close dropdowns on click outside. The ref wraps button+dropdown, so clicking
   // the toggle stays "inside" and doesn't fight the button's own onClick.
   useEffect(() => {
-    if (!indOpen && !drawOpen && !intervalOpen && !tmplOpen) return;
+    if (!indOpen && !drawOpen && !intervalOpen && !tmplOpen && !magnetOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (indOpen && indMenuRef.current && !indMenuRef.current.contains(t)) setIndOpen(false);
@@ -201,10 +265,12 @@ export default function Toolbar({
         setIntervalOpen(false);
       if (tmplOpen && tmplMenuRef.current && !tmplMenuRef.current.contains(t))
         setTmplOpen(false);
+      if (magnetOpen && magnetMenuRef.current && !magnetMenuRef.current.contains(t))
+        setMagnetOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [indOpen, drawOpen, intervalOpen, tmplOpen]);
+  }, [indOpen, drawOpen, intervalOpen, tmplOpen, magnetOpen]);
 
   // Right-clicking any overlay (drawn live or rehydrated) opens our context menu.
   // Bound to the FOCUSED cell's overlay manager; re-bind when focus changes.
@@ -601,12 +667,61 @@ export default function Toolbar({
         )}
       </div>
 
-      {/* Measure ruler (TradingView-style). Arms the tool: the next drag on the
-          chart measures price/%/ticks/bars/time. Shift+drag measures without arming.
-          Highlighted while armed; toggles off on a second click. */}
+      {/* Magnet mode (TradingView-style). The icon toggles snapping on/off; the
+          caret picks Weak/Strong. GLOBAL + persisted (lib/magnet.ts) — the same
+          state for every cell. Hold Ctrl/Cmd while drawing to momentarily invert. */}
+      <div className="menu magnet-menu" ref={magnetMenuRef}>
+        <button
+          className={`anchor-btn icon-btn magnet-toggle${magnet.on ? " on" : ""}`}
+          title="Magnet mode — snap drawings to price bars (hold Ctrl/Cmd to invert)"
+          onClick={() => toggleMagnet()}
+        >
+          <MagnetIcon />
+        </button>
+        <button
+          className={`magnet-caret-btn${magnetOpen ? " on" : ""}`}
+          title="Magnet strength"
+          onClick={() => setMagnetOpen((v) => !v)}
+        >
+          <Caret />
+        </button>
+        {magnetOpen && (
+          <div className="dropdown">
+            <ul>
+              <li
+                className="magnet-opt"
+                onClick={() => { setMagnetStrength("weak"); setMagnetOpen(false); }}
+              >
+                <span className="check">{magnet.strength === "weak" ? "✓" : ""}</span>
+                Weak Magnet
+                <InfoTip
+                  title="Weak Magnet"
+                  desc="Snaps a drawing point to the nearest OHLC price only when the cursor is close to a price bar."
+                />
+              </li>
+              <li
+                className="magnet-opt"
+                onClick={() => { setMagnetStrength("strong"); setMagnetOpen(false); }}
+              >
+                <span className="check">{magnet.strength === "strong" ? "✓" : ""}</span>
+                Strong Magnet
+                <InfoTip
+                  title="Strong Magnet"
+                  desc="Always snaps a drawing point to the nearest OHLC price of the bar under the cursor."
+                />
+              </li>
+            </ul>
+          </div>
+        )}
+      </div>
+
+      {/* Measure ruler (TradingView-style). Arms the tool: click the chart to set the
+          start, move, click again to set the end (price/%/ticks/bars/time). Holding
+          Shift arms it without the button. Highlighted while armed; toggles off on a
+          second click. */}
       <button
         className={`anchor-btn icon-btn measure-toggle${measuring ? " on" : ""}`}
-        title="Measure (or hold Shift and drag)"
+        title="Measure — click start, then click end (or hold Shift)"
         disabled={!controller?.measureArmed}
         onClick={() => controller?.measureArmed?.set(!controller.measureArmed.value)}
       >

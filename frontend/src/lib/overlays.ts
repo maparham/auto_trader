@@ -12,7 +12,8 @@
 // shared list safe (each cell renders, and persists, the complete set).
 
 import { LineType } from "klinecharts";
-import type { Chart, Overlay, OverlayEvent, DeepPartial, OverlayStyle } from "klinecharts";
+import type { Chart, Overlay, OverlayEvent, DeepPartial, OverlayStyle, OverlayMode } from "klinecharts";
+import { effectiveMagnetMode, magnetSignal, magnetInvertSignal, MAGNET_SENSITIVITY } from "./magnet";
 import {
   loadDrawings,
   saveDrawings,
@@ -36,9 +37,6 @@ import {
 } from "./visibility";
 
 type Kind = "drawing" | "alert" | "measure";
-
-// A measure anchor point — the same loose shape klinecharts stores on an overlay.
-type MeasurePoint = { timestamp?: number; value?: number; dataIndex?: number };
 
 // One-level-deep merge of a style patch onto a base style: for each top-level style
 // category present in the patch (line, text, ...), shallow-merge its fields over the
@@ -164,6 +162,13 @@ export class OverlayManager {
   // measure removes the old, and the next plain interaction / Esc / symbol change
   // clears it (ChartCore drives that). Single-instance by design.
   private measureId: string | null = null;
+  // True while klinecharts is collecting the two anchor clicks (between arm and the
+  // second placing click). Distinguishes a placing click from a clear-the-frozen-box
+  // click, and lets ChartCore cancel an unfinished measure.
+  private measureDrawing = false;
+  // Fired when a measurement completes (both anchors placed) so the owner can disarm
+  // the one-shot ruler. Set via setMeasureDone; the frozen box stays until next interaction.
+  private measureDone: (() => void) | null = null;
   private alertCfg = new Map<string, AlertConfig>();
   // klinecharts overlay id -> the alert's STABLE id (SavedAlert.id). The overlay id
   // is regenerated on every rehydrate; the stable id is the identity persisted to
@@ -230,6 +235,10 @@ export class OverlayManager {
   // NEW epic's (now GLOBAL, shared, mirrored) alert key. null until first rehydrate.
   private hydratedEpic: string | null = null;
   private rightClick: ((e: OverlayEvent) => void) | null = null;
+  // Unsubscribe from the global magnet signals (toggle + hold-invert modifier), set
+  // up in attach() and torn down in detach() so this cell's drawings track both (see
+  // applyMagnet).
+  private magnetUnsub: Array<() => void> = [];
   private alertsListener: (() => void) | null = null;
   // ChartCore subscribes to react to drawing selection changes (clear keyboard
   // focus targets, repaint), independent of the alert listener.
@@ -237,8 +246,18 @@ export class OverlayManager {
 
   attach(chart: Chart): void {
     this.chart = chart;
+    // Keep this cell's drawings' snap mode in lockstep with the global magnet toggle
+    // AND the hold-invert modifier. New drawings pick it up at create() time; these
+    // catch changes AFTER a drawing exists (so dragging an old line then snaps, and a
+    // held Ctrl/Cmd flips it mid-gesture — TV-style).
+    this.magnetUnsub = [
+      magnetSignal.subscribe(() => this.applyMagnet()),
+      magnetInvertSignal.subscribe(() => this.applyMagnet()),
+    ];
   }
   detach(): void {
+    this.magnetUnsub.forEach((u) => u());
+    this.magnetUnsub = [];
     this.chart = null;
     this.entries.clear();
     this.alertCfg.clear();
@@ -261,6 +280,17 @@ export class OverlayManager {
   }
   setScope(scope: string): void {
     this.scope = scope;
+  }
+  // Push the current global magnet mode onto every existing DRAWING (alerts/measure
+  // never snap). Called when the toolbar toggle changes. Overriding `mode` does NOT
+  // move a placed drawing — mode only affects klinecharts' coordinate→point snap
+  // during a live draw/drag — so this just arms future drags to snap (or stop).
+  private applyMagnet(): void {
+    if (!this.chart) return;
+    const mode = effectiveMagnetMode() as OverlayMode;
+    for (const [id, kind] of this.entries) {
+      if (kind === "drawing") this.chart.overrideOverlay({ id, mode });
+    }
   }
   // The data broker this cell belongs to. Alerts are stored PER BROKER, and this
   // cell can save an alert from an async callback that may fire mid broker-switch —
@@ -294,6 +324,10 @@ export class OverlayManager {
   // clear/refresh the keyboard target and repaint affordances).
   setDrawingListener(fn: (() => void) | null): void {
     this.drawingListener = fn;
+  }
+  // ChartCore sets this to disarm the one-shot ruler when a measurement completes.
+  setMeasureDone(fn: (() => void) | null): void {
+    this.measureDone = fn;
   }
   private notifyAlerts(): void {
     this.alertsListener?.(); // ChartCore: redraw on-chart axis pills
@@ -605,6 +639,7 @@ export class OverlayManager {
     if (!this.chart) return null;
     const isAlert = kind === "alert";
     const isMeasure = kind === "measure";
+    const isDrawing = kind === "drawing";
     const id = this.chart.createOverlay({
       name,
       points: points as Overlay["points"],
@@ -613,6 +648,11 @@ export class OverlayManager {
       visible: extra?.visible,
       zLevel: extra?.zLevel,
       extendData: extra?.extendData,
+      // TV-style Magnet: only user DRAWINGS snap to OHLC — never alert lines or the
+      // transient measure ruler. klinecharts does the snapping natively when `mode`
+      // is weak/strong on the candle pane (see lib/magnet.ts).
+      mode: isDrawing ? (effectiveMagnetMode() as OverlayMode) : undefined,
+      modeSensitivity: isDrawing ? MAGNET_SENSITIVITY : undefined,
       // Alerts render their own TV-style axis label (DOM pill in ChartCore), so
       // suppress klinecharts' default y-axis value box to avoid a duplicate. For
       // drawings the price tag is on by default but user-toggleable (Visibility
@@ -626,6 +666,13 @@ export class OverlayManager {
       },
       onDrawEnd: () => {
         this.drawingInProgress = false;
+        // Measure is transient: don't persist. Freeze it and let the owner disarm
+        // the one-shot ruler; the frozen box stays until the next interaction.
+        if (isMeasure) {
+          this.measureDrawing = false;
+          this.measureDone?.();
+          return false;
+        }
         this.persist();
         if (isAlert) this.notifyAlerts();
         return false;
@@ -656,7 +703,10 @@ export class OverlayManager {
       },
       onRemoved: (e) => {
         this.entries.delete(e.overlay.id);
-        if (this.measureId === e.overlay.id) this.measureId = null;
+        if (this.measureId === e.overlay.id) {
+          this.measureId = null;
+          this.measureDrawing = false;
+        }
         this.alertCfg.delete(e.overlay.id);
         this.alertIds.delete(e.overlay.id);
         this.alertCreatedAt.delete(e.overlay.id);
@@ -737,33 +787,39 @@ export class OverlayManager {
   }
 
   // --- transient measure tool (TV ruler) ------------------------------------
-  // Start a measurement at a single anchor (both points collapsed). Removes any
-  // existing measure first — only one is live at a time. Created fully placed (not
-  // interactive-draw), so it never fires onDrawEnd/persist.
-  startMeasure(p: MeasurePoint): string | null {
+  // Begin an interactive measurement: klinecharts collects the two anchors by
+  // CLICK (click start → move → click end), exactly like the Draw-menu tools — no
+  // press-drag. Removes any existing measure first (single-instance). onDrawEnd
+  // (in create()) freezes it and fires measureDone so the caller can disarm.
+  startMeasureDraw(): string | null {
     if (!this.chart) return null;
     this.clearMeasure();
-    const id = this.create("measure", "measure", [p, p] as SavedOverlay["points"]);
-    this.measureId = id;
+    this.drawingInProgress = true; // suppress lock click-align during the two placing clicks
+    const id = this.create("measure", "measure"); // no points → klinecharts draws it by click
+    if (id) {
+      this.measureId = id;
+      this.measureDrawing = true;
+    } else {
+      this.drawingInProgress = false;
+    }
     return id;
   }
 
-  // Live-update the measurement's end point while the user drags.
-  updateMeasure(p: MeasurePoint): void {
-    if (!this.chart || !this.measureId) return;
-    const start = this.chart.getOverlayById(this.measureId)?.points?.[0];
-    if (!start) return;
-    this.chart.overrideOverlay({ id: this.measureId, points: [start, p] });
-  }
-
-  // Discard the live measurement (next interaction / Esc / symbol change).
+  // Discard the measurement (cancel mid-draw, next interaction, Esc, symbol change).
   clearMeasure(): void {
-    if (this.measureId) this.chart?.removeOverlay(this.measureId); // onRemoved nulls measureId
+    if (this.measureId) this.chart?.removeOverlay(this.measureId); // onRemoved nulls the fields
     this.measureId = null;
+    this.measureDrawing = false;
   }
 
   hasMeasure(): boolean {
     return this.measureId != null;
+  }
+
+  // True between the first placing click and completion — lets a caller tell a
+  // placing click apart from a plain "click away that clears the frozen box".
+  isMeasureDrawing(): boolean {
+    return this.measureDrawing;
   }
 
   // --- user actions (called by Toolbar / chart "+" menu) ---------------------

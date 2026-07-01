@@ -20,6 +20,7 @@ import PositionsPanel from "./PositionsPanel";
 import { registerCustomIndicators } from "./lib/customIndicators";
 import { registerBacktestIndicators } from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
+import { installMagnetModifierKeys } from "./lib/magnet";
 import { registerPositionLine } from "./lib/positionLines";
 import type { ChartController } from "./lib/chartController";
 import {
@@ -1092,6 +1093,10 @@ export default function App() {
     return () => document.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeLayoutId, layoutName, tabs, active?.id]);
+
+  // Magnet mode's momentary-invert modifier (hold Ctrl/Cmd while drawing to flip
+  // snapping). Installed once for the app; OverlayManagers react via magnetInvertSignal.
+  useEffect(() => installMagnetModifierKeys(), []);
 
   // Esc leaves maximized view (matches the fullscreen idiom). Deferred while a
   // cell is maximized so nested Esc presses unwind the cell first.

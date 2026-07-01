@@ -1430,6 +1430,7 @@ export default function ChartCore({
     };
     const onAnchorDown = (e: MouseEvent) => {
       if (e.button !== 0 || avwapAnchorMode.value) return;
+      if (measureArmed.value || overlays.isMeasureDrawing()) return; // placing a measure anchor
       const c0 = chartRef.current;
       if (!c0 || !selectedAvwapId(c0, selectedIndicator.value)) return;
       const a = anchorPxRef.current;
@@ -1656,6 +1657,7 @@ export default function ChartCore({
     const lineDrags: LineDrag[] = [tradeDrag, alertDrag];
     const onLineDown = (e: MouseEvent) => {
       if (e.button !== 0 || avwapAnchorMode.value || e.metaKey || e.ctrlKey) return;
+      if (measureArmed.value || overlays.isMeasureDrawing()) return; // placing a measure anchor
       const c = chartRef.current;
       if (!c) return;
       const r = el.getBoundingClientRect();
@@ -1699,65 +1701,33 @@ export default function ChartCore({
     };
 
     // --- Measure ruler (TradingView-style) ---
-    // A transient two-point overlay: press → live-drag the end point → freeze on
-    // release. Two triggers feed the same drag: Shift+drag (measure without arming)
-    // and the toolbar ruler button (arms measureArmed; the next press measures then
-    // disarms). The frozen box is discarded on the next plain press, Esc, or a
-    // symbol/interval change. Nothing is persisted.
-    const pxToPoint = (clientX: number, clientY: number) => {
-      const c = chartRef.current;
-      if (!c) return null;
-      const r = el.getBoundingClientRect();
-      return first(
-        c.convertFromPixel([{ x: clientX - r.left, y: clientY - r.top }], {
-          paneId: "candle_pane",
-          absolute: true,
-        }),
-      );
-    };
-    let measureStart: { dataIndex?: number; value?: number } | null = null;
-    const onMeasureMove = (ev: MouseEvent) => {
-      const pt = pxToPoint(ev.clientX, ev.clientY);
-      if (pt) overlays.updateMeasure(pt);
-    };
-    const onMeasureUp = (ev: MouseEvent) => {
-      window.removeEventListener("mousemove", onMeasureMove);
-      window.removeEventListener("mouseup", onMeasureUp, true);
-      const start = measureStart;
-      measureStart = null;
-      const pt = pxToPoint(ev.clientX, ev.clientY);
-      // A press with no real drag (same bar & price) leaves a degenerate box → drop it.
-      if (start && pt && pt.dataIndex === start.dataIndex && pt.value === start.value) {
-        overlays.clearMeasure();
-      }
-    };
-    const beginMeasureDrag = (clientX: number, clientY: number) => {
-      const pt = pxToPoint(clientX, clientY);
-      if (!pt) return;
-      measureStart = { dataIndex: pt.dataIndex, value: pt.value };
-      overlays.startMeasure(pt);
-      window.addEventListener("mousemove", onMeasureMove);
-      window.addEventListener("mouseup", onMeasureUp, true);
-    };
-    // Registered FIRST among the capture-phase mousedowns so a measuring press can
-    // stopImmediatePropagation and pre-empt the line-grab / clone / pan handlers.
-    const onMeasureDown = (e: MouseEvent) => {
-      if (e.button !== 0) return;
-      const armed = measureArmed.value;
-      if (!e.shiftKey && !armed) {
-        // Not measuring: a plain press clears any frozen measurement ("click away").
-        if (overlays.hasMeasure()) overlays.clearMeasure();
-        return;
-      }
+    // A transient two-point overlay drawn by CLICK, like the Draw-menu tools: arm it
+    // (ruler button, or hold Shift), click to set the start, move, click to set the
+    // end. klinecharts collects the two anchors — no press-drag. On completion the
+    // box freezes and the tool disarms (one-shot). The frozen box is discarded on the
+    // next plain press, Esc, or a symbol/interval change. Nothing is persisted.
+    //
+    // Arming and the draw are wired to the measureArmed signal in a separate effect
+    // (subscribe → startMeasureDraw; measureDone → disarm). These two capture-phase
+    // presses are the remaining pieces: reserve a Shift press for measuring, and
+    // clear a frozen box on a plain press. Neither stops propagation — klinecharts
+    // must still receive the press to place the anchor. Registered FIRST so arming
+    // via Shift flips measureArmed before the line/clone/anchor handlers run (they
+    // bail while measuring), keeping every placing click for the ruler.
+    const onMeasureShift = (e: MouseEvent) => {
+      if (e.button !== 0 || !e.shiftKey) return;
+      if (measureArmed.value || overlays.isMeasureDrawing()) return;
       // The price-axis strip is a scale gesture, not a measurement.
       const c = chartRef.current;
       const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
       if (e.clientX - el.getBoundingClientRect().left > mainW) return;
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation(); // block the line/clone/pan handlers on this same press
-      if (armed) measureArmed.set(false); // one-shot arm
-      beginMeasureDrag(e.clientX, e.clientY);
+      measureArmed.set(true); // → startMeasureDraw() synchronously; THIS click sets the start
+    };
+    const onMeasureClear = (e: MouseEvent) => {
+      if (e.button !== 0 || e.shiftKey) return;
+      // Only a plain press with a FROZEN box (not armed, not mid-draw) clears it.
+      if (measureArmed.value || overlays.isMeasureDrawing()) return;
+      if (overlays.hasMeasure()) overlays.clearMeasure();
     };
 
     // TradingView-style "A" auto-scale: pressing on the price-axis column (the
@@ -1775,6 +1745,7 @@ export default function ChartCore({
     };
     const onAxisDown = (e: MouseEvent) => {
       if (e.button !== 0 || !autoScale.value) return;
+      if (measureArmed.value || overlays.isMeasureDrawing()) return; // measuring owns the press
       if (overPriceAxis(e)) autoScale.set(false);
     };
     // Double-clicking the price-axis column resets to auto-scale (TV behaviour):
@@ -2034,7 +2005,17 @@ export default function ChartCore({
       // of mainW into the candle pane, so it stays reachable while the cursor is in
       // the pane — only the on-axis portion is sacrificed.
       const overPlus = btn.contains(e.target as Node);
-      if (x > mainW) {
+      // The "+" is a quick-create PRICE-alert affordance and its price box reads the
+      // candle_pane scale — meaningless over a sub-pane (RSI/MACD/Volume), whose y-axis
+      // is an indicator value, not a price. Below the candle pane's bottom edge, hide the
+      // affordance entirely (like the on-axis guard) so klinecharts' own crosshair label
+      // shows that pane's value on its y-axis. Done before any box positioning so crossing
+      // the separator never flashes a stale price.
+      // klinecharts only populates a pane bounding's `top`/`height` (never `bottom`,
+      // which stays 0), so derive the candle pane's bottom edge as top + height.
+      const cb = c.getSize("candle_pane", DomPosition.Root);
+      const candleBottom = cb ? cb.top + cb.height : null;
+      if (x > mainW || (candleBottom != null && y > candleBottom)) {
         btn.style.display = "none";
         setPlusCrosshair(null);
         return;
@@ -2098,16 +2079,34 @@ export default function ChartCore({
       }
     };
     const unsubAnchor = avwapAnchorMode.subscribe((id) => setAnchoring(id != null));
-    const unsubMeasureArm = measureArmed.subscribe((on) => setMeasureArmedUi(on));
+    // Arm/draw the measure ruler off the measureArmed signal: arming starts the
+    // interactive draw (click/drag to place the two anchors); disarming mid-draw
+    // cancels it; measureDone disarms the one-shot after completion. Also drives the
+    // crosshair cursor (measureArmedUi).
+    const unsubMeasureArm = measureArmed.subscribe((on) => {
+      setMeasureArmedUi(on);
+      if (on) {
+        overlays.startMeasureDraw();
+        // Focus the cell so Esc reaches onKeyDown even when arming came from the
+        // toolbar button (which would otherwise hold focus) — Esc must always cancel.
+        wrapRef.current?.focus({ preventScroll: true });
+      } else if (overlays.isMeasureDrawing()) {
+        overlays.clearMeasure(); // disarmed before finishing
+      }
+    });
+    overlays.setMeasureDone(() => measureArmed.set(false));
 
     if (chart) {
       chart.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current));
       el.addEventListener("click", onClick);
       el.addEventListener("dblclick", onDblClick); // alert-line -> edit; curve -> settings
       el.addEventListener("contextmenu", onContextMenu); // right-click -> Paste menu
-      // Measure ruler FIRST among the capture-phase mousedowns: a measuring press
-      // stopImmediatePropagation's to pre-empt the line/clone/anchor/pan handlers.
-      el.addEventListener("mousedown", onMeasureDown, true);
+      // Measure ruler FIRST among the capture-phase mousedowns: a Shift press flips
+      // measureArmed here before the line/clone/anchor handlers run (they bail while
+      // measuring), so every placing press is reserved for the ruler. Neither measure
+      // handler stops propagation — klinecharts still needs the press to place a point.
+      el.addEventListener("mousedown", onMeasureShift, true);
+      el.addEventListener("mousedown", onMeasureClear, true);
       // Capture-phase so it runs before klinecharts' own canvas mousedown — when we
       // grab the anchor handle we stopPropagation, blocking the chart's pan start.
       el.addEventListener("mousedown", onAnchorDown, true);
@@ -2333,14 +2332,13 @@ export default function ChartCore({
       wsRef.current?.close();
       unsubAnchor();
       unsubMeasureArm();
+      overlays.setMeasureDone(null);
       unsubRemoved();
       el.removeEventListener("click", onClick);
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
-      el.removeEventListener("mousedown", onMeasureDown, true);
-      // Drop any live window listeners from an in-flight measure drag (see lineDrags).
-      window.removeEventListener("mousemove", onMeasureMove);
-      window.removeEventListener("mouseup", onMeasureUp, true);
+      el.removeEventListener("mousedown", onMeasureShift, true);
+      el.removeEventListener("mousedown", onMeasureClear, true);
       el.removeEventListener("mousedown", onAnchorDown, true);
       el.removeEventListener("mousedown", onClonePress, true);
       el.removeEventListener("mousedown", onAxisDown, true);

@@ -19,8 +19,11 @@ const CROSSHAIR_DASH: Record<CrosshairStyle["lineStyle"], [number, number] | und
   dotted: [1, 4],
 };
 
-const UP = "#26a69a";
-const DOWN = "#ef5350";
+// Candle up/down palette — the chart's core "price rose / fell" language. Exported
+// so on-chart instruments that report direction (e.g. the Measure ruler) inherit the
+// SAME colors by construction rather than re-declaring lookalike constants.
+export const UP = "#26a69a";
+export const DOWN = "#ef5350";
 
 // Axis label font (price + time). The system stack (SF on Apple) mirrors
 // TradingView's and renders thinner/cleaner than klinecharts' default Helvetica

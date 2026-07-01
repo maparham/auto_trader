@@ -30,6 +30,7 @@ class MemStorage {
 const { OverlayManager, asDrawingExtra } = await import("./overlays");
 const P = await import("./persist");
 const { alertsChanged } = await import("./signals");
+const { setMagnet, DEFAULT_MAGNET } = await import("./magnet");
 
 // Minimal faithful stand-in for a klinecharts Chart: the only 4 methods
 // OverlayManager calls (createOverlay/getOverlayById/overrideOverlay/removeOverlay),
@@ -761,5 +762,53 @@ describe("OverlayManager ghost-stub for interval/auto-hidden drawings", () => {
     expect((snapshot.styles as { line?: { color?: string } } | null)?.line?.color).toBe(
       originalColor,
     );
+  });
+});
+
+describe("magnet mode (TV-style OHLC snap)", () => {
+  beforeEach(() => setMagnet(DEFAULT_MAGNET)); // reset the global setting per test
+
+  const modeOf = (chart: FakeChart, id: string) =>
+    chart.getOverlayById(id)!.mode as string | undefined;
+
+  it("new drawings get the current magnet mode; alerts never snap", () => {
+    const { chart, m } = setup();
+    setMagnet({ on: true, strength: "weak" });
+
+    const draw = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const alert = m.addAlert(50, { condition: "crossing", trigger: "once", message: "" })!;
+
+    expect(modeOf(chart, draw)).toBe("weak_magnet");
+    expect(chart.getOverlayById(draw)!.modeSensitivity).toBeGreaterThan(0);
+    // Alert lines must not snap to OHLC regardless of the magnet setting.
+    expect(modeOf(chart, alert)).toBeUndefined();
+  });
+
+  it("a drawing added while magnet is off has no snap mode", () => {
+    const { chart, m } = setup();
+    const draw = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    expect(modeOf(chart, draw)).toBe("normal");
+  });
+
+  it("toggling magnet syncs the mode of existing drawings but not alerts", () => {
+    const { chart, m } = setup();
+    const draw = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const alert = m.addAlert(50, { condition: "crossing", trigger: "once", message: "" })!;
+
+    setMagnet({ on: true, strength: "strong" });
+    expect(modeOf(chart, draw)).toBe("strong_magnet");
+    expect(modeOf(chart, alert)).toBeUndefined(); // alert untouched
+
+    setMagnet(DEFAULT_MAGNET); // back off
+    expect(modeOf(chart, draw)).toBe("normal");
+  });
+
+  it("stops syncing after detach (subscription cleaned up)", () => {
+    const { chart, m } = setup();
+    const draw = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.detach();
+    // With the chart detached the manager must not touch a stale overlay map.
+    setMagnet({ on: true, strength: "strong" });
+    expect(modeOf(chart, draw)).toBe("normal"); // unchanged since detach
   });
 });

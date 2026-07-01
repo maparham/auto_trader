@@ -17,17 +17,21 @@ first line and `25 bars, 2h 15m` on the second; activated in TV via `⇧ + click
 ## Decisions (confirmed with user)
 
 - **Transient.** The measurement is never saved to the layout. It behaves like
-  TV's Measure: it shows while you drag, freezes on release, and is discarded on
-  the next interaction. It never enters the persisted drawing registry.
-- **Two triggers:** hold **Shift and drag** on the chart, *and* a dedicated
-  **ruler button** in the toolbar that arms the tool for the next drag.
+  TV's Measure: it shows while you place it, freezes on completion, and is
+  discarded on the next interaction. It never enters the persisted drawing registry.
+- **Drawn by CLICK, not drag** (revised after user feedback; TV parity): once
+  armed, **click** to set the start, move (the box rubber-bands), **click** again to
+  set the end. No press-drag. This is klinecharts' native interactive-draw flow — the
+  same one the Draw-menu tools use — so a drag never advances a point (klinecharts
+  sets `_cancelClick` on a moved-while-pressed gesture).
+- **Two ways to arm:** a dedicated **ruler button** in the toolbar, or **hold Shift**
+  (Shift+click starts a measurement without the toolbar; matches TV's "⇧ + Click").
+  Arming is **one-shot** — the tool disarms when the measurement completes.
 - **Metrics shown** (matching the TV screenshot):
-  - Line 1: `Δprice (Δ%) Δticks` — absolute price change, percent change, and the
-    number of min-ticks (Δprice ÷ min-tick).
-  - Line 2: `N bars, Hh Mm` — bar count across the span and elapsed time.
-  - Angle/slope and volume are explicitly out of scope for v1 (easy to add later
-    as extra label lines).
-- **Shift+drag suppresses chart panning** while a measurement is in progress.
+  - Line 1 (primary, 12px/700): `Δprice (Δ%) Δticks` — absolute price change,
+    percent change, and the number of min-ticks (Δprice ÷ min-tick).
+  - Line 2 (secondary, 10.5px/500, 78% white): `N bars, Hh Mm` — bar count and
+    elapsed time. Angle/slope and volume are out of scope for v1.
 
 ## Non-goals (v1)
 
@@ -88,51 +92,51 @@ false`, no persistence in any lifecycle callback, and no hover/select wiring. Ad
 a single-instance guard: creating a measure removes any existing one first
 (`this.measureId`).
 
-New `OverlayManager` API:
+New `OverlayManager` API (klinecharts drives the placement by click, so there is
+NO manual drag/update path):
 
-- `startMeasure(p0)` — create the `measure` overlay with points `[p0, p0]` (fully
-  placed, *not* interactive-draw), stash `barMs` in `extendData`, record
-  `measureId`. Returns the id.
-- `updateMeasure(p1)` — `overrideOverlay({ id: measureId, points: [p0, p1] })`
-  while dragging.
-- `clearMeasure()` — remove the current measure overlay if any.
-- `hasMeasure()` — whether one is live.
+- `startMeasureDraw()` — `create('measure')` with **no points** → klinecharts enters
+  interactive draw and collects the two anchors by click. Removes any existing
+  measure first (single-instance); records `measureId` + `measureDrawing`.
+- `clearMeasure()` — remove the current measure overlay (cancel/next-interaction).
+- `hasMeasure()` — whether one is live (drawing or frozen).
+- `isMeasureDrawing()` — true between the first placing click and completion (tells a
+  placing click apart from a plain clear-the-frozen-box click).
+- `setMeasureDone(fn)` — completion hook (fired from `create()`'s `onDrawEnd` for the
+  measure kind) so the owner can disarm the one-shot ruler.
 
-`create()`'s `onRemoved` clears `measureId` when the removed overlay is the
-measure. `persist()` must skip measure overlays entirely (they are not in
-`SavedOverlay` space — they never reach `persist()` because measure lifecycle
-callbacks don't call it, and `persist()` already iterates `entries` by kind, so
-guard the measure kind out there too, belt-and-suspenders).
+`create()`'s `onDrawEnd` for the measure kind freezes without persisting and fires
+`measureDone`; `onRemoved` clears `measureId`/`measureDrawing`. `persist()` skips the
+measure kind (belt-and-suspenders — measure callbacks never call it anyway).
 
-Points are `{ timestamp, value, dataIndex }`. The drag routine builds them via
-`chart.convertFromPixel({ x, y })` (returns `dataIndex` + `value`; timestamp
-derived from `dataIndex` via the loaded data, or `convertFromPixel`'s timestamp
-if provided).
+### 3. Triggers (`ChartCore.tsx`, `Toolbar.tsx`, `lib/chartController.ts`)
 
-### 3. Drag routine + triggers (`ChartCore.tsx`, `Toolbar.tsx`, `lib/signals.ts`)
+Arming and drawing are wired to a per-cell `measureArmed` signal
+(`lib/chartController.ts`, alongside `avwapAnchorMode`/`autoScale`):
 
-One shared routine `beginMeasureDrag(startX, startY)` on the focused cell:
+- Subscribe: `measureArmed` true → `overlays.startMeasureDraw()` + focus the cell (so
+  Esc always lands) + crosshair cursor; false while mid-draw → `clearMeasure()`
+  (cancel). `setMeasureDone(() => measureArmed.set(false))` disarms the one-shot.
+- **Ruler button** (Toolbar) toggles `measureArmed`. Once armed, klinecharts collects
+  the two clicks (click start → move → click end); on completion `onDrawEnd` disarms.
+- **Shift** — a capture-phase `mousedown` on `.chart-wrap` (`onMeasureShift`): a Shift
+  press flips `measureArmed` true *synchronously* (before the click reaches
+  klinecharts), so the same Shift+click sets the start. It does NOT stopPropagation —
+  klinecharts still needs the press to place the anchor.
+- The sibling capture handlers (`onLineDown`/`onAnchorDown`/`onAxisDown`) bail while
+  `measureArmed || isMeasureDrawing()`, so no placing click gets stolen to grab a line
+  or exit auto-scale.
 
-1. `p0 = overlays.startMeasure(fromPixel(startX, startY))`.
-2. Attach window `mousemove` → `overlays.updateMeasure(fromPixel(x, y))`.
-3. Attach window `mouseup` → detach listeners, freeze (the overlay stays shown).
+**Discard:** `onMeasureClear` (capture `mousedown`) clears a FROZEN box on the next
+plain press (guarded by `!measureArmed && !isMeasureDrawing()`); `Esc`
+(disarm + `clearMeasure`) and a symbol/interval change also clear.
 
-Two entry points feed it:
-
-- **Shift+drag** — a capture-phase `mousedown` handler on `.chart-wrap` (sibling
-  to the existing `onClonePress` clone handler). When `e.shiftKey` and the target
-  is the chart canvas: `e.preventDefault()` + `e.stopPropagation()` (so
-  klinecharts does not pan), then `beginMeasureDrag`.
-- **Ruler button** — a new toolbar icon button toggles a per-cell `measureArmed`
-  signal (`lib/chartController.ts`, alongside `avwapAnchorMode`/`autoScale`). When
-  armed: the chart shows a crosshair cursor; the next `mousedown` on the canvas
-  calls `beginMeasureDrag` (stopPropagation to avoid pan) and disarms. Pressing
-  **Esc** while armed disarms without drawing.
-
-**Discard-on-next-interaction:** a plain (non-Shift, non-armed) `mousedown` on the
-chart, `Esc`, or a symbol/timeframe change calls `overlays.clearMeasure()`. Wire
-this in ChartCore's existing empty-space/click and keydown branches and in the
-symbol/period change effect (same place drawings rehydrate).
+**Headless note:** klinecharts finalizes an interactive draw on its synthetic click,
+which does not fire reliably under headless synthetic input (the built-in Draw tools'
+`tab-drawings` e2e has the same limitation). So the e2e asserts the wiring
+(toggle/arm/disarm/Esc/no-persist/no-errors); the full click → move → click flow,
+frozen pill, one-shot disarm, and click-away clear are verified by hand in a real
+browser.
 
 ### 4. Colors (in `lib/customOverlays.ts`, not theme tokens)
 

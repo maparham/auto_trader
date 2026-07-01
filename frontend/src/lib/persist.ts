@@ -263,6 +263,19 @@ export function saveSettingsRaw<T>(value: T): void {
   save(SETTINGS_KEY, value);
 }
 
+// Magnet mode (TV-style OHLC snap for drawings) is a GLOBAL preference — one
+// setting for every chart cell — that rides the same mirror + cross-device sync as
+// the rest of the workspace. lib/magnet.ts owns the shape and defaults; these thin
+// wrappers just give it the mirrored load/save (magnet.ts must not reach into
+// localStorage directly, or the setting would stop syncing).
+const MAGNET_KEY = `${PREFIX}.magnet`;
+export function loadMagnet<T>(fallback: T): T {
+  return load<T>(MAGNET_KEY, fallback);
+}
+export function saveMagnet<T>(value: T): void {
+  save(MAGNET_KEY, value);
+}
+
 // --- device-local writes (NOT mirrored) --------------------------------------
 //
 // A handful of keys are intentionally PER-DEVICE and must never reach the backend

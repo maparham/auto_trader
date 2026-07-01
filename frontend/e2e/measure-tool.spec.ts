@@ -1,12 +1,19 @@
 import { test, expect } from "@playwright/test";
 import { seedSingleChartDefault, stubStateApi } from "./helpers";
 
-// The Measure ruler is a TRANSIENT overlay: it renders while you drag, freezes on
-// release, and is never persisted. These checks cover the observable contract —
-// the toolbar toggle, the one-shot arm, Esc disarm, and that nothing leaks into the
-// persisted drawing store — without reaching into the canvas (the box/pill are
-// canvas figures; their look is confirmed separately by eye).
-test("measure ruler: arm, one-shot disarm, transient, no persistence", async ({ page }) => {
+// The Measure ruler is a TRANSIENT overlay drawn by CLICK, like the Draw-menu
+// tools: arm it (ruler button or hold Shift), click to set the start, move, click
+// to set the end — no dragging. It is never persisted.
+//
+// This spec covers the parts observable in headless: the toolbar toggle, arm/disarm
+// (including Esc), and that arming/cancelling never leaks into the persisted drawing
+// store. It does NOT drive a full two-click placement to completion — klinecharts'
+// interactive draw finalizes on its synthetic click, which does not fire reliably
+// under headless synthetic input (the built-in Draw tools' e2e, tab-drawings, has
+// the same limitation). The full click → move → click flow, the frozen readout pill,
+// one-shot disarm on completion, and click-away clearing are verified by hand in a
+// real browser.
+test("measure ruler: toolbar toggle, arm/disarm, Esc, no persistence", async ({ page }) => {
   const errors: string[] = [];
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
@@ -16,54 +23,32 @@ test("measure ruler: arm, one-shot disarm, transient, no persistence", async ({ 
   await stubStateApi(page);
   await page.goto("/");
   await page.locator(".tab-bar").waitFor();
-  const canvas = page.locator(".chart canvas").first();
-  await canvas.waitFor();
+  await page.locator(".chart canvas").first().waitFor();
 
   const ruler = page.locator(".measure-toggle");
-  const box = (await canvas.boundingBox())!;
-  const cx = box.x + box.width / 2;
-  const cy = box.y + box.height / 2;
+  await expect(ruler).toHaveAttribute("title", /Measure/);
 
-  // Count of persisted drawings for the active tab — must stay 0 the whole time.
+  // Nothing is ever persisted by the ruler (transient by design).
   const drawingCount = () =>
     page.evaluate(() => {
       const key = Object.keys(localStorage).find((k) => k.includes(".drawings."));
       return key ? (JSON.parse(localStorage.getItem(key) || "[]") as unknown[]).length : 0;
     });
 
-  // Arm via the ruler button → highlighted.
+  // Button arms (highlights) and toggles back off — disarming cancels the in-progress
+  // draw, so nothing is left on the chart or in storage.
   await ruler.click();
   await expect(ruler).toHaveClass(/\bon\b/);
-
-  // Drag a measurement. The armed press is one-shot: the ruler disarms after.
-  await page.mouse.move(cx - 80, cy - 40);
-  await page.mouse.down();
-  await page.mouse.move(cx + 80, cy + 40, { steps: 8 });
-  await page.mouse.up();
-  await expect(ruler).not.toHaveClass(/\bon\b/);
-  // Transient: the measurement never reaches the persisted drawing store.
-  await expect.poll(drawingCount).toBe(0);
-
-  // Shift+drag measures without ever arming the button.
-  await page.keyboard.down("Shift");
-  await page.mouse.move(cx - 60, cy + 30);
-  await page.mouse.down();
-  await page.mouse.move(cx + 60, cy - 30, { steps: 8 });
-  await page.mouse.up();
-  await page.keyboard.up("Shift");
+  await ruler.click();
   await expect(ruler).not.toHaveClass(/\bon\b/);
   await expect.poll(drawingCount).toBe(0);
 
-  // Esc while armed disarms without drawing anything.
+  // Esc disarms an armed ruler (TV: Esc cancels the tool).
   await ruler.click();
   await expect(ruler).toHaveClass(/\bon\b/);
   await page.locator(".chart-wrap").first().focus();
   await page.keyboard.press("Escape");
   await expect(ruler).not.toHaveClass(/\bon\b/);
-  await expect.poll(drawingCount).toBe(0);
-
-  // A plain click afterwards clears any frozen measurement without error.
-  await page.mouse.click(cx, cy);
   await expect.poll(drawingCount).toBe(0);
 
   expect(errors).toEqual([]);
