@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 import time
 from collections.abc import Awaitable, Callable
@@ -49,6 +50,11 @@ class CandleCache:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._locks: dict[CandleKey, asyncio.Lock] = {}
+        # In-memory only (reset on restart) — debug/introspection counters for the
+        # candle-cache-stats UI, not durable telemetry.
+        self._hits: dict[CandleKey, int] = {}
+        self._misses: dict[CandleKey, int] = {}
+        self._last_fetch: dict[CandleKey, float] = {}
         self._connect().close()  # create db file + schema up front
 
     def _key_lock(self, key: CandleKey) -> asyncio.Lock:
@@ -212,6 +218,42 @@ class CandleCache:
             conn.close()
         return n
 
+    def _record_hit(self, key: CandleKey) -> None:
+        self._hits[key] = self._hits.get(key, 0) + 1
+
+    def _record_miss(self, key: CandleKey) -> None:
+        self._misses[key] = self._misses.get(key, 0) + 1
+
+    def _record_last_fetch(self, key: CandleKey, when: float) -> None:
+        self._last_fetch[key] = when
+
+    def stats(self, key: CandleKey) -> dict:
+        """Read-only per-series introspection for the cache-stats UI. Never
+        touches the broker; safe to call from a route handler."""
+        cov = self._coverage(key)
+        return {
+            "oldest_ts": cov[0] if cov else None,
+            "newest_ts": cov[1] if cov else None,
+            "cached_bar_count": self._cached_count(key),
+            "hits": self._hits.get(key, 0),
+            "misses": self._misses.get(key, 0),
+            "last_fetch_ts": self._last_fetch.get(key),
+        }
+
+    def global_stats(self) -> dict:
+        """Cache-wide introspection (all series) for the cache-stats popover."""
+        conn = self._connect()
+        try:
+            (total_bars,) = conn.execute("SELECT COUNT(*) FROM bars").fetchone()
+        finally:
+            conn.close()
+        return {
+            "total_bars": total_bars,
+            "total_hits": sum(self._hits.values()),
+            "total_misses": sum(self._misses.values()),
+            "db_size_bytes": os.path.getsize(self._db_path) if os.path.exists(self._db_path) else 0,
+        }
+
     async def window(
         self,
         key: CandleKey,
@@ -246,6 +288,7 @@ class CandleCache:
         # recent()/the stream own the live edge — so we never push the newest
         # watermark past the closed cutoff here (see the coverage cap below).
         if cov is not None and cov[0] <= from_ts and cov[1] >= to_ts:
+            self._record_hit(key)
             return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
         # Backfill from `start` up to the current oldest (gap-free), or the whole
         # window when cold. End the fetch at oldest so we don't re-pull covered bars.
@@ -259,6 +302,9 @@ class CandleCache:
             if cached:
                 return cached
             raise
+        if start < fetch_end:
+            self._record_miss(key)
+            self._record_last_fetch(key, now if now is not None else time.time())
         cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
         await asyncio.to_thread(self._store_closed, key, fetched, cutoff)
         # Mark the requested span covered even on an empty fetch (closed market) so we
@@ -323,6 +369,11 @@ class CandleCache:
             if cached:
                 return cached
             raise
+        self._record_last_fetch(key, now if now is not None else time.time())
+        if cold:
+            self._record_miss(key)
+        else:
+            self._record_hit(key)
         # Store without auto-extending coverage, then set it ourselves: a block that
         # connects to the existing coverage (its oldest is within one bar of newest)
         # unions; a block that lands disjoint (the gap was bigger than we could bridge)

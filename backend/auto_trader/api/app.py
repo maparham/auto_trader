@@ -229,6 +229,22 @@ class CandleDTO(BaseModel):
     volume: float
 
 
+class CandleCacheStatsDTO(BaseModel):
+    oldest_ts: int | None
+    newest_ts: int | None
+    cached_bar_count: int
+    hits: int
+    misses: int
+    last_fetch_ts: float | None
+
+
+class CandleCacheGlobalStatsDTO(BaseModel):
+    total_bars: int
+    total_hits: int
+    total_misses: int
+    db_size_bytes: int
+
+
 class MarkerDTO(BaseModel):
     time: int
     side: str
@@ -909,6 +925,44 @@ async def candles(
     if not loaded and from_ts is None:
         raise HTTPException(404, f"no data for epic '{epic}' (unknown epic or no history)")
     return [_candle_dto(c) for c in loaded]
+
+
+@app.get("/api/candle-cache/stats", response_model=CandleCacheStatsDTO)
+async def candle_cache_stats(
+    epic: str = Query(...),
+    resolution: str = Query(...),
+    price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
+    broker_id: str = Query("capital", alias="broker"),
+) -> CandleCacheStatsDTO:
+    """Read-only cache introspection for the chart's cache-stats badge/popover.
+    Never touches the broker or mutates cache state."""
+    if resolution in SECONDS_INTERVALS:
+        # Sub-minute intervals are served from TICK_STORE, not CANDLE_CACHE.
+        return CandleCacheStatsDTO(
+            oldest_ts=None, newest_ts=None, cached_bar_count=0,
+            hits=0, misses=0, last_fetch_ts=None,
+        )
+    if is_derived(resolution):
+        rule = DERIVED.get(resolution)
+        if rule is None:
+            raise HTTPException(422, f"unknown resolution '{resolution}'")
+        # The cache only ever stores base-resolution bars (derived views are folded
+        # on read, see candle_aggregate.fold) — so a derived timeframe's stats
+        # intentionally report the base series' coverage/hits, not a per-derived-view
+        # figure. Every derived view over the same base reports identical numbers.
+        res_value = rule.base.value
+    else:
+        res_value = _parse_resolution(resolution).value
+    key = (broker_id, epic, res_value, price_side)
+    stats = await asyncio.to_thread(CANDLE_CACHE.stats, key)
+    return CandleCacheStatsDTO(**stats)
+
+
+@app.get("/api/candle-cache/stats/global", response_model=CandleCacheGlobalStatsDTO)
+async def candle_cache_global_stats() -> CandleCacheGlobalStatsDTO:
+    """Cache-wide introspection (all series) for the cache-stats popover."""
+    stats = await asyncio.to_thread(CANDLE_CACHE.global_stats)
+    return CandleCacheGlobalStatsDTO(**stats)
 
 
 @app.get("/api/backtest", response_model=BacktestResponse)

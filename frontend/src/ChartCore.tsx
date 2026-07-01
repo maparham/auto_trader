@@ -18,12 +18,14 @@ import {
   fetchRecent,
   fetchRange,
   fetchMarketMeta,
+  fetchCandleCacheStats,
   openLive,
   RESOLUTION_SECONDS,
   type Instrument,
   type LiveHandle,
   type LiveStatus,
   type Period,
+  type CandleCacheStats,
   PERIODS,
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
@@ -39,6 +41,7 @@ import ChartLegend, {
 } from "./ChartLegend";
 import { ChartController } from "./lib/chartController";
 import InstrumentDetailsModal from "./InstrumentDetailsModal";
+import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle, type CurveLabelPill } from "./CurveLabels";
 import { clearBacktest } from "./lib/backtest";
 import { toast } from "./lib/notify";
@@ -1068,6 +1071,8 @@ export default function ChartCore({
   const lastCandleAtRef = useRef(0);
   // Instrument-details modal (opened by clicking the legend symbol).
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [cacheStatsOpen, setCacheStatsOpen] = useState(false);
+  const [cacheStats, setCacheStats] = useState<CandleCacheStats | null>(null);
   // Current epic/resolution, readable from once-mounted callbacks without re-subscribing.
   const epicRef = useRef(symbol.epic);
   epicRef.current = symbol.epic;
@@ -2624,6 +2629,56 @@ export default function ChartCore({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol.epic, period.resolution, priceSide, brokerId]);
 
+  // Candle-cache stats badge: poll this cell's own series on an interval, reset
+  // to null immediately on series change so the badge never shows a stale
+  // series' numbers while the new one's first poll is in flight.
+  useEffect(() => {
+    let cancelled = false;
+    setCacheStats(null);
+    const poll = () => {
+      void fetchCandleCacheStats(symbol.epic, period.resolution, priceSide, brokerId).then(
+        (s) => {
+          if (!cancelled) setCacheStats(s);
+        },
+      );
+    };
+    poll();
+    const id = setInterval(poll, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [symbol.epic, period.resolution, priceSide, brokerId]);
+
+  // Offset the badge clear of the price-axis column (priceTag.w, already tracked
+  // for the live-price pill) so it sits just to the LEFT of the axis rather than
+  // overlapping its price labels. Falls back to a plain 6px inset before the axis
+  // width is known (no data yet).
+  const cacheBadgeRight = (priceTag?.w ?? 0) + 6;
+
+  const cacheBadge = (() => {
+    if (!cacheStats) return null;
+    if (cacheStats.oldestTs == null) {
+      return {
+        label: "n/a",
+        title: "No cache data yet for this series.",
+        state: "none" as const,
+        right: cacheBadgeRight,
+      };
+    }
+    const ageSec = cacheStats.lastFetchTs != null ? Date.now() / 1000 - cacheStats.lastFetchTs : null;
+    const fresh = ageSec != null && ageSec < 60;
+    const days = Math.max(0, Math.round((cacheStats.newestTs! - cacheStats.oldestTs) / 86400));
+    const total = cacheStats.hits + cacheStats.misses;
+    const hitPct = total > 0 ? Math.round((cacheStats.hits / total) * 100) : null;
+    return {
+      label: hitPct != null ? `${hitPct}%` : "—",
+      title: `Hit rate: ${hitPct != null ? `${hitPct}% (${cacheStats.hits}/${total})` : "n/a"} · Coverage: ${days}d · ${cacheStats.cachedBarCount} bars`,
+      state: fresh ? ("fresh" as const) : ("stale" as const),
+      right: cacheBadgeRight,
+    };
+  })();
+
   // Paint the H position bracket for the active trade/draft on its own canvas. Cheap
   // and React-free, so it runs on every mousemove (to track the cursor's x) as well as
   // from `redraw` (so the spine stays glued to its lines through scroll/zoom/ticks and
@@ -3950,6 +4005,8 @@ export default function ChartCore({
         onSelectRow={onLegendSelectRow}
         onOpenMenu={onLegendOpenMenu}
         onOpenDetails={() => setDetailsOpen(true)}
+        cacheBadge={cacheBadge}
+        onOpenCacheStats={() => setCacheStatsOpen(true)}
         // Clicking the symbol name swaps the instrument (TradingView-style). The
         // wrap's onPointerDownCapture has already focused this cell, so the shared
         // symbol-search modal targets this cell's symbol.
@@ -3962,6 +4019,17 @@ export default function ChartCore({
           brokerId={brokerId}
           title={symbol.name ?? symbol.epic}
           onClose={() => setDetailsOpen(false)}
+        />
+      )}
+
+      {cacheStatsOpen && (
+        <CandleCacheStatsModal
+          epic={symbol.epic}
+          resolution={period.resolution}
+          priceSide={priceSide}
+          brokerId={brokerId}
+          title={`${symbol.name ?? symbol.epic} cache stats`}
+          onClose={() => setCacheStatsOpen(false)}
         />
       )}
 

@@ -272,6 +272,88 @@ export async function fetchMarketDetail(
   }
 }
 
+export interface CandleCacheStats {
+  oldestTs: number | null;
+  newestTs: number | null;
+  cachedBarCount: number;
+  hits: number;
+  misses: number;
+  lastFetchTs: number | null;
+}
+
+export interface CandleCacheGlobalStats {
+  totalBars: number;
+  totalHits: number;
+  totalMisses: number;
+  dbSizeBytes: number;
+}
+
+// Cache-stats fetches are debug reads, not chart-critical — same short bound as
+// the market-meta poll so a hung request can't tie up the connection budget.
+const CACHE_STATS_TIMEOUT_MS = 6_000;
+
+/** Per-series candle-cache stats (coverage, hit/miss, last fetch) for the chart
+ * legend's cache-stats badge/popover. Returns null on any failure. */
+export async function fetchCandleCacheStats(
+  epic: string,
+  resolution: string,
+  priceSide: PriceSide = "mid",
+  brokerId: string = DEFAULT_BROKER,
+): Promise<CandleCacheStats | null> {
+  try {
+    const qs = new URLSearchParams({ epic, resolution, priceSide, broker: brokerId });
+    const res = await fetchWithTimeout(
+      `${BASE}/api/candle-cache/stats?${qs}`,
+      CACHE_STATS_TIMEOUT_MS,
+    );
+    if (!res.ok) return null;
+    const d = (await res.json()) as {
+      oldest_ts: number | null;
+      newest_ts: number | null;
+      cached_bar_count: number;
+      hits: number;
+      misses: number;
+      last_fetch_ts: number | null;
+    };
+    return {
+      oldestTs: d.oldest_ts,
+      newestTs: d.newest_ts,
+      cachedBarCount: d.cached_bar_count,
+      hits: d.hits,
+      misses: d.misses,
+      lastFetchTs: d.last_fetch_ts,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Cache-wide stats (all series) shown alongside the per-series stats in the
+ * cache-stats popover. Returns null on any failure. */
+export async function fetchCandleCacheGlobalStats(): Promise<CandleCacheGlobalStats | null> {
+  try {
+    const res = await fetchWithTimeout(
+      `${BASE}/api/candle-cache/stats/global`,
+      CACHE_STATS_TIMEOUT_MS,
+    );
+    if (!res.ok) return null;
+    const d = (await res.json()) as {
+      total_bars: number;
+      total_hits: number;
+      total_misses: number;
+      db_size_bytes: number;
+    };
+    return {
+      totalBars: d.total_bars,
+      totalHits: d.total_hits,
+      totalMisses: d.total_misses,
+      dbSizeBytes: d.db_size_bytes,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Display precision + open/closed status for an epic, from one snapshot call.
  * Returns nulls (never throws) so callers can keep their existing fallbacks.
  * The chart fetches this on load and polls it so the tab badge / price label

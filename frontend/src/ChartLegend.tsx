@@ -79,7 +79,7 @@ export interface ChartLegendHandle {
   updateValues: (dataIndex: number | null) => void;
 }
 
-interface Props {
+export interface Props {
   getChart: () => Chart | null;
   // The owning cell's controller — for its per-cell legend-hover signals (these
   // were module globals; per-cell so two cells don't share a crosshair-hide).
@@ -109,6 +109,18 @@ interface Props {
   // Click the symbol name itself to change the instrument on this chart (opens the
   // symbol-search modal, TradingView-style).
   onChangeSymbol: () => void;
+  // Candle-cache stats badge (coverage/hit-rate/freshness at a glance) — null
+  // hides the badge entirely (e.g. before the first stats poll resolves).
+  // `right` (px) clears the price-axis column so the badge sits to its LEFT
+  // instead of overlapping the axis price labels.
+  cacheBadge: {
+    label: string;
+    title: string;
+    state: "fresh" | "stale" | "none";
+    right: number;
+  } | null;
+  // Click the cache badge to open the cache-stats popover.
+  onOpenCacheStats: () => void;
   // Open the indicator context menu (anchored at the ⋯ button) — TradingView's
   // "more" affordance at the end of the legend row.
   onOpenMenu: (name: string, x: number, y: number) => void;
@@ -142,6 +154,8 @@ export default function ChartLegend({
   onOpenMenu,
   onOpenDetails,
   onChangeSymbol,
+  cacheBadge,
+  onOpenCacheStats,
   handleRef,
 }: Props) {
   const { legendHovered, legendHoverName } = controller;
@@ -318,6 +332,27 @@ export default function ChartLegend({
         />
       ))}
     </div>
+
+    {/* Candle-cache stats badge — docked at the pane's top-right corner, to the
+        LEFT of the price axis (never overlapping its price labels). A sibling of
+        .chart-legend (not nested inside it): that container shrink-wraps to its
+        own content width, so a child positioned `right:` would resolve against
+        the legend's own edge, not the pane's. `right` is set inline from the
+        live-tracked axis column width (see ChartCore's cacheBadgeRight). */}
+    {cacheBadge && (
+      <button
+        className="cl-cache-corner-badge"
+        style={{ right: cacheBadge.right }}
+        title={cacheBadge.title}
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenCacheStats();
+        }}
+      >
+        <span className={`cl-cache-dot cl-cache-${cacheBadge.state}`} aria-hidden="true" />
+        {cacheBadge.label}
+      </button>
+    )}
 
     {/* One DOM legend card per sub-pane (Volume/MACD/RSI…), positioned by ChartCore
         at the top-left of each pane. Outside the candle-legend strip so each can

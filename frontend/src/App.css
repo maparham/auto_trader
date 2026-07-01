@@ -528,6 +528,7 @@
 .instrument-row dd {
   margin: 0; text-align: right; white-space: pre-line; color: var(--text);
 }
+.cache-stats-modal { width: 380px; }
 .alert-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .al-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .al-row > span { color: var(--text-dim); width: 90px; flex-shrink: 0; }
@@ -1210,6 +1211,29 @@
 .cl-ohlc-label { color: var(--text-dim); }
 .cl-ohlc-val { font-variant-numeric: tabular-nums; }
 .cl-change { font-variant-numeric: tabular-nums; }
+/* Candle-cache stats badge — a small dot (freshness) + hit-rate %, docked at the
+   top-right corner of the chart pane, same row as the OHLC legend. `right` is set
+   inline (ChartLegend) from the live-tracked price-axis column width, so the badge
+   sits just to the LEFT of the axis rather than overlapping its price labels; the
+   6px value below is only a same-corner fallback before that width is known.
+   Click opens the cache-stats popover. Neutral/dim by default so it doesn't
+   compete with the axis; this is a debug affordance, not a primary chart feature.
+   Positioned as its own overlay (not inside .chart-legend) so it isn't
+   constrained by that container's shrink-to-content width. */
+.cl-cache-corner-badge {
+  position: absolute; top: 6px; right: 6px; z-index: 11;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 6px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--text-dim); cursor: pointer;
+  font-family: "Helvetica Neue", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px; line-height: 1;
+  transition: background 0.12s ease;
+}
+.cl-cache-corner-badge:hover { background: var(--hover); }
+.cl-cache-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; }
+.cl-cache-fresh { background: var(--pos); }
+.cl-cache-stale { background: var(--text-dim); }
+.cl-cache-none { background: transparent; border: 1px solid var(--text-dim); }
 
 /* Indicator rows are interactive: hover/click to select, icons to act. */
 .cl-ind {
@@ -1955,7 +1979,7 @@
    border separates it from the table; collapsed it's the lone bar (no border, the
    dock's own top border carries it). */
 .pp-bar {
-  display: flex; align-items: center; gap: 18px; padding: 8px 14px;
+  display: flex; align-items: center; gap: 18px; padding: 8px 32px 8px 14px;
   /* Pinned height so the strip doesn't jump when toggling: expanded shows two-line
      stat blocks, collapsed a one-line ticker — center both in a constant box. */
   min-height: 44px; box-sizing: border-box;

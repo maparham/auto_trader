@@ -674,6 +674,16 @@ export default function PositionsPanel({
           </div>
         ) : (
           <div className="pp-acct">
+            <div
+              className="pp-stat"
+              title="Open profit / loss across all positions, marked to live prices (broker-reported for live accounts)"
+            >
+              <span className="pp-stat-label">Unrealized P&amp;L</span>
+              <span className={`pp-stat-val num ${pnlTone}`}>
+                {pnl >= 0 ? "" : "−"}
+                {cash(Math.abs(pnl))} {cur}
+              </span>
+            </div>
             <Stat
               label="Balance"
               value={`${cash(balance)} ${cur}`}
@@ -688,17 +698,6 @@ export default function PositionsPanel({
               value={`${cash(equity)} ${cur}`}
               title="Account value = available margin + margin in use (cash plus open P&L). What the account is worth right now."
             />
-            <div
-              className="pp-stat"
-              title="Open profit / loss across all positions, marked to live prices (broker-reported for live accounts)"
-            >
-              <span className="pp-stat-label">Unrealized P&amp;L</span>
-              <span className={`pp-stat-val num ${pnlTone}`}>
-                {caret && <span className="pp-caret">{caret}</span>}
-                {pnl >= 0 ? "" : "−"}
-                {cash(Math.abs(pnl))} {cur}
-              </span>
-            </div>
             <Stat
               label="Account margin"
               value={`${cash(accountMargin)} ${cur}`}

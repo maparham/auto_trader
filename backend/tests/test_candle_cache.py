@@ -53,6 +53,38 @@ def test_read_back_zero_is_empty(tmp_path):
     assert cache._read_back(KEY, n=0, before_ts=10_000) == []
 
 
+def test_stats_empty_series_has_none_watermarks_and_zero_counts(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    stats = cache.stats(KEY)
+    assert stats == {
+        "oldest_ts": None,
+        "newest_ts": None,
+        "cached_bar_count": 0,
+        "hits": 0,
+        "misses": 0,
+        "last_fetch_ts": None,
+    }
+
+
+def test_stats_reflects_coverage_and_count(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(100, 1.0), _c(160, 2.0)], cutoff_ts=10_000)
+    stats = cache.stats(KEY)
+    assert stats["oldest_ts"] == 100
+    assert stats["newest_ts"] == 160
+    assert stats["cached_bar_count"] == 2
+
+
+def test_global_stats_sums_across_series(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    other_key = ("capital", "GBPUSD", "MINUTE", "mid")
+    cache._store_closed(KEY, [_c(100, 1.0)], cutoff_ts=10_000)
+    cache._store_closed(other_key, [_c(100, 1.0), _c(160, 2.0)], cutoff_ts=10_000)
+    gstats = cache.global_stats()
+    assert gstats["total_bars"] == 3
+    assert gstats["db_size_bytes"] > 0
+
+
 class FakeFetcher:
     """Records calls; returns canned candles. Stand-in for the broker."""
 
@@ -322,3 +354,45 @@ def test_window_future_window_no_inverted_coverage(tmp_path):
     asyncio.run(cache.window(KEY, 60, _dt(300), _dt(400), f.range, now=280))  # cutoff=240
     cov = cache._coverage(KEY)
     assert cov is None or cov[0] <= cov[1]  # never inverted
+
+
+def test_window_hit_increments_hits_not_misses(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(t, float(t)) for t in (100, 160, 220)], cutoff_ts=10_000)
+    fetcher = FakeFetcher()
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(220), fetcher.range, now=10_000))
+    stats = cache.stats(KEY)
+    assert stats["hits"] == 1
+    assert stats["misses"] == 0
+    assert stats["last_fetch_ts"] is None  # fully served from cache, no broker call
+
+
+def test_window_miss_increments_misses_and_records_last_fetch(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    fetcher = FakeFetcher(bars=[_c(t, float(t)) for t in (100, 160, 220)])
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(220), fetcher.range, now=10_000))
+    stats = cache.stats(KEY)
+    assert stats["misses"] == 1
+    assert stats["hits"] == 0
+    assert stats["last_fetch_ts"] == 10_000
+
+
+def test_recent_cold_counts_as_miss(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    fetcher = FakeFetcher(bars=[_c(t, float(t)) for t in (100, 160, 220)])
+    asyncio.run(cache.recent(KEY, 60, 3, fetcher.recent, now=220))
+    stats = cache.stats(KEY)
+    assert stats["misses"] == 1
+    assert stats["hits"] == 0
+    assert stats["last_fetch_ts"] == 220
+
+
+def test_recent_warm_counts_as_hit(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(t, float(t)) for t in (100, 160, 220, 280)], cutoff_ts=10_000)
+    fetcher = FakeFetcher(bars=[_c(340, 340.0)])
+    asyncio.run(cache.recent(KEY, 60, 3, fetcher.recent, now=340, tail=1))
+    stats = cache.stats(KEY)
+    assert stats["hits"] == 1
+    assert stats["misses"] == 0
+    assert stats["last_fetch_ts"] == 340
