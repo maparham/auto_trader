@@ -158,6 +158,10 @@ export function applySymbolTemplate(
     // nothing was added — a rehydrate re-mints overlay ids and drops selection,
     // so a no-op Apply must not churn the chart.
     controller.overlays.rehydrate();
+    // A template drawing can be anchored before the loaded history window —
+    // page the older bars in (ChartCore's coverage walk) or it renders clamped
+    // to the first loaded bar with the wrong slope.
+    controller.coverDrawingAnchors?.();
   }
 }
 

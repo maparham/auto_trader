@@ -558,23 +558,6 @@ export default function ChartCore({
   // True while a range pick is programmatically moving the view, so the
   // scroll/zoom listener doesn't treat it as a manual gesture and clear the pill.
   const programmaticMoveRef = useRef(false);
-  // Prepend a page of older bars, keeping beyond-data (dataIndex-only) drawing
-  // anchors glued: a prepend renumbers every bar, so those anchors must shift by
-  // the page size too (see OverlayManager.shiftIndexAnchoredPoints). Shared by the
-  // quick-range walk and the drawing-anchor coverage walk. klinecharts handles this
-  // itself only for its native Forward loads (the scroll-back loader's callback);
-  // applyNewData is an INIT-type change, where its updatePointPosition skips the
-  // shift but still BACK-FILLS point.timestamp from whatever bar now sits at the
-  // stale index — permanently pinning a future anchor onto a historical bar. So
-  // the shift must run BEFORE the data lands: the pre-shifted index stays beyond
-  // the data and the back-fill leaves the point timestamp-less, as intended.
-  const applyOlderBars = (merged: KLineData[]) => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    overlays.shiftIndexAnchoredPoints(merged.length - chart.getDataList().length);
-    chart.applyNewData(merged, true);
-  };
-
   // Pan/zoom the chart to a window without the scroll/zoom listener clearing the
   // active-range pill: flag the move as programmatic, then release on the next
   // macrotask after klinecharts has emitted its scroll event.
@@ -637,7 +620,9 @@ export default function ChartCore({
         getData: () => chartRef.current?.getDataList(),
         fetchOlder: (fromSec, toSec) =>
           fetchRange(token.epic, resolution, fromSec, toSec, token.side, token.broker),
-        applyData: applyOlderBars,
+        // Prepend through the overlay manager so beyond-data (dataIndex-only)
+        // anchors shift BEFORE the data lands (see OverlayManager.applyOlderBars).
+        applyData: (merged) => overlays.applyOlderBars(merged),
         onCursor: (sec) => {
           cursorSecRef.current = sec;
         },
@@ -714,7 +699,7 @@ export default function ChartCore({
         isStale,
         getData: () => chartRef.current?.getDataList(),
         fetchOlder: (fromSec, toSec) => fetchRange(epic, resolution, fromSec, toSec, side, broker),
-        applyData: applyOlderBars,
+        applyData: (merged) => overlays.applyOlderBars(merged),
         onCursor: (sec) => {
           cursorSecRef.current = sec;
         },
@@ -774,7 +759,12 @@ export default function ChartCore({
       if (target) onPeriod?.(cellId, target);
       return;
     }
-    void ensureCoverageAndFit(token);
+    // Chain the anchor-coverage walk behind the fit: the picked window may still
+    // not reach the oldest drawing anchor, and coverage would otherwise stay
+    // gated on pendingRangeRef for the walk's whole duration.
+    void ensureCoverageAndFit(token).then(() => {
+      if (!period.liveOnly) void ensureDrawingAnchorCoverage();
+    });
   };
 
   // Calendar "go to date": center the chosen date in the current window, keeping
@@ -2513,6 +2503,10 @@ export default function ChartCore({
       // arming a drawing tool, so Esc-cancel reaches onKeyDown (same reason the
       // measure arm subscription focuses the wrap above).
       controller.focusChart = () => wrapRef.current?.focus({ preventScroll: true });
+      // Let a template apply (templates.ts writes drawings + rehydrates outside
+      // this component) request the anchor-coverage walk, so a template drawing
+      // anchored before the loaded window doesn't render clamped to the left edge.
+      controller.coverDrawingAnchors = () => void ensureDrawingAnchorCoverage();
       // Hydrate this cell's saved indicators synchronously on chart-ready (they
       // recalc once data arrives). Done here — not after the async data fetch — so
       // the focused Toolbar reflects them immediately on mount / tab switch, and
@@ -2558,6 +2552,7 @@ export default function ChartCore({
       overlays.detach();
       controller.chart = null;
       controller.focusChart = null;
+      controller.coverDrawingAnchors = null;
       const w = window as unknown as { __charts?: Map<string, Chart> };
       w.__charts?.delete(cellId);
       if (el) dispose(el);
@@ -2761,8 +2756,16 @@ export default function ChartCore({
       sepCacheRef.current = null;
       pendingRangeRef.current = null;
       setActiveRange(null);
-    } else if (resChanged && !pendingRangeRef.current) {
-      setActiveRange(null);
+    } else if (resChanged) {
+      // A pending pick whose target interval doesn't match the one that just
+      // loaded was OVERRIDDEN (the user changed interval again before its walk
+      // ran) — it can never be consumed (consumption requires resolution
+      // equality below), and leaving it parked would permanently gate the
+      // drawing-anchor coverage walk. Drop it along with the pill.
+      if (pendingRangeRef.current && pendingRangeRef.current.resolution !== period.resolution) {
+        pendingRangeRef.current = null;
+      }
+      if (!pendingRangeRef.current) setActiveRange(null);
     }
     // No data for the new series until history loads or a live tick arrives. The
     // banner is grace-gated, so this can't flash during a normal load — only when
@@ -2831,14 +2834,10 @@ export default function ChartCore({
       // initial new-resolution bars are loaded, so page back to the period start
       // (if needed) and fit. ensureCoverageAndFit clears pendingRangeRef when done.
       const pend = pendingRangeRef.current;
-      if (pend && pend.resolution === period.resolution && chartRef.current) {
-        void ensureCoverageAndFit(pend);
-      }
-      // Page back (no fit) until every saved drawing anchor maps onto a loaded bar —
-      // otherwise klinecharts clamps older anchors to the first loaded bar and the
-      // drawing renders with the wrong slope on this interval. Live-only intervals
-      // have no history to page. No-op when a quick-range walk owns paging.
-      if (!period.liveOnly) void ensureDrawingAnchorCoverage();
+      const rangeWalk =
+        pend && pend.resolution === period.resolution && chartRef.current
+          ? ensureCoverageAndFit(pend)
+          : null;
       // Re-apply each AVWAP instance's anchor for this epic (anchors are per-epic,
       // per-instance; no-op if no AVWAP is active).
       const candlePane = chartRef.current.getIndicatorByPaneId("candle_pane") as
@@ -2860,6 +2859,18 @@ export default function ChartCore({
       // indicators or drawings yet). Runs after rehydrate so the empty-cell gate
       // sees the final state; a populated/customized cell is left untouched.
       maybeAutoApplyTemplate(chartRef.current, controller, scope, symbol.epic);
+
+      // Page back (no fit) until every saved drawing anchor maps onto a loaded bar —
+      // otherwise klinecharts clamps older anchors to the first loaded bar and the
+      // drawing renders with the wrong slope on this interval. Runs AFTER the
+      // template auto-apply so template-added drawings count, and chained after a
+      // quick-range walk so the two pagers don't contend for the loading mutex
+      // (the walk also would have gated it via pendingRangeRef, which it clears
+      // only on completion). Live-only intervals have no history to page.
+      if (!period.liveOnly) {
+        if (rangeWalk) void rangeWalk.then(() => ensureDrawingAnchorCoverage());
+        else void ensureDrawingAnchorCoverage();
+      }
 
       // Live updates for the current bar.
       wsRef.current?.close();

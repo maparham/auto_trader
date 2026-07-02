@@ -71,6 +71,20 @@ class FakeChart {
   // that exercise the future-anchored point encode/decode.
   data: Array<{ timestamp: number }> = [];
   getDataList() { return this.data; }
+  // Mirrors real klinecharts applyNewData: replaces the data list, then — like its
+  // INIT-type OverlayStore.updatePointPosition (verified against klinecharts 9.8) —
+  // BACK-FILLS point.timestamp for any dataIndex-only overlay point whose index now
+  // lands on a real bar, WITHOUT the Forward-type index shift. This is the trap
+  // OverlayManager.applyOlderBars exists to defuse by shifting first.
+  applyNewData(data: Array<{ timestamp: number }>) {
+    this.data = data;
+    for (const ov of this.overlays.values()) {
+      const pts = ov.points as Array<{ timestamp?: number; dataIndex?: number }> | undefined;
+      for (const p of pts ?? []) {
+        if (p.timestamp == null && p.dataIndex != null) p.timestamp = data[p.dataIndex]?.timestamp;
+      }
+    }
+  }
   overrideOverlay(o: { id: string } & Record<string, unknown>) {
     const cur = this.overlays.get(o.id);
     if (!cur) return;
@@ -1107,13 +1121,62 @@ describe("future-anchored drawing points survive persist/rehydrate", () => {
     ]);
     m.rehydrate();
     // A 3-bar page of older history lands.
-    chart.data = [...bars(3).map((b, i) => ({ timestamp: T0 - (3 - i) * HOUR })), ...chart.data];
+    chart.data = [
+      ...Array.from({ length: 3 }, (_, i) => ({ timestamp: T0 - (3 - i) * HOUR })),
+      ...chart.data,
+    ];
     m.shiftIndexAnchoredPoints(3);
     const ov = [...chart.overlays.values()].find((o) => o.name === "segment")!;
     const pts = ov.points as Array<{ timestamp?: number; dataIndex?: number }>;
     expect(pts[1].dataIndex).toBe(16); // still 4 bars past the (shifted) last bar
     expect(pts[1].timestamp).toBeUndefined();
     expect(pts[0].timestamp).toBe(T0 + 5 * HOUR); // in-range anchor untouched
+  });
+
+  // The ordering invariant applyOlderBars encodes: klinecharts' INIT-type
+  // updatePointPosition back-fills point.timestamp from whatever bar sits at a
+  // dataIndex-only point's index the moment new data lands. Shift AFTER the data
+  // and the stale index is in-range — the future anchor gets pinned onto a
+  // historical bar permanently. FakeChart.applyNewData models that back-fill, so
+  // this test fails if anyone reorders the shift behind the applyNewData call.
+  it("applyOlderBars shifts beyond-data anchors BEFORE the data lands (Init back-fill can't pin them)", () => {
+    const { chart, m } = setup();
+    chart.data = bars(10);
+    m.setResolution("HOUR");
+    P.saveDrawings("tab.A", "US100", [
+      {
+        name: "segment",
+        points: [
+          { timestamp: chart.data[5].timestamp, value: 1 },
+          { timestamp: chart.data[9].timestamp + 4 * HOUR, value: 2 },
+        ],
+      },
+    ]);
+    m.rehydrate(); // future anchor → dataIndex 13, no timestamp
+    // A coverage-walk page of 20 older bars lands via the canonical prepend.
+    const older = Array.from({ length: 20 }, (_, i) => ({ timestamp: T0 - (20 - i) * HOUR }));
+    m.applyOlderBars([...older, ...chart.data] as never);
+    const p = ([...chart.overlays.values()].find((o) => o.name === "segment")!
+      .points as Array<{ timestamp?: number; dataIndex?: number }>)[1];
+    expect(p.dataIndex).toBe(33); // 13 + 20 — still 4 bars past the (shifted) last bar
+    expect(p.timestamp).toBeUndefined(); // index 33 is beyond the 30 bars → no back-fill
+  });
+
+  // The transient measure ruler can also have a beyond-data endpoint — it must
+  // shift with the drawings or a prepend pins its box into history.
+  it("shiftIndexAnchoredPoints moves a measure's beyond-data endpoint too", () => {
+    const { chart, m } = setup();
+    chart.data = bars(10);
+    m.setResolution("HOUR");
+    const id = m.startMeasureDraw()!;
+    // As if klinecharts collected the two clicks, the second past the last candle.
+    chart.overrideOverlay({
+      id,
+      points: [{ timestamp: chart.data[5].timestamp, value: 1 }, { dataIndex: 12, value: 2 }],
+    });
+    m.shiftIndexAnchoredPoints(3);
+    const pts = chart.getOverlayById(id)!.points as Array<{ dataIndex?: number }>;
+    expect(pts[1].dataIndex).toBe(15);
   });
 });
 

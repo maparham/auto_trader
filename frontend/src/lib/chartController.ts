@@ -86,6 +86,13 @@ export class ChartController {
   // the same reason measure arming focuses the wrap in ChartCore.
   focusChart: (() => void) | null = null;
 
+  // Kick the cell's drawing-anchor coverage walk (null until mount; assigned by
+  // ChartCore). Anything that adds drawings + rehydrates from OUTSIDE ChartCore
+  // (a template apply in templates.ts) calls this afterwards, so a drawing
+  // anchored before the loaded history window pages the older bars in instead of
+  // rendering clamped to the first loaded bar.
+  coverDrawingAnchors: (() => void) | null = null;
+
   constructor(cellId: string, scope: string) {
     this.cellId = cellId;
     this.scope = scope;

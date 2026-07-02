@@ -12,7 +12,7 @@
 // shared list safe (each cell renders, and persists, the complete set).
 
 import { LineType } from "klinecharts";
-import type { Chart, Overlay, OverlayEvent, DeepPartial, OverlayStyle, OverlayMode } from "klinecharts";
+import type { Chart, KLineData, Overlay, OverlayEvent, DeepPartial, OverlayStyle, OverlayMode } from "klinecharts";
 import { effectiveMagnetMode, magnetSignal, magnetInvertSignal, MAGNET_SENSITIVITY } from "./magnet";
 import {
   loadDrawings,
@@ -1094,8 +1094,14 @@ export class OverlayManager {
   }
 
   // Record the chart's current resolution and re-derive every drawing's effective
-  // visibility against it. A VIEW reaction (interval changed), not a user edit — so
-  // it does NOT persist (persist samples intent from extendData, untouched here).
+  // visibility against it. A VIEW reaction, not a user edit — so it does NOT
+  // persist (persist samples intent from extendData, untouched here).
+  // CAUTION — not for production interval changes: this does NOT re-materialize
+  // future-anchored points, so calling it on a timeframe switch leaves their
+  // dataIndex encoded with the OLD bar width and the next persist() writes that
+  // drift to storage. Interval changes must go through rehydrate(resolution).
+  // Kept as the seam for exercising in-place interval-visibility transitions
+  // (fade/ghost) on EXISTING overlays, which rehydrate (a full rebuild) can't.
   setResolution(resolution: string): void {
     this.resolution = resolution;
     this.applyIntervalVisibility();
@@ -1455,8 +1461,11 @@ export class OverlayManager {
   // the anchor at the wrong x AND the next persist() writes that drift back to
   // storage. Omit it when the resolution is unchanged (template re-apply).
   rehydrate(resolution?: string): void {
-    if (!this.chart) return;
+    // Adopt the new resolution even when the chart is momentarily detached (an
+    // HMR-stale controller, a teardown/remount interleaving): a later no-arg
+    // rehydrate or persist must never see the previous timeframe's bar width.
     if (resolution != null) this.resolution = resolution;
+    if (!this.chart) return;
     // Remember WHICH alert was selected by its stable saved id (not the overlay id,
     // which this rebuild re-mints). A same-epic rehydrate — a live data refresh, or
     // React's dev double-mount — must not silently drop the user's (or a navigation's)
@@ -1568,17 +1577,33 @@ export class OverlayManager {
     );
   }
 
-  // Prepending older bars (a scroll-back page, the anchor-coverage walk) renumbers
-  // every bar's dataIndex. Timestamped points re-resolve at paint time, but a
-  // beyond-data point is dataIndex-ONLY (materializePoints strips the timestamp),
-  // so klinecharts leaves it at the OLD index — the future anchor slides back into
-  // history and the drawing's slope collapses. Every prepend site reports its page
-  // size here so those points shift along and keep their bar-offset past the last
-  // candle. (Live APPENDS never renumber existing bars — no shift needed there.)
+  // THE one way to prepend older bars outside klinecharts' own Forward loader.
+  // Prepending renumbers every bar's dataIndex. Timestamped points re-resolve at
+  // paint time, but a beyond-data point is dataIndex-ONLY (materializePoints
+  // strips the timestamp) — and applyNewData is an INIT-type change, where
+  // klinecharts' updatePointPosition skips the Forward shift but still BACK-FILLS
+  // point.timestamp from whatever bar now sits at the stale index, permanently
+  // pinning a future anchor onto a historical bar. So the shift MUST run before
+  // the data lands: the pre-shifted index stays beyond the data and the back-fill
+  // leaves the point timestamp-less. Housing this here (not at the call sites)
+  // makes the ordering structural — a new paging consumer can't get it wrong.
+  // klinecharts' native Forward loads (the scroll-back callback) already shift
+  // dataIndex-only points internally and must NOT come through here.
+  applyOlderBars(merged: KLineData[]): void {
+    if (!this.chart) return;
+    this.shiftIndexAnchoredPoints(merged.length - this.chart.getDataList().length);
+    this.chart.applyNewData(merged, true);
+  }
+
+  // Prepending older bars renumbers every bar's dataIndex; dataIndex-only points
+  // must shift along to keep their bar-offset past the last candle. (Live APPENDS
+  // never renumber existing bars — no shift needed there.) See applyOlderBars.
   shiftIndexAnchoredPoints(delta: number): void {
     if (!this.chart || !(delta > 0)) return;
-    for (const [id, kind] of this.entries) {
-      if (kind !== "drawing") continue;
+    // Every kind: alerts are value-only (no dataIndex, so the predicate below
+    // skips them naturally) and the transient measure ruler CAN have a beyond-data
+    // endpoint — it must shift too or a prepend pins it onto a historical bar.
+    for (const id of this.entries.keys()) {
       const ov = this.chart.getOverlayById(id);
       const pts = ov?.points;
       if (!pts?.some((p) => p.timestamp == null && p.dataIndex != null)) continue;
