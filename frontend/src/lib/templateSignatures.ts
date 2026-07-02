@@ -17,10 +17,41 @@ import type { SavedOverlay } from "./persist";
 // not inputs. A DENYLIST (not an allowlist) so a future input field (a new source
 // mode, band setting, …) is identity-relevant by default instead of silently
 // ignored. Keep in step with the fields applyIndicator/settings write:
-//  - userVisible : the eye-toggle intent
-//  - visibility  : the per-interval visibility model
-//  - indType     : bookkeeping (mirrors the instance's type, already in the sig)
-const NON_IDENTIFYING_EXTEND_KEYS = new Set(["userVisible", "visibility", "indType"]);
+//  - userVisible    : the eye-toggle intent
+//  - visibility     : the per-interval visibility model
+//  - indType        : bookkeeping (mirrors the instance's type, already in the sig)
+//  - curveLabels    : the curve-end pill toggle/position (customIndicators.ts
+//                     CurveLabelConfig, ~L844) — purely how a curve's label pill
+//                     is drawn, never fed into any calc()
+//  - hideLegendValue: per-instance legend-value hide (MaExtend/LrExtend/
+//                     PrevHlExtend/RsiExtend, e.g. customIndicators.ts L205-207)
+//                     — legend rendering only, never read by calc()
+//  - lineHidden     : per-line show/hide map (AvwapExtend/LrExtend/PrevHlExtend,
+//                     e.g. customIndicators.ts L80-83) — calc() omits the figure
+//                     key for a hidden line, but the underlying math for every
+//                     line is unchanged; this is Style-tab visibility, the same
+//                     category as userVisible, just per-line instead of per-indicator
+//  - style          : RSI Style-tab settings (RsiStyle: colours, band levels,
+//                     per-element hidden — customIndicators.ts L1502-1514).
+//                     style.hidden.rsi suppresses the rsi figure key the same
+//                     way lineHidden does (computeRsi, L1420); the band LEVELS
+//                     only position the canvas-drawn shading (drawRsiBand/
+//                     drawRsiZoneFill) and never feed the RSI or divergence math
+//
+// NOT denylisted: RsiExtend.divergence (RsiDivergenceConfig, customIndicators.ts
+// L1143-1156) — `on` plus the lookback/range/kind fields directly parametrize
+// detectDivergences() and change the indicator's COMPUTED output (the `divs`
+// annotations, computeRsi L1455-1456), so two RSIs differing only in divergence
+// config are genuinely different indicators, not a display variant.
+const NON_IDENTIFYING_EXTEND_KEYS = new Set([
+  "userVisible",
+  "visibility",
+  "indType",
+  "curveLabels",
+  "hideLegendValue",
+  "lineHidden",
+  "style",
+]);
 
 // The identity-relevant slice of extendData with deterministically-ordered keys.
 // (Values are compared structurally via JSON; nested objects come from the same

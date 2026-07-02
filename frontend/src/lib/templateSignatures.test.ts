@@ -28,6 +28,40 @@ describe("indicatorSignature", () => {
     expect(a).toBe(b);
   });
 
+  it("ignores display-only extendData keys from customIndicators.ts (curveLabels/hideLegendValue/lineHidden/style)", () => {
+    const a = indicatorSignature({
+      type: "RSI",
+      calcParams: [14],
+      extendData: {
+        source: "close",
+        curveLabels: { enabled: false, high: { side: "left", align: "above" } },
+        hideLegendValue: true,
+        lineHidden: { vwap: true, up1: true },
+        style: { hidden: { rsi: true }, upper: { level: 80 } },
+      },
+    });
+    const b = indicatorSignature({
+      type: "RSI",
+      calcParams: [14],
+      extendData: { source: "close" },
+    });
+    expect(a).toBe(b);
+  });
+
+  it("treats RSI divergence config as identity (it changes the computed divs output, not just display)", () => {
+    const a = indicatorSignature({
+      type: "RSI",
+      calcParams: [14],
+      extendData: { divergence: { on: true, bullish: true } },
+    });
+    const b = indicatorSignature({
+      type: "RSI",
+      calcParams: [14],
+      extendData: { divergence: { on: false, bullish: true } },
+    });
+    expect(a).not.toBe(b);
+  });
+
   it("treats identifying extendData (e.g. MTF timeframe, source) as identity", () => {
     const a = indicatorSignature({ type: "EMA", calcParams: [20], extendData: { timeframe: "1h" } });
     const b = indicatorSignature({ type: "EMA", calcParams: [20], extendData: { timeframe: "4h" } });
