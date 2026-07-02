@@ -1041,6 +1041,80 @@ describe("future-anchored drawing points survive persist/rehydrate", () => {
     const p = (ov.points as Array<{ dataIndex?: number }>)[1];
     expect(p.dataIndex).toBe(9 + 24); // 2h beyond the last 5m bar = 24 bars
   });
+
+  // The timeframe-switch bug: ChartCore rebuilds overlays right after the NEW
+  // resolution's bars land, but the manager's `resolution` field still holds the
+  // PREVIOUS timeframe at that moment — so the future offset was extrapolated with
+  // the OLD bar width (a 14h-ahead anchor became 28 one-hour bars after a 30m→1H
+  // switch: line flattens, and the next persist() bakes the drift into storage).
+  // rehydrate(resolution) must adopt the new resolution BEFORE materializing.
+  it("rehydrate(resolution) materializes the future offset with the NEW timeframe's bar width, not the stale one", () => {
+    const { chart, m } = setup();
+    m.setResolution("MINUTE_5"); // the timeframe the cell was on before the switch
+    chart.data = bars(10); // the 1H bars that just landed
+    P.saveDrawings("tab.A", "US100", [
+      {
+        name: "segment",
+        points: [
+          { timestamp: chart.data[5].timestamp, value: 1 },
+          { timestamp: chart.data[9].timestamp + 4 * HOUR, value: 2 },
+        ],
+      },
+    ]);
+    m.rehydrate("HOUR");
+    const ov = [...chart.overlays.values()].find((o) => o.name === "segment")!;
+    const p = (ov.points as Array<{ dataIndex?: number }>)[1];
+    expect(p.dataIndex).toBe(13); // 4h beyond the last 1H bar = 4 bars (not 48 five-minute bars)
+    expect(m.getResolution()).toBe("HOUR"); // adopted — the later setResolution call is subsumed
+  });
+
+  it("rehydrate() without an argument keeps the current resolution (template re-apply path)", () => {
+    const { chart, m } = setup();
+    chart.data = bars(10);
+    m.setResolution("HOUR");
+    P.saveDrawings("tab.A", "US100", [
+      {
+        name: "segment",
+        points: [
+          { timestamp: chart.data[5].timestamp, value: 1 },
+          { timestamp: chart.data[9].timestamp + 4 * HOUR, value: 2 },
+        ],
+      },
+    ]);
+    m.rehydrate();
+    const ov = [...chart.overlays.values()].find((o) => o.name === "segment")!;
+    expect((ov.points as Array<{ dataIndex?: number }>)[1].dataIndex).toBe(13);
+    expect(m.getResolution()).toBe("HOUR");
+  });
+
+  // Prepending older bars (scroll-back page, anchor-coverage walk) renumbers every
+  // bar's dataIndex — a timestamped point re-resolves per paint, but a beyond-data
+  // point is dataIndex-ONLY (timestamp stripped at materialize), so klinecharts
+  // leaves it at the old index and the future anchor slides back into history.
+  // Callers report each prepend so these points shift along.
+  it("shiftIndexAnchoredPoints moves dataIndex-only points by the prepend size and leaves timestamped points alone", () => {
+    const { chart, m } = setup();
+    chart.data = bars(10);
+    m.setResolution("HOUR");
+    P.saveDrawings("tab.A", "US100", [
+      {
+        name: "segment",
+        points: [
+          { timestamp: chart.data[5].timestamp, value: 1 },
+          { timestamp: chart.data[9].timestamp + 4 * HOUR, value: 2 },
+        ],
+      },
+    ]);
+    m.rehydrate();
+    // A 3-bar page of older history lands.
+    chart.data = [...bars(3).map((b, i) => ({ timestamp: T0 - (3 - i) * HOUR })), ...chart.data];
+    m.shiftIndexAnchoredPoints(3);
+    const ov = [...chart.overlays.values()].find((o) => o.name === "segment")!;
+    const pts = ov.points as Array<{ timestamp?: number; dataIndex?: number }>;
+    expect(pts[1].dataIndex).toBe(16); // still 4 bars past the (shifted) last bar
+    expect(pts[1].timestamp).toBeUndefined();
+    expect(pts[0].timestamp).toBe(T0 + 5 * HOUR); // in-range anchor untouched
+  });
 });
 
 // The remaining stablePoints branches: an anchor dragged LEFT of the loaded window

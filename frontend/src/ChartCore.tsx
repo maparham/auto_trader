@@ -558,6 +558,23 @@ export default function ChartCore({
   // True while a range pick is programmatically moving the view, so the
   // scroll/zoom listener doesn't treat it as a manual gesture and clear the pill.
   const programmaticMoveRef = useRef(false);
+  // Prepend a page of older bars, keeping beyond-data (dataIndex-only) drawing
+  // anchors glued: a prepend renumbers every bar, so those anchors must shift by
+  // the page size too (see OverlayManager.shiftIndexAnchoredPoints). Shared by the
+  // quick-range walk and the drawing-anchor coverage walk. klinecharts handles this
+  // itself only for its native Forward loads (the scroll-back loader's callback);
+  // applyNewData is an INIT-type change, where its updatePointPosition skips the
+  // shift but still BACK-FILLS point.timestamp from whatever bar now sits at the
+  // stale index — permanently pinning a future anchor onto a historical bar. So
+  // the shift must run BEFORE the data lands: the pre-shifted index stays beyond
+  // the data and the back-fill leaves the point timestamp-less, as intended.
+  const applyOlderBars = (merged: KLineData[]) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    overlays.shiftIndexAnchoredPoints(merged.length - chart.getDataList().length);
+    chart.applyNewData(merged, true);
+  };
+
   // Pan/zoom the chart to a window without the scroll/zoom listener clearing the
   // active-range pill: flag the move as programmatic, then release on the next
   // macrotask after klinecharts has emitted its scroll event.
@@ -620,7 +637,7 @@ export default function ChartCore({
         getData: () => chartRef.current?.getDataList(),
         fetchOlder: (fromSec, toSec) =>
           fetchRange(token.epic, resolution, fromSec, toSec, token.side, token.broker),
-        applyData: (merged) => chartRef.current?.applyNewData(merged, true),
+        applyData: applyOlderBars,
         onCursor: (sec) => {
           cursorSecRef.current = sec;
         },
@@ -697,7 +714,7 @@ export default function ChartCore({
         isStale,
         getData: () => chartRef.current?.getDataList(),
         fetchOlder: (fromSec, toSec) => fetchRange(epic, resolution, fromSec, toSec, side, broker),
-        applyData: (merged) => chartRef.current?.applyNewData(merged, true),
+        applyData: applyOlderBars,
         onCursor: (sec) => {
           cursorSecRef.current = sec;
         },
@@ -2340,6 +2357,9 @@ export default function ChartCore({
               }
             } else {
               emptyStreakRef.current = 0;
+              // A Forward load: klinecharts' own updatePointPosition shifts
+              // dataIndex-only overlay points by the prepend size here — do NOT
+              // shift them again (see applyOlderBars for the INIT-type path).
               params.callback(fresh, true);
             }
           })

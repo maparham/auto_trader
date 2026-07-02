@@ -1448,8 +1448,15 @@ export class OverlayManager {
 
   // Rebuild this epic's overlays. Must run AFTER data is loaded so timestamped
   // points map onto the timescale. Guarded so the rebuild doesn't re-persist.
-  rehydrate(): void {
+  // On a timeframe switch the caller passes the NEW resolution — it must be
+  // adopted BEFORE points materialize, because a future-anchored timestamp is
+  // decoded to "n bars past the last candle" using the resolution's bar width
+  // (see materializePoints); decoding with the previous timeframe's width lands
+  // the anchor at the wrong x AND the next persist() writes that drift back to
+  // storage. Omit it when the resolution is unchanged (template re-apply).
+  rehydrate(resolution?: string): void {
     if (!this.chart) return;
+    if (resolution != null) this.resolution = resolution;
     // Remember WHICH alert was selected by its stable saved id (not the overlay id,
     // which this rebuild re-mints). A same-epic rehydrate — a live data refresh, or
     // React's dev double-mount — must not silently drop the user's (or a navigation's)
@@ -1559,6 +1566,31 @@ export class OverlayManager {
         ? { dataIndex: dl.length - 1 + Math.round((p.timestamp - last.timestamp) / interval), value: p.value }
         : p,
     );
+  }
+
+  // Prepending older bars (a scroll-back page, the anchor-coverage walk) renumbers
+  // every bar's dataIndex. Timestamped points re-resolve at paint time, but a
+  // beyond-data point is dataIndex-ONLY (materializePoints strips the timestamp),
+  // so klinecharts leaves it at the OLD index — the future anchor slides back into
+  // history and the drawing's slope collapses. Every prepend site reports its page
+  // size here so those points shift along and keep their bar-offset past the last
+  // candle. (Live APPENDS never renumber existing bars — no shift needed there.)
+  shiftIndexAnchoredPoints(delta: number): void {
+    if (!this.chart || !(delta > 0)) return;
+    for (const [id, kind] of this.entries) {
+      if (kind !== "drawing") continue;
+      const ov = this.chart.getOverlayById(id);
+      const pts = ov?.points;
+      if (!pts?.some((p) => p.timestamp == null && p.dataIndex != null)) continue;
+      this.chart.overrideOverlay({
+        id,
+        points: pts.map((p) =>
+          p.timestamp == null && p.dataIndex != null
+            ? { ...p, dataIndex: p.dataIndex + delta }
+            : p,
+        ) as Overlay["points"],
+      });
+    }
   }
 
   // Chart → storage: stable anchors only. A raw dataIndex is a position into THIS
