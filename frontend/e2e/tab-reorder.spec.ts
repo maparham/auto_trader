@@ -65,3 +65,55 @@ test("tab bar is at the top and tabs reorder by drag", async ({ page }) => {
     "1H",
   ]);
 });
+
+// The modern drag look: grabbing a chip lifts a floating clone that follows
+// the cursor, blanks the source chip, and slides the other chips apart to
+// hold open the insertion gap; dropping commits the order and cleans all of
+// it up. Uses manual mouse steps (not dragTo) so we can assert MID-drag.
+test("dragging lifts a floating chip and slides a gap open", async ({ page }) => {
+  await seedSingleChartDefault(page);
+  await stubStateApi(page);
+  await page.goto("/");
+
+  // Second, distinguishable tab (1D). Order: [1H, 1D].
+  await page.locator(".tab-add").click();
+  await page.locator(".modal.symsearch .modal-close").click();
+  await page.locator(".periods button", { hasText: /^1D$/ }).click();
+
+  const tabs = page.locator(".tab-bar .tab");
+  const src = (await tabs.nth(1).boundingBox())!;
+  const dst = (await tabs.nth(0).boundingBox())!;
+
+  // Manual HTML5 drag: press on the 1D chip, then move in steps so Chromium
+  // starts a native drag, onto the far-left edge of the 1H chip.
+  await page.mouse.move(src.x + src.width / 2, src.y + src.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(src.x + src.width / 2 - 15, src.y + src.height / 2, { steps: 4 });
+  await page.mouse.move(dst.x + dst.width * 0.1, dst.y + dst.height / 2, { steps: 8 });
+
+  // Mid-drag: floating clone exists, source chip is blanked (class), and the
+  // hovered chip slid RIGHT to open the gap (non-zero translate matrix).
+  await expect(page.locator(".tab-float")).toBeVisible();
+  await expect(tabs.nth(1)).toHaveClass(/dragging/);
+  await expect(tabs.nth(0)).toHaveCSS("transform", /matrix\(1, 0, 0, 1, [1-9]/);
+
+  // Let the 150ms slide-apart transition settle, then nudge and drop. Without
+  // this, Chromium's native drag hit-testing — which re-runs against the
+  // CSS-transition-animated chip under a stationary cursor — finds the target
+  // has animated out from under the pointer and cancels the drag (fires
+  // dragend without ever dispatching "drop") instead of committing it.
+  await page.waitForTimeout(200);
+  await page.mouse.move(dst.x + dst.width * 0.1 + 1, dst.y + dst.height / 2, { steps: 1 });
+  await page.mouse.up();
+
+  // Drop landed: order flipped, clone gone, transforms cleared.
+  await expect(page.locator(".tab-float")).toHaveCount(0);
+  await expect(page.locator(".tab-bar .tab").first()).not.toHaveCSS(
+    "transform",
+    /matrix\(1, 0, 0, 1, [1-9]/,
+  );
+  expect(await page.locator(".tab-bar .tab .tab-period").allTextContents()).toEqual([
+    "1D",
+    "1H",
+  ]);
+});

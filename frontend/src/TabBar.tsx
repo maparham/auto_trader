@@ -3,11 +3,24 @@
 // single ChartCore. Per-tab state lives entirely in App (see persist.ChartTab) —
 // this component is presentational plus drag-to-reorder.
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { ChartTab } from "./lib/persist";
+import { dropTarget, previewDeltas, type DragTarget, type Rect } from "./lib/tabDrag";
 import SymbolIcon from "./SymbolIcon";
 import ContextMenu from "./ContextMenu";
 import MergeTabsMenu from "./MergeTabsMenu";
+
+// Must match .tab-bar-tabs { gap } in App.css — the flow simulation that
+// slides chips apart uses it to predict where each chip lands.
+const TAB_GAP = 6;
+
+// 1x1 transparent GIF handed to setDragImage so the browser's faded chip
+// snapshot never shows — the .tab-float clone below is the visible drag image.
+const emptyImg = typeof Image === "undefined" ? null : new Image();
+if (emptyImg != null)
+  emptyImg.src =
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
 // Format an ISO-8601 UTC next-open time for the closed-badge tooltip, in the
 // viewer's local zone. "today"/"tomorrow" when near; otherwise a dated weekday
@@ -63,54 +76,167 @@ export default function TabBar({
   onDragActive,
   trailing,
 }: Props) {
-  // Index of the tab being dragged, the index being hovered, and which zone of
-  // that tab the cursor is on — drives the drop-indicator line/highlight and
-  // the target slot. All null when no drag is in progress. "before"/"after"
-  // let you drop on either edge (the right half of the last tab included,
-  // which a pure drop-before scheme can't express); "merge" is the middle
-  // ~40% of the chip and only applies when the dragged tab can merge into it.
-  type DropZone = "before" | "after" | "merge";
-  // Track the dragged tab by ID, not index. Dragging a chip onto the chart
-  // area (ChartGrid's merge-drop overlay) can MERGE that tab away while the
-  // gesture is still "in flight": the chip's DOM node unmounts before the
-  // browser fires dragend on it, and Chrome swallows dragend on a detached
-  // node, so endDrag() never runs. An index would then keep pointing at
-  // whichever tab slides into the vacated slot. The effect below clears drag
-  // state the moment the tracked id disappears from `tabs`, so no zone logic
-  // ever has to fall back on a stale/out-of-range index, and a later foreign
-  // drag (no chip dragstart) can never see a leftover drag as "in progress".
+  // Drag-to-reorder state. The dragged tab is tracked by ID, not index (see
+  // the effect below); `target` is where a drop right now would land — an
+  // insertion slot (chips slide apart to preview it) or a merge into a chip
+  // (highlight, middle ~40% of the chip, exactly the old zone). Geometry is
+  // measured ONCE at dragstart into dragGeom: the preview transforms change
+  // getBoundingClientRect, so live measurement would feed back into itself.
+  // `anim` gates the transform transition, so a committed drop can apply the
+  // real new order without every chip animating its transform back to zero.
   const [dragId, setDragId] = useState<string | null>(null);
-  const [overIdx, setOverIdx] = useState<number | null>(null);
-  const [overSide, setOverSide] = useState<DropZone>("before");
+  const [target, setTarget] = useState<DragTarget | null>(null);
+  const [anim, setAnim] = useState(false);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const floatRef = useRef<HTMLDivElement | null>(null);
+  const dragGeom = useRef<{
+    rects: Rect[];
+    containerWidth: number;
+    grabDx: number;
+    grabDy: number;
+  } | null>(null);
   const draggedTab = dragId != null ? (tabs.find((t) => t.id === dragId) ?? null) : null;
+  const fromIdx = dragId != null ? tabs.findIndex((t) => t.id === dragId) : -1;
 
   useEffect(() => {
-    // The dragged tab merged away mid-gesture (dragend never fired) — drop
-    // the stranded state and tell App the drag is over.
+    // The dragged tab merged away mid-gesture (its chip unmounted before
+    // dragend, which Chrome swallows on a detached node) — drop the stranded
+    // state and tell App the drag is over.
     if (dragId != null && draggedTab == null) {
       setDragId(null);
-      setOverIdx(null);
-      setOverSide("before");
+      setTarget(null);
+      dragGeom.current = null;
       onDragActive(null);
     }
   }, [dragId, draggedTab, onDragActive]);
+
+  useEffect(() => {
+    // The floating clone follows the cursor for the whole gesture — including
+    // over the chart (ChartGrid's merge overlay) — so listen at the document.
+    // It's positioned via style.transform directly: dragover fires roughly
+    // per frame, and a React state update per event would re-render the bar.
+    if (dragId == null) return;
+    const move = (e: DragEvent) => {
+      const g = dragGeom.current;
+      const el = floatRef.current;
+      if (g == null || el == null) return;
+      el.style.transform = `translate(${e.clientX - g.grabDx}px, ${e.clientY - g.grabDy}px) scale(1.05)`;
+    };
+    document.addEventListener("dragover", move);
+    return () => document.removeEventListener("dragover", move);
+  }, [dragId]);
 
   // Right-click menu on a chip and the follow-up merge checklist, anchored
   // where the user clicked.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
   const [mergePick, setMergePick] = useState<{ x: number; y: number; tabId: string } | null>(null);
 
-  const endDrag = () => {
+  // committed = the drop landed and the real order is about to change: kill
+  // the transition in the same commit, otherwise every chip animates its
+  // transform back to 0 while the layout also jumps. A cancelled drag keeps
+  // the transition on so the preview gap visibly slides closed.
+  const endDrag = (committed: boolean) => {
     setDragId(null);
-    setOverIdx(null);
-    setOverSide("before");
+    setTarget(null);
+    if (committed) {
+      setAnim(false);
+    } else {
+      // Cancelled: leave `anim` on so the gap-close transition can play, then
+      // clear it once it's finished (150ms in App.css) so .drag-anim doesn't
+      // linger on the bar until the next committed drop.
+      setTimeout(() => setAnim(false), 200);
+    }
+    dragGeom.current = null;
     onDragActive(null);
   };
+
+  // Slide-apart preview: for an insertion target, each chip's translate to
+  // where it would sit with the dragged chip moved there. null = no shifts
+  // (no drag, or hovering a merge target).
+  const deltas =
+    fromIdx !== -1 && target?.kind === "insert" && dragGeom.current != null
+      ? previewDeltas(
+          dragGeom.current.rects,
+          dragGeom.current.containerWidth,
+          TAB_GAP,
+          fromIdx,
+          target.index,
+        )
+      : null;
+
+  const floatLead =
+    draggedTab != null
+      ? (draggedTab.cells.find((c) => c.id === draggedTab.activeCellId) ??
+        draggedTab.cells[0])
+      : null;
 
   return (
     <div className="tab-bar">
       {/* Tabs scroll horizontally on overflow; the trailing actions stay pinned. */}
-      <div className="tab-bar-tabs" role="tablist">
+      <div
+        className={"tab-bar-tabs" + (anim ? " drag-anim" : "")}
+        role="tablist"
+        ref={barRef}
+        onDragOver={(e) => {
+          // Track where a drop would land, working entirely off the rects
+          // cached at dragstart. A foreign drag (no chip dragstart happened
+          // in this bar, so draggedTab is null) is not a drop target at all.
+          const g = dragGeom.current;
+          if (draggedTab == null || g == null) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          const next = dropTarget(g.rects, e.clientX, e.clientY, fromIdx, (i) =>
+            tabs[i] != null && canMerge(draggedTab.id, tabs[i].id),
+          );
+          setTarget((cur) =>
+            cur != null && cur.kind === next.kind && cur.index === next.index
+              ? cur
+              : next,
+          );
+        }}
+        onDragLeave={(e) => {
+          // Cursor left the strip (e.g. heading for the chart's merge
+          // overlay): close the preview gap. relatedTarget is null when the
+          // cursor leaves the window entirely — but emulated input can also
+          // fire a spurious null relatedTarget mid-transition, so when it's
+          // null, double-check the pointer coordinates are actually outside
+          // the bar's rect before closing the gap.
+          const rt = e.relatedTarget as Node | null;
+          const bar = barRef.current;
+          if (bar == null) return;
+          if (rt != null && bar.contains(rt)) return;
+          if (rt == null) {
+            const r = bar.getBoundingClientRect();
+            if (
+              e.clientX >= r.left &&
+              e.clientX <= r.right &&
+              e.clientY >= r.top &&
+              e.clientY <= r.bottom
+            )
+              return;
+          }
+          setTarget(null);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          // A drop can only fire here after our own dragover preventDefault,
+          // so `target` is always current. Foreign drags never get that far.
+          if (draggedTab != null && target != null) {
+            if (target.kind === "merge") {
+              onMerge(tabs[target.index].id, [draggedTab.id]);
+            } else if (
+              fromIdx !== -1 &&
+              // from and from+1 are the two slots around the chip's own spot —
+              // both are no-op moves.
+              target.index !== fromIdx &&
+              target.index !== fromIdx + 1
+            ) {
+              onReorder(fromIdx, target.index);
+            }
+          }
+          endDrag(true);
+        }}
+      >
       {tabs.map((t, i) => {
         // The tab chip represents the layout by its focused (or first) cell; a
         // multi-cell layout adds a small count badge. The title lists every cell.
@@ -135,70 +261,52 @@ export default function TabBar({
             "tab",
             t.id === activeId ? "on" : "",
             dragId === t.id ? "dragging" : "",
-            overIdx === i && dragId !== t.id
-              ? overSide === "merge"
-                ? "drop-merge"
-                : overSide === "after"
-                  ? "drop-after"
-                  : "drop-before"
+            target?.kind === "merge" && target.index === i && dragId !== t.id
+              ? "drop-merge"
               : "",
           ]
             .filter(Boolean)
             .join(" ")}
+          style={
+            deltas != null && (deltas[i].dx !== 0 || deltas[i].dy !== 0)
+              ? { transform: `translate(${deltas[i].dx}px, ${deltas[i].dy}px)` }
+              : undefined
+          }
           onClick={() => onSelect(t.id)}
           title={closedTip ? `${titleText} — ${closedTip}` : titleText}
           draggable
           onDragStart={(e) => {
-            setDragId(t.id);
+            // Cache every chip's rect NOW — the preview transforms change
+            // getBoundingClientRect, so all later hit-testing works off this
+            // snapshot (chip order can't change mid-drag except the
+            // merged-away case, which the effect above resets).
+            const bar = barRef.current;
+            if (bar == null) return;
+            const rects: Rect[] = Array.from(
+              bar.querySelectorAll<HTMLElement>(":scope > .tab"),
+            ).map((c) => {
+              const r = c.getBoundingClientRect();
+              return { left: r.left, top: r.top, width: r.width, height: r.height };
+            });
+            dragGeom.current = {
+              rects,
+              // -6 for .tab-bar-tabs' padding-left (App.css) — clientWidth
+              // includes it, but the flow simulation lays chips out from the
+              // content box, so leaving it in overestimates where a chip wraps.
+              containerWidth: bar.clientWidth - 6,
+              grabDx: e.clientX - rects[i].left,
+              grabDy: e.clientY - rects[i].top,
+            };
+            if (emptyImg != null) e.dataTransfer.setDragImage(emptyImg, 0, 0);
             // Firefox refuses to start an HTML5 drag when no drag data is set;
             // the payload itself is unused (state carries the dragged id).
             e.dataTransfer.setData("text/plain", t.id);
             e.dataTransfer.effectAllowed = "move";
+            setDragId(t.id);
+            setAnim(true);
             onDragActive(t.id);
           }}
-          onDragOver={(e) => {
-            // Allow dropping and track the hovered slot + zone the cursor is
-            // in, so the drop can land before, after, or merge into this tab.
-            // A foreign drag (no chip dragstart happened in this TabBar, so
-            // draggedTab is null) never qualifies for merge and only ever
-            // shows the plain reorder indicator — it can't merge or reorder.
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-            const r = e.currentTarget.getBoundingClientRect();
-            const frac = (e.clientX - r.left) / r.width;
-            // Middle ~40% of the chip = merge drop (when allowed); the outer
-            // edges keep meaning reorder, so the gestures don't fight.
-            const mergeOk =
-              draggedTab != null && draggedTab.id !== t.id && canMerge(draggedTab.id, t.id);
-            const side: DropZone =
-              mergeOk && frac >= 0.3 && frac <= 0.7
-                ? "merge"
-                : frac < 0.5
-                  ? "before"
-                  : "after";
-            if (overIdx !== i) setOverIdx(i);
-            if (overSide !== side) setOverSide(side);
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            // Translate (target index, zone) into either a merge or the
-            // destination index for App's reorder (remove-then-insert;
-            // dropping after tab i targets slot i+1). Foreign drags (no
-            // draggedTab) are ignored outright.
-            if (draggedTab != null) {
-              if (overSide === "merge" && draggedTab.id !== t.id) {
-                onMerge(t.id, [draggedTab.id]);
-              } else {
-                const from = tabs.findIndex((x) => x.id === draggedTab.id);
-                if (from !== -1) {
-                  const to = overSide === "after" ? i + 1 : i;
-                  if (to !== from) onReorder(from, to);
-                }
-              }
-            }
-            endDrag();
-          }}
-          onDragEnd={endDrag}
+          onDragEnd={() => endDrag(false)}
           onContextMenu={(e) => {
             e.preventDefault();
             // With one tab, the only context-menu action ("Merge into this
@@ -272,6 +380,33 @@ export default function TabBar({
           onClose={() => setMergePick(null)}
         />
       )}
+      {/* The cursor-following clone of the grabbed chip. Starts on the chip's
+          own rect; the document dragover listener above steers it. */}
+      {draggedTab != null &&
+        floatLead != null &&
+        dragGeom.current != null &&
+        fromIdx !== -1 &&
+        createPortal(
+          <div
+            className="tab tab-float"
+            ref={floatRef}
+            style={{
+              transform: `translate(${dragGeom.current.rects[fromIdx].left}px, ${dragGeom.current.rects[fromIdx].top}px) scale(1.05)`,
+            }}
+          >
+            <SymbolIcon
+              epic={floatLead.symbol.epic}
+              type={floatLead.symbol.type}
+              className="tab-icon"
+            />
+            <span className="tab-symbol">{floatLead.symbol.epic}</span>
+            <span className="tab-period">{floatLead.period.label}</span>
+            {draggedTab.cells.length > 1 && (
+              <span className="tab-count">{draggedTab.cells.length}</span>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

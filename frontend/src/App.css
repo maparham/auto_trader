@@ -316,19 +316,24 @@
 /* The active tab still needs hover feedback; .tab:hover has equal specificity and
    loses the cascade to .tab.on, so deepen the accent tint here explicitly. */
 .tab.on:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-/* Drag-to-reorder: dim the tab being dragged; show a drop line at the target.
-   The line is a pseudo-element bar sitting in the inter-tab gap rather than an
-   inset shadow, which the pill's border-radius would clip to rounded stubs. */
-.tab.dragging { opacity: 0.4; }
-.tab.drop-before::before,
-.tab.drop-after::after {
-  content: ""; position: absolute; top: 3px; bottom: 3px; width: 2px;
-  border-radius: 1px; background: var(--accent);
-}
-.tab.drop-before::before { left: -4px; }
-.tab.drop-after::after { right: -4px; }
+/* Drag-to-reorder: the grabbed chip dims; the other chips carry translate()
+   previews of the insertion gap (computed in tabDrag.ts), transitioned only
+   while .drag-anim is on so a committed drop can swap the real order without
+   a transform flash. */
+.tab.dragging { opacity: 0; }
+.tab-bar-tabs.drag-anim .tab { transition: transform 150ms ease; }
 /* Whole-chip highlight while hovering a merge drop (center zone of the chip). */
 .tab.drop-merge { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The cursor-following clone of the grabbed chip. Fixed at the viewport
+   origin and moved by transform (cheap to update per dragover event); the
+   slight scale + shadow read as "lifted off the bar". The shadow is a
+   deliberate, approved exception to the no-shadow rule. */
+.tab-float {
+  position: fixed; left: 0; top: 0; z-index: 1000;
+  pointer-events: none; transform-origin: top left;
+  background: var(--surface-2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
 .tab-icon {
   position: relative; flex-shrink: 0; width: 16px; height: 16px;
   border-radius: 50%; overflow: hidden;
