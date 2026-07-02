@@ -694,6 +694,7 @@
   border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
 }
 .al-note { color: var(--text-faint); font-size: 12px; }
+.bt-range-subtitle { margin-top: 6px; }
 /* Custom backtest range: From/To side by side on one line instead of stacked. */
 .bt-range-field { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .bt-range-field > span { color: var(--text-dim); flex-shrink: 0; }

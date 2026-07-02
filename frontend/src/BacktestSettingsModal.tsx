@@ -75,6 +75,32 @@ const OPERATORS: { value: Operator; label: string; tip: string }[] = [
 // set fall back to a nominal week.
 const NOMINAL_WINDOW_BARS = 168;
 
+const DATE_OPTS: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" };
+
+function formatDateRange(fromMs: number, toMs: number): string {
+  const from = new Date(fromMs);
+  const to = new Date(toMs);
+  const sameYear = from.getFullYear() === to.getFullYear();
+  const fromLabel = from.toLocaleDateString([], sameYear ? { day: "numeric", month: "short" } : DATE_OPTS);
+  const toLabel = to.toLocaleDateString([], DATE_OPTS);
+  return `${fromLabel} – ${toLabel}`;
+}
+
+// The actual calendar span implied by the current range choice, so "Month" etc.
+// aren't left abstract — shown relative to now for the fixed presets ("Bars"
+// depends on the resolution too, since a bar count only maps to a duration once
+// you know the timeframe).
+function rangeDateLabel(cfg: BacktestConfig, resSeconds: number): string {
+  const r = cfg.range;
+  const now = Date.now();
+  if (r.mode === "custom") {
+    if (r.fromMs && r.toMs && r.toMs > r.fromMs) return formatDateRange(r.fromMs, r.toMs);
+    return "Pick a from and to date";
+  }
+  const fromMs = now - estimateWindowBars(cfg, resSeconds) * resSeconds * 1000;
+  return formatDateRange(fromMs, now);
+}
+
 function estimateWindowBars(cfg: BacktestConfig, resSeconds: number): number {
   const r = cfg.range;
   if (r.mode === "bars") return r.bars ?? 500;
@@ -139,6 +165,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   const [side, setSide] = useState<"long" | "short">("long");
   useCloseOnEscape(onClose);
 
+  const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
+
   const usesVolume = [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit].some((g) =>
     g.rules.some((r) =>
       [r.left, r.right].some(
@@ -202,6 +230,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                 </button>
               ))}
             </div>
+            <div className="al-note bt-range-subtitle">{rangeDateLabel(cfg, resSeconds)}</div>
             {cfg.range.mode === "bars" && (
               <label className="al-row">
                 <span>Bars</span>
