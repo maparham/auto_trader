@@ -35,7 +35,10 @@ import {
   barsSpanned,
 } from "./visibility";
 
-type Kind = "drawing" | "alert";
+type Kind = "drawing" | "alert" | "measure";
+
+// A measure anchor point — the same loose shape klinecharts stores on an overlay.
+type MeasurePoint = { timestamp?: number; value?: number; dataIndex?: number };
 
 // One-level-deep merge of a style patch onto a base style: for each top-level style
 // category present in the patch (line, text, ...), shallow-merge its fields over the
@@ -157,6 +160,10 @@ export class OverlayManager {
   // active broker (correct before the first setBroker).
   private broker = "";
   private entries = new Map<string, Kind>();
+  // The live transient measure overlay (TV ruler), or null. Never persisted; a new
+  // measure removes the old, and the next plain interaction / Esc / symbol change
+  // clears it (ChartCore drives that). Single-instance by design.
+  private measureId: string | null = null;
   private alertCfg = new Map<string, AlertConfig>();
   // klinecharts overlay id -> the alert's STABLE id (SavedAlert.id). The overlay id
   // is regenerated on every rehydrate; the stable id is the identity persisted to
@@ -597,6 +604,7 @@ export class OverlayManager {
   ): string | null {
     if (!this.chart) return null;
     const isAlert = kind === "alert";
+    const isMeasure = kind === "measure";
     const id = this.chart.createOverlay({
       name,
       points: points as Overlay["points"],
@@ -609,7 +617,7 @@ export class OverlayManager {
       // suppress klinecharts' default y-axis value box to avoid a duplicate. For
       // drawings the price tag is on by default but user-toggleable (Visibility
       // tab) — honor extendData.priceLabels when present so rehydrate restores it.
-      needDefaultYAxisFigure: isAlert ? false : asDrawingExtra(extra?.extendData).priceLabels ?? true,
+      needDefaultYAxisFigure: isAlert || isMeasure ? false : asDrawingExtra(extra?.extendData).priceLabels ?? true,
       // Returning true marks the right-click handled, suppressing klinecharts'
       // default "delete on right-click" so our context menu can take over.
       onRightClick: (e) => {
@@ -648,6 +656,7 @@ export class OverlayManager {
       },
       onRemoved: (e) => {
         this.entries.delete(e.overlay.id);
+        if (this.measureId === e.overlay.id) this.measureId = null;
         this.alertCfg.delete(e.overlay.id);
         this.alertIds.delete(e.overlay.id);
         this.alertCreatedAt.delete(e.overlay.id);
@@ -725,6 +734,36 @@ export class OverlayManager {
     if (typeof id !== "string") return null;
     this.entries.set(id, kind);
     return id;
+  }
+
+  // --- transient measure tool (TV ruler) ------------------------------------
+  // Start a measurement at a single anchor (both points collapsed). Removes any
+  // existing measure first — only one is live at a time. Created fully placed (not
+  // interactive-draw), so it never fires onDrawEnd/persist.
+  startMeasure(p: MeasurePoint): string | null {
+    if (!this.chart) return null;
+    this.clearMeasure();
+    const id = this.create("measure", "measure", [p, p] as SavedOverlay["points"]);
+    this.measureId = id;
+    return id;
+  }
+
+  // Live-update the measurement's end point while the user drags.
+  updateMeasure(p: MeasurePoint): void {
+    if (!this.chart || !this.measureId) return;
+    const start = this.chart.getOverlayById(this.measureId)?.points?.[0];
+    if (!start) return;
+    this.chart.overrideOverlay({ id: this.measureId, points: [start, p] });
+  }
+
+  // Discard the live measurement (next interaction / Esc / symbol change).
+  clearMeasure(): void {
+    if (this.measureId) this.chart?.removeOverlay(this.measureId); // onRemoved nulls measureId
+    this.measureId = null;
+  }
+
+  hasMeasure(): boolean {
+    return this.measureId != null;
   }
 
   // --- user actions (called by Toolbar / chart "+" menu) ---------------------
@@ -1358,6 +1397,7 @@ export class OverlayManager {
     const drawings: SavedOverlay[] = [];
     const alerts: SavedAlert[] = [];
     for (const [id, kind] of this.entries) {
+      if (kind === "measure") continue; // transient ruler — never persisted
       const ov = this.chart.getOverlayById(id);
       if (!ov) continue;
       if (kind === "alert") {

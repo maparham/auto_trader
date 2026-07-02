@@ -48,7 +48,7 @@ import { indicatorInfo } from "./lib/indicatorMeta";
 import IndicatorRow from "./IndicatorRow";
 import type { ChartController } from "./lib/chartController";
 import ContextMenu from "./ContextMenu";
-import { BellIcon, MenuIcons } from "./lib/menuIcons";
+import { BellIcon, RulerIcon, MenuIcons } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
 import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
@@ -167,6 +167,15 @@ export default function Toolbar({
     if (!controller) return;
     setAuto(controller.autoScale.value);
     return controller.autoScale.subscribe(setAuto);
+  }, [controller]);
+  // Measure ruler armed state (mirrors the focused cell's signal; on = highlighted).
+  // Optional-chained through measureArmed so a hot-reloaded stale controller (one
+  // created before this signal existed) degrades instead of crashing the toolbar.
+  const [measuring, setMeasuring] = useState(controller?.measureArmed?.value ?? false);
+  useEffect(() => {
+    if (!controller?.measureArmed) return;
+    setMeasuring(controller.measureArmed.value);
+    return controller.measureArmed.subscribe(setMeasuring);
   }, [controller]);
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
@@ -591,6 +600,18 @@ export default function Toolbar({
           </div>
         )}
       </div>
+
+      {/* Measure ruler (TradingView-style). Arms the tool: the next drag on the
+          chart measures price/%/ticks/bars/time. Shift+drag measures without arming.
+          Highlighted while armed; toggles off on a second click. */}
+      <button
+        className={`anchor-btn icon-btn measure-toggle${measuring ? " on" : ""}`}
+        title="Measure (or hold Shift and drag)"
+        disabled={!controller?.measureArmed}
+        onClick={() => controller?.measureArmed?.set(!controller.measureArmed.value)}
+      >
+        <RulerIcon />
+      </button>
 
       <span className="tb-div" aria-hidden="true" />
 

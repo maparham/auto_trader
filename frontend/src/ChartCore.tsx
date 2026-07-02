@@ -514,6 +514,7 @@ export default function ChartCore({
     overlays,
     avwapAnchorMode,
     autoScale,
+    measureArmed,
     selectedIndicator,
     legendHovered,
     legendHoverName,
@@ -866,6 +867,9 @@ export default function ChartCore({
   // Whether the (long) error detail is expanded in the banner.
   const [errorOpen, setErrorOpen] = useState(false);
   const [anchoring, setAnchoring] = useState(false);
+  // True while the Measure ruler is armed — drives the crosshair cursor on the
+  // chart container (mirrors `anchoring`), reset when a press consumes the arm.
+  const [measureArmedUi, setMeasureArmedUi] = useState(false);
   // Cursor over the chart canvas: "cur-pointer" (hand) over a selectable indicator
   // curve, "cur-default" (arrow) over the legend strip, "" = klinecharts crosshair.
   // A class (not inline style) because klinecharts sets cursor on the canvas itself,
@@ -1694,6 +1698,68 @@ export default function ChartCore({
       });
     };
 
+    // --- Measure ruler (TradingView-style) ---
+    // A transient two-point overlay: press → live-drag the end point → freeze on
+    // release. Two triggers feed the same drag: Shift+drag (measure without arming)
+    // and the toolbar ruler button (arms measureArmed; the next press measures then
+    // disarms). The frozen box is discarded on the next plain press, Esc, or a
+    // symbol/interval change. Nothing is persisted.
+    const pxToPoint = (clientX: number, clientY: number) => {
+      const c = chartRef.current;
+      if (!c) return null;
+      const r = el.getBoundingClientRect();
+      return first(
+        c.convertFromPixel([{ x: clientX - r.left, y: clientY - r.top }], {
+          paneId: "candle_pane",
+          absolute: true,
+        }),
+      );
+    };
+    let measureStart: { dataIndex?: number; value?: number } | null = null;
+    const onMeasureMove = (ev: MouseEvent) => {
+      const pt = pxToPoint(ev.clientX, ev.clientY);
+      if (pt) overlays.updateMeasure(pt);
+    };
+    const onMeasureUp = (ev: MouseEvent) => {
+      window.removeEventListener("mousemove", onMeasureMove);
+      window.removeEventListener("mouseup", onMeasureUp, true);
+      const start = measureStart;
+      measureStart = null;
+      const pt = pxToPoint(ev.clientX, ev.clientY);
+      // A press with no real drag (same bar & price) leaves a degenerate box → drop it.
+      if (start && pt && pt.dataIndex === start.dataIndex && pt.value === start.value) {
+        overlays.clearMeasure();
+      }
+    };
+    const beginMeasureDrag = (clientX: number, clientY: number) => {
+      const pt = pxToPoint(clientX, clientY);
+      if (!pt) return;
+      measureStart = { dataIndex: pt.dataIndex, value: pt.value };
+      overlays.startMeasure(pt);
+      window.addEventListener("mousemove", onMeasureMove);
+      window.addEventListener("mouseup", onMeasureUp, true);
+    };
+    // Registered FIRST among the capture-phase mousedowns so a measuring press can
+    // stopImmediatePropagation and pre-empt the line-grab / clone / pan handlers.
+    const onMeasureDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const armed = measureArmed.value;
+      if (!e.shiftKey && !armed) {
+        // Not measuring: a plain press clears any frozen measurement ("click away").
+        if (overlays.hasMeasure()) overlays.clearMeasure();
+        return;
+      }
+      // The price-axis strip is a scale gesture, not a measurement.
+      const c = chartRef.current;
+      const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      if (e.clientX - el.getBoundingClientRect().left > mainW) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation(); // block the line/clone/pan handlers on this same press
+      if (armed) measureArmed.set(false); // one-shot arm
+      beginMeasureDrag(e.clientX, e.clientY);
+    };
+
     // TradingView-style "A" auto-scale: pressing on the price-axis column (the
     // strip right of the candle pane) is a manual y-axis scale gesture, so it
     // exits auto mode and the toolbar "A" de-highlights. Re-enabled by clicking
@@ -2032,12 +2098,16 @@ export default function ChartCore({
       }
     };
     const unsubAnchor = avwapAnchorMode.subscribe((id) => setAnchoring(id != null));
+    const unsubMeasureArm = measureArmed.subscribe((on) => setMeasureArmedUi(on));
 
     if (chart) {
       chart.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current));
       el.addEventListener("click", onClick);
       el.addEventListener("dblclick", onDblClick); // alert-line -> edit; curve -> settings
       el.addEventListener("contextmenu", onContextMenu); // right-click -> Paste menu
+      // Measure ruler FIRST among the capture-phase mousedowns: a measuring press
+      // stopImmediatePropagation's to pre-empt the line/clone/anchor/pan handlers.
+      el.addEventListener("mousedown", onMeasureDown, true);
       // Capture-phase so it runs before klinecharts' own canvas mousedown — when we
       // grab the anchor handle we stopPropagation, blocking the chart's pan start.
       el.addEventListener("mousedown", onAnchorDown, true);
@@ -2262,10 +2332,15 @@ export default function ChartCore({
     return () => {
       wsRef.current?.close();
       unsubAnchor();
+      unsubMeasureArm();
       unsubRemoved();
       el.removeEventListener("click", onClick);
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
+      el.removeEventListener("mousedown", onMeasureDown, true);
+      // Drop any live window listeners from an in-flight measure drag (see lineDrags).
+      window.removeEventListener("mousemove", onMeasureMove);
+      window.removeEventListener("mouseup", onMeasureUp, true);
       el.removeEventListener("mousedown", onAnchorDown, true);
       el.removeEventListener("mousedown", onClonePress, true);
       el.removeEventListener("mousedown", onAxisDown, true);
@@ -2479,6 +2554,12 @@ export default function ChartCore({
     const resChanged = prevResRef.current !== period.resolution;
     prevEpicRef.current = symbol.epic;
     prevResRef.current = period.resolution;
+    // A symbol or interval change invalidates any live measurement (its anchors map
+    // onto the old timescale) — discard it and disarm the ruler.
+    if (epicChanged || resChanged) {
+      measureArmed.set(false);
+      overlays.clearMeasure();
+    }
     if (epicChanged) {
       separatorTsRef.current = null;
       sepCacheRef.current = null;
@@ -3849,6 +3930,15 @@ export default function ChartCore({
         // Don't hijack copy/paste/delete while typing in a field.
         const t = e.target as HTMLElement;
         if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return;
+        // Escape disarms / discards a measurement first (TV: Esc cancels the ruler).
+        if (e.key === "Escape") {
+          if (measureArmed.value || overlays.hasMeasure()) {
+            measureArmed.set(false);
+            overlays.clearMeasure();
+            e.preventDefault();
+          }
+          return;
+        }
         // Escape on a selected trade (discard pending → deselect) is handled by a
         // window listener in App, so it works even when focus isn't on the chart.
         // Delete / Backspace removes the selected drawing (no modifier).
@@ -3876,7 +3966,7 @@ export default function ChartCore({
     >
       <div
         ref={containerRef}
-        className={anchoring ? "anchoring" : undefined}
+        className={anchoring || measureArmedUi ? "anchoring" : undefined}
         style={{ width: "100%", height: "100%" }}
       />
       <ChartRangeBar

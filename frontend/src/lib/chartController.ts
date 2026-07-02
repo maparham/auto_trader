@@ -33,6 +33,10 @@ export class ChartController {
   // or null when not in anchor mode. Carries the id (not just a bool) so multiple
   // AVWAPs each anchor independently.
   readonly avwapAnchorMode = new Signal<string | null>(null);
+  // True while the TV-style Measure ruler is armed (ruler button toggled on). The
+  // next mousedown on the chart starts a measurement drag, then disarms. Esc also
+  // disarms. Shift+drag measures without arming, so this stays a simple bool.
+  readonly measureArmed = new Signal<boolean>(false);
   // TradingView-style price-axis "auto" mode (auto-fit y-axis to visible bars).
   // Starts ON; the toolbar "A" button reflects it and re-asserts auto-fit; the
   // cell turns it OFF when the user manually scales the price axis.

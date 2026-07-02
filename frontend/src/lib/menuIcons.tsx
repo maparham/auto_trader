@@ -27,6 +27,19 @@ export function BellIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// Ruler glyph for the toolbar's Measure toggle. A tilted ruler with tick marks,
+// echoing TradingView's measure tool icon. currentColor so it inherits the button
+// state (accent when armed).
+export function RulerIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="1.8" y="7.8" width="20.4" height="8.4" rx="1.5" transform="rotate(-45 12 12)" />
+      <path d="M8.5 8.5l1.6 1.6M11 6l2.4 2.4M13.5 3.5l1.6 1.6" />
+    </svg>
+  );
+}
+
 export const MenuIcons = {
   settings: svg(
     <>

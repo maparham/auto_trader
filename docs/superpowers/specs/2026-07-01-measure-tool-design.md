@@ -123,8 +123,8 @@ Two entry points feed it:
   to the existing `onClonePress` clone handler). When `e.shiftKey` and the target
   is the chart canvas: `e.preventDefault()` + `e.stopPropagation()` (so
   klinecharts does not pan), then `beginMeasureDrag`.
-- **Ruler button** — a new toolbar icon button toggles a `measureArmed` signal
-  (`lib/signals.ts`), styled active like the A/L-scale anchor buttons. When
+- **Ruler button** — a new toolbar icon button toggles a per-cell `measureArmed`
+  signal (`lib/chartController.ts`, alongside `avwapAnchorMode`/`autoScale`). When
   armed: the chart shows a crosshair cursor; the next `mousedown` on the canvas
   calls `beginMeasureDrag` (stopPropagation to avoid pan) and disarms. Pressing
   **Esc** while armed disarms without drawing.
@@ -134,11 +134,14 @@ chart, `Esc`, or a symbol/timeframe change calls `overlays.clearMeasure()`. Wire
 this in ChartCore's existing empty-space/click and keydown branches and in the
 symbol/period change effect (same place drawings rehydrate).
 
-### 4. Theme (`lib/chartTheme.ts`)
+### 4. Colors (in `lib/customOverlays.ts`, not theme tokens)
 
-Add `measure` tint tokens: `upFill`/`upStroke`/`downFill`/`downStroke`/`labelBg`/
-`labelText` for both dark and light, reusing the existing candle up/down greens
-and reds so the box color matches the chart's own up/down palette.
+**Decision (changed from the original draft):** the measure box/pill colors are
+**fixed constants in `customOverlays.ts`**, not `chartTheme.ts` tokens. The
+translucent up/down fills (`rgba(38,166,154,…)` / `rgba(239,83,80,…)`), solid pill,
+and white pill text read correctly on both light and dark backgrounds — verified by
+eye on both themes — so per-theme tokens buy nothing. TradingView's own measure tool
+uses theme-independent measure colors too. `chartTheme.ts` is therefore untouched.
 
 ## Data flow
 
@@ -184,8 +187,9 @@ next plain mousedown / Esc / symbol change ─▶ clearMeasure() ─▶ removeOv
   `updateMeasure` / `clearMeasure` / `hasMeasure`; persist guard; `onRemoved`
   clears `measureId`.
 - `frontend/src/lib/measureMetrics.ts` (new) + `.test.ts` — pure metric helpers.
-- `frontend/src/lib/signals.ts` — `measureArmed` signal.
-- `frontend/src/lib/chartTheme.ts` — measure tint tokens (dark + light).
+- `frontend/src/lib/chartController.ts` — per-cell `measureArmed` signal.
+- (measure colors are fixed constants in `customOverlays.ts`; `chartTheme.ts`
+  is intentionally NOT touched — see §4.)
 - `frontend/src/ChartCore.tsx` — Shift+drag capture handler, `beginMeasureDrag`,
   armed-mousedown, clear-on-next-interaction / Esc / symbol change.
 - `frontend/src/Toolbar.tsx` (+ `lib/menuIcons.tsx`) — ruler button + icon.
