@@ -151,6 +151,37 @@
   touch-action: none;
 }
 .cell-resize-strip:hover { background: var(--accent); opacity: 0.25; }
+
+/* Swap button centered on the border segment between two adjacent cells.
+   Hidden until the pointer reaches the border zone: hovering the grab strip
+   reveals the buttons on that border, and the button keeps itself visible
+   under its own hover (it sits ABOVE the strip — z 31 vs 30 — so the click
+   lands on the swap; the rest of the strip still drags). No drop-shadow. */
+.cell-swap {
+  position: absolute;
+  z-index: 31;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease, background 0.1s ease;
+}
+.cell-resize-strip:hover ~ .cell-swap,
+.cell-swap:hover {
+  opacity: 1;
+}
+.cell-swap:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
 .chart-cell {
   position: relative;
   min-width: 0;

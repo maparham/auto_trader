@@ -71,6 +71,8 @@ interface Props {
   onDetachCell: (cellId: string, target: "tab" | "window") => void;
   // Close a cell (removes it from the layout; App confirms + downgrades the kind).
   onCloseCell: (cellId: string) => void;
+  // Swap two adjacent cells' positions (border ↔/↕ buttons).
+  onSwapCells: (idA: string, idB: string) => void;
   // Per-tab cell-size fractions (see ChartTab.sizes). Undefined = equal split.
   sizes?: { cols: number[]; rows: number[] };
   // Commit new fractions after a border drag.
@@ -107,6 +109,7 @@ export default function ChartGrid({
   onToggleMaximizeCell,
   onDetachCell,
   onCloseCell,
+  onSwapCells,
   sizes,
   onSizes,
   tabDrag,
@@ -352,6 +355,79 @@ export default function ChartGrid({
             onCancel={() => setDragSizes(null)}
           />
         ))}
+      {/* Border swap buttons: one per adjacent cell pair, centered on the
+          shared border SEGMENT (per row for vertical borders, per column for
+          horizontal ones — a 2×2 gets four). Clicking swaps the two cells;
+          identity travels with the cell, layout kind and track sizes stay put.
+          Cells are placed row-major, so (row r, col c) = cells[r*cols + c].
+          Hidden while a cell is maximized, same as the strips. Rendered AFTER
+          the strips so the sibling-hover reveal in App.css matches. */}
+      {!validMaximizedCellId &&
+        Array.from({ length: shape.rows }, (_, r) =>
+          Array.from({ length: shape.cols - 1 }, (_, i) => {
+            const c = i + 1;
+            const a = cells[r * shape.cols + c - 1];
+            const b = cells[r * shape.cols + c];
+            if (!a || !b) return null;
+            const left = colFracs.slice(0, c).reduce((s, v) => s + v, 0) * 100;
+            const top =
+              (rowFracs.slice(0, r).reduce((s, v) => s + v, 0) + rowFracs[r] / 2) * 100;
+            return (
+              <button
+                key={`swap-c${c}-r${r}`}
+                type="button"
+                className="cell-swap cols"
+                style={{ left: `calc(${left}% - 12px)`, top: `calc(${top}% - 12px)` }}
+                title="Swap charts"
+                aria-label="Swap charts"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSwapCells(a.id, b.id);
+                }}
+              >
+                {/* ↔ two-way arrow */}
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 8h10" />
+                  <path d="M6 5L3 8l3 3" />
+                  <path d="M10 5l3 3-3 3" />
+                </svg>
+              </button>
+            );
+          }),
+        )}
+      {!validMaximizedCellId &&
+        Array.from({ length: shape.rows - 1 }, (_, i) =>
+          Array.from({ length: shape.cols }, (_, c) => {
+            const r = i + 1;
+            const a = cells[(r - 1) * shape.cols + c];
+            const b = cells[r * shape.cols + c];
+            if (!a || !b) return null;
+            const top = rowFracs.slice(0, r).reduce((s, v) => s + v, 0) * 100;
+            const left =
+              (colFracs.slice(0, c).reduce((s, v) => s + v, 0) + colFracs[c] / 2) * 100;
+            return (
+              <button
+                key={`swap-r${r}-c${c}`}
+                type="button"
+                className="cell-swap rows"
+                style={{ left: `calc(${left}% - 12px)`, top: `calc(${top}% - 12px)` }}
+                title="Swap charts"
+                aria-label="Swap charts"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSwapCells(a.id, b.id);
+                }}
+              >
+                {/* ↕ two-way arrow */}
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3v10" />
+                  <path d="M5 6l3-3 3 3" />
+                  <path d="M5 10l3 3 3-3" />
+                </svg>
+              </button>
+            );
+          }),
+        )}
       {tabDrag && (
         <div
           className="merge-drop"

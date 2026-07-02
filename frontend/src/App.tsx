@@ -1068,6 +1068,25 @@ export default function App() {
     });
   };
 
+  // Swap two cells' positions in the active tab (border ↔/↕ buttons). Cells
+  // move whole — symbol, period, scope (drawings/alerts) travel with them —
+  // so nothing is purged or copied. Layout kind and track sizes are untouched
+  // (fractions belong to the grid tracks, not the cells).
+  const swapCells = (idA: string, idB: string) => {
+    if (!active) return;
+    setTabs((ts) =>
+      ts.map((t) => {
+        if (t.id !== active.id) return t;
+        const i = t.cells.findIndex((c) => c.id === idA);
+        const j = t.cells.findIndex((c) => c.id === idB);
+        if (i < 0 || j < 0 || i === j) return t;
+        const cells = t.cells.slice();
+        [cells[i], cells[j]] = [cells[j], cells[i]];
+        return { ...t, cells };
+      }),
+    );
+  };
+
   // Merge whole tabs into `targetId` — the inverse of detachCell. Each source
   // tab's cells move across (content re-scoped by mergeTabInto), the source
   // tabs close, and the merged tab gains crosshair sync. `position` places the
@@ -1410,6 +1429,7 @@ export default function App() {
               }
               onDetachCell={detachCell}
               onCloseCell={closeCell}
+              onSwapCells={swapCells}
               sizes={active.sizes}
               onSizes={setCellSizes}
               tabDrag={
