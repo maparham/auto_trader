@@ -3,7 +3,7 @@
 // single ChartCore. Per-tab state lives entirely in App (see persist.ChartTab) —
 // this component is presentational plus drag-to-reorder.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { ChartTab } from "./lib/persist";
 import SymbolIcon from "./SymbolIcon";
 import ContextMenu from "./ContextMenu";
@@ -70,9 +70,30 @@ export default function TabBar({
   // which a pure drop-before scheme can't express); "merge" is the middle
   // ~40% of the chip and only applies when the dragged tab can merge into it.
   type DropZone = "before" | "after" | "merge";
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  // Track the dragged tab by ID, not index. Dragging a chip onto the chart
+  // area (ChartGrid's merge-drop overlay) can MERGE that tab away while the
+  // gesture is still "in flight": the chip's DOM node unmounts before the
+  // browser fires dragend on it, and Chrome swallows dragend on a detached
+  // node, so endDrag() never runs. An index would then keep pointing at
+  // whichever tab slides into the vacated slot. The effect below clears drag
+  // state the moment the tracked id disappears from `tabs`, so no zone logic
+  // ever has to fall back on a stale/out-of-range index, and a later foreign
+  // drag (no chip dragstart) can never see a leftover drag as "in progress".
+  const [dragId, setDragId] = useState<string | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
   const [overSide, setOverSide] = useState<DropZone>("before");
+  const draggedTab = dragId != null ? (tabs.find((t) => t.id === dragId) ?? null) : null;
+
+  useEffect(() => {
+    // The dragged tab merged away mid-gesture (dragend never fired) — drop
+    // the stranded state and tell App the drag is over.
+    if (dragId != null && draggedTab == null) {
+      setDragId(null);
+      setOverIdx(null);
+      setOverSide("before");
+      onDragActive(null);
+    }
+  }, [dragId, draggedTab, onDragActive]);
 
   // Right-click menu on a chip and the follow-up merge checklist, anchored
   // where the user clicked.
@@ -80,7 +101,7 @@ export default function TabBar({
   const [mergePick, setMergePick] = useState<{ x: number; y: number; tabId: string } | null>(null);
 
   const endDrag = () => {
-    setDragIdx(null);
+    setDragId(null);
     setOverIdx(null);
     setOverSide("before");
     onDragActive(null);
@@ -113,8 +134,8 @@ export default function TabBar({
           className={[
             "tab",
             t.id === activeId ? "on" : "",
-            dragIdx === i ? "dragging" : "",
-            overIdx === i && dragIdx !== i
+            dragId === t.id ? "dragging" : "",
+            overIdx === i && dragId !== t.id
               ? overSide === "merge"
                 ? "drop-merge"
                 : overSide === "after"
@@ -128,13 +149,16 @@ export default function TabBar({
           title={closedTip ? `${titleText} — ${closedTip}` : titleText}
           draggable
           onDragStart={(e) => {
-            setDragIdx(i);
+            setDragId(t.id);
             e.dataTransfer.effectAllowed = "move";
             onDragActive(t.id);
           }}
           onDragOver={(e) => {
             // Allow dropping and track the hovered slot + zone the cursor is
             // in, so the drop can land before, after, or merge into this tab.
+            // A foreign drag (no chip dragstart happened in this TabBar, so
+            // draggedTab is null) never qualifies for merge and only ever
+            // shows the plain reorder indicator — it can't merge or reorder.
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
             const r = e.currentTarget.getBoundingClientRect();
@@ -142,7 +166,7 @@ export default function TabBar({
             // Middle ~40% of the chip = merge drop (when allowed); the outer
             // edges keep meaning reorder, so the gestures don't fight.
             const mergeOk =
-              dragIdx !== null && dragIdx !== i && canMerge(tabs[dragIdx].id, t.id);
+              draggedTab != null && draggedTab.id !== t.id && canMerge(draggedTab.id, t.id);
             const side: DropZone =
               mergeOk && frac >= 0.3 && frac <= 0.7
                 ? "merge"
@@ -156,13 +180,17 @@ export default function TabBar({
             e.preventDefault();
             // Translate (target index, zone) into either a merge or the
             // destination index for App's reorder (remove-then-insert;
-            // dropping after tab i targets slot i+1).
-            if (dragIdx !== null) {
-              if (overSide === "merge" && dragIdx !== i) {
-                onMerge(t.id, [tabs[dragIdx].id]);
+            // dropping after tab i targets slot i+1). Foreign drags (no
+            // draggedTab) are ignored outright.
+            if (draggedTab != null) {
+              if (overSide === "merge" && draggedTab.id !== t.id) {
+                onMerge(t.id, [draggedTab.id]);
               } else {
-                const to = overSide === "after" ? i + 1 : i;
-                if (to !== dragIdx) onReorder(dragIdx, to);
+                const from = tabs.findIndex((x) => x.id === draggedTab.id);
+                if (from !== -1) {
+                  const to = overSide === "after" ? i + 1 : i;
+                  if (to !== from) onReorder(from, to);
+                }
               }
             }
             endDrag();
@@ -170,7 +198,10 @@ export default function TabBar({
           onDragEnd={endDrag}
           onContextMenu={(e) => {
             e.preventDefault();
-            setCtxMenu({ x: e.clientX, y: e.clientY, tabId: t.id });
+            // With one tab, the only context-menu action ("Merge into this
+            // tab…") has nothing to target, and the menu is render-gated on
+            // tabs.length > 1 — setting state here would never clear.
+            if (tabs.length > 1) setCtxMenu({ x: e.clientX, y: e.clientY, tabId: t.id });
           }}
         >
           <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="tab-icon" />

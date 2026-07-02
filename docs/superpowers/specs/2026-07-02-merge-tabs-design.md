@@ -18,7 +18,7 @@ Building a multi-chart layout today means picking a tab and adding blank cells o
 `mergeTab(sourceTabId, targetTabId)`:
 
 1. Guard: `source.cells.length + target.cells.length <= 4`, else refuse with a message ("would exceed 4 charts").
-2. Append the source tab's cell objects to the target's `cells` **unchanged** — each cell already carries an opaque `scope` string, so drawings/indicators/settings move with it. No `copyScopeContent`, no `purgeScope` (the source tab's close path must NOT purge the moved cells' scopes).
+2. Append the source tab's cell objects to the target's `cells`, **re-scoped** to the target tab: each moved cell gets a fresh `tab.<targetId>.cell.<cellId>` scope (`cellScope`), its content is copied there via `copyScopeContent`, and the source tab's whole scope prefix is purged (`purgeTabScope`). This preserves the invariant that `closeTab`/`deleteLayout` purge a tab's content by its own id prefix — a cell may never carry a foreign tab's scope string.
 3. Re-derive `layout` from the new cell count (2 → "2h", 3 → "3", 4 → "4"). Reset custom `sizes` (same rule as any layout-kind change).
 4. Set `activeCellId` to the merged-in source tab's lead cell (its former `activeCellId`).
 5. Set `syncInterval = syncCrosshair = syncTime = true` on the target tab.
@@ -40,13 +40,13 @@ Tab reorder already tracks before/after halves of a hovered chip. Add a **center
 
 ## Un-merge
 
-Already shipped: the per-cell detach button (left-click = clone to new tab; that remains a copy). No new work in this project beyond verifying it plays well with merged-in cells (their scopes are `tab.<otherTabId>.cell.<id>`-shaped strings — opaque, so fine).
+Already shipped: the per-cell detach button (left-click = clone to new tab; that remains a copy). Since a merge re-scopes moved cells under the target tab's own id (`tab.<targetId>.cell.<id>`), a merged-in cell is indistinguishable from any other cell in that tab — detach works unmodified, no foreign-scope handling needed.
 
 ## Edge cases
 
 - Merging the last two tabs leaves a single (split) tab — fine.
 - Persistence follows the same rules as tab close/reorder today (autosave or explicit save).
-- Closing the merged tab later purges all its cells' scopes by the cells' own scope strings — `purgeTabScope`-style prefix purging by tab id must not be assumed anywhere the cells may have foreign-tab-prefixed scopes; audit purge call sites.
+- Closing (or otherwise purging) any tab is always safe to do by prefix-purging its own id: merge already re-scoped every cell it holds under that id, so no tab's `purgeTabScope` can ever leave orphaned content behind or reach into another tab's scope.
 
 ## Testing
 

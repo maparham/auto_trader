@@ -614,6 +614,7 @@ export function mergeTabInto(
     syncInterval: true,
     syncCrosshair: true,
     syncTime: true,
+    syncSymbol: false,
   };
   return tabs.filter((t) => t.id !== sourceId).map((t) => (t.id === targetId ? merged : t));
 }

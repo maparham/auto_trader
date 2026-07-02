@@ -208,6 +208,33 @@ test("dragging a chip onto the chart merges it into the active tab", async ({ pa
     .toEqual(["t1-c0", "t2-c0"]);
 });
 
+test("merging the middle chip via a chart drop leaves no stranded drag state on the sibling that slides into its slot", async ({ page }) => {
+  // Regression: dragging a chip onto the chart merges it away before the
+  // browser can fire dragend on it (Chrome swallows dragend on a node that's
+  // already been unmounted). With 3 tabs, dragging the MIDDLE chip means a
+  // later tab slides down into the dragged chip's old index — if TabBar's
+  // drag state were still keyed by index, that sibling would inherit the
+  // stuck ".dragging" (dimmed) look, or worse, another drag session could hit
+  // stale/out-of-range indices computed against the removed tab.
+  await seedThreeTabs(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+
+  const grid = page.locator(".chart-grid");
+  const g = (await grid.boundingBox())!;
+  // t1 is active; drag t2 (the middle chip, index 1) onto the chart.
+  await page.locator(".tab-bar .tab").nth(1).dragTo(grid, {
+    targetPosition: { x: g.width * 0.75, y: g.height / 2 },
+  });
+
+  // t2 merged into t1 (1+2=3 cells); t3 remains its own tab and has slid
+  // into t2's old slot (index 1).
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
+  await expect(page.locator(".chart-cell")).toHaveCount(3);
+  await expect(page.locator(".tab-bar .tab.dragging")).toHaveCount(0);
+});
+
 test("dragging a chip onto the chart's left half inserts before the existing cell", async ({ page }) => {
   await seedTwoTabs(page);
   await stubStateApi(page);

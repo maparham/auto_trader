@@ -113,6 +113,13 @@ export default function ChartGrid({
   const [detachMenu, setDetachMenu] = useState<{ x: number; y: number; cellId: string } | null>(null);
   // Which overlay half the chip drag is over (highlight), or null.
   const [mergeHover, setMergeHover] = useState<"before" | "after" | null>(null);
+  // A new drag session (or none at all) must never inherit the previous
+  // session's highlighted half — e.g. TabBar strands its own drag state when
+  // a chip merges away mid-gesture (see TabBar.tsx), so App can drop tabDrag
+  // to null without this component ever seeing a drop/dragleave to clear it.
+  useEffect(() => {
+    if (!tabDrag) setMergeHover(null);
+  }, [tabDrag]);
   // The corner controls (detach/maximize) sit INSIDE the chart area, just left
   // of the price axis (TV-style) — anchored to the cell edge they'd cover the
   // axis labels. The axis width is dynamic (price magnitude / decimals), so

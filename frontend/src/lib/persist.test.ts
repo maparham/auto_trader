@@ -604,6 +604,12 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
     expect(out[0].syncSymbol).toBeFalsy();
   });
 
+  it("forces syncSymbol off even if the target tab had it on (e.g. a former split trimmed to 1 cell)", () => {
+    const dst = { ...tab("d", 1), syncSymbol: true };
+    const out = P.mergeTabInto([tab("s", 1), dst], "s", "d")!;
+    expect(out[0].syncSymbol).toBe(false);
+  });
+
   it("position 'before' puts the incoming cells first", () => {
     const out = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d", "before")!;
     expect(out[0].cells.map((c) => c.id)).toEqual(["s-c0", "d-c0"]);
