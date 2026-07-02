@@ -123,8 +123,10 @@
 }
 .draw-sidebar .ds-row .ind-star svg,
 .draw-sidebar .ds-row .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
-.draw-sidebar .ds-row:hover .ind-star,
-.draw-sidebar .ds-row:hover .ind-info { opacity: 1; }
+/* ⓘ is ALWAYS visible (app-wide rule; user request) — only the star stays
+   hover-revealed (it's a favorite toggle, not a tooltip affordance). */
+.draw-sidebar .ds-row .ind-info { opacity: 1; }
+.draw-sidebar .ds-row:hover .ind-star { opacity: 1; }
 .draw-sidebar .ds-row .ind-star:hover,
 .draw-sidebar .ds-row .ind-info:hover { background: var(--hover); color: var(--text); }
 .draw-sidebar .ds-row .ind-star.on { opacity: 1; color: #f5b301; }
@@ -1837,9 +1839,8 @@
 .dropdown.tmpl-dropdown { width: max-content; min-width: 200px; }
 .dropdown.tmpl-dropdown li { white-space: nowrap; }
 .dropdown.tmpl-dropdown li.empty { padding-left: 32px; }
-/* Trailing ⓘ per row (shared InfoTip): hover-revealed like the indicator menu's
-   (.ind-info reveal is scoped to li.ind-row, so tmpl rows need their own line). */
-.dropdown.tmpl-dropdown li:hover .ind-info { opacity: 1; }
+/* Trailing ⓘ per row (shared InfoTip) — always visible via the app-wide
+   `.dropdown li .ind-info` rule below. */
 
 /* The indicator menu shows full names (e.g. "Relative Strength Index (RSI)"), so
    size it to its content rather than a fixed width: hug the widest row, clamped
@@ -1850,8 +1851,8 @@
 .dropdown.dropdown-ind li.ind-row { white-space: nowrap; }
 
 /* Indicator menu rows: a leading favourite star, the name, and a trailing ⓘ that
-   reveals a description tooltip on hover. Star/info are visible on row hover (and
-   the star stays visible when active). */
+   reveals a description tooltip on hover. The ⓘ is ALWAYS visible (app-wide rule;
+   user request); the star reveals on row hover and stays visible when active. */
 .dropdown li.ind-row { gap: 6px; }
 .dropdown li.ind-section {
   cursor: default; color: var(--text-faint); font-size: 11px;
@@ -1870,11 +1871,10 @@
 }
 .dropdown li .ind-star svg,
 .dropdown li .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
-.dropdown li.ind-row:hover .ind-star,
-.dropdown li.ind-row:hover .ind-info { opacity: 1; }
-/* Operator dropdown rows always showed their ⓘ (unlike the indicator menu's
-   hover-to-reveal favorite/info icons) — keep that on the shared InfoTip icon. */
-.dropdown.bt-op-dropdown li .ind-info { opacity: 1; }
+/* ⓘ is ALWAYS visible in every dropdown/menu (app-wide rule; user request) —
+   only the favourite star stays hover-revealed. */
+.dropdown li .ind-info { opacity: 1; }
+.dropdown li.ind-row:hover .ind-star { opacity: 1; }
 .dropdown li .ind-star:hover,
 .dropdown li .ind-info:hover { background: var(--hover); color: var(--text); }
 .dropdown li .ind-star.on { opacity: 1; color: #f5b301; }
@@ -2048,7 +2048,6 @@
 /* Magnet strength rows: a right-aligned ⓘ that reveals its description tooltip on
    row hover (same info-icon treatment as the indicator menu). */
 .dropdown li.magnet-opt .ind-info { margin-left: auto; }
-.dropdown li.magnet-opt:hover .ind-info { opacity: 1; }
 /* Theme toggle: icon-only, square so the sun/moon sits centered like a TV button.
    margin-left:auto pushes it (and nothing after it) to the far right of the bar. */
 /* Theme toggle: a visible round bordered icon button (more noticeable than a
