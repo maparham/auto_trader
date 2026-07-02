@@ -76,6 +76,7 @@ import {
   saveAvwapAnchor,
   saveIndicatorVisible,
   saveIndicators,
+  saveScalePriceOnly,
   CONDITION_LABELS,
   type AlertCondition,
   type AlertTrigger,
@@ -514,6 +515,7 @@ export default function ChartCore({
     overlays,
     avwapAnchorMode,
     autoScale,
+    scalePriceOnly,
     measureArmed,
     selectedIndicator,
     legendHovered,
@@ -1039,6 +1041,30 @@ export default function ChartCore({
   // indicator or drawing copied earlier. Opened by a right-click that isn't on an
   // indicator curve.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number } | null>(null);
+  // TradingView-style right-click menu for the PRICE AXIS column — a single "Scale
+  // price chart only" toggle (see onContextMenu, which opens it over the axis strip).
+  const [axisMenu, setAxisMenu] = useState<{ x: number; y: number } | null>(null);
+  // Reflect the persisted toggle so the menu's checkmark stays in sync across cells.
+  const [scaleOnly, setScaleOnly] = useState(scalePriceOnly.value);
+  // The value only changes via toggleScalePriceOnly (a user action after mount), so
+  // the initial useState seed is authoritative — just subscribe to later flips.
+  useEffect(() => scalePriceOnly.subscribe(setScaleOnly), [scalePriceOnly]);
+  // Flip "scale price chart only": persist it, push it onto the live chart, and
+  // re-apply the current y-axis type to force calcRange to rerun (same recompute
+  // path the auto-fit double-click uses).
+  const toggleScalePriceOnly = useCallback(() => {
+    const next = !scalePriceOnly.value;
+    scalePriceOnly.set(next);
+    saveScalePriceOnly(scope, next);
+    const c = chartRef.current;
+    if (!c) return;
+    (c as unknown as { _scalePriceOnly?: boolean })._scalePriceOnly = next;
+    // Only re-fit while in auto-scale mode. If the user manually scaled the axis
+    // (autoScale off), calcRange is bypassed so the flag has no effect yet — and
+    // re-applying the y-axis type would discard their manual zoom AND leave the
+    // toolbar "A" falsely off. The flag then takes effect the next time they re-fit.
+    if (autoScale.value) c.setStyles({ yAxis: { type: c.getStyles().yAxis.type } });
+  }, [scalePriceOnly, scope, autoScale]);
   // status read inside the once-mounted countdown interval without re-subscribing.
   const statusRef = useRef<LiveStatus>(status);
   statusRef.current = status;
@@ -1117,6 +1143,12 @@ export default function ChartCore({
     const chart = init(el);
     if (!chart) return;
     chartRef.current = chart;
+    // Seed the "scale price chart only" flag onto the live chart before any render
+    // or indicator add, so the patched YAxisImp.calcRange fits candles-only from the
+    // first frame (see chartController.scalePriceOnly). Read via a cast — it's an
+    // app-owned property on the klinecharts instance, not part of its public type.
+    (chart as unknown as { _scalePriceOnly?: boolean })._scalePriceOnly =
+      scalePriceOnly.value;
     setChartReady(true);
     chart.setTimezone(timezone || browserTimezone());
     chart.setCustomApi({ formatDate: makeFormatDate(clock, dateFormat, showWeekday) });
@@ -1363,8 +1395,21 @@ export default function ChartCore({
       // onMouseEnter, so it's reliably current here — no event-ordering race.
       if (overlays.getHoveredDrawingId()) return;
       const rect = el.getBoundingClientRect();
-      const mainW = c.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
-      if (e.clientX - rect.left > mainW) return; // axis column: leave native behavior
+      // overPriceAxis (defined below, initialized before this listener ever fires)
+      // is the shared "is the cursor in the right-hand y-axis column" test — reused
+      // here so the axis-menu region can't drift from the drag/double-click gestures.
+      if (overPriceAxis(e)) {
+        // The y-axis column spans the FULL chart height, but "Scale price chart only"
+        // only affects the candle pane. Restrict the toggle to the candle pane's own
+        // axis strip (the topmost pane); a right-click on a sub-pane (RSI/MACD/Volume)
+        // axis falls through to native behavior, since the toggle can't scale it.
+        const candleH = c.getSize("candle_pane", DomPosition.Main)?.height ?? 0;
+        if (candleH && e.clientY - rect.top <= candleH) {
+          e.preventDefault();
+          setAxisMenu({ x: e.clientX, y: e.clientY });
+        }
+        return;
+      }
       e.preventDefault();
       setChartMenu({ x: e.clientX, y: e.clientY });
     };
@@ -4148,6 +4193,21 @@ export default function ChartCore({
             { label: "Settings", icon: MenuIcons.settings, onClick: () => openSettings() },
           ]}
           onClose={() => setChartMenu(null)}
+        />
+      )}
+
+      {axisMenu && (
+        <ContextMenu
+          x={axisMenu.x}
+          y={axisMenu.y}
+          items={[
+            {
+              label: "Scale price chart only",
+              icon: scaleOnly ? MenuIcons.apply : undefined,
+              onClick: toggleScalePriceOnly,
+            },
+          ]}
+          onClose={() => setAxisMenu(null)}
         />
       )}
 

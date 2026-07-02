@@ -842,6 +842,20 @@ export function saveIndicators(scope: string, list: IndicatorInstance[]): void {
   save(indicatorsKey(scope), list);
 }
 
+// --- price-axis scale source (per cell) --------------------------------------
+//
+// TradingView-style "Scale price chart only": when true, the candle-pane price
+// axis auto-fits to the candle OHLC only and overlay indicators no longer expand
+// it (so adding an overlay never shrinks the candles). Default true.
+const scalePriceOnlyKey = (scope: string) => ns(scope, "scalePriceOnly");
+
+export function loadScalePriceOnly(scope: string): boolean {
+  return load<boolean>(scalePriceOnlyKey(scope), true);
+}
+export function saveScalePriceOnly(scope: string, value: boolean): void {
+  save(scalePriceOnlyKey(scope), value);
+}
+
 // --- favourite indicators (global preference) --------------------------------
 //
 // Which indicator TYPES the user has starred in the menu — a personal preference,

@@ -12,6 +12,7 @@ import type { Chart } from "klinecharts";
 import { OverlayManager } from "./overlays";
 import { Signal } from "./signals";
 import type { IndicatorInstance } from "./persist";
+import { loadScalePriceOnly } from "./persist";
 
 // The selected indicator (TradingView-style): clicking an indicator's curve or its
 // legend row selects it (hollow handles appear); clicking empty chart space
@@ -41,6 +42,12 @@ export class ChartController {
   // Starts ON; the toolbar "A" button reflects it and re-asserts auto-fit; the
   // cell turns it OFF when the user manually scales the price axis.
   readonly autoScale = new Signal<boolean>(true);
+  // TradingView-style "Scale price chart only": when true, the candle-pane price
+  // axis auto-fits to the candle OHLC only — overlay indicators no longer expand it,
+  // so adding an overlay never shrinks the candles. Persisted per cell (default on),
+  // hydrated in the constructor. Applied to the live chart via chart._scalePriceOnly
+  // (read by the patched YAxisImp.calcRange). The right-click price-axis menu toggles it.
+  readonly scalePriceOnly = new Signal<boolean>(true);
   // The selected indicator (drives the hollow selection handles on its curve).
   readonly selectedIndicator = new Signal<SelectedIndicator | null>(null);
   // True while the cursor is over this cell's top-left legend strip (hides the
@@ -70,5 +77,6 @@ export class ChartController {
     this.cellId = cellId;
     this.scope = scope;
     this.overlays.setScope(scope);
+    this.scalePriceOnly.set(loadScalePriceOnly(scope));
   }
 }
