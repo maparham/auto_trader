@@ -154,6 +154,14 @@ const ICON_ARROW_DOWN = (
     <path d="M12 5v13M6 12l6 6 6-6" />
   </svg>
 );
+// Collapse chevron (up = "hide the rows"). The collapsed state renders the SAME
+// icon rotated 180° via CSS (.cl-collapse.cl-collapsed svg) — one path, no
+// hand-maintained mirror twin.
+const ICON_CHEVRON_UP = (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 15l6-6 6 6" />
+  </svg>
+);
 
 export default function ChartLegend({
   getChart,
@@ -359,16 +367,16 @@ export default function ChartLegend({
       {rows.length > 0 && (
         <div className="cl-row cl-collapse-row">
           <button
-            className={`cl-collapse${collapsed ? " cl-collapsed" : ""}`}
+            className={`cl-icon cl-icon-svg cl-icon-stroke cl-collapse${
+              collapsed ? " cl-collapsed" : ""
+            }`}
             title={collapsed ? "Show indicator legend" : "Hide indicator legend"}
             onClick={(e) => {
               e.stopPropagation();
               onToggleCollapsed();
             }}
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
-              {collapsed ? <path d="M6 9l6 6 6-6" /> : <path d="M6 15l6-6 6 6" />}
-            </svg>
+            {ICON_CHEVRON_UP}
           </button>
         </div>
       )}
@@ -549,7 +557,7 @@ function IndicatorRow({
         </button>
         {onMoveUp && (
           <button
-            className="cl-icon cl-icon-svg sp-move-up"
+            className="cl-icon cl-icon-svg cl-icon-stroke sp-move-up"
             title="Move up"
             onClick={(e) => {
               e.stopPropagation();
@@ -561,7 +569,7 @@ function IndicatorRow({
         )}
         {onMoveDown && (
           <button
-            className="cl-icon cl-icon-svg sp-move-down"
+            className="cl-icon cl-icon-svg cl-icon-stroke sp-move-down"
             title="Move down"
             onClick={(e) => {
               e.stopPropagation();

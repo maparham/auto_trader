@@ -818,12 +818,11 @@ export default function ChartCore({
   // TV-style legend chevron: collapsed hides the indicator rows (symbol/OHLC row
   // stays). Per-cell, persisted so it survives reload.
   const [legendCollapsed, setLegendCollapsed] = useState(() => loadLegendCollapsed(scope));
-  const toggleLegendCollapsed = useCallback(() => {
-    setLegendCollapsed((prev) => {
-      saveLegendCollapsed(scope, !prev);
-      return !prev;
-    });
-  }, [scope]);
+  const toggleLegendCollapsed = () => {
+    const next = !legendCollapsed;
+    setLegendCollapsed(next);
+    saveLegendCollapsed(scope, next);
+  };
   // Sub-pane indicator legends (Volume/MACD/RSI…): same signature-gated pattern as
   // the candle rows, but the signature also folds in each pane's `top` so the cards
   // reposition when a separator is dragged (geometry, not just membership, changed).

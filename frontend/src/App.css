@@ -1623,11 +1623,10 @@
 /* The ⋯ "more" button uses an SVG (the Material Symbols subset lacks more_horiz),
    so size the glyph here instead of via font-size. */
 .cl-icon-svg svg { width: 16px; height: 16px; fill: currentColor; }
-/* The ↑/↓ reorder arrows are open line paths (a stem + chevron), not filled glyphs
-   like the ⋯ dots. The rule above fills them — which drops the stem and leaves a
-   faint wedge — so stroke these two specifically instead. */
-.cl-icon-svg.sp-move-up svg,
-.cl-icon-svg.sp-move-down svg {
+/* Open line-path icons (the ↑/↓ reorder arrows, the collapse chevron) — not
+   filled glyphs like the ⋯ dots. The rule above fills them — which drops the
+   stem and leaves a faint wedge — so these carry cl-icon-stroke to be stroked. */
+.cl-icon-svg.cl-icon-stroke svg {
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
@@ -1637,24 +1636,22 @@
 
 /* TV-style legend collapse chevron: its own mini-row under the indicator rows.
    Hover-revealed while the legend is hovered (like the row action icons); a
-   COLLAPSED chevron stays visible — it's the only way back. The row itself is
-   click-through (only the button opts in), so it never blocks chart clicks. */
-.cl-collapse-row { height: 16px; pointer-events: none; }
+   COLLAPSED chevron stays visible — it's the only way back. The whole mini-row
+   is a hover target (pointer-events:auto) so the cursor can travel from the
+   rows down to the button without dropping .chart-legend:hover (which would
+   fade the chevron and flash the crosshair mid-travel). The button shares the
+   .cl-icon/.cl-icon-svg/.cl-icon-stroke base; only the deltas live here. */
+.cl-collapse-row { height: 16px; pointer-events: auto; }
 .cl-collapse {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 18px; height: 16px; padding: 0;
-  border: none; border-radius: 3px; background: transparent;
-  color: var(--text-dim); cursor: pointer;
-  pointer-events: auto;
+  height: 16px; border-radius: 3px;
   opacity: 0; transition: opacity 0.08s;
 }
-.cl-collapse svg {
-  fill: none; stroke: currentColor; stroke-width: 2;
-  stroke-linecap: round; stroke-linejoin: round;
-}
+.cl-collapse svg { width: 13px; height: 13px; }
+/* Collapsed = the same chevron flipped to point down (one path, no mirror twin). */
+.cl-collapse.cl-collapsed svg { transform: rotate(180deg); }
 .chart-legend:hover .cl-collapse,
 .cl-collapse.cl-collapsed { opacity: 1; }
-.cl-collapse:hover { color: var(--text); background: var(--surface); }
+.cl-collapse:hover { background: var(--surface); }
 
 /* Floating settings button over the Pro chart shell. */
 /* Settings gear, parked in the bottom-right corner gutter where the price axis
