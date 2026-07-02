@@ -1314,7 +1314,44 @@
    from .chart-legend is overridden inline; a small inset keeps it off the separator
    line. No symbol/OHLC row, so the whole strip is just the interactive indicator
    rows (pointer-events come from .cl-ind). */
-.sub-pane-legend { top: 0; padding-top: 2px; }
+/* Sub-pane card lays out as a row: the drag grip on the left, the indicator row(s)
+   stacked in their own column to its right (so the grip sits beside "RSI(14)", not
+   on a line above it). */
+.sub-pane-legend { top: 0; padding-top: 2px; flex-direction: row; align-items: center; }
+.sp-rows { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+
+.sp-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* A generous, always-visible grab target — the old 16×12 hover-only grip was
+     hard to find and hit ("nothing happens"). Bigger hit area + always shown. */
+  width: 18px;
+  height: 20px;
+  padding: 0 3px;
+  margin-right: 1px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  cursor: grab;
+  /* .chart-legend is click-through (pointer-events:none); only .cl-ind/.cl-ohlc
+     opt back in normally, and the handle is a sibling of the rows, not inside
+     one, so it needs its own opt-in. */
+  pointer-events: auto;
+}
+.sp-drag-handle:hover { color: var(--text); }
+.sp-drag-handle:active { cursor: grabbing; }
+.sp-drag-handle svg { fill: currentColor; }
+
+.pane-drop-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 20;
+}
 
 .cl-row {
   display: flex; align-items: center; flex-wrap: nowrap; white-space: nowrap;
@@ -1472,6 +1509,17 @@
 /* The ⋯ "more" button uses an SVG (the Material Symbols subset lacks more_horiz),
    so size the glyph here instead of via font-size. */
 .cl-icon-svg svg { width: 16px; height: 16px; fill: currentColor; }
+/* The ↑/↓ reorder arrows are open line paths (a stem + chevron), not filled glyphs
+   like the ⋯ dots. The rule above fills them — which drops the stem and leaves a
+   faint wedge — so stroke these two specifically instead. */
+.cl-icon-svg.sp-move-up svg,
+.cl-icon-svg.sp-move-down svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
 /* Floating settings button over the Pro chart shell. */
 /* Settings gear, parked in the bottom-right corner gutter where the price axis

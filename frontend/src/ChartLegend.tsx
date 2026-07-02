@@ -21,12 +21,11 @@ import {
   prevHlLegendSummary,
   type PrevHlExtend,
 } from "./lib/customIndicators";
-import { EQUITY_INDICATOR } from "./lib/backtest";
-
 // Sub-pane indicators that are app-internal (not user-added) and so get NO legend
-// card — the user must not be able to remove/edit them via a card. The backtest
-// equity curve lives in its own pane but is owned by the backtest lifecycle.
-const INTERNAL_INDICATORS = new Set<string>([EQUITY_INDICATOR]);
+// card — the user must not be able to remove/edit them via a card. Shared with the
+// reorder engine so the legend's card index and the engine's reorderable order stay
+// in lockstep (see INTERNAL_INDICATORS in ./lib/indicators).
+import { INTERNAL_INDICATORS } from "./lib/indicators";
 
 const UP = "#26a69a";
 const DOWN = "#ef5350";
@@ -124,6 +123,10 @@ export interface Props {
   // Open the indicator context menu (anchored at the ⋯ button) — TradingView's
   // "more" affordance at the end of the legend row.
   onOpenMenu: (name: string, x: number, y: number) => void;
+  // Sub-pane reorder: move a pane to a new slot (Task 2's engine) and start a
+  // drag-to-reorder session from the legend card's grip handle.
+  onMove: (name: string, targetIndex: number) => void;
+  onStartReorder: (paneId: string, name: string) => void;
   handleRef?: Ref<ChartLegendHandle>;
 }
 
@@ -138,6 +141,17 @@ const ICON_EYE = "\uE8F4"; // visibility
 const ICON_EYE_OFF = "\uE8F5"; // visibility_off (crossed eye)
 const ICON_GEAR = "\uE8B8"; // settings
 const ICON_TRASH = "\uE872"; // delete
+
+const ICON_ARROW_UP = (
+  <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+    <path d="M12 19V6M6 12l6-6 6 6" />
+  </svg>
+);
+const ICON_ARROW_DOWN = (
+  <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+    <path d="M12 5v13M6 12l6 6 6-6" />
+  </svg>
+);
 
 export default function ChartLegend({
   getChart,
@@ -156,6 +170,8 @@ export default function ChartLegend({
   onChangeSymbol,
   cacheBadge,
   onOpenCacheStats,
+  onMove,
+  onStartReorder,
   handleRef,
 }: Props) {
   const { legendHovered, legendHoverName } = controller;
@@ -358,10 +374,12 @@ export default function ChartLegend({
         at the top-left of each pane. Outside the candle-legend strip so each can
         sit at its own `top`; they share figureValuesRef/setRowHover so values fill
         on the same imperative path and hovering reveals the same gray card. */}
-    {subPanes.map((sp) => (
+    {subPanes.map((sp, i) => (
       <SubPaneLegend
         key={sp.paneId}
         data={sp}
+        index={i}
+        count={subPanes.length}
         selectedName={selectedName}
         highlightedName={highlightedName}
         figureValuesRef={figureValuesRef}
@@ -371,6 +389,8 @@ export default function ChartLegend({
         onOpenSettings={onOpenSettings}
         onRemove={onRemove}
         onOpenMenu={onOpenMenu}
+        onMove={onMove}
+        onStartReorder={onStartReorder}
       />
     ))}
     </>
@@ -393,6 +413,8 @@ function IndicatorRow({
   onOpenSettings,
   onRemove,
   onOpenMenu,
+  onMoveUp,
+  onMoveDown,
 }: {
   row: LegendRow;
   selected: boolean;
@@ -404,6 +426,10 @@ function IndicatorRow({
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
   onOpenMenu: (name: string, x: number, y: number) => void;
+  // Sub-pane reorder arrows. Present only for sub-pane rows; undefined for candle-pane
+  // rows (no arrows) and omitted individually at the top/bottom ends.
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
 }) {
   return (
     <div
@@ -500,6 +526,30 @@ function IndicatorRow({
             <circle cx="19" cy="12" r="1.6" />
           </svg>
         </button>
+        {onMoveUp && (
+          <button
+            className="cl-icon cl-icon-svg sp-move-up"
+            title="Move up"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMoveUp();
+            }}
+          >
+            {ICON_ARROW_UP}
+          </button>
+        )}
+        {onMoveDown && (
+          <button
+            className="cl-icon cl-icon-svg sp-move-down"
+            title="Move down"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMoveDown();
+            }}
+          >
+            {ICON_ARROW_DOWN}
+          </button>
+        )}
       </span>
     </div>
   );
@@ -514,6 +564,8 @@ function IndicatorRow({
 // crosshair/tick with no extra wiring. selectedName drives the same blue highlight.
 function SubPaneLegend({
   data,
+  index,
+  count,
   selectedName,
   highlightedName,
   figureValuesRef,
@@ -523,8 +575,12 @@ function SubPaneLegend({
   onOpenSettings,
   onRemove,
   onOpenMenu,
+  onMove,
+  onStartReorder,
 }: {
   data: SubPaneLegendData;
+  index: number; // this pane's position within the reorderable sub-pane list
+  count: number; // total reorderable sub-panes
   selectedName: string | null;
   highlightedName: string | null;
   figureValuesRef: RefObject<Map<string, HTMLSpanElement>>;
@@ -534,24 +590,48 @@ function SubPaneLegend({
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
   onOpenMenu: (name: string, x: number, y: number) => void;
+  onMove: (name: string, targetIndex: number) => void;
+  onStartReorder: (paneId: string, name: string) => void;
 }) {
   return (
     <div className="chart-legend sub-pane-legend" style={{ top: data.top }}>
-      {data.rows.map((row) => (
-        <IndicatorRow
-          key={row.name}
-          row={row}
-          selected={selectedName === row.name}
-          highlighted={highlightedName === row.name}
-          figureValuesRef={figureValuesRef}
-          setRowHover={setRowHover}
-          onSelectRow={onSelectRow}
-          onToggleVisible={onToggleVisible}
-          onOpenSettings={onOpenSettings}
-          onRemove={onRemove}
-          onOpenMenu={onOpenMenu}
-        />
-      ))}
+      <button
+        className="sp-drag-handle"
+        title="Drag to reorder"
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onStartReorder(data.paneId, data.rows[0]?.name ?? "");
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+          <circle cx="9" cy="6" r="1.6" /><circle cx="15" cy="6" r="1.6" />
+          <circle cx="9" cy="12" r="1.6" /><circle cx="15" cy="12" r="1.6" />
+          <circle cx="9" cy="18" r="1.6" /><circle cx="15" cy="18" r="1.6" />
+        </svg>
+      </button>
+      {/* Rows in their own column so the grip sits to their LEFT (the card lays out
+          as a row: [grip | rows]), not stacked above the first row. */}
+      <div className="sp-rows">
+        {data.rows.map((row) => (
+          <IndicatorRow
+            key={row.name}
+            row={row}
+            selected={selectedName === row.name}
+            highlighted={highlightedName === row.name}
+            figureValuesRef={figureValuesRef}
+            setRowHover={setRowHover}
+            onSelectRow={onSelectRow}
+            onToggleVisible={onToggleVisible}
+            onOpenSettings={onOpenSettings}
+            onRemove={onRemove}
+            onOpenMenu={onOpenMenu}
+            onMoveUp={index > 0 ? () => onMove(row.name, index - 1) : undefined}
+            onMoveDown={index < count - 1 ? () => onMove(row.name, index + 1) : undefined}
+          />
+        ))}
+      </div>
     </div>
   );
 }

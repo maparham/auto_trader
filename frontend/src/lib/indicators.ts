@@ -20,7 +20,7 @@ import type {
   IndicatorStyle,
   IndicatorTemplate,
 } from "klinecharts";
-import { registerIndicator, getSupportedIndicators } from "klinecharts";
+import { registerIndicator, getSupportedIndicators, DomPosition } from "klinecharts";
 import {
   OVERLAY_INDICATORS,
   BASE_TEMPLATES,
@@ -28,6 +28,8 @@ import {
   indTypeOf,
   type CustomIndicatorType,
 } from "./customIndicators";
+import { EQUITY_INDICATOR } from "./backtest";
+import { planPaneReorder, reorderInstanceList } from "./paneOrder";
 import {
   type VisibilityModel,
   defaultVisibility,
@@ -61,6 +63,96 @@ const DEFAULT_CALC_PARAMS: Record<string, number[]> = {
 // is a cramped ~50px; TradingView gives oscillators much more room, so new sub-panes
 // (RSI/MACD/…) open taller. Users can still drag the pane divider to resize.
 const SUBPANE_HEIGHT = 120;
+
+// Panes the reorder feature must never touch: the candle pane is handled by paneId,
+// and the backtest equity curve is app-owned. Exported so ChartLegend filters on the
+// SAME set — the legend's card index and this engine's reorderable order both exclude
+// these, and they must agree or arrow/menu moves go off-by-one. One definition, no drift.
+export const INTERNAL_INDICATORS = new Set<string>([EQUITY_INDICATOR]);
+
+// A reorderable sub-pane captured before teardown: its id, current height, and the
+// ordered indicator instances it holds (usually one; a multi-indicator pane moves whole).
+interface PaneSnapshot {
+  paneId: string;
+  height: number;
+  insts: IndicatorInstance[];
+}
+
+// Enumerate the reorderable bottom panes top-to-bottom (skip candle_pane and panes
+// holding only internal indicators), capturing each pane's height + instances.
+function reorderablePanes(chart: Chart): PaneSnapshot[] {
+  const all = chart.getIndicatorByPaneId() as
+    | Map<string, Map<string, Indicator>>
+    | null
+    | undefined;
+  const out: PaneSnapshot[] = [];
+  for (const [paneId, inds] of all ?? []) {
+    if (paneId === "candle_pane") continue;
+    const insts: IndicatorInstance[] = [];
+    for (const ind of inds.values()) {
+      if (!ind?.name || INTERNAL_INDICATORS.has(ind.name)) continue;
+      insts.push({ id: ind.name, type: indTypeOf(ind) });
+    }
+    if (!insts.length) continue; // internal-only pane (e.g. equity) — not reorderable
+    const height = Math.round(chart.getSize(paneId, DomPosition.Main)?.height ?? SUBPANE_HEIGHT);
+    out.push({ paneId, height, insts });
+  }
+  return out;
+}
+
+// The reorderable sub-pane ids, top-to-bottom. Used by the UI to compute a pane's
+// current position (for Move up/down enablement and the drag drop-slot).
+export function subPaneOrder(chart: Chart): string[] {
+  return reorderablePanes(chart).map((p) => p.paneId);
+}
+
+// Reorder the bottom sub-panes so `movingPaneId` lands at `targetIndex`. klinecharts
+// has no pane-move API, so we tear down the panes from the first divergence point down
+// and recreate them (via applyIndicator, rehydrating each instance's saved config and
+// preserving its pane height) in the new order — they re-append below the untouched
+// head panes. Returns the new full instance list for the caller to persist, or null on
+// a no-op. NOTE: the equity pane, if present, is left in place and may end up above the
+// reordered user panes; acceptable for the transient backtest pane.
+export function reorderSubPanes(
+  chart: Chart,
+  scope: string,
+  epic: string,
+  current: IndicatorInstance[],
+  movingPaneId: string,
+  targetIndex: number,
+): IndicatorInstance[] | null {
+  const panes = reorderablePanes(chart);
+  const plan = planPaneReorder(panes.map((p) => p.paneId), movingPaneId, targetIndex);
+  if (!plan) return null;
+  const { desired, divIndex } = plan;
+  const byId = new Map(panes.map((p) => [p.paneId, p]));
+
+  // Tear down every reorderable pane from the divergence point down (current order).
+  for (const p of panes.slice(divIndex))
+    for (const inst of p.insts) chart.removeIndicator(p.paneId, inst.id);
+
+  // Recreate them in desired order; each opens a fresh pane appended at the bottom.
+  // A multi-indicator pane is regrouped here (2nd+ instance stacks via opts.paneId),
+  // but note hydrateIndicators recreates each persisted instance in its OWN pane — so a
+  // multi-indicator pane's grouping does NOT round-trip through a reload today. Harmless
+  // now (every createIndicator mints its own pane, so such panes don't exist); revisit
+  // if a future feature lets several indicators share one sub-pane.
+  for (const paneId of desired.slice(divIndex)) {
+    const snap = byId.get(paneId);
+    if (!snap) continue;
+    let newPaneId: string | null = null;
+    snap.insts.forEach((inst, i) => {
+      const pid = applyIndicator(chart, scope, epic, inst, {
+        rehydrate: true,
+        ...(i === 0 ? { height: snap.height } : { paneId: newPaneId ?? undefined }),
+      });
+      if (i === 0) newPaneId = pid;
+    });
+  }
+
+  const newSubOrderIds = desired.flatMap((pid) => byId.get(pid)?.insts.map((x) => x.id) ?? []);
+  return reorderInstanceList(current, newSubOrderIds);
+}
 
 // Mint a unique instance id for a type. The bare type name is used for the FIRST
 // instance (so storage stays byte-identical for single-instance users and the
@@ -176,6 +268,10 @@ export function applyIndicator(
   opts?: {
     rehydrate?: boolean;
     config?: SavedIndicatorConfig; // explicit snapshot (Paste) instead of storage
+    // Reorder support: stack this instance into an existing pane (2nd+ indicator of a
+    // moved multi-indicator pane), and/or open a fresh sub-pane at a preserved height.
+    paneId?: string;
+    height?: number;
   },
 ): string | null {
   const { id, type } = inst;
@@ -213,18 +309,20 @@ export function applyIndicator(
           : {}),
     ...(cfg?.visible === false ? { visible: false } : {}),
   };
-  const paneId = chart.createIndicator(
-    value,
-    isOverlay, // stack on candle pane for overlays; own pane otherwise
-    // Overlays stack on the candle pane; sub-pane indicators (RSI/MACD/…) get their
-    // own pane with a taller default than klinecharts' cramped ~50px, so oscillators
-    // read like TradingView's. The user can still drag the divider to resize.
-    // `gap` trims klinecharts' default {top:0.2, bottom:0.1} empty margins so the
-    // curve fills the pane (TV-style) instead of floating with dead space top/bottom.
-    isOverlay
+  // Overlays stack on the candle pane; sub-pane indicators (RSI/MACD/…) get their own
+  // pane with a taller default than klinecharts' cramped ~50px, so oscillators read
+  // like TradingView's (unless a preserved height is passed in via opts.height). The
+  // user can still drag the divider to resize. `gap` trims klinecharts' default
+  // {top:0.2, bottom:0.1} empty margins so the curve fills the pane (TV-style) instead
+  // of floating with dead space top/bottom. `opts.paneId` stacks this instance into an
+  // already-recreated pane (2nd+ indicator of a moved multi-indicator pane).
+  const stack = isOverlay || !!opts?.paneId;
+  const paneOptions = opts?.paneId
+    ? { id: opts.paneId } // stack into the just-recreated pane of a moved group
+    : isOverlay
       ? { id: "candle_pane" }
-      : { height: SUBPANE_HEIGHT, gap: { top: 0.08, bottom: 0.08 } },
-  );
+      : { height: opts?.height ?? SUBPANE_HEIGHT, gap: { top: 0.08, bottom: 0.08 } };
+  const paneId = chart.createIndicator(value, stack, paneOptions);
   if (!paneId) return null;
   // Saved line entries are partial ({color,size}); override merges them onto the
   // full default line style (DeepPartial — klinecharts fills style/dashedValue).

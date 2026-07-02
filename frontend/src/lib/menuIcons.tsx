@@ -71,6 +71,18 @@ export const MenuIcons = {
       <path d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
     </>,
   ),
+  moveUp: svg(
+    <>
+      <path d="M12 19V5" />
+      <path d="M5 12l7-7 7 7" />
+    </>,
+  ),
+  moveDown: svg(
+    <>
+      <path d="M12 5v14" />
+      <path d="M5 12l7 7 7-7" />
+    </>,
+  ),
   lock: svg(
     <>
       <rect x="5" y="11" width="14" height="10" rx="2" />

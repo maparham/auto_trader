@@ -87,6 +87,8 @@ import {
   applyIndicatorIntervalVisibility,
   hydrateIndicators,
   removeIndicatorById,
+  reorderSubPanes,
+  subPaneOrder,
 } from "./lib/indicators";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
 import { maybeAutoApplyTemplate } from "./lib/templates";
@@ -816,6 +818,9 @@ export default function ChartCore({
   // reposition when a separator is dragged (geometry, not just membership, changed).
   const [subPaneLegends, setSubPaneLegends] = useState<SubPaneLegendData[]>([]);
   const subPaneLegendsSigRef = useRef("");
+  // Drop-indicator line's y-offset (relative to chart root) during a sub-pane drag;
+  // null when no drag is in progress.
+  const [paneDropTop, setPaneDropTop] = useState<number | null>(null);
   const legendHandleRef = useRef<ChartLegendHandle>(null);
   // Latest hovered bar index from the crosshair (null = no crosshair → last bar).
   const crosshairIdxRef = useRef<number | null>(null);
@@ -3924,6 +3929,76 @@ export default function ChartCore({
     [controller, scope, indicatorRemoved],
   );
 
+  // Move a sub-pane to a new slot: rebuild panes, persist the new order, and re-resolve
+  // the current selection's paneId (recreate mints new paneIds). No-op for candle_pane.
+  const reorderPaneByName = useCallback(
+    (name: string, targetIndex: number) => {
+      const c = chartRef.current;
+      if (!c) return;
+      const paneId = paneIdOf(name);
+      if (paneId === "candle_pane") return;
+      const next = reorderSubPanes(
+        c,
+        scope,
+        epicRef.current,
+        controller.indicators.value,
+        paneId,
+        targetIndex,
+      );
+      if (!next) return;
+      controller.indicators.set(next);
+      saveIndicators(scope, next);
+      const sel = selectedIndicator.value;
+      if (sel) selectedIndicator.set({ paneId: paneIdOf(sel.name), name: sel.name });
+      redrawRef.current();
+    },
+    [paneIdOf, scope, controller, selectedIndicator],
+  );
+
+  // Drag a sub-pane by its legend handle: track the pointer against each reorderable
+  // pane's vertical band, show a drop-indicator line, and on release move the pane to
+  // the hovered slot. Rebuild happens via reorderPaneByName (shared with the menu).
+  const startPaneReorderDrag = useCallback(
+    (paneId: string, name: string) => {
+      const c = chartRef.current;
+      const wrap = wrapRef.current;
+      if (!c || !wrap) return;
+      const order = subPaneOrder(c);
+      if (order.length < 2 || order.indexOf(paneId) < 0) return;
+      const rootTop = wrap.getBoundingClientRect().top;
+      const bounds = order.map((pid) => {
+        const s = c.getSize(pid, DomPosition.Main);
+        const top = s?.top ?? 0;
+        return { top, bottom: top + (s?.height ?? 0) };
+      });
+      const from = order.indexOf(paneId);
+      let target = from;
+      const move = (ev: PointerEvent) => {
+        const y = ev.clientY - rootTop;
+        let t = 0;
+        for (const b of bounds) {
+          if ((b.top + b.bottom) / 2 < y) t++;
+          else break;
+        }
+        // Visual insertion line among the CURRENT panes (includes the moving pane).
+        const last = bounds[bounds.length - 1];
+        setPaneDropTop(t >= bounds.length ? last.bottom : bounds[t].top);
+        // arrayMove target is the final index AFTER removal, so discount the moving
+        // pane's own slot when the cursor is below it (downward drag).
+        target = Math.max(0, Math.min(order.length - 1, t > from ? t - 1 : t));
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        setPaneDropTop(null);
+        if (target !== from) reorderPaneByName(name, target);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    },
+    [reorderPaneByName],
+  );
+
   // The shared TradingView-style menu, used by both triggers (legend row + curve).
   const indicatorMenuItems = useCallback(
     (paneId: string, name: string): MenuItem[] => {
@@ -3931,6 +4006,19 @@ export default function ChartCore({
         | { visible?: boolean }
         | null;
       const visible = ind?.visible ?? true;
+      const order = paneId === "candle_pane" ? [] : subPaneOrder(chartRef.current!);
+      const idx = order.indexOf(paneId);
+      const moveItems: MenuItem[] =
+        idx < 0 || order.length < 2
+          ? []
+          : [
+              ...(idx > 0
+                ? [{ label: "Move up", icon: MenuIcons.moveUp, onClick: () => reorderPaneByName(name, idx - 1) }]
+                : []),
+              ...(idx < order.length - 1
+                ? [{ label: "Move down", icon: MenuIcons.moveDown, onClick: () => reorderPaneByName(name, idx + 1) }]
+                : []),
+            ];
       return [
         {
           label: "Settings",
@@ -3943,10 +4031,11 @@ export default function ChartCore({
           icon: visible ? MenuIcons.hide : MenuIcons.show,
           onClick: () => toggleVisibleOn(paneId, name),
         },
+        ...moveItems,
         { label: "Remove", icon: MenuIcons.remove, danger: true, onClick: () => removeOn(paneId, name) },
       ];
     },
-    [copyIndicator, toggleVisibleOn, removeOn],
+    [copyIndicator, toggleVisibleOn, removeOn, reorderPaneByName],
   );
 
   // The legend's ⋯ "more" button opens the menu (anchored below the button).
@@ -4012,6 +4101,9 @@ export default function ChartCore({
         className={anchoring || measureArmedUi ? "anchoring" : undefined}
         style={{ width: "100%", height: "100%" }}
       />
+      {paneDropTop != null && (
+        <div className="pane-drop-indicator" style={{ top: paneDropTop }} />
+      )}
       <ChartRangeBar
         activeKey={activeRange}
         disabled={!chartReady}
@@ -4137,6 +4229,8 @@ export default function ChartCore({
         onRemove={onLegendRemove}
         onSelectRow={onLegendSelectRow}
         onOpenMenu={onLegendOpenMenu}
+        onMove={reorderPaneByName}
+        onStartReorder={startPaneReorderDrag}
         onOpenDetails={() => setDetailsOpen(true)}
         cacheBadge={cacheBadge}
         onOpenCacheStats={() => setCacheStatsOpen(true)}
