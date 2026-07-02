@@ -3,8 +3,10 @@
 // (useDraggable/useCloseOnEscape/CloseButton, .modal-backdrop/.modal/.modal-head/
 // .modal-foot) — no shared wrapper, no portal.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import CloseButton from "./CloseButton";
+import InfoTip from "./components/InfoTip";
 import { useDraggable } from "./lib/useDraggable";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
@@ -212,8 +214,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
               </label>
             )}
             {cfg.range.mode === "custom" && (
-              <>
-                <label className="al-row">
+              <div className="al-row bt-range-row">
+                <label className="bt-range-field">
                   <span>From</span>
                   <input
                     type="datetime-local"
@@ -221,7 +223,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                     onChange={(e) => setRange({ fromMs: localInputToMs(e.target.value) ?? undefined })}
                   />
                 </label>
-                <label className="al-row">
+                <label className="bt-range-field">
                   <span>To</span>
                   <input
                     type="datetime-local"
@@ -229,7 +231,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                     onChange={(e) => setRange({ toMs: localInputToMs(e.target.value) ?? undefined })}
                   />
                 </label>
-              </>
+              </div>
             )}
           </Section>
 
@@ -442,32 +444,96 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-// Operator selector — a plain native <select> (a "crosses" op, an event, reads
-// in the accent colour; the comparisons, a state, read muted) plus an ⓘ info
-// icon whose tooltip explains the currently-chosen operator, matching the info
-// icons on the layout picker's sync toggles.
+// Operator selector — a custom dropdown (native <select> can't put an icon in
+// its option list). Each option in the open menu carries a ⓘ tooltip icon you
+// hover for that operator's meaning. A "crosses" op (an event) reads in the
+// accent colour; the comparisons (a state) read muted. The menu is portaled to
+// <body> so it escapes the modal's scroll clip and a parked side's opacity.
 function isCrossOp(op: Operator): boolean {
   return op === "crossesAbove" || op === "crossesBelow";
 }
 
+// Menu itself sizes to content (width: max-content in CSS) — this is only an
+// upper-bound estimate for keeping it on-screen before it has rendered.
+const OP_DROPDOWN_WIDTH = 150;
+
 function OperatorPicker({ value, onChange }: { value: Operator; onChange: (op: Operator) => void }) {
-  const tip = OPERATORS.find((o) => o.value === value)?.tip;
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const close = () => setOpen(false);
+    // Capture phase: the modal stops mousedown from bubbling past itself (so
+    // clicking inside it doesn't trigger the backdrop's close-on-click), which
+    // would otherwise swallow this listener too if it only listened on bubble.
+    document.addEventListener("mousedown", onDown, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [open]);
+
+  function toggle() {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - OP_DROPDOWN_WIDTH - 8));
+      setPos({ top: r.bottom + 4, left });
+    }
+    setOpen((v) => !v);
+  }
+
+  const current = OPERATORS.find((o) => o.value === value);
   return (
-    <div className="bt-op-cell">
-      <select
-        className={isCrossOp(value) ? "bt-op-cross" : "bt-op-compare"}
-        value={value}
-        onChange={(e) => onChange(e.target.value as Operator)}
+    <div className="bt-op-menu">
+      <button
+        ref={btnRef}
+        type="button"
+        className={`bt-op-btn ${isCrossOp(value) ? "bt-op-cross" : "bt-op-compare"}${open ? " open" : ""}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={toggle}
       >
-        {OPERATORS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <span className="bt-op-info" title={tip} aria-label={tip} role="img">
-        ⓘ
-      </span>
+        {current?.label}
+        <span className="bt-op-caret" aria-hidden="true">▾</span>
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <ul
+            ref={popRef}
+            className="dropdown bt-op-dropdown"
+            role="listbox"
+            style={{ position: "fixed", top: pos.top, left: pos.left }}
+          >
+            {OPERATORS.map((o) => (
+              <li
+                key={o.value}
+                role="option"
+                aria-selected={o.value === value}
+                className={o.value === value ? "on" : ""}
+                onClick={() => {
+                  onChange(o.value);
+                  setOpen(false);
+                }}
+              >
+                <span className={`bt-op-item-label${isCrossOp(o.value) ? " bt-op-cross" : ""}`}>{o.label}</span>
+                <InfoTip title={o.label} desc={o.tip} />
+              </li>
+            ))}
+          </ul>,
+          document.body,
+        )}
     </div>
   );
 }
