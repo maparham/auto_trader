@@ -46,6 +46,7 @@ import { indicatorInfo } from "./lib/indicatorMeta";
 import IndicatorRow from "./IndicatorRow";
 import type { ChartController } from "./lib/chartController";
 import ContextMenu from "./ContextMenu";
+import InfoTip from "./components/InfoTip";
 import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
 import SymbolSearchModal from "./SymbolSearchModal";
@@ -602,17 +603,29 @@ export default function Toolbar({
             <ul>
               <li onClick={saveTemplate}>
                 <span className="tmpl-ic">{MenuIcons.save}</span>
-                Save {symbol.epic} template
+                <span className="ind-name">Save {symbol.epic} template</span>
+                <InfoTip
+                  title={`Save ${symbol.epic} template`}
+                  desc={`Saves this chart's indicators and drawings as ${symbol.epic}'s template, replacing the previous one. Fresh ${symbol.epic} charts start with it automatically.`}
+                />
               </li>
               {loadSymbolTemplate(symbol.epic) ? (
                 <>
                   <li onClick={applyTemplate}>
                     <span className="tmpl-ic">{MenuIcons.apply}</span>
-                    Apply {symbol.epic} template
+                    <span className="ind-name">Apply {symbol.epic} template</span>
+                    <InfoTip
+                      title={`Apply ${symbol.epic} template`}
+                      desc="Adds the template's indicators and drawings that are missing from this chart. What's already here is never changed or removed."
+                    />
                   </li>
                   <li onClick={deleteTemplate}>
                     <span className="tmpl-ic">{MenuIcons.remove}</span>
-                    Delete {symbol.epic} template
+                    <span className="ind-name">Delete {symbol.epic} template</span>
+                    <InfoTip
+                      title={`Delete ${symbol.epic} template`}
+                      desc={`Removes ${symbol.epic}'s saved template. Open charts keep their layout; fresh ${symbol.epic} charts start blank.`}
+                    />
                   </li>
                 </>
               ) : (
@@ -624,17 +637,29 @@ export default function Toolbar({
                   symbol-agnostic default. */}
               <li onClick={saveDefault}>
                 <span className="tmpl-ic">{MenuIcons.star}</span>
-                Save as default template
+                <span className="ind-name">Save as default template</span>
+                <InfoTip
+                  title="Save as default template"
+                  desc="Saves this chart's indicators (drawings excluded) as the default for every symbol. Fresh charts without their own template start with it."
+                />
               </li>
               {loadDefaultTemplate() ? (
                 <>
                   <li onClick={applyDefault}>
                     <span className="tmpl-ic">{MenuIcons.apply}</span>
-                    Apply default template
+                    <span className="ind-name">Apply default template</span>
+                    <InfoTip
+                      title="Apply default template"
+                      desc="Adds the default indicators that are missing from this chart. Existing indicators and drawings are untouched."
+                    />
                   </li>
                   <li onClick={clearDefault}>
                     <span className="tmpl-ic">{MenuIcons.remove}</span>
-                    Clear default template
+                    <span className="ind-name">Clear default template</span>
+                    <InfoTip
+                      title="Clear default template"
+                      desc="Removes the shared default. Fresh charts start blank unless their symbol has its own template."
+                    />
                   </li>
                 </>
               ) : (

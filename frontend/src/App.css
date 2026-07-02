@@ -603,14 +603,19 @@
 .merge-menu .merge-row input[type="checkbox"] { pointer-events: none; margin: 0; }
 .merge-menu .merge-confirm { justify-content: center; margin-top: 4px; font-weight: 600; }
 
-/* Chip-onto-chart merge overlay: two droppable halves over the grid. Above the
-   resize strips and corner controls, below modals. */
+/* Chip-onto-chart merge overlay: two halves over the grid, each with a
+   centered droppable TARGET box. The space around the targets is a dead zone
+   (release there = cancel the drag). Above the resize strips and corner
+   controls, below modals. */
 .merge-drop { position: absolute; inset: 0; z-index: 60; display: flex; }
-.merge-drop-half { flex: 1; }
-.merge-drop-half.over {
+.merge-drop-half { flex: 1; display: flex; align-items: center; justify-content: center; }
+.merge-drop-target {
+  width: 70%; height: 70%; border-radius: 10px;
+  outline: 2px dashed var(--border); outline-offset: -2px;
+}
+.merge-drop-target.over {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   outline: 2px solid var(--accent);
-  outline-offset: -2px;
 }
 .merge-drop-blocked {
   margin: auto; padding: 6px 12px; font-size: 13px; color: var(--text-faint);
@@ -1787,6 +1792,9 @@
 .dropdown.tmpl-dropdown { width: max-content; min-width: 200px; }
 .dropdown.tmpl-dropdown li { white-space: nowrap; }
 .dropdown.tmpl-dropdown li.empty { padding-left: 32px; }
+/* Trailing ⓘ per row (shared InfoTip): hover-revealed like the indicator menu's
+   (.ind-info reveal is scoped to li.ind-row, so tmpl rows need their own line). */
+.dropdown.tmpl-dropdown li:hover .ind-info { opacity: 1; }
 
 /* The indicator menu shows full names (e.g. "Relative Strength Index (RSI)"), so
    size it to its content rather than a fixed width: hug the widest row, clamped
