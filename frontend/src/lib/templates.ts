@@ -32,7 +32,7 @@ import {
   type SavedIndicatorConfig,
   type IndicatorInstance,
 } from "./persist";
-import { applyIndicator, mintInstanceId, defaultCalcParams } from "./indicators";
+import { applyIndicator, mintInstanceId, effectiveCalcParams } from "./indicators";
 import {
   indicatorSignature,
   drawingSignature,
@@ -58,11 +58,14 @@ export function captureSymbolTemplate(scope: string, epic: string): SymbolTempla
 }
 
 // The identity signature of one saved instance, from its stored config and (for
-// AVWAP) its separately-stored anchor. calcParams are normalized to the type's
-// effective defaults when the config carries none, so a default-length EMA
-// matches a default-length EMA. AVWAP is special: its calcParams[0] IS the anchor
-// (never meaningfully stored in config), so identity uses the anchor field
-// instead — 0/absent normalizes to undefined so two unplaced AVWAPs match.
+// AVWAP) its separately-stored anchor. calcParams go through effectiveCalcParams
+// so BOTH an absent config (→ the type's default) AND a saved-but-stale config
+// (→ migrated/sliced the same way applyIndicator would) normalize to what would
+// actually land on the chart — so a default-length EMA matches a default-length
+// EMA, and a legacy 3-length RSI matches a fresh single-length RSI. AVWAP is
+// special: its calcParams[0] IS the anchor (never meaningfully stored in
+// config), so identity uses the anchor field instead — 0/absent normalizes to
+// undefined so two unplaced AVWAPs match.
 function savedIndicatorSignature(
   inst: IndicatorInstance,
   cfg: SavedIndicatorConfig | undefined,
@@ -71,7 +74,7 @@ function savedIndicatorSignature(
   const identity: IndicatorIdentity = {
     type: inst.type,
     calcParams:
-      inst.type === "AVWAP" ? undefined : cfg?.calcParams ?? defaultCalcParams(inst.type),
+      inst.type === "AVWAP" ? undefined : effectiveCalcParams(inst.type, cfg?.calcParams),
     extendData: cfg?.extendData,
     anchor: inst.type === "AVWAP" && anchor ? anchor : undefined,
   };
@@ -90,7 +93,9 @@ function savedIndicatorSignature(
 // Order per added indicator is load-bearing: its AVWAP anchor is written BEFORE
 // applyIndicator (rehydrate:true reads the anchor from storage); its config is
 // written after success (applyIndicator gets it explicitly via opts.config, and
-// a failed add must not leave an orphaned config behind).
+// a failed add must not leave an orphaned config behind). A failed add also
+// zeroes back out any anchor it pre-wrote, so a rejected AVWAP doesn't leave a
+// placed-anchor orphan under an id no instance ever used.
 export function applySymbolTemplate(
   chart: Chart,
   controller: ChartController,
@@ -125,7 +130,10 @@ export function applySymbolTemplate(
       // while it's on must not repaint indicators the sidebar eye says are hidden.
       forceHidden: controller.indicatorsHidden.value,
     });
-    if (!ok) continue;
+    if (!ok) {
+      if (anchor) saveAvwapAnchor(scope, epic, id, 0); // undo the pre-write; id never became a real instance
+      continue;
+    }
     if (cfg) saveIndicatorConfig(scope, id, cfg);
     added.push({ id, type: inst.type });
   }

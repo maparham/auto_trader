@@ -59,18 +59,87 @@ const DEFAULT_CALC_PARAMS: Record<string, number[]> = {
   RSI: [14],
 };
 
+// Default calcParams for built-in klinecharts indicator TYPES that we don't
+// override above and that aren't one of our custom types (those carry their
+// own defaults in BASE_TEMPLATES). Needed because an indicator whose settings
+// modal was merely opened gets its calcParams eagerly persisted from the LIVE
+// instance (IndicatorSettings.tsx), which for a built-in type is klinecharts'
+// own default — so the template-merge signature comparison (templates.ts) must
+// know that same default to recognize the saved config as a no-op and avoid
+// treating it as a different indicator than an unconfigured template entry.
+//
+// Values verified against the INSTALLED klinecharts package (not from memory):
+// frontend/node_modules/klinecharts/dist/index.esm.js, each indicator's own
+// `calcParams: [...]` literal a few lines below its `name: '<TYPE>'` line (v9,
+// as of this fix). Every built-in type the app's indicator menu can add is
+// covered (Toolbar.tsx's menu is literally `getSupportedIndicators()`, i.e. ALL
+// registered types minus per-instance "#" ids and our own custom overrides).
+const BUILTIN_CALC_PARAMS: Record<string, number[]> = {
+  AO: [5, 34], // index.esm.js ~L2322 (name 'AO' ~L2320)
+  BIAS: [6, 12, 24], // ~L2394 (name ~L2392)
+  BOLL: [20, 2], // ~L2461 (name ~L2458)
+  BRAR: [26], // ~L2514 (name ~L2512)
+  BBI: [3, 6, 12, 24], // ~L2574 (name ~L2570)
+  CCI: [20], // ~L2631 (name ~L2629)
+  CR: [26, 10, 20, 40, 60], // ~L2693 (name ~L2691)
+  DMA: [10, 50, 10], // ~L2789 (name ~L2787)
+  DMI: [14, 6], // ~L2873 (name ~L2871)
+  EMV: [14, 9], // ~L2980 (name ~L2978)
+  MTM: [12, 6], // ~L3094 (name ~L3092)
+  MACD: [12, 26, 9], // ~L3199 (name ~L3197)
+  OBV: [30], // ~L3297 (name ~L3295)
+  PSY: [12, 6], // ~L3394 (name ~L3392)
+  ROC: [12, 6], // ~L3447 (name ~L3445)
+  SMA: [12, 2], // ~L3572 (name ~L3569)
+  KDJ: [9, 3, 3], // ~L3624 (name ~L3622)
+  SAR: [2, 2, 20], // ~L3670 (name ~L3667)
+  TRIX: [12, 9], // ~L3781 (name ~L3779)
+  VOL: [5, 10, 20], // ~L3881 (name ~L3878)
+  VR: [26, 6], // ~L3942 (name ~L3940)
+  WR: [6, 10, 14], // ~L4022 (name ~L4020)
+  // AVP and PVT ship with NO `calcParams` key at all in their template objects
+  // (verified: no `calcParams:` literal near `name: 'AVP'` ~L2281 or
+  // `name: 'PVT'` ~L3349) — klinecharts' base Indicator constructor defaults an
+  // absent template calcParams to `[]` (index.esm.js ~L1042:
+  // `this.calcParams = calcParams ?? []`). Listed explicitly (not left to the
+  // `undefined` fallback) so a settings-opened instance — which persists the
+  // LIVE `[]` — normalizes to the SAME `[]` a config-less template entry
+  // produces, instead of comparing `[]` against `undefined`.
+  AVP: [],
+  PVT: [],
+};
+
 // The EFFECTIVE default calcParams for a type when an instance carries no saved
 // config: our TradingView-shape overrides first (RSI → [14]), then the custom
-// template's own defaults (EMA → [9], MA → [20], LR → [100,2], …). Built-in
-// klinecharts types without an override (MACD/BOLL/…) return undefined —
-// klinecharts applies its own defaults, and BOTH sides of a template-merge
-// signature comparison normalize through this same function, so undefined
-// matches undefined. Used by templates.ts's savedIndicatorSignature.
+// template's own defaults (EMA → [9], MA → [20], LR → [100,2], …), then
+// klinecharts' own built-in defaults (MACD → [12,26,9], BOLL → [20,2], …) for
+// every other registered type. Both sides of a template-merge signature
+// comparison normalize through this same function, so a config-less template
+// entry matches a settings-opened instance whose persisted calcParams happen to
+// equal the same default. Used by templates.ts's savedIndicatorSignature (via
+// effectiveCalcParams below).
 export function defaultCalcParams(type: string): number[] | undefined {
   return (
     DEFAULT_CALC_PARAMS[type] ??
-    (isCustomType(type) ? (BASE_TEMPLATES[type].calcParams as number[] | undefined) : undefined)
+    (isCustomType(type)
+      ? (BASE_TEMPLATES[type].calcParams as number[] | undefined)
+      : BUILTIN_CALC_PARAMS[type])
   );
+}
+
+// The EFFECTIVE calcParams for a type given an instance's saved value (or
+// undefined if it has none): mirrors applyIndicator's own stale-config
+// migration (below, ~L312) — a saved array longer than a DEFAULT_CALC_PARAMS
+// override (e.g. a legacy RSI's [6,12,24] against the override's [14]) is
+// sliced down to that length, since that's what actually ends up on the live
+// chart. Falls back to defaultCalcParams(type) when there's no saved value at
+// all. templates.ts's savedIndicatorSignature uses this (not defaultCalcParams
+// directly) so the merge identity sees the same params applyIndicator would
+// actually create, not the raw stored value.
+export function effectiveCalcParams(type: string, saved?: number[]): number[] | undefined {
+  const def = DEFAULT_CALC_PARAMS[type];
+  if (saved && def && saved.length > def.length) return saved.slice(0, def.length);
+  return saved ?? defaultCalcParams(type);
 }
 
 // Default height (CSS px) for a sub-pane indicator's own pane. klinecharts' default

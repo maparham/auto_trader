@@ -4,15 +4,20 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // klinecharts enums that aren't available in the node test env. Stub the module:
 // applyIndicator returns a truthy paneId so applied instances count as restored;
 // mintInstanceId mints deterministic unique ids ("EMA#m1", "RSI#m2", …);
-// defaultCalcParams returns undefined (both sides of a signature comparison
-// normalize identically, which is all the merge logic needs here — the real
-// normalization is covered by templateSignatures.test.ts + e2e).
+// effectiveCalcParams defaults to "no saved value → undefined" (both sides of a
+// signature comparison normalize identically, which is all the generic merge
+// tests below need) but per-test overrides make it return the type's REAL
+// built-in/override default (e.g. MACD → [12,26,9], RSI → [14]) to exercise the
+// actual wiring templates.ts depends on for Findings 1/2 below — the helper's
+// REAL values (verified against the installed klinecharts dist) live in
+// indicators.ts and are not node-testable here (klinecharts imports); see the
+// verified-defaults table + source-line comments in indicators.ts.
 vi.mock("./indicators", () => {
   let seq = 0;
   return {
     applyIndicator: vi.fn(() => "pane_x"),
     mintInstanceId: vi.fn((_chart: unknown, type: string) => `${type}#m${++seq}`),
-    defaultCalcParams: vi.fn(() => undefined),
+    effectiveCalcParams: vi.fn((_type: string, saved?: number[]) => saved),
   };
 });
 
@@ -42,11 +47,17 @@ class MemStorage {
 
 const P = await import("./persist");
 const T = await import("./templates");
+const I = await import("./indicators");
 
 const SCOPE = "tab.A";
 const EPIC = "US100";
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  // Restore the passthrough default; individual tests below override this to
+  // simulate indicators.ts's real normalization for the type(s) they exercise.
+  vi.mocked(I.effectiveCalcParams).mockImplementation((_type, saved) => saved);
+});
 
 describe("captureSymbolTemplate", () => {
   it("snapshots a cell's indicators, configs, drawings and AVWAP anchors", () => {
@@ -330,5 +341,78 @@ describe("applySymbolTemplate merge (additive, existing wins)", () => {
       indicatorConfigs: { a: { calcParams: [14] }, b: { calcParams: [14] } },
     }));
     expect(P.loadIndicators(SCOPE).filter((i) => i.type === "RSI")).toHaveLength(1);
+  });
+
+  // --- Finding 1 / Finding 2 regressions (adversarial review) -----------------
+  // These exercise templates.ts's WIRING to effectiveCalcParams, not the helper's
+  // real return values (those live in indicators.ts, which imports klinecharts and
+  // isn't node-testable here — verified instead by reading the installed
+  // klinecharts dist; see the verified-defaults table + source-line comments on
+  // BUILTIN_CALC_PARAMS/defaultCalcParams in indicators.ts).
+
+  it("Finding 1: a settings-opened MACD (explicit stored calcParams) matches a template MACD with no saved config — no duplicate", () => {
+    // Simulates indicators.ts's real behavior: MACD's built-in default is
+    // [12,26,9] (verified against klinecharts dist), so an absent saved value
+    // normalizes to the SAME array a settings-modal-persisted default would.
+    vi.mocked(I.effectiveCalcParams).mockImplementation((type, saved) =>
+      type === "MACD" ? (saved ?? [12, 26, 9]) : saved,
+    );
+    P.saveIndicators(SCOPE, [{ id: "MACD", type: "MACD" }]);
+    P.saveIndicatorConfig(SCOPE, "MACD", { calcParams: [12, 26, 9] });
+
+    T.applySymbolTemplate(stubChart, controller, SCOPE, EPIC, template({
+      indicators: [{ id: "MACD", type: "MACD" }],
+      indicatorConfigs: {}, // template side never had its settings modal opened — no stored config
+    }));
+
+    expect(P.loadIndicators(SCOPE).filter((i) => i.type === "MACD")).toHaveLength(1);
+  });
+
+  it("Finding 2: a legacy 3-length RSI config signatures by its EFFECTIVE (sliced) length, not the raw stored array", () => {
+    // Faithful mock of indicators.ts's effectiveCalcParams for RSI: mirrors
+    // applyIndicator's migration (slice a longer-than-override saved array to
+    // the override's length — DEFAULT_CALC_PARAMS.RSI = [14] has length 1), and
+    // an absent saved value falls back to that [14] default. NOTE the contract:
+    // the slice keeps the saved FIRST length ([14,12,24] → [14], [6,12,24] →
+    // [6] — NOT → [14]); that's what actually renders on the chart, so identity
+    // follows it.
+    vi.mocked(I.effectiveCalcParams).mockImplementation((type, saved) => {
+      if (type !== "RSI") return saved;
+      if (!saved) return [14]; // template side: no config → RSI's TradingView-shape default
+      return saved.length > 1 ? saved.slice(0, 1) : saved; // legacy 3-length migration
+    });
+
+    // Legacy [14,12,24] (user had set length 14 under the old 3-length shape)
+    // → effective [14]; config-less template RSI → default [14] → MATCH, no dup.
+    P.saveIndicators(SCOPE, [{ id: "RSI", type: "RSI" }]);
+    P.saveIndicatorConfig(SCOPE, "RSI", { calcParams: [14, 12, 24] });
+
+    T.applySymbolTemplate(stubChart, controller, SCOPE, EPIC, template({
+      indicators: [{ id: "RSI", type: "RSI" }],
+      indicatorConfigs: {}, // template's RSI is a fresh default, no stored config
+    }));
+
+    expect(P.loadIndicators(SCOPE).filter((i) => i.type === "RSI")).toHaveLength(1);
+  });
+
+  it("Finding 2 companion: a legacy RSI whose effective length differs from the default genuinely adds a second RSI", () => {
+    vi.mocked(I.effectiveCalcParams).mockImplementation((type, saved) => {
+      if (type !== "RSI") return saved;
+      if (!saved) return [14];
+      return saved.length > 1 ? saved.slice(0, 1) : saved;
+    });
+
+    // Legacy [6,12,24] → effective [6]: the chart really renders RSI(6). The
+    // config-less template RSI is RSI(14). Different lengths ARE different
+    // indicators — adding a second one is intended behavior, not a missed dedup.
+    P.saveIndicators(SCOPE, [{ id: "RSI", type: "RSI" }]);
+    P.saveIndicatorConfig(SCOPE, "RSI", { calcParams: [6, 12, 24] });
+
+    T.applySymbolTemplate(stubChart, controller, SCOPE, EPIC, template({
+      indicators: [{ id: "RSI", type: "RSI" }],
+      indicatorConfigs: {},
+    }));
+
+    expect(P.loadIndicators(SCOPE).filter((i) => i.type === "RSI")).toHaveLength(2);
   });
 });
