@@ -7,7 +7,7 @@
 // still owns the right-click drawing context menu (Lock/Settings/Delete).
 // Everything drives the Chart instance directly via its public API.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getSupportedIndicators, YAxisType } from "klinecharts";
 import {
   PERIODS,
@@ -155,12 +155,14 @@ export default function Toolbar({
     return controller.autoScale.subscribe(setAuto);
   }, [controller]);
   // "I" invert-scale mode (mirrors the focused cell's signal; on = highlighted).
-  const [inverted, setInverted] = useState(controller?.invertScale.value ?? false);
-  useEffect(() => {
-    if (!controller) return;
-    setInverted(controller.invertScale.value);
-    return controller.invertScale.subscribe(setInverted);
-  }, [controller]);
+  const subscribeInvert = useCallback(
+    (cb: () => void) => controller?.invertScale.subscribe(cb) ?? (() => {}),
+    [controller],
+  );
+  const inverted = useSyncExternalStore(
+    subscribeInvert,
+    () => controller?.invertScale.value ?? false,
+  );
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
   const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
