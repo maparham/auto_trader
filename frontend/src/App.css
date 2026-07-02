@@ -174,7 +174,14 @@
   opacity: 0;
   transition: opacity 0.1s ease, color 0.1s ease, background 0.1s ease;
 }
-.cell-resize-strip:hover ~ .cell-swap,
+/* Scoped per grid line via data-line, so hovering one border only reveals
+   THAT border's swap buttons (a bare `~` general-sibling selector would leak
+   across axes/borders since strips and buttons are siblings in the DOM).
+   Max grid is 3 cols / 2 rows, so cols-1/cols-2/rows-1 are the only internal
+   lines that can ever exist — this enumeration is exhaustive. */
+.cell-resize-strip[data-line="cols-1"]:hover ~ .cell-swap[data-line="cols-1"],
+.cell-resize-strip[data-line="cols-2"]:hover ~ .cell-swap[data-line="cols-2"],
+.cell-resize-strip[data-line="rows-1"]:hover ~ .cell-swap[data-line="rows-1"],
 .cell-swap:hover {
   opacity: 1;
 }

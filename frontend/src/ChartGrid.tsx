@@ -377,6 +377,7 @@ export default function ChartGrid({
                 key={`swap-c${c}-r${r}`}
                 type="button"
                 className="cell-swap cols"
+                data-line={`cols-${c}`}
                 style={{ left: `calc(${left}% - 12px)`, top: `calc(${top}% - 12px)` }}
                 title="Swap charts"
                 aria-label="Swap charts"
@@ -410,6 +411,7 @@ export default function ChartGrid({
                 key={`swap-r${r}-c${c}`}
                 type="button"
                 className="cell-swap rows"
+                data-line={`rows-${r}`}
                 style={{ left: `calc(${left}% - 12px)`, top: `calc(${top}% - 12px)` }}
                 title="Swap charts"
                 aria-label="Swap charts"
@@ -512,6 +514,7 @@ function ResizeStrip({
   return (
     <div
       className={`cell-resize-strip ${axis}`}
+      data-line={`${axis}-${line}`}
       style={pos}
       onPointerDown={(e) => {
         e.preventDefault();
