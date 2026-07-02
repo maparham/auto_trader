@@ -59,6 +59,20 @@ const DEFAULT_CALC_PARAMS: Record<string, number[]> = {
   RSI: [14],
 };
 
+// The EFFECTIVE default calcParams for a type when an instance carries no saved
+// config: our TradingView-shape overrides first (RSI → [14]), then the custom
+// template's own defaults (EMA → [9], MA → [20], LR → [100,2], …). Built-in
+// klinecharts types without an override (MACD/BOLL/…) return undefined —
+// klinecharts applies its own defaults, and BOTH sides of a template-merge
+// signature comparison normalize through this same function, so undefined
+// matches undefined. Used by templates.ts's savedIndicatorSignature.
+export function defaultCalcParams(type: string): number[] | undefined {
+  return (
+    DEFAULT_CALC_PARAMS[type] ??
+    (isCustomType(type) ? (BASE_TEMPLATES[type].calcParams as number[] | undefined) : undefined)
+  );
+}
+
 // Default height (CSS px) for a sub-pane indicator's own pane. klinecharts' default
 // is a cramped ~50px; TradingView gives oscillators much more room, so new sub-panes
 // (RSI/MACD/…) open taller. Users can still drag the pane divider to resize.
@@ -158,7 +172,7 @@ export function reorderSubPanes(
 // instance (so storage stays byte-identical for single-instance users and the
 // migration that maps old name → {id:name,type:name} lines up); later instances get
 // a "#<rand>" suffix. The id must be a valid, unique klinecharts indicator name.
-function mintInstanceId(chart: Chart, type: string): string {
+export function mintInstanceId(chart: Chart, type: string): string {
   const taken = new Set<string>();
   const panes = chart.getIndicatorByPaneId() as
     | Map<string, Map<string, Indicator>>

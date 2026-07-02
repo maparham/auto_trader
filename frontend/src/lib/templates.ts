@@ -5,8 +5,10 @@
 //  - capture reads the PERSISTED cell blobs (kept current by OverlayManager.persist
 //    / saveIndicators on every edit) — they're authoritative, no need to re-read the
 //    live chart.
-//  - apply writes those blobs into the TARGET cell's scope, then replays them with
-//    the same applyIndicator loop hydrateIndicators uses + overlays.rehydrate().
+//  - apply is an ADDITIVE MERGE onto the TARGET cell's scope: each template
+//    indicator/drawing is compared by identity signature against what's already
+//    there and added only if missing — existing instances are never modified or
+//    removed (see docs/superpowers/specs/2026-07-02-template-apply-merge-design.md).
 //
 // AVWAP anchors live outside SavedIndicatorConfig (under avwap.<epic>.<id>), so they
 // are captured/restored explicitly — anchors are written BEFORE the indicators are
@@ -28,8 +30,14 @@ import {
   type SymbolTemplate,
   type DefaultTemplate,
   type SavedIndicatorConfig,
+  type IndicatorInstance,
 } from "./persist";
-import { applyIndicator, removeIndicatorById } from "./indicators";
+import { applyIndicator, mintInstanceId, defaultCalcParams } from "./indicators";
+import {
+  indicatorSignature,
+  drawingSignature,
+  type IndicatorIdentity,
+} from "./templateSignatures";
 
 // Snapshot a cell's current layout for `epic` into a template. Reads the persisted
 // per-cell stores (authoritative), plus each AVWAP instance's separately-stored
@@ -49,56 +57,100 @@ export function captureSymbolTemplate(scope: string, epic: string): SymbolTempla
   return { epic, indicators, indicatorConfigs, drawings, avwapAnchors, savedAt: Date.now() };
 }
 
-// Apply a template onto a cell. `clearFirst` removes the cell's current indicators
-// before applying (used by the manual "Apply" button onto a populated cell);
-// auto-apply passes clearFirst:false because the gate guarantees the cell is empty.
+// The identity signature of one saved instance, from its stored config and (for
+// AVWAP) its separately-stored anchor. calcParams are normalized to the type's
+// effective defaults when the config carries none, so a default-length EMA
+// matches a default-length EMA. AVWAP is special: its calcParams[0] IS the anchor
+// (never meaningfully stored in config), so identity uses the anchor field
+// instead — 0/absent normalizes to undefined so two unplaced AVWAPs match.
+function savedIndicatorSignature(
+  inst: IndicatorInstance,
+  cfg: SavedIndicatorConfig | undefined,
+  anchor: number | undefined,
+): string {
+  const identity: IndicatorIdentity = {
+    type: inst.type,
+    calcParams:
+      inst.type === "AVWAP" ? undefined : cfg?.calcParams ?? defaultCalcParams(inst.type),
+    extendData: cfg?.extendData,
+    anchor: inst.type === "AVWAP" && anchor ? anchor : undefined,
+  };
+  return indicatorSignature(identity);
+}
+
+// Apply a template onto a cell — ADDITIVE MERGE, existing wins (see
+// docs/superpowers/specs/2026-07-02-template-apply-merge-design.md). For each
+// template indicator/drawing we compute its identity signature and add it only
+// if no equivalent is already on the chart; matched items are skipped entirely
+// (the existing instance keeps its id, config and styling). Nothing is ever
+// modified or removed, so Apply is idempotent and can never destroy user work
+// (the old replace-and-clear semantics silently wiped drawings when the
+// template held none).
 //
-// Order is load-bearing: (1) AVWAP anchors written first so rehydrate picks them up,
-// (2) the template blobs persisted into the target scope so a later reload sees a
-// non-empty cell (auto-apply gate stays closed) and rehydrate has data to read,
-// (3) replay onto the live chart via the same paths mount uses.
+// Order per added indicator is load-bearing: its AVWAP anchor is written BEFORE
+// applyIndicator (rehydrate:true reads the anchor from storage); its config is
+// written after success (applyIndicator gets it explicitly via opts.config, and
+// a failed add must not leave an orphaned config behind).
 export function applySymbolTemplate(
   chart: Chart,
   controller: ChartController,
   scope: string,
   epic: string,
   t: SymbolTemplate,
-  opts?: { clearFirst?: boolean },
 ): void {
-  if (opts?.clearFirst) {
-    for (const inst of controller.indicators.value) {
-      removeIndicatorById(chart, scope, inst.id);
-    }
-    // Drawings are replaced wholesale below (saveDrawings + rehydrate removes the
-    // live ones), so no separate clear needed.
-  }
+  // --- indicators: add what's missing, never touch what exists ---------------
+  const existing = loadIndicators(scope);
+  const existingCfgs = loadIndicatorConfigs(scope);
+  const have = new Set(
+    existing.map((inst) =>
+      savedIndicatorSignature(inst, existingCfgs[inst.id], loadAvwapAnchor(scope, epic, inst.id)),
+    ),
+  );
 
-  // (1) AVWAP anchors into the target scope, before indicators are applied.
-  for (const [id, ms] of Object.entries(t.avwapAnchors)) {
-    saveAvwapAnchor(scope, epic, id, ms);
-  }
-
-  // (2) Persist the template blobs into the target cell scope.
-  saveIndicators(scope, t.indicators);
-  for (const [id, cfg] of Object.entries(t.indicatorConfigs)) {
-    saveIndicatorConfig(scope, id, cfg);
-  }
-  saveDrawings(scope, epic, t.drawings);
-
-  // (3) Replay onto the live chart. Indicators via the hydrateIndicators loop
-  // (rehydrate:true so AVWAP anchors are read), drawings via the manager's
-  // rehydrate (re-reads the loadDrawings we just wrote).
-  const restored = t.indicators.filter((inst) =>
-    applyIndicator(chart, scope, epic, inst, {
+  const added: IndicatorInstance[] = [];
+  for (const inst of t.indicators) {
+    const sig = savedIndicatorSignature(inst, t.indicatorConfigs[inst.id], t.avwapAnchors[inst.id]);
+    if (have.has(sig)) continue; // an equivalent indicator is already on the chart
+    have.add(sig); // two identical template rows still add only once
+    // Fresh id in the target cell — the template's id may collide with an
+    // existing instance (ids are the bare type name or a random suffix).
+    const id = mintInstanceId(chart, inst.type);
+    const anchor = t.avwapAnchors[inst.id];
+    if (anchor) saveAvwapAnchor(scope, epic, id, anchor);
+    const cfg = t.indicatorConfigs[inst.id];
+    const ok = applyIndicator(chart, scope, epic, { id, type: inst.type }, {
       rehydrate: true,
-      config: t.indicatorConfigs[inst.id],
+      config: cfg,
       // Honor the cell's master "Hide indicators" switch — a template applied
       // while it's on must not repaint indicators the sidebar eye says are hidden.
       forceHidden: controller.indicatorsHidden.value,
-    }),
-  );
-  controller.indicators.set(restored);
-  controller.overlays.rehydrate();
+    });
+    if (!ok) continue;
+    if (cfg) saveIndicatorConfig(scope, id, cfg);
+    added.push({ id, type: inst.type });
+  }
+  if (added.length > 0) {
+    const full = [...existing, ...added];
+    saveIndicators(scope, full);
+    controller.indicators.set(full);
+  }
+
+  // --- drawings: union by geometry, never remove ------------------------------
+  const existingDrawings = loadDrawings(scope, epic);
+  const haveDrawings = new Set(existingDrawings.map(drawingSignature));
+  const newDrawings = t.drawings.filter((d) => {
+    const sig = drawingSignature(d);
+    if (haveDrawings.has(sig)) return false;
+    haveDrawings.add(sig);
+    return true;
+  });
+  if (newDrawings.length > 0) {
+    saveDrawings(scope, epic, [...existingDrawings, ...newDrawings]);
+    // Rebuild the live overlays from the union we just wrote. Skipped when
+    // nothing was added — a rehydrate re-mints overlay ids and drops selection,
+    // so a no-op Apply must not churn the chart.
+    controller.overlays.rehydrate();
+  }
 }
 
 // --- global default template (symbol-agnostic) ------------------------------
@@ -121,31 +173,24 @@ export function captureDefaultTemplate(scope: string): DefaultTemplate {
 
 // Apply the global default onto a cell. Reuses applySymbolTemplate by wrapping the
 // default in a drawings-less / anchor-less SymbolTemplate shell bound to the
-// target epic — the shared path writes empty drawings + no anchors, then replays
-// the indicators exactly like a normal mount hydrate.
+// target epic — the shared path merges the indicators in and, with an empty
+// drawings list, touches no drawings — so applying the default can never affect
+// existing drawings.
 export function applyDefaultTemplate(
   chart: Chart,
   controller: ChartController,
   scope: string,
   epic: string,
   t: DefaultTemplate,
-  opts?: { clearFirst?: boolean },
 ): void {
-  applySymbolTemplate(
-    chart,
-    controller,
-    scope,
+  applySymbolTemplate(chart, controller, scope, epic, {
     epic,
-    {
-      epic,
-      indicators: t.indicators,
-      indicatorConfigs: t.indicatorConfigs,
-      drawings: [],
-      avwapAnchors: {},
-      savedAt: t.savedAt,
-    },
-    opts,
-  );
+    indicators: t.indicators,
+    indicatorConfigs: t.indicatorConfigs,
+    drawings: [],
+    avwapAnchors: {},
+    savedAt: t.savedAt,
+  });
 }
 
 // Auto-apply a default template to a FRESH cell only. Tries the per-symbol
@@ -174,12 +219,12 @@ export function maybeAutoApplyTemplate(
   // (general). Same empty-cell gate guards both; only one is applied.
   const t = loadSymbolTemplate(epic);
   if (t) {
-    applySymbolTemplate(chart, controller, scope, epic, t, { clearFirst: false });
+    applySymbolTemplate(chart, controller, scope, epic, t);
     return true;
   }
   const d = loadDefaultTemplate();
   if (d) {
-    applyDefaultTemplate(chart, controller, scope, epic, d, { clearFirst: false });
+    applyDefaultTemplate(chart, controller, scope, epic, d);
     return true;
   }
   return false;

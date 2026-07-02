@@ -259,7 +259,7 @@ export default function Toolbar({
   // --- per-symbol templates (Save / Apply / Delete the symbol's default layout) --
   // All act on the FOCUSED cell's scope + the current symbol's epic. Save snapshots
   // the cell's current layout (overwriting the symbol's single default); Apply
-  // replaces the cell's layout with it (clearFirst, since the cell may be populated);
+  // MERGES it into the cell — adds what's missing, skips equivalents, never touches existing work;
   // Delete removes the symbol's default so fresh charts start blank again.
   function saveTemplate() {
     if (!controller || !symbol) return;
@@ -272,9 +272,7 @@ export default function Toolbar({
     if (!chart || !controller || !symbol) return;
     const t = loadSymbolTemplate(symbol.epic);
     if (!t) return;
-    applySymbolTemplate(chart, controller, controller.scope, symbol.epic, t, {
-      clearFirst: true,
-    });
+    applySymbolTemplate(chart, controller, controller.scope, symbol.epic, t);
     setTmplOpen(false);
     toast(`Applied ${symbol.epic} template`);
   }
@@ -300,9 +298,7 @@ export default function Toolbar({
     if (!chart || !controller || !symbol) return;
     const d = loadDefaultTemplate();
     if (!d) return;
-    applyDefaultTemplate(chart, controller, controller.scope, symbol.epic, d, {
-      clearFirst: true,
-    });
+    applyDefaultTemplate(chart, controller, controller.scope, symbol.epic, d);
     setTmplOpen(false);
     toast("Applied default template");
   }

@@ -67,15 +67,23 @@ async function waitForData(page: Page) {
 }
 
 // Drawing count for the FOCUSED tab's primary cell scope, from storage.
+//
+// NOTE: this test seeds via seedSingleChartDefault (bare `auto-trader.layout.*`
+// keys), but persist.ts's per-broker workspace isolation (see its header comment)
+// means resolveStartup() no longer reads those — workspace roots are broker-scoped
+// (`auto-trader.b.<broker>.*`). With no per-broker layout/default present, the app
+// falls back to its own default single-chart workspace and persists live edits to
+// the device-local per-broker SCRATCH key. Read the active tab from there instead
+// of the legacy (now-pruned) `activeLayoutId`/`layout.<id>` keys — same fix already
+// applied in detach-cell.spec.ts's readActiveScratchTab.
 async function focusedDrawingCount(page: Page): Promise<number> {
   return page.evaluate(() => {
-    // The workspace lives in the active layout body now (bare `tabs` was retired).
-    const lid = JSON.parse(localStorage.getItem("auto-trader.activeLayoutId") || "null");
-    const body = lid ? JSON.parse(localStorage.getItem(`auto-trader.layout.${lid}`) || "null") : null;
+    const k = Object.keys(localStorage).find((key) => /^auto-trader\.b\.[^.]+\.scratch$/.test(key));
+    const body = k ? JSON.parse(localStorage.getItem(k) || "null") : null;
     const tabs = body?.tabs ?? [];
-    const active = body?.activeTabId ?? "";
+    const active = body?.activeTabId || tabs[0]?.id || "";
     const tab = tabs.find((t: { id: string }) => t.id === active);
-    // After a reload the layout may not be re-persisted yet — signal "not ready"
+    // After a reload the workspace may not be re-persisted yet — signal "not ready"
     // with -1 so the caller's expect.poll keeps waiting instead of throwing.
     if (!tab) return -1;
     const cell = tab.cells.find((c: { id: string }) => c.id === tab.activeCellId);
@@ -125,11 +133,13 @@ test("a saved symbol template auto-applies to a new tab on the same symbol", asy
   // --- Save this as the symbol's template. ---
   await page.locator(".menu button", { hasText: "Template" }).click();
   await page.locator(".menu .dropdown li", { hasText: /^Save US100 template$/ }).click();
-  // The template is now stored globally under the symbol's epic.
+  // The template is stored per-broker (`auto-trader.b.<broker>.template.<epic>`,
+  // see persist.ts's workspace-isolation header) rather than under the flat
+  // `auto-trader.template.` prefix this check originally used.
   await expect
     .poll(() =>
       page.evaluate(() =>
-        Object.keys(localStorage).some((k) => k.startsWith("auto-trader.template.")),
+        Object.keys(localStorage).some((k) => /^auto-trader\.b\.[^.]+\.template\./.test(k)),
       ),
     )
     .toBe(true);
@@ -154,4 +164,70 @@ test("a saved symbol template auto-applies to a new tab on the same symbol", asy
   await waitForData(page);
   await expect.poll(() => activeTypes(page)).toContain("EMA");
   await expect.poll(() => focusedDrawingCount(page)).toBe(1); // not 2
+});
+
+test("manual Apply merges into a populated chart — keeps drawings, no duplicate indicators", async ({
+  page,
+}) => {
+  await page.route("**/api/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+  );
+  await page.route("**/api/state/**", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+  );
+  await seedSingleChartDefault(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+  await waitForData(page);
+
+  // --- Save a template containing just EMA (no drawings). ---
+  const m = indicatorMenu(page);
+  await m.add("EMA");
+  await expect.poll(() => activeTypes(page)).toContain("EMA");
+  await page.locator(".menu button", { hasText: "Template" }).click();
+  await page.locator(".menu .dropdown li", { hasText: /^Save US100 template$/ }).click();
+  // The template is now stored per-broker (`auto-trader.b.<broker>.template.<epic>`,
+  // see persist.ts's workspace-isolation header) rather than under the flat
+  // `auto-trader.template.` prefix this check originally used.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Object.keys(localStorage).some((k) => /^auto-trader\.b\.[^.]+\.template\./.test(k)),
+      ),
+    )
+    .toBe(true);
+
+  // --- Change the chart: add RSI and draw a horizontal line. ---
+  await m.add("RSI");
+  await expect.poll(() => activeTypes(page)).toContain("RSI");
+  const canvas = page.locator(".chart-cell").first().locator("canvas").first();
+  const box = (await canvas.boundingBox())!;
+  const lines = page.locator(".draw-sidebar .ds-family").first();
+  await lines.hover();
+  await lines.locator(".ds-caret").click();
+  await page
+    .locator(".draw-sidebar .ds-flyout .ds-row", { hasText: "Horizontal line" })
+    .click();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect.poll(() => focusedDrawingCount(page)).toBe(1);
+
+  // --- Apply the (drawing-free) template. OLD behavior wiped the drawing and
+  // replaced the indicator set; merge must keep BOTH the line and RSI, and must
+  // not duplicate the EMA the chart already has. ---
+  await page.locator(".menu button", { hasText: "Template" }).click();
+  await page.locator(".menu .dropdown li", { hasText: /^Apply US100 template$/ }).click();
+
+  await expect.poll(() => focusedDrawingCount(page)).toBe(1); // drawing survived
+  await expect
+    .poll(async () => (await activeTypes(page)).filter((n) => n.startsWith("EMA")).length)
+    .toBe(1); // no duplicate EMA
+  await expect.poll(() => activeTypes(page)).toContain("RSI"); // untouched
+
+  // --- Apply again: idempotent, still exactly one EMA and one drawing. ---
+  await page.locator(".menu button", { hasText: "Template" }).click();
+  await page.locator(".menu .dropdown li", { hasText: /^Apply US100 template$/ }).click();
+  await expect
+    .poll(async () => (await activeTypes(page)).filter((n) => n.startsWith("EMA")).length)
+    .toBe(1);
+  await expect.poll(() => focusedDrawingCount(page)).toBe(1);
 });
