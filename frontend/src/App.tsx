@@ -16,6 +16,7 @@ import IndicatorSettings from "./IndicatorSettings";
 import DrawingSettings from "./DrawingSettings";
 import AlertsSidebar, { type AlertNavTarget, type VisibleCell } from "./AlertsSidebar";
 import ConfirmDialog from "./ConfirmDialog";
+import Snackbar from "./Snackbar";
 import OrderTicket from "./OrderTicket";
 import PositionsPanel from "./PositionsPanel";
 import { registerCustomIndicators } from "./lib/customIndicators";
@@ -99,6 +100,7 @@ import {
   saveAutosave,
   mergeTabInto,
   canMergeTabs,
+  unmergeScopes,
   type ChartTab,
   type LayoutKind,
   type Workspace,
@@ -313,6 +315,16 @@ export default function App() {
   // Autosave: when off, edits accumulate as dirty until the user manually saves.
   const [autosave, setAutosaveState] = useState<boolean>(loadAutosave);
   const [isDirty, setIsDirty] = useState(false);
+  // One-shot undo offer for the last merge: the pre-merge snapshot plus the
+  // scope moves to reverse. Cleared by time (Snackbar), by undo/dismiss, or by
+  // the structure-signature effect below when anything structural changes.
+  const [pendingUndo, setPendingUndo] = useState<{
+    prevTabs: ChartTab[];
+    prevActiveId: string;
+    pairs: Array<{ from: string; to: string }>;
+    label: string;
+    sigAfter: string;
+  } | null>(null);
 
   // Active broker / trading account (registry key "{broker}:{env}"). Drives BOTH
   // the chart data feed (epics are broker-specific) and order/position routing.
@@ -1092,16 +1104,35 @@ export default function App() {
   // tabs close, and the merged tab gains crosshair sync. `position` places the
   // incoming cells (drag-onto-chart's left/top half passes "before"). The
   // target becomes the active tab in every gesture.
+  // Structural fingerprint: tab ids + layout kinds + cell ids. Symbol/TF
+  // changes don't alter it (an undo offer must survive them); close/add/
+  // detach/layout changes and workspace/broker switches do.
+  const structureSig = (ts: ChartTab[]) =>
+    ts.map((t) => `${t.id}:${t.layout}:${t.cells.map((c) => c.id).join(",")}`).join("|");
+
+  useEffect(() => {
+    if (pendingUndo && structureSig(tabs) !== pendingUndo.sigAfter) setPendingUndo(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs]);
+
   const mergeTabs = (
     targetId: string,
     sourceIds: string[],
     position: "before" | "after" = "after",
   ) => {
+    const prevTabs = tabs;
+    const prevActiveId = activeId;
+    // Label = the TARGET's pre-merge lead chart (after the merge its
+    // activeCellId points at the merged-in cell, which would mislabel).
+    const dst = tabs.find((t) => t.id === targetId);
+    const lead = dst ? (dst.cells.find((c) => c.id === dst.activeCellId) ?? dst.cells[0]) : null;
+    const pairs: Array<{ from: string; to: string }> = [];
     let next = tabs;
     for (const srcId of sourceIds) {
       const res = mergeTabInto(next, srcId, targetId, position);
       if (!res) continue; // over-cap sources are UI-disabled; skip defensively
       next = res.tabs;
+      pairs.push(...res.moved);
       clearAlignAnchor(srcId); // same leak-guard closeTab applies
     }
     if (next === tabs) return;
@@ -1121,6 +1152,32 @@ export default function App() {
     }
     setTabs(next);
     setActiveId(targetId);
+    setPendingUndo({
+      prevTabs,
+      prevActiveId,
+      pairs,
+      label: lead ? `Merged into ${lead.symbol.name} · ${lead.period.label}` : "Tabs merged",
+      sigAfter: structureSig(next),
+    });
+  };
+
+  // Full inverse of the last merge: content moves back to the old scopes
+  // (carrying post-merge edits), the snapshot tab array is restored, and the
+  // workspace is persisted with the same durable rule the merge used.
+  const undoMerge = () => {
+    const u = pendingUndo;
+    if (!u) return;
+    setPendingUndo(null); // before setTabs — the sig effect must not race it
+    unmergeScopes(u.pairs);
+    const ws: Workspace = { tabs: u.prevTabs, activeTabId: "" };
+    if (activeLayoutId && layoutName != null) {
+      saveLayout(activeLayoutId, layoutName, ws);
+      setIsDirty(false);
+    } else {
+      saveScratch(ws);
+    }
+    setTabs(u.prevTabs);
+    setActiveId(u.prevActiveId);
   };
 
   // Reorder tabs by drag-and-drop: move the tab at `from` to destination slot
@@ -1641,6 +1698,16 @@ export default function App() {
           id={drawSettings.id}
           onIdChange={(id) => drawingSettingsRequest.set({ id })}
           onClose={() => drawingSettingsRequest.set(null)}
+        />
+      )}
+
+      {/* Transient undo offer for the last tab merge (bottom-center). */}
+      {pendingUndo && (
+        <Snackbar
+          message={pendingUndo.label}
+          actionLabel="Undo"
+          onAction={undoMerge}
+          onDismiss={() => setPendingUndo(null)}
         />
       )}
 

@@ -1293,6 +1293,24 @@
 }
 .toast.show { opacity: 1; transform: translateY(0); }
 
+/* Bottom-center transient snackbar (merge undo) — same idiom as the toasts. */
+.snackbar {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 3000;
+  display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 13px; box-shadow: 0 8px 28px var(--shadow);
+}
+.snackbar-action {
+  border: none; background: transparent; color: var(--accent); font-weight: 600;
+  font-size: 13px; padding: 4px 8px; border-radius: 5px; cursor: pointer;
+}
+.snackbar-action:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.snackbar-close {
+  border: none; background: transparent; color: var(--text-faint); font-size: 15px;
+  padding: 2px 6px; cursor: pointer; border-radius: 5px;
+}
+.snackbar-close:hover { color: var(--text); }
+
 /* TradingView-style live price + countdown pill, overlaying the axis numbers.
    EVEN heights (40px with countdown / 20px without): the pill centers with
    transform: translateY(-50%), so an odd/fractional height would put -50% on a

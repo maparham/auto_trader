@@ -283,3 +283,73 @@ test("releasing a chip on the dead zone between drop targets cancels instead of 
   await expect(page.locator(".chart-cell")).toHaveCount(1);
   await expect(page.locator(".tab-bar .tab.dragging")).toHaveCount(0);
 });
+
+test("Undo restores the pre-merge tabs with content back under the old scope", async ({ page }) => {
+  await seedTwoTabs(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+
+  await page.locator(".tab-bar .tab").first().click({ button: "right" });
+  await page.locator(".ctxmenu .ctx-item", { hasText: "Merge into this tab" }).click();
+  await page.locator(".merge-menu .merge-row", { hasText: "OIL_CRUDE" }).click();
+  await page.locator(".merge-menu .merge-confirm").click();
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
+
+  await expect(page.locator(".snackbar")).toContainText("Merged into US100 · 1H");
+  await page.locator(".snackbar-action", { hasText: "Undo" }).click();
+
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
+  await expect(page.locator(".chart-cell")).toHaveCount(1);
+  await expect(page.locator(".snackbar")).toHaveCount(0);
+  // Content moved back: drawing under t2's original scope, merged scope purged,
+  // and the restored workspace persisted (synchronous rule).
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const ws = JSON.parse(localStorage.getItem("auto-trader.b.capital.scratch") || "null");
+        return {
+          tabCount: ws?.tabs?.length,
+          restored: localStorage.getItem("auto-trader.tab.t2.drawings.OIL_CRUDE") != null,
+          purged: localStorage.getItem("auto-trader.tab.t1.cell.t2-c0.drawings.OIL_CRUDE") == null,
+        };
+      }),
+    )
+    .toEqual({ tabCount: 2, restored: true, purged: true });
+});
+
+test("snackbar disappears on a structural tab change instead of offering a stale undo", async ({ page }) => {
+  await seedThreeTabs(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+
+  // Merge t3 (GOLD) into t1 via the checklist, then close t2 — a structural
+  // change unrelated to the merge. The undo snapshot is stale → snackbar gone.
+  await page.locator(".tab-bar .tab").first().click({ button: "right" });
+  await page.locator(".ctxmenu .ctx-item", { hasText: "Merge into this tab" }).click();
+  await page.locator(".merge-menu .merge-row", { hasText: "GOLD" }).click();
+  await page.locator(".merge-menu .merge-confirm").click();
+  await expect(page.locator(".snackbar")).toBeVisible();
+
+  await page.locator(".tab-bar .tab", { hasText: "OIL_CRUDE" }).locator(".tab-close").click();
+  await expect(page.locator(".snackbar")).toHaveCount(0);
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
+});
+
+test("snackbar auto-dismisses after 8s and the merge stays", async ({ page }) => {
+  await seedTwoTabs(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+
+  await page.locator(".tab-bar .tab").first().click({ button: "right" });
+  await page.locator(".ctxmenu .ctx-item", { hasText: "Merge into this tab" }).click();
+  await page.locator(".merge-menu .merge-row", { hasText: "OIL_CRUDE" }).click();
+  await page.locator(".merge-menu .merge-confirm").click();
+  await expect(page.locator(".snackbar")).toBeVisible();
+
+  await expect(page.locator(".snackbar")).toHaveCount(0, { timeout: 10000 });
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
+  await expect(page.locator(".chart-cell")).toHaveCount(2);
+});
