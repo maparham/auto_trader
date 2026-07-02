@@ -97,24 +97,32 @@ class FakeChart {
     const cb = cur?.onRemoved;
     if (typeof cb === "function") (cb as (e: { overlay: unknown }) => void)({ overlay: cur });
   }
-  // hoverAlert toggles the crosshair's horizontal guide. It does so by merging into
-  // the chart STORE (not chart.setStyles, which would jolt the whole view via
+  // hoverAlert reconciles the crosshair's horizontal guide over alert lines. The
+  // contract (see overlays.ts applyCrosshairForAlert): the master `horizontal.show`
+  // stays TRUE — klinecharts gates both the line AND the y-axis label on it — and
+  // the child flags `line.show` / `text.show` do the actual hiding. The write merges
+  // into the chart STORE (not chart.setStyles, which would jolt the whole view via
   // adjustPaneViewport). Model both: _chartStore.setOptions is the real path, and
   // setStyles is the fallback. setStylesCalls counts the fallback so a regression
   // back to the heavyweight call is caught.
-  crosshairHorizontalShow: boolean | undefined;
+  crosshairHorizontal:
+    | { show?: boolean; line?: { show?: boolean }; text?: { show?: boolean } }
+    | undefined;
   setStylesCalls = 0;
+  private captureCrosshair(s?: {
+    crosshair?: { horizontal?: { show?: boolean; line?: { show?: boolean }; text?: { show?: boolean } } };
+  }) {
+    const horizontal = s?.crosshair?.horizontal;
+    if (horizontal) this.crosshairHorizontal = horizontal;
+  }
   _chartStore = {
-    setOptions: (o: { styles?: { crosshair?: { horizontal?: { show?: boolean } } } }) => {
-      const show = o?.styles?.crosshair?.horizontal?.show;
-      if (typeof show === "boolean") this.crosshairHorizontalShow = show;
-    },
+    setOptions: (o: { styles?: Parameters<FakeChart["captureCrosshair"]>[0] }) =>
+      this.captureCrosshair(o?.styles),
   };
   styles: Record<string, unknown> = {};
-  setStyles(s: { crosshair?: { horizontal?: { show?: boolean } } } & Record<string, unknown>) {
+  setStyles(s: Parameters<FakeChart["captureCrosshair"]>[0] & Record<string, unknown>) {
     this.setStylesCalls += 1;
-    const show = s?.crosshair?.horizontal?.show;
-    if (typeof show === "boolean") this.crosshairHorizontalShow = show;
+    this.captureCrosshair(s);
     this.styles = { ...this.styles, ...s };
   }
 }
@@ -198,12 +206,15 @@ describe("OverlayManager alert hover/select line-weight sync (sidebar ↔ chart)
     m.hoverAlert(id);
     expect(lineSize(chart, id)).toBe(2); // emphasized on hover
     expect(m.getAlerts().find((a) => a.id === id)!.hovered).toBe(true);
-    expect(chart.crosshairHorizontalShow).toBe(false); // horizontal guide hidden over the line
+    // Over the line: the guide's LINE and y-axis LABEL hide, but the master `show`
+    // must stay true — flipping it would take the label down with it permanently.
+    expect(chart.crosshairHorizontal).toEqual({ show: true, line: { show: false }, text: { show: false } });
 
     m.hoverAlert(null);
     expect(lineSize(chart, id)).toBe(1); // back to resting
     expect(m.getAlerts().find((a) => a.id === id)!.hovered).toBe(false);
-    expect(chart.crosshairHorizontalShow).toBe(true); // guide restored on un-hover
+    // Guide (line + label) restored on un-hover.
+    expect(chart.crosshairHorizontal).toEqual({ show: true, line: { show: true }, text: { show: true } });
 
     // The crosshair toggle must NOT go through chart.setStyles — that runs
     // adjustPaneViewport(forceY) and jolts the whole view on every hover. It must
