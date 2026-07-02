@@ -4,7 +4,7 @@
 // layouts remounts only the cells that actually change. The focused cell gets a
 // thin accent ring (no drop-shadow, per project style).
 
-import { useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import ChartCore from "./ChartCore";
 import ContextMenu from "./ContextMenu";
 import { DomPosition } from "klinecharts";
@@ -107,15 +107,35 @@ export default function ChartGrid({
   // The corner controls (detach/maximize) sit INSIDE the chart area, just left
   // of the price axis (TV-style) — anchored to the cell edge they'd cover the
   // axis labels. The axis width is dynamic (price magnitude / decimals), so
-  // measure it from the cell's chart when the pointer enters the cell (the
-  // buttons only reveal on hover anyway) and offset the buttons by it.
+  // measure it from the cell's chart while the pointer is over the cell (the
+  // buttons only reveal on hover anyway) and offset the buttons by it. Entry
+  // alone isn't enough: a symbol switch or precision change can widen the axis
+  // WITHOUT the pointer ever leaving the cell, so mousemove re-measures too
+  // (throttled; setState only fires on an actual width change).
   const chartsRef = useRef(new Map<string, Chart>());
   const [axisW, setAxisW] = useState<Record<string, number>>({});
+  const lastMeasure = useRef(0);
   const measureAxis = (cellId: string) => {
     const w = chartsRef.current.get(cellId)?.getSize("candle_pane", DomPosition.YAxis)?.width;
     if (w && w !== axisW[cellId]) setAxisW((m) => ({ ...m, [cellId]: w }));
   };
-  // Fallback before the first measurement (chart not ready yet).
+  // Drop measurements/chart handles for cells no longer in this tab (detach /
+  // layout trim) — ChartGrid only remounts on tab switch, so within a tab
+  // these maps would otherwise retain dead Chart instances.
+  useEffect(() => {
+    const live = new Set(cells.map((c) => c.id));
+    for (const id of chartsRef.current.keys()) if (!live.has(id)) chartsRef.current.delete(id);
+    setAxisW((m) => {
+      const stale = Object.keys(m).filter((id) => !live.has(id));
+      if (stale.length === 0) return m;
+      const next = { ...m };
+      for (const id of stale) delete next[id];
+      return next;
+    });
+  }, [cells]);
+  // Fallback before the first measurement (chart not ready yet) — empirical
+  // typical axis width, not guaranteed to clear every symbol on first paint;
+  // the first hover corrects it.
   const buttonRight = (cellId: string, slot: 0 | 1) => (axisW[cellId] ?? 56) + 6 + slot * 28;
   // Clamp to a cell that's actually in this render's set: the parent clears
   // maximizedCellId via an effect that commits one render after a layout
@@ -158,6 +178,11 @@ export default function ChartGrid({
           }${isMax ? " maximized" : ""}`}
           style={{ display: hidden ? "none" : undefined }}
           onMouseEnter={() => measureAxis(cell.id)}
+          onMouseMove={(e) => {
+            if (e.timeStamp - lastMeasure.current < 200) return;
+            lastMeasure.current = e.timeStamp;
+            measureAxis(cell.id);
+          }}
         >
           {cells.length > 1 && (
             <button
