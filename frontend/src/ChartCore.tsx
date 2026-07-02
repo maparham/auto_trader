@@ -41,7 +41,7 @@ import ChartLegend, {
 } from "./ChartLegend";
 import { ChartController } from "./lib/chartController";
 import { isInvertShortcut } from "./lib/invertShortcut";
-import InstrumentDetailsModal from "./InstrumentDetailsModal";
+import MarketInfoPopover from "./MarketInfoPopover";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle, type CurveLabelPill } from "./CurveLabels";
 import { clearBacktest } from "./lib/backtest";
@@ -1225,8 +1225,8 @@ export default function ChartCore({
   // event-driven: a ticking stream means the market is open (no server call), so
   // we only re-check status when the stream falls silent (see the effect below).
   const lastCandleAtRef = useRef(0);
-  // Instrument-details modal (opened by clicking the legend symbol).
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  // Market-info popover anchor (viewport coords of the legend ⓘ); null = closed.
+  const [detailsAnchor, setDetailsAnchor] = useState<{ x: number; y: number } | null>(null);
   const [cacheStatsOpen, setCacheStatsOpen] = useState(false);
   const [cacheStats, setCacheStats] = useState<CandleCacheStats | null>(null);
   // Current epic/resolution, readable from once-mounted callbacks without re-subscribing.
@@ -4441,7 +4441,7 @@ export default function ChartCore({
         onOpenMenu={onLegendOpenMenu}
         onMove={reorderPaneByName}
         onStartReorder={startPaneReorderDrag}
-        onOpenDetails={() => setDetailsOpen(true)}
+        onOpenDetails={(x, y) => setDetailsAnchor({ x, y })}
         cacheBadge={cacheBadge}
         onOpenCacheStats={() => setCacheStatsOpen(true)}
         // Clicking the symbol name swaps the instrument (TradingView-style). The
@@ -4450,12 +4450,13 @@ export default function ChartCore({
         onChangeSymbol={requestSymbolSearch}
       />
 
-      {detailsOpen && (
-        <InstrumentDetailsModal
+      {detailsAnchor && (
+        <MarketInfoPopover
           epic={symbol.epic}
           brokerId={brokerId}
           title={symbol.name ?? symbol.epic}
-          onClose={() => setDetailsOpen(false)}
+          anchor={detailsAnchor}
+          onClose={() => setDetailsAnchor(null)}
         />
       )}
 

@@ -109,7 +109,8 @@ export interface Props {
   // Click a row body to select the indicator (TradingView-style), like a curve click.
   onSelectRow: (name: string) => void;
   // Click the ⓘ button to open the instrument-details modal (TradingView-style).
-  onOpenDetails: () => void;
+  // Open the market-info popover, anchored at the ⓘ button (viewport coords).
+  onOpenDetails: (x: number, y: number) => void;
   // Click the symbol name itself to change the instrument on this chart (opens the
   // symbol-search modal, TradingView-style).
   onChangeSymbol: () => void;
@@ -313,7 +314,8 @@ export default function ChartLegend({
           title="Instrument details"
           onClick={(e) => {
             e.stopPropagation();
-            onOpenDetails();
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onOpenDetails(r.left, r.bottom + 6);
           }}
         >
           {/* A rounded-square accent chip with a serif "i" — non-round so it never
