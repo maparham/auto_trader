@@ -86,6 +86,59 @@ test("a backgrounded tab's closed market still badges (App-level epic poll)", as
   await expect(tabs.nth(0).locator(".tab-closed-badge")).toHaveCount(0);
 });
 
+test("a closed market hides the legend live dot", async ({ page }) => {
+  // The dot signals live *streaming*, but the WS connects to OUR backend, which
+  // stays up when the market is closed — so the dot must also gate on the
+  // market's open/closed state, not just the socket status.
+  await seedSingleChartDefault(page);
+  await stubStateApi(page);
+  await page.route("**/api/market/**", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ epic: "US100", pricePrecision: 2, closed: true, nextOpen: "2026-06-26T22:00:00+00:00" }),
+    }),
+  );
+  // Candle history so the price pill renders — its "live" class proves the WS
+  // is connected before we assert on the dot (else a not-yet-connected socket
+  // would make the dot's absence pass trivially).
+  await page.route("**/api/candles**", (r) => {
+    const hour = 3600;
+    const now = Math.floor(Date.now() / 1000);
+    const start = now - (now % hour);
+    const candles = Array.from({ length: 50 }, (_, i) => {
+      const time = start - (49 - i) * hour;
+      return { time, open: 100, high: 101, low: 99, close: 100, volume: 1 };
+    });
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(candles) });
+  });
+  await page.goto("/");
+  await page.locator(".price-tag.live").waitFor(); // stream is up (socket status "live")
+  await expect(page.locator(".price-tag .pt-cd")).toHaveText("closed"); // closed meta landed
+
+  // Stream up + market closed: the dot must NOT be shown.
+  await expect(page.locator(".chart-legend .cl-live-dot")).toHaveCount(0);
+});
+
+test("an open market shows the legend live dot", async ({ page }) => {
+  // Positive control for the test above: with the market open and the stream
+  // connected, the dot must appear — proving its absence when closed is the
+  // gating, not a never-connected socket.
+  await seedSingleChartDefault(page);
+  await stubStateApi(page);
+  await page.route("**/api/market/**", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ epic: "US100", pricePrecision: 2, closed: false, nextOpen: null }),
+    }),
+  );
+  await page.goto("/");
+  await page.locator(".chart-legend .cl-sym").waitFor();
+
+  await expect(page.locator(".chart-legend .cl-live-dot")).toBeVisible();
+});
+
 test("a tradeable market shows no closed badge", async ({ page }) => {
   await seedSingleChartDefault(page);
   await stubStateApi(page);

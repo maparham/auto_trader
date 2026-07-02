@@ -74,6 +74,7 @@ import {
 } from "./lib/signals";
 import {
   loadAvwapAnchor,
+  loadDrawings,
   saveAvwapAnchor,
   saveIndicatorVisible,
   saveIndicators,
@@ -639,6 +640,85 @@ export default function ChartCore({
       // mutex for its own walk); the current owner — or a settled idle state —
       // releases it.
       if (pendingRangeRef.current === token || pendingRangeRef.current === null) {
+        loadingRef.current = false;
+      }
+    }
+  };
+
+  // Drawings anchor by timestamp, and klinecharts snaps a timestamp to the NEAREST
+  // LOADED bar — an anchor older than the initial 500-bar window clamps to the left
+  // edge of the loaded data, pivoting the drawing to a wrong slope until the user
+  // happens to scroll back far enough (paint-time re-resolution self-heals once the
+  // bars exist). After a load, silently page history back until the oldest saved
+  // drawing anchor is covered — bounded like a quick-range walk, and with NO fit:
+  // the view stays parked at the live edge. Alerts are horizontal (no timestamp),
+  // so only drawings matter here.
+  const ensureDrawingAnchorCoverage = async () => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const epic = epicRef.current;
+    const resolution = resRef.current;
+    const broker = brokerIdRef.current;
+    const side = priceSideRef.current;
+    const anchors = loadDrawings(scope, epic)
+      .flatMap((d) => d.points ?? [])
+      .map((p) => p.timestamp)
+      .filter((t): t is number => t != null);
+    if (!anchors.length) return;
+    const fromTs = Math.min(...anchors);
+    const first = chart.getDataList()[0];
+    if (!first || fromTs >= first.timestamp) return; // already covered (or nothing to extend)
+    // A quick-range pick owns paging (it covers + fits its own window) — stay out of
+    // its way now, and abort via isStale if one starts mid-walk.
+    if (pendingRangeRef.current) return;
+    const isStale = () =>
+      !chartRef.current ||
+      pendingRangeRef.current !== null ||
+      epicRef.current !== epic ||
+      brokerIdRef.current !== broker ||
+      priceSideRef.current !== side ||
+      resRef.current !== resolution;
+    // Same mutex dance as ensureCoverageAndFit: wait out an in-flight scroll-back
+    // page (bounded), then hold the mutex so the two pagers can't interleave.
+    for (let i = 0; loadingRef.current && i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      if (isStale()) return;
+    }
+    if (isStale()) return;
+    loadingRef.current = true;
+    try {
+      await pageHistoryBack<KLineData>({
+        fromTs,
+        toTs: first.timestamp,
+        resSec: RESOLUTION_SECONDS[resolution] ?? 60,
+        pageBars: PAGE_BARS,
+        maxPages: 16,
+        maxEmpty: 4,
+        isStale,
+        getData: () => chartRef.current?.getDataList(),
+        fetchOlder: (fromSec, toSec) => fetchRange(epic, resolution, fromSec, toSec, side, broker),
+        applyData: (merged) => chartRef.current?.applyNewData(merged, true),
+        onCursor: (sec) => {
+          cursorSecRef.current = sec;
+        },
+        onProgress: () => {
+          exhaustedRef.current = false;
+        },
+        onExhausted: () => {
+          exhaustedRef.current = true;
+        },
+      });
+      // Bounded walk: a very old anchor on a very fine interval can exceed the page
+      // budget — the drawing then still clamps. Say so instead of failing silently.
+      const oldest = chartRef.current?.getDataList()[0];
+      if (oldest && oldest.timestamp > fromTs) {
+        console.debug(
+          `[chart] drawing-anchor coverage capped for ${epic}@${resolution}: oldest anchor ${new Date(fromTs).toISOString()} predates loaded history`,
+        );
+      }
+    } finally {
+      // Release only if a quick-range pick hasn't taken the mutex for its own walk.
+      if (pendingRangeRef.current === null) {
         loadingRef.current = false;
       }
     }
@@ -2694,8 +2774,14 @@ export default function ChartCore({
       // Anchor to the latest bars so the live/forming candle is on-screen.
       chartRef.current.scrollToRealTime();
       // Rehydrate this symbol's saved drawings + alerts now that the data (and
-      // therefore the timescale their points map onto) is loaded.
-      overlays.rehydrate();
+      // therefore the timescale their points map onto) is loaded. Passing the
+      // resolution makes rehydrate adopt it BEFORE points materialize — a
+      // future-anchored point decodes its timestamp with the bar width, and a
+      // trailing setResolution() call left it decoding with the PREVIOUS
+      // timeframe's width on every switch (trendline slope changed, and the
+      // next persist baked the drift in). This also re-derives each drawing's
+      // per-interval visibility, so no separate setResolution call remains.
+      overlays.rehydrate(period.resolution);
       // Redraw position lines for the (possibly new) epic at the current precision.
       posLinesRef.current?.setPrecision(effPrecision);
       posDrawRef.current();
@@ -2704,10 +2790,6 @@ export default function ChartCore({
       // shows for a trade on this epic — so refresh once the rehydrate lands rather
       // than waiting for the next live tick.
       redrawRef.current();
-      // Record the current resolution and derive each drawing's effective
-      // visibility (a drawing can be pinned to specific intervals). This effect
-      // re-runs on period.resolution, so switching timeframe re-evaluates here.
-      overlays.setResolution(period.resolution);
       // Mirror the drawings' interval filter for indicators: re-derive each
       // indicator's effective visibility (user intent AND interval match) against
       // the now-current resolution. Runs here so both a fresh rehydrate (above)
@@ -2723,6 +2805,11 @@ export default function ChartCore({
       if (pend && pend.resolution === period.resolution && chartRef.current) {
         void ensureCoverageAndFit(pend);
       }
+      // Page back (no fit) until every saved drawing anchor maps onto a loaded bar —
+      // otherwise klinecharts clamps older anchors to the first loaded bar and the
+      // drawing renders with the wrong slope on this interval. Live-only intervals
+      // have no history to page. No-op when a quick-range walk owns paging.
+      if (!period.liveOnly) void ensureDrawingAnchorCoverage();
       // Re-apply each AVWAP instance's anchor for this epic (anchors are per-epic,
       // per-instance; no-op if no AVWAP is active).
       const candlePane = chartRef.current.getIndicatorByPaneId("candle_pane") as
@@ -4295,7 +4382,9 @@ export default function ChartCore({
           symbol: symbol.epic,
           period: period.label,
           precision,
-          live: status === "live",
+          // The socket connects to OUR backend, so status alone stays "live"
+          // through a market close — gate the dot on the market being open too.
+          live: status === "live" && !marketClosed,
           broker: brokerLabel(brokerId),
         }}
         rows={legendRows}
