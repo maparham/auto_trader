@@ -23,11 +23,11 @@ class BuyBar1(Strategy):
     def __init__(self) -> None:
         self.fired = False
 
-    def on_bar(self, ctx: Context) -> Signal | None:
+    def on_bar(self, ctx: Context) -> list[Signal]:
         if len(ctx.history) == 2 and not self.fired:
             self.fired = True
-            return Signal(Side.BUY, 1.0, "enter")
-        return None
+            return [Signal(Side.BUY, 1.0, "enter")]
+        return []
 
 
 def test_fill_is_next_open_not_current_close():
@@ -42,13 +42,13 @@ def test_fill_is_next_open_not_current_close():
 
 def test_round_trip_pnl():
     class Flip(Strategy):
-        def on_bar(self, ctx: Context) -> Signal | None:
+        def on_bar(self, ctx: Context) -> list[Signal]:
             n = len(ctx.history)
             if n == 1:
-                return Signal(Side.BUY, 1.0, "in")
+                return [Signal(Side.BUY, 1.0, "in")]
             if n == 3:
-                return Signal(Side.SELL, 1.0, "out")
-            return None
+                return [Signal(Side.SELL, 1.0, "out")]
+            return []
 
     # buy fills at bar1 open=100, sell fills at bar3 open=110 -> pnl = 10
     candles = _series([100, 100, 105, 110, 110])
@@ -63,13 +63,13 @@ def test_round_trip_pnl():
 
 def test_commission_and_slippage_reduce_pnl():
     class Flip(Strategy):
-        def on_bar(self, ctx: Context) -> Signal | None:
+        def on_bar(self, ctx: Context) -> list[Signal]:
             n = len(ctx.history)
             if n == 1:
-                return Signal(Side.BUY, 1.0, "in")
+                return [Signal(Side.BUY, 1.0, "in")]
             if n == 3:
-                return Signal(Side.SELL, 1.0, "out")
-            return None
+                return [Signal(Side.SELL, 1.0, "out")]
+            return []
 
     candles = _series([100, 100, 105, 110, 110])
     res = BacktestEngine(Flip(), commission_per_side=0.5, slippage=1.0).run(candles)
@@ -91,10 +91,10 @@ def test_net_pnl_includes_open_position_at_end():
 
 def test_signal_on_last_bar_is_dropped():
     class BuyLast(Strategy):
-        def on_bar(self, ctx: Context) -> Signal | None:
+        def on_bar(self, ctx: Context) -> list[Signal]:
             if len(ctx.history) == 3:  # final bar
-                return Signal(Side.BUY, 1.0, "late")
-            return None
+                return [Signal(Side.BUY, 1.0, "late")]
+            return []
 
     res = BacktestEngine(BuyLast()).run(_series([1, 2, 3]))
     assert res.fills == []  # nothing to fill on; no future bar

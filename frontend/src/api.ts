@@ -1,5 +1,7 @@
 // Typed client for the Auto Trader backend.
 
+import type { RuleGroup, Costs } from "./lib/backtestConfig";
+
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
 interface Candle {
@@ -48,23 +50,23 @@ export interface BacktestResult {
   };
 }
 
-export interface BacktestParams {
+export interface BacktestRequest {
   epic: string;
   resolution: string;
-  bars: number;
-  fast: number;
-  slow: number;
+  candles: Candle[];
+  series: Record<string, Array<number | null>>;
+  entry: RuleGroup;
+  exit: RuleGroup;
+  costs: Costs;
+  tradeFromTime: number; // unix seconds — the window's start (D6)
 }
 
-export async function runBacktest(p: BacktestParams): Promise<BacktestResult> {
-  const qs = new URLSearchParams({
-    epic: p.epic,
-    resolution: p.resolution,
-    bars: String(p.bars),
-    fast: String(p.fast),
-    slow: String(p.slow),
+export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {
+  const res = await fetch(`${BASE}/api/backtest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
   });
-  const res = await fetch(`${BASE}/api/backtest?${qs}`);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
     throw new Error(detail.detail ?? `request failed (${res.status})`);

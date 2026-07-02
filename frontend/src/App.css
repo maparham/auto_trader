@@ -529,6 +529,85 @@
   margin: 0; text-align: right; white-space: pre-line; color: var(--text);
 }
 .cache-stats-modal { width: 380px; }
+
+/* Backtest settings: wider than the other form modals — a rule row packs two
+   3-control operand pills, an operator, and a remove button, which needs real
+   room or it overflows the modal edge. */
+.bt-modal { width: 720px; }
+.bt-body { padding: 4px 16px 16px; max-height: 76vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.bt-section { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.bt-section:last-child { border-bottom: none; }
+/* Numbers in this modal read like a terminal, matching the rest of the app
+   (price/qty columns) rather than plain form fields. */
+.bt-body input[type="number"] { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* A rule row reads as one sentence: [operand] [operator] [operand] [remove].
+   Grid (not flex) so the two operand columns share space via minmax(0, 1fr) —
+   they shrink together instead of one overflowing the modal's right edge. */
+.bt-rule-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+.bt-rule-row > select { flex: 0 0 auto; min-width: 0; }
+/* The operand pills get a subtle border so the row visually chunks into its
+   three parts instead of reading as a wall of adjacent selects. */
+.bt-operand {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px;
+  background: var(--surface-2);
+}
+.bt-operand select { flex: 1 1 0; min-width: 0; }
+.bt-operand-length { width: 52px; flex: 0 0 auto; min-width: 0; }
+/* A "crosses" rule is a directional signal (the reason this feature exists);
+   a plain comparison is bookkeeping. Give the crossing operators the app's
+   accent so the row's most meaningful choice is the one that stands out. */
+.bt-op-cross { color: var(--accent); font-weight: 600; border-color: var(--accent); }
+.bt-op-compare { color: var(--text-dim); }
+.bt-rule-remove {
+  flex: 0 0 auto; background: transparent; border: none; color: var(--text-dim);
+  cursor: pointer; padding: 4px;
+}
+.bt-rule-remove:hover { color: var(--danger, #e5534b); }
+/* A rule group with zero rules is never true — for "Buy when" that means the
+   backtest can never open a position at all, which reads as "nothing happens"
+   with no other clue why. Call it out instead of letting it fail silently. */
+.bt-empty-rules {
+  color: var(--text-dim); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+}
+
+/* Costs: a 2x2 grid (was 4 stacked full-width rows) with the label stacked
+   above its input so a longer label like "Commission/side" has room to read
+   in full instead of being clipped by a fixed-width side label column. */
+.bt-costs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+.bt-field { display: flex; flex-direction: column; gap: 4px; }
+.bt-field span { color: var(--text-dim); font-size: 12px; }
+.bt-field input {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
+}
+
+/* Window timeline (History depth section) — the one idea in this modal that's
+   easier shown than explained: the range picker sets where TRADES happen, not
+   how far back indicators can see. History is drawn as a lighter segment,
+   the trading window as solid accent, split at the "trades start here" marker.
+   "Full" depth has no knowable size (it's whatever the broker actually serves),
+   so it fades out at the left edge instead of showing a fabricated number. */
+.bt-timeline { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.bt-timeline-track { display: flex; align-items: stretch; height: 10px; border-radius: 5px; overflow: hidden; }
+.bt-timeline-history { background: color-mix(in srgb, var(--accent) 22%, var(--surface-2)); min-width: 8%; }
+.bt-timeline-history.open-ended {
+  background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent) 22%, var(--surface-2)) 70%);
+}
+.bt-timeline-window { background: var(--accent); min-width: 12%; }
+.bt-timeline-marker { flex: 0 0 3px; background: #fff; box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 35%, transparent); }
+.bt-timeline-labels {
+  display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.bt-timeline-window-label { color: var(--accent); font-weight: 600; }
 .alert-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .al-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .al-row > span { color: var(--text-dim); width: 90px; flex-shrink: 0; }
@@ -1656,7 +1735,9 @@
   border-radius: 6px; padding: 2px 6px; cursor: pointer; font-size: 11px; transition: background 0.12s;
 }
 .bt-clear:hover { background: var(--hover); color: var(--text); }
+.bt-gear { padding: 4px 8px; font-size: 14px; }
 .bt-error { color: var(--neg); font-size: 12px; }
+.bt-warning { color: var(--text-dim); font-size: 12px; cursor: help; }
 
 .scale { display: inline-flex; gap: 2px; margin-left: 4px; }
 .scale button {

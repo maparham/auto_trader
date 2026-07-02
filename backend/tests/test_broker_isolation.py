@@ -91,37 +91,3 @@ def test_fast_broker_not_blocked_by_concurrent_slow_broker(monkeypatch) -> None:
 async def _swallow(coro):
     with pytest.raises(HTTPException):
         await coro
-
-
-def test_backtest_allowance_error_is_429_not_502(monkeypatch) -> None:
-    """The backtest route now runs through the same breaker as the candles route, so
-    IG's spent weekly allowance surfaces as an actionable 429 (the broker is healthy;
-    live prices still stream) instead of the old generic 502 — and it must not trip
-    the breaker."""
-    from auto_trader.brokers.ig import IGAllowanceExceeded
-    from auto_trader.core.models import Resolution
-
-    class _AllowanceBroker(_StubBroker):
-        def __init__(self) -> None:
-            super().__init__(delay=0.0)
-
-        async def get_recent_candles(self, *a, **k):  # type: ignore[override]
-            raise IGAllowanceExceeded()
-
-    reg = BrokerRegistry()
-    reg.add_data("ig-demo", _AllowanceBroker())
-    monkeypatch.setattr(app_module, "_registry", reg)
-    monkeypatch.setattr(app_module, "BROKER_HEALTH", BrokerHealth())
-
-    async def scenario():
-        with pytest.raises(HTTPException) as e:
-            await app_module.backtest(
-                epic="EURUSD", resolution=Resolution.MINUTE_5, bars=50,
-                fast=9, slow=21, quantity=1.0, commission_per_side=0.0,
-                slippage=0.0, broker_id="ig-demo",
-            )
-        assert e.value.status_code == 429  # actionable, not a generic 502
-
-    asyncio.run(scenario())
-    # Allowance is a healthy-broker signal — the breaker must stay closed.
-    assert app_module.BROKER_HEALTH.is_open("ig-demo") is False

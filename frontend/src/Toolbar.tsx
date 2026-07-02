@@ -724,6 +724,7 @@ export default function Toolbar({
         controller={controller}
         period={period}
         epic={symbol.epic}
+        brokerId={brokerId}
       />
 
       {/* Alerts panel toggle (bell). */}

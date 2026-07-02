@@ -13,7 +13,7 @@ import {
   LineType,
   type Chart,
 } from "klinecharts";
-import { runBacktest, type BacktestParams, type BacktestResult } from "../api";
+import { runBacktest, type BacktestRequest, type BacktestResult } from "../api";
 
 export const EQUITY_INDICATOR = "EQUITY";
 
@@ -41,9 +41,9 @@ export function registerBacktestIndicators(): void {
 
 export async function runAndRender(
   chart: Chart,
-  params: BacktestParams,
+  req: BacktestRequest,
 ): Promise<BacktestResult> {
-  const result = await runBacktest(params);
+  const result = await runBacktest(req);
   clearBacktest(chart);
 
   // Equity curve -> own sub-pane.

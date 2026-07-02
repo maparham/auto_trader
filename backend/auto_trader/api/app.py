@@ -14,13 +14,13 @@ import logging
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 log = logging.getLogger(__name__)
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from auto_trader.brokers import ig_stream
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
@@ -61,7 +61,7 @@ from auto_trader.core.candle_aggregate import (
     is_derived,
 )
 from auto_trader.engine.backtest import BacktestEngine
-from auto_trader.strategy.sma_cross import SmaCross
+from auto_trader.strategy.rule import Operand, Rule, RuleGroup, RuleStrategy, series_name
 
 # The broker registry: named data brokers (keyed "capital") and execution brokers
 # (keyed "capital:paper"). Built once in lifespan so each broker reuses its
@@ -250,6 +250,7 @@ class MarkerDTO(BaseModel):
     side: str
     price: float
     reason: str
+    leg: str
 
 
 class TradeDTO(BaseModel):
@@ -260,6 +261,7 @@ class TradeDTO(BaseModel):
     exit_time: int
     exit_price: float
     pnl: float
+    leg: str
 
 
 class EquityDTO(BaseModel):
@@ -283,6 +285,78 @@ class BacktestResponse(BaseModel):
     trades: list[TradeDTO]
     equity: list[EquityDTO]
     summary: dict
+
+
+# --- rule-based backtest request (D1/D4/D6: frontend computes series, posts
+# candles + series + rules; engine does no indicator math and no re-fetch) ---
+
+
+class OperandDTO(BaseModel):
+    kind: Literal["indicator", "price", "const"]
+    indicator: Literal["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"] | None = None
+    length: int | None = None
+    field: Literal["close", "open", "high", "low"] | None = None
+    value: float | None = None
+
+    @model_validator(mode="after")
+    def _kind_matches_fields(self) -> "OperandDTO":
+        if self.kind == "indicator" and self.indicator is None:
+            raise ValueError("indicator operand requires 'indicator'")
+        if self.kind == "price" and self.field is None:
+            raise ValueError("price operand requires 'field'")
+        if self.kind == "const" and self.value is None:
+            raise ValueError("const operand requires 'value'")
+        return self
+
+    def to_operand(self) -> Operand:
+        return Operand(
+            kind=self.kind, indicator=self.indicator, length=self.length,
+            field=self.field, value=self.value,
+        )
+
+
+class RuleDTO(BaseModel):
+    left: OperandDTO
+    op: Literal["crossesAbove", "crossesBelow", "gt", "lt", "gte", "lte"]
+    right: OperandDTO
+
+    def to_rule(self) -> Rule:
+        return Rule(self.left.to_operand(), self.op, self.right.to_operand())
+
+
+class RuleGroupDTO(BaseModel):
+    combine: Literal["AND", "OR"]
+    rules: list[RuleDTO] = []
+
+    def to_group(self) -> RuleGroup:
+        return RuleGroup(self.combine, [r.to_rule() for r in self.rules])
+
+    def operands(self) -> list[OperandDTO]:
+        result = []
+        for r in self.rules:
+            result.append(r.left)
+            result.append(r.right)
+        return result
+
+
+class CostsDTO(BaseModel):
+    quantity: float = Field(gt=0)
+    commissionPerSide: float = Field(ge=0)
+    slippage: float = Field(ge=0)
+    startingCash: float = Field(gt=0)
+
+
+class BacktestRequest(BaseModel):
+    epic: str
+    resolution: str
+    candles: list[CandleDTO]
+    series: dict[str, list[float | None]]
+    longEntry: RuleGroupDTO
+    longExit: RuleGroupDTO
+    shortEntry: RuleGroupDTO
+    shortExit: RuleGroupDTO
+    costs: CostsDTO
+    tradeFromTime: int
 
 
 def _ts(dt: datetime) -> int:
@@ -965,45 +1039,64 @@ async def candle_cache_global_stats() -> CandleCacheGlobalStatsDTO:
     return CandleCacheGlobalStatsDTO(**stats)
 
 
-@app.get("/api/backtest", response_model=BacktestResponse)
-async def backtest(
-    epic: str = Query("EURUSD"),
-    resolution: Resolution = Query(Resolution.MINUTE_5),
-    bars: int = Query(500, ge=1, le=1000),
-    fast: int = Query(9, ge=1),
-    slow: int = Query(21, ge=2),
-    quantity: float = Query(1.0, gt=0),
-    commission_per_side: float = Query(0.0, ge=0),
-    slippage: float = Query(0.0, ge=0),
-    broker_id: str = Query("capital", alias="broker"),
-) -> BacktestResponse:
-    if fast >= slow:
-        raise HTTPException(422, "fast period must be < slow period")
-    # Same breaker as the candles route: bounds the call, fast-fails a down broker
-    # so it can't starve the others, and maps IG's spent allowance to an actionable
-    # 429 (not a generic 502). Recent-bars mode is weekend-proof (see candles).
-    broker = get_data(broker_id)  # 404 on unknown broker (not a breaker failure)
-    candle_data = await guarded(
-        broker_id,
-        lambda: broker.get_recent_candles(epic, resolution, bars),
-        "backtest data fetch",
+def _candle_from_dto(c: CandleDTO) -> Candle:
+    return Candle(
+        time=datetime.fromtimestamp(c.time, tz=timezone.utc),
+        open=c.open, high=c.high, low=c.low, close=c.close, volume=c.volume,
     )
-    if not candle_data:
-        raise HTTPException(404, f"no data for epic '{epic}' (unknown epic or no history)")
 
-    strategy = SmaCross(fast=fast, slow=slow, quantity=quantity)
+
+@app.post("/api/backtest", response_model=BacktestResponse)
+async def backtest(req: BacktestRequest) -> BacktestResponse:
+    """No broker call (D1): the request carries the exact candles the series were
+    computed on, so re-fetching (which can shift by one forming bar) can't
+    silently misalign series and candles. Indicators warm up over the full
+    posted `candles`, but only bars at/after `tradeFromTime` are tradeable or
+    returned (D6) — that split is what lets a long indicator be fully warm on
+    the trading window's first bar."""
+    if not req.candles:
+        raise HTTPException(422, "candles must not be empty")
+
+    for name, arr in req.series.items():
+        if len(arr) != len(req.candles):
+            raise HTTPException(
+                422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}"
+            )
+
+    # D4: re-derive each referenced operand's series name and make sure it's
+    # actually in the payload (price/const operands have no series to check).
+    for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
+        for op in group.operands():
+            name = series_name(op.to_operand())
+            if name is not None and name not in req.series:
+                raise HTTPException(422, f"missing series '{name}' referenced by a rule")
+
+    candles = [_candle_from_dto(c) for c in req.candles]
+    strategy = RuleStrategy(
+        req.longEntry.to_group(), req.longExit.to_group(),
+        req.shortEntry.to_group(), req.shortExit.to_group(),
+        req.series, quantity=req.costs.quantity, trade_from_time=req.tradeFromTime,
+    )
     result = BacktestEngine(
         strategy,
-        commission_per_side=commission_per_side,
-        slippage=slippage,
-    ).run(candle_data)
+        starting_cash=req.costs.startingCash,
+        commission_per_side=req.costs.commissionPerSide,
+        slippage=req.costs.slippage,
+    ).run(candles)
 
+    # Fills/trades need no >= tradeFromTime filter here: RuleStrategy gates every
+    # entry to tradeFromTime-or-later (rule.py), a fill only lands on a LATER
+    # bar's open, and an exit can only follow a gated entry — so every fill and
+    # trade already satisfies the window by construction. Equity is the one
+    # collection that isn't: the engine appends a point for every bar, including
+    # warm-up, so it's the only result that still needs trimming here.
+    window = [c for c in req.candles if c.time >= req.tradeFromTime]
     return BacktestResponse(
-        epic=epic,
-        resolution=resolution.value,
-        candles=[_candle_dto(c) for c in candle_data],
+        epic=req.epic,
+        resolution=req.resolution,
+        candles=window,
         markers=[
-            MarkerDTO(time=_ts(f.time), side=f.side.value, price=f.price, reason=f.reason)
+            MarkerDTO(time=_ts(f.time), side=f.side.value, price=f.price, reason=f.reason, leg=f.leg)
             for f in result.fills
         ],
         trades=[
@@ -1015,10 +1108,15 @@ async def backtest(
                 exit_time=_ts(t.exit_time),
                 exit_price=t.exit_price,
                 pnl=t.pnl,
+                leg=t.leg,
             )
             for t in result.trades
         ],
-        equity=[EquityDTO(time=_ts(p.time), value=p.equity) for p in result.equity],
+        equity=[
+            EquityDTO(time=_ts(p.time), value=p.equity)
+            for p in result.equity
+            if _ts(p.time) >= req.tradeFromTime
+        ],
         summary=result.summary(),
     )
 

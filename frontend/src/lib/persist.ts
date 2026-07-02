@@ -14,6 +14,7 @@
 
 import type { DeepPartial, OverlayStyle } from "klinecharts";
 import type { Instrument, Period } from "./feed";
+import type { BacktestConfig } from "./backtestConfig";
 
 const PREFIX = "auto-trader";
 
@@ -914,6 +915,40 @@ export function deleteIndicatorPreset(type: string, name: string): void {
     delete all[name];
     save(indicatorPresetsKey(type), all);
   }
+}
+
+// --- backtest configs (global) ------------------------------------------------
+//
+// Same shape as the indicator-preset pair above: named presets (Save/load/Delete
+// in the settings modal) plus a last-used snapshot that auto-restores next time
+// the modal opens. GLOBAL (not per-symbol/per-cell) — a strategy you built is
+// useful on any chart.
+export type SavedBacktestConfig = BacktestConfig;
+
+const BACKTEST_PRESETS_KEY = `${PREFIX}.backtestPresets`;
+const BACKTEST_LAST_USED_KEY = `${PREFIX}.backtestLastUsed`;
+
+export function loadBacktestPresets(): Record<string, SavedBacktestConfig> {
+  return load<Record<string, SavedBacktestConfig>>(BACKTEST_PRESETS_KEY, {});
+}
+export function saveBacktestPreset(name: string, cfg: SavedBacktestConfig): void {
+  const all = loadBacktestPresets();
+  all[name] = cfg;
+  save(BACKTEST_PRESETS_KEY, all);
+}
+export function deleteBacktestPreset(name: string): void {
+  const all = loadBacktestPresets();
+  if (name in all) {
+    delete all[name];
+    save(BACKTEST_PRESETS_KEY, all);
+  }
+}
+
+export function loadBacktestLastUsed(): SavedBacktestConfig | null {
+  return load<SavedBacktestConfig | null>(BACKTEST_LAST_USED_KEY, null);
+}
+export function saveBacktestLastUsed(cfg: SavedBacktestConfig): void {
+  save(BACKTEST_LAST_USED_KEY, cfg);
 }
 
 // --- per-symbol chart templates (global, keyed by epic) ----------------------

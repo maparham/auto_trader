@@ -256,6 +256,22 @@ export function openSettings(): void {
   settingsRequest.set(settingsRequest.value + 1);
 }
 
+// Request to open the Backtest settings modal. Set by the ⚙ gear next to the
+// Backtest button; read by App, which owns the modal.
+export const backtestSettingsRequest = new Signal<number>(0);
+export function openBacktestSettings(): void {
+  backtestSettingsRequest.set(backtestSettingsRequest.value + 1);
+}
+
+// Bumped when the settings modal's "Run backtest" is clicked (after saving the
+// config as last-used) — BacktestButton owns the actual fetch/run logic and its
+// own running/summary/error state, so this just re-triggers the same ▶ Backtest
+// action rather than duplicating it here.
+export const backtestRunRequest = new Signal<number>(0);
+export function requestBacktestRun(): void {
+  backtestRunRequest.set(backtestRunRequest.value + 1);
+}
+
 // Bumped (monotonic counter) whenever the alert set changes — a price alert is
 // created, deleted, or dragged (live list), OR a new alert fires (history list).
 // The alerts sidebar subscribes and re-reads overlays.getAlerts() / the persisted

@@ -1,0 +1,126 @@
+import { describe, it, expect } from "vitest";
+import {
+  resolveWindow,
+  resolveHistoryStart,
+  minimalHistoryStart,
+  requiredWarmupBars,
+  warmupBarCount,
+} from "./backtestWindow";
+import type { BacktestConfig } from "./backtestConfig";
+
+const DAY_MS = 86_400_000;
+
+function cfg(overrides: Partial<BacktestConfig>): BacktestConfig {
+  return {
+    range: { mode: "bars", bars: 500 },
+    entry: { combine: "AND", rules: [] },
+    exit: { combine: "AND", rules: [] },
+    costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+    ...overrides,
+  };
+}
+
+describe("resolveWindow", () => {
+  const now = 1_700_000_000_000;
+
+  it("bars mode: window is the last N bars by resolution seconds", () => {
+    const { fromMs, toMs } = resolveWindow(cfg({ range: { mode: "bars", bars: 10 } }), 60, now);
+    expect(toMs).toBe(now);
+    expect(fromMs).toBe(now - 10 * 60 * 1000);
+  });
+
+  it("lastWeek mode: window is the trailing 7 days", () => {
+    const { fromMs, toMs } = resolveWindow(cfg({ range: { mode: "lastWeek" } }), 3600, now);
+    expect(toMs).toBe(now);
+    expect(fromMs).toBe(now - 7 * DAY_MS);
+  });
+
+  it("custom mode: window is exactly fromMs/toMs", () => {
+    const { fromMs, toMs } = resolveWindow(
+      cfg({ range: { mode: "custom", fromMs: 100, toMs: 200 } }),
+      60,
+      now,
+    );
+    expect(fromMs).toBe(100);
+    expect(toMs).toBe(200);
+  });
+});
+
+describe("resolveHistoryStart / minimalHistoryStart — weekend padding", () => {
+  const windowFromMs = 1_700_000_000_000;
+
+  it("pads sub-week resolutions so a weekend inside the lookback doesn't undercount real bars", () => {
+    // "minimal" depth, indicator needs 200 bars on DAY resolution (86400s).
+    // A flat 200*86400s calendar subtraction would land ~28% short of 200 REAL
+    // trading-day candles (weekends have none) — the padded start must reach
+    // further back than the naive calculation to compensate.
+    const config = cfg({
+      entry: {
+        combine: "AND",
+        rules: [
+          {
+            left: { kind: "indicator", indicator: "SMA", length: 200 },
+            op: "gt",
+            right: { kind: "const", value: 0 },
+          },
+        ],
+      },
+    });
+    const naiveStart = windowFromMs - 200 * 86_400 * 1000;
+    const paddedStart = minimalHistoryStart(config, windowFromMs, 86_400);
+    expect(paddedStart).toBeLessThan(naiveStart);
+  });
+
+  it("does not pad resolutions at/above a week (no weekend gap to compensate for)", () => {
+    const config = cfg({
+      entry: {
+        combine: "AND",
+        rules: [{ left: { kind: "indicator", indicator: "SMA", length: 20 }, op: "gt", right: { kind: "const", value: 0 } }],
+      },
+    });
+    const weekSeconds = 604_800;
+    const naiveStart = windowFromMs - 20 * weekSeconds * 1000;
+    expect(minimalHistoryStart(config, windowFromMs, weekSeconds)).toBe(naiveStart);
+  });
+
+  it("bars depth pads the user-typed history bar count the same way", () => {
+    const config = cfg({ range: { mode: "bars", bars: 500, history: "bars", historyBars: 100 } });
+    const naiveStart = windowFromMs - 100 * 86_400 * 1000;
+    expect(resolveHistoryStart(config, windowFromMs, 86_400)).toBeLessThan(naiveStart);
+  });
+});
+
+describe("requiredWarmupBars", () => {
+  const config = (history: "full" | "bars" | "minimal", historyBars?: number) =>
+    cfg({
+      range: { mode: "bars", bars: 500, history, historyBars },
+      entry: {
+        combine: "AND",
+        rules: [{ left: { kind: "indicator", indicator: "EMA", length: 21 }, op: "gt", right: { kind: "const", value: 0 } }],
+      },
+    });
+
+  it("minimal: the longest indicator length", () => {
+    expect(requiredWarmupBars(config("minimal"))).toBe(21);
+  });
+
+  it("bars: the user-typed history bar count", () => {
+    expect(requiredWarmupBars(config("bars", 300))).toBe(300);
+  });
+
+  it("full: the longest indicator length is still the floor (can't ask for less than that)", () => {
+    expect(requiredWarmupBars(config("full"))).toBe(21);
+  });
+});
+
+describe("warmupBarCount", () => {
+  it("counts bars strictly before the window start", () => {
+    const bars = [{ timestamp: 0 }, { timestamp: 1000 }, { timestamp: 2000 }, { timestamp: 3000 }];
+    expect(warmupBarCount(bars, 2000)).toBe(2);
+  });
+
+  it("is 0 when every bar is inside the window", () => {
+    const bars = [{ timestamp: 5000 }, { timestamp: 6000 }];
+    expect(warmupBarCount(bars, 2000)).toBe(0);
+  });
+});

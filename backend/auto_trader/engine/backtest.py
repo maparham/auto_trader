@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from auto_trader.core.models import Candle, Fill, Side, Trade
+from auto_trader.core.models import Candle, Fill, Side, Signal, Trade
 from auto_trader.strategy.base import Context, Strategy
 
 
@@ -67,69 +67,106 @@ class BacktestEngine:
         result = BacktestResult()
         ctx = Context()
 
-        position = 0.0  # signed units held
-        entry_price = 0.0  # average entry of the open position
-        entry_time: datetime | None = None
-        entry_reason = ""
+        # Two independent buckets (hedging). Each holds a non-negative size, its
+        # average entry price, and the open time/reason for trade records.
+        long_qty = short_qty = 0.0
+        long_entry = short_entry = 0.0
+        long_time: datetime | None = None
+        short_time: datetime | None = None
+        long_reason = short_reason = ""
         realized = 0.0
-        pending: tuple[Side, float, str] | None = None  # signal awaiting next open
+        pending: list[Signal] = []  # signals from the previous bar, filled at this open
 
         peak_equity = self.starting_cash
 
         for i, bar in enumerate(candles):
-            # 1) Execute any signal from the previous bar at THIS bar's open.
-            if pending is not None:
-                side, qty, reason = pending
-                pending = None
-                fill_price = self._fill_price(bar.open, side)
-                result.fills.append(Fill(bar.time, side, fill_price, qty, reason))
-
-                delta = qty if side is Side.BUY else -qty
-                realized, position, entry_price, entry_time, entry_reason = self._apply(
-                    result,
-                    realized,
-                    position,
-                    entry_price,
-                    entry_time,
-                    entry_reason,
-                    delta,
-                    fill_price,
-                    bar.time,
-                    reason,
+            # 1) Fill everything queued on the previous bar at THIS bar's open.
+            for sig in pending:
+                fill_price = self._fill_price(bar.open, sig.side)
+                result.fills.append(
+                    Fill(bar.time, sig.side, fill_price, sig.quantity, sig.reason, sig.leg)
                 )
+                realized -= self.commission  # one side's commission per fill
 
-            # 2) Mark-to-market equity using the close.
-            unrealized = position * (bar.close - entry_price) if position else 0.0
-            equity = self.starting_cash + realized + unrealized
+                if sig.leg == "long":
+                    if sig.side is Side.BUY:  # open / add long
+                        new_qty = long_qty + sig.quantity
+                        long_entry = (
+                            (long_qty * long_entry + sig.quantity * fill_price) / new_qty
+                            if new_qty
+                            else 0.0
+                        )
+                        if long_qty == 0:
+                            long_time, long_reason = bar.time, sig.reason
+                        long_qty = new_qty
+                    else:  # SELL -> close / reduce long
+                        closing = min(sig.quantity, long_qty)
+                        if closing > 0:
+                            pnl = closing * (fill_price - long_entry)
+                            realized += pnl
+                            result.trades.append(
+                                Trade(
+                                    side=Side.BUY, quantity=closing,
+                                    entry_time=long_time, entry_price=long_entry,  # type: ignore[arg-type]
+                                    exit_time=bar.time, exit_price=fill_price, pnl=pnl,
+                                    leg="long", reason_in=long_reason, reason_out=sig.reason,
+                                )
+                            )
+                            long_qty -= closing
+                            if long_qty == 0:
+                                long_entry, long_time, long_reason = 0.0, None, ""
+                else:  # short leg
+                    if sig.side is Side.SELL:  # open / add short
+                        new_qty = short_qty + sig.quantity
+                        short_entry = (
+                            (short_qty * short_entry + sig.quantity * fill_price) / new_qty
+                            if new_qty
+                            else 0.0
+                        )
+                        if short_qty == 0:
+                            short_time, short_reason = bar.time, sig.reason
+                        short_qty = new_qty
+                    else:  # BUY -> close / reduce short
+                        closing = min(sig.quantity, short_qty)
+                        if closing > 0:
+                            pnl = closing * (short_entry - fill_price)  # short profits on a drop
+                            realized += pnl
+                            result.trades.append(
+                                Trade(
+                                    side=Side.SELL, quantity=closing,
+                                    entry_time=short_time, entry_price=short_entry,  # type: ignore[arg-type]
+                                    exit_time=bar.time, exit_price=fill_price, pnl=pnl,
+                                    leg="short", reason_in=short_reason, reason_out=sig.reason,
+                                )
+                            )
+                            short_qty -= closing
+                            if short_qty == 0:
+                                short_entry, short_time, short_reason = 0.0, None, ""
+            pending = []
+
+            # 2) Mark-to-market both buckets on the close.
+            long_unrealized = long_qty * (bar.close - long_entry) if long_qty else 0.0
+            short_unrealized = short_qty * (short_entry - bar.close) if short_qty else 0.0
+            equity = self.starting_cash + realized + long_unrealized + short_unrealized
             result.equity.append(EquityPoint(bar.time, equity))
             peak_equity = max(peak_equity, equity)
             result.max_drawdown = max(result.max_drawdown, peak_equity - equity)
 
             # 3) Let the strategy decide for the NEXT bar (no lookahead).
             ctx.history.append(bar)
-            ctx.position = position
+            ctx.position_long = long_qty
+            ctx.position_short = short_qty
             if i < len(candles) - 1:  # last bar has no next-open to fill on
-                signal = self.strategy.on_bar(ctx)
-                if signal is not None:
-                    pending = (signal.side, signal.quantity, signal.reason)
+                pending = list(self.strategy.on_bar(ctx))
 
-        # Include the mark-to-market of any position still open at the last bar,
-        # so net_pnl matches the final equity point instead of reporting ~0 for a
-        # buy-and-hold that never closed.
-        final_unrealized = (
-            position * (candles[-1].close - entry_price) if position and candles else 0.0
-        )
-        result.net_pnl = realized + final_unrealized
+        # Mark-to-market any still-open buckets at the last bar so net_pnl matches
+        # the final equity point instead of reporting ~0 for a held position.
+        if candles:
+            last = candles[-1].close
+            realized += long_qty * (last - long_entry) if long_qty else 0.0
+            realized += short_qty * (short_entry - last) if short_qty else 0.0
+        result.net_pnl = realized
         result.n_trades = len(result.trades)
-        # Trade.pnl is GROSS (price move only); net_pnl is net of per-fill
-        # commission. Count a trade as a win only if it clears its round-trip cost
-        # (one commission on entry + one on exit), so win_rate stays consistent
-        # with net_pnl instead of counting commission-eaten trades as wins.
-        # NB: this 2*commission cost is exact for full-close exits (every strategy
-        # here closes its whole position per fill). A strategy that scales out in
-        # partial closes would book one shared entry commission across several exit
-        # trades, so each would carry less than a full round trip — revisit this if
-        # such a strategy is added.
         round_trip_cost = 2 * self.commission
         wins = sum(1 for t in result.trades if t.pnl > round_trip_cost)
         result.win_rate = wins / result.n_trades if result.n_trades else 0.0
@@ -140,60 +177,3 @@ class BacktestEngine:
     def _fill_price(self, open_price: float, side: Side) -> float:
         # Slippage pushes the price against us: pay more to buy, receive less to sell.
         return open_price + (self.slippage if side is Side.BUY else -self.slippage)
-
-    def _apply(
-        self,
-        result: BacktestResult,
-        realized: float,
-        position: float,
-        entry_price: float,
-        entry_time: datetime | None,
-        entry_reason: str,
-        delta: float,
-        price: float,
-        time: datetime,
-        reason: str,
-    ):
-        """Apply a fill to the position, realizing PnL and recording round-trip
-        trades when a position is reduced, closed, or reversed."""
-        realized -= self.commission  # one side's commission per fill
-
-        if position == 0 or (position > 0) == (delta > 0):
-            # opening or adding in the same direction: update average entry
-            new_pos = position + delta
-            entry_price = (
-                (abs(position) * entry_price + abs(delta) * price) / abs(new_pos)
-                if new_pos
-                else 0.0
-            )
-            if position == 0:
-                entry_time, entry_reason = time, reason
-            return realized, new_pos, entry_price, entry_time, entry_reason
-
-        # opposite direction: closing some/all of the position
-        closing = min(abs(delta), abs(position))
-        direction = 1 if position > 0 else -1
-        pnl = direction * closing * (price - entry_price)
-        realized += pnl
-        result.trades.append(
-            Trade(
-                side=Side.BUY if direction > 0 else Side.SELL,
-                quantity=closing,
-                entry_time=entry_time,  # type: ignore[arg-type]
-                entry_price=entry_price,
-                exit_time=time,
-                exit_price=price,
-                pnl=pnl,
-                reason_in=entry_reason,
-                reason_out=reason,
-            )
-        )
-
-        remaining = abs(delta) - closing
-        new_pos = position + delta
-        if remaining > 0:
-            # reversed through zero: open a fresh position with the remainder
-            entry_price, entry_time, entry_reason = price, time, reason
-        elif new_pos == 0:
-            entry_price, entry_time, entry_reason = 0.0, None, ""
-        return realized, new_pos, entry_price, entry_time, entry_reason

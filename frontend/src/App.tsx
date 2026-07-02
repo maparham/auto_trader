@@ -7,6 +7,9 @@ import BrokerSelector from "./BrokerSelector";
 import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor } from "./lib/chartSync";
 import ThemeToggle from "./ThemeToggle";
 import SettingsModal from "./Settings";
+import BacktestSettingsModal from "./BacktestSettingsModal";
+import { defaultBacktestConfig } from "./lib/backtestConfig";
+import { loadBacktestLastUsed, saveBacktestLastUsed } from "./lib/persist";
 import AlertModal from "./AlertModal";
 import IndicatorSettings from "./IndicatorSettings";
 import DrawingSettings from "./DrawingSettings";
@@ -32,6 +35,8 @@ import {
   alertsChanged,
   bumpAlerts,
   settingsRequest,
+  backtestSettingsRequest,
+  requestBacktestRun,
   confirmLineEditsSignal,
   tradeLineUiSignal,
   pendingEditsSignal,
@@ -230,6 +235,9 @@ export default function App() {
   }, [settings.trading.confirmLineEdits]);
   // Toolbar gear + chart context menu request the Settings modal via a signal.
   useEffect(() => settingsRequest.subscribe(() => setShowSettings(true)), []);
+  // Backtest button's ⚙ gear requests the Backtest settings modal via a signal.
+  const [showBacktestCfg, setShowBacktestCfg] = useState(false);
+  useEffect(() => backtestSettingsRequest.subscribe(() => setShowBacktestCfg(true)), []);
   const [alertReq, setAlertReq] = useState(alertModalRequest.value);
   useEffect(() => alertModalRequest.subscribe(setAlertReq), []);
   const [alertEdit, setAlertEdit] = useState(alertEditRequest.value);
@@ -1323,6 +1331,19 @@ export default function App() {
           settings={settings}
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {showBacktestCfg && symbol && period && (
+        <BacktestSettingsModal
+          initial={loadBacktestLastUsed() ?? defaultBacktestConfig()}
+          epic={symbol.epic}
+          resolution={period.resolution}
+          onRun={(cfg) => {
+            saveBacktestLastUsed(cfg);
+            requestBacktestRun();
+          }}
+          onClose={() => setShowBacktestCfg(false)}
         />
       )}
 

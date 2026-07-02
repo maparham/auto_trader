@@ -122,7 +122,7 @@ const AVWAP_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
 // startIndex. The band stdev is the volume-weighted deviation of the source price
 // from the running VWAP: variance = Σ(p²·vol)/Σvol − vwap², clamped at 0 (FP drift
 // makes it slightly negative on near-flat data, and sqrt(NaN) would blank lines).
-function vwapFrom(
+export function vwapFrom(
   dataList: KLineData[],
   startIndex: number,
   ext: AvwapExtend,
@@ -1311,7 +1311,7 @@ function smoothSeries(
 // (default close). When smoothing is set, an MA of the RSI (+ optional Bollinger
 // Bands) is attached; when divergence is enabled, its segments are attached too —
 // both consumed by the `draw` callback.
-function computeRsi(dataList: KLineData[], length: number, ext: RsiExtend): RsiPoint[] {
+export function computeRsi(dataList: KLineData[], length: number, ext: RsiExtend): RsiPoint[] {
   const n = dataList.length;
   const out: RsiPoint[] = dataList.map(() => ({}));
   const period = Math.max(1, Math.floor(length) || 14);

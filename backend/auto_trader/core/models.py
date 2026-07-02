@@ -57,11 +57,17 @@ class Candle:
 
 @dataclass(frozen=True, slots=True)
 class Signal:
-    """A strategy's intent at a given bar. quantity in instrument units."""
+    """A strategy's intent at a given bar. quantity in instrument units.
+
+    `leg` picks which position bucket the side acts on (hedging): leg="long"
+    + BUY opens/adds long, leg="long" + SELL closes long; leg="short" + SELL
+    opens/adds short, leg="short" + BUY closes short.
+    """
 
     side: Side
     quantity: float
     reason: str = ""
+    leg: str = "long"
 
 
 @dataclass(slots=True)
@@ -75,6 +81,7 @@ class Trade:
     exit_time: datetime
     exit_price: float
     pnl: float
+    leg: str = "long"
     reason_in: str = ""
     reason_out: str = ""
 
@@ -88,6 +95,7 @@ class Fill:
     price: float
     quantity: float
     reason: str = ""
+    leg: str = "long"
 
 
 # --- order execution (paper / live) -----------------------------------------

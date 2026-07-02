@@ -47,7 +47,7 @@ function ema(values: number[], length: number): Array<number | undefined> {
 }
 
 /** Simple moving average over `length` (undefined until enough samples). */
-function sma(values: number[], length: number): Array<number | undefined> {
+export function sma(values: number[], length: number): Array<number | undefined> {
   const out: Array<number | undefined> = new Array(values.length).fill(undefined);
   if (length < 1) return out;
   let sum = 0;
