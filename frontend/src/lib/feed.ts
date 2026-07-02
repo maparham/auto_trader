@@ -168,32 +168,53 @@ export async function searchInstruments(
   return res.json();
 }
 
+// Session-cache an instrument-list fetch per broker, WITHOUT caching failures.
+// A transient failure (backend restarting mid-dev, a blip) used to be cached as a
+// resolved [] for the rest of the tab's life — the symbol-search modal then
+// resolved the Recent list against an empty catalogue and rendered "No recently
+// opened symbols yet" forever. On failure we still resolve [] (callers render an
+// empty list for THAT open), but evict the cache entry so the next open retries.
+function cachedInstrumentFetch(
+  cache: Map<string, Promise<Instrument[]>>,
+  brokerId: string,
+  url: string,
+): Promise<Instrument[]> {
+  let cached = cache.get(brokerId);
+  if (!cached) {
+    cached = fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`instrument fetch failed: ${r.status}`);
+        return r.json() as Promise<Instrument[]>;
+      })
+      .catch(() => {
+        cache.delete(brokerId);
+        return [];
+      });
+    cache.set(brokerId, cached);
+  }
+  return cached;
+}
+
 // The full instrument catalogue (~4000) in one call, cached for the session: the
 // symbol-search modal filters it client-side by `type` for the category chips.
 // Keyed by broker so switching brokers can't serve the wrong broker's catalogue.
 const allMarketsCache = new Map<string, Promise<Instrument[]>>();
 export function fetchAllMarkets(brokerId: string = DEFAULT_BROKER): Promise<Instrument[]> {
-  let cached = allMarketsCache.get(brokerId);
-  if (!cached) {
-    cached = fetch(`${BASE}/api/markets/all?broker=${encodeURIComponent(brokerId)}`)
-      .then((r) => (r.ok ? r.json() : []))
-      .catch(() => []);
-    allMarketsCache.set(brokerId, cached);
-  }
-  return cached;
+  return cachedInstrumentFetch(
+    allMarketsCache,
+    brokerId,
+    `${BASE}/api/markets/all?broker=${encodeURIComponent(brokerId)}`,
+  );
 }
 
 // The account's FAVORITES watchlist — the modal's opening view. Cached per broker.
 const favoritesCache = new Map<string, Promise<Instrument[]>>();
 export function fetchFavorites(brokerId: string = DEFAULT_BROKER): Promise<Instrument[]> {
-  let cached = favoritesCache.get(brokerId);
-  if (!cached) {
-    cached = fetch(`${BASE}/api/favorites?broker=${encodeURIComponent(brokerId)}`)
-      .then((r) => (r.ok ? r.json() : []))
-      .catch(() => []);
-    favoritesCache.set(brokerId, cached);
-  }
-  return cached;
+  return cachedInstrumentFetch(
+    favoritesCache,
+    brokerId,
+    `${BASE}/api/favorites?broker=${encodeURIComponent(brokerId)}`,
+  );
 }
 
 // Drop one broker's favorites cache so the next fetchFavorites() re-reads from
