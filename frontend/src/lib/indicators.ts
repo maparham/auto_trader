@@ -378,9 +378,11 @@ export function applyIndicator(
   // Migrate stale saved calcParams to a new shorter default (e.g. an RSI saved
   // under the old three-length design → single length 14), so existing instances
   // pick up the TradingView shape on reload instead of redrawing three curves.
-  const def = DEFAULT_CALC_PARAMS[type];
-  if (cfg?.calcParams && def && cfg.calcParams.length > def.length) {
-    cfg.calcParams = cfg.calcParams.slice(0, def.length);
+  // The slice rule lives in effectiveCalcParams — the ONE source of truth the
+  // template-merge signature also normalizes through, so what lands on the chart
+  // and what the merge identity sees can never drift apart.
+  if (cfg?.calcParams) {
+    cfg.calcParams = effectiveCalcParams(type, cfg.calcParams);
   }
   // indType always reflects the real type; merge it over any saved/copied extendData.
   const extendData: { userVisible?: boolean; indType: string } = {
