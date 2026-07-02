@@ -503,7 +503,7 @@ export class OverlayManager {
   // stable anchors + styles + name, by VALUE — safe to stash in a clipboard.
   getDrawing(id: string): {
     name: string;
-    points: Array<{ timestamp?: number; value?: number }>;
+    points: Array<{ timestamp?: number; value?: number; dataIndex?: number }>;
     styles: DeepPartial<OverlayStyle> | null;
     lock: boolean;
     visible: boolean;
@@ -514,7 +514,11 @@ export class OverlayManager {
     if (!ov || this.entries.get(id) !== "drawing") return null;
     return {
       name: ov.name,
-      points: (ov.points ?? []).map((p) => ({ timestamp: p.timestamp, value: p.value })),
+      // Keep dataIndex: a point past the last candle has NO timestamp (klinecharts'
+      // dataIndexToTimestamp returns null beyond the data) and renders x from
+      // dataIndex alone — dropping it teleports the anchor to x=0 (left edge) on
+      // any recreate (setExtend / clone / paste / modal Cancel).
+      points: (ov.points ?? []).map((p) => ({ timestamp: p.timestamp, value: p.value, dataIndex: p.dataIndex })),
       styles: this.canonicalStyles(id, ov) ?? null,
       lock: !!ov.lock,
       // INTENT, not the live (effective) flag — the overlay's `visible` is the
@@ -1127,7 +1131,7 @@ export class OverlayManager {
     if (target === ov.name) return id;
     const spec = {
       name: target,
-      points: (ov.points ?? []).map((p) => ({ timestamp: p.timestamp, value: p.value })),
+      points: (ov.points ?? []).map((p) => ({ timestamp: p.timestamp, value: p.value, dataIndex: p.dataIndex })),
       // The CANONICAL style, never the faded ghost color — the recreated overlay must
       // look identical to the (possibly currently-ghosted) original, not bake the fade
       // in as if it were the real one (see canonicalStyles/fadedStyles).

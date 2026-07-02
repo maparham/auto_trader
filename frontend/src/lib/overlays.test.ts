@@ -515,6 +515,35 @@ describe("OverlayManager setExtend preserves extendData (text + intervals surviv
   });
 });
 
+describe("OverlayManager future-whitespace anchors (dataIndex-only points)", () => {
+  // A point placed/dragged past the last candle has NO timestamp in klinecharts
+  // (dataIndexToTimestamp returns null beyond the data) — it exists only as a
+  // dataIndex. klinecharts renders x from timestamp if present, else dataIndex,
+  // else x=0 (the left edge). So any copy path that drops dataIndex teleports a
+  // future-anchored endpoint to the left edge → the "extend changes the slope" bug.
+  const FUTURE = [
+    { timestamp: 1_000, value: 1 },
+    { dataIndex: 250, value: 2 }, // beyond the last bar: dataIndex-only
+  ];
+
+  it("setExtend keeps a dataIndex-only anchor (recreate must not drop it)", () => {
+    const { chart, m } = setup();
+    let id = m.addDrawing("segment", FUTURE)!;
+    id = m.setExtend(id, "ray")!;
+    const pts = chart.getOverlayById(id)!.points as Array<Record<string, unknown>>;
+    expect(pts[1].dataIndex).toBe(250);
+    expect(pts[1].value).toBe(2);
+    expect(pts[0].timestamp).toBe(1_000);
+  });
+
+  it("getDrawing keeps a dataIndex-only anchor (clipboard/clone/Cancel snapshot source)", () => {
+    const { m } = setup();
+    const id = m.addDrawing("segment", FUTURE)!;
+    const pts = m.getDrawing(id)!.points;
+    expect(pts[1].dataIndex).toBe(250);
+  });
+});
+
 describe("drawing effective visibility", () => {
   // effectiveVisible mirrors: userVisible AND interval AND NOT(autoHide && bars<min).
   function effective(
