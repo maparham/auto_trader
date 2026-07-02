@@ -74,6 +74,7 @@ import {
   purgeScope,
   primaryCellScope,
   cellScope,
+  copyScopeContent,
   LAYOUT_CELLS,
   pruneLegacyGlobalWorkspace,
   setPersistBroker,
@@ -279,7 +280,25 @@ export default function App() {
   // three slices must share ONE resolveStartup() call, not three divergent ones).
   const [startup] = useState(resolveStartup);
   const [tabs, setTabs] = useState<ChartTab[]>(() => startup.ws.tabs);
-  const [activeId, setActiveId] = useState<string>(() => startup.ws.activeTabId);
+  const [activeId, setActiveId] = useState<string>(() => {
+    // Deep-link from "detach to browser tab": ?tab=<id> selects that tab on
+    // launch (if it exists in the resolved workspace). The query string is
+    // stripped in a mount effect below (not here) so a reload behaves
+    // normally. Device-local activation only — never persisted. Kept pure:
+    // no history mutation in this initializer, since StrictMode double-runs
+    // it in dev.
+    const want = new URLSearchParams(location.search).get("tab");
+    if (want && startup.ws.tabs.some((t) => t.id === want)) return want;
+    return startup.ws.activeTabId;
+  });
+  // Strip a deep-link ?tab= param after mount (not in the useState
+  // initializer above) so a reload behaves normally without risking the
+  // StrictMode double-invoke racing the read against the strip.
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("tab")) {
+      history.replaceState(null, "", location.pathname);
+    }
+  }, []);
   // The named layout this device currently shows (null = scratch). Device-local.
   const [activeLayoutId, setActiveLayoutId] = useState<string | null>(
     () => startup.activeLayoutId,
@@ -856,9 +875,15 @@ export default function App() {
         const activeCellId = cells.some((c) => c.id === t.activeCellId)
           ? t.activeCellId
           : cells[0].id;
-        return { ...t, layout, cells, activeCellId };
+        return { ...t, layout, cells, activeCellId, sizes: layout === t.layout ? t.sizes : undefined };
       }),
     );
+  };
+
+  // Commit new cell-size fractions after a border drag (ChartGrid onSizes).
+  const setCellSizes = (sizes: { cols: number[]; rows: number[] }) => {
+    if (!active) return;
+    setTabs((ts) => ts.map((t) => (t.id === active.id ? { ...t, sizes } : t)));
   };
 
   // Toggle a per-tab sync link (symbol, interval, or crosshair). Enabling symbol or
@@ -969,6 +994,42 @@ export default function App() {
     setTabs((ts) => [...ts, t]);
     setActiveId(t.id);
     requestSymbolSearch();
+  };
+
+  // Detach a cell into its own NEW one-cell tab: same symbol/interval, and a full
+  // copy of the cell's scope content (drawings/indicators/config) into the new
+  // tab's primary scope. Alerts are global per instrument — nothing to copy.
+  // target "tab" switches this window to the new tab; "window" leaves this window
+  // alone and opens the app in a new browser tab focused on it (?tab=<id> — see
+  // the startup handling). The source tab/cell is untouched either way.
+  const detachCell = (cellId: string, target: "tab" | "window") => {
+    if (!active) return;
+    const src = active.cells.find((c) => c.id === cellId);
+    if (!src) return;
+    const id = newTabId();
+    const cid = `${id}-c0`;
+    const scope = primaryCellScope(id);
+    copyScopeContent(src.scope, scope);
+    const t: ChartTab = {
+      id,
+      layout: "1",
+      activeCellId: cid,
+      cells: [{ id: cid, symbol: src.symbol, period: src.period, scope }],
+    };
+    const nextTabs = [...tabs, t];
+    setTabs(nextTabs);
+    if (target === "tab") {
+      setActiveId(id);
+    } else {
+      // The new browser tab resolves its workspace from storage, so the updated
+      // tab list must be persisted NOW (synchronously, inside the click gesture —
+      // both for popup-blocker friendliness and so the autosave effect's timing
+      // doesn't matter, including autosave-off).
+      const ws: Workspace = { tabs: nextTabs, activeTabId: "" };
+      if (activeLayoutId && layoutName != null) saveLayout(activeLayoutId, layoutName, ws);
+      else saveScratch(ws);
+      window.open(`${location.pathname}?tab=${encodeURIComponent(id)}`, "_blank");
+    }
   };
 
   // Reorder tabs by drag-and-drop: move the tab at `from` to destination slot
@@ -1272,6 +1333,9 @@ export default function App() {
               onToggleMaximizeCell={(cellId) =>
                 setMaximizedCellId((cur) => (cur === cellId ? null : cellId))
               }
+              onDetachCell={detachCell}
+              sizes={active.sizes}
+              onSizes={setCellSizes}
             />
           ) : (
             /* Blank workspace: no default layout and nothing open. Offer the two

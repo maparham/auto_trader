@@ -510,6 +510,10 @@ export interface ChartTab {
   // symbol forced off) so unlocking restores their prior state for free; the flags
   // themselves are never mutated. See the effective* helpers in App.tsx.
   locked?: boolean;
+  // Per-tab cell-size fractions (column widths / row heights, each summing to 1)
+  // set by dragging the borders between cells. Absent = equal split. Reset when
+  // the layout kind changes.
+  sizes?: { cols: number[]; rows: number[] };
 }
 
 // Pre-cells persisted tab shape (one chart per tab). Kept only to migrate.
@@ -755,6 +759,7 @@ export function cloneWorkspace(
       syncCrosshair: t.syncCrosshair,
       syncTime: t.syncTime,
       locked: t.locked,
+      sizes: t.sizes,
     };
   });
   const srcActiveIdx = src.tabs.findIndex((t) => t.id === src.activeTabId);
@@ -765,12 +770,13 @@ export function cloneWorkspace(
 }
 
 // Copy every `${PREFIX}.<from>.*` key to `${PREFIX}.<to>.*` (mirrored to the
-// backend). Used by cloneWorkspace. CAREFUL: a primary scope (`tab.<id>`) is a
-// PREFIX of its nested cell scopes (`tab.<id>.cell.<cid>`), so a naive prefix scan
-// would also drag every nested-cell key into the clone's primary scope (leaked junk
-// under stale cell ids). Each cell is copied under its OWN scope by the caller, so
-// here we EXCLUDE the nested `cell.` keys when copying a primary scope.
-function copyScopeContent(from: string, to: string): void {
+// backend). Used by cloneWorkspace and App.tsx's detach-cell. CAREFUL: a primary
+// scope (`tab.<id>`) is a PREFIX of its nested cell scopes (`tab.<id>.cell.<cid>`),
+// so a naive prefix scan would also drag every nested-cell key into the clone's
+// primary scope (leaked junk under stale cell ids). Each cell is copied under its
+// OWN scope by the caller, so here we EXCLUDE the nested `cell.` keys when copying
+// a primary scope.
+export function copyScopeContent(from: string, to: string): void {
   const head = `${PREFIX}.${from}.`;
   const nested = `${head}cell.`; // only meaningful when `from` is a primary scope
   const pairs: Array<[string, string]> = [];

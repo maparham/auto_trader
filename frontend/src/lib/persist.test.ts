@@ -459,6 +459,35 @@ describe("pickActiveTabId (per-instance active tab)", () => {
   });
 });
 
+describe("cell sizes + detach support", () => {
+  it("cloneWorkspace preserves the tab's sizes fractions", () => {
+    let n = 0;
+    const ws: P.Workspace = {
+      tabs: [
+        {
+          id: "t1",
+          layout: "2h",
+          activeCellId: "t1-c0",
+          sizes: { cols: [0.3, 0.7], rows: [1] },
+          cells: [
+            { id: "t1-c0", symbol: SYMBOL, period: PERIOD, scope: "tab.t1" },
+            { id: "c2", symbol: SYMBOL, period: PERIOD, scope: "tab.t1.cell.c2" },
+          ],
+        },
+      ],
+      activeTabId: "t1",
+    };
+    const out = P.cloneWorkspace(ws, () => `nt${++n}`, () => `nc${++n}`);
+    expect(out.tabs[0].sizes).toEqual({ cols: [0.3, 0.7], rows: [1] });
+  });
+
+  it("copyScopeContent is exported and copies scope keys", () => {
+    localStorage.setItem("auto-trader.tab.src.drawings.EPIC", "[1]");
+    P.copyScopeContent("tab.src", "tab.dst");
+    expect(localStorage.getItem("auto-trader.tab.dst.drawings.EPIC")).toBe("[1]");
+  });
+});
+
 // The named-layout library (index + bodies) is SHARED across accounts of the same
 // broker family (capital/capital-live, ig-demo/ig-live) — see Task 6. Everything
 // else (active layout, scratch, autosave, tabs) stays per-feed so each feed still

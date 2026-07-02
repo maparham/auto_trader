@@ -84,7 +84,17 @@
 /* Multi-chart layout grid (TradingView-style split). Fills .chart; each cell is an
    independent ChartCore. Thin separators between cells; the focused cell carries a
    subtle accent ring (inset, so it never shifts layout — and no drop-shadow). */
-.chart-grid { gap: 1px; background: var(--border); }
+.chart-grid { gap: 1px; background: var(--border); position: relative; }
+
+/* Invisible ~8px grab strips over the 1px cell borders. Above the corner
+   controls' z-25 so the border is always grabbable. */
+.cell-resize-strip {
+  position: absolute;
+  z-index: 30;
+  background: transparent;
+  touch-action: none;
+}
+.cell-resize-strip:hover { background: var(--accent); opacity: 0.25; }
 .chart-cell {
   position: relative;
   min-width: 0;
@@ -101,13 +111,14 @@
   box-shadow: inset 0 0 0 1px var(--accent);
   z-index: 20;
 }
-/* Per-cell maximize control: top-right corner, revealed on cell hover, kept
-   visible while that cell is maximized. Sits above the chart canvas and the
-   focus ring (z 20). No drop-shadow, per project style. */
+/* Per-cell maximize control: top-right INSIDE the chart area, just left of the
+   price axis so it never covers axis labels — the horizontal offset is set
+   inline by ChartGrid (measured axis width, dynamic). Revealed on cell hover,
+   kept visible while that cell is maximized. Sits above the chart canvas and
+   the focus ring (z 20). No drop-shadow, per project style. */
 .chart-cell-maximize {
   position: absolute;
   top: 6px;
-  right: 6px;
   z-index: 25;
   display: flex;
   align-items: center;
@@ -131,6 +142,8 @@
   color: var(--text);
   background: var(--surface-2);
 }
+/* Detach ("open in new tab") control: shares the maximize button's look, sits
+   to its left (offset set inline by ChartGrid alongside maximize). */
 .placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-faint); }
 
 /* TradingView-style chart tabs along the top (topmost strip, above the toolbar).
@@ -1467,18 +1480,17 @@
 .cl-ohlc-label { color: var(--text-dim); }
 .cl-ohlc-val { font-variant-numeric: tabular-nums; }
 .cl-change { font-variant-numeric: tabular-nums; }
-/* Candle-cache stats badge — a small dot (freshness) + hit-rate %, docked at the
-   top-right corner of the chart pane, same row as the OHLC legend. `right` is set
-   inline (ChartLegend) from the live-tracked price-axis column width, so the badge
-   sits just to the LEFT of the axis rather than overlapping its price labels; the
-   6px value below is only a same-corner fallback before that width is known.
-   Click opens the cache-stats popover. Neutral/dim by default so it doesn't
-   compete with the axis; this is a debug affordance, not a primary chart feature.
-   Positioned as its own overlay (not inside .chart-legend) so it isn't
-   constrained by that container's shrink-to-content width. */
+/* Candle-cache stats badge — a small dot (freshness) + hit-rate %, rendered as
+   the legend's LAST row at the top-left. It used to dock at the pane's top-right,
+   but that corner now belongs to the cell controls (detach/maximize), which would
+   cover it while hovered. Click opens the cache-stats popover. Neutral/dim so it
+   doesn't compete with the legend rows above; this is a debug affordance, not a
+   primary chart feature. The legend container is pointer-events:none, so clicks
+   are re-enabled here. */
 .cl-cache-corner-badge {
-  position: absolute; top: 6px; right: 6px; z-index: 11;
+  pointer-events: auto;
   display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 2px;
   padding: 1px 6px; border: 0; border-radius: 4px;
   background: transparent; color: var(--text-dim); cursor: pointer;
   font-family: "Helvetica Neue", -apple-system, BlinkMacSystemFont, sans-serif;

@@ -2779,12 +2779,6 @@ export default function ChartCore({
     };
   }, [symbol.epic, period.resolution, priceSide, brokerId]);
 
-  // Offset the badge clear of the price-axis column (priceTag.w, already tracked
-  // for the live-price pill) so it sits just to the LEFT of the axis rather than
-  // overlapping its price labels. Falls back to a plain 6px inset before the axis
-  // width is known (no data yet).
-  const cacheBadgeRight = (priceTag?.w ?? 0) + 6;
-
   const cacheBadge = (() => {
     if (!cacheStats) return null;
     if (cacheStats.oldestTs == null) {
@@ -2792,7 +2786,6 @@ export default function ChartCore({
         label: "n/a",
         title: "No cache data yet for this series.",
         state: "none" as const,
-        right: cacheBadgeRight,
       };
     }
     const ageSec = cacheStats.lastFetchTs != null ? Date.now() / 1000 - cacheStats.lastFetchTs : null;
@@ -2804,7 +2797,6 @@ export default function ChartCore({
       label: hitPct != null ? `${hitPct}%` : "—",
       title: `Hit rate: ${hitPct != null ? `${hitPct}% (${cacheStats.hits}/${total})` : "n/a"} · Coverage: ${days}d · ${cacheStats.cachedBarCount} bars`,
       state: fresh ? ("fresh" as const) : ("stale" as const),
-      right: cacheBadgeRight,
     };
   })();
 
