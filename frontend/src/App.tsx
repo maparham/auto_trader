@@ -76,6 +76,7 @@ import {
   cellScope,
   copyScopeContent,
   LAYOUT_CELLS,
+  KIND_FOR_COUNT,
   pruneLegacyGlobalWorkspace,
   setPersistBroker,
   getPersistBroker,
@@ -1036,6 +1037,37 @@ export default function App() {
     }
   };
 
+  // Close ONE cell of a multi-cell layout (✕ corner button). Confirms first —
+  // the cell's drawings/indicators are purged — then removes the cell and
+  // downgrades the layout kind to the remaining count (2×2 → three columns →
+  // two columns → single). Survivor order is preserved; sizes reset because
+  // the grid shape changed. maximizedCellId clears via the existing
+  // layout-change effect (the kind always changes here).
+  const closeCell = (cellId: string) => {
+    if (!active) return;
+    const cell = active.cells.find((c) => c.id === cellId);
+    if (!cell || active.cells.length < 2) return;
+    requestConfirm({
+      title: "Close chart",
+      message: "Close this chart? Its drawings and indicators will be removed.",
+      confirmLabel: "Close",
+      onConfirm: () => {
+        if (cell.scope !== primaryCellScope(active.id)) purgeScope(cell.scope);
+        setTabs((ts) =>
+          ts.map((t) => {
+            if (t.id !== active.id) return t;
+            const cells = t.cells.filter((c) => c.id !== cellId);
+            if (cells.length === t.cells.length || cells.length === 0) return t;
+            const activeCellId = cells.some((c) => c.id === t.activeCellId)
+              ? t.activeCellId
+              : cells[0].id;
+            return { ...t, layout: KIND_FOR_COUNT[cells.length], cells, activeCellId, sizes: undefined };
+          }),
+        );
+      },
+    });
+  };
+
   // Merge whole tabs into `targetId` — the inverse of detachCell. Each source
   // tab's cells move across (content re-scoped by mergeTabInto), the source
   // tabs close, and the merged tab gains crosshair sync. `position` places the
@@ -1377,6 +1409,7 @@ export default function App() {
                 setMaximizedCellId((cur) => (cur === cellId ? null : cellId))
               }
               onDetachCell={detachCell}
+              onCloseCell={closeCell}
               sizes={active.sizes}
               onSizes={setCellSizes}
               tabDrag={

@@ -569,7 +569,7 @@ export function saveTabs(tabs: ChartTab[]): void {
 
 // Layout kind implied by a cell count — merging re-derives the shape and drops
 // any custom sizes (the standard rule when the layout kind changes).
-const KIND_FOR_COUNT: Record<number, LayoutKind> = { 1: "1", 2: "2h", 3: "3", 4: "4" };
+export const KIND_FOR_COUNT: Record<number, LayoutKind> = { 1: "1", 2: "2h", 3: "3", 4: "4" };
 
 export function canMergeTabs(tabs: ChartTab[], sourceId: string, targetId: string): boolean {
   if (sourceId === targetId) return false;

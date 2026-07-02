@@ -69,6 +69,8 @@ interface Props {
   onToggleMaximizeCell: (cellId: string) => void;
   // Detach a cell to a new tab ("tab" = in-app, "window" = new browser tab).
   onDetachCell: (cellId: string, target: "tab" | "window") => void;
+  // Close a cell (removes it from the layout; App confirms + downgrades the kind).
+  onCloseCell: (cellId: string) => void;
   // Per-tab cell-size fractions (see ChartTab.sizes). Undefined = equal split.
   sizes?: { cols: number[]; rows: number[] };
   // Commit new fractions after a border drag.
@@ -104,6 +106,7 @@ export default function ChartGrid({
   maximizedCellId,
   onToggleMaximizeCell,
   onDetachCell,
+  onCloseCell,
   sizes,
   onSizes,
   tabDrag,
@@ -152,7 +155,7 @@ export default function ChartGrid({
   // Fallback before the first measurement (chart not ready yet) — empirical
   // typical axis width, not guaranteed to clear every symbol on first paint;
   // the first hover corrects it.
-  const buttonRight = (cellId: string, slot: 0 | 1) => (axisW[cellId] ?? 56) + 6 + slot * 28;
+  const buttonRight = (cellId: string, slot: 0 | 1 | 2) => (axisW[cellId] ?? 56) + 6 + slot * 28;
   // Clamp to a cell that's actually in this render's set: the parent clears
   // maximizedCellId via an effect that commits one render after a layout
   // trim or tab switch can drop the id, so treat a dangling id as unmaximized
@@ -262,6 +265,24 @@ export default function ChartGrid({
                     <path d="M14 14l-5-5" />
                   </>
                 )}
+              </svg>
+            </button>
+          )}
+          {cells.length > 1 && (
+            <button
+              type="button"
+              className="chart-cell-maximize chart-cell-close"
+              style={{ right: buttonRight(cell.id, 2) }}
+              title="Close chart"
+              aria-label="Close chart"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCloseCell(cell.id);
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M4 4l8 8" />
+                <path d="M12 4l-8 8" />
               </svg>
             </button>
           )}
