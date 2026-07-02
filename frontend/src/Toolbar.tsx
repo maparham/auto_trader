@@ -640,7 +640,7 @@ export default function Toolbar({
                     <span className="ind-name">Delete {symbol.epic} template</span>
                     <InfoTip
                       title={`Delete ${symbol.epic} template`}
-                      desc={`Removes ${symbol.epic}'s saved template. Open charts keep their layout; fresh ${symbol.epic} charts start blank.`}
+                      desc={`Removes ${symbol.epic}'s saved template. Open charts keep their layout; fresh ${symbol.epic} charts fall back to the default template if one is set, otherwise start blank.`}
                     />
                   </li>
                 </>
@@ -656,7 +656,7 @@ export default function Toolbar({
                 <span className="ind-name">Save as default template</span>
                 <InfoTip
                   title="Save as default template"
-                  desc="Saves this chart's indicators (drawings excluded) as the default for every symbol. Fresh charts without their own template start with it."
+                  desc="Saves this chart's indicators (drawings and AVWAPs excluded) as the default for every symbol. Fresh charts without their own template start with it."
                 />
               </li>
               {loadDefaultTemplate() ? (
