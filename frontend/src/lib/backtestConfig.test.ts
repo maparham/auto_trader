@@ -54,6 +54,8 @@ describe("collectSeriesOperands", () => {
         ],
       },
       shortExit: EMPTY_GROUP,
+      longEnabled: true,
+      shortEnabled: true,
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     const names = collectSeriesOperands(cfg).map(seriesName).sort();
@@ -70,6 +72,8 @@ describe("collectSeriesOperands", () => {
       longExit: EMPTY_GROUP,
       shortEntry: EMPTY_GROUP,
       shortExit: EMPTY_GROUP,
+      longEnabled: true,
+      shortEnabled: true,
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     expect(collectSeriesOperands(cfg)).toEqual([]);
@@ -84,6 +88,8 @@ describe("defaultBacktestConfig", () => {
     expect(cfg.longExit.rules[0].op).toBe("crossesBelow");
     expect(cfg.shortEntry.rules[0].op).toBe("crossesBelow"); // mirror of long entry
     expect(cfg.shortExit.rules[0].op).toBe("crossesAbove");
+    expect(cfg.longEnabled).toBe(true); // both sides trade by default
+    expect(cfg.shortEnabled).toBe(true);
     expect(cfg.costs).toEqual({ quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 });
   });
 });
@@ -108,6 +114,8 @@ describe("longestIndicatorLength", () => {
       },
       shortEntry: EMPTY_GROUP,
       shortExit: EMPTY_GROUP,
+      longEnabled: true,
+      shortEnabled: true,
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     expect(longestIndicatorLength(cfg)).toBe(200);
@@ -120,6 +128,8 @@ describe("longestIndicatorLength", () => {
       longExit: EMPTY_GROUP,
       shortEntry: EMPTY_GROUP,
       shortExit: EMPTY_GROUP,
+      longEnabled: true,
+      shortEnabled: true,
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     expect(longestIndicatorLength(cfg)).toBe(1);

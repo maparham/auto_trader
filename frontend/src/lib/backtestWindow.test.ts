@@ -13,8 +13,12 @@ const DAY_MS = 86_400_000;
 function cfg(overrides: Partial<BacktestConfig>): BacktestConfig {
   return {
     range: { mode: "bars", bars: 500 },
-    entry: { combine: "AND", rules: [] },
-    exit: { combine: "AND", rules: [] },
+    longEntry: { combine: "AND", rules: [] },
+    longExit: { combine: "AND", rules: [] },
+    shortEntry: { combine: "AND", rules: [] },
+    shortExit: { combine: "AND", rules: [] },
+    longEnabled: true,
+    shortEnabled: true,
     costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     ...overrides,
   };
@@ -55,7 +59,7 @@ describe("resolveHistoryStart / minimalHistoryStart — weekend padding", () => 
     // trading-day candles (weekends have none) — the padded start must reach
     // further back than the naive calculation to compensate.
     const config = cfg({
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [
           {
@@ -73,7 +77,7 @@ describe("resolveHistoryStart / minimalHistoryStart — weekend padding", () => 
 
   it("does not pad resolutions at/above a week (no weekend gap to compensate for)", () => {
     const config = cfg({
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [{ left: { kind: "indicator", indicator: "SMA", length: 20 }, op: "gt", right: { kind: "const", value: 0 } }],
       },
@@ -94,7 +98,7 @@ describe("requiredWarmupBars", () => {
   const config = (history: "full" | "bars" | "minimal", historyBars?: number) =>
     cfg({
       range: { mode: "bars", bars: 500, history, historyBars },
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [{ left: { kind: "indicator", indicator: "EMA", length: 21 }, op: "gt", right: { kind: "const", value: 0 } }],
       },

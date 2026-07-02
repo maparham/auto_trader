@@ -355,6 +355,11 @@ class BacktestRequest(BaseModel):
     longExit: RuleGroupDTO
     shortEntry: RuleGroupDTO
     shortExit: RuleGroupDTO
+    # Per-side master switches: a disabled side never trades even if its rule
+    # groups are populated (the user keeps the rules while the side is parked).
+    # Default on so an omitted flag means "trade this side" (backward-safe).
+    longEnabled: bool = True
+    shortEnabled: bool = True
     costs: CostsDTO
     tradeFromTime: int
 
@@ -1076,6 +1081,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         req.longEntry.to_group(), req.longExit.to_group(),
         req.shortEntry.to_group(), req.shortExit.to_group(),
         req.series, quantity=req.costs.quantity, trade_from_time=req.tradeFromTime,
+        long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
     )
     result = BacktestEngine(
         strategy,

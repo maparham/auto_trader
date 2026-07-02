@@ -578,6 +578,11 @@
   border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
 }
 
+/* Long/Short side tabs inside the rule-builder — full-width segmented control
+   so the two sides read as peers, sitting above that side's entry/exit groups. */
+.bt-side-tabs { width: 100%; margin-top: 4px; }
+.bt-side-tabs button { flex: 1; }
+
 /* Costs: a 2x2 grid (was 4 stacked full-width rows) with the label stacked
    above its input so a longer label like "Commission/side" has room to read
    in full instead of being clipped by a fixed-width side label column. */

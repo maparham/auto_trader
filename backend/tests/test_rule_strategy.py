@@ -223,3 +223,32 @@ def test_trade_from_time_gates_both_entries():
     # both entries gated until bar i=2 -> first fills at i=3 open, none earlier
     assert result.fills
     assert min(f.time for f in result.fills) == candles[3].time
+
+
+def test_long_disabled_skips_long_even_with_entry_rules():
+    # The switch's whole point: a populated long side that's turned OFF must not
+    # trade, while the enabled short side still fires. (Distinguishes the enable
+    # flag from "empty the rule group".)
+    candles = _series([10] * 4)
+    series = {"EMA_5": [3.0, 3.0, 3.0, 3.0], "EMA_9": [2.0, 2.0, 2.0, 2.0]}
+    entry = RuleGroup("AND", [_rule(_ind("EMA", 5), "gt", _ind("EMA", 9))])  # always true
+    strat = RuleStrategy(
+        entry, RuleGroup("AND", []), entry, RuleGroup("AND", []),
+        series, quantity=1.0, long_enabled=False, short_enabled=True,
+    )
+    result = BacktestEngine(strat).run(candles)
+    assert not any(f.leg == "long" for f in result.fills)  # long never even opened
+    assert any(f.leg == "short" for f in result.fills)  # short still fired
+
+
+def test_short_disabled_skips_short_even_with_entry_rules():
+    candles = _series([10] * 4)
+    series = {"EMA_5": [3.0, 3.0, 3.0, 3.0], "EMA_9": [2.0, 2.0, 2.0, 2.0]}
+    entry = RuleGroup("AND", [_rule(_ind("EMA", 5), "gt", _ind("EMA", 9))])  # always true
+    strat = RuleStrategy(
+        entry, RuleGroup("AND", []), entry, RuleGroup("AND", []),
+        series, quantity=1.0, long_enabled=True, short_enabled=False,
+    )
+    result = BacktestEngine(strat).run(candles)
+    assert not any(f.leg == "short" for f in result.fills)  # short never even opened
+    assert any(f.leg == "long" for f in result.fills)  # long still fired

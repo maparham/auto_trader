@@ -61,6 +61,8 @@ export interface BacktestRequest {
   longExit: RuleGroup;
   shortEntry: RuleGroup;
   shortExit: RuleGroup;
+  longEnabled: boolean; // per-side master switch (a disabled side never trades)
+  shortEnabled: boolean;
   costs: Costs;
   tradeFromTime: number; // unix seconds — the window's start (D6)
 }

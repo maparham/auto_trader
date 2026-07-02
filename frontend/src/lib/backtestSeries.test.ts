@@ -26,8 +26,12 @@ function candles(closes: number[], volumes?: number[]): KLineData[] {
 function cfg(overrides: Partial<BacktestConfig>): BacktestConfig {
   return {
     range: { mode: "bars", bars: 500 },
-    entry: { combine: "AND", rules: [] },
-    exit: { combine: "AND", rules: [] },
+    longEntry: { combine: "AND", rules: [] },
+    longExit: { combine: "AND", rules: [] },
+    shortEntry: { combine: "AND", rules: [] },
+    shortExit: { combine: "AND", rules: [] },
+    longEnabled: true,
+    shortEnabled: true,
     costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     ...overrides,
   };
@@ -37,7 +41,7 @@ describe("buildSeries", () => {
   it("keys the output by the seriesName contract", () => {
     const bars = candles([1, 2, 3, 4, 5]);
     const config = cfg({
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [
           {
@@ -55,7 +59,7 @@ describe("buildSeries", () => {
   it("every series has the same length as the candles, with null warmup", () => {
     const bars = candles([1, 2, 3, 4, 5]);
     const config = cfg({
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [
           {
@@ -76,7 +80,7 @@ describe("buildSeries", () => {
   it("uses .val for RSI (not .rsi, which is omitted when the line is hidden)", () => {
     const bars = candles([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
     const config = cfg({
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [
           {
@@ -96,7 +100,7 @@ describe("buildSeries", () => {
   it("VOL reads raw volume, VOLMA smooths it", () => {
     const bars = candles([1, 1, 1, 1], [10, 20, 30, 40]);
     const config = cfg({
-      entry: {
+      longEntry: {
         combine: "OR",
         rules: [
           { left: { kind: "indicator", indicator: "VOL" }, op: "gt", right: { kind: "const", value: 0 } },
@@ -117,7 +121,7 @@ describe("buildSeries", () => {
   it("AVWAP anchors at index 0", () => {
     const bars = candles([10, 10, 10], [5, 5, 5]);
     const config = cfg({
-      entry: {
+      longEntry: {
         combine: "AND",
         rules: [
           { left: { kind: "indicator", indicator: "AVWAP" }, op: "gt", right: { kind: "const", value: 0 } },

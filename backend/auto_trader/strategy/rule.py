@@ -70,6 +70,13 @@ class RuleStrategy(Strategy):
     flat-short, `short_exit` closes (BUY leg=short) when short. Long and short
     are independent — the strategy can hold both at once.
 
+    `long_enabled` / `short_enabled` turn a whole side off: when a side is
+    disabled its bucket is skipped entirely — no entries AND no exits — so it
+    never trades even if its rule groups are populated. This is an explicit
+    switch, distinct from an empty rule group: the user keeps their rules while
+    the side is parked. A disabled side never opens a position, so skipping its
+    exit is moot (nothing to close). Both default on.
+
     `trade_from_time` (unix seconds, optional) gates BOTH entry legs (D6): bars
     before it are history loaded purely to warm the series up. Exits are never
     gated — no bucket can hold anything there, since no entry could have fired.
@@ -84,6 +91,9 @@ class RuleStrategy(Strategy):
         series: dict[str, list[float | None]],
         quantity: float,
         trade_from_time: int | None = None,
+        *,
+        long_enabled: bool = True,
+        short_enabled: bool = True,
     ) -> None:
         self.long_entry = long_entry
         self.long_exit = long_exit
@@ -92,6 +102,8 @@ class RuleStrategy(Strategy):
         self.series = series
         self.quantity = quantity
         self.trade_from_time = trade_from_time
+        self.long_enabled = long_enabled
+        self.short_enabled = short_enabled
 
     def on_bar(self, ctx: Context) -> list[Signal]:
         i = len(ctx.history) - 1
@@ -101,35 +113,38 @@ class RuleStrategy(Strategy):
         )
         signals: list[Signal] = []
 
-        # Long bucket.
-        if ctx.position_long == 0:
-            if not gated:
-                passed, results = self._eval_group(self.long_entry, ctx, i)
+        # Long bucket (skipped entirely when the side is disabled — no entry,
+        # and no exit either, since a disabled side can never be holding).
+        if self.long_enabled:
+            if ctx.position_long == 0:
+                if not gated:
+                    passed, results = self._eval_group(self.long_entry, ctx, i)
+                    if passed:
+                        signals.append(
+                            Signal(Side.BUY, self.quantity, self._reason(self.long_entry, results), leg="long")
+                        )
+            else:
+                passed, results = self._eval_group(self.long_exit, ctx, i)
                 if passed:
                     signals.append(
-                        Signal(Side.BUY, self.quantity, self._reason(self.long_entry, results), leg="long")
+                        Signal(Side.SELL, ctx.position_long, self._reason(self.long_exit, results), leg="long")
                     )
-        else:
-            passed, results = self._eval_group(self.long_exit, ctx, i)
-            if passed:
-                signals.append(
-                    Signal(Side.SELL, ctx.position_long, self._reason(self.long_exit, results), leg="long")
-                )
 
-        # Short bucket.
-        if ctx.position_short == 0:
-            if not gated:
-                passed, results = self._eval_group(self.short_entry, ctx, i)
+        # Short bucket (skipped entirely when the side is disabled).
+        if self.short_enabled:
+            if ctx.position_short == 0:
+                if not gated:
+                    passed, results = self._eval_group(self.short_entry, ctx, i)
+                    if passed:
+                        signals.append(
+                            Signal(Side.SELL, self.quantity, self._reason(self.short_entry, results), leg="short")
+                        )
+            else:
+                passed, results = self._eval_group(self.short_exit, ctx, i)
                 if passed:
                     signals.append(
-                        Signal(Side.SELL, self.quantity, self._reason(self.short_entry, results), leg="short")
+                        Signal(Side.BUY, ctx.position_short, self._reason(self.short_exit, results), leg="short")
                     )
-        else:
-            passed, results = self._eval_group(self.short_exit, ctx, i)
-            if passed:
-                signals.append(
-                    Signal(Side.BUY, ctx.position_short, self._reason(self.short_exit, results), leg="short")
-                )
 
         return signals
 

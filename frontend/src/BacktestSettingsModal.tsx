@@ -132,14 +132,14 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   const [presets, setPresets] = useState(() => loadBacktestPresets());
   const [presetName, setPresetName] = useState("");
   const [loadName, setLoadName] = useState("");
+  const [side, setSide] = useState<"long" | "short">("long");
   useCloseOnEscape(onClose);
 
-  const usesVolume = [cfg.entry, cfg.exit].some((g) =>
-    g.rules.some(
-      (r) =>
-        [r.left, r.right].some(
-          (op) => op.kind === "indicator" && (op.indicator === "VOL" || op.indicator === "VOLMA" || op.indicator === "AVWAP"),
-        ),
+  const usesVolume = [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit].some((g) =>
+    g.rules.some((r) =>
+      [r.left, r.right].some(
+        (op) => op.kind === "indicator" && (op.indicator === "VOL" || op.indicator === "VOLMA" || op.indicator === "AVWAP"),
+      ),
     ),
   );
 
@@ -149,7 +149,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   function setCosts(patch: Partial<Costs>) {
     setCfg({ ...cfg, costs: { ...cfg.costs, ...patch } });
   }
-  function setGroup(which: "entry" | "exit", group: RuleGroup) {
+  function setGroup(which: "longEntry" | "longExit" | "shortEntry" | "shortExit", group: RuleGroup) {
     setCfg({ ...cfg, [which]: group });
   }
 
@@ -261,18 +261,61 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
             <WindowTimeline cfg={cfg} resolution={resolution} />
           </Section>
 
-          <RuleGroupSection
-            title="Buy when"
-            group={cfg.entry}
-            onChange={(g) => setGroup("entry", g)}
-            emptyHint="No buy rules — this strategy can never open a position, so the backtest will always show 0 trades."
-          />
-          <RuleGroupSection
-            title="Sell when"
-            group={cfg.exit}
-            onChange={(g) => setGroup("exit", g)}
-            emptyHint="No sell rules — once a position opens, it holds until the trading window ends."
-          />
+          <div className="bt-side-tabs seg">
+            <button className={side === "long" ? "seg-on" : ""} onClick={() => setSide("long")}>
+              Long{cfg.longEnabled === false ? " (off)" : ""}
+            </button>
+            <button className={side === "short" ? "seg-on" : ""} onClick={() => setSide("short")}>
+              Short{cfg.shortEnabled === false ? " (off)" : ""}
+            </button>
+          </div>
+          {side === "long" ? (
+            <>
+              <SideEnableToggle
+                label="Trade the long side"
+                offHint="Long is off — no long positions open, whatever the rules below say."
+                enabled={cfg.longEnabled !== false}
+                onChange={(v) => setCfg({ ...cfg, longEnabled: v })}
+              />
+              <div style={cfg.longEnabled === false ? { opacity: 0.45 } : undefined}>
+                <RuleGroupSection
+                  title="Buy to open (long)"
+                  group={cfg.longEntry}
+                  onChange={(g) => setGroup("longEntry", g)}
+                  emptyHint="No long-entry rules — this strategy won't open any long positions."
+                />
+                <RuleGroupSection
+                  title="Sell to close (long)"
+                  group={cfg.longExit}
+                  onChange={(g) => setGroup("longExit", g)}
+                  emptyHint="No long-exit rules — an open long holds until the trading window ends."
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <SideEnableToggle
+                label="Trade the short side"
+                offHint="Short is off — no short positions open, whatever the rules below say."
+                enabled={cfg.shortEnabled !== false}
+                onChange={(v) => setCfg({ ...cfg, shortEnabled: v })}
+              />
+              <div style={cfg.shortEnabled === false ? { opacity: 0.45 } : undefined}>
+                <RuleGroupSection
+                  title="Sell to open (short)"
+                  group={cfg.shortEntry}
+                  onChange={(g) => setGroup("shortEntry", g)}
+                  emptyHint="No short-entry rules — this strategy won't open any short positions."
+                />
+                <RuleGroupSection
+                  title="Buy to close (short)"
+                  group={cfg.shortExit}
+                  onChange={(g) => setGroup("shortExit", g)}
+                  emptyHint="No short-exit rules — an open short holds until the trading window ends."
+                />
+              </div>
+            </>
+          )}
 
           {usesVolume && (
             <div className="al-note">
@@ -365,6 +408,28 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
           <button onClick={run}>Run backtest</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SideEnableToggle({
+  label,
+  offHint,
+  enabled,
+  onChange,
+}: {
+  label: string;
+  offHint: string;
+  enabled: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  return (
+    <div className="bt-section">
+      <label className="al-row bt-side-enable">
+        <input type="checkbox" checked={enabled} onChange={(e) => onChange(e.target.checked)} />
+        <span>{label}</span>
+      </label>
+      {!enabled && <div className="al-note">{offHint}</div>}
     </div>
   );
 }

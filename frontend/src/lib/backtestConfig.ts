@@ -53,6 +53,13 @@ export interface BacktestConfig {
   longExit: RuleGroup;
   shortEntry: RuleGroup;
   shortExit: RuleGroup;
+  // Per-side master switches. A disabled side never trades even if its rule
+  // groups are populated (the user keeps the rules while the side is parked).
+  // Read defensively (`!== false`) so a preset saved before these existed —
+  // where the field is undefined — still trades that side rather than silently
+  // disabling it.
+  longEnabled: boolean;
+  shortEnabled: boolean;
   costs: Costs;
 }
 
@@ -107,6 +114,8 @@ export function defaultBacktestConfig(): BacktestConfig {
     longExit: cross("crossesBelow"),
     shortEntry: cross("crossesBelow"),
     shortExit: cross("crossesAbove"),
+    longEnabled: true,
+    shortEnabled: true,
     costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
   };
 }

@@ -107,8 +107,13 @@ export default function BacktestButton({ controller, period, epic, brokerId }: P
         resolution: period.resolution,
         candles,
         series,
-        entry: cfg.entry,
-        exit: cfg.exit,
+        longEntry: cfg.longEntry,
+        longExit: cfg.longExit,
+        shortEntry: cfg.shortEntry,
+        shortExit: cfg.shortExit,
+        // `!== false` so a preset predating these flags (undefined) still trades.
+        longEnabled: cfg.longEnabled !== false,
+        shortEnabled: cfg.shortEnabled !== false,
         costs: cfg.costs,
         tradeFromTime,
       });
