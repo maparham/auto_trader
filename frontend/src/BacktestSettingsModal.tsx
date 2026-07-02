@@ -55,13 +55,15 @@ const HISTORY_DEPTHS: { value: HistoryDepth; label: string }[] = [
 const INDICATORS: IndicatorKind[] = ["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"];
 const NO_LENGTH: IndicatorKind[] = ["AVWAP", "VOL"];
 const PRICE_FIELDS: PriceField[] = ["close", "open", "high", "low"];
-const OPERATORS: { value: Operator; label: string }[] = [
-  { value: "crossesAbove", label: "crosses above" },
-  { value: "crossesBelow", label: "crosses below" },
-  { value: "gt", label: ">" },
-  { value: "lt", label: "<" },
-  { value: "gte", label: ">=" },
-  { value: "lte", label: "<=" },
+// `tip` is a one-line tooltip. Crosses fire ONCE on the bar the lines meet (an
+// event); the comparisons are true on EVERY bar the condition holds (a state).
+const OPERATORS: { value: Operator; label: string; tip: string }[] = [
+  { value: "crossesAbove", label: "crosses above", tip: "Fires once — the bar the left rises through the right." },
+  { value: "crossesBelow", label: "crosses below", tip: "Fires once — the bar the left drops through the right." },
+  { value: "gt", label: ">", tip: "True on every bar the left is above the right." },
+  { value: "lt", label: "<", tip: "True on every bar the left is below the right." },
+  { value: "gte", label: ">=", tip: "True on every bar the left is at or above the right." },
+  { value: "lte", label: "<=", tip: "True on every bar the left is at or below the right." },
 ];
 
 // A rough, illustrative bar count for the window timeline — not the exact fetch
@@ -263,59 +265,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
 
           <div className="bt-side-tabs seg">
             <button className={side === "long" ? "seg-on" : ""} onClick={() => setSide("long")}>
-              Long{cfg.longEnabled === false ? " (off)" : ""}
+              <span className={`bt-side-dot${cfg.longEnabled === false ? " off" : ""}`} aria-hidden="true" />
+              Long
             </button>
             <button className={side === "short" ? "seg-on" : ""} onClick={() => setSide("short")}>
-              Short{cfg.shortEnabled === false ? " (off)" : ""}
+              <span className={`bt-side-dot${cfg.shortEnabled === false ? " off" : ""}`} aria-hidden="true" />
+              Short
             </button>
           </div>
-          {side === "long" ? (
-            <>
-              <SideEnableToggle
-                label="Trade the long side"
-                offHint="Long is off — no long positions open, whatever the rules below say."
-                enabled={cfg.longEnabled !== false}
-                onChange={(v) => setCfg({ ...cfg, longEnabled: v })}
-              />
-              <div style={cfg.longEnabled === false ? { opacity: 0.45 } : undefined}>
-                <RuleGroupSection
-                  title="Buy to open (long)"
-                  group={cfg.longEntry}
-                  onChange={(g) => setGroup("longEntry", g)}
-                  emptyHint="No long-entry rules — this strategy won't open any long positions."
-                />
-                <RuleGroupSection
-                  title="Sell to close (long)"
-                  group={cfg.longExit}
-                  onChange={(g) => setGroup("longExit", g)}
-                  emptyHint="No long-exit rules — an open long holds until the trading window ends."
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <SideEnableToggle
-                label="Trade the short side"
-                offHint="Short is off — no short positions open, whatever the rules below say."
-                enabled={cfg.shortEnabled !== false}
-                onChange={(v) => setCfg({ ...cfg, shortEnabled: v })}
-              />
-              <div style={cfg.shortEnabled === false ? { opacity: 0.45 } : undefined}>
-                <RuleGroupSection
-                  title="Sell to open (short)"
-                  group={cfg.shortEntry}
-                  onChange={(g) => setGroup("shortEntry", g)}
-                  emptyHint="No short-entry rules — this strategy won't open any short positions."
-                />
-                <RuleGroupSection
-                  title="Buy to close (short)"
-                  group={cfg.shortExit}
-                  onChange={(g) => setGroup("shortExit", g)}
-                  emptyHint="No short-exit rules — an open short holds until the trading window ends."
-                />
-              </div>
-            </>
-          )}
+          <SidePanel side={side} cfg={cfg} setCfg={setCfg} setGroup={setGroup} />
 
           {usesVolume && (
             <div className="al-note">
@@ -412,25 +370,66 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   );
 }
 
-function SideEnableToggle({
-  label,
-  offHint,
-  enabled,
-  onChange,
+// One side of the strategy (long or short): an arm switch that parks the whole
+// side without losing its rules, above that side's entry/exit rule groups.
+// Parking dims the rules but keeps them editable, so you can set a side up
+// before you switch it on. Long and short are structurally identical, so both
+// render through here rather than being copy-pasted.
+function SidePanel({
+  side,
+  cfg,
+  setCfg,
+  setGroup,
 }: {
-  label: string;
-  offHint: string;
-  enabled: boolean;
-  onChange: (enabled: boolean) => void;
+  side: "long" | "short";
+  cfg: BacktestConfig;
+  setCfg: (c: BacktestConfig) => void;
+  setGroup: (which: "longEntry" | "longExit" | "shortEntry" | "shortExit", g: RuleGroup) => void;
 }) {
+  const isLong = side === "long";
+  const enabled = (isLong ? cfg.longEnabled : cfg.shortEnabled) !== false;
+  const entry = isLong ? cfg.longEntry : cfg.shortEntry;
+  const exit = isLong ? cfg.longExit : cfg.shortExit;
+
   return (
-    <div className="bt-section">
-      <label className="al-row bt-side-enable">
-        <input type="checkbox" checked={enabled} onChange={(e) => onChange(e.target.checked)} />
-        <span>{label}</span>
-      </label>
-      {!enabled && <div className="al-note">{offHint}</div>}
-    </div>
+    <>
+      <div className="bt-arm">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          aria-label={`Trade the ${side} side`}
+          className={`bt-switch${enabled ? " on" : ""}`}
+          onClick={() => setCfg({ ...cfg, [isLong ? "longEnabled" : "shortEnabled"]: !enabled })}
+        >
+          <span className="bt-switch-knob" />
+        </button>
+        {/* Visible label/state are decorative — the switch's aria-label + aria-checked
+            already carry the accessible name and on/off, so hide these to avoid a
+            doubled screen-reader announcement. */}
+        <span className="bt-arm-label" aria-hidden="true">Trade the {side} side</span>
+        <span className={`bt-arm-state${enabled ? " on" : ""}`} aria-hidden="true">{enabled ? "Trading" : "Parked"}</span>
+      </div>
+      {!enabled && (
+        <div className="al-note bt-parked-note">
+          Rules are kept — the {side} side won't open or close positions until you switch it back on.
+        </div>
+      )}
+      <div className={`bt-side-rules${enabled ? "" : " bt-parked"}`}>
+        <RuleGroupSection
+          title={isLong ? "Buy to open (long)" : "Sell to open (short)"}
+          group={entry}
+          onChange={(g) => setGroup(isLong ? "longEntry" : "shortEntry", g)}
+          emptyHint={`No ${side}-entry rules — this strategy won't open any ${side} positions.`}
+        />
+        <RuleGroupSection
+          title={isLong ? "Sell to close (long)" : "Buy to close (short)"}
+          group={exit}
+          onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
+          emptyHint={`No ${side}-exit rules — an open ${side} holds until the trading window ends.`}
+        />
+      </div>
+    </>
   );
 }
 
@@ -439,6 +438,36 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
     <div className="bt-section">
       <div className="instrument-section-title">{title}</div>
       {children}
+    </div>
+  );
+}
+
+// Operator selector — a plain native <select> (a "crosses" op, an event, reads
+// in the accent colour; the comparisons, a state, read muted) plus an ⓘ info
+// icon whose tooltip explains the currently-chosen operator, matching the info
+// icons on the layout picker's sync toggles.
+function isCrossOp(op: Operator): boolean {
+  return op === "crossesAbove" || op === "crossesBelow";
+}
+
+function OperatorPicker({ value, onChange }: { value: Operator; onChange: (op: Operator) => void }) {
+  const tip = OPERATORS.find((o) => o.value === value)?.tip;
+  return (
+    <div className="bt-op-cell">
+      <select
+        className={isCrossOp(value) ? "bt-op-cross" : "bt-op-compare"}
+        value={value}
+        onChange={(e) => onChange(e.target.value as Operator)}
+      >
+        {OPERATORS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <span className="bt-op-info" title={tip} aria-label={tip} role="img">
+        ⓘ
+      </span>
     </div>
   );
 }
@@ -485,17 +514,7 @@ function RuleGroupSection({
       {group.rules.map((rule, i) => (
         <div className="bt-rule-row" key={i}>
           <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} />
-          <select
-            className={rule.op === "crossesAbove" || rule.op === "crossesBelow" ? "bt-op-cross" : "bt-op-compare"}
-            value={rule.op}
-            onChange={(e) => setRule(i, { ...rule, op: e.target.value as Operator })}
-          >
-            {OPERATORS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+          <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
           <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} />
           <button className="bt-rule-remove" onClick={() => removeRule(i)} title="Remove rule" aria-label="Remove rule">
             ✕

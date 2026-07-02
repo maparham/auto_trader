@@ -92,6 +92,45 @@ def test_post_backtest_short_config_produces_short_trades_with_leg():
     assert any(m.leg == "short" for m in result.markers)
 
 
+def _both_sides_cross_body():
+    """A config where BOTH a long entry and a short entry fire (EMA_5 crosses
+    above EMA_9 at i=2, below at i=4), used to test the per-side enable flags."""
+    candles = _candles([10, 10, 10, 10, 10, 10, 10])
+    return {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        "series": {"EMA_5": [1.0, 1.0, 3.0, 3.0, 1.0, 1.0, 1.0], "EMA_9": [2.0] * 7},
+        **_groups(
+            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
+            short_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesBelow", "right": _ind("EMA", 9)}]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+    }
+
+
+def test_post_backtest_disabled_long_side_produces_no_long_markers():
+    body = {**_both_sides_cross_body(), "longEnabled": False}
+    legs = {m.leg for m in _run(body).markers}
+    assert "long" not in legs
+    assert "short" in legs  # the enabled side still trades
+
+
+def test_post_backtest_disabled_short_side_produces_no_short_markers():
+    body = {**_both_sides_cross_body(), "shortEnabled": False}
+    legs = {m.leg for m in _run(body).markers}
+    assert "short" not in legs
+    assert "long" in legs
+
+
+def test_post_backtest_enable_flags_default_to_trading_when_omitted():
+    # Omitting longEnabled/shortEnabled must trade BOTH sides (DTO default True),
+    # guarding against a flipped default or dropped kwargs in the handler wiring.
+    legs = {m.leg for m in _run(_both_sides_cross_body()).markers}
+    assert legs == {"long", "short"}
+
+
 def test_post_backtest_422_on_empty_candles():
     body = {
         "epic": "EURUSD",

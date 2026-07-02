@@ -55,11 +55,11 @@ export interface BacktestConfig {
   shortExit: RuleGroup;
   // Per-side master switches. A disabled side never trades even if its rule
   // groups are populated (the user keeps the rules while the side is parked).
-  // Read defensively (`!== false`) so a preset saved before these existed —
-  // where the field is undefined — still trades that side rather than silently
-  // disabling it.
-  longEnabled: boolean;
-  shortEnabled: boolean;
+  // Optional on purpose: a preset saved before these existed loads with the
+  // field absent, so the undefined case is real — every read guards with
+  // `!== false` so an absent flag trades rather than silently parking the side.
+  longEnabled?: boolean;
+  shortEnabled?: boolean;
   costs: Costs;
 }
 
