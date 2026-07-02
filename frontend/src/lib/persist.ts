@@ -590,7 +590,7 @@ export function mergeTabInto(
   sourceId: string,
   targetId: string,
   position: "before" | "after" = "after",
-): ChartTab[] | null {
+): { tabs: ChartTab[]; moved: Array<{ from: string; to: string }> } | null {
   if (!canMergeTabs(tabs, sourceId, targetId)) return null;
   const src = tabs.find((t) => t.id === sourceId)!;
   const dst = tabs.find((t) => t.id === targetId)!;
@@ -600,9 +600,11 @@ export function mergeTabInto(
   // the target's timeframe or the merged tab would claim a lock its cells
   // visibly violate.
   const lockPeriod = dst.locked ? dst.cells[0]?.period : undefined;
+  const movedScopes: Array<{ from: string; to: string }> = [];
   const moved: ChartCell[] = src.cells.map((c) => {
     const scope = cellScope(targetId, c.id);
     copyScopeContent(c.scope, scope);
+    movedScopes.push({ from: c.scope, to: scope });
     return lockPeriod ? { ...c, scope, period: lockPeriod } : { ...c, scope };
   });
   purgeTabScope(sourceId);
@@ -622,7 +624,21 @@ export function mergeTabInto(
     syncTime: true,
     syncSymbol: false,
   };
-  return tabs.filter((t) => t.id !== sourceId).map((t) => (t.id === targetId ? merged : t));
+  return {
+    tabs: tabs.filter((t) => t.id !== sourceId).map((t) => (t.id === targetId ? merged : t)),
+    moved: movedScopes,
+  };
+}
+
+// Inverse of the scope moves a merge performed: content travels BACK to the
+// old scopes (carrying any edits made since the merge) and the merged-in
+// scopes are purged. Restoring the tab array itself is the caller's job — it
+// holds the pre-merge snapshot (mergeTabInto never mutates its input).
+export function unmergeScopes(pairs: Array<{ from: string; to: string }>): void {
+  for (const { from, to } of pairs) {
+    copyScopeContent(to, from);
+    purgeScope(to);
+  }
 }
 
 // --- named workspace layouts -------------------------------------------------

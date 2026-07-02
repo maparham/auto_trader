@@ -1099,9 +1099,9 @@ export default function App() {
   ) => {
     let next = tabs;
     for (const srcId of sourceIds) {
-      const merged = mergeTabInto(next, srcId, targetId, position);
-      if (!merged) continue; // over-cap sources are UI-disabled; skip defensively
-      next = merged;
+      const res = mergeTabInto(next, srcId, targetId, position);
+      if (!res) continue; // over-cap sources are UI-disabled; skip defensively
+      next = res.tabs;
       clearAlignAnchor(srcId); // same leak-guard closeTab applies
     }
     if (next === tabs) return;

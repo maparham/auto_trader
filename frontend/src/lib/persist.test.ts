@@ -583,7 +583,7 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
     P.saveDrawings(P.primaryCellScope("s"), "US100", [
       { name: "horizontalStraightLine", points: [{ value: 1 }] },
     ]);
-    const out = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d")!;
+    const out = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d")!.tabs;
     expect(out.map((t) => t.id)).toEqual(["d"]);
     expect(out[0].cells.map((c) => c.id)).toEqual(["d-c0", "s-c0"]);
     expect(out[0].cells[1].scope).toBe(P.cellScope("d", "s-c0"));
@@ -593,7 +593,7 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
   });
 
   it("re-derives layout, resets sizes, focuses the merged-in lead, enables interval/crosshair/date-range sync", () => {
-    const out = P.mergeTabInto([tab("s", 2), tab("d", 2)], "s", "d")!;
+    const out = P.mergeTabInto([tab("s", 2), tab("d", 2)], "s", "d")!.tabs;
     expect(out[0].layout).toBe("4");
     expect(out[0].sizes).toBeUndefined();
     expect(out[0].activeCellId).toBe("s-c0");
@@ -606,8 +606,27 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
 
   it("forces syncSymbol off even if the target tab had it on (e.g. a former split trimmed to 1 cell)", () => {
     const dst = { ...tab("d", 1), syncSymbol: true };
-    const out = P.mergeTabInto([tab("s", 1), dst], "s", "d")!;
+    const out = P.mergeTabInto([tab("s", 1), dst], "s", "d")!.tabs;
     expect(out[0].syncSymbol).toBe(false);
+  });
+
+  it("returns the moved scope pairs, and unmergeScopes round-trips content (edits made after the merge survive undo)", () => {
+    P.saveDrawings(P.primaryCellScope("s"), "US100", [{ name: "x", points: [{ value: 1 }] }]);
+    const prev = [tab("s", 1), tab("d", 1)];
+    const res = P.mergeTabInto(prev, "s", "d")!;
+    expect(res.moved).toEqual([{ from: P.primaryCellScope("s"), to: P.cellScope("d", "s-c0") }]);
+    // Edit made AFTER the merge under the NEW scope — must travel back on undo.
+    P.saveDrawings(P.cellScope("d", "s-c0"), "US100", [
+      { name: "x", points: [{ value: 1 }] },
+      { name: "y", points: [{ value: 2 }] },
+    ]);
+    P.unmergeScopes(res.moved);
+    expect(P.loadDrawings(P.primaryCellScope("s"), "US100")).toHaveLength(2);
+    expect(P.loadDrawings(P.cellScope("d", "s-c0"), "US100")).toHaveLength(0);
+    // The pre-merge array is untouched (immutable input) — the caller's
+    // snapshot restore is a plain array swap.
+    expect(prev.map((t) => t.id)).toEqual(["s", "d"]);
+    expect(prev[0].cells[0].scope).toBe(P.primaryCellScope("s"));
   });
 
   it("merging into a LOCKED tab harmonizes incoming cells to the target's timeframe", () => {
@@ -616,7 +635,7 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
     // the incoming 5m cell must adopt the target's 1H.
     const fiveMin = { resolution: "MINUTE_5", label: "5m" } as never;
     const src = { ...tab("s", 1), cells: [{ ...cell("s", 0), period: fiveMin }] };
-    const out = P.mergeTabInto([src, { ...tab("d", 2), locked: true }], "s", "d")!;
+    const out = P.mergeTabInto([src, { ...tab("d", 2), locked: true }], "s", "d")!.tabs;
     expect(out[0].locked).toBe(true);
     expect(out[0].cells.map((c) => (c.period as { label: string }).label)).toEqual([
       "1H",
@@ -624,12 +643,12 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
       "1H",
     ]);
     // An unlocked target leaves incoming timeframes alone.
-    const out2 = P.mergeTabInto([{ ...src }, tab("d", 1)], "s", "d")!;
+    const out2 = P.mergeTabInto([{ ...src }, tab("d", 1)], "s", "d")!.tabs;
     expect((out2[0].cells[1].period as { label: string }).label).toBe("5m");
   });
 
   it("position 'before' puts the incoming cells first", () => {
-    const out = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d", "before")!;
+    const out = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d", "before")!.tabs;
     expect(out[0].cells.map((c) => c.id)).toEqual(["s-c0", "d-c0"]);
   });
 
