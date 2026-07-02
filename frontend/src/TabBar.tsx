@@ -6,6 +6,8 @@
 import { useState, type ReactNode } from "react";
 import type { ChartTab } from "./lib/persist";
 import SymbolIcon from "./SymbolIcon";
+import ContextMenu from "./ContextMenu";
+import MergeTabsMenu from "./MergeTabsMenu";
 
 // Format an ISO-8601 UTC next-open time for the closed-badge tooltip, in the
 // viewer's local zone. "today"/"tomorrow" when near; otherwise a dated weekday
@@ -36,6 +38,10 @@ interface Props {
   onAdd: () => void;
   onClose: (id: string) => void;
   onReorder: (from: number, to: number) => void;
+  // Merge gestures (see App.mergeTabs). canMerge gates UI affordances by the
+  // 4-cell cap; onMerge performs the merge (sources merge in the given order).
+  canMerge: (sourceId: string, targetId: string) => boolean;
+  onMerge: (targetId: string, sourceIds: string[]) => void;
   // Workspace-level controls pinned to the right of the bar (Backtest, workspace
   // layouts, the split picker, theme toggle) — they aren't specific to one chart.
   trailing?: ReactNode;
@@ -49,6 +55,7 @@ export default function TabBar({
   onAdd,
   onClose,
   onReorder,
+  onMerge,
   trailing,
 }: Props) {
   // Index of the tab being dragged, the index being hovered, and which side of
@@ -59,6 +66,11 @@ export default function TabBar({
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
   const [overSide, setOverSide] = useState<"before" | "after">("before");
+
+  // Right-click menu on a chip and the follow-up merge checklist, anchored
+  // where the user clicked.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+  const [mergePick, setMergePick] = useState<{ x: number; y: number; tabId: string } | null>(null);
 
   const endDrag = () => {
     setDragIdx(null);
@@ -131,6 +143,10 @@ export default function TabBar({
             endDrag();
           }}
           onDragEnd={endDrag}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setCtxMenu({ x: e.clientX, y: e.clientY, tabId: t.id });
+          }}
         >
           <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="tab-icon" />
           <span className="tab-symbol">{lead.symbol.epic}</span>
@@ -174,6 +190,29 @@ export default function TabBar({
       </button>
       </div>
       {trailing && <div className="tab-bar-actions">{trailing}</div>}
+      {ctxMenu && tabs.length > 1 && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={[
+            {
+              label: "Merge into this tab…",
+              onClick: () => setMergePick(ctxMenu),
+            },
+          ]}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+      {mergePick && (
+        <MergeTabsMenu
+          x={mergePick.x}
+          y={mergePick.y}
+          tabs={tabs}
+          targetId={mergePick.tabId}
+          onMerge={(sourceIds) => onMerge(mergePick.tabId, sourceIds)}
+          onClose={() => setMergePick(null)}
+        />
+      )}
     </div>
   );
 }

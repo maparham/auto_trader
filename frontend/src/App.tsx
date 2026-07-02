@@ -96,6 +96,8 @@ import {
   pickActiveTabId,
   loadAutosave,
   saveAutosave,
+  mergeTabInto,
+  canMergeTabs,
   type ChartTab,
   type LayoutKind,
   type Workspace,
@@ -1032,6 +1034,28 @@ export default function App() {
     }
   };
 
+  // Merge whole tabs into `targetId` — the inverse of detachCell. Each source
+  // tab's cells move across (content re-scoped by mergeTabInto), the source
+  // tabs close, and the merged tab gains crosshair sync. `position` places the
+  // incoming cells (drag-onto-chart's left/top half passes "before"). The
+  // target becomes the active tab in every gesture.
+  const mergeTabs = (
+    targetId: string,
+    sourceIds: string[],
+    position: "before" | "after" = "after",
+  ) => {
+    let next = tabs;
+    for (const srcId of sourceIds) {
+      const merged = mergeTabInto(next, srcId, targetId, position);
+      if (!merged) continue; // over-cap sources are UI-disabled; skip defensively
+      next = merged;
+      clearAlignAnchor(srcId); // same leak-guard closeTab applies
+    }
+    if (next === tabs) return;
+    setTabs(next);
+    setActiveId(targetId);
+  };
+
   // Reorder tabs by drag-and-drop: move the tab at `from` to destination slot
   // `to` (in original-array indexing; `to === length` means past the last tab).
   const reorderTab = (from: number, to: number) => {
@@ -1229,6 +1253,8 @@ export default function App() {
         onAdd={addTab}
         onClose={closeTab}
         onReorder={reorderTab}
+        canMerge={(s, d) => canMergeTabs(tabs, s, d)}
+        onMerge={mergeTabs}
         trailing={
           <>
             <LayoutManager
