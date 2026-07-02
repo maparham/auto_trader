@@ -92,6 +92,9 @@ export function applySymbolTemplate(
     applyIndicator(chart, scope, epic, inst, {
       rehydrate: true,
       config: t.indicatorConfigs[inst.id],
+      // Honor the cell's master "Hide indicators" switch — a template applied
+      // while it's on must not repaint indicators the sidebar eye says are hidden.
+      forceHidden: controller.indicatorsHidden.value,
     }),
   );
   controller.indicators.set(restored);

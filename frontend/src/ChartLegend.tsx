@@ -621,6 +621,7 @@ function SubPaneLegend({
         title="Drag to reorder"
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => {
+          if (e.button !== 0) return; // primary button only — no right-click drags
           e.stopPropagation();
           e.preventDefault();
           onStartReorder(data.paneId, data.rows[0]?.name ?? "");

@@ -217,6 +217,42 @@ function toColor(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+// Controlled integer input that stays clearable: committing `floor(Number(v)) || d`
+// on every keystroke would snap an emptied field straight back to the default (the
+// falsy-zero trap), so keep the raw string as a draft while focused and only commit
+// keystrokes that parse; blur drops the draft back to the committed value.
+function IntInput({
+  value,
+  min,
+  max,
+  disabled,
+  commit,
+}: {
+  value: number;
+  min?: number;
+  max?: number;
+  disabled?: boolean;
+  commit: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={1}
+      disabled={disabled}
+      value={draft ?? value}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = Math.floor(Number(e.target.value));
+        if (e.target.value !== "" && Number.isFinite(n)) commit(n);
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
+}
+
 interface LineDraft {
   key: string; // figure key (vwap/up1/dn1/…) — operations key by this, not row index
   label: string;
@@ -1487,13 +1523,11 @@ export default function IndicatorSettings({
                     <label>Lookback left</label>
                     <InfoTip title="Pivot lookback left" text="Bars required to the left of a swing for it to count as a pivot." />
                   </span>
-                  <input
-                    type="number"
+                  <IntInput
                     min={1}
-                    step={1}
                     disabled={!rsiDiv.on}
                     value={rsiDiv.lookbackLeft}
-                    onChange={(e) => setRsiDivergence({ lookbackLeft: Math.max(1, Math.floor(Number(e.target.value)) || 5) })}
+                    commit={(n) => setRsiDivergence({ lookbackLeft: Math.max(1, n) })}
                   />
                 </span>
                 <span className="ind-pair-cell">
@@ -1501,14 +1535,12 @@ export default function IndicatorSettings({
                     <label>right</label>
                     <InfoTip title="Pivot lookback right" text="Bars required to the right to confirm a pivot (the detection lag)." />
                   </span>
-                  <input
-                    type="number"
+                  <IntInput
                     min={1}
-                    step={1}
                     disabled={!rsiDiv.on}
                     value={rsiDiv.lookbackRight}
-                    onChange={(e) => {
-                      const lookbackRight = Math.max(1, Math.floor(Number(e.target.value)) || 5);
+                    commit={(n) => {
+                      const lookbackRight = Math.max(1, n);
                       // Keep forming right-lookback ≤ lookbackRight-1 so the shown value never
                       // exceeds what detection can use after lowering the confirmed lookback.
                       const formingLookbackRight = Math.min(rsiDiv.formingLookbackRight, Math.max(1, lookbackRight - 1));
@@ -1523,14 +1555,12 @@ export default function IndicatorSettings({
                     <label>Range min</label>
                     <InfoTip title="Range min" text="Fewest bars allowed between the two pivots being compared. Always ≤ Range max." />
                   </span>
-                  <input
-                    type="number"
+                  <IntInput
                     min={1}
                     max={rsiDiv.rangeMax}
-                    step={1}
                     disabled={!rsiDiv.on}
                     value={rsiDiv.rangeMin}
-                    onChange={(e) => setRsiDivergence({ rangeMin: Math.min(rsiDiv.rangeMax, Math.max(1, Math.floor(Number(e.target.value)) || 5)) })}
+                    commit={(n) => setRsiDivergence({ rangeMin: Math.min(rsiDiv.rangeMax, Math.max(1, n)) })}
                   />
                 </span>
                 <span className="ind-pair-cell">
@@ -1538,13 +1568,11 @@ export default function IndicatorSettings({
                     <label>max</label>
                     <InfoTip title="Range max" text="Most bars allowed between the two pivots being compared. Always ≥ Range min." />
                   </span>
-                  <input
-                    type="number"
+                  <IntInput
                     min={1}
-                    step={1}
                     disabled={!rsiDiv.on}
                     value={rsiDiv.rangeMax}
-                    onChange={(e) => setRsiDivergence({ rangeMax: Math.max(rsiDiv.rangeMin, Math.floor(Number(e.target.value)) || 60) })}
+                    commit={(n) => setRsiDivergence({ rangeMax: Math.max(rsiDiv.rangeMin, n) })}
                   />
                 </span>
               </div>
@@ -1603,18 +1631,16 @@ export default function IndicatorSettings({
                   <label>Forming lookback right</label>
                   <InfoTip title="Forming lookback right" text="Right-side bars for a tentative pivot; lower = earlier but jumpier. Always < Pivot lookback right." />
                 </span>
-                <input
-                  type="number"
+                <IntInput
                   min={1}
                   max={Math.max(1, rsiDiv.lookbackRight - 1)}
-                  step={1}
                   disabled={!rsiDiv.on || !rsiDiv.showForming}
                   value={rsiDiv.formingLookbackRight}
-                  onChange={(e) =>
+                  commit={(n) =>
                     setRsiDivergence({
                       formingLookbackRight: Math.min(
                         Math.max(1, rsiDiv.lookbackRight - 1),
-                        Math.max(1, Math.floor(Number(e.target.value)) || 2),
+                        Math.max(1, n),
                       ),
                     })
                   }

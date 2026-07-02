@@ -884,26 +884,34 @@ describe("OverlayManager hide-all drawings (sidebar eye)", () => {
 });
 
 describe("OverlayManager lock-all drawings (sidebar padlock)", () => {
-  it("lockAllDrawings locks only drawings; allDrawingsLocked reflects it", () => {
+  it("lockAllDrawings locks only drawings; anyDrawingsLocked reflects it", () => {
     const { chart, m } = setup();
     const d = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
     const alert = m.addAlert(5, { condition: "crossing", trigger: "once", message: "" })!;
 
-    expect(m.allDrawingsLocked()).toBe(false);
+    expect(m.anyDrawingsLocked()).toBe(false);
     m.lockAllDrawings();
-    expect(m.allDrawingsLocked()).toBe(true);
+    expect(m.anyDrawingsLocked()).toBe(true);
     expect(chart.getOverlayById(d)!.lock).toBe(true);
     expect(chart.getOverlayById(alert)!.lock).not.toBe(true); // alerts untouched
     // Lock persists (SavedOverlay.lock existed already).
     expect(P.loadDrawings("tab.A", "US100")[0].lock).toBe(true);
 
     m.unlockAll();
-    expect(m.allDrawingsLocked()).toBe(false);
+    expect(m.anyDrawingsLocked()).toBe(false);
   });
 
-  it("allDrawingsLocked is false with zero drawings (empty ≠ locked)", () => {
+  it("anyDrawingsLocked is true in a MIXED state (one locked, one not) so the padlock unlocks instead of locking everything", () => {
+    const { chart, m } = setup();
+    const a = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.addDrawing("segment", [{ value: 3 }, { value: 4 }])!;
+    chart.overrideOverlay({ id: a, lock: true }); // one drawing locked via right-click
+    expect(m.anyDrawingsLocked()).toBe(true);
+  });
+
+  it("anyDrawingsLocked is false with zero drawings", () => {
     const { m } = setup();
-    expect(m.allDrawingsLocked()).toBe(false);
+    expect(m.anyDrawingsLocked()).toBe(false);
   });
 });
 
@@ -942,5 +950,20 @@ describe("OverlayManager cancelDrawing (Esc cancels an in-progress drawing)", ()
     expect(m.cancelDrawing()).toBe(true);
     expect(chart.getOverlayById(placed)).toBeTruthy();
     expect(P.loadDrawings("tab.A", "US100")).toHaveLength(1);
+  });
+
+  it("re-arming a different tool cancels the first in-progress overlay (no ghost entry)", () => {
+    const { chart, m } = setup();
+    // klinecharts keeps ONE progress slot and overwrites it without firing
+    // onRemoved — arming tool B while tool A is unplaced would strand A's id in
+    // `entries` forever. addDrawing must cancel A properly first.
+    const first = m.addDrawing("segment")!;
+    const second = m.addDrawing("horizontalStraightLine")!;
+    expect(chart.getOverlayById(first)).toBeNull(); // A removed, not orphaned
+    expect(chart.getOverlayById(second)).toBeTruthy();
+    expect(m.isDrawing()).toBe(true); // B is still armed
+    // The stale id must not poison bulk lock state (a ghost read as "unlocked"
+    // would pin the sidebar padlock to its lock branch for the whole session).
+    expect(m.anyDrawingsLocked()).toBe(false);
   });
 });

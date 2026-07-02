@@ -129,6 +129,10 @@ export default function DrawSidebar({ controller }: Props) {
 
   function arm(name: string) {
     overlays?.addDrawing(name);
+    // Hand keyboard focus to the chart so Esc cancels the armed tool immediately —
+    // without this the sidebar button keeps focus and the chart's Esc handler
+    // never sees the key (same move the measure arm makes in ChartCore).
+    controller?.focusChart?.();
     const next = { ...lastUsed, tool: name };
     setLastUsed(next);
     saveLastDrawTools(next);
@@ -173,7 +177,9 @@ export default function DrawSidebar({ controller }: Props) {
 
   function toggleLockAll() {
     if (!overlays) return;
-    if (overlays.allDrawingsLocked()) overlays.unlockAll();
+    // ANY locked → unlock all (keeps the one-click escape hatch for a drawing
+    // locked via right-click); none locked → lock all.
+    if (overlays.anyDrawingsLocked()) overlays.unlockAll();
     else overlays.lockAllDrawings();
   }
 
@@ -190,7 +196,7 @@ export default function DrawSidebar({ controller }: Props) {
           tools.find((t) => t.name === lastUsed.tool)?.name ?? tools[0].name;
         return (
           <div className="ds-family">
-            <button className="ds-btn" title={`Drawing tools — ${toolLabel(current)}`}
+            <button className="ds-btn" title={`Drawing tools · ${toolLabel(current)}`}
               onClick={() => arm(current)}>
               <DrawGlyph name={current} />
             </button>
@@ -250,7 +256,7 @@ export default function DrawSidebar({ controller }: Props) {
         <button
           key={name}
           className="ds-btn ds-fav"
-          title={`${toolLabel(name)} (favorite)`}
+          title={toolLabel(name)}
           onClick={() => arm(name)}
         >
           <DrawGlyph name={name} />
@@ -266,7 +272,7 @@ export default function DrawSidebar({ controller }: Props) {
       {/* Measure ruler (moved from the toolbar; same signal contract). */}
       <button
         className={"ds-btn measure-toggle" + (measuring ? " on" : "")}
-        title="Measure — click start, then click end (or hold Shift)"
+        title="Measure. Click start, then click end. Shift-drag also works."
         disabled={!controller?.measureArmed}
         onClick={() => controller?.measureArmed?.set(!controller.measureArmed.value)}
       >
@@ -277,7 +283,7 @@ export default function DrawSidebar({ controller }: Props) {
       <div className="ds-family" ref={magnetRef}>
         <button
           className={"ds-btn magnet-toggle" + (magnet.on ? " on" : "")}
-          title="Magnet mode — snap drawings to price bars (hold Ctrl/Cmd to invert)"
+          title="Magnet mode. Snaps drawings to bar prices. Hold Ctrl/Cmd to invert."
           onClick={() => toggleMagnet()}
         >
           <MagnetIcon />

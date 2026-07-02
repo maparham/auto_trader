@@ -77,6 +77,12 @@ export class ChartController {
   // The cell's live klinecharts instance (null until init / after dispose).
   chart: Chart | null = null;
 
+  // DOM-focus this cell's chart wrap (null until mount). Chrome that arms a chart
+  // interaction from OUTSIDE the wrap (DrawSidebar's tool buttons) must call this
+  // after arming, or keyboard handling (Esc cancel) never reaches the chart —
+  // the same reason measure arming focuses the wrap in ChartCore.
+  focusChart: (() => void) | null = null;
+
   constructor(cellId: string, scope: string) {
     this.cellId = cellId;
     this.scope = scope;

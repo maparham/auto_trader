@@ -272,6 +272,11 @@ export function applyIndicator(
     // moved multi-indicator pane), and/or open a fresh sub-pane at a preserved height.
     paneId?: string;
     height?: number;
+    // The sidebar's master "Hide indicators" switch is on: create this instance
+    // hidden (a one-shot setAllIndicatorsHidden sweep can't catch indicators added
+    // after it ran). Intent is seeded into extendData.userVisible so the switch
+    // turning off restores what the indicator would have shown.
+    forceHidden?: boolean;
   },
 ): string | null {
   const { id, type } = inst;
@@ -295,7 +300,13 @@ export function applyIndicator(
     cfg.calcParams = cfg.calcParams.slice(0, def.length);
   }
   // indType always reflects the real type; merge it over any saved/copied extendData.
-  const extendData = { ...(cfg?.extendData ?? {}), indType: type };
+  const extendData: { userVisible?: boolean; indType: string } = {
+    ...(cfg?.extendData ?? {}),
+    indType: type,
+  };
+  if (opts?.forceHidden && extendData.userVisible === undefined) {
+    extendData.userVisible = cfg?.visible !== false;
+  }
   const value = {
     name: id,
     createTooltipDataSource: legendTooltipSource,
@@ -307,7 +318,7 @@ export function applyIndicator(
         : DEFAULT_CALC_PARAMS[type]
           ? { calcParams: DEFAULT_CALC_PARAMS[type] }
           : {}),
-    ...(cfg?.visible === false ? { visible: false } : {}),
+    ...(opts?.forceHidden || cfg?.visible === false ? { visible: false } : {}),
   };
   // Overlays stack on the candle pane; sub-pane indicators (RSI/MACD/…) get their own
   // pane with a taller default than klinecharts' cramped ~50px, so oscillators read
@@ -375,7 +386,16 @@ export function setAllIndicatorsHidden(chart: Chart, hidden: boolean, resolution
   for (const [paneId, inds] of panes ?? []) {
     for (const ind of inds.values()) {
       if (!ind?.name || INTERNAL_INDICATORS.has(ind.name)) continue;
-      chart.overrideIndicator({ name: ind.name, visible: false }, paneId);
+      // Record intent BEFORE forcing the live flag off: un-hiding derives intent as
+      // userVisible ?? visible, and an indicator never individually toggled has no
+      // userVisible yet — its forced-false flag would read back as intent and the
+      // indicator would stay hidden after the switch turns off.
+      const ext = (ind.extendData ?? {}) as { userVisible?: boolean };
+      const seed =
+        ext.userVisible === undefined
+          ? { extendData: { ...ext, userVisible: ind.visible ?? true } }
+          : {};
+      chart.overrideIndicator({ name: ind.name, visible: false, ...seed }, paneId);
     }
   }
 }
@@ -387,10 +407,11 @@ export function addIndicatorInstance(
   scope: string,
   epic: string,
   type: string,
-  opts?: { config?: SavedIndicatorConfig },
+  opts?: { config?: SavedIndicatorConfig; forceHidden?: boolean },
 ): IndicatorInstance | null {
   const inst: IndicatorInstance = { id: mintInstanceId(chart, type), type };
-  if (!applyIndicator(chart, scope, epic, inst, { config: opts?.config })) return null;
+  if (!applyIndicator(chart, scope, epic, inst, { config: opts?.config, forceHidden: opts?.forceHidden }))
+    return null;
   return inst;
 }
 

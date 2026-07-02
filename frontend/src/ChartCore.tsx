@@ -2386,6 +2386,10 @@ export default function ChartCore({
       // synchronous fallback (symbol.pricePrecision ?? 2); the async fetch refines it.
       overlays.setPricePrecision(effPrecision);
       controller.chart = chart;
+      // Let outside chrome (DrawSidebar) hand keyboard focus to this cell after
+      // arming a drawing tool, so Esc-cancel reaches onKeyDown (same reason the
+      // measure arm subscription focuses the wrap above).
+      controller.focusChart = () => wrapRef.current?.focus({ preventScroll: true });
       // Hydrate this cell's saved indicators synchronously on chart-ready (they
       // recalc once data arrives). Done here — not after the async data fetch — so
       // the focused Toolbar reflects them immediately on mount / tab switch, and
@@ -2430,6 +2434,7 @@ export default function ChartCore({
       posDrawRef.current = () => {};
       overlays.detach();
       controller.chart = null;
+      controller.focusChart = null;
       const w = window as unknown as { __charts?: Map<string, Chart> };
       w.__charts?.delete(cellId);
       if (el) dispose(el);
@@ -3822,6 +3827,7 @@ export default function ChartCore({
     }
     const inst = addIndicatorInstance(c, scope, epicRef.current, parsed.type, {
       config: parsed.config,
+      forceHidden: controller.indicatorsHidden.value,
     });
     if (!inst) {
       toast(`Can't paste ${parsed.type}`);
@@ -3986,6 +3992,10 @@ export default function ChartCore({
   // Drag a sub-pane by its legend handle: track the pointer against each reorderable
   // pane's vertical band, show a drop-indicator line, and on release move the pane to
   // the hovered slot. Rebuild happens via reorderPaneByName (shared with the menu).
+  // Abort an in-flight pane drag if the cell unmounts (tab switch, layout change) —
+  // its window listeners would otherwise outlive the chart they close over.
+  const paneDragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => paneDragCleanupRef.current?.(), []);
   const startPaneReorderDrag = useCallback(
     (paneId: string, name: string) => {
       const c = chartRef.current;
@@ -4015,14 +4025,26 @@ export default function ChartCore({
         // pane's own slot when the cursor is below it (downward drag).
         target = Math.max(0, Math.min(order.length - 1, t > from ? t - 1 : t));
       };
-      const up = () => {
+      // Shared teardown: pointerup commits, pointercancel (touch/OS gesture
+      // takeover — pointerup never follows) and a mid-drag unmount just abort.
+      // Without the cancel path the drop indicator sticks and the next unrelated
+      // pointerup anywhere would commit a reorder the user never dropped.
+      const cleanup = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", cancel);
+        paneDragCleanupRef.current = null;
         setPaneDropTop(null);
+      };
+      const cancel = () => cleanup();
+      const up = () => {
+        cleanup();
         if (target !== from) reorderPaneByName(name, target);
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", cancel);
+      paneDragCleanupRef.current = cleanup;
     },
     [reorderPaneByName],
   );
@@ -4090,15 +4112,20 @@ export default function ChartCore({
         // Don't hijack copy/paste/delete while typing in a field.
         const t = e.target as HTMLElement;
         if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return;
-        // Escape disarms / discards a measurement first (TV: Esc cancels the ruler);
-        // then falls back to cancelling an armed/mid-placement drawing tool.
+        // Escape cancels the most recent transient first: an ARMED measure (TV: Esc
+        // cancels the ruler), then an armed/mid-placement drawing tool, and only
+        // then a leftover frozen measure box — a stale box must not swallow the
+        // Esc meant for the tool the user just armed.
         if (e.key === "Escape") {
-          if (measureArmed.value || overlays.hasMeasure()) {
+          if (measureArmed.value) {
             measureArmed.set(false);
             overlays.clearMeasure();
             e.preventDefault();
           } else if (overlays.cancelDrawing()) {
             // TV: Esc cancels an armed/mid-placement drawing tool.
+            e.preventDefault();
+          } else if (overlays.hasMeasure()) {
+            overlays.clearMeasure();
             e.preventDefault();
           }
           return;

@@ -241,7 +241,9 @@ export default function Toolbar({
   // uses the exact same path.
   function addIndicator(type: string) {
     if (!chart || !controller || !symbol) return;
-    const inst = addIndicatorInstance(chart, controller.scope, symbol.epic, type);
+    const inst = addIndicatorInstance(chart, controller.scope, symbol.epic, type, {
+      forceHidden: controller.indicatorsHidden.value,
+    });
     if (!inst) return;
     const next = [...controller.indicators.value, inst];
     controller.indicators.set(next);

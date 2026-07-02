@@ -846,6 +846,11 @@ export class OverlayManager {
   // Place a drawing. With points it's created in place (e.g. a horizontal line
   // at a price from the "+" menu); without, klinecharts enters interactive draw.
   addDrawing(name: string, points?: SavedOverlay["points"]): string | null {
+    // Re-arming replaces the in-progress tool: klinecharts keeps ONE progress slot
+    // and silently overwrites it WITHOUT firing onRemoved, which would strand the
+    // previous overlay's id in `entries` forever (getOverlayById(ghost) → null, so
+    // e.g. anyDrawingsLocked/persist iterate a dead id). Cancel it properly first.
+    if (!points) this.cancelDrawing();
     // No points = interactive draw (klinecharts collects clicks until the figure is
     // complete). Flag it so a lock click-to-align doesn't fire on those clicks; the
     // onDrawEnd in create() clears it.
@@ -1363,14 +1368,14 @@ export class OverlayManager {
     this.persist();
   }
 
-  allDrawingsLocked(): boolean {
-    let n = 0;
+  // ANY (not all) locked: the sidebar padlock unlocks when at least one drawing is
+  // locked, so it keeps the old one-click "unlock all" escape hatch — a mixed state
+  // must never silently lock (and persist) everything the user left unlocked.
+  anyDrawingsLocked(): boolean {
     for (const [id, kind] of this.entries) {
-      if (kind !== "drawing") continue;
-      n++;
-      if (!this.chart?.getOverlayById(id)?.lock) return false;
+      if (kind === "drawing" && this.chart?.getOverlayById(id)?.lock) return true;
     }
-    return n > 0;
+    return false;
   }
 
   unlockAll(): void {

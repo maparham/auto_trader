@@ -98,6 +98,7 @@ describe("maybeAutoApplyTemplate gate", () => {
   let applied: { id: string }[] = [];
   const stubController = {
     indicators: { value: [] as unknown[], set: (v: { id: string }[]) => (applied = v) },
+    indicatorsHidden: { value: false },
     overlays: { rehydrate: () => {} },
   } as unknown as import("./chartController").ChartController;
 
