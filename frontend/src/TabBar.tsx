@@ -55,17 +55,20 @@ export default function TabBar({
   onAdd,
   onClose,
   onReorder,
+  canMerge,
   onMerge,
   trailing,
 }: Props) {
-  // Index of the tab being dragged, the index being hovered, and which side of
-  // that tab the cursor is on ("before"/"after") — drives the drop-indicator
-  // line and the target slot. All null when no drag is in progress. The side
-  // lets you drop AFTER the last tab (drop on its right half), which a pure
-  // drop-before scheme can't express.
+  // Index of the tab being dragged, the index being hovered, and which zone of
+  // that tab the cursor is on — drives the drop-indicator line/highlight and
+  // the target slot. All null when no drag is in progress. "before"/"after"
+  // let you drop on either edge (the right half of the last tab included,
+  // which a pure drop-before scheme can't express); "merge" is the middle
+  // ~40% of the chip and only applies when the dragged tab can merge into it.
+  type DropZone = "before" | "after" | "merge";
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
-  const [overSide, setOverSide] = useState<"before" | "after">("before");
+  const [overSide, setOverSide] = useState<DropZone>("before");
 
   // Right-click menu on a chip and the follow-up merge checklist, anchored
   // where the user clicked.
@@ -107,9 +110,11 @@ export default function TabBar({
             t.id === activeId ? "on" : "",
             dragIdx === i ? "dragging" : "",
             overIdx === i && dragIdx !== i
-              ? overSide === "after"
-                ? "drop-after"
-                : "drop-before"
+              ? overSide === "merge"
+                ? "drop-merge"
+                : overSide === "after"
+                  ? "drop-after"
+                  : "drop-before"
               : "",
           ]
             .filter(Boolean)
@@ -122,23 +127,37 @@ export default function TabBar({
             e.dataTransfer.effectAllowed = "move";
           }}
           onDragOver={(e) => {
-            // Allow dropping and track the hovered slot + which half the cursor
-            // is on, so the drop can land before or after this tab.
+            // Allow dropping and track the hovered slot + zone the cursor is
+            // in, so the drop can land before, after, or merge into this tab.
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
             const r = e.currentTarget.getBoundingClientRect();
-            const side = e.clientX < r.left + r.width / 2 ? "before" : "after";
+            const frac = (e.clientX - r.left) / r.width;
+            // Middle ~40% of the chip = merge drop (when allowed); the outer
+            // edges keep meaning reorder, so the gestures don't fight.
+            const mergeOk =
+              dragIdx !== null && dragIdx !== i && canMerge(tabs[dragIdx].id, t.id);
+            const side: DropZone =
+              mergeOk && frac >= 0.3 && frac <= 0.7
+                ? "merge"
+                : frac < 0.5
+                  ? "before"
+                  : "after";
             if (overIdx !== i) setOverIdx(i);
             if (overSide !== side) setOverSide(side);
           }}
           onDrop={(e) => {
             e.preventDefault();
-            // Translate (target index, side) into the destination index, then
-            // let App's reorder do the remove-then-insert. Dropping after tab i
-            // targets slot i+1.
+            // Translate (target index, zone) into either a merge or the
+            // destination index for App's reorder (remove-then-insert;
+            // dropping after tab i targets slot i+1).
             if (dragIdx !== null) {
-              const to = overSide === "after" ? i + 1 : i;
-              if (to !== dragIdx) onReorder(dragIdx, to);
+              if (overSide === "merge" && dragIdx !== i) {
+                onMerge(t.id, [tabs[dragIdx].id]);
+              } else {
+                const to = overSide === "after" ? i + 1 : i;
+                if (to !== dragIdx) onReorder(dragIdx, to);
+              }
             }
             endDrag();
           }}

@@ -155,3 +155,21 @@ test("context-menu merge collapses t2 into t1 with content, focus and crosshair 
   await page.locator(".chart-cell").nth(1).locator(".chart-cell-detach").click();
   await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
 });
+
+test("dropping a chip on another chip's center merges the two tabs", async ({ page }) => {
+  await seedTwoTabs(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+
+  const tabs = page.locator(".tab-bar .tab");
+  const b = (await tabs.nth(0).boundingBox())!;
+  // Center of the target chip = merge zone (edges still mean reorder — covered
+  // by tab-reorder.spec.ts, which this must not break).
+  await tabs.nth(1).dragTo(tabs.nth(0), {
+    targetPosition: { x: b.width / 2, y: b.height / 2 },
+  });
+
+  await expect(tabs).toHaveCount(1);
+  await expect(page.locator(".chart-cell")).toHaveCount(2);
+});
