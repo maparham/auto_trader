@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { Chart } from "klinecharts";
 import ChartGrid from "./ChartGrid";
 import Toolbar from "./Toolbar";
+import DrawSidebar from "./DrawSidebar";
 import LayoutPicker from "./LayoutPicker";
 import BrokerSelector from "./BrokerSelector";
 import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor } from "./lib/chartSync";
@@ -1237,6 +1238,8 @@ export default function App() {
       />
       <div className={`workspace${dockMaximized ? " dock-hidden" : ""}`}>
         <main className="chart">
+          {active && <DrawSidebar controller={focusedController} />}
+          <div className="chart-cells">
           {active ? (
             /* Multi-chart grid for the active tab. Switching tabs swaps the cell
                set; each cell keys on cell.id so it remounts and re-reads its scope. */
@@ -1282,6 +1285,7 @@ export default function App() {
               <button onClick={addTab}>+ New chart</button>
             </div>
           )}
+          </div>
         </main>
         {/* Panel is toggled by the toolbar bell; closed = chart uses full width. */}
         {panelOpen && symbol && (

@@ -841,3 +841,68 @@ describe("magnet mode (TV-style OHLC snap)", () => {
     expect(modeOf(chart, draw)).toBe("normal"); // unchanged since detach
   });
 });
+
+describe("OverlayManager hide-all drawings (sidebar eye)", () => {
+  it("hides every drawing without touching per-drawing intent, and restores on unhide", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const a = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const b = m.addDrawing("priceLine", [{ value: 3 }])!;
+
+    expect(m.getDrawingsHidden()).toBe(false);
+    m.setDrawingsHidden(true);
+    expect(m.getDrawingsHidden()).toBe(true);
+    expect(chart.getOverlayById(a)!.visible).toBe(false);
+    expect(chart.getOverlayById(b)!.visible).toBe(false);
+    // Intent untouched: getDrawing still reports the user's choice, and persist
+    // (which reads intent) is not corrupted by the session-only hide.
+    expect(m.getDrawing(a)!.visible).toBe(true);
+    const saved = P.loadDrawings("tab.A", "US100");
+    expect(saved.every((d) => (asDrawingExtra(d.extendData).userVisible ?? true) === true)).toBe(true);
+
+    m.setDrawingsHidden(false);
+    expect(chart.getOverlayById(a)!.visible).toBe(true);
+    expect(chart.getOverlayById(b)!.visible).toBe(true);
+  });
+
+  it("a ghosted (interval-filtered) drawing comes back as a ghost, not solid", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
+    m.setResolution("MINUTE_5"); // → ghost (faded, still visible)
+    const ghostColor = (chart.getOverlayById(id)!.styles as { line?: { color?: string } }).line?.color;
+    expect(ghostColor).toMatch(/^rgba\(/);
+
+    m.setDrawingsHidden(true);
+    expect(chart.getOverlayById(id)!.visible).toBe(false);
+    m.setDrawingsHidden(false);
+    const back = chart.getOverlayById(id)!;
+    expect(back.visible).toBe(true);
+    expect((back.styles as { line?: { color?: string } }).line?.color).toMatch(/^rgba\(/);
+  });
+});
+
+describe("OverlayManager lock-all drawings (sidebar padlock)", () => {
+  it("lockAllDrawings locks only drawings; allDrawingsLocked reflects it", () => {
+    const { chart, m } = setup();
+    const d = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const alert = m.addAlert(5, { condition: "crossing", trigger: "once", message: "" })!;
+
+    expect(m.allDrawingsLocked()).toBe(false);
+    m.lockAllDrawings();
+    expect(m.allDrawingsLocked()).toBe(true);
+    expect(chart.getOverlayById(d)!.lock).toBe(true);
+    expect(chart.getOverlayById(alert)!.lock).not.toBe(true); // alerts untouched
+    // Lock persists (SavedOverlay.lock existed already).
+    expect(P.loadDrawings("tab.A", "US100")[0].lock).toBe(true);
+
+    m.unlockAll();
+    expect(m.allDrawingsLocked()).toBe(false);
+  });
+
+  it("allDrawingsLocked is false with zero drawings (empty ≠ locked)", () => {
+    const { m } = setup();
+    expect(m.allDrawingsLocked()).toBe(false);
+  });
+});

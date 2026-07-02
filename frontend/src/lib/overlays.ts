@@ -389,6 +389,14 @@ export class OverlayManager {
     return this.drawingInProgress;
   }
 
+  // Sidebar "hide all drawings" eye — SESSION-ONLY master switch layered over
+  // per-drawing intent (extendData.userVisible), so toggling it never rewrites
+  // (or persists over) what the user chose per drawing.
+  private drawingsHidden = false;
+  getDrawingsHidden(): boolean {
+    return this.drawingsHidden;
+  }
+
   // Apply an alert line's resting/emphasized weight. A line is emphasized (thick)
   // while it is EITHER click-selected OR hovered (from the chart or the sidebar), so
   // this single rule keeps the two states from fighting — un-hovering a selected
@@ -900,6 +908,7 @@ export class OverlayManager {
     extra: DrawingExtra,
     pts?: ReadonlyArray<{ timestamp?: number }>,
   ): { visible: boolean; faded: boolean } {
+    if (this.drawingsHidden) return { visible: false, faded: false }; // master eye off
     const intent = extra.userVisible ?? true;
     if (!intent) return { visible: false, faded: false };
     const effective = this.effectiveVisible({ ...extra, userVisible: true }, pts);
@@ -1305,10 +1314,42 @@ export class OverlayManager {
     }
   }
 
+  // Sidebar eye: hide/show every drawing at once (session-only; per-drawing
+  // intent and persistence are untouched — see displayFor).
+  setDrawingsHidden(hidden: boolean): void {
+    if (this.drawingsHidden === hidden) return;
+    this.drawingsHidden = hidden;
+    for (const [id, kind] of this.entries) {
+      if (kind !== "drawing") continue;
+      const ov = this.chart?.getOverlayById(id);
+      if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
+    }
+  }
+
+  // Sidebar padlock: lock every drawing (alerts and the measure ruler are not
+  // drawings and stay interactive). Persisted via SavedOverlay.lock.
+  lockAllDrawings(): void {
+    for (const [id, kind] of this.entries) {
+      if (kind === "drawing") this.chart?.overrideOverlay({ id, lock: true });
+    }
+    this.persist();
+  }
+
+  allDrawingsLocked(): boolean {
+    let n = 0;
+    for (const [id, kind] of this.entries) {
+      if (kind !== "drawing") continue;
+      n++;
+      if (!this.chart?.getOverlayById(id)?.lock) return false;
+    }
+    return n > 0;
+  }
+
   unlockAll(): void {
     for (const id of this.entries.keys()) {
       this.chart?.overrideOverlay({ id, lock: false });
     }
+    this.persist();
   }
 
   // The Style tab's handler (DrawingSettings.tsx) — reachable by clicking a ghost to

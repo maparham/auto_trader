@@ -1,17 +1,14 @@
 // Our TradingView-style toolbar over the klinecharts-core chart we own:
 //  - instrument search   - timeframe bar
 //  - SEARCHABLE indicator menu (built-ins + custom VWAP/AVWAP)
-//  - drawing tools (klinecharts overlays)   - A/L price-scale toggles
+//  - A/L price-scale toggles
 //
+// Drawing tools, magnet, and measure now live in DrawSidebar; this toolbar
+// still owns the right-click drawing context menu (Lock/Settings/Delete).
 // Everything drives the Chart instance directly via its public API.
 
 import { useEffect, useRef, useState } from "react";
-import {
-  getSupportedIndicators,
-  getSupportedOverlays,
-  YAxisType,
-} from "klinecharts";
-import InfoTip from "./components/InfoTip";
+import { getSupportedIndicators, YAxisType } from "klinecharts";
 import {
   PERIODS,
   PERIOD_GROUPS,
@@ -46,11 +43,10 @@ import {
   applyDefaultTemplate,
 } from "./lib/templates";
 import { indicatorInfo } from "./lib/indicatorMeta";
-import { magnetSignal, toggleMagnet, setMagnetStrength } from "./lib/magnet";
 import IndicatorRow from "./IndicatorRow";
 import type { ChartController } from "./lib/chartController";
 import ContextMenu from "./ContextMenu";
-import { BellIcon, RulerIcon, MenuIcons } from "./lib/menuIcons";
+import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
 import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
@@ -89,18 +85,6 @@ interface Props {
   onToggleMaximize: () => void;
 }
 
-// A few friendly labels for the most-used drawing overlays.
-const DRAW_TOOLS: { name: string; label: string }[] = [
-  { name: "horizontalStraightLine", label: "Horizontal line" },
-  { name: "verticalStraightLine", label: "Vertical line" },
-  { name: "straightLine", label: "Trend line" },
-  { name: "rayLine", label: "Ray" },
-  { name: "segment", label: "Segment" },
-  { name: "priceLine", label: "Price line" },
-  { name: "priceChannelLine", label: "Parallel channel" },
-  { name: "fibonacciLine", label: "Fibonacci retracement" },
-];
-
 // Shared dropdown caret — the same SVG chevron the symbol chip uses, so every
 // toolbar caret renders identically (replacing the plain "▾" text triangles that
 // rendered in a different style beside the SVG one).
@@ -113,20 +97,6 @@ function Caret({ className }: { className?: string }) {
       aria-hidden="true"
     >
       <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
-}
-
-// Horseshoe magnet (TV-style) — stroke icon (currentColor) so it inherits the
-// toolbar's mono treatment and the .on highlight, matching the bell/ruler icons.
-function MagnetIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true">
-      <path d="M6 4v7a6 6 0 0 0 12 0V4" />
-      <path d="M3 4h6v3H3z" />
-      <path d="M15 4h6v3h-6z" />
     </svg>
   );
 }
@@ -167,20 +137,12 @@ export default function Toolbar({
 
   // dropdown wrappers (for outside-click close)
   const indMenuRef = useRef<HTMLDivElement>(null);
-  const drawMenuRef = useRef<HTMLDivElement>(null);
   const intervalMenuRef = useRef<HTMLDivElement>(null);
   const tmplMenuRef = useRef<HTMLDivElement>(null);
 
-  // drawing menu
-  const [drawOpen, setDrawOpen] = useState(false);
+  // drawing right-click context menu (Lock/Settings/Delete etc — the tools that
+  // CREATE drawings now live in DrawSidebar; this menu still fires from the chart).
   const [drawMenu, setDrawMenu] = useState<DrawMenu | null>(null);
-
-  // Magnet mode (GLOBAL, persisted) — mirror the signal; on = highlighted button.
-  // The caret opens a Weak/Strong strength menu.
-  const [magnet, setMagnet] = useState(magnetSignal.value);
-  useEffect(() => magnetSignal.subscribe(setMagnet), []);
-  const [magnetOpen, setMagnetOpen] = useState(false);
-  const magnetMenuRef = useRef<HTMLDivElement>(null);
 
   // price-scale
   const [log, setLog] = useState(false);
@@ -190,15 +152,6 @@ export default function Toolbar({
     if (!controller) return;
     setAuto(controller.autoScale.value);
     return controller.autoScale.subscribe(setAuto);
-  }, [controller]);
-  // Measure ruler armed state (mirrors the focused cell's signal; on = highlighted).
-  // Optional-chained through measureArmed so a hot-reloaded stale controller (one
-  // created before this signal existed) degrades instead of crashing the toolbar.
-  const [measuring, setMeasuring] = useState(controller?.measureArmed?.value ?? false);
-  useEffect(() => {
-    if (!controller?.measureArmed) return;
-    setMeasuring(controller.measureArmed.value);
-    return controller.measureArmed.subscribe(setMeasuring);
   }, [controller]);
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
@@ -215,21 +168,18 @@ export default function Toolbar({
   // Close dropdowns on click outside. The ref wraps button+dropdown, so clicking
   // the toggle stays "inside" and doesn't fight the button's own onClick.
   useEffect(() => {
-    if (!indOpen && !drawOpen && !intervalOpen && !tmplOpen && !magnetOpen) return;
+    if (!indOpen && !intervalOpen && !tmplOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (indOpen && indMenuRef.current && !indMenuRef.current.contains(t)) setIndOpen(false);
-      if (drawOpen && drawMenuRef.current && !drawMenuRef.current.contains(t)) setDrawOpen(false);
       if (intervalOpen && intervalMenuRef.current && !intervalMenuRef.current.contains(t))
         setIntervalOpen(false);
       if (tmplOpen && tmplMenuRef.current && !tmplMenuRef.current.contains(t))
         setTmplOpen(false);
-      if (magnetOpen && magnetMenuRef.current && !magnetMenuRef.current.contains(t))
-        setMagnetOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [indOpen, drawOpen, intervalOpen, tmplOpen, magnetOpen]);
+  }, [indOpen, intervalOpen, tmplOpen]);
 
   // Right-clicking any overlay (drawn live or rehydrated) opens our context menu.
   // Bound to the FOCUSED cell's overlay manager; re-bind when focus changes.
@@ -359,23 +309,6 @@ export default function Toolbar({
     deleteDefaultTemplate();
     setTmplOpen(false);
     toast("Cleared default template");
-  }
-
-  function addDrawing(name: string) {
-    overlays?.addDrawing(name);
-    setDrawOpen(false);
-  }
-
-  function clearDrawings() {
-    overlays?.clearDrawings();
-    setDrawOpen(false);
-  }
-
-  function unlockAll() {
-    // Locked overlays stop responding to events, so they can't be unlocked by
-    // right-click — this is the escape hatch.
-    overlays?.unlockAll();
-    setDrawOpen(false);
   }
 
   // Copy the right-clicked drawing to the system clipboard, in the same tagged
@@ -599,93 +532,6 @@ export default function Toolbar({
           </div>
         )}
       </div>
-
-      {/* Drawing tools */}
-      <div className="menu" ref={drawMenuRef}>
-        <button
-          className={drawOpen ? "on" : ""}
-          title="Drawing tools"
-          onClick={() => setDrawOpen((v) => !v)}
-        >
-          ✎ Draw<Caret />
-        </button>
-        {drawOpen && (
-          <div className="dropdown">
-            <ul>
-              {DRAW_TOOLS.filter((t) => getSupportedOverlays().includes(t.name)).map(
-                (t) => (
-                  <li key={t.name} onClick={() => addDrawing(t.name)}>
-                    {t.label}
-                  </li>
-                ),
-              )}
-              <li onClick={unlockAll}>↺ Unlock all drawings</li>
-              <li onClick={clearDrawings}>— Clear all drawings —</li>
-            </ul>
-          </div>
-        )}
-      </div>
-
-      {/* Magnet mode (TradingView-style). The icon toggles snapping on/off; the
-          caret picks Weak/Strong. GLOBAL + persisted (lib/magnet.ts) — the same
-          state for every cell. Hold Ctrl/Cmd while drawing to momentarily invert. */}
-      <div className="menu magnet-menu" ref={magnetMenuRef}>
-        <button
-          className={`anchor-btn icon-btn magnet-toggle${magnet.on ? " on" : ""}`}
-          title="Magnet mode — snap drawings to price bars (hold Ctrl/Cmd to invert)"
-          onClick={() => toggleMagnet()}
-        >
-          <MagnetIcon />
-        </button>
-        <button
-          className={`magnet-caret-btn${magnetOpen ? " on" : ""}`}
-          title="Magnet strength"
-          onClick={() => setMagnetOpen((v) => !v)}
-        >
-          <Caret />
-        </button>
-        {magnetOpen && (
-          <div className="dropdown">
-            <ul>
-              <li
-                className="magnet-opt"
-                onClick={() => { setMagnetStrength("weak"); setMagnetOpen(false); }}
-              >
-                <span className="check">{magnet.strength === "weak" ? "✓" : ""}</span>
-                Weak Magnet
-                <InfoTip
-                  title="Weak Magnet"
-                  desc="Snaps a drawing point to the nearest OHLC price only when the cursor is close to a price bar."
-                />
-              </li>
-              <li
-                className="magnet-opt"
-                onClick={() => { setMagnetStrength("strong"); setMagnetOpen(false); }}
-              >
-                <span className="check">{magnet.strength === "strong" ? "✓" : ""}</span>
-                Strong Magnet
-                <InfoTip
-                  title="Strong Magnet"
-                  desc="Always snaps a drawing point to the nearest OHLC price of the bar under the cursor."
-                />
-              </li>
-            </ul>
-          </div>
-        )}
-      </div>
-
-      {/* Measure ruler (TradingView-style). Arms the tool: click the chart to set the
-          start, move, click again to set the end (price/%/ticks/bars/time). Holding
-          Shift arms it without the button. Highlighted while armed; toggles off on a
-          second click. */}
-      <button
-        className={`anchor-btn icon-btn measure-toggle${measuring ? " on" : ""}`}
-        title="Measure — click start, then click end (or hold Shift)"
-        disabled={!controller?.measureArmed}
-        onClick={() => controller?.measureArmed?.set(!controller.measureArmed.value)}
-      >
-        <RulerIcon />
-      </button>
 
       <span className="tb-div" aria-hidden="true" />
 

@@ -40,6 +40,20 @@ export function RulerIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// Horseshoe magnet (TV-style) — stroke icon (currentColor) so it inherits the
+// toolbar's mono treatment and the .on highlight, matching the bell/ruler icons.
+export function MagnetIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M6 4v7a6 6 0 0 0 12 0V4" />
+      <path d="M3 4h6v3H3z" />
+      <path d="M15 4h6v3h-6z" />
+    </svg>
+  );
+}
+
 export const MenuIcons = {
   settings: svg(
     <>

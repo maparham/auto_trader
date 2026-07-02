@@ -872,6 +872,27 @@ export function saveFavoriteIndicators(list: string[]): void {
   save(FAVORITE_INDICATORS_KEY, list);
 }
 
+// --- drawing-tool preferences (left sidebar) ---------------------------------
+//
+// Starred drawing tools (GLOBAL preference, star order) — mirrors the
+// indicator favorites idiom above. And the last-used tool per sidebar family
+// (device-local), so each family button re-arms what you used last.
+const FAVORITE_DRAWINGS_KEY = `${PREFIX}.drawingFavorites`;
+export function loadFavoriteDrawings(): string[] {
+  return load<string[]>(FAVORITE_DRAWINGS_KEY, []);
+}
+export function saveFavoriteDrawings(list: string[]): void {
+  save(FAVORITE_DRAWINGS_KEY, list);
+}
+
+const LAST_DRAW_TOOLS_KEY = `${PREFIX}.lastDrawTools`;
+export function loadLastDrawTools(): Record<string, string> {
+  return load<Record<string, string>>(LAST_DRAW_TOOLS_KEY, {});
+}
+export function saveLastDrawTools(map: Record<string, string>): void {
+  saveLocal(LAST_DRAW_TOOLS_KEY, map);
+}
+
 // --- recently opened symbols (PER BROKER, mirrored) --------------------------
 //
 // A personal MRU list: the epics of symbols the user recently opened from the
