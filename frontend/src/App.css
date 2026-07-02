@@ -155,11 +155,18 @@
 /* Swap button centered on the border segment between two adjacent cells.
    Hidden until the pointer reaches the border zone: hovering the grab strip
    reveals the buttons on that border, and the button keeps itself visible
-   under its own hover (it sits ABOVE the strip — z 31 vs 30 — so the click
-   lands on the swap; the rest of the strip still drags). No drop-shadow. */
+   under its own hover (it sits ABOVE the strip — z 30 — so the click lands
+   on the swap; the rest of the strip still drags). No drop-shadow.
+   z-index 49: .chart-cell creates no stacking context, so the in-cell DOM
+   axis pills (ba-tag 44 / alert tags 45-48 / price-tag 47) compete directly
+   with this button — on a vertical border they sit exactly on the left
+   cell's price axis, i.e. under this button. While revealed, the handle is
+   the deliberate target, so it beats the whole pill ladder. No clash with
+   the cursor price label (also 49): it only paints where the chart sees
+   mousemoves, and the strip/button swallow those here. */
 .cell-swap {
   position: absolute;
-  z-index: 31;
+  z-index: 49;
   display: flex;
   align-items: center;
   justify-content: center;
