@@ -45,6 +45,29 @@
 .draw-sidebar .ds-btn:hover { background: var(--hover); color: var(--text); }
 .draw-sidebar .ds-btn.on { background: var(--hover-strong); color: var(--accent); }
 .draw-sidebar .ds-btn:disabled { opacity: 0.4; cursor: default; }
+/* Favorites-zone buttons: a small amber star badge (same convention as the
+   flyout's row stars) marks a button as a starred tool, so it reads as
+   distinct from the tool/family buttons below. */
+.draw-sidebar .ds-btn.ds-fav { position: relative; animation: ds-fav-in 160ms ease-out; }
+.draw-sidebar .ds-fav-star {
+  position: absolute; right: 2px; bottom: 2px; width: 8px; height: 8px;
+  fill: #f5b301; stroke: none; pointer-events: none;
+}
+/* Starred tools slide out from beneath the Drawing tools button. */
+@keyframes ds-fav-in {
+  from { max-height: 0; opacity: 0; transform: translateY(-8px); }
+  to { max-height: 30px; opacity: 1; transform: translateY(0); }
+}
+/* Slim expander between the Drawing tools button and the favorites strip:
+   chevron points down (expand) and flips up while open (collapse). */
+.draw-sidebar .ds-fav-toggle {
+  width: 30px; height: 13px; padding: 0; border: none; border-radius: 3px;
+  background: transparent; color: var(--text-faint); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.draw-sidebar .ds-fav-toggle:hover { background: var(--hover); color: var(--text); }
+.draw-sidebar .ds-fav-toggle svg { transition: transform 140ms ease; }
+.draw-sidebar .ds-fav-toggle.open svg { transform: rotate(180deg); }
 .draw-sidebar .ds-div { width: 22px; height: 1px; background: var(--border); margin: 4px 0; }
 .draw-sidebar .ds-spacer { flex: 1; }
 /* Family = an icon button + its flyout caret, laid out TV-style: the caret is
@@ -61,7 +84,8 @@
 .draw-sidebar .ds-flyout {
   position: absolute; left: calc(100% + 6px); top: -4px; z-index: 60;
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  width: max-content; min-width: 260px; padding: 6px 0;
+  /* Content-sized (user: minimal width) — rows set the width, no floor. */
+  width: max-content; padding: 6px 0;
 }
 .draw-sidebar .ds-fly-section {
   padding: 8px 16px 6px; font-size: 11px; font-weight: 500; color: var(--text-faint);

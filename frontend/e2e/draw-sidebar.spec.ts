@@ -32,11 +32,24 @@ test("draw sidebar: flyout, favorites, last-used, bulk buttons", async ({ page }
   await expect(flyout.locator(".ds-row").first()).toContainText("Trend line");
   await expect(flyout.locator(".ds-row svg").first()).toBeVisible(); // glyph
 
+  // Esc closes an open flyout (without needing chart focus).
+  await page.keyboard.press("Escape");
+  await expect(flyout).toHaveCount(0);
+  await toolFamily.hover();
+  await toolFamily.locator(".ds-caret").click();
+  await expect(flyout).toBeVisible();
+
   // Star "Ray" → favorites button appears at the sidebar top and persists.
   const rayRow = flyout.locator(".ds-row", { hasText: "Ray" });
   await rayRow.hover();
   await rayRow.locator(".ind-star").click();
-  await expect(sidebar.locator("button[title='Ray']")).toBeVisible();
+  await expect(sidebar.locator("button[title='Ray (favorite)']")).toBeVisible();
+  // The favorites strip collapses/expands via the slim toggle under the tool button.
+  const favToggle = sidebar.locator(".ds-fav-toggle");
+  await favToggle.click();
+  await expect(sidebar.locator("button[title='Ray (favorite)']")).toHaveCount(0);
+  await favToggle.click();
+  await expect(sidebar.locator("button[title='Ray (favorite)']")).toBeVisible();
   const favs = await page.evaluate(() => {
     const k = Object.keys(localStorage).find((x) => x.includes("drawingFavorites"));
     return k ? JSON.parse(localStorage.getItem(k)!) : [];
@@ -57,7 +70,7 @@ test("draw sidebar: flyout, favorites, last-used, bulk buttons", async ({ page }
   // Favorites survive reload.
   await page.reload();
   await page.locator(".chart canvas").first().waitFor();
-  await expect(page.locator(".draw-sidebar button[title='Ray']")).toBeVisible();
+  await expect(page.locator(".draw-sidebar button[title='Ray (favorite)']")).toBeVisible();
 
   // Measure + magnet live on the sidebar now.
   await expect(page.locator(".draw-sidebar .measure-toggle")).toBeVisible();

@@ -16,7 +16,7 @@ import {
   saveLastDrawTools,
 } from "./lib/persist";
 import { magnetSignal, toggleMagnet, setMagnetStrength } from "./lib/magnet";
-import { MagnetIcon, RulerIcon } from "./lib/menuIcons";
+import { MagnetIcon, StrongMagnetIcon, RulerIcon } from "./lib/menuIcons";
 import type { ChartController } from "./lib/chartController";
 
 interface Props {
@@ -51,6 +51,8 @@ export default function DrawSidebar({ controller }: Props) {
   // Starred tools (global, star order) + last-used tool (device-local).
   const [favs, setFavs] = useState<string[]>(loadFavoriteDrawings);
   const [lastUsed, setLastUsed] = useState<Record<string, string>>(loadLastDrawTools);
+  // Favorites strip expanded/collapsed (session-only; default expanded).
+  const [favsOpen, setFavsOpen] = useState(true);
 
   // Magnet (global signal) + measure (focused controller's signal) mirrors —
   // moved verbatim from Toolbar.
@@ -104,6 +106,21 @@ export default function DrawSidebar({ controller }: Props) {
     return () => document.removeEventListener("mousedown", close);
   }, [eyeOpen]);
   const anyHidden = hidden || indicatorsHidden || positionsHidden;
+
+  // Esc closes any open flyout. Document-level because the flyouts never hold
+  // focus; the chart's own Esc handling (measure/drawing cancel) lives on the
+  // focused .chart-wrap and is unaffected unless focus sits inside the chart.
+  useEffect(() => {
+    if (!openFly && !magnetOpen && !eyeOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpenFly(false);
+      setMagnetOpen(false);
+      setEyeOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openFly, magnetOpen, eyeOpen]);
 
   // Only tools klinecharts actually supports (same guard the old dropdown had).
   const supported = new Set(getSupportedOverlays());
@@ -167,19 +184,6 @@ export default function DrawSidebar({ controller }: Props) {
 
   return (
     <aside className="draw-sidebar" ref={rootRef}>
-      {/* Favorites zone: starred tools as direct buttons, star order. */}
-      {favShown.map((name) => (
-        <button
-          key={name}
-          className="ds-btn"
-          title={toolLabel(name)}
-          onClick={() => arm(name)}
-        >
-          <DrawGlyph name={name} />
-        </button>
-      ))}
-      {favShown.length > 0 && <span className="ds-div" aria-hidden="true" />}
-
       {/* Single "Drawing tools" button: icon = the last-used tool; caret = flyout. */}
       {tools.length > 0 && (() => {
         const current =
@@ -226,6 +230,37 @@ export default function DrawSidebar({ controller }: Props) {
         );
       })()}
 
+      {/* Favorites: starred tools live directly beneath the Drawing tools
+          button (star order) behind a slim collapse toggle, sliding out so
+          they read as coming from its flyout. */}
+      {favShown.length > 0 && (
+        <button
+          className={"ds-fav-toggle" + (favsOpen ? " open" : "")}
+          title={favsOpen ? "Hide favorite tools" : "Show favorite tools"}
+          aria-expanded={favsOpen}
+          onClick={() => setFavsOpen((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" width="9" height="9" fill="none"
+            stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+      )}
+      {favsOpen && favShown.map((name) => (
+        <button
+          key={name}
+          className="ds-btn ds-fav"
+          title={`${toolLabel(name)} (favorite)`}
+          onClick={() => arm(name)}
+        >
+          <DrawGlyph name={name} />
+          {/* Star badge: ties the button back to the flyout star that made it. */}
+          <svg className="ds-fav-star" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
+          </svg>
+        </button>
+      ))}
+
       <span className="ds-div" aria-hidden="true" />
 
       {/* Measure ruler (moved from the toolbar; same signal contract). */}
@@ -263,6 +298,7 @@ export default function DrawSidebar({ controller }: Props) {
               <li className="ds-row magnet-opt"
                 onClick={() => { setMagnetStrength("weak"); setMagnetOpen(false); }}>
                 <span className="check">{magnet.strength === "weak" ? "✓" : ""}</span>
+                <span className="ds-glyph"><MagnetIcon /></span>
                 <span className="ds-label">Weak Magnet</span>
                 <InfoTip title="Weak Magnet"
                   desc="Snaps a drawing point to the nearest OHLC price only when the cursor is close to a price bar." />
@@ -270,6 +306,7 @@ export default function DrawSidebar({ controller }: Props) {
               <li className="ds-row magnet-opt"
                 onClick={() => { setMagnetStrength("strong"); setMagnetOpen(false); }}>
                 <span className="check">{magnet.strength === "strong" ? "✓" : ""}</span>
+                <span className="ds-glyph"><StrongMagnetIcon /></span>
                 <span className="ds-label">Strong Magnet</span>
                 <InfoTip title="Strong Magnet"
                   desc="Always snaps a drawing point to the nearest OHLC price of the bar under the cursor." />
