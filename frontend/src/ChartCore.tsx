@@ -1155,7 +1155,16 @@ export default function ChartCore({
   useEffect(
     () =>
       invertScale.subscribe((reverse) => {
-        chartRef.current?.setStyles({ yAxis: { reverse } });
+        // setStyles triggers a synchronous repaint that can throw from deep in
+        // klinecharts (x-axis tick formatting on a NaN scroll offset — a latent
+        // bug unrelated to inversion) AFTER the style is already committed.
+        // Signal.set stops notifying on a throw, so contain it here or the
+        // toolbar "I" button (a later subscriber) would miss the flip.
+        try {
+          chartRef.current?.setStyles({ yAxis: { reverse } });
+        } catch (e) {
+          console.error("invert-scale repaint", e);
+        }
       }),
     [invertScale],
   );
