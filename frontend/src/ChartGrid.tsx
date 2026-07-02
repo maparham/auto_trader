@@ -380,6 +380,20 @@ function ResizeStrip({
         el.addEventListener("pointerup", up);
         el.addEventListener("pointercancel", cancel);
       }}
+      onDoubleClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // TV-style instant reset: split the two tracks this strip separates
+        // evenly, preserving their combined fraction so other tracks are
+        // unaffected. Commits through the same onSizes path a drag uses.
+        const half = (f[line - 1] + f[line]) / 2;
+        const next = [...f];
+        next[line - 1] = half;
+        next[line] = half;
+        onCommit(
+          axis === "cols" ? { cols: next, rows: rowFracs } : { cols: colFracs, rows: next }
+        );
+      }}
     />
   );
 }
