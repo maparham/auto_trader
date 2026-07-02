@@ -10,7 +10,7 @@ Building a multi-chart layout today means picking a tab and adding blank cells o
 
 - **Move, not copy**: merging collapses the source tab into the target tab; the source tab closes. Un-merging is the existing per-cell detach button.
 - **All cells come across**: if the source tab is itself a split, every one of its cells moves. Merges that would exceed the 4-cell layout cap are blocked with a clear message.
-- **Crosshair sync turns on** after a merge; symbol/interval sync toggles are left untouched (merged tabs usually intentionally differ in symbol/timeframe).
+- **Interval, crosshair and date-range sync all turn on** after a merge (user decision 2026-07-02, superseding the earlier crosshair-only default); symbol sync stays off (merged tabs usually intentionally differ in symbol). Cells keep their own timeframe at merge time — interval sync applies from the next timeframe change.
 - Three gestures, all sharing one core operation: tab context menu, drag tab onto the chart, drop tab onto another tab chip.
 
 ## Core operation
@@ -21,7 +21,7 @@ Building a multi-chart layout today means picking a tab and adding blank cells o
 2. Append the source tab's cell objects to the target's `cells` **unchanged** — each cell already carries an opaque `scope` string, so drawings/indicators/settings move with it. No `copyScopeContent`, no `purgeScope` (the source tab's close path must NOT purge the moved cells' scopes).
 3. Re-derive `layout` from the new cell count (2 → "2h", 3 → "3", 4 → "4"). Reset custom `sizes` (same rule as any layout-kind change).
 4. Set `activeCellId` to the merged-in source tab's lead cell (its former `activeCellId`).
-5. Set `syncCrosshair = true` on the target tab.
+5. Set `syncInterval = syncCrosshair = syncTime = true` on the target tab.
 6. Remove the source tab from the workspace; if it was active, activate the target.
 
 Alerts are global per epic — nothing to move. Same-epic cells in one tab are already handled by the existing full-resync reconcile.
@@ -50,5 +50,5 @@ Already shipped: the per-cell detach button (left-click = clone to new tab; that
 
 ## Testing
 
-- Unit (`persist.test.ts` / App logic): cap enforcement, cells + scopes preserved verbatim, layout re-derived, sizes reset, source tab removed, focus set to merged lead, `syncCrosshair` set, purge-on-close of a tab containing foreign-scoped cells removes exactly those scopes.
-- e2e (`e2e/` Playwright): merge two tabs via the context menu → both charts render with their original drawings/indicators, source tab gone, crosshair sync on; then detach one cell back out.
+- Unit (`persist.test.ts` / App logic): cap enforcement, cells + scopes preserved verbatim, layout re-derived, sizes reset, source tab removed, focus set to merged lead, `syncInterval`/`syncCrosshair`/`syncTime` set, purge-on-close of a tab containing foreign-scoped cells removes exactly those scopes.
+- e2e (`e2e/` Playwright): merge two tabs via the context menu → both charts render with their original drawings/indicators, source tab gone, all three sync toggles on; then detach one cell back out.

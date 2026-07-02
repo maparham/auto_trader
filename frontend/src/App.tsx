@@ -234,6 +234,8 @@ export default function App() {
   // Transient view state (like `maximized` above) — never persisted. Siblings stay
   // mounted (hidden via CSS) so their live sockets/drawings/scroll survive restore.
   const [maximizedCellId, setMaximizedCellId] = useState<string | null>(null);
+  // Tab chip currently being dragged (chart-drop merge gesture), or null.
+  const [dragTabId, setDragTabId] = useState<string | null>(null);
   // Mirror confirmLineEdits onto a signal so the chart (no settings prop) can read it.
   useEffect(() => {
     confirmLineEditsSignal.set(settings.trading.confirmLineEdits);
@@ -1255,6 +1257,7 @@ export default function App() {
         onReorder={reorderTab}
         canMerge={(s, d) => canMergeTabs(tabs, s, d)}
         onMerge={mergeTabs}
+        onDragActive={setDragTabId}
         trailing={
           <>
             <LayoutManager
@@ -1362,6 +1365,15 @@ export default function App() {
               onDetachCell={detachCell}
               sizes={active.sizes}
               onSizes={setCellSizes}
+              tabDrag={
+                dragTabId && active && dragTabId !== active.id
+                  ? { canMerge: canMergeTabs(tabs, dragTabId, active.id) }
+                  : null
+              }
+              onMergeDrop={(pos) => {
+                if (dragTabId && active) mergeTabs(active.id, [dragTabId], pos);
+                setDragTabId(null);
+              }}
             />
           ) : (
             /* Blank workspace: no default layout and nothing open. Offer the two

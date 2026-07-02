@@ -607,9 +607,13 @@ export function mergeTabInto(
     cells,
     layout: KIND_FOR_COUNT[cells.length],
     // The merged-in chart is what the user just pulled over — focus it, and
-    // link the cells' crosshairs (the point of viewing tabs together).
+    // link the cells (the point of viewing tabs together): interval, crosshair
+    // and date range all sync. Symbol sync stays off — merged tabs usually
+    // intentionally show different instruments.
     activeCellId: src.activeCellId,
+    syncInterval: true,
     syncCrosshair: true,
+    syncTime: true,
   };
   return tabs.filter((t) => t.id !== sourceId).map((t) => (t.id === targetId ? merged : t));
 }

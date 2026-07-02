@@ -603,6 +603,20 @@
 .merge-menu .merge-row input[type="checkbox"] { pointer-events: none; margin: 0; }
 .merge-menu .merge-confirm { justify-content: center; margin-top: 4px; font-weight: 600; }
 
+/* Chip-onto-chart merge overlay: two droppable halves over the grid. Above the
+   resize strips and corner controls, below modals. */
+.merge-drop { position: absolute; inset: 0; z-index: 60; display: flex; }
+.merge-drop-half { flex: 1; }
+.merge-drop-half.over {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.merge-drop-blocked {
+  margin: auto; padding: 6px 12px; font-size: 13px; color: var(--text-faint);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+}
+
 /* Date label beside an editable coordinate price in the drawing settings modal. */
 .ind-coord-date { color: var(--text-faint); font-size: 12px; white-space: nowrap; align-self: center; }
 

@@ -42,6 +42,9 @@ interface Props {
   // 4-cell cap; onMerge performs the merge (sources merge in the given order).
   canMerge: (sourceId: string, targetId: string) => boolean;
   onMerge: (targetId: string, sourceIds: string[]) => void;
+  // A chip drag started/ended (id or null) — App shows ChartGrid's merge
+  // overlay while a chip is in flight.
+  onDragActive: (tabId: string | null) => void;
   // Workspace-level controls pinned to the right of the bar (Backtest, workspace
   // layouts, the split picker, theme toggle) — they aren't specific to one chart.
   trailing?: ReactNode;
@@ -57,6 +60,7 @@ export default function TabBar({
   onReorder,
   canMerge,
   onMerge,
+  onDragActive,
   trailing,
 }: Props) {
   // Index of the tab being dragged, the index being hovered, and which zone of
@@ -79,6 +83,7 @@ export default function TabBar({
     setDragIdx(null);
     setOverIdx(null);
     setOverSide("before");
+    onDragActive(null);
   };
 
   return (
@@ -125,6 +130,7 @@ export default function TabBar({
           onDragStart={(e) => {
             setDragIdx(i);
             e.dataTransfer.effectAllowed = "move";
+            onDragActive(t.id);
           }}
           onDragOver={(e) => {
             // Allow dropping and track the hovered slot + zone the cursor is

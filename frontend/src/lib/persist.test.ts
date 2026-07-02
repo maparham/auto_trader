@@ -592,12 +592,16 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
     expect(P.loadDrawings(P.primaryCellScope("s"), "US100")).toHaveLength(0);
   });
 
-  it("re-derives layout, resets sizes, focuses the merged-in lead, enables crosshair sync", () => {
+  it("re-derives layout, resets sizes, focuses the merged-in lead, enables interval/crosshair/date-range sync", () => {
     const out = P.mergeTabInto([tab("s", 2), tab("d", 2)], "s", "d")!;
     expect(out[0].layout).toBe("4");
     expect(out[0].sizes).toBeUndefined();
     expect(out[0].activeCellId).toBe("s-c0");
+    expect(out[0].syncInterval).toBe(true);
     expect(out[0].syncCrosshair).toBe(true);
+    expect(out[0].syncTime).toBe(true);
+    // Symbol sync stays off — merged tabs usually show different instruments.
+    expect(out[0].syncSymbol).toBeFalsy();
   });
 
   it("position 'before' puts the incoming cells first", () => {

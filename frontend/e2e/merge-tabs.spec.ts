@@ -130,9 +130,9 @@ test("context-menu merge collapses t2 into t1 with content, focus and crosshair 
   await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
   await expect(page.locator(".chart-cell")).toHaveCount(2);
 
-  // Persisted shape: one 2h tab, crosshair-synced, focused on the merged-in
-  // cell; t2's drawing re-scoped under t1 and the old scope purged. Poll — the
-  // scratch autosave effect commits asynchronously.
+  // Persisted shape: one 2h tab with interval/crosshair/date-range sync on,
+  // focused on the merged-in cell; t2's drawing re-scoped under t1 and the old
+  // scope purged. Poll — the scratch autosave effect commits asynchronously.
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -141,14 +141,21 @@ test("context-menu merge collapses t2 into t1 with content, focus and crosshair 
         return {
           tabCount: ws?.tabs?.length,
           layout: t?.layout,
-          sync: t?.syncCrosshair,
+          sync: [t?.syncInterval, t?.syncCrosshair, t?.syncTime],
           active: t?.activeCellId,
           moved: localStorage.getItem("auto-trader.tab.t1.cell.t2-c0.drawings.OIL_CRUDE") != null,
           purged: localStorage.getItem("auto-trader.tab.t2.drawings.OIL_CRUDE") == null,
         };
       }),
     )
-    .toEqual({ tabCount: 1, layout: "2h", sync: true, active: "t2-c0", moved: true, purged: true });
+    .toEqual({
+      tabCount: 1,
+      layout: "2h",
+      sync: [true, true, true],
+      active: "t2-c0",
+      moved: true,
+      purged: true,
+    });
 
   // Round-trip: detach still splits a merged-in cell back out into its own tab.
   await page.locator(".chart-cell").nth(1).hover();
@@ -172,4 +179,58 @@ test("dropping a chip on another chip's center merges the two tabs", async ({ pa
 
   await expect(tabs).toHaveCount(1);
   await expect(page.locator(".chart-cell")).toHaveCount(2);
+});
+
+test("dragging a chip onto the chart merges it into the active tab", async ({ page }) => {
+  await seedTwoTabs(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+
+  // t1 is active; drag t2's chip onto the chart. Drop on the right half →
+  // incoming cell lands after the existing one.
+  const grid = page.locator(".chart-grid");
+  const g = (await grid.boundingBox())!;
+  await page.locator(".tab-bar .tab").nth(1).dragTo(grid, {
+    targetPosition: { x: g.width * 0.75, y: g.height / 2 },
+  });
+
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
+  await expect(page.locator(".chart-cell")).toHaveCount(2);
+  // Order: existing t1 cell first (drop was "after").
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const ws = JSON.parse(localStorage.getItem("auto-trader.b.capital.scratch") || "null");
+        return ws?.tabs?.[0]?.cells?.map((c: { id: string }) => c.id);
+      }),
+    )
+    .toEqual(["t1-c0", "t2-c0"]);
+});
+
+test("dragging a chip onto the chart's left half inserts before the existing cell", async ({ page }) => {
+  await seedTwoTabs(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+
+  // t1 is active; drag t2's chip onto the chart. Drop on the left half →
+  // incoming cell lands before the existing one.
+  const grid = page.locator(".chart-grid");
+  const g = (await grid.boundingBox())!;
+  await page.locator(".tab-bar .tab").nth(1).dragTo(grid, {
+    targetPosition: { x: g.width * 0.25, y: g.height / 2 },
+  });
+
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
+  await expect(page.locator(".chart-cell")).toHaveCount(2);
+  // Order: incoming t2 cell first (drop was "before").
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const ws = JSON.parse(localStorage.getItem("auto-trader.b.capital.scratch") || "null");
+        return ws?.tabs?.[0]?.cells?.map((c: { id: string }) => c.id);
+      }),
+    )
+    .toEqual(["t2-c0", "t1-c0"]);
 });

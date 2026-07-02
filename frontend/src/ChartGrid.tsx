@@ -73,6 +73,11 @@ interface Props {
   sizes?: { cols: number[]; rows: number[] };
   // Commit new fractions after a border drag.
   onSizes: (sizes: { cols: number[]; rows: number[] }) => void;
+  // A tab chip is being dragged over the app (merge gesture): show a two-half
+  // drop overlay. canMerge=false renders a "would exceed" notice instead of
+  // droppable halves. Absent/null = no drag in flight.
+  tabDrag?: { canMerge: boolean } | null;
+  onMergeDrop?: (position: "before" | "after") => void;
 }
 
 export default function ChartGrid({
@@ -101,9 +106,13 @@ export default function ChartGrid({
   onDetachCell,
   sizes,
   onSizes,
+  tabDrag,
+  onMergeDrop,
 }: Props) {
   // Right-click menu on a detach handle: which cell + where to anchor it.
   const [detachMenu, setDetachMenu] = useState<{ x: number; y: number; cellId: string } | null>(null);
+  // Which overlay half the chip drag is over (highlight), or null.
+  const [mergeHover, setMergeHover] = useState<"before" | "after" | null>(null);
   // The corner controls (detach/maximize) sit INSIDE the chart area, just left
   // of the price axis (TV-style) — anchored to the cell edge they'd cover the
   // axis labels. The axis width is dynamic (price magnitude / decimals), so
@@ -315,6 +324,36 @@ export default function ChartGrid({
             onCancel={() => setDragSizes(null)}
           />
         ))}
+      {tabDrag && (
+        <div
+          className="merge-drop"
+          // Halves follow the grid's main axis: side-by-side layouts split
+          // left/right, stacked ones top/bottom.
+          style={{ flexDirection: shape.rows === 1 ? "row" : "column" }}
+        >
+          {tabDrag.canMerge ? (
+            (["before", "after"] as const).map((pos) => (
+              <div
+                key={pos}
+                className={`merge-drop-half${mergeHover === pos ? " over" : ""}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  if (mergeHover !== pos) setMergeHover(pos);
+                }}
+                onDragLeave={() => setMergeHover((h) => (h === pos ? null : h))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setMergeHover(null);
+                  onMergeDrop?.(pos);
+                }}
+              />
+            ))
+          ) : (
+            <div className="merge-drop-blocked">Would exceed 4 charts</div>
+          )}
+        </div>
+      )}
       {detachMenu && (
         <ContextMenu
           x={detachMenu.x}
