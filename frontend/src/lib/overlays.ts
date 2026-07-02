@@ -35,6 +35,7 @@ import {
   isVisibleOnResolution,
   barsSpanned,
 } from "./visibility";
+import { RESOLUTION_SECONDS } from "./feed";
 
 type Kind = "drawing" | "alert" | "measure";
 
@@ -659,7 +660,7 @@ export class OverlayManager {
     const isDrawing = kind === "drawing";
     const id = this.chart.createOverlay({
       name,
-      points: points as Overlay["points"],
+      points: this.materializePoints(points) as Overlay["points"],
       styles: styles ?? undefined,
       lock,
       visible: extra?.visible,
@@ -1522,6 +1523,65 @@ export class OverlayManager {
 
   // --- persistence -----------------------------------------------------------
 
+  // --- future-anchored points --------------------------------------------------
+  // klinecharts gives a point placed beyond the last candle (a trendline projected
+  // into the future) NO timestamp — dataIndexToTimestamp returns null past the data,
+  // leaving only a session-relative dataIndex. And on the way back in, its
+  // timestampToDataIndex CLAMPS an out-of-range timestamp to the nearest existing
+  // bar, while a point with neither field renders at x=0. So future anchors are
+  // ENCODED to storage as an extrapolated timestamp (last bar + n × bar width) by
+  // stablePoints(), and DECODED back to a beyond-data dataIndex (timestamp dropped —
+  // klinecharts prefers timestamp when both are set) by materializePoints().
+
+  // One bar's width in ms at the current resolution; falls back to the loaded
+  // bars' own spacing for resolutions the table doesn't know.
+  private barIntervalMs(): number | null {
+    const secs = RESOLUTION_SECONDS[this.resolution];
+    if (secs) return secs * 1000;
+    const dl = this.chart?.getDataList() ?? [];
+    for (let i = dl.length - 1; i > 0; i--) {
+      const g = dl[i].timestamp - dl[i - 1].timestamp;
+      if (g > 0) return g;
+    }
+    return null;
+  }
+
+  // Storage → chart: rewrite any timestamp beyond the last loaded bar as an
+  // extrapolated dataIndex so the anchor keeps its future x-offset.
+  private materializePoints(points?: SavedOverlay["points"]): SavedOverlay["points"] | undefined {
+    if (!points) return points;
+    const dl = this.chart?.getDataList() ?? [];
+    const last = dl[dl.length - 1];
+    const interval = this.barIntervalMs();
+    if (!last || !interval) return points;
+    return points.map((p) =>
+      p.timestamp != null && p.timestamp > last.timestamp
+        ? { dataIndex: dl.length - 1 + Math.round((p.timestamp - last.timestamp) / interval), value: p.value }
+        : p,
+    );
+  }
+
+  // Chart → storage: stable anchors only. A raw dataIndex is a position into THIS
+  // session's loaded window (wrong after any reload), so points that have a
+  // timestamp keep just that — but a beyond-data point (no timestamp) must have its
+  // dataIndex converted to an extrapolated timestamp, not dropped: dropping it
+  // strips the anchor's x entirely and the next rehydrate pins it to the left edge.
+  private stablePoints(points: Overlay["points"] | undefined): SavedOverlay["points"] {
+    const dl = this.chart?.getDataList() ?? [];
+    const lastIdx = dl.length - 1;
+    const interval = this.barIntervalMs();
+    return (points ?? []).map((p) => {
+      let ts = p.timestamp;
+      if (ts == null && p.dataIndex != null && lastIdx >= 0 && interval) {
+        const idx = Math.round(p.dataIndex);
+        if (idx > lastIdx) ts = dl[lastIdx].timestamp + (idx - lastIdx) * interval;
+        else if (idx < 0) ts = dl[0].timestamp + idx * interval;
+        else ts = dl[idx].timestamp;
+      }
+      return { timestamp: ts, value: p.value };
+    });
+  }
+
   private persist(): void {
     if (this.hydrating || !this.chart) return;
     // Guard the symbol-change window: setEpic() advanced this.epic but the old
@@ -1549,14 +1609,9 @@ export class OverlayManager {
       } else {
         drawings.push({
           name: ov.name,
-          // Persist only the stable anchors (timestamp/value). dataIndex is a
-          // position into THIS session's dataList; after a refresh reloads a
-          // shifted window it would point at the wrong bar, so drop it and let
-          // klinecharts recompute it from the timestamp on rehydration.
-          points: (ov.points ?? []).map((p) => ({
-            timestamp: p.timestamp,
-            value: p.value,
-          })),
+          // Stable anchors only (timestamp/value) — see stablePoints for why a
+          // beyond-data anchor's dataIndex becomes an extrapolated timestamp.
+          points: this.stablePoints(ov.points),
           // The stashed canonical style while this id is a ghost (faded interval/
           // auto-hide stub) — ov.styles is the FADED color in that state, and
           // persist() must never write that; see canonicalStyles/fadedStyles.

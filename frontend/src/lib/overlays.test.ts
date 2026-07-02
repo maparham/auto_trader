@@ -67,6 +67,10 @@ class FakeChart {
     return id;
   }
   getOverlayById(id: string) { return this.overlays.get(id) ?? null; }
+  // Loaded candles (timestamps only — all OverlayManager reads). Seeded by tests
+  // that exercise the future-anchored point encode/decode.
+  data: Array<{ timestamp: number }> = [];
+  getDataList() { return this.data; }
   overrideOverlay(o: { id: string } & Record<string, unknown>) {
     const cur = this.overlays.get(o.id);
     if (!cur) return;
@@ -965,5 +969,98 @@ describe("OverlayManager cancelDrawing (Esc cancels an in-progress drawing)", ()
     // The stale id must not poison bulk lock state (a ghost read as "unlocked"
     // would pin the sidebar padlock to its lock branch for the whole session).
     expect(m.anyDrawingsLocked()).toBe(false);
+  });
+});
+
+// A trendline whose second anchor sits to the RIGHT of the last candle (projected
+// into the future) gets NO timestamp from klinecharts — only a dataIndex. Persisting
+// must encode that anchor as an extrapolated timestamp (last bar + n × bar width),
+// and rehydrating must decode it back to a beyond-data dataIndex: klinecharts'
+// timestampToDataIndex CLAMPS to the nearest existing bar, and a point with neither
+// timestamp nor dataIndex renders at x=0 — the "trendline teleports to the left
+// edge after a timeframe change" bug.
+describe("future-anchored drawing points survive persist/rehydrate", () => {
+  const HOUR = 3_600_000;
+  const T0 = 1_750_000_000_000;
+  const bars = (n: number) => Array.from({ length: n }, (_, i) => ({ timestamp: T0 + i * HOUR }));
+
+  it("persists an extrapolated timestamp for a point beyond the last candle", () => {
+    const { chart, m } = setup();
+    chart.data = bars(10); // last bar index 9
+    m.setResolution("HOUR");
+    m.addDrawing("segment", [
+      { timestamp: chart.data[5].timestamp, value: 1 },
+      { dataIndex: 13, value: 2 }, // 4 bars past the last — no timestamp, like klinecharts
+    ]);
+    const saved = P.loadDrawings("tab.A", "US100")[0];
+    expect(saved.points[1].timestamp).toBe(chart.data[9].timestamp + 4 * HOUR);
+    expect(saved.points[1].value).toBe(2);
+  });
+
+  it("rehydrates a future timestamp as a beyond-data dataIndex (not clamped / left-edge)", () => {
+    const { chart, m } = setup();
+    chart.data = bars(10);
+    m.setResolution("HOUR");
+    P.saveDrawings("tab.A", "US100", [
+      {
+        name: "segment",
+        points: [
+          { timestamp: chart.data[5].timestamp, value: 1 },
+          { timestamp: chart.data[9].timestamp + 4 * HOUR, value: 2 },
+        ],
+      },
+    ]);
+    m.rehydrate();
+    const ov = [...chart.overlays.values()].find((o) => o.name === "segment")!;
+    const p = (ov.points as Array<{ timestamp?: number; dataIndex?: number; value?: number }>)[1];
+    expect(p.dataIndex).toBe(13);
+    expect(p.timestamp).toBeUndefined(); // klinecharts prefers timestamp — it must be gone
+  });
+
+  it("the future offset re-derives per resolution: same saved anchor lands on the right bar at 5m", () => {
+    const { chart, m } = setup();
+    const M5 = 300_000;
+    chart.data = Array.from({ length: 10 }, (_, i) => ({ timestamp: T0 + i * M5 }));
+    m.setResolution("MINUTE_5");
+    P.saveDrawings("tab.A", "US100", [
+      { name: "segment", points: [{ timestamp: T0, value: 1 }, { timestamp: chart.data[9].timestamp + 2 * HOUR, value: 2 }] },
+    ]);
+    m.rehydrate();
+    const ov = [...chart.overlays.values()].find((o) => o.name === "segment")!;
+    const p = (ov.points as Array<{ dataIndex?: number }>)[1];
+    expect(p.dataIndex).toBe(9 + 24); // 2h beyond the last 5m bar = 24 bars
+  });
+});
+
+// The remaining stablePoints branches: an anchor dragged LEFT of the loaded window
+// (negative dataIndex) extrapolates backwards from the first bar, and an in-range
+// point that klinecharts left timestamp-less resolves to its bar's timestamp.
+describe("stablePoints edge branches", () => {
+  const HOUR = 3_600_000;
+  const T0 = 1_750_000_000_000;
+  const bars = (n: number) => Array.from({ length: n }, (_, i) => ({ timestamp: T0 + i * HOUR }));
+
+  it("encodes a before-data anchor (negative dataIndex) as first bar minus n bars", () => {
+    const { chart, m } = setup();
+    chart.data = bars(10);
+    m.setResolution("HOUR");
+    m.addDrawing("segment", [
+      { dataIndex: -3, value: 1 },
+      { timestamp: chart.data[5].timestamp, value: 2 },
+    ]);
+    const saved = P.loadDrawings("tab.A", "US100")[0];
+    expect(saved.points[0].timestamp).toBe(T0 - 3 * HOUR);
+  });
+
+  it("resolves an in-range point with dataIndex but no timestamp to that bar's timestamp", () => {
+    const { chart, m } = setup();
+    chart.data = bars(10);
+    m.setResolution("HOUR");
+    m.addDrawing("segment", [
+      { dataIndex: 4, value: 1 },
+      { timestamp: chart.data[9].timestamp, value: 2 },
+    ]);
+    const saved = P.loadDrawings("tab.A", "US100")[0];
+    expect(saved.points[0].timestamp).toBe(chart.data[4].timestamp);
   });
 });
