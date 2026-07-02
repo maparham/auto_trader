@@ -862,6 +862,19 @@ export function saveScalePriceOnly(scope: string, value: boolean): void {
   save(scalePriceOnlyKey(scope), value);
 }
 
+// --- legend collapsed (per cell) ----------------------------------------------
+//
+// TradingView-style legend chevron: when true, the candle-pane legend hides its
+// indicator rows and shows only the symbol/OHLC row. Default false (expanded).
+const legendCollapsedKey = (scope: string) => ns(scope, "legendCollapsed");
+
+export function loadLegendCollapsed(scope: string): boolean {
+  return load<boolean>(legendCollapsedKey(scope), false);
+}
+export function saveLegendCollapsed(scope: string, value: boolean): void {
+  save(legendCollapsedKey(scope), value);
+}
+
 // --- favourite indicators (global preference) --------------------------------
 //
 // Which indicator TYPES the user has starred in the menu — a personal preference,

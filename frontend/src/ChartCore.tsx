@@ -77,6 +77,8 @@ import {
   saveIndicatorVisible,
   saveIndicators,
   saveScalePriceOnly,
+  loadLegendCollapsed,
+  saveLegendCollapsed,
   CONDITION_LABELS,
   type AlertCondition,
   type AlertTrigger,
@@ -813,6 +815,15 @@ export default function ChartCore({
   // this handle (textContent), driven from the crosshair subscription + live tick.
   const [legendRows, setLegendRows] = useState<LegendRow[]>([]);
   const legendRowsSigRef = useRef("");
+  // TV-style legend chevron: collapsed hides the indicator rows (symbol/OHLC row
+  // stays). Per-cell, persisted so it survives reload.
+  const [legendCollapsed, setLegendCollapsed] = useState(() => loadLegendCollapsed(scope));
+  const toggleLegendCollapsed = useCallback(() => {
+    setLegendCollapsed((prev) => {
+      saveLegendCollapsed(scope, !prev);
+      return !prev;
+    });
+  }, [scope]);
   // Sub-pane indicator legends (Volume/MACD/RSI…): same signature-gated pattern as
   // the candle rows, but the signature also folds in each pane's `top` so the cards
   // reposition when a separator is dragged (geometry, not just membership, changed).
@@ -4241,6 +4252,8 @@ export default function ChartCore({
           broker: brokerLabel(brokerId),
         }}
         rows={legendRows}
+        collapsed={legendCollapsed}
+        onToggleCollapsed={toggleLegendCollapsed}
         subPanes={subPaneLegends}
         selectedName={selectedName}
         highlightedName={curveHoverNameState}

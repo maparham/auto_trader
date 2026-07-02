@@ -1635,6 +1635,27 @@
   stroke-linejoin: round;
 }
 
+/* TV-style legend collapse chevron: its own mini-row under the indicator rows.
+   Hover-revealed while the legend is hovered (like the row action icons); a
+   COLLAPSED chevron stays visible — it's the only way back. The row itself is
+   click-through (only the button opts in), so it never blocks chart clicks. */
+.cl-collapse-row { height: 16px; pointer-events: none; }
+.cl-collapse {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 16px; padding: 0;
+  border: none; border-radius: 3px; background: transparent;
+  color: var(--text-dim); cursor: pointer;
+  pointer-events: auto;
+  opacity: 0; transition: opacity 0.08s;
+}
+.cl-collapse svg {
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.chart-legend:hover .cl-collapse,
+.cl-collapse.cl-collapsed { opacity: 1; }
+.cl-collapse:hover { color: var(--text); background: var(--surface); }
+
 /* Floating settings button over the Pro chart shell. */
 /* Settings gear, parked in the bottom-right corner gutter where the price axis
    meets the time axis (TradingView-style). */

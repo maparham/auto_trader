@@ -43,6 +43,16 @@ describe("persist scoping", () => {
     expect(P.primaryCellScope("t1")).toBe("tab.t1");
     expect(P.cellScope("t1", "c2")).toBe("tab.t1.cell.c2");
   });
+
+  it("legendCollapsed round-trips per scope, default false", () => {
+    expect(P.loadLegendCollapsed("tab.A")).toBe(false);
+    P.saveLegendCollapsed("tab.A", true);
+    expect(P.loadLegendCollapsed("tab.A")).toBe(true);
+    // Another cell is independent.
+    expect(P.loadLegendCollapsed("tab.B")).toBe(false);
+    P.saveLegendCollapsed("tab.A", false);
+    expect(P.loadLegendCollapsed("tab.A")).toBe(false);
+  });
 });
 
 // Overlay-less edits of a stored alert (the alerts panel's all-symbols rows act on

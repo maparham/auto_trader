@@ -85,6 +85,11 @@ export interface Props {
   controller: ChartController;
   ctx: LegendCtx;
   rows: LegendRow[];
+  // TV-style chevron: collapsed hides the candle-pane indicator rows (the symbol/
+  // OHLC row stays). The chevron itself hover-reveals while expanded and stays
+  // visible while collapsed (it's the only way back).
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   // Sub-pane indicator legends (Volume/MACD/RSI…), one per pane below the chart.
   // Rendered here (not in ChartCore) so they share this component's figureValuesRef
   // and hover signal — their values fill on the same imperative crosshair/tick path.
@@ -155,6 +160,8 @@ export default function ChartLegend({
   controller,
   ctx,
   rows,
+  collapsed,
+  onToggleCollapsed,
   subPanes,
   selectedName,
   highlightedName,
@@ -250,7 +257,7 @@ export default function ChartLegend({
   useEffect(() => {
     updateValues(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, subPanes, ctx.symbol, ctx.precision]);
+  }, [rows, subPanes, ctx.symbol, ctx.precision, collapsed]);
 
   // Hovering a row drives BOTH the gray border + icon reveal (CSS, via this
   // signal) so they appear together on the exact row (matches the old behavior).
@@ -328,22 +335,43 @@ export default function ChartLegend({
         />
       </div>
 
-      {/* One row per candle-pane indicator. */}
-      {rows.map((row) => (
-        <IndicatorRow
-          key={row.name}
-          row={row}
-          selected={selectedName === row.name}
-          highlighted={highlightedName === row.name}
-          figureValuesRef={figureValuesRef}
-          setRowHover={setRowHover}
-          onSelectRow={onSelectRow}
-          onToggleVisible={onToggleVisible}
-          onOpenSettings={onOpenSettings}
-          onRemove={onRemove}
-          onOpenMenu={onOpenMenu}
-        />
-      ))}
+      {/* One row per candle-pane indicator (hidden entirely while collapsed). */}
+      {!collapsed &&
+        rows.map((row) => (
+          <IndicatorRow
+            key={row.name}
+            row={row}
+            selected={selectedName === row.name}
+            highlighted={highlightedName === row.name}
+            figureValuesRef={figureValuesRef}
+            setRowHover={setRowHover}
+            onSelectRow={onSelectRow}
+            onToggleVisible={onToggleVisible}
+            onOpenSettings={onOpenSettings}
+            onRemove={onRemove}
+            onOpenMenu={onOpenMenu}
+          />
+        ))}
+
+      {/* TV-style collapse chevron: its own mini-row under the indicator rows.
+          Hover-revealed while expanded (CSS); always visible while collapsed. Only
+          rendered when there are rows to collapse. */}
+      {rows.length > 0 && (
+        <div className="cl-row cl-collapse-row">
+          <button
+            className={`cl-collapse${collapsed ? " cl-collapsed" : ""}`}
+            title={collapsed ? "Show indicator legend" : "Hide indicator legend"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCollapsed();
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+              {collapsed ? <path d="M6 9l6 6 6-6" /> : <path d="M6 15l6-6 6 6" />}
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* Candle-cache stats badge — last legend row at the top-LEFT. It used to
           dock at the pane's top-right, but that corner now belongs to the cell
