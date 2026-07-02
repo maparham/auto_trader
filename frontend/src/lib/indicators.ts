@@ -359,6 +359,27 @@ export function applyIndicatorIntervalVisibility(chart: Chart, resolution: strin
   }
 }
 
+// Sidebar eye menu "Hide indicators": master-hide every user indicator (the
+// internal EQUITY backtest pane is not a user indicator — skip it). Un-hiding
+// re-derives per-indicator visibility from intent + interval model rather than
+// blanket-showing, so a filtered/unchecked indicator stays correctly hidden.
+export function setAllIndicatorsHidden(chart: Chart, hidden: boolean, resolution: string): void {
+  if (!hidden) {
+    applyIndicatorIntervalVisibility(chart, resolution);
+    return;
+  }
+  const panes = chart.getIndicatorByPaneId() as
+    | Map<string, Map<string, Indicator>>
+    | null
+    | undefined;
+  for (const [paneId, inds] of panes ?? []) {
+    for (const ind of inds.values()) {
+      if (!ind?.name || INTERNAL_INDICATORS.has(ind.name)) continue;
+      chart.overrideIndicator({ name: ind.name, visible: false }, paneId);
+    }
+  }
+}
+
 // Add a fresh instance of `type` (mints a new id). Returns the new instance, or
 // null on failure. Used by the Toolbar menu (always-add) and Paste.
 export function addIndicatorInstance(

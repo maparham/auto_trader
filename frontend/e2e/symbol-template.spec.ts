@@ -112,8 +112,13 @@ test("a saved symbol template auto-applies to a new tab on the same symbol", asy
 
   const canvas = page.locator(".chart-cell").first().locator("canvas").first();
   const box = (await canvas.boundingBox())!;
-  await page.locator(".menu button", { hasText: "Draw" }).click();
-  await page.locator(".menu .dropdown li", { hasText: "Horizontal line" }).click();
+  // Tools now live in the left draw sidebar (Lines family flyout).
+  const lines = page.locator(".draw-sidebar .ds-family").first();
+  await lines.hover();
+  await lines.locator(".ds-caret").click();
+  await page
+    .locator(".draw-sidebar .ds-flyout .ds-row", { hasText: "Horizontal line" })
+    .click();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect.poll(() => focusedDrawingCount(page)).toBe(1);
 

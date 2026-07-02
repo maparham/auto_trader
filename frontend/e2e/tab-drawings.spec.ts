@@ -25,10 +25,13 @@ test("tabs on the same symbol+period have independent drawings", async ({ page }
     });
 
   // Place a single-click drawing (horizontal line) at the canvas center.
+  // Tools now live in the left draw sidebar (Lines family flyout).
   const drawHLine = async () => {
-    await page.locator(".menu button", { hasText: "Draw" }).click();
+    const lines = page.locator(".draw-sidebar .ds-family").first();
+    await lines.hover();
+    await lines.locator(".ds-caret").click();
     await page
-      .locator(".menu .dropdown li", { hasText: "Horizontal line" })
+      .locator(".draw-sidebar .ds-flyout .ds-row", { hasText: "Horizontal line" })
       .click();
     const box = await page.locator(".chart canvas").first().boundingBox();
     await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);

@@ -42,6 +42,10 @@ export class ChartController {
   // Starts ON; the toolbar "A" button reflects it and re-asserts auto-fit; the
   // cell turns it OFF when the user manually scales the price axis.
   readonly autoScale = new Signal<boolean>(true);
+  // Sidebar eye menu (session-only, per cell): master switches that hide whole
+  // categories without touching per-item state.
+  readonly indicatorsHidden = new Signal<boolean>(false);
+  readonly positionsHidden = new Signal<boolean>(false);
   // TradingView-style "Scale price chart only": when true, the candle-pane price
   // axis auto-fits to the candle OHLC only — overlay indicators no longer expand it,
   // so adding an overlay never shrinks the candles. Persisted per cell (default on),

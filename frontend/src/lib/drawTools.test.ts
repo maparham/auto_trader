@@ -13,26 +13,21 @@ class MemStorage {
 }
 (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
 
-const { DRAW_FAMILIES, toolLabel, familyOf } = await import("./drawTools");
+const { DRAW_TOOLS, toolLabel } = await import("./drawTools");
 const P = await import("./persist");
 
 describe("draw-tool registry", () => {
-  it("groups the existing 8 tools into lines/channels/fibs", () => {
-    expect(DRAW_FAMILIES.map((f) => f.key)).toEqual(["lines", "channels", "fibs"]);
-    const lines = DRAW_FAMILIES[0].tools.map((t) => t.name);
-    expect(lines).toEqual([
+  it("is a single flat list of the 8 tools, in order", () => {
+    expect(DRAW_TOOLS.map((t) => t.name)).toEqual([
       "segment", "rayLine", "straightLine",
       "horizontalStraightLine", "verticalStraightLine", "priceLine",
+      "priceChannelLine", "fibonacciLine",
     ]);
-    expect(DRAW_FAMILIES[1].tools.map((t) => t.name)).toEqual(["priceChannelLine"]);
-    expect(DRAW_FAMILIES[2].tools.map((t) => t.name)).toEqual(["fibonacciLine"]);
   });
 
-  it("toolLabel and familyOf resolve by overlay name", () => {
+  it("toolLabel resolves by overlay name and falls back gracefully", () => {
     expect(toolLabel("segment")).toBe("Trend line");
     expect(toolLabel("nope")).toBe("nope"); // graceful fallback
-    expect(familyOf("priceChannelLine")?.key).toBe("channels");
-    expect(familyOf("nope")).toBeUndefined();
   });
 });
 
@@ -43,9 +38,9 @@ describe("draw-tool preferences (persist)", () => {
     expect(P.loadFavoriteDrawings()).toEqual(["segment", "priceLine"]);
   });
 
-  it("last-used-per-family round-trips", () => {
+  it("last-used-tool round-trips", () => {
     expect(P.loadLastDrawTools()).toEqual({});
-    P.saveLastDrawTools({ lines: "rayLine" });
-    expect(P.loadLastDrawTools()).toEqual({ lines: "rayLine" });
+    P.saveLastDrawTools({ tool: "rayLine" });
+    expect(P.loadLastDrawTools()).toEqual({ tool: "rayLine" });
   });
 });

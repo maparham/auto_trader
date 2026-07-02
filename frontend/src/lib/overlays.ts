@@ -389,6 +389,11 @@ export class OverlayManager {
     return this.drawingInProgress;
   }
 
+  // The overlay id klinecharts is currently collecting clicks for (set alongside
+  // drawingInProgress in addDrawing's interactive branch), so cancelDrawing knows
+  // WHICH overlay to remove. Cleared everywhere drawingInProgress is cleared.
+  private pendingDrawId: string | null = null;
+
   // Sidebar "hide all drawings" eye — SESSION-ONLY master switch layered over
   // per-drawing intent (extendData.userVisible), so toggling it never rewrites
   // (or persists over) what the user chose per drawing.
@@ -678,6 +683,7 @@ export class OverlayManager {
       },
       onDrawEnd: () => {
         this.drawingInProgress = false;
+        this.pendingDrawId = null;
         // Measure is transient: don't persist. Freeze it and let the owner disarm
         // the one-shot ruler; the frozen box stays until the next interaction.
         if (isMeasure) {
@@ -732,6 +738,7 @@ export class OverlayManager {
         // in-progress overlay and fires THIS, not onDrawEnd — so clear the flag here
         // too, or it sticks true and the lock hover-align stays silently disabled.
         this.drawingInProgress = false;
+        this.pendingDrawId = null;
         if (this.hoveredAlertId === e.overlay.id) {
           // Removing the hovered alert won't fire onMouseLeave, so restore the
           // crosshair (line + label) here or it stays stuck hidden.
@@ -845,8 +852,29 @@ export class OverlayManager {
     if (!points) this.drawingInProgress = true;
     const id = this.create("drawing", name, points);
     if (id && points) this.persist(); // interactive draws persist via onDrawEnd
-    else if (!id) this.drawingInProgress = false; // creation failed → don't get stuck
+    else if (id && !points) this.pendingDrawId = id; // remember it for cancelDrawing()
+    else if (!id) {
+      // creation failed → don't get stuck
+      this.drawingInProgress = false;
+      this.pendingDrawId = null;
+    }
     return id;
+  }
+
+  // Esc while placing a drawing (TV: Esc cancels the tool). Removes the in-progress
+  // overlay; its onRemoved clears drawingInProgress/pendingDrawId (verified against
+  // FakeChart AND real klinecharts — removeOverlay on an unfinished overlay still
+  // fires onRemoved, same as clearMeasure() above already relies on).
+  // Returns true if there was something to cancel (caller preventDefaults).
+  cancelDrawing(): boolean {
+    if (!this.drawingInProgress || !this.pendingDrawId) return false;
+    this.chart?.removeOverlay(this.pendingDrawId);
+    // Belt-and-braces: don't rely solely on onRemoved firing (it does today, but a
+    // future klinecharts version silently not doing so for a never-finalized overlay
+    // must not leave the tool stuck "armed").
+    this.drawingInProgress = false;
+    this.pendingDrawId = null;
+    return true;
   }
 
   // Re-create a fully-specified drawing in place (paste / clone). Unlike addDrawing,

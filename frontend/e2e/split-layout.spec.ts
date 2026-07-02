@@ -63,8 +63,13 @@ test("split layout cells have independent drawings", async ({ page }) => {
   const drawHLineOn = async (i: number) => {
     await focusCell(i);
     const box = await cellCanvas(i).boundingBox();
-    await page.locator(".menu button", { hasText: "Draw" }).click();
-    await page.locator(".menu .dropdown li", { hasText: "Horizontal line" }).click();
+    // Tools now live in the left draw sidebar (Lines family flyout).
+    const lines = page.locator(".draw-sidebar .ds-family").first();
+    await lines.hover();
+    await lines.locator(".ds-caret").click();
+    await page
+      .locator(".draw-sidebar .ds-flyout .ds-row", { hasText: "Horizontal line" })
+      .click();
     await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
   };
 

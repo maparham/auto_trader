@@ -906,3 +906,41 @@ describe("OverlayManager lock-all drawings (sidebar padlock)", () => {
     expect(m.allDrawingsLocked()).toBe(false);
   });
 });
+
+describe("OverlayManager cancelDrawing (Esc cancels an in-progress drawing)", () => {
+  it("returns false when nothing is in progress", () => {
+    const { m } = setup();
+    expect(m.cancelDrawing()).toBe(false);
+  });
+
+  it("cancels a drawing armed via addDrawing(name) with no points: removes the overlay, clears isDrawing()", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("segment")!; // interactive draw, no points yet
+    expect(id).toBeTruthy();
+    expect(m.isDrawing()).toBe(true);
+    expect(chart.getOverlayById(id)).toBeTruthy();
+
+    expect(m.cancelDrawing()).toBe(true);
+
+    expect(chart.getOverlayById(id)).toBeNull();
+    expect(m.isDrawing()).toBe(false);
+    // A second Escape (cancelDrawing) is a no-op — nothing left to cancel.
+    expect(m.cancelDrawing()).toBe(false);
+  });
+
+  it("cancelling an in-progress drawing never persists it", () => {
+    const { m } = setup();
+    m.addDrawing("segment");
+    m.cancelDrawing();
+    expect(P.loadDrawings("tab.A", "US100")).toEqual([]);
+  });
+
+  it("does not disturb an unrelated already-placed drawing", () => {
+    const { chart, m } = setup();
+    const placed = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.addDrawing("segment"); // arm a second, interactive one
+    expect(m.cancelDrawing()).toBe(true);
+    expect(chart.getOverlayById(placed)).toBeTruthy();
+    expect(P.loadDrawings("tab.A", "US100")).toHaveLength(1);
+  });
+});

@@ -1,14 +1,14 @@
 // TV-style left drawing sidebar (one per tab, beside the chart grid). Drives
 // the FOCUSED cell's OverlayManager — same contract as Toolbar. Top→bottom:
-// favorites zone (starred tools, one-click), family buttons (click = arm the
-// family's last-used tool; hover-caret = flyout to pick/star a variant),
-// measure + magnet (relocated from the toolbar), then the bulk cluster
-// (hide-all eye / lock-all padlock / delete-all).
+// favorites zone (starred tools, one-click), the single "Drawing tools"
+// button (click = arm the last-used tool; hover-caret = flyout listing all
+// 8 tools flat, no groups), measure + magnet (relocated from the toolbar),
+// then the bulk cluster (hide-all eye / lock-all padlock / delete-all).
 import { useEffect, useRef, useState } from "react";
 import { getSupportedOverlays } from "klinecharts";
 import DrawGlyph from "./DrawIcons";
 import InfoTip from "./components/InfoTip";
-import { DRAW_FAMILIES, toolLabel, type DrawFamily } from "./lib/drawTools";
+import { DRAW_TOOLS, toolLabel } from "./lib/drawTools";
 import {
   loadFavoriteDrawings,
   saveFavoriteDrawings,
@@ -36,19 +36,19 @@ function Star({ on }: { on: boolean }) {
 export default function DrawSidebar({ controller }: Props) {
   const overlays = controller?.overlays ?? null;
 
-  // Which family's flyout is open (null = none). Outside-click closes it.
-  const [openFly, setOpenFly] = useState<DrawFamily["key"] | null>(null);
+  // Whether the drawing-tools flyout is open. Outside-click closes it.
+  const [openFly, setOpenFly] = useState(false);
   const rootRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!openFly) return;
     const close = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpenFly(null);
+      if (!rootRef.current?.contains(e.target as Node)) setOpenFly(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [openFly]);
 
-  // Starred tools (global, star order) + last-used per family (device-local).
+  // Starred tools (global, star order) + last-used tool (device-local).
   const [favs, setFavs] = useState<string[]>(loadFavoriteDrawings);
   const [lastUsed, setLastUsed] = useState<Record<string, string>>(loadLastDrawTools);
 
@@ -73,24 +73,49 @@ export default function DrawSidebar({ controller }: Props) {
     return controller.measureArmed.subscribe(setMeasuring);
   }, [controller]);
 
-  // Hide-all eye: session state lives on the manager; re-read when focus moves.
+  // Eye menu: drawings-hidden lives on the manager (existing); indicators/positions
+  // are per-cell signals on the controller. Re-sync all three when focus moves, and
+  // subscribe to the two signals for external changes (e.g. another surface toggling
+  // them later). `eyeOpen` is this flyout's own open state (outside-click closes it,
+  // same idiom as the drawing-tools and magnet flyouts).
   const [hidden, setHidden] = useState(false);
-  useEffect(() => setHidden(overlays?.getDrawingsHidden() ?? false), [overlays]);
+  const [indicatorsHidden, setIndicatorsHidden] = useState(false);
+  const [positionsHidden, setPositionsHidden] = useState(false);
+  useEffect(() => {
+    setHidden(overlays?.getDrawingsHidden() ?? false);
+    setIndicatorsHidden(controller?.indicatorsHidden.value ?? false);
+    setPositionsHidden(controller?.positionsHidden.value ?? false);
+    if (!controller) return;
+    const unsubInd = controller.indicatorsHidden.subscribe(setIndicatorsHidden);
+    const unsubPos = controller.positionsHidden.subscribe(setPositionsHidden);
+    return () => {
+      unsubInd();
+      unsubPos();
+    };
+  }, [overlays, controller]);
+  const [eyeOpen, setEyeOpen] = useState(false);
+  const eyeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!eyeOpen) return;
+    const close = (e: MouseEvent) => {
+      if (!eyeRef.current?.contains(e.target as Node)) setEyeOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [eyeOpen]);
+  const anyHidden = hidden || indicatorsHidden || positionsHidden;
 
   // Only tools klinecharts actually supports (same guard the old dropdown had).
   const supported = new Set(getSupportedOverlays());
-  const families = DRAW_FAMILIES.map((f) => ({
-    ...f,
-    tools: f.tools.filter((t) => supported.has(t.name)),
-  })).filter((f) => f.tools.length > 0);
+  const tools = DRAW_TOOLS.filter((t) => supported.has(t.name));
   const favShown = favs.filter((n) => supported.has(n));
 
-  function arm(name: string, familyKey: string) {
+  function arm(name: string) {
     overlays?.addDrawing(name);
-    const next = { ...lastUsed, [familyKey]: name };
+    const next = { ...lastUsed, tool: name };
     setLastUsed(next);
     saveLastDrawTools(next);
-    setOpenFly(null);
+    setOpenFly(false);
   }
 
   function toggleFav(name: string) {
@@ -101,11 +126,32 @@ export default function DrawSidebar({ controller }: Props) {
     });
   }
 
-  function toggleHidden() {
+  function toggleDrawingsHidden() {
     if (!overlays) return;
     const next = !overlays.getDrawingsHidden();
     overlays.setDrawingsHidden(next);
     setHidden(next);
+  }
+
+  function toggleIndicatorsHidden() {
+    if (!controller) return;
+    controller.indicatorsHidden.set(!controller.indicatorsHidden.value);
+  }
+
+  function togglePositionsHidden() {
+    if (!controller) return;
+    controller.positionsHidden.set(!controller.positionsHidden.value);
+  }
+
+  function toggleHideAll() {
+    if (!overlays || !controller) return;
+    // ✓ when all three are already hidden → show all; otherwise hide all three.
+    const allHidden = hidden && indicatorsHidden && positionsHidden;
+    const next = !allHidden;
+    overlays.setDrawingsHidden(next);
+    setHidden(next);
+    controller.indicatorsHidden.set(next);
+    controller.positionsHidden.set(next);
   }
 
   function toggleLockAll() {
@@ -127,43 +173,40 @@ export default function DrawSidebar({ controller }: Props) {
           key={name}
           className="ds-btn"
           title={toolLabel(name)}
-          onClick={() => {
-            const fam = DRAW_FAMILIES.find((f) => f.tools.some((t) => t.name === name));
-            arm(name, fam?.key ?? "lines");
-          }}
+          onClick={() => arm(name)}
         >
           <DrawGlyph name={name} />
         </button>
       ))}
       {favShown.length > 0 && <span className="ds-div" aria-hidden="true" />}
 
-      {/* Family buttons: icon = the family's last-used tool; caret = flyout. */}
-      {families.map((f) => {
+      {/* Single "Drawing tools" button: icon = the last-used tool; caret = flyout. */}
+      {tools.length > 0 && (() => {
         const current =
-          f.tools.find((t) => t.name === lastUsed[f.key])?.name ?? f.tools[0].name;
+          tools.find((t) => t.name === lastUsed.tool)?.name ?? tools[0].name;
         return (
-          <div key={f.key} className="ds-family">
-            <button className="ds-btn" title={`${f.label} — ${toolLabel(current)}`}
-              onClick={() => arm(current, f.key)}>
+          <div className="ds-family">
+            <button className="ds-btn" title={`Drawing tools — ${toolLabel(current)}`}
+              onClick={() => arm(current)}>
               <DrawGlyph name={current} />
             </button>
             <button
-              className={"ds-caret" + (openFly === f.key ? " on" : "")}
-              title={`${f.label}…`}
-              aria-label={`Open ${f.label} menu`}
-              onClick={() => setOpenFly((v) => (v === f.key ? null : f.key))}
+              className={"ds-caret" + (openFly ? " on" : "")}
+              title="Drawing tools…"
+              aria-label="Open drawing tools menu"
+              onClick={() => setOpenFly((v) => !v)}
             >
               <svg viewBox="0 0 24 24" width="8" height="8" fill="none"
                 stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
                 <path d="m9 6 6 6-6 6" />
               </svg>
             </button>
-            {openFly === f.key && (
+            {openFly && (
               <div className="ds-flyout">
-                <div className="ds-fly-section">{f.label}</div>
+                <div className="ds-fly-section">Drawing tools</div>
                 <ul>
-                  {f.tools.map((t) => (
-                    <li key={t.name} className="ds-row" onClick={() => arm(t.name, f.key)}>
+                  {tools.map((t) => (
+                    <li key={t.name} className="ds-row" onClick={() => arm(t.name)}>
                       <span className="ds-glyph"><DrawGlyph name={t.name} /></span>
                       <span className="ds-label">{t.label}</span>
                       <button
@@ -181,7 +224,7 @@ export default function DrawSidebar({ controller }: Props) {
             )}
           </div>
         );
-      })}
+      })()}
 
       <span className="ds-div" aria-hidden="true" />
 
@@ -238,23 +281,48 @@ export default function DrawSidebar({ controller }: Props) {
 
       <span className="ds-spacer" aria-hidden="true" />
 
-      {/* Bulk cluster (focused cell): hide-all eye, lock-all, delete-all. */}
-      <button className={"ds-btn ds-eye" + (hidden ? " on" : "")}
-        title={hidden ? "Show all drawings" : "Hide all drawings"}
-        disabled={!overlays} onClick={toggleHidden}>
-        {hidden ? (
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-            strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-            <path d="M3 3l18 18M10.6 10.7a2.5 2.5 0 0 0 3.5 3.5M7.4 7.5C4.9 8.9 3 12 3 12s3.5 6 9 6c1.6 0 3-.4 4.3-1.1M12 6c5.5 0 9 6 9 6s-.7 1.2-2 2.5" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-            strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-            <path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
-            <circle cx="12" cy="12" r="2.5" />
-          </svg>
+      {/* Bulk cluster (focused cell): eye menu, lock-all, delete-all. */}
+      <div className="ds-family" ref={eyeRef}>
+        <button className={"ds-btn ds-eye" + (anyHidden ? " on" : "")}
+          title="Hide…"
+          aria-label="Open hide menu"
+          disabled={!overlays} onClick={() => setEyeOpen((v) => !v)}>
+          {anyHidden ? (
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+              strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+              <path d="M3 3l18 18M10.6 10.7a2.5 2.5 0 0 0 3.5 3.5M7.4 7.5C4.9 8.9 3 12 3 12s3.5 6 9 6c1.6 0 3-.4 4.3-1.1M12 6c5.5 0 9 6 9 6s-.7 1.2-2 2.5" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+              strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+              <path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
+              <circle cx="12" cy="12" r="2.5" />
+            </svg>
+          )}
+        </button>
+        {eyeOpen && (
+          <div className="ds-flyout">
+            <ul>
+              <li className="ds-row" onClick={toggleDrawingsHidden}>
+                <span className="check">{hidden ? "✓" : ""}</span>
+                <span className="ds-label">Hide drawings</span>
+              </li>
+              <li className="ds-row" onClick={toggleIndicatorsHidden}>
+                <span className="check">{indicatorsHidden ? "✓" : ""}</span>
+                <span className="ds-label">Hide indicators</span>
+              </li>
+              <li className="ds-row" onClick={togglePositionsHidden}>
+                <span className="check">{positionsHidden ? "✓" : ""}</span>
+                <span className="ds-label">Hide positions and orders</span>
+              </li>
+              <li className="ds-row" onClick={toggleHideAll}>
+                <span className="check">{hidden && indicatorsHidden && positionsHidden ? "✓" : ""}</span>
+                <span className="ds-label">Hide all</span>
+              </li>
+            </ul>
+          </div>
         )}
-      </button>
+      </div>
       <button className="ds-btn" title="Lock / unlock all drawings"
         disabled={!overlays} onClick={toggleLockAll}>
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"

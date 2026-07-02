@@ -8,45 +8,20 @@ export interface DrawTool {
   label: string;
 }
 
-export interface DrawFamily {
-  key: "lines" | "channels" | "fibs";
-  label: string;
-  tools: DrawTool[];
-}
-
-export const DRAW_FAMILIES: DrawFamily[] = [
-  {
-    key: "lines",
-    label: "Lines",
-    tools: [
-      { name: "segment", label: "Trend line" },
-      { name: "rayLine", label: "Ray" },
-      { name: "straightLine", label: "Extended line" },
-      { name: "horizontalStraightLine", label: "Horizontal line" },
-      { name: "verticalStraightLine", label: "Vertical line" },
-      { name: "priceLine", label: "Price line" },
-    ],
-  },
-  {
-    key: "channels",
-    label: "Channels",
-    tools: [{ name: "priceChannelLine", label: "Parallel channel" }],
-  },
-  {
-    key: "fibs",
-    label: "Fib / Projections",
-    tools: [{ name: "fibonacciLine", label: "Fib retracement" }],
-  },
+// One flat list (user choice: a single "Drawing tools" menu, no family groups).
+export const DRAW_TOOLS: DrawTool[] = [
+  { name: "segment", label: "Trend line" },
+  { name: "rayLine", label: "Ray" },
+  { name: "straightLine", label: "Extended line" },
+  { name: "horizontalStraightLine", label: "Horizontal line" },
+  { name: "verticalStraightLine", label: "Vertical line" },
+  { name: "priceLine", label: "Price line" },
+  { name: "priceChannelLine", label: "Parallel channel" },
+  { name: "fibonacciLine", label: "Fib retracement" },
 ];
 
-const BY_NAME = new Map(
-  DRAW_FAMILIES.flatMap((f) => f.tools.map((t) => [t.name, { tool: t, family: f }] as const)),
-);
+const BY_NAME = new Map(DRAW_TOOLS.map((t) => [t.name, t]));
 
 export function toolLabel(name: string): string {
-  return BY_NAME.get(name)?.tool.label ?? name;
-}
-
-export function familyOf(name: string): DrawFamily | undefined {
-  return BY_NAME.get(name)?.family;
+  return BY_NAME.get(name)?.label ?? name;
 }

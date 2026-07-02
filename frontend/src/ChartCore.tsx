@@ -84,10 +84,10 @@ import {
 } from "./lib/persist";
 import {
   addIndicatorInstance,
-  applyIndicatorIntervalVisibility,
   hydrateIndicators,
   removeIndicatorById,
   reorderSubPanes,
+  setAllIndicatorsHidden,
   subPaneOrder,
 } from "./lib/indicators";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
@@ -2273,21 +2273,26 @@ export default function ChartCore({
         }
       };
       const drawPositions = () => {
+        // Sidebar eye menu "Hide positions and orders": master-hide clears every
+        // line (render([]) removes the previously-rendered ones) instead of
+        // building specs from the (unaffected) underlying trade state.
         posLines.render(
-          tradeLineSpecs({
-            trades: tradesRef.current,
-            pending: pendingRef.current,
-            epic: epicRef.current,
-            precision: precisionRef.current,
-            levelsDraggable: true,
-            onDrag,
-            draft: draftRef.current,
-            hidden: new Set(tradeUiRef.current.hidden),
-            hovered: tradeUiRef.current.hovered,
-            selected: tradeUiRef.current.selected,
-            // Blank the focused line's own label so its pill takes that spot (Idea C).
-            selectedField: tradeUiRef.current.selectedField,
-          }),
+          controller.positionsHidden.value
+            ? []
+            : tradeLineSpecs({
+                trades: tradesRef.current,
+                pending: pendingRef.current,
+                epic: epicRef.current,
+                precision: precisionRef.current,
+                levelsDraggable: true,
+                onDrag,
+                draft: draftRef.current,
+                hidden: new Set(tradeUiRef.current.hidden),
+                hovered: tradeUiRef.current.hovered,
+                selected: tradeUiRef.current.selected,
+                // Blank the focused line's own label so its pill takes that spot (Idea C).
+                selectedField: tradeUiRef.current.selectedField,
+              }),
         );
       };
       posDrawRef.current = drawPositions;
@@ -2347,6 +2352,9 @@ export default function ChartCore({
       // tradePanelOpen=false without a tradeLineUiSignal change).
       const unsubEditOpen = tradePanelOpen.subscribe(() => paintBracketRef.current());
       const unsubEditId = editTradeSignal.subscribe(() => paintBracketRef.current());
+      // Sidebar eye menu "Hide positions and orders" toggle: re-run drawPositions
+      // (which reads controller.positionsHidden.value itself, above).
+      const unsubPositionsHidden = controller.positionsHidden.subscribe(() => drawPositions());
       posUnsubRef.current = () => {
         unsubTrades();
         unsubPending();
@@ -2355,6 +2363,7 @@ export default function ChartCore({
         unsubTradeUi();
         unsubEditOpen();
         unsubEditId();
+        unsubPositionsHidden();
         if (pendingRedrawRafRef.current) {
           cancelAnimationFrame(pendingRedrawRafRef.current);
           pendingRedrawRafRef.current = 0;
@@ -2674,7 +2683,9 @@ export default function ChartCore({
       // the now-current resolution. Runs here so both a fresh rehydrate (above)
       // and a plain period switch (this effect re-runs on period.resolution) land
       // on the right on-chart state — a view reaction only, nothing persisted.
-      applyIndicatorIntervalVisibility(chartRef.current, period.resolution);
+      // Guard: the sidebar eye menu's "Hide indicators" master switch overrides
+      // this re-derive — while it's on, re-assert all-hidden instead of un-hiding.
+      setAllIndicatorsHidden(chartRef.current, controller.indicatorsHidden.value, period.resolution);
       // A quick-range pick that switched interval parked its window here; the
       // initial new-resolution bars are loaded, so page back to the period start
       // (if needed) and fit. ensureCoverageAndFit clears pendingRangeRef when done.
@@ -2757,6 +2768,20 @@ export default function ChartCore({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol.epic, period.resolution, priceSide, brokerId]);
+
+  // Sidebar eye menu "Hide indicators": subscribe to the master switch and apply
+  // it to the live chart on every toggle (mirrors the resolution-change call above,
+  // which re-asserts hidden instead of un-hiding while this switch is on).
+  useEffect(() => {
+    return controller.indicatorsHidden.subscribe((hidden) => {
+      if (!chartRef.current) return;
+      // resRef (not the closed-over period.resolution) — this effect only re-runs
+      // when `controller` changes (a new cell), so a plain interval switch must be
+      // read live via the ref, same idiom as the scroll-back fetcher above (~2204).
+      setAllIndicatorsHidden(chartRef.current, hidden, resRef.current);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controller]);
 
   // Candle-cache stats badge: poll this cell's own series on an interval, reset
   // to null immediately on series change so the badge never shows a stale
@@ -4054,11 +4079,15 @@ export default function ChartCore({
         // Don't hijack copy/paste/delete while typing in a field.
         const t = e.target as HTMLElement;
         if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return;
-        // Escape disarms / discards a measurement first (TV: Esc cancels the ruler).
+        // Escape disarms / discards a measurement first (TV: Esc cancels the ruler);
+        // then falls back to cancelling an armed/mid-placement drawing tool.
         if (e.key === "Escape") {
           if (measureArmed.value || overlays.hasMeasure()) {
             measureArmed.set(false);
             overlays.clearMeasure();
+            e.preventDefault();
+          } else if (overlays.cancelDrawing()) {
+            // TV: Esc cancels an armed/mid-placement drawing tool.
             e.preventDefault();
           }
           return;

@@ -34,7 +34,7 @@
 
 /* --- left drawing sidebar (TV-style) --- */
 .draw-sidebar {
-  flex: none; width: 38px; display: flex; flex-direction: column; align-items: center;
+  flex: none; width: 42px; display: flex; flex-direction: column; align-items: center;
   gap: 2px; padding: 6px 0; background: var(--bg); border-right: 1px solid var(--border);
 }
 .draw-sidebar .ds-btn {
@@ -47,38 +47,64 @@
 .draw-sidebar .ds-btn:disabled { opacity: 0.4; cursor: default; }
 .draw-sidebar .ds-div { width: 22px; height: 1px; background: var(--border); margin: 4px 0; }
 .draw-sidebar .ds-spacer { flex: 1; }
-.draw-sidebar .ds-family { position: relative; display: flex; align-items: center; }
+/* Family = an icon button + its flyout caret, laid out TV-style: the caret is
+   a slim vertical strip flush against the icon's right edge, full button
+   height, vertically centered — not corner-anchored. */
+.draw-sidebar .ds-family { position: relative; display: flex; align-items: stretch; height: 30px; }
 .draw-sidebar .ds-caret {
-  position: absolute; right: -2px; bottom: 2px; width: 10px; height: 10px; padding: 0;
-  border: none; background: transparent; color: var(--text-faint); cursor: pointer;
-  opacity: 0; display: flex; align-items: center; justify-content: center;
+  position: static; flex: none; width: 11px; height: 100%; padding: 0;
+  border: none; border-radius: 3px; background: transparent; color: var(--text-faint);
+  cursor: pointer; opacity: 0; display: flex; align-items: center; justify-content: center;
 }
 .draw-sidebar .ds-family:hover .ds-caret, .draw-sidebar .ds-caret.on { opacity: 1; }
-.draw-sidebar .ds-caret:hover { color: var(--text); }
+.draw-sidebar .ds-caret:hover { color: var(--text); background: var(--hover); }
 .draw-sidebar .ds-flyout {
   position: absolute; left: calc(100% + 6px); top: -4px; z-index: 60;
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  min-width: 200px; padding: 4px 0;
+  width: max-content; min-width: 260px; padding: 6px 0;
 }
 .draw-sidebar .ds-fly-section {
-  padding: 5px 12px 3px; font-size: 11px; color: var(--text-faint);
-  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 8px 16px 6px; font-size: 11px; font-weight: 500; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: 0.05em;
 }
 .draw-sidebar .ds-flyout ul { list-style: none; margin: 0; padding: 0; }
+/* Flyout row grammar — shared by all three flyouts (tools / magnet / eye),
+   matched to TradingView's left-toolbar menus: 40px rows, 14px labels, a
+   fixed 28px leading column (glyph or check) so labels align, and quiet
+   hover-revealed trailing icons (star / InfoTip ⓘ). The .ind-star/.ind-info
+   rules restate the .dropdown li grammar because these flyouts don't live
+   under .dropdown, so InfoTip's icon would otherwise fall back to default
+   button chrome + black-filled svg. */
 .draw-sidebar .ds-row {
-  display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer;
-  font-size: 13px; color: var(--text);
+  display: flex; align-items: center; gap: 10px; min-height: 40px;
+  padding: 0 12px 0 10px; cursor: pointer; font-size: 14px; color: var(--text);
 }
 .draw-sidebar .ds-row:hover { background: var(--hover); }
-.draw-sidebar .ds-glyph { display: flex; color: var(--text-dim); }
-.draw-sidebar .ds-label { flex: 1; }
-.draw-sidebar .ds-row .ind-star {
-  border: none; background: transparent; padding: 0; cursor: pointer;
-  color: var(--text-faint); opacity: 0; display: flex;
+.draw-sidebar .ds-glyph {
+  flex: none; width: 28px; display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim);
 }
-.draw-sidebar .ds-row:hover .ind-star { opacity: 1; }
+.draw-sidebar .ds-row:hover .ds-glyph { color: var(--text); }
+.draw-sidebar .ds-label { flex: 1; white-space: nowrap; }
+.draw-sidebar .ds-row .check {
+  flex: none; width: 28px; text-align: center; font-size: 13px; line-height: 1;
+  color: var(--accent);
+}
+.draw-sidebar .ds-row .ind-star,
+.draw-sidebar .ds-row .ind-info {
+  display: flex; align-items: center; justify-content: center; flex: none;
+  width: 22px; height: 22px; padding: 0; border: none; border-radius: 4px;
+  background: transparent; cursor: pointer; color: var(--text-faint);
+  opacity: 0; transition: opacity 0.1s, color 0.1s, background 0.1s;
+}
+.draw-sidebar .ds-row .ind-star svg,
+.draw-sidebar .ds-row .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.draw-sidebar .ds-row:hover .ind-star,
+.draw-sidebar .ds-row:hover .ind-info { opacity: 1; }
+.draw-sidebar .ds-row .ind-star:hover,
+.draw-sidebar .ds-row .ind-info:hover { background: var(--hover); color: var(--text); }
 .draw-sidebar .ds-row .ind-star.on { opacity: 1; color: #f5b301; }
-.draw-sidebar .ds-row .check { width: 12px; font-size: 11px; color: var(--accent); }
+.draw-sidebar .ds-row .ind-star.on svg { fill: currentColor; stroke: currentColor; }
 .draw-sidebar .ds-trash:hover { color: #d33; }
 
 /* Multi-chart layout grid (TradingView-style split). Fills .chart; each cell is an
