@@ -43,12 +43,13 @@ export function RulerIcon({ size = 16 }: { size?: number }) {
 // Horseshoe magnet, angled −45° with detached pole caps (matches the user's
 // reference art). "Filled" look built from thick butt-capped strokes so it
 // still inherits currentColor like every other icon here.
-export function MagnetIcon() {
+export function MagnetIcon({ size = 18 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
       stroke="currentColor" strokeWidth="3.8" strokeLinecap="butt"
       aria-hidden="true">
-      <g transform="rotate(-45 12 12)">
+      {/* Mirrored horizontally (user preference) — poles point up-right. */}
+      <g transform="translate(24 0) scale(-1 1) rotate(-45 12 12)">
         <path d="M8.2 9.4v2.8a3.8 3.8 0 0 0 7.6 0V9.4" />
         <path d="M8.2 4.4v2.6" />
         <path d="M15.8 4.4v2.6" />
@@ -60,18 +61,21 @@ export function MagnetIcon() {
 // "Strong Magnet": the same angled horseshoe with a lightning bolt striking
 // from the top-right (the magnet-flyout rows pair Weak=plain / Strong=bolt,
 // per the user's reference art).
-export function StrongMagnetIcon() {
+export function StrongMagnetIcon({ size = 18 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
       stroke="currentColor" strokeWidth="3.6" strokeLinecap="butt"
       aria-hidden="true">
-      <g transform="rotate(-45 13 14) translate(1.6 3.2)">
-        <path d="M8.4 9.4v2.5a3.6 3.6 0 0 0 7.2 0V9.4" />
-        <path d="M8.4 4.8v2.4" />
-        <path d="M15.6 4.8v2.4" />
+      {/* Mirrored horizontally (user preference) — bolt strikes from top-left. */}
+      <g transform="translate(24 0) scale(-1 1)">
+        <g transform="rotate(-45 13 14) translate(1.6 3.2)">
+          <path d="M8.4 9.4v2.5a3.6 3.6 0 0 0 7.2 0V9.4" />
+          <path d="M8.4 4.8v2.4" />
+          <path d="M15.6 4.8v2.4" />
+        </g>
+        <path fill="currentColor" stroke="none"
+          d="M23 0.6l-7.6 3.6 2.5 1.4-5 4.6 7.9-3.5-2.5-1.4z" />
       </g>
-      <path fill="currentColor" stroke="none"
-        d="M23 0.6l-7.6 3.6 2.5 1.4-5 4.6 7.9-3.5-2.5-1.4z" />
     </svg>
   );
 }

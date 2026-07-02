@@ -130,6 +130,12 @@
 .draw-sidebar .ds-row .ind-star.on { opacity: 1; color: #f5b301; }
 .draw-sidebar .ds-row .ind-star.on svg { fill: currentColor; stroke: currentColor; }
 .draw-sidebar .ds-trash:hover { color: #d33; }
+/* Magnet flyout: minimal width — narrower fixed columns and tighter gaps than
+   the shared row grammar (user: bigger icons, smallest possible menu). */
+.draw-sidebar .ds-row.magnet-opt { gap: 4px; padding: 0 6px; min-height: 34px; }
+.draw-sidebar .ds-row.magnet-opt .check { width: 15px; }
+.draw-sidebar .ds-row.magnet-opt .ds-glyph { width: 24px; }
+.draw-sidebar .ds-row.magnet-opt .ds-label { padding-right: 4px; }
 
 /* Multi-chart layout grid (TradingView-style split). Fills .chart; each cell is an
    independent ChartCore. Thin separators between cells; the focused cell carries a
@@ -1640,13 +1646,15 @@
    is a hover target (pointer-events:auto) so the cursor can travel from the
    rows down to the button without dropping .chart-legend:hover (which would
    fade the chevron and flash the crosshair mid-travel). The button shares the
-   .cl-icon/.cl-icon-svg/.cl-icon-stroke base; only the deltas live here. */
-.cl-collapse-row { height: 16px; pointer-events: auto; }
+   .cl-icon/.cl-icon-svg/.cl-icon-stroke base (incl. its 16px svg size); only
+   the deltas live here. padding:0 (vs .cl-row's 6px sides) shrink-wraps the
+   hit strip to the button, so the invisible click-swallowing zone over the
+   candles stays minimal. */
+.cl-collapse-row { height: 16px; padding: 0; pointer-events: auto; }
 .cl-collapse {
   height: 16px; border-radius: 3px;
   opacity: 0; transition: opacity 0.08s;
 }
-.cl-collapse svg { width: 13px; height: 13px; }
 /* Collapsed = the same chevron flipped to point down (one path, no mirror twin). */
 .cl-collapse.cl-collapsed svg { transform: rotate(180deg); }
 .chart-legend:hover .cl-collapse,

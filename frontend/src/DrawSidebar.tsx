@@ -286,7 +286,7 @@ export default function DrawSidebar({ controller }: Props) {
           title="Magnet mode. Snaps drawings to bar prices. Hold Ctrl/Cmd to invert."
           onClick={() => toggleMagnet()}
         >
-          <MagnetIcon />
+          <MagnetIcon size={22} />
         </button>
         <button
           className={"ds-caret" + (magnetOpen ? " on" : "")}
@@ -304,7 +304,7 @@ export default function DrawSidebar({ controller }: Props) {
               <li className="ds-row magnet-opt"
                 onClick={() => { setMagnetStrength("weak"); setMagnetOpen(false); }}>
                 <span className="check">{magnet.strength === "weak" ? "✓" : ""}</span>
-                <span className="ds-glyph"><MagnetIcon /></span>
+                <span className="ds-glyph"><MagnetIcon size={24} /></span>
                 <span className="ds-label">Weak Magnet</span>
                 <InfoTip title="Weak Magnet"
                   desc="Snaps a drawing point to the nearest OHLC price only when the cursor is close to a price bar." />
@@ -312,7 +312,7 @@ export default function DrawSidebar({ controller }: Props) {
               <li className="ds-row magnet-opt"
                 onClick={() => { setMagnetStrength("strong"); setMagnetOpen(false); }}>
                 <span className="check">{magnet.strength === "strong" ? "✓" : ""}</span>
-                <span className="ds-glyph"><StrongMagnetIcon /></span>
+                <span className="ds-glyph"><StrongMagnetIcon size={24} /></span>
                 <span className="ds-label">Strong Magnet</span>
                 <InfoTip title="Strong Magnet"
                   desc="Always snaps a drawing point to the nearest OHLC price of the bar under the cursor." />
