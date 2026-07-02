@@ -594,10 +594,16 @@ export function mergeTabInto(
   if (!canMergeTabs(tabs, sourceId, targetId)) return null;
   const src = tabs.find((t) => t.id === sourceId)!;
   const dst = tabs.find((t) => t.id === targetId)!;
+  // A locked target mirrors every interaction across its cells on ONE shared
+  // timeframe (toggleLock harmonizes periods when engaging). The lock carries
+  // over to the merged tab via the spread below, so incoming cells must adopt
+  // the target's timeframe or the merged tab would claim a lock its cells
+  // visibly violate.
+  const lockPeriod = dst.locked ? dst.cells[0]?.period : undefined;
   const moved: ChartCell[] = src.cells.map((c) => {
     const scope = cellScope(targetId, c.id);
     copyScopeContent(c.scope, scope);
-    return { ...c, scope };
+    return lockPeriod ? { ...c, scope, period: lockPeriod } : { ...c, scope };
   });
   purgeTabScope(sourceId);
   const cells = position === "before" ? [...moved, ...dst.cells] : [...dst.cells, ...moved];

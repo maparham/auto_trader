@@ -1054,6 +1054,20 @@ export default function App() {
       clearAlignAnchor(srcId); // same leak-guard closeTab applies
     }
     if (next === tabs) return;
+    // Merging PURGED the source tabs' persisted content (mergeTabInto), so the
+    // matching tab-list change must be durable NOW. Leaving it to the deferred
+    // autosave effect opens a data-loss window: a reload before it commits (or
+    // autosave-off never committing) resurrects the source tab from the stale
+    // body with its drawings/indicators already gone. Same deliberate
+    // autosave-off trade-off as detachCell's window path: the merge gesture
+    // commits the workspace synchronously.
+    const ws: Workspace = { tabs: next, activeTabId: "" };
+    if (activeLayoutId && layoutName != null) {
+      saveLayout(activeLayoutId, layoutName, ws);
+      setIsDirty(false);
+    } else {
+      saveScratch(ws);
+    }
     setTabs(next);
     setActiveId(targetId);
   };

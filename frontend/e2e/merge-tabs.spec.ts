@@ -261,3 +261,25 @@ test("dragging a chip onto the chart's left half inserts before the existing cel
     )
     .toEqual(["t2-c0", "t1-c0"]);
 });
+
+test("releasing a chip on the dead zone between drop targets cancels instead of merging", async ({ page }) => {
+  // The overlay's droppable targets are centered boxes, NOT the full grid —
+  // the border around them is a deliberate dead zone so an abandoned reorder
+  // (drag to the chart, let go) stays the harmless cancel it always was.
+  await seedTwoTabs(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+
+  const grid = page.locator(".chart-grid");
+  const g = (await grid.boundingBox())!;
+  // Top edge, dead-center between the two targets: outside both boxes.
+  await page.locator(".tab-bar .tab").nth(1).dragTo(grid, {
+    targetPosition: { x: g.width * 0.5, y: g.height * 0.04 },
+  });
+
+  // Nothing merged, nothing stranded.
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
+  await expect(page.locator(".chart-cell")).toHaveCount(1);
+  await expect(page.locator(".tab-bar .tab.dragging")).toHaveCount(0);
+});

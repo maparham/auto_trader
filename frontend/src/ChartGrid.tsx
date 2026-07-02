@@ -340,21 +340,26 @@ export default function ChartGrid({
         >
           {tabDrag.canMerge ? (
             (["before", "after"] as const).map((pos) => (
-              <div
-                key={pos}
-                className={`merge-drop-half${mergeHover === pos ? " over" : ""}`}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                  if (mergeHover !== pos) setMergeHover(pos);
-                }}
-                onDragLeave={() => setMergeHover((h) => (h === pos ? null : h))}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setMergeHover(null);
-                  onMergeDrop?.(pos);
-                }}
-              />
+              // Only the centered TARGET box accepts the drop; the dead border
+              // around it restores the pre-overlay escape hatch — releasing a
+              // chip there cancels the drag instead of merging, so an
+              // abandoned reorder can't destroy a tab.
+              <div key={pos} className="merge-drop-half">
+                <div
+                  className={`merge-drop-target${mergeHover === pos ? " over" : ""}`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (mergeHover !== pos) setMergeHover(pos);
+                  }}
+                  onDragLeave={() => setMergeHover((h) => (h === pos ? null : h))}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setMergeHover(null);
+                    onMergeDrop?.(pos);
+                  }}
+                />
+              </div>
             ))
           ) : (
             <div className="merge-drop-blocked">Would exceed 4 charts</div>

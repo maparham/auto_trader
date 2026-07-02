@@ -150,6 +150,9 @@ export default function TabBar({
           draggable
           onDragStart={(e) => {
             setDragId(t.id);
+            // Firefox refuses to start an HTML5 drag when no drag data is set;
+            // the payload itself is unused (state carries the dragged id).
+            e.dataTransfer.setData("text/plain", t.id);
             e.dataTransfer.effectAllowed = "move";
             onDragActive(t.id);
           }}

@@ -610,6 +610,24 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
     expect(out[0].syncSymbol).toBe(false);
   });
 
+  it("merging into a LOCKED tab harmonizes incoming cells to the target's timeframe", () => {
+    // Lock's contract: every cell of a locked tab shares one timeframe
+    // (toggleLock enforces it when engaging). The lock survives the merge, so
+    // the incoming 5m cell must adopt the target's 1H.
+    const fiveMin = { resolution: "MINUTE_5", label: "5m" } as never;
+    const src = { ...tab("s", 1), cells: [{ ...cell("s", 0), period: fiveMin }] };
+    const out = P.mergeTabInto([src, { ...tab("d", 2), locked: true }], "s", "d")!;
+    expect(out[0].locked).toBe(true);
+    expect(out[0].cells.map((c) => (c.period as { label: string }).label)).toEqual([
+      "1H",
+      "1H",
+      "1H",
+    ]);
+    // An unlocked target leaves incoming timeframes alone.
+    const out2 = P.mergeTabInto([{ ...src }, tab("d", 1)], "s", "d")!;
+    expect((out2[0].cells[1].period as { label: string }).label).toBe("5m");
+  });
+
   it("position 'before' puts the incoming cells first", () => {
     const out = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d", "before")!;
     expect(out[0].cells.map((c) => c.id)).toEqual(["s-c0", "d-c0"]);
