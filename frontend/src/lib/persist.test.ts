@@ -561,3 +561,54 @@ describe("named-layout library is shared across a broker family", () => {
     expect(P.loadLayouts().map((l) => l.name)).toEqual(["IG Layout"]);
   });
 });
+
+describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
+  const cell = (tabId: string, n: number) => ({
+    id: `${tabId}-c${n}`,
+    symbol: { epic: "US100", name: "US100" } as never,
+    period: { resolution: "HOUR", label: "1H" } as never,
+    // Cell 0 is the primary (tab-prefix scope), later cells are nested — same
+    // shape real tabs have.
+    scope: n === 0 ? P.primaryCellScope(tabId) : P.cellScope(tabId, `${tabId}-c${n}`),
+  });
+  const tab = (id: string, nCells: number): P.ChartTab => ({
+    id,
+    layout: (["1", "2h", "3", "4"] as const)[nCells - 1],
+    cells: Array.from({ length: nCells }, (_, i) => cell(id, i)),
+    activeCellId: `${id}-c0`,
+    sizes: { cols: [0.3, 0.7], rows: [1] },
+  });
+
+  it("moves all source cells re-scoped under the target and purges the source prefix", () => {
+    P.saveDrawings(P.primaryCellScope("s"), "US100", [
+      { name: "horizontalStraightLine", points: [{ value: 1 }] },
+    ]);
+    const out = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d")!;
+    expect(out.map((t) => t.id)).toEqual(["d"]);
+    expect(out[0].cells.map((c) => c.id)).toEqual(["d-c0", "s-c0"]);
+    expect(out[0].cells[1].scope).toBe(P.cellScope("d", "s-c0"));
+    // Content followed the cell; the old scope is purged.
+    expect(P.loadDrawings(P.cellScope("d", "s-c0"), "US100")).toHaveLength(1);
+    expect(P.loadDrawings(P.primaryCellScope("s"), "US100")).toHaveLength(0);
+  });
+
+  it("re-derives layout, resets sizes, focuses the merged-in lead, enables crosshair sync", () => {
+    const out = P.mergeTabInto([tab("s", 2), tab("d", 2)], "s", "d")!;
+    expect(out[0].layout).toBe("4");
+    expect(out[0].sizes).toBeUndefined();
+    expect(out[0].activeCellId).toBe("s-c0");
+    expect(out[0].syncCrosshair).toBe(true);
+  });
+
+  it("position 'before' puts the incoming cells first", () => {
+    const out = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d", "before")!;
+    expect(out[0].cells.map((c) => c.id)).toEqual(["s-c0", "d-c0"]);
+  });
+
+  it("refuses over-cap and self merges", () => {
+    expect(P.canMergeTabs([tab("s", 3), tab("d", 2)], "s", "d")).toBe(false);
+    expect(P.mergeTabInto([tab("s", 3), tab("d", 2)], "s", "d")).toBeNull();
+    expect(P.canMergeTabs([tab("s", 1), tab("d", 1)], "s", "s")).toBe(false);
+    expect(P.canMergeTabs([tab("s", 1)], "s", "missing")).toBe(false);
+  });
+});

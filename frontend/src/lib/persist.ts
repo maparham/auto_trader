@@ -565,6 +565,55 @@ export function saveTabs(tabs: ChartTab[]): void {
   save(tabsKey(), tabs);
 }
 
+// --- merge tabs (inverse of cell detach) --------------------------------------
+
+// Layout kind implied by a cell count — merging re-derives the shape and drops
+// any custom sizes (the standard rule when the layout kind changes).
+const KIND_FOR_COUNT: Record<number, LayoutKind> = { 1: "1", 2: "2h", 3: "3", 4: "4" };
+
+export function canMergeTabs(tabs: ChartTab[], sourceId: string, targetId: string): boolean {
+  if (sourceId === targetId) return false;
+  const src = tabs.find((t) => t.id === sourceId);
+  const dst = tabs.find((t) => t.id === targetId);
+  return !!src && !!dst && src.cells.length + dst.cells.length <= 4;
+}
+
+// Merge the whole source tab into the target: every source cell moves across
+// and the source tab disappears from the returned array. Cells are RE-SCOPED
+// under the target tab id (content copied via copyScopeContent, source prefix
+// purged) — keeping the foreign scope would break the invariant closeTab /
+// deleteLayout rely on (purging a tab's content by its own prefix reaches all
+// of its cells). `position` places the incoming cells relative to the target's
+// existing ones. Returns null when the merge is invalid or would exceed 4 cells.
+export function mergeTabInto(
+  tabs: ChartTab[],
+  sourceId: string,
+  targetId: string,
+  position: "before" | "after" = "after",
+): ChartTab[] | null {
+  if (!canMergeTabs(tabs, sourceId, targetId)) return null;
+  const src = tabs.find((t) => t.id === sourceId)!;
+  const dst = tabs.find((t) => t.id === targetId)!;
+  const moved: ChartCell[] = src.cells.map((c) => {
+    const scope = cellScope(targetId, c.id);
+    copyScopeContent(c.scope, scope);
+    return { ...c, scope };
+  });
+  purgeTabScope(sourceId);
+  const cells = position === "before" ? [...moved, ...dst.cells] : [...dst.cells, ...moved];
+  const { sizes: _sizes, ...dstRest } = dst;
+  const merged: ChartTab = {
+    ...dstRest,
+    cells,
+    layout: KIND_FOR_COUNT[cells.length],
+    // The merged-in chart is what the user just pulled over — focus it, and
+    // link the cells' crosshairs (the point of viewing tabs together).
+    activeCellId: src.activeCellId,
+    syncCrosshair: true,
+  };
+  return tabs.filter((t) => t.id !== sourceId).map((t) => (t.id === targetId ? merged : t));
+}
+
 // --- named workspace layouts -------------------------------------------------
 //
 // A LAYOUT is a named snapshot of the ENTIRE workspace: every tab (each tab a
