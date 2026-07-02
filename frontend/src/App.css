@@ -852,6 +852,12 @@
 .ind-row select.ind-wide-select { width: 160px; }
 .ind-row input[type="datetime-local"]:disabled { opacity: 0.5; cursor: not-allowed; }
 .ind-row input[type="number"]:disabled, .ind-row select:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Two labelled number fields on one line (e.g. Range min / max). Each cell is
+   content-sized (label + fixed input); the row's space-between spreads them so the
+   RIGHT input aligns to the modal edge like single-row inputs. Keep the second
+   label short (e.g. "max", "right") so both fields fit the 360px modal. */
+.ind-row-pair > .ind-pair-cell { display: inline-flex; align-items: center; gap: 8px; }
+.ind-row-pair .ind-pair-cell input[type="number"] { width: 52px; flex: 0 0 auto; }
 .ind-line-controls { display: inline-flex; align-items: center; gap: 8px; }
 .ind-line-controls input[type="color"] {
   width: 36px; height: 26px; padding: 0; border: 1px solid var(--border);

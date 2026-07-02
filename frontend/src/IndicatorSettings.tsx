@@ -83,7 +83,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = "inputs" | "style" | "visibility";
+type Tab = "inputs" | "divergence" | "style" | "visibility";
 
 const DEFAULT_LINE_PALETTE = ["#FF9600", "#935EBD", "#2962ff", "#E11D74", "#01C5C4"];
 
@@ -300,6 +300,11 @@ export default function IndicatorSettings({
   // Write a divergence-config patch onto extendData (merging live extendData to
   // preserve indType) and let calc re-run so the markers update immediately.
   // Persistence is handled by the snapshot effect (keyed on rsiDiv).
+  // Reset the divergence TUNING to defaults but keep the master on/off as-is, so a
+  // reset never silently switches the feature off under the user.
+  function resetDivergence() {
+    setRsiDivergence({ ...RSI_DIVERGENCE_DEFAULTS, on: rsiDiv.on });
+  }
   function setRsiDivergence(patch: Partial<RsiDivergenceConfig>) {
     const next = { ...rsiDiv, ...patch };
     setRsiDiv(next);
@@ -1175,13 +1180,15 @@ export default function IndicatorSettings({
         </div>
 
         <div className="ind-tabs">
-          {(["inputs", "style", "visibility"] as Tab[]).map((t) => (
+          {((isRsi
+            ? ["inputs", "divergence", "style", "visibility"]
+            : ["inputs", "style", "visibility"]) as Tab[]).map((t) => (
             <button
               key={t}
               className={`ind-tab ${tab === t ? "on" : ""}`}
               onClick={() => setTab(t)}
             >
-              {t === "inputs" ? "Inputs" : t === "style" ? "Style" : "Visibility"}
+              {t === "inputs" ? "Inputs" : t === "divergence" ? "Divergence" : t === "style" ? "Style" : "Visibility"}
             </button>
           ))}
         </div>
@@ -1389,21 +1396,6 @@ export default function IndicatorSettings({
                   ))}
                 </select>
               </div>
-              {/* Matches TradingView's built-in RSI: a single toggle. Pivot lookback
-                  (5/5) and range (5–60) are the TV defaults, applied automatically;
-                  regular bullish + bearish divergences are marked on the plot. */}
-              <label className="ind-check">
-                <input
-                  type="checkbox"
-                  checked={rsiDiv.on}
-                  onChange={(e) => setRsiDivergence({ on: e.target.checked })}
-                />
-                <span>Calculate Divergence</span>
-                <InfoTip
-                  title="Calculate Divergence"
-                  text="Marks bullish and bearish RSI divergences on the plot. That's where price makes a new high or low but the RSI does not."
-                />
-              </label>
 
               <div className="ind-group">Smoothing</div>
               <div className="ind-row">
@@ -1470,6 +1462,179 @@ export default function IndicatorSettings({
                 <select value="chart" disabled>
                   <option value="chart">Chart</option>
                 </select>
+              </div>
+            </>
+          )}
+
+          {tab === "divergence" && isRsi && (
+            <>
+              <div className="ind-group">Divergence</div>
+              <label className="ind-check">
+                <input
+                  type="checkbox"
+                  checked={rsiDiv.on}
+                  onChange={(e) => setRsiDivergence({ on: e.target.checked })}
+                />
+                <span>Calculate Divergence</span>
+                <InfoTip
+                  title="Calculate Divergence"
+                  text="Marks divergences on the plot: price makes a new high or low but the RSI does not."
+                />
+              </label>
+              <div className={`ind-row ind-row-pair${rsiDiv.on ? "" : " is-off"}`}>
+                <span className="ind-pair-cell">
+                  <span className="ind-row-head">
+                    <label>Lookback left</label>
+                    <InfoTip title="Pivot lookback left" text="Bars required to the left of a swing for it to count as a pivot." />
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    disabled={!rsiDiv.on}
+                    value={rsiDiv.lookbackLeft}
+                    onChange={(e) => setRsiDivergence({ lookbackLeft: Math.max(1, Math.floor(Number(e.target.value)) || 5) })}
+                  />
+                </span>
+                <span className="ind-pair-cell">
+                  <span className="ind-row-head">
+                    <label>right</label>
+                    <InfoTip title="Pivot lookback right" text="Bars required to the right to confirm a pivot (the detection lag)." />
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    disabled={!rsiDiv.on}
+                    value={rsiDiv.lookbackRight}
+                    onChange={(e) => {
+                      const lookbackRight = Math.max(1, Math.floor(Number(e.target.value)) || 5);
+                      // Keep forming right-lookback ≤ lookbackRight-1 so the shown value never
+                      // exceeds what detection can use after lowering the confirmed lookback.
+                      const formingLookbackRight = Math.min(rsiDiv.formingLookbackRight, Math.max(1, lookbackRight - 1));
+                      setRsiDivergence({ lookbackRight, formingLookbackRight });
+                    }}
+                  />
+                </span>
+              </div>
+              <div className={`ind-row ind-row-pair${rsiDiv.on ? "" : " is-off"}`}>
+                <span className="ind-pair-cell">
+                  <span className="ind-row-head">
+                    <label>Range min</label>
+                    <InfoTip title="Range min" text="Fewest bars allowed between the two pivots being compared. Always ≤ Range max." />
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={rsiDiv.rangeMax}
+                    step={1}
+                    disabled={!rsiDiv.on}
+                    value={rsiDiv.rangeMin}
+                    onChange={(e) => setRsiDivergence({ rangeMin: Math.min(rsiDiv.rangeMax, Math.max(1, Math.floor(Number(e.target.value)) || 5)) })}
+                  />
+                </span>
+                <span className="ind-pair-cell">
+                  <span className="ind-row-head">
+                    <label>max</label>
+                    <InfoTip title="Range max" text="Most bars allowed between the two pivots being compared. Always ≥ Range min." />
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    disabled={!rsiDiv.on}
+                    value={rsiDiv.rangeMax}
+                    onChange={(e) => setRsiDivergence({ rangeMax: Math.max(rsiDiv.rangeMin, Math.floor(Number(e.target.value)) || 60) })}
+                  />
+                </span>
+              </div>
+              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
+                <input
+                  type="checkbox"
+                  disabled={!rsiDiv.on}
+                  checked={rsiDiv.bullish}
+                  onChange={(e) => setRsiDivergence({ bullish: e.target.checked })}
+                />
+                <span>Regular bullish</span>
+                <InfoTip title="Regular bullish" text="Price makes a lower low while RSI makes a higher low." />
+              </label>
+              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
+                <input
+                  type="checkbox"
+                  disabled={!rsiDiv.on}
+                  checked={rsiDiv.bearish}
+                  onChange={(e) => setRsiDivergence({ bearish: e.target.checked })}
+                />
+                <span>Regular bearish</span>
+                <InfoTip title="Regular bearish" text="Price makes a higher high while RSI makes a lower high." />
+              </label>
+              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
+                <input
+                  type="checkbox"
+                  disabled={!rsiDiv.on}
+                  checked={rsiDiv.hiddenBullish}
+                  onChange={(e) => setRsiDivergence({ hiddenBullish: e.target.checked })}
+                />
+                <span>Hidden bullish</span>
+                <InfoTip title="Hidden bullish" text="Price makes a higher low while RSI makes a lower low." />
+              </label>
+              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
+                <input
+                  type="checkbox"
+                  disabled={!rsiDiv.on}
+                  checked={rsiDiv.hiddenBearish}
+                  onChange={(e) => setRsiDivergence({ hiddenBearish: e.target.checked })}
+                />
+                <span>Hidden bearish</span>
+                <InfoTip title="Hidden bearish" text="Price makes a lower high while RSI makes a higher high." />
+              </label>
+              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
+                <input
+                  type="checkbox"
+                  disabled={!rsiDiv.on}
+                  checked={rsiDiv.showForming}
+                  onChange={(e) => setRsiDivergence({ showForming: e.target.checked })}
+                />
+                <span>Show forming divergence</span>
+                <InfoTip title="Show forming divergence" text="Also show the latest still-forming divergence (dotted, may be invalidated)." />
+              </label>
+              <div className={`ind-row${rsiDiv.on && rsiDiv.showForming ? "" : " is-off"}`}>
+                <span className="ind-row-head">
+                  <label>Forming lookback right</label>
+                  <InfoTip title="Forming lookback right" text="Right-side bars for a tentative pivot; lower = earlier but jumpier. Always < Pivot lookback right." />
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  max={Math.max(1, rsiDiv.lookbackRight - 1)}
+                  step={1}
+                  disabled={!rsiDiv.on || !rsiDiv.showForming}
+                  value={rsiDiv.formingLookbackRight}
+                  onChange={(e) =>
+                    setRsiDivergence({
+                      formingLookbackRight: Math.min(
+                        Math.max(1, rsiDiv.lookbackRight - 1),
+                        Math.max(1, Math.floor(Number(e.target.value)) || 2),
+                      ),
+                    })
+                  }
+                />
+              </div>
+              <label className={`ind-check${rsiDiv.on && rsiDiv.showForming ? "" : " is-off"}`}>
+                <input
+                  type="checkbox"
+                  disabled={!rsiDiv.on || !rsiDiv.showForming}
+                  checked={rsiDiv.formingScanBack}
+                  onChange={(e) => setRsiDivergence({ formingScanBack: e.target.checked })}
+                />
+                <span>Scan back for forming</span>
+                <InfoTip title="Scan back for forming" text="If the latest tentative swing isn't diverging, look further back for an older one that is." />
+              </label>
+              <div className="ind-row">
+                <button type="button" className="ghost" onClick={resetDivergence}>
+                  Reset to defaults
+                </button>
+                <InfoTip title="Reset to defaults" text="Restore the divergence tuning to defaults (keeps the on/off toggle)." />
               </div>
             </>
           )}

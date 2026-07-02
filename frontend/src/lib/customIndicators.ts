@@ -1091,7 +1091,7 @@ function computeMa(
 // curve matches TV rather than klinecharts' built-in. Length in calcParams[0];
 // divergence config on extendData (RsiExtend).
 // ---------------------------------------------------------------------------
-type DivergenceKind = "bullish" | "bearish" | "hiddenBullish" | "hiddenBearish";
+export type DivergenceKind = "bullish" | "bearish" | "hiddenBullish" | "hiddenBearish";
 
 // One divergence line to draw on the RSI pane: from a previous RSI pivot to the
 // confirmed pivot at this bar. Stashed on the right-pivot bar's result point as a
@@ -1102,6 +1102,7 @@ interface DivSegment {
   fromValue: number; // RSI at the previous pivot
   toIndex: number; // this bar (the confirmed pivot)
   toValue: number; // RSI here
+  forming?: boolean; // tentative (partial-confirmation) pivot; may still be invalidated
 }
 
 interface RsiPoint {
@@ -1149,6 +1150,9 @@ export interface RsiDivergenceConfig {
   bearish: boolean; // regular: price higher high + RSI lower high
   hiddenBullish: boolean; // price higher low + RSI lower low
   hiddenBearish: boolean; // price lower high + RSI higher high
+  showForming: boolean; // also mark the latest still-forming divergence
+  formingLookbackRight: number; // right-side bars for a tentative (forming) pivot
+  formingScanBack: boolean; // if the latest tail swing isn't diverging, scan older ones
 }
 
 export interface RsiExtend {
@@ -1169,6 +1173,9 @@ export const RSI_DIVERGENCE_DEFAULTS: RsiDivergenceConfig = {
   bearish: true,
   hiddenBullish: false,
   hiddenBearish: false,
+  showForming: false,
+  formingLookbackRight: 2,
+  formingScanBack: false,
 };
 
 // One RSI pivot: its bar index, the RSI value, and the price extreme used for the
@@ -1182,7 +1189,7 @@ interface RsiPivot {
 // Detect regular/hidden divergences by comparing each confirmed RSI pivot to the
 // previous pivot of the same side, within [rangeMin, rangeMax] bars. Segments are
 // appended to the right-pivot bar's result point so `draw` can render them.
-function detectDivergences(
+export function detectDivergences(
   dataList: KLineData[],
   rsi: Array<number | undefined>,
   out: RsiPoint[],
@@ -1245,6 +1252,74 @@ function detectDivergences(
         }
       }
       lastHigh = { index: i, rsi: v, price };
+    }
+  }
+
+  // Forming pass: the latest STILL-FORMING divergence on each side. A tentative
+  // pivot uses the same rule as a confirmed one but only `formingLookbackRight`
+  // bars to the right (< lbR), and must sit in the not-yet-confirmable tail
+  // (i + lbR >= n) so it's a genuinely forming swing — not an old one that failed
+  // full confirmation. It is compared to the last CONFIRMED pivot of its side.
+  if (cfg.showForming) {
+    // Forming right-lookback: at least 1 (never the noisy zero-right case) and strictly
+    // less than the confirmed lbR. When lbR === 1 this yields fbR === 1 === lbR, and the
+    // tail (`i + lbR >= n`) and `i + fbR < n` conditions below can't both hold — so no
+    // forming pivot forms, the right outcome (no room for a "less confirmed" pivot).
+    const fbR = Math.max(1, Math.min(lbR - 1, Math.max(1, Math.floor(cfg.formingLookbackRight) || 1)));
+    const isFormingPivot = (i: number, want: "low" | "high"): boolean => {
+      const v = rsi[i];
+      if (v === undefined) return false;
+      if (i - lbL < 0 || i + fbR >= n) return false;
+      for (let j = i - lbL; j <= i + fbR; j++) {
+        const w = rsi[j];
+        if (w === undefined) return false;
+        if (j !== i && (want === "low" ? w < v : w > v)) return false;
+      }
+      return true;
+    };
+    if (lastLow) {
+      for (let i = n - 1; i > lastLow.index && i + lbR >= n; i--) {
+        if (!isFormingPivot(i, "low")) continue;
+        const dist = i - lastLow.index;
+        if (dist > hi) continue;
+        if (dist < lo) break;
+        const v = rsi[i] as number;
+        const price = dataList[i].low;
+        let emitted = false;
+        if (cfg.bullish && v > lastLow.rsi && price < lastLow.price) {
+          add(i, { kind: "bullish", fromIndex: lastLow.index, fromValue: lastLow.rsi, toIndex: i, toValue: v, forming: true });
+          emitted = true;
+        }
+        if (cfg.hiddenBullish && v < lastLow.rsi && price > lastLow.price) {
+          add(i, { kind: "hiddenBullish", fromIndex: lastLow.index, fromValue: lastLow.rsi, toIndex: i, toValue: v, forming: true });
+          emitted = true;
+        }
+        // Default: stop at the most recent tentative low (even if it didn't diverge).
+        // scanBack: keep looking at older in-range tail lows until one diverges.
+        if (emitted || !cfg.formingScanBack) break;
+      }
+    }
+    if (lastHigh) {
+      for (let i = n - 1; i > lastHigh.index && i + lbR >= n; i--) {
+        if (!isFormingPivot(i, "high")) continue;
+        const dist = i - lastHigh.index;
+        if (dist > hi) continue;
+        if (dist < lo) break;
+        const v = rsi[i] as number;
+        const price = dataList[i].high;
+        let emitted = false;
+        if (cfg.bearish && v < lastHigh.rsi && price > lastHigh.price) {
+          add(i, { kind: "bearish", fromIndex: lastHigh.index, fromValue: lastHigh.rsi, toIndex: i, toValue: v, forming: true });
+          emitted = true;
+        }
+        if (cfg.hiddenBearish && v > lastHigh.rsi && price < lastHigh.price) {
+          add(i, { kind: "hiddenBearish", fromIndex: lastHigh.index, fromValue: lastHigh.rsi, toIndex: i, toValue: v, forming: true });
+          emitted = true;
+        }
+        // Default: stop at the most recent tentative high (even if it didn't diverge).
+        // scanBack: keep looking at older in-range tail highs until one diverges.
+        if (emitted || !cfg.formingScanBack) break;
+      }
     }
   }
 }
@@ -1388,6 +1463,20 @@ const DIV_LABEL: Record<DivergenceKind, string> = {
   hiddenBullish: "H Bull",
   hiddenBearish: "H Bear",
 };
+
+// Resolve a divergence segment's visual state. Three states, one bull/bear colour:
+// confirmed-regular = solid/opaque, confirmed-hidden = dashed, forming = dotted +
+// faded + a "?" suffix so it reads as provisional (may still be invalidated).
+export function divVisual(seg: { kind: DivergenceKind; forming?: boolean }): {
+  label: string;
+  dash: number[];
+  alpha: number;
+} {
+  const base = DIV_LABEL[seg.kind];
+  if (seg.forming) return { label: `${base}?`, dash: [2, 3], alpha: 0.55 };
+  const hidden = seg.kind === "hiddenBullish" || seg.kind === "hiddenBearish";
+  return { label: base, dash: hidden ? [4, 3] : [], alpha: 1 };
+}
 
 // Per-instance RSI visual style (the Style tab), carried on extendData.style and
 // resolved over RSI_STYLE_DEFAULTS at draw time. Colours are hex; the three bands
@@ -1616,17 +1705,19 @@ function drawRsiDivergences(params: IndicatorDrawParams<RsiPoint>): boolean {
       const bullish = s.kind === "bullish" || s.kind === "hiddenBullish";
       if (bullish ? style.hidden.bull : style.hidden.bear) continue;
       const color = bullish ? style.bull : style.bear;
-      const hidden = s.kind === "hiddenBullish" || s.kind === "hiddenBearish";
+      const vis = divVisual(s);
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
-      ctx.setLineDash(hidden ? [4, 3] : []);
+      ctx.globalAlpha = vis.alpha;
+      ctx.setLineDash(vis.dash);
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
       // Label outside the pivot: above for bearish (RSI tops), below for bullish.
       ctx.setLineDash([]);
-      ctx.fillText(DIV_LABEL[s.kind], x2 + 3, bullish ? y2 + 7 : y2 - 7);
+      ctx.fillText(vis.label, x2 + 3, bullish ? y2 + 7 : y2 - 7);
+      ctx.globalAlpha = 1;
     }
   }
   ctx.restore();
