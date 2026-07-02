@@ -154,6 +154,13 @@ export default function Toolbar({
     setAuto(controller.autoScale.value);
     return controller.autoScale.subscribe(setAuto);
   }, [controller]);
+  // "I" invert-scale mode (mirrors the focused cell's signal; on = highlighted).
+  const [inverted, setInverted] = useState(controller?.invertScale.value ?? false);
+  useEffect(() => {
+    if (!controller) return;
+    setInverted(controller.invertScale.value);
+    return controller.invertScale.subscribe(setInverted);
+  }, [controller]);
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
   const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
@@ -564,7 +571,7 @@ export default function Toolbar({
         Alert
       </button>
 
-      {/* Price-scale A / L (auto-fit, logarithmic) */}
+      {/* Price-scale A / L / I (auto-fit, logarithmic, invert) */}
       <div className="scale">
         <button
           title="Auto (fits data to screen)"
@@ -579,6 +586,13 @@ export default function Toolbar({
           onClick={() => setScale(log ? YAxisType.Normal : YAxisType.Log)}
         >
           L
+        </button>
+        <button
+          title="Invert scale (Option+I)"
+          className={inverted ? "on" : ""}
+          onClick={() => controller?.invertScale.set(!controller.invertScale.value)}
+        >
+          I
         </button>
       </div>
 

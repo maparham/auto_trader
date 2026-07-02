@@ -40,6 +40,7 @@ import ChartLegend, {
   type SubPaneLegendData,
 } from "./ChartLegend";
 import { ChartController } from "./lib/chartController";
+import { isInvertShortcut } from "./lib/invertShortcut";
 import InstrumentDetailsModal from "./InstrumentDetailsModal";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle, type CurveLabelPill } from "./CurveLabels";
@@ -519,6 +520,7 @@ export default function ChartCore({
     overlays,
     avwapAnchorMode,
     autoScale,
+    invertScale,
     scalePriceOnly,
     measureArmed,
     selectedIndicator,
@@ -1064,6 +1066,19 @@ export default function ChartCore({
   // The value only changes via toggleScalePriceOnly (a user action after mount), so
   // the initial useState seed is authoritative — just subscribe to later flips.
   useEffect(() => scalePriceOnly.subscribe(setScaleOnly), [scalePriceOnly]);
+  // Invert scale (Alt/Option+I or the toolbar "I" button): push the flip onto the
+  // live chart. Candle pane only — klinecharts' YAxisImp.isReverse() ignores
+  // yAxis.reverse for sub-panes. Session-only, so no initial apply is needed
+  // (the signal is always false at mount) — just react to later flips. Theme
+  // changes deep-merge styles via klineStyles() (which never sets reverse), so
+  // an active inversion survives them.
+  useEffect(
+    () =>
+      invertScale.subscribe((reverse) => {
+        chartRef.current?.setStyles({ yAxis: { reverse } });
+      }),
+    [invertScale],
+  );
   // Flip "scale price chart only": persist it, push it onto the live chart, and
   // re-apply the current y-axis type to force calcRange to rerun (same recompute
   // path the auto-fit double-click uses).
@@ -4134,6 +4149,12 @@ export default function ChartCore({
         // Delete / Backspace removes the selected drawing (no modifier).
         if (e.key === "Delete" || e.key === "Backspace") {
           if (deleteSelectedDrawing()) e.preventDefault();
+          return;
+        }
+        // Alt/Option+I: TV-style invert scale (flip the price axis upside down).
+        if (isInvertShortcut(e)) {
+          invertScale.set(!invertScale.value);
+          e.preventDefault();
           return;
         }
         const mod = e.ctrlKey || e.metaKey;

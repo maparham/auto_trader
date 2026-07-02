@@ -42,6 +42,9 @@ export class ChartController {
   // Starts ON; the toolbar "A" button reflects it and re-asserts auto-fit; the
   // cell turns it OFF when the user manually scales the price axis.
   readonly autoScale = new Signal<boolean>(true);
+  // TradingView-style "invert scale" (Alt/Option+I + toolbar "I" button): flips
+  // the candle-pane price axis via yAxis.reverse. Session-only — never persisted.
+  readonly invertScale = new Signal<boolean>(false);
   // Sidebar eye menu (session-only, per cell): master switches that hide whole
   // categories without touching per-item state.
   readonly indicatorsHidden = new Signal<boolean>(false);
