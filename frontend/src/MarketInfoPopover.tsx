@@ -257,7 +257,12 @@ export default function MarketInfoPopover({ epic, brokerId, title, anchor, onClo
               <div className="mi-range">
                 <div className="mi-range-track">
                   <div className="mi-range-marker" style={{ left: `${rangePct}%` }} />
-                  <div className="mi-range-pill" style={{ left: `${rangePct}%` }}>
+                  {/* clamp keeps the centered pill from poking past the card
+                      when the price sits at the extremes of the range */}
+                  <div
+                    className="mi-range-pill"
+                    style={{ left: `clamp(28px, ${rangePct}%, calc(100% - 28px))` }}
+                  >
                     {priceText(bid, decimals)}
                   </div>
                 </div>
