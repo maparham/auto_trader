@@ -1238,6 +1238,56 @@ describe("drawing defaults seeding + config round-trip", () => {
     expect(asDrawingExtra(ov.extendData).visibility).toEqual(hidden); // stored
   });
 
+  it("enforces a seeded hidden-visibility default when an interactive draw completes (Step 3b)", () => {
+    // The interactive (no-points) path enforces visibility in create()'s onDrawEnd,
+    // which klinecharts fires on completion. FakeChart never fires it, so simulate
+    // completion by invoking the stored callback — the ONLY thing that exercises the
+    // onDrawEnd applyDisplay branch. (A with-points draw is enforced earlier, in
+    // addDrawing itself — covered by the in-place test above; using no-points here
+    // isolates the onDrawEnd branch.) Hidden-but-user-visible ⇒ GHOST (faded rgba).
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const hidden = defaultVisibility();
+    for (const u of Object.values(hidden.units)) u.on = false; // hidden on every interval
+    P.saveDrawingDefault("segment", { visibility: hidden });
+    const id = m.addDrawing("segment")!; // interactive: no points
+    const ov = chart.getOverlayById(id)! as unknown as { onDrawEnd?: () => void };
+    const before = (chart.getOverlayById(id)!.styles as { line?: { color?: string } }).line?.color;
+    expect(before).not.toMatch(/^rgba\(/); // not yet faded (onDrawEnd hasn't fired)
+    ov.onDrawEnd?.(); // fire Step 3b
+    const after = (chart.getOverlayById(id)!.styles as { line?: { color?: string } }).line?.color;
+    expect(after).toMatch(/^rgba\(/); // seeded hide enforced → ghosted
+  });
+
+  it("enforces a seeded hidden-visibility default on an in-place (with-points) draw", () => {
+    // The chart "+" menu draws with points → completes synchronously → NO onDrawEnd.
+    // Seeded visibility must still be enforced immediately (not only after a reload).
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const hidden = defaultVisibility();
+    for (const u of Object.values(hidden.units)) u.on = false;
+    P.saveDrawingDefault("horizontalStraightLine", { visibility: hidden });
+    const id = m.addDrawing("horizontalStraightLine", [{ value: 100 }])!;
+    const color = (chart.getOverlayById(id)!.styles as { line?: { color?: string } }).line?.color;
+    expect(color).toMatch(/^rgba\(/); // ghosted right away
+  });
+
+  it("captures CONCRETE line fields so a size-1 default fully resets a widened line", () => {
+    const { m } = setup();
+    // A default from a plain (unstyled) drawing must carry concrete size/style/color…
+    const src = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const def = m.getDrawingConfig(src)!;
+    expect(def.line?.size).toBe(1);
+    expect(def.line?.color).toBeTruthy();
+    expect(def.line?.style).toBeDefined();
+    // …so applying it over a customized (width-5) line resets the width back to 1.
+    const other = m.addDrawing("segment", [{ value: 3 }, { value: 4 }])!;
+    m.setStyle(other, { line: { size: 5 } } as Parameters<typeof m.setStyle>[1]);
+    expect(m.getDrawingConfig(other)!.line?.size).toBe(5);
+    m.applyDrawingConfig(other, def);
+    expect(m.getDrawingConfig(other)!.line?.size).toBe(1);
+  });
+
   it("draws with no seeded style/extras when there is no default", () => {
     const { chart, m } = setup();
     const id = m.addDrawing("rayLine");

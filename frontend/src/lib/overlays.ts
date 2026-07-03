@@ -874,8 +874,16 @@ export class OverlayManager {
     const id = this.create("drawing", name, points, seed?.styles, undefined, {
       extendData: seed?.extendData,
     });
-    if (id && points) this.persist(); // interactive draws persist via onDrawEnd
-    else if (id && !points) this.pendingDrawId = id; // remember it for cancelDrawing()
+    if (id && points) {
+      this.persist();
+      // In-place draws (e.g. the chart "+" menu) complete synchronously and never fire
+      // create()'s onDrawEnd, so enforce any seeded per-interval visibility here —
+      // mirroring the interactive path's Step 3b. Harmless when nothing is seeded
+      // (empty extra ⇒ visible). persist() ran first, so it captured the canonical
+      // (unfaded) style, never a ghost rgba.
+      const ov = this.chart?.getOverlayById(id);
+      if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
+    } else if (id && !points) this.pendingDrawId = id; // remember it for cancelDrawing()
     else if (!id) {
       // creation failed → don't get stuck
       this.drawingInProgress = false;
@@ -1178,7 +1186,16 @@ export class OverlayManager {
     const line = (live.styles?.line ?? {}) as { color?: string; size?: number; style?: LineType };
     const extra = asDrawingExtra(live.extendData);
     return {
-      line: { color: line.color, size: line.size, style: line.style },
+      // CONCRETE values, never the overlay's implicit `undefined`s: klinecharts' style
+      // merge skips undefined fields, so an undefined size/style would never overwrite
+      // a customized line back to the default on "Reset settings" — Reset would revert
+      // color but leave a widened line at its custom width. Resolving them also means a
+      // default saved from an unstyled drawing is a real config, not a hollow {line:{}}.
+      line: {
+        color: this.resolveLineColor(live.styles),
+        size: line.size ?? 1,
+        style: line.style ?? LineType.Solid,
+      },
       showMiddle: extra.showMiddle,
       priceLabels: extra.priceLabels,
       visibility: extra.visibility,
