@@ -62,8 +62,16 @@ export default function OrderTicket({
   instrumentType,
   trading,
 }: Props) {
-  const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [orderType, setOrderType] = useState<OrderType>("market");
+  // A chart-staged draft (the price-axis "+" menu's Buy/Sell limit items) is placed
+  // on draftOrderSignal BEFORE this ticket mounts; seed local state from it (same-epic
+  // only — the signal is app-global) so the maintenance effect honors the clicked
+  // side/type/price instead of rebuilding a default market draft over it.
+  const seededDraft =
+    draftOrderSignal.value?.epic === epic ? draftOrderSignal.value : null;
+  const [side, setSide] = useState<"buy" | "sell">(seededDraft?.side ?? "buy");
+  const [orderType, setOrderType] = useState<OrderType>(
+    seededDraft?.type === "limit" ? "limit" : "market",
+  );
   const [quantity, setQuantity] = useState("1");
   const [exitsOpen, setExitsOpen] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -73,7 +81,7 @@ export default function OrderTicket({
   const submittingRef = useRef(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
-  const [draft, setDraft] = useState<DraftOrder | null>(null);
+  const [draft, setDraft] = useState<DraftOrder | null>(draftOrderSignal.value);
   const [positions, setPositions] = useState<TradeView[]>([]);
   const [editId, setEditId] = useState<string | null>(editTradeSignal.value);
   const flash = useRef<number | undefined>(undefined);
@@ -82,7 +90,30 @@ export default function OrderTicket({
   const round = (n: number) => Number(n.toFixed(precision));
   const fmt = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(precision));
 
-  useEffect(() => draftOrderSignal.subscribe(setDraft), []);
+  useEffect(
+    () =>
+      draftOrderSignal.subscribe((d) => {
+        setDraft(d);
+        // Adopt an externally injected draft's side/type (chart Buy/Sell limit menu,
+        // fired while the panel is already open) so the maintenance effect doesn't
+        // rebuild over the seeded level. Same-epic only. Loop-safe: the ticket's own
+        // draft writes always carry the current side/type, so these setters no-op.
+        if (d && d.epic === epic) {
+          setSide(d.side);
+          setOrderType(d.type === "limit" ? "limit" : "market");
+        }
+      }),
+    [epic],
+  );
+  // StrictMode's phantom mount→unmount→remount fires the draft-clearing cleanup below
+  // ONCE on mount, nulling a draft the chart injected before opening (React state is
+  // preserved, so the ticket still renders right — but the on-chart entry line, which
+  // the chart draws from the signal, vanishes). Re-assert the seed after mount so the
+  // line shows immediately. No-op in production (no phantom unmount) and when unseeded.
+  useEffect(() => {
+    if (seededDraft) draftOrderSignal.set(seededDraft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => subscribeTrades(setPositions), []);
   useEffect(() => editTradeSignal.subscribe(setEditId), []);
   // Clear the staged draft AND any open edit when the ticket unmounts (panel closed).

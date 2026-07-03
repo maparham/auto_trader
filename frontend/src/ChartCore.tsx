@@ -4897,6 +4897,7 @@ export default function ChartCore({
           items={[
             {
               label: `Add alert at ${plusMenu.price.toFixed(precision)}`,
+              icon: MenuIcons.bell,
               // Create immediately, inheriting the user's alert defaults (no modal).
               // Matches TV's quick "add alert here" — editable afterwards (dbl-click).
               onClick: () => {
@@ -4911,12 +4912,14 @@ export default function ChartCore({
               },
             },
             {
-              label: `Draw horizontal line at ${plusMenu.price.toFixed(precision)}`,
+              label: `Draw line at ${plusMenu.price.toFixed(precision)}`,
+              icon: MenuIcons.horizontalLine,
               onClick: () =>
                 overlays.addDrawing("horizontalStraightLine", [{ value: plusMenu.price }]),
             },
             {
               label: `Buy limit at ${plusMenu.price.toFixed(precision)}`,
+              icon: MenuIcons.chevronUp,
               // Quantize to instrument precision (matches the label) so a valid limit
               // level — not a 14-decimal float — is staged and later sent to the broker.
               onClick: () =>
@@ -4928,6 +4931,7 @@ export default function ChartCore({
             },
             {
               label: `Sell limit at ${plusMenu.price.toFixed(precision)}`,
+              icon: MenuIcons.chevronDown,
               onClick: () =>
                 stageChartOrder({
                   epic: symbol.epic,

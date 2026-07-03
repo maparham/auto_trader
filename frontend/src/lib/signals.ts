@@ -249,6 +249,25 @@ export interface DraftOrder {
 }
 export const draftOrderSignal = new Signal<DraftOrder | null>(null);
 
+// Stage a new LIMIT order from the chart (the price-axis "+" menu's Buy/Sell limit
+// items) and open the ticket at the clicked level. Clears any in-progress edit
+// first — otherwise the ticket, sitting in edit mode, ignores the injected draft
+// (its maintenance effect bails on editId) and the action silently does nothing.
+// The draft is set BEFORE opening so a fresh ticket mount reads a populated value.
+export function stageChartOrder(o: { epic: string; side: "buy" | "sell"; price: number }): void {
+  setTradeSelected(null);
+  draftOrderSignal.set({
+    epic: o.epic,
+    side: o.side,
+    quantity: 1,
+    type: "limit",
+    price: o.price,
+    stop: null,
+    takeProfit: null,
+  });
+  tradePanelOpen.set(true);
+}
+
 // Request to open the app Settings modal. Set by the toolbar gear button and the
 // chart's right-click context menu; read by App, which owns the modal.
 export const settingsRequest = new Signal<number>(0);

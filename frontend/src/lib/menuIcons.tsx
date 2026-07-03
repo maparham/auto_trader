@@ -172,4 +172,23 @@ export const MenuIcons = {
   star: svg(
     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z" />,
   ),
+  // Bell — "add alert here" (menu-weight twin of the standalone BellIcon).
+  bell: svg(
+    <>
+      <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </>,
+  ),
+  // Horizontal line with endpoint handles — "draw a horizontal line here".
+  horizontalLine: svg(
+    <>
+      <circle cx="4.5" cy="12" r="1.7" />
+      <circle cx="19.5" cy="12" r="1.7" />
+      <path d="M6.4 12h11.2" />
+    </>,
+  ),
+  // Up chevron — "buy limit" (long).
+  chevronUp: svg(<path d="M6 15l6-6 6 6" />),
+  // Down chevron — "sell limit" (short).
+  chevronDown: svg(<path d="M6 9l6 6 6-6" />),
 };
