@@ -185,3 +185,49 @@ def test_half_open_trial_failure_reopens_and_releases_slot() -> None:
         assert await hb.run("capital", _ok) == "ok"  # next trial admitted
 
     asyncio.run(scenario())
+
+
+def test_ignored_exception_on_half_open_trial_closes_breaker() -> None:
+    """A business error (ignored) on the half-open trial proves the broker is
+    REACHABLE — that's recovery from the outage that opened it, so the breaker
+    must CLOSE. Otherwise a persistent business error (e.g. IG's week-long
+    allowance lockout) would pin every call into single-flight half-open forever,
+    fast-failing concurrent callers even though the broker is up."""
+    t, clock = _fixed_clock()
+    hb = BrokerHealth(fail_threshold=1, cooldown=20.0, clock=clock)
+
+    class Quota(Exception):
+        pass
+
+    async def quota():
+        raise Quota()
+
+    async def scenario():
+        with pytest.raises(RuntimeError):
+            await hb.run("ig", _boom)  # 1 real failure -> open
+        assert hb.is_open("ig") is True
+        t["now"] = 21.0  # cooldown elapsed -> half-open
+
+        # The half-open trial hits a persistent business error, not a health
+        # failure. It re-raises, but the breaker must be fully CLOSED afterward.
+        with pytest.raises(Quota):
+            await hb.run("ig", quota, ignore=(Quota,))
+        assert hb.is_open("ig") is False
+
+        # Proof the breaker isn't stuck in single-flight half-open: concurrent
+        # callers now run together instead of being fast-failed as BrokerUnavailable.
+        gate = asyncio.Event()
+        inflight = {"n": 0}
+
+        async def slow_ok():
+            inflight["n"] += 1
+            await gate.wait()
+            return "ok"
+
+        tasks = [asyncio.create_task(hb.run("ig", slow_ok)) for _ in range(3)]
+        await asyncio.sleep(0.05)
+        assert inflight["n"] == 3  # all admitted concurrently, none fast-failed
+        gate.set()
+        assert await asyncio.gather(*tasks) == ["ok", "ok", "ok"]
+
+    asyncio.run(scenario())

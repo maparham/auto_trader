@@ -4,8 +4,7 @@
 
 import type { KLineData } from "klinecharts";
 import type { PriceSide } from "../theme";
-
-const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+import { API_BASE as BASE, errorDetail } from "./http";
 
 export interface Period {
   resolution: string; // backend Resolution value, or a SECONDS_INTERVALS key
@@ -463,17 +462,6 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** Pull the FastAPI `{detail}` string from a failed response, else status text. */
-async function errorDetail(res: Response): Promise<string> {
-  try {
-    const body = await res.json();
-    if (body && typeof body.detail === "string") return body.detail;
-  } catch {
-    /* non-JSON body — fall through to status */
-  }
-  return `${res.status} ${res.statusText}`.trim();
 }
 
 /** Candles in [fromSec, toSec]. Used for scroll-back pagination. */

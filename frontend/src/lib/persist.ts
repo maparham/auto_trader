@@ -16,6 +16,7 @@ import type { DeepPartial, OverlayStyle, LineType } from "klinecharts";
 import type { Instrument, Period } from "./feed";
 import type { VisibilityModel } from "./visibility";
 import type { BacktestConfig } from "./backtestConfig";
+import { API_BASE } from "./http";
 
 const PREFIX = "auto-trader";
 
@@ -138,9 +139,6 @@ function isDeviceLocalKey(k: string): boolean {
 // All mirror calls are fire-and-forget — persistence to the backend is best-effort
 // and must never block or break the (already-committed) localStorage write. They're
 // also guarded so the module stays usable in the test/node env (no fetch/window).
-const API_BASE =
-  (import.meta as unknown as { env?: { VITE_API_BASE?: string } }).env
-    ?.VITE_API_BASE ?? "http://localhost:8000";
 
 // Mirroring is DISABLED until hydrateFromBackend() has pulled the backend snapshot
 // (it flips this true). This is the single "don't mirror until hydrated" gate, and
@@ -642,8 +640,10 @@ export function mergeTabInto(
 // holds the pre-merge snapshot (mergeTabInto never mutates its input).
 export function unmergeScopes(pairs: Array<{ from: string; to: string }>): void {
   for (const { from, to } of pairs) {
-    copyScopeContent(to, from);
-    purgeScope(to);
+    // Only purge the merged-in scope once the content fully travelled back — on
+    // storage quota the copy silently drops keys, so keeping the source turns
+    // permanent data loss into a mere orphaned-scope leak (mirrors mergeTabInto).
+    if (copyScopeContent(to, from)) purgeScope(to);
   }
 }
 

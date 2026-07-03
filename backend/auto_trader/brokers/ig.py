@@ -36,6 +36,7 @@ from auto_trader.brokers.capital import (
     PriceSide,
     _RateLimiter,
     _market_hours_state,
+    _mid,
     _price_precision,
     _to_utc,
     pick_side,
@@ -887,12 +888,6 @@ def _parse_prices(prices: list[dict], price_side: PriceSide = "mid") -> list[Can
         )
     out.sort(key=lambda c: c.time)
     return out
-
-
-def _mid(price: dict | None, side: PriceSide = "mid") -> float | None:
-    if not price:
-        return None
-    return pick_side(price.get("bid"), price.get("ask"), side)
 
 
 def _parse_ig_time(p: dict) -> datetime:

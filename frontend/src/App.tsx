@@ -1038,7 +1038,7 @@ export default function App() {
     const id = newTabId();
     const cid = `${id}-c0`;
     const scope = primaryCellScope(id);
-    copyScopeContent(src.scope, scope);
+    const copiedOk = copyScopeContent(src.scope, scope);
     const t: ChartTab = {
       id,
       layout: "1",
@@ -1050,7 +1050,10 @@ export default function App() {
       // Same removal rules as closeCell: purge the source scope unless it's the
       // tab's primary one, downgrade the layout kind to the remaining count,
       // reset track sizes (grid shape changed), re-home activeCellId.
-      if (src.scope !== primaryCellScope(active.id)) purgeScope(src.scope);
+      // Only burn the original once the copy fully landed — on storage quota the
+      // copy silently drops keys, so keeping the source turns permanent data
+      // loss into a mere orphaned-scope leak (mirrors mergeTabInto).
+      if (copiedOk && src.scope !== primaryCellScope(active.id)) purgeScope(src.scope);
       nextTabs = nextTabs.map((tt) => {
         if (tt.id !== active.id) return tt;
         const cells = tt.cells.filter((c) => c.id !== cellId);

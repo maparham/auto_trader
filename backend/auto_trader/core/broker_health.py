@@ -77,8 +77,11 @@ class BrokerHealth:
         and resets the breaker.
 
         `ignore` lists *expected business* exceptions (e.g. a quota limit) that mean
-        the broker is healthy — they're re-raised WITHOUT recording success or
-        failure, so they never trip or reset the breaker."""
+        the broker is healthy — they're re-raised without ever counting as a failure
+        (they never trip the breaker). In the CLOSED state they also don't reset it
+        (the fail streak is left untouched); but on a HALF-OPEN trial they DO close
+        it, since the broker responding at all proves it has recovered — see the
+        `except ignore` handler."""
         until = self._open_until.get(key)
         if until is not None:
             if self._clock() < until:
@@ -98,7 +101,18 @@ class BrokerHealth:
         try:
             result = await asyncio.wait_for(factory(), self._call_timeout)
         except ignore:
-            raise  # expected business error — leave breaker state untouched
+            # Expected business error — the broker RESPONDED, so it's reachable.
+            # In the closed state we deliberately leave the breaker untouched
+            # (don't count toward opening, don't reset the fail streak). But on a
+            # HALF-OPEN trial (`until is not None`) reaching the broker at all is
+            # recovery from the outage that opened it: close the breaker. Otherwise
+            # the stale, already-elapsed `_open_until` lingers and pins every future
+            # call into single-flight half-open mode for as long as the business
+            # error persists (e.g. IG's week-long allowance lockout) — fast-failing
+            # concurrent callers as BrokerUnavailable even though the broker is up.
+            if until is not None:
+                self._record_success(key)
+            raise
         except asyncio.TimeoutError as e:
             self._record_failure(key)
             raise BrokerTimeout(key) from e

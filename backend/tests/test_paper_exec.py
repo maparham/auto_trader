@@ -465,11 +465,43 @@ def test_partial_close_preserves_sl_tp() -> None:
     assert remaining.stop_level == 98.0 and remaining.take_profit_level == 103.0
 
 
-def test_modify_does_not_revalidate_untouched_level() -> None:
-    # A long with a TP at 101; price then drifts to 102 (a non-streamed epic, so
-    # the TP hasn't auto-triggered). Dragging only the STOP must not be rejected
-    # for the untouched TP now sitting "below" the market — that kept TP simply
-    # triggers on the next tick; it isn't this edit's concern.
+def test_modify_does_not_revalidate_untouched_level_resent_concrete() -> None:
+    # A long with a precision-laden TP; price then drifts above it (a non-streamed
+    # epic, so the TP hasn't auto-triggered). Dragging only the STOP must not be
+    # rejected for the untouched TP now sitting "below" the market — that kept TP
+    # simply triggers on the next tick; it isn't this edit's concern.
+    #
+    # The apply/drag paths (applyEditedLevels) RESEND the unchanged TP as a concrete
+    # value, not None — this is the real-world shape the bug hid behind. The kept
+    # level is recognized as unchanged by value, so a fractional TP is used here
+    # deliberately: it must round-trip exactly for the `!= booked` check to hold.
+    kept_tp = 100.98765
+    broker = _broker(bid=100.0, ask=100.2, tick=100.1)
+    asyncio.run(
+        broker.place_order(
+            Order(
+                epic="EURUSD", side=Side.BUY, quantity=1, client_order_id="open",
+                take_profit_level=kept_tp,
+            )
+        )
+    )
+    [pos] = asyncio.run(broker.get_positions("EURUSD"))
+    assert pos.take_profit_level == kept_tp  # stored raw, no quantization
+
+    broker._ticks = _FakeTicks(102.0)  # price now above the kept TP
+    res = asyncio.run(
+        broker.modify_position(pos.deal_id, stop_level=99.0, take_profit_level=kept_tp)
+    )
+    assert res.status is not OrderStatus.REJECTED
+    [updated] = asyncio.run(broker.get_positions("EURUSD"))
+    assert updated.stop_level == 99.0
+    assert updated.take_profit_level == kept_tp  # kept, untouched
+
+
+def test_modify_does_not_revalidate_untouched_level_omitted_none() -> None:
+    # The other live edit path (PositionsPanel.applyAll) sends `take_profit_level`
+    # as None when the user only staged a stop change. A None arg means "unchanged"
+    # and must likewise skip re-validating the kept TP.
     broker = _broker(bid=100.0, ask=100.2, tick=100.1)
     asyncio.run(
         broker.place_order(

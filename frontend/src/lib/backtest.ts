@@ -2,16 +2,22 @@
 // in its own sub-pane via a custom "EQUITY" indicator.
 //
 // The equity series is dynamic (it depends on the backtest params), but an
-// indicator's calc only sees the kline dataList. So we stash the latest equity
-// series in a module-level map keyed by timestamp; the calc looks each bar up.
-// Markers are created directly on the chart (NOT via the overlays manager) so
-// they aren't persisted as user drawings — they're ephemeral backtest artifacts.
+// indicator's calc only sees the kline dataList. So we stash the equity series
+// on the EQUITY instance's OWN extendData (a ts→value map) and the calc looks
+// each bar up there. It must NOT live in a module global: the app runs one chart
+// per cell but shares the single registered EQUITY template, so a global would
+// let a backtest in one cell overwrite/clear another cell's curve. Per-chart
+// bookkeeping (pane id + marker ids, for clearing) lives in a WeakMap keyed by
+// the chart instance. Markers are created directly on the chart (NOT via the
+// overlays manager) so they aren't persisted as user drawings — they're
+// ephemeral backtest artifacts.
 
 import {
   registerIndicator,
   IndicatorSeries,
   LineType,
   type Chart,
+  type Indicator,
 } from "klinecharts";
 import { runBacktest, type BacktestRequest, type BacktestResult } from "../api";
 
@@ -28,9 +34,23 @@ export function markerLabel(side: "buy" | "sell", leg: "long" | "short"): string
   return `${letter}${opening ? "+" : "-"}`;
 }
 
-let equityByTs = new Map<number, number>();
-let equityPaneId: string | null = null;
-let markerIds: string[] = [];
+// Per-chart backtest artifacts, so clearing one cell's backtest never touches
+// another's. The equity series itself rides on the indicator instance's
+// extendData (see calc), not here.
+interface BacktestArtifacts {
+  equityPaneId: string | null;
+  markerIds: string[];
+}
+const artifactsByChart = new WeakMap<Chart, BacktestArtifacts>();
+
+function artifactsFor(chart: Chart): BacktestArtifacts {
+  let a = artifactsByChart.get(chart);
+  if (!a) {
+    a = { equityPaneId: null, markerIds: [] };
+    artifactsByChart.set(chart, a);
+  }
+  return a;
+}
 
 export function registerBacktestIndicators(): void {
   registerIndicator<{ equity?: number }>({
@@ -39,11 +59,16 @@ export function registerBacktestIndicators(): void {
     series: IndicatorSeries.Normal,
     precision: 2,
     figures: [{ key: "equity", title: "Equity: ", type: "line" }],
-    calc: (dataList) =>
-      dataList.map((k) => {
-        const v = equityByTs.get(k.timestamp);
+    // Read THIS instance's equity map off its extendData — never a module global,
+    // so each cell's EQUITY pane plots its own backtest (see runAndRender).
+    calc: (dataList, indicator: Indicator) => {
+      const equity = indicator.extendData as Map<number, number> | undefined;
+      if (!equity) return dataList.map(() => ({}));
+      return dataList.map((k) => {
+        const v = equity.get(k.timestamp);
         return v != null ? { equity: v } : {};
-      }),
+      });
+    },
   });
 }
 
@@ -53,10 +78,16 @@ export async function runAndRender(
 ): Promise<BacktestResult> {
   const result = await runBacktest(req);
   clearBacktest(chart);
+  const artifacts = artifactsFor(chart);
 
-  // Equity curve -> own sub-pane.
-  equityByTs = new Map(result.equity.map((p) => [p.time * 1000, p.value]));
-  equityPaneId = chart.createIndicator(EQUITY_INDICATOR, false) ?? null;
+  // Equity curve -> own sub-pane. The series travels on the instance's
+  // extendData so this chart's calc looks up its own values.
+  const equityByTs = new Map(result.equity.map((p) => [p.time * 1000, p.value]));
+  artifacts.equityPaneId =
+    chart.createIndicator(
+      { name: EQUITY_INDICATOR, extendData: equityByTs },
+      false,
+    ) ?? null;
 
   // Trade markers -> locked simpleAnnotation overlays (arrow + label).
   for (const m of result.markers) {
@@ -67,17 +98,18 @@ export async function runAndRender(
       extendData: markerLabel(m.side, m.leg),
       styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
     });
-    if (typeof id === "string") markerIds.push(id);
+    if (typeof id === "string") artifacts.markerIds.push(id);
   }
   return result;
 }
 
 export function clearBacktest(chart: Chart): void {
-  for (const id of markerIds) chart.removeOverlay(id);
-  markerIds = [];
-  if (equityPaneId) {
-    chart.removeIndicator(equityPaneId, EQUITY_INDICATOR);
-    equityPaneId = null;
+  const artifacts = artifactsByChart.get(chart);
+  if (!artifacts) return;
+  for (const id of artifacts.markerIds) chart.removeOverlay(id);
+  artifacts.markerIds = [];
+  if (artifacts.equityPaneId) {
+    chart.removeIndicator(artifacts.equityPaneId, EQUITY_INDICATOR);
+    artifacts.equityPaneId = null;
   }
-  equityByTs = new Map();
 }

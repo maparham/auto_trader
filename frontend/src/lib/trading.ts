@@ -10,8 +10,7 @@
 
 import { isCapitalBroker, onTradesDirty } from "./persist";
 import { tradesSignal } from "./signals";
-
-const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+import { API_BASE as BASE, errorDetail } from "./http";
 
 // A registry account key "{broker}:{env}", e.g. "capital:paper". Opaque to the
 // frontend — it comes from GET /api/brokers and routes orders/positions.
@@ -293,10 +292,7 @@ export async function placeOrder(req: OrderRequest): Promise<OrderResult> {
       ...req,
     }),
   });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail ?? `order failed (${res.status})`);
-  }
+  if (!res.ok) throw new Error(await errorDetail(res, `order failed (${res.status})`));
   return res.json();
 }
 
@@ -492,10 +488,7 @@ export async function closePosition(
     `${BASE}/api/positions/${encodeURIComponent(dealId)}?${qs}`,
     { method: "DELETE" },
   );
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail ?? `close failed (${res.status})`);
-  }
+  if (!res.ok) throw new Error(await errorDetail(res, `close failed (${res.status})`));
   return res.json();
 }
 
@@ -525,10 +518,7 @@ export async function applyLevels(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(edit),
   });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail ?? `update failed (${res.status})`);
-  }
+  if (!res.ok) throw new Error(await errorDetail(res, `update failed (${res.status})`));
   return res.json();
 }
 
@@ -597,9 +587,6 @@ export async function cancelWorkingOrder(
 ): Promise<OrderResult> {
   const url = `${BASE}/api/orders/working/${encodeURIComponent(orderId)}?account=${encodeURIComponent(account)}`;
   const res = await fetch(url, { method: "DELETE" });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail ?? `cancel failed (${res.status})`);
-  }
+  if (!res.ok) throw new Error(await errorDetail(res, `cancel failed (${res.status})`));
   return res.json();
 }

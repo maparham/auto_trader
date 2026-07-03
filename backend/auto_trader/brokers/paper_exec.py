@@ -480,12 +480,22 @@ class PaperExecutionBroker(ExecutionBroker):
             ref_price = await self._current_mid(pos.epic)
             if ref_price is None:
                 ref_price = pos.open_level
-            # Validate ONLY the levels this call actually sets — not a kept level
-            # (None = unchanged). Re-checking an untouched TP would reject an
-            # unrelated stop drag just because the price has since drifted past a
-            # TP the user never touched; that kept TP simply triggers on the next
-            # tick. Clearing a level needs no validation either.
-            bad = validate_levels(pos.side, ref_price, stop_level, take_profit_level)
+            # Validate ONLY the levels this edit actually CHANGES. The apply/drag
+            # paths send the full resolved SL+TP (they don't use the None-means-
+            # unchanged convention), so a stop-only edit still carries the existing
+            # TP. Re-checking a kept TP against the drifted market would reject the
+            # stop edit for a TP the user never touched — e.g. on a non-streamed
+            # epic whose triggers never fired and the market has since crossed the
+            # TP. A kept level was valid when set and simply triggers on the next
+            # tick; clearing a level needs no validation either. (This differs from
+            # modify_working_order, which validates against the order's own limit —
+            # a user-editable reference — so it must re-check kept levels.)
+            bad = validate_levels(
+                pos.side,
+                ref_price,
+                new_stop if new_stop != pos.stop_level else None,
+                new_tp if new_tp != pos.take_profit_level else None,
+            )
             if bad:
                 return OrderResult(
                     client_order_id="", status=OrderStatus.REJECTED, reason=bad
