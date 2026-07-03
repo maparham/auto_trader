@@ -550,19 +550,21 @@ function EditTicket({
     setTradeSelected(null);
   }
 
-  // Default SL/TP when first toggled on: a fixed % away from the reference — the
-  // LATEST price for an open position (so the bracket starts a sensible distance from
-  // where the market is now), the order's own limit for a resting order. Then clamp
-  // to the valid side of the latest price so it can never start on the wrong side
-  // (long SL below / TP above; short reversed) — the same rule that bounds dragging.
+  // Default SL/TP when first toggled on: a fixed % away from the reference, then
+  // clamped to the valid side of that same reference so it can never start on the
+  // wrong side (long SL below / TP above; short reversed) — the rule that bounds
+  // dragging. The reference is the order's own LIMIT for a resting order (its SL/TP
+  // measure from where it will fill, not from today's market), the LATEST price for
+  // an open position (so the bracket starts a sensible distance from the market now).
   function bracket(kind: "tp" | "sl"): number {
     const latest = getLivePrice(trade.epic);
-    const base = isOrder ? ref : latest ?? ref;
+    const reference = isOrder ? ref : latest;
+    const base = reference ?? ref;
     const up = kind === "tp" ? long : !long;
     const v = round(up ? base * (1 + DEFAULT_BRACKET) : base * (1 - DEFAULT_BRACKET));
-    if (latest == null) return v;
+    if (reference == null) return v; // position with no live price → skip the clamp
     const tick = Number((10 ** -precision).toFixed(precision));
-    return round(clampLevelToPrice(kind === "sl" ? "stop" : "tp", trade.side, latest, v, tick));
+    return round(clampLevelToPrice(kind === "sl" ? "stop" : "tp", trade.side, reference, v, tick));
   }
   function toggleExit(kind: "tp" | "sl", on: boolean) {
     patch(

@@ -532,20 +532,25 @@ export async function applyLevels(
   return res.json();
 }
 
-/** Keep an SL/TP on the valid side of the latest price: a long's stop must sit BELOW
- *  the price and its take-profit ABOVE it; a short's are reversed. Clamps `level` to
- *  one `tick` past the price so a dragged line can't cross (the broker rejects it
- *  anyway). Returns `level` unchanged when it's already on the right side. */
+/** Keep an SL/TP on the valid side of a REFERENCE price: a long's stop must sit BELOW
+ *  the reference and its take-profit ABOVE it; a short's are reversed. Clamps `level`
+ *  to one `tick` past the reference so a dragged line can't cross (the broker rejects
+ *  it anyway). Returns `level` unchanged when it's already on the right side.
+ *
+ *  The reference is the current market price for an OPEN POSITION (a TP below the
+ *  market would already be a loss), but the order's own LIMIT price for a WORKING
+ *  ORDER — the order isn't filled yet, so its SL/TP are measured from where it WILL
+ *  fill, not from where the market happens to be now. Callers pass the right one. */
 export function clampLevelToPrice(
   field: "stop" | "tp",
   side: OrderSide,
-  latest: number,
+  reference: number,
   level: number,
   tick: number,
 ): number {
   const long = side === "buy";
-  const below = field === "stop" ? long : !long; // must this line stay below the price?
-  return below ? Math.min(level, latest - tick) : Math.max(level, latest + tick);
+  const below = field === "stop" ? long : !long; // must this line stay below the reference?
+  return below ? Math.min(level, reference - tick) : Math.max(level, reference + tick);
 }
 
 /** Merge a trade's pending (un-applied) edits over its server levels, BY PRESENCE

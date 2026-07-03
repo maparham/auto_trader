@@ -1,4 +1,5 @@
-// SL/TP must stay on the valid side of the latest price (clampLevelToPrice).
+// SL/TP must stay on the valid side of a reference price (clampLevelToPrice) —
+// the market price for an open position, the order's limit for a working order.
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { installMemStorage } from "./testMemStorage";
@@ -40,6 +41,18 @@ describe("clampLevelToPrice", () => {
   });
   it("short take-profit is left alone when already below", () => {
     expect(clampLevelToPrice("tp", "sell", PRICE, 90, TICK)).toBe(90);
+  });
+
+  // WORKING ORDER: the reference passed is the order's LIMIT, not the market. So a
+  // long buy-limit at 100 with the market up at 108 can still take profit anywhere
+  // above 100 — the clamp knows nothing about 108, only the limit it was handed.
+  it("working long TP below the market is preserved when above the limit reference", () => {
+    const LIMIT = 100;
+    expect(clampLevelToPrice("tp", "buy", LIMIT, 103, TICK)).toBe(103);
+  });
+  it("working long SL is measured from the limit, not the market", () => {
+    const LIMIT = 100;
+    expect(clampLevelToPrice("stop", "buy", LIMIT, 101, TICK)).toBe(99.99);
   });
 });
 
