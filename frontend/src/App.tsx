@@ -324,6 +324,7 @@ export default function App() {
     pairs: Array<{ from: string; to: string }>;
     label: string;
     sigAfter: string;
+    targetId: string; // the merged tab — the snackbar anchors under its chip
   } | null>(null);
 
   // Active broker / trading account (registry key "{broker}:{env}"). Drives BOTH
@@ -1158,6 +1159,7 @@ export default function App() {
       pairs,
       label: lead ? `Merged into ${lead.symbol.name} · ${lead.period.label}` : "Tabs merged",
       sigAfter: structureSig(next),
+      targetId,
     });
   };
 
@@ -1708,6 +1710,7 @@ export default function App() {
           actionLabel="Undo"
           onAction={undoMerge}
           onDismiss={() => setPendingUndo(null)}
+          anchorSelector={`.tab-bar .tab[data-tab-id="${pendingUndo.targetId}"]`}
         />
       )}
 

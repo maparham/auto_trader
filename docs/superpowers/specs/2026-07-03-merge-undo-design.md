@@ -8,7 +8,7 @@ Merging tabs is a move with no confirmation on the drag gestures (deliberate —
 
 ## Decision
 
-A TV-style snackbar, bottom-center of the chart area, shown after every successful merge: "Merged into <lead symbol> · <TF>" + accent **Undo** button + subtle ✕. Auto-dismisses after 8 seconds; the timer pauses while hovered. One snackbar per merge *operation* — a checklist merge of several tabs gets a single undo that restores all of them.
+A TV-style snackbar shown after every successful merge, anchored just below the merged tab's chip in the tab bar (top of the app — where the merge happened; falls back to top-center if the chip can't be located): "Merged into <lead symbol> · <TF>" + accent **Undo** button + subtle ✕. Auto-dismisses after 8 seconds; the timer pauses while hovered. One snackbar per merge *operation* — a checklist merge of several tabs gets a single undo that restores all of them.
 
 ## Inverse operation
 
@@ -28,7 +28,7 @@ No cap/validity checks: the snapshot is a known-good prior state.
 
 ## Snackbar component
 
-New `Snackbar.tsx`: content-sized pill, plain copy, light-theme-first, follows the existing toast visual idiom. Rendered by App over the chart area (bottom-center), only while `pendingUndo` is set. Buttons: **Undo** (accent) and ✕ (dismiss). The 8s timer lives in the component; hover pauses it.
+New `Snackbar.tsx`: content-sized pill, plain copy, light-theme-first, follows the existing toast visual idiom. Rendered by App only while `pendingUndo` is set; an `anchorSelector` prop positions it under the merged tab's chip (clamped to the viewport, re-placed on window resize). Buttons: **Undo** (accent) and ✕ (dismiss). The 8s timer lives in the component; hover pauses it.
 
 ## Invalidation
 

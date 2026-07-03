@@ -1,4 +1,7 @@
-// TV-style transient snackbar (bottom-center): message + accent action + ✕.
+// TV-style transient snackbar: message + accent action + ✕. Anchors itself
+// just below the element matching `anchorSelector` (e.g. the merged tab's
+// chip), so the offer appears where the action happened; without an anchor
+// (or when the element is gone) it sits top-center under the tab bar.
 // Auto-dismisses after `duration` ms. Hovering pauses the countdown; leaving
 // restarts it in full (simple, and indistinguishable from a true pause at
 // this duration).
@@ -11,6 +14,7 @@ interface Props {
   onAction: () => void;
   onDismiss: () => void;
   duration?: number;
+  anchorSelector?: string;
 }
 
 export default function Snackbar({
@@ -19,8 +23,32 @@ export default function Snackbar({
   onAction,
   onDismiss,
   duration = 8000,
+  anchorSelector,
 }: Props) {
   const [hovered, setHovered] = useState(false);
+  // Anchored position (viewport px), or null → the CSS default (top-center).
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  useEffect(() => {
+    if (!anchorSelector) return;
+    const place = () => {
+      const el = document.querySelector(anchorSelector);
+      if (!el) {
+        setPos(null);
+        return;
+      }
+      const r = el.getBoundingClientRect();
+      // Clamp the center so a chip near the viewport edge can't push the
+      // pill off-screen (half a typical snackbar width of margin).
+      const pad = 170;
+      setPos({
+        left: Math.min(Math.max(r.left + r.width / 2, pad), window.innerWidth - pad),
+        top: r.bottom + 8,
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [anchorSelector]);
   // The timeout must always call the LATEST onDismiss without restarting the
   // countdown when the parent re-renders with a new closure.
   const onDismissRef = useRef(onDismiss);
@@ -33,6 +61,7 @@ export default function Snackbar({
   return (
     <div
       className="snackbar"
+      style={pos ? { left: pos.left, top: pos.top } : undefined}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >

@@ -256,6 +256,9 @@ export default function TabBar({
         <div
           key={t.id}
           role="tab"
+          // DOM hook for anchoring floating UI to a specific chip (the merge
+          // undo snackbar positions itself under the merged tab).
+          data-tab-id={t.id}
           aria-selected={t.id === activeId}
           className={[
             "tab",

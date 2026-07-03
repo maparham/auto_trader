@@ -297,6 +297,12 @@ test("Undo restores the pre-merge tabs with content back under the old scope", a
   await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
 
   await expect(page.locator(".snackbar")).toContainText("Merged into US100 · 1H");
+  // Anchored to where the merge happened: just below the merged tab's chip in
+  // the top tab bar, horizontally near it (not the old bottom-center spot).
+  const chip = (await page.locator('.tab-bar .tab[data-tab-id="t1"]').boundingBox())!;
+  const pill = (await page.locator(".snackbar").boundingBox())!;
+  expect(pill.y).toBeGreaterThan(chip.y + chip.height);
+  expect(pill.y).toBeLessThan(chip.y + chip.height + 40);
   await page.locator(".snackbar-action", { hasText: "Undo" }).click();
 
   await expect(page.locator(".tab-bar .tab")).toHaveCount(2);

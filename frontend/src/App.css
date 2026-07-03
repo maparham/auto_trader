@@ -1298,9 +1298,11 @@
 }
 .toast.show { opacity: 1; transform: translateY(0); }
 
-/* Bottom-center transient snackbar (merge undo) — same idiom as the toasts. */
+/* Transient snackbar (merge undo) — same idiom as the toasts. Sits just below
+   the tab bar; when anchored, inline left/top place it under the merged chip
+   (the translateX centering applies either way). */
 .snackbar {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 3000;
+  position: fixed; top: 44px; left: 50%; transform: translateX(-50%); z-index: 3000;
   display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px;
   background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; font-size: 13px; box-shadow: 0 8px 28px var(--shadow);
