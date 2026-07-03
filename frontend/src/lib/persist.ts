@@ -12,8 +12,9 @@
 // but deliberately NOT by period (a 1H trendline on the 1m chart is acceptable).
 // The triggered-alert HISTORY remains global (a cross-cell, cross-symbol log).
 
-import type { DeepPartial, OverlayStyle } from "klinecharts";
+import type { DeepPartial, OverlayStyle, LineType } from "klinecharts";
 import type { Instrument, Period } from "./feed";
+import type { VisibilityModel } from "./visibility";
 import type { BacktestConfig } from "./backtestConfig";
 
 const PREFIX = "auto-trader";
@@ -1060,6 +1061,52 @@ export function deleteIndicatorPreset(type: string, name: string): void {
   }
 }
 
+// --- per-drawing defaults + templates (global, keyed by overlay NAME) --------
+//
+// The drawing analogue of the indicator "Defaults" menu above. GLOBAL (not
+// per-cell, not per-symbol) — a personal style preference — keyed by the
+// klinecharts overlay NAME (segment/rayLine/straightLine/…). Two layers holding
+// the SAME SavedDrawingConfig the drawing settings modal produces:
+//  - default : ONE config per name. Freshly-DRAWN overlays of that name seed from
+//              it (see OverlayManager.addDrawing). Never touches rehydrated draws.
+//  - presets : named configs per name ("Red", …), applied on demand.
+// Extend is NOT a stored field: the trend family (segment/rayLine/straightLine)
+// is three separate names, so extend is captured by which name you save under.
+const drawingDefaultKey = (name: string) => `${PREFIX}.drawingDefault.${name}`;
+const drawingPresetsKey = (name: string) => `${PREFIX}.drawingPresets.${name}`;
+
+export function loadDrawingDefault(name: string): SavedDrawingConfig | null {
+  return load<SavedDrawingConfig | null>(drawingDefaultKey(name), null);
+}
+export function saveDrawingDefault(name: string, cfg: SavedDrawingConfig): void {
+  save(drawingDefaultKey(name), cfg);
+}
+export function clearDrawingDefault(name: string): void {
+  const key = drawingDefaultKey(name);
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* non-fatal */
+  }
+  mirrorDelete(key);
+}
+
+export function loadDrawingPresets(name: string): Record<string, SavedDrawingConfig> {
+  return load<Record<string, SavedDrawingConfig>>(drawingPresetsKey(name), {});
+}
+export function saveDrawingPreset(name: string, presetName: string, cfg: SavedDrawingConfig): void {
+  const all = loadDrawingPresets(name);
+  all[presetName] = cfg;
+  save(drawingPresetsKey(name), all);
+}
+export function deleteDrawingPreset(name: string, presetName: string): void {
+  const all = loadDrawingPresets(name);
+  if (presetName in all) {
+    delete all[presetName];
+    save(drawingPresetsKey(name), all);
+  }
+}
+
 // --- backtest configs (global) ------------------------------------------------
 //
 // Same shape as the indicator-preset pair above: named presets (Save/load/Delete
@@ -1193,6 +1240,17 @@ export interface SavedIndicatorConfig {
   // drawer. `style`/`dashedValue` is what the Style-tab line-style picker writes.
   styles?: { lines: Array<{ color?: string; size?: number; style?: string; dashedValue?: number[] }> };
   extendData?: Record<string, unknown>;
+}
+
+// The drawing settings modal's reusable style snapshot (no points/text/extend —
+// see the per-drawing defaults block). `visibility` absent = show on all intervals
+// (the VisibilityModel default). This is the same per-timeframe model the Visibility
+// tab edits (lib/visibility.ts) — a plain JSON object, safe to persist.
+export interface SavedDrawingConfig {
+  line?: { color?: string; size?: number; style?: LineType };
+  showMiddle?: boolean;
+  priceLabels?: boolean;
+  visibility?: VisibilityModel;
 }
 
 const indicatorCfgKey = (scope: string) => ns(scope, "indicatorConfig");

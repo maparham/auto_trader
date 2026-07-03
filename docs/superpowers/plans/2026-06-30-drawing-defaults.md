@@ -12,7 +12,7 @@
 
 - Defaults/templates are keyed by klinecharts overlay **name** (`segment`, `rayLine`, `straightLine`, `horizontalStraightLine`, `verticalStraightLine`, `priceLine`, `priceChannelLine`, `fibonacciLine`). A default seeds only new drawings of the SAME name.
 - Storage is **global** (not per-cell, not per-symbol), like indicator defaults.
-- Stored fields: line `{color,size,style}`, `showMiddle`, `priceLabels`, `intervals`. NEVER store `text` content, `userVisible`, points/coordinates, or an explicit "extend" field (extend is captured by which trend tool you save under).
+- Stored fields: line `{color,size,style}`, `showMiddle`, `priceLabels`, `visibility` (the per-timeframe `VisibilityModel` from `lib/visibility.ts` — the Visibility tab's `units`+`autoHide` object; this REPLACED the old flat `intervals: string[]`). NEVER store `text` content, `userVisible`, points/coordinates, or an explicit "extend" field (extend is captured by which trend tool you save under).
 - Storage functions MUST mirror to the backend identically to the indicator block: writes via `save()`, clears via `localStorage.removeItem` + `mirrorDelete(key)`.
 - The footer dropdown is labeled **"Defaults ▾"** (consistency with the indicator modal), not "Template".
 - `localStorage` key prefix is `auto-trader` (the `PREFIX` const). Keys: `auto-trader.drawingDefault.<name>` and `auto-trader.drawingPresets.<name>`.
@@ -23,19 +23,19 @@
 ### Task 1: Storage layer in `persist.ts`
 
 **Files:**
-- Modify: `frontend/src/lib/persist.ts` (add after the indicator preset block, ~line 864)
+- Modify: `frontend/src/lib/persist.ts` (add after the indicator preset block — `deleteIndicatorPreset` is now ~line 1028)
 - Test: `frontend/src/lib/persist.test.ts` (add a new `describe` block)
 
 **Interfaces:**
 - Produces:
-  - `interface SavedDrawingConfig { line?: { color?: string; size?: number; style?: LineType }; showMiddle?: boolean; priceLabels?: boolean; intervals?: string[] | null }`
+  - `interface SavedDrawingConfig { line?: { color?: string; size?: number; style?: LineType }; showMiddle?: boolean; priceLabels?: boolean; visibility?: VisibilityModel }`
   - `loadDrawingDefault(name: string): SavedDrawingConfig | null`
   - `saveDrawingDefault(name: string, cfg: SavedDrawingConfig): void`
   - `clearDrawingDefault(name: string): void`
   - `loadDrawingPresets(name: string): Record<string, SavedDrawingConfig>`
   - `saveDrawingPreset(name: string, presetName: string, cfg: SavedDrawingConfig): void`
   - `deleteDrawingPreset(name: string, presetName: string): void`
-- Consumes: existing module-private `save`, `load`, `mirrorDelete`, `PREFIX` (all already in `persist.ts`); `LineType` type from `klinecharts`.
+- Consumes: existing module-private `save`, `load`, `mirrorDelete`, `PREFIX` (all already in `persist.ts`); `LineType` type from `klinecharts`; `VisibilityModel` type from `./visibility`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -74,7 +74,7 @@ Expected: FAIL — `P.saveDrawingDefault is not a function` (and the others).
 
 - [ ] **Step 3: Implement the storage functions**
 
-In `frontend/src/lib/persist.ts`, immediately after `deleteIndicatorPreset` (line 864), add:
+In `frontend/src/lib/persist.ts`, immediately after `deleteIndicatorPreset` (~line 1028), add:
 
 ```ts
 // --- per-drawing defaults + templates (global, keyed by overlay NAME) --------
@@ -124,16 +124,18 @@ export function deleteDrawingPreset(name: string, presetName: string): void {
 }
 ```
 
-Then add the type next to `SavedIndicatorConfig` (after line 962). `LineType` must be importable — check the top of `persist.ts` for an existing `import { ... } from "klinecharts"`; if `LineType` is not already a type import there, add `import type { LineType } from "klinecharts";`:
+Then add the type next to `SavedIndicatorConfig` (the interface is now ~line 1161). Imports at the top of `persist.ts` currently read `import type { DeepPartial, OverlayStyle } from "klinecharts";` (line 15) — `LineType` is NOT imported, so add `import type { LineType } from "klinecharts";`. `VisibilityModel` is also not imported here — add `import type { VisibilityModel } from "./visibility";`:
 
 ```ts
 // The drawing settings modal's reusable style snapshot (no points/text/extend —
-// see the per-drawing defaults block). `intervals` null/absent = all intervals.
+// see the per-drawing defaults block). `visibility` absent = show on all intervals
+// (the VisibilityModel default). This is the same per-timeframe model the Visibility
+// tab edits (lib/visibility.ts) — a plain JSON object, safe to persist.
 export interface SavedDrawingConfig {
   line?: { color?: string; size?: number; style?: LineType };
   showMiddle?: boolean;
   priceLabels?: boolean;
-  intervals?: string[] | null;
+  visibility?: VisibilityModel;
 }
 ```
 
@@ -154,7 +156,7 @@ git commit -m "feat: per-drawing default + template storage (keyed by overlay na
 ### Task 2: Seed new draws + modal read/apply helpers in `overlays.ts`
 
 **Files:**
-- Modify: `frontend/src/lib/overlays.ts` (`addDrawing` ~682; add two methods near the other drawing edits ~810)
+- Modify: `frontend/src/lib/overlays.ts` (`addDrawing` is now ~849; add two methods near the other drawing edits, after `updatePoints` ~1124; add visibility enforcement in `create()`'s `onDrawEnd` ~685)
 - Test: `frontend/src/lib/overlays.test.ts` (add a `describe` block)
 
 **Interfaces:**
@@ -164,11 +166,14 @@ git commit -m "feat: per-drawing default + template storage (keyed by overlay na
   - `OverlayManager.applyDrawingConfig(id: string, cfg: SavedDrawingConfig): void` — push a config onto an existing drawing via the existing setters.
 - Internal: `addDrawing` now seeds styles+extendData from the default at create time.
 
-**Background facts (already verified — do not re-investigate):**
-- `addDrawing` (line 682) is the ONLY interactive-draw entry point; rehydrate (line 1117) and paste/clone (`placeDrawing`, line 705) call `create()` directly. So seeding here is fresh-draw-only and needs NO rehydrate guard.
-- `create()` (line 540) forwards `styles` and `extendData` to `chart.createOverlay` even for point-less interactive draws, and `needDefaultYAxisFigure` (line 562) already reads `extendData.priceLabels`. So seeding at create time both styles the in-progress draw and sets the y-axis tag correctly.
-- Existing setters to reuse in `applyDrawingConfig`: `setStyle(id, {line})` (1035), `setShowMiddle(id, bool)` (776), `setPriceLabels(id, bool)` (754), `setVisibleIntervals(id, string[]|null)` (741).
-- `getDrawing(id)` (413) returns `{ name, points, styles, ..., extendData }`; `asDrawingExtra(v)` (64) narrows `extendData` to `DrawingExtra`.
+**Background facts (re-verified against current code — line numbers are approximate, anchors are by-name):**
+- `addDrawing` (~line 849) is the ONLY interactive-draw entry point; rehydrate and paste/clone (`placeDrawing`, ~889) call `create()` directly. So seeding here is fresh-draw-only and needs NO rehydrate guard.
+- **DRIFT — do not blind-replace `addDrawing`.** Since the plan was first written it gained two behaviors that MUST be preserved: `if (!points) this.cancelDrawing();` (cancels a stranded in-progress tool on re-arm) and `else if (id && !points) this.pendingDrawId = id;` (remembers the id for `cancelDrawing`/Esc). Merge the seed in; keep both.
+- `create()` (~line 649) forwards `styles` and `extendData` to `chart.createOverlay` even for point-less interactive draws (`styles: styles ?? undefined`, line ~664), and `needDefaultYAxisFigure` (~678) already reads `asDrawingExtra(extra?.extendData).priceLabels`. So seeding at create time both styles the in-progress draw and sets the y-axis tag correctly.
+- **`create()`'s `onDrawEnd` (~685) calls `this.persist()` but NOT `applyDisplay`.** `color`/`showMiddle`/`priceLabels` are paint-time/create-time reads and apply immediately, but `visibility` is ENFORCED by `applyDisplay` (hides the overlay off its configured intervals). A seeded `visibility` stashed only in `extendData` won't take effect until the next interval switch or reload. So the completion path must run `applyDisplay` — see Step 3b.
+- Existing setters to reuse in `applyDrawingConfig`: `setStyle(id, {line})` (~1397), `setShowMiddle(id, bool)` (~1091), `setPriceLabels(id, bool)` (~1065), `setVisibilityModel(id, VisibilityModel)` (~1052 — this REPLACED `setVisibleIntervals`; it calls `applyDisplay` + `persist` internally).
+- `getDrawing(id)` (~518) returns `{ name, points, styles, ..., extendData }`; `asDrawingExtra(v)` (~110) narrows `extendData` to `DrawingExtra`. `DrawingExtra` (~97) now carries `visibility?: VisibilityModel` (NOT `intervals`).
+- `LineType` is already imported as a VALUE at the top of `overlays.ts` (`import { LineType } from "klinecharts";`, line 14) — usable in type position, so no import change needed for it. `VisibilityModel` is already imported (line ~33). `SavedDrawingConfig` still needs adding to the `./persist` type import.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -180,10 +185,16 @@ describe("drawing defaults seeding + config round-trip", () => {
     // Build a manager bound to a FakeChart + epic the same way the other drawing
     // tests in this file do (construct OverlayManager, setChart, setEpic).
     const { mgr, chart } = makeManager(); // <- use this file's existing helper/pattern
+    // A visibility model that hides on all intervals, to prove it's both stored AND
+    // enforced. Build from defaultVisibility() (import from "./visibility") and flip
+    // every unit off so applyDisplay would hide the overlay at any resolution.
+    const hidden = defaultVisibility();
+    for (const u of Object.values(hidden.units)) u.on = false;
     P.saveDrawingDefault("segment", {
       line: { color: "#ff0000", size: 3 },
       showMiddle: true,
       priceLabels: false,
+      visibility: hidden,
     });
     const id = mgr.addDrawing("segment"); // interactive: no points
     expect(id).not.toBeNull();
@@ -192,6 +203,8 @@ describe("drawing defaults seeding + config round-trip", () => {
     expect(asDrawingExtra(ov.extendData).showMiddle).toBe(true);
     expect(asDrawingExtra(ov.extendData).priceLabels).toBe(false);
     expect(ov.needDefaultYAxisFigure).toBe(false); // priceLabels:false ⇒ no y-axis tag
+    // Seeded visibility is stored in extendData…
+    expect(asDrawingExtra(ov.extendData).visibility).toEqual(hidden);
   });
 
   it("draws with no extra styling when there is no default", () => {
@@ -201,16 +214,27 @@ describe("drawing defaults seeding + config round-trip", () => {
     expect(ov.styles).toBeUndefined(); // create() passes styles ?? undefined
   });
 
-  it("getDrawingConfig reads the live overlay; applyDrawingConfig writes it back", () => {
+  it("getDrawingConfig reads the live overlay; applyDrawingConfig writes it back (incl. visibility)", () => {
     const { mgr } = makeManager();
     const id = mgr.addDrawing("segment", [{ value: 10 }, { value: 20 }])!;
-    mgr.applyDrawingConfig(id, { line: { color: "#00ff00" }, priceLabels: false });
+    const hidden = defaultVisibility();
+    hidden.units.days.on = false;
+    mgr.applyDrawingConfig(id, {
+      line: { color: "#00ff00" },
+      priceLabels: false,
+      visibility: hidden,
+    });
     const cfg = mgr.getDrawingConfig(id)!;
     expect(cfg.line?.color).toBe("#00ff00");
     expect(cfg.priceLabels).toBe(false);
+    // applyDrawingConfig routes visibility through setVisibilityModel (which runs
+    // applyDisplay + stores it); getDrawingConfig reads it straight back.
+    expect(cfg.visibility?.units.days.on).toBe(false);
   });
 });
 ```
+
+NOTE on enforcement (Step 3b): `applyDisplay` runs inside `create()`'s `onDrawEnd`, which fires only when a klinecharts interactive draw *completes* — FakeChart does not drive that completion, so the seeding test above asserts visibility is STORED, and the round-trip test asserts the apply path (via `setVisibilityModel`) works. The full seed-then-enforce effect (a fresh drawing hidden immediately on the seeded interval) is verified in the manual smoke (Task 3, Step 4).
 
 NOTE: if `overlays.test.ts` has no shared `makeManager()` helper, add a small one at the top of this `describe` that constructs the manager exactly as the existing drawing tests do (same `new OverlayManager(...)`, `setChart(new FakeChart())`, epic-set calls). Keep it local to this block.
 
@@ -229,10 +253,14 @@ import type { /* …existing… */ SavedDrawingConfig } from "./persist";
 ```
 (Match the file's existing import grouping — `SavedOverlay` is already imported from persist around line 23.)
 
-Replace `addDrawing` (lines 682-691) with:
+**MERGE the seed into the current `addDrawing` (~849) — do NOT paste over it, or you drop `cancelDrawing()` and `pendingDrawId`.** The only additions are the `seedFromDefault` call and threading `seed?.styles` + `{extendData: seed?.extendData}` into `create()`. Result:
 
 ```ts
 addDrawing(name: string, points?: SavedOverlay["points"]): string | null {
+  // Re-arming replaces the in-progress tool: klinecharts keeps ONE progress slot and
+  // silently overwrites it WITHOUT firing onRemoved, stranding the previous id. Cancel
+  // it properly first. (Preserved — pre-existing behavior.)
+  if (!points) this.cancelDrawing();
   // No points = interactive draw (klinecharts collects clicks until the figure is
   // complete). Flag it so a lock click-to-align doesn't fire on those clicks; the
   // onDrawEnd in create() clears it.
@@ -246,13 +274,18 @@ addDrawing(name: string, points?: SavedOverlay["points"]): string | null {
     extendData: seed?.extendData,
   });
   if (id && points) this.persist(); // interactive draws persist via onDrawEnd
-  else if (!id) this.drawingInProgress = false; // creation failed → don't get stuck
+  else if (id && !points) this.pendingDrawId = id; // remember it for cancelDrawing() (preserved)
+  else if (!id) {
+    // creation failed → don't get stuck
+    this.drawingInProgress = false;
+    this.pendingDrawId = null;
+  }
   return id;
 }
 
 // Translate a saved default for `name` into create()'s styles + extendData, or
 // undefined when there's no default. extendData carries only the appearance flags
-// (showMiddle/priceLabels/intervals) — never points or text.
+// (showMiddle/priceLabels/visibility) — never points or text.
 private seedFromDefault(
   name: string,
 ): { styles?: DeepPartial<OverlayStyle>; extendData?: DrawingExtra } | undefined {
@@ -261,7 +294,7 @@ private seedFromDefault(
   const extendData: DrawingExtra = {};
   if (def.showMiddle !== undefined) extendData.showMiddle = def.showMiddle;
   if (def.priceLabels !== undefined) extendData.priceLabels = def.priceLabels;
-  if (def.intervals !== undefined) extendData.intervals = def.intervals;
+  if (def.visibility !== undefined) extendData.visibility = def.visibility;
   return {
     styles: def.line ? ({ line: def.line } as DeepPartial<OverlayStyle>) : undefined,
     extendData: Object.keys(extendData).length ? extendData : undefined,
@@ -269,9 +302,23 @@ private seedFromDefault(
 }
 ```
 
+- [ ] **Step 3b: Enforce seeded visibility on draw completion**
+
+`create()`'s `onDrawEnd` (~685) persists but never runs `applyDisplay`, so a seeded `visibility` would be stored yet not enforced until the next interval switch/reload. Add an `applyDisplay` call for the drawing kind so a freshly-completed drawing immediately honors its seeded visibility. In `create()`, inside `onDrawEnd`, after `this.persist();` and before `if (isAlert) this.notifyAlerts();`, add:
+
+```ts
+// A seeded default may carry per-interval visibility; enforce it now (persist alone
+// doesn't). Harmless when none is seeded — empty visibility ⇒ show on all intervals.
+// `id` is closed over and assigned by the time onDrawEnd fires.
+if (isDrawing) {
+  const ov = this.chart?.getOverlayById(id);
+  if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
+}
+```
+
 - [ ] **Step 4: Implement `getDrawingConfig` + `applyDrawingConfig`**
 
-Add these two methods near the other drawing edits (after `updatePoints`, ~line 815):
+Add these two methods near the other drawing edits (after `updatePoints`, ~line 1124):
 
 ```ts
 // Read the LIVE overlay into a reusable SavedDrawingConfig (no points/text). Used
@@ -287,7 +334,7 @@ getDrawingConfig(id: string): SavedDrawingConfig | null {
     line: { color: line.color, size: line.size, style: line.style },
     showMiddle: extra.showMiddle,
     priceLabels: extra.priceLabels,
-    intervals: extra.intervals ?? null,
+    visibility: extra.visibility,
   };
 }
 
@@ -298,11 +345,11 @@ applyDrawingConfig(id: string, cfg: SavedDrawingConfig): void {
   if (cfg.line) this.setStyle(id, { line: cfg.line } as DeepPartial<OverlayStyle>);
   if (cfg.showMiddle !== undefined) this.setShowMiddle(id, cfg.showMiddle);
   if (cfg.priceLabels !== undefined) this.setPriceLabels(id, cfg.priceLabels);
-  if (cfg.intervals !== undefined) this.setVisibleIntervals(id, cfg.intervals);
+  if (cfg.visibility !== undefined) this.setVisibilityModel(id, cfg.visibility);
 }
 ```
 
-`LineType` is a type-only use here; ensure `import type { LineType } from "klinecharts"` exists at the top of `overlays.ts` (the file already imports klinecharts types like `OverlayStyle`/`DeepPartial` — add `LineType` to that type import if absent).
+`LineType` is already imported as a value at the top of `overlays.ts` (line 14) — fine for this type position, no change needed. `VisibilityModel` is already imported (~line 33).
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -353,7 +400,7 @@ import {
 ```
 (`useEffect`/`useRef` are new; `useMemo`/`useState` are already imported — merge, don't duplicate the React import.)
 
-Inside the component, after the existing `useState` hooks (after line 93), add the menu state + outside-click close (copied from `IndicatorSettings.tsx:921-938`):
+Inside the component, after the existing `useState` hooks (the last one, `vis`/`setVis`, is ~line 89), add the menu state + outside-click close (copied from the indicator modal's Defaults menu):
 
 ```ts
 const [defOpen, setDefOpen] = useState(false);
@@ -377,7 +424,7 @@ useEffect(() => {
 
 - [ ] **Step 2: Add the handlers**
 
-Add these handlers inside the component (after `applyPointValue`, ~line 175). They route through Task 2's `overlays` helpers and re-sync the modal's local React state so the open drawing visibly updates:
+Add these handlers inside the component (after `applyPointValue`, ~line 155, before `cancel`). They route through Task 2's `overlays` helpers and re-sync the modal's local React state so the open drawing visibly updates. NOTE the state setters: `setStyle` is the LOCAL line-style state hook (line 78), and the visibility state hook is `vis`/`setVis` (line 89) — there is no `setIntervals`:
 
 ```ts
 // Apply a config to the open drawing AND refresh local state so the controls
@@ -390,8 +437,7 @@ function applyConfigHere(cfg: SavedDrawingConfig | null) {
   if (cfg.line?.style !== undefined) setStyle(cfg.line.style);
   if (cfg.showMiddle !== undefined) setShowMiddle(cfg.showMiddle);
   if (cfg.priceLabels !== undefined) setPriceLabels(cfg.priceLabels);
-  if (cfg.intervals !== undefined)
-    setIntervals(cfg.intervals && cfg.intervals.length ? new Set(cfg.intervals) : null);
+  if (cfg.visibility !== undefined) setVis(cfg.visibility);
 }
 
 function resetToDefault() {
@@ -434,7 +480,7 @@ import type { SavedDrawingConfig } from "./lib/persist";
 
 - [ ] **Step 3: Add the footer dropdown JSX**
 
-Replace the footer (lines 376-382) with the indicator-menu structure (mirrors `IndicatorSettings.tsx:1914-1987`), keeping the existing Cancel/Ok:
+Replace the footer (now lines 333-338 — `<div className="modal-foot">` … Cancel/Ok) with the indicator-menu structure, keeping the existing Cancel/Ok:
 
 ```tsx
 <div className="modal-foot">
@@ -563,7 +609,9 @@ git commit -m "feat: Defaults menu (set-as-default + named templates) in drawing
 **Spec coverage:**
 - Per-type default + named templates → Task 1 (storage), Task 3 (UI). ✓
 - Keyed by overlay name; isolated across names → Task 1 tests. ✓
-- Stored fields = line/showMiddle/priceLabels/intervals; excludes text/userVisible/points/extend → `SavedDrawingConfig` (Task 1) + `getDrawingConfig` (Task 2). ✓
+- Stored fields = line/showMiddle/priceLabels/visibility (`VisibilityModel`, replacing the old `intervals: string[]`); excludes text/userVisible/points/extend → `SavedDrawingConfig` (Task 1) + `getDrawingConfig` (Task 2). ✓
+- Seeded `visibility` is enforced at draw completion, not just stored → Task 2 Step 3b `applyDisplay` in `onDrawEnd`. ✓
+- `addDrawing` merge preserves `cancelDrawing()` + `pendingDrawId` (post-plan drift) → Task 2 Step 3 merge note. ✓
 - Backend mirror → `save`/`mirrorDelete` in Task 1. ✓
 - Seed fresh draws only, no rehydrate guard → Task 2 `addDrawing`/`seedFromDefault` + the verified create-path facts. ✓
 - Save-as-default reads the LIVE overlay (extend-via-name correctness) → `getDrawingConfig(curId)` in Tasks 2-3. ✓

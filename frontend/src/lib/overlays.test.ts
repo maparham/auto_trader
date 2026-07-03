@@ -1212,3 +1212,57 @@ describe("stablePoints edge branches", () => {
     expect(saved.points[0].timestamp).toBe(chart.data[4].timestamp);
   });
 });
+
+describe("drawing defaults seeding + config round-trip", () => {
+  it("seeds a freshly-drawn overlay from the saved default (styles + extendData)", () => {
+    const { chart, m } = setup();
+    // A visibility model that hides on all intervals, to prove it's stored on the
+    // seeded overlay. (Enforcement runs in create()'s onDrawEnd, which FakeChart does
+    // not fire for an interactive draw — so we assert STORAGE here; the apply path is
+    // exercised by the round-trip test below.)
+    const hidden = defaultVisibility();
+    for (const u of Object.values(hidden.units)) u.on = false;
+    P.saveDrawingDefault("segment", {
+      line: { color: "#ff0000", size: 3 },
+      showMiddle: true,
+      priceLabels: false,
+      visibility: hidden,
+    });
+    const id = m.addDrawing("segment"); // interactive: no points
+    expect(id).not.toBeNull();
+    const ov = chart.getOverlayById(id!)!;
+    expect((ov.styles as { line?: { color?: string } }).line?.color).toBe("#ff0000");
+    expect(asDrawingExtra(ov.extendData).showMiddle).toBe(true);
+    expect(asDrawingExtra(ov.extendData).priceLabels).toBe(false);
+    expect(ov.needDefaultYAxisFigure).toBe(false); // priceLabels:false ⇒ no y-axis tag
+    expect(asDrawingExtra(ov.extendData).visibility).toEqual(hidden); // stored
+  });
+
+  it("draws with no seeded style/extras when there is no default", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("rayLine");
+    const ov = chart.getOverlayById(id!)!;
+    // No default ⇒ create() passes styles:undefined; FakeChart substitutes the
+    // klinecharts default (#1677FF), and no appearance flags are seeded.
+    expect((ov.styles as { line?: { color?: string } }).line?.color).toBe("#1677FF");
+    expect(asDrawingExtra(ov.extendData)).toEqual({});
+  });
+
+  it("getDrawingConfig reads the live overlay; applyDrawingConfig writes it back (incl. visibility)", () => {
+    const { m } = setup();
+    const id = m.addDrawing("segment", [{ value: 10 }, { value: 20 }])!;
+    const hidden = defaultVisibility();
+    hidden.units.days.on = false;
+    m.applyDrawingConfig(id, {
+      line: { color: "#00ff00" },
+      priceLabels: false,
+      visibility: hidden,
+    });
+    const cfg = m.getDrawingConfig(id)!;
+    expect(cfg.line?.color).toBe("#00ff00");
+    expect(cfg.priceLabels).toBe(false);
+    // applyDrawingConfig routes visibility through setVisibilityModel (applyDisplay +
+    // store); getDrawingConfig reads it straight back.
+    expect(cfg.visibility?.units.days.on).toBe(false);
+  });
+});

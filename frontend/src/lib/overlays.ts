@@ -21,8 +21,10 @@ import {
   saveAlerts,
   normalizeAlert,
   newAlertId,
+  loadDrawingDefault,
   type SavedOverlay,
   type SavedAlert,
+  type SavedDrawingConfig,
   type AlertCondition,
   type AlertTrigger,
   type AlertNotifyChannels,
@@ -693,6 +695,14 @@ export class OverlayManager {
           return false;
         }
         this.persist();
+        // A seeded default may carry per-interval visibility; enforce it now (persist
+        // alone doesn't run applyDisplay). Harmless when none is seeded — empty
+        // visibility ⇒ show on all intervals. `id` is closed over and assigned by the
+        // time onDrawEnd fires.
+        if (isDrawing) {
+          const ov = this.chart?.getOverlayById(id);
+          if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
+        }
         if (isAlert) this.notifyAlerts();
         return false;
       },
@@ -856,7 +866,14 @@ export class OverlayManager {
     // complete). Flag it so a lock click-to-align doesn't fire on those clicks; the
     // onDrawEnd in create() clears it.
     if (!points) this.drawingInProgress = true;
-    const id = this.create("drawing", name, points);
+    // Seed from this overlay-name's saved default (set as default / TV-style). Only
+    // fresh draws route through addDrawing — rehydrate/paste call create() directly —
+    // so existing drawings are never restyled. extendData also drives the y-axis tag
+    // (needDefaultYAxisFigure reads priceLabels in create()).
+    const seed = this.seedFromDefault(name);
+    const id = this.create("drawing", name, points, seed?.styles, undefined, {
+      extendData: seed?.extendData,
+    });
     if (id && points) this.persist(); // interactive draws persist via onDrawEnd
     else if (id && !points) this.pendingDrawId = id; // remember it for cancelDrawing()
     else if (!id) {
@@ -865,6 +882,24 @@ export class OverlayManager {
       this.pendingDrawId = null;
     }
     return id;
+  }
+
+  // Translate a saved default for `name` into create()'s styles + extendData, or
+  // undefined when there's no default. extendData carries only the appearance flags
+  // (showMiddle/priceLabels/visibility) — never points or text.
+  private seedFromDefault(
+    name: string,
+  ): { styles?: DeepPartial<OverlayStyle>; extendData?: DrawingExtra } | undefined {
+    const def = loadDrawingDefault(name);
+    if (!def) return undefined;
+    const extendData: DrawingExtra = {};
+    if (def.showMiddle !== undefined) extendData.showMiddle = def.showMiddle;
+    if (def.priceLabels !== undefined) extendData.priceLabels = def.priceLabels;
+    if (def.visibility !== undefined) extendData.visibility = def.visibility;
+    return {
+      styles: def.line ? ({ line: def.line } as DeepPartial<OverlayStyle>) : undefined,
+      extendData: Object.keys(extendData).length ? extendData : undefined,
+    };
   }
 
   // Esc while placing a drawing (TV: Esc cancels the tool). Removes the in-progress
@@ -1131,6 +1166,33 @@ export class OverlayManager {
     if (this.entries.get(id) !== "drawing") return;
     this.chart?.overrideOverlay({ id, points: points as Overlay["points"] });
     this.persist();
+  }
+
+  // Read the LIVE overlay into a reusable SavedDrawingConfig (no points/text). Used
+  // by the settings modal's "Save as default/preset" — reading the live overlay (not
+  // stale React state) is what makes the extend-via-name model correct: an extended
+  // line resolves to name `straightLine` and saves under that key.
+  getDrawingConfig(id: string): SavedDrawingConfig | null {
+    const live = this.getDrawing(id);
+    if (!live) return null;
+    const line = (live.styles?.line ?? {}) as { color?: string; size?: number; style?: LineType };
+    const extra = asDrawingExtra(live.extendData);
+    return {
+      line: { color: line.color, size: line.size, style: line.style },
+      showMiddle: extra.showMiddle,
+      priceLabels: extra.priceLabels,
+      visibility: extra.visibility,
+    };
+  }
+
+  // Push a SavedDrawingConfig onto an EXISTING drawing (Reset settings / apply
+  // template). Reuses the per-field setters so each persists; never changes the
+  // overlay name, so no recreate is needed.
+  applyDrawingConfig(id: string, cfg: SavedDrawingConfig): void {
+    if (cfg.line) this.setStyle(id, { line: cfg.line } as DeepPartial<OverlayStyle>);
+    if (cfg.showMiddle !== undefined) this.setShowMiddle(id, cfg.showMiddle);
+    if (cfg.priceLabels !== undefined) this.setPriceLabels(id, cfg.priceLabels);
+    if (cfg.visibility !== undefined) this.setVisibilityModel(id, cfg.visibility);
   }
 
   // Stash arbitrary per-drawing config (middle-point flag, text, etc.) used by

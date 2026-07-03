@@ -169,6 +169,30 @@ describe("per-indicator presets (global, keyed by type)", () => {
   });
 });
 
+describe("per-drawing defaults + templates (global, keyed by overlay name)", () => {
+  it("stores ONE default per overlay name, isolated across names", () => {
+    const cfg = { line: { color: "#ff0000", size: 2 }, priceLabels: false };
+    P.saveDrawingDefault("segment", cfg);
+    expect(P.loadDrawingDefault("segment")).toEqual(cfg);
+    // A different overlay name has its own (absent) default.
+    expect(P.loadDrawingDefault("rayLine")).toBeNull();
+    expect(localStorage.getItem("auto-trader.drawingDefault.segment")).not.toBeNull();
+    P.clearDrawingDefault("segment");
+    expect(P.loadDrawingDefault("segment")).toBeNull();
+  });
+
+  it("stores named templates per overlay name and deletes them", () => {
+    P.saveDrawingPreset("segment", "Red", { line: { color: "#ff0000" } });
+    P.saveDrawingPreset("segment", "Blue", { line: { color: "#0000ff" } });
+    expect(Object.keys(P.loadDrawingPresets("segment")).sort()).toEqual(["Blue", "Red"]);
+    expect(P.loadDrawingPresets("segment").Red).toEqual({ line: { color: "#ff0000" } });
+    // Scoped to the name — rayLine sees none.
+    expect(P.loadDrawingPresets("rayLine")).toEqual({});
+    P.deleteDrawingPreset("segment", "Red");
+    expect(Object.keys(P.loadDrawingPresets("segment"))).toEqual(["Blue"]);
+  });
+});
+
 describe("saveIndicatorVisible (legend eye-icon toggle)", () => {
   it("patches extendData.userVisible alongside the legacy visible flag", () => {
     // Regression: applyIndicatorIntervalVisibility (lib/indicators.ts) reads intent
