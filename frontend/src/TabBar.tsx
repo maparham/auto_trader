@@ -3,9 +3,9 @@
 // single ChartCore. Per-tab state lives entirely in App (see persist.ChartTab) —
 // this component is presentational plus drag-to-reorder.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { ChartTab } from "./lib/persist";
+import type { ChartCell, ChartTab } from "./lib/persist";
 import { dropTarget, previewDeltas, type DragTarget, type Rect } from "./lib/tabDrag";
 import SymbolIcon from "./SymbolIcon";
 import ContextMenu from "./ContextMenu";
@@ -38,6 +38,40 @@ function fmtNextOpen(iso: string): string {
   if (days === 1) return `tomorrow ${time}`;
   const date = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric" });
   return `${date} ${time}`;
+}
+
+// The chip's inner markup, shared by the real tab and its floating drag clone
+// so the two can't drift (the clone previously copy-pasted this and lost the
+// closed-market badge). The close button stays chip-only, outside this.
+function ChipContent({
+  lead,
+  cellCount,
+  closedTip,
+}: {
+  lead: ChartCell;
+  cellCount: number;
+  closedTip: string | null;
+}) {
+  return (
+    <>
+      <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="tab-icon" />
+      <span className="tab-symbol">{lead.symbol.epic}</span>
+      <span className="tab-period">{lead.period.label}</span>
+      {cellCount > 1 && <span className="tab-count">{cellCount}</span>}
+      {/* Crescent-moon badge pinned to the tab's top-right when the lead cell's
+          market is closed (CSS positions it absolutely). The tooltip names the
+          next opening time when known. */}
+      {closedTip != null && (
+        <span className="tab-closed-badge" title={closedTip} aria-label={closedTip}>
+          {/* Solid crescent (currentColor) — keeps the chrome monochrome rather
+              than the lone colored 🌙 emoji it replaced. */}
+          <svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true">
+            <path fill="currentColor" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+        </span>
+      )}
+    </>
+  );
 }
 
 interface Props {
@@ -91,24 +125,56 @@ export default function TabBar({
   const floatRef = useRef<HTMLDivElement | null>(null);
   const dragGeom = useRef<{
     rects: Rect[];
+    // Tab ids in order AT dragstart. If the live `tabs` sequence diverges from
+    // this (a cross-window state push replaced the array mid-drag), the cached
+    // rects/indices no longer describe the DOM — abort rather than mis-target.
+    ids: string[];
     containerWidth: number;
     grabDx: number;
     grabDy: number;
   } | null>(null);
+  // The cancelled-drag anim-off timer (see cancelDrag) — held in a ref so a new
+  // drag started within its 200ms window can cancel it before it strips the
+  // transition mid-gesture.
+  const animTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draggedTab = dragId != null ? (tabs.find((t) => t.id === dragId) ?? null) : null;
   const fromIdx = dragId != null ? tabs.findIndex((t) => t.id === dragId) : -1;
 
-  useEffect(() => {
-    // The dragged tab merged away mid-gesture (its chip unmounted before
-    // dragend, which Chrome swallows on a detached node) — drop the stranded
-    // state and tell App the drag is over.
-    if (dragId != null && draggedTab == null) {
-      setDragId(null);
-      setTarget(null);
-      dragGeom.current = null;
-      onDragActive(null);
+  const clearAnimTimer = () => {
+    if (animTimer.current != null) {
+      clearTimeout(animTimer.current);
+      animTimer.current = null;
     }
-  }, [dragId, draggedTab, onDragActive]);
+  };
+
+  // Shared cancel cleanup for a drag that ends WITHOUT committing (dragend, or
+  // the tab list changing under the drag): drop the drag state but leave `anim`
+  // on so the preview gap can slide closed, clearing it once the 150ms App.css
+  // transition has played. The single owner of the cancel path (Fix C).
+  const cancelDrag = useCallback(() => {
+    setDragId(null);
+    setTarget(null);
+    dragGeom.current = null;
+    onDragActive(null);
+    if (animTimer.current != null) clearTimeout(animTimer.current);
+    animTimer.current = setTimeout(() => {
+      setAnim(false);
+      animTimer.current = null;
+    }, 200);
+  }, [onDragActive]);
+
+  useEffect(() => {
+    // Any mid-drag change to the tab list invalidates the dragstart geometry
+    // snapshot: the dragged tab merging away (its chip unmounts before dragend,
+    // which Chrome swallows on a detached node), OR a cross-window state push
+    // replacing `tabs`. Either way the cached rects/indices no longer describe
+    // the DOM — abort rather than index into stale data.
+    if (dragId == null) return;
+    const g = dragGeom.current;
+    const idsChanged =
+      g != null && (g.ids.length !== tabs.length || g.ids.some((id, i) => tabs[i]?.id !== id));
+    if (draggedTab == null || idsChanged) cancelDrag();
+  }, [dragId, draggedTab, tabs, cancelDrag]);
 
   useEffect(() => {
     // The floating clone follows the cursor for the whole gesture — including
@@ -120,10 +186,28 @@ export default function TabBar({
       const g = dragGeom.current;
       const el = floatRef.current;
       if (g == null || el == null) return;
+      // Cursor is (back) inside the window: the clone tracks it again, so undo
+      // the leave-the-window dimming below.
+      el.style.visibility = "";
+      barRef.current?.classList.remove("drag-outside");
       el.style.transform = `translate(${e.clientX - g.grabDx}px, ${e.clientY - g.grabDy}px) scale(1.05)`;
     };
+    const leave = (e: DragEvent) => {
+      // relatedTarget null on a document dragleave means the cursor left the
+      // window entirely. The clone can't follow a cursor that isn't there, so
+      // hide it and re-dim the source chip (App.css .drag-outside) as the drag's
+      // visible stand-in until the cursor returns.
+      if (e.relatedTarget != null) return;
+      if (floatRef.current != null) floatRef.current.style.visibility = "hidden";
+      barRef.current?.classList.add("drag-outside");
+    };
     document.addEventListener("dragover", move);
-    return () => document.removeEventListener("dragover", move);
+    document.addEventListener("dragleave", leave);
+    return () => {
+      document.removeEventListener("dragover", move);
+      document.removeEventListener("dragleave", leave);
+      barRef.current?.classList.remove("drag-outside");
+    };
   }, [dragId]);
 
   // Right-click menu on a chip and the follow-up merge checklist, anchored
@@ -136,19 +220,25 @@ export default function TabBar({
   // transform back to 0 while the layout also jumps. A cancelled drag keeps
   // the transition on so the preview gap visibly slides closed.
   const endDrag = (committed: boolean) => {
-    setDragId(null);
-    setTarget(null);
+    // Idempotent: dragend fires after a committed drop too, so onDrop's
+    // endDrag(true) is followed by onDragEnd's endDrag(false). This closure is
+    // from the post-drop render (dragId already flushed to null), so the
+    // trailing call no-ops instead of re-arming the cancel timer.
+    if (dragId == null) return;
     if (committed) {
+      setDragId(null);
+      setTarget(null);
+      clearAnimTimer();
       setAnim(false);
+      dragGeom.current = null;
+      onDragActive(null);
     } else {
-      // Cancelled: leave `anim` on so the gap-close transition can play, then
-      // clear it once it's finished (150ms in App.css) so .drag-anim doesn't
-      // linger on the bar until the next committed drop.
-      setTimeout(() => setAnim(false), 200);
+      cancelDrag();
     }
-    dragGeom.current = null;
-    onDragActive(null);
   };
+
+  // A drag in flight when the bar unmounts leaves a pending cancel timer.
+  useEffect(() => () => clearAnimTimer(), []);
 
   // Slide-apart preview: for an insertion target, each chip's translate to
   // where it would sit with the dragged chip moved there. null = no shifts
@@ -169,6 +259,14 @@ export default function TabBar({
       ? (draggedTab.cells.find((c) => c.id === draggedTab.activeCellId) ??
         draggedTab.cells[0])
       : null;
+  // The clone shows the same closed-market badge as the chip it lifted off —
+  // recomputed here because the chip's per-row closedTip is scoped to the map.
+  const floatMeta = floatLead != null ? closedEpics[floatLead.symbol.epic] : undefined;
+  const floatClosedTip = floatMeta?.closed
+    ? floatMeta.nextOpen
+      ? `Market closed · opens ${fmtNextOpen(floatMeta.nextOpen)}`
+      : "Market closed"
+    : null;
 
   return (
     <div className="tab-bar">
@@ -182,7 +280,14 @@ export default function TabBar({
           // cached at dragstart. A foreign drag (no chip dragstart happened
           // in this bar, so draggedTab is null) is not a drop target at all.
           const g = dragGeom.current;
-          if (draggedTab == null || g == null) return;
+          if (draggedTab == null || g == null) {
+            // A foreign drag (no chip dragstart in this bar) isn't a drop
+            // target, but must still be captured so the browser's default drop
+            // — navigating the app to a dropped file — never fires.
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "none";
+            return;
+          }
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
           const next = dropTarget(g.rects, e.clientX, e.clientY, fromIdx, (i) =>
@@ -195,33 +300,30 @@ export default function TabBar({
           );
         }}
         onDragLeave={(e) => {
-          // Cursor left the strip (e.g. heading for the chart's merge
-          // overlay): close the preview gap. relatedTarget is null when the
-          // cursor leaves the window entirely — but emulated input can also
-          // fire a spurious null relatedTarget mid-transition, so when it's
-          // null, double-check the pointer coordinates are actually outside
-          // the bar's rect before closing the gap.
+          // Cursor left the strip (e.g. heading for the chart's merge overlay):
+          // close the preview gap. rt === null means the cursor left the window
+          // entirely — which happens through the bar's own top edge too, so no
+          // coordinate special-case: any exit that isn't into the bar closes it.
           const rt = e.relatedTarget as Node | null;
           const bar = barRef.current;
           if (bar == null) return;
           if (rt != null && bar.contains(rt)) return;
-          if (rt == null) {
-            const r = bar.getBoundingClientRect();
-            if (
-              e.clientX >= r.left &&
-              e.clientX <= r.right &&
-              e.clientY >= r.top &&
-              e.clientY <= r.bottom
-            )
-              return;
-          }
           setTarget(null);
         }}
         onDrop={(e) => {
           e.preventDefault();
+          // `target` indexes the dragstart snapshot; if `tabs` changed under the
+          // drag (cross-window push), those indices now point at different tabs,
+          // so a merge/reorder would hit the wrong one — skip the mutation when
+          // the live id sequence no longer matches the snapshot.
+          const g = dragGeom.current;
+          const snapshotValid =
+            g != null &&
+            g.ids.length === tabs.length &&
+            g.ids.every((id, i) => tabs[i]?.id === id);
           // A drop can only fire here after our own dragover preventDefault,
           // so `target` is always current. Foreign drags never get that far.
-          if (draggedTab != null && target != null) {
+          if (snapshotValid && draggedTab != null && target != null) {
             if (target.kind === "merge") {
               onMerge(tabs[target.index].id, [draggedTab.id]);
             } else if (
@@ -271,7 +373,9 @@ export default function TabBar({
             .filter(Boolean)
             .join(" ")}
           style={
-            deltas != null && (deltas[i].dx !== 0 || deltas[i].dy !== 0)
+            // deltas is sized to the dragstart snapshot; if `tabs` grew under
+            // the drag, deltas[i] is undefined for the new chips (guarded).
+            deltas != null && deltas[i] != null && (deltas[i].dx !== 0 || deltas[i].dy !== 0)
               ? { transform: `translate(${deltas[i].dx}px, ${deltas[i].dy}px)` }
               : undefined
           }
@@ -293,6 +397,7 @@ export default function TabBar({
             });
             dragGeom.current = {
               rects,
+              ids: tabs.map((t) => t.id),
               // -6 for .tab-bar-tabs' padding-left (App.css) — clientWidth
               // includes it, but the flow simulation lays chips out from the
               // content box, so leaving it in overestimates where a chip wraps.
@@ -306,6 +411,9 @@ export default function TabBar({
             e.dataTransfer.setData("text/plain", t.id);
             e.dataTransfer.effectAllowed = "move";
             setDragId(t.id);
+            // A cancelled drag's pending anim-off timer would strip the
+            // transition mid-gesture if it fired during this new drag.
+            clearAnimTimer();
             setAnim(true);
             onDragActive(t.id);
           }}
@@ -318,29 +426,7 @@ export default function TabBar({
             if (tabs.length > 1) setCtxMenu({ x: e.clientX, y: e.clientY, tabId: t.id });
           }}
         >
-          <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="tab-icon" />
-          <span className="tab-symbol">{lead.symbol.epic}</span>
-          <span className="tab-period">{lead.period.label}</span>
-          {t.cells.length > 1 && <span className="tab-count">{t.cells.length}</span>}
-          {/* Crescent-moon badge pinned to the tab's top-right when the lead
-              cell's market is closed (CSS positions it absolutely). The tooltip
-              names the next opening time when known. */}
-          {leadClosed && (
-            <span
-              className="tab-closed-badge"
-              title={closedTip ?? "Market closed"}
-              aria-label={closedTip ?? "Market closed"}
-            >
-              {/* Solid crescent (currentColor) — keeps the chrome monochrome
-                  rather than the lone colored 🌙 emoji it replaced. */}
-              <svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true">
-                <path
-                  fill="currentColor"
-                  d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
-                />
-              </svg>
-            </span>
-          )}
+          <ChipContent lead={lead} cellCount={t.cells.length} closedTip={closedTip} />
           <button
             className="tab-close"
             // Closing must not also select the tab.
@@ -389,6 +475,9 @@ export default function TabBar({
         floatLead != null &&
         dragGeom.current != null &&
         fromIdx !== -1 &&
+        // fromIdx indexes live `tabs`; if the array grew past the snapshot the
+        // rect is undefined — skip the clone rather than read a bad transform.
+        dragGeom.current.rects[fromIdx] != null &&
         createPortal(
           <div
             className="tab tab-float"
@@ -397,16 +486,11 @@ export default function TabBar({
               transform: `translate(${dragGeom.current.rects[fromIdx].left}px, ${dragGeom.current.rects[fromIdx].top}px) scale(1.05)`,
             }}
           >
-            <SymbolIcon
-              epic={floatLead.symbol.epic}
-              type={floatLead.symbol.type}
-              className="tab-icon"
+            <ChipContent
+              lead={floatLead}
+              cellCount={draggedTab.cells.length}
+              closedTip={floatClosedTip}
             />
-            <span className="tab-symbol">{floatLead.symbol.epic}</span>
-            <span className="tab-period">{floatLead.period.label}</span>
-            {draggedTab.cells.length > 1 && (
-              <span className="tab-count">{draggedTab.cells.length}</span>
-            )}
           </div>,
           document.body,
         )}

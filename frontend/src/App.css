@@ -321,6 +321,10 @@
    while .drag-anim is on so a committed drop can swap the real order without
    a transform flash. */
 .tab.dragging { opacity: 0; }
+/* While the cursor is outside the window the float clone can't track it, so the
+   source chip is the drag's only visible representation — re-dim it (not fully
+   blank) until the cursor returns and the clone takes over again. */
+.tab-bar-tabs.drag-outside .tab.dragging { opacity: 0.4; }
 .tab-bar-tabs.drag-anim .tab { transition: transform 150ms ease; }
 /* Whole-chip highlight while hovering a merge drop (center zone of the chip). */
 .tab.drop-merge { outline: 2px solid var(--accent); outline-offset: -2px; }

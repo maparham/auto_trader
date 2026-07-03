@@ -5,6 +5,8 @@
 // the preview transforms change getBoundingClientRect, so live measurement
 // would feed back into itself.
 
+import { arrayMove } from "./paneOrder";
+
 export interface Rect {
   left: number;
   top: number;
@@ -45,10 +47,7 @@ export function flowPositions(
 // ORIGINAL array, so rightward moves land at to - 1 after the removal shifts
 // everything down. to === from and to === from + 1 are both no-ops.
 export function moveItem<T>(arr: T[], from: number, to: number): T[] {
-  const next = arr.slice();
-  const [moved] = next.splice(from, 1);
-  next.splice(from < to ? to - 1 : to, 0, moved);
-  return next;
+  return arrayMove(arr, from, from < to ? to - 1 : to);
 }
 
 // Per-chip translate that previews moveItem(chips, from, to) without touching
