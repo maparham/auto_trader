@@ -110,7 +110,7 @@ import {
 } from "./lib/customIndicators";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
-import { PositionLines, tradeLineSpecs, DRAFT_ID, bracketLabels, drawPositionBracket } from "./lib/positionLines";
+import { PositionLines, tradeLineSpecs, DRAFT_ID, SIDE_CHEVRON, bracketLabels, drawPositionBracket } from "./lib/positionLines";
 import {
   brokerLabel,
   setLivePrice,
@@ -1043,7 +1043,6 @@ export default function ChartCore({
       tradeId: string;
       field: TradeLineField;
       y: number;
-      epic: string;
       kind: "position" | "order";
       side: OrderSide;
       qty: number;
@@ -1770,15 +1769,20 @@ export default function ChartCore({
           }
           return;
         }
-        // Keep SL/TP on the valid side of the latest price (long: SL below / TP above;
-        // short: reversed) — clamp so the line can't be dragged across it.
+        // Keep SL/TP on the valid side of their reference (long: SL below / TP above;
+        // short: reversed) — clamp so the line can't be dragged across it. A WORKING
+        // ORDER measures from its own limit (the live shown one, so a mid-edit entry
+        // drag re-references it) since it isn't filled yet; a POSITION from the market.
         const trade = tradesRef.current.find((t) => t.id === hit.id);
         if (trade && (hit.field === "stop" || hit.field === "tp")) {
-          const last = getLivePrice(epicRef.current) ?? c.getDataList().at(-1)?.close;
-          if (last != null) {
+          const reference =
+            trade.kind === "order"
+              ? pendingEditsSignal.value[hit.id]?.price ?? trade.priceLevel
+              : getLivePrice(epicRef.current) ?? c.getDataList().at(-1)?.close;
+          if (reference != null) {
             const tick = Number((10 ** -precisionRef.current).toFixed(precisionRef.current));
             level = Number(
-              clampLevelToPrice(hit.field, trade.side, last, level, tick).toFixed(precisionRef.current),
+              clampLevelToPrice(hit.field, trade.side, reference, level, tick).toFixed(precisionRef.current),
             );
           }
         }
@@ -2200,6 +2204,20 @@ export default function ChartCore({
         setCursorMode("cur-ns");
       }
       btn.classList.toggle("passthrough", overAlertId != null || snapTarget != null);
+      // Over a TRADE line (entry/limit, SL, TP, or the staged draft) fully HIDE the
+      // "+" price pill — unlike an alert line, which keeps it as a click-through
+      // readout, a trade line already carries its own price pill, so a second "+"
+      // readout snapped on top just doubles it. The native crosshair line is already
+      // suppressed by the snap above, so the trade line stays the sole guide. Alerts
+      // still win (keep the passthrough readout) when the cursor is genuinely over
+      // one. Union the 6px hover hit (covers open positions/orders) with the 5px snap
+      // isTrade flag (also covers the draft, which the hover test skips).
+      const overTradeLine = hoverTradeId != null || snapTarget?.isTrade === true;
+      if (overTradeLine && overAlertId == null) {
+        btn.style.display = "none";
+        setPlusCrosshair(null);
+        return;
+      }
       // Hide the "+" pill the moment the cursor crosses onto the price-axis strip
       // (x > mainW), even when it's over the "+" itself. The axis is a drag/scale
       // gesture zone; a DOM button sitting there with pointer-events:auto would
@@ -3405,7 +3423,7 @@ export default function ChartCore({
       // P/L a level would realise if price reached it (from the fixed open level).
       const plAt = (lvl: number) => dir * sel.quantity * (lvl - sel.priceLevel);
       const common = {
-        tradeId: sel.id, epic: sel.epic, kind: sel.kind, side: sel.side, qty: sel.quantity,
+        tradeId: sel.id, kind: sel.kind, side: sel.side, qty: sel.quantity,
       };
       let pill: (typeof tradePills)[number] | null = null;
       if (field === "price") {
@@ -4720,8 +4738,11 @@ export default function ChartCore({
         const prec = precisionRef.current;
         const isEntry = p.field === "price";
         const pendKey = p.field === "tp" ? "takeProfit" : p.field; // pendingEdits key
+        // Entry pill mirrors the canvas pill exactly (side chevron + label), so
+        // selecting a line just adds buttons to the SAME blue pill — no separate
+        // pill stacked on top. SL/TP carry no side chevron.
         const label = isEntry
-          ? `${tradeLabel(p.kind, p.side)} ${p.qty} @ ${p.level.toFixed(prec)}`
+          ? `${SIDE_CHEVRON[p.side]} ${tradeLabel(p.kind, p.side)} ${p.qty} @ ${p.level.toFixed(prec)}`
           : `${p.field === "stop" ? "SL" : "TP"} ${p.level.toFixed(prec)}`;
         const sign = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
         // Remove this SL/TP line: commit the level cleared right away (an explicit
@@ -4744,14 +4765,13 @@ export default function ChartCore({
         return (
           <div
             key={`${p.tradeId}:${p.field}`}
-            className={`trade-pill tp-line-${p.field}${p.changed ? " has-changes" : ""}`}
+            className={`trade-pill tp-line-${p.field}`}
             style={{ top: p.y, left: tradePillLeftRef.current ?? undefined }}
           >
-            <span className="tp-sym">{p.epic}</span>
             <span className="tp-text">{label}</span>
             {p.pl != null && (
               <span
-                className={`tp-upnl ${p.pl >= 0 ? "pos" : "neg"}`}
+                className="tp-upnl"
                 title={isEntry ? "Unrealised P&L" : "P&L if this level is hit"}
               >
                 {sign(p.pl)}

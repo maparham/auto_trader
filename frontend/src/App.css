@@ -1405,8 +1405,10 @@
    over the canvas, signalling the line drags vertically (klinecharts sets an
    inline crosshair cursor, so override with !important). */
 .chart-wrap.alert-hover canvas { cursor: ns-resize !important; }
-/* Selected-trade pill (mirrors .alert-pill): summary + close, and Apply/Discard once
-   a drag stages a change. Sits just above the hovered alert pill (47). */
+/* Selected-trade pill. Made to look IDENTICAL to the canvas line pill (same
+   role colour, white text, chevron) so selecting a line just adds buttons to the
+   SAME pill — no second pill stacked on top. The role colour is set per field
+   below. Sits just above the hovered alert pill (47). */
 .trade-pill {
   position: absolute; z-index: 47; transform: translateY(-50%);
   display: flex; align-items: stretch;
@@ -1414,35 +1416,35 @@
      click of a double-click on the line it sits over (which would break dblclick→edit
      ticket) or block a line grab. Only its buttons opt back in (see .tp-btn). */
   pointer-events: none;
-  border-radius: 4px; white-space: nowrap; overflow: hidden;
-  background: var(--surface); color: var(--text);
-  border: 1px solid var(--border); box-shadow: 0 1px 4px var(--shadow);
-  font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
+  border-radius: 3px; white-space: nowrap; overflow: hidden;
+  color: #fff;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums;
 }
-.trade-pill.has-changes { border-color: var(--accent); }
-/* Symbol badge leading every pill — a faint chip so the instrument reads at a glance
-   even when several trades' pills overlap. */
-.trade-pill .tp-sym {
-  display: flex; align-items: center; padding: 3px 7px;
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-  color: var(--text-faint); font-weight: 600; font-size: 11px;
-}
-.trade-pill .tp-text { display: flex; align-items: center; padding: 3px 8px; }
-.trade-pill .tp-upnl { display: flex; align-items: center; padding: 3px 8px 3px 0; }
-.trade-pill .tp-upnl.pos { color: var(--pos); }
-.trade-pill .tp-upnl.neg { color: var(--neg); }
+/* Role colours mirror the canvas pill: blue entry/limit, red stop, green target. */
+.trade-pill.tp-line-price { background: #2962ff; }
+.trade-pill.tp-line-stop  { background: #f23645; }
+.trade-pill.tp-line-tp    { background: #089981; }
+.trade-pill .tp-text { display: flex; align-items: center; padding: 3px 6px; }
+/* P/L rides inside the pill in white (like the canvas pill's "(+1.23)"); the
+   +/− sign carries direction, so no red/green needed on the coloured fill. */
+.trade-pill .tp-upnl { display: flex; align-items: center; padding: 3px 6px 3px 0; color: rgba(255, 255, 255, 0.85); }
 .trade-pill .tp-btn {
   display: flex; align-items: center; justify-content: center;
-  background: transparent; border: none; border-left: 1px solid var(--border);
-  cursor: pointer; color: var(--text-faint); padding: 0 7px;
+  background: rgba(255, 255, 255, 0.14); border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+  cursor: pointer; color: #fff; padding: 0 6px;
   pointer-events: auto; /* buttons stay clickable though the pill body is pass-through */
 }
-.trade-pill .tp-btn svg { width: 14px; height: 14px; display: block; }
-.trade-pill .tp-btn:hover { background: rgba(127, 127, 127, 0.12); color: var(--text); }
-.trade-pill .tp-apply { color: var(--pos); }
-.trade-pill .tp-apply:hover { background: color-mix(in srgb, var(--pos) 16%, transparent); color: var(--pos); }
+.trade-pill .tp-btn svg { width: 13px; height: 13px; display: block; }
+.trade-pill .tp-btn:hover { background: rgba(255, 255, 255, 0.3); }
+/* Keep the positive/destructive affordance on hover even over the coloured fill:
+   translucent green/red tints layer over blue/red/green and stay legible, so Apply
+   reads as "commit" and Close/Cancel/Discard/Remove read as "destructive". */
+.trade-pill .tp-apply:hover { background: color-mix(in srgb, var(--pos) 55%, transparent); }
 .trade-pill .tp-close:hover,
-.trade-pill .tp-remove:hover { background: color-mix(in srgb, var(--neg) 14%, transparent); color: var(--neg); }
+.trade-pill .tp-discard:hover,
+.trade-pill .tp-remove:hover { background: color-mix(in srgb, var(--neg) 55%, transparent); }
 /* Hover tooltip shown when cursor is over a draggable trade line. */
 /* Confirm-dialog detail rows (e.g. the full position breakdown shown before close). */
 .confirm-details {

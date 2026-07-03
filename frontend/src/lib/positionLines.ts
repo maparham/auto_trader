@@ -25,6 +25,10 @@ export interface LineSpec {
   level: number;
   color: string;
   label: string;
+  // Set only on ENTRY/limit lines (never SL/TP): the trade's direction, drawn as a
+  // small ∧/∨ chevron prefixed inside the pill so a buy and a sell limit (identical
+  // blue pills otherwise) read apart at a glance. Absent → no chevron.
+  side?: "buy" | "sell";
   draggable: boolean;
   // Drawn emphasised (dashed, thicker) — set while the trade is hovered (panel row
   // or the line itself).
@@ -40,6 +44,14 @@ export interface LineSpec {
 const PRICE_COLOR = "#2962ff";
 const STOP_COLOR = "#f23645";
 const TP_COLOR = "#089981";
+
+const PILL_FAMILY = "-apple-system, system-ui, sans-serif";
+// Side marker prefixed INSIDE the entry/limit pill: an up chevron for buy/long, a
+// down chevron for sell/short, so a buy and a sell limit (identical blue pills
+// otherwise) read apart at a glance. SL/TP lines carry no side, so no chevron.
+// Use ∧/∨ (logical and/or) — a true mirror-image PAIR that renders at the same size
+// and vertical position, unlike ⌃/⌄ (keyboard arrowheads), whose metrics differ.
+export const SIDE_CHEVRON = { buy: "∧", sell: "∨" } as const;
 
 type LineField = "price" | "stop" | "takeProfit";
 
@@ -100,6 +112,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         key: `${t.id}:price`,
         level: price,
         color: PRICE_COLOR,
+        side: t.side,
         label: focusedField === "price" ? "" : `${word} ${t.quantity} @ ${fmt(price)}${pnlStr}`,
         // A resting order's price line is draggable to reprice it; a filled
         // position's entry is fixed (you can't change a fill), so never draggable.
@@ -144,6 +157,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         key: `${DRAFT_ID}:price`,
         level: d.price,
         color: PRICE_COLOR,
+        side: d.side,
         label: `${verb} limit ${d.quantity} @ ${fmt(d.price)}`,
         draggable: true,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "price", lvl),
@@ -176,6 +190,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
 interface LineExtra {
   label: string;
   color: string;
+  side?: "buy" | "sell";
   highlight?: boolean;
   selected?: boolean;
 }
@@ -221,16 +236,19 @@ const tradeLine: OverlayTemplate = {
       },
     ];
     if (extra.label) {
+      // A ∧/∨ chevron prefixed inside the pill marks the side on entry/limit lines
+      // (buy = up, sell = down); SL/TP lines carry no side, so no chevron.
+      const text = extra.side ? `${SIDE_CHEVRON[extra.side]} ${extra.label}` : extra.label;
       figures.push({
         type: "text",
         // Centre the pill ON the line (far left), like an alert's hover pill —
         // its solid fill sits over the dashed line.
-        attrs: { x: 6, y, text: extra.label, align: "left", baseline: "middle" },
+        attrs: { x: 6, y, text, align: "left", baseline: "middle" },
         styles: {
           color: "#ffffff",
           backgroundColor: extra.color,
           size: 11,
-          family: "-apple-system, system-ui, sans-serif",
+          family: PILL_FAMILY,
           paddingLeft: 6,
           paddingRight: 6,
           paddingTop: 3,
@@ -290,7 +308,7 @@ export class PositionLines {
   }
 
   private sig(s: LineSpec): string {
-    return `${s.level}|${s.label}|${s.color}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}`;
+    return `${s.level}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}`;
   }
 
   private onMoveEnd = (e: OverlayEvent): boolean => {
@@ -327,7 +345,7 @@ export class PositionLines {
             points: [{ value: spec.level }],
             lock: !spec.draggable,
             needDefaultPointFigure: spec.draggable,
-            extendData: { label: spec.label, color: spec.color, highlight: spec.highlight ?? false, selected: spec.selected ?? false },
+            extendData: { label: spec.label, color: spec.color, side: spec.side, highlight: spec.highlight ?? false, selected: spec.selected ?? false },
           });
           existing.sig = sig;
         }
@@ -340,7 +358,7 @@ export class PositionLines {
         // The default point figure is klinecharts' drag handle — only show/enable
         // it for a draggable line (a locked line has none, can't be moved).
         needDefaultPointFigure: spec.draggable,
-        extendData: { label: spec.label, color: spec.color, highlight: spec.highlight ?? false, selected: spec.selected ?? false },
+        extendData: { label: spec.label, color: spec.color, side: spec.side, highlight: spec.highlight ?? false, selected: spec.selected ?? false },
         styles: { line: { color: spec.color } },
         onRightClick: () => true, // suppress klinecharts' default delete menu
         onPressedMoveEnd: this.onMoveEnd,
