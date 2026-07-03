@@ -114,6 +114,7 @@ describe("maybeAutoApplyTemplate gate", () => {
   const stubController = {
     indicators: { value: [] as unknown[], set: (v: { id: string; type: string }[]) => (applied = v) },
     indicatorsHidden: { value: false },
+    subPanesHidden: { value: false },
     overlays: { rehydrate: () => {} },
   } as unknown as import("./chartController").ChartController;
 
@@ -185,6 +186,7 @@ describe("applySymbolTemplate merge (additive, existing wins)", () => {
   const controller = {
     indicators: { value: [], set: (v: { id: string; type: string }[]) => (applied = v) },
     indicatorsHidden: { value: false },
+    subPanesHidden: { value: false },
     overlays: { rehydrate: () => rehydrated++ },
   } as unknown as import("./chartController").ChartController;
 

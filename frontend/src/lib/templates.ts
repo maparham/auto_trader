@@ -32,7 +32,7 @@ import {
   type SavedIndicatorConfig,
   type IndicatorInstance,
 } from "./persist";
-import { applyIndicator, mintInstanceId, effectiveCalcParams } from "./indicators";
+import { applyIndicator, mintInstanceId, effectiveCalcParams, isSubPaneIndicator } from "./indicators";
 import {
   indicatorSignature,
   drawingSignature,
@@ -141,6 +141,10 @@ export function applySymbolTemplate(
     const full = [...existing, ...added];
     saveIndicators(scope, full);
     controller.indicators.set(full);
+    // A template that brings in any sub-pane indicator auto-expands collapsed bottom
+    // panes (mirrors a manual add) so the applied layout is actually visible.
+    if (controller.subPanesHidden.value && added.some((a) => isSubPaneIndicator(a.type)))
+      controller.subPanesHidden.set(false);
   }
 
   // --- drawings: union by geometry, never remove ------------------------------

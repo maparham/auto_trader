@@ -49,6 +49,12 @@ export class ChartController {
   // categories without touching per-item state.
   readonly indicatorsHidden = new Signal<boolean>(false);
   readonly positionsHidden = new Signal<boolean>(false);
+  // Double-click empty chart space (session-only, per cell): collapse just the
+  // bottom sub-pane indicators (Volume/MACD/RSI…), leaving price-overlay indicators
+  // (EMA…) on the candle pane visible. Orthogonal to indicatorsHidden — both mask
+  // the same live `visible` flag, so a single applier (applyIndicatorVisibility)
+  // derives effective visibility from both at once rather than fighting over it.
+  readonly subPanesHidden = new Signal<boolean>(false);
   // TradingView-style "Scale price chart only": when true, the candle-pane price
   // axis auto-fits to the candle OHLC only — overlay indicators no longer expand it,
   // so adding an overlay never shrinks the candles. Persisted per cell (default on),

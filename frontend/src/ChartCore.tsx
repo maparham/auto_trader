@@ -61,6 +61,7 @@ import {
   setTradeSelected,
   selectTradeLine,
   openTradeEditor,
+  stageChartOrder,
   tradePanelOpen,
   editTradeSignal,
   discardPendingEdit,
@@ -88,10 +89,14 @@ import {
 } from "./lib/persist";
 import {
   addIndicatorInstance,
+  applyIndicatorVisibility,
+  collapseSubPanes,
+  expandSubPanes,
+  forceCollapseSubPanes,
   hydrateIndicators,
+  isSubPaneIndicator,
   removeIndicatorById,
   reorderSubPanes,
-  setAllIndicatorsHidden,
   subPaneOrder,
 } from "./lib/indicators";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
@@ -535,6 +540,9 @@ export default function ChartCore({
   const chartRef = useRef<Chart | null>(null);
   const wsRef = useRef<LiveHandle | null>(null);
   const inited = useRef(false);
+  // Prior sub-pane heights captured when the double-click "hide bottom sub-panes"
+  // gesture collapses them, so un-collapsing restores each pane to its own height.
+  const collapsedHeightsRef = useRef<Map<string, number>>(new Map());
   // Active quick-range button (null once the user manually zooms/scrolls or
   // changes interval). Transient — not persisted.
   const [activeRange, setActiveRange] = useState<RangeKey | null>(null);
@@ -1523,12 +1531,12 @@ export default function ChartCore({
         indicatorSettingsRequest.set({ paneId: hit.paneId, name: hit.name });
         return;
       }
-      // Double-click empty chart space -> hide/unhide all the sub-pane indicators
-      // at the bottom (Volume/MACD/RSI…), the same action as the sidebar eye menu.
-      // Skip the axis gutters — those own their own dblclick (reset price scale /
-      // bar spacing) and aren't "empty" chart space.
+      // Double-click empty chart space -> hide/unhide the bottom sub-pane indicators
+      // (Volume/MACD/RSI…). Price-overlay indicators on the candle pane (EMA…) stay
+      // put — only the panes "at the bottom" collapse. Skip the axis gutters, which
+      // own their own dblclick (reset price scale / bar spacing) and aren't "empty".
       if (overPriceAxis(e) || overTimeAxis(e)) return;
-      controller.indicatorsHidden.set(!controller.indicatorsHidden.value);
+      controller.subPanesHidden.set(!controller.subPanesHidden.value);
     };
 
     // Right-click the chart -> our context menu (Paste an indicator). Suppress the
@@ -2850,9 +2858,15 @@ export default function ChartCore({
       // the now-current resolution. Runs here so both a fresh rehydrate (above)
       // and a plain period switch (this effect re-runs on period.resolution) land
       // on the right on-chart state — a view reaction only, nothing persisted.
-      // Guard: the sidebar eye menu's "Hide indicators" master switch overrides
-      // this re-derive — while it's on, re-assert all-hidden instead of un-hiding.
-      setAllIndicatorsHidden(chartRef.current, controller.indicatorsHidden.value, period.resolution);
+      // Guard: the sidebar "Hide indicators" master switch overrides this re-derive —
+      // while it's on, re-assert all-hidden instead of un-hiding.
+      applyIndicatorVisibility(chartRef.current, period.resolution, controller.indicatorsHidden.value);
+      // A symbol switch recreates the sub-panes at their default height, so re-assert
+      // the double-click "hide bottom sub-panes" collapse if it's on. forceCollapse
+      // (not collapseSubPanes) so it doesn't overwrite the captured heights with the
+      // freshly-recreated defaults — the map from the original toggle is the source of
+      // truth for restore (recreated panes have new ids and fall back to the default).
+      if (controller.subPanesHidden.value) forceCollapseSubPanes(chartRef.current);
       // A quick-range pick that switched interval parked its window here; the
       // initial new-resolution bars are loaded, so page back to the period start
       // (if needed) and fit. ensureCoverageAndFit clears pendingRangeRef when done.
@@ -2949,17 +2963,31 @@ export default function ChartCore({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol.epic, period.resolution, priceSide, brokerId]);
 
-  // Sidebar eye menu "Hide indicators": subscribe to the master switch and apply
-  // it to the live chart on every toggle (mirrors the resolution-change call above,
-  // which re-asserts hidden instead of un-hiding while this switch is on).
+  // Two independent hide gestures, each with its own live effect:
+  //  • Sidebar eye menu "Hide indicators" — masks every indicator's curve IN PLACE
+  //    (pane stays); re-derives visibility from intent + interval on toggle.
+  //  • Double-click "hide bottom sub-panes" — COLLAPSES the sub-pane heights to ~0 so
+  //    the candle pane reclaims the space (plain masking left an empty band). Captures
+  //    prior heights on collapse; restores them on expand. A legend filter drops the
+  //    collapsed panes' cards (see buildSubPaneLegends). resRef (not the closed-over
+  //    period.resolution) is read live — this effect only re-runs when `controller`
+  //    changes, same idiom as the scroll-back fetcher above (~2204).
   useEffect(() => {
-    return controller.indicatorsHidden.subscribe((hidden) => {
-      if (!chartRef.current) return;
-      // resRef (not the closed-over period.resolution) — this effect only re-runs
-      // when `controller` changes (a new cell), so a plain interval switch must be
-      // read live via the ref, same idiom as the scroll-back fetcher above (~2204).
-      setAllIndicatorsHidden(chartRef.current, hidden, resRef.current);
+    const unsubAll = controller.indicatorsHidden.subscribe(() => {
+      if (chartRef.current)
+        applyIndicatorVisibility(chartRef.current, resRef.current, controller.indicatorsHidden.value);
     });
+    const unsubSub = controller.subPanesHidden.subscribe((hidden) => {
+      const c = chartRef.current;
+      if (!c) return;
+      if (hidden) collapsedHeightsRef.current = collapseSubPanes(c);
+      else expandSubPanes(c, collapsedHeightsRef.current);
+      redrawRef.current(); // refresh the DOM legends (drop/restore the sub-pane cards)
+    });
+    return () => {
+      unsubAll();
+      unsubSub();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controller]);
 
@@ -3998,6 +4026,9 @@ export default function ChartCore({
       toast(`Can't paste ${parsed.type}`);
       return;
     }
+    // Auto-expand collapsed sub-panes when pasting one in (mirrors the toolbar add).
+    if (controller.subPanesHidden.value && isSubPaneIndicator(parsed.type))
+      controller.subPanesHidden.set(false);
     const next = [...controller.indicators.value, inst];
     controller.indicators.set(next);
     saveIndicators(scope, next);
@@ -4883,6 +4914,26 @@ export default function ChartCore({
               label: `Draw horizontal line at ${plusMenu.price.toFixed(precision)}`,
               onClick: () =>
                 overlays.addDrawing("horizontalStraightLine", [{ value: plusMenu.price }]),
+            },
+            {
+              label: `Buy limit at ${plusMenu.price.toFixed(precision)}`,
+              // Quantize to instrument precision (matches the label) so a valid limit
+              // level — not a 14-decimal float — is staged and later sent to the broker.
+              onClick: () =>
+                stageChartOrder({
+                  epic: symbol.epic,
+                  side: "buy",
+                  price: Number(plusMenu.price.toFixed(precision)),
+                }),
+            },
+            {
+              label: `Sell limit at ${plusMenu.price.toFixed(precision)}`,
+              onClick: () =>
+                stageChartOrder({
+                  epic: symbol.epic,
+                  side: "sell",
+                  price: Number(plusMenu.price.toFixed(precision)),
+                }),
             },
           ]}
           onClose={() => {

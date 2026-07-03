@@ -759,6 +759,11 @@ export function buildLegendRows(chart: Chart, tfLabel?: string): { rows: LegendR
   return { rows, sig: rowsSig(rows) };
 }
 
+// A sub-pane at/below this height (px) has been collapsed by the double-click
+// "hide bottom sub-panes" gesture (its height is forced to 1px); a real sub-pane is
+// ≥30px. Used to drop the collapsed pane's legend card.
+const COLLAPSED_SUBPANE_MAX_H = 12;
+
 // Build the sub-pane legend list (every pane EXCEPT candle_pane), each positioned at
 // its pane's main-area top via getSize. Returns the data array + a combined signature
 // that folds in each pane's rows AND its `top` — so a separator drag (which only
@@ -788,6 +793,11 @@ export function buildSubPaneLegends(chart: Chart): {
     // root — exactly where klinecharts drew its canvas legend. Round to whole pixels
     // so the card text lands on the pixel grid (crisp, no half-pixel blur).
     const size = chart.getSize(paneId, DomPosition.Main);
+    // No card for a pane the double-click gesture collapsed to ~1px (its indicators
+    // still exist, but the pane is a sliver) — the card would otherwise render over the
+    // reclaimed candle area. A real sub-pane is ≥30px (klinecharts' min height), so any
+    // pane below COLLAPSED_SUBPANE_MAX_H is collapsed, not merely short.
+    if ((size?.height ?? 0) <= COLLAPSED_SUBPANE_MAX_H) continue;
     const top = Math.round(size?.top ?? 0);
     subPanes.push({ paneId, top, rows });
   }

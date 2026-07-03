@@ -45,6 +45,13 @@ import {
   type SavedIndicatorConfig,
 } from "./persist";
 
+// True if adding this indicator TYPE opens its own bottom sub-pane (Volume/MACD/RSI…)
+// rather than overlaying the candle pane (EMA/…). Used to auto-expand collapsed
+// sub-panes when the user adds one (seeing a nothing after adding would be confusing).
+export function isSubPaneIndicator(type: string): boolean {
+  return !OVERLAY_INDICATORS.has(type);
+}
+
 const CUSTOM_TYPES = Object.keys(BASE_TEMPLATES) as CustomIndicatorType[];
 const isCustomType = (type: string): type is CustomIndicatorType =>
   (CUSTOM_TYPES as string[]).includes(type);
@@ -356,7 +363,7 @@ export function applyIndicator(
     paneId?: string;
     height?: number;
     // The sidebar's master "Hide indicators" switch is on: create this instance
-    // hidden (a one-shot setAllIndicatorsHidden sweep can't catch indicators added
+    // hidden (a one-shot applyIndicatorVisibility sweep can't catch indicators added
     // after it ran). Intent is seeded into extendData.userVisible so the switch
     // turning off restores what the indicator would have shown.
     forceHidden?: boolean;
@@ -430,40 +437,19 @@ export function applyIndicator(
   return paneId;
 }
 
-// Re-derive every indicator's effective on-chart visibility against the current
-// resolution. Mirrors OverlayManager.applyIntervalVisibility for drawings: user intent
-// (extendData.userVisible, default true) AND the model's interval match. Iterates ALL
-// panes — the candle pane plus every sub-pane (Volume/MACD/RSI/…) — via
-// chart.getIndicatorByPaneId() with no args, which returns every pane's indicator map
-// (same enumerator removeIndicatorById already uses; klinecharts has no getPanes()/
-// no-name-per-pane array API). A VIEW reaction to a period change, not a user edit: it
-// does not persist (intent is already stored in extendData by the settings modal).
-export function applyIndicatorIntervalVisibility(chart: Chart, resolution: string): void {
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
-  for (const [paneId, inds] of panes ?? []) {
-    for (const ind of inds.values()) {
-      if (!ind?.name) continue;
-      const ext = (ind.extendData ?? {}) as { userVisible?: boolean; visibility?: VisibilityModel };
-      const intent = ext.userVisible ?? ind.visible ?? true;
-      const model = ext.visibility ?? defaultVisibility();
-      const visible = intent && isVisibleOnResolution(model, resolution);
-      chart.overrideIndicator({ name: ind.name, visible }, paneId);
-    }
-  }
-}
-
-// Sidebar eye menu "Hide indicators": master-hide every user indicator (the
-// internal EQUITY backtest pane is not a user indicator — skip it). Un-hiding
-// re-derives per-indicator visibility from intent + interval model rather than
-// blanket-showing, so a filtered/unchecked indicator stays correctly hidden.
-export function setAllIndicatorsHidden(chart: Chart, hidden: boolean, resolution: string): void {
-  if (!hidden) {
-    applyIndicatorIntervalVisibility(chart, resolution);
-    return;
-  }
+// Re-derive every indicator's effective on-chart visibility: user intent
+// (extendData.userVisible, default true) AND the interval model matches the current
+// resolution AND the sidebar eye menu's "Hide indicators" master switch isn't masking
+// it. The internal EQUITY backtest pane is not a user indicator — left untouched.
+// Mirrors OverlayManager.applyIntervalVisibility for drawings. Iterates ALL panes via
+// chart.getIndicatorByPaneId() with no args (every pane's indicator map; klinecharts
+// has no getPanes()/no-name-per-pane API). A VIEW reaction, not a user edit: it never
+// persists (intent already lives in extendData, written by the settings modal).
+//
+// This is masking-in-place (the pane stays, the curve is hidden) — the sidebar eye.
+// The double-click "hide bottom sub-panes" gesture is a DIFFERENT operation that frees
+// the pane's HEIGHT: see collapseSubPanes/expandSubPanes below.
+export function applyIndicatorVisibility(chart: Chart, resolution: string, allHidden: boolean): void {
   const panes = chart.getIndicatorByPaneId() as
     | Map<string, Map<string, Indicator>>
     | null
@@ -471,18 +457,68 @@ export function setAllIndicatorsHidden(chart: Chart, hidden: boolean, resolution
   for (const [paneId, inds] of panes ?? []) {
     for (const ind of inds.values()) {
       if (!ind?.name || INTERNAL_INDICATORS.has(ind.name)) continue;
-      // Record intent BEFORE forcing the live flag off: un-hiding derives intent as
-      // userVisible ?? visible, and an indicator never individually toggled has no
-      // userVisible yet — its forced-false flag would read back as intent and the
-      // indicator would stay hidden after the switch turns off.
-      const ext = (ind.extendData ?? {}) as { userVisible?: boolean };
+      const ext = (ind.extendData ?? {}) as { userVisible?: boolean; visibility?: VisibilityModel };
+      const intent = ext.userVisible ?? ind.visible ?? true;
+      const model = ext.visibility ?? defaultVisibility();
+      const visible = !allHidden && intent && isVisibleOnResolution(model, resolution);
+      // Record intent BEFORE the first mask forces the live flag off: un-masking
+      // derives intent as userVisible ?? visible, and an indicator never individually
+      // toggled has no userVisible yet — its forced-false flag would read back as
+      // intent and the indicator would stay hidden after the mask lifts. Only seed
+      // while masking a never-toggled indicator.
       const seed =
-        ext.userVisible === undefined
+        allHidden && ext.userVisible === undefined
           ? { extendData: { ...ext, userVisible: ind.visible ?? true } }
           : {};
-      chart.overrideIndicator({ name: ind.name, visible: false, ...seed }, paneId);
+      chart.overrideIndicator({ name: ind.name, visible, ...seed }, paneId);
     }
   }
+}
+
+// klinecharts' default pane minHeight (PANE_MIN_HEIGHT), restored when un-collapsing.
+const PANE_MIN_HEIGHT = 30;
+// A sub-pane at/below this height (px) reads as collapsed, not user-sized — used to
+// avoid re-capturing a 1px height as if it were the real one (see collapseSubPanes).
+export const COLLAPSED_PANE_HEIGHT = 3;
+
+// Double-click "hide bottom sub-panes": collapse every reorderable sub-pane
+// (Volume/MACD/RSI…) to ~0px so the candle pane reclaims the height — plain
+// visibility-hiding leaves the empty pane band, which the user explicitly didn't want.
+// klinecharts ignores height:0 (it requires >0), so we use 1px + minHeight:0 and
+// disable the divider drag. Returns the captured prior heights keyed by paneId for
+// expandSubPanes to restore. The internal EQUITY pane is left alone (reorderablePanes
+// skips it). MUST be called from a fully-expanded state so it captures real heights;
+// a pane already at ~1px is recorded as SUBPANE_HEIGHT so a stray re-capture can't
+// freeze it collapsed forever.
+export function collapseSubPanes(chart: Chart): Map<string, number> {
+  const heights = new Map<string, number>();
+  for (const p of reorderablePanes(chart)) {
+    heights.set(p.paneId, p.height > COLLAPSED_PANE_HEIGHT ? p.height : SUBPANE_HEIGHT);
+    chart.setPaneOptions({ id: p.paneId, height: 1, minHeight: 0, dragEnabled: false });
+  }
+  return heights;
+}
+
+// Re-assert the collapse WITHOUT capturing heights — for the resolution/rehydrate
+// re-assert, where the live panes may already be at 1px (a plain interval switch) or
+// freshly recreated at the default height (a symbol switch). Either way the caller's
+// saved height map is the source of truth for restore, so we must not overwrite it.
+export function forceCollapseSubPanes(chart: Chart): void {
+  for (const p of reorderablePanes(chart))
+    chart.setPaneOptions({ id: p.paneId, height: 1, minHeight: 0, dragEnabled: false });
+}
+
+// Un-collapse: restore each sub-pane to its captured height (or the default for a pane
+// created/recreated while collapsed, whose id isn't in the map), re-enabling the
+// divider drag and the normal min height.
+export function expandSubPanes(chart: Chart, heights: Map<string, number>): void {
+  for (const p of reorderablePanes(chart))
+    chart.setPaneOptions({
+      id: p.paneId,
+      height: heights.get(p.paneId) ?? SUBPANE_HEIGHT,
+      minHeight: PANE_MIN_HEIGHT,
+      dragEnabled: true,
+    });
 }
 
 // Add a fresh instance of `type` (mints a new id). Returns the new instance, or

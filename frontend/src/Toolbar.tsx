@@ -35,7 +35,7 @@ import {
   loadDefaultTemplate,
   deleteDefaultTemplate,
 } from "./lib/persist";
-import { addIndicatorInstance } from "./lib/indicators";
+import { addIndicatorInstance, isSubPaneIndicator } from "./lib/indicators";
 import {
   captureSymbolTemplate,
   applySymbolTemplate,
@@ -255,6 +255,11 @@ export default function Toolbar({
       forceHidden: controller.indicatorsHidden.value,
     });
     if (!inst) return;
+    // Adding a sub-pane indicator while the bottom panes are collapsed (double-click
+    // "hide sub-panes") auto-expands them — you'd otherwise add an oscillator and see
+    // nothing. Also keeps collapse-capture honest (it must run from an expanded state).
+    if (controller.subPanesHidden.value && isSubPaneIndicator(type))
+      controller.subPanesHidden.set(false);
     const next = [...controller.indicators.value, inst];
     controller.indicators.set(next);
     saveIndicators(controller.scope, next);

@@ -13,7 +13,14 @@ vi.mock("klinecharts", () => ({
   DomPosition: { Main: "main" },
 }));
 
-const { setAllIndicatorsHidden, INTERNAL_INDICATORS } = await import("./indicators");
+const { applyIndicatorVisibility, collapseSubPanes, expandSubPanes, INTERNAL_INDICATORS } =
+  await import("./indicators");
+
+// Reads as the sidebar eye-menu gesture it exercises (the double-click "hide sub-panes"
+// gesture is height-collapse, not a visibility mask — it's manipulation of pane layout,
+// covered by e2e/manual, not this unit).
+const hideAll = (chart: Chart, hidden: boolean, resolution: string) =>
+  applyIndicatorVisibility(chart, resolution, hidden);
 
 describe("indicator interval visibility decision", () => {
   it("hides a minutes-only indicator on an hour timeframe", () => {
@@ -52,7 +59,7 @@ describe("setAllIndicatorsHidden (sidebar eye menu master switch)", () => {
       ["pane_1", new Map([["RSI_1", { name: "RSI_1" }], [equityName, { name: equityName }]])],
     ]);
     const { chart, overrides } = fakeChart(panes);
-    setAllIndicatorsHidden(chart, true, "HOUR");
+    hideAll(chart, true, "HOUR");
     // Never-toggled indicators get their intent seeded (userVisible) in the same
     // override that forces the flag off — see the round-trip test below.
     expect(overrides).toEqual([
@@ -69,12 +76,12 @@ describe("setAllIndicatorsHidden (sidebar eye menu master switch)", () => {
     const panes = new Map([["candle_pane", new Map([["MA_1", ind]])]]);
     const { chart, overrides } = fakeChart(panes);
 
-    setAllIndicatorsHidden(chart, true, "HOUR");
+    hideAll(chart, true, "HOUR");
     // Mirror what a real chart does with the override: merge it into the live indicator.
     ind.visible = false;
     ind.extendData = overrides[0].extendData;
 
-    setAllIndicatorsHidden(chart, false, "HOUR");
+    hideAll(chart, false, "HOUR");
     expect(overrides[1]).toEqual({ name: "MA_1", visible: true, paneId: "candle_pane" });
   });
 
@@ -83,7 +90,7 @@ describe("setAllIndicatorsHidden (sidebar eye menu master switch)", () => {
       ["candle_pane", new Map([["MA_1", { name: "MA_1", visible: false, extendData: { userVisible: false } }]])],
     ]);
     const { chart, overrides } = fakeChart(panes);
-    setAllIndicatorsHidden(chart, true, "HOUR");
+    hideAll(chart, true, "HOUR");
     expect(overrides).toEqual([{ name: "MA_1", visible: false, paneId: "candle_pane" }]);
   });
 
@@ -99,7 +106,53 @@ describe("setAllIndicatorsHidden (sidebar eye menu master switch)", () => {
       ],
     ]);
     const { chart, overrides } = fakeChart(panes);
-    setAllIndicatorsHidden(chart, false, "HOUR");
+    hideAll(chart, false, "HOUR");
     expect(overrides).toEqual([{ name: "MA_1", visible: false, paneId: "candle_pane" }]);
+  });
+});
+
+describe("collapse / expand sub-panes (double-click hide bottom sub-panes)", () => {
+  // Minimal fake exposing what collapse/expand touch: getIndicatorByPaneId() (to
+  // enumerate reorderable sub-panes), getSize() (their heights), setPaneOptions().
+  function fakeChart(heights: Record<string, number>, subPanes: string[]) {
+    const opts: { id: string; height?: number; minHeight?: number; dragEnabled?: boolean }[] = [];
+    const map = new Map<string, Map<string, { name: string }>>(
+      subPanes.map((p) => [p, new Map([[`I_${p}`, { name: `I_${p}` }]])]),
+    );
+    map.set("candle_pane", new Map([["MA_1", { name: "MA_1" }]])); // never collapsed
+    const chart = {
+      getIndicatorByPaneId: () => map,
+      getSize: (paneId: string) => ({ height: heights[paneId] ?? 0, top: 0 }),
+      setPaneOptions: (o: (typeof opts)[number]) => opts.push(o),
+    } as unknown as Chart;
+    return { chart, opts };
+  }
+
+  it("captures real heights + forces each sub-pane to 1px; expand restores them (candle pane untouched)", () => {
+    const { chart, opts } = fakeChart({ pane_1: 120, pane_2: 80 }, ["pane_1", "pane_2"]);
+    const heights = collapseSubPanes(chart);
+    expect(heights.get("pane_1")).toBe(120);
+    expect(heights.get("pane_2")).toBe(80);
+    expect(opts.map((o) => o.id).sort()).toEqual(["pane_1", "pane_2"]); // NOT candle_pane
+    expect(opts.every((o) => o.height === 1 && o.minHeight === 0 && o.dragEnabled === false)).toBe(true);
+
+    opts.length = 0;
+    expandSubPanes(chart, heights);
+    const byId = Object.fromEntries(opts.map((o) => [o.id, o]));
+    expect(byId.pane_1.height).toBe(120);
+    expect(byId.pane_2.height).toBe(80);
+    expect(byId.pane_1.dragEnabled).toBe(true);
+    expect(byId.pane_1.minHeight).toBe(30);
+  });
+
+  it("records the default height (not ~1px) when a pane is already collapsed, so a stray re-capture can't freeze it", () => {
+    const { chart } = fakeChart({ pane_1: 1 }, ["pane_1"]);
+    expect(collapseSubPanes(chart).get("pane_1")).toBe(120); // SUBPANE_HEIGHT fallback
+  });
+
+  it("expand falls back to the default height for a pane whose id isn't in the captured map", () => {
+    const { chart, opts } = fakeChart({ pane_new: 999 }, ["pane_new"]);
+    expandSubPanes(chart, new Map());
+    expect(opts[0].height).toBe(120); // SUBPANE_HEIGHT, not the live 999
   });
 });
