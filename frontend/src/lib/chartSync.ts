@@ -54,9 +54,8 @@ export const chartSync = new TabChannel<CrosshairMsg>();
 // bars before fitting.
 //
 // Why this isn't a one-liner: klinecharts v9 has no setVisibleRange(from, to). It
-// only exposes setBarSpace (zoom) + scrollToTimestamp (anchor one ts a constant
-// ~2 bars from the right edge), so "show this time window" has to be synthesised
-// from those. The barSpace→window relation isn't exact (it drifts a few %), so we
+// only exposes setBarSpace (zoom) + scrollToTimestamp (park one bar flush at the
+// right edge), so "show this time window" has to be synthesised from those. The barSpace→window relation isn't exact (it drifts a few %), so we
 // do one measure-and-correct pass, then anchor the right edge by pixel distance.
 // Verified empirically across intervals: left edge lands within ~1 bar, right edge
 // exact. getVisibleRange / convertFromPixel update synchronously, so this whole
@@ -288,9 +287,10 @@ export function applyVisibleRange(chart: Chart, fromTs: number, toTs: number): v
   if (!data || data.length < 2) return;
   const barMs = medianBarMs(data);
   const lastTs = data[data.length - 1].timestamp;
+  const toIdx = floatIdxAt(data, toTs, barMs);
   // Whitespace share of the window, in this chart's own (virtual) bars.
-  const wsBars = Math.max(0, floatIdxAt(data, toTs, barMs) - (data.length - 1));
-  const bars = Math.max(1, floatIdxAt(data, toTs, barMs) - floatIdxAt(data, fromTs, barMs));
+  const wsBars = Math.max(0, toIdx - (data.length - 1));
+  const bars = Math.max(1, toIdx - floatIdxAt(data, fromTs, barMs));
   // klinecharts silently no-ops setBarSpace for values outside [1, 50] (px/bar).
   // When the window maps onto only a few bars of a coarser sibling, w/bars blows
   // past 50, so an unclamped call would be dropped — leaving the sibling at its
@@ -327,10 +327,11 @@ export function applyVisibleRange(chart: Chart, fromTs: number, toTs: number): v
 // If the two instruments' sessions differ the bars themselves don't line up, so
 // columns can still diverge away from the anchor — a data limit, not a math one.
 //
-// The scroll is iterated: scrollToTimestamp parks the bar ~2 bars from the right, and
-// a single scrollByDistance can leave a sub-pixel residual, so we nudge until the bar
-// sits within ½px of anchorX (converges in 1–2 passes; capped so a chart that lacks
-// the history to reach the target degrades gracefully instead of looping).
+// The scroll is iterated: scrollToTimestamp lands the bar flush at the right edge
+// (half a bar in), and a single scrollByDistance can leave a sub-pixel residual, so
+// we nudge until the bar sits within ½px of anchorX (converges in 1–2 passes; capped
+// so a chart that lacks the history to reach the target degrades gracefully instead
+// of looping).
 export function applyVisibleRangeExact(
   chart: Chart,
   anchorTs: number,

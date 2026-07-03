@@ -16,7 +16,9 @@ const { applyVisibleRange, readVisibleRange } = await import("./chartSync");
 //  - timestamp → index is binary-search NEAREST, CLAMPED to the data extent, so
 //    convertToPixel/scrollToTimestamp cannot express a future (whitespace) time;
 //  - setBarSpace silently ignores values outside [1, 50] px/bar;
-//  - scrollByDistance shifts the right-edge whitespace by distance/barSpace bars.
+//  - scrollByDistance shifts the right-edge whitespace by distance/barSpace bars,
+//    clamped so at least 2 bars stay visible at either edge (adjustVisibleRange's
+//    default minVisibleBarCount) — the cap the degradation tests lean on.
 class FakeChart {
   data: { timestamp: number }[];
   barSpace: number;
@@ -28,6 +30,16 @@ class FakeChart {
     this.barSpace = opts.barSpace;
     this.rightDiff = opts.rightDiff ?? 0;
     this.w = opts.width ?? 800;
+    this.clampScroll();
+  }
+
+  private clampScroll() {
+    const visible = this.w / this.barSpace;
+    const n = this.data.length;
+    this.rightDiff = Math.min(visible - Math.min(2, n), Math.max(-n + Math.min(2, n), this.rightDiff));
+  }
+  maxRightDiff(): number {
+    return this.w / this.barSpace - Math.min(2, this.data.length);
   }
 
   getDataList() {
@@ -66,6 +78,7 @@ class FakeChart {
   }
   scrollByDistance(distance: number) {
     this.rightDiff -= distance / this.barSpace;
+    this.clampScroll();
   }
   scrollToTimestamp(ts: number) {
     const idx = this.nearestClamped(ts);
@@ -108,13 +121,24 @@ describe("readVisibleRange", () => {
     expect(Math.abs(r!.toTs - (last + 20.4 * HOUR))).toBeLessThanOrEqual(HOUR);
   });
 
-  it("extrapolates both edges when the whole view is whitespace", () => {
-    // Panned so far left that even the left pixel edge is past the last bar.
-    const c = new FakeChart({ data: bars(100, HOUR), barSpace: 10, rightDiff: 100 });
+  it("keeps reporting at klinecharts' max right-whitespace (2 bars left visible)", () => {
+    // The real chart clamps scrolling so ≥2 bars stay visible; at that extreme the
+    // right edge is ~78 virtual bars out and must still be reported.
+    const c = new FakeChart({ data: bars(100, HOUR), barSpace: 10, rightDiff: 1000 });
+    expect(c.rightDiff).toBe(c.maxRightDiff()); // 78
     const last = T0 + 99 * HOUR;
     const r = readVisibleRange(c.asChart());
     expect(r).not.toBeNull();
-    expect(r!.fromTs).toBeGreaterThan(last);
+    expect(Math.abs(r!.toTs - (last + 77.9 * HOUR))).toBeLessThanOrEqual(HOUR);
+  });
+
+  it("extrapolates the left edge when scrolled back past the first bar", () => {
+    // History exhausted and scrolled back beyond it: the left pixel edge sits in
+    // whitespace before the first bar.
+    const c = new FakeChart({ data: bars(100, HOUR), barSpace: 10, rightDiff: -1000 });
+    const r = readVisibleRange(c.asChart());
+    expect(r).not.toBeNull();
+    expect(r!.fromTs).toBeLessThan(T0);
     expect(r!.toTs).toBeGreaterThan(r!.fromTs);
   });
 });
@@ -146,5 +170,37 @@ describe("applyVisibleRange", () => {
     expect(c.barSpace).toBeCloseTo(5, 0);
     const xLast = c.xOf(lastTs);
     expect(Math.abs(xLast - (c.w - 40 * c.barSpace))).toBeLessThanOrEqual(2 * c.barSpace);
+    // Round-trip: reading the window back reproduces what was asked for (the
+    // invariant the whole master/follower loop rests on), whitespace included.
+    const r = readVisibleRange(c.asChart());
+    expect(r).not.toBeNull();
+    expect(Math.abs(r!.toTs - to)).toBeLessThanOrEqual(2 * HALF);
+    expect(Math.abs(r!.fromTs - from)).toBeLessThanOrEqual(2 * HALF);
+  });
+
+  it("scrolls newer follower bars out of view when the window ends in its past", () => {
+    // Mirror image of the whitespace case: the master is STALER than the follower
+    // (window's toTs sits inside the follower's data), so the follower's newer bars
+    // belong right of the visible window.
+    const data = bars(200, HOUR);
+    const to = T0 + 150 * HOUR;
+    const c = new FakeChart({ data, barSpace: 25 });
+    applyVisibleRange(c.asChart(), T0 + 70 * HOUR, to);
+    expect(c.xOf(to)).toBeGreaterThan(c.w - 1.5 * c.barSpace);
+    expect(c.xOf(to)).toBeLessThanOrEqual(c.w);
+    expect(c.xOf(data[data.length - 1].timestamp)).toBeGreaterThan(c.w);
+  });
+
+  it("degrades to max whitespace, without hanging, on a window entirely past the data", () => {
+    // A quick-range window on a closed market can sit wholly past the last bar
+    // (e.g. "1D" on a Sunday). The pin target is unreachable — klinecharts' scroll
+    // clamp (≥2 bars visible) must win, leaving max whitespace, not a loop. The
+    // quick-range caller clamps such windows to end at the last bar precisely
+    // because this is all a chart can show for one.
+    const data = bars(200, HOUR);
+    const lastTs = data[data.length - 1].timestamp;
+    const c = new FakeChart({ data, barSpace: 25 });
+    applyVisibleRange(c.asChart(), lastTs + 24 * HOUR, lastTs + 48 * HOUR);
+    expect(c.rightDiff).toBe(c.maxRightDiff());
   });
 });

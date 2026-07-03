@@ -586,7 +586,21 @@ export default function ChartCore({
     // and call this again with the SAME pending token while a walk is in flight.
     if (launchedTokenRef.current === token) return;
     launchedTokenRef.current = token;
-    const { resolution, fromTs, toTs } = token;
+    const { resolution } = token;
+    // Quick-range windows end at "now" (rangeWindow), which on a closed market sits
+    // hours-to-days past the last bar. applyVisibleRange renders that dead time as
+    // whitespace bars (wall-clock, at this chart's interval — the date-range-link
+    // semantics), which on a minute chart over a weekend would squeeze the actual
+    // data off screen. The preset's intent is "this much time, up to the latest
+    // data", so slide the window back to end at the latest bar, span preserved —
+    // clamped BEFORE the coverage walk so the walk covers the window we'll fit.
+    // A live market is unaffected (last bar ≈ now). The latest bar is already
+    // loaded here: this runs from the data-load effect / an unchanged-resolution
+    // pick, and the back-walk below only prepends OLDER bars.
+    const dl = chartRef.current?.getDataList();
+    const lastTs = dl?.length ? dl[dl.length - 1].timestamp : token.toTs;
+    const toTs = Math.min(token.toTs, lastTs);
+    const fromTs = toTs - (token.toTs - token.fromTs);
     // Stale once a newer pick replaces the token, the chart is torn down, or the
     // series identity drifts from what this pick captured (epic/broker/side/
     // resolution) — the same defence the scroll-back loader applies.
@@ -1505,7 +1519,16 @@ export default function ChartCore({
       }
       // Double-click an indicator's curve -> open its settings (TradingView-style).
       const hit = hitTestCache(lineCacheRef.current, x, y);
-      if (hit) indicatorSettingsRequest.set({ paneId: hit.paneId, name: hit.name });
+      if (hit) {
+        indicatorSettingsRequest.set({ paneId: hit.paneId, name: hit.name });
+        return;
+      }
+      // Double-click empty chart space -> hide/unhide all the sub-pane indicators
+      // at the bottom (Volume/MACD/RSI…), the same action as the sidebar eye menu.
+      // Skip the axis gutters — those own their own dblclick (reset price scale /
+      // bar spacing) and aren't "empty" chart space.
+      if (overPriceAxis(e) || overTimeAxis(e)) return;
+      controller.indicatorsHidden.set(!controller.indicatorsHidden.value);
     };
 
     // Right-click the chart -> our context menu (Paste an indicator). Suppress the
