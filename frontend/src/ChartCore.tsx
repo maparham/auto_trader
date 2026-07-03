@@ -3767,9 +3767,10 @@ export default function ChartCore({
       // away from the left edge, which is exactly when it's useful.
       if (!programmaticMoveRef.current) setActiveRange(null);
       if (!syncTimeRef.current || !isGestureCell(cellId)) return;
-      // Lock mode needs a window even at a whitespace edge (to keep mirroring siblings
-      // pixel-for-pixel); the plain link skips broadcasting there so siblings stay put.
-      const r = readVisibleRange(chart, lockedRef.current);
+      // A window edge in whitespace past the last bar is extrapolated (not bailed on),
+      // so panning into right-edge whitespace keeps driving the followers — they reveal
+      // their own newest candles, then mirror the whitespace.
+      const r = readVisibleRange(chart);
       if (!r) return;
       // Under lock, carry the exact-mode anchor (barSpace + reference bar + its pixel)
       // so siblings on the same interval mirror the window pixel-for-pixel; the plain

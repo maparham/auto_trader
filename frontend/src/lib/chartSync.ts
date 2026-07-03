@@ -109,6 +109,20 @@ function xAtTs(chart: Chart, timestamp: number): number | null {
 function mainWidth(chart: Chart): number {
   return chart.getSize("candle_pane", DomPosition.Main)?.width ?? 0;
 }
+// Typical bar spacing (ms) as the median positive timestamp delta — robust to
+// session gaps (mirrors customIndicators' estimateBarMs, which can't be imported
+// here: that module registers indicators at load). 0 when too little data to tell.
+function medianBarMs(data: { timestamp: number }[]): number {
+  if (data.length < 2) return 0;
+  const deltas: number[] = [];
+  for (let i = 1; i < data.length; i++) {
+    const d = data[i].timestamp - data[i - 1].timestamp;
+    if (d > 0) deltas.push(d);
+  }
+  if (!deltas.length) return 0;
+  deltas.sort((a, b) => a - b);
+  return deltas[deltas.length >> 1];
+}
 // Nearest bar index to `ts` in a sorted-by-timestamp data list (binary search).
 function nearestIdx(data: { timestamp: number }[], ts: number): number {
   const n = data.length;
@@ -165,34 +179,62 @@ export function clearAlignAnchor(tabId: string): void {
   alignAnchorByTab.delete(tabId);
 }
 
-// Read the time window currently on screen as its two pixel-edge timestamps.
-// When the chart is scrolled so an edge sits in the empty space past the first/last
-// bar, convertFromPixel at that pixel maps to NO bar and returns null.
-//
-// `extentFallback` (default true) governs what happens at such a null edge:
-//  - true  — fall back to the data extent so a window is ALWAYS reported. CRUCIAL for
-//            lock mode: returning null would make the broadcast bail, so a master
-//            scrolled into right-edge whitespace would stop driving its followers and
-//            they'd freeze out of alignment (the trap that desynced locked charts).
-//  - false — return null, so the caller broadcasts NOTHING. The plain cross-interval
-//            date-range link uses this: clamping to the extent would yank linked
-//            siblings to re-frame when the user merely scrolls past the last bar into
-//            whitespace, where they should simply stay put.
-export function readVisibleRange(
+// Timestamp at pixel x, EXTRAPOLATED into whitespace. klinecharts maps pixels past
+// the data extent onto virtual bar slots (whitespace renders at the same barSpace as
+// real bars), but convertFromPixel returns null there — no bar to look the time up
+// on. Reproduce the mapping in wall-clock terms by extending from the nearest end
+// bar at this chart's typical bar interval, so a window edge in whitespace still
+// carries a meaningful time.
+function tsAtXVirtual(
   chart: Chart,
-  extentFallback = true,
-): { fromTs: number; toTs: number } | null {
+  x: number,
+  data: { timestamp: number }[],
+  barMs: number,
+): number | null {
+  const ts = tsAtX(chart, x);
+  if (ts != null) return ts;
+  if (!(barMs > 0)) return null;
+  const space = chart.getBarSpace();
+  if (!(space > 0)) return null;
+  const lastTs = data[data.length - 1].timestamp;
+  const xLast = xAtTs(chart, lastTs);
+  if (xLast != null && x > xLast) return lastTs + ((x - xLast) / space) * barMs;
+  const firstTs = data[0].timestamp;
+  const xFirst = xAtTs(chart, firstTs);
+  if (xFirst != null && x < xFirst) return firstTs - ((xFirst - x) / space) * barMs;
+  return null;
+}
+
+// The window's position on this chart's bar axis, in (fractional) bar indices —
+// virtual indices past either end stand for whitespace slots, converted at this
+// chart's own bar interval. This is what lets a window that extends past the last
+// bar keep its meaning on a chart with a different interval.
+function floatIdxAt(data: { timestamp: number }[], ts: number, barMs: number): number {
+  const n = data.length;
+  const firstTs = data[0].timestamp;
+  const lastTs = data[n - 1].timestamp;
+  if (barMs > 0 && ts > lastTs) return n - 1 + (ts - lastTs) / barMs;
+  if (barMs > 0 && ts < firstTs) return -((firstTs - ts) / barMs);
+  return nearestIdx(data, ts);
+}
+
+// Read the time window currently on screen as its two pixel-edge timestamps. An
+// edge sitting in the empty space past the first/last bar is extrapolated at the
+// chart's bar interval (see tsAtXVirtual), so a master panned into right-edge
+// whitespace KEEPS reporting a (partly virtual) window and its followers keep
+// tracking — the old behavior of bailing there froze followers at the master's
+// last-bar time, hiding any newer candles of their own for good. Falls back to the
+// data extent only when extrapolation is impossible (single bar).
+export function readVisibleRange(chart: Chart): { fromTs: number; toTs: number } | null {
   const w = mainWidth(chart);
   if (w <= 1) return null;
   const data = chart.getDataList();
   if (!data || data.length < 1) return null;
-  let fromTs = tsAtX(chart, 1);
-  let toTs = tsAtX(chart, w - 1);
-  if (fromTs == null || toTs == null) {
-    if (!extentFallback) return null;
-    if (fromTs == null) fromTs = data[0].timestamp;
-    if (toTs == null) toTs = data[data.length - 1].timestamp;
-  }
+  const barMs = medianBarMs(data);
+  let fromTs = tsAtXVirtual(chart, 1, data, barMs);
+  let toTs = tsAtXVirtual(chart, w - 1, data, barMs);
+  if (fromTs == null) fromTs = data[0].timestamp;
+  if (toTs == null) toTs = data[data.length - 1].timestamp;
   if (!(toTs > fromTs)) return null;
   return { fromTs, toTs };
 }
@@ -232,7 +274,11 @@ export function readExactAnchor(
 }
 
 // Pan/zoom `chart` so its left edge ≈ fromTs and right edge ≈ toTs, mapping the
-// timestamps onto this chart's own bars (handles a different interval). No-op if
+// timestamps onto this chart's own bars (handles a different interval). A window
+// extending past the last bar becomes right-edge whitespace here too: the excess
+// time converts to virtual bars at THIS chart's interval, and the last bar is
+// pinned that many bar-widths left of the edge — so a follower first reveals its
+// own newest candles, then mirrors the master's whitespace proportionally. No-op if
 // the chart has no width or data yet; degrades gracefully when the chart lacks
 // history covering the window (the window is then approximate, never a throw).
 export function applyVisibleRange(chart: Chart, fromTs: number, toTs: number): void {
@@ -240,7 +286,11 @@ export function applyVisibleRange(chart: Chart, fromTs: number, toTs: number): v
   if (w <= 1 || !(toTs > fromTs)) return;
   const data = chart.getDataList();
   if (!data || data.length < 2) return;
-  const bars = Math.max(1, nearestIdx(data, toTs) - nearestIdx(data, fromTs));
+  const barMs = medianBarMs(data);
+  const lastTs = data[data.length - 1].timestamp;
+  // Whitespace share of the window, in this chart's own (virtual) bars.
+  const wsBars = Math.max(0, floatIdxAt(data, toTs, barMs) - (data.length - 1));
+  const bars = Math.max(1, floatIdxAt(data, toTs, barMs) - floatIdxAt(data, fromTs, barMs));
   // klinecharts silently no-ops setBarSpace for values outside [1, 50] (px/bar).
   // When the window maps onto only a few bars of a coarser sibling, w/bars blows
   // past 50, so an unclamped call would be dropped — leaving the sibling at its
@@ -249,20 +299,23 @@ export function applyVisibleRange(chart: Chart, fromTs: number, toTs: number): v
   // the correction pass below honest about what was actually applied.
   let space = clampBarSpace(w / bars);
   chart.setBarSpace(space);
-  chart.scrollToTimestamp(toTs, 0);
+  // The scroll anchor must be a REAL bar (scrollToTimestamp clamps a future time to
+  // the last bar anyway): the bar nearest toTs, or the last bar when toTs is in the
+  // whitespace — then pinned wsBars bar-widths left of the right edge.
+  const anchorTs = toTs > lastTs ? lastTs : data[nearestIdx(data, toTs)].timestamp;
+  chart.scrollToTimestamp(anchorTs, 0);
+  scrollBarToPixel(chart, anchorTs, w - wsBars * space);
   // One correction pass: rescale zoom by the ratio of the span we actually got to
-  // the span we wanted (the barSpace→window relation isn't exactly linear).
-  const lpx = tsAtX(chart, 1);
-  const rpx = tsAtX(chart, w - 1);
+  // the span we wanted (the barSpace→window relation isn't exactly linear). Edges
+  // in whitespace are measured by extrapolation, same as the read side.
+  const lpx = tsAtXVirtual(chart, 1, data, barMs);
+  const rpx = tsAtXVirtual(chart, w - 1, data, barMs);
   if (lpx != null && rpx != null && rpx > lpx) {
     space = clampBarSpace(space * ((rpx - lpx) / (toTs - fromTs)));
     chart.setBarSpace(space);
   }
-  // Anchor the right pixel edge on toTs (scrollToTimestamp parks it ~2 bars in, so
-  // nudge by the residual pixel distance).
-  chart.scrollToTimestamp(toTs, 0);
-  const x = xAtTs(chart, toTs);
-  if (x != null) chart.scrollByDistance(w - x, 0);
+  // Re-pin after the zoom correction (barSpace changes shift the anchor's pixel).
+  scrollBarToPixel(chart, anchorTs, w - wsBars * space);
 }
 
 // Exact mirror for "lock charts": the sibling shares the master's interval, so we
