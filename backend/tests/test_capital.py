@@ -253,3 +253,79 @@ def test_get_market_meta_falls_back_to_tick_for_precision():
     meta = _run_meta(broker, "GOLD")
     assert meta["pricePrecision"] == 2
     assert meta["closed"] is False  # no status, no hours -> defaults to open
+
+
+# ---------------------------------------------------------------------------
+# get_market_detail: account-leverage enrichment.
+#
+# Capital's /markets/{epic} marginFactor is a static base value (100%) that
+# IGNORES the account's per-asset-class leverage setting — the effective
+# margin/leverage lives in /accounts/preferences `leverages[type].current`
+# (verified empirically: demo prefs said COMMODITIES 20x while marginFactor
+# stayed 100). The detail payload carries it as `accountLeverage` so the
+# market-info popover can show what Capital's own app shows.
+# ---------------------------------------------------------------------------
+
+
+def _broker_with_routes(routes: dict[str, dict | Exception]) -> tuple[CapitalComBroker, list[str]]:
+    """Broker whose _get answers per-path from `routes`; records requested paths."""
+    broker = CapitalComBroker(api_key="k", identifier="i", password="p", base_url="http://x")
+    calls: list[str] = []
+
+    async def _fake_get(path: str, params: dict) -> _FakeResp:
+        calls.append(path)
+        hit = routes[path]
+        if isinstance(hit, Exception):
+            raise hit
+        return _FakeResp(hit)
+
+    broker._get = _fake_get  # type: ignore[assignment]
+    return broker, calls
+
+
+_OIL_DETAIL = {
+    "instrument": {"epic": "OIL_CRUDE", "type": "COMMODITIES", "marginFactor": 100},
+    "dealingRules": {},
+    "snapshot": {"bid": 68.4},
+}
+_PREFS = {"hedgingMode": True, "leverages": {"COMMODITIES": {"current": 20, "available": [1, 20]}}}
+
+
+def test_market_detail_carries_account_leverage_for_instrument_type():
+    broker, _ = _broker_with_routes(
+        {"/api/v1/markets/OIL_CRUDE": _OIL_DETAIL, "/api/v1/accounts/preferences": _PREFS}
+    )
+    detail = asyncio.run(broker.get_market_detail("OIL_CRUDE"))
+    assert detail["accountLeverage"] == 20
+    # Raw sections stay verbatim (marginFactor untouched — the raw-truth section).
+    assert detail["instrument"]["marginFactor"] == 100
+
+
+def test_market_detail_omits_account_leverage_when_prefs_unavailable():
+    broker, _ = _broker_with_routes(
+        {
+            "/api/v1/markets/OIL_CRUDE": _OIL_DETAIL,
+            "/api/v1/accounts/preferences": RuntimeError("boom"),
+        }
+    )
+    detail = asyncio.run(broker.get_market_detail("OIL_CRUDE"))
+    assert detail is not None
+    assert "accountLeverage" not in detail  # detail still served, just unenriched
+
+
+def test_market_detail_omits_account_leverage_for_unlisted_type():
+    prefs = {"leverages": {"SHARES": {"current": 5}}}
+    broker, _ = _broker_with_routes(
+        {"/api/v1/markets/OIL_CRUDE": _OIL_DETAIL, "/api/v1/accounts/preferences": prefs}
+    )
+    detail = asyncio.run(broker.get_market_detail("OIL_CRUDE"))
+    assert "accountLeverage" not in detail
+
+
+def test_account_preferences_are_cached_across_detail_calls():
+    broker, calls = _broker_with_routes(
+        {"/api/v1/markets/OIL_CRUDE": _OIL_DETAIL, "/api/v1/accounts/preferences": _PREFS}
+    )
+    asyncio.run(broker.get_market_detail("OIL_CRUDE"))
+    asyncio.run(broker.get_market_detail("OIL_CRUDE"))
+    assert calls.count("/api/v1/accounts/preferences") == 1

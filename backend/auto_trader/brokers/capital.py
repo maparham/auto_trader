@@ -52,6 +52,9 @@ SESSION_TTL = timedelta(minutes=9)  # docs say 10; refresh a little early.
 # storm shared-broker polling can trigger. Short enough that the modal's snapshot
 # is still effectively live.
 _MARKET_DETAIL_TTL = timedelta(seconds=30)
+# Account leverage preferences change only when the user edits them in Capital's
+# UI — a long cache keeps the details modal from adding a request per open.
+_PREFS_TTL = timedelta(minutes=10)
 # Capital.com expects naive ISO timestamps interpreted as UTC, e.g. 2022-02-24T00:00:00
 _TS_FMT = "%Y-%m-%dT%H:%M:%S"
 # Capital.com's documented general limit is 10 requests/sec/user; stay just under
@@ -274,6 +277,8 @@ class CapitalComBroker(MarketDataBroker):
         # FX-rate cache keyed "FROM->TO": (fetched_at, factor). Used to convert a
         # position's instrument-currency margin into the account currency.
         self._fx_cache: dict[str, tuple[datetime, float]] = {}
+        # Account leverage preferences (per asset class): (fetched_at, leverages dict).
+        self._prefs_cache: tuple[datetime, dict] | None = None
 
     def _is_live_env(self) -> bool:
         """True only for Capital's LIVE host (api-capital…), not demo or test hosts.
@@ -548,6 +553,22 @@ class CapitalComBroker(MarketDataBroker):
             self._fx_cache[key] = (now, factor)
         return factor
 
+    async def _fetch_leverages(self) -> dict:
+        """Per-asset-class leverage settings from /accounts/preferences
+        (`{"COMMODITIES": {"current": 20, ...}, ...}`), cached _PREFS_TTL.
+        {} on any failure — leverage is an enrichment, never worth failing a
+        details request over."""
+        now = datetime.now(timezone.utc)
+        if self._prefs_cache is not None and now - self._prefs_cache[0] < _PREFS_TTL:
+            return self._prefs_cache[1]
+        try:
+            resp = await self._get("/api/v1/accounts/preferences", {})
+            leverages = resp.json().get("leverages") or {}
+        except Exception:
+            return {}
+        self._prefs_cache = (now, leverages)
+        return leverages
+
     async def get_market_detail(self, epic: str) -> dict | None:
         """The full broker-provided instrument detail, passed through as-is for the
         chart's instrument-details modal: the three raw sections (instrument,
@@ -556,15 +577,27 @@ class CapitalComBroker(MarketDataBroker):
         onePipMeans/valueOfOnePip/currencies that commodities leave null), so a
         generic key/value render of the raw payload shows "all details" without a
         hand-maintained allowlist drifting out of date. None if the epic is
-        unknown."""
+        unknown.
+
+        One curated addition: `accountLeverage` — the account's effective leverage
+        for this instrument's asset class, from /accounts/preferences. Capital's
+        `instrument.marginFactor` is a static base (100%) that ignores the account
+        leverage setting, so it is NOT what Capital's own app shows as
+        margin/leverage; `leverages[instrument.type].current` is. Omitted when
+        preferences are unavailable or the type isn't listed."""
         d = await self._fetch_market_raw(epic)
         if d is None:
             return None
-        return {
+        out = {
             "instrument": d.get("instrument") or {},
             "dealingRules": d.get("dealingRules") or {},
             "snapshot": d.get("snapshot") or {},
         }
+        lev = (await self._fetch_leverages()).get(out["instrument"].get("type"))
+        current = lev.get("current") if isinstance(lev, dict) else None
+        if isinstance(current, (int, float)) and current > 0:
+            out["accountLeverage"] = current
+        return out
 
     async def all_markets(self) -> list[dict]:
         """The complete instrument catalogue (~4000 markets), one request.

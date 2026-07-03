@@ -11,6 +11,8 @@ import CloseButton from "./CloseButton";
 import { fetchMarketDetail, type MarketDetail } from "./lib/feed";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import {
+  accountLeverageText,
+  accountMarginText,
   fundingText,
   leverageText,
   localOpeningHours,
@@ -209,8 +211,15 @@ export default function MarketInfoPopover({ epic, brokerId, title, anchor, onClo
   const feeTime = fee ? swapTimeText(fee.swapChargeTimestamp, offsetMinutes) : null;
 
   const minSize = formatValue("minDealSize", rules.minDealSize);
-  const margin = marginText(num(inst, "marginFactor"), inst.marginFactorUnit);
-  const leverage = leverageText(num(inst, "marginFactor"), inst.marginFactorUnit);
+  // Prefer the account-effective leverage (Capital's per-asset-class setting —
+  // what Capital's own app shows); instrument.marginFactor is a static base that
+  // ignores it, kept only as the fallback for brokers where it IS effective (IG).
+  const acctLev = detail?.accountLeverage;
+  const margin =
+    accountMarginText(acctLev) ?? marginText(num(inst, "marginFactor"), inst.marginFactorUnit);
+  const leverage =
+    accountLeverageText(acctLev) ??
+    leverageText(num(inst, "marginFactor"), inst.marginFactorUnit);
   const spread = spreadText(bid, offer, decimals);
 
   // Row order mirrors Capital's sheet: Currency, Min size, [funding block],

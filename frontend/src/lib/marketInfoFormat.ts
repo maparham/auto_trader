@@ -115,6 +115,20 @@ export function swapTimeText(tsMs: unknown, offsetMinutes: number): string | nul
   return hhmm(mins);
 }
 
+/** Account leverage (Capital's per-asset-class preference, e.g. 10) → "10:1".
+ * This is the EFFECTIVE leverage Capital's own app shows; the instrument's
+ * marginFactor is a static base that ignores the account setting. */
+export function accountLeverageText(leverage: unknown): string | null {
+  if (typeof leverage !== "number" || !(leverage > 0)) return null;
+  return `${leverage}:1`;
+}
+
+/** Margin derived from the account leverage: 10 → "10.00%", 20 → "5.00%". */
+export function accountMarginText(leverage: unknown): string | null {
+  if (typeof leverage !== "number" || !(leverage > 0)) return null;
+  return `${(100 / leverage).toFixed(2)}%`;
+}
+
 /** marginFactor + unit → "10.00%" for PERCENTAGE, verbatim otherwise. */
 export function marginText(factor: unknown, unit: unknown): string | null {
   if (typeof factor !== "number" || !Number.isFinite(factor)) return null;

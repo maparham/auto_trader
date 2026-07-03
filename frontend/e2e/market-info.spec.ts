@@ -14,7 +14,7 @@ const DETAILS = {
     currency: "USD",
     lotSize: 1,
     guaranteedStopAllowed: true,
-    marginFactor: 5,
+    marginFactor: 100, // static base — must NOT be shown when accountLeverage exists
     marginFactorUnit: "PERCENTAGE",
     openingHours: {
       mon: ["00:00 - 21:00", "22:00 - 00:00"],
@@ -37,6 +37,9 @@ const DETAILS = {
     minDealSize: { value: 1, unit: "POINTS" },
     maxDealSize: { value: 125000, unit: "POINTS" },
   },
+  // Account-effective leverage (Capital /accounts/preferences): 20x → Leverage
+  // 20:1, Margin 5.00% — must win over the static marginFactor above.
+  accountLeverage: 20,
   snapshot: {
     marketStatus: "TRADEABLE",
     bid: 68.425,
@@ -86,8 +89,9 @@ test("legend ⓘ opens the curated popover; Esc and outside click dismiss", asyn
   await expect(pop).toContainText("USD");
   await expect(pop).toContainText("-0.011%"); // funding, 3 decimals
   await expect(pop).toContainText("21:00"); // swap charge time
-  await expect(pop).toContainText("5.00%"); // margin
-  await expect(pop).toContainText("20:1"); // leverage
+  await expect(pop).toContainText("5.00%"); // margin from accountLeverage (100/20), not marginFactor
+  await expect(pop).toContainText("20:1"); // leverage from accountLeverage
+  await expect(pop.locator(".mi-row", { hasText: "Margin" })).not.toContainText("100.00%");
   await expect(pop).toContainText("0.032"); // spread at 3 decimals
 
   // Raw section is collapsed by default, expands on click.

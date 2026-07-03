@@ -270,6 +270,11 @@ export interface MarketDetail {
   instrument: Record<string, unknown>;
   dealingRules: Record<string, unknown>;
   snapshot: Record<string, unknown>;
+  // Account-effective leverage for this instrument's asset class (Capital's
+  // /accounts/preferences). The instrument's marginFactor is a static base that
+  // ignores the account setting — this is what the broker's own app shows.
+  // Absent for brokers without the concept (IG) or when preferences fail.
+  accountLeverage?: number;
 }
 
 /** Full instrument detail for the details modal. Fetched once on open (not
@@ -287,6 +292,7 @@ export async function fetchMarketDetail(
       instrument: d.instrument ?? {},
       dealingRules: d.dealingRules ?? {},
       snapshot: d.snapshot ?? {},
+      ...(typeof d.accountLeverage === "number" ? { accountLeverage: d.accountLeverage } : {}),
     };
   } catch {
     return null;

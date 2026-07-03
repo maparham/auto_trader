@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  accountLeverageText,
+  accountMarginText,
   fundingText,
   leverageText,
   localOpeningHours,
@@ -91,6 +93,29 @@ describe("swapTimeText", () => {
   });
   it("rejects non-numbers", () => {
     expect(swapTimeText(null, 0)).toBeNull();
+  });
+});
+
+describe("accountLeverageText / accountMarginText", () => {
+  // Capital's effective values come from the account's per-asset-class leverage
+  // preference (e.g. COMMODITIES 10x → "10:1" and margin 100/10 = "10.00%");
+  // instrument.marginFactor is a static base that ignores the setting.
+  it("formats leverage and derives margin from the account leverage", () => {
+    expect(accountLeverageText(10)).toBe("10:1");
+    expect(accountMarginText(10)).toBe("10.00%");
+    expect(accountLeverageText(20)).toBe("20:1");
+    expect(accountMarginText(20)).toBe("5.00%");
+    expect(accountLeverageText(2)).toBe("2:1");
+    expect(accountMarginText(2)).toBe("50.00%");
+    expect(accountLeverageText(1)).toBe("1:1");
+    expect(accountMarginText(1)).toBe("100.00%");
+  });
+  it("rejects missing/invalid values", () => {
+    expect(accountLeverageText(undefined)).toBeNull();
+    expect(accountMarginText(undefined)).toBeNull();
+    expect(accountLeverageText(0)).toBeNull();
+    expect(accountMarginText(0)).toBeNull();
+    expect(accountLeverageText("10")).toBeNull();
   });
 });
 
