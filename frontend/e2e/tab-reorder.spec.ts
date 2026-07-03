@@ -97,6 +97,22 @@ test("dragging lifts a floating chip and slides a gap open", async ({ page }) =>
   await expect(tabs.nth(1)).toHaveClass(/dragging/);
   await expect(tabs.nth(0)).toHaveCSS("transform", /matrix\(1, 0, 0, 1, [1-9]/);
 
+  // The clone is pinned to the tab bar: drag the cursor far down over the
+  // chart and the chip must slide only horizontally, its Y clamped inside the
+  // bar instead of following the cursor into the chart.
+  const bar = (await page.locator(".tab-bar-tabs").boundingBox())!;
+  await page.mouse.move(dst.x + dst.width * 0.1, bar.y + bar.height + 300, { steps: 8 });
+  await expect
+    .poll(() =>
+      page
+        .locator(".tab-float")
+        .evaluate((el) => new DOMMatrixReadOnly(getComputedStyle(el).transform).f),
+    )
+    .toBeLessThanOrEqual(bar.y + bar.height);
+  // Back onto the target chip before dropping, so the reorder below is
+  // exercised unchanged.
+  await page.mouse.move(dst.x + dst.width * 0.1, dst.y + dst.height / 2, { steps: 8 });
+
   // Let the 150ms slide-apart transition settle, then nudge and drop. Without
   // this, Chromium's native drag hit-testing — which re-runs against the
   // CSS-transition-animated chip under a stationary cursor — finds the target

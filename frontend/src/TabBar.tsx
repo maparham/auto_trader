@@ -132,6 +132,10 @@ export default function TabBar({
     containerWidth: number;
     grabDx: number;
     grabDy: number;
+    // Clamp range for the clone's translate: the chip rides the tab bar only
+    // (Chrome-style), sliding horizontally along it no matter where the
+    // cursor goes — including down onto the chart's merge overlay.
+    bounds: { minX: number; maxX: number; minY: number; maxY: number };
   } | null>(null);
   // The cancelled-drag anim-off timer (see cancelDrag) — held in a ref so a new
   // drag started within its 200ms window can cancel it before it strips the
@@ -177,8 +181,10 @@ export default function TabBar({
   }, [dragId, draggedTab, tabs, cancelDrag]);
 
   useEffect(() => {
-    // The floating clone follows the cursor for the whole gesture — including
-    // over the chart (ChartGrid's merge overlay) — so listen at the document.
+    // The clone tracks the cursor for the whole gesture — so listen at the
+    // document — but its position is clamped to the tab bar (bounds cached at
+    // dragstart): the chip slides only along the bar, Chrome-style, even while
+    // the cursor is down over the chart's merge overlay or off the window.
     // It's positioned via style.transform directly: dragover fires roughly
     // per frame, and a React state update per event would re-render the bar.
     if (dragId == null) return;
@@ -186,28 +192,12 @@ export default function TabBar({
       const g = dragGeom.current;
       const el = floatRef.current;
       if (g == null || el == null) return;
-      // Cursor is (back) inside the window: the clone tracks it again, so undo
-      // the leave-the-window dimming below.
-      el.style.visibility = "";
-      barRef.current?.classList.remove("drag-outside");
-      el.style.transform = `translate(${e.clientX - g.grabDx}px, ${e.clientY - g.grabDy}px) scale(1.05)`;
-    };
-    const leave = (e: DragEvent) => {
-      // relatedTarget null on a document dragleave means the cursor left the
-      // window entirely. The clone can't follow a cursor that isn't there, so
-      // hide it and re-dim the source chip (App.css .drag-outside) as the drag's
-      // visible stand-in until the cursor returns.
-      if (e.relatedTarget != null) return;
-      if (floatRef.current != null) floatRef.current.style.visibility = "hidden";
-      barRef.current?.classList.add("drag-outside");
+      const x = Math.min(Math.max(e.clientX - g.grabDx, g.bounds.minX), g.bounds.maxX);
+      const y = Math.min(Math.max(e.clientY - g.grabDy, g.bounds.minY), g.bounds.maxY);
+      el.style.transform = `translate(${x}px, ${y}px) scale(1.05)`;
     };
     document.addEventListener("dragover", move);
-    document.addEventListener("dragleave", leave);
-    return () => {
-      document.removeEventListener("dragover", move);
-      document.removeEventListener("dragleave", leave);
-      barRef.current?.classList.remove("drag-outside");
-    };
+    return () => document.removeEventListener("dragover", move);
   }, [dragId]);
 
   // Right-click menu on a chip and the follow-up merge checklist, anchored
@@ -395,6 +385,7 @@ export default function TabBar({
               const r = c.getBoundingClientRect();
               return { left: r.left, top: r.top, width: r.width, height: r.height };
             });
+            const barRect = bar.getBoundingClientRect();
             dragGeom.current = {
               rects,
               ids: tabs.map((t) => t.id),
@@ -404,6 +395,12 @@ export default function TabBar({
               containerWidth: bar.clientWidth - 6,
               grabDx: e.clientX - rects[i].left,
               grabDy: e.clientY - rects[i].top,
+              bounds: {
+                minX: barRect.left,
+                maxX: barRect.right - rects[i].width,
+                minY: barRect.top,
+                maxY: barRect.bottom - rects[i].height,
+              },
             };
             if (emptyImg != null) e.dataTransfer.setDragImage(emptyImg, 0, 0);
             // Firefox refuses to start an HTML5 drag when no drag data is set;
