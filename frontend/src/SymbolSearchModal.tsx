@@ -19,6 +19,8 @@ import SymbolIcon from "./SymbolIcon";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { loadRecentSymbols, pushRecentSymbol } from "./lib/persist";
 import { brokerLabel } from "./lib/trading";
+import { isSyntheticExpr, parseLegs } from "./lib/syntheticExpr";
+import { registerSynthetic } from "./lib/syntheticRegistry";
 
 interface Props {
   current: Instrument;
@@ -163,10 +165,41 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
 
   const loading = query.trim() ? searching : catalogueLoading;
 
+  // A typed arithmetic expression (e.g. OIL_CRUDE/DXY) whose legs all exist in
+  // the catalogue becomes a "Create synthetic" row above the results. null when
+  // the query isn't an expression, is malformed, or names an unknown leg.
+  const syntheticCandidate = useMemo(() => {
+    const q = query.trim();
+    if (!q || !isSyntheticExpr(q) || all.length === 0) return null;
+    let legList: string[];
+    try {
+      legList = parseLegs(q);
+    } catch {
+      return null;
+    }
+    if (legList.length === 0) return null;
+    const byEpic = new Set(all.map((m) => m.epic.toUpperCase()));
+    const missing = legList.filter((l) => !byEpic.has(l.toUpperCase()));
+    return { expr: q, legs: legList, missing };
+  }, [query, all]);
+
   function pick(s: Instrument) {
     pushRecentSymbol(s.epic);
     setRecentEpics(loadRecentSymbols());
     onPick(s);
+    onClose();
+  }
+
+  function pickSynthetic(expr: string) {
+    const entry = registerSynthetic(expr, brokerId);
+    pushRecentSymbol(entry.id);
+    setRecentEpics(loadRecentSymbols());
+    onPick({
+      epic: entry.id,
+      name: entry.expression,
+      status: "TRADEABLE",
+      type: "SYNTHETIC",
+    });
     onClose();
   }
 
@@ -214,6 +247,27 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
             </button>
           ))}
         </div>
+
+        {syntheticCandidate && (
+          <div className="symsearch-synthetic">
+            {syntheticCandidate.missing.length === 0 ? (
+              <button
+                className="symsearch-synthetic-row"
+                onClick={() => pickSynthetic(syntheticCandidate.expr)}
+              >
+                <span className="ss-epic">= {syntheticCandidate.expr}</span>
+                <span className="ss-name">
+                  Synthetic · {syntheticCandidate.legs.join(", ")}
+                </span>
+              </button>
+            ) : (
+              <div className="symsearch-empty">
+                Unknown instrument{syntheticCandidate.missing.length > 1 ? "s" : ""}:{" "}
+                {syntheticCandidate.missing.join(", ")}
+              </div>
+            )}
+          </div>
+        )}
 
         <ul className="symsearch-results">
           {shown.map((m, i) => (

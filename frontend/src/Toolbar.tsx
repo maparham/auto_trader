@@ -53,6 +53,7 @@ import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
 import BrokerSelector from "./BrokerSelector";
 import type { BrokerAccount } from "./lib/trading";
+import { isSynthetic } from "./lib/syntheticRegistry";
 
 interface DrawMenu {
   x: number;
@@ -416,7 +417,9 @@ export default function Toolbar({
         onClick={() => setSymModalOpen(true)}
       >
         <SymbolIcon epic={symbol.epic} type={symbol.type} className="sym-logo" />
-        <span className="sym-epic">{symbol.epic}</span>
+        <span className="sym-epic">
+          {isSynthetic(symbol.epic) ? (symbol.name ?? symbol.epic) : symbol.epic}
+        </span>
         <svg className="sym-caret" viewBox="0 0 24 24" width="12" height="12" fill="none"
           stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
           aria-hidden="true">
@@ -546,37 +549,44 @@ export default function Toolbar({
         )}
       </div>
 
-      <span className="tb-div" aria-hidden="true" />
+      {/* Synthetic charts are alert-free: history-only, so a price alert on them
+          would never fire. Hide the divider along with the button so no orphan
+          separator remains. */}
+      {!isSynthetic(symbol.epic) && (
+        <>
+          <span className="tb-div" aria-hidden="true" />
 
-      {/* Open the TV-style alert modal, prefilled with the last price. The bell is
-          an inline SVG (currentColor) so it stays monochrome, not a colored emoji. */}
-      <button
-        className="anchor-btn icon-btn"
-        title="Create a price alert"
-        onClick={() => {
-          // This click is a user gesture: unlock audio so later (programmatic)
-          // pings can sound, and request OS-notification permission. Surface the
-          // outcome so the user knows whether banners will actually appear.
-          primeSound();
-          ensureNotifyPermission().then((perm) => {
-            if (perm === "denied")
-              toast("OS alerts blocked — alerts will show in this tab only");
-            else if (perm === "unsupported")
-              toast("OS alerts unsupported here — alerts will show in this tab");
-          });
-          const dl = chart?.getDataList();
-          const last = dl && dl.length ? dl[dl.length - 1].close : 0;
-          alertModalRequest.set({ price: last });
-        }}
-      >
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true">
-          <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-          <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-        </svg>
-        Alert
-      </button>
+          {/* Open the TV-style alert modal, prefilled with the last price. The bell is
+              an inline SVG (currentColor) so it stays monochrome, not a colored emoji. */}
+          <button
+            className="anchor-btn icon-btn"
+            title="Create a price alert"
+            onClick={() => {
+              // This click is a user gesture: unlock audio so later (programmatic)
+              // pings can sound, and request OS-notification permission. Surface the
+              // outcome so the user knows whether banners will actually appear.
+              primeSound();
+              ensureNotifyPermission().then((perm) => {
+                if (perm === "denied")
+                  toast("OS alerts blocked — alerts will show in this tab only");
+                else if (perm === "unsupported")
+                  toast("OS alerts unsupported here — alerts will show in this tab");
+              });
+              const dl = chart?.getDataList();
+              const last = dl && dl.length ? dl[dl.length - 1].close : 0;
+              alertModalRequest.set({ price: last });
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              aria-hidden="true">
+              <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+            </svg>
+            Alert
+          </button>
+        </>
+      )}
 
       {/* Price-scale A / L / I (auto-fit, logarithmic, invert) */}
       <div className="scale">

@@ -133,6 +133,7 @@ import { chartColors, loadSettings, type BidAsk, type BidAskStyle, type Clock, t
 import { hexToRgba, DASH_DASHED, DASH_DOTTED } from "./lib/lineStyle";
 import { makeFormatDate } from "./lib/timeFormat";
 import { formatRemaining, resolveExpiry } from "./lib/alertUi";
+import { isSynthetic, setSyntheticPrecision } from "./lib/syntheticRegistry";
 
 // The browser's IANA timezone (e.g. "Europe/London"), used when the user picks
 // "Browser time". klinecharts needs an explicit name; passing "" can leave the
@@ -149,6 +150,14 @@ function browserTimezone(): string {
 // one-element array, so normalize to the single result.
 function first<T>(r: T | T[]): T {
   return (Array.isArray(r) ? r[0] : r) as T;
+}
+
+// Decimals for ~5 significant figures on a synthetic ratio/spread of unknown magnitude. Clamped 0..8.
+function synthPrecision(sampleClose: number): number {
+  const v = Math.abs(sampleClose);
+  if (!Number.isFinite(v) || v === 0) return 2;
+  const digitsLeft = Math.floor(Math.log10(v)) + 1;
+  return Math.min(8, Math.max(0, 5 - digitsLeft));
 }
 
 // How close (px) a click/cursor must be to a curve to select/hover it.
@@ -2446,6 +2455,7 @@ export default function ChartCore({
         }
       };
       const drawPositions = () => {
+        if (isSynthetic(epicRef.current)) return; // analysis-only: no trade lines
         // Sidebar eye menu "Hide positions and orders": master-hide clears every
         // line (render([]) removes the previously-rendered ones) instead of
         // building specs from the (unaffected) underlying trade state.
@@ -2647,6 +2657,7 @@ export default function ChartCore({
     // Default to open on an in-cell symbol switch so a now-open symbol doesn't flash
     // "closed" until the first fetch resolves a round-trip later.
     setMarketClosed(false);
+    if (isSynthetic(symbol.epic)) return; // synthetic: no market-status poll, never "closed"
 
     const schedule = (closed: boolean, nextOpen: string | null): void => {
       clearTimeout(timer);
@@ -2847,6 +2858,11 @@ export default function ChartCore({
       // Live-only (seconds) intervals have no history, so disable scroll-back to
       // avoid firing empty fetchRange windows that walk back for nothing.
       chartRef.current.applyNewData(bars, !period.liveOnly);
+      if (isSynthetic(symbol.epic) && bars.length > 0) {
+        const p = synthPrecision(bars[bars.length - 1].close);
+        setFetchedPrecision(p);
+        setSyntheticPrecision(symbol.epic, p);
+      }
       // Live-only (seconds) intervals legitimately start empty and fill from the
       // stream, so don't badge them no-data on the empty history; the first tick
       // below flips hasData true. Native intervals with no history are genuinely
@@ -3056,6 +3072,7 @@ export default function ChartCore({
   // from `redraw` (so the spine stays glued to its lines through scroll/zoom/ticks and
   // line drags). Stable — reads refs only.
   const paintBracket = useCallback(() => {
+    if (isSynthetic(epicRef.current)) return; // analysis-only: no position bracket
     const chart = chartRef.current;
     const canvas = bracketCanvasRef.current;
     const wrap = wrapRef.current;
@@ -4492,7 +4509,7 @@ export default function ChartCore({
         getChart={getChart}
         controller={controller}
         ctx={{
-          symbol: symbol.epic,
+          symbol: isSynthetic(symbol.epic) ? (symbol.name ?? symbol.epic) : symbol.epic,
           period: period.label,
           precision,
           // The socket connects to OUR backend, so status alone stays "live"
@@ -4878,6 +4895,7 @@ export default function ChartCore({
         );
       })}
 
+      {!isSynthetic(symbol.epic) && (
       <div
         ref={plusBtnRef}
         className="axis-plus"
@@ -4908,6 +4926,7 @@ export default function ChartCore({
         </span>
         <span className="axis-plus-price" ref={plusPriceLabelRef} />
       </div>
+      )}
 
 
       {plusMenu && (

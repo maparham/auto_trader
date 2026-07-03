@@ -60,6 +60,7 @@ from auto_trader.core.candle_aggregate import (
     fold,
     is_derived,
 )
+from auto_trader.core.synthetic import SyntheticError, combine, legs, parse
 from auto_trader.engine.backtest import BacktestEngine
 from auto_trader.strategy.rule import Operand, Rule, RuleGroup, RuleStrategy, series_name
 
@@ -879,28 +880,22 @@ async def ws_state(websocket: WebSocket) -> None:
         _state_subscribers.discard(websocket)
 
 
-@app.get("/api/candles", response_model=list[CandleDTO])
-async def candles(
-    epic: str = Query("EURUSD"),
-    resolution: str = Query(Resolution.MINUTE_5.value),
-    bars: int = Query(500, ge=1, le=1000),
-    from_ts: int | None = Query(None, description="window start, unix seconds"),
-    to_ts: int | None = Query(None, description="window end, unix seconds"),
-    price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
-    broker_id: str = Query("capital", alias="broker"),
-) -> list[CandleDTO]:
-    """Candles for an epic. With from_ts/to_ts -> that date window (used by the
-    chart's scroll-back). Without -> most-recent `bars` (weekend-proof).
-
-    Sub-minute (seconds) intervals have no history endpoint upstream, so they're
-    served from our own tick recorder (warmed while the epic is streamed) and
-    extended live over the socket. Scroll-back (from_ts/to_ts) isn't supported
-    for them — the chart disables it for live-only intervals."""
+async def _fetch_leg_candles(
+    broker_id: str,
+    epic: str,
+    resolution: str,
+    bars: int,
+    from_ts: int | None,
+    to_ts: int | None,
+    price_side: str,
+) -> list[Candle]:
+    """Fetch raw candles for one epic against one broker: seconds (tick recorder),
+    derived (folded from cached base series), or native (cache/broker). Raises the
+    same HTTPExceptions as before for bad brokers/windows/IG-derived; does NOT
+    raise the native-path "no data at all" 404 — that decision stays with the
+    caller (a leg's emptiness may or may not be fatal depending on context)."""
     if resolution in SECONDS_INTERVALS:
-        return [
-            _candle_dto(c)
-            for c in await TICK_STORE.bars(broker_id, epic, SECONDS_INTERVALS[resolution], bars)
-        ]
+        return await TICK_STORE.bars(broker_id, epic, SECONDS_INTERVALS[resolution], bars)
     if is_derived(resolution):
         # 2W/3W/6W, 1M/2M/3M, 1Y aren't native resolutions: fold the cached DAY/WEEK
         # base series into calendar buckets on read. The cache only ever sees the
@@ -950,7 +945,7 @@ async def candles(
             base_bars = await CANDLE_CACHE.window(
                 base_key, base_seconds, start, end, fetch_range
             )
-            return [_candle_dto(c) for c in fold(base_bars, rule)]
+            return fold(base_bars, rule)
         base_bars = await CANDLE_CACHE.recent(
             base_key, base_seconds, base_count_for(rule, bars), fetch_recent
         )
@@ -962,7 +957,7 @@ async def candles(
             raise HTTPException(
                 404, f"no data for epic '{epic}' (unknown epic or no history)"
             )
-        return [_candle_dto(c) for c in folded[-bars:]]
+        return folded[-bars:]
     resolution = _parse_resolution(resolution)
     broker = get_data(broker_id)  # 404 on unknown broker (not a breaker failure)
     key = (broker_id, epic, resolution.value, price_side)
@@ -999,11 +994,72 @@ async def candles(
         loaded = await CANDLE_CACHE.window(key, res_seconds, start, end, fetch_range)
     else:
         loaded = await CANDLE_CACHE.recent(key, res_seconds, bars, fetch_recent)
+    return loaded
+
+
+@app.get("/api/candles", response_model=list[CandleDTO])
+async def candles(
+    epic: str = Query("EURUSD"),
+    resolution: str = Query(Resolution.MINUTE_5.value),
+    bars: int = Query(500, ge=1, le=1000),
+    from_ts: int | None = Query(None, description="window start, unix seconds"),
+    to_ts: int | None = Query(None, description="window end, unix seconds"),
+    price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
+    broker_id: str = Query("capital", alias="broker"),
+) -> list[CandleDTO]:
+    """Candles for an epic. With from_ts/to_ts -> that date window (used by the
+    chart's scroll-back). Without -> most-recent `bars` (weekend-proof).
+
+    Sub-minute (seconds) intervals have no history endpoint upstream, so they're
+    served from our own tick recorder (warmed while the epic is streamed) and
+    extended live over the socket. Scroll-back (from_ts/to_ts) isn't supported
+    for them — the chart disables it for live-only intervals."""
+    loaded = await _fetch_leg_candles(broker_id, epic, resolution, bars, from_ts, to_ts, price_side)
     # A date window may legitimately be empty (market closed); only 404 when no
-    # window was requested at all (likely a bad epic).
-    if not loaded and from_ts is None:
+    # window was requested at all (likely a bad epic). Seconds resolutions are
+    # exempt: an epic that isn't currently streamed has no tick history yet, and
+    # that's a legitimate empty chart (200 []), not a 404 — the original seconds
+    # branch never raised here.
+    if not loaded and from_ts is None and resolution not in SECONDS_INTERVALS:
         raise HTTPException(404, f"no data for epic '{epic}' (unknown epic or no history)")
     return [_candle_dto(c) for c in loaded]
+
+
+@app.get("/api/candles/synthetic", response_model=list[CandleDTO])
+async def candles_synthetic(
+    expr: str = Query(..., description="arithmetic expression, e.g. OIL_CRUDE/DXY"),
+    resolution: str = Query(Resolution.MINUTE_5.value),
+    bars: int = Query(500, ge=1, le=1000),
+    from_ts: int | None = Query(None),
+    to_ts: int | None = Query(None),
+    price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
+    broker_id: str = Query("capital", alias="broker"),
+) -> list[CandleDTO]:
+    """Candles for a synthetic (arithmetic-combination) chart. Stateless: the raw
+    expression is parsed here, each leg is fetched via the shared candle path
+    against the same broker, and the legs are combined element-wise."""
+    try:
+        node = parse(expr)
+    except SyntheticError as e:
+        raise HTTPException(422, f"bad expression: {e}") from e
+    names = legs(node)
+    if not names:
+        raise HTTPException(422, "expression has no instruments")
+
+    per_leg: dict[str, list[Candle]] = {}
+    for name in names:
+        # Reuse the native/derived/cache path per leg; a leg-level HTTPException
+        # (unknown broker, IG-derived block) propagates unchanged.
+        per_leg[name] = await _fetch_leg_candles(
+            broker_id, name, resolution, bars, from_ts, to_ts, price_side
+        )
+
+    result = combine(node, per_leg)
+    if not result and from_ts is None:
+        raise HTTPException(
+            404, f"no data for synthetic '{expr}' (unknown leg or no overlapping history)"
+        )
+    return [_candle_dto(c) for c in result]
 
 
 @app.get("/api/candle-cache/stats", response_model=CandleCacheStatsDTO)

@@ -5,6 +5,7 @@
 import type { KLineData } from "klinecharts";
 import type { PriceSide } from "../theme";
 import { API_BASE as BASE, errorDetail } from "./http";
+import { getSynthetic, isSynthetic } from "./syntheticRegistry";
 
 export interface Period {
   resolution: string; // backend Resolution value, or a SECONDS_INTERVALS key
@@ -417,6 +418,20 @@ export async function fetchRecent(
   priceSide: PriceSide = "mid",
   brokerId: string = DEFAULT_BROKER,
 ): Promise<KLineData[]> {
+  const syn = getSynthetic(epic);
+  if (syn) {
+    const qs = new URLSearchParams({
+      expr: syn.canonical,
+      resolution,
+      bars: String(bars),
+      priceSide,
+      broker: brokerId,
+    });
+    const res = await fetchWithTimeout(`${BASE}/api/candles/synthetic?${qs}`);
+    if (res.ok) return ((await res.json()) as RawCandle[]).map(toKLine);
+    if (res.status === 404) return [];
+    throw new Error(await errorDetail(res));
+  }
   const qs = new URLSearchParams({
     epic,
     resolution,
@@ -473,6 +488,20 @@ export async function fetchRange(
   priceSide: PriceSide = "mid",
   brokerId: string = DEFAULT_BROKER,
 ): Promise<KLineData[]> {
+  const syn = getSynthetic(epic);
+  if (syn) {
+    const qs = new URLSearchParams({
+      expr: syn.canonical,
+      resolution,
+      from_ts: String(fromSec),
+      to_ts: String(toSec),
+      priceSide,
+      broker: brokerId,
+    });
+    const res = await fetch(`${BASE}/api/candles/synthetic?${qs}`);
+    if (!res.ok) return [];
+    return ((await res.json()) as RawCandle[]).map(toKLine);
+  }
   const qs = new URLSearchParams({
     epic,
     resolution,
@@ -509,6 +538,12 @@ export function openLive(
   priceSide: PriceSide = "mid",
   brokerId: string = DEFAULT_BROKER,
 ): LiveHandle {
+  if (isSynthetic(epic)) {
+    // Synthetic charts are history-only (no tick stream). Return an inert handle
+    // so callers can treat them uniformly; status stays non-live.
+    onStatus?.("down");
+    return { close: () => {} };
+  }
   const wsBase = BASE.replace(/^http/, "ws");
   const url = `${wsBase}/ws/candles?epic=${encodeURIComponent(epic)}&resolution=${resolution}&priceSide=${priceSide}&broker=${encodeURIComponent(brokerId)}`;
   let ws: WebSocket | null = null;

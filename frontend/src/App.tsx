@@ -110,6 +110,7 @@ import { requestSymbolSearch } from "./lib/signals";
 import { loadSettings, saveSettings, type Settings } from "./theme";
 import TabBar from "./TabBar";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
+import { isSynthetic } from "./lib/syntheticRegistry";
 import "./App.css";
 
 // One-time rename of the persisted real-money Capital account key
@@ -675,7 +676,7 @@ export default function App() {
     const epics = new Set<string>();
     for (const t of tabs) {
       const lead = t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0];
-      if (lead) epics.add(lead.symbol.epic);
+      if (lead && !isSynthetic(lead.symbol.epic)) epics.add(lead.symbol.epic);
     }
     // JSON (not a delimiter-joined string) so the key round-trips cleanly back to
     // an array regardless of what characters an epic contains — a comma in an epic
@@ -1558,7 +1559,7 @@ export default function App() {
           </div>
         </main>
         {/* Panel is toggled by the toolbar bell; closed = chart uses full width. */}
-        {panelOpen && symbol && (
+        {panelOpen && symbol && !isSynthetic(symbol.epic) && (
           <AlertsSidebar
             controller={focusedController}
             epic={symbol.epic}
@@ -1572,7 +1573,7 @@ export default function App() {
         {/* Order ticket (paper): compose a new order for the focused symbol. The
             open book lives in the bottom dock, not here. Toggled by the toolbar's
             trade button. */}
-        {tradeOpen && symbol && (
+        {tradeOpen && symbol && !isSynthetic(symbol.epic) && (
           <aside className="trade-sidebar">
             <OrderTicket
               epic={symbol.epic}

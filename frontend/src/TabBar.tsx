@@ -10,6 +10,7 @@ import { dropTarget, previewDeltas, type DragTarget, type Rect } from "./lib/tab
 import SymbolIcon from "./SymbolIcon";
 import ContextMenu from "./ContextMenu";
 import MergeTabsMenu from "./MergeTabsMenu";
+import { isSynthetic } from "./lib/syntheticRegistry";
 
 // Must match .tab-bar-tabs { gap } in App.css — the flow simulation that
 // slides chips apart uses it to predict where each chip lands.
@@ -55,7 +56,9 @@ function ChipContent({
   return (
     <>
       <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="tab-icon" />
-      <span className="tab-symbol">{lead.symbol.epic}</span>
+      <span className="tab-symbol">
+        {isSynthetic(lead.symbol.epic) ? (lead.symbol.name ?? lead.symbol.epic) : lead.symbol.epic}
+      </span>
       <span className="tab-period">{lead.period.label}</span>
       {cellCount > 1 && <span className="tab-count">{cellCount}</span>}
       {/* Crescent-moon badge pinned to the tab's top-right when the lead cell's
