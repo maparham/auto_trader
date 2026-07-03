@@ -6,7 +6,7 @@
 // restarts it in full (simple, and indistinguishable from a true pause at
 // this duration).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 interface Props {
   message: string;
@@ -28,7 +28,12 @@ export default function Snackbar({
   const [hovered, setHovered] = useState(false);
   // Anchored position (viewport px), or null → the CSS default (top-center).
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  useEffect(() => {
+  // useLayoutEffect: the first placement happens BEFORE paint, so the pill
+  // never flashes at the top-center fallback for a frame. The anchor chip can
+  // also move without a window resize (a sibling label widens, a panel
+  // toggles), so re-measure on a short interval while visible — the pill is
+  // transient, so that's a few dozen cheap reads at most.
+  useLayoutEffect(() => {
     if (!anchorSelector) return;
     const place = () => {
       const el = document.querySelector(anchorSelector);
@@ -40,14 +45,21 @@ export default function Snackbar({
       // Clamp the center so a chip near the viewport edge can't push the
       // pill off-screen (half a typical snackbar width of margin).
       const pad = 170;
-      setPos({
+      const next = {
         left: Math.min(Math.max(r.left + r.width / 2, pad), window.innerWidth - pad),
         top: r.bottom + 8,
-      });
+      };
+      // Keep the same object when nothing moved — a fresh object every tick
+      // would re-render the pill 4×/second for nothing.
+      setPos((p) => (p && p.left === next.left && p.top === next.top ? p : next));
     };
     place();
+    const iv = setInterval(place, 250);
     window.addEventListener("resize", place);
-    return () => window.removeEventListener("resize", place);
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener("resize", place);
+    };
   }, [anchorSelector]);
   // The timeout must always call the LATEST onDismiss without restarting the
   // countdown when the parent re-renders with a new closure.

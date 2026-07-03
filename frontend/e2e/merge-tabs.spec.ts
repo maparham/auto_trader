@@ -303,6 +303,12 @@ test("Undo restores the pre-merge tabs with content back under the old scope", a
   const pill = (await page.locator(".snackbar").boundingBox())!;
   expect(pill.y).toBeGreaterThan(chip.y + chip.height);
   expect(pill.y).toBeLessThan(chip.y + chip.height + 40);
+  // …and horizontally tied to the chip (its center is viewport-clamped, so
+  // allow the clamp margin) — a plain top-CENTER pill would sit ~half the
+  // viewport away from this first chip and fail.
+  const chipCx = chip.x + chip.width / 2;
+  const pillCx = pill.x + pill.width / 2;
+  expect(Math.abs(pillCx - chipCx)).toBeLessThan(200);
   await page.locator(".snackbar-action", { hasText: "Undo" }).click();
 
   await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
@@ -358,4 +364,32 @@ test("snackbar auto-dismisses after 8s and the merge stays", async ({ page }) =>
   await expect(page.locator(".snackbar")).toHaveCount(0, { timeout: 10000 });
   await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
   await expect(page.locator(".chart-cell")).toHaveCount(2);
+});
+
+test("reordering tabs keeps the undo offer (order is not structural)", async ({ page }) => {
+  await seedThreeTabs(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+
+  // Merge t3 (GOLD, 2 cells) into t1 — snackbar appears.
+  await page.locator(".tab-bar .tab").first().click({ button: "right" });
+  await page.locator(".ctxmenu .ctx-item", { hasText: "Merge into this tab" }).click();
+  await page.locator(".merge-menu .merge-row", { hasText: "GOLD" }).click();
+  await page.locator(".merge-menu .merge-confirm").click();
+  await expect(page.locator(".snackbar")).toBeVisible();
+
+  // Reorder: drag t2 (OIL_CRUDE) onto the first chip's left edge. A pure
+  // reorder is NOT structural — the undo offer must survive it.
+  const tabs = page.locator(".tab-bar .tab");
+  const b = (await tabs.nth(0).boundingBox())!;
+  await tabs.nth(1).dragTo(tabs.nth(0), {
+    targetPosition: { x: Math.max(4, b.width * 0.1), y: b.height / 2 },
+  });
+  await expect(tabs.first().locator(".tab-symbol")).toHaveText("OIL_CRUDE");
+  await expect(page.locator(".snackbar")).toBeVisible();
+
+  // And Undo still works after the reorder (snapshot still valid).
+  await page.locator(".snackbar-action", { hasText: "Undo" }).click();
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(3);
 });

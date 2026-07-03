@@ -453,6 +453,12 @@ export default function App() {
   // Re-read the active workspace from localStorage and force a grid remount. Shared
   // by the startup hydrate and live cross-tab pushes. LayoutManager re-reads too.
   const reseedFromLocal = () => {
+    // Someone else (another device/browser tab, a broker or layout switch)
+    // just rewrote the workspace we snapshotted — a pending merge-undo would
+    // restore a stale state and silently clobber their edit, so drop it even
+    // when the tab STRUCTURE happens to match (the sig effect can't see
+    // symbol/TF-only remote changes).
+    setPendingUndo(null);
     const r = resolveStartup();
     // Skip the remount if the resolved workspace already matches what's on screen
     // (avoids an unnecessary grid remount on the common no-change startup).
@@ -1136,8 +1142,13 @@ export default function App() {
   // Structural fingerprint: tab ids + layout kinds + cell ids. Symbol/TF
   // changes don't alter it (an undo offer must survive them); close/add/
   // detach/layout changes and workspace/broker switches do.
+  // Sorted so pure tab REORDER doesn't change the signature — reordering is
+  // not structural and must not kill a still-valid undo offer.
   const structureSig = (ts: ChartTab[]) =>
-    ts.map((t) => `${t.id}:${t.layout}:${t.cells.map((c) => c.id).join(",")}`).join("|");
+    ts
+      .map((t) => `${t.id}:${t.layout}:${t.cells.map((c) => c.id).join(",")}`)
+      .sort()
+      .join("|");
 
   useEffect(() => {
     if (pendingUndo && structureSig(tabs) !== pendingUndo.sigAfter) setPendingUndo(null);

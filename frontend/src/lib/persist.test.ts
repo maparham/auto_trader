@@ -653,6 +653,26 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
     expect(prev[0].cells[0].scope).toBe(P.primaryCellScope("s"));
   });
 
+  it("keeps the source content (skips the purge) when a scope copy fails, e.g. storage quota", () => {
+    P.saveDrawings(P.primaryCellScope("s"), "US100", [{ name: "x", points: [{ value: 1 }] }]);
+    // Simulate quota exhaustion for the copy's destination keys only.
+    const store = localStorage;
+    const orig = store.setItem;
+    store.setItem = function (k: string, v: string) {
+      if (k.includes("tab.d.cell.s-c0")) throw new Error("QuotaExceededError");
+      orig.call(store, k, v);
+    } as never;
+    try {
+      const res = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d")!;
+      expect(res.tabs).toHaveLength(1); // the merge itself still happens
+    } finally {
+      store.setItem = orig;
+    }
+    // The copy silently lost the key — the ORIGINAL must survive so nothing
+    // is permanently gone (undo/recovery can still reach it).
+    expect(P.loadDrawings(P.primaryCellScope("s"), "US100")).toHaveLength(1);
+  });
+
   it("merging into a LOCKED tab harmonizes incoming cells to the target's timeframe", () => {
     // Lock's contract: every cell of a locked tab shares one timeframe
     // (toggleLock enforces it when engaging). The lock survives the merge, so

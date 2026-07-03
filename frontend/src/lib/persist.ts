@@ -602,13 +602,18 @@ export function mergeTabInto(
   // visibly violate.
   const lockPeriod = dst.locked ? dst.cells[0]?.period : undefined;
   const movedScopes: Array<{ from: string; to: string }> = [];
+  let copiesOk = true;
   const moved: ChartCell[] = src.cells.map((c) => {
     const scope = cellScope(targetId, c.id);
-    copyScopeContent(c.scope, scope);
+    copiesOk = copyScopeContent(c.scope, scope) && copiesOk;
     movedScopes.push({ from: c.scope, to: scope });
     return lockPeriod ? { ...c, scope, period: lockPeriod } : { ...c, scope };
   });
-  purgeTabScope(sourceId);
+  // Only burn the originals when EVERY copy landed. On storage quota the copy
+  // silently drops keys — keeping the source content turns permanent data
+  // loss into a mere orphaned-scope leak, and undo can still restore the
+  // untouched originals.
+  if (copiesOk) purgeTabScope(sourceId);
   const cells = position === "before" ? [...moved, ...dst.cells] : [...dst.cells, ...moved];
   const { sizes: _sizes, ...dstRest } = dst;
   const merged: ChartTab = {
@@ -853,7 +858,10 @@ export function cloneWorkspace(
 // primary scope (leaked junk under stale cell ids). Each cell is copied under its
 // OWN scope by the caller, so here we EXCLUDE the nested `cell.` keys when copying
 // a primary scope.
-export function copyScopeContent(from: string, to: string): void {
+// Returns false when any write failed (storage quota) — callers that DELETE
+// the source afterwards (merge) must check it, or a silently-lost copy turns
+// into permanent data loss.
+export function copyScopeContent(from: string, to: string): boolean {
   const head = `${PREFIX}.${from}.`;
   const nested = `${head}cell.`; // only meaningful when `from` is a primary scope
   const pairs: Array<[string, string]> = [];
@@ -862,6 +870,7 @@ export function copyScopeContent(from: string, to: string): void {
     if (k && k.startsWith(head) && !k.startsWith(nested))
       pairs.push([k, `${PREFIX}.${to}.${k.slice(head.length)}`]);
   }
+  let ok = true;
   for (const [src, dst] of pairs) {
     const v = localStorage.getItem(src);
     if (v == null) continue;
@@ -869,9 +878,10 @@ export function copyScopeContent(from: string, to: string): void {
       localStorage.setItem(dst, v);
       mirrorSet(dst, v);
     } catch {
-      /* non-fatal */
+      ok = false; // quota — non-fatal for the copy itself
     }
   }
+  return ok;
 }
 
 // --- drawings (overlays the user drew) ---------------------------------------
