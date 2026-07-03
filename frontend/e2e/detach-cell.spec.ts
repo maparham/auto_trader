@@ -34,9 +34,10 @@ async function seedTwoTabsScratch(page: Page, epicA = "US100", epicB = "OIL_CRUD
   );
 }
 
-// Detach: a handle next to maximize clones the cell (symbol/period + scope
-// content) into a NEW one-cell tab; the original tab/cell is untouched.
-test("detach handle opens the cell as a new in-app tab with its drawings", async ({ page }) => {
+// Detach (default click): the handle next to maximize MOVES the cell into a NEW
+// one-cell tab — its scope content travels along and the source tab's layout
+// downgrades to the remaining cells. Copy variants live in the context menu.
+test("detach handle moves the cell into a new in-app tab with its drawings", async ({ page }) => {
   await seedSingleChartDefault(page);
   await stubStateApi(page);
   await page.goto("/");
@@ -107,24 +108,22 @@ test("detach handle opens the cell as a new in-app tab with its drawings", async
   await expect(page.locator(".tab-bar .tab")).toHaveCount(before + 1);
   await expect(page.locator(".chart-cell")).toHaveCount(1);
 
-  // The new tab's primary scope carries the copied drawing (1 drawing key). The
-  // source drawing lived on the SECOND (added) cell, whose scope is nested
-  // (`tab.<id>.cell.<cellId>.drawings.…`, per split-layout.spec.ts's scopeCounts
-  // pattern) — so the count regex must allow dots in the scope segment, not just
-  // match the primary-cell-only form.
+  // MOVE semantics: the drawing lived on the SECOND (added) cell, whose nested
+  // scope (`tab.<id>.cell.<cellId>.drawings.…`) is purged on detach — so exactly
+  // one drawing key remains, the one under the new tab's primary scope.
   const dstCount = await page.evaluate(() => {
     const tabsRaw = Object.keys(localStorage).filter((k) =>
       /^auto-trader\.tab\..+\.drawings\./.test(k));
     return tabsRaw.length;
   });
-  expect(dstCount).toBeGreaterThanOrEqual(2); // source cell's + the copy
+  expect(dstCount).toBe(1); // the moved copy only — source scope purged
 
-  // Original tab intact: switch back → still 2 cells.
+  // Source tab downgraded: switch back → single cell now.
   await page.locator(".tab-bar .tab").first().click();
-  await expect(page.locator(".chart-cell")).toHaveCount(2);
+  await expect(page.locator(".chart-cell")).toHaveCount(1);
 });
 
-test("right-clicking the detach handle offers both destinations", async ({ page }) => {
+test("right-clicking the detach handle offers all three destinations", async ({ page }) => {
   await seedSingleChartDefault(page);
   await stubStateApi(page);
   await page.goto("/");
@@ -136,11 +135,91 @@ test("right-clicking the detach handle offers both destinations", async ({ page 
   await page.locator(".chart-cell").nth(1).hover();
   await page.locator(".chart-cell").nth(1).locator(".chart-cell-detach")
     .click({ button: "right" });
-  await expect(page.locator(".ctxmenu .ctx-item", { hasText: "Open in new tab" })).toBeVisible();
+  await expect(page.locator(".ctxmenu .ctx-item", { hasText: "Detach in new tab" })).toBeVisible();
+  await expect(
+    page.locator(".ctxmenu .ctx-item", { hasText: /^Open in new tab$/ }),
+  ).toBeVisible();
   await expect(page.locator(".ctxmenu .ctx-item", { hasText: "Open in new browser tab" })).toBeVisible();
   // Escape dismisses.
   await page.keyboard.press("Escape");
   await expect(page.locator(".ctxmenu")).toHaveCount(0);
+
+  // "Open in new tab" is the COPY path: a new tab opens, but the source tab
+  // keeps both cells.
+  await page.locator(".chart-cell").nth(1).hover();
+  await page.locator(".chart-cell").nth(1).locator(".chart-cell-detach")
+    .click({ button: "right" });
+  await page.locator(".ctxmenu .ctx-item", { hasText: /^Open in new tab$/ }).click();
+  await expect(page.locator(".chart-cell")).toHaveCount(1); // new tab active
+  await page.locator(".tab-bar .tab").first().click();
+  await expect(page.locator(".chart-cell")).toHaveCount(2); // source untouched
+
+  // "Detach in new tab" via the MENU is the MOVE path (same as default click):
+  // the source tab downgrades to one cell.
+  await page.locator(".chart-cell").nth(1).hover();
+  await page.locator(".chart-cell").nth(1).locator(".chart-cell-detach")
+    .click({ button: "right" });
+  await page.locator(".ctxmenu .ctx-item", { hasText: "Detach in new tab" }).click();
+  await expect(page.locator(".chart-cell")).toHaveCount(1); // new tab active
+  await page.locator(".tab-bar .tab").first().click();
+  await expect(page.locator(".chart-cell")).toHaveCount(1); // cell moved out
+});
+
+// Detaching the FIRST cell exercises the primary-scope branch: the source
+// tab's primary scope (`tab.<id>`) is never purged (purging it would
+// prefix-match the surviving cells' nested `tab.<id>.cell.*` keys), so after
+// the move both the orphaned original drawing key and the copy exist.
+test("detaching the primary cell keeps the survivors' scope intact", async ({ page }) => {
+  await seedSingleChartDefault(page);
+  await stubStateApi(page);
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+  await page.locator(".layout-menu button").click();
+  await page.locator(".layout-dropdown li", { hasText: "Two columns" }).click();
+  await expect(page.locator(".chart-cell")).toHaveCount(2);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const charts = (window as unknown as { __charts?: Map<string, { getDataList(): unknown[] }> })
+            .__charts;
+          if (!charts || charts.size < 2) return 0;
+          return [...charts.values()].filter((c) => c.getDataList().length > 0).length;
+        }),
+      { timeout: 20000 },
+    )
+    .toBe(2);
+
+  // Draw a horizontal line on the FIRST (primary-scope) cell.
+  const box = await page.locator(".chart-cell").nth(0).locator("canvas").first().boundingBox();
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2); // focus cell 0
+  const lines = page.locator(".draw-sidebar .ds-family").first();
+  await lines.hover();
+  await lines.locator(".ds-caret").click();
+  await page
+    .locator(".draw-sidebar .ds-flyout .ds-row", { hasText: "Horizontal line" })
+    .click();
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+
+  const drawingKeys = () =>
+    page.evaluate(
+      () =>
+        Object.keys(localStorage).filter((k) => /^auto-trader\.tab\..+\.drawings\./.test(k))
+          .length,
+    );
+  await expect.poll(drawingKeys).toBe(1);
+
+  await page.locator(".chart-cell").nth(0).hover();
+  await page.locator(".chart-cell").nth(0).locator(".chart-cell-detach").click();
+  await expect(page.locator(".chart-cell")).toHaveCount(1); // new tab active
+
+  // Orphaned primary-scope original + the moved copy — the primary scope is
+  // deliberately NOT purged.
+  await expect.poll(drawingKeys).toBe(2);
+
+  // Source tab survives with the remaining (second) cell.
+  await page.locator(".tab-bar .tab").first().click();
+  await expect(page.locator(".chart-cell")).toHaveCount(1);
 });
 
 test("?tab= startup param activates that tab and is stripped from the URL", async ({ page }) => {

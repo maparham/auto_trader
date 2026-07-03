@@ -918,9 +918,9 @@ export default function App() {
       const turningOn = !active.syncTime;
       if (turningOn) {
         const src = readyRef.current.get(focusedCell.id);
-        // Plain date-range link (lock off): no extent clamp — if the master sits in
-        // whitespace past its last bar, don't snap siblings; they self-heal on scroll.
-        const r = src ? readVisibleRange(src.chart, false) : null;
+        // A focused cell panned into right-edge whitespace reports an extrapolated
+        // window, so siblings snap to the same view, whitespace included.
+        const r = src ? readVisibleRange(src.chart) : null;
         if (r) rangeSync.publish(active.id, { sourceCellId: focusedCell.id, ...r });
       }
       setTabs((ts) => ts.map((t) => (t.id === active.id ? { ...t, syncTime: turningOn } : t)));
@@ -1017,10 +1017,15 @@ export default function App() {
   // Detach a cell into its own NEW one-cell tab: same symbol/interval, and a full
   // copy of the cell's scope content (drawings/indicators/config) into the new
   // tab's primary scope. Alerts are global per instrument — nothing to copy.
-  // target "tab" switches this window to the new tab; "window" leaves this window
-  // alone and opens the app in a new browser tab focused on it (?tab=<id> — see
-  // the startup handling). The source tab/cell is untouched either way.
-  const detachCell = (cellId: string, target: "tab" | "window") => {
+  // target "move" (the default click) also REMOVES the source cell — the layout
+  // downgrades exactly like closeCell, but without a confirm since the content
+  // lives on in the new tab (a single-cell tab falls back to copy: it can't be
+  // left empty, though the UI only shows the handle on multi-cell layouts).
+  // "tab" leaves the source untouched (opens a copy); "window" is the copy
+  // variant that opens the app in a new browser tab focused on the new tab
+  // (?tab=<id> — see the startup handling). "move"/"tab" switch this window to
+  // the new tab; "window" leaves this window alone.
+  const detachCell = (cellId: string, target: "move" | "tab" | "window") => {
     if (!active) return;
     const src = active.cells.find((c) => c.id === cellId);
     if (!src) return;
@@ -1034,18 +1039,41 @@ export default function App() {
       activeCellId: cid,
       cells: [{ id: cid, symbol: src.symbol, period: src.period, scope }],
     };
-    const nextTabs = [...tabs, t];
+    let nextTabs = [...tabs, t];
+    if (target === "move" && active.cells.length > 1) {
+      // Same removal rules as closeCell: purge the source scope unless it's the
+      // tab's primary one, downgrade the layout kind to the remaining count,
+      // reset track sizes (grid shape changed), re-home activeCellId.
+      if (src.scope !== primaryCellScope(active.id)) purgeScope(src.scope);
+      nextTabs = nextTabs.map((tt) => {
+        if (tt.id !== active.id) return tt;
+        const cells = tt.cells.filter((c) => c.id !== cellId);
+        const activeCellId = cells.some((c) => c.id === tt.activeCellId)
+          ? tt.activeCellId
+          : cells[0].id;
+        return { ...tt, layout: KIND_FOR_COUNT[cells.length], cells, activeCellId, sizes: undefined };
+      });
+    }
+    // "move" PURGED the source cell's persisted content, so the matching
+    // tab-list change must be durable NOW — same rule as mergeTabs: leaving it
+    // to the deferred autosave effect (or autosave-off never committing) opens
+    // a data-loss window where a reload resurrects the source cell with its
+    // drawings/indicators already gone. "window" needs the sync save too: the
+    // new browser tab resolves its workspace from storage inside this click
+    // gesture (popup-blocker friendliness, autosave-off).
+    if (target !== "tab") {
+      const ws: Workspace = { tabs: nextTabs, activeTabId: "" };
+      if (activeLayoutId && layoutName != null) {
+        saveLayout(activeLayoutId, layoutName, ws);
+        setIsDirty(false);
+      } else {
+        saveScratch(ws);
+      }
+    }
     setTabs(nextTabs);
-    if (target === "tab") {
+    if (target !== "window") {
       setActiveId(id);
     } else {
-      // The new browser tab resolves its workspace from storage, so the updated
-      // tab list must be persisted NOW (synchronously, inside the click gesture —
-      // both for popup-blocker friendliness and so the autosave effect's timing
-      // doesn't matter, including autosave-off).
-      const ws: Workspace = { tabs: nextTabs, activeTabId: "" };
-      if (activeLayoutId && layoutName != null) saveLayout(activeLayoutId, layoutName, ws);
-      else saveScratch(ws);
       window.open(`${location.pathname}?tab=${encodeURIComponent(id)}`, "_blank");
     }
   };

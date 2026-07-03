@@ -68,7 +68,7 @@ interface Props {
   // Toggle maximize for a cell (maximize if none/other, restore if it's this one).
   onToggleMaximizeCell: (cellId: string) => void;
   // Detach a cell to a new tab ("tab" = in-app, "window" = new browser tab).
-  onDetachCell: (cellId: string, target: "tab" | "window") => void;
+  onDetachCell: (cellId: string, target: "move" | "tab" | "window") => void;
   // Close a cell (removes it from the layout; App confirms + downgrades the kind).
   onCloseCell: (cellId: string) => void;
   // Swap two adjacent cells' positions (border ↔/↕ buttons).
@@ -211,13 +211,13 @@ export default function ChartGrid({
               type="button"
               className="chart-cell-maximize chart-cell-detach"
               style={{ right: buttonRight(cell.id, 1) }}
-              title="Open in new tab (⌘-click: browser tab, right-click: options)"
-              aria-label="Open in new tab"
+              title="Detach in new tab (⌘-click: open copy in browser tab, right-click: options)"
+              aria-label="Detach in new tab"
               onClick={(e) => {
                 e.stopPropagation();
                 // Ctrl/Cmd-click matches the browser's own "open link in new
-                // tab" gesture → detach to a new BROWSER tab instead of in-app.
-                onDetachCell(cell.id, e.metaKey || e.ctrlKey ? "window" : "tab");
+                // tab" gesture → open a copy in a new BROWSER tab instead.
+                onDetachCell(cell.id, e.metaKey || e.ctrlKey ? "window" : "move");
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -470,6 +470,7 @@ export default function ChartGrid({
           x={detachMenu.x}
           y={detachMenu.y}
           items={[
+            { label: "Detach in new tab", onClick: () => onDetachCell(detachMenu.cellId, "move") },
             { label: "Open in new tab", onClick: () => onDetachCell(detachMenu.cellId, "tab") },
             { label: "Open in new browser tab", onClick: () => onDetachCell(detachMenu.cellId, "window") },
           ]}
