@@ -11,7 +11,7 @@
 // built-in overlays have fixed figure rendering); the tab shell is present so the
 // layout matches TV, with those fields noted as coming soon.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CloseButton from "./CloseButton";
 import { LineType } from "klinecharts";
 import type { DeepPartial, OverlayStyle } from "klinecharts";
@@ -21,6 +21,17 @@ import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility } from "./lib/visibility";
+import { toast } from "./lib/notify";
+import InfoTip from "./InfoTip";
+import {
+  loadDrawingDefault,
+  saveDrawingDefault,
+  clearDrawingDefault,
+  loadDrawingPresets,
+  saveDrawingPreset,
+  deleteDrawingPreset,
+  type SavedDrawingConfig,
+} from "./lib/persist";
 
 interface Props {
   overlays: OverlayManager;
@@ -88,6 +99,26 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const [showMiddle, setShowMiddle] = useState<boolean>(extra0.showMiddle ?? false);
   const [vis, setVis] = useState<VisibilityModel>(extra0.visibility ?? defaultVisibility());
 
+  // "Defaults ▾" footer menu: this drawing type's default + named templates (global,
+  // keyed by overlay name). Mirrors the indicator settings Defaults menu.
+  const [defOpen, setDefOpen] = useState(false);
+  const [naming, setNaming] = useState(false); // inline "Save as template…" field
+  const [presetName, setPresetName] = useState("");
+  const defMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!defOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (defMenuRef.current && !defMenuRef.current.contains(e.target as Node)) {
+        setDefOpen(false);
+        setNaming(false);
+      }
+    };
+    // Capture phase: the modal body stops mousedown propagation, so a document
+    // listener must capture to see clicks inside the modal.
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [defOpen]);
+
   // Coordinates: editable price per point, with the timestamp shown as a date.
   const [points, setPoints] = useState(() =>
     (live?.points ?? []).map((p) => ({ timestamp: p.timestamp, value: p.value })),
@@ -152,6 +183,52 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     const next = points.map((p, j) => (j === i ? { ...p, value } : p));
     setPoints(next);
     overlays.updatePoints(curId, next);
+  }
+
+  // Apply a config to the open drawing AND refresh local state so the controls
+  // reflect it. `null` = this name's default (or no-op if none saved). Note the
+  // setters: `setStyle` is the local line-style state, `setVis` the visibility state.
+  function applyConfigHere(cfg: SavedDrawingConfig | null) {
+    if (!cfg) return;
+    overlays.applyDrawingConfig(curId, cfg);
+    if (cfg.line?.color !== undefined) setColor(cfg.line.color);
+    if (cfg.line?.size !== undefined) setSize(cfg.line.size);
+    if (cfg.line?.style !== undefined) setStyle(cfg.line.style);
+    if (cfg.showMiddle !== undefined) setShowMiddle(cfg.showMiddle);
+    if (cfg.priceLabels !== undefined) setPriceLabels(cfg.priceLabels);
+    if (cfg.visibility !== undefined) setVis(cfg.visibility);
+  }
+
+  function resetToDefault() {
+    applyConfigHere(loadDrawingDefault(name));
+    setDefOpen(false);
+  }
+  function saveAsDefault() {
+    const cfg = overlays.getDrawingConfig(curId); // LIVE overlay → correct name key
+    if (cfg) saveDrawingDefault(name, cfg);
+    setDefOpen(false);
+    toast(`Saved ${title} default`);
+  }
+  function commitPreset() {
+    const nm = presetName.trim();
+    if (!nm) return;
+    const cfg = overlays.getDrawingConfig(curId);
+    if (cfg) saveDrawingPreset(name, nm, cfg);
+    setNaming(false);
+    setPresetName("");
+    setDefOpen(false);
+    toast(`Saved template "${nm}"`);
+  }
+  function applyPreset(nm: string) {
+    const cfg = loadDrawingPresets(name)[nm];
+    if (cfg) applyConfigHere(cfg);
+    setDefOpen(false);
+  }
+  function removePreset(nm: string) {
+    deleteDrawingPreset(name, nm);
+    // Re-read by toggling the menu (same idiom as the indicator menu).
+    setDefOpen(false);
+    setTimeout(() => setDefOpen(true), 0);
   }
 
   function cancel() {
@@ -331,6 +408,76 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
         </div>
 
         <div className="modal-foot">
+          {/* TV-style "Defaults" menu: this drawing type's default + named templates,
+              all global. Pinned left opposite Cancel/Ok. */}
+          <div className="menu ind-def-menu" ref={defMenuRef}>
+            <span className="ind-row-head">
+              <button className={`ghost ${defOpen ? "on" : ""}`} onClick={() => setDefOpen((v) => !v)}>
+                Defaults ▾
+              </button>
+              <InfoTip
+                title="Defaults"
+                text="Save these settings as the default for this drawing type, or store named templates."
+              />
+            </span>
+            {defOpen && (
+              <div className="dropdown ind-def-dropdown">
+                <ul>
+                  <li onClick={resetToDefault}>Reset settings</li>
+                  <li onClick={saveAsDefault}>Save as default</li>
+                  {loadDrawingDefault(name) && (
+                    <li
+                      onClick={() => {
+                        clearDrawingDefault(name);
+                        setDefOpen(false);
+                        toast(`Cleared ${title} default`);
+                      }}
+                    >
+                      Clear default
+                    </li>
+                  )}
+                  <li className="sep" />
+                  {Object.keys(loadDrawingPresets(name)).map((nm) => (
+                    <li key={nm} className="ind-def-preset">
+                      <span onClick={() => applyPreset(nm)} title={`Apply "${nm}"`}>
+                        {nm}
+                      </span>
+                      <button
+                        className="ind-def-del"
+                        title={`Delete "${nm}"`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removePreset(nm);
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                  {naming ? (
+                    <li className="ind-def-name">
+                      <input
+                        autoFocus
+                        placeholder="Template name…"
+                        value={presetName}
+                        onChange={(e) => setPresetName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitPreset();
+                          if (e.key === "Escape") {
+                            setNaming(false);
+                            setPresetName("");
+                          }
+                        }}
+                      />
+                      <button onClick={commitPreset}>Save</button>
+                    </li>
+                  ) : (
+                    <li onClick={() => setNaming(true)}>Save as template…</li>
+                  )}
+                </ul>
+              </div>
+            )}
+          </div>
           <button className="ghost" onClick={cancel}>
             Cancel
           </button>
