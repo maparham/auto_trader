@@ -2120,12 +2120,17 @@
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--text-faint); padding: 4px 8px 2px;
 }
-.interval-dropdown li { justify-content: space-between; }
+.interval-dropdown li { justify-content: space-between; gap: 8px; }
 .interval-dropdown li.on { background: var(--hover-strong); color: var(--text); }
+.interval-dropdown .tf-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .interval-dropdown .live-only {
   font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--text-faint); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px;
 }
+/* Favourite-timeframe toggle: reuse the indicator-menu star styling, but ALWAYS
+   visible (not hover-revealed) so it's discoverable — the whole point of the
+   star over the old right-click menu. Only non-default intervals render it. */
+.interval-dropdown li .ind-star.tf-star { opacity: 1; }
 
 /* TradingView-style borderless toolbar button (Alert): transparent with a subtle
    gray rounded highlight on hover / when selected. Scoped under .toolbar to beat

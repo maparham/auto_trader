@@ -139,11 +139,10 @@ export default function Toolbar({
   // section. Seeded from localStorage; toggled by the per-row star.
   const [favIndicators, setFavIndicators] = useState<string[]>(loadFavoriteIndicators);
 
-  // Pinned timeframes (global preference), merged with the defaults to form the
-  // quick bar. Seeded from localStorage; toggled via right-click add/remove.
+  // Favorite timeframes (global preference), merged with the defaults to form the
+  // quick bar. Seeded from localStorage; toggled via the per-row star in the
+  // interval dropdown (defaults are always present and have no star).
   const [favResolutions, setFavResolutions] = useState<string[]>(loadFavoriteResolutions);
-  // Right-click menu on a quick-bar button or dropdown row (add/remove favorite).
-  const [tfMenu, setTfMenu] = useState<{ x: number; y: number; resolution: string } | null>(null);
 
   // grouped interval menu (TV-style; quick-bar stays fixed)
   const [intervalOpen, setIntervalOpen] = useState(false);
@@ -465,13 +464,6 @@ export default function Toolbar({
             className={p.resolution === period.resolution ? "on" : ""}
             title={`${p.label} interval`}
             onClick={() => onPeriod(p)}
-            onContextMenu={(e) => {
-              // Suppress the native menu on the toolbar regardless; defaults
-              // (1m–1W) are fixed, so right-clicking them is just a no-op.
-              e.preventDefault();
-              if (DEFAULT_RESOLUTIONS.has(p.resolution)) return;
-              setTfMenu({ x: e.pageX, y: e.pageY, resolution: p.resolution });
-            }}
           >
             {p.label}
           </button>
@@ -510,15 +502,41 @@ export default function Toolbar({
                           onPeriod(p);
                           setIntervalOpen(false);
                         }}
-                        onContextMenu={(e) => {
-                          // Suppress the native menu; defaults have no favorite toggle.
-                          e.preventDefault();
-                          if (DEFAULT_RESOLUTIONS.has(p.resolution)) return;
-                          setTfMenu({ x: e.pageX, y: e.pageY, resolution: p.resolution });
-                        }}
                       >
-                        {p.label}
-                        {p.liveOnly && <span className="live-only">live</span>}
+                        <span className="tf-label">
+                          {p.label}
+                          {p.liveOnly && <span className="live-only">live</span>}
+                        </span>
+                        {/* Defaults (1m–1W) are always on the quick bar; only the
+                            other intervals get a favourite toggle. The star is
+                            always visible (not hover-revealed) for discoverability. */}
+                        {!DEFAULT_RESOLUTIONS.has(p.resolution) && (
+                          <button
+                            className={
+                              "ind-star tf-star" +
+                              (favResolutions.includes(p.resolution) ? " on" : "")
+                            }
+                            title={
+                              favResolutions.includes(p.resolution)
+                                ? "Remove from quick bar"
+                                : "Add to quick bar"
+                            }
+                            aria-label={
+                              favResolutions.includes(p.resolution)
+                                ? "Remove from quick bar"
+                                : "Add to quick bar"
+                            }
+                            aria-pressed={favResolutions.includes(p.resolution)}
+                            onClick={(e) => {
+                              e.stopPropagation(); // toggle only; don't switch interval
+                              toggleFavResolution(p.resolution);
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                              <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
+                            </svg>
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -827,21 +845,6 @@ export default function Toolbar({
         />
       )}
 
-      {tfMenu && (
-        <ContextMenu
-          x={tfMenu.x}
-          y={tfMenu.y}
-          items={[
-            {
-              label: favResolutions.includes(tfMenu.resolution)
-                ? "Remove from quick bar"
-                : "Add to quick bar",
-              onClick: () => toggleFavResolution(tfMenu.resolution),
-            },
-          ]}
-          onClose={() => setTfMenu(null)}
-        />
-      )}
     </header>
   );
 }
