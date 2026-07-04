@@ -91,8 +91,9 @@ Props:
   shows instantly (no delay). `delay={0}` opts a trigger into always-instant.
 
 - **Animation — quick fade + slide (locked with user).** On show, the bubble fades
-  in over `~120ms` and slides `8px` toward the anchor into place (slides up when
-  placed on `top`, down when flipped to `bottom`, etc.). On hide it fades out. Runs
+  in over `~120ms` and slides `8px` toward the anchor into place (settles downward
+  when placed on `top`, upward when flipped to `bottom`, etc. — the bubble starts
+  further from the trigger and slides closer). On hide it fades out. Runs
   on CSS `transition` (opacity + transform); the transform direction is set from the
   resolved placement so the motion always originates *away* from the trigger. This
   is animation option "A" from the demo. Motion respects
