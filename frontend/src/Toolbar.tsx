@@ -10,8 +10,9 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getSupportedIndicators, YAxisType } from "klinecharts";
 import {
-  PERIODS,
   PERIOD_GROUPS,
+  quickBarPeriods,
+  DEFAULT_RESOLUTIONS,
   type Instrument,
   type Period,
 } from "./lib/feed";
@@ -29,6 +30,8 @@ import {
   saveIndicators,
   loadFavoriteIndicators,
   saveFavoriteIndicators,
+  loadFavoriteResolutions,
+  saveFavoriteResolutions,
   saveSymbolTemplate,
   loadSymbolTemplate,
   deleteSymbolTemplate,
@@ -135,6 +138,12 @@ export default function Toolbar({
   // Starred indicator types (global preference), shown in the menu's Favorites
   // section. Seeded from localStorage; toggled by the per-row star.
   const [favIndicators, setFavIndicators] = useState<string[]>(loadFavoriteIndicators);
+
+  // Pinned timeframes (global preference), merged with the defaults to form the
+  // quick bar. Seeded from localStorage; toggled via right-click add/remove.
+  const [favResolutions, setFavResolutions] = useState<string[]>(loadFavoriteResolutions);
+  // Right-click menu on a quick-bar button or dropdown row (add/remove favorite).
+  const [tfMenu, setTfMenu] = useState<{ x: number; y: number; resolution: string } | null>(null);
 
   // grouped interval menu (TV-style; quick-bar stays fixed)
   const [intervalOpen, setIntervalOpen] = useState(false);
@@ -246,6 +255,18 @@ export default function Toolbar({
         ? prev.filter((t) => t !== type)
         : [...prev, type];
       saveFavoriteIndicators(next);
+      return next;
+    });
+  }
+
+  // Pin/unpin a timeframe on the quick bar (global preference). Defaults are never
+  // passed here — their buttons/rows offer no context action.
+  function toggleFavResolution(resolution: string) {
+    setFavResolutions((prev) => {
+      const next = prev.includes(resolution)
+        ? prev.filter((r) => r !== resolution)
+        : [...prev, resolution];
+      saveFavoriteResolutions(next);
       return next;
     });
   }
@@ -412,6 +433,9 @@ export default function Toolbar({
     return <header className="toolbar toolbar-empty" />;
   }
 
+  // Merged quick bar: defaults (1m–1W) ∪ pinned favorites, duration-sorted.
+  const quickBar = quickBarPeriods(favResolutions);
+
   return (
     <header className="toolbar">
       {/* Editable symbol name (TV-style): click to open the symbol-search modal.
@@ -435,19 +459,25 @@ export default function Toolbar({
       <span className="tb-div" aria-hidden="true" />
 
       <div className="periods">
-        {PERIODS.map((p) => (
+        {quickBar.map((p) => (
           <button
             key={p.resolution}
             className={p.resolution === period.resolution ? "on" : ""}
             title={`${p.label} interval`}
             onClick={() => onPeriod(p)}
+            onContextMenu={(e) => {
+              // Defaults (1m–1W) are fixed — no remove menu.
+              if (DEFAULT_RESOLUTIONS.has(p.resolution)) return;
+              e.preventDefault();
+              setTfMenu({ x: e.pageX, y: e.pageY, resolution: p.resolution });
+            }}
           >
             {p.label}
           </button>
         ))}
         {/* When the active interval isn't on the quick-bar (e.g. a seconds TF),
             surface it as a highlighted chip just left of the dropdown toggle. */}
-        {PERIODS.every((p) => p.resolution !== period.resolution) && (
+        {quickBar.every((p) => p.resolution !== period.resolution) && (
           <button
             className="on extra-period"
             title={`${period.label} interval`}
@@ -478,6 +508,11 @@ export default function Toolbar({
                         onClick={() => {
                           onPeriod(p);
                           setIntervalOpen(false);
+                        }}
+                        onContextMenu={(e) => {
+                          if (DEFAULT_RESOLUTIONS.has(p.resolution)) return;
+                          e.preventDefault();
+                          setTfMenu({ x: e.pageX, y: e.pageY, resolution: p.resolution });
                         }}
                       >
                         {p.label}
@@ -787,6 +822,22 @@ export default function Toolbar({
           y={drawMenu.y}
           items={drawMenuItems}
           onClose={() => setDrawMenu(null)}
+        />
+      )}
+
+      {tfMenu && (
+        <ContextMenu
+          x={tfMenu.x}
+          y={tfMenu.y}
+          items={[
+            {
+              label: favResolutions.includes(tfMenu.resolution)
+                ? "Remove from quick bar"
+                : "Add to quick bar",
+              onClick: () => toggleFavResolution(tfMenu.resolution),
+            },
+          ]}
+          onClose={() => setTfMenu(null)}
         />
       )}
     </header>
