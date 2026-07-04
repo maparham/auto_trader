@@ -51,7 +51,7 @@ Props:
 | `content`    | `string \| string[] \| ReactNode`          | —         | A string renders one line; an array renders one dim `.tooltip-desc` paragraph per item; a ReactNode renders as-is for custom cases. |
 | `title`      | `string`                                   | —         | Optional bold heading line above the content. |
 | `placement`  | `"top" \| "bottom" \| "left" \| "right"`   | `"top"`   | *Preferred* side. Auto-flips/shifts if there is no room (collision-aware). |
-| `delay`      | `number` (ms)                              | `120`     | Show delay. Hide is immediate. |
+| `delay`      | `number` (ms)                              | `100`     | First-hover show delay (see grace group below). Hide is immediate. Callers can pass `0` for always-instant or a larger value for a slow-reveal hint. |
 | `disabled`   | `boolean`                                  | `false`   | When true the trigger renders bare with no tooltip behavior. |
 | `children`   | `ReactNode`                                | —         | The trigger element. |
 
@@ -81,8 +81,22 @@ Props:
 
 - **Triggers.** Show on `mouseenter` **and** keyboard `focus` (accessibility);
   hide on `mouseleave`, `blur`, `Escape`, `scroll` (capture, so nested scrollers
-  count), and window `resize`. `~120ms` show delay makes it feel instant without
-  twitching on pass-through; hide is immediate.
+  count), and window `resize`. Hide is immediate.
+
+- **Timing — delay + grace group.** The `delay` prop (default `100ms`) applies to
+  the *first* tooltip shown. A single module-level "grace window" tracks when the
+  last tooltip hid: if another tooltip's trigger is entered within `~400ms` of that,
+  it shows **instantly** (delay skipped). This is what makes sweeping across a
+  toolbar feel snappy — you wait once, not on every icon. Keyboard `focus` always
+  shows instantly (no delay). `delay={0}` opts a trigger into always-instant.
+
+- **Animation — quick fade + slide (locked with user).** On show, the bubble fades
+  in over `~120ms` and slides `8px` toward the anchor into place (slides up when
+  placed on `top`, down when flipped to `bottom`, etc.). On hide it fades out. Runs
+  on CSS `transition` (opacity + transform); the transform direction is set from the
+  resolved placement so the motion always originates *away* from the trigger. This
+  is animation option "A" from the demo. Motion respects
+  `@media (prefers-reduced-motion: reduce)` → fade only, no slide.
 
 - **Non-interactive bubble.** `pointer-events: none` on the bubble so it never
   eats clicks or creates hover loops. Content is display-only.
@@ -133,7 +147,19 @@ Reuse today's tooltip visual tokens, renamed from `.ind-tooltip*` to `.tooltip*`
   border: 1px solid var(--border); border-radius: 6px;
   pointer-events: none;
   /* no box-shadow — flat, border-only, per the app's no-shadows convention */
+
+  /* animation A: quick fade + slide toward the anchor */
+  opacity: 0;
+  transition: opacity .12s ease, transform .12s cubic-bezier(.2,.7,.3,1);
 }
+/* pre-show offset is set inline per placement (translateY(±8px) / translateX(±8px));
+   the .show state resets it to 0 so the bubble slides into place. */
+.tooltip.show { opacity: 1; transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tooltip { transition: opacity .12s ease; transform: none !important; }
+}
+
 .tooltip-title { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
 .tooltip-desc  { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
 .tooltip-desc + .tooltip-desc { margin-top: 6px; }
@@ -142,6 +168,10 @@ Reuse today's tooltip visual tokens, renamed from `.ind-tooltip*` to `.tooltip*`
 Decisions locked with the user:
 - **Flat, border only** — no drop shadow.
 - **Default placement: top**, flipping to bottom / shifting inward on collision.
+- **Animation A** — ~120ms fade + 8px slide toward the anchor (fade-only under
+  reduced-motion).
+- **Timing** — 100ms first-hover delay with an instant grace group; `delay` is an
+  optional prop (`0` = always instant).
 
 ## Files
 
