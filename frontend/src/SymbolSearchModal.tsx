@@ -19,7 +19,7 @@ import SymbolIcon from "./SymbolIcon";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { loadRecentSymbols, pushRecentSymbol } from "./lib/persist";
 import { brokerLabel } from "./lib/trading";
-import { isSyntheticExpr, parseLegs } from "./lib/syntheticExpr";
+import { activeLegFragment, insertLeg, isSyntheticExpr, parseLegs } from "./lib/syntheticExpr";
 import { registerSynthetic } from "./lib/syntheticRegistry";
 
 interface Props {
@@ -63,7 +63,21 @@ function typeLabel(type: string | null | undefined): string {
   }
 }
 
+// TradingView-style "spread operators" revealed by the input's toggle. `token` is
+// what gets inserted into the box (our combiner grammar: + - * / ( ) and reciprocal
+// 1/). Power (^) isn't supported by the backend combiner, so it's intentionally absent.
+const SPREAD_OPS: { label: string; token: string; name: string }[] = [
+  { label: "÷", token: "/", name: "Divide" },
+  { label: "×", token: "*", name: "Multiply" },
+  { label: "+", token: "+", name: "Add" },
+  { label: "−", token: "-", name: "Subtract" },
+  { label: "(", token: "(", name: "Open paren" },
+  { label: ")", token: ")", name: "Close paren" },
+  { label: "1/", token: "1/", name: "Reciprocal" },
+];
+
 export default function SymbolSearchModal({ current, brokerId, onPick, onClose }: Props) {
+  const [showOps, setShowOps] = useState(false);
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("recent"); // opening view
   const [all, setAll] = useState<Instrument[]>([]);
@@ -130,26 +144,52 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
     };
   }, [brokerId]);
 
-  // Debounced keyword search (broker-side). Only runs when there's a query;
-  // with no query `loading` reads catalogueLoading, so `searching` is moot here.
+  // The active search term: in formula mode (the box holds an operator) it's just
+  // the leg being typed — the text after the last operator — so autocomplete
+  // targets the active leg, not the whole expression.
+  const term = (isSyntheticExpr(query) ? activeLegFragment(query) : query).trim();
+
+  // Debounced keyword search (broker-side) for the active term.
   useEffect(() => {
-    const q = query.trim();
-    if (!q) return;
+    if (!term) {
+      setSearchHits([]);
+      setSearching(false);
+      return;
+    }
     setSearching(true);
     const id = ++reqId.current;
     const t = setTimeout(async () => {
-      const found = await searchInstruments(q, brokerId);
+      const found = await searchInstruments(term, brokerId);
       if (id !== reqId.current) return; // a newer query superseded this one
       setSearchHits(found);
       setSearching(false);
     }, 300);
     return () => clearTimeout(t);
-  }, [query, brokerId]);
+  }, [term, brokerId]);
 
-  // What to show: keyword search wins; otherwise the active chip filters the
-  // cached catalogue (Favorites/All are special; the rest match by type).
+  // What to show. With an active term, merge the broker keyword hits with local
+  // catalogue matches by epic/name — the broker search matches display names but
+  // NOT the exact epic (typing "OIL_CRUDE" misses "Crude Oil Spot"), so the local
+  // match guarantees an exact/prefix epic always appears. Otherwise the active chip
+  // filters the cached catalogue.
   const shown = useMemo(() => {
-    if (query.trim()) return searchHits;
+    if (query.trim()) {
+      if (!term) return []; // formula mode, empty active leg → the hint shows
+      const t = term.toLowerCase();
+      const local = all.filter(
+        (m) => m.epic.toLowerCase().includes(t) || m.name.toLowerCase().includes(t),
+      );
+      const seen = new Set<string>();
+      const out: Instrument[] = [];
+      for (const m of [...searchHits, ...local]) {
+        const key = m.epic.toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push(m);
+        }
+      }
+      return out;
+    }
     if (cat === "favorites") return favorites;
     if (cat === "recent") {
       // Map epics → catalogue instruments, preserving MRU order; drop any epic
@@ -161,9 +201,9 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
     }
     if (cat === "all") return all;
     return all.filter((m) => m.type === cat);
-  }, [query, searchHits, cat, all, favorites, recentEpics]);
+  }, [query, term, searchHits, cat, all, favorites, recentEpics]);
 
-  const loading = query.trim() ? searching : catalogueLoading;
+  const loading = term ? searching : catalogueLoading;
 
   // A typed arithmetic expression (e.g. OIL_CRUDE/DXY) whose legs all exist in
   // the catalogue becomes a "Create synthetic" row above the results. null when
@@ -180,7 +220,16 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
     if (legList.length === 0) return null;
     const byEpic = new Set(all.map((m) => m.epic.toUpperCase()));
     const missing = legList.filter((l) => !byEpic.has(l.toUpperCase()));
-    return { expr: q, legs: legList, missing };
+    return { expr: q, missing };
+  }, [query, all]);
+
+  // When the box holds a single plain symbol (not an expression) that exactly
+  // matches a catalogue epic, Enter opens that instrument.
+  const singleTarget = useMemo(() => {
+    const q = query.trim();
+    if (!q || isSyntheticExpr(q)) return null;
+    const up = q.toUpperCase();
+    return all.find((m) => m.epic.toUpperCase() === up) ?? null;
   }, [query, all]);
 
   function pick(s: Instrument) {
@@ -188,6 +237,36 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
     setRecentEpics(loadRecentSymbols());
     onPick(s);
     onClose();
+  }
+
+  // Set the box and keep focus with the caret at the end so composition flows.
+  function setQueryFocused(next: string) {
+    setQuery(next);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(next.length, next.length);
+      }
+    });
+  }
+
+  // Clicking a result adds its epic to the search box (it does NOT open the chart);
+  // the modal stays open so the user can keep building — add an operator + another
+  // symbol for a synthetic, or press Enter to open.
+  function addLeg(epic: string) {
+    setQueryFocused(insertLeg(query, epic));
+  }
+
+  // Insert a spread operator (from the operators toggle) into the box.
+  function insertOp(token: string) {
+    const t = query.replace(/\s*$/, "");
+    let next: string;
+    if (token === "(") next = t ? `${t} (` : "(";
+    else if (token === ")") next = `${t})`;
+    else if (token === "1/") next = t ? `${t} 1/` : "1/";
+    else next = t ? `${t} ${token} ` : `${token} `; // binary operator
+    setQueryFocused(next);
   }
 
   function pickSynthetic(expr: string) {
@@ -225,12 +304,52 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
             placeholder="Symbol or name…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              // Enter opens the chart: a complete synthetic expression, else a
+              // single plain symbol that resolves to a catalogue epic.
+              if (syntheticCandidate && syntheticCandidate.missing.length === 0) {
+                e.preventDefault();
+                pickSynthetic(syntheticCandidate.expr);
+              } else if (singleTarget) {
+                e.preventDefault();
+                pick(singleTarget);
+              }
+            }}
           />
           {query && (
             <button className="symsearch-clear" title="Clear" onClick={() => setQuery("")}>
               ✕
             </button>
           )}
+          {showOps && (
+            <div className="symsearch-ops">
+              {SPREAD_OPS.map((o) => (
+                <button
+                  key={o.token}
+                  type="button"
+                  aria-label={o.name}
+                  title={o.name}
+                  onClick={() => insertOp(o.token)}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            className={"symsearch-ops-toggle" + (showOps ? " on" : "")}
+            title={showOps ? "Hide spread operators" : "Show spread operators"}
+            aria-label={showOps ? "Hide spread operators" : "Show spread operators"}
+            aria-pressed={showOps}
+            onClick={() => setShowOps((v) => !v)}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+              strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M8 9h.01M12 9h.01M16 9h.01M8 13h.01M16 13h.01M8 17h8" />
+            </svg>
+          </button>
         </div>
 
         <div className="symsearch-cats">
@@ -248,24 +367,14 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
           ))}
         </div>
 
-        {syntheticCandidate && (
+        {/* A valid expression has no open-row — press Enter to open it. Only an
+            unknown leg surfaces a message, as validation feedback. */}
+        {syntheticCandidate && syntheticCandidate.missing.length > 0 && (
           <div className="symsearch-synthetic">
-            {syntheticCandidate.missing.length === 0 ? (
-              <button
-                className="symsearch-synthetic-row"
-                onClick={() => pickSynthetic(syntheticCandidate.expr)}
-              >
-                <span className="ss-epic">= {syntheticCandidate.expr}</span>
-                <span className="ss-name">
-                  Synthetic · {syntheticCandidate.legs.join(", ")}
-                </span>
-              </button>
-            ) : (
-              <div className="symsearch-empty">
-                Unknown instrument{syntheticCandidate.missing.length > 1 ? "s" : ""}:{" "}
-                {syntheticCandidate.missing.join(", ")}
-              </div>
-            )}
+            <div className="symsearch-empty">
+              Unknown instrument{syntheticCandidate.missing.length > 1 ? "s" : ""}:{" "}
+              {syntheticCandidate.missing.join(", ")}
+            </div>
           </div>
         )}
 
@@ -277,7 +386,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
                 (m.epic === current.epic ? "selected" : "") +
                 (m.status !== "TRADEABLE" ? " closed" : "")
               }
-              onClick={() => pick(m)}
+              onClick={() => addLeg(m.epic)}
               title={m.status !== "TRADEABLE" ? "Market closed" : undefined}
             >
               <SymbolIcon epic={m.epic} type={m.type} className="ss-icon" />
@@ -304,19 +413,25 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
               </button>
             </li>
           ))}
-          {loading && shown.length === 0 && (
-            <li className="symsearch-empty">Loading…</li>
-          )}
-          {!loading && shown.length === 0 && (
-            <li className="symsearch-empty">
-              {query.trim()
-                ? `No symbols match “${query.trim()}”.`
-                : cat === "favorites"
-                  ? "No favorites yet — search above, then tap the ☆ on any symbol."
-                  : cat === "recent"
-                    ? "No recently opened symbols yet."
-                    : "Nothing to browse here — search by name above."}
-            </li>
+          {isSyntheticExpr(query) && activeLegFragment(query) === "" ? (
+            <li className="symsearch-empty">Type to search the next leg…</li>
+          ) : (
+            <>
+              {loading && shown.length === 0 && (
+                <li className="symsearch-empty">Loading…</li>
+              )}
+              {!loading && shown.length === 0 && (
+                <li className="symsearch-empty">
+                  {query.trim()
+                    ? `No symbols match “${term}”.`
+                    : cat === "favorites"
+                      ? "No favorites yet — search above, then tap the ☆ on any symbol."
+                      : cat === "recent"
+                        ? "No recently opened symbols yet."
+                        : "Nothing to browse here — search by name above."}
+                </li>
+              )}
+            </>
           )}
         </ul>
       </div>

@@ -541,6 +541,24 @@
 }
 .symsearch .symsearch-clear:hover { background: var(--hover); color: var(--text); }
 
+/* Spread-operator toggle + the revealed operator buttons (TradingView-style). */
+.symsearch .symsearch-ops-toggle {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 26px; height: 26px; border-radius: 6px;
+  background: transparent; border: none; color: var(--text-faint); cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.symsearch .symsearch-ops-toggle:hover { background: var(--hover); color: var(--text); }
+.symsearch .symsearch-ops-toggle.on { background: var(--hover-strong); color: var(--text); }
+.symsearch-ops { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.symsearch-ops button {
+  display: flex; align-items: center; justify-content: center;
+  min-width: 26px; height: 26px; padding: 0 6px; border-radius: 6px;
+  background: transparent; border: none; color: var(--text); cursor: pointer;
+  font-size: 15px; line-height: 1;
+}
+.symsearch-ops button:hover { background: var(--hover-strong); }
+
 .symsearch-cats {
   display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 20px 14px;
 }
@@ -557,12 +575,6 @@
    as one more actionable row (matching .symsearch-results li) rather than a
    bare <button>, with a light top separator so it still reads as distinct. */
 .symsearch-synthetic { border-top: 1px solid var(--border); }
-.symsearch-synthetic-row {
-  display: flex; align-items: center; gap: 14px; padding: 11px 20px;
-  width: 100%; background: none; border: none; cursor: pointer;
-  text-align: left; color: var(--text); font-size: 14px;
-}
-.symsearch-synthetic-row:hover { background: var(--hover); }
 
 .symsearch-results {
   list-style: none; margin: 0; padding: 0; min-height: 160px;
@@ -628,17 +640,6 @@
 .symsearch .ss-star.on { opacity: 1; color: #f5b301; }
 .symsearch .ss-star.on svg { fill: currentColor; stroke: currentColor; }
 .symsearch .ss-star.on:hover { background: var(--hover-strong); }
-
-/* "+" add-to-formula button on each result row — mirrors the star. */
-.symsearch .ss-add {
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  width: 26px; height: 26px; padding: 0; border: none; border-radius: 50%;
-  background: transparent; cursor: pointer; color: var(--text-faint);
-  font-size: 20px; line-height: 1; font-weight: 500;
-  opacity: 0; transition: opacity 0.1s, color 0.1s, background 0.1s;
-}
-.symsearch-results li:hover .ss-add { opacity: 1; }
-.symsearch .ss-add:hover { background: var(--hover-strong); color: var(--text); }
 
 .symsearch-empty {
   display: flex; align-items: center; justify-content: center;

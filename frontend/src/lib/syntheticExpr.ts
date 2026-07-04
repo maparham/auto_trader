@@ -121,3 +121,34 @@ export function syntheticId(expr: string): string {
   }
   return "SYN_" + (h >>> 0).toString(36);
 }
+
+// Index of the last operator/paren that separates legs, or -1. A bare "-" is NOT
+// a boundary — only a SPACED minus (whitespace before it) is subtraction — so this
+// agrees with isSyntheticExpr, which ignores bare dashes. Otherwise a typed "A-"
+// followed by a pick would strand the box in a not-formula-but-split state.
+function lastOpIndex(text: string): number {
+  let last = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "-") {
+      if (i > 0 && /\s/.test(text[i - 1])) last = i;
+    } else if ("+*/()".includes(ch)) {
+      last = i;
+    }
+  }
+  return last;
+}
+
+/** The leg the user is currently typing: text after the last operator/paren, trimmed. */
+export function activeLegFragment(text: string): string {
+  return text.slice(lastOpIndex(text) + 1).trim();
+}
+
+/** `text` with the active leg fragment replaced by `epic`, spacing normalized. */
+export function insertLeg(text: string, epic: string): string {
+  if (!text.trim()) return epic;
+  const last = lastOpIndex(text);
+  if (last < 0) return epic; // no operator yet: the box is one leg fragment
+  const head = text.slice(0, last + 1).replace(/\s*$/, ""); // up to & incl the operator
+  return `${head} ${epic}`;
+}
