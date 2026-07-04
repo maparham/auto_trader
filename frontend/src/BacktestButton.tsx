@@ -114,6 +114,8 @@ export default function BacktestButton({ controller, period, epic, brokerId }: P
         // `!== false` so a preset predating these flags (undefined) still trades.
         longEnabled: cfg.longEnabled !== false,
         shortEnabled: cfg.shortEnabled !== false,
+        longRisk: cfg.longRisk,
+        shortRisk: cfg.shortRisk,
         costs: cfg.costs,
         tradeFromTime,
       });
@@ -158,6 +160,9 @@ export default function BacktestButton({ controller, period, epic, brokerId }: P
             {summary.net_pnl.toFixed(2)}
           </span>
           <span>{summary.n_trades} trades</span>
+          <span title="Largest peak-to-trough equity drop">
+            −{summary.max_drawdown.toFixed(2)} dd
+          </span>
           <span>{(summary.win_rate * 100).toFixed(0)}% win</span>
           <button className="bt-clear" title="Clear backtest" onClick={clear}>
             ✕

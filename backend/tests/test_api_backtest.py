@@ -11,9 +11,13 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from auto_trader.api import app as app_module
+from auto_trader.api.app import app
+
+client = TestClient(app)
 
 
 def _candles(closes: list[float]) -> list[dict]:
@@ -261,3 +265,41 @@ def test_post_backtest_422_on_indicator_operand_missing_indicator():
     }
     with pytest.raises(ValidationError):
         _run(body)
+
+
+def _min_body():
+    # 4 flat candles, no rules -> no trades; a valid minimal request body.
+    candles = [{"time": i * 60, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 0}
+               for i in range(4)]
+    empty = {"combine": "AND", "rules": []}
+    return {
+        "epic": "X", "resolution": "MINUTE", "candles": candles, "series": {},
+        "longEntry": empty, "longExit": empty, "shortEntry": empty, "shortExit": empty,
+        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": 0, "startingCash": 10000},
+        "tradeFromTime": 0,
+    }
+
+
+def test_atr_risk_without_series_is_rejected():
+    body = _min_body()
+    body["longRisk"] = {"stop": {"kind": "atr", "mult": 2, "length": 14},
+                        "target": {"kind": "none"}}
+    r = client.post("/api/backtest", json=body)
+    assert r.status_code == 422
+    assert "ATR_14" in r.json()["detail"]
+
+
+def test_pct_risk_needs_no_series_and_runs():
+    body = _min_body()
+    body["longRisk"] = {"stop": {"kind": "pct", "value": 2}, "target": {"kind": "none"}}
+    r = client.post("/api/backtest", json=body)
+    assert r.status_code == 200
+
+
+def test_atr_risk_with_series_runs():
+    body = _min_body()
+    body["series"] = {"ATR_14": [1, 2, 4, 4]}
+    body["longRisk"] = {"stop": {"kind": "atr", "mult": 2, "length": 14},
+                        "target": {"kind": "none"}}
+    r = client.post("/api/backtest", json=body)
+    assert r.status_code == 200

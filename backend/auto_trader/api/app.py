@@ -62,6 +62,7 @@ from auto_trader.core.candle_aggregate import (
 )
 from auto_trader.core.synthetic import SyntheticError, combine, legs, parse
 from auto_trader.engine.backtest import BacktestEngine
+from auto_trader.engine.risk import RiskConfig, StopSpec, TargetSpec
 from auto_trader.strategy.rule import Operand, Rule, RuleGroup, RuleStrategy, series_name
 
 # The broker registry: named data brokers (keyed "capital") and execution brokers
@@ -347,6 +348,41 @@ class CostsDTO(BaseModel):
     startingCash: float = Field(gt=0)
 
 
+class StopSpecDTO(BaseModel):
+    kind: Literal["none", "pct", "price", "atr", "trailPct", "trailAtr"]
+    value: float | None = None
+    mult: float | None = None
+    length: int | None = None
+
+    def to_spec(self) -> StopSpec:
+        return StopSpec(self.kind, self.value, self.mult, self.length)
+
+
+class TargetSpecDTO(BaseModel):
+    kind: Literal["none", "pct", "price", "atr"]
+    value: float | None = None
+    mult: float | None = None
+    length: int | None = None
+
+    def to_spec(self) -> TargetSpec:
+        return TargetSpec(self.kind, self.value, self.mult, self.length)
+
+
+class RiskConfigDTO(BaseModel):
+    stop: StopSpecDTO
+    target: TargetSpecDTO
+
+    def to_risk(self) -> RiskConfig:
+        return RiskConfig(self.stop.to_spec(), self.target.to_spec())
+
+    def atr_series_names(self) -> list[str]:
+        names = []
+        for spec in (self.stop, self.target):
+            if spec.kind in ("atr", "trailAtr") and spec.length is not None:
+                names.append(f"ATR_{spec.length}")
+        return names
+
+
 class BacktestRequest(BaseModel):
     epic: str
     resolution: str
@@ -361,6 +397,8 @@ class BacktestRequest(BaseModel):
     # Default on so an omitted flag means "trade this side" (backward-safe).
     longEnabled: bool = True
     shortEnabled: bool = True
+    longRisk: RiskConfigDTO | None = None
+    shortRisk: RiskConfigDTO | None = None
     costs: CostsDTO
     tradeFromTime: int
 
@@ -1132,6 +1170,14 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             if name is not None and name not in req.series:
                 raise HTTPException(422, f"missing series '{name}' referenced by a rule")
 
+    # Stop/target ATR sizing reads the same posted-series channel as rules do.
+    for risk in (req.longRisk, req.shortRisk):
+        if risk is None:
+            continue
+        for name in risk.atr_series_names():
+            if name not in req.series:
+                raise HTTPException(422, f"missing series '{name}' referenced by a stop/target")
+
     candles = [_candle_from_dto(c) for c in req.candles]
     strategy = RuleStrategy(
         req.longEntry.to_group(), req.longExit.to_group(),
@@ -1144,6 +1190,9 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         starting_cash=req.costs.startingCash,
         commission_per_side=req.costs.commissionPerSide,
         slippage=req.costs.slippage,
+        long_risk=req.longRisk.to_risk() if req.longRisk else None,
+        short_risk=req.shortRisk.to_risk() if req.shortRisk else None,
+        series=req.series,
     ).run(candles)
 
     # Fills/trades need no >= tradeFromTime filter here: RuleStrategy gates every

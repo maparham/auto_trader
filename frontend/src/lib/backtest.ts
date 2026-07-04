@@ -26,9 +26,12 @@ export const EQUITY_INDICATOR = "EQUITY";
 const BUY_COLOR = "#26a69a";
 const SELL_COLOR = "#ef5350";
 
-/** Chart marker label: "+" opens a position, "-" closes it; the letter is the
- * order side (B/S). open-long=B+, close-long=S-, open-short=S+, close-short=B-. */
-export function markerLabel(side: "buy" | "sell", leg: "long" | "short"): string {
+/** Chart marker label. Risk exits read by reason: stop/trailing => "SL",
+ * target => "TP". Otherwise "+" opens a position and "-" closes it, prefixed by
+ * the order side (B/S): open-long=B+, close-long=S-, open-short=S+, close-short=B-. */
+export function markerLabel(side: "buy" | "sell", leg: "long" | "short", reason?: string): string {
+  if (reason === "stop" || reason === "trail") return "SL";
+  if (reason === "target") return "TP";
   const letter = side === "buy" ? "B" : "S";
   const opening = (leg === "long" && side === "buy") || (leg === "short" && side === "sell");
   return `${letter}${opening ? "+" : "-"}`;
@@ -95,7 +98,7 @@ export async function runAndRender(
       name: "simpleAnnotation",
       points: [{ timestamp: m.time * 1000, value: m.price }],
       lock: true, // backtest artifacts: not user-editable
-      extendData: markerLabel(m.side, m.leg),
+      extendData: markerLabel(m.side, m.leg, m.reason),
       styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
     });
     if (typeof id === "string") artifacts.markerIds.push(id);

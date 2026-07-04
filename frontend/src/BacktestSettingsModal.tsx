@@ -25,6 +25,9 @@ import {
   type Operator,
   type Combine,
   type Costs,
+  type RiskConfig,
+  type StopKind,
+  type TargetKind,
 } from "./lib/backtestConfig";
 import {
   loadBacktestPresets,
@@ -57,6 +60,22 @@ const HISTORY_DEPTHS: { value: HistoryDepth; label: string }[] = [
 const INDICATORS: IndicatorKind[] = ["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"];
 const NO_LENGTH: IndicatorKind[] = ["AVWAP", "VOL"];
 const PRICE_FIELDS: PriceField[] = ["close", "open", "high", "low"];
+const STOP_KINDS: { value: StopKind; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "pct", label: "% from entry" },
+  { value: "atr", label: "ATR ×" },
+  { value: "trailPct", label: "Trailing %" },
+  { value: "trailAtr", label: "Trailing ATR ×" },
+  { value: "price", label: "Fixed price" },
+];
+const TARGET_KINDS: { value: TargetKind; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "pct", label: "% from entry" },
+  { value: "atr", label: "ATR ×" },
+  { value: "price", label: "Fixed price" },
+];
+
+const EMPTY_RISK: RiskConfig = { stop: { kind: "none" }, target: { kind: "none" } };
 // `tip` is a one-line tooltip. Crosses fire ONCE on the bar the lines meet (an
 // event); the comparisons are true on EVERY bar the condition holds (a state).
 const OPERATORS: { value: Operator; label: string; tip: string }[] = [
@@ -401,6 +420,76 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   );
 }
 
+// The stop/target block for one side. A stop is one dropdown (fixed %/price/ATR
+// or trailing %/ATR); a target is the same minus the trailing kinds. Off by
+// default (kind "none") so existing presets are untouched. ATR kinds expose a
+// length (default 14); % / trailing % expose a percent; ATR kinds expose a
+// multiple; fixed price exposes an absolute level.
+function RiskSection({
+  side,
+  risk,
+  onChange,
+}: {
+  side: "long" | "short";
+  risk: RiskConfig;
+  onChange: (r: RiskConfig) => void;
+}) {
+  const setStopKind = (kind: StopKind) => {
+    const next: RiskConfig["stop"] = { kind };
+    if (kind === "atr" || kind === "trailAtr") { next.mult = risk.stop.mult ?? 2; next.length = risk.stop.length ?? 14; }
+    else if (kind === "pct" || kind === "trailPct") next.value = risk.stop.value ?? 2;
+    else if (kind === "price") next.value = risk.stop.value ?? 0;
+    onChange({ ...risk, stop: next });
+  };
+  const setTargetKind = (kind: TargetKind) => {
+    const next: RiskConfig["target"] = { kind };
+    if (kind === "atr") { next.mult = risk.target.mult ?? 3; next.length = risk.target.length ?? 14; }
+    else if (kind === "pct") next.value = risk.target.value ?? 4;
+    else if (kind === "price") next.value = risk.target.value ?? 0;
+    onChange({ ...risk, target: next });
+  };
+  const num = (v: number | undefined, set: (n: number) => void, step = "any") => (
+    <input type="number" step={step} value={v ?? 0}
+      onChange={(e) => set(Number(e.target.value))} className="bt-num" />
+  );
+
+  return (
+    <div className="bt-risk">
+      <div className="instrument-section-title">Stop &amp; target ({side})</div>
+      <div className="bt-risk-row">
+        <span className="bt-risk-label">Stop</span>
+        <select value={risk.stop.kind} onChange={(e) => setStopKind(e.target.value as StopKind)}>
+          {STOP_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+        </select>
+        {(risk.stop.kind === "pct" || risk.stop.kind === "trailPct") &&
+          <>{num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }))}<span>%</span></>}
+        {(risk.stop.kind === "atr" || risk.stop.kind === "trailAtr") && <>
+          {num(risk.stop.mult, (n) => onChange({ ...risk, stop: { ...risk.stop, mult: n } }))}
+          <span>× ATR</span>
+          {num(risk.stop.length, (n) => onChange({ ...risk, stop: { ...risk.stop, length: Math.max(1, Math.round(n)) } }), "1")}
+        </>}
+        {risk.stop.kind === "price" &&
+          num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }))}
+      </div>
+      <div className="bt-risk-row">
+        <span className="bt-risk-label">Target</span>
+        <select value={risk.target.kind} onChange={(e) => setTargetKind(e.target.value as TargetKind)}>
+          {TARGET_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+        </select>
+        {risk.target.kind === "pct" &&
+          <>{num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }))}<span>%</span></>}
+        {risk.target.kind === "atr" && <>
+          {num(risk.target.mult, (n) => onChange({ ...risk, target: { ...risk.target, mult: n } }))}
+          <span>× ATR</span>
+          {num(risk.target.length, (n) => onChange({ ...risk, target: { ...risk.target, length: Math.max(1, Math.round(n)) } }), "1")}
+        </>}
+        {risk.target.kind === "price" &&
+          num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }))}
+      </div>
+    </div>
+  );
+}
+
 // One side of the strategy (long or short): an arm switch that parks the whole
 // side without losing its rules, above that side's entry/exit rule groups.
 // Parking dims the rules but keeps them editable, so you can set a side up
@@ -458,6 +547,11 @@ function SidePanel({
           group={exit}
           onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
           emptyHint={`No ${side}-exit rules — an open ${side} holds until the trading window ends.`}
+        />
+        <RiskSection
+          side={side}
+          risk={(isLong ? cfg.longRisk : cfg.shortRisk) ?? EMPTY_RISK}
+          onChange={(r) => setCfg({ ...cfg, [isLong ? "longRisk" : "shortRisk"]: r })}
         />
       </div>
     </>

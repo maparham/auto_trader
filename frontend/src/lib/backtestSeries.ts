@@ -5,7 +5,8 @@
 import type { KLineData } from "klinecharts";
 import { maSeries, sma } from "./mtf";
 import { vwapFrom, computeRsi } from "./customIndicators";
-import { collectSeriesOperands, seriesName, type BacktestConfig, type Operand } from "./backtestConfig";
+import { collectSeriesOperands, seriesName, riskAtrLengths, type BacktestConfig, type Operand } from "./backtestConfig";
+import { atrSeries } from "./atr";
 
 function toNullable(arr: Array<number | undefined>): Array<number | null> {
   return arr.map((v) => (v === undefined ? null : v));
@@ -21,6 +22,10 @@ export function buildSeries(
     const name = seriesName(op);
     if (name === null) continue;
     out[name] = computeOne(op, candles);
+  }
+
+  for (const length of riskAtrLengths(cfg)) {
+    out[`ATR_${length}`] = atrSeries(candles, length);
   }
 
   return out;

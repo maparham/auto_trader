@@ -132,4 +132,23 @@ describe("buildSeries", () => {
     expect(series["AVWAP"]).toHaveLength(3);
     expect(series["AVWAP"][0]).not.toBeNull();
   });
+
+  it("emits an ATR_{n} series when a risk config references ATR", () => {
+    const data = candles([10, 11, 12, 13, 14, 15]);
+    const out = buildSeries(data, cfg({
+      longRisk: { stop: { kind: "trailAtr", mult: 2, length: 3 }, target: { kind: "none" } },
+    }));
+    expect(out["ATR_3"]).toBeDefined();
+    expect(out["ATR_3"].length).toBe(data.length);
+    expect(out["ATR_3"][0]).toBeNull(); // cold until 3 TRs exist
+    expect(out["ATR_3"][2]).not.toBeNull();
+  });
+
+  it("emits no ATR series when no risk config references ATR", () => {
+    const data = candles([10, 11, 12]);
+    const out = buildSeries(data, cfg({
+      longRisk: { stop: { kind: "pct", value: 2 }, target: { kind: "none" } },
+    }));
+    expect(Object.keys(out).some((k) => k.startsWith("ATR_"))).toBe(false);
+  });
 });

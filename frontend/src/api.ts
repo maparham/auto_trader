@@ -1,6 +1,6 @@
 // Typed client for the Auto Trader backend.
 
-import type { RuleGroup, Costs } from "./lib/backtestConfig";
+import type { RuleGroup, Costs, RiskConfig } from "./lib/backtestConfig";
 import { API_BASE as BASE, errorDetail } from "./lib/http";
 
 interface Candle {
@@ -62,6 +62,8 @@ export interface BacktestRequest {
   shortExit: RuleGroup;
   longEnabled: boolean; // per-side master switch (a disabled side never trades)
   shortEnabled: boolean;
+  longRisk?: RiskConfig; // optional price-level exits (stop/target/trailing)
+  shortRisk?: RiskConfig;
   costs: Costs;
   tradeFromTime: number; // unix seconds — the window's start (D6)
 }

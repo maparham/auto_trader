@@ -4,6 +4,7 @@ import {
   collectSeriesOperands,
   longestIndicatorLength,
   defaultBacktestConfig,
+  riskAtrLengths,
   type BacktestConfig,
 } from "./backtestConfig";
 
@@ -133,5 +134,34 @@ describe("longestIndicatorLength", () => {
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     expect(longestIndicatorLength(cfg)).toBe(1);
+  });
+});
+
+describe("risk ATR collection", () => {
+  it("collects ATR lengths from stop and target of both sides, deduped", () => {
+    const cfg = {
+      ...defaultBacktestConfig(),
+      longRisk: { stop: { kind: "trailAtr" as const, mult: 2, length: 14 },
+                  target: { kind: "atr" as const, mult: 3, length: 14 } },
+      shortRisk: { stop: { kind: "atr" as const, mult: 2, length: 20 },
+                   target: { kind: "none" as const } },
+    };
+    expect(riskAtrLengths(cfg).sort((a, b) => a - b)).toEqual([14, 20]);
+  });
+
+  it("ignores non-ATR stop kinds", () => {
+    const cfg = {
+      ...defaultBacktestConfig(),
+      longRisk: { stop: { kind: "pct" as const, value: 2 }, target: { kind: "none" as const } },
+    };
+    expect(riskAtrLengths(cfg)).toEqual([]);
+  });
+
+  it("longestIndicatorLength counts a risk ATR length larger than any rule", () => {
+    const cfg = {
+      ...defaultBacktestConfig(), // rules use EMA 9/21
+      longRisk: { stop: { kind: "atr" as const, mult: 2, length: 50 }, target: { kind: "none" as const } },
+    };
+    expect(longestIndicatorLength(cfg)).toBe(50);
   });
 });

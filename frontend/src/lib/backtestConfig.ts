@@ -13,6 +13,18 @@ export type Operand =
   | { kind: "price"; field: PriceField }
   | { kind: "const"; value: number };
 
+export type StopKind = "none" | "pct" | "price" | "atr" | "trailPct" | "trailAtr";
+export type TargetKind = "none" | "pct" | "price" | "atr";
+
+// value: pct percent OR absolute price. mult/length: ATR multiple + Wilder length.
+export interface StopSpec { kind: StopKind; value?: number; mult?: number; length?: number }
+export interface TargetSpec { kind: TargetKind; value?: number; mult?: number; length?: number }
+
+// Price-level exits for one side. Coexists with that side's rule-exit group;
+// whichever triggers first closes the position. Optional on BacktestConfig so
+// presets saved before this existed load as "no stop / no target".
+export interface RiskConfig { stop: StopSpec; target: TargetSpec }
+
 export interface Rule {
   left: Operand;
   op: Operator;
@@ -60,6 +72,8 @@ export interface BacktestConfig {
   // `!== false` so an absent flag trades rather than silently parking the side.
   longEnabled?: boolean;
   shortEnabled?: boolean;
+  longRisk?: RiskConfig;
+  shortRisk?: RiskConfig;
   costs: Costs;
 }
 
@@ -88,12 +102,28 @@ export function collectSeriesOperands(cfg: BacktestConfig): Operand[] {
   return [...seen.values()];
 }
 
+const ATR_KINDS = new Set(["atr", "trailAtr"]);
+
+/** Every distinct ATR length referenced by either side's stop or target, so the
+ * caller computes each `ATR_{n}` series once. Non-ATR kinds contribute nothing. */
+export function riskAtrLengths(cfg: BacktestConfig): number[] {
+  const lengths = new Set<number>();
+  for (const risk of [cfg.longRisk, cfg.shortRisk]) {
+    if (!risk) continue;
+    for (const spec of [risk.stop, risk.target]) {
+      if (ATR_KINDS.has(spec.kind) && spec.length != null) lengths.add(spec.length);
+    }
+  }
+  return [...lengths];
+}
+
 /** The longest indicator length referenced anywhere in the config — the number
  * of bars of warm-up the slowest indicator needs before it produces a value. */
 export function longestIndicatorLength(cfg: BacktestConfig): number {
   return Math.max(
     1,
     ...collectSeriesOperands(cfg).map((op) => (op.kind === "indicator" ? op.length ?? 1 : 1)),
+    ...riskAtrLengths(cfg),
   );
 }
 

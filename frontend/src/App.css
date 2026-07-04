@@ -951,6 +951,23 @@
    editable — prep a side before arming). */
 .bt-side-rules { display: contents; }
 .bt-side-rules.bt-parked { display: block; opacity: 0.5; }
+
+/* Stop & target — price-level exits for one side, below its rule groups. Reads
+   as one more section within the side; a top border divides it from the exit
+   rules above (which, being the last .bt-section, drops their own divider). Each
+   row is one line: [Stop|Target] [kind select] [that kind's inputs]. */
+.bt-risk {
+  display: flex; flex-flow: row wrap; align-items: center; gap: 8px 24px;
+  padding: 12px 0; border-top: 1px solid var(--border);
+}
+/* Title spans the top; Stop and Target then share the next line side by side,
+   wrapping back to two lines only if a populated (e.g. ATR) row gets too wide. */
+.bt-risk > .instrument-section-title { flex-basis: 100%; margin-bottom: 0; }
+.bt-risk-row { display: flex; align-items: center; gap: 8px; }
+.bt-risk-row select { flex: 0 0 auto; min-width: 0; }
+.bt-risk-row span { color: var(--text-dim); font-size: 12px; }
+.bt-risk-label { flex: 0 0 52px; color: var(--text-dim); font-size: 12px; }
+.bt-num { width: 64px; flex: 0 0 auto; min-width: 0; }
 @media (prefers-reduced-motion: reduce) {
   .bt-switch, .bt-switch-knob { transition: none; }
 }
