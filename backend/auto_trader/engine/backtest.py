@@ -21,6 +21,7 @@ from datetime import datetime
 
 from auto_trader.core.models import Candle, Fill, Side, Signal, Trade
 from auto_trader.engine.risk import RiskConfig, is_trailing, stop_level, target_level
+from auto_trader.engine.scaling import ScalingConfig, spacing_ok
 from auto_trader.strategy.base import Context, Strategy
 
 
@@ -78,6 +79,8 @@ class BacktestEngine:
         long_risk: RiskConfig | None = None,
         short_risk: RiskConfig | None = None,
         series: dict[str, list[float | None]] | None = None,
+        long_scaling: ScalingConfig | None = None,
+        short_scaling: ScalingConfig | None = None,
     ) -> None:
         self.strategy = strategy
         self.starting_cash = starting_cash
@@ -86,6 +89,8 @@ class BacktestEngine:
         self.long_risk = long_risk
         self.short_risk = short_risk
         self.series = series or {}
+        self.long_scaling = long_scaling or ScalingConfig()
+        self.short_scaling = short_scaling or ScalingConfig()
 
     def run(self, candles: list[Candle]) -> BacktestResult:
         result = BacktestResult()
@@ -97,25 +102,43 @@ class BacktestEngine:
         pending: list[Signal] = []  # signals from the previous bar, filled at this open
 
         peak_equity = self.starting_cash
+        last_long_open: float | None = None
+        last_short_open: float | None = None
 
         for i, bar in enumerate(candles):
             # 1) Fill everything queued on the previous bar at THIS bar's open.
             for sig in pending:
                 fill_price = self._fill_price(bar.open, sig.side)
-                result.fills.append(
-                    Fill(bar.time, sig.side, fill_price, sig.quantity, sig.reason, sig.leg)
-                )
-                realized -= self.commission  # one side's commission per fill
                 if sig.leg == "long":
-                    if sig.side is Side.BUY:
-                        self._open_or_add(longs, "long", self.long_risk, fill_price, bar.time, sig.reason, sig.quantity, i)
-                    else:
-                        realized = self._reduce(longs, "long", result, realized, fill_price, bar.time, sig.reason, sig.quantity)
+                    positions, side, risk, scaling = longs, "long", self.long_risk, self.long_scaling
+                    opening = sig.side is Side.BUY
+                    last_open = last_long_open
+                    close_side = Side.SELL
                 else:
-                    if sig.side is Side.SELL:
-                        self._open_or_add(shorts, "short", self.short_risk, fill_price, bar.time, sig.reason, sig.quantity, i)
+                    positions, side, risk, scaling = shorts, "short", self.short_risk, self.short_scaling
+                    opening = sig.side is Side.SELL
+                    last_open = last_short_open
+                    close_side = Side.BUY
+
+                if opening:
+                    atr = self._atr_at(scaling.spacing.length if scaling.spacing else None, i)
+                    if len(positions) >= scaling.max_concurrent or not spacing_ok(
+                        scaling.spacing, last_open, fill_price, side, atr
+                    ):
+                        continue  # cap/spacing rejected: no fill, no commission
+                    result.fills.append(Fill(bar.time, sig.side, fill_price, sig.quantity, sig.reason, sig.leg))
+                    realized -= self.commission
+                    self._open(positions, side, risk, fill_price, bar.time, sig.reason, sig.quantity, i)
+                    if side == "long":
+                        last_long_open = fill_price
                     else:
-                        realized = self._reduce(shorts, "short", result, realized, fill_price, bar.time, sig.reason, sig.quantity)
+                        last_short_open = fill_price
+                else:
+                    realized = self._close_all(positions, side, result, realized, close_side, fill_price, bar.time, sig.reason)
+                    if side == "long":
+                        last_long_open = None
+                    else:
+                        last_short_open = None
             pending = []
 
             # 1b) Intra-bar stop/target, then 1c) trailing ratchet — per side.
@@ -166,23 +189,24 @@ class BacktestEngine:
         arr = self.series.get(f"ATR_{length}", [])
         return arr[i] if i < len(arr) else None
 
-    def _open_or_add(self, positions, side, risk, fill_price, bar_time, reason, qty, i):
-        """A BUY(long)/SELL(short) intent fill. With an existing open position on
-        the side, MERGE (weighted-average entry, keep original open time/reason,
-        levels unchanged) — matching today's single-bucket add. Otherwise open a
-        new Position and seed its stop/target/extreme from the fill price."""
-        if positions:
-            p = positions[0]
-            new_qty = p.qty + qty
-            p.entry = (p.qty * p.entry + qty * fill_price) / new_qty if new_qty else 0.0
-            p.qty = new_qty
-            return
+    def _open(self, positions, side, risk, fill_price, bar_time, reason, qty, i):
+        """Open a NEW independent position; seed its stop/target/extreme from the
+        fill price. (Pyramiding/merge is a later phase.)"""
         p = Position(qty=qty, entry=fill_price, open_time=bar_time, open_reason=reason)
         if risk:
             p.extreme = fill_price
             p.stop = stop_level(risk.stop, fill_price, side, self._atr_at(risk.stop.length, i), p.extreme)
             p.target = target_level(risk.target, fill_price, side, self._atr_at(risk.target.length, i))
         positions.append(p)
+
+    def _close_all(self, positions, side, result, realized, close_side, fill_price, bar_time, reason):
+        """Close EVERY open position on the side (P2 exit scope). One fill +
+        commission + Trade per position. Returns updated realized."""
+        while positions:
+            result.fills.append(Fill(bar_time, close_side, fill_price, positions[0].qty, reason, side))
+            realized -= self.commission
+            realized = self._reduce(positions, side, result, realized, fill_price, bar_time, reason, positions[0].qty)
+        return realized
 
     def _reduce(self, positions, side, result, realized, fill_price, bar_time, reason, qty):
         """A closing fill (SELL for long, BUY for short) of `qty` units against the

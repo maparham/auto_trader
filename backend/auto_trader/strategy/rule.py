@@ -113,37 +113,34 @@ class RuleStrategy(Strategy):
         )
         signals: list[Signal] = []
 
-        # Long bucket (skipped entirely when the side is disabled — no entry,
-        # and no exit either, since a disabled side can never be holding).
+        # Long: entry fires whenever the rule passes (the ENGINE caps how many
+        # positions open); exit fires only while the side is holding.
         if self.long_enabled:
-            if ctx.position_long == 0:
-                if not gated:
-                    passed, results = self._eval_group(self.long_entry, ctx, i)
-                    if passed:
-                        signals.append(
-                            Signal(Side.BUY, self.quantity, self._reason(self.long_entry, results), leg="long")
-                        )
-            else:
+            if not gated:
+                passed, results = self._eval_group(self.long_entry, ctx, i)
+                if passed:
+                    signals.append(
+                        Signal(Side.BUY, self.quantity, self._reason(self.long_entry, results), leg="long")
+                    )
+            if ctx.position_long > 0:
                 passed, results = self._eval_group(self.long_exit, ctx, i)
                 if passed:
                     signals.append(
-                        Signal(Side.SELL, ctx.position_long, self._reason(self.long_exit, results), leg="long")
+                        Signal(Side.SELL, self.quantity, self._reason(self.long_exit, results), leg="long")
                     )
 
-        # Short bucket (skipped entirely when the side is disabled).
         if self.short_enabled:
-            if ctx.position_short == 0:
-                if not gated:
-                    passed, results = self._eval_group(self.short_entry, ctx, i)
-                    if passed:
-                        signals.append(
-                            Signal(Side.SELL, self.quantity, self._reason(self.short_entry, results), leg="short")
-                        )
-            else:
+            if not gated:
+                passed, results = self._eval_group(self.short_entry, ctx, i)
+                if passed:
+                    signals.append(
+                        Signal(Side.SELL, self.quantity, self._reason(self.short_entry, results), leg="short")
+                    )
+            if ctx.position_short > 0:
                 passed, results = self._eval_group(self.short_exit, ctx, i)
                 if passed:
                     signals.append(
-                        Signal(Side.BUY, ctx.position_short, self._reason(self.short_exit, results), leg="short")
+                        Signal(Side.BUY, self.quantity, self._reason(self.short_exit, results), leg="short")
                     )
 
         return signals
