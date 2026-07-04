@@ -846,6 +846,11 @@
    room or it overflows the modal edge. */
 .bt-modal { width: 720px; }
 .bt-body { padding: 4px 16px 16px; max-height: 76vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+/* This flex column scrolls when its content exceeds max-height — it must NOT
+   shrink its children to fit. Without this, an overflowing modal collapses any
+   child that can shrink to nothing (e.g. the .seg Long/Short tab bar, whose
+   overflow:hidden gives it a 0 min-height) down to an invisible sliver. */
+.bt-body > * { flex-shrink: 0; }
 .bt-section { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .bt-section:last-child { border-bottom: none; }
 /* Numbers in this modal read like a terminal, matching the rest of the app
