@@ -63,6 +63,7 @@ from auto_trader.core.candle_aggregate import (
 from auto_trader.core.synthetic import SyntheticError, combine, legs, parse
 from auto_trader.engine.backtest import BacktestEngine
 from auto_trader.engine.risk import RiskConfig, StopSpec, TargetSpec
+from auto_trader.engine.scaling import ScalingConfig, SpacingSpec
 from auto_trader.strategy.rule import Operand, Rule, RuleGroup, RuleStrategy, series_name
 
 # The broker registry: named data brokers (keyed "capital") and execution brokers
@@ -383,6 +384,29 @@ class RiskConfigDTO(BaseModel):
         return names
 
 
+class SpacingSpecDTO(BaseModel):
+    kind: Literal["pct", "atr"]
+    value: float | None = None
+    mult: float | None = None
+    length: int | None = None
+
+    def to_spec(self) -> SpacingSpec:
+        return SpacingSpec(self.kind, self.value, self.mult, self.length)
+
+
+class ScalingConfigDTO(BaseModel):
+    maxConcurrent: int = Field(default=1, ge=1)
+    spacing: SpacingSpecDTO | None = None
+
+    def to_scaling(self) -> ScalingConfig:
+        return ScalingConfig(self.maxConcurrent, self.spacing.to_spec() if self.spacing else None)
+
+    def atr_series_names(self) -> list[str]:
+        if self.spacing and self.spacing.kind == "atr" and self.spacing.length is not None:
+            return [f"ATR_{self.spacing.length}"]
+        return []
+
+
 class BacktestRequest(BaseModel):
     epic: str
     resolution: str
@@ -399,6 +423,8 @@ class BacktestRequest(BaseModel):
     shortEnabled: bool = True
     longRisk: RiskConfigDTO | None = None
     shortRisk: RiskConfigDTO | None = None
+    longScaling: ScalingConfigDTO | None = None
+    shortScaling: ScalingConfigDTO | None = None
     costs: CostsDTO
     tradeFromTime: int
 
@@ -1178,6 +1204,14 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             if name not in req.series:
                 raise HTTPException(422, f"missing series '{name}' referenced by a stop/target")
 
+    # Scaling spacing ATR sizing reads the same posted-series channel as risk does.
+    for cfg in (req.longScaling, req.shortScaling):
+        if cfg is None:
+            continue
+        for name in cfg.atr_series_names():
+            if name not in req.series:
+                raise HTTPException(422, f"missing series '{name}' referenced by spacing")
+
     candles = [_candle_from_dto(c) for c in req.candles]
     strategy = RuleStrategy(
         req.longEntry.to_group(), req.longExit.to_group(),
@@ -1192,6 +1226,8 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         slippage=req.costs.slippage,
         long_risk=req.longRisk.to_risk() if req.longRisk else None,
         short_risk=req.shortRisk.to_risk() if req.shortRisk else None,
+        long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
+        short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
         series=req.series,
     ).run(candles)
 

@@ -303,3 +303,18 @@ def test_atr_risk_with_series_runs():
                         "target": {"kind": "none"}}
     r = client.post("/api/backtest", json=body)
     assert r.status_code == 200
+
+
+def test_scaling_atr_spacing_without_series_is_rejected():
+    body = _min_body()
+    body["longScaling"] = {"maxConcurrent": 3, "spacing": {"kind": "atr", "mult": 2, "length": 14}}
+    r = client.post("/api/backtest", json=body)
+    assert r.status_code == 422
+    assert "ATR_14" in r.json()["detail"]
+
+
+def test_scaling_pct_spacing_runs():
+    body = _min_body()
+    body["longScaling"] = {"maxConcurrent": 3, "spacing": {"kind": "pct", "value": 1.0}}
+    r = client.post("/api/backtest", json=body)
+    assert r.status_code == 200

@@ -151,4 +151,12 @@ describe("buildSeries", () => {
     }));
     expect(Object.keys(out).some((k) => k.startsWith("ATR_"))).toBe(false);
   });
+
+  it("emits ATR_{n} for scaling spacing", () => {
+    const data = candles([10, 11, 12, 13]);
+    const out = buildSeries(data, cfg({
+      longScaling: { maxConcurrent: 3, spacing: { kind: "atr", mult: 2, length: 3 } },
+    }));
+    expect(out["ATR_3"]).toBeDefined();
+  });
 });

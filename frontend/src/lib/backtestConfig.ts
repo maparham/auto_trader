@@ -25,6 +25,10 @@ export interface TargetSpec { kind: TargetKind; value?: number; mult?: number; l
 // presets saved before this existed load as "no stop / no target".
 export interface RiskConfig { stop: StopSpec; target: TargetSpec }
 
+export type SpacingKind = "pct" | "atr";
+export interface SpacingSpec { kind: SpacingKind; value?: number; mult?: number; length?: number }
+export interface ScalingConfig { maxConcurrent: number; spacing?: SpacingSpec }
+
 export interface Rule {
   left: Operand;
   op: Operator;
@@ -74,6 +78,8 @@ export interface BacktestConfig {
   shortEnabled?: boolean;
   longRisk?: RiskConfig;
   shortRisk?: RiskConfig;
+  longScaling?: ScalingConfig;
+  shortScaling?: ScalingConfig;
   costs: Costs;
 }
 
@@ -117,6 +123,16 @@ export function riskAtrLengths(cfg: BacktestConfig): number[] {
   return [...lengths];
 }
 
+/** Every distinct ATR length referenced by either side's spacing spec, so the
+ * caller computes each `ATR_{n}` series once. Non-ATR kinds contribute nothing. */
+export function scalingAtrLengths(cfg: BacktestConfig): number[] {
+  const out = new Set<number>();
+  for (const sc of [cfg.longScaling, cfg.shortScaling]) {
+    if (sc?.spacing?.kind === "atr" && sc.spacing.length != null) out.add(sc.spacing.length);
+  }
+  return [...out];
+}
+
 /** The longest indicator length referenced anywhere in the config — the number
  * of bars of warm-up the slowest indicator needs before it produces a value. */
 export function longestIndicatorLength(cfg: BacktestConfig): number {
@@ -124,6 +140,7 @@ export function longestIndicatorLength(cfg: BacktestConfig): number {
     1,
     ...collectSeriesOperands(cfg).map((op) => (op.kind === "indicator" ? op.length ?? 1 : 1)),
     ...riskAtrLengths(cfg),
+    ...scalingAtrLengths(cfg),
   );
 }
 

@@ -5,6 +5,7 @@ import {
   longestIndicatorLength,
   defaultBacktestConfig,
   riskAtrLengths,
+  scalingAtrLengths,
   type BacktestConfig,
 } from "./backtestConfig";
 
@@ -163,5 +164,19 @@ describe("risk ATR collection", () => {
       longRisk: { stop: { kind: "atr" as const, mult: 2, length: 50 }, target: { kind: "none" as const } },
     };
     expect(longestIndicatorLength(cfg)).toBe(50);
+  });
+});
+
+describe("scaling ATR", () => {
+  it("collects spacing ATR lengths and folds into warm-up", () => {
+    const cfg = { ...defaultBacktestConfig(),
+      longScaling: { maxConcurrent: 3, spacing: { kind: "atr" as const, mult: 2, length: 40 } } };
+    expect(scalingAtrLengths(cfg)).toEqual([40]);
+    expect(longestIndicatorLength(cfg)).toBe(40);
+  });
+  it("no ATR when spacing is pct/absent", () => {
+    const cfg = { ...defaultBacktestConfig(),
+      longScaling: { maxConcurrent: 3, spacing: { kind: "pct" as const, value: 1 } } };
+    expect(scalingAtrLengths(cfg)).toEqual([]);
   });
 });
