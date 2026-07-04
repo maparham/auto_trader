@@ -31,6 +31,23 @@ class EquityPoint:
 
 
 @dataclass(slots=True)
+class Position:
+    """One open position on a side. For independent mode each entry is its own
+    Position; for the current (single-bucket) behaviour a side holds at most one.
+    `stop`/`target` are absolute levels (None = none); `extreme` is the favorable
+    high/low water mark since entry (for trailing); `breakeven_armed` is reserved
+    for a later phase and unused here."""
+    qty: float
+    entry: float
+    open_time: datetime
+    open_reason: str
+    stop: float | None = None
+    target: float | None = None
+    extreme: float = 0.0
+    breakeven_armed: bool = False
+
+
+@dataclass(slots=True)
 class BacktestResult:
     fills: list[Fill] = field(default_factory=list)
     trades: list[Trade] = field(default_factory=list)
@@ -74,16 +91,8 @@ class BacktestEngine:
         result = BacktestResult()
         ctx = Context()
 
-        # Two independent buckets (hedging). Each holds a non-negative size, its
-        # average entry price, and the open time/reason for trade records.
-        long_qty = short_qty = 0.0
-        long_entry = short_entry = 0.0
-        long_time: datetime | None = None
-        short_time: datetime | None = None
-        long_reason = short_reason = ""
-        long_stop = long_target = None  # active levels for the open long
-        short_stop = short_target = None
-        long_extreme = short_extreme = 0.0  # favorable high/low water mark since entry
+        longs: list[Position] = []
+        shorts: list[Position] = []
         realized = 0.0
         pending: list[Signal] = []  # signals from the previous bar, filled at this open
 
@@ -97,166 +106,47 @@ class BacktestEngine:
                     Fill(bar.time, sig.side, fill_price, sig.quantity, sig.reason, sig.leg)
                 )
                 realized -= self.commission  # one side's commission per fill
-
                 if sig.leg == "long":
-                    if sig.side is Side.BUY:  # open / add long
-                        new_qty = long_qty + sig.quantity
-                        long_entry = (
-                            (long_qty * long_entry + sig.quantity * fill_price) / new_qty
-                            if new_qty
-                            else 0.0
-                        )
-                        if long_qty == 0:
-                            long_time, long_reason = bar.time, sig.reason
-                            if self.long_risk:
-                                long_extreme = fill_price
-                                long_stop = stop_level(
-                                    self.long_risk.stop, fill_price, "long",
-                                    self._atr_at(self.long_risk.stop.length, i), long_extreme,
-                                )
-                                long_target = target_level(
-                                    self.long_risk.target, fill_price, "long",
-                                    self._atr_at(self.long_risk.target.length, i),
-                                )
-                        long_qty = new_qty
-                    else:  # SELL -> close / reduce long
-                        closing = min(sig.quantity, long_qty)
-                        if closing > 0:
-                            realized, long_qty = self._close_long(
-                                result, realized, long_qty, long_entry, long_time,
-                                long_reason, fill_price, bar.time, sig.reason, closing,
-                            )
-                            if long_qty == 0:
-                                long_entry, long_time, long_reason = 0.0, None, ""
-                                long_stop = long_target = None
-                else:  # short leg
-                    if sig.side is Side.SELL:  # open / add short
-                        new_qty = short_qty + sig.quantity
-                        short_entry = (
-                            (short_qty * short_entry + sig.quantity * fill_price) / new_qty
-                            if new_qty
-                            else 0.0
-                        )
-                        if short_qty == 0:
-                            short_time, short_reason = bar.time, sig.reason
-                            if self.short_risk:
-                                short_extreme = fill_price
-                                short_stop = stop_level(
-                                    self.short_risk.stop, fill_price, "short",
-                                    self._atr_at(self.short_risk.stop.length, i), short_extreme,
-                                )
-                                short_target = target_level(
-                                    self.short_risk.target, fill_price, "short",
-                                    self._atr_at(self.short_risk.target.length, i),
-                                )
-                        short_qty = new_qty
-                    else:  # BUY -> close / reduce short
-                        closing = min(sig.quantity, short_qty)
-                        if closing > 0:
-                            realized, short_qty = self._close_short(
-                                result, realized, short_qty, short_entry, short_time,
-                                short_reason, fill_price, bar.time, sig.reason, closing,
-                            )
-                            if short_qty == 0:
-                                short_entry, short_time, short_reason = 0.0, None, ""
-                                short_stop = short_target = None
+                    if sig.side is Side.BUY:
+                        self._open_or_add(longs, "long", self.long_risk, fill_price, bar.time, sig.reason, sig.quantity, i)
+                    else:
+                        realized = self._reduce(longs, "long", result, realized, fill_price, bar.time, sig.reason, sig.quantity)
+                else:
+                    if sig.side is Side.SELL:
+                        self._open_or_add(shorts, "short", self.short_risk, fill_price, bar.time, sig.reason, sig.quantity, i)
+                    else:
+                        realized = self._reduce(shorts, "short", result, realized, fill_price, bar.time, sig.reason, sig.quantity)
             pending = []
 
-            # 1b) Intra-bar stop/target for any open bucket. Pessimistic: stop is
-            # tested before target EXCEPT when the bar already opens at/through the
-            # target (the open resolves that order); gaps fill against us; and this
-            # runs AFTER open/rule-exit fills so a same-bar rule exit pre-empts it.
-            if long_qty > 0 and self.long_risk:
-                hit = None
-                if long_target is not None and bar.open >= long_target:
-                    # Opened at/through the target: it filled at the open, before
-                    # the bar's low could reach the stop. The open resolves the
-                    # intra-bar order, so this is NOT the ambiguous stop-wins case.
-                    hit = (self._fill_price(long_target, Side.SELL), "target")
-                elif long_stop is not None and bar.low <= long_stop:
-                    raw = min(bar.open, long_stop)  # gap-down fills worse
-                    reason = "trail" if is_trailing(self.long_risk.stop) else "stop"
-                    hit = (self._fill_price(raw, Side.SELL), reason)
-                elif long_target is not None and bar.high >= long_target:
-                    hit = (self._fill_price(long_target, Side.SELL), "target")
-                if hit:
-                    px, reason = hit
-                    result.fills.append(Fill(bar.time, Side.SELL, px, long_qty, reason, "long"))
-                    realized -= self.commission
-                    realized, long_qty = self._close_long(
-                        result, realized, long_qty, long_entry, long_time,
-                        long_reason, px, bar.time, reason, long_qty,
-                    )
-                    long_entry, long_time, long_reason = 0.0, None, ""
-                    long_stop = long_target = None
+            # 1b) Intra-bar stop/target, then 1c) trailing ratchet — per side.
+            realized = self._intrabar_exit(longs, "long", self.long_risk, result, realized, bar)
+            realized = self._intrabar_exit(shorts, "short", self.short_risk, result, realized, bar)
+            self._ratchet_trailing(longs, "long", self.long_risk, bar, i)
+            self._ratchet_trailing(shorts, "short", self.short_risk, bar, i)
 
-            if short_qty > 0 and self.short_risk:
-                hit = None
-                if short_target is not None and bar.open <= short_target:
-                    # Opened at/through the target (mirror of the long case): the
-                    # open resolves the order, so the target filled before the
-                    # bar's high could reach the stop.
-                    hit = (self._fill_price(short_target, Side.BUY), "target")
-                elif short_stop is not None and bar.high >= short_stop:
-                    raw = max(bar.open, short_stop)
-                    reason = "trail" if is_trailing(self.short_risk.stop) else "stop"
-                    hit = (self._fill_price(raw, Side.BUY), reason)
-                elif short_target is not None and bar.low <= short_target:
-                    hit = (self._fill_price(short_target, Side.BUY), "target")
-                if hit:
-                    px, reason = hit
-                    result.fills.append(Fill(bar.time, Side.BUY, px, short_qty, reason, "short"))
-                    realized -= self.commission
-                    realized, short_qty = self._close_short(
-                        result, realized, short_qty, short_entry, short_time,
-                        short_reason, px, bar.time, reason, short_qty,
-                    )
-                    short_entry, short_time, short_reason = 0.0, None, ""
-                    short_stop = short_target = None
-
-            # 1c) Trailing ratchet for still-open buckets, using THIS bar's
-            # extreme — for the NEXT bar only (the check above already ran).
-            # A trailing stop only ever tightens. With trailAtr an ATR spike can
-            # compute a looser stop (and a cold ATR yields None); clamp so the
-            # stop never loosens and a momentary None never wipes it.
-            if long_qty > 0 and self.long_risk and is_trailing(self.long_risk.stop):
-                long_extreme = max(long_extreme, bar.high)
-                new_stop = stop_level(
-                    self.long_risk.stop, long_entry, "long",
-                    self._atr_at(self.long_risk.stop.length, i), long_extreme,
-                )
-                if new_stop is not None:
-                    long_stop = new_stop if long_stop is None else max(long_stop, new_stop)
-            if short_qty > 0 and self.short_risk and is_trailing(self.short_risk.stop):
-                short_extreme = min(short_extreme, bar.low)
-                new_stop = stop_level(
-                    self.short_risk.stop, short_entry, "short",
-                    self._atr_at(self.short_risk.stop.length, i), short_extreme,
-                )
-                if new_stop is not None:
-                    short_stop = new_stop if short_stop is None else min(short_stop, new_stop)
-
-            # 2) Mark-to-market both buckets on the close.
-            long_unrealized = long_qty * (bar.close - long_entry) if long_qty else 0.0
-            short_unrealized = short_qty * (short_entry - bar.close) if short_qty else 0.0
-            equity = self.starting_cash + realized + long_unrealized + short_unrealized
+            # 2) Mark-to-market on the close.
+            equity = (
+                self.starting_cash + realized
+                + self._unrealized(longs, "long", bar.close)
+                + self._unrealized(shorts, "short", bar.close)
+            )
             result.equity.append(EquityPoint(bar.time, equity))
             peak_equity = max(peak_equity, equity)
             result.max_drawdown = max(result.max_drawdown, peak_equity - equity)
 
             # 3) Let the strategy decide for the NEXT bar (no lookahead).
             ctx.history.append(bar)
-            ctx.position_long = long_qty
-            ctx.position_short = short_qty
+            ctx.position_long = sum(p.qty for p in longs)
+            ctx.position_short = sum(p.qty for p in shorts)
             if i < len(candles) - 1:  # last bar has no next-open to fill on
                 pending = list(self.strategy.on_bar(ctx))
 
-        # Mark-to-market any still-open buckets at the last bar so net_pnl matches
-        # the final equity point instead of reporting ~0 for a held position.
+        # Settle any still-open positions at the last close so net_pnl matches the
+        # final equity point.
         if candles:
             last = candles[-1].close
-            realized += long_qty * (last - long_entry) if long_qty else 0.0
-            realized += short_qty * (short_entry - last) if short_qty else 0.0
+            realized += self._unrealized(longs, "long", last)
+            realized += self._unrealized(shorts, "short", last)
         result.net_pnl = realized
         result.n_trades = len(result.trades)
         round_trip_cost = 2 * self.commission
@@ -276,34 +166,108 @@ class BacktestEngine:
         arr = self.series.get(f"ATR_{length}", [])
         return arr[i] if i < len(arr) else None
 
-    @staticmethod
-    def _close_long(result, realized, qty, entry, entry_time, entry_reason,
-                    fill_price, exit_time, exit_reason, closing):
-        """Book a long close (SELL leg=long) for `closing` units; return
-        (realized, remaining_qty)."""
-        pnl = closing * (fill_price - entry)
+    def _open_or_add(self, positions, side, risk, fill_price, bar_time, reason, qty, i):
+        """A BUY(long)/SELL(short) intent fill. With an existing open position on
+        the side, MERGE (weighted-average entry, keep original open time/reason,
+        levels unchanged) — matching today's single-bucket add. Otherwise open a
+        new Position and seed its stop/target/extreme from the fill price."""
+        if positions:
+            p = positions[0]
+            new_qty = p.qty + qty
+            p.entry = (p.qty * p.entry + qty * fill_price) / new_qty if new_qty else 0.0
+            p.qty = new_qty
+            return
+        p = Position(qty=qty, entry=fill_price, open_time=bar_time, open_reason=reason)
+        if risk:
+            p.extreme = fill_price
+            p.stop = stop_level(risk.stop, fill_price, side, self._atr_at(risk.stop.length, i), p.extreme)
+            p.target = target_level(risk.target, fill_price, side, self._atr_at(risk.target.length, i))
+        positions.append(p)
+
+    def _reduce(self, positions, side, result, realized, fill_price, bar_time, reason, qty):
+        """A closing fill (SELL for long, BUY for short) of `qty` units against the
+        side's open position; books a Trade and drops the position if flat. Returns
+        the updated realized pnl."""
+        if not positions:
+            return realized
+        p = positions[0]
+        closing = min(qty, p.qty)
+        if closing <= 0:
+            return realized
+        if side == "long":
+            pnl = closing * (fill_price - p.entry)
+            trade_side = Side.BUY
+        else:
+            pnl = closing * (p.entry - fill_price)
+            trade_side = Side.SELL
         realized += pnl
         result.trades.append(
             Trade(
-                side=Side.BUY, quantity=closing,
-                entry_time=entry_time, entry_price=entry,  # type: ignore[arg-type]
-                exit_time=exit_time, exit_price=fill_price, pnl=pnl,
-                leg="long", reason_in=entry_reason, reason_out=exit_reason,
+                side=trade_side, quantity=closing,
+                entry_time=p.open_time, entry_price=p.entry,
+                exit_time=bar_time, exit_price=fill_price, pnl=pnl,
+                leg=side, reason_in=p.open_reason, reason_out=reason,
             )
         )
-        return realized, qty - closing
+        p.qty -= closing
+        if p.qty == 0:
+            positions.pop(0)
+        return realized
+
+    def _intrabar_exit(self, positions, side, risk, result, realized, bar):
+        """Pessimistic intra-bar stop/target for the side's open position (the
+        open resolves the order when it gaps through the target). Books the exit
+        and returns updated realized pnl. See the stops-feature design."""
+        if not positions or not risk:
+            return realized
+        p = positions[0]
+        hit = None
+        if side == "long":
+            if p.target is not None and bar.open >= p.target:
+                hit = (self._fill_price(p.target, Side.SELL), "target")
+            elif p.stop is not None and bar.low <= p.stop:
+                raw = min(bar.open, p.stop)
+                hit = (self._fill_price(raw, Side.SELL), "trail" if is_trailing(risk.stop) else "stop")
+            elif p.target is not None and bar.high >= p.target:
+                hit = (self._fill_price(p.target, Side.SELL), "target")
+            close_side = Side.SELL
+        else:
+            if p.target is not None and bar.open <= p.target:
+                hit = (self._fill_price(p.target, Side.BUY), "target")
+            elif p.stop is not None and bar.high >= p.stop:
+                raw = max(bar.open, p.stop)
+                hit = (self._fill_price(raw, Side.BUY), "trail" if is_trailing(risk.stop) else "stop")
+            elif p.target is not None and bar.low <= p.target:
+                hit = (self._fill_price(p.target, Side.BUY), "target")
+            close_side = Side.BUY
+        if hit:
+            px, reason = hit
+            result.fills.append(Fill(bar.time, close_side, px, p.qty, reason, side))
+            realized -= self.commission
+            realized = self._reduce(positions, side, result, realized, px, bar.time, reason, p.qty)
+        return realized
+
+    def _ratchet_trailing(self, positions, side, risk, bar, i):
+        """Extend the trailing extreme with THIS bar's high/low and recompute the
+        stop for the NEXT bar — clamped so a trailing stop never loosens (and a
+        cold ATR never wipes it)."""
+        if not positions or not risk or not is_trailing(risk.stop):
+            return
+        p = positions[0]
+        if side == "long":
+            p.extreme = max(p.extreme, bar.high)
+        else:
+            p.extreme = min(p.extreme, bar.low)
+        new_stop = stop_level(risk.stop, p.entry, side, self._atr_at(risk.stop.length, i), p.extreme)
+        if new_stop is not None:
+            if p.stop is None:
+                p.stop = new_stop
+            else:
+                p.stop = max(p.stop, new_stop) if side == "long" else min(p.stop, new_stop)
 
     @staticmethod
-    def _close_short(result, realized, qty, entry, entry_time, entry_reason,
-                     fill_price, exit_time, exit_reason, closing):
-        pnl = closing * (entry - fill_price)  # short profits on a drop
-        realized += pnl
-        result.trades.append(
-            Trade(
-                side=Side.SELL, quantity=closing,
-                entry_time=entry_time, entry_price=entry,  # type: ignore[arg-type]
-                exit_time=exit_time, exit_price=fill_price, pnl=pnl,
-                leg="short", reason_in=entry_reason, reason_out=exit_reason,
-            )
-        )
-        return realized, qty - closing
+    def _unrealized(positions, side, close):
+        total = 0.0
+        for p in positions:
+            total += p.qty * (close - p.entry) if side == "long" else p.qty * (p.entry - close)
+        return total
