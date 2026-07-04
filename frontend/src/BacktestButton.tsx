@@ -122,6 +122,8 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         shortEnabled: cfg.shortEnabled !== false,
         longRisk: cfg.longRisk,
         shortRisk: cfg.shortRisk,
+        longScaling: cfg.longScaling,
+        shortScaling: cfg.shortScaling,
         costs: cfg.costs,
         tradeFromTime,
       });

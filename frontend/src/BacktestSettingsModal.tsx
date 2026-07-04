@@ -28,6 +28,7 @@ import {
   type RiskConfig,
   type StopKind,
   type TargetKind,
+  type ScalingConfig,
 } from "./lib/backtestConfig";
 import {
   loadBacktestPresets,
@@ -76,6 +77,7 @@ const TARGET_KINDS: { value: TargetKind; label: string }[] = [
 ];
 
 const EMPTY_RISK: RiskConfig = { stop: { kind: "none" }, target: { kind: "none" } };
+const DEFAULT_SCALING: ScalingConfig = { maxConcurrent: 1 };
 // `tip` is a one-line tooltip. Crosses fire ONCE on the bar the lines meet (an
 // event); the comparisons are true on EVERY bar the condition holds (a state).
 const OPERATORS: { value: Operator; label: string; tip: string }[] = [
@@ -492,6 +494,53 @@ function RiskSection({
   );
 }
 
+// Max-concurrent-positions + min-spacing controls for one side. Collapsed by
+// default (a <details>) so the common single-position case stays out of the
+// way; off by default via DEFAULT_SCALING (maxConcurrent: 1, no spacing) so
+// existing presets behave exactly as before.
+function ScalingSection({
+  side,
+  scaling,
+  onChange,
+}: {
+  side: "long" | "short";
+  scaling: ScalingConfig;
+  onChange: (s: ScalingConfig) => void;
+}) {
+  const spacingKind = scaling.spacing?.kind ?? "none";
+  const setSpacingKind = (k: "none" | "pct" | "atr") => {
+    if (k === "none") return onChange({ ...scaling, spacing: undefined });
+    if (k === "pct") return onChange({ ...scaling, spacing: { kind: "pct", value: scaling.spacing?.value ?? 1 } });
+    onChange({ ...scaling, spacing: { kind: "atr", mult: scaling.spacing?.mult ?? 1, length: scaling.spacing?.length ?? 14 } });
+  };
+  return (
+    <details className="bt-scaling">
+      <summary className="instrument-section-title">Scaling &amp; management ({side})</summary>
+      <div className="bt-risk-row">
+        <span className="bt-risk-label">Max positions</span>
+        <input type="number" min={1} step="1" className="bt-num" value={scaling.maxConcurrent}
+          onChange={(e) => onChange({ ...scaling, maxConcurrent: Math.max(1, Math.round(Number(e.target.value))) })} />
+      </div>
+      <div className="bt-risk-row">
+        <span className="bt-risk-label">Min spacing</span>
+        <select value={spacingKind} onChange={(e) => setSpacingKind(e.target.value as "none" | "pct" | "atr")}>
+          <option value="none">None</option><option value="pct">%</option><option value="atr">ATR ×</option>
+        </select>
+        {scaling.spacing?.kind === "pct" &&
+          <>{<input type="number" step="any" className="bt-num" value={scaling.spacing.value ?? 0}
+            onChange={(e) => onChange({ ...scaling, spacing: { kind: "pct", value: Number(e.target.value) } })} />}<span>%</span></>}
+        {scaling.spacing?.kind === "atr" && <>
+          <input type="number" step="any" className="bt-num" value={scaling.spacing.mult ?? 0}
+            onChange={(e) => onChange({ ...scaling, spacing: { ...scaling.spacing!, kind: "atr", mult: Number(e.target.value) } })} />
+          <span>× ATR</span>
+          <input type="number" step="1" className="bt-num" value={scaling.spacing.length ?? 14}
+            onChange={(e) => onChange({ ...scaling, spacing: { ...scaling.spacing!, kind: "atr", length: Math.max(1, Math.round(Number(e.target.value))) } })} />
+        </>}
+      </div>
+    </details>
+  );
+}
+
 // One side of the strategy (long or short): an arm switch that parks the whole
 // side without losing its rules, above that side's entry/exit rule groups.
 // Parking dims the rules but keeps them editable, so you can set a side up
@@ -554,6 +603,11 @@ function SidePanel({
           side={side}
           risk={(isLong ? cfg.longRisk : cfg.shortRisk) ?? EMPTY_RISK}
           onChange={(r) => setCfg({ ...cfg, [isLong ? "longRisk" : "shortRisk"]: r })}
+        />
+        <ScalingSection
+          side={side}
+          scaling={(isLong ? cfg.longScaling : cfg.shortScaling) ?? DEFAULT_SCALING}
+          onChange={(s) => setCfg({ ...cfg, [isLong ? "longScaling" : "shortScaling"]: s })}
         />
       </div>
     </>
