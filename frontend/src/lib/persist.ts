@@ -999,6 +999,18 @@ export function saveLastDrawTools(map: Record<string, string>): void {
   saveLocal(LAST_DRAW_TOOLS_KEY, map);
 }
 
+// Favorite timeframes (GLOBAL preference) — resolution keys the user pinned onto
+// the quick-access bar, on top of the fixed defaults. Order here is just the pin
+// set; the bar itself always renders in duration order. Mirrors the indicator /
+// drawing favorites idiom above.
+const FAVORITE_RESOLUTIONS_KEY = `${PREFIX}.favoriteResolutions`;
+export function loadFavoriteResolutions(): string[] {
+  return load<string[]>(FAVORITE_RESOLUTIONS_KEY, []);
+}
+export function saveFavoriteResolutions(list: string[]): void {
+  save(FAVORITE_RESOLUTIONS_KEY, list);
+}
+
 // --- recently opened symbols (PER BROKER, mirrored) --------------------------
 //
 // A personal MRU list: the epics of symbols the user recently opened from the

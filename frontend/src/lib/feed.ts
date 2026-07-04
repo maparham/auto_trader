@@ -84,6 +84,23 @@ export const PERIOD_GROUPS: PeriodGroup[] = [
   },
 ];
 
+// Every selectable timeframe (seconds → derived), used to resolve a favorite
+// resolution key back to its Period and to build the merged quick bar.
+export const ALL_PERIODS: Period[] = [
+  ...SECONDS_PERIODS,
+  ...PERIODS,
+  ...DERIVED_PERIODS,
+];
+
+const PERIOD_BY_RESOLUTION = new Map(ALL_PERIODS.map((p) => [p.resolution, p]));
+
+// The fixed defaults that always occupy the quick bar and can't be removed.
+export const DEFAULT_RESOLUTIONS = new Set(PERIODS.map((p) => p.resolution));
+
+export function periodByResolution(resolution: string): Period | undefined {
+  return PERIOD_BY_RESOLUTION.get(resolution);
+}
+
 export interface Instrument {
   epic: string;
   name: string;
@@ -632,3 +649,19 @@ export const RESOLUTION_SECONDS: Record<string, number> = {
   MONTH_3: 7776000,
   YEAR: 31536000,
 };
+
+// The quick-access timeframe bar: the fixed defaults merged with the user's
+// favorite resolutions, de-duped and sorted ascending by duration. The favorite
+// list's own order is irrelevant — display order is always by RESOLUTION_SECONDS.
+export function quickBarPeriods(favoriteResolutions: string[]): Period[] {
+  const byRes = new Map(PERIODS.map((p) => [p.resolution, p]));
+  for (const r of favoriteResolutions) {
+    const p = periodByResolution(r);
+    if (p) byRes.set(r, p);
+  }
+  return [...byRes.values()].sort(
+    (a, b) =>
+      (RESOLUTION_SECONDS[a.resolution] ?? 0) -
+      (RESOLUTION_SECONDS[b.resolution] ?? 0),
+  );
+}
