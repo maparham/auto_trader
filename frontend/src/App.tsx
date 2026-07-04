@@ -19,6 +19,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import Snackbar from "./Snackbar";
 import OrderTicket from "./OrderTicket";
 import PositionsPanel from "./PositionsPanel";
+import BacktestPanel from "./BacktestPanel";
 import { registerCustomIndicators } from "./lib/customIndicators";
 import { registerBacktestIndicators } from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
@@ -1606,6 +1607,11 @@ export default function App() {
           onToggleMaximize={() => setDockMaximized((m) => !m)}
         />
       </div>
+
+      {/* Backtest results: docked below the chart/dock, TradingView-style. Self-
+          hides until a run completes (renders null with no result), so it's
+          always mounted rather than conditionally rendered here. */}
+      <BacktestPanel />
 
       {showSettings && (
         <SettingsModal

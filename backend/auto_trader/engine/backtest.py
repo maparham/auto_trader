@@ -46,6 +46,7 @@ class Position:
     target: float | None = None
     extreme: float = 0.0
     breakeven_armed: bool = False
+    stop_initial: float | None = None
 
 
 @dataclass(slots=True)
@@ -202,6 +203,7 @@ class BacktestEngine:
         if risk:
             p.extreme = fill_price
             p.stop = stop_level(risk.stop, fill_price, side, self._atr_at(risk.stop.length, i), p.extreme)
+            p.stop_initial = p.stop
             p.target = target_level(risk.target, fill_price, side, self._atr_at(risk.target.length, i))
         positions.append(p)
 
@@ -237,6 +239,7 @@ class BacktestEngine:
                 entry_time=p.open_time, entry_price=p.entry,
                 exit_time=bar_time, exit_price=fill_price, pnl=pnl,
                 leg=side, reason_in=p.open_reason, reason_out=reason,
+                stop_initial=p.stop_initial, stop_final=p.stop, target=p.target,
             )
         )
         p.qty -= closing

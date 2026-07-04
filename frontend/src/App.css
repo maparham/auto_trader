@@ -2951,3 +2951,89 @@
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 .vis-autohide .vis-num { width: 48px; }
+
+/* Backtest results panel — docked below the chart once a run completes. A flex
+   column with a fixed header (tabs/count/collapse/close) and a capped body:
+   Overview is a wrapped card grid, Trades a sortable table whose scroll wrapper
+   owns the flex-scroll discipline (flex:1 + overflow-y:auto + min-height:0, and
+   every ancestor down to it gets min-height:0) so a long trade list scrolls
+   internally instead of squashing the chart above it. */
+.bt-panel {
+  display: flex; flex-direction: column; min-height: 0;
+  height: 220px; max-height: 40vh;
+  background: var(--surface); border-top: 1px solid var(--border);
+}
+.bt-panel-collapsed { height: auto; max-height: none; }
+
+.bt-panel-head {
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+}
+.bt-panel-collapsed .bt-panel-head { border-bottom-color: transparent; }
+.bt-panel-count {
+  font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.bt-panel-winctl { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.bt-panel-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; border-radius: 6px; padding: 5px;
+  color: var(--text-dim); cursor: pointer; transition: background 0.12s, color 0.12s;
+}
+.bt-panel-iconbtn:hover { background: var(--hover); color: var(--text); }
+
+/* Overview: wrapped grid of small label/value cards. */
+.bt-panel-overview {
+  display: flex; flex-wrap: wrap; gap: 8px; min-height: 0;
+  padding: 10px; overflow-y: auto;
+}
+.bt-panel-card {
+  display: flex; flex-direction: column; gap: 3px;
+  min-width: 110px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+}
+.bt-panel-card-label {
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint);
+}
+.bt-panel-card-value {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.bt-panel-card-value.pos { color: var(--pos); }
+.bt-panel-card-value.neg { color: var(--neg); }
+
+/* Trades: the scrollable table wrapper — this is the flex-scroll boundary. */
+.bt-panel-trades-wrap { flex: 1; overflow-y: auto; min-height: 0; }
+.bt-panel-table {
+  width: 100%; min-width: 760px; border-collapse: collapse; font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.bt-panel-table thead th {
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
+  text-align: left; font-weight: 500; font-size: 10px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-faint);
+  padding: 5px 10px 6px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.bt-panel-table td {
+  padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.bt-panel-table th:first-child { padding-left: 14px; }
+.bt-panel-table td:first-child { padding-left: 14px; }
+.bt-panel-table th:last-child, .bt-panel-table td:last-child { padding-right: 14px; }
+.bt-panel-c-num { text-align: right; font-family: var(--mono); color: var(--text); }
+.bt-panel-c-time { color: var(--text-dim); }
+.bt-panel-table .pos { color: var(--pos); }
+.bt-panel-table .neg { color: var(--neg); }
+.bt-panel-side-long { color: var(--accent); font-weight: 600; }
+.bt-panel-side-short { color: var(--neg); font-weight: 600; }
+.bt-trade-row { cursor: pointer; }
+.bt-trade-row.highlighted { background: var(--hover-strong, var(--hover)); }
+.bt-trade-row.selected { background: var(--accent-soft, rgba(41,98,255,.10)); box-shadow: inset 2px 0 0 var(--accent); }
+
+.bt-panel-sort {
+  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+  background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.bt-panel-sort:hover { color: var(--text-dim); }
+.bt-panel-sort.on { color: var(--text); }
+.bt-panel-sort-caret { font-size: 7px; line-height: 1; }
+.bt-panel-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }

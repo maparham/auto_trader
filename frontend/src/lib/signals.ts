@@ -80,7 +80,31 @@ export const tradePanelOpen = new Signal<boolean>(false);
 // panel AND every chart cell subscribe to this one signal so there's exactly one
 // poll, fanned out — a cell draws only the trades whose epic matches its symbol.
 import type { TradeView } from "./trading";
+import type { BacktestResult } from "../api";
 export const tradesSignal = new Signal<TradeView[]>([]);
+
+// Backtest run result published after a successful run. Set by BacktestButton after
+// runAndRender completes; cleared when the run is dismissed or the symbol/timeframe changes.
+// Consumers (e.g., trades panel) subscribe to render backtest-specific UI.
+export const backtestResultSignal = new Signal<BacktestResult | null>(null);
+
+// The backtest trade index (row.i) currently highlighted, or null. Set by the
+// trades panel row hover/click AND (Phase C Task 2) the chart's trade markers —
+// whichever side the cursor is on drives the other side's highlight.
+export const highlightTradeSignal = new Signal<number | null>(null);
+
+// The backtest trade index (row.i) STICKILY selected by clicking a trades-panel
+// row, or null. Distinct from the hover-driven highlightTradeSignal above: this
+// persists across mouse movement and drives the (Phase 2 Task 2) windowed
+// risk/reward zone overlay on the chart. Reset to null on a new run / clearBacktest.
+export const selectedTradeSignal = new Signal<number | null>(null);
+
+// A one-shot "scroll the chart to this trade" request (row.i, or null = no-op),
+// set by the trades panel row's onClick. The chart (backtest.ts runAndRender)
+// subscribes and pans/zooms to the trade's entry↔exit span — a second signal
+// rather than threading a chart handle into the panel, since the panel has no
+// direct reference to the per-cell chart instance.
+export const focusTradeSignal = new Signal<number | null>(null);
 
 // Pending (un-applied) line drags, keyed by trade id (deal_id or order_id). A
 // drag writes the new level here; the panel shows a combined Apply/Cancel; chart

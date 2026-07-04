@@ -20,7 +20,7 @@ import {
   warmupBarCount,
 } from "./lib/backtestWindow";
 import { loadBacktestLastUsed, saveBacktestLastUsed } from "./lib/persist";
-import { openBacktestSettings, backtestRunRequest } from "./lib/signals";
+import { openBacktestSettings, backtestRunRequest, backtestResultSignal } from "./lib/signals";
 
 interface Props {
   controller: ChartController | null;
@@ -46,6 +46,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   // (ChartCore clears the on-chart artifacts; this clears the readout).
   useEffect(() => {
     setSummary(null);
+    backtestResultSignal.set(null);
     setError(null);
     setWarning(null);
   }, [epic, period?.resolution]);
@@ -128,6 +129,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         tradeFromTime,
       });
       setSummary(res.summary);
+      backtestResultSignal.set(res);
       saveBacktestLastUsed(cfg);
     } catch (e) {
       setError(e instanceof Error ? e.message : "backtest failed");
@@ -139,6 +141,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   function clear() {
     if (chart) clearBacktest(chart);
     setSummary(null);
+    backtestResultSignal.set(null);
     setError(null);
     setWarning(null);
   }

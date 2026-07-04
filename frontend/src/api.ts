@@ -29,6 +29,10 @@ interface Trade {
   exit_price: number;
   pnl: number;
   leg: "long" | "short";
+  reason: string;
+  stop_initial: number | null;
+  stop_final: number | null;
+  target: number | null;
 }
 
 interface EquityPoint {
@@ -48,6 +52,20 @@ export interface BacktestResult {
     n_trades: number;
     win_rate: number;
     max_drawdown: number;
+  };
+  metrics: {
+    return_pct: number;
+    profit_factor: number | null;
+    expectancy: number;
+    avg_win: number;
+    avg_loss: number;
+    avg_win_loss_ratio: number | null;
+    largest_win: number;
+    largest_loss: number;
+    max_drawdown_pct: number;
+    avg_duration_bars: number;
+    max_consec_wins: number;
+    max_consec_losses: number;
   };
 }
 

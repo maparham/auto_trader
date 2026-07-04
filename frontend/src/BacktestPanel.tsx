@@ -1,0 +1,214 @@
+// Backtest results panel — TradingView-style bottom panel that appears once a
+// backtest finishes (BacktestButton publishes the result onto
+// backtestResultSignal). Self-hiding: renders null while the signal is null.
+//
+// Overview tab: metricRows() as a wrapped grid of label/value cards (tone
+// coloured pos/neg). Trades tab: a sortable table of every trade
+// (tradeRows()/sortTradeRows()). Each row carries data-trade-index — a hook
+// Phase C uses to highlight the matching chart marker on hover/click.
+
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { backtestResultSignal, highlightTradeSignal, selectedTradeSignal } from "./lib/signals";
+import { metricRows, tradeRows, sortTradeRows, type TradeRow } from "./lib/backtestPanelData";
+import { RESOLUTION_SECONDS } from "./lib/feed";
+import { formatExpiryShort } from "./lib/alertUi";
+
+// Module-singleton signal — the subscribe fn never changes, so memoize it (matches
+// Toolbar's useSyncExternalStore pattern) instead of resubscribing on every render.
+const subscribeResult = (cb: () => void) => backtestResultSignal.subscribe(cb);
+const subscribeHighlight = (cb: () => void) => highlightTradeSignal.subscribe(cb);
+const subscribeSelected = (cb: () => void) => selectedTradeSignal.subscribe(cb);
+
+type Tab = "overview" | "trades";
+type SortDir = "asc" | "desc";
+
+// Text columns read more naturally A→Z on first click; numeric/time columns
+// most-significant-first (mirrors PositionsPanel's defaultDir).
+const TEXT_KEYS: (keyof TradeRow)[] = ["leg", "reason"];
+const defaultDir = (key: keyof TradeRow): SortDir => (TEXT_KEYS.includes(key) ? "asc" : "desc");
+
+const fmtPrice = (n: number): string => n.toFixed(2);
+const fmtPnl = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
+const fmtPct = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}%`;
+const toneOf = (n: number): string => (n > 0 ? "pos" : n < 0 ? "neg" : "");
+
+export default function BacktestPanel() {
+  const result = useSyncExternalStore(subscribeResult, () => backtestResultSignal.value);
+  const highlighted = useSyncExternalStore(subscribeHighlight, () => highlightTradeSignal.value);
+  const selected = useSyncExternalStore(subscribeSelected, () => selectedTradeSignal.value);
+  const [tab, setTab] = useState<Tab>("overview");
+  const [collapsed, setCollapsed] = useState(false);
+  const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
+
+  // Keep the highlighted row in view whether the highlight originated here (a
+  // hover in this same list — scrollIntoView is a no-op when already visible)
+  // or from outside (Phase C Task 2: a chart marker hover/click).
+  const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
+  useEffect(() => {
+    highlightedRowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
+
+  if (result == null) return null;
+
+  const toggleSort = (key: keyof TradeRow) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: defaultDir(key) }));
+
+  const resSeconds = RESOLUTION_SECONDS[result.resolution] ?? 60;
+  const rows = sortTradeRows(tradeRows(result, resSeconds), sort.key, sort.dir);
+  const nTrades = result.trades.length;
+
+  return (
+    <section className={`bt-panel${collapsed ? " bt-panel-collapsed" : ""}`}>
+      <div className="bt-panel-head">
+        <div className="seg" role="tablist" aria-label="Backtest results view">
+          <button
+            className={tab === "overview" ? "seg-on" : ""}
+            role="tab"
+            aria-selected={tab === "overview"}
+            onClick={() => setTab("overview")}
+          >
+            Overview
+          </button>
+          <button
+            className={tab === "trades" ? "seg-on" : ""}
+            role="tab"
+            aria-selected={tab === "trades"}
+            onClick={() => setTab("trades")}
+          >
+            Trades
+          </button>
+        </div>
+        <span className="bt-panel-count">
+          {nTrades} {nTrades === 1 ? "trade" : "trades"}
+        </span>
+        <div className="bt-panel-winctl">
+          <button
+            className="bt-panel-iconbtn"
+            onClick={() => setCollapsed((c) => !c)}
+            aria-pressed={collapsed}
+            title={collapsed ? "Expand" : "Collapse"}
+          >
+            <ChevronIcon open={collapsed} />
+          </button>
+          <button
+            className="bt-panel-iconbtn"
+            onClick={() => backtestResultSignal.set(null)}
+            title="Close backtest results"
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      </div>
+
+      {!collapsed && (
+        tab === "overview" ? (
+          <div className="bt-panel-overview">
+            {metricRows(result).map((m) => (
+              <div className="bt-panel-card" key={m.label}>
+                <span className="bt-panel-card-label">{m.label}</span>
+                <span className={`bt-panel-card-value${m.tone ? ` ${m.tone}` : ""}`}>{m.value}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bt-panel-trades-wrap">
+            <table className="bt-panel-table">
+              <thead>
+                <tr>
+                  <th><SortHeader label="#" col="i" sort={sort} onSort={toggleSort} /></th>
+                  <th><SortHeader label="Side" col="leg" sort={sort} onSort={toggleSort} /></th>
+                  <th><SortHeader label="Entry time" col="entryTime" sort={sort} onSort={toggleSort} /></th>
+                  <th className="bt-panel-c-num"><SortHeader label="Entry" col="entryPrice" sort={sort} onSort={toggleSort} /></th>
+                  <th><SortHeader label="Exit time" col="exitTime" sort={sort} onSort={toggleSort} /></th>
+                  <th className="bt-panel-c-num"><SortHeader label="Exit" col="exitPrice" sort={sort} onSort={toggleSort} /></th>
+                  <th className="bt-panel-c-num"><SortHeader label="P&L" col="pnl" sort={sort} onSort={toggleSort} /></th>
+                  <th className="bt-panel-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={toggleSort} /></th>
+                  <th><SortHeader label="Reason" col="reason" sort={sort} onSort={toggleSort} /></th>
+                  <th className="bt-panel-c-num"><SortHeader label="Duration" col="durationBars" sort={sort} onSort={toggleSort} /></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.i}
+                    data-trade-index={row.i}
+                    ref={row.i === highlighted ? highlightedRowRef : undefined}
+                    className={`bt-trade-row${row.i === highlighted ? " highlighted" : ""}${row.i === selected ? " selected" : ""}`}
+                    onMouseEnter={() => highlightTradeSignal.set(row.i)}
+                    onMouseLeave={() => highlightTradeSignal.set(null)}
+                    onClick={() => selectedTradeSignal.set(row.i)}
+                  >
+                    <td>{row.i + 1}</td>
+                    <td className={row.leg === "long" ? "bt-panel-side-long" : "bt-panel-side-short"}>
+                      {row.leg === "long" ? "Long" : "Short"}
+                    </td>
+                    <td className="bt-panel-c-time">{formatExpiryShort(row.entryTime * 1000)}</td>
+                    <td className="bt-panel-c-num">{fmtPrice(row.entryPrice)}</td>
+                    <td className="bt-panel-c-time">{formatExpiryShort(row.exitTime * 1000)}</td>
+                    <td className="bt-panel-c-num">{fmtPrice(row.exitPrice)}</td>
+                    <td className={`bt-panel-c-num ${toneOf(row.pnl)}`}>{fmtPnl(row.pnl)}</td>
+                    <td className={`bt-panel-c-num ${toneOf(row.pnlPct)}`}>{fmtPct(row.pnlPct)}</td>
+                    <td>{row.reason}</td>
+                    <td className="bt-panel-c-num">{row.durationBars.toFixed(1)} bars</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </section>
+  );
+}
+
+// Clickable column header: click to sort by this column, click again to flip
+// direction (mirrors PositionsPanel's SortHeader).
+function SortHeader({
+  label,
+  col,
+  sort,
+  onSort,
+}: {
+  label: string;
+  col: keyof TradeRow;
+  sort: { key: keyof TradeRow; dir: SortDir };
+  onSort: (key: keyof TradeRow) => void;
+}) {
+  const active = sort.key === col;
+  return (
+    <button
+      className={`bt-panel-sort${active ? " on" : ""}`}
+      onClick={() => onSort(col)}
+      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <span>{label}</span>
+      <span className="bt-panel-sort-caret" aria-hidden="true">
+        {active ? (sort.dir === "asc" ? "▲" : "▼") : ""}
+      </span>
+    </button>
+  );
+}
+
+// Chevron: down when expanded (click collapses), rotated to point up when
+// collapsed (click expands) — same affordance as PositionsPanel's dock chevron.
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="13"
+      height="13"
+      aria-hidden="true"
+      style={{ transform: open ? "rotate(180deg)" : undefined }}
+    >
+      <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}

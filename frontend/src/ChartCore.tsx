@@ -2584,6 +2584,10 @@ export default function ChartCore({
       unsubMeasureArm();
       overlays.setMeasureDone(null);
       unsubRemoved();
+      // Backtest chart-sync subscriptions (highlightTradeSignal/focusTradeSignal)
+      // strongly capture this chart + its BacktestResult — release them on unmount
+      // so a detached/closed cell can be GC'd (clearBacktest is a no-op if none ran).
+      clearBacktest(chart);
       el.removeEventListener("click", onClick);
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);

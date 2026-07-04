@@ -318,3 +318,43 @@ def test_scaling_pct_spacing_runs():
     body["longScaling"] = {"maxConcurrent": 3, "spacing": {"kind": "pct", "value": 1.0}}
     r = client.post("/api/backtest", json=body)
     assert r.status_code == 200
+
+
+def test_response_has_metrics_and_trade_reason():
+    body = _min_body()
+    # a trivial always-open then stop so at least one trade closes with a reason
+    body["longEntry"] = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "gt",
+         "right": {"kind": "const", "value": 0}}]}
+    body["longRisk"] = {"stop": {"kind": "pct", "value": 1}, "target": {"kind": "none"}}
+    # give it a down-bar so the stop triggers and books a trade
+    body["candles"] = [
+        {"time": 0, "open": 100, "high": 100, "low": 100, "close": 100, "volume": 0},
+        {"time": 60, "open": 100, "high": 100, "low": 100, "close": 100, "volume": 0},
+        {"time": 120, "open": 100, "high": 100, "low": 98, "close": 98, "volume": 0},
+    ]
+    r = client.post("/api/backtest", json=body)
+    assert r.status_code == 200
+    data = r.json()
+    assert "metrics" in data
+    assert "profit_factor" in data["metrics"] and "max_consec_losses" in data["metrics"]
+    assert data["trades"], "expected at least one closed trade"
+    assert "reason" in data["trades"][0]  # e.g. "stop"
+
+
+def test_trade_dto_carries_stop_target_levels():
+    body = _min_body()
+    body["longEntry"] = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "gt",
+         "right": {"kind": "const", "value": 0}}]}
+    body["longRisk"] = {"stop": {"kind": "pct", "value": 2}, "target": {"kind": "pct", "value": 4}}
+    body["candles"] = [
+        {"time": 0, "open": 100, "high": 100, "low": 100, "close": 100, "volume": 0},
+        {"time": 60, "open": 100, "high": 100, "low": 100, "close": 100, "volume": 0},
+        {"time": 120, "open": 100, "high": 101, "low": 97, "close": 98, "volume": 0},
+    ]
+    r = client.post("/api/backtest", json=body)
+    assert r.status_code == 200
+    t = r.json()["trades"][0]
+    assert t["stop_initial"] == 98.0 and t["target"] == 104.0
+    assert "stop_final" in t

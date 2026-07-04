@@ -62,6 +62,7 @@ from auto_trader.core.candle_aggregate import (
 )
 from auto_trader.core.synthetic import SyntheticError, combine, legs, parse
 from auto_trader.engine.backtest import BacktestEngine
+from auto_trader.engine.metrics import compute_metrics
 from auto_trader.engine.risk import RiskConfig, StopSpec, TargetSpec
 from auto_trader.engine.scaling import ScalingConfig, SpacingSpec
 from auto_trader.strategy.rule import Operand, Rule, RuleGroup, RuleStrategy, series_name
@@ -265,6 +266,10 @@ class TradeDTO(BaseModel):
     exit_price: float
     pnl: float
     leg: str
+    reason: str = ""
+    stop_initial: float | None = None
+    stop_final: float | None = None
+    target: float | None = None
 
 
 class EquityDTO(BaseModel):
@@ -288,6 +293,7 @@ class BacktestResponse(BaseModel):
     trades: list[TradeDTO]
     equity: list[EquityDTO]
     summary: dict
+    metrics: dict = {}
 
 
 # --- rule-based backtest request (D1/D4/D6: frontend computes series, posts
@@ -1256,6 +1262,10 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                 exit_price=t.exit_price,
                 pnl=t.pnl,
                 leg=t.leg,
+                reason=t.reason_out,
+                stop_initial=t.stop_initial,
+                stop_final=t.stop_final,
+                target=t.target,
             )
             for t in result.trades
         ],
@@ -1265,6 +1275,10 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             if _ts(p.time) >= req.tradeFromTime
         ],
         summary=result.summary(),
+        metrics=compute_metrics(
+            result.trades, result.equity, result.net_pnl,
+            req.costs.startingCash, Resolution(req.resolution).seconds,
+        ),
     )
 
 

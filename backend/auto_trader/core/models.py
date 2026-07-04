@@ -84,6 +84,9 @@ class Trade:
     leg: str = "long"
     reason_in: str = ""
     reason_out: str = ""
+    stop_initial: float | None = None
+    stop_final: float | None = None
+    target: float | None = None
 
 
 @dataclass(slots=True)
