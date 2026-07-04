@@ -34,6 +34,8 @@ import {
   loadBacktestPresets,
   saveBacktestPreset,
   deleteBacktestPreset,
+  loadBacktestSide,
+  saveBacktestSide,
 } from "./lib/persist";
 
 interface Props {
@@ -183,7 +185,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   const [presets, setPresets] = useState(() => loadBacktestPresets());
   const [presetName, setPresetName] = useState("");
   const [loadName, setLoadName] = useState("");
-  const [side, setSide] = useState<"long" | "short">("long");
+  // Restore the last-viewed tab (device-local) and persist it on switch, so
+  // re-opening the modal returns to the side you were working on.
+  const [side, setSide] = useState<"long" | "short">(loadBacktestSide);
+  const selectSide = (s: "long" | "short") => {
+    setSide(s);
+    saveBacktestSide(s);
+  };
   useCloseOnEscape(onClose);
 
   const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
@@ -316,11 +324,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
           </Section>
 
           <div className="bt-side-tabs seg">
-            <button className={side === "long" ? "seg-on" : ""} onClick={() => setSide("long")}>
+            <button className={side === "long" ? "seg-on" : ""} onClick={() => selectSide("long")}>
               <span className={`bt-side-dot${cfg.longEnabled === false ? " off" : ""}`} aria-hidden="true" />
               Long
             </button>
-            <button className={side === "short" ? "seg-on" : ""} onClick={() => setSide("short")}>
+            <button className={side === "short" ? "seg-on" : ""} onClick={() => selectSide("short")}>
               <span className={`bt-side-dot${cfg.shortEnabled === false ? " off" : ""}`} aria-hidden="true" />
               Short
             </button>

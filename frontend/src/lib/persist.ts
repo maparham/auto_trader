@@ -1166,6 +1166,16 @@ export function saveBacktestLastUsed(cfg: SavedBacktestConfig): void {
   save(BACKTEST_LAST_USED_KEY, cfg);
 }
 
+// The Long/Short tab the backtest modal last showed. Device-local (a per-browser
+// view preference, not synced) so re-opening the modal returns to the same side.
+const BACKTEST_SIDE_KEY = `${PREFIX}.backtestSide`;
+export function loadBacktestSide(): "long" | "short" {
+  return load<"long" | "short">(BACKTEST_SIDE_KEY, "long");
+}
+export function saveBacktestSide(side: "long" | "short"): void {
+  saveLocal(BACKTEST_SIDE_KEY, side);
+}
+
 // --- per-symbol chart templates (global, keyed by epic) ----------------------
 //
 // A saved layout (indicators + drawings) tied to a SYMBOL, not a cell — so a
