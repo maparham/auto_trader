@@ -15,6 +15,7 @@ import {
   type Instrument,
   type Period,
 } from "./lib/feed";
+import type { PriceSide } from "./theme";
 import { ensureNotifyPermission, primeSound, toast } from "./lib/notify";
 import { EQUITY_INDICATOR } from "./lib/backtest";
 import {
@@ -79,6 +80,9 @@ interface Props {
   // maximized, so we ALSO render the selector here in that case (see below) so the
   // broker stays switchable. `accounts` + `onSelectBroker` feed that fallback.
   brokerId: string;
+  // The chart's active price side — forwarded to the backtest so it fetches the
+  // same candle series the chart displays (the cache is per side).
+  priceSide: PriceSide;
   accounts: BrokerAccount[];
   onSelectBroker: (broker: string) => void;
   // Maximized view hides the tab bar; this toggle (the only chrome that survives)
@@ -110,6 +114,7 @@ export default function Toolbar({
   onSymbol,
   onPeriod,
   brokerId,
+  priceSide,
   accounts,
   onSelectBroker,
   maximized,
@@ -720,6 +725,7 @@ export default function Toolbar({
         period={period}
         epic={symbol.epic}
         brokerId={brokerId}
+        priceSide={priceSide}
       />
 
       {/* Alerts panel toggle (bell). */}

@@ -9,6 +9,7 @@ import { runAndRender, clearBacktest } from "./lib/backtest";
 import type { BacktestResult } from "./api";
 import type { ChartController } from "./lib/chartController";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
+import type { PriceSide } from "./theme";
 import { buildSeries } from "./lib/backtestSeries";
 import { defaultBacktestConfig } from "./lib/backtestConfig";
 import {
@@ -27,9 +28,14 @@ interface Props {
   // Symbol epic — only used to reset the readout when the instrument changes.
   epic?: string;
   brokerId: string;
+  // The chart's active price side. The backtest MUST fetch the same side the
+  // chart shows: the cache is populated per side, and a mismatch (e.g. fetching
+  // "mid" while the chart shows "bid") silently backtests a different, often
+  // far shorter, candle series than the one on screen.
+  priceSide: PriceSide;
 }
 
-export default function BacktestButton({ controller, period, epic, brokerId }: Props) {
+export default function BacktestButton({ controller, period, epic, brokerId, priceSide }: Props) {
   const chart = controller?.chart ?? null;
   const [running, setRunning] = useState(false);
   const [summary, setSummary] = useState<BacktestResult["summary"] | null>(null);
@@ -61,7 +67,7 @@ export default function BacktestButton({ controller, period, epic, brokerId }: P
       const { fromMs: windowFromMs, toMs: windowToMs } = resolveWindow(cfg, resSeconds, now);
       const toSec = Math.floor(windowToMs / 1000);
       const fetchBars = (fromMs: number) =>
-        fetchRange(epic, period.resolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, "mid", brokerId);
+        fetchRange(epic, period.resolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId);
 
       const required = requiredWarmupBars(cfg);
       const depth = cfg.range.history ?? "full";

@@ -1488,6 +1488,7 @@ export default function App() {
         onSymbol={setSymbol}
         onPeriod={setPeriod}
         brokerId={brokerId}
+        priceSide={settings.priceSide}
         accounts={accounts}
         onSelectBroker={selectBroker}
         maximized={maximized}
