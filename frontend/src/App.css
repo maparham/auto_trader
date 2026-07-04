@@ -2058,6 +2058,36 @@
 
 /* Description tooltip — portaled to <body> and fixed-positioned so the menu's
    overflow-scroll list can't clip it. Anchored to the right of the ⓘ icon. */
+.tooltip {
+  position: fixed; z-index: 2500; /* above the modal (2000) */
+  max-width: 260px; padding: 8px 10px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  pointer-events: none;
+  /* animation A: quick fade + 8px slide toward the anchor */
+  opacity: 0;
+  transition: opacity .12s ease, transform .12s cubic-bezier(.2,.7,.3,1);
+}
+.tooltip[data-side="top"]    { transform: translateY(-8px); }
+.tooltip[data-side="bottom"] { transform: translateY(8px); }
+.tooltip[data-side="left"]   { transform: translateX(-8px); }
+.tooltip[data-side="right"]  { transform: translateX(8px); }
+.tooltip.show { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .tooltip { transition: opacity .12s ease; }
+  .tooltip[data-side] { transform: none; }
+}
+.tooltip-title { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
+.tooltip-desc  { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.tooltip-desc + .tooltip-desc { margin-top: 6px; }
+
+/* the invisible inline wrapper around a trigger — must have a box so its
+   getBoundingClientRect() anchors the bubble; adds no visual footprint. */
+.tooltip-trigger { display: inline-flex; }
+
+/* Legacy aliases: not-yet-migrated callers still use the raw .ind-tooltip*
+   classes. Keep them pointing at the same styles until the last raw usage
+   is migrated to <Tooltip>, then remove. */
 .ind-tooltip {
   position: fixed; transform: translateY(-50%); z-index: 2500; /* above the modal (2000) */
   max-width: 260px; padding: 8px 10px;
