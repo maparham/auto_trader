@@ -466,9 +466,10 @@ export default function Toolbar({
             title={`${p.label} interval`}
             onClick={() => onPeriod(p)}
             onContextMenu={(e) => {
-              // Defaults (1m–1W) are fixed — no remove menu.
-              if (DEFAULT_RESOLUTIONS.has(p.resolution)) return;
+              // Suppress the native menu on the toolbar regardless; defaults
+              // (1m–1W) are fixed, so right-clicking them is just a no-op.
               e.preventDefault();
+              if (DEFAULT_RESOLUTIONS.has(p.resolution)) return;
               setTfMenu({ x: e.pageX, y: e.pageY, resolution: p.resolution });
             }}
           >
@@ -510,8 +511,9 @@ export default function Toolbar({
                           setIntervalOpen(false);
                         }}
                         onContextMenu={(e) => {
-                          if (DEFAULT_RESOLUTIONS.has(p.resolution)) return;
+                          // Suppress the native menu; defaults have no favorite toggle.
                           e.preventDefault();
+                          if (DEFAULT_RESOLUTIONS.has(p.resolution)) return;
                           setTfMenu({ x: e.pageX, y: e.pageY, resolution: p.resolution });
                         }}
                       >
