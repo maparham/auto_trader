@@ -697,7 +697,7 @@ export default function Toolbar({
                 <span className="ind-name">Save {symbol.epic} template</span>
                 <InfoTip
                   title={`Save ${symbol.epic} template`}
-                  desc={`Saves this chart's indicators and drawings as ${symbol.epic}'s template, replacing the previous one. Fresh ${symbol.epic} charts start with it automatically.`}
+                  text={`Saves this chart's indicators and drawings as ${symbol.epic}'s template, replacing the previous one. Fresh ${symbol.epic} charts start with it automatically.`}
                 />
               </li>
               {loadSymbolTemplate(symbol.epic) ? (
@@ -707,7 +707,7 @@ export default function Toolbar({
                     <span className="ind-name">Apply {symbol.epic} template</span>
                     <InfoTip
                       title={`Apply ${symbol.epic} template`}
-                      desc="Adds the template's indicators and drawings that are missing from this chart. What's already here is never changed or removed."
+                      text="Adds the template's indicators and drawings that are missing from this chart. What's already here is never changed or removed."
                     />
                   </li>
                   <li onClick={deleteTemplate}>
@@ -715,7 +715,7 @@ export default function Toolbar({
                     <span className="ind-name">Delete {symbol.epic} template</span>
                     <InfoTip
                       title={`Delete ${symbol.epic} template`}
-                      desc={`Removes ${symbol.epic}'s saved template. Open charts keep their layout; fresh ${symbol.epic} charts fall back to the default template if one is set, otherwise start blank.`}
+                      text={`Removes ${symbol.epic}'s saved template. Open charts keep their layout; fresh ${symbol.epic} charts fall back to the default template if one is set, otherwise start blank.`}
                     />
                   </li>
                 </>
@@ -731,7 +731,7 @@ export default function Toolbar({
                 <span className="ind-name">Save as default template</span>
                 <InfoTip
                   title="Save as default template"
-                  desc="Saves this chart's indicators (drawings and AVWAPs excluded) as the default for every symbol. Fresh charts without their own template start with it."
+                  text="Saves this chart's indicators (drawings and AVWAPs excluded) as the default for every symbol. Fresh charts without their own template start with it."
                 />
               </li>
               {loadDefaultTemplate() ? (
@@ -741,7 +741,7 @@ export default function Toolbar({
                     <span className="ind-name">Apply default template</span>
                     <InfoTip
                       title="Apply default template"
-                      desc="Adds the default indicators that are missing from this chart. Existing indicators and drawings are untouched."
+                      text="Adds the default indicators that are missing from this chart. Existing indicators and drawings are untouched."
                     />
                   </li>
                   <li onClick={clearDefault}>
@@ -749,7 +749,7 @@ export default function Toolbar({
                     <span className="ind-name">Clear default template</span>
                     <InfoTip
                       title="Clear default template"
-                      desc="Removes the shared default. Fresh charts start blank unless their symbol has its own template."
+                      text="Removes the shared default. Fresh charts start blank unless their symbol has its own template."
                     />
                   </li>
                 </>

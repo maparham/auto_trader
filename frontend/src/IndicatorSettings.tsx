@@ -65,7 +65,7 @@ import { applyIndicator, removeIndicatorById } from "./lib/indicators";
 import { toast } from "./lib/notify";
 import { useDraggable } from "./lib/useDraggable";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
-import InfoTip from "./InfoTip";
+import InfoTip from "./components/InfoTip";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
 import { cloneStyles } from "./lib/overlays";

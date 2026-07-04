@@ -1,43 +1,41 @@
-import { useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import type { ReactNode } from "react";
+import Tooltip from "./Tooltip";
 
-// A trailing ⓘ that reveals a description tooltip on hover, mirroring the indicator
-// menu's info icon (same .ind-info / .ind-tooltip styling). The tooltip is portaled
-// to <body> so the dropdown's own clipping/stacking can't hide it. onClick is
-// swallowed so clicking the icon inside a menu row never triggers the row's action.
-export default function InfoTip({ title, desc }: { title: string; desc: string }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
-  const show = () => {
-    const r = ref.current?.getBoundingClientRect();
-    if (r) setTip({ x: r.right + 8, y: r.top + r.height / 2 });
-  };
+interface InfoTipProps {
+  // One string, or several — each rendered as its own description line.
+  text: string | string[];
+  title?: string;
+  // Optional custom trigger (e.g. a ⚠ badge); defaults to the ⓘ glyph.
+  children?: ReactNode;
+  // Overrides the trigger button's class (default "ind-info").
+  className?: string;
+}
+
+// A trailing ⓘ that reveals a description tooltip on hover/focus. The tooltip
+// mechanics (portal, positioning, timing, animation) all live in <Tooltip>; this
+// component only owns the icon trigger and swallows its click so tapping the icon
+// inside a menu row / label never triggers the row's action.
+export default function InfoTip({ text, title, children, className }: InfoTipProps) {
   return (
-    <>
+    <Tooltip title={title} content={text}>
       <button
-        ref={ref}
-        className="ind-info"
-        aria-label={`About ${title}`}
-        onClick={(e) => e.stopPropagation()}
-        onMouseEnter={show}
-        onMouseLeave={() => setTip(null)}
-        onFocus={show}
-        onBlur={() => setTip(null)}
+        type="button"
+        className={className ?? "ind-info"}
+        aria-label={title ? `About ${title}` : "More info"}
+        tabIndex={-1}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
       >
-        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-          <circle cx="12" cy="12" r="9" />
-          <line x1="12" y1="11" x2="12" y2="16" />
-          <circle cx="12" cy="7.5" r="0.6" fill="currentColor" stroke="none" />
-        </svg>
-      </button>
-      {tip &&
-        createPortal(
-          <div className="ind-tooltip" style={{ left: tip.x, top: tip.y }} role="tooltip">
-            <div className="ind-tooltip-title">{title}</div>
-            <div className="ind-tooltip-desc">{desc}</div>
-          </div>,
-          document.body,
+        {children ?? (
+          <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <line x1="12" y1="11" x2="12" y2="16" />
+            <circle cx="12" cy="7.5" r="0.6" fill="currentColor" stroke="none" />
+          </svg>
         )}
-    </>
+      </button>
+    </Tooltip>
   );
 }

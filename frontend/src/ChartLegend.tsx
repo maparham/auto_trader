@@ -14,7 +14,7 @@
 import { useEffect, useImperativeHandle, useRef, type Ref, type RefObject } from "react";
 import { DomPosition, type Chart, type Indicator, type KLineData } from "klinecharts";
 import type { ChartController } from "./lib/chartController";
-import InfoTip from "./InfoTip";
+import InfoTip from "./components/InfoTip";
 import {
   indTypeOf,
   prevHlDegenerateInfo,

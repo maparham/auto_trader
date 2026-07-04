@@ -715,7 +715,7 @@ function OperatorPicker({ value, onChange }: { value: Operator; onChange: (op: O
                 }}
               >
                 <span className={`bt-op-item-label${isCrossOp(o.value) ? " bt-op-cross" : ""}`}>{o.label}</span>
-                <InfoTip title={o.label} desc={o.tip} />
+                <InfoTip title={o.label} text={o.tip} />
               </li>
             ))}
           </ul>,

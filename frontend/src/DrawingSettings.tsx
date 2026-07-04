@@ -22,7 +22,7 @@ import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker"
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility } from "./lib/visibility";
 import { toast } from "./lib/notify";
-import InfoTip from "./InfoTip";
+import InfoTip from "./components/InfoTip";
 import {
   loadDrawingDefault,
   saveDrawingDefault,
