@@ -629,6 +629,17 @@
 .symsearch .ss-star.on svg { fill: currentColor; stroke: currentColor; }
 .symsearch .ss-star.on:hover { background: var(--hover-strong); }
 
+/* "+" add-to-formula button on each result row — mirrors the star. */
+.symsearch .ss-add {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 26px; height: 26px; padding: 0; border: none; border-radius: 50%;
+  background: transparent; cursor: pointer; color: var(--text-faint);
+  font-size: 20px; line-height: 1; font-weight: 500;
+  opacity: 0; transition: opacity 0.1s, color 0.1s, background 0.1s;
+}
+.symsearch-results li:hover .ss-add { opacity: 1; }
+.symsearch .ss-add:hover { background: var(--hover-strong); color: var(--text); }
+
 .symsearch-empty {
   display: flex; align-items: center; justify-content: center;
   color: var(--text-faint); font-size: 13px; padding: 40px 20px; cursor: default;
@@ -966,8 +977,14 @@
 .bt-risk-row { display: flex; align-items: center; gap: 8px; }
 .bt-risk-row select { flex: 0 0 auto; min-width: 0; }
 .bt-risk-row span { color: var(--text-dim); font-size: 12px; }
-.bt-risk-label { flex: 0 0 52px; color: var(--text-dim); font-size: 12px; }
+.bt-risk-label { flex: 0 0 auto; color: var(--text-dim); font-size: 12px; }
 .bt-num { width: 64px; flex: 0 0 auto; min-width: 0; }
+
+/* Presets: Save-as and Load share one line, each taking half the row (min-width:0
+   lets the input/select shrink instead of overflowing). Wraps on a narrow modal. */
+.bt-presets { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.bt-presets > .al-row { flex: 1 1 260px; min-width: 0; }
+.bt-presets .al-row > span { width: auto; }
 @media (prefers-reduced-motion: reduce) {
   .bt-switch, .bt-switch-knob { transition: none; }
 }
@@ -975,7 +992,7 @@
 /* Costs: a 2x2 grid (was 4 stacked full-width rows) with the label stacked
    above its input so a longer label like "Commission/side" has room to read
    in full instead of being clipped by a fixed-width side label column. */
-.bt-costs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+.bt-costs-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 16px; }
 .bt-field { display: flex; flex-direction: column; gap: 4px; }
 .bt-field span { color: var(--text-dim); font-size: 12px; }
 .bt-field input {

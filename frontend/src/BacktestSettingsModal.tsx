@@ -378,33 +378,35 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
           </Section>
 
           <Section title="Presets">
-            <div className="al-row">
-              <span>Save as</span>
-              <input
-                value={presetName}
-                placeholder="Strategy name"
-                onChange={(e) => setPresetName(e.target.value)}
-              />
-              <button className="ghost" onClick={savePreset} disabled={!presetName.trim()}>
-                Save
-              </button>
-            </div>
-            <div className="al-row">
-              <span>Load</span>
-              <select value={loadName} onChange={(e) => setLoadName(e.target.value)}>
-                <option value="">Choose a preset…</option>
-                {Object.keys(presets).map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-              <button className="ghost" onClick={() => applyPreset(loadName)} disabled={!loadName}>
-                Load
-              </button>
-              <button className="ghost" onClick={() => removePreset(loadName)} disabled={!loadName}>
-                Delete
-              </button>
+            <div className="bt-presets">
+              <div className="al-row">
+                <span>Save as</span>
+                <input
+                  value={presetName}
+                  placeholder="Strategy name"
+                  onChange={(e) => setPresetName(e.target.value)}
+                />
+                <button className="ghost" onClick={savePreset} disabled={!presetName.trim()}>
+                  Save
+                </button>
+              </div>
+              <div className="al-row">
+                <span>Load</span>
+                <select value={loadName} onChange={(e) => setLoadName(e.target.value)}>
+                  <option value="">Choose a preset…</option>
+                  {Object.keys(presets).map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+                <button className="ghost" onClick={() => applyPreset(loadName)} disabled={!loadName}>
+                  Load
+                </button>
+                <button className="ghost" onClick={() => removePreset(loadName)} disabled={!loadName}>
+                  Delete
+                </button>
+              </div>
             </div>
           </Section>
         </div>
@@ -455,7 +457,7 @@ function RiskSection({
 
   return (
     <div className="bt-risk">
-      <div className="instrument-section-title">Stop &amp; target ({side})</div>
+      <div className="instrument-section-title">Stop &amp; take profit ({side})</div>
       <div className="bt-risk-row">
         <span className="bt-risk-label">Stop</span>
         <select value={risk.stop.kind} onChange={(e) => setStopKind(e.target.value as StopKind)}>
@@ -472,7 +474,7 @@ function RiskSection({
           num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }))}
       </div>
       <div className="bt-risk-row">
-        <span className="bt-risk-label">Target</span>
+        <span className="bt-risk-label">Take profit</span>
         <select value={risk.target.kind} onChange={(e) => setTargetKind(e.target.value as TargetKind)}>
           {TARGET_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
