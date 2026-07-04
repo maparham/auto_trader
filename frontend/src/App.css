@@ -984,8 +984,13 @@
 /* Scaling & management — max concurrent positions + min spacing, per side.
    A <details> so it stays collapsed (the common single-position case) unless
    opened; reuses .bt-risk-row/.bt-risk-label/.bt-num from the section above. */
-.bt-scaling { padding: 12px 0; border-top: 1px solid var(--border); }
-.bt-scaling > summary { cursor: pointer; margin-bottom: 8px; list-style: revert; }
+/* Always visible; title spans the top, then Max positions and Min spacing share
+   the next line side by side (wrapping only if spacing's ATR inputs get wide). */
+.bt-scaling {
+  display: flex; flex-flow: row wrap; align-items: center; gap: 8px 24px;
+  padding: 12px 0; border-top: 1px solid var(--border);
+}
+.bt-scaling > .instrument-section-title { flex-basis: 100%; margin-bottom: 0; }
 
 /* Presets: Save-as and Load share one line, each taking half the row (min-width:0
    lets the input/select shrink instead of overflowing). Wraps on a narrow modal. */

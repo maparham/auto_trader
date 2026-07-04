@@ -514,8 +514,8 @@ function ScalingSection({
     onChange({ ...scaling, spacing: { kind: "atr", mult: scaling.spacing?.mult ?? 1, length: scaling.spacing?.length ?? 14 } });
   };
   return (
-    <details className="bt-scaling">
-      <summary className="instrument-section-title">Scaling &amp; management ({side})</summary>
+    <div className="bt-scaling">
+      <div className="instrument-section-title">Scaling &amp; management ({side})</div>
       <div className="bt-risk-row">
         <span className="bt-risk-label">Max positions</span>
         <input type="number" min={1} step="1" className="bt-num" value={scaling.maxConcurrent}
@@ -537,7 +537,7 @@ function ScalingSection({
             onChange={(e) => onChange({ ...scaling, spacing: { ...scaling.spacing!, kind: "atr", length: Math.max(1, Math.round(Number(e.target.value))) } })} />
         </>}
       </div>
-    </details>
+    </div>
   );
 }
 
