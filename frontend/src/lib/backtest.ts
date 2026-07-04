@@ -388,6 +388,14 @@ export async function runAndRender(
               if (backtestResultSignal.value === result) highlightTradeSignal.set(null);
               return false;
             },
+            // Clicking a marker sticky-selects its trade, same as clicking its
+            // row — draws the risk/reward zone overlay and scrolls to it (the
+            // selectedTradeSignal subscription below does the drawing/scrolling
+            // for both this and the panel's row click).
+            onClick: () => {
+              if (backtestResultSignal.value === result) selectedTradeSignal.set(idx);
+              return false;
+            },
           }
         : {}),
     });
