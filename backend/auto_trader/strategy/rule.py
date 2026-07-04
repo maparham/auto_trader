@@ -65,10 +65,11 @@ CROSS_OPS = {"crossesAbove", "crossesBelow"}
 class RuleStrategy(Strategy):
     """Hedging rule strategy: four independent rule groups drive two buckets.
 
-    Long: `long_entry` opens (BUY leg=long) when flat-long, `long_exit` closes
-    (SELL leg=long) when long. Short: `short_entry` opens (SELL leg=short) when
-    flat-short, `short_exit` closes (BUY leg=short) when short. Long and short
-    are independent — the strategy can hold both at once.
+    Long: `long_entry` emits a BUY (leg=long) whenever the entry rule passes —
+    the ENGINE decides whether that opens a new position or is rejected by the
+    cap/spacing — and `long_exit` emits a SELL (leg=long) while the side holds.
+    Short mirrors it (SELL to open, BUY to close). Long and short are
+    independent — the strategy can hold both at once.
 
     `long_enabled` / `short_enabled` turn a whole side off: when a side is
     disabled its bucket is skipped entirely — no entries AND no exits — so it

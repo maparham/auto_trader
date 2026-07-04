@@ -44,3 +44,30 @@ def test_spacing_rejects_until_price_moves():
     flat = [_c(t0, i, 100, 100, 100, 100) for i in range(5)]
     res2 = BacktestEngine(BuyEveryBar(), long_scaling=scaling).run(flat)
     assert len([f for f in res2.fills if f.side is Side.BUY]) == 1  # never moves -> one open
+
+
+class OpenTwoThenExit(Strategy):
+    """Open on the first two decision bars (fills open two positions under
+    max_concurrent=2), then emit an exit that must close BOTH."""
+    def on_bar(self, ctx: Context):
+        n = len(ctx.history)
+        if n <= 2:
+            return [Signal(Side.BUY, 1.0, "enter", leg="long")]
+        if n == 5:
+            return [Signal(Side.SELL, 1.0, "exit", leg="long")]
+        return []
+
+
+def test_rule_exit_closes_all_open_positions():
+    t0 = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    candles = [_c(t0, i, 100, 100, 100, 100) for i in range(7)]
+    res = BacktestEngine(
+        OpenTwoThenExit(), commission_per_side=1.0,
+        long_scaling=ScalingConfig(max_concurrent=2),
+    ).run(candles)
+    # two opens, then ONE exit signal closes BOTH positions
+    assert len([f for f in res.fills if f.side is Side.BUY]) == 2
+    assert len([f for f in res.fills if f.side is Side.SELL]) == 2
+    assert len(res.trades) == 2
+    # commission is charged per fill: 2 opens + 2 closes = 4; prices flat so pnl=0
+    assert res.net_pnl == -4.0

@@ -144,6 +144,12 @@ class BacktestEngine:
             # 1b) Intra-bar stop/target, then 1c) trailing ratchet — per side.
             realized = self._intrabar_exit(longs, "long", self.long_risk, result, realized, bar)
             realized = self._intrabar_exit(shorts, "short", self.short_risk, result, realized, bar)
+            # An intrabar stop/target that empties a side clears its spacing
+            # anchor, so the next entry isn't wrongly blocked by a stale last-open.
+            if not longs:
+                last_long_open = None
+            if not shorts:
+                last_short_open = None
             self._ratchet_trailing(longs, "long", self.long_risk, bar, i)
             self._ratchet_trailing(shorts, "short", self.short_risk, bar, i)
 
