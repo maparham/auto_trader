@@ -33,6 +33,9 @@ export interface Rule {
   left: Operand;
   op: Operator;
   right: Operand;
+  // A disabled rule is kept (editable) but excluded from the run — like a parked
+  // side, but per rule. Absent ⇒ enabled (backward-safe for old presets).
+  enabled?: boolean;
 }
 
 export interface RuleGroup {
@@ -45,10 +48,36 @@ export interface RuleGroup {
  * shallow spread of each is a full deep copy; sharing them instead would let an
  * edit to the original mutate the duplicate (and vice versa). */
 export function cloneRule(rule: Rule): Rule {
-  return { left: { ...rule.left }, op: rule.op, right: { ...rule.right } };
+  return { left: { ...rule.left }, op: rule.op, right: { ...rule.right }, enabled: rule.enabled };
 }
 
-export type RangeMode = "bars" | "lastDay" | "lastWeek" | "lastMonth" | "custom";
+/** A rule group with its disabled rules dropped — what actually gets sent to the
+ * engine. An all-disabled group becomes empty (that side simply never triggers,
+ * same as no rules). */
+export function activeGroup(group: RuleGroup): RuleGroup {
+  return { combine: group.combine, rules: group.rules.filter((r) => r.enabled !== false) };
+}
+
+export type RangeMode = "bars" | "lastDay" | "lastWeek" | "lastMonth" | "lastYear" | "custom";
+
+export type SessionPreset = "NYSE" | "London" | "Frankfurt" | "Tokyo" | "Sydney" | "Crypto";
+
+/** A clock window, minutes from midnight in the mask's tz. Half-open [start,end); wraps when end<start. */
+export interface DayTimeWindow { startMin: number; endMin: number }
+
+/** Phone-alarm-style activity mask. A bar is active iff it passes EVERY enabled
+ * filter. `session`, when set, is a UI convenience that resolveMask() inlines
+ * into timeOfDay+tz before the predicate runs and before POST — the backend
+ * never sees `session`. Absent/`enabled:false` ⇒ every bar active. */
+export interface RecurrenceMask {
+  enabled: boolean;
+  daysOfWeek?: number[];    // JS getDay 0=Sun..6=Sat; absent/empty = all
+  monthsOfYear?: number[];  // 1=Jan..12=Dec; absent/empty = all
+  daysOfMonth?: number[];   // 1..31; absent/empty = all
+  timeOfDay?: DayTimeWindow;
+  session?: SessionPreset;
+  tz?: string;              // IANA; default "UTC"
+}
 // How far back to load candles before the trading window so indicators are
 // already warm at the window's first bar (D6 in the plan) — "full" = all
 // available history (default), "bars" = a user-typed count, "minimal" = just
@@ -62,6 +91,7 @@ export interface RangeConfig {
   toMs?: number;
   history?: HistoryDepth;
   historyBars?: number;
+  mask?: RecurrenceMask;
 }
 
 export interface Costs {

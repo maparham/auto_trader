@@ -10,6 +10,7 @@ const RANGE_SPAN_MS: Record<string, number> = {
   lastDay: DAY_MS,
   lastWeek: 7 * DAY_MS,
   lastMonth: 30 * DAY_MS,
+  lastYear: 365 * DAY_MS,
 };
 
 /** Resolve a BacktestConfig's range into the trading window [fromMs, toMs). */
@@ -24,6 +25,12 @@ export function resolveWindow(
   if (cfg.range.mode === "bars") {
     const bars = cfg.range.bars ?? 500;
     return { fromMs: now - bars * resSeconds * 1000, toMs: now };
+  }
+  // Relative unit modes (lastDay/Week/Month/Year) normally trail `now`, but a
+  // calendar suggestion chip sets an absolute fromMs/toMs anchor on the same
+  // mode — honour it so the unit tab stays selected while the range is fixed.
+  if (cfg.range.fromMs != null && cfg.range.toMs != null) {
+    return { fromMs: cfg.range.fromMs, toMs: cfg.range.toMs };
   }
   return { fromMs: now - (RANGE_SPAN_MS[cfg.range.mode] ?? DAY_MS), toMs: now };
 }

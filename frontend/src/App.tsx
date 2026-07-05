@@ -19,7 +19,6 @@ import ConfirmDialog from "./ConfirmDialog";
 import Snackbar from "./Snackbar";
 import OrderTicket from "./OrderTicket";
 import PositionsPanel from "./PositionsPanel";
-import BacktestPanel from "./BacktestPanel";
 import { registerCustomIndicators } from "./lib/customIndicators";
 import { registerBacktestIndicators } from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
@@ -247,7 +246,7 @@ export default function App() {
   }, [settings.trading.confirmLineEdits]);
   // Toolbar gear + chart context menu request the Settings modal via a signal.
   useEffect(() => settingsRequest.subscribe(() => setShowSettings(true)), []);
-  // Backtest button's ⚙ gear requests the Backtest settings modal via a signal.
+  // The toolbar Backtest button opens the docked config panel via a signal.
   const [showBacktestCfg, setShowBacktestCfg] = useState(false);
   useEffect(() => backtestSettingsRequest.subscribe(() => setShowBacktestCfg(true)), []);
   const [alertReq, setAlertReq] = useState(alertModalRequest.value);
@@ -1586,6 +1585,21 @@ export default function App() {
             />
           </aside>
         )}
+        {/* Backtest config: docked right, like the alerts sidebar. Non-modal —
+            the chart shrinks beside it and stays interactive; running keeps it
+            open so you can iterate. */}
+        {showBacktestCfg && symbol && period && (
+          <BacktestSettingsModal
+            initial={loadBacktestLastUsed() ?? defaultBacktestConfig()}
+            epic={symbol.epic}
+            resolution={period.resolution}
+            onRun={(cfg) => {
+              saveBacktestLastUsed(cfg);
+              requestBacktestRun();
+            }}
+            onClose={() => setShowBacktestCfg(false)}
+          />
+        )}
       </div>
       {/* Trading dock (paper): the whole open book — positions + resting orders
           across ALL symbols — docked full-width under the chart, TV-style. ALWAYS
@@ -1608,29 +1622,11 @@ export default function App() {
         />
       </div>
 
-      {/* Backtest results: docked below the chart/dock, TradingView-style. Self-
-          hides until a run completes (renders null with no result), so it's
-          always mounted rather than conditionally rendered here. */}
-      <BacktestPanel />
-
       {showSettings && (
         <SettingsModal
           settings={settings}
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
-        />
-      )}
-
-      {showBacktestCfg && symbol && period && (
-        <BacktestSettingsModal
-          initial={loadBacktestLastUsed() ?? defaultBacktestConfig()}
-          epic={symbol.epic}
-          resolution={period.resolution}
-          onRun={(cfg) => {
-            saveBacktestLastUsed(cfg);
-            requestBacktestRun();
-          }}
-          onClose={() => setShowBacktestCfg(false)}
         />
       )}
 

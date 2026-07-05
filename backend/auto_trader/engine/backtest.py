@@ -22,6 +22,7 @@ from datetime import datetime
 from auto_trader.core.models import Candle, Fill, Side, Signal, Trade
 from auto_trader.engine.risk import RiskConfig, is_trailing, stop_level, target_level
 from auto_trader.engine.scaling import ScalingConfig, spacing_ok
+from auto_trader.engine.schedule import RecurrenceMask, is_active
 from auto_trader.strategy.base import Context, Strategy
 
 
@@ -82,8 +83,10 @@ class BacktestEngine:
         series: dict[str, list[float | None]] | None = None,
         long_scaling: ScalingConfig | None = None,
         short_scaling: ScalingConfig | None = None,
+        mask: RecurrenceMask | None = None,
     ) -> None:
         self.strategy = strategy
+        self.mask = mask
         self.starting_cash = starting_cash
         self.commission = commission_per_side
         self.slippage = slippage
@@ -107,6 +110,19 @@ class BacktestEngine:
         last_short_open: float | None = None
 
         for i, bar in enumerate(candles):
+            active = is_active(self.mask, bar.time)
+            # Force-flat at the first inactive bar's open: close every open
+            # position via the normal exit path with a "session close" reason.
+            if not active and (longs or shorts):
+                realized = self._close_all(
+                    longs, "long", result, realized, Side.SELL, bar.open, bar.time, "session close"
+                )
+                realized = self._close_all(
+                    shorts, "short", result, realized, Side.BUY, bar.open, bar.time, "session close"
+                )
+                last_long_open = None
+                last_short_open = None
+
             # 1) Fill everything queued on the previous bar at THIS bar's open.
             for sig in pending:
                 fill_price = self._fill_price(bar.open, sig.side)
@@ -122,6 +138,8 @@ class BacktestEngine:
                     close_side = Side.BUY
 
                 if opening:
+                    if not active:
+                        continue  # mask inactive: no new entries on this bar
                     atr = self._atr_at(scaling.spacing.length if scaling.spacing else None, i)
                     if len(positions) >= scaling.max_concurrent or not spacing_ok(
                         scaling.spacing, last_open, fill_price, side, atr

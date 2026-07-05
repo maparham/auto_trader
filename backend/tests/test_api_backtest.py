@@ -402,3 +402,80 @@ def test_trade_dto_carries_stop_target_levels():
     t = r.json()["trades"][0]
     assert t["stop_initial"] == 98.0 and t["target"] == 104.0
     assert "stop_final" in t
+
+
+# --- recurrence mask (period scheduling) ---
+
+
+def test_backtest_accepts_recurrence_mask():
+    candles = _candles([10, 10, 10, 10, 10])
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        "series": {
+            "EMA_5": [1.0, 1.0, 3.0, 3.0, 3.0],
+            "EMA_9": [2.0, 2.0, 2.0, 2.0, 2.0],
+        },
+        **_groups(
+            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+        "mask": {"enabled": True, "daysOfWeek": [1], "tz": "America/New_York"},
+    }
+    result = _run(body)  # runs without error; mask is honoured by the engine
+    assert result.epic == "EURUSD"
+
+
+def test_backtest_rejects_bad_tz():
+    with pytest.raises(ValidationError):
+        app_module.RecurrenceMaskDTO(enabled=True, tz="Not/AZone")
+
+
+def test_backtest_without_mask_still_works():
+    candles = _candles([10, 10, 10, 10, 10])
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        "series": {
+            "EMA_5": [1.0, 1.0, 3.0, 3.0, 3.0],
+            "EMA_9": [2.0, 2.0, 2.0, 2.0, 2.0],
+        },
+        **_groups(
+            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+    }
+    result = _run(body)
+    assert len(result.markers) == 1
+
+
+def test_backtest_time_of_day_window_honoured_over_the_wire():
+    # Regression: the frontend sends the clock filter as a nested
+    # `timeOfDay: {startMin, endMin}` object; the DTO must read that shape (a
+    # flat timeStartMin/timeEndMin silently drops it). Candles here sit at
+    # ~22:13–22:17 UTC (minute-of-day ~1333); the EMA_5/EMA_9 cross at index 2
+    # fills at index 3.
+    candles = _candles([10, 10, 10, 10, 10])
+    base = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        "series": {"EMA_5": [1.0, 1.0, 3.0, 3.0, 3.0], "EMA_9": [2.0, 2.0, 2.0, 2.0, 2.0]},
+        **_groups(
+            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+    }
+
+    # A window that EXCLUDES the candles' time-of-day gates the entry away.
+    excluded = _run({**base, "mask": {"enabled": True, "timeOfDay": {"startMin": 0, "endMin": 600}, "tz": "UTC"}})
+    assert len(excluded.markers) == 0
+
+    # A window that INCLUDES it lets the entry fire.
+    included = _run({**base, "mask": {"enabled": True, "timeOfDay": {"startMin": 1300, "endMin": 1400}, "tz": "UTC"}})
+    assert len(included.markers) >= 1

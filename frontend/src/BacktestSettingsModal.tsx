@@ -3,12 +3,10 @@
 // (useDraggable/useCloseOnEscape/CloseButton, .modal-backdrop/.modal/.modal-head/
 // .modal-foot) — no shared wrapper, no portal.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CloseButton from "./CloseButton";
 import InfoTip from "./components/InfoTip";
-import { useDraggable } from "./lib/useDraggable";
-import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
 import { resolveWindow } from "./lib/backtestWindow";
 import { RESOLUTION_SECONDS } from "./lib/feed";
@@ -31,7 +29,12 @@ import {
   type StopKind,
   type TargetKind,
   type ScalingConfig,
+  type RecurrenceMask,
+  type SessionPreset,
+  type DayTimeWindow,
 } from "./lib/backtestConfig";
+import { SESSION_PRESETS, buildRangeChips, coverage, isActive, resolveMask } from "./lib/backtestSchedule";
+import BacktestPanel from "./BacktestPanel";
 import {
   loadBacktestPresets,
   saveBacktestPreset,
@@ -53,8 +56,59 @@ const RANGE_MODES: { value: RangeMode; label: string }[] = [
   { value: "lastDay", label: "Day" },
   { value: "lastWeek", label: "Week" },
   { value: "lastMonth", label: "Month" },
+  { value: "lastYear", label: "Year" },
   { value: "custom", label: "Custom" },
 ];
+
+type BacktestTab = "period" | "strategy" | "costs" | "presets" | "results";
+const BACKTEST_TABS: { value: BacktestTab; label: string }[] = [
+  { value: "period", label: "Period" },
+  { value: "strategy", label: "Strategy" },
+  { value: "costs", label: "Costs" },
+  { value: "presets", label: "Presets" },
+  { value: "results", label: "Results" },
+];
+
+// Which suggestion-chip unit each range tab shows (Bars/Custom show none).
+const CHIP_UNIT: Partial<Record<RangeMode, "day" | "week" | "month" | "year">> = {
+  lastDay: "day",
+  lastWeek: "week",
+  lastMonth: "month",
+  lastYear: "year",
+};
+
+const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// The timezone the mask/chips are evaluated in. A chosen session carries its own
+// tz (resolveMask inlines it), so honour that here too; else the explicit tz;
+// else UTC (wiring the instrument's exchange tz is a deferred follow-up).
+function maskTz(cfg: BacktestConfig): string {
+  const m = cfg.range.mask;
+  if (m?.session) return SESSION_PRESETS[m.session].tz;
+  return m?.tz ?? "UTC";
+}
+
+function toggle(list: number[] | undefined, v: number): number[] {
+  const s = new Set(list ?? []);
+  if (s.has(v)) s.delete(v);
+  else s.add(v);
+  return [...s].sort((a, b) => a - b);
+}
+function minToTime(min: number | undefined): string {
+  if (min == null) return "";
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+}
+function timeToMin(s: string): number {
+  const [h, m] = s.split(":").map(Number);
+  return h * 60 + m;
+}
+function withStart(w: DayTimeWindow | undefined, startMin: number): DayTimeWindow {
+  return { startMin, endMin: w?.endMin ?? startMin };
+}
+function withEnd(w: DayTimeWindow | undefined, endMin: number): DayTimeWindow {
+  return { startMin: w?.startMin ?? 0, endMin };
+}
 
 const HISTORY_DEPTHS: { value: HistoryDepth; label: string }[] = [
   { value: "full", label: "Full" },
@@ -87,11 +141,38 @@ const DEFAULT_SCALING: ScalingConfig = { maxConcurrent: 1 };
 const OPERATORS: { value: Operator; label: string; tip: string }[] = [
   { value: "crossesAbove", label: "crosses above", tip: "Fires once — the bar the left rises through the right." },
   { value: "crossesBelow", label: "crosses below", tip: "Fires once — the bar the left drops through the right." },
-  { value: "gt", label: ">", tip: "True on every bar the left is above the right." },
-  { value: "lt", label: "<", tip: "True on every bar the left is below the right." },
-  { value: "gte", label: ">=", tip: "True on every bar the left is at or above the right." },
-  { value: "lte", label: "<=", tip: "True on every bar the left is at or below the right." },
+  { value: "gt", label: "greater than", tip: "True on every bar the left is above the right." },
+  { value: "lt", label: "less than", tip: "True on every bar the left is below the right." },
+  { value: "gte", label: "greater or equal", tip: "True on every bar the left is at or above the right." },
+  { value: "lte", label: "less or equal", tip: "True on every bar the left is at or below the right." },
 ];
+
+// The compact glyph shown in the operator button (the row must fit on one line):
+// a crossing-lines icon for the two "crosses" operators, a math symbol for the
+// plain comparisons. The full wording stays in the dropdown.
+function CrossGlyph({ dir }: { dir: "up" | "down" }) {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" className="bt-op-crossicon">
+      {/* the reference line, and the series crossing through it up or down */}
+      <path d="M1 8 H15" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.5" />
+      <path
+        d={dir === "up" ? "M2 13 L14 3" : "M2 3 L14 13"}
+        fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+      />
+      <path
+        d={dir === "up" ? "M14 3 l-4 0 M14 3 l0 4" : "M14 13 l-4 0 M14 13 l0 -4"}
+        fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function OpGlyph({ op }: { op: Operator }) {
+  if (op === "crossesAbove") return <CrossGlyph dir="up" />;
+  if (op === "crossesBelow") return <CrossGlyph dir="down" />;
+  const g: Record<string, string> = { gt: ">", lt: "<", gte: "≥", lte: "≤" };
+  return <span className="bt-op-glyph">{g[op]}</span>;
+}
 
 // A rough, illustrative bar count for the window timeline — not the exact fetch
 // math BacktestButton uses (which also depends on "now" and the live broker's
@@ -117,26 +198,22 @@ function formatDateRange(fromMs: number, toMs: number): string {
 // you know the timeframe).
 function rangeDateLabel(cfg: BacktestConfig, resSeconds: number): string {
   const r = cfg.range;
-  const now = Date.now();
-  if (r.mode === "custom") {
-    if (r.fromMs && r.toMs && r.toMs > r.fromMs) return formatDateRange(r.fromMs, r.toMs);
+  if (r.mode === "custom" && !(r.fromMs && r.toMs && r.toMs > r.fromMs)) {
     return "Pick a from and to date";
   }
-  const fromMs = now - estimateWindowBars(cfg, resSeconds) * resSeconds * 1000;
-  return formatDateRange(fromMs, now);
+  // resolveWindow already applies a chip's absolute fromMs/toMs anchor.
+  const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
+  return formatDateRange(fromMs, toMs);
 }
 
 function estimateWindowBars(cfg: BacktestConfig, resSeconds: number): number {
   const r = cfg.range;
   if (r.mode === "bars") return r.bars ?? 500;
-  if (r.mode === "custom") {
-    if (r.fromMs && r.toMs && r.toMs > r.fromMs) {
-      return Math.max(1, Math.round((r.toMs - r.fromMs) / 1000 / resSeconds));
-    }
+  if (r.mode === "custom" && !(r.fromMs && r.toMs && r.toMs > r.fromMs)) {
     return NOMINAL_WINDOW_BARS;
   }
-  const days = r.mode === "lastDay" ? 1 : r.mode === "lastMonth" ? 30 : 7;
-  return Math.max(1, Math.round((days * 86_400) / resSeconds));
+  const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
+  return Math.max(1, Math.round((toMs - fromMs) / 1000 / resSeconds));
 }
 
 /** The history-vs-trading-window split, illustrated to scale — this is the one
@@ -182,7 +259,6 @@ function defaultRule(): Rule {
 }
 
 export default function BacktestSettingsModal({ initial, epic, resolution, onRun, onClose }: Props) {
-  const drag = useDraggable();
   const [cfg, setCfg] = useState<BacktestConfig>(initial);
   const [presets, setPresets] = useState(() => loadBacktestPresets());
   const [presetName, setPresetName] = useState("");
@@ -190,6 +266,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   // Restore the last-viewed tab (device-local) and persist it on switch, so
   // re-opening the modal returns to the side you were working on.
   const [side, setSide] = useState<"long" | "short">(loadBacktestSide);
+  const [tab, setTab] = useState<BacktestTab>("period");
   const selectSide = (s: "long" | "short") => {
     setSide(s);
     saveBacktestSide(s);
@@ -198,7 +275,6 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   // between entry/exit and — the point of this — between the long and short
   // sides. Null until the user copies one; cleared only by copying another.
   const [clipboard, setClipboard] = useState<Rule | null>(null);
-  useCloseOnEscape(onClose);
 
   const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
 
@@ -215,6 +291,24 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   function setRange(patch: Partial<RangeConfig>) {
     setCfg({ ...cfg, range: { ...cfg.range, ...patch } });
   }
+  function setMask(patch: Partial<RecurrenceMask>) {
+    const base: RecurrenceMask = cfg.range.mask ?? { enabled: false };
+    setRange({ mask: { ...base, ...patch } });
+  }
+
+  // Coverage readout + heat-strip: sample the resolved window on a coarse grid
+  // (>= 1h buckets, capped) and count how many slots the mask keeps active.
+  const maskPreview = useMemo(() => {
+    const m = cfg.range.mask;
+    if (!m?.enabled) return null;
+    const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
+    const stepMs = Math.max(resSeconds, 3600) * 1000;
+    const grid: number[] = [];
+    for (let t = fromMs; t < toMs && grid.length < 2000; t += stepMs) grid.push(t);
+    const resolved = resolveMask(m);
+    return { grid, resolved, cov: coverage(grid, resolved) };
+     
+  }, [cfg, resSeconds]);
   function setCosts(patch: Partial<Costs>) {
     setCfg({ ...cfg, costs: { ...cfg.costs, ...patch } });
   }
@@ -222,9 +316,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
     setCfg({ ...cfg, [which]: group });
   }
 
+  // Docked panel: running does NOT close it, so you can tweak and re-run
+  // against the chart beside it. The header ✕ is the only close. Jump to the
+  // Results tab so the outcome shows in this same panel.
   function run() {
     onRun(cfg);
-    onClose();
+    setTab("results");
   }
 
   function savePreset() {
@@ -245,28 +342,60 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal bt-modal" style={drag.style} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-head" {...drag.handleProps}>
-          <span>
-            Backtest settings — <strong>{epic}</strong> ({resolution})
+    <aside className="bt-cfg-panel">
+        <div className="bt-cfg-head">
+          <span className="bt-cfg-title">
+            Backtest — <strong>{epic}</strong> <span className="bt-cfg-res">{resolution}</span>
           </span>
           <CloseButton onClick={onClose} />
         </div>
 
-        <div className="bt-body">
-          <Section title="Time range">
+        <div className="bt-body-wrap">
+          <nav className="bt-vtabs">
+            {BACKTEST_TABS.map((t) => (
+              <button
+                key={t.value}
+                className={tab === t.value ? "on" : ""}
+                onClick={() => setTab(t.value)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+          <div className="bt-body">
+            {tab === "period" && (
+              <>
+                <Section
+                  title="Time range"
+                  info="The span of history the backtest trades over. Pick a relative window (last day/week/month/year), a calendar period via the chips, or a custom from/to."
+                >
             <div className="seg">
               {RANGE_MODES.map((m) => (
                 <button
                   key={m.value}
                   className={cfg.range.mode === m.value ? "seg-on" : ""}
-                  onClick={() => setRange({ mode: m.value })}
+                  onClick={() => setRange({ mode: m.value, fromMs: undefined, toMs: undefined })}
                 >
                   {m.label}
                 </button>
               ))}
             </div>
+            {CHIP_UNIT[cfg.range.mode] && (
+              <div className="bt-chip-row">
+                {buildRangeChips(CHIP_UNIT[cfg.range.mode]!, Date.now(), maskTz(cfg)).map((chip) => {
+                  const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
+                  return (
+                    <button
+                      key={chip.label}
+                      className={on ? "seg-on bt-chip" : "bt-chip"}
+                      onClick={() => setRange({ fromMs: chip.fromMs, toMs: chip.toMs })}
+                    >
+                      {chip.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <div className="al-note bt-range-subtitle">{rangeDateLabel(cfg, resSeconds)}</div>
             {cfg.range.mode === "bars" && (
               <label className="al-row">
@@ -301,7 +430,141 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
             )}
           </Section>
 
-          <Section title="History depth">
+          <Section
+            title="Repeat / active windows"
+            info="Restrict trading to recurring windows — weekdays, months, days of the month, or a market session. Outside them the strategy is flat, and any open position is closed."
+          >
+            <label className="al-row bt-mask-toggle">
+              <input
+                type="checkbox"
+                checked={cfg.range.mask?.enabled ?? false}
+                onChange={(e) => setMask({ enabled: e.target.checked })}
+              />
+              <span>Only trade during selected windows (force-flat outside)</span>
+              <InfoTip text="When on, the strategy only opens positions inside the windows you pick below; at each window's close any open position is force-flattened." />
+            </label>
+
+            {cfg.range.mask?.enabled && (
+              <>
+                <div className="bt-chip-row">
+                  {DOW_LABELS.map((d, i) => {
+                    const on = cfg.range.mask?.daysOfWeek?.includes(i) ?? false;
+                    return (
+                      <button
+                        key={d}
+                        className={on ? "seg-on bt-chip" : "bt-chip"}
+                        onClick={() => setMask({ daysOfWeek: toggle(cfg.range.mask?.daysOfWeek, i) })}
+                      >
+                        {d}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="bt-chip-row">
+                  {MONTH_LABELS.map((mo, idx) => {
+                    const m = idx + 1;
+                    const on = cfg.range.mask?.monthsOfYear?.includes(m) ?? false;
+                    return (
+                      <button
+                        key={mo}
+                        className={on ? "seg-on bt-chip" : "bt-chip"}
+                        onClick={() => setMask({ monthsOfYear: toggle(cfg.range.mask?.monthsOfYear, m) })}
+                      >
+                        {mo}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="al-row bt-range-row">
+                  <label className="bt-range-field">
+                    <span className="bt-field-label">
+                      Session
+                      <InfoTip text="Preset market hours with the right timezone — e.g. NYSE 09:30–16:00 New York. Only meaningful on intraday timeframes." />
+                    </span>
+                    <select
+                      disabled={resSeconds >= 86400}
+                      value={cfg.range.mask?.session ?? ""}
+                      onChange={(e) =>
+                        setMask({ session: (e.target.value || undefined) as SessionPreset | undefined })
+                      }
+                    >
+                      <option value="">Custom / none</option>
+                      {Object.entries(SESSION_PRESETS).map(([k, v]) => (
+                        <option key={k} value={k}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="bt-range-field">
+                    <span className="bt-field-label">
+                      Timezone
+                      <InfoTip text="Timezone used to evaluate the weekday, day-of-month and clock filters (and the calendar chips). A session sets this for you." />
+                    </span>
+                    <input
+                      type="text"
+                      disabled={!!cfg.range.mask?.session}
+                      value={
+                        cfg.range.mask?.session
+                          ? SESSION_PRESETS[cfg.range.mask.session].tz
+                          : cfg.range.mask?.tz ?? "UTC"
+                      }
+                      onChange={(e) => setMask({ tz: e.target.value })}
+                    />
+                  </label>
+                </div>
+
+                {!cfg.range.mask?.session && (
+                  <div className="al-row bt-range-row">
+                    <label className="bt-range-field">
+                      <span>From</span>
+                      <input
+                        type="time"
+                        disabled={resSeconds >= 86400}
+                        value={minToTime(cfg.range.mask?.timeOfDay?.startMin)}
+                        onChange={(e) => setMask({ timeOfDay: withStart(cfg.range.mask?.timeOfDay, timeToMin(e.target.value)) })}
+                      />
+                    </label>
+                    <label className="bt-range-field">
+                      <span>To</span>
+                      <input
+                        type="time"
+                        disabled={resSeconds >= 86400}
+                        value={minToTime(cfg.range.mask?.timeOfDay?.endMin)}
+                        onChange={(e) => setMask({ timeOfDay: withEnd(cfg.range.mask?.timeOfDay, timeToMin(e.target.value)) })}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {resSeconds >= 86400 && (
+                  <div className="al-note">Clock/session filters apply on intraday timeframes only.</div>
+                )}
+
+                {maskPreview && (
+                  <>
+                    <div className="al-note">
+                      Active on {maskPreview.cov.active} of {maskPreview.cov.total} sampled slots
+                      {" "}
+                      ({Math.round((maskPreview.cov.active / Math.max(1, maskPreview.cov.total)) * 100)}%)
+                    </div>
+                    <div className="bt-heatstrip" aria-hidden>
+                      {maskPreview.grid.slice(0, 400).map((t) => (
+                        <span key={t} className={isActive(maskPreview.resolved, t) ? "on" : "off"} />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </Section>
+
+          <Section
+            title="History depth"
+            info="How much history to load before the window so indicators are warmed up when trading starts. It never adds trades — only the range above does."
+          >
             <div className="al-note">
               Indicators warm up on history loaded before the window — trades still only open once
               the window starts.
@@ -330,13 +593,30 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
             )}
             <WindowTimeline cfg={cfg} resolution={resolution} />
           </Section>
+              </>
+            )}
 
+            {tab === "strategy" && (
+              // The whole side view takes on the side's identity colour — long =
+              // the chart's up/green, short = down/red — via one --side variable.
+              // Parking greys it out (data-parked).
+              <div
+                className="bt-strategy"
+                style={{ "--side": side === "long" ? "var(--pos)" : "var(--neg)" } as CSSProperties}
+                data-parked={(side === "long" ? cfg.longEnabled : cfg.shortEnabled) === false}
+              >
           <div className="bt-side-tabs seg">
-            <button className={side === "long" ? "seg-on" : ""} onClick={() => selectSide("long")}>
+            <button
+              className={`bt-side-long${side === "long" ? " seg-on" : ""}`}
+              onClick={() => selectSide("long")}
+            >
               <span className={`bt-side-dot${cfg.longEnabled === false ? " off" : ""}`} aria-hidden="true" />
               Long
             </button>
-            <button className={side === "short" ? "seg-on" : ""} onClick={() => selectSide("short")}>
+            <button
+              className={`bt-side-short${side === "short" ? " seg-on" : ""}`}
+              onClick={() => selectSide("short")}
+            >
               <span className={`bt-side-dot${cfg.shortEnabled === false ? " off" : ""}`} aria-hidden="true" />
               Short
             </button>
@@ -357,11 +637,20 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
               trade volume (e.g. many forex/CFD instruments) — they'll never fire there.
             </div>
           )}
+              </div>
+            )}
 
-          <Section title="Costs">
+            {tab === "costs" && (
+          <Section
+            title="Costs"
+            info="Per-trade assumptions applied to every fill: position size, commission, slippage, and the starting balance the equity curve builds from."
+          >
             <div className="bt-costs-grid">
               <label className="bt-field">
-                <span>Quantity</span>
+                <span className="bt-field-label">
+                  Quantity
+                  <InfoTip text="Units bought or sold per trade." />
+                </span>
                 <input
                   type="number"
                   min={0}
@@ -371,7 +660,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                 />
               </label>
               <label className="bt-field">
-                <span>Commission/side</span>
+                <span className="bt-field-label">
+                  Commission/side
+                  <InfoTip text="Flat cost charged on each entry and each exit — a round trip pays it twice." />
+                </span>
                 <input
                   type="number"
                   min={0}
@@ -381,7 +673,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                 />
               </label>
               <label className="bt-field">
-                <span>Slippage</span>
+                <span className="bt-field-label">
+                  Slippage
+                  <InfoTip text="Price penalty applied to every fill, in the instrument's price units — you buy a bit higher and sell a bit lower." />
+                </span>
                 <input
                   type="number"
                   min={0}
@@ -391,7 +686,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                 />
               </label>
               <label className="bt-field">
-                <span>Starting cash</span>
+                <span className="bt-field-label">
+                  Starting cash
+                  <InfoTip text="Opening account balance the equity curve and return % build from." />
+                </span>
                 <input
                   type="number"
                   min={0}
@@ -402,8 +700,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
               </label>
             </div>
           </Section>
+            )}
 
-          <Section title="Presets">
+            {tab === "presets" && (
+          <Section
+            title="Presets"
+            info="Save the whole configuration — range, mask, rules, risk, and costs — under a name, and reload it later."
+          >
             <div className="bt-presets">
               <div className="al-row">
                 <span>Save as</span>
@@ -435,16 +738,19 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
               </div>
             </div>
           </Section>
+            )}
+
+            {tab === "results" && <BacktestPanel />}
+          </div>
         </div>
 
-        <div className="modal-foot">
+        <div className="modal-foot bt-cfg-foot">
           <button className="ghost" onClick={onClose}>
-            Cancel
+            Close
           </button>
           <button onClick={run}>Run backtest</button>
         </div>
-      </div>
-    </div>
+    </aside>
   );
 }
 
@@ -454,11 +760,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
 // length (default 14); % / trailing % expose a percent; ATR kinds expose a
 // multiple; fixed price exposes an absolute level.
 function RiskSection({
-  side,
   risk,
   onChange,
 }: {
-  side: "long" | "short";
   risk: RiskConfig;
   onChange: (r: RiskConfig) => void;
 }) {
@@ -483,7 +787,9 @@ function RiskSection({
 
   return (
     <div className="bt-risk">
-      <div className="instrument-section-title">Stop &amp; take profit ({side})</div>
+      <SectionTitle info="Price-level exits for this side. Whichever triggers first — stop, target, or a close rule — ends the trade.">
+        Stop &amp; take profit
+      </SectionTitle>
       <div className="bt-risk-row">
         <span className="bt-risk-label">Stop</span>
         <select value={risk.stop.kind} onChange={(e) => setStopKind(e.target.value as StopKind)}>
@@ -523,11 +829,9 @@ function RiskSection({
 // way; off by default via DEFAULT_SCALING (maxConcurrent: 1, no spacing) so
 // existing presets behave exactly as before.
 function ScalingSection({
-  side,
   scaling,
   onChange,
 }: {
-  side: "long" | "short";
   scaling: ScalingConfig;
   onChange: (s: ScalingConfig) => void;
 }) {
@@ -539,7 +843,9 @@ function ScalingSection({
   };
   return (
     <div className="bt-scaling">
-      <div className="instrument-section-title">Scaling &amp; management ({side})</div>
+      <SectionTitle info="Allow more than one open position on this side, and set the minimum price spacing between successive entries.">
+        Scaling &amp; management
+      </SectionTitle>
       <div className="bt-risk-row">
         <span className="bt-risk-label">Max positions</span>
         <input type="number" min={1} step="1" className="bt-num" value={scaling.maxConcurrent}
@@ -618,7 +924,8 @@ function SidePanel({
       )}
       <div className={`bt-side-rules${enabled ? "" : " bt-parked"}`}>
         <RuleGroupSection
-          title={isLong ? "Buy to open (long)" : "Sell to open (short)"}
+          title={isLong ? "Buy to open" : "Sell to open"}
+          info={`Conditions that open a ${side} position. Multiple rules combine with the AND/OR switch.`}
           group={entry}
           onChange={(g) => setGroup(isLong ? "longEntry" : "shortEntry", g)}
           emptyHint={`No ${side}-entry rules — this strategy won't open any ${side} positions.`}
@@ -627,7 +934,8 @@ function SidePanel({
           onCopy={onCopy}
         />
         <RuleGroupSection
-          title={isLong ? "Sell to close (long)" : "Buy to close (short)"}
+          title={isLong ? "Sell to close" : "Buy to close"}
+          info={`Conditions that close an open ${side} position. A stop or target can close it first.`}
           group={exit}
           onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
           emptyHint={`No ${side}-exit rules — an open ${side} holds until the trading window ends.`}
@@ -636,12 +944,10 @@ function SidePanel({
           onCopy={onCopy}
         />
         <RiskSection
-          side={side}
           risk={(isLong ? cfg.longRisk : cfg.shortRisk) ?? EMPTY_RISK}
           onChange={(r) => setCfg({ ...cfg, [isLong ? "longRisk" : "shortRisk"]: r })}
         />
         <ScalingSection
-          side={side}
           scaling={(isLong ? cfg.longScaling : cfg.shortScaling) ?? DEFAULT_SCALING}
           onChange={(s) => setCfg({ ...cfg, [isLong ? "longScaling" : "shortScaling"]: s })}
         />
@@ -650,10 +956,22 @@ function SidePanel({
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+// A section heading with an optional ⓘ that explains what the section does.
+// Shared by <Section> and the risk/scaling blocks so every heading tips the
+// same way.
+function SectionTitle({ info, children }: { info?: string | string[]; children: ReactNode }) {
+  return (
+    <div className="instrument-section-title bt-section-title">
+      <span>{children}</span>
+      {info && <InfoTip text={info} />}
+    </div>
+  );
+}
+
+function Section({ title, info, children }: { title: string; info?: string | string[]; children: ReactNode }) {
   return (
     <div className="bt-section">
-      <div className="instrument-section-title">{title}</div>
+      <SectionTitle info={info}>{title}</SectionTitle>
       {children}
     </div>
   );
@@ -717,10 +1035,11 @@ function OperatorPicker({ value, onChange }: { value: Operator; onChange: (op: O
         className={`bt-op-btn ${isCrossOp(value) ? "bt-op-cross" : "bt-op-compare"}${open ? " open" : ""}`}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={`Operator: ${current?.label}`}
+        title={current?.label}
         onClick={toggle}
       >
-        {current?.label}
-        <span className="bt-op-caret" aria-hidden="true">▾</span>
+        <OpGlyph op={value} />
       </button>
       {open &&
         pos &&
@@ -742,7 +1061,10 @@ function OperatorPicker({ value, onChange }: { value: Operator; onChange: (op: O
                   setOpen(false);
                 }}
               >
-                <span className={`bt-op-item-label${isCrossOp(o.value) ? " bt-op-cross" : ""}`}>{o.label}</span>
+                <span className={`bt-op-item-label${isCrossOp(o.value) ? " bt-op-cross" : ""}`}>
+                  <span className="bt-op-item-glyph"><OpGlyph op={o.value} /></span>
+                  {o.label}
+                </span>
                 <InfoTip title={o.label} text={o.tip} />
               </li>
             ))}
@@ -753,8 +1075,120 @@ function OperatorPicker({ value, onChange }: { value: Operator; onChange: (op: O
   );
 }
 
+function KebabIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <circle cx="12" cy="5" r="1.7" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.7" fill="currentColor" />
+      <circle cx="12" cy="19" r="1.7" fill="currentColor" />
+    </svg>
+  );
+}
+
+// Enable/disable shortcut: an open eye when the rule is active, a slashed eye
+// when it's disabled (dropped from the run but kept).
+function EyeIcon({ on }: { on: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="2.6" />
+      {!on && <path d="M4 20 L20 4" strokeLinecap="round" />}
+    </svg>
+  );
+}
+
+// Per-row actions collapsed into one ⋮ menu (the inline icons were too small to
+// notice). Portaled like the operator dropdown so the panel's overflow can't
+// clip it. Includes a Disable/Enable toggle — a disabled rule is kept but
+// dropped from the run (activeGroup filters it).
+const RULE_MENU_WIDTH = 168;
+function RuleMenu({
+  enabled,
+  onDuplicate,
+  onCopy,
+  onToggleEnabled,
+  onRemove,
+}: {
+  enabled: boolean;
+  onDuplicate: () => void;
+  onCopy: () => void;
+  onToggleEnabled: () => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const close = () => setOpen(false);
+    document.addEventListener("mousedown", onDown, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [open]);
+
+  function toggle() {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const left = Math.max(8, Math.min(r.right - RULE_MENU_WIDTH, window.innerWidth - RULE_MENU_WIDTH - 8));
+      setPos({ top: r.bottom + 4, left });
+    }
+    setOpen((v) => !v);
+  }
+
+  function run(fn: () => void) {
+    fn();
+    setOpen(false);
+  }
+
+  return (
+    <div className="bt-rule-menu">
+      <button
+        ref={btnRef}
+        type="button"
+        className={`bt-rule-menu-btn${open ? " open" : ""}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Rule actions"
+        title="Rule actions"
+        onClick={toggle}
+      >
+        <KebabIcon />
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <ul
+            ref={popRef}
+            className="dropdown bt-rule-menu-list"
+            role="menu"
+            style={{ position: "fixed", top: pos.top, left: pos.left }}
+          >
+            <li role="menuitem" onClick={() => run(onDuplicate)}>Duplicate</li>
+            <li role="menuitem" onClick={() => run(onCopy)}>Copy</li>
+            <li role="menuitem" onClick={() => run(onToggleEnabled)}>{enabled ? "Disable" : "Enable"}</li>
+            <li role="menuitem" className="bt-rule-menu-danger" onClick={() => run(onRemove)}>Remove</li>
+          </ul>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
 function RuleGroupSection({
   title,
+  info,
   group,
   onChange,
   emptyHint,
@@ -763,6 +1197,7 @@ function RuleGroupSection({
   onCopy,
 }: {
   title: string;
+  info?: string;
   group: RuleGroup;
   onChange: (g: RuleGroup) => void;
   emptyHint: string;
@@ -798,7 +1233,7 @@ function RuleGroupSection({
   }
 
   return (
-    <Section title={title}>
+    <Section title={title} info={info}>
       {group.rules.length === 0 && <div className="al-note bt-empty-rules">{emptyHint}</div>}
       {group.rules.length > 1 && (
         <div className="seg">
@@ -811,35 +1246,27 @@ function RuleGroupSection({
         </div>
       )}
       {group.rules.map((rule, i) => (
-        <div className="bt-rule-row" key={i}>
+        <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`} key={i}>
           <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} />
           <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
           <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} />
           <div className="bt-rule-actions">
             <button
-              className="bt-rule-btn"
-              onClick={() => duplicateRule(i)}
-              title="Duplicate rule"
-              aria-label="Duplicate rule"
+              className="bt-rule-toggle"
+              onClick={() => setRule(i, { ...rule, enabled: rule.enabled === false })}
+              title={rule.enabled === false ? "Enable rule" : "Disable rule"}
+              aria-label={rule.enabled === false ? "Enable rule" : "Disable rule"}
+              aria-pressed={rule.enabled !== false}
             >
-              ⧉
+              <EyeIcon on={rule.enabled !== false} />
             </button>
-            <button
-              className="bt-rule-btn"
-              onClick={() => onCopy(rule)}
-              title="Copy rule (paste into any side)"
-              aria-label="Copy rule"
-            >
-              ⎘
-            </button>
-            <button
-              className="bt-rule-remove"
-              onClick={() => removeRule(i)}
-              title="Remove rule"
-              aria-label="Remove rule"
-            >
-              ✕
-            </button>
+            <RuleMenu
+              enabled={rule.enabled !== false}
+              onDuplicate={() => duplicateRule(i)}
+              onCopy={() => onCopy(rule)}
+              onToggleEnabled={() => setRule(i, { ...rule, enabled: rule.enabled === false })}
+              onRemove={() => removeRule(i)}
+            />
           </div>
         </div>
       ))}
@@ -866,40 +1293,35 @@ function OperandPicker({
   onChange: (op: Operand) => void;
   defaultAvwapAnchor: number;
 }) {
-  function setKind(kind: Operand["kind"]) {
-    if (kind === "indicator") onChange(defaultOperand());
-    else if (kind === "price") onChange({ kind: "price", field: "close" });
-    else onChange({ kind: "const", value: 0 });
+  // One select drives the operand type: pick an indicator directly (EMA, SMA…),
+  // or Price, or Number — no separate "kind then indicator" step. The token is
+  // the indicator name for indicators, else the kind.
+  const typeToken = value.kind === "indicator" ? value.indicator : value.kind;
+  const prevLength = value.kind === "indicator" ? value.length : undefined;
+  function setType(token: string) {
+    if (token === "price") return onChange({ kind: "price", field: "close" });
+    if (token === "const") return onChange({ kind: "const", value: 0 });
+    const indicator = token as IndicatorKind;
+    if (indicator === "AVWAP") onChange({ kind: "indicator", indicator, anchor: defaultAvwapAnchor });
+    else if (NO_LENGTH.includes(indicator)) onChange({ kind: "indicator", indicator });
+    else onChange({ kind: "indicator", indicator, length: prevLength ?? 9 });
   }
 
   return (
     <div className="bt-operand">
-      <select value={value.kind} onChange={(e) => setKind(e.target.value as Operand["kind"])}>
-        <option value="indicator">Indicator</option>
+      <select value={typeToken} onChange={(e) => setType(e.target.value)}>
+        <optgroup label="Indicator">
+          {INDICATORS.map((ind) => (
+            <option key={ind} value={ind}>
+              {ind}
+            </option>
+          ))}
+        </optgroup>
         <option value="price">Price</option>
         <option value="const">Number</option>
       </select>
       {value.kind === "indicator" && (
         <>
-          <select
-            value={value.indicator}
-            onChange={(e) => {
-              const indicator = e.target.value as IndicatorKind;
-              if (indicator === "AVWAP") {
-                onChange({ kind: "indicator", indicator, anchor: defaultAvwapAnchor });
-              } else if (NO_LENGTH.includes(indicator)) {
-                onChange({ kind: "indicator", indicator });
-              } else {
-                onChange({ kind: "indicator", indicator, length: value.length ?? 9 });
-              }
-            }}
-          >
-            {INDICATORS.map((ind) => (
-              <option key={ind} value={ind}>
-                {ind}
-              </option>
-            ))}
-          </select>
           {value.indicator === "AVWAP" && (
             <input
               type="datetime-local"

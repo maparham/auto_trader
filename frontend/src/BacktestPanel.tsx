@@ -1,6 +1,6 @@
-// Backtest results panel — TradingView-style bottom panel that appears once a
-// backtest finishes (BacktestButton publishes the result onto
-// backtestResultSignal). Self-hiding: renders null while the signal is null.
+// Backtest results — embedded in the config side panel's "Results" tab
+// (BacktestButton publishes the result onto backtestResultSignal). Shows an
+// empty-state prompt until the first run completes.
 //
 // Overview tab: metricRows() as a wrapped grid of label/value cards (tone
 // coloured pos/neg). Trades tab: a sortable table of every trade
@@ -37,7 +37,6 @@ export default function BacktestPanel() {
   const highlighted = useSyncExternalStore(subscribeHighlight, () => highlightTradeSignal.value);
   const selected = useSyncExternalStore(subscribeSelected, () => selectedTradeSignal.value);
   const [tab, setTab] = useState<Tab>("overview");
-  const [collapsed, setCollapsed] = useState(false);
   const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
 
   // Keep the highlighted row in view whether the highlight originated here (a
@@ -48,7 +47,13 @@ export default function BacktestPanel() {
     highlightedRowRef.current?.scrollIntoView({ block: "nearest" });
   }, [highlighted]);
 
-  if (result == null) return null;
+  if (result == null) {
+    return (
+      <div className="bt-results bt-results-empty">
+        Run a backtest to see results here.
+      </div>
+    );
+  }
 
   const toggleSort = (key: keyof TradeRow) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: defaultDir(key) }));
@@ -58,8 +63,8 @@ export default function BacktestPanel() {
   const nTrades = result.trades.length;
 
   return (
-    <section className={`bt-panel${collapsed ? " bt-panel-collapsed" : ""}`}>
-      <div className="bt-panel-head">
+    <div className="bt-results">
+      <div className="bt-results-head">
         <div className="seg" role="tablist" aria-label="Backtest results view">
           <button
             className={tab === "overview" ? "seg-on" : ""}
@@ -81,26 +86,9 @@ export default function BacktestPanel() {
         <span className="bt-panel-count">
           {nTrades} {nTrades === 1 ? "trade" : "trades"}
         </span>
-        <div className="bt-panel-winctl">
-          <button
-            className="bt-panel-iconbtn"
-            onClick={() => setCollapsed((c) => !c)}
-            aria-pressed={collapsed}
-            title={collapsed ? "Expand" : "Collapse"}
-          >
-            <ChevronIcon open={collapsed} />
-          </button>
-          <button
-            className="bt-panel-iconbtn"
-            onClick={() => backtestResultSignal.set(null)}
-            title="Close backtest results"
-          >
-            <CloseIcon />
-          </button>
-        </div>
       </div>
 
-      {!collapsed && (
+      {(
         tab === "overview" ? (
           <div className="bt-panel-overview">
             {metricRows(result).map((m) => (
@@ -157,7 +145,7 @@ export default function BacktestPanel() {
           </div>
         )
       )}
-    </section>
+    </div>
   );
 }
 
@@ -186,29 +174,5 @@ function SortHeader({
         {active ? (sort.dir === "asc" ? "▲" : "▼") : ""}
       </span>
     </button>
-  );
-}
-
-// Chevron: down when expanded (click collapses), rotated to point up when
-// collapsed (click expands) — same affordance as PositionsPanel's dock chevron.
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="13"
-      height="13"
-      aria-hidden="true"
-      style={{ transform: open ? "rotate(180deg)" : undefined }}
-    >
-      <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
   );
 }

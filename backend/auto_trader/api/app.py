@@ -13,6 +13,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
 from typing import Any, Literal, TypeVar
 
@@ -62,6 +63,7 @@ from auto_trader.core.candle_aggregate import (
 )
 from auto_trader.core.synthetic import SyntheticError, combine, legs, parse
 from auto_trader.engine.backtest import BacktestEngine
+from auto_trader.engine.schedule import RecurrenceMask
 from auto_trader.engine.metrics import compute_metrics
 from auto_trader.engine.risk import RiskConfig, StopSpec, TargetSpec
 from auto_trader.engine.scaling import ScalingConfig, SpacingSpec
@@ -414,6 +416,43 @@ class ScalingConfigDTO(BaseModel):
         return []
 
 
+class DayTimeWindowDTO(BaseModel):
+    # Minutes from midnight in the mask's tz; matches the frontend's nested
+    # `timeOfDay: { startMin, endMin }` shape exactly (do not flatten — the
+    # frontend never sends flat time*Min fields, so a mismatch silently drops
+    # the clock filter).
+    startMin: int
+    endMin: int
+
+
+class RecurrenceMaskDTO(BaseModel):
+    enabled: bool = False
+    daysOfWeek: list[int] = []       # JS getDay 0=Sun..6=Sat
+    monthsOfYear: list[int] = []     # 1=Jan..12=Dec
+    daysOfMonth: list[int] = []      # 1..31
+    timeOfDay: DayTimeWindowDTO | None = None
+    tz: str = "UTC"
+
+    @model_validator(mode="after")
+    def _valid_tz(self) -> "RecurrenceMaskDTO":
+        try:
+            ZoneInfo(self.tz)
+        except Exception as e:
+            raise ValueError(f"unknown timezone '{self.tz}'") from e
+        return self
+
+    def to_mask(self) -> RecurrenceMask:
+        return RecurrenceMask(
+            enabled=self.enabled,
+            days_of_week=tuple(self.daysOfWeek),
+            months_of_year=tuple(self.monthsOfYear),
+            days_of_month=tuple(self.daysOfMonth),
+            time_start_min=self.timeOfDay.startMin if self.timeOfDay else None,
+            time_end_min=self.timeOfDay.endMin if self.timeOfDay else None,
+            tz=self.tz,
+        )
+
+
 class BacktestRequest(BaseModel):
     epic: str
     resolution: str
@@ -434,6 +473,7 @@ class BacktestRequest(BaseModel):
     shortScaling: ScalingConfigDTO | None = None
     costs: CostsDTO
     tradeFromTime: int
+    mask: RecurrenceMaskDTO | None = None
 
 
 def _ts(dt: datetime) -> int:
@@ -1236,6 +1276,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
         short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
         series=req.series,
+        mask=req.mask.to_mask() if req.mask else None,
     ).run(candles)
 
     # Fills/trades need no >= tradeFromTime filter here: RuleStrategy gates every

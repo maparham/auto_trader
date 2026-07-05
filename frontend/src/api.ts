@@ -1,6 +1,6 @@
 // Typed client for the Auto Trader backend.
 
-import type { RuleGroup, Costs, RiskConfig, ScalingConfig } from "./lib/backtestConfig";
+import type { RuleGroup, Costs, RiskConfig, ScalingConfig, RecurrenceMask } from "./lib/backtestConfig";
 import { API_BASE as BASE, errorDetail } from "./lib/http";
 
 interface Candle {
@@ -86,6 +86,7 @@ export interface BacktestRequest {
   shortScaling?: ScalingConfig;
   costs: Costs;
   tradeFromTime: number; // unix seconds — the window's start (D6)
+  mask?: RecurrenceMask; // recurrence/activity mask (resolved: no `session` field)
 }
 
 export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {

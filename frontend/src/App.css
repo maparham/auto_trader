@@ -828,6 +828,24 @@
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-faint); margin-bottom: 6px;
 }
+/* Section heading with a trailing ⓘ: keep the icon on the title's baseline row. */
+.bt-section-title { display: flex; align-items: center; gap: 5px; margin-bottom: 0; }
+/* Info ⓘ triggers in the backtest panel: a bare icon button (no button chrome),
+   drawn as an outlined glyph (fill:none) rather than a solid dot. */
+.bt-section-title .ind-info,
+.bt-field-label .ind-info,
+.bt-mask-toggle .ind-info {
+  display: inline-flex; align-items: center; padding: 0; border: none;
+  background: none; cursor: help; color: var(--text-faint);
+}
+.bt-section-title .ind-info:hover,
+.bt-field-label .ind-info:hover,
+.bt-mask-toggle .ind-info:hover { color: var(--text-dim); }
+.bt-section-title .ind-info svg,
+.bt-field-label .ind-info svg,
+.bt-mask-toggle .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+/* Field labels that carry a trailing ⓘ (costs, session, timezone). */
+.bt-field-label { display: inline-flex; align-items: center; gap: 4px; }
 .instrument-grid { margin: 0; }
 .instrument-row {
   display: flex; justify-content: space-between; gap: 16px;
@@ -844,8 +862,55 @@
 /* Backtest settings: wider than the other form modals — a rule row packs two
    3-control operand pills, an operator, and a remove button, which needs real
    room or it overflows the modal edge. */
-.bt-modal { width: 720px; }
-.bt-body { padding: 4px 16px 16px; max-height: 76vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+/* Docked right-side panel (like the alerts sidebar): sibling of .chart in
+   .workspace, so the chart shrinks beside it and stays interactive. Non-modal,
+   no backdrop. */
+.bt-cfg-panel {
+  width: 720px;
+  flex-shrink: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+.bt-cfg-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.bt-cfg-title { font-size: 13px; }
+.bt-cfg-res { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+/* Vertical tab rail + scrolling content pane. The rail stretches to the pane's
+   height so its right divider runs full-height; only the pane scrolls. The wrap
+   grows to fill the panel between head and footer. */
+.bt-body-wrap { display: flex; align-items: stretch; flex: 1; min-height: 0; }
+.bt-vtabs {
+  flex: 0 0 136px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+}
+.bt-vtabs button {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.bt-vtabs button:hover { background: var(--hover); color: var(--text); }
+.bt-vtabs button.on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.bt-body { flex: 1; min-width: 0; min-height: 0; padding: 4px 16px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 /* This flex column scrolls when its content exceeds max-height — it must NOT
    shrink its children to fit. Without this, an overflowing modal collapses any
    child that can shrink to nothing (e.g. the .seg Long/Short tab bar, whose
@@ -857,25 +922,35 @@
    (price/qty columns) rather than plain form fields. */
 .bt-body input[type="number"] { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
-/* A rule row reads as one sentence: [operand] [operator] [operand] [remove].
-   Grid (not flex) so the two operand columns share space via minmax(0, 1fr) —
-   they shrink together instead of one overflowing the modal's right edge. */
+/* A rule reads top-to-bottom as one sentence — [left operand] / [operator] /
+   [right operand] — inside its own card. Stacking (rather than one tight line)
+   gives each operand the full column width, so the selects breathe instead of
+   truncating ("Indicat…") in the docked panel. Actions tuck onto the operator
+   line, right-aligned. */
+/* One line: [left operand] [op glyph] [right operand] … [actions]. Each control
+   sizes to its content (short values like "EMA" don't stretch); the row's spare
+   width goes between the right operand and the actions, which sit at the end. */
 .bt-rule-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-}
-.bt-rule-row > select { flex: 0 0 auto; min-width: 0; }
-/* The operand pills get a subtle border so the row visually chunks into its
-   three parts instead of reading as a wall of adjacent selects. */
-.bt-operand {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0;
-  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   background: var(--surface-2);
 }
-.bt-operand select { flex: 1 1 0; min-width: 0; }
-.bt-operand-length { width: 52px; flex: 0 0 auto; min-width: 0; }
+/* Consistent control chrome for every select/number inside a rule card. */
+.bt-rule-row select,
+.bt-rule-row input {
+  background: var(--input-bg); color: var(--text); font: inherit;
+  border: 1px solid var(--border); border-radius: 5px; padding: 4px 5px; min-width: 0;
+}
+/* An operand's controls size to content and can shrink; the wide AVWAP anchor
+   still drops to its own line via its flex-basis:100%. */
+.bt-operand { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.bt-operand select { flex: 0 1 auto; width: auto; min-width: 0; }
+.bt-operand-length { flex: 0 0 46px; min-width: 0; text-align: right; }
 /* The AVWAP anchor's datetime-local input is intrinsically wide (~160px) — too
    wide to sit beside the indicator select in a narrow rule column without
    crushing it. Give it its own full-width line below the select instead. */
@@ -891,14 +966,18 @@
    app's .dropdown but is portaled to <body>, so it needs a z-index above the
    modal (.modal-backdrop is 2000) and is positioned by inline style. */
 .bt-op-menu { position: relative; flex: 0 0 auto; min-width: 0; }
+/* Compact glyph button — sized to one icon so the whole rule fits on a line. */
 .bt-op-btn {
-  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font: inherit;
-  background: var(--surface-2); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; font: inherit;
+  width: 30px; height: 28px; padding: 0;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
 }
 .bt-op-btn.open { border-color: var(--accent); }
+.bt-op-btn.bt-op-cross { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .bt-op-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.bt-op-caret { color: var(--text-dim); font-size: 10px; }
+.bt-op-glyph { font-size: 15px; font-weight: 600; line-height: 1; }
+.bt-op-crossicon { display: block; }
 /* Compound selector so this beats the later, equal-specificity .dropdown rule
    (z-index: 100) that made the menu render invisibly BEHIND the modal. Also
    overrides that rule's min-width: 220px — this menu's rows are short, so it
@@ -908,21 +987,40 @@
    right (hover the icon for that operator's meaning). */
 .bt-op-dropdown li { justify-content: space-between; gap: 10px; }
 .bt-op-dropdown li.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.bt-op-item-label { font-weight: 500; }
+.bt-op-item-label { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
 .bt-op-item-label.bt-op-cross { color: var(--accent); font-weight: 600; }
+.bt-op-item-glyph { display: inline-flex; align-items: center; justify-content: center; width: 18px; color: var(--text-dim); }
+.bt-op-item-label.bt-op-cross .bt-op-item-glyph { color: var(--accent); }
 /* Per-row actions sit in the row's last (auto) grid column as one cluster:
    duplicate, copy, remove. Icon-only buttons — each carries a title/aria-label. */
-.bt-rule-actions { display: inline-flex; align-items: center; gap: 2px; }
-.bt-rule-btn {
-  flex: 0 0 auto; background: transparent; border: none; color: var(--text-dim);
-  cursor: pointer; padding: 4px; font-size: 14px; line-height: 1;
+/* Per-row actions at the row's right edge: an enable/disable eye shortcut plus
+   the ⋮ menu (which repeats the toggle alongside duplicate/copy/remove). */
+.bt-rule-actions { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+.bt-rule-menu { flex: 0 0 auto; }
+.bt-rule-toggle,
+.bt-rule-menu-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border-radius: 6px;
+  background: transparent; border: 1px solid transparent; color: var(--text-dim);
+  cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.bt-rule-btn:hover { color: var(--accent); }
-.bt-rule-remove {
-  flex: 0 0 auto; background: transparent; border: none; color: var(--text-dim);
-  cursor: pointer; padding: 4px;
+.bt-rule-toggle:hover,
+.bt-rule-menu-btn:hover { background: var(--hover); color: var(--text); }
+/* On a disabled row the eye is the way back on — keep it legible, not dimmed. */
+.bt-rule-disabled .bt-rule-toggle { color: var(--neg); opacity: 1; }
+.bt-rule-menu-btn.open { background: var(--hover); color: var(--text); border-color: var(--border); }
+.bt-rule-menu-list { z-index: 2100; min-width: 168px; padding: 4px; }
+.bt-rule-menu-list li {
+  display: flex; align-items: center; padding: 6px 10px; border-radius: 5px;
+  cursor: pointer; color: var(--text); font-size: 13px;
 }
-.bt-rule-remove:hover { color: var(--danger, #e5534b); }
+.bt-rule-menu-list li:hover { background: var(--hover); }
+.bt-rule-menu-danger { color: var(--neg); }
+.bt-rule-menu-danger:hover { background: color-mix(in srgb, var(--neg) 14%, transparent); }
+/* A disabled rule stays visible but reads as inactive; its menu stays usable. */
+.bt-rule-disabled > .bt-operand,
+.bt-rule-disabled > .bt-op-menu { opacity: 0.42; }
+.bt-rule-disabled { background: var(--surface); }
 /* Add / Paste live on one row; Paste only appears while a rule is on the
    clipboard, so the group can gain a rule copied from the other side. */
 .bt-rule-foot { display: flex; gap: 8px; }
@@ -944,6 +1042,13 @@
    white so it reads against the blue. */
 .bt-side-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
 .bt-side-dot.off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+/* Directional identity: long = the chart's up/green, short = its down/red. Each
+   tab carries its side's colour, and the active tab fills with it (dot flips to
+   white to read against the fill). This is the one bold move in the view. */
+.bt-side-long .bt-side-dot { background: var(--pos); }
+.bt-side-short .bt-side-dot { background: var(--neg); }
+.bt-side-tabs .bt-side-long.seg-on { background: var(--pos); }
+.bt-side-tabs .bt-side-short.seg-on { background: var(--neg); }
 .bt-side-tabs .seg-on .bt-side-dot { background: var(--accent-text); }
 .bt-side-tabs .seg-on .bt-side-dot.off {
   background: transparent;
@@ -960,6 +1065,7 @@
   transition: background 0.15s;
 }
 .bt-switch.on { background: var(--accent); }
+.bt-strategy .bt-switch.on { background: var(--side); }
 .bt-switch-knob {
   position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
   /* Border defines the white knob against the pale off-track in light theme,
@@ -973,16 +1079,26 @@
 .bt-arm-state {
   margin-left: auto; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-faint);
+  padding: 2px 8px; border-radius: 999px;
 }
 .bt-arm-state.on { color: var(--accent); }
+.bt-strategy .bt-arm-state.on {
+  color: var(--side); background: color-mix(in srgb, var(--side) 14%, transparent);
+}
 .bt-parked-note { margin-top: -2px; }
 /* The rule groups sit in a wrapper so a parked side can dim them as a unit. When
    armed the wrapper is display:contents — transparent to layout, so the entry/exit
    .bt-section children keep the .bt-body gap and dividers exactly as if unwrapped.
    Parked needs a real box to carry opacity, so it becomes a block (dimmed but still
    editable — prep a side before arming). */
-.bt-side-rules { display: contents; }
-.bt-side-rules.bt-parked { display: block; opacity: 0.5; }
+/* All of a side's entry/exit/risk/scaling sit behind one left rail in the side's
+   identity colour — the visual anchor that says "this is the long/short side".
+   Parking greys the rail and dims the block (still editable — prep before arming). */
+.bt-side-rules {
+  display: flex; flex-direction: column; gap: 4px;
+  border-left: 2px solid var(--side); padding-left: 12px; margin-top: 4px;
+}
+.bt-side-rules.bt-parked { opacity: 0.55; border-left-color: var(--border); }
 
 /* Stop & target — price-level exits for one side, below its rule groups. Reads
    as one more section within the side; a top border divides it from the exit
@@ -1059,7 +1175,50 @@
   border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
 }
 .al-note { color: var(--text-faint); font-size: 12px; }
-.bt-range-subtitle { margin-top: 6px; }
+/* The resolved period ("1 May – 1 Jun 2026") — the headline result of the range
+   picker, so full-strength text, not the faint note colour it inherits. */
+.bt-range-subtitle { margin-top: 8px; color: var(--text); font-size: 13px; font-weight: 600; }
+/* Mask enable toggle: a plain checkbox + label, not the value-input row layout
+   (which stretches the checkbox via flex:1 and clamps the label to 90px). */
+.bt-mask-toggle { justify-content: flex-start; gap: 8px; }
+.bt-mask-toggle > input { flex: 0 0 auto; width: auto; }
+.bt-mask-toggle > span { width: auto; }
+/* Suggestion chips (calendar anchors) + recurrence-mask toggle chips. */
+.bt-chip-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.bt-chip {
+  padding: 3px 9px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.bt-chip:hover {
+  background: var(--hover);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.bt-chip:active { background: var(--hover-strong); }
+.bt-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.bt-chip.seg-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.bt-chip.seg-on:hover {
+  background: color-mix(in srgb, var(--accent) 88%, black);
+  border-color: color-mix(in srgb, var(--accent) 88%, black);
+}
+/* Coverage heat-strip: active vs idle slices across the range. */
+.bt-heatstrip { display: flex; height: 10px; margin-top: 6px; border-radius: 3px; overflow: hidden; }
+.bt-heatstrip > span { flex: 1 1 0; min-width: 0; }
+.bt-heatstrip > span.on { background: var(--accent, #2b7); }
+.bt-heatstrip > span.off { background: var(--muted-bg, #e5e7eb); }
 /* Custom backtest range: From/To side by side on one line instead of stacked. */
 .bt-range-field { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .bt-range-field > span { color: var(--text-dim); flex-shrink: 0; }
@@ -1128,6 +1287,7 @@
   padding: 12px 16px; border-top: 1px solid var(--border);
 }
 .modal-foot .ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+.bt-cfg-foot { flex-shrink: 0; }
 /* Confirmation dialog (deletes etc.): narrower than the form modals, not draggable,
    with a destructive primary button. */
 .confirm-modal { width: 360px; }
@@ -2331,7 +2491,6 @@
   border-radius: 6px; padding: 2px 6px; cursor: pointer; font-size: 11px; transition: background 0.12s;
 }
 .bt-clear:hover { background: var(--hover); color: var(--text); }
-.bt-gear { padding: 4px 8px; font-size: 14px; }
 .bt-error { color: var(--neg); font-size: 12px; }
 .bt-warning { color: var(--text-dim); font-size: 12px; cursor: help; }
 
@@ -3003,33 +3162,23 @@
    owns the flex-scroll discipline (flex:1 + overflow-y:auto + min-height:0, and
    every ancestor down to it gets min-height:0) so a long trade list scrolls
    internally instead of squashing the chart above it. */
-.bt-panel {
-  display: flex; flex-direction: column; min-height: 0;
-  height: 220px; max-height: 40vh;
-  background: var(--surface); border-top: 1px solid var(--border);
-}
-.bt-panel-collapsed { height: auto; max-height: none; }
-
-.bt-panel-head {
+/* Backtest results, embedded in the config side panel's Results tab. Fills the
+   tab and scrolls internally. */
+.bt-results { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.bt-results-empty { padding: 16px 4px; color: var(--text-faint); font-size: 12px; }
+.bt-results-head {
   display: flex; align-items: center; gap: 12px; flex-shrink: 0;
-  padding: 6px 10px; border-bottom: 1px solid var(--border);
+  padding: 6px 0 10px; border-bottom: 1px solid var(--border); margin-bottom: 8px;
 }
-.bt-panel-collapsed .bt-panel-head { border-bottom-color: transparent; }
 .bt-panel-count {
   font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums;
+  margin-left: auto;
 }
-.bt-panel-winctl { display: flex; align-items: center; gap: 4px; margin-left: auto; }
-.bt-panel-iconbtn {
-  display: inline-flex; align-items: center; justify-content: center;
-  background: none; border: none; border-radius: 6px; padding: 5px;
-  color: var(--text-dim); cursor: pointer; transition: background 0.12s, color 0.12s;
-}
-.bt-panel-iconbtn:hover { background: var(--hover); color: var(--text); }
 
 /* Overview: wrapped grid of small label/value cards. */
 .bt-panel-overview {
   display: flex; flex-wrap: wrap; gap: 8px; min-height: 0;
-  padding: 10px; overflow-y: auto;
+  padding: 2px 0; overflow-y: auto;
 }
 .bt-panel-card {
   display: flex; flex-direction: column; gap: 3px;
@@ -3046,7 +3195,7 @@
 .bt-panel-card-value.neg { color: var(--neg); }
 
 /* Trades: the scrollable table wrapper — this is the flex-scroll boundary. */
-.bt-panel-trades-wrap { flex: 1; overflow-y: auto; min-height: 0; }
+.bt-panel-trades-wrap { flex: 1; overflow: auto; min-height: 0; }
 .bt-panel-table {
   width: 100%; min-width: 760px; border-collapse: collapse; font-size: 12px;
   font-variant-numeric: tabular-nums;

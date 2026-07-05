@@ -10,7 +10,8 @@ import type { ChartController } from "./lib/chartController";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
 import { buildSeries } from "./lib/backtestSeries";
-import { defaultBacktestConfig } from "./lib/backtestConfig";
+import { defaultBacktestConfig, activeGroup } from "./lib/backtestConfig";
+import { resolveMask } from "./lib/backtestSchedule";
 import {
   resolveWindow,
   resolveHistoryStart,
@@ -64,9 +65,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     setWarning(null);
   }
 
-  // The settings modal's "Run backtest" saves the config as last-used then bumps
-  // this signal, re-triggering the same ▶ Backtest action (run() always reads
-  // the latest last-used config, so no config needs to be threaded through here).
+  // The panel's "Run backtest" saves the config as last-used then bumps this
+  // signal, which runs the backtest here (run() always reads the latest
+  // last-used config, so no config needs to be threaded through). The toolbar
+  // button only opens the panel — running lives with the config.
   useEffect(() => backtestRunRequest.subscribe(() => void run()));
 
   async function run() {
@@ -129,10 +131,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           resolution: period.resolution,
           candles,
           series,
-          longEntry: cfg.longEntry,
-          longExit: cfg.longExit,
-          shortEntry: cfg.shortEntry,
-          shortExit: cfg.shortExit,
+          // Disabled rules are kept in the config but dropped from the run.
+          longEntry: activeGroup(cfg.longEntry),
+          longExit: activeGroup(cfg.longExit),
+          shortEntry: activeGroup(cfg.shortEntry),
+          shortExit: activeGroup(cfg.shortExit),
           // `!== false` so a preset predating these flags (undefined) still trades.
           longEnabled: cfg.longEnabled !== false,
           shortEnabled: cfg.shortEnabled !== false,
@@ -142,6 +145,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           shortScaling: cfg.shortScaling,
           costs: cfg.costs,
           tradeFromTime,
+          mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
         },
         controller!.scope,
       );
@@ -169,19 +173,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     <div className="backtest">
       <button
         className="tabbar-action"
-        onClick={run}
-        disabled={running || !chart || !!period?.liveOnly}
-        title={period?.liveOnly ? "Backtest needs history (not available sub-minute)" : "Run the backtest"}
-      >
-        {running ? "Running…" : "▶ Backtest"}
-      </button>
-      <button
-        className="tabbar-action bt-gear"
         onClick={openBacktestSettings}
-        title="Backtest settings"
-        aria-label="Backtest settings"
+        title="Open the backtest panel"
       >
-        ⚙
+        {running ? "Running…" : "Backtest"}
       </button>
       {summary && (
         <span className="bt-summary">

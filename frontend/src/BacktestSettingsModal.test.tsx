@@ -21,58 +21,90 @@ function ruleRows(section: HTMLElement): HTMLElement[] {
   return [...section.querySelectorAll(".bt-rule-row")] as HTMLElement[];
 }
 
+function renderModal() {
+  return render(
+    <BacktestSettingsModal
+      initial={defaultBacktestConfig()}
+      epic="TEST"
+      resolution="MINUTE"
+      onRun={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+}
+
+describe("BacktestSettingsModal period scheduling", () => {
+  it("shows month suggestion chips when the Month tab is active", () => {
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    // getByRole throws if absent, so reaching the assertion is the check.
+    expect(screen.getByRole("button", { name: "This month" })).toBeTruthy();
+  });
+
+  it("reveals mask controls and a coverage readout when enabled", () => {
+    renderModal();
+    fireEvent.click(screen.getByLabelText(/only trade during selected windows/i));
+    expect(screen.getByRole("button", { name: "Mon" })).toBeTruthy();
+    expect(screen.getByText("Session")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Mon" }));
+    expect(screen.getByText(/Active on \d+ of \d+ sampled slots/)).toBeTruthy();
+  });
+});
+
+// The rule builder now lives under the "Strategy" vertical tab, so tests must
+// open it before the Long/Short groups exist in the DOM.
+function openStrategy() {
+  fireEvent.click(screen.getByRole("button", { name: "Strategy" }));
+}
+
+// Row actions now live behind a ⋮ menu. Open the first row's menu in `section`,
+// then click the named menuitem (the menu is portaled to <body>).
+function ruleAction(section: HTMLElement, name: RegExp | string) {
+  fireEvent.click(within(section).getAllByLabelText("Rule actions")[0]);
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+}
+
 describe("BacktestSettingsModal rule duplicate/copy/paste", () => {
   it("duplicating a rule inserts an independent copy right after it", () => {
-    render(
-      <BacktestSettingsModal
-        initial={defaultBacktestConfig()}
-        epic="TEST"
-        resolution="MINUTE"
-        onRun={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
-    // Long side is shown first; its "Buy to open (long)" group has one rule.
-    const entry = groupSection("Buy to open (long)");
+    renderModal();
+    openStrategy();
+    // Long side is shown first; its "Buy to open" group has one rule.
+    const entry = groupSection("Buy to open");
     expect(ruleRows(entry)).toHaveLength(1);
-    fireEvent.click(within(entry).getByLabelText("Duplicate rule"));
+    ruleAction(entry, "Duplicate");
     expect(ruleRows(entry)).toHaveLength(2);
   });
 
   it("copy then paste appends the rule to a group on the other side", () => {
-    render(
-      <BacktestSettingsModal
-        initial={defaultBacktestConfig()}
-        epic="TEST"
-        resolution="MINUTE"
-        onRun={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
-    // Copy the long-entry rule.
-    const longEntry = groupSection("Buy to open (long)");
-    fireEvent.click(within(longEntry).getByLabelText("Copy rule"));
+    renderModal();
+    openStrategy();
+    // Copy the long-entry rule via its row menu.
+    ruleAction(groupSection("Buy to open"), "Copy");
 
     // Switch to the short side and paste into its entry group.
     fireEvent.click(screen.getByRole("button", { name: /Short/ }));
-    const shortEntry = groupSection("Sell to open (short)");
+    const shortEntry = groupSection("Sell to open");
     expect(ruleRows(shortEntry)).toHaveLength(1);
     fireEvent.click(within(shortEntry).getByRole("button", { name: "Paste rule" }));
     expect(ruleRows(shortEntry)).toHaveLength(2);
   });
 
   it("hides Paste until a rule has been copied", () => {
-    render(
-      <BacktestSettingsModal
-        initial={defaultBacktestConfig()}
-        epic="TEST"
-        resolution="MINUTE"
-        onRun={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
+    renderModal();
+    openStrategy();
     expect(screen.queryByRole("button", { name: "Paste rule" })).toBeNull();
-    fireEvent.click(within(groupSection("Buy to open (long)")).getAllByLabelText("Copy rule")[0]);
+    ruleAction(groupSection("Buy to open"), "Copy");
     expect(screen.getAllByRole("button", { name: "Paste rule" }).length).toBeGreaterThan(0);
+  });
+
+  it("disabling a rule keeps it but marks the row disabled", () => {
+    renderModal();
+    openStrategy();
+    const entry = groupSection("Buy to open");
+    expect(ruleRows(entry)).toHaveLength(1);
+    ruleAction(entry, "Disable");
+    // Still present (not removed), now flagged disabled.
+    expect(ruleRows(entry)).toHaveLength(1);
+    expect(entry.querySelector(".bt-rule-disabled")).not.toBeNull();
   });
 });
