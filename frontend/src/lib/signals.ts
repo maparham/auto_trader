@@ -102,6 +102,16 @@ export const highlightTradeSignal = new Signal<number | null>(null);
 // risk/reward zone overlay on the chart. Reset to null on a new run / clearBacktest.
 export const selectedTradeSignal = new Signal<number | null>(null);
 
+// The aggregate-marker popover on a higher timeframe: the trades bucketed into
+// one bar (a pill the cursor is over) plus the cursor's page position. Set by an
+// aggregate pill's onMouseEnter (backtest.ts), cleared on leave / teardown; App
+// renders one popover for it. Global + one-at-a-time (only one pill is hovered
+// app-wide at a time), matching the modal-request idiom above — no per-cell
+// gating needed. Carries the stored trade shape (plain data, no candles).
+export const backtestClusterHoverSignal = new Signal<
+  { trades: StoredBacktestResult["trades"]; x: number; y: number } | null
+>(null);
+
 // A one-shot "scroll the chart to this trade" request (row.i, or null = no-op),
 // set by the trades panel row's onClick. The chart (backtest.ts runAndRender)
 // subscribes and pans/zooms to the trade's entry↔exit span — a second signal

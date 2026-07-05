@@ -94,30 +94,39 @@ x-position always lands centered on the correct bar. Bucket the `Marker`s (entry
 and exit fills are separate markers) into these bars; entry and exit of one trade
 may land in the same bar.
 
-### 3. The aggregate glyph
+### 3. The aggregate pill (DOM, not a klinecharts overlay)
 
-- New overlay type `backtestAggregateMarker`, anchored at the bar timestamp and
-  the bar's **high** (sits as a badge above the candle).
-- Renders **fill count + net P&L** for the bar, colored by net result:
-  green net-win / red net-loss / neutral for mixed-or-zero.
-- **Single-fill bars keep the existing clean arrow** — the aggregate pill is used
-  only when a bar holds ≥2 fills. (Decision: consistency of the clean arrow beats
-  a "●1" pill.)
+Implementation note — this diverged from the original "new overlay type" plan.
+A klinecharts overlay was built first, but its event hit test on a tiny locked
+figure proved unreliable: `onClick` never fired and `onMouseLeave` didn't fire
+when the overlay was torn down (stranding the popover). So the pills are **DOM
+elements** (`BacktestAggMarkers.tsx`), the same DOM-over-canvas pattern the legend
+and curve-end labels use — native `onmouseenter`/`onmouseleave`/`onclick` are
+100% reliable. `renderArtifacts` stashes the clusters on the chart's artifacts
+(`getBacktestAggregate`); `ChartCore`'s redraw loop projects each cluster's
+bar-high anchor to a pixel via `convertToPixel` every frame and feeds the DOM
+layer (culling off-screen pills, clamping `y` so a high-anchored pill stays just
+inside the pane top).
 
-### 4. Interaction (staged)
+- Each pill shows **trade count + net P&L**, colored by net: green net-win / red
+  net-loss / grey break-even. Anchored just above the containing bar's high.
+- **Single-trade bars show just the P&L** (a "1" count badge is noise); a
+  multi-trade bar prefixes the count (`N · net`).
 
-**Stage A — hover popover (ship first):**
-- Hover the glyph → a DOM popover (same DOM-over-canvas pattern used by the chart
-  legend and curve-end labels) listing each fill in that bar: side, time, price,
-  P&L, reason.
+### 4. Interaction (both shipped)
 
-**Stage B — click to drill in (follow-up):**
-- Click the glyph → set the cell's resolution to the backtest's **native** TF and
-  scroll/zoom to that bar's window, where the real per-fill markers render.
-- Reuses `scrollChartToTrade`-style bar-width math plus the existing
-  `period.resolution` setter in `ChartCore`. This is the riskiest piece because
-  it touches `ChartCore` and the cell's resolution state, so it ships after
-  Stage A.
+- **Hover** a pill → the shared DOM popover (`BacktestClusterPopover`, rendered
+  once at App level, driven by `backtestClusterHoverSignal`) lists each trade in
+  that bar: side, entry time, entry→exit price, P&L, reason. Clears on leave.
+- **Click** a pill → drill in: set the cell's resolution to the backtest's
+  **native** TF and zoom to that bar's trade span, where the per-fill arrows
+  render. Reuses `ChartCore`'s pending-range + page-back machinery (the same path
+  the quick-range buttons use).
+  - **Data-availability caveat:** drilling into a trade older than the broker
+    serves at the fine timeframe lands at the edge of available history rather
+    than exactly on the trade (the backtest ran off the candle cache, which goes
+    back further than the live fine-TF feed). Trades within the broker's fine-TF
+    history — the common case — land exactly.
 
 ## Out of scope
 

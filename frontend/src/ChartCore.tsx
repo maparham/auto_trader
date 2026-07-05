@@ -27,6 +27,7 @@ import {
   type Period,
   type CandleCacheStats,
   PERIODS,
+  periodByResolution,
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
 import { rangeWindow, goToDateTs, type RangeKey } from "./lib/rangeWindow";
@@ -44,7 +45,8 @@ import { isInvertShortcut } from "./lib/invertShortcut";
 import MarketInfoPopover from "./MarketInfoPopover";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle, type CurveLabelPill } from "./CurveLabels";
-import { teardownArtifacts, rehydrateBacktest } from "./lib/backtest";
+import { teardownArtifacts, rehydrateBacktest, getBacktestAggregate } from "./lib/backtest";
+import BacktestAggMarkers, { type BacktestAggMarkersHandle, type AggPill } from "./BacktestAggMarkers";
 import { toast } from "./lib/notify";
 import {
   alertEditRequest,
@@ -800,6 +802,31 @@ export default function ChartCore({
     });
   };
 
+  // Drill into a backtest aggregate pill (higher-timeframe view): switch this
+  // cell to the backtest's native timeframe and zoom to the bar's [fromMs, toMs]
+  // trade span, where the per-fill arrows render. Mirrors onRangePick's
+  // interval-switch path (park a pending range; the data-load effect covers +
+  // fits once the new-resolution bars land); if already on the native timeframe
+  // it just zooms. Padded so a same-window span still yields a real view.
+  const onBacktestDrillIn = (resolution: string, fromMs: number, toMs: number) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    onFocus?.(cellId);
+    const span = Math.max(toMs - fromMs, 0);
+    const pad = Math.max(span * 0.25, 60_000);
+    const fromTs = fromMs - pad;
+    const toTs = toMs + pad;
+    if (resolution === period.resolution) {
+      fitVisibleRange(chart, fromTs, toTs);
+      return;
+    }
+    const target = periodByResolution(resolution);
+    if (!target) return;
+    pendingRangeRef.current = { resolution, fromTs, toTs, epic: symbol.epic, broker: brokerId, side: priceSide };
+    setActiveRange(null);
+    onPeriod?.(cellId, target);
+  };
+
   // Calendar "go to date": center the chosen date in the current window, keeping
   // the interval. Degrades to the loaded extent if the date predates history.
   const onGoToDate = (dateStr: string) => {
@@ -875,6 +902,7 @@ export default function ChartCore({
   // are recomputed from the line cache each redraw and pushed here, mirroring the
   // legend's imperative-update pattern (no React churn per crosshair pixel).
   const curveLabelsRef = useRef<CurveLabelsHandle>(null);
+  const aggMarkersRef = useRef<BacktestAggMarkersHandle>(null);
   // While the cursor is parked over the "+" affordance, klinecharts has lost the
   // canvas hover and dropped its crosshair. We redraw just the HORIZONTAL crosshair
   // line ourselves at this y (the vertical one is intentionally gone — x is
@@ -3831,6 +3859,40 @@ export default function ChartCore({
       setSubPaneLegends(sub.subPanes);
     }
     legendHandleRef.current?.updateValues(crosshairIdxRef.current);
+    // Higher-timeframe backtest markers: project each aggregate cluster's bar-high
+    // anchor to a pixel and feed the DOM pill layer. Runs every redraw so the pills
+    // track scroll/zoom/tick; getBacktestAggregate returns null (→ []) unless this
+    // cell's backtest is being viewed on a coarser timeframe. Off-screen pills are
+    // culled by x; y is clamped so a pill whose bar-high sits above the pane still
+    // shows just inside the top.
+    const agg = getBacktestAggregate(chart);
+    if (agg) {
+      const paneW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      const pills: AggPill[] = [];
+      for (const cl of agg.clusters) {
+        const px = first(
+          chart.convertToPixel([{ timestamp: cl.barTs, value: cl.high }], {
+            paneId: "candle_pane",
+            absolute: true,
+          }),
+        );
+        if (px.x == null || px.y == null || px.x < 0 || px.x > paneW) continue;
+        pills.push({
+          key: `agg:${cl.barTs}`,
+          x: px.x,
+          y: Math.max(px.y, 14),
+          count: cl.trades.length,
+          net: cl.net,
+          trades: cl.trades.map((t) => t.trade),
+          resolution: agg.result.resolution,
+          fromMs: cl.fromTs,
+          toMs: cl.toTs,
+        });
+      }
+      aggMarkersRef.current?.setPills(pills);
+    } else {
+      aggMarkersRef.current?.setPills([]);
+    }
     // Keep the position bracket glued to its lines as geometry shifts (scroll/zoom/
     // tick/drag) — the cursor needn't move for the lines to.
     paintBracket();
@@ -4645,6 +4707,10 @@ export default function ChartCore({
       {/* Curve-end key-parameter labels (DOM pills, crisp text) for the selected/
           highlighted indicator. z-index 11 sits just above the handle overlay. */}
       <CurveLabels handleRef={curveLabelsRef} />
+      {/* Higher-timeframe backtest markers: DOM pills (count + net P&L) for a
+          backtest viewed on a coarser timeframe. Hover opens the trade-list
+          popover; click drills into the native timeframe. Fed by the redraw loop. */}
+      <BacktestAggMarkers handleRef={aggMarkersRef} onDrillIn={onBacktestDrillIn} />
       {/* Top-left legend as crisp DOM (the candle/OHLC row + one row per candle-pane
           indicator), replacing klinecharts' blurry canvas legend. Row membership is
           React state (signature-gated); values update imperatively via the handle. */}

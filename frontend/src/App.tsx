@@ -16,6 +16,7 @@ import IndicatorSettings from "./IndicatorSettings";
 import DrawingSettings from "./DrawingSettings";
 import AlertsSidebar, { type AlertNavTarget, type VisibleCell } from "./AlertsSidebar";
 import ConfirmDialog from "./ConfirmDialog";
+import BacktestClusterPopover from "./BacktestClusterPopover";
 import Snackbar from "./Snackbar";
 import OrderTicket from "./OrderTicket";
 import PositionsPanel from "./PositionsPanel";
@@ -1773,6 +1774,10 @@ export default function App() {
           onClose={() => confirmRequest.set(null)}
         />
       )}
+
+      {/* Hover popover for a backtest aggregate marker (higher-timeframe view).
+          Self-driven by backtestClusterHoverSignal; renders nothing when idle. */}
+      <BacktestClusterPopover />
     </div>
   );
 }

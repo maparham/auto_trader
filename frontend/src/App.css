@@ -3336,6 +3336,29 @@
 .bt-trade-row.highlighted { background: var(--hover-strong, var(--hover)); }
 .bt-trade-row.selected { background: var(--accent-soft, rgba(41,98,255,.10)); box-shadow: inset 2px 0 0 var(--accent); }
 
+/* Aggregate-marker hover popover (higher-timeframe view) — flat card listing a
+   bar's bucketed trades. pointer-events:none so leaving the pill clears it. */
+.bt-cluster-pop {
+  position: fixed; z-index: 2500; pointer-events: none;
+  max-width: 340px; padding: 7px 9px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 12px;
+}
+.bt-cluster-pop-table { border-collapse: collapse; }
+.bt-cluster-pop-table td { padding: 2px 7px 2px 0; white-space: nowrap; }
+.bt-cluster-pop-table tr td:last-child { padding-right: 0; }
+.bt-cluster-pop-time { color: var(--text-dim); font-family: var(--mono); }
+.bt-cluster-pop-num { text-align: right; font-family: var(--mono); }
+.bt-cluster-pop-num.pos { color: var(--pos); }
+.bt-cluster-pop-num.neg { color: var(--neg); }
+.bt-cluster-pop-reason { color: var(--text-dim); }
+.bt-cluster-pop-more { color: var(--text-faint); margin-top: 4px; }
+.bt-cluster-pop-hint {
+  margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border);
+  color: var(--text-faint); font-size: 11px;
+}
+
 .bt-panel-sort {
   font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
   background: none; border: none; padding: 0; margin: 0; cursor: pointer;

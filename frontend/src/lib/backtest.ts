@@ -26,7 +26,12 @@ import {
 } from "klinecharts";
 import { runBacktest, type BacktestRequest, type BacktestResult } from "../api";
 import { applyVisibleRange } from "./chartSync";
-import { backtestResultSignal, highlightTradeSignal, selectedTradeSignal } from "./signals";
+import {
+  backtestResultSignal,
+  highlightTradeSignal,
+  selectedTradeSignal,
+  backtestClusterHoverSignal,
+} from "./signals";
 import { tradeZones } from "./tradeZones";
 import { RESOLUTION_SECONDS } from "./feed";
 import {
@@ -77,6 +82,11 @@ export function markerLabel(side: "buy" | "sell", leg: "long" | "short", reason?
 interface BacktestArtifacts {
   equityPaneId: string | null;
   markerIds: string[];
+  // Higher-timeframe aggregate pills (one per bar). Not klinecharts overlays —
+  // ChartCore's redraw loop reads these via getBacktestAggregate, projects them
+  // to pixels, and renders the DOM <BacktestAggMarkers> layer. Empty unless the
+  // current timeframe is coarser than the backtest's (markerMode === "aggregate").
+  aggClusters: TradeCluster[];
   trades: Trade[];
   highlightOverlayId: string | null;
   selectionOverlayIds: string[];
@@ -94,6 +104,7 @@ function artifactsFor(chart: Chart): BacktestArtifacts {
     a = {
       equityPaneId: null,
       markerIds: [],
+      aggClusters: [],
       trades: [],
       highlightOverlayId: null,
       selectionOverlayIds: [],
@@ -211,6 +222,99 @@ function ensureMarkerOverlayRegistered(): void {
 function setMarkerHoverCursor(chart: Chart, hovering: boolean): void {
   const dom = chart.getDom("candle_pane", DomPosition.Main);
   if (dom) dom.style.cursor = hovering ? "pointer" : "crosshair";
+}
+
+// ---------------------------------------------------------------------------
+// Aggregate markers (higher-timeframe view).
+//
+// On a timeframe COARSER than the backtest's own, an individual fill can't be
+// anchored cleanly — many fills fall inside one bar and would collapse onto the
+// same x. Instead we bucket each trade into the bar that contains its ENTRY and
+// show ONE pill per bar with the trade count + net P&L. The pills are DOM, not
+// klinecharts overlays (native hover/click events are reliable, whereas the
+// overlay-event hit test on a tiny locked figure is flaky — the same reason the
+// legend/curve labels are DOM). `renderArtifacts` just stashes the clusters on
+// the chart's artifacts; ChartCore's redraw loop projects them to pixels each
+// frame and feeds the <BacktestAggMarkers> layer, which owns the hover popover
+// (backtestClusterHoverSignal) and the click→drill-in.
+
+/** One higher-timeframe bar's worth of trades, ready to draw as a single pill.
+ * `barTs`/`high` anchor the pill (ms + the bar's high price); `fromTs`/`toTs`
+ * (ms) are the min-entry→max-exit span used to zoom on drill-in. Pure output of
+ * `aggregateTradesByBar` — exported for tests. */
+export interface TradeCluster {
+  barTs: number;
+  high: number;
+  trades: { trade: Trade; index: number }[];
+  net: number;
+  fromTs: number;
+  toTs: number;
+}
+
+/** Bucket trades into the loaded chart bar that CONTAINS each trade's entry
+ * (the bar whose `[timestamp, nextTimestamp)` window covers `entry_time`). We
+ * find the containing bar by the same "last bar at or before this time" rule
+ * klinecharts uses to snap an overlay, rather than `floor(t / seconds)` math —
+ * daily/weekly/derived bars don't align to epoch multiples. Trades before the
+ * first / after the last loaded bar clamp to the edge bar so they stay
+ * discoverable. Pure + exported for tests. */
+export function aggregateTradesByBar(
+  trades: Trade[],
+  bars: { timestamp: number; high: number }[],
+): TradeCluster[] {
+  if (bars.length === 0) return [];
+  const last = bars.length - 1;
+  const byBar = new Map<number, TradeCluster>();
+  for (let i = 0; i < trades.length; i++) {
+    const t = trades[i];
+    const entryMs = t.entry_time * 1000;
+    const exitMs = t.exit_time * 1000;
+    // idx = last bar with timestamp <= entryMs, clamped to [0, last].
+    let idx: number;
+    if (entryMs <= bars[0].timestamp) idx = 0;
+    else if (entryMs >= bars[last].timestamp) idx = last;
+    else {
+      let lo = 0;
+      let hi = last;
+      idx = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (bars[mid].timestamp <= entryMs) {
+          idx = mid;
+          lo = mid + 1;
+        } else hi = mid - 1;
+      }
+    }
+    let cl = byBar.get(idx);
+    if (!cl) {
+      cl = {
+        barTs: bars[idx].timestamp,
+        high: bars[idx].high,
+        trades: [],
+        net: 0,
+        fromTs: entryMs,
+        toTs: exitMs,
+      };
+      byBar.set(idx, cl);
+    }
+    cl.trades.push({ trade: t, index: i });
+    cl.net += t.pnl;
+    cl.fromTs = Math.min(cl.fromTs, entryMs);
+    cl.toTs = Math.max(cl.toTs, exitMs);
+  }
+  return [...byBar.values()].sort((a, b) => a.barTs - b.barTs);
+}
+
+/** The current higher-timeframe aggregate pills for a chart, plus the result
+ * they belong to (for the drill-in resolution). null when the chart isn't in
+ * aggregate mode (native/none, or no backtest). Read by ChartCore's redraw loop
+ * to project the clusters to pixels and render the DOM pill layer. */
+export function getBacktestAggregate(
+  chart: Chart,
+): { clusters: TradeCluster[]; result: StoredBacktestResult } | null {
+  const a = artifactsByChart.get(chart);
+  if (!a || !a.result || a.aggClusters.length === 0) return null;
+  return { clusters: a.aggClusters, result: a.result };
 }
 
 const ZONE_OVERLAY = "tradeZone";
@@ -435,7 +539,7 @@ export async function runAndRender(
   // reload (candles stripped — see saveBacktestResult). The fresh run is
   // always rendered in full (its own native timeframe).
   saveBacktestResult(scope, req.epic, result);
-  renderArtifacts(chart, result, { drawMarkers: true, drawEquity: true });
+  renderArtifacts(chart, result, { markerMode: "native", drawEquity: true });
   return result;
 }
 
@@ -447,15 +551,23 @@ export async function runAndRender(
  * `result` object (the sync gating below is identity-based).
  *
  * `drawEquity` renders the equity curve (native timeframe only — a bar-indexed
- * equity series is misleading once bars aggregate). `drawMarkers` renders the
- * fill markers + installs the row/marker sync (same-or-finer timeframe only,
- * where each fill timestamp still lands on a bar boundary). On a coarser
- * timeframe both are false: nothing is drawn, but the result stays saved and
- * the panel still shows it. */
+ * equity series is misleading once bars aggregate). `markerMode` picks how
+ * trades are drawn:
+ *   - "native"    — per-fill arrows (same-or-finer timeframe where each fill
+ *                   timestamp still lands on a bar boundary).
+ *   - "aggregate" — one pill per bar (count + net P&L) on a COARSER timeframe,
+ *                   where individual fills would collapse onto the same bar.
+ *   - "none"      — nothing drawn (a finer timeframe that doesn't divide the
+ *                   native one, so fills can't be anchored).
+ * The trades-panel row↔chart hover/selection sync (highlight segment + windowed
+ * risk/reward zone) is installed for BOTH "native" and "aggregate" — those are
+ * timestamp-anchored and work on any timeframe, so the panel stays interactive
+ * when zoomed out. On "none" nothing is drawn and no sync installed, but the
+ * result stays saved and the panel still shows it. */
 export function renderArtifacts(
   chart: Chart,
   result: StoredBacktestResult,
-  { drawMarkers, drawEquity }: { drawMarkers: boolean; drawEquity: boolean },
+  { markerMode, drawEquity }: { markerMode: "native" | "aggregate" | "none"; drawEquity: boolean },
 ): void {
   const artifacts = artifactsFor(chart);
 
@@ -475,23 +587,10 @@ export function renderArtifacts(
   // drawn (coarser timeframe).
   artifacts.trades = result.trades;
   artifacts.result = result;
+  artifacts.aggClusters = []; // set below only in "aggregate" mode
 
-  if (!drawMarkers) return;
+  if (markerMode === "none") return;
 
-  // time|leg -> trade index, so each fill marker can be tied back to the trade
-  // it belongs to (its opening fill is at entry_time, its closing fill at
-  // exit_time, both tagged with the trade's leg).
-  const tradeIndexByFill = new Map<string, number>();
-  result.trades.forEach((t, i) => {
-    tradeIndexByFill.set(`${t.entry_time}|${t.leg}`, i);
-    tradeIndexByFill.set(`${t.exit_time}|${t.leg}`, i);
-  });
-
-  // Trade markers -> locked backtestMarker overlays (arrow + label). Markers
-  // that map to a trade also emphasize/scroll the trades panel row on hover
-  // (chart -> row half of the two-way sync; the row -> chart half is the
-  // highlightTradeSignal subscription below).
-  //
   // highlightTradeSignal/selectedTradeSignal/backtestResultSignal are module-global
   // (one trades panel for the whole app), but a backtest can be running/rendered
   // in more than one cell's chart at once. Gate every emit/consume on
@@ -500,49 +599,71 @@ export function renderArtifacts(
   // result is the one actually shown in the panel participates; a
   // not-currently-displayed cell's markers/lines stay inert instead of
   // cross-talking into another chart's trade indices.
-  ensureMarkerOverlayRegistered();
-  for (const m of result.markers) {
-    const idx = tradeIndexByFill.get(`${m.time}|${m.leg}`);
-    const id = chart.createOverlay({
-      name: MARKER_OVERLAY,
-      points: [{ timestamp: m.time * 1000, value: m.price }],
-      lock: true, // backtest artifacts: not user-editable
-      extendData: {
-        label: markerLabel(m.side, m.leg, m.reason),
-        win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
-      } satisfies MarkerExtra,
-      styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
-      ...(idx !== undefined
-        ? {
-            onMouseEnter: () => {
-              if (backtestResultSignal.value === result) {
-                highlightTradeSignal.set(idx);
-                setMarkerHoverCursor(chart, true);
-              }
-              return false;
-            },
-            onMouseLeave: () => {
-              if (backtestResultSignal.value === result) {
-                highlightTradeSignal.set(null);
-                setMarkerHoverCursor(chart, false);
-              }
-              return false;
-            },
-            // Clicking a marker sticky-selects its trade, same as clicking its
-            // row — draws the risk/reward zone overlay and scrolls to it (the
-            // selectedTradeSignal subscription below does the drawing/scrolling
-            // for both this and the panel's row click). Clicking the
-            // already-selected trade again toggles it back off (deselect).
-            onClick: () => {
-              if (backtestResultSignal.value === result) {
-                selectedTradeSignal.set(selectedTradeSignal.value === idx ? null : idx);
-              }
-              return false;
-            },
-          }
-        : {}),
+  if (markerMode === "native") {
+    // time|leg -> trade index, so each fill marker can be tied back to the trade
+    // it belongs to (its opening fill is at entry_time, its closing fill at
+    // exit_time, both tagged with the trade's leg).
+    const tradeIndexByFill = new Map<string, number>();
+    result.trades.forEach((t, i) => {
+      tradeIndexByFill.set(`${t.entry_time}|${t.leg}`, i);
+      tradeIndexByFill.set(`${t.exit_time}|${t.leg}`, i);
     });
-    if (typeof id === "string") artifacts.markerIds.push(id);
+
+    // Trade markers -> locked backtestMarker overlays (arrow + label). Markers
+    // that map to a trade also emphasize/scroll the trades panel row on hover
+    // (chart -> row half of the two-way sync; the row -> chart half is the
+    // highlightTradeSignal subscription below).
+    ensureMarkerOverlayRegistered();
+    for (const m of result.markers) {
+      const idx = tradeIndexByFill.get(`${m.time}|${m.leg}`);
+      const id = chart.createOverlay({
+        name: MARKER_OVERLAY,
+        points: [{ timestamp: m.time * 1000, value: m.price }],
+        lock: true, // backtest artifacts: not user-editable
+        extendData: {
+          label: markerLabel(m.side, m.leg, m.reason),
+          win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
+        } satisfies MarkerExtra,
+        styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
+        ...(idx !== undefined
+          ? {
+              onMouseEnter: () => {
+                if (backtestResultSignal.value === result) {
+                  highlightTradeSignal.set(idx);
+                  setMarkerHoverCursor(chart, true);
+                }
+                return false;
+              },
+              onMouseLeave: () => {
+                if (backtestResultSignal.value === result) {
+                  highlightTradeSignal.set(null);
+                  setMarkerHoverCursor(chart, false);
+                }
+                return false;
+              },
+              // Clicking a marker sticky-selects its trade, same as clicking its
+              // row — draws the risk/reward zone overlay and scrolls to it (the
+              // selectedTradeSignal subscription below does the drawing/scrolling
+              // for both this and the panel's row click). Clicking the
+              // already-selected trade again toggles it back off (deselect).
+              onClick: () => {
+                if (backtestResultSignal.value === result) {
+                  selectedTradeSignal.set(selectedTradeSignal.value === idx ? null : idx);
+                }
+                return false;
+              },
+            }
+          : {}),
+      });
+      if (typeof id === "string") artifacts.markerIds.push(id);
+    }
+  } else {
+    // Aggregate: bucket trades per currently-loaded bar and stash the clusters;
+    // ChartCore's redraw loop projects them to pixels and renders the DOM pill
+    // layer (which owns the hover popover + click-to-drill-in). No klinecharts
+    // overlays here — see the module note above.
+    const bars = (chart.getDataList() ?? []).map((k) => ({ timestamp: k.timestamp, high: k.high }));
+    artifacts.aggClusters = aggregateTradesByBar(result.trades, bars);
   }
 
   // Row -> chart: draw ONE transient locked line spanning entry -> exit,
@@ -600,22 +721,32 @@ export function renderArtifacts(
 
 /** Decide what a saved backtest renders on the `current` timeframe given the
  * `native` one it was run on:
- *  - markers: on the native timeframe and any FINER one where each fill
- *    timestamp still lands on a bar boundary — i.e. the current interval evenly
- *    divides the native interval (5m markers show on 1m/5m, hide on 3m/15m/1D).
+ *  - markerMode:
+ *      "native"    — the native timeframe and any FINER one where each fill
+ *                    timestamp still lands on a bar boundary (the current
+ *                    interval evenly divides the native one): per-fill arrows.
+ *                    5m shows on 1m/5m.
+ *      "aggregate" — any COARSER timeframe: one pill per bar (count + net P&L),
+ *                    since individual fills would collapse onto the same bar.
+ *                    5m aggregates on 15m/1H/1D.
+ *      "none"      — a finer timeframe that does NOT divide the native one, so
+ *                    fills can't be anchored (45s native / 10s current). Nothing
+ *                    drawn.
  *  - equity: native timeframe ONLY (a bar-indexed equity curve is misleading
  *    once bars aggregate, and sparse once they subdivide).
  * Pure + exported for tests. */
 export function backtestRenderFlags(
   current: string,
   native: string,
-): { drawMarkers: boolean; drawEquity: boolean } {
+): { markerMode: "native" | "aggregate" | "none"; drawEquity: boolean } {
   const cur = RESOLUTION_SECONDS[current] ?? 0;
   const nat = RESOLUTION_SECONDS[native] ?? 0;
-  return {
-    drawMarkers: cur > 0 && nat > 0 && cur <= nat && nat % cur === 0,
-    drawEquity: current === native,
-  };
+  let markerMode: "native" | "aggregate" | "none" = "none";
+  if (cur > 0 && nat > 0) {
+    if (cur > nat) markerMode = "aggregate";
+    else if (nat % cur === 0) markerMode = "native";
+  }
+  return { markerMode, drawEquity: current === native };
 }
 
 /** Restore a cell's saved backtest onto the chart after a symbol/timeframe
@@ -623,10 +754,10 @@ export function backtestRenderFlags(
  * artifacts. Called from ChartCore once the new series' bars are loaded.
  *
  * Markers render on the backtest's native timeframe AND any finer one where the
- * fill timestamps still align to bar boundaries (current interval divides the
- * native interval); the equity curve renders only on the native timeframe. On a
- * coarser timeframe nothing is drawn, but the result stays saved and the panel
- * is repopulated so it's still discoverable. */
+ * fill timestamps still align to bar boundaries (per-fill arrows), and on any
+ * coarser timeframe as one aggregate pill per bar; the equity curve renders only
+ * on the native timeframe. The result stays saved and the panel is repopulated
+ * regardless, so it's always discoverable. */
 export function rehydrateBacktest(
   chart: Chart,
   scope: string,
@@ -664,6 +795,7 @@ export function teardownArtifacts(chart: Chart): void {
   if (!artifacts) return;
   for (const id of artifacts.markerIds) chart.removeOverlay(id);
   artifacts.markerIds = [];
+  artifacts.aggClusters = [];
   if (artifacts.equityPaneId) {
     chart.removeIndicator(artifacts.equityPaneId, EQUITY_INDICATOR);
     artifacts.equityPaneId = null;
@@ -677,6 +809,8 @@ export function teardownArtifacts(chart: Chart): void {
     artifacts.unsub();
     artifacts.unsub = null;
   }
+  // Drop a hover popover left open over one of this chart's aggregate pills.
+  if (backtestResultSignal.value === artifacts.result) backtestClusterHoverSignal.set(null);
   artifacts.trades = [];
   // Reset the GLOBAL hover/selection signals ONLY when this chart owns the
   // currently-active backtest — otherwise clearing/unmounting an UNRELATED cell
