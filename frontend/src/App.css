@@ -870,12 +870,16 @@
 /* The operand pills get a subtle border so the row visually chunks into its
    three parts instead of reading as a wall of adjacent selects. */
 .bt-operand {
-  display: flex; align-items: center; gap: 6px; min-width: 0;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0;
   border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px;
   background: var(--surface-2);
 }
 .bt-operand select { flex: 1 1 0; min-width: 0; }
 .bt-operand-length { width: 52px; flex: 0 0 auto; min-width: 0; }
+/* The AVWAP anchor's datetime-local input is intrinsically wide (~160px) — too
+   wide to sit beside the indicator select in a narrow rule column without
+   crushing it. Give it its own full-width line below the select instead. */
+.bt-operand-anchor { flex: 1 1 100%; min-width: 0; }
 /* A "crosses" rule is a directional signal (the reason this feature exists);
    a plain comparison is bookkeeping. Give the crossing operators the app's
    accent so the row's most meaningful choice is the one that stands out. */
