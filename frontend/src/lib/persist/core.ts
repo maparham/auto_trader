@@ -107,10 +107,24 @@ export const familyMembers = () =>
 // layout. Suffix-matched because each broker has its own copy (the old exact-string
 // Set couldn't span brokers).
 const DEVICE_LOCAL_SUFFIXES = ["activeLayoutId", "scratch", "autosave"] as const;
+// Flat (non-per-broker) keys that are ALSO device-local: the backtest panel's UI
+// prefs (open flag, long/short tab, settings/results split) and the last-used
+// drawing tools. All are written via saveLocal and never mirrored, so the backend
+// snapshot never carries them — without this the prune loop below would delete
+// them a beat after each load, so the SECOND reload lost them (e.g. the backtest
+// panel reopened once, then stayed closed). ANY new saveLocal-only flat key must
+// be added here for the same reason.
+const DEVICE_LOCAL_FLAT_KEYS = new Set([
+  `${PREFIX}.backtestOpen`,
+  `${PREFIX}.backtestSide`,
+  `${PREFIX}.backtestSplit`,
+  `${PREFIX}.lastDrawTools`,
+]);
 function isDeviceLocalKey(k: string): boolean {
   return (
-    k.startsWith(`${PREFIX}.b.`) &&
-    DEVICE_LOCAL_SUFFIXES.some((s) => k.endsWith(`.${s}`))
+    DEVICE_LOCAL_FLAT_KEYS.has(k) ||
+    (k.startsWith(`${PREFIX}.b.`) &&
+      DEVICE_LOCAL_SUFFIXES.some((s) => k.endsWith(`.${s}`)))
   );
 }
 

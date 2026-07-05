@@ -166,6 +166,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // The summary chip is driven by the signal subscription above, so just
       // publish the result (rehydrate uses the same publish path).
       backtestResultSignal.set(res);
+      // The run's range can predate the chart's currently-loaded (recent) bars —
+      // runAndRender then culls those fills as out-of-window. Page history back to
+      // cover the run, which reanchors the markers onto their real candles (same
+      // walk the timeframe-switch rehydrate uses). No-op when already covered.
+      controller?.coverDrawingAnchors?.();
       saveBacktestLastUsed(cfg);
     } catch (e) {
       setError(e instanceof Error ? e.message : "backtest failed");

@@ -88,6 +88,12 @@ interface BacktestArtifacts {
   // to pixels, and renders the DOM <BacktestAggMarkers> layer. Empty unless the
   // current timeframe is coarser than the backtest's (markerMode === "aggregate").
   aggClusters: TradeCluster[];
+  // How the current timeframe draws this result's trades (see renderArtifacts).
+  // Retained so `reanchorBacktestMarkers` — called after the history-coverage
+  // page-back loads older bars — knows whether to recreate native overlays or
+  // recompute aggregate clusters, without re-running the whole render (which
+  // would re-create the equity pane and re-install the sync subscriptions).
+  markerMode: "native" | "aggregate" | "none";
   trades: Trade[];
   highlightOverlayId: string | null;
   selectionOverlayIds: string[];
@@ -106,6 +112,7 @@ function artifactsFor(chart: Chart): BacktestArtifacts {
       equityPaneId: null,
       markerIds: [],
       aggClusters: [],
+      markerMode: "none",
       trades: [],
       highlightOverlayId: null,
       selectionOverlayIds: [],
@@ -137,10 +144,23 @@ function scrollChartToTrade(chart: Chart, entryTs: number, exitTs: number): void
   // Robust bar interval, not the last-two-bars gap (which can straddle a session
   // break and blow the fitted window up to hours) — see minPositiveGap.
   const barMs = minPositiveGap(data.map((k) => k.timestamp)) || 1;
-  const from = Math.min(entryTs, exitTs);
-  const to = Math.max(entryTs, exitTs);
+  const firstTs = data[0].timestamp;
+  const lastTs = data[data.length - 1].timestamp;
+  // Clamp the trade's span to the loaded bar window. A trade OLDER than the
+  // loaded history (e.g. a 5m run's Jun-22 trade viewed on 3m, whose broker
+  // history only reaches Jun-25) has entry/exit before the first bar; feeding
+  // those out-of-data timestamps to applyVisibleRange makes it extrapolate into
+  // negative virtual-bar indices and blow the zoom/scroll up (candles collapse to
+  // a sliver, price axis goes haywire). If the span doesn't overlap the loaded
+  // window at all, don't scroll — the trade can't be shown here (its markers are
+  // culled too), so leave the view put rather than wreck it.
+  const from = Math.max(Math.min(entryTs, exitTs), firstTs);
+  const to = Math.min(Math.max(entryTs, exitTs), lastTs);
+  if (!(to > from)) return;
   const pad = Math.max((to - from) * 0.25, barMs * 3);
-  applyVisibleRange(chart, from - pad, to + pad);
+  // Keep the padded window inside the loaded data so applyVisibleRange never
+  // extrapolates past either edge.
+  applyVisibleRange(chart, Math.max(from - pad, firstTs), Math.min(to + pad, lastTs));
 }
 
 // Backtest fill marker (arrow + label). A hand-rolled clone of klinecharts'
@@ -332,6 +352,21 @@ export function snapNearestBar(ms: number, barTimes: number[]): number {
   return ms - before <= after - ms ? before : after;
 }
 
+/** Whether a fill at `ms` falls within the loaded bar window `[first, last]`
+ * (inclusive). A finer timeframe loads far less history than the backtest's own
+ * resolution (a fixed bar count spans a much shorter time), so a trade older
+ * than the loaded window can't be placed on a real candle: `snapNearestBar`
+ * would clamp EVERY such fill onto the edge bar, stacking them into one
+ * misleading vertical pile floating above the visible candles. Native markers
+ * outside the window are skipped instead — the trade stays listed in the panel
+ * and remains discoverable via any coarser view's aggregate pill. Empty
+ * `barTimes` => false (nothing loaded to anchor to). Pure + exported for tests. */
+export function fillWithinLoadedWindow(ms: number, barTimes: number[]): boolean {
+  const n = barTimes.length;
+  if (n === 0) return false;
+  return ms >= barTimes[0] && ms <= barTimes[n - 1];
+}
+
 /** The current higher-timeframe aggregate pills for a chart, plus the result
  * they belong to (for the drill-in resolution). null when the chart isn't in
  * aggregate mode (native/none, or no backtest). Read by ChartCore's redraw loop
@@ -504,8 +539,24 @@ function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade)
   // freshly appended live bar) and run to hours or days, which would balloon the
   // zone's right edge for a short-lived trade. See minPositiveGap.
   const barMs = (data && minPositiveGap(data.map((k) => k.timestamp))) || 1;
-  const pad = Math.max(Math.abs(exitTs - entryTs) * 0.15, barMs);
-  const windowEnd = Math.max(entryTs, exitTs) + pad;
+  // Skip the zone entirely when the trade's span doesn't overlap the loaded bar
+  // window at all (e.g. a 5m run's Jun-22 trade viewed on 3m, whose broker history
+  // only reaches Jun-25). klinecharts would clamp every off-window point onto the
+  // first bar, drawing a degenerate zero-width zone stranded at the left edge; and
+  // scrollChartToTrade can't frame a span that isn't loaded. Selecting the row still
+  // highlights it — the trade just isn't drawable on this timeframe.
+  if (data && data.length > 0) {
+    const firstTs = data[0].timestamp;
+    const lastTs = data[data.length - 1].timestamp;
+    const lo = Math.min(entryTs, exitTs);
+    const hi = Math.max(entryTs, exitTs);
+    if (hi < firstTs || lo > lastTs) return;
+  }
+  // End the zone AT the trade's exit so the reward/risk bands + entry line are
+  // tight to the position's actual duration (a trailing pad made the box span
+  // longer than the trade). Floor at one bar so a same-bar trade (entry≈exit)
+  // still has a visible, non-zero width.
+  const windowEnd = Math.max(Math.max(entryTs, exitTs), entryTs + barMs);
   const id = chart.createOverlay({
     name: ZONE_OVERLAY,
     lock: true,
@@ -571,6 +622,138 @@ export async function runAndRender(
   return result;
 }
 
+/** Draw this result's trade markers for the CURRENT loaded bars, per
+ * `artifacts.markerMode`:
+ *   - "native"    — one locked `backtestMarker` overlay per fill (arrow + label),
+ *                   skipping fills outside the loaded bar window (they'd otherwise
+ *                   clamp onto the edge bar into a pile — see fillWithinLoadedWindow).
+ *   - "aggregate" — recompute the per-bar DOM pill clusters (ChartCore's redraw
+ *                   loop projects them).
+ * Split out of renderArtifacts so `reanchorBacktestMarkers` can redraw ONLY the
+ * markers after the history-coverage page-back extends the loaded window, without
+ * re-creating the equity pane or re-installing the hover/selection subscriptions.
+ * Assumes the caller cleared any prior marker overlays/clusters for this chart. */
+function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: BacktestArtifacts): void {
+  if (artifacts.markerMode === "native") {
+    // time|leg -> trade index, so each fill marker can be tied back to the trade
+    // it belongs to (its opening fill is at entry_time, its closing fill at
+    // exit_time, both tagged with the trade's leg).
+    const tradeIndexByFill = new Map<string, number>();
+    result.trades.forEach((t, i) => {
+      tradeIndexByFill.set(`${t.entry_time}|${t.leg}`, i);
+      tradeIndexByFill.set(`${t.exit_time}|${t.leg}`, i);
+    });
+
+    // Fill timestamps land on the native timeframe's bar opens. On a finer view
+    // whose interval doesn't evenly divide the native one (3m viewing a 5m run) a
+    // fill falls between two bars — snap it to the nearest loaded bar so the arrow
+    // sits on a real candle. Same-or-evenly-dividing views already land exactly, so
+    // snapNearestBar is a no-op there (returns the identical timestamp).
+    const barTimes = (chart.getDataList() ?? []).map((k) => k.timestamp);
+
+    // Trade markers -> locked backtestMarker overlays (arrow + label). Markers
+    // that map to a trade also emphasize/scroll the trades panel row on hover
+    // (chart -> row half of the two-way sync; the row -> chart half is the
+    // highlightTradeSignal subscription in renderArtifacts). The gating on
+    // `backtestResultSignal.value === result` (identity) keeps a not-currently-
+    // shown cell's markers inert instead of cross-talking into another chart's
+    // trade indices — a backtest can be rendered in more than one cell at once.
+    ensureMarkerOverlayRegistered();
+    for (const m of result.markers) {
+      // Skip fills outside the loaded bar window: on a finer timeframe the
+      // backtest may predate the (much shorter) loaded history, and snapNearestBar
+      // would otherwise clamp every such fill onto the edge bar — the disconnected
+      // marker pile. In-window fills still snap normally (3m viewing a 5m run).
+      // The history-coverage page-back then loads the older bars and
+      // reanchorBacktestMarkers redraws, so the initially-skipped fills reappear
+      // on their real candles once covered.
+      if (!fillWithinLoadedWindow(m.time * 1000, barTimes)) continue;
+      const idx = tradeIndexByFill.get(`${m.time}|${m.leg}`);
+      const id = chart.createOverlay({
+        name: MARKER_OVERLAY,
+        points: [{ timestamp: snapNearestBar(m.time * 1000, barTimes), value: m.price }],
+        lock: true, // backtest artifacts: not user-editable
+        extendData: {
+          label: markerLabel(m.side, m.leg, m.reason),
+          win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
+        } satisfies MarkerExtra,
+        styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
+        ...(idx !== undefined
+          ? {
+              onMouseEnter: () => {
+                if (backtestResultSignal.value === result) {
+                  highlightTradeSignal.set(idx);
+                  setMarkerHoverCursor(chart, true);
+                }
+                return false;
+              },
+              onMouseLeave: () => {
+                if (backtestResultSignal.value === result) {
+                  highlightTradeSignal.set(null);
+                  setMarkerHoverCursor(chart, false);
+                }
+                return false;
+              },
+              // Clicking a marker sticky-selects its trade, same as clicking its
+              // row — draws the risk/reward zone overlay and scrolls to it (the
+              // selectedTradeSignal subscription does the drawing/scrolling for
+              // both this and the panel's row click). Clicking the already-selected
+              // trade again toggles it back off (deselect).
+              onClick: () => {
+                if (backtestResultSignal.value === result) {
+                  selectedTradeSignal.set(selectedTradeSignal.value === idx ? null : idx);
+                }
+                return false;
+              },
+            }
+          : {}),
+      });
+      if (typeof id === "string") artifacts.markerIds.push(id);
+    }
+  } else if (artifacts.markerMode === "aggregate") {
+    // Aggregate: bucket trades per currently-loaded bar and stash the clusters;
+    // ChartCore's redraw loop projects them to pixels and renders the DOM pill
+    // layer (which owns the hover popover + click-to-drill-in). No klinecharts
+    // overlays here — see the module note above.
+    const bars = (chart.getDataList() ?? []).map((k) => ({ timestamp: k.timestamp, high: k.high }));
+    artifacts.aggClusters = aggregateTradesByBar(result.trades, bars);
+  }
+}
+
+/** The oldest trade-fill timestamp (ms) this chart needs loaded to draw its
+ * backtest markers, or null when nothing is drawn (markerMode "none" / no
+ * result). ChartCore folds this into the history-coverage page-back so a
+ * finer-timeframe view — whose initial load starts well after the run — pages
+ * back far enough to cover the run, then calls reanchorBacktestMarkers. Reads the
+ * already-rendered artifacts (rehydrate ran first), so it honors the current
+ * timeframe's markerMode decision. */
+export function getBacktestCoverageFromTs(chart: Chart): number | null {
+  const a = artifactsByChart.get(chart);
+  if (!a || !a.result || a.markerMode === "none") return null;
+  let min = Infinity;
+  for (const m of a.result.markers) min = Math.min(min, m.time * 1000);
+  return Number.isFinite(min) ? min : null;
+}
+
+/** Redraw a chart's backtest markers against the CURRENT loaded bars — call
+ * after the history-coverage page-back loads older history the initial
+ * recent-only load didn't cover. On a finer timeframe the initial load starts
+ * well after the backtest's own range, so renderArtifacts culled every fill as
+ * out-of-window (clamping them would pile them at the left edge). Once the
+ * covering bars page in, this recreates the native overlays / recomputes the
+ * aggregate clusters so the markers land on their real candles. Markers ONLY —
+ * the equity pane and the highlight/selection subscriptions renderArtifacts
+ * installed stay in place (re-running the full render would double-install them).
+ * No-op if this chart has no rendered result or draws nothing (markerMode none). */
+export function reanchorBacktestMarkers(chart: Chart): void {
+  const artifacts = artifactsByChart.get(chart);
+  if (!artifacts || !artifacts.result || artifacts.markerMode === "none") return;
+  for (const id of artifacts.markerIds) chart.removeOverlay(id);
+  artifacts.markerIds = [];
+  artifacts.aggClusters = [];
+  drawMarkers(chart, artifacts.result, artifacts);
+}
+
 /** Draw a backtest result's on-chart artifacts (equity sub-pane + trade
  * markers) and wire the trades-panel hover/selection sync. Shared by a fresh
  * run (runAndRender) and a rehydrate after a timeframe switch / reload
@@ -615,91 +798,16 @@ export function renderArtifacts(
   // drawn (coarser timeframe).
   artifacts.trades = result.trades;
   artifacts.result = result;
-  artifacts.aggClusters = []; // set below only in "aggregate" mode
+  artifacts.markerMode = markerMode;
+  artifacts.aggClusters = []; // set by drawMarkers only in "aggregate" mode
 
   if (markerMode === "none") return;
 
-  // highlightTradeSignal/selectedTradeSignal/backtestResultSignal are module-global
-  // (one trades panel for the whole app), but a backtest can be running/rendered
-  // in more than one cell's chart at once. Gate every emit/consume on
-  // `backtestResultSignal.value === result` (identity, not equality — the panel
-  // is set from this exact object by the caller) so only the chart whose
-  // result is the one actually shown in the panel participates; a
-  // not-currently-displayed cell's markers/lines stay inert instead of
-  // cross-talking into another chart's trade indices.
-  if (markerMode === "native") {
-    // time|leg -> trade index, so each fill marker can be tied back to the trade
-    // it belongs to (its opening fill is at entry_time, its closing fill at
-    // exit_time, both tagged with the trade's leg).
-    const tradeIndexByFill = new Map<string, number>();
-    result.trades.forEach((t, i) => {
-      tradeIndexByFill.set(`${t.entry_time}|${t.leg}`, i);
-      tradeIndexByFill.set(`${t.exit_time}|${t.leg}`, i);
-    });
-
-    // Fill timestamps land on the native timeframe's bar opens. On a finer view
-    // whose interval doesn't evenly divide the native one (3m viewing a 5m run) a
-    // fill falls between two bars — snap it to the nearest loaded bar so the arrow
-    // sits on a real candle. Same-or-evenly-dividing views already land exactly, so
-    // snapNearestBar is a no-op there (returns the identical timestamp).
-    const barTimes = (chart.getDataList() ?? []).map((k) => k.timestamp);
-
-    // Trade markers -> locked backtestMarker overlays (arrow + label). Markers
-    // that map to a trade also emphasize/scroll the trades panel row on hover
-    // (chart -> row half of the two-way sync; the row -> chart half is the
-    // highlightTradeSignal subscription below).
-    ensureMarkerOverlayRegistered();
-    for (const m of result.markers) {
-      const idx = tradeIndexByFill.get(`${m.time}|${m.leg}`);
-      const id = chart.createOverlay({
-        name: MARKER_OVERLAY,
-        points: [{ timestamp: snapNearestBar(m.time * 1000, barTimes), value: m.price }],
-        lock: true, // backtest artifacts: not user-editable
-        extendData: {
-          label: markerLabel(m.side, m.leg, m.reason),
-          win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
-        } satisfies MarkerExtra,
-        styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
-        ...(idx !== undefined
-          ? {
-              onMouseEnter: () => {
-                if (backtestResultSignal.value === result) {
-                  highlightTradeSignal.set(idx);
-                  setMarkerHoverCursor(chart, true);
-                }
-                return false;
-              },
-              onMouseLeave: () => {
-                if (backtestResultSignal.value === result) {
-                  highlightTradeSignal.set(null);
-                  setMarkerHoverCursor(chart, false);
-                }
-                return false;
-              },
-              // Clicking a marker sticky-selects its trade, same as clicking its
-              // row — draws the risk/reward zone overlay and scrolls to it (the
-              // selectedTradeSignal subscription below does the drawing/scrolling
-              // for both this and the panel's row click). Clicking the
-              // already-selected trade again toggles it back off (deselect).
-              onClick: () => {
-                if (backtestResultSignal.value === result) {
-                  selectedTradeSignal.set(selectedTradeSignal.value === idx ? null : idx);
-                }
-                return false;
-              },
-            }
-          : {}),
-      });
-      if (typeof id === "string") artifacts.markerIds.push(id);
-    }
-  } else {
-    // Aggregate: bucket trades per currently-loaded bar and stash the clusters;
-    // ChartCore's redraw loop projects them to pixels and renders the DOM pill
-    // layer (which owns the hover popover + click-to-drill-in). No klinecharts
-    // overlays here — see the module note above.
-    const bars = (chart.getDataList() ?? []).map((k) => ({ timestamp: k.timestamp, high: k.high }));
-    artifacts.aggClusters = aggregateTradesByBar(result.trades, bars);
-  }
+  // Draw the trade markers for the currently-loaded bars. Split out so the
+  // history-coverage page-back can redraw JUST the markers later (see
+  // reanchorBacktestMarkers) without re-creating the equity pane or re-installing
+  // the subscriptions below.
+  drawMarkers(chart, result, artifacts);
 
   // Row -> chart: draw ONE transient locked line spanning entry -> exit,
   // colored win/loss, while a row (or a marker, above) is highlighted; null
@@ -827,6 +935,7 @@ export function teardownArtifacts(chart: Chart): void {
   for (const id of artifacts.markerIds) chart.removeOverlay(id);
   artifacts.markerIds = [];
   artifacts.aggClusters = [];
+  artifacts.markerMode = "none";
   if (artifacts.equityPaneId) {
     chart.removeIndicator(artifacts.equityPaneId, EQUITY_INDICATOR);
     artifacts.equityPaneId = null;

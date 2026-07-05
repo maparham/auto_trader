@@ -46,7 +46,13 @@ import { isInvertShortcut } from "./lib/invertShortcut";
 import MarketInfoPopover from "./MarketInfoPopover";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle, type CurveLabelPill } from "./CurveLabels";
-import { teardownArtifacts, rehydrateBacktest, getBacktestAggregate } from "./lib/backtest";
+import {
+  teardownArtifacts,
+  rehydrateBacktest,
+  getBacktestAggregate,
+  getBacktestCoverageFromTs,
+  reanchorBacktestMarkers,
+} from "./lib/backtest";
 import BacktestAggMarkers, { type BacktestAggMarkersHandle, type AggPill } from "./BacktestAggMarkers";
 import { toast } from "./lib/notify";
 import {
@@ -687,7 +693,7 @@ export default function ChartCore({
   // drawing anchor is covered — bounded like a quick-range walk, and with NO fit:
   // the view stays parked at the live edge. Alerts are horizontal (no timestamp),
   // so only drawings matter here.
-  const ensureDrawingAnchorCoverage = async () => {
+  const ensureAnchorCoverage = async () => {
     const chart = chartRef.current;
     if (!chart) return;
     const epic = epicRef.current;
@@ -698,6 +704,12 @@ export default function ChartCore({
       .flatMap((d) => d.points ?? [])
       .map((p) => p.timestamp)
       .filter((t): t is number => t != null);
+    // Backtest fills have the SAME clamp problem as drawing anchors: on a finer
+    // timeframe the initial recent-only load starts after the run, so renderArtifacts
+    // culled every fill (drawing them would pile at the left edge). Fold the oldest
+    // fill into the walk so it pages back far enough, then reanchor the markers below.
+    const backtestFromMs = getBacktestCoverageFromTs(chart);
+    if (backtestFromMs != null) anchors.push(backtestFromMs);
     if (!anchors.length) return;
     const fromTs = Math.min(...anchors);
     const first = chart.getDataList()[0];
@@ -742,12 +754,22 @@ export default function ChartCore({
           exhaustedRef.current = true;
         },
       });
+      // Redraw backtest markers against the now-extended history. renderArtifacts
+      // culled the fills the recent-only initial load didn't cover, and paging back
+      // does NOT move existing overlays — so recreate them here, now that their bars
+      // exist. Guard on !isStale() so a symbol/TF switch that raced in (its own
+      // rehydrate will redraw) doesn't double-draw; gate on the backtest actually
+      // needing coverage so a drawing-only walk doesn't churn the markers. Fills
+      // still older than the broker's finest history stay culled, not piled.
+      if (!isStale() && backtestFromMs != null && backtestFromMs < first.timestamp) {
+        reanchorBacktestMarkers(chart);
+      }
       // Bounded walk: a very old anchor on a very fine interval can exceed the page
-      // budget — the drawing then still clamps. Say so instead of failing silently.
+      // budget — the drawing/marker then still clamps. Say so instead of failing silently.
       const oldest = chartRef.current?.getDataList()[0];
       if (oldest && oldest.timestamp > fromTs) {
         console.debug(
-          `[chart] drawing-anchor coverage capped for ${epic}@${resolution}: oldest anchor ${new Date(fromTs).toISOString()} predates loaded history`,
+          `[chart] anchor coverage capped for ${epic}@${resolution}: oldest anchor ${new Date(fromTs).toISOString()} predates loaded history`,
         );
       }
     } finally {
@@ -795,7 +817,7 @@ export default function ChartCore({
     // not reach the oldest drawing anchor, and coverage would otherwise stay
     // gated on pendingRangeRef for the walk's whole duration.
     void ensureCoverageAndFit(token).then(() => {
-      if (!period.liveOnly) void ensureDrawingAnchorCoverage();
+      if (!period.liveOnly) void ensureAnchorCoverage();
     });
   };
 
@@ -2710,7 +2732,7 @@ export default function ChartCore({
       // Let a template apply (templates.ts writes drawings + rehydrates outside
       // this component) request the anchor-coverage walk, so a template drawing
       // anchored before the loaded window doesn't render clamped to the left edge.
-      controller.coverDrawingAnchors = () => void ensureDrawingAnchorCoverage();
+      controller.coverDrawingAnchors = () => void ensureAnchorCoverage();
       // Hydrate this cell's saved indicators synchronously on chart-ready (they
       // recalc once data arrives). Done here — not after the async data fetch — so
       // the focused Toolbar reflects them immediately on mount / tab switch, and
@@ -3104,8 +3126,8 @@ export default function ChartCore({
       // (the walk also would have gated it via pendingRangeRef, which it clears
       // only on completion). Live-only intervals have no history to page.
       if (!period.liveOnly) {
-        if (rangeWalk) void rangeWalk.then(() => ensureDrawingAnchorCoverage());
-        else void ensureDrawingAnchorCoverage();
+        if (rangeWalk) void rangeWalk.then(() => ensureAnchorCoverage());
+        else void ensureAnchorCoverage();
       }
 
       // Live updates for the current bar.

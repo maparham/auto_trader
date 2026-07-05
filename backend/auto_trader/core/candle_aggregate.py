@@ -38,6 +38,13 @@ class BucketRule:
 
 
 DERIVED: dict[str, BucketRule] = {
+    # NB: 3m folds from native 1m, so its history depth is bounded by Capital's
+    # 1-minute retention — Capital serves only ~the last ~10 days of MINUTE bars
+    # (a /prices?resolution=MINUTE request for older dates returns HTTP 400), while
+    # 5m+ go back weeks/months. So a 3m chart has a hard left edge ~10 days back
+    # (sliding forward with time). This is a BROKER limit, not the cache; verified
+    # 2026-07-05 on capital-live/OIL_CRUDE. Coarser derived TFs fold from DAY/WEEK,
+    # which have deep history, so they're unaffected.
     "MINUTE_3": BucketRule(Resolution.MINUTE, "minute", 3),
     "WEEK_2": BucketRule(Resolution.WEEK, "week", 2),
     "WEEK_3": BucketRule(Resolution.WEEK, "week", 3),
