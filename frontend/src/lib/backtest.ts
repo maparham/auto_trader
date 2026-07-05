@@ -18,6 +18,7 @@ import {
   LineType,
   PolygonType,
   registerOverlay,
+  DomPosition,
   type Chart,
   type Indicator,
   type OverlayTemplate,
@@ -119,6 +120,90 @@ function scrollChartToTrade(chart: Chart, entryTs: number, exitTs: number): void
   const to = Math.max(entryTs, exitTs);
   const pad = Math.max((to - from) * 0.25, barMs * 3);
   applyVisibleRange(chart, from - pad, to + pad);
+}
+
+// Backtest fill marker (arrow + label). A hand-rolled clone of klinecharts'
+// built-in `simpleAnnotation` — IDENTICAL geometry — with ONE deliberate
+// difference: the figures do NOT set `ignoreEvent: true`. The built-in hardcodes
+// `ignoreEvent: true` on its line/arrow/text, which klinecharts' _createFigureEvents
+// reads to strip ALL mouse events at the dispatch layer, so an overlay-level
+// onClick/onMouseEnter/onMouseLeave could never fire (that's the bug this fixes).
+// Leaving ignoreEvent unset lets figure hits route to the overlay handlers
+// (see drawFigures -> _createFigureEvents -> onMouseEnter/onClick).
+// Appearance is preserved because per-figure styles are omitted, so each figure
+// inherits `defaultStyles[type]` merged with the overlay-level `styles` we pass
+// at createOverlay — the same merge the built-in relied on (only the vertical
+// line is side-colored; arrow + text use theme defaults).
+const MARKER_OVERLAY = "backtestMarker";
+
+// extendData for a `backtestMarker`: the label text plus the trade's outcome so
+// the label pill can be win/loss colored (green won, red lost). `win` is null
+// for a marker not tied to a trade — that keeps klinecharts' default blue pill.
+interface MarkerExtra {
+  label: string;
+  win: boolean | null;
+}
+function asMarkerExtra(v: unknown): MarkerExtra {
+  return (typeof v === "object" && v !== null ? v : { label: "", win: null }) as MarkerExtra;
+}
+
+const markerOverlay: OverlayTemplate = {
+  name: MARKER_OVERLAY,
+  totalStep: 2,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: ({ overlay, coordinates }) => {
+    if (coordinates.length < 1) return [];
+    const { label, win } = asMarkerExtra(overlay.extendData);
+    const startX = coordinates[0].x;
+    const startY = coordinates[0].y - 6;
+    const lineEndY = startY - 50;
+    const arrowEndY = lineEndY - 5;
+    // The label renders as a filled pill via klinecharts' default overlay text
+    // style (white text on a blue background). Override just the fill/border to
+    // the win/loss color so a losing trade's marker reads red, a winner green.
+    const pillColor = win == null ? undefined : win ? BUY_COLOR : SELL_COLOR;
+    return [
+      {
+        type: "line",
+        attrs: { coordinates: [{ x: startX, y: startY }, { x: startX, y: lineEndY }] },
+      },
+      {
+        type: "polygon",
+        attrs: {
+          coordinates: [
+            { x: startX, y: lineEndY },
+            { x: startX - 4, y: arrowEndY },
+            { x: startX + 4, y: arrowEndY },
+          ],
+        },
+      },
+      {
+        type: "text",
+        attrs: { x: startX, y: arrowEndY, text: label, align: "center", baseline: "bottom" },
+        ...(pillColor ? { styles: { backgroundColor: pillColor, borderColor: pillColor } } : {}),
+      },
+    ];
+  },
+};
+
+let markerOverlayRegistered = false;
+function ensureMarkerOverlayRegistered(): void {
+  if (markerOverlayRegistered) return;
+  markerOverlayRegistered = true;
+  registerOverlay(markerOverlay);
+}
+
+// klinecharts hard-sets the candle pane's cursor to 'crosshair' in its
+// IndicatorWidget ctor, so a hovered clickable marker would otherwise give no
+// affordance. Flip the pane cursor to 'pointer' while a trade-mapped marker is
+// hovered (onMouseEnter) and restore 'crosshair' on leave — the pane's DOM is
+// the element carrying the cursor style (setting the root container wouldn't
+// override the child pane's own cursor).
+function setMarkerHoverCursor(chart: Chart, hovering: boolean): void {
+  const dom = chart.getDom("candle_pane", DomPosition.Main);
+  if (dom) dom.style.cursor = hovering ? "pointer" : "crosshair";
 }
 
 const ZONE_OVERLAY = "tradeZone";
@@ -357,7 +442,7 @@ export async function runAndRender(
     tradeIndexByFill.set(`${t.exit_time}|${t.leg}`, i);
   });
 
-  // Trade markers -> locked simpleAnnotation overlays (arrow + label). Markers
+  // Trade markers -> locked backtestMarker overlays (arrow + label). Markers
   // that map to a trade also emphasize/scroll the trades panel row on hover
   // (chart -> row half of the two-way sync; the row -> chart half is the
   // highlightTradeSignal subscription below).
@@ -370,30 +455,43 @@ export async function runAndRender(
   // result is the one actually shown in the panel participates; a
   // not-currently-displayed cell's markers/lines stay inert instead of
   // cross-talking into another chart's trade indices.
+  ensureMarkerOverlayRegistered();
   for (const m of result.markers) {
     const idx = tradeIndexByFill.get(`${m.time}|${m.leg}`);
     const id = chart.createOverlay({
-      name: "simpleAnnotation",
+      name: MARKER_OVERLAY,
       points: [{ timestamp: m.time * 1000, value: m.price }],
       lock: true, // backtest artifacts: not user-editable
-      extendData: markerLabel(m.side, m.leg, m.reason),
+      extendData: {
+        label: markerLabel(m.side, m.leg, m.reason),
+        win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
+      } satisfies MarkerExtra,
       styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
       ...(idx !== undefined
         ? {
             onMouseEnter: () => {
-              if (backtestResultSignal.value === result) highlightTradeSignal.set(idx);
+              if (backtestResultSignal.value === result) {
+                highlightTradeSignal.set(idx);
+                setMarkerHoverCursor(chart, true);
+              }
               return false;
             },
             onMouseLeave: () => {
-              if (backtestResultSignal.value === result) highlightTradeSignal.set(null);
+              if (backtestResultSignal.value === result) {
+                highlightTradeSignal.set(null);
+                setMarkerHoverCursor(chart, false);
+              }
               return false;
             },
             // Clicking a marker sticky-selects its trade, same as clicking its
             // row — draws the risk/reward zone overlay and scrolls to it (the
             // selectedTradeSignal subscription below does the drawing/scrolling
-            // for both this and the panel's row click).
+            // for both this and the panel's row click). Clicking the
+            // already-selected trade again toggles it back off (deselect).
             onClick: () => {
-              if (backtestResultSignal.value === result) selectedTradeSignal.set(idx);
+              if (backtestResultSignal.value === result) {
+                selectedTradeSignal.set(selectedTradeSignal.value === idx ? null : idx);
+              }
               return false;
             },
           }

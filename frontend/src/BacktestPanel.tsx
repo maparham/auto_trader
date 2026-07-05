@@ -136,7 +136,7 @@ export default function BacktestPanel() {
                     className={`bt-trade-row${row.i === highlighted ? " highlighted" : ""}${row.i === selected ? " selected" : ""}`}
                     onMouseEnter={() => highlightTradeSignal.set(row.i)}
                     onMouseLeave={() => highlightTradeSignal.set(null)}
-                    onClick={() => selectedTradeSignal.set(row.i)}
+                    onClick={() => selectedTradeSignal.set(selected === row.i ? null : row.i)}
                   >
                     <td>{row.i + 1}</td>
                     <td className={row.leg === "long" ? "bt-panel-side-long" : "bt-panel-side-short"}>
