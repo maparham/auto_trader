@@ -16,8 +16,8 @@ def _series(closes: list[float]) -> list[Candle]:
     ]
 
 
-def _ind(name: str, length: int | None = None) -> Operand:
-    return Operand(kind="indicator", indicator=name, length=length)
+def _ind(name: str, length: int | None = None, anchor: int | None = None) -> Operand:
+    return Operand(kind="indicator", indicator=name, length=length, anchor=anchor)
 
 
 def _price(field: str) -> Operand:
@@ -35,7 +35,8 @@ def _rule(left, op, right):
 def test_series_name_contract():
     assert series_name(_ind("EMA", 9)) == "EMA_9"
     assert series_name(_ind("RSI", 14)) == "RSI_14"
-    assert series_name(_ind("AVWAP")) == "AVWAP"
+    assert series_name(_ind("AVWAP")) == "AVWAP_0"
+    assert series_name(_ind("AVWAP", anchor=1_700_000_000_000)) == "AVWAP_1700000000000"
     assert series_name(_ind("VOL")) == "VOL"
     assert series_name(_price("close")) is None
     assert series_name(_const(5)) is None

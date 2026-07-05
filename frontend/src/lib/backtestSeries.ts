@@ -45,10 +45,16 @@ function computeOne(op: Operand, candles: KLineData[]): Array<number | null> {
       return toNullable(sma(candles.map((k) => k.volume ?? 0), op.length ?? 0));
     case "VOL":
       return candles.map((k) => k.volume ?? null);
-    case "AVWAP":
-      // v1 anchor = the start of the loaded range (index 0) — see backtestConfig's
-      // history-depth setting for how deep that range reaches.
-      return vwapFrom(candles, 0, {}).map((p) => p.vwap ?? null);
+    case "AVWAP": {
+      // Mirror the chart's AVWAP calc (customIndicators.ts): anchor is an epoch-ms
+      // timestamp; <= 0 means unplaced (no line). Otherwise accumulate from the
+      // first bar at/after the anchor. An anchor past the last bar -> all null.
+      const anchor = op.anchor ?? 0;
+      if (anchor <= 0) return candles.map(() => null);
+      const idx = candles.findIndex((k) => k.timestamp >= anchor);
+      const start = idx < 0 ? candles.length : idx;
+      return vwapFrom(candles, start, {}).map((p) => p.vwap ?? null);
+    }
     case "RSI":
       // `.val` is always present; `.rsi` is omitted when the line is style-hidden,
       // which would silently null the series for a hidden RSI line.

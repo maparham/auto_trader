@@ -118,19 +118,53 @@ describe("buildSeries", () => {
     expect(series["VOLMA_2"][1]).toBe(15);
   });
 
-  it("AVWAP anchors at index 0", () => {
+  it("AVWAP anchors at the chosen bar; before-anchor bars are null", () => {
+    // candles() stamps timestamps at i * 60_000, so anchor 60_000 = index 1.
     const bars = candles([10, 10, 10], [5, 5, 5]);
     const config = cfg({
       longEntry: {
         combine: "AND",
         rules: [
-          { left: { kind: "indicator", indicator: "AVWAP" }, op: "gt", right: { kind: "const", value: 0 } },
+          { left: { kind: "indicator", indicator: "AVWAP", anchor: 60_000 }, op: "gt", right: { kind: "const", value: 0 } },
         ],
       },
     });
     const series = buildSeries(bars, config);
-    expect(series["AVWAP"]).toHaveLength(3);
-    expect(series["AVWAP"][0]).not.toBeNull();
+    expect(series["AVWAP_60000"]).toHaveLength(3);
+    expect(series["AVWAP_60000"][0]).toBeNull(); // before the anchor
+    expect(series["AVWAP_60000"][1]).not.toBeNull();
+    expect(series["AVWAP_60000"][2]).not.toBeNull();
+  });
+
+  it("AVWAP with an anchor after the range is all null", () => {
+    const bars = candles([10, 10, 10], [5, 5, 5]);
+    const config = cfg({
+      longEntry: {
+        combine: "AND",
+        rules: [
+          { left: { kind: "indicator", indicator: "AVWAP", anchor: 999_999_999 }, op: "gt", right: { kind: "const", value: 0 } },
+        ],
+      },
+    });
+    const series = buildSeries(bars, config);
+    expect(series["AVWAP_999999999"]).toEqual([null, null, null]);
+  });
+
+  it("two AVWAPs with different anchors produce two distinct series", () => {
+    const bars = candles([10, 10, 10], [5, 5, 5]);
+    const config = cfg({
+      longEntry: {
+        combine: "AND",
+        rules: [
+          { left: { kind: "indicator", indicator: "AVWAP", anchor: 0 }, op: "gt", right: { kind: "const", value: 0 } },
+          { left: { kind: "indicator", indicator: "AVWAP", anchor: 60_000 }, op: "gt", right: { kind: "const", value: 0 } },
+        ],
+      },
+    });
+    const series = buildSeries(bars, config);
+    // anchor 0 = unplaced -> all null; anchor 60_000 = placed at index 1.
+    expect(series["AVWAP_0"]).toEqual([null, null, null]);
+    expect(series["AVWAP_60000"][1]).not.toBeNull();
   });
 
   it("emits an ATR_{n} series when a risk config references ATR", () => {

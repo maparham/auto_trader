@@ -9,7 +9,7 @@ export type Operator = "crossesAbove" | "crossesBelow" | "gt" | "lt" | "gte" | "
 export type Combine = "AND" | "OR";
 
 export type Operand =
-  | { kind: "indicator"; indicator: IndicatorKind; length?: number }
+  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number }
   | { kind: "price"; field: PriceField }
   | { kind: "const"; value: number };
 
@@ -84,11 +84,13 @@ export interface BacktestConfig {
 }
 
 /** The payload key an operand's series lives under, or null if it has no
- * series (price/const are read straight off the candle). AVWAP/VOL have no
- * length; EMA/SMA/RSI/VOLMA are keyed by `${indicator}_${length}`. */
+ * series (price/const are read straight off the candle). AVWAP is keyed by its
+ * anchor (epoch-ms) so distinct anchors are distinct series; VOL has no length;
+ * EMA/SMA/RSI/VOLMA are keyed by `${indicator}_${length}`. */
 export function seriesName(op: Operand): string | null {
   if (op.kind !== "indicator") return null;
-  if (op.indicator === "AVWAP" || op.indicator === "VOL") return op.indicator;
+  if (op.indicator === "VOL") return "VOL";
+  if (op.indicator === "AVWAP") return `AVWAP_${op.anchor ?? 0}`;
   return `${op.indicator}_${op.length}`;
 }
 

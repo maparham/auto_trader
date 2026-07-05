@@ -20,7 +20,10 @@ describe("seriesName", () => {
   });
 
   it("keys AVWAP/VOL by name alone (no length)", () => {
-    expect(seriesName({ kind: "indicator", indicator: "AVWAP" })).toBe("AVWAP");
+    expect(seriesName({ kind: "indicator", indicator: "AVWAP" })).toBe("AVWAP_0");
+    expect(seriesName({ kind: "indicator", indicator: "AVWAP", anchor: 1_700_000_000_000 })).toBe(
+      "AVWAP_1700000000000",
+    );
     expect(seriesName({ kind: "indicator", indicator: "VOL" })).toBe("VOL");
   });
 
@@ -79,6 +82,26 @@ describe("collectSeriesOperands", () => {
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     expect(collectSeriesOperands(cfg)).toEqual([]);
+  });
+
+  it("keeps two AVWAPs with different anchors as distinct series, dedupes equal anchors", () => {
+    const cfg: BacktestConfig = {
+      range: { mode: "bars", bars: 500 },
+      longEntry: {
+        combine: "AND",
+        rules: [
+          { left: { kind: "price", field: "close" }, op: "gt", right: { kind: "indicator", indicator: "AVWAP", anchor: 1000 } },
+          { left: { kind: "price", field: "close" }, op: "gt", right: { kind: "indicator", indicator: "AVWAP", anchor: 2000 } },
+          { left: { kind: "price", field: "close" }, op: "gt", right: { kind: "indicator", indicator: "AVWAP", anchor: 1000 } },
+        ],
+      },
+      longExit: { combine: "AND", rules: [] },
+      shortEntry: { combine: "AND", rules: [] },
+      shortExit: { combine: "AND", rules: [] },
+      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+    };
+    const names = collectSeriesOperands(cfg).map(seriesName).sort();
+    expect(names).toEqual(["AVWAP_1000", "AVWAP_2000"]);
   });
 });
 

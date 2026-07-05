@@ -306,6 +306,7 @@ class OperandDTO(BaseModel):
     length: int | None = None
     field: Literal["close", "open", "high", "low"] | None = None
     value: float | None = None
+    anchor: int | None = None
 
     @model_validator(mode="after")
     def _kind_matches_fields(self) -> "OperandDTO":
@@ -320,7 +321,7 @@ class OperandDTO(BaseModel):
     def to_operand(self) -> Operand:
         return Operand(
             kind=self.kind, indicator=self.indicator, length=self.length,
-            field=self.field, value=self.value,
+            field=self.field, value=self.value, anchor=self.anchor,
         )
 
 

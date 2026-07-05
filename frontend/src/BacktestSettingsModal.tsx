@@ -10,6 +10,7 @@ import InfoTip from "./components/InfoTip";
 import { useDraggable } from "./lib/useDraggable";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
+import { resolveWindow } from "./lib/backtestWindow";
 import { RESOLUTION_SECONDS } from "./lib/feed";
 import {
   longestIndicatorLength,
@@ -196,6 +197,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
 
   const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
 
+  const defaultAvwapAnchor = resolveWindow(cfg, resSeconds, Date.now()).fromMs;
+
   const usesVolume = [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit].some((g) =>
     g.rules.some((r) =>
       [r.left, r.right].some(
@@ -333,7 +336,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
               Short
             </button>
           </div>
-          <SidePanel side={side} cfg={cfg} setCfg={setCfg} setGroup={setGroup} />
+          <SidePanel side={side} cfg={cfg} setCfg={setCfg} setGroup={setGroup} defaultAvwapAnchor={defaultAvwapAnchor} />
 
           {usesVolume && (
             <div className="al-note">
@@ -559,11 +562,13 @@ function SidePanel({
   cfg,
   setCfg,
   setGroup,
+  defaultAvwapAnchor,
 }: {
   side: "long" | "short";
   cfg: BacktestConfig;
   setCfg: (c: BacktestConfig) => void;
   setGroup: (which: "longEntry" | "longExit" | "shortEntry" | "shortExit", g: RuleGroup) => void;
+  defaultAvwapAnchor: number;
 }) {
   const isLong = side === "long";
   const enabled = (isLong ? cfg.longEnabled : cfg.shortEnabled) !== false;
@@ -600,12 +605,14 @@ function SidePanel({
           group={entry}
           onChange={(g) => setGroup(isLong ? "longEntry" : "shortEntry", g)}
           emptyHint={`No ${side}-entry rules — this strategy won't open any ${side} positions.`}
+          defaultAvwapAnchor={defaultAvwapAnchor}
         />
         <RuleGroupSection
           title={isLong ? "Sell to close (long)" : "Buy to close (short)"}
           group={exit}
           onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
           emptyHint={`No ${side}-exit rules — an open ${side} holds until the trading window ends.`}
+          defaultAvwapAnchor={defaultAvwapAnchor}
         />
         <RiskSection
           side={side}
@@ -730,11 +737,13 @@ function RuleGroupSection({
   group,
   onChange,
   emptyHint,
+  defaultAvwapAnchor,
 }: {
   title: string;
   group: RuleGroup;
   onChange: (g: RuleGroup) => void;
   emptyHint: string;
+  defaultAvwapAnchor: number;
 }) {
   function setCombine(combine: Combine) {
     onChange({ ...group, combine });
@@ -766,9 +775,9 @@ function RuleGroupSection({
       )}
       {group.rules.map((rule, i) => (
         <div className="bt-rule-row" key={i}>
-          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} />
+          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} />
           <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
-          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} />
+          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} />
           <button className="bt-rule-remove" onClick={() => removeRule(i)} title="Remove rule" aria-label="Remove rule">
             ✕
           </button>
@@ -781,7 +790,15 @@ function RuleGroupSection({
   );
 }
 
-function OperandPicker({ value, onChange }: { value: Operand; onChange: (op: Operand) => void }) {
+function OperandPicker({
+  value,
+  onChange,
+  defaultAvwapAnchor,
+}: {
+  value: Operand;
+  onChange: (op: Operand) => void;
+  defaultAvwapAnchor: number;
+}) {
   function setKind(kind: Operand["kind"]) {
     if (kind === "indicator") onChange(defaultOperand());
     else if (kind === "price") onChange({ kind: "price", field: "close" });
@@ -801,11 +818,13 @@ function OperandPicker({ value, onChange }: { value: Operand; onChange: (op: Ope
             value={value.indicator}
             onChange={(e) => {
               const indicator = e.target.value as IndicatorKind;
-              onChange(
-                NO_LENGTH.includes(indicator)
-                  ? { kind: "indicator", indicator }
-                  : { kind: "indicator", indicator, length: value.length ?? 9 },
-              );
+              if (indicator === "AVWAP") {
+                onChange({ kind: "indicator", indicator, anchor: defaultAvwapAnchor });
+              } else if (NO_LENGTH.includes(indicator)) {
+                onChange({ kind: "indicator", indicator });
+              } else {
+                onChange({ kind: "indicator", indicator, length: value.length ?? 9 });
+              }
             }}
           >
             {INDICATORS.map((ind) => (
@@ -814,6 +833,14 @@ function OperandPicker({ value, onChange }: { value: Operand; onChange: (op: Ope
               </option>
             ))}
           </select>
+          {value.indicator === "AVWAP" && (
+            <input
+              type="datetime-local"
+              className="bt-operand-anchor"
+              value={value.anchor && value.anchor > 0 ? msToLocalInput(value.anchor) : ""}
+              onChange={(e) => onChange({ ...value, anchor: localInputToMs(e.target.value) ?? 0 })}
+            />
+          )}
           {!NO_LENGTH.includes(value.indicator) && (
             <input
               type="number"

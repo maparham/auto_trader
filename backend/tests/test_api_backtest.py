@@ -27,8 +27,8 @@ def _candles(closes: list[float]) -> list[dict]:
     ]
 
 
-def _ind(name: str, length: int | None = None) -> dict:
-    return {"kind": "indicator", "indicator": name, "length": length}
+def _ind(name: str, length: int | None = None, anchor: int | None = None) -> dict:
+    return {"kind": "indicator", "indicator": name, "length": length, "anchor": anchor}
 
 
 def _costs() -> dict:
@@ -74,6 +74,50 @@ def test_post_backtest_returns_markers_for_a_simple_cross():
     assert result.markers[0].side == "buy"
     assert result.markers[0].leg == "long"
     assert len(result.candles) == len(candles)
+
+
+def test_post_backtest_avwap_anchor_uses_keyed_series():
+    candles = _candles([10, 10, 10, 10, 10])
+    anchor_ms = candles[0]["time"] * 1000
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        "series": {"AVWAP_%d" % anchor_ms: [9.0, 9.0, 9.0, 9.0, 9.0]},
+        **_groups(
+            long_entry={"combine": "AND", "rules": [
+                {"left": {"kind": "price", "field": "close"}, "op": "gt",
+                 "right": _ind("AVWAP", anchor=anchor_ms)}
+            ]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+    }
+    # D4 validation passes (keyed series present) and the rule fires (close 10 > 9).
+    result = _run(body)
+    assert len(result.markers) >= 1
+
+
+def test_post_backtest_422_when_avwap_keyed_series_missing():
+    candles = _candles([10, 10, 10])
+    anchor_ms = candles[0]["time"] * 1000
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        "series": {},  # AVWAP_<anchor> referenced but not provided
+        **_groups(
+            long_entry={"combine": "AND", "rules": [
+                {"left": {"kind": "price", "field": "close"}, "op": "gt",
+                 "right": _ind("AVWAP", anchor=anchor_ms)}
+            ]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+    }
+    with pytest.raises(HTTPException) as e:
+        _run(body)
+    assert e.value.status_code == 422
 
 
 def test_post_backtest_short_config_produces_short_trades_with_leg():

@@ -17,7 +17,7 @@ from auto_trader.strategy.base import Context, Strategy
 @dataclass(frozen=True, slots=True)
 class Operand:
     """One side of a Rule. Exactly one of the kind-specific fields is used:
-    kind="indicator" -> indicator/length; kind="price" -> field; kind="const" -> value.
+    kind="indicator" -> indicator/length (+ anchor for AVWAP); kind="price" -> field; kind="const" -> value.
     """
 
     kind: str  # "indicator" | "price" | "const"
@@ -25,6 +25,7 @@ class Operand:
     length: int | None = None
     field: str | None = None
     value: float | None = None
+    anchor: int | None = None  # AVWAP only: anchor epoch-ms; keys the series
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,11 +43,15 @@ class RuleGroup:
 
 def series_name(op: Operand) -> str | None:
     """The payload key this operand's series lives under, or None if it has no
-    series (price/const are read straight off the candle)."""
+    series (price/const are read straight off the candle). AVWAP is keyed by its
+    anchor (epoch-ms) so distinct anchors are distinct series; VOL has no param;
+    the rest are keyed by length."""
     if op.kind != "indicator":
         return None
-    if op.indicator in ("AVWAP", "VOL"):
-        return op.indicator
+    if op.indicator == "VOL":
+        return "VOL"
+    if op.indicator == "AVWAP":
+        return f"AVWAP_{op.anchor or 0}"
     return f"{op.indicator}_{op.length}"
 
 
