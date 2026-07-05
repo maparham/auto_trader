@@ -26,6 +26,7 @@ import {
   type Operator,
   type Combine,
   type Costs,
+  cloneRule,
   type RiskConfig,
   type StopKind,
   type TargetKind,
@@ -193,6 +194,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
     setSide(s);
     saveBacktestSide(s);
   };
+  // A single copied rule, shared across all four groups so a rule can be pasted
+  // between entry/exit and — the point of this — between the long and short
+  // sides. Null until the user copies one; cleared only by copying another.
+  const [clipboard, setClipboard] = useState<Rule | null>(null);
   useCloseOnEscape(onClose);
 
   const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
@@ -336,7 +341,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
               Short
             </button>
           </div>
-          <SidePanel side={side} cfg={cfg} setCfg={setCfg} setGroup={setGroup} defaultAvwapAnchor={defaultAvwapAnchor} />
+          <SidePanel
+            side={side}
+            cfg={cfg}
+            setCfg={setCfg}
+            setGroup={setGroup}
+            defaultAvwapAnchor={defaultAvwapAnchor}
+            clipboard={clipboard}
+            onCopy={(rule) => setClipboard(cloneRule(rule))}
+          />
 
           {usesVolume && (
             <div className="al-note">
@@ -563,12 +576,16 @@ function SidePanel({
   setCfg,
   setGroup,
   defaultAvwapAnchor,
+  clipboard,
+  onCopy,
 }: {
   side: "long" | "short";
   cfg: BacktestConfig;
   setCfg: (c: BacktestConfig) => void;
   setGroup: (which: "longEntry" | "longExit" | "shortEntry" | "shortExit", g: RuleGroup) => void;
   defaultAvwapAnchor: number;
+  clipboard: Rule | null;
+  onCopy: (rule: Rule) => void;
 }) {
   const isLong = side === "long";
   const enabled = (isLong ? cfg.longEnabled : cfg.shortEnabled) !== false;
@@ -606,6 +623,8 @@ function SidePanel({
           onChange={(g) => setGroup(isLong ? "longEntry" : "shortEntry", g)}
           emptyHint={`No ${side}-entry rules — this strategy won't open any ${side} positions.`}
           defaultAvwapAnchor={defaultAvwapAnchor}
+          clipboard={clipboard}
+          onCopy={onCopy}
         />
         <RuleGroupSection
           title={isLong ? "Sell to close (long)" : "Buy to close (short)"}
@@ -613,6 +632,8 @@ function SidePanel({
           onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
           emptyHint={`No ${side}-exit rules — an open ${side} holds until the trading window ends.`}
           defaultAvwapAnchor={defaultAvwapAnchor}
+          clipboard={clipboard}
+          onCopy={onCopy}
         />
         <RiskSection
           side={side}
@@ -738,12 +759,16 @@ function RuleGroupSection({
   onChange,
   emptyHint,
   defaultAvwapAnchor,
+  clipboard,
+  onCopy,
 }: {
   title: string;
   group: RuleGroup;
   onChange: (g: RuleGroup) => void;
   emptyHint: string;
   defaultAvwapAnchor: number;
+  clipboard: Rule | null;
+  onCopy: (rule: Rule) => void;
 }) {
   function setCombine(combine: Combine) {
     onChange({ ...group, combine });
@@ -758,6 +783,18 @@ function RuleGroupSection({
   }
   function removeRule(i: number) {
     onChange({ ...group, rules: group.rules.filter((_, idx) => idx !== i) });
+  }
+  // Insert an independent copy right after the source row, so a duplicated rule
+  // reads as a variation of the one above it rather than landing at the bottom.
+  function duplicateRule(i: number) {
+    const rules = group.rules.slice();
+    rules.splice(i + 1, 0, cloneRule(group.rules[i]));
+    onChange({ ...group, rules });
+  }
+  // Paste appends — the clipboard rule may come from another group entirely, so
+  // there's no "source row" here to sit beneath.
+  function pasteRule() {
+    if (clipboard) onChange({ ...group, rules: [...group.rules, cloneRule(clipboard)] });
   }
 
   return (
@@ -778,14 +815,44 @@ function RuleGroupSection({
           <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} />
           <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
           <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} />
-          <button className="bt-rule-remove" onClick={() => removeRule(i)} title="Remove rule" aria-label="Remove rule">
-            ✕
-          </button>
+          <div className="bt-rule-actions">
+            <button
+              className="bt-rule-btn"
+              onClick={() => duplicateRule(i)}
+              title="Duplicate rule"
+              aria-label="Duplicate rule"
+            >
+              ⧉
+            </button>
+            <button
+              className="bt-rule-btn"
+              onClick={() => onCopy(rule)}
+              title="Copy rule (paste into any side)"
+              aria-label="Copy rule"
+            >
+              ⎘
+            </button>
+            <button
+              className="bt-rule-remove"
+              onClick={() => removeRule(i)}
+              title="Remove rule"
+              aria-label="Remove rule"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       ))}
-      <button className="ghost" onClick={addRule}>
-        + Add rule
-      </button>
+      <div className="bt-rule-foot">
+        <button className="ghost" onClick={addRule}>
+          + Add rule
+        </button>
+        {clipboard && (
+          <button className="ghost" onClick={pasteRule} title="Paste the copied rule here">
+            Paste rule
+          </button>
+        )}
+      </div>
     </Section>
   );
 }

@@ -40,6 +40,14 @@ export interface RuleGroup {
   rules: Rule[];
 }
 
+/** A fresh, independent copy of a rule — used to duplicate a rule within a group
+ * or paste one copied from another side. Operands are flat value objects, so a
+ * shallow spread of each is a full deep copy; sharing them instead would let an
+ * edit to the original mutate the duplicate (and vice versa). */
+export function cloneRule(rule: Rule): Rule {
+  return { left: { ...rule.left }, op: rule.op, right: { ...rule.right } };
+}
+
 export type RangeMode = "bars" | "lastDay" | "lastWeek" | "lastMonth" | "custom";
 // How far back to load candles before the trading window so indicators are
 // already warm at the window's first bar (D6 in the plan) — "full" = all
