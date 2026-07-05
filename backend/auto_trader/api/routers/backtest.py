@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
-from auto_trader.core.models import Candle, Resolution
+from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.models import Candle
 from auto_trader.engine.backtest import BacktestEngine
 from auto_trader.engine.metrics import compute_metrics
 from auto_trader.strategy.rule import RuleStrategy, series_name
@@ -132,6 +133,6 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         summary=result.summary(),
         metrics=compute_metrics(
             result.trades, result.equity, result.net_pnl,
-            req.costs.startingCash, Resolution(req.resolution).seconds,
+            req.costs.startingCash, resolution_seconds(req.resolution),
         ),
     )

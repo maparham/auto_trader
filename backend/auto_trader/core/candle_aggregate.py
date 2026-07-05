@@ -1,9 +1,11 @@
-"""Aggregate native DAY/WEEK candles into higher "derived" timeframes.
+"""Aggregate native MINUTE/DAY/WEEK candles into "derived" timeframes.
 
-Derived resolutions (2W/3W/6W, 1M/2M/3M, 1Y) are NOT broker resolutions and
+Derived resolutions (3m, 2W/3W/6W, 1M/2M/3M, 1Y) are NOT broker resolutions and
 are NEVER cached as their own series. The API folds cached base bars into
-calendar-aware buckets on read; this module is the pure, I/O-free core (plus a
-thin streaming wrapper that re-folds the forming bucket live).
+fixed-duration or calendar-aware buckets on read; this module is the pure,
+I/O-free core (plus a thin streaming wrapper that re-folds the forming bucket
+live). 3m is the one derived TF finer than a native (it folds native 1m bars);
+the rest are coarser.
 """
 
 from __future__ import annotations
@@ -15,7 +17,12 @@ from typing import Any
 
 from auto_trader.core.models import Candle, Resolution
 
+_MINUTE = 60
 _WEEK = 604800
+# Nominal seconds for calendar buckets (months vary 28–31 days, years 365–366).
+# Only for coarse math like backtest annualization — never for bucketing.
+_MONTH = 30 * 86400
+_YEAR = 365 * 86400
 # Ceiling on a single base fetch. Capital's get_recent_candles hard-clamps to
 # 1000 bars/request (no pagination), so a larger value would only defeat the
 # cache warm-path (cached_n < count-1 stays true forever -> every recent() refetches
@@ -26,11 +33,12 @@ _MAX_BASE = 1000
 @dataclass(frozen=True, slots=True)
 class BucketRule:
     base: Resolution  # native series to fold from
-    kind: str         # "week" | "month" | "year"
-    group: int        # multiplier: 2W->2, 3M->3, 1Y->1
+    kind: str         # "minute" | "week" | "month" | "year"
+    group: int        # multiplier: 3m->3, 2W->2, 3M->3, 1Y->1
 
 
 DERIVED: dict[str, BucketRule] = {
+    "MINUTE_3": BucketRule(Resolution.MINUTE, "minute", 3),
     "WEEK_2": BucketRule(Resolution.WEEK, "week", 2),
     "WEEK_3": BucketRule(Resolution.WEEK, "week", 3),
     "WEEK_6": BucketRule(Resolution.WEEK, "week", 6),
@@ -45,12 +53,36 @@ def is_derived(res: str) -> bool:
     return res in DERIVED
 
 
+def resolution_seconds(res: str) -> int:
+    """Nominal bar width in seconds for any resolution, native or derived.
+
+    Native resolutions defer to Resolution.seconds. Derived ones can't (their
+    keys aren't in the enum): fixed-duration buckets are exact, month/year use a
+    nominal average (matches the frontend's RESOLUTION_SECONDS). Intended for
+    coarse math like backtest annualization, never for bucketing."""
+    rule = DERIVED.get(res)
+    if rule is None:
+        return Resolution(res).seconds
+    if rule.kind == "minute":
+        return rule.group * _MINUTE
+    if rule.kind == "week":
+        return rule.group * _WEEK
+    if rule.kind == "month":
+        return rule.group * _MONTH
+    return _YEAR  # year
+
+
 def _utc_ts(dt: datetime) -> int:
     return int(dt.timestamp())
 
 
 def bucket_open(ts: int, rule: BucketRule) -> int:
     """UTC open timestamp of the bucket containing a base bar opening at `ts`."""
+    if rule.kind == "minute":
+        # Fixed-duration buckets aligned to the epoch. group*60 divides an hour
+        # evenly (3m -> 180s, and 3600 % 180 == 0), so buckets land on :00/:03/:06…
+        span = rule.group * _MINUTE
+        return ts - ts % span
     if rule.kind == "week":
         # Weekly bars share a fixed weekday offset; group by absolute week index and
         # subtract whole weeks from `ts` itself so the result PRESERVES that offset
@@ -70,6 +102,8 @@ def bucket_end(ts: int, rule: BucketRule) -> int:
     """UTC open timestamp of the bucket AFTER the one containing `ts` (exclusive
     upper edge). Used to snap a scroll-back window outward so every folded bucket
     is complete — partial edge buckets would corrupt the chart on prepend."""
+    if rule.kind == "minute":
+        return bucket_open(ts, rule) + rule.group * _MINUTE
     if rule.kind == "week":
         return bucket_open(ts, rule) + rule.group * _WEEK
     dt = datetime.fromtimestamp(bucket_open(ts, rule), tz=timezone.utc)
@@ -108,7 +142,7 @@ def fold(base_bars: list[Candle], rule: BucketRule) -> list[Candle]:
 
 def base_count_for(rule: BucketRule, n: int) -> int:
     """Base bars to fetch to cover `n` aggregate bars (over-fetch, then slice)."""
-    if rule.kind == "week":
+    if rule.kind in ("minute", "week"):
         per = rule.group
     elif rule.kind == "month":
         per = 31 * rule.group

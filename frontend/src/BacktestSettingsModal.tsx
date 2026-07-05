@@ -173,6 +173,18 @@ function CrossGlyph({ dir }: { dir: "up" | "down" }) {
   );
 }
 
+// Flip an operator to its opposite sense — the mirror of each comparison, so a
+// whole side's rules can be inverted in one click (e.g. to reuse a long setup
+// as its short mirror).
+const OP_REVERSE: Record<Operator, Operator> = {
+  crossesAbove: "crossesBelow",
+  crossesBelow: "crossesAbove",
+  gt: "lt",
+  lt: "gt",
+  gte: "lte",
+  lte: "gte",
+};
+
 function OpGlyph({ op }: { op: Operator }) {
   if (op === "crossesAbove") return <CrossGlyph dir="up" />;
   if (op === "crossesBelow") return <CrossGlyph dir="down" />;
@@ -212,13 +224,14 @@ function clampPosOnBlur(el: HTMLInputElement, floor: number, commit: (n: number)
 }
 
 const DATE_OPTS: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" };
+const TIME_OPTS: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
 
 function formatDateRange(fromMs: number, toMs: number): string {
   const from = new Date(fromMs);
   const to = new Date(toMs);
   const sameYear = from.getFullYear() === to.getFullYear();
-  const fromLabel = from.toLocaleDateString([], sameYear ? { day: "numeric", month: "short" } : DATE_OPTS);
-  const toLabel = to.toLocaleDateString([], DATE_OPTS);
+  const fromLabel = from.toLocaleString([], { ...(sameYear ? { day: "numeric", month: "short" } : DATE_OPTS), ...TIME_OPTS });
+  const toLabel = to.toLocaleString([], { ...DATE_OPTS, ...TIME_OPTS });
   return `${fromLabel} – ${toLabel}`;
 }
 
@@ -403,6 +416,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // between entry/exit and — the point of this — between the long and short
   // sides. Null until the user copies one; cleared only by copying another.
   const [clipboard, setClipboard] = useState<Rule | null>(null);
+  // A copied set of whole-group rules, shared across all four groups the same way
+  // — so every rule in one side/leg can be pasted into another at once.
+  const [groupClipboard, setGroupClipboard] = useState<Rule[] | null>(null);
 
   // The timeframe the run will actually use: the config override when set, else
   // the active chart timeframe (the `resolution` prop). Window math + the header
@@ -829,6 +845,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             baseResolution={effectiveRes}
             clipboard={clipboard}
             onCopy={(rule) => setClipboard(cloneRule(rule))}
+            groupClipboard={groupClipboard}
+            onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
           />
 
           {usesVolume && (
@@ -1117,6 +1135,8 @@ function SidePanel({
   baseResolution,
   clipboard,
   onCopy,
+  groupClipboard,
+  onCopyAll,
 }: {
   side: "long" | "short";
   cfg: BacktestConfig;
@@ -1126,6 +1146,8 @@ function SidePanel({
   baseResolution: string;
   clipboard: Rule | null;
   onCopy: (rule: Rule) => void;
+  groupClipboard: Rule[] | null;
+  onCopyAll: (rules: Rule[]) => void;
 }) {
   const isLong = side === "long";
   const enabled = (isLong ? cfg.longEnabled : cfg.shortEnabled) !== false;
@@ -1167,6 +1189,8 @@ function SidePanel({
           baseResolution={baseResolution}
           clipboard={clipboard}
           onCopy={onCopy}
+          groupClipboard={groupClipboard}
+          onCopyAll={onCopyAll}
         />
         <RuleGroupSection
           title={isLong ? "Sell to close" : "Buy to close"}
@@ -1178,6 +1202,8 @@ function SidePanel({
           baseResolution={baseResolution}
           clipboard={clipboard}
           onCopy={onCopy}
+          groupClipboard={groupClipboard}
+          onCopyAll={onCopyAll}
         />
         <RiskSection
           risk={(isLong ? cfg.longRisk : cfg.shortRisk) ?? EMPTY_RISK}
@@ -1333,6 +1359,17 @@ function EyeIcon({ on }: { on: boolean }) {
   );
 }
 
+// Two overlapping sheets — the standard "copy" glyph, reused for both the
+// copy-all and paste-all whole-group actions.
+function CopyAllIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <rect x="9" y="9" width="11" height="11" rx="2" strokeLinejoin="round" />
+      <path d="M5 15 H4.5 A1.5 1.5 0 0 1 3 13.5 V4.5 A1.5 1.5 0 0 1 4.5 3 h9 A1.5 1.5 0 0 1 15 4.5 V5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // Per-row actions collapsed into one ⋮ menu (the inline icons were too small to
 // notice). Portaled like the operator dropdown so the panel's overflow can't
 // clip it. Includes a Disable/Enable toggle — a disabled rule is kept but
@@ -1432,6 +1469,8 @@ function RuleGroupSection({
   baseResolution,
   clipboard,
   onCopy,
+  groupClipboard,
+  onCopyAll,
 }: {
   title: string;
   info?: string;
@@ -1442,9 +1481,25 @@ function RuleGroupSection({
   baseResolution: string;
   clipboard: Rule | null;
   onCopy: (rule: Rule) => void;
+  groupClipboard: Rule[] | null;
+  onCopyAll: (rules: Rule[]) => void;
 }) {
   function setCombine(combine: Combine) {
     onChange({ ...group, combine });
+  }
+  // Flip every rule's operator to its opposite in one go.
+  function reverseAll() {
+    onChange({ ...group, rules: group.rules.map((r) => ({ ...r, op: OP_REVERSE[r.op] })) });
+  }
+  // Copy the whole group's rules, and paste a copied set (appending independent
+  // clones so they can land in another side/leg without sharing references).
+  function copyAll() {
+    onCopyAll(group.rules);
+  }
+  function pasteAll() {
+    if (groupClipboard?.length) {
+      onChange({ ...group, rules: [...group.rules, ...groupClipboard.map(cloneRule)] });
+    }
   }
   function setRule(i: number, rule: Rule) {
     const rules = group.rules.slice();
@@ -1473,14 +1528,36 @@ function RuleGroupSection({
   return (
     <Section title={title} info={info}>
       {group.rules.length === 0 && <div className="al-note bt-empty-rules">{emptyHint}</div>}
-      {group.rules.length > 1 && (
-        <div className="seg">
-          <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>
-            AND
-          </button>
-          <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>
-            OR
-          </button>
+      {group.rules.length > 0 && (
+        <div className="bt-rule-groophead">
+          {group.rules.length > 1 && (
+            <div className="seg">
+              <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>
+                AND
+              </button>
+              <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>
+                OR
+              </button>
+            </div>
+          )}
+          <div className="bt-groophead-actions">
+            <button
+              className="bt-rule-toggle bt-reverse-ops"
+              onClick={reverseAll}
+              title="Flip every operator to its opposite (> ↔ <, crosses above ↔ below)"
+              aria-label="Reverse operators"
+            >
+              ⇄
+            </button>
+            <button
+              className="bt-rule-toggle bt-copyall"
+              onClick={copyAll}
+              title="Copy all rules in this group"
+              aria-label="Copy all rules"
+            >
+              <CopyAllIcon />
+            </button>
+          </div>
         </div>
       )}
       {group.rules.map((rule, i) => (
@@ -1517,6 +1594,15 @@ function RuleGroupSection({
             Paste rule
           </button>
         )}
+        {groupClipboard?.length ? (
+          <button
+            className="ghost bt-pasteall"
+            onClick={pasteAll}
+            title={`Paste all ${groupClipboard.length} copied rule${groupClipboard.length > 1 ? "s" : ""} here`}
+          >
+            <CopyAllIcon /> Paste all
+          </button>
+        ) : null}
       </div>
     </Section>
   );

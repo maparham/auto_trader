@@ -165,9 +165,10 @@ async def _fetch_leg_candles(
     if resolution in SECONDS_INTERVALS:
         return await TICK_STORE.bars(broker_id, epic, SECONDS_INTERVALS[resolution], bars)
     if is_derived(resolution):
-        # 2W/3W/6W, 1M/2M/3M, 1Y aren't native resolutions: fold the cached DAY/WEEK
-        # base series into calendar buckets on read. The cache only ever sees the
-        # native base series (no derived rows), so its backfill gives us full history.
+        # 3m, 2W/3W/6W, 1M/2M/3M, 1Y aren't native resolutions: fold the cached base
+        # series (1m for 3m; DAY/WEEK for the rest) into buckets on read. The cache
+        # only ever sees the native base series (no derived rows), so its backfill
+        # gives us full history.
         rule = DERIVED[resolution]
         base = rule.base
         base_key = (broker_id, epic, base.value, price_side)

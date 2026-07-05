@@ -25,6 +25,12 @@ export const PERIODS: Period[] = [
   { resolution: "WEEK", label: "1W" },
 ];
 
+// 3m isn't a native Capital resolution (their API rejects it) — the backend
+// folds native 1m bars into 3-minute buckets on read, like the coarser derived
+// timeframes below. It's the one derived TF finer than a native, so it slots
+// into the Minutes group right after 1m rather than into its own group.
+const MINUTE_DERIVED_PERIODS: Period[] = [{ resolution: "MINUTE_3", label: "3m" }];
+
 // Derived (non-native) timeframes: the backend folds cached DAY/WEEK base bars
 // into calendar buckets — full history + live, but not Capital resolutions. Like
 // the seconds group, these live only in the grouped dropdown, not the quick-bar.
@@ -60,7 +66,12 @@ export const PERIOD_GROUPS: PeriodGroup[] = [
   { label: "Seconds", periods: SECONDS_PERIODS },
   {
     label: "Minutes",
-    periods: PERIODS.filter((p) => p.resolution.startsWith("MINUTE")),
+    // 1m, then derived 3m, then native 5m/15m/30m (ascending by duration).
+    periods: [
+      ...PERIODS.filter((p) => p.resolution === "MINUTE"),
+      ...MINUTE_DERIVED_PERIODS,
+      ...PERIODS.filter((p) => p.resolution.startsWith("MINUTE_")),
+    ],
   },
   {
     label: "Hours",
@@ -89,6 +100,7 @@ export const PERIOD_GROUPS: PeriodGroup[] = [
 export const ALL_PERIODS: Period[] = [
   ...SECONDS_PERIODS,
   ...PERIODS,
+  ...MINUTE_DERIVED_PERIODS,
   ...DERIVED_PERIODS,
 ];
 
@@ -632,6 +644,7 @@ export const RESOLUTION_SECONDS: Record<string, number> = {
   SECOND_30: 30,
   SECOND_45: 45,
   MINUTE: 60,
+  MINUTE_3: 180, // derived: folded from native 1m bars
   MINUTE_5: 300,
   MINUTE_15: 900,
   MINUTE_30: 1800,

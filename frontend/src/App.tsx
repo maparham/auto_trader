@@ -10,7 +10,7 @@ import ThemeToggle from "./ThemeToggle";
 import SettingsModal from "./Settings";
 import BacktestSettingsModal from "./BacktestSettingsModal";
 import { defaultBacktestConfig } from "./lib/backtestConfig";
-import { loadBacktestLastUsed, saveBacktestLastUsed } from "./lib/persist";
+import { loadBacktestLastUsed, saveBacktestLastUsed, loadBacktestOpen, saveBacktestOpen } from "./lib/persist";
 import AlertModal from "./AlertModal";
 import IndicatorSettings from "./IndicatorSettings";
 import DrawingSettings from "./DrawingSettings";
@@ -248,8 +248,14 @@ export default function App() {
   // Toolbar gear + chart context menu request the Settings modal via a signal.
   useEffect(() => settingsRequest.subscribe(() => setShowSettings(true)), []);
   // The toolbar Backtest button opens the docked config panel via a signal.
-  const [showBacktestCfg, setShowBacktestCfg] = useState(false);
-  useEffect(() => backtestSettingsRequest.subscribe(() => setShowBacktestCfg(true)), []);
+  // Open-state is device-local so the panel reopens after a reload if it was
+  // open (loadBacktestOpen), showing the persisted config/results without re-running.
+  const [showBacktestCfg, setShowBacktestCfg] = useState(loadBacktestOpen);
+  const openBacktestCfg = (open: boolean) => {
+    setShowBacktestCfg(open);
+    saveBacktestOpen(open);
+  };
+  useEffect(() => backtestSettingsRequest.subscribe(() => openBacktestCfg(true)), []);
   const [alertReq, setAlertReq] = useState(alertModalRequest.value);
   useEffect(() => alertModalRequest.subscribe(setAlertReq), []);
   const [alertEdit, setAlertEdit] = useState(alertEditRequest.value);
@@ -1599,7 +1605,7 @@ export default function App() {
               saveBacktestLastUsed(cfg);
               requestBacktestRun();
             }}
-            onClose={() => setShowBacktestCfg(false)}
+            onClose={() => openBacktestCfg(false)}
           />
         )}
       </div>

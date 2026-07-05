@@ -1120,6 +1120,12 @@
 /* Add / Paste live on one row; Paste only appears while a rule is on the
    clipboard, so the group can gain a rule copied from the other side. */
 .bt-rule-foot { display: flex; gap: 8px; }
+/* The AND/OR switch and the whole-group actions (reverse operators, copy all)
+   share one row; the actions sit at the far end. */
+.bt-rule-groophead { display: flex; align-items: center; gap: 8px; }
+.bt-groophead-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.bt-reverse-ops { white-space: nowrap; }
+.bt-pasteall { display: inline-flex; align-items: center; gap: 4px; }
 /* A rule group with zero rules is never true — for "Buy when" that means the
    backtest can never open a position at all, which reads as "nothing happens"
    with no other clue why. Call it out instead of letting it fail silently. */

@@ -32,6 +32,7 @@ import {
 import ChartRangeBar from "./ChartRangeBar";
 import { rangeWindow, goToDateTs, type RangeKey } from "./lib/rangeWindow";
 import { pageHistoryBack } from "./lib/historyPaging";
+import { minPositiveGap } from "./lib/barInterval";
 import { klineStyles } from "./lib/chartTheme";
 import ChartLegend, {
   buildLegendRows,
@@ -316,12 +317,8 @@ function paintSelectionDots(
     if (coords.length < 2) continue;
     // Bar interval (ms): the smallest positive gap between adjacent bars (so
     // weekend/overnight gaps don't distort the per-bar phase used for anchoring).
-    let barMs = Infinity;
-    for (let i = 1; i < coords.length; i++) {
-      const d = coords[i].t - coords[i - 1].t;
-      if (d > 0 && d < barMs) barMs = d;
-    }
-    if (!Number.isFinite(barMs) || barMs <= 0) continue;
+    const barMs = minPositiveGap(coords.map((c) => c.t));
+    if (barMs == null) continue;
     // Octave-thin when zoomed out so dots never crowd, but only by doubling the
     // step (a multiple of the base) so the surviving dots stay anchored to the
     // same bars — they thin/reappear on zoom, never slide.

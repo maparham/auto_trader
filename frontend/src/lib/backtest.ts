@@ -33,6 +33,7 @@ import {
   backtestClusterHoverSignal,
 } from "./signals";
 import { tradeZones } from "./tradeZones";
+import { minPositiveGap } from "./barInterval";
 import { RESOLUTION_SECONDS } from "./feed";
 import {
   saveBacktestResult,
@@ -133,7 +134,9 @@ function removeSelectionOverlays(chart: Chart, artifacts: BacktestArtifacts): vo
 function scrollChartToTrade(chart: Chart, entryTs: number, exitTs: number): void {
   const data = chart.getDataList();
   if (!data || data.length < 2) return;
-  const barMs = Math.max(1, data[data.length - 1].timestamp - data[data.length - 2].timestamp);
+  // Robust bar interval, not the last-two-bars gap (which can straddle a session
+  // break and blow the fitted window up to hours) — see minPositiveGap.
+  const barMs = minPositiveGap(data.map((k) => k.timestamp)) || 1;
   const from = Math.min(entryTs, exitTs);
   const to = Math.max(entryTs, exitTs);
   const pad = Math.max((to - from) * 0.25, barMs * 3);
@@ -305,6 +308,30 @@ export function aggregateTradesByBar(
   return [...byBar.values()].sort((a, b) => a.barTs - b.barTs);
 }
 
+/** Snap a timestamp (ms) to the closest bar in an ascending `barTimes` (ms).
+ * Used to anchor native fill arrows on a finer view whose interval doesn't
+ * evenly divide the native one (3m viewing a 5m run) — the fill falls between
+ * two bars, so it lands on whichever is nearer. A fill already on a bar returns
+ * that same bar; empty `barTimes` returns the input unchanged. Exported for tests. */
+export function snapNearestBar(ms: number, barTimes: number[]): number {
+  const n = barTimes.length;
+  if (n === 0) return ms;
+  if (ms <= barTimes[0]) return barTimes[0];
+  if (ms >= barTimes[n - 1]) return barTimes[n - 1];
+  // Binary search for the first bar at or after `ms`, then pick the nearer of it
+  // and the bar before it (ties go to the earlier bar).
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (barTimes[mid] < ms) lo = mid + 1;
+    else hi = mid;
+  }
+  const after = barTimes[lo];
+  const before = barTimes[lo - 1];
+  return ms - before <= after - ms ? before : after;
+}
+
 /** The current higher-timeframe aggregate pills for a chart, plus the result
  * they belong to (for the drill-in resolution). null when the chart isn't in
  * aggregate mode (native/none, or no backtest). Read by ChartCore's redraw loop
@@ -472,10 +499,11 @@ function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade)
   const entryTs = t.entry_time * 1000;
   const exitTs = t.exit_time * 1000;
   const data = chart.getDataList();
-  const barMs =
-    data && data.length >= 2
-      ? Math.max(1, data[data.length - 1].timestamp - data[data.length - 2].timestamp)
-      : 1;
+  // Robust bar interval, NOT the last-two-bars gap: that trailing gap can straddle
+  // a session/overnight/weekend break (or the seam between loaded history and a
+  // freshly appended live bar) and run to hours or days, which would balloon the
+  // zone's right edge for a short-lived trade. See minPositiveGap.
+  const barMs = (data && minPositiveGap(data.map((k) => k.timestamp))) || 1;
   const pad = Math.max(Math.abs(exitTs - entryTs) * 0.15, barMs);
   const windowEnd = Math.max(entryTs, exitTs) + pad;
   const id = chart.createOverlay({
@@ -609,6 +637,13 @@ export function renderArtifacts(
       tradeIndexByFill.set(`${t.exit_time}|${t.leg}`, i);
     });
 
+    // Fill timestamps land on the native timeframe's bar opens. On a finer view
+    // whose interval doesn't evenly divide the native one (3m viewing a 5m run) a
+    // fill falls between two bars — snap it to the nearest loaded bar so the arrow
+    // sits on a real candle. Same-or-evenly-dividing views already land exactly, so
+    // snapNearestBar is a no-op there (returns the identical timestamp).
+    const barTimes = (chart.getDataList() ?? []).map((k) => k.timestamp);
+
     // Trade markers -> locked backtestMarker overlays (arrow + label). Markers
     // that map to a trade also emphasize/scroll the trades panel row on hover
     // (chart -> row half of the two-way sync; the row -> chart half is the
@@ -618,7 +653,7 @@ export function renderArtifacts(
       const idx = tradeIndexByFill.get(`${m.time}|${m.leg}`);
       const id = chart.createOverlay({
         name: MARKER_OVERLAY,
-        points: [{ timestamp: m.time * 1000, value: m.price }],
+        points: [{ timestamp: snapNearestBar(m.time * 1000, barTimes), value: m.price }],
         lock: true, // backtest artifacts: not user-editable
         extendData: {
           label: markerLabel(m.side, m.leg, m.reason),
@@ -722,16 +757,15 @@ export function renderArtifacts(
 /** Decide what a saved backtest renders on the `current` timeframe given the
  * `native` one it was run on:
  *  - markerMode:
- *      "native"    — the native timeframe and any FINER one where each fill
- *                    timestamp still lands on a bar boundary (the current
- *                    interval evenly divides the native one): per-fill arrows.
- *                    5m shows on 1m/5m.
+ *      "native"    — the native timeframe and ANY finer one: per-fill arrows.
+ *                    When the finer interval doesn't evenly divide the native
+ *                    one (e.g. 3m viewing a 5m run) a fill falls between bars, so
+ *                    renderArtifacts snaps it to the nearest bar. 5m shows on
+ *                    1m/3m/5m.
  *      "aggregate" — any COARSER timeframe: one pill per bar (count + net P&L),
  *                    since individual fills would collapse onto the same bar.
  *                    5m aggregates on 15m/1H/1D.
- *      "none"      — a finer timeframe that does NOT divide the native one, so
- *                    fills can't be anchored (45s native / 10s current). Nothing
- *                    drawn.
+ *      "none"      — only when a resolution is unknown (no bar width to compare).
  *  - equity: native timeframe ONLY (a bar-indexed equity curve is misleading
  *    once bars aggregate, and sparse once they subdivide).
  * Pure + exported for tests. */
@@ -742,10 +776,7 @@ export function backtestRenderFlags(
   const cur = RESOLUTION_SECONDS[current] ?? 0;
   const nat = RESOLUTION_SECONDS[native] ?? 0;
   let markerMode: "native" | "aggregate" | "none" = "none";
-  if (cur > 0 && nat > 0) {
-    if (cur > nat) markerMode = "aggregate";
-    else if (nat % cur === 0) markerMode = "native";
-  }
+  if (cur > 0 && nat > 0) markerMode = cur > nat ? "aggregate" : "native";
   return { markerMode, drawEquity: current === native };
 }
 

@@ -9,6 +9,7 @@ from auto_trader.core.candle_aggregate import (
     bucket_open,
     fold,
     is_derived,
+    resolution_seconds,
 )
 from auto_trader.core.models import Candle, Resolution
 
@@ -21,10 +22,15 @@ def _ts(y, m, d):
     return int(datetime(y, m, d, tzinfo=timezone.utc).timestamp())
 
 
-def test_registry_covers_seven_tokens():
+def _tsm(y, mo, d, h, mi):
+    return int(datetime(y, mo, d, h, mi, tzinfo=timezone.utc).timestamp())
+
+
+def test_registry_covers_eight_tokens():
     assert set(DERIVED) == {
-        "WEEK_2", "WEEK_3", "WEEK_6", "MONTH", "MONTH_2", "MONTH_3", "YEAR",
+        "MINUTE_3", "WEEK_2", "WEEK_3", "WEEK_6", "MONTH", "MONTH_2", "MONTH_3", "YEAR",
     }
+    assert DERIVED["MINUTE_3"].base is Resolution.MINUTE
     assert DERIVED["WEEK_2"].base is Resolution.WEEK
     assert DERIVED["MONTH"].base is Resolution.DAY
     assert DERIVED["YEAR"].base is Resolution.DAY
@@ -33,8 +39,54 @@ def test_registry_covers_seven_tokens():
 def test_is_derived():
     assert is_derived("MONTH") is True
     assert is_derived("WEEK_2") is True
+    assert is_derived("MINUTE_3") is True
     assert is_derived("WEEK") is False
     assert is_derived("MINUTE_5") is False
+
+
+def test_bucket_open_minute_aligns_to_three_minute_grid():
+    r = DERIVED["MINUTE_3"]
+    # :00/:03/:06 boundaries; bars in between snap back to the bucket open.
+    assert bucket_open(_tsm(2026, 7, 5, 14, 0), r) == _tsm(2026, 7, 5, 14, 0)
+    assert bucket_open(_tsm(2026, 7, 5, 14, 1), r) == _tsm(2026, 7, 5, 14, 0)
+    assert bucket_open(_tsm(2026, 7, 5, 14, 2), r) == _tsm(2026, 7, 5, 14, 0)
+    assert bucket_open(_tsm(2026, 7, 5, 14, 3), r) == _tsm(2026, 7, 5, 14, 3)
+    # Grid stays aligned across the hour boundary (3600 % 180 == 0).
+    assert bucket_open(_tsm(2026, 7, 5, 14, 59), r) == _tsm(2026, 7, 5, 14, 57)
+    assert bucket_open(_tsm(2026, 7, 5, 15, 0), r) == _tsm(2026, 7, 5, 15, 0)
+
+
+def test_bucket_end_minute_is_next_grid_open():
+    r = DERIVED["MINUTE_3"]
+    assert bucket_end(_tsm(2026, 7, 5, 14, 1), r) == _tsm(2026, 7, 5, 14, 3)
+    assert bucket_end(_tsm(2026, 7, 5, 14, 59), r) == _tsm(2026, 7, 5, 15, 0)
+
+
+def test_fold_minute_reduces_three_one_minute_bars():
+    r = DERIVED["MINUTE_3"]
+    bars = [
+        Candle(datetime(2026, 7, 5, 14, 0, tzinfo=timezone.utc), 10, 12, 9, 11, 5),
+        Candle(datetime(2026, 7, 5, 14, 1, tzinfo=timezone.utc), 11, 15, 10, 14, 7),
+        Candle(datetime(2026, 7, 5, 14, 2, tzinfo=timezone.utc), 14, 14, 8, 9, 3),
+        Candle(datetime(2026, 7, 5, 14, 3, tzinfo=timezone.utc), 9, 10, 8, 10, 2),
+    ]
+    out = fold(bars, r)
+    assert len(out) == 2
+    first = out[0]
+    assert first.time == datetime(2026, 7, 5, 14, 0, tzinfo=timezone.utc)
+    assert (first.open, first.high, first.low, first.close, first.volume) == (10, 15, 8, 9, 15)
+    assert out[1].open == 9 and out[1].close == 10
+
+
+def test_resolution_seconds_native_and_derived():
+    assert resolution_seconds("MINUTE") == 60
+    assert resolution_seconds("MINUTE_5") == 300
+    assert resolution_seconds("WEEK") == 604800
+    # Derived tokens aren't in the Resolution enum; helper must still resolve them.
+    assert resolution_seconds("MINUTE_3") == 180
+    assert resolution_seconds("WEEK_2") == 2 * 604800
+    assert resolution_seconds("MONTH") == 30 * 86400
+    assert resolution_seconds("YEAR") == 365 * 86400
 
 
 def test_bucket_open_month_groups_calendar_month():
@@ -102,6 +154,7 @@ def test_fold_empty():
 
 
 def test_base_count_for():
+    assert base_count_for(DERIVED["MINUTE_3"], 10) == 30
     assert base_count_for(DERIVED["WEEK_2"], 10) == 20
     assert base_count_for(DERIVED["WEEK_3"], 10) == 30
     assert base_count_for(DERIVED["MONTH"], 4) == 4 * 31

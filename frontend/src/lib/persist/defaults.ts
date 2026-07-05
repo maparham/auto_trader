@@ -170,6 +170,17 @@ export function saveBacktestSplit(split: BacktestSplit): void {
   saveLocal(BACKTEST_SPLIT_KEY, split);
 }
 
+// Whether the docked backtest config panel was open. Device-local view
+// preference (like side & split) so the panel reopens after a reload if it was
+// open — showing the already-persisted config/results, without re-running.
+const BACKTEST_OPEN_KEY = `${PREFIX}.backtestOpen`;
+export function loadBacktestOpen(): boolean {
+  return load<boolean>(BACKTEST_OPEN_KEY, false);
+}
+export function saveBacktestOpen(open: boolean): void {
+  saveLocal(BACKTEST_OPEN_KEY, open);
+}
+
 // --- per-symbol chart templates (global, keyed by epic) ----------------------
 //
 // A saved layout (indicators + drawings) tied to a SYMBOL, not a cell — so a
