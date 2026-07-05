@@ -26,6 +26,7 @@ class Operand:
     field: str | None = None
     value: float | None = None
     anchor: int | None = None  # AVWAP only: anchor epoch-ms; keys the series
+    timeframe: str | None = None  # higher timeframe this indicator runs on; keys the series (None ⇒ base)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,10 +50,15 @@ def series_name(op: Operand) -> str | None:
     if op.kind != "indicator":
         return None
     if op.indicator == "VOL":
-        return "VOL"
-    if op.indicator == "AVWAP":
-        return f"AVWAP_{op.anchor or 0}"
-    return f"{op.indicator}_{op.length}"
+        base = "VOL"
+    elif op.indicator == "AVWAP":
+        base = f"AVWAP_{op.anchor or 0}"
+    else:
+        base = f"{op.indicator}_{op.length}"
+    # A per-operand timeframe qualifies the key so a base-timeframe indicator and
+    # the same indicator on a higher timeframe are distinct series. None ⇒ base ⇒
+    # the bare key. Must match the frontend's seriesName (backtestConfig.ts).
+    return f"{base}@{op.timeframe}" if op.timeframe else base
 
 
 def _operand_name(op: Operand) -> str:

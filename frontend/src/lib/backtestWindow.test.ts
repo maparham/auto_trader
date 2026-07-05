@@ -115,6 +115,33 @@ describe("requiredWarmupBars", () => {
   it("full: the longest indicator length is still the floor (can't ask for less than that)", () => {
     expect(requiredWarmupBars(config("full"))).toBe(21);
   });
+
+  it("scales an operand's warm-up by its timeframe when baseSeconds is given", () => {
+    // EMA(10) on a 5-minute timeframe over a 1-minute base needs 10 × 5 = 50
+    // base bars of warm-up, not 10.
+    const c = cfg({
+      range: { mode: "bars", bars: 500, history: "minimal" },
+      longEntry: {
+        combine: "AND",
+        rules: [{ left: { kind: "indicator", indicator: "EMA", length: 10, timeframe: "MINUTE_5" }, op: "gt", right: { kind: "const", value: 0 } }],
+      },
+    });
+    expect(requiredWarmupBars(c, 60)).toBe(50); // 1-minute base
+    expect(requiredWarmupBars(c)).toBe(10); // no baseSeconds ⇒ unscaled
+  });
+
+  it("bars depth: a higher-timeframe operand can raise the requirement above the asked N", () => {
+    // Asking 30 base bars, but EMA(20)@5m needs 20 × 5 = 100 base bars warm.
+    const c = cfg({
+      range: { mode: "bars", bars: 500, history: "bars", historyBars: 30 },
+      longEntry: {
+        combine: "AND",
+        rules: [{ left: { kind: "indicator", indicator: "EMA", length: 20, timeframe: "MINUTE_5" }, op: "gt", right: { kind: "const", value: 0 } }],
+      },
+    });
+    expect(requiredWarmupBars(c, 60)).toBe(100);
+    expect(requiredWarmupBars(c)).toBe(30); // unscaled falls back to the asked N
+  });
 });
 
 describe("warmupBarCount", () => {

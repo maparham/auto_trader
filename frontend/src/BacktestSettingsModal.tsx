@@ -3,13 +3,14 @@
 // (useDraggable/useCloseOnEscape/CloseButton, .modal-backdrop/.modal/.modal-head/
 // .modal-foot) — no shared wrapper, no portal.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CloseButton from "./CloseButton";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
 import { resolveWindow } from "./lib/backtestWindow";
-import { RESOLUTION_SECONDS } from "./lib/feed";
+import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
   longestIndicatorLength,
   type BacktestConfig,
@@ -34,6 +35,7 @@ import {
   type DayTimeWindow,
 } from "./lib/backtestConfig";
 import { SESSION_PRESETS, buildRangeChips, coverage, isActive, resolveMask } from "./lib/backtestSchedule";
+import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
 import {
   loadBacktestPresets,
@@ -49,6 +51,9 @@ interface Props {
   initial: BacktestConfig;
   epic: string;
   resolution: string;
+  // The focused chart cell, so "Pick Range" can arm a drag-select on it. Null when
+  // no cell is focused — the button is then disabled.
+  controller: ChartController | null;
   onRun: (cfg: BacktestConfig) => void;
   onClose: () => void;
 }
@@ -182,6 +187,30 @@ function OpGlyph({ op }: { op: Operator }) {
 // set fall back to a nominal week.
 const NOMINAL_WINDOW_BARS = 168;
 
+// A number <input> happily keeps a leading zero the model can't represent —
+// "0200", or the "0" left behind after you clear the field (Number("") is 0) and
+// type your number after it, giving "0200". React won't re-render that away on
+// its own when the parsed value is unchanged, so strip it off the raw string in
+// place. Returns the cleaned string (may be "" — callers coerce with Number()).
+function cleanNumInput(el: HTMLInputElement): string {
+  const cleaned = el.value.replace(/^(-?)0+(?=\d)/, "$1");
+  if (cleaned !== el.value) el.value = cleaned;
+  return cleaned;
+}
+
+// Count/length/magnitude fields must stay positive (an EMA of 0 or -5 bars is
+// meaningless). Block the keystrokes that would enter a negative or exponent so
+// one can't be typed at all...
+function blockNegKeys(e: ReactKeyboardEvent<HTMLInputElement>) {
+  if (e.key === "-" || e.key === "+" || e.key === "e" || e.key === "E") e.preventDefault();
+}
+// ...and on blur snap a value that came out ≤ 0 (or was left empty mid-edit) up
+// to the field's floor, so leaving the field can't commit a non-positive number.
+// `commit` is 0-arg because the caller already knows the clamped value to write.
+function clampPosOnBlur(el: HTMLInputElement, floor: number, commit: (n: number) => void) {
+  if (!(Number(el.value) > 0)) commit(floor);
+}
+
 const DATE_OPTS: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" };
 
 function formatDateRange(fromMs: number, toMs: number): string {
@@ -259,8 +288,11 @@ function defaultRule(): Rule {
   return { left: defaultOperand(), op: "gt", right: { kind: "const", value: 0 } };
 }
 
-export default function BacktestSettingsModal({ initial, epic, resolution, onRun, onClose }: Props) {
+export default function BacktestSettingsModal({ initial, epic, resolution, controller, onRun, onClose }: Props) {
   const [cfg, setCfg] = useState<BacktestConfig>(initial);
+  // True while "Pick Range" is armed on the chart (mirrors the controller signal),
+  // so the button reflects the active state.
+  const [pickingRange, setPickingRange] = useState(false);
   const [presets, setPresets] = useState(() => loadBacktestPresets());
   const [presetName, setPresetName] = useState("");
   const [loadName, setLoadName] = useState("");
@@ -268,6 +300,28 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   // re-opening the modal returns to the side you were working on.
   const [side, setSide] = useState<"long" | "short">(loadBacktestSide);
   const [tab, setTab] = useState<BacktestTab>("period");
+  // "Pick Range" ↔ chart wiring: mirror the armed flag for the button state, and
+  // when the chart publishes a picked range drop it into the Custom from/to (and
+  // switch to Custom mode). Re-subscribes if the focused cell changes.
+  useEffect(() => {
+    if (!controller) {
+      setPickingRange(false);
+      return;
+    }
+    setPickingRange(controller.rangePickArmed.value);
+    const unsubArmed = controller.rangePickArmed.subscribe(setPickingRange);
+    const unsubResult = controller.rangePickResult.subscribe((res) => {
+      if (!res) return;
+      setCfg((c) => ({ ...c, range: { ...c.range, mode: "custom", fromMs: res.fromMs, toMs: res.toMs } }));
+      controller.rangePickResult.set(null); // consume one-shot
+    });
+    return () => {
+      unsubArmed();
+      unsubResult();
+      controller.rangePickArmed.set(false); // don't leave the chart armed if the panel closes mid-pick
+    };
+  }, [controller]);
+
   const selectSide = (s: "long" | "short") => {
     setSide(s);
     saveBacktestSide(s);
@@ -350,7 +404,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   // sides. Null until the user copies one; cleared only by copying another.
   const [clipboard, setClipboard] = useState<Rule | null>(null);
 
-  const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
+  // The timeframe the run will actually use: the config override when set, else
+  // the active chart timeframe (the `resolution` prop). Window math + the header
+  // badge follow this so they reflect the run, not necessarily the chart.
+  const effectiveRes = cfg.range.resolution ?? resolution;
+  const resSeconds = RESOLUTION_SECONDS[effectiveRes] ?? 60;
 
   const defaultAvwapAnchor = resolveWindow(cfg, resSeconds, Date.now()).fromMs;
 
@@ -420,7 +478,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
     <aside className="bt-cfg-panel">
         <div className="bt-cfg-head">
           <span className="bt-cfg-title">
-            Backtest — <strong>{epic}</strong> <span className="bt-cfg-res">{resolution}</span>
+            Backtest — <strong>{epic}</strong> <span className="bt-cfg-res">{effectiveRes}</span>
           </span>
           <CloseButton onClick={onClose} />
         </div>
@@ -444,16 +502,44 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                   title="Time range"
                   info="The span of history the backtest trades over. Pick a relative window (last day/week/month/year), a calendar period via the chips, or a custom from/to."
                 >
-            <div className="seg">
-              {RANGE_MODES.map((m) => (
-                <button
-                  key={m.value}
-                  className={cfg.range.mode === m.value ? "seg-on" : ""}
-                  onClick={() => setRange({ mode: m.value, fromMs: undefined, toMs: undefined })}
-                >
-                  {m.label}
-                </button>
-              ))}
+            <div className="bt-range-mode-row">
+              <div className="seg">
+                {RANGE_MODES.map((m) => (
+                  <button
+                    key={m.value}
+                    className={cfg.range.mode === m.value ? "seg-on" : ""}
+                    onClick={() => setRange({ mode: m.value, fromMs: undefined, toMs: undefined })}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <label className="bt-tf-inline">
+                <span className="bt-tf-label">
+                  Timeframe
+                  <InfoTip text="Timeframe the backtest runs on. 'Chart' follows the active chart timeframe." />
+                </span>
+              <select
+                className="bt-tf-select"
+                value={cfg.range.resolution ?? ""}
+                onChange={(e) => setRange({ resolution: e.target.value || undefined })}
+              >
+                <option value="">Chart</option>
+                {PERIOD_GROUPS.map((group) => {
+                  const periods = group.periods.filter((p) => !p.liveOnly);
+                  if (periods.length === 0) return null;
+                  return (
+                    <optgroup key={group.label} label={group.label}>
+                      {periods.map((p) => (
+                        <option key={p.resolution} value={p.resolution}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+              </select>
+              </label>
             </div>
             {CHIP_UNIT[cfg.range.mode] && (
               <div className="bt-chip-row">
@@ -479,7 +565,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                   type="number"
                   min={1}
                   value={cfg.range.bars ?? 500}
-                  onChange={(e) => setRange({ bars: Number(e.target.value) })}
+                  onKeyDown={blockNegKeys}
+                  onChange={(e) => setRange({ bars: Number(cleanNumInput(e.currentTarget)) })}
+                  onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setRange({ bars: n }))}
                 />
               </label>
             )}
@@ -501,6 +589,41 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                     onChange={(e) => setRange({ toMs: localInputToMs(e.target.value) ?? undefined })}
                   />
                 </label>
+                <Tooltip
+                  content={
+                    !controller
+                      ? "Focus a chart to pick a range"
+                      : pickingRange
+                        ? "Picking… drag across the chart's time axis, or click a start then an end. Esc cancels."
+                        : "Pick the range on the chart — drag across the time axis, or click a start then an end"
+                  }
+                >
+                  <button
+                    type="button"
+                    className={`bt-pick-range${pickingRange ? " on" : ""}`}
+                    disabled={!controller}
+                    aria-label="Pick range on chart"
+                    onClick={() => {
+                      if (!controller) return;
+                      if (controller.rangePickArmed.value) {
+                        controller.rangePickArmed.set(false);
+                      } else {
+                        controller.rangePickArmed.set(true);
+                        controller.focusChart?.(); // so Esc reaches the chart
+                      }
+                    }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+                      <path
+                        d="M3 4v8M13 4v8M3 8h10"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                </Tooltip>
               </div>
             )}
           </Section>
@@ -662,11 +785,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                   type="number"
                   min={1}
                   value={cfg.range.historyBars ?? 500}
-                  onChange={(e) => setRange({ historyBars: Number(e.target.value) })}
+                  onKeyDown={blockNegKeys}
+                  onChange={(e) => setRange({ historyBars: Number(cleanNumInput(e.currentTarget)) })}
+                  onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setRange({ historyBars: n }))}
                 />
               </label>
             )}
-            <WindowTimeline cfg={cfg} resolution={resolution} />
+            <WindowTimeline cfg={cfg} resolution={effectiveRes} />
           </Section>
             </section>
 
@@ -701,6 +826,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
             setCfg={setCfg}
             setGroup={setGroup}
             defaultAvwapAnchor={defaultAvwapAnchor}
+            baseResolution={effectiveRes}
             clipboard={clipboard}
             onCopy={(rule) => setClipboard(cloneRule(rule))}
           />
@@ -730,7 +856,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                   min={0}
                   step="any"
                   value={cfg.costs.quantity}
-                  onChange={(e) => setCosts({ quantity: Number(e.target.value) })}
+                  onKeyDown={blockNegKeys}
+                  onChange={(e) => setCosts({ quantity: Number(cleanNumInput(e.currentTarget)) })}
+                  onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setCosts({ quantity: n }))}
                 />
               </label>
               <label className="bt-field">
@@ -743,7 +871,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                   min={0}
                   step="any"
                   value={cfg.costs.commissionPerSide}
-                  onChange={(e) => setCosts({ commissionPerSide: Number(e.target.value) })}
+                  onChange={(e) => setCosts({ commissionPerSide: Number(cleanNumInput(e.currentTarget)) })}
                 />
               </label>
               <label className="bt-field">
@@ -756,7 +884,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                   min={0}
                   step="any"
                   value={cfg.costs.slippage}
-                  onChange={(e) => setCosts({ slippage: Number(e.target.value) })}
+                  onChange={(e) => setCosts({ slippage: Number(cleanNumInput(e.currentTarget)) })}
                 />
               </label>
               <label className="bt-field">
@@ -769,7 +897,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
                   min={0}
                   step="any"
                   value={cfg.costs.startingCash}
-                  onChange={(e) => setCosts({ startingCash: Number(e.target.value) })}
+                  onKeyDown={blockNegKeys}
+                  onChange={(e) => setCosts({ startingCash: Number(cleanNumInput(e.currentTarget)) })}
+                  onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setCosts({ startingCash: n }))}
                 />
               </label>
             </div>
@@ -876,9 +1006,13 @@ function RiskSection({
     else if (kind === "price") next.value = risk.target.value ?? 0;
     onChange({ ...risk, target: next });
   };
-  const num = (v: number | undefined, set: (n: number) => void, step = "any") => (
-    <input type="number" step={step} value={v ?? 0}
-      onChange={(e) => set(Number(e.target.value))} className="bt-num" />
+  // `floor` opts a field into positive-only: block negatives and snap ≤0 up to
+  // the floor on blur. Left off for price levels / ATR multiples, which are free.
+  const num = (v: number | undefined, set: (n: number) => void, step = "any", floor?: number) => (
+    <input type="number" step={step} value={v ?? 0} className="bt-num" min={floor}
+      onKeyDown={floor != null ? blockNegKeys : undefined}
+      onChange={(e) => set(Number(cleanNumInput(e.currentTarget)))}
+      onBlur={floor != null ? (e) => clampPosOnBlur(e.currentTarget, floor, set) : undefined} />
   );
 
   return (
@@ -892,7 +1026,7 @@ function RiskSection({
           {STOP_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
         {(risk.stop.kind === "pct" || risk.stop.kind === "trailPct") &&
-          <>{num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }))}<span>%</span></>}
+          <>{num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }), "any", 1)}<span>%</span></>}
         {(risk.stop.kind === "atr" || risk.stop.kind === "trailAtr") && <>
           {num(risk.stop.mult, (n) => onChange({ ...risk, stop: { ...risk.stop, mult: n } }))}
           <span>× ATR</span>
@@ -907,7 +1041,7 @@ function RiskSection({
           {TARGET_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
         {risk.target.kind === "pct" &&
-          <>{num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }))}<span>%</span></>}
+          <>{num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }), "any", 1)}<span>%</span></>}
         {risk.target.kind === "atr" && <>
           {num(risk.target.mult, (n) => onChange({ ...risk, target: { ...risk.target, mult: n } }))}
           <span>× ATR</span>
@@ -945,7 +1079,9 @@ function ScalingSection({
       <div className="bt-risk-row">
         <span className="bt-risk-label">Max positions</span>
         <input type="number" min={1} step="1" className="bt-num" value={scaling.maxConcurrent}
-          onChange={(e) => onChange({ ...scaling, maxConcurrent: Math.max(1, Math.round(Number(e.target.value))) })} />
+          onKeyDown={blockNegKeys}
+          onChange={(e) => onChange({ ...scaling, maxConcurrent: Math.round(Number(cleanNumInput(e.currentTarget))) })}
+          onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => onChange({ ...scaling, maxConcurrent: n }))} />
       </div>
       <div className="bt-risk-row">
         <span className="bt-risk-label">Min spacing</span>
@@ -954,13 +1090,13 @@ function ScalingSection({
         </select>
         {scaling.spacing?.kind === "pct" &&
           <>{<input type="number" step="any" className="bt-num" value={scaling.spacing.value ?? 0}
-            onChange={(e) => onChange({ ...scaling, spacing: { kind: "pct", value: Number(e.target.value) } })} />}<span>%</span></>}
+            onChange={(e) => onChange({ ...scaling, spacing: { kind: "pct", value: Number(cleanNumInput(e.currentTarget)) } })} />}<span>%</span></>}
         {scaling.spacing?.kind === "atr" && <>
           <input type="number" step="any" className="bt-num" value={scaling.spacing.mult ?? 0}
-            onChange={(e) => onChange({ ...scaling, spacing: { ...scaling.spacing!, kind: "atr", mult: Number(e.target.value) } })} />
+            onChange={(e) => onChange({ ...scaling, spacing: { ...scaling.spacing!, kind: "atr", mult: Number(cleanNumInput(e.currentTarget)) } })} />
           <span>× ATR</span>
           <input type="number" step="1" className="bt-num" value={scaling.spacing.length ?? 14}
-            onChange={(e) => onChange({ ...scaling, spacing: { ...scaling.spacing!, kind: "atr", length: Math.max(1, Math.round(Number(e.target.value))) } })} />
+            onChange={(e) => onChange({ ...scaling, spacing: { ...scaling.spacing!, kind: "atr", length: Math.max(1, Math.round(Number(cleanNumInput(e.currentTarget)))) } })} />
         </>}
       </div>
     </div>
@@ -978,6 +1114,7 @@ function SidePanel({
   setCfg,
   setGroup,
   defaultAvwapAnchor,
+  baseResolution,
   clipboard,
   onCopy,
 }: {
@@ -986,6 +1123,7 @@ function SidePanel({
   setCfg: (c: BacktestConfig) => void;
   setGroup: (which: "longEntry" | "longExit" | "shortEntry" | "shortExit", g: RuleGroup) => void;
   defaultAvwapAnchor: number;
+  baseResolution: string;
   clipboard: Rule | null;
   onCopy: (rule: Rule) => void;
 }) {
@@ -1026,6 +1164,7 @@ function SidePanel({
           onChange={(g) => setGroup(isLong ? "longEntry" : "shortEntry", g)}
           emptyHint={`No ${side}-entry rules — this strategy won't open any ${side} positions.`}
           defaultAvwapAnchor={defaultAvwapAnchor}
+          baseResolution={baseResolution}
           clipboard={clipboard}
           onCopy={onCopy}
         />
@@ -1036,6 +1175,7 @@ function SidePanel({
           onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
           emptyHint={`No ${side}-exit rules — an open ${side} holds until the trading window ends.`}
           defaultAvwapAnchor={defaultAvwapAnchor}
+          baseResolution={baseResolution}
           clipboard={clipboard}
           onCopy={onCopy}
         />
@@ -1289,6 +1429,7 @@ function RuleGroupSection({
   onChange,
   emptyHint,
   defaultAvwapAnchor,
+  baseResolution,
   clipboard,
   onCopy,
 }: {
@@ -1298,6 +1439,7 @@ function RuleGroupSection({
   onChange: (g: RuleGroup) => void;
   emptyHint: string;
   defaultAvwapAnchor: number;
+  baseResolution: string;
   clipboard: Rule | null;
   onCopy: (rule: Rule) => void;
 }) {
@@ -1343,9 +1485,9 @@ function RuleGroupSection({
       )}
       {group.rules.map((rule, i) => (
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`} key={i}>
-          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} />
+          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} />
           <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
-          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} />
+          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} />
           <div className="bt-rule-actions">
             <button
               className="bt-rule-toggle"
@@ -1384,11 +1526,29 @@ function OperandPicker({
   value,
   onChange,
   defaultAvwapAnchor,
+  baseResolution,
 }: {
   value: Operand;
   onChange: (op: Operand) => void;
   defaultAvwapAnchor: number;
+  baseResolution: string;
 }) {
+  // Timeframes a rule operand can run on: the base (blank ⇒ follow the run's
+  // base timeframe) plus every non-live timeframe strictly higher than base.
+  // Lower-than-base is excluded — it can't align onto the coarser base bars
+  // without either losing information or leaking future ticks.
+  const baseSec = RESOLUTION_SECONDS[baseResolution] ?? 0;
+  const higherTfs = PERIOD_GROUPS.flatMap((g) => g.periods).filter(
+    (p) => !p.liveOnly && (RESOLUTION_SECONDS[p.resolution] ?? 0) > baseSec,
+  );
+  // If the operand already has a timeframe that's no longer "higher than base"
+  // (e.g. the base dropdown was raised to meet it), keep it selectable so the
+  // control doesn't render blank while silently holding a value.
+  const currentTf = value.kind === "indicator" ? value.timeframe : undefined;
+  if (currentTf && !higherTfs.some((p) => p.resolution === currentTf)) {
+    const cur = PERIOD_GROUPS.flatMap((g) => g.periods).find((p) => p.resolution === currentTf);
+    if (cur) higherTfs.unshift(cur);
+  }
   // One select drives the operand type: pick an indicator directly (EMA, SMA…),
   // or Price, or Number — no separate "kind then indicator" step. The token is
   // the indicator name for indicators, else the kind.
@@ -1432,9 +1592,24 @@ function OperandPicker({
               min={1}
               className="bt-operand-length"
               value={value.length ?? 9}
-              onChange={(e) => onChange({ ...value, length: Number(e.target.value) })}
+              onKeyDown={blockNegKeys}
+              onChange={(e) => onChange({ ...value, length: Number(cleanNumInput(e.currentTarget)) })}
+              onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => onChange({ ...value, length: n }))}
             />
           )}
+          <select
+            className="bt-operand-tf"
+            title="Timeframe this indicator is computed on"
+            value={value.timeframe ?? ""}
+            onChange={(e) => onChange({ ...value, timeframe: e.target.value || undefined })}
+          >
+            <option value="">Base</option>
+            {higherTfs.map((p) => (
+              <option key={p.resolution} value={p.resolution}>
+                {p.label}
+              </option>
+            ))}
+          </select>
         </>
       )}
       {value.kind === "price" && (
@@ -1452,7 +1627,7 @@ function OperandPicker({
           step="any"
           className="bt-operand-length"
           value={value.value}
-          onChange={(e) => onChange({ kind: "const", value: Number(e.target.value) })}
+          onChange={(e) => onChange({ kind: "const", value: Number(cleanNumInput(e.currentTarget)) })}
         />
       )}
     </div>

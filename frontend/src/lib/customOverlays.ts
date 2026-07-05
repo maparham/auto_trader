@@ -311,6 +311,43 @@ const measure: OverlayTemplate = {
   },
 };
 
+// --- rangeBand: the transient backtest "Pick Range" selection ---------------
+// A two-anchor overlay that shades a FULL-HEIGHT vertical band between the two
+// anchors' x positions (time-only — the y anchors are ignored). Like measure it
+// is never persisted; OverlayManager drives it directly via override during the
+// drag and removes it on finish. Fixed accent color, non-interactive.
+const RANGE_BAND_FILL = "rgba(41, 98, 255, 0.12)";
+const RANGE_BAND_STROKE = "rgba(41, 98, 255, 0.7)";
+const rangeBand: OverlayTemplate = {
+  name: "rangeBand",
+  totalStep: 3,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: ({ coordinates, bounding }) => {
+    if (coordinates.length < 2) return [];
+    const [c0, c1] = coordinates;
+    const left = Math.min(c0.x, c1.x);
+    const right = Math.max(c0.x, c1.x);
+    const h = bounding.height;
+    return [
+      {
+        type: "polygon",
+        attrs: {
+          coordinates: [
+            { x: left, y: 0 },
+            { x: right, y: 0 },
+            { x: right, y: h },
+            { x: left, y: h },
+          ],
+        },
+        styles: { style: "stroke_fill", color: RANGE_BAND_FILL, borderColor: RANGE_BAND_STROKE, borderSize: 1 },
+        ignoreEvent: true,
+      },
+    ];
+  },
+};
+
 let registered = false;
 // Idempotent — safe to call on every chart mount (registration is global).
 export function registerCustomOverlays(): void {
@@ -320,4 +357,5 @@ export function registerCustomOverlays(): void {
   registerOverlay(rayLine);
   registerOverlay(straightLine);
   registerOverlay(measure);
+  registerOverlay(rangeBand);
 }

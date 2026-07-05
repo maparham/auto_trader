@@ -9,7 +9,12 @@ export type Operator = "crossesAbove" | "crossesBelow" | "gt" | "lt" | "gte" | "
 export type Combine = "AND" | "OR";
 
 export type Operand =
-  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number }
+  // `timeframe` (absent ⇒ the run's base timeframe) lets a single rule reference
+  // an indicator computed on a higher timeframe than the backtest steps on — the
+  // frontend fetches that timeframe, computes the indicator on it, and forward-
+  // fills the values onto the base bars (no lookahead). It's part of the series
+  // key (seriesName) so `EMA_9` and `EMA_9@HOUR` are distinct series.
+  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number; timeframe?: string }
   | { kind: "price"; field: PriceField }
   | { kind: "const"; value: number };
 
@@ -92,6 +97,10 @@ export interface RangeConfig {
   history?: HistoryDepth;
   historyBars?: number;
   mask?: RecurrenceMask;
+  // The timeframe the backtest runs on. Absent means "follow the active chart
+  // timeframe" (the historical behavior) — a concrete resolution string (e.g.
+  // "HOUR") overrides the chart and runs the backtest on that timeframe instead.
+  resolution?: string;
 }
 
 export interface Costs {
@@ -127,9 +136,16 @@ export interface BacktestConfig {
  * EMA/SMA/RSI/VOLMA are keyed by `${indicator}_${length}`. */
 export function seriesName(op: Operand): string | null {
   if (op.kind !== "indicator") return null;
-  if (op.indicator === "VOL") return "VOL";
-  if (op.indicator === "AVWAP") return `AVWAP_${op.anchor ?? 0}`;
-  return `${op.indicator}_${op.length}`;
+  let base: string;
+  if (op.indicator === "VOL") base = "VOL";
+  else if (op.indicator === "AVWAP") base = `AVWAP_${op.anchor ?? 0}`;
+  else base = `${op.indicator}_${op.length}`;
+  // A per-operand timeframe qualifies the key so a base-timeframe indicator and
+  // the same indicator on a higher timeframe are stored/looked-up separately.
+  // Absent ⇒ base timeframe ⇒ the bare key (byte-for-byte compatible with older
+  // presets and with same-timeframe operands). The backend derives this key
+  // identically (rule.py:series_name) — keep the two in lockstep.
+  return op.timeframe ? `${base}@${op.timeframe}` : base;
 }
 
 /** Every indicator operand referenced by any of the four rule groups, deduped by

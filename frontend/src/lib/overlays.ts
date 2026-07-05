@@ -39,7 +39,7 @@ import {
 } from "./visibility";
 import { RESOLUTION_SECONDS } from "./feed";
 
-type Kind = "drawing" | "alert" | "measure";
+type Kind = "drawing" | "alert" | "measure" | "rangeBand";
 
 // One-level-deep merge of a style patch onto a base style: for each top-level style
 // category present in the patch (line, text, ...), shallow-merge its fields over the
@@ -172,6 +172,12 @@ export class OverlayManager {
   // Fired when a measurement completes (both anchors placed) so the owner can disarm
   // the one-shot ruler. Set via setMeasureDone; the frozen box stays until next interaction.
   private measureDone: (() => void) | null = null;
+  // Transient "Pick Range" band (backtest): the shaded time selection driven by a
+  // press-drag on the chart. Single-instance; the start/end timestamps are held
+  // here (not read back from the overlay) so finishRangePick is exact.
+  private rangeBandId: string | null = null;
+  private rangeStartTs: number | null = null;
+  private rangeEndTs: number | null = null;
   private alertCfg = new Map<string, AlertConfig>();
   // klinecharts overlay id -> the alert's STABLE id (SavedAlert.id). The overlay id
   // is regenerated on every rehydrate; the stable id is the identity persisted to
@@ -659,6 +665,7 @@ export class OverlayManager {
     if (!this.chart) return null;
     const isAlert = kind === "alert";
     const isMeasure = kind === "measure";
+    const isRangeBand = kind === "rangeBand";
     const isDrawing = kind === "drawing";
     const id = this.chart.createOverlay({
       name,
@@ -677,7 +684,7 @@ export class OverlayManager {
       // suppress klinecharts' default y-axis value box to avoid a duplicate. For
       // drawings the price tag is on by default but user-toggleable (Visibility
       // tab) — honor extendData.priceLabels when present so rehydrate restores it.
-      needDefaultYAxisFigure: isAlert || isMeasure ? false : asDrawingExtra(extra?.extendData).priceLabels ?? true,
+      needDefaultYAxisFigure: isAlert || isMeasure || isRangeBand ? false : asDrawingExtra(extra?.extendData).priceLabels ?? true,
       // Returning true marks the right-click handled, suppressing klinecharts'
       // default "delete on right-click" so our context menu can take over.
       onRightClick: (e) => {
@@ -735,6 +742,11 @@ export class OverlayManager {
         if (this.measureId === e.overlay.id) {
           this.measureId = null;
           this.measureDrawing = false;
+        }
+        if (this.rangeBandId === e.overlay.id) {
+          this.rangeBandId = null;
+          this.rangeStartTs = null;
+          this.rangeEndTs = null;
         }
         this.alertCfg.delete(e.overlay.id);
         this.alertIds.delete(e.overlay.id);
@@ -850,6 +862,59 @@ export class OverlayManager {
   // placing click apart from a plain "click away that clears the frozen box".
   isMeasureDrawing(): boolean {
     return this.measureDrawing;
+  }
+
+  // --- transient "Pick Range" band (backtest) --------------------------------
+  // Begin a range selection at `startTs`: create the full-height band with both
+  // anchors at the start (zero width). ChartCore's drag then calls updateRangePick
+  // as the cursor moves and finishRangePick on release. Created WITH points, so it
+  // renders immediately (no click-to-place draw mode).
+  startRangePick(startTs: number): string | null {
+    if (!this.chart) return null;
+    this.clearRangePick();
+    this.rangeStartTs = startTs;
+    this.rangeEndTs = startTs;
+    const id = this.create("rangeBand", "rangeBand", [
+      { timestamp: startTs, value: 0 },
+      { timestamp: startTs, value: 0 },
+    ], null, true);
+    this.rangeBandId = id;
+    return id;
+  }
+
+  // Move the band's end anchor during the drag.
+  updateRangePick(endTs: number): void {
+    if (!this.rangeBandId || this.rangeStartTs == null || !this.chart) return;
+    this.rangeEndTs = endTs;
+    this.chart.overrideOverlay({
+      id: this.rangeBandId,
+      points: [
+        { timestamp: this.rangeStartTs, value: 0 },
+        { timestamp: endTs, value: 0 },
+      ],
+    });
+  }
+
+  // End the selection: remove the band and return the ordered [fromMs,toMs], or
+  // null if no real range was drawn.
+  finishRangePick(): { fromMs: number; toMs: number } | null {
+    const start = this.rangeStartTs;
+    const end = this.rangeEndTs;
+    this.clearRangePick();
+    if (start == null || end == null || start === end) return null;
+    return { fromMs: Math.min(start, end), toMs: Math.max(start, end) };
+  }
+
+  // Discard the band (disarm, Esc, symbol change, or a click with no drag).
+  clearRangePick(): void {
+    if (this.rangeBandId) this.chart?.removeOverlay(this.rangeBandId); // onRemoved nulls the fields
+    this.rangeBandId = null;
+    this.rangeStartTs = null;
+    this.rangeEndTs = null;
+  }
+
+  hasRangePick(): boolean {
+    return this.rangeBandId != null;
   }
 
   // --- user actions (called by Toolbar / chart "+" menu) ---------------------
@@ -1727,7 +1792,7 @@ export class OverlayManager {
     const drawings: SavedOverlay[] = [];
     const alerts: SavedAlert[] = [];
     for (const [id, kind] of this.entries) {
-      if (kind === "measure") continue; // transient ruler — never persisted
+      if (kind === "measure" || kind === "rangeBand") continue; // transient — never persisted
       const ov = this.chart.getOverlayById(id);
       if (!ov) continue;
       if (kind === "alert") {

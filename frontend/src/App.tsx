@@ -1593,6 +1593,7 @@ export default function App() {
             initial={loadBacktestLastUsed() ?? defaultBacktestConfig()}
             epic={symbol.epic}
             resolution={period.resolution}
+            controller={focusedController}
             onRun={(cfg) => {
               saveBacktestLastUsed(cfg);
               requestBacktestRun();

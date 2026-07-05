@@ -309,6 +309,10 @@ class OperandDTO(BaseModel):
     field: Literal["close", "open", "high", "low"] | None = None
     value: float | None = None
     anchor: int | None = None
+    # Higher timeframe an indicator runs on (None ⇒ the run's base timeframe). The
+    # frontend aligns it onto the base bars, so the engine never reads this — it
+    # only rides along to key the series (series_name); see OperandDTO.to_operand.
+    timeframe: str | None = None
 
     @model_validator(mode="after")
     def _kind_matches_fields(self) -> "OperandDTO":
@@ -324,6 +328,7 @@ class OperandDTO(BaseModel):
         return Operand(
             kind=self.kind, indicator=self.indicator, length=self.length,
             field=self.field, value=self.value, anchor=self.anchor,
+            timeframe=self.timeframe,
         )
 
 

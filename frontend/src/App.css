@@ -834,15 +834,18 @@
    drawn as an outlined glyph (fill:none) rather than a solid dot. */
 .bt-section-title .ind-info,
 .bt-field-label .ind-info,
+.bt-tf-label .ind-info,
 .bt-mask-toggle .ind-info {
   display: inline-flex; align-items: center; padding: 0; border: none;
   background: none; cursor: help; color: var(--text-faint);
 }
 .bt-section-title .ind-info:hover,
 .bt-field-label .ind-info:hover,
+.bt-tf-label .ind-info:hover,
 .bt-mask-toggle .ind-info:hover { color: var(--text-dim); }
 .bt-section-title .ind-info svg,
 .bt-field-label .ind-info svg,
+.bt-tf-label .ind-info svg,
 .bt-mask-toggle .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
 /* Field labels that carry a trailing ⓘ (costs, session, timezone). */
 .bt-field-label { display: inline-flex; align-items: center; gap: 4px; }
@@ -974,13 +977,19 @@
 .bt-scroll-section { display: flex; flex-direction: column; gap: 4px; }
 .bt-scroll-section > * { flex-shrink: 0; }
 .bt-scroll-section:last-child { min-height: 100%; }
+/* Divider ONLY between the major tab-groups (Period | Strategy | Costs | …),
+   not between every sub-section. Within a group, whitespace + the faint section
+   titles do the separating — a calmer vertical rhythm than a rule per section. */
+.bt-scroll-section + .bt-scroll-section { border-top: 1px solid var(--border); }
 /* This flex column scrolls when its content exceeds max-height — it must NOT
    shrink its children to fit. Without this, an overflowing modal collapses any
    child that can shrink to nothing (e.g. the .seg Long/Short tab bar, whose
    overflow:hidden gives it a 0 min-height) down to an invisible sliver. */
 .bt-body > * { flex-shrink: 0; }
-.bt-section { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.bt-section:last-child { border-bottom: none; }
+/* No per-section divider — sub-sections within a tab-group are separated by
+   whitespace alone (dividers live at the group boundary, see bt-scroll-section).
+   A touch more vertical padding lets the dense panel breathe. */
+.bt-section { display: flex; flex-direction: column; gap: 10px; padding: 16px 0; }
 /* Numbers in this modal read like a terminal, matching the rest of the app
    (price/qty columns) rather than plain form fields. */
 .bt-body input[type="number"] { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -1013,7 +1022,31 @@
    still drops to its own line via its flex-basis:100%. */
 .bt-operand { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .bt-operand select { flex: 0 1 auto; width: auto; min-width: 0; }
-.bt-operand-length { flex: 0 0 46px; min-width: 0; text-align: right; }
+.bt-operand-length { flex: 0 0 62px; min-width: 0; text-align: left; }
+/* Per-operand timeframe: hug the selected value ("Base"/"1H") — never stretch. */
+.bt-operand-tf { flex: 0 0 auto; width: auto; min-width: 0; }
+/* The base-timeframe select in the Period section: size to its value, not the
+   full row (al-row select defaults to flex:1). Field width stays minimal. */
+.al-row select.bt-tf-select { flex: 0 0 auto; width: auto; min-width: 0; }
+/* Range-mode buttons + the base-timeframe select share one row; the seg takes
+   the slack, the select hugs its value on the right. */
+.bt-range-mode-row { display: flex; align-items: center; gap: 8px; }
+/* Let the segmented control hug its buttons instead of stretching to fill the
+   row (which left a dead gray gap inside the border after "Custom"). */
+.bt-range-mode-row .seg { flex: 0 0 auto; }
+/* "Timeframe" label stacked above its select, pushed to the right edge of the
+   row, mirroring the "Time range" section header style. */
+.bt-tf-inline { flex: 0 0 auto; margin-left: auto; display: flex; flex-direction: column; gap: 4px; }
+.bt-tf-inline > .bt-tf-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.bt-range-mode-row select.bt-tf-select {
+  flex: 0 0 auto; width: auto; min-width: 0;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
+}
 /* The AVWAP anchor's datetime-local input is intrinsically wide (~160px) — too
    wide to sit beside the indicator select in a narrow rule column without
    crushing it. Give it its own full-width line below the select instead. */
@@ -1161,7 +1194,7 @@
   display: flex; flex-direction: column; gap: 4px;
   border-left: 2px solid var(--side); padding-left: 12px; margin-top: 4px;
 }
-.bt-side-rules.bt-parked { opacity: 0.55; border-left-color: var(--border); }
+.bt-side-rules.bt-parked { opacity: 0.68; border-left-color: var(--border); }
 
 /* Stop & target — price-level exits for one side, below its rule groups. Reads
    as one more section within the side; a top border divides it from the exit
@@ -1285,6 +1318,19 @@
 /* Custom backtest range: From/To side by side on one line instead of stacked. */
 .bt-range-field { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .bt-range-field > span { color: var(--text-dim); flex-shrink: 0; }
+/* "Pick range" affordance: a compact square icon button that arms the
+   drag-select on the chart (its instruction lives in the tooltip). Turns accent
+   while armed. Kept small so it doesn't compete with the From/To date inputs. */
+.bt-pick-range {
+  flex: 0 0 auto; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; color: var(--text-dim);
+  background: var(--input-bg);
+  border: 1px solid var(--border); border-radius: 4px; padding: 0;
+}
+.bt-pick-range:hover:not(:disabled) { border-color: var(--accent, #2962ff); color: var(--accent, #2962ff); }
+.bt-pick-range.on { background: var(--accent, #2962ff); border-color: var(--accent, #2962ff); color: #fff; }
+.bt-pick-range:disabled { opacity: 0.5; cursor: not-allowed; }
 /* Rows whose control is taller than one line (message, expiration, notifications)
    align their label to the top. */
 .al-row-top { align-items: flex-start; }
@@ -1583,6 +1629,11 @@
 .ind-interval-group-label { color: var(--text-faint); font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
 
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+/* A .seg placed directly in a flex-column section (History depth, AND/OR) would
+   otherwise be stretched full-width by align-items:stretch, leaving dead gray
+   space after its content-sized buttons. Let it hug its buttons instead. The
+   full-width side-tabs .seg lives in .bt-strategy, not a section, so it's spared. */
+.bt-section > .seg { align-self: flex-start; }
 .seg button { background: var(--input-bg); color: var(--text); border: none; padding: 6px 14px; cursor: pointer; }
 .seg button.seg-on { background: var(--accent); color: var(--accent-text); }
 

@@ -2,7 +2,31 @@
 // Split out so the weekend-padding and warm-up-sufficiency logic — the parts
 // that were wrong before — are unit-testable without mounting the component.
 
-import { longestIndicatorLength, type BacktestConfig } from "./backtestConfig";
+import {
+  longestIndicatorLength,
+  collectSeriesOperands,
+  riskAtrLengths,
+  scalingAtrLengths,
+  type BacktestConfig,
+} from "./backtestConfig";
+import { RESOLUTION_SECONDS } from "./feed";
+
+/** The longest warm-up need in BASE bars, accounting for per-operand timeframes:
+ * an indicator of length N on a timeframe T needs N × (T / base) base bars of
+ * history before it's warm. Base-timeframe operands (the common case) scale by 1,
+ * so this equals {@link longestIndicatorLength}. ATR risk/scaling lengths are
+ * always base-timeframe. `baseSeconds` unknown/≤0 ⇒ no scaling. */
+export function longestWarmupBars(cfg: BacktestConfig, baseSeconds: number): number {
+  if (!(baseSeconds > 0)) return longestIndicatorLength(cfg);
+  const scaled = collectSeriesOperands(cfg).map((op) => {
+    if (op.kind !== "indicator") return 1;
+    const len = op.length ?? 1;
+    const tfSec = op.timeframe ? RESOLUTION_SECONDS[op.timeframe] ?? baseSeconds : baseSeconds;
+    const ratio = Math.max(1, Math.ceil(tfSec / baseSeconds));
+    return len * ratio;
+  });
+  return Math.max(1, ...scaled, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg));
+}
 
 const DAY_MS = 86_400_000;
 const WEEK_SECONDS = 604_800;
@@ -51,7 +75,7 @@ function paddedLookbackMs(bars: number, resSeconds: number): number {
 }
 
 export function minimalHistoryStart(cfg: BacktestConfig, windowFromMs: number, resSeconds: number): number {
-  return windowFromMs - paddedLookbackMs(longestIndicatorLength(cfg), resSeconds);
+  return windowFromMs - paddedLookbackMs(longestWarmupBars(cfg, resSeconds), resSeconds);
 }
 
 // "Full" history is bounded, not literally epoch 0: Capital's REST history API
@@ -77,10 +101,17 @@ export function resolveHistoryStart(cfg: BacktestConfig, windowFromMs: number, r
  * contain before the window for the config to be honestly "warmed up" — "full"
  * has no fixed target size, but still can't honestly warm less than the
  * longest indicator needs. */
-export function requiredWarmupBars(cfg: BacktestConfig): number {
+export function requiredWarmupBars(cfg: BacktestConfig, baseSeconds?: number): number {
   const depth = cfg.range.history ?? "full";
-  if (depth === "bars") return cfg.range.historyBars ?? 500;
-  return longestIndicatorLength(cfg);
+  if (depth === "bars") {
+    const asked = cfg.range.historyBars ?? 500;
+    // A higher-timeframe indicator can need more base bars than the user's "N
+    // bars" ask (N/ratio HTF bars won't warm it). Raise the requirement so the
+    // insufficient-warmup retry refetches at the TF-scaled minimal depth and the
+    // short-warm-up warning fires honestly. Base-only configs keep asking N.
+    return baseSeconds != null ? Math.max(asked, longestWarmupBars(cfg, baseSeconds)) : asked;
+  }
+  return baseSeconds != null ? longestWarmupBars(cfg, baseSeconds) : longestIndicatorLength(cfg);
 }
 
 /** How many of the fetched bars fall strictly before the trading window — i.e.

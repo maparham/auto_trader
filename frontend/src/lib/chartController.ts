@@ -38,6 +38,15 @@ export class ChartController {
   // next mousedown on the chart starts a measurement drag, then disarms. Esc also
   // disarms. Shift+drag measures without arming, so this stays a simple bool.
   readonly measureArmed = new Signal<boolean>(false);
+  // True while the backtest "Pick Range" tool is armed: the next press-drag on the
+  // chart selects a time range (shaded band, crosshair cursor), and on release the
+  // picked [fromMs,toMs] is published on rangePickResult and the tool disarms.
+  // Armed from OUTSIDE the chart (the backtest panel), so it also focuses the wrap.
+  readonly rangePickArmed = new Signal<boolean>(false);
+  // The most recent time range picked on the chart (ms), or null. The backtest
+  // panel subscribes and drops it into the Custom from/to. One-shot: consumers may
+  // reset it to null after reading.
+  readonly rangePickResult = new Signal<{ fromMs: number; toMs: number } | null>(null);
   // TradingView-style price-axis "auto" mode (auto-fit y-axis to visible bars).
   // Starts ON; the toolbar "A" button reflects it and re-asserts auto-fit; the
   // cell turns it OFF when the user manually scales the price axis.

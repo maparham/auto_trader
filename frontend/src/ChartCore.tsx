@@ -538,6 +538,8 @@ export default function ChartCore({
     invertScale,
     scalePriceOnly,
     measureArmed,
+    rangePickArmed,
+    rangePickResult,
     selectedIndicator,
     legendHovered,
     legendHoverName,
@@ -1007,6 +1009,7 @@ export default function ChartCore({
   // True while the Measure ruler is armed — drives the crosshair cursor on the
   // chart container (mirrors `anchoring`), reset when a press consumes the arm.
   const [measureArmedUi, setMeasureArmedUi] = useState(false);
+  const [rangePickArmedUi, setRangePickArmedUi] = useState(false);
   // Cursor over the chart canvas: "cur-pointer" (hand) over a selectable indicator
   // curve, "cur-default" (arrow) over the legend strip, "" = klinecharts crosshair.
   // A class (not inline style) because klinecharts sets cursor on the canvas itself,
@@ -1945,6 +1948,100 @@ export default function ChartCore({
       if (overlays.hasMeasure()) overlays.clearMeasure();
     };
 
+    // --- Pick Range (backtest) ---
+    // Armed from the backtest panel (rangePickArmed). While armed, selecting a time
+    // range shades a full-height band (live), and on completion publishes
+    // [fromMs,toMs] on rangePickResult and disarms (one-shot). Two gestures, like
+    // TradingView's measure: PRESS-DRAG (down → drag → release) OR CLICK-MOVE-CLICK
+    // (click to set the start, move the cursor to size it, click again to end).
+    // Chart scroll/zoom are disabled while armed, so this owns the gesture — it runs
+    // FIRST among the capture mousedowns and stops propagation so the line-drag /
+    // clone / anchor handlers don't also fire.
+    let rangePickDragCleanup: (() => void) | null = null;
+    // "idle" = not selecting; "drag" = between press and release; "track" = after a
+    // click with no drag, the cursor now sizes the band until the next click.
+    let rangePickPhase: "idle" | "drag" | "track" = "idle";
+    let rangePickDownX = 0;
+    let rangePickMoved = false;
+    // Timestamp at an absolute page x, clamped into whitespace to the nearest end
+    // bar (a range to "now" ends past the last bar, where convertFromPixel is null).
+    const rangePickTsAtX = (clientX: number): number | null => {
+      const c = chartRef.current;
+      if (!c) return null;
+      const r = c.convertFromPixel([{ x: clientX }], { paneId: "candle_pane", absolute: true });
+      const p = Array.isArray(r) ? r[0] : r;
+      if (p && typeof p.timestamp === "number") return p.timestamp;
+      // convertFromPixel is null in the whitespace past either end — snap to that
+      // end bar (a range to "now" ends past the last bar). Only snap when x is
+      // genuinely beyond an end; an in-range null (transient during layout) returns
+      // null so the caller skips it rather than jumping the band to an edge.
+      const data = c.getDataList();
+      if (!data.length) return null;
+      const lastTs = data[data.length - 1].timestamp;
+      const firstTs = data[0].timestamp;
+      const xOf = (ts: number): number | null => {
+        const q = c.convertToPixel([{ timestamp: ts }], { paneId: "candle_pane", absolute: true });
+        const qp = Array.isArray(q) ? q[0] : q;
+        return qp && typeof qp.x === "number" ? qp.x : null;
+      };
+      const lastX = xOf(lastTs);
+      if (lastX != null && clientX > lastX) return lastTs;
+      const firstX = xOf(firstTs);
+      if (firstX != null && clientX < firstX) return firstTs;
+      return null;
+    };
+    const rangePickFinalize = (endTs: number | null) => {
+      if (endTs != null) overlays.updateRangePick(endTs);
+      const res = overlays.finishRangePick(); // null if no real range (start === end)
+      if (res) rangePickResult.set(res);
+      rangePickDragCleanup?.();
+      rangePickDragCleanup = null;
+      rangePickPhase = "idle";
+      rangePickArmed.set(false); // one-shot: disarm after a pick
+    };
+    const onRangePickMove = (me: MouseEvent) => {
+      const ts = rangePickTsAtX(me.clientX);
+      if (ts == null) return;
+      if (Math.abs(me.clientX - rangePickDownX) > 4) rangePickMoved = true;
+      overlays.updateRangePick(ts);
+    };
+    const onRangePickUp = (ue: MouseEvent) => {
+      window.removeEventListener("mouseup", onRangePickUp, true);
+      if (rangePickPhase !== "drag") return;
+      if (rangePickMoved) {
+        rangePickFinalize(rangePickTsAtX(ue.clientX)); // press-drag: release ends it
+      } else {
+        rangePickPhase = "track"; // a click: cursor now sizes it (onMove stays), next click ends
+      }
+    };
+    const onRangePickDown = (e: MouseEvent) => {
+      if (!rangePickArmed.value || e.button !== 0) return;
+      const c = chartRef.current;
+      const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      if (e.clientX - el.getBoundingClientRect().left > mainW) return; // price-axis strip
+      // Second click of a click-move-click ends the selection here.
+      if (rangePickPhase === "track") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        rangePickFinalize(rangePickTsAtX(e.clientX));
+        return;
+      }
+      const startTs = rangePickTsAtX(e.clientX);
+      if (startTs == null) return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // Pick Range owns this gesture
+      overlays.startRangePick(startTs);
+      rangePickPhase = "drag";
+      rangePickDownX = e.clientX;
+      rangePickMoved = false;
+      window.addEventListener("mousemove", onRangePickMove, true);
+      window.addEventListener("mouseup", onRangePickUp, true);
+      rangePickDragCleanup = () => {
+        window.removeEventListener("mousemove", onRangePickMove, true);
+        window.removeEventListener("mouseup", onRangePickUp, true);
+      };
+    };
+
     // TradingView-style "A" auto-scale: pressing on the price-axis column (the
     // strip right of the candle pane) is a manual y-axis scale gesture, so it
     // exits auto mode and the toolbar "A" de-highlights. Re-enabled by clicking
@@ -2325,6 +2422,26 @@ export default function ChartCore({
     });
     overlays.setMeasureDone(() => measureArmed.set(false));
 
+    // Pick Range arm/disarm: toggle the crosshair cursor and disable chart
+    // scroll/zoom while armed (so the press-drag selects a range instead of
+    // panning), restoring both on disarm and clearing any half-drawn band.
+    const unsubRangePickArm = rangePickArmed.subscribe((on) => {
+      setRangePickArmedUi(on);
+      const c = chartRef.current;
+      if (on) {
+        c?.setScrollEnabled(false);
+        c?.setZoomEnabled(false);
+        wrapRef.current?.focus({ preventScroll: true }); // so Esc reaches onKeyDown
+      } else {
+        rangePickDragCleanup?.();
+        rangePickDragCleanup = null;
+        rangePickPhase = "idle";
+        if (overlays.hasRangePick()) overlays.clearRangePick();
+        c?.setScrollEnabled(true);
+        c?.setZoomEnabled(true);
+      }
+    });
+
     if (chart) {
       chart.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current));
       el.addEventListener("click", onClick);
@@ -2334,6 +2451,9 @@ export default function ChartCore({
       // measureArmed here before the line/clone/anchor handlers run (they bail while
       // measuring), so every placing press is reserved for the ruler. Neither measure
       // handler stops propagation — klinecharts still needs the press to place a point.
+      // Pick Range FIRST: when armed it owns the press (stopImmediatePropagation),
+      // so the measure/line/clone/anchor handlers below never fire during a pick.
+      el.addEventListener("mousedown", onRangePickDown, true);
       el.addEventListener("mousedown", onMeasureShift, true);
       el.addEventListener("mousedown", onMeasureClear, true);
       // Capture-phase so it runs before klinecharts' own canvas mousedown — when we
@@ -2582,6 +2702,8 @@ export default function ChartCore({
       wsRef.current?.close();
       unsubAnchor();
       unsubMeasureArm();
+      unsubRangePickArm();
+      rangePickDragCleanup?.();
       overlays.setMeasureDone(null);
       unsubRemoved();
       // Backtest chart-sync subscriptions (highlightTradeSignal/focusTradeSignal)
@@ -2592,6 +2714,7 @@ export default function ChartCore({
       el.removeEventListener("click", onClick);
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
+      el.removeEventListener("mousedown", onRangePickDown, true);
       el.removeEventListener("mousedown", onMeasureShift, true);
       el.removeEventListener("mousedown", onMeasureClear, true);
       el.removeEventListener("mousedown", onAnchorDown, true);
@@ -2817,6 +2940,9 @@ export default function ChartCore({
     if (epicChanged || resChanged) {
       measureArmed.set(false);
       overlays.clearMeasure();
+      // A live Pick Range band is anchored to the old timescale too — disarm it.
+      rangePickArmed.set(false);
+      overlays.clearRangePick();
     }
     if (epicChanged) {
       separatorTsRef.current = null;
@@ -4362,7 +4488,10 @@ export default function ChartCore({
         // then a leftover frozen measure box — a stale box must not swallow the
         // Esc meant for the tool the user just armed.
         if (e.key === "Escape") {
-          if (measureArmed.value) {
+          if (rangePickArmed.value) {
+            rangePickArmed.set(false); // subscription clears the band + restores scroll
+            e.preventDefault();
+          } else if (measureArmed.value) {
             measureArmed.set(false);
             overlays.clearMeasure();
             e.preventDefault();
@@ -4408,7 +4537,7 @@ export default function ChartCore({
     >
       <div
         ref={containerRef}
-        className={anchoring || measureArmedUi ? "anchoring" : undefined}
+        className={anchoring || measureArmedUi || rangePickArmedUi ? "anchoring" : undefined}
         style={{ width: "100%", height: "100%" }}
       />
       {paneDropTop != null && (

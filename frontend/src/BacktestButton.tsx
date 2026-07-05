@@ -83,14 +83,17 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     setWarning(null);
     try {
       const cfg = loadBacktestLastUsed() ?? defaultBacktestConfig();
-      const resSeconds = RESOLUTION_SECONDS[period.resolution] ?? 60;
+      // The config timeframe overrides the active chart timeframe when set;
+      // absent means follow the chart (the historical behavior).
+      const runResolution = cfg.range.resolution ?? period.resolution;
+      const resSeconds = RESOLUTION_SECONDS[runResolution] ?? 60;
       const now = Date.now();
       const { fromMs: windowFromMs, toMs: windowToMs } = resolveWindow(cfg, resSeconds, now);
       const toSec = Math.floor(windowToMs / 1000);
       const fetchBars = (fromMs: number) =>
-        fetchRange(epic, period.resolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId);
+        fetchRange(epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId);
 
-      const required = requiredWarmupBars(cfg);
+      const required = requiredWarmupBars(cfg, resSeconds);
       const depth = cfg.range.history ?? "full";
       let bars = await fetchBars(resolveHistoryStart(cfg, windowFromMs, resSeconds));
 
@@ -119,7 +122,13 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         setWarning(`only ${warmup} of ${required} warm-up bars available — indicators may be cold at the start of the window`);
       }
 
-      const series = buildSeries(bars, cfg);
+      // A rule operand may reference a higher timeframe than the base run; fetch
+      // each such timeframe over the same span as the base history so its
+      // indicator is warm, then buildSeries forward-fills it onto the base bars.
+      const htfFromSec = Math.floor(Math.max(0, bars[0].timestamp) / 1000);
+      const fetchTimeframe = (resolution: string) =>
+        fetchRange(epic, resolution, htfFromSec, toSec, priceSide, brokerId);
+      const series = await buildSeries(bars, cfg, runResolution, fetchTimeframe);
       const candles = bars.map((k) => ({
         time: Math.round(k.timestamp / 1000),
         open: k.open,
@@ -133,7 +142,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         chart,
         {
           epic,
-          resolution: period.resolution,
+          resolution: runResolution,
           candles,
           series,
           // Disabled rules are kept in the config but dropped from the run.
