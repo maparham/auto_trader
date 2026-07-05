@@ -881,36 +881,99 @@
 }
 .bt-cfg-title { font-size: 13px; }
 .bt-cfg-res { color: var(--text-faint); font-variant-numeric: tabular-nums; }
-/* Vertical tab rail + scrolling content pane. The rail stretches to the pane's
-   height so its right divider runs full-height; only the pane scrolls. The wrap
-   grows to fill the panel between head and footer. */
-.bt-body-wrap { display: flex; align-items: stretch; flex: 1; min-height: 0; }
-.bt-vtabs {
-  flex: 0 0 136px;
+/* The panel body between head and footer is a vertical split: a settings region
+   (horizontal tab bar + scrolling content) on top, and an always-present,
+   collapsible results region on the bottom, divided by a draggable handle. */
+.bt-split { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.bt-settings-region { display: flex; flex-direction: column; flex: 1 1 0; min-height: 140px; }
+/* Horizontal tab bar across the top of the settings region. */
+.bt-htabs {
   display: flex;
-  flex-direction: column;
   gap: 2px;
-  padding: 12px 8px;
-  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border);
 }
-.bt-vtabs button {
-  text-align: left;
+.bt-htabs button {
   background: transparent;
   border: none;
   color: var(--text-dim);
-  padding: 7px 10px;
-  border-radius: 6px;
+  padding: 7px 12px;
+  border-radius: 6px 6px 0 0;
   font-size: 13px;
   cursor: pointer;
+  border-bottom: 2px solid transparent;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.bt-vtabs button:hover { background: var(--hover); color: var(--text); }
-.bt-vtabs button.on {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+.bt-htabs button:hover { background: var(--hover); color: var(--text); }
+.bt-htabs button.on {
   color: var(--accent);
   font-weight: 600;
+  border-bottom-color: var(--accent);
 }
-.bt-body { flex: 1; min-width: 0; min-height: 0; padding: 4px 16px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+/* Draggable divider between the settings and results regions. */
+.bt-split-divider {
+  flex: 0 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  touch-action: none;
+}
+.bt-split-divider:hover { background: var(--hover); }
+.bt-split-grip { width: 34px; height: 3px; border-radius: 2px; background: var(--border); }
+.bt-split-divider:hover .bt-split-grip { background: var(--text-faint); }
+/* Results region: fixed default height (overridden inline once the user drags);
+   collapses to just its toggle bar. Full panel width — no left rail beside it. */
+.bt-results-region {
+  flex: 0 0 40%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+.bt-results-region.collapsed { flex: 0 0 auto; border-top: 1px solid var(--border); }
+.bt-results-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.bt-results-toggle:hover { color: var(--text); }
+.bt-results-chevron { transition: transform 0.15s ease; font-size: 11px; }
+.bt-results-chevron.collapsed { transform: rotate(-90deg); }
+/* Horizontal insets that .bt-body used to provide when results lived inside it. */
+.bt-results-region .bt-results { padding: 0 16px 12px; }
+/* The summary line + clear (moved here from the toolbar) and transient run
+   messages, sitting above the Overview/Trades toggle. */
+.bt-results-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 2px 0 8px;
+}
+.bt-results-messages { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 0 0 8px; }
+.bt-body { flex: 1; min-width: 0; min-height: 0; padding: 4px 16px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; scroll-behavior: smooth; }
+/* Each tab's content is now a stacked section in one continuous scroll pane; the
+   tab bar jumps between them and highlights the one at the top (scrollspy). Keep
+   the same inner spacing tabs had, and give the last (short) section room so it
+   can still scroll up to the top edge when jumped to. */
+.bt-scroll-section { display: flex; flex-direction: column; gap: 4px; }
+.bt-scroll-section > * { flex-shrink: 0; }
+.bt-scroll-section:last-child { min-height: 100%; }
 /* This flex column scrolls when its content exceeds max-height — it must NOT
    shrink its children to fit. Without this, an overflowing modal collapses any
    child that can shrink to nothing (e.g. the .seg Long/Short tab bar, whose

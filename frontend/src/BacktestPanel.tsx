@@ -8,7 +8,13 @@
 // Phase C uses to highlight the matching chart marker on hover/click.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { backtestResultSignal, highlightTradeSignal, selectedTradeSignal } from "./lib/signals";
+import {
+  backtestResultSignal,
+  highlightTradeSignal,
+  selectedTradeSignal,
+  backtestMessagesSignal,
+  requestBacktestClear,
+} from "./lib/signals";
 import { metricRows, tradeRows, sortTradeRows, type TradeRow } from "./lib/backtestPanelData";
 import { RESOLUTION_SECONDS } from "./lib/feed";
 import { formatExpiryShort } from "./lib/alertUi";
@@ -18,6 +24,7 @@ import { formatExpiryShort } from "./lib/alertUi";
 const subscribeResult = (cb: () => void) => backtestResultSignal.subscribe(cb);
 const subscribeHighlight = (cb: () => void) => highlightTradeSignal.subscribe(cb);
 const subscribeSelected = (cb: () => void) => selectedTradeSignal.subscribe(cb);
+const subscribeMessages = (cb: () => void) => backtestMessagesSignal.subscribe(cb);
 
 type Tab = "overview" | "trades";
 type SortDir = "asc" | "desc";
@@ -36,6 +43,7 @@ export default function BacktestPanel() {
   const result = useSyncExternalStore(subscribeResult, () => backtestResultSignal.value);
   const highlighted = useSyncExternalStore(subscribeHighlight, () => highlightTradeSignal.value);
   const selected = useSyncExternalStore(subscribeSelected, () => selectedTradeSignal.value);
+  const messages = useSyncExternalStore(subscribeMessages, () => backtestMessagesSignal.value);
   const [tab, setTab] = useState<Tab>("overview");
   const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
 
@@ -47,13 +55,46 @@ export default function BacktestPanel() {
     highlightedRowRef.current?.scrollIntoView({ block: "nearest" });
   }, [highlighted]);
 
+  // Transient run messages (fetch error / short warm-up) — shown whether or not
+  // a result exists, since an errored run leaves no result to render.
+  const msgRow =
+    messages.error || messages.warning ? (
+      <div className="bt-results-messages">
+        {messages.warning && (
+          <span className="bt-warning" title={messages.warning}>
+            ⚠ short warm-up
+          </span>
+        )}
+        {messages.error && <span className="bt-error">{messages.error}</span>}
+      </div>
+    ) : null;
+
   if (result == null) {
     return (
-      <div className="bt-results bt-results-empty">
-        Run a backtest to see results here.
+      <div className="bt-results">
+        {msgRow}
+        <div className="bt-results-empty">Run a backtest to see results here.</div>
       </div>
     );
   }
+
+  const s = result.summary;
+  const summaryRow = (
+    <div className="bt-results-summary">
+      <span className="bt-summary">
+        <span className={s.net_pnl >= 0 ? "pos" : "neg"}>
+          {s.net_pnl >= 0 ? "+" : ""}
+          {s.net_pnl.toFixed(2)}
+        </span>
+        <span>{s.n_trades} trades</span>
+        <span title="Largest peak-to-trough equity drop">−{s.max_drawdown.toFixed(2)} dd</span>
+        <span>{(s.win_rate * 100).toFixed(0)}% win</span>
+      </span>
+      <button className="bt-clear" title="Clear backtest" onClick={requestBacktestClear}>
+        ✕
+      </button>
+    </div>
+  );
 
   const toggleSort = (key: keyof TradeRow) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: defaultDir(key) }));
@@ -64,6 +105,8 @@ export default function BacktestPanel() {
 
   return (
     <div className="bt-results">
+      {summaryRow}
+      {msgRow}
       <div className="bt-results-head">
         <div className="seg" role="tablist" aria-label="Backtest results view">
           <button

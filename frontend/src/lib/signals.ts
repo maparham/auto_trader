@@ -318,6 +318,22 @@ export function requestBacktestRun(): void {
   backtestRunRequest.set(backtestRunRequest.value + 1);
 }
 
+// Bumped when the results pane's clear (✕) is clicked. Like the run request,
+// BacktestButton owns the chart-side teardown (it has the chart/controller/epic),
+// so the results pane just asks for a clear rather than duplicating that logic.
+export const backtestClearRequest = new Signal<number>(0);
+export function requestBacktestClear(): void {
+  backtestClearRequest.set(backtestClearRequest.value + 1);
+}
+
+// Transient run messages (fetch error / short warm-up warning) published by
+// BacktestButton so the results pane can show them alongside the summary — they
+// used to render next to the toolbar button. Reset on symbol/timeframe change.
+export const backtestMessagesSignal = new Signal<{ error: string | null; warning: string | null }>({
+  error: null,
+  warning: null,
+});
+
 // Bumped (monotonic counter) whenever the alert set changes — a price alert is
 // created, deleted, or dragged (live list), OR a new alert fires (history list).
 // The alerts sidebar subscribes and re-reads overlays.getAlerts() / the persisted

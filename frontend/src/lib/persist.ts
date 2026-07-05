@@ -1203,6 +1203,21 @@ export function saveBacktestSide(side: "long" | "short"): void {
   saveLocal(BACKTEST_SIDE_KEY, side);
 }
 
+// The settings/results vertical split in the backtest panel: the results-region
+// height (px) and whether it's collapsed. Device-local view preference, like the
+// side above — persists the layout you dragged to across re-opens and reloads.
+const BACKTEST_SPLIT_KEY = `${PREFIX}.backtestSplit`;
+export interface BacktestSplit {
+  resultsHeight: number;
+  collapsed: boolean;
+}
+export function loadBacktestSplit(): BacktestSplit {
+  return load<BacktestSplit>(BACKTEST_SPLIT_KEY, { resultsHeight: 0, collapsed: false });
+}
+export function saveBacktestSplit(split: BacktestSplit): void {
+  saveLocal(BACKTEST_SPLIT_KEY, split);
+}
+
 // --- per-symbol chart templates (global, keyed by epic) ----------------------
 //
 // A saved layout (indicators + drawings) tied to a SYMBOL, not a cell — so a

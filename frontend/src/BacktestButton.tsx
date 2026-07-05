@@ -4,7 +4,7 @@
 // sits to its right. Self-contained: it owns its own run state and only needs
 // the focused controller + the active period/broker.
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { runAndRender, clearBacktest } from "./lib/backtest";
 import type { ChartController } from "./lib/chartController";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
@@ -20,7 +20,13 @@ import {
   warmupBarCount,
 } from "./lib/backtestWindow";
 import { loadBacktestLastUsed, saveBacktestLastUsed } from "./lib/persist";
-import { openBacktestSettings, backtestRunRequest, backtestResultSignal } from "./lib/signals";
+import {
+  openBacktestSettings,
+  backtestRunRequest,
+  backtestClearRequest,
+  backtestResultSignal,
+  backtestMessagesSignal,
+} from "./lib/signals";
 
 interface Props {
   controller: ChartController | null;
@@ -41,17 +47,6 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
 
-  // The summary chip mirrors the active backtest result straight off the signal
-  // (same store BacktestPanel reads). Driving it off the signal — not just a
-  // fresh run — means a rehydrate after a timeframe switch or a reload, where
-  // ChartCore's rehydrateBacktest republishes the stored result, brings the chip
-  // back too.
-  const activeResult = useSyncExternalStore(
-    (cb) => backtestResultSignal.subscribe(cb),
-    () => backtestResultSignal.value,
-  );
-  const summary = activeResult?.summary ?? null;
-
   // The transient run messages (error / short-warm-up warning) belong to a
   // specific run; drop them when the symbol or timeframe changes. Reset during
   // render on the key change (React's "adjust state on prop change" pattern)
@@ -64,6 +59,16 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     setError(null);
     setWarning(null);
   }
+
+  // Publish the transient messages so the results pane renders them (they no
+  // longer live next to this toolbar button).
+  useEffect(() => {
+    backtestMessagesSignal.set({ error, warning });
+  }, [error, warning]);
+
+  // The results pane's clear (✕) asks for a clear through this signal; the
+  // teardown lives here because only this component has the chart/controller.
+  useEffect(() => backtestClearRequest.subscribe(() => clear()));
 
   // The panel's "Run backtest" saves the config as last-used then bumps this
   // signal, which runs the backtest here (run() always reads the latest
@@ -178,24 +183,6 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       >
         {running ? "Running…" : "Backtest"}
       </button>
-      {summary && (
-        <span className="bt-summary">
-          <span className={summary.net_pnl >= 0 ? "pos" : "neg"}>
-            {summary.net_pnl >= 0 ? "+" : ""}
-            {summary.net_pnl.toFixed(2)}
-          </span>
-          <span>{summary.n_trades} trades</span>
-          <span title="Largest peak-to-trough equity drop">
-            −{summary.max_drawdown.toFixed(2)} dd
-          </span>
-          <span>{(summary.win_rate * 100).toFixed(0)}% win</span>
-          <button className="bt-clear" title="Clear backtest" onClick={clear}>
-            ✕
-          </button>
-        </span>
-      )}
-      {warning && <span className="bt-warning" title={warning}>⚠ short warm-up</span>}
-      {error && <span className="bt-error">{error}</span>}
     </div>
   );
 }

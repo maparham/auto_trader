@@ -41,6 +41,8 @@ import {
   deleteBacktestPreset,
   loadBacktestSide,
   saveBacktestSide,
+  loadBacktestSplit,
+  saveBacktestSplit,
 } from "./lib/persist";
 
 interface Props {
@@ -60,13 +62,12 @@ const RANGE_MODES: { value: RangeMode; label: string }[] = [
   { value: "custom", label: "Custom" },
 ];
 
-type BacktestTab = "period" | "strategy" | "costs" | "presets" | "results";
+type BacktestTab = "period" | "strategy" | "costs" | "presets";
 const BACKTEST_TABS: { value: BacktestTab; label: string }[] = [
   { value: "period", label: "Period" },
   { value: "strategy", label: "Strategy" },
   { value: "costs", label: "Costs" },
   { value: "presets", label: "Presets" },
-  { value: "results", label: "Results" },
 ];
 
 // Which suggestion-chip unit each range tab shows (Bars/Custom show none).
@@ -271,6 +272,79 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
     setSide(s);
     saveBacktestSide(s);
   };
+
+  // Settings (top) / results (bottom) vertical split. resultsHeight 0 means
+  // "unset" — the CSS default flex-basis governs until the user drags. Persisted
+  // device-local so the layout survives re-opens and reloads.
+  const splitRef = useRef<HTMLDivElement | null>(null);
+  const dragging = useRef(false);
+  const [split, setSplit] = useState(loadBacktestSplit);
+  useEffect(() => {
+    saveBacktestSplit(split);
+  }, [split]);
+  const toggleResults = () => setSplit((s) => ({ ...s, collapsed: !s.collapsed }));
+  function startResize(e: React.PointerEvent) {
+    if (!splitRef.current) return;
+    e.preventDefault();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragging.current = true;
+  }
+  function onResize(e: React.PointerEvent) {
+    if (!dragging.current || !splitRef.current) return;
+    const rect = splitRef.current.getBoundingClientRect();
+    const h = Math.max(140, Math.min(rect.height - 180, rect.bottom - e.clientY));
+    setSplit((s) => ({ ...s, resultsHeight: h }));
+  }
+  function endResize(e: React.PointerEvent) {
+    if (!dragging.current) return;
+    dragging.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  }
+  // Inline height for the results region: unset/collapsed use CSS defaults.
+  const resultsStyle: CSSProperties =
+    split.collapsed || split.resultsHeight <= 0
+      ? {}
+      : { flex: `0 0 ${split.resultsHeight}px` };
+
+  // Continuous scroll: all four sections live in one scroll pane (bodyRef). The
+  // tab bar jumps to a section and highlights whichever is currently at the top
+  // (scrollspy). setRef registers each section; suppressSpyUntil silences the
+  // spy during the smooth jump so it lands on the clicked tab, not the ones it
+  // scrolls past.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const sectionRefs = useRef<Record<BacktestTab, HTMLElement | null>>({
+    period: null,
+    strategy: null,
+    costs: null,
+    presets: null,
+  });
+  const suppressSpyUntil = useRef(0);
+  const setRef = (t: BacktestTab) => (el: HTMLElement | null) => {
+    sectionRefs.current[t] = el;
+  };
+  function jumpToTab(t: BacktestTab) {
+    setTab(t);
+    const el = sectionRefs.current[t];
+    const c = bodyRef.current;
+    if (!el || !c) return;
+    suppressSpyUntil.current = Date.now() + 700;
+    const top = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+    c.scrollTo?.({ top, behavior: "smooth" });
+  }
+  function onBodyScroll() {
+    if (Date.now() < suppressSpyUntil.current) return;
+    const c = bodyRef.current;
+    if (!c) return;
+    // The active tab is the last section whose top has passed just below the
+    // pane's top edge (a small 24px lead-in feels natural).
+    const ctop = c.getBoundingClientRect().top;
+    let current: BacktestTab = BACKTEST_TABS[0].value;
+    for (const t of BACKTEST_TABS) {
+      const el = sectionRefs.current[t.value];
+      if (el && el.getBoundingClientRect().top - ctop <= 24) current = t.value;
+    }
+    setTab((prev) => (prev === current ? prev : current));
+  }
   // A single copied rule, shared across all four groups so a rule can be pasted
   // between entry/exit and — the point of this — between the long and short
   // sides. Null until the user copies one; cleared only by copying another.
@@ -317,11 +391,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
   }
 
   // Docked panel: running does NOT close it, so you can tweak and re-run
-  // against the chart beside it. The header ✕ is the only close. Jump to the
-  // Results tab so the outcome shows in this same panel.
+  // against the chart beside it. The header ✕ is the only close. Results live in
+  // the always-visible bottom pane, so there's no tab to jump to — but a run
+  // must expand the results pane if the user had collapsed it.
   function run() {
     onRun(cfg);
-    setTab("results");
+    setSplit((s) => (s.collapsed ? { ...s, collapsed: false } : s));
   }
 
   function savePreset() {
@@ -350,21 +425,21 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
           <CloseButton onClick={onClose} />
         </div>
 
-        <div className="bt-body-wrap">
-          <nav className="bt-vtabs">
+        <div className="bt-split" ref={splitRef}>
+        <div className="bt-settings-region">
+          <nav className="bt-htabs">
             {BACKTEST_TABS.map((t) => (
               <button
                 key={t.value}
                 className={tab === t.value ? "on" : ""}
-                onClick={() => setTab(t.value)}
+                onClick={() => jumpToTab(t.value)}
               >
                 {t.label}
               </button>
             ))}
           </nav>
-          <div className="bt-body">
-            {tab === "period" && (
-              <>
+          <div className="bt-body" ref={bodyRef} onScroll={onBodyScroll}>
+            <section className="bt-scroll-section" ref={setRef("period")}>
                 <Section
                   title="Time range"
                   info="The span of history the backtest trades over. Pick a relative window (last day/week/month/year), a calendar period via the chips, or a custom from/to."
@@ -593,13 +668,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
             )}
             <WindowTimeline cfg={cfg} resolution={resolution} />
           </Section>
-              </>
-            )}
+            </section>
 
-            {tab === "strategy" && (
-              // The whole side view takes on the side's identity colour — long =
-              // the chart's up/green, short = down/red — via one --side variable.
-              // Parking greys it out (data-parked).
+            <section className="bt-scroll-section" ref={setRef("strategy")}>
+              {/* The whole side view takes on the side's identity colour — long =
+                  the chart's up/green, short = down/red — via one --side variable.
+                  Parking greys it out (data-parked). */}
               <div
                 className="bt-strategy"
                 style={{ "--side": side === "long" ? "var(--pos)" : "var(--neg)" } as CSSProperties}
@@ -638,9 +712,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
             </div>
           )}
               </div>
-            )}
+            </section>
 
-            {tab === "costs" && (
+            <section className="bt-scroll-section" ref={setRef("costs")}>
           <Section
             title="Costs"
             info="Per-trade assumptions applied to every fill: position size, commission, slippage, and the starting balance the equity curve builds from."
@@ -700,9 +774,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
               </label>
             </div>
           </Section>
-            )}
+            </section>
 
-            {tab === "presets" && (
+            <section className="bt-scroll-section" ref={setRef("presets")}>
           <Section
             title="Presets"
             info="Save the whole configuration — range, mask, rules, risk, and costs — under a name, and reload it later."
@@ -738,10 +812,32 @@ export default function BacktestSettingsModal({ initial, epic, resolution, onRun
               </div>
             </div>
           </Section>
-            )}
-
-            {tab === "results" && <BacktestPanel />}
+            </section>
           </div>
+        </div>
+
+        {!split.collapsed && (
+          <div
+            className="bt-split-divider"
+            role="separator"
+            aria-orientation="horizontal"
+            onPointerDown={startResize}
+            onPointerMove={onResize}
+            onPointerUp={endResize}
+          >
+            <span className="bt-split-grip" aria-hidden="true" />
+          </div>
+        )}
+
+        <div className={`bt-results-region${split.collapsed ? " collapsed" : ""}`} style={resultsStyle}>
+          <button className="bt-results-toggle" onClick={toggleResults} aria-expanded={!split.collapsed}>
+            <span className={`bt-results-chevron${split.collapsed ? " collapsed" : ""}`} aria-hidden="true">
+              ▾
+            </span>
+            Results
+          </button>
+          {!split.collapsed && <BacktestPanel />}
+        </div>
         </div>
 
         <div className="modal-foot bt-cfg-foot">
