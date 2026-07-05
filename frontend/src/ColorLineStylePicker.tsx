@@ -17,6 +17,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import Tooltip from "./components/Tooltip";
 
 export type LineStyleOpt = "solid" | "dashed" | "dotted";
 
@@ -138,39 +139,40 @@ export default function ColorLineStylePicker({
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={`clsp-swatch${showLinePreview ? " clsp-swatch--line" : ""}${open ? " on" : ""}`}
-        disabled={disabled}
-        title={title ?? "Color & line style"}
-        onClick={toggle}
-      >
-        <span
-          className="clsp-swatch-fill"
-          style={{ background: color, opacity: swatchAlpha }}
-        />
-        {showLinePreview && (
-          <svg
-            className="clsp-swatch-line"
-            viewBox="0 0 40 16"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <line
-              x1="2"
-              y1="8"
-              x2="38"
-              y2="8"
-              stroke={color}
-              strokeOpacity={swatchAlpha}
-              strokeWidth={size ?? 2}
-              strokeDasharray={lineStyle ? LINE_STYLE_DASH[lineStyle] : undefined}
-              strokeLinecap={lineStyle === "dotted" ? "round" : "butt"}
-            />
-          </svg>
-        )}
-      </button>
+      <Tooltip content={title ?? "Color & line style"}>
+        <button
+          ref={triggerRef}
+          type="button"
+          className={`clsp-swatch${showLinePreview ? " clsp-swatch--line" : ""}${open ? " on" : ""}`}
+          disabled={disabled}
+          onClick={toggle}
+        >
+          <span
+            className="clsp-swatch-fill"
+            style={{ background: color, opacity: swatchAlpha }}
+          />
+          {showLinePreview && (
+            <svg
+              className="clsp-swatch-line"
+              viewBox="0 0 40 16"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <line
+                x1="2"
+                y1="8"
+                x2="38"
+                y2="8"
+                stroke={color}
+                strokeOpacity={swatchAlpha}
+                strokeWidth={size ?? 2}
+                strokeDasharray={lineStyle ? LINE_STYLE_DASH[lineStyle] : undefined}
+                strokeLinecap={lineStyle === "dotted" ? "round" : "butt"}
+              />
+            </svg>
+          )}
+        </button>
+      </Tooltip>
       {open &&
         pos &&
         createPortal(
@@ -182,37 +184,38 @@ export default function ColorLineStylePicker({
           >
             <div className="clsp-grid">
               {PALETTE.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className={`clsp-cell${sameColor(c, color) ? " sel" : ""}`}
-                  style={{ background: c }}
-                  title={c}
-                  onClick={() => onColor(c)}
-                />
+                <Tooltip key={c} content={c}>
+                  <button
+                    type="button"
+                    className={`clsp-cell${sameColor(c, color) ? " sel" : ""}`}
+                    style={{ background: c }}
+                    onClick={() => onColor(c)}
+                  />
+                </Tooltip>
               ))}
             </div>
 
             {/* Custom colour: a "+" tile delegating to the native picker (the escape
                 hatch for any hue not on the grid). */}
             <div className="clsp-custom">
-              <button
-                type="button"
-                className="clsp-add"
-                title="Custom color"
-                onClick={() => nativeRef.current?.click()}
-              >
-                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-                <input
-                  ref={nativeRef}
-                  type="color"
-                  value={/^#[0-9a-f]{6}$/i.test(color) ? color : "#000000"}
-                  onChange={(e) => onColor(e.target.value)}
-                />
-              </button>
+              <Tooltip content="Custom color">
+                <button
+                  type="button"
+                  className="clsp-add"
+                  onClick={() => nativeRef.current?.click()}
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  <input
+                    ref={nativeRef}
+                    type="color"
+                    value={/^#[0-9a-f]{6}$/i.test(color) ? color : "#000000"}
+                    onChange={(e) => onColor(e.target.value)}
+                  />
+                </button>
+              </Tooltip>
             </div>
 
             {opacity != null && onOpacity && (
@@ -237,17 +240,17 @@ export default function ColorLineStylePicker({
                 <div className="clsp-label">Thickness</div>
                 <div className="clsp-presets">
                   {SIZES.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      className={`clsp-preset${s === size ? " sel" : ""}`}
-                      title={`${s}px`}
-                      onClick={() => onSize(s)}
-                    >
-                      <svg viewBox="0 0 40 16" width="40" height="16" aria-hidden="true">
-                        <line x1="3" y1="8" x2="37" y2="8" strokeWidth={s} />
-                      </svg>
-                    </button>
+                    <Tooltip key={s} content={`${s}px`}>
+                      <button
+                        type="button"
+                        className={`clsp-preset${s === size ? " sel" : ""}`}
+                        onClick={() => onSize(s)}
+                      >
+                        <svg viewBox="0 0 40 16" width="40" height="16" aria-hidden="true">
+                          <line x1="3" y1="8" x2="37" y2="8" strokeWidth={s} />
+                        </svg>
+                      </button>
+                    </Tooltip>
                   ))}
                 </div>
               </div>
@@ -258,25 +261,25 @@ export default function ColorLineStylePicker({
                 <div className="clsp-label">Line style</div>
                 <div className="clsp-presets">
                   {lineStyleOptions.map((opt) => (
-                    <button
-                      key={opt}
-                      type="button"
-                      className={`clsp-preset${opt === lineStyle ? " sel" : ""}`}
-                      title={LINE_STYLE_LABEL[opt]}
-                      onClick={() => onLineStyle(opt)}
-                    >
-                      <svg viewBox="0 0 40 16" width="40" height="16" aria-hidden="true">
-                        <line
-                          x1="3"
-                          y1="8"
-                          x2="37"
-                          y2="8"
-                          strokeWidth={2}
-                          strokeDasharray={LINE_STYLE_DASH[opt]}
-                          strokeLinecap={opt === "dotted" ? "round" : "butt"}
-                        />
-                      </svg>
-                    </button>
+                    <Tooltip key={opt} content={LINE_STYLE_LABEL[opt]}>
+                      <button
+                        type="button"
+                        className={`clsp-preset${opt === lineStyle ? " sel" : ""}`}
+                        onClick={() => onLineStyle(opt)}
+                      >
+                        <svg viewBox="0 0 40 16" width="40" height="16" aria-hidden="true">
+                          <line
+                            x1="3"
+                            y1="8"
+                            x2="37"
+                            y2="8"
+                            strokeWidth={2}
+                            strokeDasharray={LINE_STYLE_DASH[opt]}
+                            strokeLinecap={opt === "dotted" ? "round" : "butt"}
+                          />
+                        </svg>
+                      </button>
+                    </Tooltip>
                   ))}
                 </div>
               </div>

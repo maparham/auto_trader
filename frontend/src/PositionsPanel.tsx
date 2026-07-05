@@ -45,6 +45,7 @@ import {
 } from "./lib/signals";
 import { usedMargin } from "./lib/orderInfo";
 import type { TradingSettings } from "./theme";
+import Tooltip from "./components/Tooltip";
 
 interface Props {
   account?: TradeAccount;
@@ -730,7 +731,7 @@ export default function PositionsPanel({
   );
 }
 
-function Stat({
+export function Stat({
   label,
   value,
   tone,
@@ -742,16 +743,18 @@ function Stat({
   title?: string;
 }) {
   return (
-    <div className="pp-stat" title={title}>
-      <span className="pp-stat-label">{label}</span>
-      <span className={`pp-stat-val num${tone ? ` pp-${tone}` : ""}`}>{value}</span>
-    </div>
+    <Tooltip content={title}>
+      <div className="pp-stat">
+        <span className="pp-stat-label">{label}</span>
+        <span className={`pp-stat-val num${tone ? ` pp-${tone}` : ""}`}>{value}</span>
+      </div>
+    </Tooltip>
   );
 }
 
 // Clickable column header: click to sort by this column, click again to flip
 // direction. A caret marks the active column; inactive heads stay quiet.
-function SortHeader({
+export function SortHeader({
   label,
   col,
   sort,
@@ -766,17 +769,18 @@ function SortHeader({
 }) {
   const active = sort.key === col;
   return (
-    <button
-      className={`pp-sort${active ? " on" : ""}`}
-      onClick={() => onSort(col)}
-      title={title}
-      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-    >
-      <span>{label}</span>
-      <span className="pp-sort-caret" aria-hidden="true">
-        {active ? (sort.dir === "asc" ? "▲" : "▼") : ""}
-      </span>
-    </button>
+    <Tooltip content={title}>
+      <button
+        className={`pp-sort${active ? " on" : ""}`}
+        onClick={() => onSort(col)}
+        aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+      >
+        <span>{label}</span>
+        <span className="pp-sort-caret" aria-hidden="true">
+          {active ? (sort.dir === "asc" ? "▲" : "▼") : ""}
+        </span>
+      </button>
+    </Tooltip>
   );
 }
 

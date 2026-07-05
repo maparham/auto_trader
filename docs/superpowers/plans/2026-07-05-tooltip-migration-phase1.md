@@ -545,7 +545,7 @@ afterEach(cleanup);
 describe("IndicatorRow", () => {
   it("shows the indicator's description via InfoTip when one exists", () => {
     render(<IndicatorRow name="RSI" favorite={false} onAdd={() => {}} onToggleFavorite={() => {}} />);
-    fireEvent.focus(screen.getByRole("button", { name: "About RSI" }));
+    fireEvent.focus(screen.getByRole("button", { name: "About Relative Strength Index" }));
     expect(screen.getByRole("tooltip").textContent).toContain(
       "Momentum oscillator (0–100) measuring the speed of gains vs losses",
     );
