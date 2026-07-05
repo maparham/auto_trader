@@ -16,6 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 from auto_trader.api import app as app_module
+from auto_trader.api import deps
 from auto_trader.brokers.base import MarketDataBroker
 from auto_trader.brokers.registry import BrokerRegistry
 from auto_trader.core.broker_health import BrokerHealth
@@ -44,9 +45,11 @@ def _install(monkeypatch, *, call_timeout: float, fail_threshold: int) -> None:
     reg = BrokerRegistry()
     reg.add_data("slow", _StubBroker(delay=10.0))  # "down" broker: hangs
     reg.add_data("fast", _StubBroker(delay=0.0))  # healthy broker
-    monkeypatch.setattr(app_module, "_registry", reg)
+    # _registry/BROKER_HEALTH moved to auto_trader.api.deps in the app split; the
+    # market route's get_data()/guarded() read them from there, so patch deps.
+    monkeypatch.setattr(deps, "_registry", reg)
     monkeypatch.setattr(
-        app_module,
+        deps,
         "BROKER_HEALTH",
         BrokerHealth(call_timeout=call_timeout, fail_threshold=fail_threshold),
     )

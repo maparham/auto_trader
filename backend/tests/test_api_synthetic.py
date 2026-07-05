@@ -15,6 +15,7 @@ import pytest
 from fastapi import HTTPException
 
 import auto_trader.api.app as app_module
+from auto_trader.api import deps
 from auto_trader.core.models import Candle
 
 
@@ -52,7 +53,7 @@ def test_synthetic_ratio_combines_legs(monkeypatch):
             return [_c(60, 2), _c(120, 4)]
         return []
 
-    monkeypatch.setattr(app_module, "_fetch_leg_candles", fake_fetch)
+    monkeypatch.setattr(deps, "_fetch_leg_candles", fake_fetch)  # moved to auto_trader.api.deps
     result = _run(expr="A / B")
     assert [dto.close for dto in result] == [5.0, 5.0]
 
@@ -67,7 +68,7 @@ def test_synthetic_no_overlap_404(monkeypatch):
     async def fake_fetch(broker_id, epic, resolution, bars, from_ts, to_ts, price_side):
         return []
 
-    monkeypatch.setattr(app_module, "_fetch_leg_candles", fake_fetch)
+    monkeypatch.setattr(deps, "_fetch_leg_candles", fake_fetch)  # moved to auto_trader.api.deps
     with pytest.raises(HTTPException) as exc:
         _run(expr="A / B")
     assert exc.value.status_code == 404
