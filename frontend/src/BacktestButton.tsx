@@ -4,9 +4,8 @@
 // sits to its right. Self-contained: it owns its own run state and only needs
 // the focused controller + the active period/broker.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { runAndRender, clearBacktest } from "./lib/backtest";
-import type { BacktestResult } from "./api";
 import type { ChartController } from "./lib/chartController";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
@@ -38,18 +37,32 @@ interface Props {
 export default function BacktestButton({ controller, period, epic, brokerId, priceSide }: Props) {
   const chart = controller?.chart ?? null;
   const [running, setRunning] = useState(false);
-  const [summary, setSummary] = useState<BacktestResult["summary"] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
 
-  // Backtest results belong to a specific symbol/timeframe; drop them on change
-  // (ChartCore clears the on-chart artifacts; this clears the readout).
-  useEffect(() => {
-    setSummary(null);
-    backtestResultSignal.set(null);
+  // The summary chip mirrors the active backtest result straight off the signal
+  // (same store BacktestPanel reads). Driving it off the signal — not just a
+  // fresh run — means a rehydrate after a timeframe switch or a reload, where
+  // ChartCore's rehydrateBacktest republishes the stored result, brings the chip
+  // back too.
+  const activeResult = useSyncExternalStore(
+    (cb) => backtestResultSignal.subscribe(cb),
+    () => backtestResultSignal.value,
+  );
+  const summary = activeResult?.summary ?? null;
+
+  // The transient run messages (error / short-warm-up warning) belong to a
+  // specific run; drop them when the symbol or timeframe changes. Reset during
+  // render on the key change (React's "adjust state on prop change" pattern)
+  // rather than in an effect. The result itself is now persisted and rehydrated
+  // by ChartCore, so it is NOT cleared here anymore.
+  const runKey = `${epic ?? ""}|${period?.resolution ?? ""}`;
+  const [msgKey, setMsgKey] = useState(runKey);
+  if (msgKey !== runKey) {
+    setMsgKey(runKey);
     setError(null);
     setWarning(null);
-  }, [epic, period?.resolution]);
+  }
 
   // The settings modal's "Run backtest" saves the config as last-used then bumps
   // this signal, re-triggering the same ▶ Backtest action (run() always reads
@@ -109,26 +122,31 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         volume: k.volume ?? 0,
       }));
 
-      const res = await runAndRender(chart, {
-        epic,
-        resolution: period.resolution,
-        candles,
-        series,
-        longEntry: cfg.longEntry,
-        longExit: cfg.longExit,
-        shortEntry: cfg.shortEntry,
-        shortExit: cfg.shortExit,
-        // `!== false` so a preset predating these flags (undefined) still trades.
-        longEnabled: cfg.longEnabled !== false,
-        shortEnabled: cfg.shortEnabled !== false,
-        longRisk: cfg.longRisk,
-        shortRisk: cfg.shortRisk,
-        longScaling: cfg.longScaling,
-        shortScaling: cfg.shortScaling,
-        costs: cfg.costs,
-        tradeFromTime,
-      });
-      setSummary(res.summary);
+      const res = await runAndRender(
+        chart,
+        {
+          epic,
+          resolution: period.resolution,
+          candles,
+          series,
+          longEntry: cfg.longEntry,
+          longExit: cfg.longExit,
+          shortEntry: cfg.shortEntry,
+          shortExit: cfg.shortExit,
+          // `!== false` so a preset predating these flags (undefined) still trades.
+          longEnabled: cfg.longEnabled !== false,
+          shortEnabled: cfg.shortEnabled !== false,
+          longRisk: cfg.longRisk,
+          shortRisk: cfg.shortRisk,
+          longScaling: cfg.longScaling,
+          shortScaling: cfg.shortScaling,
+          costs: cfg.costs,
+          tradeFromTime,
+        },
+        controller!.scope,
+      );
+      // The summary chip is driven by the signal subscription above, so just
+      // publish the result (rehydrate uses the same publish path).
       backtestResultSignal.set(res);
       saveBacktestLastUsed(cfg);
     } catch (e) {
@@ -139,8 +157,9 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   }
 
   function clear() {
-    if (chart) clearBacktest(chart);
-    setSummary(null);
+    // Delete the persisted result too, so it doesn't come back on the next
+    // timeframe switch or reload. (summary follows backtestResultSignal.)
+    if (chart && controller && epic) clearBacktest(chart, controller.scope, epic);
     backtestResultSignal.set(null);
     setError(null);
     setWarning(null);

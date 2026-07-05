@@ -80,13 +80,16 @@ export const tradePanelOpen = new Signal<boolean>(false);
 // panel AND every chart cell subscribe to this one signal so there's exactly one
 // poll, fanned out — a cell draws only the trades whose epic matches its symbol.
 import type { TradeView } from "./trading";
-import type { BacktestResult } from "../api";
+import type { StoredBacktestResult } from "./persist";
 export const tradesSignal = new Signal<TradeView[]>([]);
 
-// Backtest run result published after a successful run. Set by BacktestButton after
-// runAndRender completes; cleared when the run is dismissed or the symbol/timeframe changes.
+// Backtest run result published after a successful run OR restored on rehydrate
+// (timeframe switch / reload). Set by BacktestButton (fresh run) and by
+// rehydrateBacktest (restore); cleared when the run is dismissed. Carries the
+// stored shape (no candles) — every consumer reads markers/trades/equity/summary,
+// never candles, so a full or candle-stripped result works identically.
 // Consumers (e.g., trades panel) subscribe to render backtest-specific UI.
-export const backtestResultSignal = new Signal<BacktestResult | null>(null);
+export const backtestResultSignal = new Signal<StoredBacktestResult | null>(null);
 
 // The backtest trade index (row.i) currently highlighted, or null. Set by the
 // trades panel row hover/click AND (Phase C Task 2) the chart's trade markers —

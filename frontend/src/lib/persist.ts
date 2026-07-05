@@ -16,6 +16,7 @@ import type { DeepPartial, OverlayStyle, LineType } from "klinecharts";
 import type { Instrument, Period } from "./feed";
 import type { VisibilityModel } from "./visibility";
 import type { BacktestConfig } from "./backtestConfig";
+import type { BacktestResult } from "../api";
 import { API_BASE } from "./http";
 
 const PREFIX = "auto-trader";
@@ -905,6 +906,32 @@ export function loadDrawings(scope: string, epic: string): SavedOverlay[] {
 }
 export function saveDrawings(scope: string, epic: string, list: SavedOverlay[]): void {
   save(drawingsKey(scope, epic), list);
+}
+
+// --- backtest result (per cell, per epic) ------------------------------------
+//
+// The last backtest a cell ran, persisted so its markers/equity/trades survive a
+// timeframe switch AND a full reload — cleared only by the toolbar ✕ or a re-run.
+// Keyed like drawings (scope + epic): a cell owns its own backtest, and per-epic
+// so switching symbol away and back restores the right result. The bulky
+// `candles` array is stripped before saving — redraw attaches markers/equity to
+// whatever bars are loaded by absolute timestamp, so the candles aren't needed.
+export type StoredBacktestResult = Omit<BacktestResult, "candles">;
+
+const backtestKey = (scope: string, epic: string) => ns(scope, `backtest.${epic}`);
+
+export function loadBacktestResult(scope: string, epic: string): StoredBacktestResult | null {
+  return load<StoredBacktestResult | null>(backtestKey(scope, epic), null);
+}
+export function saveBacktestResult(scope: string, epic: string, result: BacktestResult): void {
+  // Strip the bulky candle array before persisting — redraw doesn't need it
+  // (markers/equity attach to whatever bars are loaded by absolute timestamp).
+  const stored: StoredBacktestResult = { ...result };
+  delete (stored as Partial<BacktestResult>).candles;
+  save(backtestKey(scope, epic), stored);
+}
+export function clearBacktestResult(scope: string, epic: string): void {
+  removeKeyEverywhere(backtestKey(scope, epic));
 }
 
 // --- active indicators (per cell) --------------------------------------------

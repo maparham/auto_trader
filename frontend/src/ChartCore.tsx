@@ -44,7 +44,7 @@ import { isInvertShortcut } from "./lib/invertShortcut";
 import MarketInfoPopover from "./MarketInfoPopover";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle, type CurveLabelPill } from "./CurveLabels";
-import { clearBacktest } from "./lib/backtest";
+import { teardownArtifacts, rehydrateBacktest } from "./lib/backtest";
 import { toast } from "./lib/notify";
 import {
   alertEditRequest,
@@ -2586,8 +2586,9 @@ export default function ChartCore({
       unsubRemoved();
       // Backtest chart-sync subscriptions (highlightTradeSignal/focusTradeSignal)
       // strongly capture this chart + its BacktestResult — release them on unmount
-      // so a detached/closed cell can be GC'd (clearBacktest is a no-op if none ran).
-      clearBacktest(chart);
+      // so a detached/closed cell can be GC'd (no-op if none ran). Teardown only:
+      // the persisted result must survive so a reopened cell can rehydrate it.
+      teardownArtifacts(chart);
       el.removeEventListener("click", onClick);
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
@@ -2792,8 +2793,10 @@ export default function ChartCore({
     // Alerts are stored per broker; address them with THIS cell's broker (not the
     // ambient persistBroker the toolbar may flip mid-switch). In lockstep with setEpic.
     overlays.setBroker(brokerId);
-    // Backtest markers/equity belong to the previous series — drop them.
-    clearBacktest(chart);
+    // Backtest markers/equity belong to the previous series — drop the live
+    // artifacts immediately (keep the persisted result; rehydrateBacktest below
+    // redraws it for the new series once its bars are loaded).
+    teardownArtifacts(chart);
     // Reset scroll-back state for the new series.
     loadingRef.current = false;
     exhaustedRef.current = false;
@@ -2883,6 +2886,13 @@ export default function ChartCore({
       // next persist baked the drift in). This also re-derives each drawing's
       // per-interval visibility, so no separate setResolution call remains.
       overlays.rehydrate(period.resolution);
+      // Restore this cell's saved backtest (markers/equity/trades) for the new
+      // series — the backtest counterpart to overlays.rehydrate. Markers show on
+      // the backtest's native timeframe and any finer one where fills align to
+      // bars; equity only on the native one; a coarser timeframe draws nothing
+      // but keeps the result saved. Republishes backtestResultSignal so the
+      // trades panel + summary chip come back.
+      rehydrateBacktest(chartRef.current, scope, symbol.epic, period.resolution);
       // Redraw position lines for the (possibly new) epic at the current precision.
       posLinesRef.current?.setPrecision(effPrecision);
       posDrawRef.current();

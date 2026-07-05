@@ -28,8 +28,15 @@ import { runBacktest, type BacktestRequest, type BacktestResult } from "../api";
 import { applyVisibleRange } from "./chartSync";
 import { backtestResultSignal, highlightTradeSignal, selectedTradeSignal } from "./signals";
 import { tradeZones } from "./tradeZones";
+import { RESOLUTION_SECONDS } from "./feed";
+import {
+  saveBacktestResult,
+  loadBacktestResult,
+  clearBacktestResult,
+  type StoredBacktestResult,
+} from "./persist";
 
-type Trade = BacktestResult["trades"][number];
+type Trade = StoredBacktestResult["trades"][number];
 
 export const EQUITY_INDICATOR = "EQUITY";
 
@@ -73,10 +80,10 @@ interface BacktestArtifacts {
   trades: Trade[];
   highlightOverlayId: string | null;
   selectionOverlayIds: string[];
-  // The result THIS chart rendered, so clearBacktest resets the global
+  // The result THIS chart rendered, so teardownArtifacts resets the global
   // hover/selection signals only when this chart owns the currently-active
   // backtest — closing an unrelated cell must not wipe another cell's selection.
-  result: BacktestResult | null;
+  result: StoredBacktestResult | null;
   unsub: (() => void) | null;
 }
 const artifactsByChart = new WeakMap<Chart, BacktestArtifacts>();
@@ -415,23 +422,61 @@ export function registerBacktestIndicators(): void {
 export async function runAndRender(
   chart: Chart,
   req: BacktestRequest,
+  scope: string,
 ): Promise<BacktestResult> {
   const result = await runBacktest(req);
   // Drops the previous run's markers/equity/highlight/selection zone AND
   // detaches its highlight/selection subscriptions + resets
   // highlightTradeSignal/selectedTradeSignal — so a stale trade index from the
-  // prior result can never draw against this run's data.
-  clearBacktest(chart);
+  // prior result can never draw against this run's data. (Does NOT delete the
+  // persisted store — the save() below overwrites it with the fresh run.)
+  teardownArtifacts(chart);
+  // Persist so the markers/equity/trades survive a timeframe switch and a full
+  // reload (candles stripped — see saveBacktestResult). The fresh run is
+  // always rendered in full (its own native timeframe).
+  saveBacktestResult(scope, req.epic, result);
+  renderArtifacts(chart, result, { drawMarkers: true, drawEquity: true });
+  return result;
+}
+
+/** Draw a backtest result's on-chart artifacts (equity sub-pane + trade
+ * markers) and wire the trades-panel hover/selection sync. Shared by a fresh
+ * run (runAndRender) and a rehydrate after a timeframe switch / reload
+ * (rehydrateBacktest). The caller is responsible for tearing down any prior
+ * artifacts first and for publishing `backtestResultSignal` with THIS exact
+ * `result` object (the sync gating below is identity-based).
+ *
+ * `drawEquity` renders the equity curve (native timeframe only — a bar-indexed
+ * equity series is misleading once bars aggregate). `drawMarkers` renders the
+ * fill markers + installs the row/marker sync (same-or-finer timeframe only,
+ * where each fill timestamp still lands on a bar boundary). On a coarser
+ * timeframe both are false: nothing is drawn, but the result stays saved and
+ * the panel still shows it. */
+export function renderArtifacts(
+  chart: Chart,
+  result: StoredBacktestResult,
+  { drawMarkers, drawEquity }: { drawMarkers: boolean; drawEquity: boolean },
+): void {
   const artifacts = artifactsFor(chart);
 
   // Equity curve -> own sub-pane. The series travels on the instance's
   // extendData so this chart's calc looks up its own values.
-  const equityByTs = new Map(result.equity.map((p) => [p.time * 1000, p.value]));
-  artifacts.equityPaneId =
-    chart.createIndicator(
-      { name: EQUITY_INDICATOR, extendData: equityByTs },
-      false,
-    ) ?? null;
+  if (drawEquity) {
+    const equityByTs = new Map(result.equity.map((p) => [p.time * 1000, p.value]));
+    artifacts.equityPaneId =
+      chart.createIndicator(
+        { name: EQUITY_INDICATOR, extendData: equityByTs },
+        false,
+      ) ?? null;
+  }
+
+  // Always record the result + trades so teardownArtifacts' ownership check and
+  // any installed subscriptions read a coherent state, even when nothing is
+  // drawn (coarser timeframe).
+  artifacts.trades = result.trades;
+  artifacts.result = result;
+
+  if (!drawMarkers) return;
 
   // time|leg -> trade index, so each fill marker can be tied back to the trade
   // it belongs to (its opening fill is at entry_time, its closing fill at
@@ -451,7 +496,7 @@ export async function runAndRender(
   // (one trades panel for the whole app), but a backtest can be running/rendered
   // in more than one cell's chart at once. Gate every emit/consume on
   // `backtestResultSignal.value === result` (identity, not equality — the panel
-  // is set from this exact object in BacktestButton) so only the chart whose
+  // is set from this exact object by the caller) so only the chart whose
   // result is the one actually shown in the panel participates; a
   // not-currently-displayed cell's markers/lines stay inert instead of
   // cross-talking into another chart's trade indices.
@@ -499,9 +544,6 @@ export async function runAndRender(
     });
     if (typeof id === "string") artifacts.markerIds.push(id);
   }
-
-  artifacts.trades = result.trades;
-  artifacts.result = result;
 
   // Row -> chart: draw ONE transient locked line spanning entry -> exit,
   // colored win/loss, while a row (or a marker, above) is highlighted; null
@@ -554,11 +596,70 @@ export async function runAndRender(
     unsubHighlight();
     unsubSelection();
   };
-
-  return result;
 }
 
-export function clearBacktest(chart: Chart): void {
+/** Decide what a saved backtest renders on the `current` timeframe given the
+ * `native` one it was run on:
+ *  - markers: on the native timeframe and any FINER one where each fill
+ *    timestamp still lands on a bar boundary — i.e. the current interval evenly
+ *    divides the native interval (5m markers show on 1m/5m, hide on 3m/15m/1D).
+ *  - equity: native timeframe ONLY (a bar-indexed equity curve is misleading
+ *    once bars aggregate, and sparse once they subdivide).
+ * Pure + exported for tests. */
+export function backtestRenderFlags(
+  current: string,
+  native: string,
+): { drawMarkers: boolean; drawEquity: boolean } {
+  const cur = RESOLUTION_SECONDS[current] ?? 0;
+  const nat = RESOLUTION_SECONDS[native] ?? 0;
+  return {
+    drawMarkers: cur > 0 && nat > 0 && cur <= nat && nat % cur === 0,
+    drawEquity: current === native,
+  };
+}
+
+/** Restore a cell's saved backtest onto the chart after a symbol/timeframe
+ * change or a page reload — the counterpart to overlays.rehydrate for backtest
+ * artifacts. Called from ChartCore once the new series' bars are loaded.
+ *
+ * Markers render on the backtest's native timeframe AND any finer one where the
+ * fill timestamps still align to bar boundaries (current interval divides the
+ * native interval); the equity curve renders only on the native timeframe. On a
+ * coarser timeframe nothing is drawn, but the result stays saved and the panel
+ * is repopulated so it's still discoverable. */
+export function rehydrateBacktest(
+  chart: Chart,
+  scope: string,
+  epic: string,
+  resolution: string,
+): void {
+  // Did THIS chart own the panel before we tear it down? Only an owner may clear
+  // the shared panel below — otherwise, in a split layout, a cell with no saved
+  // backtest would null another cell's freshly-published result on mount.
+  const prev = artifactsByChart.get(chart);
+  const owned = !!prev && backtestResultSignal.value === prev.result;
+  // Clean slate (the ChartCore effect also tears down synchronously on switch;
+  // this is defensive so a direct call can't stack artifacts).
+  teardownArtifacts(chart);
+  const saved = loadBacktestResult(scope, epic);
+  if (!saved) {
+    // No backtest for this cell/epic — clear the panel only if this cell was the
+    // one showing a result (switched to a no-backtest symbol/TF). A cell that
+    // never owned the panel leaves another cell's result alone.
+    if (owned) backtestResultSignal.set(null);
+    return;
+  }
+  renderArtifacts(chart, saved, backtestRenderFlags(resolution, saved.resolution));
+  // Publish with THIS exact object so renderArtifacts' identity-gated sync binds
+  // to it, and the trades panel / summary chip repopulate.
+  backtestResultSignal.set(saved);
+}
+
+/** Remove a chart's live backtest artifacts (markers, equity pane, highlight +
+ * selection overlays) and detach its subscriptions — WITHOUT touching the
+ * persisted store. Used on a symbol/timeframe change and on unmount, where the
+ * saved result must survive to be rehydrated. */
+export function teardownArtifacts(chart: Chart): void {
   const artifacts = artifactsByChart.get(chart);
   if (!artifacts) return;
   for (const id of artifacts.markerIds) chart.removeOverlay(id);
@@ -581,11 +682,19 @@ export function clearBacktest(chart: Chart): void {
   // currently-active backtest — otherwise clearing/unmounting an UNRELATED cell
   // would fire another cell's live subscription and wipe its shown selection.
   // Stale-index safety on re-run still holds: the owning chart's own
-  // runAndRender calls clearBacktest at the top while it is still the active
+  // runAndRender calls teardownArtifacts at the top while it is still the active
   // result, so this condition is true and the reset happens.
   if (backtestResultSignal.value === artifacts.result) {
     highlightTradeSignal.set(null);
     selectedTradeSignal.set(null);
   }
   artifacts.result = null;
+}
+
+/** User-initiated clear (toolbar ✕): drop the live artifacts AND delete the
+ * persisted store so it does NOT come back on the next timeframe switch or
+ * reload. */
+export function clearBacktest(chart: Chart, scope: string, epic: string): void {
+  teardownArtifacts(chart);
+  clearBacktestResult(scope, epic);
 }

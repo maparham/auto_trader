@@ -703,3 +703,74 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
     expect(P.canMergeTabs([tab("s", 1)], "s", "missing")).toBe(false);
   });
 });
+
+describe("backtest result persistence", () => {
+  const mkResult = (resolution: string) =>
+    ({
+      epic: "US100",
+      resolution,
+      candles: [{ time: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 }],
+      markers: [{ time: 100, side: "buy", price: 5, reason: "entry", leg: "long" }],
+      trades: [
+        {
+          side: "buy",
+          quantity: 1,
+          entry_time: 100,
+          entry_price: 5,
+          exit_time: 200,
+          exit_price: 6,
+          pnl: 1,
+          leg: "long",
+          reason: "exit",
+          stop_initial: null,
+          stop_final: null,
+          target: null,
+        },
+      ],
+      equity: [{ time: 100, value: 1000 }],
+      summary: { net_pnl: 1, n_trades: 1, win_rate: 1, max_drawdown: 0 },
+      metrics: {
+        return_pct: 0.1,
+        profit_factor: null,
+        expectancy: 1,
+        avg_win: 1,
+        avg_loss: 0,
+        avg_win_loss_ratio: null,
+        largest_win: 1,
+        largest_loss: 0,
+        max_drawdown_pct: 0,
+        avg_duration_bars: 1,
+        max_consec_wins: 1,
+        max_consec_losses: 0,
+      },
+    }) as unknown as import("../api").BacktestResult;
+
+  it("round-trips a result per scope+epic, stripping candles", () => {
+    P.saveBacktestResult("tab.A", "US100", mkResult("MINUTE_5"));
+    const loaded = P.loadBacktestResult("tab.A", "US100");
+    expect(loaded).not.toBeNull();
+    // Candles dropped; everything else survives.
+    expect(loaded as unknown as { candles?: unknown }).not.toHaveProperty("candles");
+    expect(loaded!.resolution).toBe("MINUTE_5");
+    expect(loaded!.markers).toHaveLength(1);
+    expect(loaded!.trades[0].pnl).toBe(1);
+    expect(loaded!.equity[0].value).toBe(1000);
+    expect(loaded!.summary.n_trades).toBe(1);
+  });
+
+  it("is scoped per cell and per epic; default null", () => {
+    P.saveBacktestResult("tab.A", "US100", mkResult("HOUR"));
+    // Another cell (scope) sees nothing.
+    expect(P.loadBacktestResult("tab.B", "US100")).toBeNull();
+    // Another epic in the same cell is separate.
+    expect(P.loadBacktestResult("tab.A", "BTC")).toBeNull();
+    expect(localStorage.getItem("auto-trader.tab.A.backtest.US100")).not.toBeNull();
+  });
+
+  it("clearBacktestResult removes the stored key", () => {
+    P.saveBacktestResult("tab.A", "US100", mkResult("HOUR"));
+    P.clearBacktestResult("tab.A", "US100");
+    expect(P.loadBacktestResult("tab.A", "US100")).toBeNull();
+    expect(localStorage.getItem("auto-trader.tab.A.backtest.US100")).toBeNull();
+  });
+});
