@@ -877,11 +877,22 @@
 .bt-op-dropdown li.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .bt-op-item-label { font-weight: 500; }
 .bt-op-item-label.bt-op-cross { color: var(--accent); font-weight: 600; }
+/* Per-row actions sit in the row's last (auto) grid column as one cluster:
+   duplicate, copy, remove. Icon-only buttons — each carries a title/aria-label. */
+.bt-rule-actions { display: inline-flex; align-items: center; gap: 2px; }
+.bt-rule-btn {
+  flex: 0 0 auto; background: transparent; border: none; color: var(--text-dim);
+  cursor: pointer; padding: 4px; font-size: 14px; line-height: 1;
+}
+.bt-rule-btn:hover { color: var(--accent); }
 .bt-rule-remove {
   flex: 0 0 auto; background: transparent; border: none; color: var(--text-dim);
   cursor: pointer; padding: 4px;
 }
 .bt-rule-remove:hover { color: var(--danger, #e5534b); }
+/* Add / Paste live on one row; Paste only appears while a rule is on the
+   clipboard, so the group can gain a rule copied from the other side. */
+.bt-rule-foot { display: flex; gap: 8px; }
 /* A rule group with zero rules is never true — for "Buy when" that means the
    backtest can never open a position at all, which reads as "nothing happens"
    with no other clue why. Call it out instead of letting it fail silently. */
