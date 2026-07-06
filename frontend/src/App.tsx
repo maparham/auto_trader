@@ -138,6 +138,10 @@ const DEFAULT_SYMBOL: Instrument = {
 const DEFAULT_PERIOD: Period =
   PERIODS.find((p) => p.resolution === "HOUR") ?? PERIODS[0];
 
+// Which chart tab is active is remembered PER BROWSER TAB (sessionStorage, so it
+// survives a reload but isn't shared with sibling tabs) — see the activeId state.
+const ACTIVE_TAB_SESSION_KEY = "auto-trader.activeTabId";
+
 // The first instrument a brand-new broker workspace opens on (each broker is an
 // isolated instance with a FRESH START — no carry-over). Epics are broker-specific,
 // so a per-broker default; pricePrecision is just a render seed (the chart fetches
@@ -317,8 +321,20 @@ export default function App() {
     // it in dev.
     const want = new URLSearchParams(location.search).get("tab");
     if (want && startup.ws.tabs.some((t) => t.id === want)) return want;
+    // Persist the active tab PER BROWSER TAB across reloads via sessionStorage
+    // (scoped to this tab, not shared with siblings — matching the per-instance,
+    // never-synced design of the active selection). Tab ids are globally-unique,
+    // so the existence check self-corrects across broker/layout switches; fall
+    // back to the body seed when the remembered tab is gone.
+    const remembered = sessionStorage.getItem(ACTIVE_TAB_SESSION_KEY);
+    if (remembered && startup.ws.tabs.some((t) => t.id === remembered))
+      return remembered;
     return startup.ws.activeTabId;
   });
+  // Remember the active tab for this browser tab so a reload restores it.
+  useEffect(() => {
+    if (activeId) sessionStorage.setItem(ACTIVE_TAB_SESSION_KEY, activeId);
+  }, [activeId]);
   // Strip a deep-link ?tab= param after mount (not in the useState
   // initializer above) so a reload behaves normally without risking the
   // StrictMode double-invoke racing the read against the strip.
