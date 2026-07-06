@@ -233,6 +233,9 @@ class RecurrenceMaskDTO(BaseModel):
     daysOfMonth: list[int] = []      # 1..31
     timeOfDay: DayTimeWindowDTO | None = None
     tz: str = "UTC"
+    # camelCase to match the wire (this DTO uses camelCase attr names, no aliases).
+    # Force-flat open positions at each session close; default off (see RecurrenceMask).
+    flattenAtClose: bool = False
 
     @model_validator(mode="after")
     def _valid_tz(self) -> "RecurrenceMaskDTO":
@@ -251,6 +254,7 @@ class RecurrenceMaskDTO(BaseModel):
             time_start_min=self.timeOfDay.startMin if self.timeOfDay else None,
             time_end_min=self.timeOfDay.endMin if self.timeOfDay else None,
             tz=self.tz,
+            flatten_at_close=self.flattenAtClose,
         )
 
 

@@ -26,6 +26,10 @@ class RecurrenceMask:
     time_start_min: int | None = None         # minutes from midnight, local to tz
     time_end_min: int | None = None
     tz: str = "UTC"
+    # When True, force-flat any open position at the first bar outside a window
+    # (books a "session close" exit). Default off: entries stay gated to windows
+    # but an open position runs across boundaries to its stop/target/range end.
+    flatten_at_close: bool = False
 
 
 def _js_weekday(dt: datetime) -> int:

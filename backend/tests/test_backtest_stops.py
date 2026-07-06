@@ -140,8 +140,12 @@ def test_no_risk_config_reproduces_baseline():
     t0 = datetime(2024, 1, 1, tzinfo=timezone.utc)
     candles = [_c(t0, i, 100, 100, 100, 100) for i in range(4)]
     base = _run(candles)                              # risks default None
-    assert base.trades == []                          # BuyOnBar1 never exits by rule
-    assert base.n_trades == 0
+    # BuyOnBar1 never exits by rule; with no stop/target the only exit is the
+    # "range end" booking of the still-open position at the last bar (pnl 0 at
+    # flat prices) — no stop/target trade is produced.
+    assert base.n_trades == 1
+    assert base.trades[0].reason_out == "range end"
+    assert base.trades[0].pnl == 0.0
 
 
 class SellOnBar1(Strategy):

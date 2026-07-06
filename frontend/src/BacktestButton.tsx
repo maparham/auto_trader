@@ -19,13 +19,14 @@ import {
   requiredWarmupBars,
   warmupBarCount,
 } from "./lib/backtestWindow";
-import { loadBacktestLastUsed, saveBacktestLastUsed } from "./lib/persist";
+import { loadBacktestLastUsed, saveBacktestLastUsed, loadBacktestPeriodsShown } from "./lib/persist";
 import {
   openBacktestSettings,
   backtestRunRequest,
   backtestClearRequest,
   backtestResultSignal,
   backtestMessagesSignal,
+  backtestPeriodsShownSignal,
 } from "./lib/signals";
 
 interface Props {
@@ -75,6 +76,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   // last-used config, so no config needs to be threaded through). The toolbar
   // button only opens the panel — running lives with the config.
   useEffect(() => backtestRunRequest.subscribe(() => void run()));
+
+  // Seed the period-shading toggle from device-local storage once at startup
+  // (the component is mounted for the whole app session).
+  useEffect(() => {
+    backtestPeriodsShownSignal.set(loadBacktestPeriodsShown());
+  }, []);
 
   async function run() {
     if (!chart || !epic || !period || running) return;
@@ -162,6 +169,14 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
         },
         controller!.scope,
+        // Displayed TF, so runAndRender picks native/aggregate/none correctly when
+        // the run's base TF (runResolution) differs from what the chart shows.
+        period.resolution,
+        {
+          fromMs: windowFromMs,
+          toMs: windowToMs,
+          mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
+        },
       );
       // The summary chip is driven by the signal subscription above, so just
       // publish the result (rehydrate uses the same publish path).

@@ -181,6 +181,16 @@ export function saveBacktestOpen(open: boolean): void {
   saveLocal(BACKTEST_OPEN_KEY, open);
 }
 
+// Whether the on-chart backtest trading-period shading is shown. Device-local
+// view preference (like the panel open/side/split flags above), default on.
+const BACKTEST_PERIODS_SHOWN_KEY = `${PREFIX}.backtestPeriodsShown`;
+export function loadBacktestPeriodsShown(): boolean {
+  return load<boolean>(BACKTEST_PERIODS_SHOWN_KEY, true);
+}
+export function saveBacktestPeriodsShown(shown: boolean): void {
+  saveLocal(BACKTEST_PERIODS_SHOWN_KEY, shown);
+}
+
 // --- per-symbol chart templates (global, keyed by epic) ----------------------
 //
 // A saved layout (indicators + drawings) tied to a SYMBOL, not a cell — so a

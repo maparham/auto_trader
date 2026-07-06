@@ -24,13 +24,14 @@ import {
   type OverlayTemplate,
   type OverlayFigure,
 } from "klinecharts";
-import { runBacktest, type BacktestRequest, type BacktestResult } from "../api";
+import { runBacktest, type BacktestRequest } from "../api";
 import { applyVisibleRange } from "./chartSync";
 import {
   backtestResultSignal,
   highlightTradeSignal,
   selectedTradeSignal,
   backtestClusterHoverSignal,
+  backtestPeriodsShownSignal,
 } from "./signals";
 import { tradeZones } from "./tradeZones";
 import { minPositiveGap } from "./barInterval";
@@ -41,6 +42,7 @@ import {
   clearBacktestResult,
   type StoredBacktestResult,
 } from "./persist";
+import { computePeriodBands, type BacktestPeriod, type PeriodBand } from "./backtestPeriods";
 
 type Trade = StoredBacktestResult["trades"][number];
 
@@ -52,6 +54,9 @@ const SELL_COLOR = "#ef5350";
 // entry/price blue) so the selected-trade overlay reads consistently with the
 // live trade lines, without importing that module's private const.
 const ACCENT_COLOR = "#2962ff";
+// Neutral grey for the trading-period shading — deliberately off the green/red
+// markers and the blue trade lines so an always-on layer doesn't compete.
+const PERIOD_COLOR = "#59646f";
 
 /** Chart marker label. Risk exits read by reason: stop/trailing => "SL",
  * target => "TP". Otherwise "+" opens a position and "-" closes it, prefixed by
@@ -102,6 +107,8 @@ interface BacktestArtifacts {
   // backtest — closing an unrelated cell must not wipe another cell's selection.
   result: StoredBacktestResult | null;
   unsub: (() => void) | null;
+  // Ids of the locked, non-interactive period-shading overlays (one per band).
+  periodBandIds: string[];
 }
 const artifactsByChart = new WeakMap<Chart, BacktestArtifacts>();
 
@@ -118,6 +125,7 @@ function artifactsFor(chart: Chart): BacktestArtifacts {
       selectionOverlayIds: [],
       result: null,
       unsub: null,
+      periodBandIds: [],
     };
     artifactsByChart.set(chart, a);
   }
@@ -524,6 +532,126 @@ function ensureZoneOverlayRegistered(): void {
   registerOverlay(tradeZoneOverlay);
 }
 
+const PERIOD_OVERLAY = "backtestPeriod";
+
+interface PeriodExtra { label: string }
+
+// The trading-period band: a faint full-pane-height rect in the price pane, and
+// a faint labeled chip in the X-axis pane (createXAxisFigures — the native way to
+// draw on the time axis, so it pans/zooms with the axis). Read-only: lock on
+// create AND every figure ignoreEvent, so it never intercepts clicks or the
+// crosshair — the cursor's time pill (klinecharts' crosshair label, drawn above
+// the overlay layer) stays fully legible over the faint chip.
+const periodOverlay: OverlayTemplate = {
+  name: PERIOD_OVERLAY,
+  totalStep: 2,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: ({ coordinates, bounding }) => {
+    if (coordinates.length < 2) return [];
+    const x0 = Math.min(coordinates[0].x, coordinates[1].x);
+    const w = Math.abs(coordinates[1].x - coordinates[0].x);
+    return [
+      {
+        type: "rect",
+        attrs: { x: x0, y: 0, width: w, height: bounding.height },
+        styles: { style: PolygonType.Fill, color: `${PERIOD_COLOR}0f` }, // ~6%
+        ignoreEvent: true,
+      },
+    ];
+  },
+  createXAxisFigures: ({ overlay, coordinates, bounding }) => {
+    if (coordinates.length < 2) return [];
+    const { label } = (overlay.extendData as PeriodExtra) ?? { label: "" };
+    const x0 = Math.min(coordinates[0].x, coordinates[1].x);
+    const x1 = Math.max(coordinates[0].x, coordinates[1].x);
+    const w = x1 - x0;
+    const figures: OverlayFigure[] = [
+      {
+        type: "rect",
+        attrs: { x: x0, y: 0, width: w, height: bounding.height },
+        styles: { style: PolygonType.Fill, color: `${PERIOD_COLOR}33` }, // ~20%
+        ignoreEvent: true,
+      },
+    ];
+    if (label && w > 44) {
+      figures.push({
+        type: "text",
+        attrs: { x: (x0 + x1) / 2, y: bounding.height / 2, text: label, align: "center", baseline: "middle" },
+        // backgroundColor/borderColor MUST be transparent: klinecharts' default
+        // overlay-text style fills a solid (blue) pill, which on the axis would
+        // mimic the crosshair time label. We want only the faint grey chip rect
+        // above to read, with plain grey text on it.
+        styles: {
+          color: PERIOD_COLOR,
+          size: 10,
+          family: "-apple-system, system-ui, sans-serif",
+          backgroundColor: "transparent",
+          borderColor: "transparent",
+        },
+        ignoreEvent: true,
+      });
+    }
+    return figures;
+  },
+};
+
+let periodOverlayRegistered = false;
+function ensurePeriodOverlayRegistered(): void {
+  if (periodOverlayRegistered) return;
+  periodOverlayRegistered = true;
+  registerOverlay(periodOverlay);
+}
+
+/** Short label for a band's axis chip: a clock span for an intraday-width band
+ * (a mask session), a date span for a multi-day one (the whole window). */
+function periodLabel(b: PeriodBand, period: BacktestPeriod): string {
+  const tz = period.mask?.tz;
+  const multiDay = b.toMs - b.fromMs >= 20 * 3600 * 1000;
+  if (multiDay) {
+    const d: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", ...(tz ? { timeZone: tz } : {}) };
+    return `${new Date(b.fromMs).toLocaleDateString([], d)} – ${new Date(b.toMs).toLocaleDateString([], d)}`;
+  }
+  const t: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", ...(tz ? { timeZone: tz } : {}) };
+  return `${new Date(b.fromMs).toLocaleTimeString([], t)}–${new Date(b.toMs).toLocaleTimeString([], t)}`;
+}
+
+/** Remove this chart's period-band overlays and reset the bookkeeping. */
+function clearPeriodBands(chart: Chart, artifacts: BacktestArtifacts): void {
+  for (const id of artifacts.periodBandIds) chart.removeOverlay(id);
+  artifacts.periodBandIds = [];
+}
+
+/** Draw the trading-period bands for the CURRENT loaded bars, if the global
+ * toggle is on and the result carries a period. Caller clears any prior bands
+ * first. Independent of markerMode — periods are pure time spans, valid on every
+ * timeframe. */
+function drawPeriodBands(chart: Chart, artifacts: BacktestArtifacts, result: StoredBacktestResult): void {
+  if (!backtestPeriodsShownSignal.value) return;
+  const period = result.period;
+  if (!period) return;
+  const data = chart.getDataList() ?? [];
+  if (data.length === 0) return;
+  const barTimes = data.map((k) => k.timestamp);
+  const bands = computePeriodBands(period, barTimes);
+  if (bands.length === 0) return;
+  ensurePeriodOverlayRegistered();
+  const yVal = data[0].close; // a valid in-range price so the point projects (y is unused)
+  for (const b of bands) {
+    const id = chart.createOverlay({
+      name: PERIOD_OVERLAY,
+      lock: true,
+      points: [
+        { timestamp: b.fromMs, value: yVal },
+        { timestamp: b.toMs, value: yVal },
+      ],
+      extendData: { label: periodLabel(b, period) } satisfies PeriodExtra,
+    });
+    if (typeof id === "string") artifacts.periodBandIds.push(id);
+  }
+}
+
 /** Draw the windowed risk/reward zone overlay for trade `t` and scroll the
  * chart to its entry↔exit span. Pushes the created overlay's id into
  * `artifacts.selectionOverlayIds` (the caller is responsible for clearing any
@@ -606,7 +734,9 @@ export async function runAndRender(
   chart: Chart,
   req: BacktestRequest,
   scope: string,
-): Promise<BacktestResult> {
+  displayResolution: string,
+  period?: BacktestPeriod,
+): Promise<StoredBacktestResult> {
   const result = await runBacktest(req);
   // Drops the previous run's markers/equity/highlight/selection zone AND
   // detaches its highlight/selection subscriptions + resets
@@ -615,11 +745,20 @@ export async function runAndRender(
   // persisted store — the save() below overwrites it with the fresh run.)
   teardownArtifacts(chart);
   // Persist so the markers/equity/trades survive a timeframe switch and a full
-  // reload (candles stripped — see saveBacktestResult). The fresh run is
-  // always rendered in full (its own native timeframe).
-  saveBacktestResult(scope, req.epic, result);
-  renderArtifacts(chart, result, { markerMode: "native", drawEquity: true });
-  return result;
+  // reload (candles stripped — see saveBacktestResult). Attach the period so the
+  // shading persists + rehydrates like the markers.
+  saveBacktestResult(scope, req.epic, result, period);
+  // Render for the CURRENTLY displayed timeframe, not blindly native: the run's
+  // base TF (req.resolution) can differ from the chart's TF (the settings panel's
+  // "base TF" dropdown lets you run e.g. 5m while viewing 1H), and running does
+  // NOT switch the chart. Hardcoding native+equity then piled every fine fill onto
+  // the coarse bars (aggregate's whole reason to exist) and drew a gappy equity
+  // pane. Same flags rehydrate uses, so a run and a switch-away-and-back now agree.
+  // Render the freshly-STORED object (which carries `period`) so the shading is
+  // present at render time.
+  const stored = loadBacktestResult(scope, req.epic) ?? result;
+  renderArtifacts(chart, stored, backtestRenderFlags(displayResolution, req.resolution));
+  return stored;
 }
 
 /** Draw this result's trade markers for the CURRENT loaded bars, per
@@ -752,6 +891,8 @@ export function reanchorBacktestMarkers(chart: Chart): void {
   artifacts.markerIds = [];
   artifacts.aggClusters = [];
   drawMarkers(chart, artifacts.result, artifacts);
+  clearPeriodBands(chart, artifacts);
+  drawPeriodBands(chart, artifacts, artifacts.result);
 }
 
 /** Draw a backtest result's on-chart artifacts (equity sub-pane + trade
@@ -801,7 +942,20 @@ export function renderArtifacts(
   artifacts.markerMode = markerMode;
   artifacts.aggClusters = []; // set by drawMarkers only in "aggregate" mode
 
-  if (markerMode === "none") return;
+  // Period shading — draw now (gated by the toggle) and redraw on toggle flips.
+  // Installed BEFORE the markerMode "none" early-return so periods still respond
+  // to the toggle on a timeframe where markers aren't drawn.
+  clearPeriodBands(chart, artifacts);
+  drawPeriodBands(chart, artifacts, result);
+  const unsubPeriods = backtestPeriodsShownSignal.subscribe(() => {
+    clearPeriodBands(chart, artifacts);
+    drawPeriodBands(chart, artifacts, result);
+  });
+
+  if (markerMode === "none") {
+    artifacts.unsub = unsubPeriods;
+    return;
+  }
 
   // Draw the trade markers for the currently-loaded bars. Split out so the
   // history-coverage page-back can redraw JUST the markers later (see
@@ -859,6 +1013,7 @@ export function renderArtifacts(
   artifacts.unsub = () => {
     unsubHighlight();
     unsubSelection();
+    unsubPeriods();
   };
 }
 
@@ -936,6 +1091,7 @@ export function teardownArtifacts(chart: Chart): void {
   artifacts.markerIds = [];
   artifacts.aggClusters = [];
   artifacts.markerMode = "none";
+  clearPeriodBands(chart, artifacts);
   if (artifacts.equityPaneId) {
     chart.removeIndicator(artifacts.equityPaneId, EQUITY_INDICATOR);
     artifacts.equityPaneId = null;

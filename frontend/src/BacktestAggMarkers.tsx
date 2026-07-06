@@ -11,7 +11,7 @@
 // rendered once at App level); clicking drills into the backtest's native
 // timeframe zoomed to that bar's window (onDrillIn, wired by ChartCore).
 
-import { useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { backtestClusterHoverSignal } from "./lib/signals";
 import type { StoredBacktestResult } from "./lib/persist";
 
@@ -59,10 +59,28 @@ export default function BacktestAggMarkers({
 }) {
   const [pills, setPills] = useState<AggPill[]>([]);
   const sigRef = useRef("");
+  // Key of the pill currently driving the shared hover popover (set on
+  // mouseEnter, below). Tracked so we can dismiss the popover if that pill later
+  // leaves the projected set — React fires NO onMouseLeave when a hovered element
+  // unmounts, so scrolling/zooming a hovered pill off-screen would otherwise
+  // strand the popover open with that bar's stale trades.
+  const hoveredKeyRef = useRef<string | null>(null);
+  const clearHoverIfOwned = () => {
+    if (hoveredKeyRef.current !== null) {
+      hoveredKeyRef.current = null;
+      backtestClusterHoverSignal.set(null);
+    }
+  };
   useImperativeHandle(
     handleRef,
     () => ({
       setPills(next: AggPill[]) {
+        // If the pill under the open popover was culled (moved off-screen), clear
+        // the signal here since its onMouseLeave will never fire. A cull always
+        // changes the signature, so this runs before the no-op early return below.
+        if (hoveredKeyRef.current !== null && !next.some((p) => p.key === hoveredKeyRef.current)) {
+          clearHoverIfOwned();
+        }
         const sig = pillsSig(next);
         if (sig === sigRef.current) return;
         sigRef.current = sig;
@@ -71,6 +89,10 @@ export default function BacktestAggMarkers({
     }),
     [],
   );
+  // On unmount (cell removed / backtest cleared) drop a popover THIS layer opened.
+  // Gated on hoveredKeyRef so unmounting an unrelated cell never wipes another
+  // cell's open popover — the signal is global (one App-level popover).
+  useEffect(() => clearHoverIfOwned, []);
 
   if (pills.length === 0) return null;
   return (
@@ -83,10 +105,16 @@ export default function BacktestAggMarkers({
         return (
           <span
             key={p.key}
-            onMouseEnter={(e) =>
-              backtestClusterHoverSignal.set({ trades: p.trades, x: e.clientX, y: e.clientY })
-            }
-            onMouseLeave={() => backtestClusterHoverSignal.set(null)}
+            onMouseEnter={(e) => {
+              hoveredKeyRef.current = p.key;
+              backtestClusterHoverSignal.set({ trades: p.trades, x: e.clientX, y: e.clientY });
+            }}
+            // Only clear if THIS pill still owns the popover: when moving pill→pill
+            // the next pill's onMouseEnter can land before this leave, and an
+            // unconditional clear would wipe the popover it just opened.
+            onMouseLeave={() => {
+              if (hoveredKeyRef.current === p.key) clearHoverIfOwned();
+            }}
             onClick={() => onDrillIn(p.resolution, p.fromMs, p.toMs)}
             style={{
               position: "absolute",

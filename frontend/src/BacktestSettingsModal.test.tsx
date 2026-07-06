@@ -49,6 +49,18 @@ describe("BacktestSettingsModal period scheduling", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mon" }));
     expect(screen.getByText(/Active on \d+ of \d+ sampled slots/)).toBeTruthy();
   });
+
+  it("shows the session-close sub-toggle only when windows are enabled, and it toggles", () => {
+    renderModal();
+    // Hidden until the windows checkbox is on.
+    expect(screen.queryByLabelText(/close open positions at session close/i)).toBeNull();
+    fireEvent.click(screen.getByLabelText(/only trade during selected windows/i));
+    const sub = screen.getByLabelText(/close open positions at session close/i) as HTMLInputElement;
+    // Default off, and toggles on.
+    expect(sub.checked).toBe(false);
+    fireEvent.click(sub);
+    expect(sub.checked).toBe(true);
+  });
 });
 
 // The rule builder now lives under the "Strategy" vertical tab, so tests must

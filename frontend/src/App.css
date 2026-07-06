@@ -1285,6 +1285,8 @@
 .bt-mask-toggle { justify-content: flex-start; gap: 8px; }
 .bt-mask-toggle > input { flex: 0 0 auto; width: auto; }
 .bt-mask-toggle > span { width: auto; }
+/* Nested "close at session close" sub-toggle: indented under the windows checkbox. */
+.bt-mask-subtoggle { margin-left: 22px; }
 /* Suggestion chips (calendar anchors) + recurrence-mask toggle chips. */
 .bt-chip-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .bt-chip {
@@ -2611,6 +2613,20 @@
   border-radius: 6px; padding: 2px 6px; cursor: pointer; font-size: 11px; transition: background 0.12s;
 }
 .bt-clear:hover { background: var(--hover); color: var(--text); }
+.bt-periods-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; margin-right: 2px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: transparent; color: var(--text-dim);
+  font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap;
+  cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.bt-periods-toggle:hover { background: var(--hover); color: var(--text); }
+.bt-periods-toggle.on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: var(--accent);
+}
 .bt-error { color: var(--neg); font-size: 12px; }
 .bt-warning { color: var(--text-dim); font-size: 12px; cursor: help; }
 

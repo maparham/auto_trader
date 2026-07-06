@@ -646,7 +646,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
 
           <Section
             title="Repeat / active windows"
-            info="Restrict trading to recurring windows — weekdays, months, days of the month, or a market session. Outside them the strategy is flat, and any open position is closed."
+            info="Restrict trading to recurring windows — weekdays, months, days of the month, or a market session. Outside them the strategy opens no new positions; an open position keeps running unless you enable closing at session close."
           >
             <label className="al-row bt-mask-toggle">
               <input
@@ -654,12 +654,27 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 checked={cfg.range.mask?.enabled ?? false}
                 onChange={(e) => setMask({ enabled: e.target.checked })}
               />
-              <span>Only trade during selected windows (force-flat outside)</span>
-              <InfoTip text="When on, the strategy only opens positions inside the windows you pick below; at each window's close any open position is force-flattened." />
+              <span>Only trade during selected windows</span>
+              <InfoTip text="When on, the strategy only opens positions inside the windows you pick below. Positions already open keep running unless you also close them at session close." />
             </label>
 
             {cfg.range.mask?.enabled && (
               <>
+                <label className="al-row bt-mask-toggle bt-mask-subtoggle">
+                  <input
+                    type="checkbox"
+                    checked={cfg.range.mask?.flattenAtClose ?? false}
+                    onChange={(e) => setMask({ flattenAtClose: e.target.checked })}
+                  />
+                  <span>Close open positions at session close</span>
+                  <InfoTip
+                    text={[
+                      "Off (default): a position opened inside a window keeps running past the session boundary until its stop or target hits (or the backtest range ends).",
+                      "On: any open position is force-flattened at each session close — the previous behavior.",
+                    ]}
+                  />
+                </label>
+
                 <div className="bt-chip-row">
                   {DOW_LABELS.map((d, i) => {
                     const on = cfg.range.mask?.daysOfWeek?.includes(i) ?? false;
@@ -729,6 +744,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                     />
                   </label>
                 </div>
+
+                {cfg.range.mask?.session &&
+                  !cfg.range.mask?.daysOfWeek?.length &&
+                  SESSION_PRESETS[cfg.range.mask.session].days && (
+                    <div className="al-note">
+                      {SESSION_PRESETS[cfg.range.mask.session].label} trades Mon–Fri —
+                      weekends are excluded automatically. Pick weekday chips above to override.
+                    </div>
+                  )}
 
                 {!cfg.range.mask?.session && (
                   <div className="al-row bt-range-row">

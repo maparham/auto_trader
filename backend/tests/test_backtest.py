@@ -34,7 +34,9 @@ def test_fill_is_next_open_not_current_close():
     # Signal fires on bar index 1 (price 10) -> must fill at bar index 2's OPEN.
     candles = _series([10, 10, 20, 20])
     res = BacktestEngine(BuyBar1()).run(candles)
-    assert len(res.fills) == 1
+    # Two fills: the entry, plus the "range end" exit booked for the still-open
+    # position at the last bar.
+    assert len(res.fills) == 2
     fill = res.fills[0]
     assert fill.price == 20.0  # bar index 2 open, NOT bar index 1 close (10)
     assert fill.time == candles[2].time
@@ -78,13 +80,16 @@ def test_commission_and_slippage_reduce_pnl():
     assert res.net_pnl == 7.0
 
 
-def test_net_pnl_includes_open_position_at_end():
-    # Buy 1 unit at bar2 open=20 and never sell. Last close is 50, so the open
-    # position is +30 mark-to-market. net_pnl must reflect that (not ~0) and must
-    # equal the final equity point minus starting cash.
+def test_open_position_at_end_is_booked_as_range_end_trade():
+    # Buy 1 unit at bar2 open=20 and never sell. The still-open position at range
+    # end is booked as a "range end" Trade at the last close (50), so pnl = +30.
+    # With no commission, net_pnl still equals the final equity point.
     candles = _series([10, 10, 20, 50])
     res = BacktestEngine(BuyBar1()).run(candles)
-    assert res.trades == []  # an open position is not a closed round-trip
+    assert len(res.trades) == 1
+    assert res.trades[0].reason_out == "range end"
+    assert res.trades[0].exit_price == 50  # last close
+    assert res.trades[0].pnl == 30.0
     assert res.net_pnl == 30.0
     assert res.net_pnl == res.equity[-1].equity - 10_000.0
 

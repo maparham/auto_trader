@@ -53,7 +53,8 @@ def test_crosses_above_entry_fills_at_next_open():
     exit_ = RuleGroup("AND", [])
     strategy = RuleStrategy(entry, exit_, RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
     result = BacktestEngine(strategy).run(candles)
-    assert len(result.fills) == 1
+    # Entry only; the still-open position adds a "range end" exit fill at the last bar.
+    assert len([f for f in result.fills if f.reason != "range end"]) == 1
     assert result.fills[0].side is Side.BUY
     assert result.fills[0].time == candles[3].time  # signal at i=2 fills at i=3's open
     assert "EMA_5 crossesAbove EMA_9" in result.fills[0].reason
@@ -104,7 +105,8 @@ def test_or_fires_with_either_rule():
     )
     strategy = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
     result = BacktestEngine(strategy).run(candles)
-    assert len(result.fills) == 1
+    # Entry only; the still-open position adds a "range end" exit fill at the last bar.
+    assert len([f for f in result.fills if f.reason != "range end"]) == 1
     assert result.fills[0].time == candles[1].time  # true at i=0, fills at i=1 open
 
 
@@ -117,7 +119,8 @@ def test_warmup_none_is_false_under_and():
     strategy = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
     result = BacktestEngine(strategy).run(candles)
     # true only once EMA_5 warms at i=1 -> fills at i=2's open
-    assert len(result.fills) == 1
+    # Entry only; the still-open position adds a "range end" exit fill at the last bar.
+    assert len([f for f in result.fills if f.reason != "range end"]) == 1
     assert result.fills[0].time == candles[2].time
 
 
@@ -137,7 +140,8 @@ def test_price_and_const_operand():
     entry = RuleGroup("AND", [Rule(_price("close"), "gt", _const(10))])
     strategy = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), {}, quantity=1.0)
     result = BacktestEngine(strategy).run(candles)
-    assert len(result.fills) == 1
+    # Entry only; the still-open position adds a "range end" exit fill at the last bar.
+    assert len([f for f in result.fills if f.reason != "range end"]) == 1
     assert result.fills[0].time == candles[3].time  # true at i=2, fills at i=3
 
 
@@ -147,7 +151,8 @@ def test_price_crosses_above_indicator_uses_history_for_prev():
     entry = RuleGroup("AND", [Rule(_price("close"), "crossesAbove", _ind("EMA", 5))])
     strategy = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
     result = BacktestEngine(strategy).run(candles)
-    assert len(result.fills) == 1
+    # Entry only; the still-open position adds a "range end" exit fill at the last bar.
+    assert len([f for f in result.fills if f.reason != "range end"]) == 1
     assert result.fills[0].time == candles[3].time
 
 
@@ -175,7 +180,8 @@ def test_trade_from_time_gates_entries_not_exits():
     result = BacktestEngine(strategy).run(candles)
     # entry true from i=0, but gated until bar i=2 (time >= trade_from_time) ->
     # first BUY signal at i=2, filled at i=3's open.
-    assert len(result.fills) == 1
+    # Entry only; the still-open position adds a "range end" exit fill at the last bar.
+    assert len([f for f in result.fills if f.reason != "range end"]) == 1
     assert result.fills[0].side is Side.BUY
     assert result.fills[0].time == candles[3].time
 

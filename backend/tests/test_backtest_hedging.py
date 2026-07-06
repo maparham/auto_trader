@@ -48,7 +48,8 @@ def test_long_and_short_open_same_bar_both_fill_next_open():
     candles = _series([10, 20, 20])
     res = BacktestEngine(Hedge()).run(candles)
     # both fill at bar1 open=20; long unrealized at last close 20 -> 0; short unrealized -> 0
-    assert len(res.fills) == 2
+    # 4 fills: the two opens, plus a "range end" close for each still-open leg.
+    assert len(res.fills) == 4
     legs = {(f.side, f.reason) for f in res.fills}
     assert (Side.BUY, "long-open") in legs
     assert (Side.SELL, "short-open") in legs
@@ -70,6 +71,8 @@ def test_net_pnl_sums_both_open_legs_at_end():
 
     candles = _series([10, 10, 12])
     res = BacktestEngine(Hedge()).run(candles)
-    assert res.trades == []  # neither leg closed
-    assert res.net_pnl == 0.0
+    # Both legs are booked as "range end" trades at the last close (12).
+    assert len(res.trades) == 2
+    assert all(t.reason_out == "range end" for t in res.trades)
+    assert res.net_pnl == 0.0  # long +2, short -2 cancel
     assert res.net_pnl == res.equity[-1].equity - 10_000.0

@@ -113,7 +113,10 @@ class BacktestEngine:
             active = is_active(self.mask, bar.time)
             # Force-flat at the first inactive bar's open: close every open
             # position via the normal exit path with a "session close" reason.
-            if not active and (longs or shorts):
+            # Opt-in via mask.flatten_at_close (default off); is_active already
+            # guarantees `active` is only False when a mask is enabled, so the
+            # self.mask guard is belt-and-suspenders.
+            if not active and (longs or shorts) and self.mask and self.mask.flatten_at_close:
                 realized = self._close_all(
                     longs, "long", result, realized, Side.SELL, bar.open, bar.time, "session close"
                 )
@@ -189,12 +192,18 @@ class BacktestEngine:
             if i < len(candles) - 1:  # last bar has no next-open to fill on
                 pending = list(self.strategy.on_bar(ctx))
 
-        # Settle any still-open positions at the last close so net_pnl matches the
-        # final equity point.
+        # Book any still-open positions at the last close via the normal exit path
+        # (reason "range end") so every position produces a Trade row rather than a
+        # silent mark-to-market. This charges an exit commission per open position,
+        # matching how every other exit is treated.
         if candles:
-            last = candles[-1].close
-            realized += self._unrealized(longs, "long", last)
-            realized += self._unrealized(shorts, "short", last)
+            last_bar = candles[-1]
+            realized = self._close_all(
+                longs, "long", result, realized, Side.SELL, last_bar.close, last_bar.time, "range end"
+            )
+            realized = self._close_all(
+                shorts, "short", result, realized, Side.BUY, last_bar.close, last_bar.time, "range end"
+            )
         result.net_pnl = realized
         result.n_trades = len(result.trades)
         round_trip_cost = 2 * self.commission

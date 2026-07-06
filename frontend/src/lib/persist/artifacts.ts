@@ -5,6 +5,7 @@
 import type { DeepPartial, OverlayStyle, LineType } from "klinecharts";
 import type { VisibilityModel } from "../visibility";
 import type { BacktestResult } from "../../api";
+import type { BacktestPeriod } from "../backtestPeriods";
 import { PREFIX, ns, root, load, save, saveLocal, removeKeyEverywhere } from "./core";
 
 // --- drawings (overlays the user drew) ---------------------------------------
@@ -38,17 +39,28 @@ export function saveDrawings(scope: string, epic: string, list: SavedOverlay[]):
 // so switching symbol away and back restores the right result. The bulky
 // `candles` array is stripped before saving — redraw attaches markers/equity to
 // whatever bars are loaded by absolute timestamp, so the candles aren't needed.
-export type StoredBacktestResult = Omit<BacktestResult, "candles">;
+// The persisted result also carries the trading `period` (window + resolved
+// mask) so the on-chart period shading rehydrates like the markers do — it is a
+// frontend-derived field (not returned by the backend), attached at save time.
+export type StoredBacktestResult = Omit<BacktestResult, "candles"> & {
+  period?: BacktestPeriod;
+};
 
 const backtestKey = (scope: string, epic: string) => ns(scope, `backtest.${epic}`);
 
 export function loadBacktestResult(scope: string, epic: string): StoredBacktestResult | null {
   return load<StoredBacktestResult | null>(backtestKey(scope, epic), null);
 }
-export function saveBacktestResult(scope: string, epic: string, result: BacktestResult): void {
+export function saveBacktestResult(
+  scope: string,
+  epic: string,
+  result: BacktestResult,
+  period?: BacktestPeriod,
+): void {
   // Strip the bulky candle array before persisting — redraw doesn't need it
-  // (markers/equity attach to whatever bars are loaded by absolute timestamp).
-  const stored: StoredBacktestResult = { ...result };
+  // (markers/equity/periods attach to whatever bars are loaded by absolute
+  // timestamp).
+  const stored: StoredBacktestResult = { ...result, period };
   delete (stored as Partial<BacktestResult>).candles;
   save(backtestKey(scope, epic), stored);
 }

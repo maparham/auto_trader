@@ -91,6 +91,11 @@ export const tradesSignal = new Signal<TradeView[]>([]);
 // Consumers (e.g., trades panel) subscribe to render backtest-specific UI.
 export const backtestResultSignal = new Signal<StoredBacktestResult | null>(null);
 
+// Whether the on-chart backtest trading-period shading is shown (global display
+// preference, seeded from device-local storage at startup). backtest.ts reads
+// this to gate drawing and subscribes to redraw each chart's bands on change.
+export const backtestPeriodsShownSignal = new Signal<boolean>(true);
+
 // The backtest trade index (row.i) currently highlighted, or null. Set by the
 // trades panel row hover/click AND (Phase C Task 2) the chart's trade markers —
 // whichever side the cursor is on drives the other side's highlight.

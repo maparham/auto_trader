@@ -5,19 +5,26 @@
 
 import type { DayTimeWindow, RecurrenceMask, SessionPreset } from "./backtestConfig";
 
+// `days` = the session's default trading weekdays (JS getDay 0=Sun..6=Sat),
+// inlined by resolveMask when the user hasn't picked weekday chips, so an
+// exchange preset excludes weekends automatically. `null` = every day (Crypto).
+const WEEKDAYS = [1, 2, 3, 4, 5]; // Mon–Fri
 export const SESSION_PRESETS: Record<
   SessionPreset,
-  { label: string; window: DayTimeWindow | null; tz: string }
+  { label: string; window: DayTimeWindow | null; tz: string; days: number[] | null }
 > = {
-  NYSE: { label: "NYSE", window: { startMin: 9 * 60 + 30, endMin: 16 * 60 }, tz: "America/New_York" },
-  London: { label: "London", window: { startMin: 8 * 60, endMin: 16 * 60 + 30 }, tz: "Europe/London" },
-  Frankfurt: { label: "Frankfurt", window: { startMin: 9 * 60, endMin: 17 * 60 + 30 }, tz: "Europe/Berlin" },
-  Tokyo: { label: "Tokyo", window: { startMin: 9 * 60, endMin: 15 * 60 }, tz: "Asia/Tokyo" },
-  Sydney: { label: "Sydney", window: { startMin: 10 * 60, endMin: 16 * 60 }, tz: "Australia/Sydney" },
-  Crypto: { label: "Crypto (24/7)", window: null, tz: "UTC" },
+  NYSE: { label: "NYSE", window: { startMin: 9 * 60 + 30, endMin: 16 * 60 }, tz: "America/New_York", days: WEEKDAYS },
+  London: { label: "London", window: { startMin: 8 * 60, endMin: 16 * 60 + 30 }, tz: "Europe/London", days: WEEKDAYS },
+  Frankfurt: { label: "Frankfurt", window: { startMin: 9 * 60, endMin: 17 * 60 + 30 }, tz: "Europe/Berlin", days: WEEKDAYS },
+  Tokyo: { label: "Tokyo", window: { startMin: 9 * 60, endMin: 15 * 60 }, tz: "Asia/Tokyo", days: WEEKDAYS },
+  Sydney: { label: "Sydney", window: { startMin: 10 * 60, endMin: 16 * 60 }, tz: "Australia/Sydney", days: WEEKDAYS },
+  Crypto: { label: "Crypto (24/7)", window: null, tz: "UTC", days: null },
 };
 
-/** Inline a session preset into timeOfDay+tz; drop `session`. Idempotent. */
+/** Inline a session preset into timeOfDay+tz+daysOfWeek; drop `session`.
+ * The preset's trading days fill in only when the user hasn't set explicit
+ * weekday chips, so exchange sessions skip weekends without extra clicks while
+ * an explicit chip selection still wins. Idempotent. */
 export function resolveMask(m: RecurrenceMask): RecurrenceMask {
   if (!m.session) return m;
   const preset = SESSION_PRESETS[m.session];
@@ -26,6 +33,7 @@ export function resolveMask(m: RecurrenceMask): RecurrenceMask {
     ...rest,
     tz: preset.tz,
     timeOfDay: preset.window ?? undefined,
+    daysOfWeek: rest.daysOfWeek?.length ? rest.daysOfWeek : preset.days ?? undefined,
   };
 }
 

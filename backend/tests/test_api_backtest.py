@@ -70,9 +70,11 @@ def test_post_backtest_returns_markers_for_a_simple_cross():
     }
     result = _run(body)
     assert result.epic == "EURUSD"
-    assert len(result.markers) == 1
-    assert result.markers[0].side == "buy"
-    assert result.markers[0].leg == "long"
+    # One entry marker; the still-open long adds a "range end" exit marker.
+    entries = [m for m in result.markers if m.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].side == "buy"
+    assert entries[0].leg == "long"
     assert len(result.candles) == len(candles)
 
 
@@ -450,7 +452,8 @@ def test_backtest_without_mask_still_works():
         "tradeFromTime": candles[0]["time"],
     }
     result = _run(body)
-    assert len(result.markers) == 1
+    # One entry marker; the still-open long adds a "range end" exit marker.
+    assert len([m for m in result.markers if m.reason != "range end"]) == 1
 
 
 def test_backtest_time_of_day_window_honoured_over_the_wire():

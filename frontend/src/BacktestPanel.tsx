@@ -13,8 +13,10 @@ import {
   highlightTradeSignal,
   selectedTradeSignal,
   backtestMessagesSignal,
+  backtestPeriodsShownSignal,
   requestBacktestClear,
 } from "./lib/signals";
+import { saveBacktestPeriodsShown } from "./lib/persist";
 import { metricRows, tradeRows, sortTradeRows, type TradeRow } from "./lib/backtestPanelData";
 import { RESOLUTION_SECONDS } from "./lib/feed";
 import { formatExpiryShort } from "./lib/alertUi";
@@ -44,6 +46,15 @@ export default function BacktestPanel() {
   const highlighted = useSyncExternalStore(subscribeHighlight, () => highlightTradeSignal.value);
   const selected = useSyncExternalStore(subscribeSelected, () => selectedTradeSignal.value);
   const messages = useSyncExternalStore(subscribeMessages, () => backtestMessagesSignal.value);
+  const periodsShown = useSyncExternalStore(
+    (cb) => backtestPeriodsShownSignal.subscribe(cb),
+    () => backtestPeriodsShownSignal.value,
+  );
+  const toggleBacktestPeriods = () => {
+    const next = !backtestPeriodsShownSignal.value;
+    backtestPeriodsShownSignal.set(next);
+    saveBacktestPeriodsShown(next);
+  };
   const [tab, setTab] = useState<Tab>("overview");
   const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
 
@@ -90,6 +101,20 @@ export default function BacktestPanel() {
         <span title="Largest peak-to-trough equity drop">−{s.max_drawdown.toFixed(2)} dd</span>
         <span>{(s.win_rate * 100).toFixed(0)}% win</span>
       </span>
+      <button
+        className={`bt-periods-toggle${periodsShown ? " on" : ""}`}
+        title={periodsShown ? "Hide the trading periods shaded on the chart" : "Show the trading periods shaded on the chart"}
+        aria-pressed={periodsShown}
+        onClick={toggleBacktestPeriods}
+      >
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+          {/* shaded period bands standing on the time axis */}
+          <rect x="1.5" y="3.5" width="3" height="8" rx="1" fill="currentColor" />
+          <rect x="6.5" y="3.5" width="3" height="8" rx="1" fill="currentColor" opacity="0.55" />
+          <rect x="11.5" y="3.5" width="3" height="8" rx="1" fill="currentColor" />
+        </svg>
+        <span>Periods</span>
+      </button>
       <button className="bt-clear" title="Clear backtest" onClick={requestBacktestClear}>
         ✕
       </button>

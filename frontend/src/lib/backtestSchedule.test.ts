@@ -20,6 +20,21 @@ describe("resolveMask", () => {
     expect(r.timeOfDay).toBeUndefined();
     expect(r.tz).toBe("UTC");
   });
+  it("exchange session defaults to Mon–Fri when no weekday chips are set", () => {
+    const r = resolveMask({ enabled: true, session: "NYSE" });
+    expect(r.daysOfWeek).toEqual([1, 2, 3, 4, 5]);
+    // Sat/Sun NYSE hours are now inactive; a weekday still passes.
+    expect(isActive(r, utc(2024, 1, 6, 15, 0))).toBe(false); // Sat 10:00 NY
+    expect(isActive(r, utc(2024, 1, 5, 15, 0))).toBe(true);  // Fri 10:00 NY
+  });
+  it("explicit weekday chips win over the session default", () => {
+    const r = resolveMask({ enabled: true, session: "NYSE", daysOfWeek: [1, 3] });
+    expect(r.daysOfWeek).toEqual([1, 3]);
+  });
+  it("Crypto session keeps every day active (no weekday default)", () => {
+    const r = resolveMask({ enabled: true, session: "Crypto" });
+    expect(r.daysOfWeek).toBeUndefined();
+  });
   it("exposes a preset table", () => {
     expect(SESSION_PRESETS.London.tz).toBe("Europe/London");
   });

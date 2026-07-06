@@ -82,6 +82,10 @@ export interface RecurrenceMask {
   timeOfDay?: DayTimeWindow;
   session?: SessionPreset;
   tz?: string;              // IANA; default "UTC"
+  // Force-flat open positions at each session close. Default off: entries stay
+  // gated to windows but an open position runs across boundaries to its
+  // stop/target/range end. Only meaningful when `enabled`.
+  flattenAtClose?: boolean;
 }
 // How far back to load candles before the trading window so indicators are
 // already warm at the window's first bar (D6 in the plan) — "full" = all
