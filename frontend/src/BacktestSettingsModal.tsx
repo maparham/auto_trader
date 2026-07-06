@@ -9,7 +9,7 @@ import CloseButton from "./CloseButton";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
-import { requestGoLive } from "./lib/signals";
+import { requestGoLive, requestConfirm } from "./lib/signals";
 import { resolveWindow } from "./lib/backtestWindow";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
@@ -148,6 +148,7 @@ const DEFAULT_SCALING: ScalingConfig = { maxConcurrent: 1 };
 const OPERATORS: { value: Operator; label: string; tip: string }[] = [
   { value: "crossesAbove", label: "crosses above", tip: "Fires once — the bar the left rises through the right." },
   { value: "crossesBelow", label: "crosses below", tip: "Fires once — the bar the left drops through the right." },
+  { value: "crosses", label: "crosses", tip: "Fires once — the bar the left crosses the right in either direction." },
   { value: "gt", label: "greater than", tip: "True on every bar the left is above the right." },
   { value: "lt", label: "less than", tip: "True on every bar the left is below the right." },
   { value: "gte", label: "greater or equal", tip: "True on every bar the left is at or above the right." },
@@ -157,7 +158,17 @@ const OPERATORS: { value: Operator; label: string; tip: string }[] = [
 // The compact glyph shown in the operator button (the row must fit on one line):
 // a crossing-lines icon for the two "crosses" operators, a math symbol for the
 // plain comparisons. The full wording stays in the dropdown.
-function CrossGlyph({ dir }: { dir: "up" | "down" }) {
+function CrossGlyph({ dir }: { dir: "up" | "down" | "both" }) {
+  if (dir === "both") {
+    // Either-direction cross: an X over the reference line, no arrowhead.
+    return (
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" className="bt-op-crossicon">
+        <path d="M1 8 H15" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.5" />
+        <path d="M2 3 L14 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M2 13 L14 3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" className="bt-op-crossicon">
       {/* the reference line, and the series crossing through it up or down */}
@@ -180,6 +191,7 @@ function CrossGlyph({ dir }: { dir: "up" | "down" }) {
 const OP_REVERSE: Record<Operator, Operator> = {
   crossesAbove: "crossesBelow",
   crossesBelow: "crossesAbove",
+  crosses: "crosses",  // direction-agnostic — its own mirror
   gt: "lt",
   lt: "gt",
   gte: "lte",
@@ -189,6 +201,7 @@ const OP_REVERSE: Record<Operator, Operator> = {
 function OpGlyph({ op }: { op: Operator }) {
   if (op === "crossesAbove") return <CrossGlyph dir="up" />;
   if (op === "crossesBelow") return <CrossGlyph dir="down" />;
+  if (op === "crosses") return <CrossGlyph dir="both" />;
   const g: Record<string, string> = { gt: ">", lt: "<", gte: "≥", lte: "≤" };
   return <span className="bt-op-glyph">{g[op]}</span>;
 }
@@ -1236,6 +1249,7 @@ function SidePanel({
           onCopy={onCopy}
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
+          isExit
         />
         <RiskSection
           risk={(isLong ? cfg.longRisk : cfg.shortRisk) ?? EMPTY_RISK}
@@ -1402,6 +1416,17 @@ function CopyAllIcon() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6h16" />
+      <path d="M9 6V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V6" />
+      <path d="M6 6l1 13.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 6" />
+      <path d="M10 10.5v6M14 10.5v6" />
+    </svg>
+  );
+}
+
 // Per-row actions collapsed into one ⋮ menu (the inline icons were too small to
 // notice). Portaled like the operator dropdown so the panel's overflow can't
 // clip it. Includes a Disable/Enable toggle — a disabled rule is kept but
@@ -1503,6 +1528,7 @@ export function RuleGroupSection({
   onCopy,
   groupClipboard,
   onCopyAll,
+  isExit = false,
 }: {
   title: string;
   info?: string;
@@ -1515,6 +1541,9 @@ export function RuleGroupSection({
   onCopy: (rule: Rule) => void;
   groupClipboard: Rule[] | null;
   onCopyAll: (rules: Rule[]) => void;
+  // Exit groups can reference the entry price and carry an "Nth time" count;
+  // entry groups can't (there's no position yet).
+  isExit?: boolean;
 }) {
   function setCombine(combine: Combine) {
     onChange({ ...group, combine });
@@ -1522,6 +1551,16 @@ export function RuleGroupSection({
   // Flip every rule's operator to its opposite in one go.
   function reverseAll() {
     onChange({ ...group, rules: group.rules.map((r) => ({ ...r, op: OP_REVERSE[r.op] })) });
+  }
+  // Wipe every rule in this group, gated behind a confirm (unlike the per-row
+  // delete, which is cheap to undo by re-adding one rule).
+  function clearAll() {
+    requestConfirm({
+      title: "Delete all rules",
+      message: `Remove all ${group.rules.length} rule${group.rules.length === 1 ? "" : "s"} from ${title}?`,
+      confirmLabel: "Delete all",
+      onConfirm: () => onChange({ ...group, rules: [] }),
+    });
   }
   // Copy the whole group's rules, and paste a copied set (appending independent
   // clones so they can land in another side/leg without sharing references).
@@ -1589,14 +1628,23 @@ export function RuleGroupSection({
             >
               <CopyAllIcon />
             </button>
+            <button
+              className="bt-rule-toggle bt-clearall"
+              onClick={clearAll}
+              title="Delete all rules in this group"
+              aria-label="Delete all rules"
+            >
+              <TrashIcon />
+            </button>
           </div>
         </div>
       )}
       {group.rules.map((rule, i) => (
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`} key={i}>
-          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} />
+          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} />
           <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
-          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} />
+          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} />
+          {isExit && <CountField value={rule.count} onChange={(count) => setRule(i, { ...rule, count })} />}
           <div className="bt-rule-actions">
             <button
               className="bt-rule-toggle"
@@ -1606,6 +1654,14 @@ export function RuleGroupSection({
               aria-pressed={rule.enabled !== false}
             >
               <EyeIcon on={rule.enabled !== false} />
+            </button>
+            <button
+              className="bt-rule-toggle bt-rule-delete"
+              onClick={() => removeRule(i)}
+              title="Delete rule"
+              aria-label="Delete rule"
+            >
+              <TrashIcon />
             </button>
             <RuleMenu
               enabled={rule.enabled !== false}
@@ -1640,16 +1696,59 @@ export function RuleGroupSection({
   );
 }
 
+// Compact ordinal suffix for the count chip: 1st, 2nd, 3rd, 4th…
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+// The optional "Nth time" modifier on an exit rule. Blank/1 ⇒ fire on the first
+// occurrence (the default); N ≥ 2 ⇒ fire on the Nth bar since entry the
+// condition is true (cumulative — non-consecutive bars count).
+function CountField({ value, onChange }: { value?: number; onChange: (n?: number) => void }) {
+  const n = value && value > 1 ? value : undefined;
+  return (
+    <Tooltip
+      content={[
+        "Fire on the Nth time since entry this condition is true.",
+        "Counts every bar it's true, consecutive or not. Blank or 1 = the first time.",
+      ]}
+    >
+      <label className={`bt-rule-count${n ? " on" : ""}`}>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          className="bt-rule-count-input"
+          placeholder="1st"
+          value={n ?? ""}
+          onKeyDown={blockNegKeys}
+          onChange={(e) => {
+            const raw = cleanNumInput(e.currentTarget);
+            const num = Math.round(Number(raw));
+            onChange(raw === "" || num <= 1 || !Number.isFinite(num) ? undefined : num);
+          }}
+        />
+        <span className="bt-rule-count-suffix" aria-hidden="true">{n ? ordinal(n) : ""}</span>
+      </label>
+    </Tooltip>
+  );
+}
+
 function OperandPicker({
   value,
   onChange,
   defaultAvwapAnchor,
   baseResolution,
+  allowEntry = false,
 }: {
   value: Operand;
   onChange: (op: Operand) => void;
   defaultAvwapAnchor: number;
   baseResolution: string;
+  // Offer "Entry price" — only in exit rules, where a position exists to read it.
+  allowEntry?: boolean;
 }) {
   // Timeframes a rule operand can run on: the base (blank ⇒ follow the run's
   // base timeframe) plus every non-live timeframe strictly higher than base.
@@ -1675,6 +1774,7 @@ function OperandPicker({
   function setType(token: string) {
     if (token === "price") return onChange({ kind: "price", field: "close" });
     if (token === "const") return onChange({ kind: "const", value: 0 });
+    if (token === "entry") return onChange({ kind: "entry" });
     const indicator = token as IndicatorKind;
     if (indicator === "AVWAP") onChange({ kind: "indicator", indicator, anchor: defaultAvwapAnchor });
     else if (NO_LENGTH.includes(indicator)) onChange({ kind: "indicator", indicator });
@@ -1693,6 +1793,7 @@ function OperandPicker({
         </optgroup>
         <option value="price">Price</option>
         <option value="const">Number</option>
+        {(allowEntry || value.kind === "entry") && <option value="entry">Entry price</option>}
       </select>
       {value.kind === "indicator" && (
         <>

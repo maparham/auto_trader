@@ -5,7 +5,7 @@
 
 export type IndicatorKind = "EMA" | "SMA" | "AVWAP" | "RSI" | "VOL" | "VOLMA";
 export type PriceField = "close" | "open" | "high" | "low";
-export type Operator = "crossesAbove" | "crossesBelow" | "gt" | "lt" | "gte" | "lte";
+export type Operator = "crossesAbove" | "crossesBelow" | "crosses" | "gt" | "lt" | "gte" | "lte";
 export type Combine = "AND" | "OR";
 
 export type Operand =
@@ -16,7 +16,10 @@ export type Operand =
   // key (seriesName) so `EMA_9` and `EMA_9@HOUR` are distinct series.
   | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number; timeframe?: string }
   | { kind: "price"; field: PriceField }
-  | { kind: "const"; value: number };
+  | { kind: "const"; value: number }
+  // The open position's entry (fill) price. Only meaningful in an exit rule while
+  // a position is held; parameterless. Has no series (read off the position).
+  | { kind: "entry" };
 
 export type StopKind = "none" | "pct" | "price" | "atr" | "trailPct" | "trailAtr";
 export type TargetKind = "none" | "pct" | "price" | "atr";
@@ -41,6 +44,9 @@ export interface Rule {
   // A disabled rule is kept (editable) but excluded from the run — like a parked
   // side, but per rule. Absent ⇒ enabled (backward-safe for old presets).
   enabled?: boolean;
+  // "Nth time" modifier: fire on the Nth bar since entry the base comparison is
+  // true (cumulative). Exit-only; absent/≤1 ⇒ fire on first occurrence.
+  count?: number;
 }
 
 export interface RuleGroup {
@@ -53,7 +59,7 @@ export interface RuleGroup {
  * shallow spread of each is a full deep copy; sharing them instead would let an
  * edit to the original mutate the duplicate (and vice versa). */
 export function cloneRule(rule: Rule): Rule {
-  return { left: { ...rule.left }, op: rule.op, right: { ...rule.right }, enabled: rule.enabled };
+  return { left: { ...rule.left }, op: rule.op, right: { ...rule.right }, enabled: rule.enabled, count: rule.count };
 }
 
 /** A rule group with its disabled rules dropped — what actually gets sent to the

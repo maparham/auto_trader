@@ -67,7 +67,12 @@ export async function runOneCycle(
   if (!snap) return { state: reconciled };
 
   const position = open
-    ? { side: open.side, quantity: open.quantity, open_level: open.priceLevel }
+    ? {
+        side: open.side, quantity: open.quantity, open_level: open.priceLevel,
+        // Epoch seconds, for counted exits. openedAt is created_at in ms; omit if
+        // the broker didn't report an open time (counted exits then can't count).
+        open_time: open.openedAt != null ? Math.floor(open.openedAt / 1000) : undefined,
+      }
     : null;
 
   // buildSeries wants a fetchTimeframe fn for HTF operands. Use the injected

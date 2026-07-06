@@ -69,6 +69,22 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
     ctx.history = candles
     ctx.position_long = pos_long
     ctx.position_short = pos_short
+    # Seed the held side's entry price + open time so exit rules can reference the
+    # `entry` operand and count occurrences since entry (mirrors the backtest
+    # engine). Entry price is the position's open level.
+    if req.position is not None:
+        entry_price = req.position.open_level
+        entry_time = (
+            datetime.fromtimestamp(req.position.open_time, tz=timezone.utc)
+            if req.position.open_time is not None
+            else None
+        )
+        if pos_long > 0:
+            ctx.long_entry_price = entry_price
+            ctx.long_entry_time = entry_time
+        elif pos_short > 0:
+            ctx.short_entry_price = entry_price
+            ctx.short_entry_time = entry_time
     signals = strategy.on_bar(ctx)
 
     close = candles[-1].close

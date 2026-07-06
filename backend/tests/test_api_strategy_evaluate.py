@@ -117,6 +117,107 @@ def test_close_takes_priority_over_entry_when_holding():
     assert resp.actions[0].kind == "close" and resp.actions[0].leg == "long"
 
 
+def test_entry_price_operand_closes_when_below_entry():
+    # Holding long opened at 10; `close < entryPrice` must close on the last bar
+    # (close 9 < entry 10). entryPrice comes from the position's open_level.
+    exit_rule = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "lt", "right": {"kind": "entry"}}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 10, 9]),
+        "series": {},
+        **_groups(long_exit=exit_rule),
+        "position": {"side": "buy", "quantity": 1.0, "open_level": 10.0,
+                     "open_time": 1_700_000_000},
+    }
+    resp = _run(body)
+    assert len(resp.actions) == 1
+    assert resp.actions[0].kind == "close" and resp.actions[0].leg == "long"
+
+
+def test_counted_exit_needs_entry_time_and_fires_on_nth():
+    # `close < entryPrice` count=2 over closes [10,9,11,9]: belows at bars 1 and 3
+    # -> 2nd below is the last bar -> close. Needs the position's open_time to
+    # locate the entry bar and count from it.
+    exit_rule = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "lt",
+         "right": {"kind": "entry"}, "count": 2}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 9, 11, 9]),
+        "series": {},
+        **_groups(long_exit=exit_rule),
+        "position": {"side": "buy", "quantity": 1.0, "open_level": 10.0,
+                     "open_time": 1_700_000_000},
+    }
+    resp = _run(body)
+    assert len(resp.actions) == 1
+    assert resp.actions[0].kind == "close"
+
+
+def test_counted_exit_includes_entry_bar_on_mid_bar_fill():
+    # Broker fill at a mid-bar instant (between bar 1's and bar 2's open). The
+    # entry bar is the one CONTAINING that instant (bar 1), and its close counts.
+    # closes [10, 9, 9]: entry price 10, belows on the entry bar (1) and bar 2 ->
+    # `close < entryPrice` count=2 fires on bar 2. (An off-by-one that started at
+    # bar 2 would see only one below and never close.)
+    exit_rule = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "lt",
+         "right": {"kind": "entry"}, "count": 2}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 9, 9]),
+        "series": {},
+        **_groups(long_exit=exit_rule),
+        "position": {"side": "buy", "quantity": 1.0, "open_level": 10.0,
+                     "open_time": 1_700_000_000 + 90},  # mid bar-1 (60..120)
+    }
+    resp = _run(body)
+    assert len(resp.actions) == 1
+    assert resp.actions[0].kind == "close"
+
+
+def test_counted_exit_best_effort_when_open_time_missing():
+    # If the broker omits an open time, a counted exit must still degrade to a
+    # best-effort count over the loaded window rather than never closing.
+    # closes [10, 9, 11, 9]: belows at bars 1 and 3 -> count=2 closes on the last.
+    exit_rule = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "lt",
+         "right": {"kind": "entry"}, "count": 2}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 9, 11, 9]),
+        "series": {},
+        **_groups(long_exit=exit_rule),
+        "position": {"side": "buy", "quantity": 1.0, "open_level": 10.0},  # no open_time
+    }
+    resp = _run(body)
+    assert len(resp.actions) == 1
+    assert resp.actions[0].kind == "close"
+
+
+def test_counted_exit_does_not_fire_before_nth():
+    # Same shape but count=3 and only 2 belows -> no close yet.
+    exit_rule = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "lt",
+         "right": {"kind": "entry"}, "count": 3}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 9, 11, 9]),
+        "series": {},
+        **_groups(long_exit=exit_rule),
+        "position": {"side": "buy", "quantity": 1.0, "open_level": 10.0,
+                     "open_time": 1_700_000_000},
+    }
+    resp = _run(body)
+    assert resp.actions == []
+
+
 def test_open_carries_pct_bracket_from_last_close():
     body = {
         "epic": "EURUSD", "resolution": "MINUTE",

@@ -189,6 +189,12 @@ class BacktestEngine:
             ctx.history.append(bar)
             ctx.position_long = sum(p.qty for p in longs)
             ctx.position_short = sum(p.qty for p in shorts)
+            # Entry price/time of the held position per side (single-position
+            # netting), or None when flat — feeds the `entry` operand + counts.
+            ctx.long_entry_price = longs[0].entry if longs else None
+            ctx.short_entry_price = shorts[0].entry if shorts else None
+            ctx.long_entry_time = longs[0].open_time if longs else None
+            ctx.short_entry_time = shorts[0].open_time if shorts else None
             if i < len(candles) - 1:  # last bar has no next-open to fill on
                 pending = list(self.strategy.on_bar(ctx))
 

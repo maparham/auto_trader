@@ -9,6 +9,7 @@ decides how/when that signal is filled.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from auto_trader.core.models import Candle, Signal
 
@@ -25,6 +26,13 @@ class Context:
         self.history: list[Candle] = []
         self.position_long: float = 0.0
         self.position_short: float = 0.0
+        # Entry (fill) price and open time of the held position on each side, or
+        # None when flat. These let an exit rule reference the entry price (the
+        # `entry` operand) and locate the entry bar to count occurrences since.
+        self.long_entry_price: float | None = None
+        self.short_entry_price: float | None = None
+        self.long_entry_time: datetime | None = None
+        self.short_entry_time: datetime | None = None
 
     @property
     def bar(self) -> Candle:

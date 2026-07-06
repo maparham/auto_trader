@@ -28,8 +28,16 @@ def _const(value: float) -> Operand:
     return Operand(kind="const", value=value)
 
 
+def _entry() -> Operand:
+    return Operand(kind="entry")
+
+
 def _rule(left, op, right):
     return Rule(left, op, right)
+
+
+def _always_entry() -> RuleGroup:
+    return RuleGroup("AND", [Rule(_const(1), "gt", _const(0))])  # true every bar
 
 
 def test_series_name_contract():
@@ -246,6 +254,104 @@ def test_long_disabled_skips_long_even_with_entry_rules():
     result = BacktestEngine(strat).run(candles)
     assert not any(f.leg == "long" for f in result.fills)  # long never even opened
     assert any(f.leg == "short" for f in result.fills)  # short still fired
+
+
+def test_entry_price_operand_exits_when_close_dips_below_entry():
+    # Always-true entry -> BUY at i=0 fills at i=1's open = 10 (the entry price).
+    # Exit rule `close < entryPrice` fires the first bar close drops below 10.
+    candles = _series([10, 10, 9, 9])
+    exit_ = RuleGroup("AND", [Rule(_price("close"), "lt", _entry())])
+    strat = RuleStrategy(
+        _always_entry(), exit_, RuleGroup("AND", []), RuleGroup("AND", []),
+        {}, quantity=1.0,
+    )
+    result = BacktestEngine(strat).run(candles)
+    assert len(result.trades) == 1
+    tr = result.trades[0]
+    assert tr.entry_price == 10.0
+    assert tr.exit_price == 9.0  # close<entry at i=2 -> SELL fills at i=3's open
+    assert "entryPrice" in tr.reason_out
+
+
+def test_count_is_cumulative_fires_on_nth_non_consecutive_close():
+    # Entry price 10. `close < entryPrice` with count=3 must ignore the 1st and
+    # 2nd dips (non-consecutive) and fire only on the 3rd below-entry close.
+    #   i: 1   2   3    4   5    6   7
+    #   c: 10  9   11   9   11   9   9
+    #      hold t1  --   t2  --   t3(fire)
+    candles = _series([10, 10, 9, 11, 9, 11, 9, 9])
+    exit_ = RuleGroup("AND", [Rule(_price("close"), "lt", _entry(), count=3)])
+    strat = RuleStrategy(
+        _always_entry(), exit_, RuleGroup("AND", []), RuleGroup("AND", []),
+        {}, quantity=1.0,
+    )
+    result = BacktestEngine(strat).run(candles)
+    assert len(result.trades) == 1
+    # 3rd below-entry close is at i=6 -> SELL fills at i=7's open = 9.
+    assert result.trades[0].exit_time == candles[7].time
+    assert result.trades[0].exit_price == 9.0
+
+
+def test_count_without_modifier_fires_on_first_occurrence():
+    # Same shape as above but no count -> exits on the FIRST dip below entry (i=2).
+    candles = _series([10, 10, 9, 11, 9, 11, 9, 9])
+    exit_ = RuleGroup("AND", [Rule(_price("close"), "lt", _entry())])
+    strat = RuleStrategy(
+        _always_entry(), exit_, RuleGroup("AND", []), RuleGroup("AND", []),
+        {}, quantity=1.0,
+    )
+    result = BacktestEngine(strat).run(candles)
+    assert result.trades[0].exit_time == candles[3].time  # dip at i=2 fills i=3
+
+
+def test_crosses_operator_either_direction_with_count():
+    # Entry price 10. `close crosses entryPrice` count=2: 1st cross is a down-cross
+    # (i=2), 2nd is an up-cross (i=3) -> fires at i=3, fills at i=4's open = 11.
+    candles = _series([10, 10, 9, 11, 11])
+    exit_ = RuleGroup("AND", [Rule(_price("close"), "crosses", _entry(), count=2)])
+    strat = RuleStrategy(
+        _always_entry(), exit_, RuleGroup("AND", []), RuleGroup("AND", []),
+        {}, quantity=1.0,
+    )
+    result = BacktestEngine(strat).run(candles)
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_time == candles[4].time
+
+
+def test_count_resets_across_positions():
+    # Two round-trips, each exited by count=2. If the tally leaked across
+    # positions, the 2nd trade would exit one bar early. Entry always true.
+    #  i:  1   2   3    4    5    6    7    8
+    #  c:  10  9   9    12   12   11   11   11
+    #  pos1 hold t1  t2(fire@i3->fill i4=12)
+    #                    re-enter@12(fill i5) hold t1  t2(fire@i7->fill i8=11)
+    candles = _series([10, 10, 9, 9, 12, 12, 11, 11, 11])
+    exit_ = RuleGroup("AND", [Rule(_price("close"), "lt", _entry(), count=2)])
+    strat = RuleStrategy(
+        _always_entry(), exit_, RuleGroup("AND", []), RuleGroup("AND", []),
+        {}, quantity=1.0,
+    )
+    result = BacktestEngine(strat).run(candles)
+    assert len(result.trades) == 2
+    assert result.trades[0].exit_time == candles[4].time
+    assert result.trades[1].entry_price == 12.0
+    assert result.trades[1].exit_time == candles[8].time  # NOT candles[7]
+
+
+def test_short_entry_price_operand_and_count():
+    # Short mirror: enter short at 10, `close > entryPrice` count=2 fires on the
+    # 2nd close above 10.  c: 10 11 9 11 11 -> aboves at i=2 (t1) and i=4 (t2)...
+    # use i:1..: 10(hold) 11(t1) 9 11(t2 fire@i4->fill i5)
+    candles = _series([10, 10, 11, 9, 11, 11])
+    exit_ = RuleGroup("AND", [Rule(_price("close"), "gt", _entry(), count=2)])
+    strat = RuleStrategy(
+        RuleGroup("AND", []), RuleGroup("AND", []), _always_entry(), exit_,
+        {}, quantity=1.0,
+    )
+    result = BacktestEngine(strat).run(candles)
+    assert len(result.trades) == 1
+    assert result.trades[0].leg == "short"
+    assert result.trades[0].exit_time == candles[5].time
 
 
 def test_short_disabled_skips_short_even_with_entry_rules():

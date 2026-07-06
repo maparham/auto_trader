@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   seriesName,
   collectSeriesOperands,
+  cloneRule,
   longestIndicatorLength,
   defaultBacktestConfig,
   riskAtrLengths,
@@ -30,6 +31,24 @@ describe("seriesName", () => {
   it("returns null for price/const (no series, read off the candle)", () => {
     expect(seriesName({ kind: "price", field: "close" })).toBeNull();
     expect(seriesName({ kind: "const", value: 5 })).toBeNull();
+  });
+
+  it("returns null for the entry-price operand (read off the position)", () => {
+    expect(seriesName({ kind: "entry" })).toBeNull();
+  });
+});
+
+describe("cloneRule", () => {
+  it("preserves the count modifier and the entry-price operand", () => {
+    const rule = {
+      left: { kind: "price" as const, field: "close" as const },
+      op: "crosses" as const,
+      right: { kind: "entry" as const },
+      count: 3,
+    };
+    const copy = cloneRule(rule);
+    expect(copy).toEqual(rule);
+    expect(copy.right).not.toBe(rule.right); // deep copy, not shared ref
   });
 });
 

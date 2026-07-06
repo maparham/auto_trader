@@ -20,7 +20,7 @@ class Operand:
     kind="indicator" -> indicator/length (+ anchor for AVWAP); kind="price" -> field; kind="const" -> value.
     """
 
-    kind: str  # "indicator" | "price" | "const"
+    kind: str  # "indicator" | "price" | "const" | "entry"
     indicator: str | None = None
     length: int | None = None
     field: str | None = None
@@ -32,8 +32,13 @@ class Operand:
 @dataclass(frozen=True, slots=True)
 class Rule:
     left: Operand
-    op: str  # "crossesAbove" | "crossesBelow" | "gt" | "lt" | "gte" | "lte"
+    op: str  # "crossesAbove" | "crossesBelow" | "crosses" | "gt" | "lt" | "gte" | "lte"
     right: Operand
+    # Optional "Nth time" modifier, applied only when the rule is evaluated as an
+    # EXIT: the rule is satisfied on the Nth bar since entry on which its base
+    # comparison is true (cumulative — non-consecutive bars count). None/≤1 keeps
+    # the default fire-on-first-occurrence behaviour.
+    count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,10 +72,12 @@ def _operand_name(op: Operand) -> str:
         return name
     if op.kind == "price":
         return op.field or "price"
+    if op.kind == "entry":
+        return "entryPrice"
     return str(op.value)
 
 
-CROSS_OPS = {"crossesAbove", "crossesBelow"}
+CROSS_OPS = {"crossesAbove", "crossesBelow", "crosses"}
 
 
 class RuleStrategy(Strategy):
@@ -129,13 +136,13 @@ class RuleStrategy(Strategy):
         # positions open); exit fires only while the side is holding.
         if self.long_enabled:
             if not gated:
-                passed, results = self._eval_group(self.long_entry, ctx, i)
+                passed, results = self._eval_group(self.long_entry, ctx, i, "long", is_exit=False)
                 if passed:
                     signals.append(
                         Signal(Side.BUY, self.quantity, self._reason(self.long_entry, results), leg="long")
                     )
             if ctx.position_long > 0:
-                passed, results = self._eval_group(self.long_exit, ctx, i)
+                passed, results = self._eval_group(self.long_exit, ctx, i, "long", is_exit=True)
                 if passed:
                     signals.append(
                         Signal(Side.SELL, self.quantity, self._reason(self.long_exit, results), leg="long")
@@ -143,13 +150,13 @@ class RuleStrategy(Strategy):
 
         if self.short_enabled:
             if not gated:
-                passed, results = self._eval_group(self.short_entry, ctx, i)
+                passed, results = self._eval_group(self.short_entry, ctx, i, "short", is_exit=False)
                 if passed:
                     signals.append(
                         Signal(Side.SELL, self.quantity, self._reason(self.short_entry, results), leg="short")
                     )
             if ctx.position_short > 0:
-                passed, results = self._eval_group(self.short_exit, ctx, i)
+                passed, results = self._eval_group(self.short_exit, ctx, i, "short", is_exit=True)
                 if passed:
                     signals.append(
                         Signal(Side.BUY, self.quantity, self._reason(self.short_exit, results), leg="short")
@@ -159,16 +166,40 @@ class RuleStrategy(Strategy):
 
     # --- evaluation ---------------------------------------------------------
 
-    def _eval_group(self, group: RuleGroup, ctx: Context, i: int) -> tuple[bool, list[bool]]:
+    def _eval_group(
+        self, group: RuleGroup, ctx: Context, i: int, side: str, *, is_exit: bool
+    ) -> tuple[bool, list[bool]]:
         if not group.rules:
             return False, []
-        results = [self._eval_rule(r, ctx, i) for r in group.rules]
+        results = [self._eval_rule(r, ctx, i, side, is_exit) for r in group.rules]
         passed = all(results) if group.combine == "AND" else any(results)
         return passed, results
 
-    def _eval_rule(self, rule: Rule, ctx: Context, i: int) -> bool:
-        lnow, lprev = self._operand_values(rule.left, ctx, i)
-        rnow, rprev = self._operand_values(rule.right, ctx, i)
+    def _eval_rule(self, rule: Rule, ctx: Context, i: int, side: str, is_exit: bool) -> bool:
+        n = rule.count or 1
+        # Count only applies to exits, and only once we can locate the entry bar.
+        # Otherwise the rule keeps its default fire-on-first-occurrence behaviour.
+        if is_exit and n > 1:
+            entry_idx = self._entry_index(ctx, side)
+            if entry_idx is None:
+                return False
+            # Count cumulative occurrences since entry; `cur` ends as the current
+            # bar's truth. Fire only ON an occurrence bar (current true) once the
+            # tally has reached N — so it triggers on the Nth occurrence rather
+            # than latching true on every later bar.
+            tally = 0
+            cur = False
+            for j in range(entry_idx, i + 1):
+                cur = self._base_true_at(rule, ctx, j, side)
+                if cur:
+                    tally += 1
+            return cur and tally >= n
+        return self._base_true_at(rule, ctx, i, side)
+
+    def _base_true_at(self, rule: Rule, ctx: Context, i: int, side: str) -> bool:
+        """The rule's raw comparison at bar index `i`, ignoring any count."""
+        lnow, lprev = self._operand_values(rule.left, ctx, i, side)
+        rnow, rprev = self._operand_values(rule.right, ctx, i, side)
 
         if rule.op in CROSS_OPS:
             # D2: needs a previous bar and every value present, or it's False.
@@ -176,7 +207,10 @@ class RuleStrategy(Strategy):
                 return False
             if rule.op == "crossesAbove":
                 return lprev <= rprev and lnow > rnow
-            return lprev >= rprev and lnow < rnow
+            if rule.op == "crossesBelow":
+                return lprev >= rprev and lnow < rnow
+            # crosses: either direction.
+            return (lprev <= rprev and lnow > rnow) or (lprev >= rprev and lnow < rnow)
 
         # D2: a non-cross comparison with a None operand is False, not omitted.
         if lnow is None or rnow is None:
@@ -191,13 +225,49 @@ class RuleStrategy(Strategy):
             return lnow <= rnow
         raise ValueError(f"unknown operator '{rule.op}'")
 
+    def _entry_index(self, ctx: Context, side: str) -> int | None:
+        """Index in `ctx.history` of the bar the position opened on — the bar whose
+        interval CONTAINS the entry time (the last bar with `time <= entry_time`).
+
+        In backtest the entry time is exactly a bar's open time, so this is that
+        bar (fill-bar inclusive, matching the counted-exit semantics). In live a
+        mid-bar broker fill lands inside a bar; using `>= t` would pick the bar
+        *after* it and drop the entry bar's own close from the count.
+
+        Degrades safely for the live rolling window (these never occur in
+        backtest, where the entry bar is always present with an exact time):
+        an unknown entry time, or an entry that predates the loaded window, counts
+        over the whole window from index 0 — a best-effort tally so a counted exit
+        still fires rather than silently never closing the position. Occurrences
+        before the window are unavoidably invisible, so this can under-count and
+        fire late; that is preferable to never firing. None only when there are no
+        bars to count at all."""
+        if not ctx.history:
+            return None
+        t = ctx.long_entry_time if side == "long" else ctx.short_entry_time
+        if t is None or t <= ctx.history[0].time:
+            return 0
+        idx = 0
+        for j, bar in enumerate(ctx.history):
+            if bar.time <= t:
+                idx = j
+            else:
+                break
+        return idx
+
     def _operand_values(
-        self, op: Operand, ctx: Context, i: int
+        self, op: Operand, ctx: Context, i: int, side: str
     ) -> tuple[float | None, float | None]:
         if op.kind == "const":
             return op.value, op.value
+        if op.kind == "entry":
+            # The position's entry price is constant for the life of the trade, so
+            # both "now" and "prev" equal it (a moving series can cross the flat
+            # entry line naturally).
+            ep = ctx.long_entry_price if side == "long" else ctx.short_entry_price
+            return ep, ep
         if op.kind == "price":
-            now = getattr(ctx.bar, op.field)
+            now = getattr(ctx.history[i], op.field)
             prev = getattr(ctx.history[i - 1], op.field) if i > 0 else None
             return now, prev
         # indicator

@@ -99,7 +99,7 @@ class BacktestResponse(BaseModel):
 
 
 class OperandDTO(BaseModel):
-    kind: Literal["indicator", "price", "const"]
+    kind: Literal["indicator", "price", "const", "entry"]
     indicator: Literal["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"] | None = None
     length: int | None = None
     field: Literal["close", "open", "high", "low"] | None = None
@@ -130,11 +130,13 @@ class OperandDTO(BaseModel):
 
 class RuleDTO(BaseModel):
     left: OperandDTO
-    op: Literal["crossesAbove", "crossesBelow", "gt", "lt", "gte", "lte"]
+    op: Literal["crossesAbove", "crossesBelow", "crosses", "gt", "lt", "gte", "lte"]
     right: OperandDTO
+    # "Nth time" modifier (exit-only; None ⇒ fire on first occurrence).
+    count: int | None = Field(default=None, ge=1)
 
     def to_rule(self) -> Rule:
-        return Rule(self.left.to_operand(), self.op, self.right.to_operand())
+        return Rule(self.left.to_operand(), self.op, self.right.to_operand(), count=self.count)
 
 
 class RuleGroupDTO(BaseModel):
@@ -379,6 +381,9 @@ class PositionStateDTO(BaseModel):
     side: Literal["buy", "sell"]
     quantity: float
     open_level: float
+    # Epoch seconds the position opened. Optional (older callers omit it), but
+    # required for counted exits ("Nth time since entry") to locate the entry bar.
+    open_time: int | None = None
 
 
 class ActionDTO(BaseModel):

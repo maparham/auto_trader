@@ -14,6 +14,9 @@ export interface PositionState {
   side: "buy" | "sell";
   quantity: number;
   open_level: number;
+  // Epoch seconds the position opened. Needed for counted exits ("Nth time since
+  // entry") so the engine can locate the entry bar; omit when unknown.
+  open_time?: number;
 }
 
 export interface EvaluateRequest {

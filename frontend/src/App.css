@@ -1029,6 +1029,13 @@
 .bt-operand { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .bt-operand select { flex: 0 1 auto; width: auto; min-width: 0; }
 .bt-operand-length { flex: 0 0 62px; min-width: 0; text-align: left; }
+/* The optional "Nth time" chip on an exit rule: a tiny number + ordinal suffix.
+   Dim until set (blank ⇒ 1st ⇒ default), accented once it holds a count. */
+.bt-rule-count { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.bt-rule-count-input { flex: 0 0 40px; width: 40px; text-align: center; }
+.bt-rule-count-input::placeholder { color: var(--text-faint); }
+.bt-rule-count-suffix { font-size: 11px; color: var(--accent); font-weight: 600; }
+.bt-rule-count.on .bt-rule-count-input { border-color: var(--accent); color: var(--accent); }
 /* Per-operand timeframe: hug the selected value ("Base"/"1H") — never stretch. */
 .bt-operand-tf { flex: 0 0 auto; width: auto; min-width: 0; }
 /* The base-timeframe select in the Period section: size to its value, not the
