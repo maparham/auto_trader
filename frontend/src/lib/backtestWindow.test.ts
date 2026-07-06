@@ -145,6 +145,33 @@ describe("requiredWarmupBars", () => {
     expect(requiredWarmupBars(c, 60)).toBe(65);
   });
 
+  it("warms a pasted chart (series) operand by its length, scaled by its timeframe", () => {
+    // A copied LR(100) curve needs 100 base bars warm; on a 5m TF over a 1m base,
+    // 100 × 5 = 500. A drawing series (no length) needs just 1.
+    const emaKey = (tf?: string) =>
+      cfg({
+        range: { mode: "bars", bars: 500, history: "minimal" },
+        longEntry: {
+          combine: "AND",
+          rules: [
+            {
+              left: {
+                kind: "series",
+                seriesKey: "lr_x",
+                label: "LR(100)",
+                recipe: { source: "indicator", indicatorType: "LR", calcParams: [100, 2], line: 0 },
+                ...(tf ? { timeframe: tf } : {}),
+              },
+              op: "gt",
+              right: { kind: "const", value: 0 },
+            },
+          ],
+        },
+      });
+    expect(requiredWarmupBars(emaKey(), 60)).toBe(100); // base timeframe
+    expect(requiredWarmupBars(emaKey("MINUTE_5"), 60)).toBe(500); // 100 × 5
+  });
+
   it("bars depth: a higher-timeframe operand can raise the requirement above the asked N", () => {
     // Asking 30 base bars, but EMA(20)@5m needs 20 × 5 = 100 base bars warm.
     const c = cfg({

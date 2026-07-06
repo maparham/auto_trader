@@ -5,6 +5,7 @@
 import {
   longestIndicatorLength,
   collectSeriesOperands,
+  operandBaseLen,
   riskAtrLengths,
   scalingAtrLengths,
   slopeLen,
@@ -22,9 +23,11 @@ export function longestWarmupBars(cfg: BacktestConfig, baseSeconds: number): num
   const scaled = collectSeriesOperands(cfg).map((op) => {
     // A sloped operand needs `slope.len` extra bars in its OWN timeframe (it reads
     // v[i] and v[i−len] on that timeframe), so add it BEFORE scaling by the ratio.
-    const base = op.kind === "indicator" ? op.length ?? 1 : 1;
-    const len = base + (slopeLen(op) ?? 0);
-    const tfSec = op.kind === "indicator" && op.timeframe ? RESOLUTION_SECONDS[op.timeframe] ?? baseSeconds : baseSeconds;
+    const len = operandBaseLen(op) + (slopeLen(op) ?? 0);
+    // Both indicator and (pasted chart) series operands can carry a per-operand
+    // higher timeframe; a drawing series never does. Scale by that TF's ratio.
+    const tf = op.kind === "indicator" || op.kind === "series" ? op.timeframe : undefined;
+    const tfSec = tf ? RESOLUTION_SECONDS[tf] ?? baseSeconds : baseSeconds;
     const ratio = Math.max(1, Math.ceil(tfSec / baseSeconds));
     return len * ratio;
   });

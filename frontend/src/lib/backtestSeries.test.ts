@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { KLineData } from "klinecharts";
-import type { BacktestConfig } from "./backtestConfig";
+import type { BacktestConfig, SeriesRecipe, Operand } from "./backtestConfig";
+import type { FetchTimeframe } from "./backtestSeries";
 
 // customIndicators.ts reads LineType at module load (AVWAP line style table);
 // stub klinecharts' runtime surface like overlays.test.ts does.
@@ -11,6 +12,9 @@ vi.mock("klinecharts", () => ({
 }));
 
 const { buildSeries } = await import("./backtestSeries");
+const { maSeries, sma } = await import("./mtf");
+const { computeRsi, computeLr, computePrevHl, vwapFrom } = await import("./customIndicators");
+const { recipeKey, seriesName } = await import("./backtestConfig");
 
 // The base run is on 1-minute bars (candles() stamps every 60_000ms); no rule
 // here references a higher timeframe, so fetchTimeframe is never called.
@@ -323,5 +327,163 @@ describe("buildSeries", () => {
     // Bars before the first 5m close (t < 300k) have no usable value → null.
     expect(s.slice(0, 5)).toEqual([null, null, null, null, null]);
     expect(s[5]).toBe(10); // t=300k: first 5m bar has now closed
+  });
+});
+
+// A copied chart operand (kind "series") must recompute the EXACT curve the chart
+// shows, via the same pure functions — so parity is asserted against a direct call.
+const nul = (a: Array<number | undefined>) => a.map((v) => (v === undefined ? null : v));
+
+async function seriesFor(
+  recipe: SeriesRecipe,
+  bars: KLineData[],
+  opts: { timeframe?: string; slope?: { len: number }; base?: string; fetch?: FetchTimeframe } = {},
+): Promise<Array<number | null>> {
+  const op = {
+    kind: "series", seriesKey: recipeKey(recipe), label: "chip", recipe,
+    ...(opts.timeframe ? { timeframe: opts.timeframe } : {}),
+    ...(opts.slope ? { slope: opts.slope } : {}),
+  } as Operand;
+  const config = cfg({
+    longEntry: { combine: "AND", rules: [{ left: op, op: "gt", right: { kind: "const", value: 0 } }] },
+  });
+  const out = await buildSeries(bars, config, opts.base ?? BASE, opts.fetch ?? noFetch);
+  return out[seriesName(op)!];
+}
+
+describe("series operand — indicator recipes match the chart template", () => {
+  it("EMA reproduces maSeries().base", async () => {
+    const bars = candles([1, 2, 3, 4, 5, 6, 7, 8]);
+    const got = await seriesFor({ source: "indicator", indicatorType: "EMA", calcParams: [3], line: 0 }, bars);
+    expect(got).toEqual(nul(maSeries(bars, "ema", 3, {}).base));
+  });
+
+  it("MA reproduces maSeries().base (simple, not smoothed)", async () => {
+    const bars = candles([1, 2, 3, 4, 5, 6, 7, 8]);
+    const got = await seriesFor({ source: "indicator", indicatorType: "MA", calcParams: [4], line: 0 }, bars);
+    expect(got).toEqual(nul(maSeries(bars, "sma", 4, {}).base));
+  });
+
+  it("RSI reproduces computeRsi().val", async () => {
+    const bars = candles([1, 2, 3, 2, 3, 4, 3, 4, 5, 4, 5, 6, 5, 6, 7, 8]);
+    const got = await seriesFor({ source: "indicator", indicatorType: "RSI", calcParams: [14], line: 0 }, bars);
+    expect(got).toEqual(nul(computeRsi(bars, 14, {}).map((p) => p.val ?? undefined)));
+  });
+
+  it("LR line 0 reproduces computeLr().lr; line picks the selected curve", async () => {
+    const bars = candles([1, 3, 2, 4, 6, 5, 7, 9, 8, 10]);
+    const lr = computeLr(bars, 5, 2, {});
+    const got = await seriesFor({ source: "indicator", indicatorType: "LR", calcParams: [5, 2], line: 0 }, bars);
+    expect(got).toEqual(nul(lr.map((p) => (p as Record<string, number | undefined>).lr)));
+    const up = await seriesFor({ source: "indicator", indicatorType: "LR", calcParams: [5, 2], line: 1 }, bars);
+    expect(up).toEqual(nul(lr.map((p) => (p as Record<string, number | undefined>).up)));
+  });
+
+  it("VWAP reproduces vwapFrom(0).vwap; AVWAP starts at its anchor (calcParams[0])", async () => {
+    const bars = candles([1, 2, 3, 4, 5], [10, 10, 10, 10, 10]);
+    const vwap = await seriesFor({ source: "indicator", indicatorType: "VWAP", calcParams: [], line: 0 }, bars);
+    expect(vwap).toEqual(nul(vwapFrom(bars, 0, {}).map((p) => p.vwap ?? undefined)));
+    // AVWAP anchored at t=120_000 (bar index 2) accumulates from index 2.
+    const av = await seriesFor({ source: "indicator", indicatorType: "AVWAP", calcParams: [120_000], line: 0 }, bars);
+    expect(av.slice(0, 2)).toEqual([null, null]);
+    expect(av[2]).not.toBeNull();
+    // Unplaced anchor (<= 0) => no line.
+    const unplaced = await seriesFor({ source: "indicator", indicatorType: "AVWAP", calcParams: [0], line: 0 }, bars);
+    expect(unplaced).toEqual([null, null, null, null, null]);
+  });
+
+  it("PREV_HL picks the selected boundary line by index", async () => {
+    const bars = candles([5, 7, 3, 8, 2, 9, 4, 6]);
+    const pts = computePrevHl(bars, {}) as unknown as Array<Record<string, number | undefined>>;
+    // line 2 = dayHigh in the template's figure order.
+    const dayHigh = await seriesFor({ source: "indicator", indicatorType: "PREV_HL", calcParams: [], line: 2 }, bars);
+    expect(dayHigh).toEqual(nul(pts.map((p) => p.dayHigh)));
+  });
+
+  it("a picker-built LR 'Upper' operand (line 1) resolves to computeLr().up end-to-end", async () => {
+    const { chartOperandSources } = await import("./chartOperand");
+    const bars = candles([1, 3, 2, 4, 6, 5, 7, 9, 8, 10]);
+    const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "LR#x", indType: "LR", calcParams: [5, 2], extendData: {} });
+    const upper = src.outputs.find((o) => o.operand.label.endsWith("Upper"))!;
+    const recipe = (upper.operand as Extract<Operand, { kind: "series" }>).recipe;
+    const got = await seriesFor(recipe, bars);
+    expect(got).toEqual(nul(computeLr(bars, 5, 2, {}).map((p) => (p as Record<string, number | undefined>).up)));
+  });
+});
+
+describe("series operand — drawing recipes as a per-bar price series", () => {
+  // Candle timestamps are i*60_000; anchors chosen on that grid.
+  const bars = candles([0, 0, 0, 0, 0, 0]); // t = 0,60k,120k,180k,240k,300k
+
+  it("segment: linear inside [t0,t1], null outside", async () => {
+    const got = await seriesFor(
+      { source: "drawing", drawingKind: "segment", anchors: [{ timestamp: 60_000, value: 10 }, { timestamp: 180_000, value: 30 }] },
+      bars,
+    );
+    // i0 (t=0) before start -> null; i1=10, i2=20, i3=30; i4,i5 after end -> null
+    expect(got).toEqual([null, 10, 20, 30, null, null]);
+  });
+
+  it("rayLine: null before the origin, linear from t0 forward", async () => {
+    const got = await seriesFor(
+      { source: "drawing", drawingKind: "rayLine", anchors: [{ timestamp: 60_000, value: 10 }, { timestamp: 120_000, value: 20 }] },
+      bars,
+    );
+    // slope = 10 per 60k. i0 before origin -> null; then 10,20,30,40,50
+    expect(got).toEqual([null, 10, 20, 30, 40, 50]);
+  });
+
+  it("straightLine: defined for all bars (both directions)", async () => {
+    const got = await seriesFor(
+      { source: "drawing", drawingKind: "straightLine", anchors: [{ timestamp: 60_000, value: 10 }, { timestamp: 120_000, value: 20 }] },
+      bars,
+    );
+    expect(got).toEqual([0, 10, 20, 30, 40, 50]);
+  });
+
+  it("horizontalStraightLine / priceLine: flat constant at anchors[0].value", async () => {
+    const flat = await seriesFor(
+      { source: "drawing", drawingKind: "horizontalStraightLine", anchors: [{ timestamp: 999, value: 42 }] },
+      bars,
+    );
+    expect(flat).toEqual([42, 42, 42, 42, 42, 42]);
+  });
+});
+
+describe("series operand — MTF and slope compose", () => {
+  it("a sloped series keys ~len and slopes the native curve", async () => {
+    // A rising straight line -> a positive %/hr slope on every warm bar (the
+    // slope is taken on the drawing's own per-bar values, not a flat series).
+    const bars = candles([0, 0, 0, 0, 0, 0]);
+    const recipe: SeriesRecipe = {
+      source: "drawing", drawingKind: "straightLine",
+      anchors: [{ timestamp: 0, value: 100 }, { timestamp: 60_000, value: 101 }],
+    };
+    const got = await seriesFor(recipe, bars, { slope: { len: 1 } });
+    // key carries the ~1 suffix
+    const key = seriesName({ kind: "series", seriesKey: recipeKey(recipe), label: "x", recipe, slope: { len: 1 } } as Operand);
+    expect(key).toMatch(/~1$/);
+    expect(got[0]).toBeNull(); // first bar: no v[i-1]
+    const defined = got.slice(1);
+    expect(defined.every((v) => v !== null && Number.isFinite(v) && (v as number) > 0)).toBe(true);
+  });
+
+  it("an MTF indicator recipe fetches the higher timeframe and forward-fills onto base bars", async () => {
+    const base = candles(new Array(10).fill(10)); // 1-min bars, t=0..540k
+    const htf: KLineData[] = [
+      { timestamp: 0, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+      { timestamp: 300_000, open: 20, high: 20, low: 20, close: 20, volume: 0 },
+    ];
+    let requested = "";
+    const fetch: FetchTimeframe = async (r) => { requested = r; return htf; };
+    // EMA(1) == close, so the HTF value is just the last closed 5m close.
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "EMA", calcParams: [1], line: 0 },
+      base,
+      { timeframe: "MINUTE_5", fetch },
+    );
+    expect(requested).toBe("MINUTE_5");
+    expect(got.slice(0, 5)).toEqual([null, null, null, null, null]); // before first 5m close
+    expect(got[5]).toBe(10); // first 5m bar closed at t=300k
   });
 });

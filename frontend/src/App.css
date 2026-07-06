@@ -661,15 +661,19 @@
   width: 100%; padding: 7px 10px; border: none; border-radius: 5px;
   background: transparent; color: var(--text); cursor: pointer; text-align: left;
 }
-.ctxmenu .ctx-item:hover:not(:disabled) { background: var(--accent); color: var(--accent-text); }
-.ctxmenu .ctx-item:disabled { color: var(--text-faint); cursor: default; }
-.ctxmenu .ctx-item.danger:hover { background: var(--danger); color: #fff; }
+/* A disabled item with a reason is wrapped in Tooltip's inline-flex trigger span;
+   stretch it to the full menu width so the greyed row aligns with sibling items. */
+.ctxmenu > .tooltip-trigger { display: block; width: 100%; }
+.ctxmenu .ctx-item:hover:not(:disabled):not(.disabled) { background: var(--accent); color: var(--accent-text); }
+.ctxmenu .ctx-item:disabled,
+.ctxmenu .ctx-item.disabled { color: var(--text-faint); cursor: default; }
+.ctxmenu .ctx-item.danger:hover:not(.disabled) { background: var(--danger); color: #fff; }
 .ctxmenu .ctx-item-label { display: flex; align-items: center; gap: 10px; }
 .ctxmenu .ctx-item-icon { display: inline-flex; color: var(--text-dim); flex: 0 0 auto; }
-.ctxmenu .ctx-item:hover:not(:disabled) .ctx-item-icon { color: var(--accent-text); }
-.ctxmenu .ctx-item.danger:hover .ctx-item-icon { color: #fff; }
+.ctxmenu .ctx-item:hover:not(:disabled):not(.disabled) .ctx-item-icon { color: var(--accent-text); }
+.ctxmenu .ctx-item.danger:hover:not(.disabled) .ctx-item-icon { color: #fff; }
 .ctxmenu .ctx-item kbd { font-family: inherit; font-size: 11px; color: var(--text-dim); background: transparent; }
-.ctxmenu .ctx-item:hover:not(:disabled) kbd { color: var(--accent-text); }
+.ctxmenu .ctx-item:hover:not(:disabled):not(.disabled) kbd { color: var(--accent-text); }
 .ctx-sep { height: 1px; margin: 6px 4px; background: var(--border); }
 
 /* Merge-tabs checklist (tab-chip context menu → "Merge into this tab…"). */
@@ -1032,7 +1036,7 @@
 /* The optional "Nth time" chip on an exit rule: a tiny number + ordinal suffix.
    Dim until set (blank ⇒ 1st ⇒ default), accented once it holds a count. */
 .bt-rule-count { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
-.bt-rule-count-input { flex: 0 0 40px; width: 40px; text-align: center; }
+.bt-rule-count-input { flex: 0 0 54px; width: 54px; text-align: center; }
 .bt-rule-count-input::placeholder { color: var(--text-faint); }
 .bt-rule-count-suffix { font-size: 11px; color: var(--accent); font-weight: 600; }
 .bt-rule-count.on .bt-rule-count-input { border-color: var(--accent); color: var(--accent); }
@@ -1049,6 +1053,19 @@
 }
 .bt-operand-slope:hover { color: var(--text); border-color: var(--text-faint); }
 .bt-operand-slope.on { color: var(--accent); border-color: var(--accent); }
+/* A pasted chart operand renders as a labelled chip with a clear (✕) control. */
+.bt-operand-chip {
+  flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px;
+  height: 24px; padding: 0 4px 0 8px; border-radius: 4px;
+  border: 1px solid var(--accent); background: var(--surface); color: var(--text);
+}
+.bt-operand-chip-label { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt-operand-chip-clear {
+  flex: 0 0 auto; width: 16px; height: 16px; padding: 0; border: none; border-radius: 3px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; line-height: 1; cursor: pointer; background: transparent; color: var(--text-faint);
+}
+.bt-operand-chip-clear:hover { color: var(--text); background: var(--surface-hover, rgba(127,127,127,0.15)); }
 /* The %/hr unit hint next to a Number operand compared against a slope. */
 .bt-operand-unit { flex: 0 0 auto; font-size: 11px; color: var(--text-faint); }
 /* The base-timeframe select in the Period section: size to its value, not the
@@ -3517,3 +3534,24 @@
 .live-mm .pos, .live-journal-list .pos { color: var(--pos); }
 .live-mm .neg, .live-journal-list .neg { color: var(--neg); }
 .live-journal-list { list-style: none; margin: 8px 0 0; padding: 0; font-size: 11px; display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+
+/* Chart-operand picker (strategy-side "Add from chart"). */
+.chart-operand-picker-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.15); z-index: 60; display: flex; align-items: center; justify-content: center; }
+.chart-operand-picker { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; min-width: 260px; max-width: 340px; max-height: 70vh; display: flex; flex-direction: column; }
+.chart-operand-picker-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.chart-operand-picker-empty { padding: 16px 12px; }
+.chart-operand-picker-list, .chart-operand-sublist { list-style: none; margin: 0; padding: 4px; overflow-y: auto; }
+.chart-operand-sublist { padding: 0 0 0 18px; }
+.chart-operand-row { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 6px 8px; background: none; border: none; border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
+.chart-operand-row:hover:not(:disabled) { background: var(--hover); }
+.chart-operand-row:disabled { color: var(--text-faint); cursor: not-allowed; }
+.chart-operand-swatch { flex: none; width: 12px; height: 3px; border-radius: 2px; }
+.chart-operand-row:disabled .chart-operand-swatch { opacity: 0.5; }
+.chart-operand-chevron { transition: transform 0.12s; font-size: 10px; }
+.chart-operand-chevron.open { transform: rotate(90deg); }
+
+/* Per-operand "add from chart" button (replaces the old ⧉ paste). */
+.bt-operand-add { flex: 0 0 auto; width: 24px; height: 24px; padding: 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1; cursor: pointer; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--accent); }
+.bt-operand-add:hover { background: var(--accent); color: var(--accent-text); }
+.bt-swap-sides { white-space: nowrap; }
+.bt-empty-actions { margin-top: 6px; }

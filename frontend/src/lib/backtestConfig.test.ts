@@ -7,7 +7,14 @@ import {
   defaultBacktestConfig,
   riskAtrLengths,
   scalingAtrLengths,
+  recipeKey,
+  swapSides,
+  ruleFromChartOperand,
+  OP_REVERSE,
   type BacktestConfig,
+  type Operand,
+  type Rule,
+  type SeriesRecipe,
 } from "./backtestConfig";
 
 const EMPTY_GROUP = { combine: "AND" as const, rules: [] };
@@ -144,6 +151,94 @@ describe("collectSeriesOperands", () => {
   });
 });
 
+const EMA9_RECIPE: SeriesRecipe = { source: "indicator", indicatorType: "EMA", calcParams: [9], line: 0 };
+const TREND_RECIPE: SeriesRecipe = {
+  source: "drawing",
+  drawingKind: "segment",
+  anchors: [{ timestamp: 1000, value: 10 }, { timestamp: 2000, value: 20 }],
+};
+
+function ser(recipe: SeriesRecipe, extra: Partial<Operand> = {}): Operand {
+  return { kind: "series", seriesKey: recipeKey(recipe), label: "chip", recipe, ...extra } as Operand;
+}
+
+function cfgWith(...rules: { left: Operand; op: "gt"; right: Operand }[]): BacktestConfig {
+  return {
+    range: { mode: "bars", bars: 500 },
+    longEntry: { combine: "AND", rules },
+    longExit: EMPTY_GROUP,
+    shortEntry: EMPTY_GROUP,
+    shortExit: EMPTY_GROUP,
+    longEnabled: true,
+    shortEnabled: true,
+    costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+  };
+}
+
+describe("recipeKey", () => {
+  it("is deterministic and stable for the same recipe", () => {
+    expect(recipeKey(EMA9_RECIPE)).toBe(recipeKey({ ...EMA9_RECIPE }));
+    expect(recipeKey(EMA9_RECIPE)).toMatch(/^EMA_/);
+    expect(recipeKey(TREND_RECIPE)).toMatch(/^segment_/);
+  });
+  it("distinguishes recipes that differ in any compute field", () => {
+    const keys = new Set([
+      recipeKey(EMA9_RECIPE),
+      recipeKey({ ...EMA9_RECIPE, calcParams: [21] }),
+      recipeKey({ ...EMA9_RECIPE, indicatorType: "MA" }),
+      recipeKey({ ...EMA9_RECIPE, line: 1 }),
+      recipeKey({ source: "indicator", indicatorType: "AVWAP", calcParams: [111], line: 0 }),
+      recipeKey({ source: "indicator", indicatorType: "AVWAP", calcParams: [222], line: 0 }),
+    ]);
+    expect(keys.size).toBe(6);
+  });
+});
+
+describe("seriesName for a series operand", () => {
+  it("returns the seriesKey verbatim", () => {
+    const op = ser(EMA9_RECIPE);
+    expect(seriesName(op)).toBe(op.seriesKey);
+  });
+  it("appends ~len for slope, then @tf — slope before timeframe", () => {
+    const key = recipeKey(EMA9_RECIPE);
+    expect(seriesName(ser(EMA9_RECIPE, { slope: { len: 3 } }))).toBe(`${key}~3`);
+    expect(seriesName(ser(EMA9_RECIPE, { slope: { len: 3 }, timeframe: "HOUR" }))).toBe(`${key}~3@HOUR`);
+    expect(seriesName(ser(EMA9_RECIPE, { timeframe: "HOUR" }))).toBe(`${key}@HOUR`);
+  });
+});
+
+describe("collectSeriesOperands with series operands", () => {
+  it("collects series operands and dedups identical recipes", () => {
+    const cfg = cfgWith(
+      { left: ser(EMA9_RECIPE), op: "gt", right: { kind: "const", value: 0 } },
+      { left: ser(EMA9_RECIPE), op: "gt", right: { kind: "const", value: 1 } }, // identical recipe -> dedup
+      { left: ser(TREND_RECIPE), op: "gt", right: { kind: "const", value: 0 } },
+    );
+    const names = collectSeriesOperands(cfg).map(seriesName).sort();
+    expect(names).toEqual([recipeKey(EMA9_RECIPE), recipeKey(TREND_RECIPE)].sort());
+  });
+  it("keeps the same recipe on two timeframes as distinct series", () => {
+    const cfg = cfgWith(
+      { left: ser(EMA9_RECIPE), op: "gt", right: { kind: "const", value: 0 } },
+      { left: ser(EMA9_RECIPE, { timeframe: "HOUR" }), op: "gt", right: { kind: "const", value: 0 } },
+    );
+    expect(collectSeriesOperands(cfg).length).toBe(2);
+  });
+});
+
+describe("cloneRule with a series operand", () => {
+  it("deep-copies the recipe so edits don't alias", () => {
+    const rule = { left: ser(EMA9_RECIPE), op: "gt" as const, right: ser(TREND_RECIPE) };
+    const copy = cloneRule(rule);
+    const left = copy.left as Extract<Operand, { kind: "series" }>;
+    const orig = rule.left as Extract<Operand, { kind: "series" }>;
+    expect(left.recipe).not.toBe(orig.recipe);
+    if (left.recipe.source === "indicator" && orig.recipe.source === "indicator") {
+      expect(left.recipe.calcParams).not.toBe(orig.recipe.calcParams);
+    }
+  });
+});
+
 describe("collectSeriesOperands with slope", () => {
   it("collects a sloped price operand (which now keys a series)", () => {
     const cfg: BacktestConfig = {
@@ -183,6 +278,24 @@ describe("longestIndicatorLength with slope", () => {
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
     };
     expect(longestIndicatorLength(cfg)).toBe(55);
+  });
+
+  it("uses a series operand's length param, but never AVWAP's anchor as a length", () => {
+    // EMA(50) series operand -> 50 warm-up bars.
+    const ema = cfgWith({
+      left: ser({ source: "indicator", indicatorType: "EMA", calcParams: [50], line: 0 }),
+      op: "gt",
+      right: { kind: "const", value: 0 },
+    });
+    expect(longestIndicatorLength(ema)).toBe(50);
+    // AVWAP's calcParams[0] is an anchor epoch-ms, NOT a bar count — warm-up must
+    // not balloon to ~1.7e12 bars.
+    const avwap = cfgWith({
+      left: ser({ source: "indicator", indicatorType: "AVWAP", calcParams: [1_700_000_000_000], line: 0 }),
+      op: "gt",
+      right: { kind: "const", value: 0 },
+    });
+    expect(longestIndicatorLength(avwap)).toBe(1);
   });
 });
 
@@ -282,5 +395,31 @@ describe("scaling ATR", () => {
     const cfg = { ...defaultBacktestConfig(),
       longScaling: { maxConcurrent: 3, spacing: { kind: "pct" as const, value: 1 } } };
     expect(scalingAtrLengths(cfg)).toEqual([]);
+  });
+});
+
+const series: Operand = { kind: "series", seriesKey: "k", label: "EMA(9)", recipe: { source: "indicator", indicatorType: "EMA", calcParams: [9], line: 0 } };
+
+describe("swapSides", () => {
+  it("A gt B -> B lt A (operands swapped, operator mirrored, truth preserved)", () => {
+    const rule: Rule = { left: { kind: "price", field: "close" }, op: "gt", right: { kind: "const", value: 5 } };
+    expect(swapSides(rule)).toEqual({ left: { kind: "const", value: 5 }, op: "lt", right: { kind: "price", field: "close" } });
+  });
+  it("crosses self-mirrors", () => {
+    const rule: Rule = { left: series, op: "crosses", right: { kind: "const", value: 0 } };
+    expect(swapSides(rule).op).toBe("crosses");
+  });
+  it("a full round-trip returns the original rule", () => {
+    const rule: Rule = { left: series, op: "crossesAbove", right: { kind: "const", value: 1 }, enabled: false, count: 3 };
+    expect(swapSides(swapSides(rule))).toEqual(rule);
+  });
+  it("OP_REVERSE is a complete involution", () => {
+    for (const [k, v] of Object.entries(OP_REVERSE)) expect(OP_REVERSE[v]).toBe(k);
+  });
+});
+
+describe("ruleFromChartOperand", () => {
+  it("seeds { left: series, op: gt, right: const 0 }", () => {
+    expect(ruleFromChartOperand(series)).toEqual({ left: series, op: "gt", right: { kind: "const", value: 0 } });
   });
 });

@@ -6,10 +6,13 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CloseButton from "./CloseButton";
+import ChartOperandPicker from "./ChartOperandPicker";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
-import { requestGoLive, requestConfirm } from "./lib/signals";
+import { requestGoLive, requestConfirm, backtestClearRequest } from "./lib/signals";
+import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
+import type { EmphasisTarget } from "./lib/chartOperand";
 import { resolveWindow } from "./lib/backtestWindow";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
@@ -35,6 +38,9 @@ import {
   type RecurrenceMask,
   type SessionPreset,
   type DayTimeWindow,
+  swapSides,
+  ruleFromChartOperand,
+  OP_REVERSE,
 } from "./lib/backtestConfig";
 import { SESSION_PRESETS, buildRangeChips, coverage, isActive, resolveMask } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
@@ -185,19 +191,6 @@ function CrossGlyph({ dir }: { dir: "up" | "down" | "both" }) {
     </svg>
   );
 }
-
-// Flip an operator to its opposite sense — the mirror of each comparison, so a
-// whole side's rules can be inverted in one click (e.g. to reuse a long setup
-// as its short mirror).
-const OP_REVERSE: Record<Operator, Operator> = {
-  crossesAbove: "crossesBelow",
-  crossesBelow: "crossesAbove",
-  crosses: "crosses",  // direction-agnostic — its own mirror
-  gt: "lt",
-  lt: "gt",
-  gte: "lte",
-  lte: "gte",
-};
 
 function OpGlyph({ op }: { op: Operator }) {
   if (op === "crossesAbove") return <CrossGlyph dir="up" />;
@@ -435,6 +428,24 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // — so every rule in one side/leg can be pasted into another at once.
   const [groupClipboard, setGroupClipboard] = useState<Rule[] | null>(null);
 
+  // The chart-operand picker is modal-owned (opened from deep in the rule builder
+  // via a threaded callback). `pickerFor` holds the pick handler; non-null = open.
+  const [pickerFor, setPickerFor] = useState<((op: Operand) => void) | null>(null);
+  const openChartPicker = (onPick: (op: Operand) => void) => setPickerFor(() => onPick);
+  const pickerSources = useMemo(() => (pickerFor ? enumerateChartOperands(controller) : []), [pickerFor, controller]);
+  // Emphasize the on-chart element behind the hovered picker row: a drawing thickens
+  // (overlays.hoverDrawing), an indicator curve shows its selection handles
+  // (curveHover). Reconcile BOTH on every change (null clears whichever was active).
+  const handleHoverSource = (t: EmphasisTarget | null) => {
+    if (!controller) return;
+    controller.overlays.hoverDrawing(t?.kind === "drawing" ? t.id : null);
+    const ind = t?.kind === "indicator" ? { paneId: t.paneId, name: t.name } : null;
+    const cur = controller.curveHover.value;
+    if ((cur?.paneId ?? null) !== (ind?.paneId ?? null) || (cur?.name ?? null) !== (ind?.name ?? null)) {
+      controller.curveHover.set(ind);
+    }
+  };
+
   // The timeframe the run will actually use: the config override when set, else
   // the active chart timeframe (the `resolution` prop). Window math + the header
   // badge follow this so they reflect the run, not necessarily the chart.
@@ -506,6 +517,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   }
 
   return (
+    <>
     <aside className="bt-cfg-panel">
         <div className="bt-cfg-head">
           <span className="bt-cfg-title">
@@ -886,6 +898,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             onCopy={(rule) => setClipboard(cloneRule(rule))}
             groupClipboard={groupClipboard}
             onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
+            openChartPicker={openChartPicker}
           />
 
           {usesVolume && (
@@ -1041,6 +1054,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           <button onClick={run}>Run backtest</button>
         </div>
     </aside>
+      {pickerFor && (
+        <ChartOperandPicker
+          sources={pickerSources}
+          onPick={(op) => { pickerFor(op); setPickerFor(null); }}
+          onClose={() => setPickerFor(null)}
+          onHoverSource={handleHoverSource}
+        />
+      )}
+    </>
   );
 }
 
@@ -1183,6 +1205,7 @@ function SidePanel({
   onCopy,
   groupClipboard,
   onCopyAll,
+  openChartPicker,
 }: {
   side: "long" | "short";
   cfg: BacktestConfig;
@@ -1194,6 +1217,9 @@ function SidePanel({
   onCopy: (rule: Rule) => void;
   groupClipboard: Rule[] | null;
   onCopyAll: (rules: Rule[]) => void;
+  // Absent in surfaces with no chart to pick from (e.g. the Live panel) — the
+  // affordances that need it simply don't render.
+  openChartPicker?: (onPick: (op: Operand) => void) => void;
 }) {
   const isLong = side === "long";
   const enabled = (isLong ? cfg.longEnabled : cfg.shortEnabled) !== false;
@@ -1237,6 +1263,7 @@ function SidePanel({
           onCopy={onCopy}
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
+          openChartPicker={openChartPicker}
         />
         <RuleGroupSection
           title={isLong ? "Sell to close" : "Buy to close"}
@@ -1250,6 +1277,7 @@ function SidePanel({
           onCopy={onCopy}
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
+          openChartPicker={openChartPicker}
           isExit
         />
         <RiskSection
@@ -1417,6 +1445,18 @@ function CopyAllIcon() {
   );
 }
 
+// Flip-operators glyph: a ">" chevron above a "<" chevron (the ≷ motif) —
+// distinct from the swap-sides straight double-arrow, since this inverts each
+// operator to its opposite rather than swapping the two operands.
+function ReverseOpsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 4l5 4-5 4" />
+      <path d="M16 12l-5 4 5 4" />
+    </svg>
+  );
+}
+
 function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -1529,6 +1569,7 @@ export function RuleGroupSection({
   onCopy,
   groupClipboard,
   onCopyAll,
+  openChartPicker,
   isExit = false,
 }: {
   title: string;
@@ -1542,6 +1583,9 @@ export function RuleGroupSection({
   onCopy: (rule: Rule) => void;
   groupClipboard: Rule[] | null;
   onCopyAll: (rules: Rule[]) => void;
+  // Absent in surfaces with no chart to pick from (e.g. the Live panel) — the
+  // affordances that need it simply don't render.
+  openChartPicker?: (onPick: (op: Operand) => void) => void;
   // Exit groups can reference the entry price and carry an "Nth time" count;
   // entry groups can't (there's no position yet).
   isExit?: boolean;
@@ -1549,9 +1593,15 @@ export function RuleGroupSection({
   function setCombine(combine: Combine) {
     onChange({ ...group, combine });
   }
-  // Flip every rule's operator to its opposite in one go.
+  // Flip every rule's operator to its opposite in one go. Gated behind a confirm
+  // since it rewrites the group's logic (> ↔ <, crosses above ↔ below).
   function reverseAll() {
-    onChange({ ...group, rules: group.rules.map((r) => ({ ...r, op: OP_REVERSE[r.op] })) });
+    requestConfirm({
+      title: "Reverse operators",
+      message: `Flip every operator in ${title} to its opposite (> ↔ <, crosses above ↔ below)?`,
+      confirmLabel: "Reverse",
+      onConfirm: () => onChange({ ...group, rules: group.rules.map((r) => ({ ...r, op: OP_REVERSE[r.op] })) }),
+    });
   }
   // Wipe every rule in this group, gated behind a confirm (unlike the per-row
   // delete, which is cheap to undo by re-adding one rule).
@@ -1599,7 +1649,23 @@ export function RuleGroupSection({
 
   return (
     <Section title={title} info={info}>
-      {group.rules.length === 0 && <div className="al-note bt-empty-rules">{emptyHint}</div>}
+      {group.rules.length === 0 && (
+        <div className="al-note bt-empty-rules">
+          {emptyHint}
+          {openChartPicker && (
+            <div className="bt-empty-actions">
+              <Tooltip content="Add a rule seeded from a chart indicator or drawing">
+                <button
+                  className="ghost"
+                  onClick={() => openChartPicker((op) => onChange({ ...group, rules: [ruleFromChartOperand(op)] }))}
+                >
+                  + Rule from chart
+                </button>
+              </Tooltip>
+            </div>
+          )}
+        </div>
+      )}
       {group.rules.length > 0 && (
         <div className="bt-rule-groophead">
           {group.rules.length > 1 && (
@@ -1619,7 +1685,7 @@ export function RuleGroupSection({
               title="Flip every operator to its opposite (> ↔ <, crosses above ↔ below)"
               aria-label="Reverse operators"
             >
-              ⇄
+              <ReverseOpsIcon />
             </button>
             <button
               className="bt-rule-toggle bt-copyall"
@@ -1642,9 +1708,9 @@ export function RuleGroupSection({
       )}
       {group.rules.map((rule, i) => (
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`} key={i}>
-          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} />
+          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} openChartPicker={openChartPicker} />
           <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
-          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} />
+          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} openChartPicker={openChartPicker} />
           {isExit && <CountField value={rule.count} onChange={(count) => setRule(i, { ...rule, count })} />}
           <div className="bt-rule-actions">
             <button
@@ -1656,6 +1722,16 @@ export function RuleGroupSection({
             >
               <EyeIcon on={rule.enabled !== false} />
             </button>
+            <Tooltip content="Swap sides (same condition)">
+              <button
+                type="button"
+                className="bt-rule-toggle bt-swap-sides"
+                onClick={() => setRule(i, swapSides(rule))}
+                aria-label="Swap sides"
+              >
+                ⇄
+              </button>
+            </Tooltip>
             <button
               className="bt-rule-toggle bt-rule-delete"
               onClick={() => removeRule(i)}
@@ -1678,6 +1754,16 @@ export function RuleGroupSection({
         <button className="ghost" onClick={addRule}>
           + Add rule
         </button>
+        {openChartPicker && (
+          <Tooltip content="Add a rule seeded from a chart indicator or drawing">
+            <button
+              className="ghost"
+              onClick={() => openChartPicker((op) => onChange({ ...group, rules: [...group.rules, ruleFromChartOperand(op)] }))}
+            >
+              + Rule from chart
+            </button>
+          </Tooltip>
+        )}
         {clipboard && (
           <button className="ghost" onClick={pasteRule} title="Paste the copied rule here">
             Paste rule
@@ -1709,6 +1795,15 @@ function ordinal(n: number): string {
 // condition is true (cumulative — non-consecutive bars count).
 function CountField({ value, onChange }: { value?: number; onChange: (n?: number) => void }) {
   const n = value && value > 1 ? value : undefined;
+  // Keep a local text buffer so the field shows exactly what the user typed
+  // mid-edit. Deriving the input value straight from the model breaks typing:
+  // a bare "1" (the default) maps to undefined, so a controlled value would
+  // wipe the leading "1" of 10–19 the instant it's typed. We sync back from the
+  // model only when it changes from the outside (e.g. a reset).
+  const [text, setText] = useState<string>(n ? String(n) : "");
+  useEffect(() => {
+    setText(n ? String(n) : "");
+  }, [n]);
   return (
     <Tooltip
       content={[
@@ -1719,17 +1814,24 @@ function CountField({ value, onChange }: { value?: number; onChange: (n?: number
       <label className={`bt-rule-count${n ? " on" : ""}`}>
         <input
           type="number"
-          min={1}
+          // Floor at 2: 1 is the default and reads as blank, so letting the
+          // native spinner step to 1 would make the up-arrow appear dead.
+          min={2}
           step={1}
           className="bt-rule-count-input"
           placeholder="1st"
-          value={n ?? ""}
+          value={text}
           onKeyDown={blockNegKeys}
           onChange={(e) => {
             const raw = cleanNumInput(e.currentTarget);
+            setText(raw);
             const num = Math.round(Number(raw));
             onChange(raw === "" || num <= 1 || !Number.isFinite(num) ? undefined : num);
           }}
+          // A stray "1" (or anything that resolves to the default) snaps back to
+          // the blank "1st" placeholder on blur so the field never lingers on a
+          // value the model dropped.
+          onBlur={() => setText(n ? String(n) : "")}
         />
         <span className="bt-rule-count-suffix" aria-hidden="true">{n ? ordinal(n) : ""}</span>
       </label>
@@ -1744,6 +1846,7 @@ function OperandPicker({
   baseResolution,
   allowEntry = false,
   siblingSloped = false,
+  openChartPicker,
 }: {
   value: Operand;
   onChange: (op: Operand) => void;
@@ -1754,12 +1857,16 @@ function OperandPicker({
   // The rule's OTHER operand is a slope, so this operand — if it's a Number — is
   // being compared in %/hr; show a unit hint to make that legible.
   siblingSloped?: boolean;
+  // Absent in surfaces with no chart to pick from (e.g. the Live panel) — the
+  // affordances that need it simply don't render.
+  openChartPicker?: (onPick: (op: Operand) => void) => void;
 }) {
-  // Slope can wrap an indicator or a price (not a constant or the entry price).
-  const canSlope = value.kind === "indicator" || value.kind === "price";
+  // Slope can wrap an indicator, a price, or a pasted chart operand (not a constant
+  // or the entry price).
+  const canSlope = value.kind === "indicator" || value.kind === "price" || value.kind === "series";
   const sloped = slopeLen(value) !== null;
   function setSlope(spec: { len: number } | undefined) {
-    if (value.kind !== "indicator" && value.kind !== "price") return;
+    if (value.kind !== "indicator" && value.kind !== "price" && value.kind !== "series") return;
     onChange({ ...value, slope: spec });
   }
   // Timeframes a rule operand can run on: the base (blank ⇒ follow the run's
@@ -1773,7 +1880,7 @@ function OperandPicker({
   // If the operand already has a timeframe that's no longer "higher than base"
   // (e.g. the base dropdown was raised to meet it), keep it selectable so the
   // control doesn't render blank while silently holding a value.
-  const currentTf = value.kind === "indicator" ? value.timeframe : undefined;
+  const currentTf = value.kind === "indicator" || value.kind === "series" ? value.timeframe : undefined;
   if (currentTf && !higherTfs.some((p) => p.resolution === currentTf)) {
     const cur = PERIOD_GROUPS.flatMap((g) => g.periods).find((p) => p.resolution === currentTf);
     if (cur) higherTfs.unshift(cur);
@@ -1786,7 +1893,8 @@ function OperandPicker({
   // Carry the slope transform across a type switch (like `length` above), so
   // swapping EMA↔SMA or indicator↔price doesn't silently drop an active slope and
   // turn the rule into a different condition. const/entry can't be sloped.
-  const prevSlope = value.kind === "indicator" || value.kind === "price" ? value.slope : undefined;
+  const prevSlope =
+    value.kind === "indicator" || value.kind === "price" || value.kind === "series" ? value.slope : undefined;
   function setType(token: string) {
     if (token === "price") return onChange({ kind: "price", field: "close", slope: prevSlope });
     if (token === "const") return onChange({ kind: "const", value: 0 });
@@ -1799,6 +1907,42 @@ function OperandPicker({
 
   return (
     <div className="bt-operand">
+      {value.kind === "series" ? (
+        <>
+          <Tooltip content="A chart curve/drawing copied into this rule. Clear (✕) to edit as a normal operand.">
+            <span className="bt-operand-chip">
+              <span className="bt-operand-chip-label">{value.label}</span>
+              <button
+                type="button"
+                className="bt-operand-chip-clear"
+                onClick={() => onChange({ kind: "const", value: 0 })}
+                aria-label="Clear pasted operand"
+              >
+                ✕
+              </button>
+            </span>
+          </Tooltip>
+          {/* A drawing has no meaningful timeframe (it's absolute-time anchored);
+              offering one would forward-fill the line into a step function. Only an
+              indicator recipe can run on a higher timeframe. */}
+          {value.recipe.source === "indicator" && (
+            <select
+              className="bt-operand-tf"
+              title="Timeframe this operand is computed on"
+              value={value.timeframe ?? ""}
+              onChange={(e) => onChange({ ...value, timeframe: e.target.value || undefined })}
+            >
+              <option value="">Base</option>
+              {higherTfs.map((p) => (
+                <option key={p.resolution} value={p.resolution}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          )}
+        </>
+      ) : (
+      <>
       <select value={typeToken} onChange={(e) => setType(e.target.value)}>
         <optgroup label="Indicator">
           {INDICATORS.map((ind) => (
@@ -1867,6 +2011,26 @@ function OperandPicker({
           />
           {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
         </>
+      )}
+      {openChartPicker && (
+        <Tooltip content="Add a chart indicator or drawing as this operand">
+          <button
+            type="button"
+            className="bt-operand-add"
+            onClick={() => openChartPicker((op) => {
+              if (prevSlope && (op.kind === "indicator" || op.kind === "price" || op.kind === "series")) {
+                onChange({ ...op, slope: prevSlope });
+              } else {
+                onChange(op);
+              }
+            })}
+            aria-label="Add from chart"
+          >
+            +
+          </button>
+        </Tooltip>
+      )}
+      </>
       )}
       {canSlope && (
         <>

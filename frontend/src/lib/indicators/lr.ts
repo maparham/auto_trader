@@ -20,7 +20,7 @@ interface LrPoint {
   dn?: number; // lower channel (lr − mult·σ)
 }
 
-interface LrExtend {
+export interface LrExtend {
   source?: PriceSource; // default close (TV default for LR)
   hideLegendValue?: boolean;
   // Per-line show/hide (Style tab), keyed by figure key (lr/up/dn).
@@ -37,7 +37,7 @@ const LR_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
   { ...fullLine(LR_BAND, LineType.Solid), dashedValue: [0, 0] }, // dn
 ];
 
-function computeLr(
+export function computeLr(
   dataList: KLineData[],
   length: number,
   mult: number,

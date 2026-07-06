@@ -10,9 +10,15 @@
 // needs no knowledge that a timeframe was involved.
 
 import type { KLineData } from "klinecharts";
-import { maSeries, sma, alignHtfToChart } from "./mtf";
-import { vwapFrom, computeRsi } from "./customIndicators";
-import { collectSeriesOperands, seriesName, slopeLen, riskAtrLengths, scalingAtrLengths, type BacktestConfig, type Operand } from "./backtestConfig";
+import { maSeries, sma, alignHtfToChart, type MaOptions } from "./mtf";
+import {
+  vwapFrom, computeRsi, computeLr, computePrevHl,
+  type AvwapExtend, type RsiExtend, type LrExtend, type PrevHlExtend,
+} from "./customIndicators";
+import {
+  collectSeriesOperands, seriesName, slopeLen, riskAtrLengths, scalingAtrLengths,
+  type BacktestConfig, type Operand, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe,
+} from "./backtestConfig";
 import { atrSeries } from "./atr";
 import { RESOLUTION_SECONDS } from "./feed";
 
@@ -38,7 +44,7 @@ export async function buildSeries(
   for (const op of collectSeriesOperands(cfg)) {
     const name = seriesName(op);
     if (name === null) continue;
-    const tf = op.kind === "indicator" ? op.timeframe : undefined;
+    const tf = op.kind === "indicator" || op.kind === "series" ? op.timeframe : undefined;
     if (!tf || tf === baseResolution) {
       out[name] = toNullable(derive(op, candles, tfHours(baseResolution)));
       continue;
@@ -106,6 +112,7 @@ function slopeOf(raw: Array<number | undefined>, n: number, barHours: number): A
  * bars or a higher timeframe's. */
 function computeRaw(op: Operand, candles: KLineData[]): Array<number | undefined> {
   if (op.kind === "price") return candles.map((k) => k[op.field] ?? undefined);
+  if (op.kind === "series") return computeSeriesRecipe(op.recipe, candles);
   if (op.kind !== "indicator") return [];
   switch (op.indicator) {
     case "EMA":
@@ -132,4 +139,104 @@ function computeRaw(op: Operand, candles: KLineData[]): Array<number | undefined
     default:
       return [];
   }
+}
+
+// --- chart operands (kind "series") -----------------------------------------
+
+/** A copied chart operand's per-bar values. Runs the SAME pure compute function
+ * the chart uses (so the operand reproduces the exact curve), then extracts the
+ * selected output line. Pure in `candles`, so MTF just runs it on HTF bars. */
+function computeSeriesRecipe(recipe: SeriesRecipe, candles: KLineData[]): Array<number | undefined> {
+  return recipe.source === "indicator"
+    ? computeIndicatorRecipe(recipe, candles)
+    : computeDrawingRecipe(recipe, candles);
+}
+
+// Output-line keys per indicator type, in the chart template's figure order, so a
+// recipe's numeric `line` resolves to the right series (EMA/MA are handled apart:
+// maSeries returns {base, smoothing} rather than a keyed point array).
+export const LINE_KEYS: Record<string, readonly string[]> = {
+  LR: ["lr", "up", "dn"],
+  VWAP: ["vwap"],
+  AVWAP: ["vwap"],
+  PREV_HL: ["rollingHigh", "rollingLow", "dayHigh", "dayLow", "weekHigh", "weekLow", "anchorHigh", "anchorLow"],
+};
+
+function pickLine(points: Array<Record<string, unknown>>, keys: readonly string[], line: number): Array<number | undefined> {
+  const key = keys[line] ?? keys[0];
+  return points.map((p) => {
+    const v = p[key];
+    return typeof v === "number" ? v : undefined;
+  });
+}
+
+function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[]): Array<number | undefined> {
+  const ext = (r.extend ?? {}) as Record<string, unknown>;
+  const line = r.line ?? 0;
+  switch (r.indicatorType) {
+    case "EMA":
+    case "MA": {
+      const ma = maSeries(candles, r.indicatorType === "EMA" ? "ema" : "sma", r.calcParams[0] ?? 0, ext as MaOptions);
+      return line === 1 && ma.smoothing ? ma.smoothing : ma.base;
+    }
+    case "LR": {
+      const pts = computeLr(candles, r.calcParams[0] ?? 0, r.calcParams[1] ?? 0, ext as LrExtend);
+      return pickLine(pts as unknown as Array<Record<string, unknown>>, LINE_KEYS.LR, line);
+    }
+    case "VWAP":
+    case "AVWAP": {
+      // AVWAP accumulates from the first bar at/after its anchor (calcParams[0]);
+      // plain VWAP accumulates from bar 0. Anchor <= 0 (or past the last bar) means
+      // unplaced -> no line. Mirrors the chart's calc and computeRaw's AVWAP path.
+      let start = 0;
+      if (r.indicatorType === "AVWAP") {
+        const anchor = r.calcParams[0] ?? 0;
+        if (anchor <= 0) return candles.map(() => undefined);
+        const idx = candles.findIndex((k) => k.timestamp >= anchor);
+        start = idx < 0 ? candles.length : idx;
+      }
+      return vwapFrom(candles, start, ext as AvwapExtend).map((p) => p.vwap ?? undefined);
+    }
+    case "PREV_HL": {
+      const pts = computePrevHl(candles, ext as PrevHlExtend);
+      return pickLine(pts as unknown as Array<Record<string, unknown>>, LINE_KEYS.PREV_HL, line);
+    }
+    case "RSI":
+      return computeRsi(candles, r.calcParams[0] ?? 14, ext as RsiExtend).map((p) => p.val ?? undefined);
+    default:
+      return candles.map(() => undefined);
+  }
+}
+
+/** A straight-line drawing as a per-bar price series. The line through two
+ * absolute anchors (t0,v0)-(t1,v1) is price(t) = v0 + (v1−v0)·(t−t0)/(t1−t0);
+ * each tool defines it over a different domain (undefined = no value at that bar):
+ *   segment                 — only within [t0, t1]
+ *   rayLine                 — forward from t0 (t >= t0)
+ *   straightLine            — everywhere (both directions)
+ *   horizontalStraightLine / priceLine — a flat constant at anchors[0].value. */
+function computeDrawingRecipe(r: DrawingRecipe, candles: KLineData[]): Array<number | undefined> {
+  const a = r.anchors;
+  if (r.drawingKind === "horizontalStraightLine" || r.drawingKind === "priceLine") {
+    const v = a[0]?.value;
+    return candles.map(() => (typeof v === "number" ? v : undefined));
+  }
+  if (a.length < 2) return candles.map(() => undefined);
+  // Keep the DRAWN anchor order: a[0] is the origin, a[1] the direction point —
+  // this matters for a rayLine, which extends from a[0] THROUGH a[1] and beyond
+  // (that direction may point backward in time if the user drew it leftward).
+  const [o, d] = a;
+  const dt = d.timestamp - o.timestamp;
+  if (dt === 0) return candles.map(() => undefined); // vertical: not a function of t
+  const slope = (d.value - o.value) / dt;
+  const lo = Math.min(o.timestamp, d.timestamp);
+  const hi = Math.max(o.timestamp, d.timestamp);
+  return candles.map((k) => {
+    const t = k.timestamp;
+    if (r.drawingKind === "segment" && (t < lo || t > hi)) return undefined;
+    // Ray: defined on the half-line from the origin toward the direction point,
+    // i.e. (t − o.t) has the same sign as (d.t − o.t) (origin itself included).
+    if (r.drawingKind === "rayLine" && (t - o.timestamp) * dt < 0) return undefined;
+    return o.value + slope * (t - o.timestamp);
+  });
 }

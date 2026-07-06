@@ -224,6 +224,14 @@ export class OverlayManager {
   // delete / copy and the "Settings…" target without a right-click.
   private hoveredDrawingId: string | null = null;
   private selectedDrawingId: string | null = null;
+  // The drawing currently emphasized from OUTSIDE the chart (a chart-operand picker
+  // row hover), so the user can see which on-chart line a row refers to when names/
+  // colors are identical. Transient: the line is thickened (+ its concrete color) via
+  // overrideOverlay while hovered and restored on leave. `emphasisBase` stashes the
+  // real pre-emphasis style so canonicalStyles/persist NEVER bake the thick size in
+  // (drawings persist their styles, unlike alert weights). See hoverDrawing.
+  private emphasizedDrawingId: string | null = null;
+  private emphasisBase: DeepPartial<OverlayStyle> | null | undefined = undefined;
   // Overlay id -> the CANONICAL (unfaded) styles for drawings currently rendered as a
   // ghost stub (see displayFor/applyDisplay). Stashed the moment a drawing first fades
   // so persist() can always write the real color back, never the faded one, even
@@ -285,6 +293,8 @@ export class OverlayManager {
     this.selectedAlertId = null;
     this.hoveredDrawingId = null;
     this.selectedDrawingId = null;
+    this.emphasizedDrawingId = null;
+    this.emphasisBase = undefined;
     this.draggingAlert = false;
     this.draggingAlertId = null;
     this.drawingInProgress = false;
@@ -534,6 +544,49 @@ export class OverlayManager {
     this.selectedDrawingId = id;
     this.drawingListener?.();
   }
+  // Emphasize a drawing from OUTSIDE the chart (a chart-operand picker row hover),
+  // thickening its line so the user can spot which on-chart drawing the row is —
+  // essential when several same-type drawings share a name/color. `null` clears.
+  // Idempotent; only one drawing is emphasized at a time (like hoveredDrawingId).
+  hoverDrawing(id: string | null): void {
+    if (id === this.emphasizedDrawingId) return;
+    if (this.emphasizedDrawingId) this.unemphasizeDrawing(this.emphasizedDrawingId);
+    this.emphasizedDrawingId = null;
+    this.emphasisBase = undefined;
+    if (id) this.emphasizeDrawing(id);
+  }
+  private emphasizeDrawing(id: string): void {
+    if (this.entries.get(id) !== "drawing") return;
+    const ov = this.chart?.getOverlayById(id);
+    if (!ov) return;
+    // Capture the TRUE base style. `emphasizedDrawingId` is still null here, so
+    // canonicalStyles reports the real style — arm the shield only AFTER we have a
+    // valid base, so a bail-out above never leaves it pointing at an undefined base.
+    const base = this.fadedStyles.has(id) ? this.fadedStyles.get(id) : cloneStyles(ov.styles);
+    this.emphasisBase = cloneStyles(base);
+    this.emphasizedDrawingId = id;
+    // Reconstruct the whole `line` with concrete color+size — overrideOverlay's partial
+    // merge is not trusted here (see fade/unfade), so a size-only patch could drop color.
+    this.chart?.overrideOverlay({
+      id,
+      styles: { line: { ...(base?.line ?? {}), color: this.resolveLineColor(base), size: this.resolveLineSize(base) + this.EMPHASIS_EXTRA_SIZE } },
+    });
+  }
+  private unemphasizeDrawing(id: string): void {
+    const base = this.emphasisBase;
+    this.emphasisBase = undefined;
+    this.emphasizedDrawingId = null;
+    const ov = this.chart?.getOverlayById(id);
+    if (!ov) return;
+    // Write the concrete base line back (never omit — same reason as unfade).
+    this.chart?.overrideOverlay({
+      id,
+      styles: { line: { ...(base?.line ?? {}), color: this.resolveLineColor(base), size: this.resolveLineSize(base) } },
+    });
+    // A currently-faded (ghost) drawing must return to its faint render; re-run the
+    // display decision to re-apply the fade over the restored size.
+    if (this.fadedStyles.has(id)) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
+  }
   // Live snapshot of a drawing (for copy / clone / the settings modal). Returns the
   // stable anchors + styles + name, by VALUE — safe to stash in a clipboard.
   getDrawing(id: string): {
@@ -563,6 +616,25 @@ export class OverlayManager {
       zLevel: ov.zLevel ?? 0,
       extendData: ov.extendData,
     };
+  }
+  /** Every straight-line drawing on this cell as { id, name, points, text, color } —
+   * the source for the chart-operand picker. `text` is the user's custom label (so
+   * two same-type drawings are distinguishable) and `color` is the CANONICAL (unfaded)
+   * line color (so the picker swatch matches the chart even while a line is ghosted).
+   * Excludes alerts and transient overlays (measure/rangeBand/slope). Points are by
+   * value; safe to snapshot. */
+  listDrawings(): Array<{ id: string; name: string; points: Array<{ timestamp?: number; value?: number; dataIndex?: number }>; text?: string; color: string }> {
+    const out: Array<{ id: string; name: string; points: Array<{ timestamp?: number; value?: number; dataIndex?: number }>; text?: string; color: string }> = [];
+    if (!this.chart) return out;
+    for (const [id, kind] of this.entries) {
+      if (kind !== "drawing") continue;
+      const ov = this.chart.getOverlayById(id);
+      if (!ov) continue;
+      const text = asDrawingExtra(ov.extendData).text?.trim() || undefined;
+      const color = this.drawingLineColor(id, ov);
+      out.push({ id, name: ov.name, points: ov.points, text, color });
+    }
+    return out;
   }
   // Current alert lines with their live levels (read from the overlay points).
   // `condition` feeds the on-line pill label; `active` is true while the line is
@@ -1146,9 +1218,26 @@ export class OverlayManager {
   // line.color, klinecharts ^9.8) so a restored default-colored drawing matches what it
   // looked like before it was ever faded, not an arbitrary blue.
   private readonly DEFAULT_LINE_COLOR = "#1677FF";
+  // klinecharts' default overlay line.size (getDefaultOverlayStyle, ^9.8) — the
+  // effective width of a drawing left at its default, which its `.styles` omits (only
+  // resolved at paint). Emphasis writes a CONCRETE size, so it needs this fallback,
+  // exactly as resolveLineColor needs DEFAULT_LINE_COLOR.
+  private readonly DEFAULT_LINE_SIZE = 1;
+  // Extra px added to a drawing's line width while it's picker-hovered.
+  private readonly EMPHASIS_EXTRA_SIZE = 2;
 
   private resolveLineColor(styles: DeepPartial<OverlayStyle> | null | undefined): string {
     return (styles?.line as { color?: string } | undefined)?.color ?? this.DEFAULT_LINE_COLOR;
+  }
+  private resolveLineSize(styles: DeepPartial<OverlayStyle> | null | undefined): number {
+    return (styles?.line as { size?: number } | undefined)?.size ?? this.DEFAULT_LINE_SIZE;
+  }
+  // The drawing's CANONICAL (unfaded) line color WITHOUT cloning its whole style tree —
+  // for the operand-picker swatch, read once per drawing per picker-open. Mirrors
+  // canonicalStyles' precedence (ghost stash > live) but returns just the color string.
+  private drawingLineColor(id: string, ov: Overlay): string {
+    if (this.fadedStyles.has(id)) return this.resolveLineColor(this.fadedStyles.get(id));
+    return this.resolveLineColor(ov.styles);
   }
 
   // The CANONICAL (unfaded) styles for a drawing — `ov.styles` while solid, or the
@@ -1157,6 +1246,10 @@ export class OverlayManager {
   // getDrawing, setExtend) MUST go through this, or a clone/extend/save of a currently-
   // ghosted drawing would bake the faded color in as if it were the real one.
   private canonicalStyles(id: string, ov: Overlay): DeepPartial<OverlayStyle> | null | undefined {
+    // While a drawing is picker-hovered its live `ov.styles` carries the transient
+    // thick emphasis — never let persist/getDrawing/clone snapshot that. Return the
+    // stashed pre-emphasis style instead (same shielding role fadedStyles plays below).
+    if (id === this.emphasizedDrawingId) return this.emphasisBase;
     if (this.fadedStyles.has(id)) return this.fadedStyles.get(id);
     // klinecharts mutates `ov.styles` IN PLACE on overrideOverlay (verified empirically —
     // see cloneStyles above), and every caller here (getDrawing, setExtend, persist) wants
@@ -1202,12 +1295,13 @@ export class OverlayManager {
     }
     if (faded) {
       // Stash the canonical (unfaded) styles ONCE so persist() never saves the ghost.
-      // MUST be a deep clone: klinecharts mutates an overlay's `styles` object in
-      // place on overrideOverlay (verified empirically), so stashing `ov.styles` by
-      // reference would let the very next line's fade() call corrupt this same
-      // object — permanently baking the ghost color in as "canonical" and making
-      // every later un-fade attempt restore the ghost color instead of the original.
-      if (!wasFaded) this.fadedStyles.set(id, cloneStyles(ov.styles));
+      // Read via canonicalStyles, NOT raw ov.styles: if this drawing is picker-hovered
+      // right now its live `ov.styles` carries the transient +2px emphasis, and stashing
+      // that would bake the thick size in as "canonical" permanently. canonicalStyles
+      // returns the real pre-emphasis style (emphasisBase) in that case, ov.styles
+      // otherwise. Clone so fadedStyles never aliases emphasisBase or the live object
+      // (klinecharts mutates `ov.styles` in place on overrideOverlay).
+      if (!wasFaded) this.fadedStyles.set(id, cloneStyles(this.canonicalStyles(id, ov)));
       const canonical = this.fadedStyles.get(id);
       this.chart?.overrideOverlay({
         id,

@@ -20,13 +20,19 @@ class Operand:
     kind="indicator" -> indicator/length (+ anchor for AVWAP); kind="price" -> field; kind="const" -> value.
     """
 
-    kind: str  # "indicator" | "price" | "const" | "entry"
+    kind: str  # "indicator" | "price" | "const" | "entry" | "series"
     indicator: str | None = None
     length: int | None = None
     field: str | None = None
     value: float | None = None
     anchor: int | None = None  # AVWAP only: anchor epoch-ms; keys the series
     timeframe: str | None = None  # higher timeframe this indicator runs on; keys the series (None ⇒ base)
+    # A `series` operand (a chart indicator/drawing copied into a rule): the frontend
+    # computed the array and posted it; the engine only needs the key it lives under
+    # (series_key, used verbatim) and a human label (for exit reasons). It carries no
+    # recipe — the backend never recomputes.
+    series_key: str | None = None
+    label: str | None = None
     # Slope lookback (bars): when set, the operand's value is the %/hr tangent rate
     # of change of its underlying curve (÷ elapsed time), computed frontend-side and
     # posted as its own series. Keys the series (series_name). indicator/price only.
@@ -57,7 +63,11 @@ def series_name(op: Operand) -> str | None:
     its anchor (epoch-ms) so distinct anchors are distinct series; VOL has no param;
     the rest are keyed by length. A SLOPED operand always keys a series (even price,
     which normally has none): the slope suffix `~len` is appended BEFORE any `@tf`."""
-    if op.kind == "indicator":
+    if op.kind == "series":
+        # A copied chart operand: its key is authored frontend-side (a hash of the
+        # recipe) and used verbatim; slope/tf suffixes still apply below.
+        base = op.series_key or ""
+    elif op.kind == "indicator":
         if op.indicator == "VOL":
             base = "VOL"
         elif op.indicator == "AVWAP":
@@ -85,6 +95,9 @@ def _operand_name(op: Operand) -> str:
         # sloped MTF operand is distinguishable from the base-timeframe one.
         inner = _operand_name(replace(op, slope_len=None))
         return f"slope({inner},{op.slope_len})"
+    if op.kind == "series":
+        # Render the human label the copy captured, not the opaque hash key.
+        return op.label or series_name(op) or "series"
     name = series_name(op)
     if name is not None:
         return name

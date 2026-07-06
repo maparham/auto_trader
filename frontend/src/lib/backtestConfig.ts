@@ -18,6 +18,82 @@ export type Combine = "AND" | "OR";
 // series (even price, which normally has none). const/entry can't be sloped.
 export interface SlopeSpec { len: number }
 
+// --- chart operands (kind "series") -----------------------------------------
+// A chart indicator curve or drawing copied into a rule. The operand carries a
+// self-contained `recipe` (the exact params the chart instance had) plus a
+// `seriesKey` (a deterministic hash of that recipe) and a human `label`. The
+// frontend recomputes the array from the recipe and posts it under seriesKey;
+// the backend reads it verbatim and never recomputes. `timeframe` and `slope`
+// live at the operand level (like an indicator operand), NOT in the recipe, so
+// the `@tf`/`~len` key suffixes and the MTF fetch path work unchanged.
+
+/** The app's custom indicator types reachable as a rule operand (SESSIONS is
+ * deferred — it has no price line and nothing to click-select). */
+export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI";
+/** The straight-line drawing family evaluable as a per-bar price series. */
+export type DrawingKind = "segment" | "rayLine" | "straightLine" | "horizontalStraightLine" | "priceLine";
+
+export interface IndicatorRecipe {
+  source: "indicator";
+  indicatorType: SeriesIndicatorType;
+  calcParams: number[];   // positional, exactly as on the chart (AVWAP anchor = calcParams[0])
+  line: number;           // which output line (0 for single-line indicators)
+  // The chart instance's extendData snapshot — carries everything that isn't a
+  // positional calcParam (price source, PREV_HL period config, …). Passed
+  // verbatim to the same pure compute function the chart uses, so the operand
+  // reproduces the exact curve. Part of the recipe hash.
+  extend?: Record<string, unknown>;
+}
+export interface DrawingRecipe {
+  source: "drawing";
+  drawingKind: DrawingKind;
+  // Absolute, snapshotted at copy time (any dataIndex-anchored point resolved to
+  // a timestamp then) so TF switches can't corrupt the geometry.
+  anchors: Array<{ timestamp: number; value: number }>;
+}
+export type SeriesRecipe = IndicatorRecipe | DrawingRecipe;
+
+/** 32-bit FNV-1a of a string, base36 — a short, stable, dependency-free hash.
+ * Not cryptographic; only needs to be deterministic and collision-free enough to
+ * distinguish distinct recipes. */
+function fnv1a(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/** A deterministic key for a recipe: identical recipes hash identically (so two
+ * pasted operands dedup into one posted series). Excludes timeframe/slope — those
+ * are appended as key suffixes by seriesName, mirroring indicator operands. The
+ * type prefix keeps the posted key legible. */
+export function recipeKey(recipe: SeriesRecipe): string {
+  if (recipe.source === "indicator") {
+    const canon = [
+      "ind", recipe.indicatorType, recipe.calcParams.join(","),
+      recipe.line, stableStringify(recipe.extend ?? {}),
+    ].join("|");
+    return `${recipe.indicatorType}_${fnv1a(canon)}`;
+  }
+  const canon = [
+    "draw", recipe.drawingKind,
+    recipe.anchors.map((a) => `${a.timestamp}:${a.value}`).join(";"),
+  ].join("|");
+  return `${recipe.drawingKind}_${fnv1a(canon)}`;
+}
+
+/** JSON with object keys sorted at every level, so two equal objects serialize
+ * identically regardless of insertion order (recipe extend snapshots come from
+ * chart state whose key order isn't guaranteed). */
+function stableStringify(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(v as Record<string, unknown>).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(",")}}`;
+}
+
 export type Operand =
   // `timeframe` (absent ⇒ the run's base timeframe) lets a single rule reference
   // an indicator computed on a higher timeframe than the backtest steps on — the
@@ -29,11 +105,16 @@ export type Operand =
   | { kind: "const"; value: number }
   // The open position's entry (fill) price. Only meaningful in an exit rule while
   // a position is held; parameterless. Has no series (read off the position).
-  | { kind: "entry" };
+  | { kind: "entry" }
+  // A chart indicator curve or drawing copied into the rule (see recipe types
+  // above). Always keys a series (the frontend computes it and posts it).
+  | { kind: "series"; seriesKey: string; label: string; recipe: SeriesRecipe; timeframe?: string; slope?: SlopeSpec };
 
 /** The slope lookback for an operand, or null if it isn't sloped. */
 export function slopeLen(op: Operand): number | null {
-  return (op.kind === "indicator" || op.kind === "price") && op.slope ? op.slope.len : null;
+  return (op.kind === "indicator" || op.kind === "price" || op.kind === "series") && op.slope
+    ? op.slope.len
+    : null;
 }
 
 export type StopKind = "none" | "pct" | "price" | "atr" | "trailPct" | "trailAtr";
@@ -64,6 +145,31 @@ export interface Rule {
   count?: number;
 }
 
+/** Each operator's mirror, so swapping a rule's two operands preserves its truth:
+ * gt↔lt, gte↔lte, crossesAbove↔crossesBelow; `crosses` (direction-agnostic) is its
+ * own mirror. Single source of truth (BacktestSettingsModal's "reverse all" reuses it). */
+export const OP_REVERSE: Record<Operator, Operator> = {
+  crossesAbove: "crossesBelow",
+  crossesBelow: "crossesAbove",
+  crosses: "crosses",
+  gt: "lt",
+  lt: "gt",
+  gte: "lte",
+  lte: "gte",
+};
+
+/** Swap a rule's two operands AND flip the operator, so `A > B` becomes the
+ * equivalent `B < A` (same truth value). enabled/count are preserved. */
+export function swapSides(rule: Rule): Rule {
+  return { ...rule, left: rule.right, right: rule.left, op: OP_REVERSE[rule.op] };
+}
+
+/** A new rule seeded from a chart operand: `<operand> > 0`, ready to edit. Used by
+ * the group-level "+ Rule from chart" entry so an empty group needs no pre-step. */
+export function ruleFromChartOperand(op: Operand): Rule {
+  return { left: op, op: "gt", right: { kind: "const", value: 0 } };
+}
+
 export interface RuleGroup {
   combine: Combine;
   rules: Rule[];
@@ -81,7 +187,15 @@ export function cloneRule(rule: Rule): Rule {
  * sloped operand nests a `slope` object, so a bare spread would share it. */
 function cloneOperand(op: Operand): Operand {
   const copy = { ...op };
-  if ((copy.kind === "indicator" || copy.kind === "price") && copy.slope) copy.slope = { ...copy.slope };
+  if ((copy.kind === "indicator" || copy.kind === "price" || copy.kind === "series") && copy.slope) {
+    copy.slope = { ...copy.slope };
+  }
+  // A series operand nests a recipe (with its own arrays) — deep-copy it too.
+  if (copy.kind === "series") {
+    copy.recipe = copy.recipe.source === "indicator"
+      ? { ...copy.recipe, calcParams: [...copy.recipe.calcParams] }
+      : { ...copy.recipe, anchors: copy.recipe.anchors.map((a) => ({ ...a })) };
+  }
   return copy;
 }
 
@@ -169,7 +283,11 @@ export interface BacktestConfig {
  * EMA/SMA/RSI/VOLMA are keyed by `${indicator}_${length}`. */
 export function seriesName(op: Operand): string | null {
   let base: string;
-  if (op.kind === "indicator") {
+  if (op.kind === "series") {
+    // The recipe hash, authored at copy time and used verbatim (the backend reads
+    // it the same way); slope/tf suffixes still apply below.
+    base = op.seriesKey;
+  } else if (op.kind === "indicator") {
     if (op.indicator === "VOL") base = "VOL";
     else if (op.indicator === "AVWAP") base = `AVWAP_${op.anchor ?? 0}`;
     else base = `${op.indicator}_${op.length}`;
@@ -189,7 +307,7 @@ export function seriesName(op: Operand): string | null {
   // the same indicator on a higher timeframe are stored/looked-up separately.
   // Absent ⇒ base timeframe ⇒ the bare key (byte-for-byte compatible with older
   // presets and with same-timeframe operands).
-  const tf = op.kind === "indicator" ? op.timeframe : undefined;
+  const tf = op.kind === "indicator" || op.kind === "series" ? op.timeframe : undefined;
   return tf ? `${base}@${tf}` : base;
 }
 
@@ -241,12 +359,31 @@ export function longestIndicatorLength(cfg: BacktestConfig): number {
     1,
     // A sloped operand needs `len` extra bars beyond its base indicator's length
     // before it has a value (it reads v[i] and v[i−len]).
-    ...collectSeriesOperands(cfg).map(
-      (op) => (op.kind === "indicator" ? op.length ?? 1 : 1) + (slopeLen(op) ?? 0),
-    ),
+    ...collectSeriesOperands(cfg).map((op) => operandBaseLen(op) + (slopeLen(op) ?? 0)),
     ...riskAtrLengths(cfg),
     ...scalingAtrLengths(cfg),
   );
+}
+
+// Series indicator types whose calcParams[0] is a lookback LENGTH (so it drives
+// warm-up). Everything else (VWAP/AVWAP anchored from a bar, PREV_HL configured on
+// extendData) has no length there — notably AVWAP's calcParams[0] is an anchor
+// epoch-ms, which must NOT be read as a bar count.
+const SERIES_LENGTH_TYPES = new Set<SeriesIndicatorType>(["EMA", "MA", "RSI", "LR"]);
+
+/** The warm-up bars an operand's base curve needs before it produces a value,
+ * ignoring any slope lookback (added separately). Indicator = its length; a
+ * series indicator = its length param for length-based types (else 1); a drawing
+ * or anything else = 1. The single source of truth for per-operand warm-up length
+ * (shared by longestIndicatorLength here and longestWarmupBars in backtestWindow). */
+export function operandBaseLen(op: Operand): number {
+  if (op.kind === "indicator") return op.length ?? 1;
+  if (op.kind === "series" && op.recipe.source === "indicator") {
+    const r = op.recipe;
+    const len = r.calcParams[0];
+    return SERIES_LENGTH_TYPES.has(r.indicatorType) && Number.isFinite(len) ? Math.max(1, len) : 1;
+  }
+  return 1;
 }
 
 export function defaultBacktestConfig(): BacktestConfig {

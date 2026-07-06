@@ -1,6 +1,17 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
+
+// The modal now threads openChartPicker -> enumerateChartOperands, which pulls in
+// backtestSeries -> customIndicators, which reads LineType at module load (AVWAP
+// line style table); stub klinecharts' runtime surface like backtestSeries.test.ts /
+// overlays.test.ts / chartOperand.test.ts do.
+vi.mock("klinecharts", () => ({
+  LineType: { Solid: "solid", Dashed: "dashed" },
+  IndicatorSeries: { Normal: "normal", Price: "price" },
+  registerIndicator: () => {},
+}));
+
 import BacktestSettingsModal from "./BacktestSettingsModal";
 import { defaultBacktestConfig } from "./lib/backtestConfig";
 
@@ -118,5 +129,30 @@ describe("BacktestSettingsModal rule duplicate/copy/paste", () => {
     // Still present (not removed), now flagged disabled.
     expect(ruleRows(entry)).toHaveLength(1);
     expect(entry.querySelector(".bt-rule-disabled")).not.toBeNull();
+  });
+});
+
+describe("chart-operand entry points", () => {
+  it("an empty rule group offers '+ Rule from chart' and opens the picker", () => {
+    renderModal();
+    openStrategy();
+    // Empty the seeded "Buy to open" group so the empty-state entry point (the
+    // reported bug — no pre-added rule needed) is what's actually exercised.
+    const entry = groupSection("Buy to open");
+    fireEvent.click(within(entry).getByLabelText("Delete rule"));
+    expect(ruleRows(entry)).toHaveLength(0);
+    // Both the empty-state hint and the footer offer it once the group is empty.
+    const btns = within(entry).getAllByRole("button", { name: "+ Rule from chart" });
+    expect(btns.length).toBeGreaterThan(0);
+    fireEvent.click(btns[0]);
+    // No controller in the test harness -> picker shows its empty state.
+    expect(screen.getByText(/No indicators on this chart/i)).toBeTruthy();
+  });
+
+  it("every operand shows an 'Add from chart' button", () => {
+    renderModal();
+    openStrategy();
+    fireEvent.click(screen.getAllByRole("button", { name: "+ Add rule" })[0]);
+    expect(screen.getAllByRole("button", { name: "Add from chart" }).length).toBeGreaterThan(0);
   });
 });

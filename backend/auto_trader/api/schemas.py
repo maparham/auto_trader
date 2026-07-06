@@ -103,12 +103,17 @@ class SlopeDTO(BaseModel):
 
 
 class OperandDTO(BaseModel):
-    kind: Literal["indicator", "price", "const", "entry"]
+    kind: Literal["indicator", "price", "const", "entry", "series"]
     indicator: Literal["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"] | None = None
     length: int | None = None
     field: Literal["close", "open", "high", "low"] | None = None
     value: float | None = None
     anchor: int | None = None
+    # A `series` operand (a chart indicator/drawing copied into a rule): the frontend
+    # already computed the array and posts it under `seriesKey`; the engine reads it
+    # verbatim and never recomputes. `label` is only for exit-reason rendering.
+    seriesKey: str | None = None
+    label: str | None = None
     # Higher timeframe an indicator runs on (None ⇒ the run's base timeframe). The
     # frontend aligns it onto the base bars, so the engine never reads this — it
     # only rides along to key the series (series_name); see OperandDTO.to_operand.
@@ -125,8 +130,10 @@ class OperandDTO(BaseModel):
             raise ValueError("price operand requires 'field'")
         if self.kind == "const" and self.value is None:
             raise ValueError("const operand requires 'value'")
-        if self.slope is not None and self.kind not in ("indicator", "price"):
-            raise ValueError("slope is only valid on an indicator or price operand")
+        if self.kind == "series" and not (self.seriesKey and self.seriesKey.strip()):
+            raise ValueError("series operand requires a non-empty 'seriesKey'")
+        if self.slope is not None and self.kind not in ("indicator", "price", "series"):
+            raise ValueError("slope is only valid on an indicator, price, or series operand")
         return self
 
     def to_operand(self) -> Operand:
@@ -135,6 +142,7 @@ class OperandDTO(BaseModel):
             field=self.field, value=self.value, anchor=self.anchor,
             timeframe=self.timeframe,
             slope_len=self.slope.len if self.slope else None,
+            series_key=self.seriesKey, label=self.label,
         )
 
 

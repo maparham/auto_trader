@@ -2,6 +2,7 @@
 // outside-click or Escape.
 
 import { useEffect, useRef, type ReactNode } from "react";
+import Tooltip from "./components/Tooltip";
 
 export interface MenuItem {
   label: string;
@@ -9,6 +10,10 @@ export interface MenuItem {
   danger?: boolean;
   // Optional leading icon (an inline SVG node — see ./lib/menuIcons).
   icon?: ReactNode;
+  // A greyed-out, non-clickable item. `disabledReason` (when set) shows as a
+  // tooltip explaining why — e.g. "MACD isn't supported in rules yet".
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 interface Props {
@@ -46,21 +51,34 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
 
   return (
     <div ref={ref} className="ctxmenu" style={style}>
-      {items.map((it, i) => (
-        <button
-          key={i}
-          className={`ctx-item${it.danger ? " danger" : ""}`}
-          onClick={() => {
-            it.onClick();
-            onClose();
-          }}
-        >
-          <span className="ctx-item-label">
-            {it.icon && <span className="ctx-item-icon">{it.icon}</span>}
-            {it.label}
-          </span>
-        </button>
-      ))}
+      {items.map((it, i) => {
+        const btn = (
+          <button
+            key={i}
+            // aria-disabled (not the native `disabled` attr) so the button still
+            // emits the pointer events the tooltip wrapper listens for.
+            className={`ctx-item${it.danger ? " danger" : ""}${it.disabled ? " disabled" : ""}`}
+            aria-disabled={it.disabled}
+            onClick={() => {
+              if (it.disabled) return;
+              it.onClick();
+              onClose();
+            }}
+          >
+            <span className="ctx-item-label">
+              {it.icon && <span className="ctx-item-icon">{it.icon}</span>}
+              {it.label}
+            </span>
+          </button>
+        );
+        return it.disabled && it.disabledReason ? (
+          <Tooltip key={i} content={it.disabledReason} placement="right">
+            {btn}
+          </Tooltip>
+        ) : (
+          btn
+        );
+      })}
     </div>
   );
 }

@@ -1316,3 +1316,73 @@ describe("drawing defaults seeding + config round-trip", () => {
     expect(cfg.visibility?.units.days.on).toBe(false);
   });
 });
+
+describe("OverlayManager picker-hover emphasis (thicken on chart, never persist the bump)", () => {
+  const liveLine = (chart: FakeChart, id: string) =>
+    (chart.getOverlayById(id)!.styles as { line?: { size?: number; color?: string } }).line ?? {};
+
+  it("hoverDrawing thickens the live line but getDrawing/persist report the BASE size (shield)", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    expect(liveLine(chart, id).size).toBe(1); // seeded default
+
+    m.hoverDrawing(id);
+    // Live overlay is emphasized (thicker), color preserved (full line reconstructed).
+    expect(liveLine(chart, id).size).toBe(3); // 1 + EMPHASIS_EXTRA_SIZE
+    expect(liveLine(chart, id).color).toBe("#1677FF");
+    // The SHIELD: a snapshot (clipboard/clone/persist path) must NOT see the bump.
+    const styled = m.getDrawing(id)!.styles as { line?: { size?: number } } | null;
+    expect(styled?.line?.size ?? 1).toBe(1);
+
+    // Un-hover restores the exact base weight on the live overlay.
+    m.hoverDrawing(null);
+    expect(liveLine(chart, id).size).toBe(1);
+    expect(liveLine(chart, id).color).toBe("#1677FF");
+  });
+
+  it("moving hover from one drawing to another restores the first and emphasizes the second", () => {
+    const { chart, m } = setup();
+    const a = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const b = m.addDrawing("segment", [{ value: 3 }, { value: 4 }])!;
+    m.hoverDrawing(a);
+    m.hoverDrawing(b);
+    expect(liveLine(chart, a).size).toBe(1); // restored
+    expect(liveLine(chart, b).size).toBe(3); // now emphasized
+  });
+
+  it("a drawing that FADES while picker-emphasized never stashes the +2px as canonical (shield covers fade-stash)", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
+    m.setVisible(id, true); // solid on HOUR
+    m.hoverDrawing(id);
+    expect(liveLine(chart, id).size).toBe(3); // emphasized
+
+    m.setResolution("MINUTE_5"); // fades WHILE emphasized → fade-stash must capture BASE
+    // Canonical/persisted width stays the base 1, not the transient 3.
+    const styled = m.getDrawing(id)!.styles as { line?: { size?: number } } | null;
+    expect(styled?.line?.size ?? 1).toBe(1);
+
+    m.hoverDrawing(null);
+    m.setResolution("HOUR"); // back to solid
+    expect(liveLine(chart, id).size).toBe(1); // never re-baked thicker
+  });
+
+  it("emphasizing a ghosted (faded) drawing returns it to faded on un-hover", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    m.setVisibilityModel(id, onlyVisibleOn("HOUR"));
+    m.setVisible(id, true);
+    m.setResolution("MINUTE_5"); // now a ghost (faded rgba color)
+    expect(liveLine(chart, id).color).toMatch(/^rgba\(/);
+
+    m.hoverDrawing(id);
+    expect(liveLine(chart, id).size).toBe(3); // popped to full color + thick
+    expect(liveLine(chart, id).color).not.toMatch(/^rgba\(/);
+
+    m.hoverDrawing(null);
+    expect(liveLine(chart, id).color).toMatch(/^rgba\(/); // re-faded
+  });
+});

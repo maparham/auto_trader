@@ -141,6 +141,65 @@ def test_slope_vs_slope_comparison():
     assert entries[0].time == candles[3].time  # fast slope>slow slope first at i=2
 
 
+def _ser(series_key: str, label: str, slope_len: int | None = None, timeframe: str | None = None) -> Operand:
+    return Operand(kind="series", series_key=series_key, label=label, slope_len=slope_len, timeframe=timeframe)
+
+
+def test_series_name_verbatim():
+    # A `series` operand's key is its series_key verbatim; the frontend is the sole
+    # authority for both the key and the array so they cannot drift.
+    assert series_name(_ser("h1a2b3", "EMA(9)")) == "h1a2b3"
+    # Slope suffix (~len) precedes the timeframe suffix (@tf), same ordering as
+    # every other kind.
+    assert series_name(_ser("h1a2b3", "EMA(9)", slope_len=3)) == "h1a2b3~3"
+    assert series_name(_ser("h1a2b3", "EMA(9)", slope_len=3, timeframe="HOUR")) == "h1a2b3~3@HOUR"
+    assert series_name(_ser("h1a2b3", "EMA(9)", timeframe="HOUR")) == "h1a2b3@HOUR"
+
+
+def test_series_operand_reads_from_series_and_reason_renders_label():
+    candles = _series([10, 10, 10, 10])
+    series = {"trendline_x": [None, None, 5.0, 5.0]}
+    entry = RuleGroup("AND", [Rule(_ser("trendline_x", "Trendline"), "gt", _const(0))])
+    strat = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    entries = [f for f in result.fills if f.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].time == candles[3].time  # value>0 first at i=2 -> fill i=3
+    assert "Trendline gt 0" in entries[0].reason  # label rendered, not the raw key
+
+
+def test_series_operand_composes_with_crosses_and_count():
+    # A series operand crossing above another, used as an exit with the Nth-time
+    # count modifier, exits on the 2nd (cumulative) occurrence.
+    candles = _series([10, 10, 10, 10, 10, 10])
+    series = {"my_ema": [1.0, 3.0, 1.0, 3.0, 1.0, 3.0]}  # crosses above 2 at i=1,3,5
+    entry = _always_entry()
+    exit_ = RuleGroup("AND", [Rule(_ser("my_ema", "EMA(9)"), "crossesAbove", _const(2), count=2)])
+    strat = RuleStrategy(entry, exit_, RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    exits = [f for f in result.fills if f.side == Side.SELL and f.reason != "range end"]
+    assert len(exits) == 1
+    assert exits[0].time == candles[4].time  # 2nd cross above at i=3 -> fills next open i=4
+
+
+def test_series_operand_in_or_group():
+    candles = _series([10, 10, 10, 10])
+    # Two series, neither true alone at i=1 for AND, but OR fires when either is.
+    series = {"a_key": [None, 5.0, 5.0, 5.0], "b_key": [None, None, None, None]}
+    entry = RuleGroup(
+        "OR",
+        [
+            Rule(_ser("a_key", "A"), "gt", _const(0)),
+            Rule(_ser("b_key", "B"), "gt", _const(0)),
+        ],
+    )
+    strat = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    entries = [f for f in result.fills if f.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].time == candles[2].time  # a_key>0 first at i=1 -> fill i=2
+
+
 def test_crosses_above_entry_fills_at_next_open():
     # fast <= slow through index 1, fast > slow at index 2 -> cross at i=2.
     candles = _series([10, 10, 10, 10, 10])

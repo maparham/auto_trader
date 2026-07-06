@@ -410,7 +410,7 @@ function computeAnchor(
   }
 }
 
-function computePrevHl(dataList: KLineData[], ext: PrevHlExtend): PrevHlPoint[] {
+export function computePrevHl(dataList: KLineData[], ext: PrevHlExtend): PrevHlPoint[] {
   const hidden = ext.lineHidden ?? {};
   const zone = resolvePrevHlZone(ext.tz);
   const lengths = ext.lengths ?? {};

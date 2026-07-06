@@ -155,6 +155,75 @@ def test_sloped_mtf_operand_key_ordering():
     assert len(resp.actions) == 1 and resp.actions[0].kind == "open"
 
 
+def test_series_operand_round_trips_and_opens():
+    # A `series` operand (a chart curve/drawing copied into a rule) posts its array
+    # under `seriesKey`; the endpoint's key check accepts it verbatim.
+    entry = {"combine": "AND", "rules": [
+        {"left": {"kind": "series", "seriesKey": "ema9_abc", "label": "EMA(9)"},
+         "op": "gt", "right": {"kind": "const", "value": 0.0}}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 10, 10]),
+        "series": {"ema9_abc": [None, None, 1.5]},
+        **_groups(long_entry=entry),
+        "position": None,
+    }
+    resp = _run(body)
+    assert len(resp.actions) == 1
+    assert resp.actions[0].kind == "open" and resp.actions[0].leg == "long"
+
+
+def test_series_operand_rejects_empty_key():
+    # A series operand with a blank seriesKey is malformed (the frontend always
+    # sends a recipe hash) — reject it rather than silently keying "" and never firing.
+    import pytest
+    from pydantic import ValidationError
+
+    from auto_trader.api.schemas import OperandDTO
+
+    with pytest.raises(ValidationError):
+        OperandDTO(kind="series", seriesKey="", label="x")
+    with pytest.raises(ValidationError):
+        OperandDTO(kind="series", seriesKey="   ", label="x")
+
+
+def test_series_operand_mtf_key_ordering():
+    # A copied MTF curve keys `<seriesKey>@HOUR`; the posted key must match.
+    entry = {"combine": "AND", "rules": [
+        {"left": {"kind": "series", "seriesKey": "ema9_abc", "label": "EMA(9)",
+                  "timeframe": "HOUR"},
+         "op": "gt", "right": {"kind": "const", "value": 0.0}}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 10, 10]),
+        "series": {"ema9_abc@HOUR": [None, None, 2.0]},
+        **_groups(long_entry=entry),
+        "position": None,
+    }
+    resp = _run(body)  # no 422 -> the posted key matched series_name
+    assert len(resp.actions) == 1 and resp.actions[0].kind == "open"
+
+
+def test_series_operand_sloped_key_ordering():
+    # Slope of a copied curve keys `<seriesKey>~N` (slope before any tf).
+    entry = {"combine": "AND", "rules": [
+        {"left": {"kind": "series", "seriesKey": "trend_x", "label": "Trendline",
+                  "slope": {"len": 3}},
+         "op": "gt", "right": {"kind": "const", "value": 0.0}}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 10, 10]),
+        "series": {"trend_x~3": [None, None, 1.0]},
+        **_groups(long_entry=entry),
+        "position": None,
+    }
+    resp = _run(body)
+    assert len(resp.actions) == 1 and resp.actions[0].kind == "open"
+
+
 def test_entry_price_operand_closes_when_below_entry():
     # Holding long opened at 10; `close < entryPrice` must close on the last bar
     # (close 9 < entry 10). entryPrice comes from the position's open_level.
