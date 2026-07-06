@@ -52,6 +52,7 @@ import {
   getBacktestAggregate,
   getBacktestCoverageFromTs,
   reanchorBacktestMarkers,
+  registerBacktestPager,
 } from "./lib/backtest";
 import BacktestAggMarkers, { type BacktestAggMarkersHandle, type AggPill } from "./BacktestAggMarkers";
 import { toast } from "./lib/notify";
@@ -798,6 +799,84 @@ export default function ChartCore({
           `[chart] anchor coverage capped for ${epic}@${resolution}: oldest anchor ${new Date(fromTs).toISOString()} predates loaded history`,
         );
       }
+    } finally {
+      // Release only if a quick-range pick hasn't taken the mutex for its own walk.
+      if (pendingRangeRef.current === null) {
+        loadingRef.current = false;
+      }
+    }
+  };
+
+  // On-demand page-back so the backtest trades panel can scroll to a trade whose
+  // entry predates the loaded bars. ensureAnchorCoverage pages to the OLDEST anchor
+  // with a small budget (enough for a just-finished run on the recent-only load);
+  // this instead targets ONE trade's entry with a larger bounded budget, so an old
+  // trade can be reached on demand. The bars come from the local candle cache, so
+  // even a deep walk is fast, and pageHistoryBack stops the moment coverage reaches
+  // `fromTs` — the budget is only a safety cap. Returns whether the oldest loaded
+  // bar now reaches `fromTs` (false → older than reachable history: the caller
+  // shows a notice rather than scrolling nowhere). Shares the loadingRef mutex +
+  // stale guards with the other pagers; a quick-range pick still preempts it.
+  const coverBacktestTradeTo = async (fromTs: number): Promise<boolean> => {
+    const chart = chartRef.current;
+    if (!chart) return false;
+    const epic = epicRef.current;
+    const resolution = resRef.current;
+    const broker = brokerIdRef.current;
+    const side = priceSideRef.current;
+    const first = chart.getDataList()[0];
+    if (!first) return false;
+    if (fromTs >= first.timestamp) return true; // already covered
+    if (pendingRangeRef.current) return false; // a quick-range pick owns paging
+    const isStale = () =>
+      !chartRef.current ||
+      pendingRangeRef.current !== null ||
+      epicRef.current !== epic ||
+      brokerIdRef.current !== broker ||
+      priceSideRef.current !== side ||
+      resRef.current !== resolution;
+    // Same mutex dance as ensureAnchorCoverage: wait out an in-flight scroll-back
+    // page (bounded), then hold the mutex so the pagers can't interleave.
+    for (let i = 0; loadingRef.current && i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      if (isStale()) return false;
+    }
+    if (isStale()) return false;
+    loadingRef.current = true;
+    try {
+      await pageHistoryBack<KLineData>({
+        fromTs,
+        toTs: first.timestamp,
+        resSec: RESOLUTION_SECONDS[resolution] ?? 60,
+        pageBars: PAGE_BARS,
+        // Bounded safety cap only: the walk breaks as soon as coverage reaches
+        // fromTs. Sized to reach a several-months-old trade on a fine timeframe
+        // (500 bars × 80 ≈ 40k bars ≈ ~14 months of near-24h 15m bars).
+        maxPages: 80,
+        maxEmpty: 4,
+        isStale,
+        getData: () => chartRef.current?.getDataList(),
+        fetchOlder: (fromSec, toSec) => fetchRange(epic, resolution, fromSec, toSec, side, broker),
+        applyData: (merged) => overlays.applyOlderBars(merged),
+        onCursor: (sec) => {
+          cursorSecRef.current = sec;
+        },
+        onProgress: () => {
+          exhaustedRef.current = false;
+        },
+        onExhausted: () => {
+          exhaustedRef.current = true;
+        },
+      });
+      // Redraw the markers/period bands against the now-extended history: the
+      // recent-only load culled the fills this trade belongs to (same reason
+      // ensureAnchorCoverage reanchors after its walk). No-op if nothing's drawn.
+      if (!isStale()) {
+        reanchorBacktestMarkers(chart);
+        extendMtfCoverage();
+      }
+      const oldest = chartRef.current?.getDataList()[0];
+      return !!oldest && oldest.timestamp <= fromTs;
     } finally {
       // Release only if a quick-range pick hasn't taken the mutex for its own walk.
       if (pendingRangeRef.current === null) {
@@ -2913,6 +2992,11 @@ export default function ChartCore({
       // this component) request the anchor-coverage walk, so a template drawing
       // anchored before the loaded window doesn't render clamped to the left edge.
       controller.coverDrawingAnchors = () => ensureAnchorCoverage();
+      // Let the backtest trades panel page an out-of-window trade in before
+      // scrolling to it (see coverBacktestTradeTo). Registered per-chart so the
+      // panel's selection subscription — which only holds the Chart — can reach it.
+      controller.coverBacktestTradeTo = (fromTs) => coverBacktestTradeTo(fromTs);
+      registerBacktestPager(chart, (fromTs) => coverBacktestTradeTo(fromTs));
       // Hydrate this cell's saved indicators synchronously on chart-ready (they
       // recalc once data arrives). Done here — not after the async data fetch — so
       // the focused Toolbar reflects them immediately on mount / tab switch, and
@@ -2971,6 +3055,8 @@ export default function ChartCore({
       controller.chart = null;
       controller.focusChart = null;
       controller.coverDrawingAnchors = null;
+      controller.coverBacktestTradeTo = null;
+      registerBacktestPager(chart, null);
       const w = window as unknown as { __charts?: Map<string, Chart> };
       w.__charts?.delete(cellId);
       if (el) dispose(el);

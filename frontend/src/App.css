@@ -2678,6 +2678,7 @@
 }
 .bt-error { color: var(--neg); font-size: 12px; }
 .bt-warning { color: var(--text-dim); font-size: 12px; cursor: help; }
+.bt-notice { color: var(--text-dim); font-size: 12px; }
 
 .scale { display: inline-flex; gap: 2px; margin-left: 4px; }
 .scale button {

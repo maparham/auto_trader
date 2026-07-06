@@ -13,6 +13,7 @@ import {
   highlightTradeSignal,
   selectedTradeSignal,
   backtestMessagesSignal,
+  backtestSelectNoticeSignal,
   backtestPeriodsShownSignal,
   requestBacktestClear,
 } from "./lib/signals";
@@ -28,6 +29,7 @@ const subscribeResult = (cb: () => void) => backtestResultSignal.subscribe(cb);
 const subscribeHighlight = (cb: () => void) => highlightTradeSignal.subscribe(cb);
 const subscribeSelected = (cb: () => void) => selectedTradeSignal.subscribe(cb);
 const subscribeMessages = (cb: () => void) => backtestMessagesSignal.subscribe(cb);
+const subscribeSelectNotice = (cb: () => void) => backtestSelectNoticeSignal.subscribe(cb);
 
 type Tab = "overview" | "trades";
 type SortDir = "asc" | "desc";
@@ -47,6 +49,7 @@ export default function BacktestPanel() {
   const highlighted = useSyncExternalStore(subscribeHighlight, () => highlightTradeSignal.value);
   const selected = useSyncExternalStore(subscribeSelected, () => selectedTradeSignal.value);
   const messages = useSyncExternalStore(subscribeMessages, () => backtestMessagesSignal.value);
+  const selectNotice = useSyncExternalStore(subscribeSelectNotice, () => backtestSelectNoticeSignal.value);
   const periodsShown = useSyncExternalStore(
     (cb) => backtestPeriodsShownSignal.subscribe(cb),
     () => backtestPeriodsShownSignal.value,
@@ -70,7 +73,7 @@ export default function BacktestPanel() {
   // Transient run messages (fetch error / short warm-up) — shown whether or not
   // a result exists, since an errored run leaves no result to render.
   const msgRow =
-    messages.error || messages.warning ? (
+    messages.error || messages.warning || selectNotice ? (
       <div className="bt-results-messages">
         {messages.warning && (
           <span className="bt-warning" title={messages.warning}>
@@ -78,6 +81,7 @@ export default function BacktestPanel() {
           </span>
         )}
         {messages.error && <span className="bt-error">{messages.error}</span>}
+        {selectNotice && <span className="bt-notice">{selectNotice}</span>}
       </div>
     ) : null;
 

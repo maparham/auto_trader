@@ -115,6 +115,14 @@ export class ChartController {
   // await it; void-returning callers (template apply) ignore the result.
   coverDrawingAnchors: (() => void | Promise<void>) | null = null;
 
+  // Page older history in until a specific timestamp is covered (null until mount;
+  // assigned by ChartCore). Used by the backtest trades panel: selecting a trade
+  // whose entry predates the loaded bars (common on a fine timeframe, whose
+  // initial load is recent-only) pages back to it on demand before scrolling.
+  // Resolves to whether the oldest loaded bar now reaches `fromTs` (false → older
+  // than reachable history, so the caller shows a notice instead of scrolling).
+  coverBacktestTradeTo: ((fromTs: number) => Promise<boolean>) | null = null;
+
   constructor(cellId: string, scope: string) {
     this.cellId = cellId;
     this.scope = scope;

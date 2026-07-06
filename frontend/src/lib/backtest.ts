@@ -32,6 +32,7 @@ import {
   selectedTradeSignal,
   backtestClusterHoverSignal,
   backtestPeriodsShownSignal,
+  backtestSelectNoticeSignal,
 } from "./signals";
 import { tradeZones } from "./tradeZones";
 import { minPositiveGap } from "./barInterval";
@@ -124,6 +125,20 @@ interface BacktestArtifacts {
   periodBandIds: string[];
 }
 const artifactsByChart = new WeakMap<Chart, BacktestArtifacts>();
+
+// Bridge from a Chart to its ChartCore page-back function. The selection
+// subscription below only holds the Chart (it's installed by renderArtifacts,
+// which knows nothing of the controller), so ChartCore registers its
+// coverBacktestTradeTo here at chart-ready and clears it on teardown. Lets the
+// subscription page an out-of-window trade in before scrolling to it.
+const pagerByChart = new WeakMap<Chart, (fromTs: number) => Promise<boolean>>();
+export function registerBacktestPager(
+  chart: Chart,
+  fn: ((fromTs: number) => Promise<boolean>) | null,
+): void {
+  if (fn) pagerByChart.set(chart, fn);
+  else pagerByChart.delete(chart);
+}
 
 function artifactsFor(chart: Chart): BacktestArtifacts {
   let a = artifactsByChart.get(chart);
@@ -1041,10 +1056,51 @@ export function renderArtifacts(
     // Every subscriber clears its OWN leftover zone unconditionally (same
     // "active chart may have changed" reasoning as the highlight above).
     removeSelectionOverlays(chart, artifacts);
+    // A fresh selection supersedes any prior "can't reach this trade" notice.
+    backtestSelectNoticeSignal.set(null);
     if (i == null || backtestResultSignal.value !== result) return;
     const t = artifacts.trades[i];
     if (!t) return;
-    drawSelectionZone(chart, artifacts, t);
+    const entryTs = t.entry_time * 1000;
+    const exitTs = t.exit_time * 1000;
+    const data = chart.getDataList();
+    const firstTs = data?.[0]?.timestamp;
+    const lastTs = data?.[data.length - 1]?.timestamp;
+    const lo = Math.min(entryTs, exitTs);
+    const hi = Math.max(entryTs, exitTs);
+    // In the loaded window → draw + scroll straight away (the common case; also
+    // when firstTs/lastTs are unknown, let drawSelectionZone's own guard decide).
+    if (firstTs == null || lastTs == null || (hi >= firstTs && lo <= lastTs)) {
+      drawSelectionZone(chart, artifacts, t);
+      return;
+    }
+    // Out of window. A finer timeframe's initial load is recent-only, so an older
+    // trade sits before the first loaded bar — page history in to cover it, then
+    // draw + scroll. (A future-side trade, lo > lastTs, can't be paged toward;
+    // fall through to the notice.) Guard against the selection / active result
+    // changing during the async walk before drawing.
+    const pager = pagerByChart.get(chart);
+    if (pager && lo < firstTs) {
+      // Paging a fine timeframe back several months is a few seconds of sequential
+      // fetches — show a note NOW so the click doesn't read as "nothing happened"
+      // (a silent gap is indistinguishable from the very bug this fixes). Replaced
+      // in the .then: cleared on success (the scroll is the feedback), or swapped
+      // for the "too far back" notice when the walk can't reach the trade.
+      backtestSelectNoticeSignal.set("Loading history for this trade…");
+      void pager(lo).then((reached) => {
+        if (selectedTradeSignal.value !== i || backtestResultSignal.value !== result) return;
+        backtestSelectNoticeSignal.set(null);
+        if (reached) drawSelectionZone(chart, artifacts, t);
+        else
+          backtestSelectNoticeSignal.set(
+            "This trade is older than the history available at this timeframe — open it on a higher timeframe.",
+          );
+      });
+      return;
+    }
+    backtestSelectNoticeSignal.set(
+      "This trade is outside the loaded range on this timeframe.",
+    );
   });
 
   artifacts.unsub = () => {

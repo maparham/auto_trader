@@ -349,6 +349,13 @@ export const backtestMessagesSignal = new Signal<{ error: string | null; warning
   warning: null,
 });
 
+// Transient notice shown when selecting a trade row can't navigate the chart to
+// it — the trade predates the history reachable at the current timeframe (a fine
+// timeframe whose loaded/pageable window doesn't reach that far back). Set by the
+// selection subscription in backtest.ts after an on-demand page-back fails to
+// cover the trade; cleared on the next selection. Null = no notice.
+export const backtestSelectNoticeSignal = new Signal<string | null>(null);
+
 // Bumped (monotonic counter) whenever the alert set changes — a price alert is
 // created, deleted, or dragged (live list), OR a new alert fires (history list).
 // The alerts sidebar subscribes and re-reads overlays.getAlerts() / the persisted
