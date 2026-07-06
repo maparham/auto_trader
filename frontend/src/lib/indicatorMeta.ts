@@ -194,6 +194,11 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Previous Period High/Low",
     desc: "Two kinds of high/low reference lines: a rolling trailing range (previous N bars/minutes/hours/days/weeks, sliding) and anchored previous-period lines (previous trading day and week). Each aggregates by max/min, average, or median. Toggle and style each in the modal.",
   },
+  SESSIONS: {
+    inputs: [],
+    title: "Trading Sessions",
+    desc: "Shades the FX trading sessions (Sydney, Tokyo, London, New York) across the time axis in a compact strip. Overlapping sessions split the row. Edit, add, recolor, or retime each session in the settings.",
+  },
 };
 
 // Friendly name + description for klinecharts built-ins that DON'T need a custom

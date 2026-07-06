@@ -37,12 +37,15 @@ import type {
   RsiElement,
   CurveLabelSide,
   CurveLabelAlign,
+  SessionDef,
+  SessionsExtend,
 } from "./lib/customIndicators";
 import {
   AVWAP_DEFAULT_BANDS,
   RSI_DIVERGENCE_DEFAULTS,
   RSI_SMOOTHING_DEFAULTS,
   RSI_STYLE_DEFAULTS,
+  DEFAULT_SESSIONS,
   indTypeOf,
   prevHlAnchorToInput,
   prevHlInputToAnchor,
@@ -554,6 +557,41 @@ export default function IndicatorSettings({
     );
   }
 
+  // --- SESSIONS: editable per-session list (extendData.sessions) ---
+  // The whole indicator config is this list. Hours are LOCAL time in each session's
+  // timezone (Inputs tab); colours live in the Style tab. Writes merge live
+  // extendData (preserve indType); persistence is the snapshot effect (keyed on
+  // `sessions`).
+  const sessionsExt0 = (ind?.extendData ?? {}) as SessionsExtend;
+  const [sessions, setSessions] = useState<SessionDef[]>(() =>
+    (sessionsExt0.sessions ?? DEFAULT_SESSIONS).map((s) => ({ ...s })),
+  );
+  function writeSessions(next: SessionDef[]) {
+    setSessions(next);
+    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    chart.overrideIndicator(
+      { name, extendData: { ...((live?.extendData as object) ?? {}), sessions: next } },
+      paneId,
+    );
+  }
+  function patchSession(i: number, patch: Partial<SessionDef>) {
+    writeSessions(sessions.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  }
+  function addSession() {
+    writeSessions([
+      ...sessions,
+      {
+        id: `s${Math.random().toString(36).slice(2, 8)}`,
+        name: "New session",
+        color: "#787b86",
+        timezone: "Europe/London",
+        open: "08:00",
+        close: "16:00",
+        enabled: true,
+      },
+    ]);
+  }
+
   // PREV_HL timezone override: write extendData.tz and let calc re-bucket. "chart"
   // stores no tz (omit the key) so the instance follows the global chart zone.
   // Merges live extendData to preserve lineHidden / indType. Persistence is handled
@@ -787,6 +825,11 @@ export default function IndicatorSettings({
       const st = curveLabelState();
       if (!curveLabelIsDefault(st)) extendData.curveLabels = curveLabelObj(st);
     }
+    if (type === "SESSIONS" && JSON.stringify(sessions) !== JSON.stringify(DEFAULT_SESSIONS)) {
+      // The whole session list (only when edited away from defaults, so a fresh
+      // instance carries no key and picks up future default changes).
+      extendData.sessions = sessions;
+    }
     if (!showValue) extendData.hideLegendValue = true;
     // Per-timeframe visibility (TV Visibility tab) — model only when non-default,
     // but userVisible (the intent) is always written once touched, so a later read
@@ -811,7 +854,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions]);
 
   // Push a moving-average config (chart-TF or MTF) through the coordinator, which
   // refetches HTF data when a timeframe is set. Reads explicit overrides so it
@@ -1667,8 +1710,73 @@ export default function IndicatorSettings({
 
           {tab === "inputs" && !isMa && !isAvwap && !isRsi && (
             <>
-              {inputs.length === 0 && type !== "PREV_HL" && (
+              {inputs.length === 0 && type !== "PREV_HL" && type !== "SESSIONS" && (
                 <p className="ind-note">This indicator has no adjustable inputs.</p>
+              )}
+              {type === "SESSIONS" && (
+                <div className="sessions-editor">
+                  <p className="ind-note">
+                    Hours are local time in each session's timezone. Set colours in the Style tab.
+                  </p>
+                  {sessions.map((s, i) => (
+                    <div className={`session-row${s.enabled ? "" : " is-off"}`} key={s.id}>
+                      <label className="ind-check ind-check-inline">
+                        <input
+                          type="checkbox"
+                          checked={s.enabled}
+                          onChange={(e) => patchSession(i, { enabled: e.target.checked })}
+                        />
+                      </label>
+                      <input
+                        className="session-name"
+                        type="text"
+                        value={s.name}
+                        aria-label="Session name"
+                        onChange={(e) => patchSession(i, { name: e.target.value })}
+                      />
+                      <select
+                        className="tz-select session-tz"
+                        value={s.timezone}
+                        aria-label="Session timezone"
+                        onChange={(e) => patchSession(i, { timezone: e.target.value })}
+                      >
+                        {/* City name only — the offset is dropped to keep the row
+                            short; the selected zone's city is enough to identify it. */}
+                        {TIMEZONES.filter((tz) => tz.value).map((tz) => (
+                          <option key={tz.value} value={tz.value}>
+                            {tz.label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        className="session-time"
+                        type="time"
+                        value={s.open}
+                        aria-label="Session open"
+                        onChange={(e) => patchSession(i, { open: e.target.value })}
+                      />
+                      <span className="session-dash">–</span>
+                      <input
+                        className="session-time"
+                        type="time"
+                        value={s.close}
+                        aria-label="Session close"
+                        onChange={(e) => patchSession(i, { close: e.target.value })}
+                      />
+                      <button
+                        type="button"
+                        className="session-remove"
+                        aria-label={`Remove ${s.name}`}
+                        onClick={() => writeSessions(sessions.filter((_, j) => j !== i))}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <button type="button" className="session-add" onClick={addSession}>
+                    + Add session
+                  </button>
+                </div>
               )}
               {inputs.map((inp) => {
                 if (inp.source === "calcParam" && inp.index != null) {
@@ -1824,8 +1932,8 @@ export default function IndicatorSettings({
                   );
                 })()
               )}
-              <div className="ind-group">Calculation</div>
-              {type === "PREV_HL" ? (
+              {type !== "SESSIONS" && <div className="ind-group">Calculation</div>}
+              {type === "SESSIONS" ? null : type === "PREV_HL" ? (
                 <>
                   {/* How the rolling time-span treats closed-market time. */}
                   <div className="ind-row">
@@ -1892,7 +2000,7 @@ export default function IndicatorSettings({
             <>
               {/* Non-PREV_HL toggles its figure values at the top. PREV_HL shows a
                   range summary instead, and that toggle lives at the bottom (below). */}
-              {type !== "PREV_HL" && (
+              {type !== "PREV_HL" && type !== "SESSIONS" && (
                 <label className="ind-check">
                   <input
                     type="checkbox"
@@ -1902,6 +2010,21 @@ export default function IndicatorSettings({
                   <span>Show value in legend</span>
                 </label>
               )}
+              {type === "SESSIONS" &&
+                sessions.map((s, i) => (
+                  <div className={`ind-row ind-style-row${s.enabled ? "" : " is-off"}`} key={s.id}>
+                    <span className="ind-row-head">
+                      <label>{s.name}</label>
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={s.color}
+                        onColor={(hex) => patchSession(i, { color: hex })}
+                        title={`${s.name} colour`}
+                      />
+                    </div>
+                  </div>
+                ))}
               {/* PREV_HL: pair each boundary's High and Low on ONE row —
                   "Day  High [color][size]  Low [color][size]" — halving the list.
                   The boundary is greyed when deactivated in the Inputs tab. */}

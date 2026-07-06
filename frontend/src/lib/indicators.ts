@@ -26,6 +26,7 @@ import {
   BASE_TEMPLATES,
   legendTooltipSource,
   indTypeOf,
+  SESSIONS_AXIS_NAME,
   type CustomIndicatorType,
 } from "./customIndicators";
 import { EQUITY_INDICATOR } from "./backtest";
@@ -153,6 +154,14 @@ export function effectiveCalcParams(type: string, saved?: number[]): number[] | 
 // is a cramped ~50px; TradingView gives oscillators much more room, so new sub-panes
 // (RSI/MACD/…) open taller. Users can still drag the pane divider to resize.
 const SUBPANE_HEIGHT = 120;
+
+// The Sessions indicator is a fixed compact strip (not a resizable oscillator): a
+// short pane, no numeric y-axis, drag disabled. minHeight is passed explicitly so
+// the sub-30px height isn't clamped by PANE_MIN_HEIGHT.
+const SESSIONS_PANE_HEIGHT = 26;
+function isFixedCompact(type: string): boolean {
+  return type === "SESSIONS";
+}
 
 // Panes the reorder feature must never touch: the candle pane is handled by paneId,
 // and the backtest equity curve is app-owned. Exported so ChartLegend filters on the
@@ -424,7 +433,17 @@ export function applyIndicator(
     ? { id: opts.paneId } // stack into the just-recreated pane of a moved group
     : isOverlay
       ? { id: "candle_pane" }
-      : { height: opts?.height ?? SUBPANE_HEIGHT, gap: { top: 0.08, bottom: 0.08 } };
+      : isFixedCompact(type)
+        ? {
+            // Fixed compact strip: short, no numeric y-axis, drag disabled. minHeight
+            // is explicit so the sub-30px height isn't clamped by PANE_MIN_HEIGHT.
+            height: opts?.height ?? SESSIONS_PANE_HEIGHT,
+            minHeight: 20,
+            dragEnabled: false,
+            gap: { top: 0, bottom: 0 },
+            axisOptions: { name: SESSIONS_AXIS_NAME },
+          }
+        : { height: opts?.height ?? SUBPANE_HEIGHT, gap: { top: 0.08, bottom: 0.08 } };
   const paneId = chart.createIndicator(value, stack, paneOptions);
   if (!paneId) return null;
   // Saved line entries are partial ({color,size}); override merges them onto the

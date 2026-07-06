@@ -1629,6 +1629,35 @@
 .ind-style-row.is-off { opacity: 0.5; }
 .ind-style-row.is-off .ind-check-inline { cursor: not-allowed; }
 .ind-row.is-off .ind-line-controls { opacity: 0.5; }
+
+/* Sessions indicator: one editable row per session (Inputs tab). Compact flex row
+   of enable + name + timezone + open–close, with a remove button. */
+.sessions-editor { display: flex; flex-direction: column; gap: 6px; }
+.session-row { display: flex; align-items: center; gap: 5px; }
+.session-row.is-off { opacity: 0.55; }
+.session-row .session-name { flex: 1 1 52px; min-width: 44px; }
+/* City-name only (offset dropped in the markup). Trim the inherited tz-select
+   padding so the short city ("New York") fits beside the native dropdown arrow
+   without a wide box; ellipsis guards any longer city. */
+.session-row .session-tz {
+  flex: 0 0 88px; width: 88px; min-width: 88px; padding-left: 4px; padding-right: 2px;
+  text-overflow: ellipsis;
+}
+.session-row .session-time { width: 54px; flex: 0 0 auto; }
+/* Drop the native clock/spinner button — it eats ~20px per field and isn't needed
+   (type the time, or use arrow keys). */
+.session-row .session-time::-webkit-calendar-picker-indicator { display: none; }
+.session-row .session-time::-webkit-inner-spin-button { display: none; }
+.session-row .session-dash { color: var(--text-faint); flex: 0 0 auto; }
+.session-row .session-remove {
+  border: none; background: none; color: var(--text-faint); cursor: pointer;
+  font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+}
+.session-row .session-remove:hover { color: var(--sell); background: var(--hover); }
+.session-add {
+  align-self: flex-start; border: none; background: none; color: var(--accent);
+  cursor: pointer; font-size: 12px; padding: 2px 0; margin-top: 2px;
+}
 .ind-group {
   margin-top: 4px; color: var(--text-faint); font-size: 11px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase;

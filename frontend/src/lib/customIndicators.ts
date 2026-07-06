@@ -14,6 +14,7 @@ export * from "./indicators/lr";
 export * from "./indicators/vwap";
 export * from "./indicators/prevHl";
 export * from "./indicators/rsi";
+export * from "./indicators/sessions";
 export * from "./indicators/curveLabels";
 
 import { EMA_TEMPLATE, MA_TEMPLATE } from "./indicators/ma";
@@ -21,12 +22,21 @@ import { LR_TEMPLATE } from "./indicators/lr";
 import { VWAP_TEMPLATE, AVWAP_TEMPLATE } from "./indicators/vwap";
 import { PREV_HL_TEMPLATE } from "./indicators/prevHl";
 import { RSI_TEMPLATE } from "./indicators/rsi";
+import { SESSIONS_TEMPLATE, registerSessionsAxis } from "./indicators/sessions";
 
 // Base templates for our custom indicator TYPES, keyed by type. Each is a full
 // klinecharts indicator definition MINUS the `name` (the name is assigned per
 // instance — either the type itself, or a unique "EMA#abc" id for multi-instance).
 // `lib/indicators.ts` clones one of these under a fresh name to add an instance.
-export type CustomIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI";
+export type CustomIndicatorType =
+  | "EMA"
+  | "MA"
+  | "LR"
+  | "VWAP"
+  | "AVWAP"
+  | "PREV_HL"
+  | "RSI"
+  | "SESSIONS";
 
 export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate, "name">> = {
   EMA: EMA_TEMPLATE,
@@ -36,12 +46,14 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   AVWAP: AVWAP_TEMPLATE,
   PREV_HL: PREV_HL_TEMPLATE,
   RSI: RSI_TEMPLATE,
+  SESSIONS: SESSIONS_TEMPLATE,
 };
 
 // Register each base type under its own name (so a single instance can still use
 // the bare type name "EMA", and so the type is always resolvable). Per-instance
 // clones are registered on demand by lib/indicators.ts (registerInstanceTemplate).
 export function registerCustomIndicators(): void {
+  registerSessionsAxis();
   for (const [type, tmpl] of Object.entries(BASE_TEMPLATES)) {
     registerIndicator({ ...tmpl, name: type });
   }
