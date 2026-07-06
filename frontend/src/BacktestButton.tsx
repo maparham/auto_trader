@@ -5,7 +5,7 @@
 // the focused controller + the active period/broker.
 
 import { useEffect, useState } from "react";
-import { runAndRender, clearBacktest } from "./lib/backtest";
+import { runAndRender, clearBacktest, fitBacktestTrades } from "./lib/backtest";
 import type { ChartController } from "./lib/chartController";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
@@ -185,7 +185,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // runAndRender then culls those fills as out-of-window. Page history back to
       // cover the run, which reanchors the markers onto their real candles (same
       // walk the timeframe-switch rehydrate uses). No-op when already covered.
-      controller?.coverDrawingAnchors?.();
+      // Await the coverage walk so trades predating the loaded window are paged
+      // in, then fit the chart to the full traded span — no more panning back to
+      // find the trades. Only on a fresh run: reload/TF-switch go via renderArtifacts.
+      await controller?.coverDrawingAnchors?.();
+      if (chart) fitBacktestTrades(chart, res);
       saveBacktestLastUsed(cfg);
     } catch (e) {
       setError(e instanceof Error ? e.message : "backtest failed");

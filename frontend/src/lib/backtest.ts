@@ -25,7 +25,7 @@ import {
   type OverlayFigure,
 } from "klinecharts";
 import { runBacktest, type BacktestRequest } from "../api";
-import { applyVisibleRange } from "./chartSync";
+import { applyVisibleRange, applyVisibleRangeKeepStart } from "./chartSync";
 import {
   backtestResultSignal,
   highlightTradeSignal,
@@ -67,6 +67,19 @@ export function markerLabel(side: "buy" | "sell", leg: "long" | "short", reason?
   const letter = side === "buy" ? "B" : "S";
   const opening = (leg === "long" && side === "buy") || (leg === "short" && side === "sell");
   return `${letter}${opening ? "+" : "-"}`;
+}
+
+/** Which side of the candle a fill marker should hang from so it clears the
+ * body. The arrow always pins to the exact fill price, so the pill has to be
+ * offset AWAY from the body: if the fill sits in the lower half of the candle
+ * (e.g. a short opened at a bullish candle's open, which is its low), drop the
+ * pill BELOW it; otherwise keep the historical ABOVE placement. Ties at the
+ * exact midpoint default to "above". Decided once at draw time (price space, so
+ * stable across zoom/pan). Returns "above" when high==low (a flat/degenerate
+ * bar has no body to clear). */
+export function markerPlacement(fillPrice: number, high: number, low: number): "above" | "below" {
+  const mid = (high + low) / 2;
+  return fillPrice < mid ? "below" : "above";
 }
 
 // Per-chart backtest artifacts, so clearing one cell's backtest never touches
@@ -171,6 +184,46 @@ function scrollChartToTrade(chart: Chart, entryTs: number, exitTs: number): void
   applyVisibleRange(chart, Math.max(from - pad, firstTs), Math.min(to + pad, lastTs));
 }
 
+/**
+ * Fit the chart to the whole traded span (first entry → last exit) so a finished
+ * backtest lands the user right on the trades instead of far to the right. The
+ * FIRST (leftmost) trade is always kept in view: when the span is too wide to fit
+ * at max zoom-out, applyVisibleRangeKeepStart pins the first entry near the left
+ * rather than letting the right-anchored fit push it off screen. No-op when the
+ * run produced no trades or the span doesn't overlap the loaded window (those
+ * markers are culled too). Call AFTER coverDrawingAnchors so trades that predate
+ * the chart's loaded bars have been paged in and count toward the span.
+ */
+export function fitBacktestTrades(chart: Chart, result: StoredBacktestResult): void {
+  const trades = result.trades;
+  if (!trades?.length) return;
+  const data = chart.getDataList();
+  if (!data || data.length < 2) return;
+  const firstTs = data[0].timestamp;
+  const lastTs = data[data.length - 1].timestamp;
+  const barMs = minPositiveGap(data.map((k) => k.timestamp)) || 1;
+  let minEntry = Infinity;
+  let maxExit = -Infinity;
+  for (const t of trades) {
+    minEntry = Math.min(minEntry, t.entry_time * 1000);
+    maxExit = Math.max(maxExit, t.exit_time * 1000);
+  }
+  // Clamp the traded span to the loaded bar window (same guard as
+  // scrollChartToTrade: out-of-data timestamps make applyVisibleRange extrapolate
+  // into negative virtual bars and wreck the view). A first trade older than the
+  // broker's finest history can't be shown at all, so fall back to the earliest
+  // loaded bar. Bail if the span doesn't overlap what's loaded.
+  const start = Math.max(minEntry, firstTs);
+  const end = Math.min(maxExit, lastTs);
+  if (!(end >= start)) return;
+  // A little context on each side; a single same-bar trade still yields a window.
+  const pad = Math.max((end - start) * 0.1, barMs * 5);
+  const from = Math.max(start - pad, firstTs);
+  const to = Math.min(end + pad, lastTs);
+  if (!(to > from)) return;
+  applyVisibleRangeKeepStart(chart, from, to, start);
+}
+
 // Backtest fill marker (arrow + label). A hand-rolled clone of klinecharts'
 // built-in `simpleAnnotation` — IDENTICAL geometry — with ONE deliberate
 // difference: the figures do NOT set `ignoreEvent: true`. The built-in hardcodes
@@ -191,6 +244,9 @@ const MARKER_OVERLAY = "backtestMarker";
 interface MarkerExtra {
   label: string;
   win: boolean | null;
+  // Which side of the candle the pill hangs from (see markerPlacement). Absent
+  // in older persisted results — treated as "above" (the historical default).
+  placement?: "above" | "below";
 }
 function asMarkerExtra(v: unknown): MarkerExtra {
   return (typeof v === "object" && v !== null ? v : { label: "", win: null }) as MarkerExtra;
@@ -204,11 +260,15 @@ const markerOverlay: OverlayTemplate = {
   needDefaultYAxisFigure: false,
   createPointFigures: ({ overlay, coordinates }) => {
     if (coordinates.length < 1) return [];
-    const { label, win } = asMarkerExtra(overlay.extendData);
+    const { label, win, placement } = asMarkerExtra(overlay.extendData);
     const startX = coordinates[0].x;
-    const startY = coordinates[0].y - 6;
-    const lineEndY = startY - 50;
-    const arrowEndY = lineEndY - 5;
+    // "below" mirrors the historical "above" geometry through the anchor: the
+    // line/arrow/pill grow downward and the pill's baseline flips so it hangs
+    // under the fill instead of over it. `dir` is +1 downward, -1 upward.
+    const dir = placement === "below" ? 1 : -1;
+    const startY = coordinates[0].y + dir * 6;
+    const lineEndY = startY + dir * 50;
+    const arrowEndY = lineEndY + dir * 5;
     // The label renders as a filled pill via klinecharts' default overlay text
     // style (white text on a blue background). Override just the fill/border to
     // the win/loss color so a losing trade's marker reads red, a winner green.
@@ -230,7 +290,13 @@ const markerOverlay: OverlayTemplate = {
       },
       {
         type: "text",
-        attrs: { x: startX, y: arrowEndY, text: label, align: "center", baseline: "bottom" },
+        attrs: {
+          x: startX,
+          y: arrowEndY,
+          text: label,
+          align: "center",
+          baseline: placement === "below" ? "top" : "bottom",
+        },
         ...(pillColor ? { styles: { backgroundColor: pillColor, borderColor: pillColor } } : {}),
       },
     ];
@@ -752,7 +818,11 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
     // fill falls between two bars — snap it to the nearest loaded bar so the arrow
     // sits on a real candle. Same-or-evenly-dividing views already land exactly, so
     // snapNearestBar is a no-op there (returns the identical timestamp).
-    const barTimes = (chart.getDataList() ?? []).map((k) => k.timestamp);
+    const bars = chart.getDataList() ?? [];
+    const barTimes = bars.map((k) => k.timestamp);
+    // timestamp -> {high, low} so a marker can hang from whichever side of its
+    // candle clears the body (markerPlacement), keyed by the snapped bar time.
+    const barByTime = new Map(bars.map((k) => [k.timestamp, k]));
 
     // Trade markers -> locked backtestMarker overlays (arrow + label). Markers
     // that map to a trade also emphasize/scroll the trades panel row on hover
@@ -772,13 +842,16 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       // on their real candles once covered.
       if (!fillWithinLoadedWindow(m.time * 1000, barTimes)) continue;
       const idx = tradeIndexByFill.get(`${m.time}|${m.leg}`);
+      const snappedTs = snapNearestBar(m.time * 1000, barTimes);
+      const bar = barByTime.get(snappedTs);
       const id = chart.createOverlay({
         name: MARKER_OVERLAY,
-        points: [{ timestamp: snapNearestBar(m.time * 1000, barTimes), value: m.price }],
+        points: [{ timestamp: snappedTs, value: m.price }],
         lock: true, // backtest artifacts: not user-editable
         extendData: {
           label: markerLabel(m.side, m.leg, m.reason),
           win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
+          placement: bar ? markerPlacement(m.price, bar.high, bar.low) : "above",
         } satisfies MarkerExtra,
         styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
         ...(idx !== undefined

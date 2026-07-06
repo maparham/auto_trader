@@ -110,7 +110,10 @@ export class ChartController {
   // (a template apply in templates.ts) calls this afterwards, so a drawing
   // anchored before the loaded history window pages the older bars in instead of
   // rendering clamped to the first loaded bar.
-  coverDrawingAnchors: (() => void) | null = null;
+  // Returns the coverage walk's promise so a caller that needs the older bars
+  // loaded before its next step (a fresh backtest fitting the traded range) can
+  // await it; void-returning callers (template apply) ignore the result.
+  coverDrawingAnchors: (() => void | Promise<void>) | null = null;
 
   constructor(cellId: string, scope: string) {
     this.cellId = cellId;

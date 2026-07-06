@@ -318,6 +318,32 @@ export function applyVisibleRange(chart: Chart, fromTs: number, toTs: number): v
   scrollBarToPixel(chart, anchorTs, w - wsBars * space);
 }
 
+// Like applyVisibleRange, but guarantees `startTs` (default fromTs) stays on
+// screen near the left. applyVisibleRange right-anchors toTs and floors zoom at
+// MIN_BAR_SPACE, so a window wider than the view can hold at max zoom-out pushes
+// the left end off screen. Used when the START matters more than the end — a
+// finished backtest must land on its FIRST trade even when the whole traded span
+// can't fit. When the span fits this only nudges in a small left margin; when it
+// doesn't it re-pins startTs a few bars from the left (the tail overflows right,
+// pannable) instead of hiding it off the left edge.
+export function applyVisibleRangeKeepStart(
+  chart: Chart,
+  fromTs: number,
+  toTs: number,
+  startTs: number = fromTs,
+): void {
+  applyVisibleRange(chart, fromTs, toTs);
+  const w = mainWidth(chart);
+  const data = chart.getDataList();
+  if (w <= 1 || !data || data.length < 2) return;
+  const barTs = data[nearestIdx(data, startTs)].timestamp;
+  const leftPad = Math.min(Math.max(chart.getBarSpace() * 4, 16), w * 0.15);
+  const x = xAtTs(chart, barTs);
+  // Already visible with at least the left margin — the span fit, leave it.
+  if (x == null || x >= leftPad - 0.5) return;
+  scrollBarToPixel(chart, barTs, leftPad);
+}
+
 // Exact mirror for "lock charts": the sibling shares the master's interval, so we
 // copy its barSpace verbatim and scroll so the reference bar `anchorTs` lands on the
 // exact pixel `anchorX` it holds on the master — no bar-count re-derivation. With

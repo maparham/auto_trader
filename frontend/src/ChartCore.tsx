@@ -2912,7 +2912,7 @@ export default function ChartCore({
       // Let a template apply (templates.ts writes drawings + rehydrates outside
       // this component) request the anchor-coverage walk, so a template drawing
       // anchored before the loaded window doesn't render clamped to the left edge.
-      controller.coverDrawingAnchors = () => void ensureAnchorCoverage();
+      controller.coverDrawingAnchors = () => ensureAnchorCoverage();
       // Hydrate this cell's saved indicators synchronously on chart-ready (they
       // recalc once data arrives). Done here — not after the async data fetch — so
       // the focused Toolbar reflects them immediately on mount / tab switch, and
