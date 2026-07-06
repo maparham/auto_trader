@@ -368,6 +368,24 @@ export function requestSymbolSearch(): void {
   symbolSearchRequest.set(symbolSearchRequest.value + 1);
 }
 
+// True while the Live trading panel is open. Toggled by the toolbar's live
+// button; read by App to render the panel beside the chart. Distinct surface
+// from the backtest so "testing" is never confused with "trading real money".
+export const livePanelOpen = new Signal<boolean>(false);
+export function openLivePanel(): void {
+  livePanelOpen.set(true);
+}
+
+// "Go live →" from the backtest modal: carries a COPY of the current backtest
+// config to seed the Live panel's draft (spec: arm snapshots a copy — editing
+// the backtest later never touches a running strategy). null = no pending seed.
+import type { BacktestConfig } from "./backtestConfig";
+export const goLiveRequest = new Signal<BacktestConfig | null>(null);
+export function requestGoLive(cfg: BacktestConfig): void {
+  goLiveRequest.set(structuredClone(cfg));
+  openLivePanel();
+}
+
 // Request to open the per-indicator settings modal (TradingView-style gear). Set
 // by the indicator legend's gear icon (ChartCore's OnTooltipIconClick handler);
 // the modal (in App) reads/writes the live indicator via overrideIndicator.

@@ -181,6 +181,16 @@ export function saveBacktestOpen(open: boolean): void {
   saveLocal(BACKTEST_OPEN_KEY, open);
 }
 
+// Whether the Live trading panel is open — device-local view preference (mirrors
+// backtestOpen) so the panel reopens after a reload if it was open.
+const LIVE_OPEN_KEY = `${PREFIX}.liveOpen`;
+export function loadLiveOpen(): boolean {
+  return load<boolean>(LIVE_OPEN_KEY, false);
+}
+export function saveLiveOpen(open: boolean): void {
+  saveLocal(LIVE_OPEN_KEY, open);
+}
+
 // Whether the on-chart backtest trading-period shading is shown. Device-local
 // view preference (like the panel open/side/split flags above), default on.
 const BACKTEST_PERIODS_SHOWN_KEY = `${PREFIX}.backtestPeriodsShown`;

@@ -9,6 +9,7 @@
 // position, order_id for a resting order).
 
 import { isCapitalBroker, onTradesDirty } from "./persist";
+import { isStrategyDeal } from "./liveTags";
 import { tradesSignal } from "./signals";
 import { API_BASE as BASE, errorDetail } from "./http";
 
@@ -119,6 +120,7 @@ export interface OrderRequest {
   stop_level?: number | null;
   take_profit_level?: number | null;
   confirm?: boolean; // required for real-money (live) orders
+  client_order_id?: string; // derived idempotency key (live engine); absent ⇒ minted
 }
 
 // Selector payload from GET /api/brokers: registered data brokers + accounts.
@@ -226,6 +228,7 @@ export interface TradeView {
   openedAt: number | null; // created_at as epoch ms (position open / order placed)
   leverage: number | null; // broker per-position leverage (null → fall back to configured)
   margin: number | null; // broker deposit requirement, account currency (null → estimate)
+  source?: "manual" | "strategy"; // "strategy" = opened by the live engine (dock `strat` tag)
 }
 
 export interface Quote {
@@ -302,6 +305,18 @@ async function fetchPositions(account: TradeAccount): Promise<Position[]> {
   return res.json();
 }
 
+/** Open positions for an account (optionally one epic), normalized to TradeView.
+ *  Used by the live engine to reconcile before evaluating — a direct fetch, not
+ *  the shared subscribeTrades feed (which is account-global and event-driven). */
+export async function fetchOpenPositions(
+  account: TradeAccount,
+  epic?: string,
+): Promise<TradeView[]> {
+  const positions = await fetchPositions(account);
+  const filtered = epic ? positions.filter((p) => p.epic === epic) : positions;
+  return toTrades(filtered, []);
+}
+
 async function fetchWorkingOrders(account: TradeAccount): Promise<WorkingOrder[]> {
   const url = `${BASE}/api/orders/working?account=${encodeURIComponent(account)}`;
   const res = await fetch(url);
@@ -325,6 +340,7 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
         openedAt: p.created_at ? Date.parse(p.created_at) : null,
         leverage: p.leverage,
         margin: p.margin,
+        source: isStrategyDeal(p.deal_id) ? "strategy" : "manual",
       }),
     ),
     ...orders.map(
@@ -341,6 +357,7 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
         openedAt: o.created_at ? Date.parse(o.created_at) : null,
         leverage: null,
         margin: null,
+        source: "manual",
       }),
     ),
   ];

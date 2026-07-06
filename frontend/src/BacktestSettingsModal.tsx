@@ -9,6 +9,7 @@ import CloseButton from "./CloseButton";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
+import { requestGoLive } from "./lib/signals";
 import { resolveWindow } from "./lib/backtestWindow";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
@@ -140,7 +141,7 @@ const TARGET_KINDS: { value: TargetKind; label: string }[] = [
   { value: "price", label: "Fixed price" },
 ];
 
-const EMPTY_RISK: RiskConfig = { stop: { kind: "none" }, target: { kind: "none" } };
+export const EMPTY_RISK: RiskConfig = { stop: { kind: "none" }, target: { kind: "none" } };
 const DEFAULT_SCALING: ScalingConfig = { maxConcurrent: 1 };
 // `tip` is a one-line tooltip. Crosses fire ONCE on the bar the lines meet (an
 // event); the comparisons are true on EVERY bar the condition holds (a state).
@@ -1016,6 +1017,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           <button className="ghost" onClick={onClose}>
             Close
           </button>
+          <button
+            className="ghost bt-golive"
+            title="Copy this strategy into the Live panel to trade a demo/live account"
+            onClick={() => requestGoLive(cfg)}
+          >
+            Go live →
+          </button>
           <button onClick={run}>Run backtest</button>
         </div>
     </aside>
@@ -1027,7 +1035,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
 // default (kind "none") so existing presets are untouched. ATR kinds expose a
 // length (default 14); % / trailing % expose a percent; ATR kinds expose a
 // multiple; fixed price exposes an absolute level.
-function RiskSection({
+export function RiskSection({
   risk,
   onChange,
 }: {
@@ -1483,7 +1491,7 @@ function RuleMenu({
   );
 }
 
-function RuleGroupSection({
+export function RuleGroupSection({
   title,
   info,
   group,

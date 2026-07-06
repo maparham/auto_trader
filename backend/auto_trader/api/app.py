@@ -28,7 +28,7 @@ from auto_trader.brokers.registry import build_registry
 from auto_trader.core.tick_store import TICK_STORE
 
 from . import deps
-from .routers import backtest, charts, markets, state, stream, trading
+from .routers import backtest, charts, markets, state, strategy, stream, trading
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for _module in (markets, trading, state, charts, backtest, stream):
+for _module in (markets, trading, state, charts, backtest, strategy, stream):
     app.include_router(_module.router)
 
 
@@ -105,6 +105,8 @@ for _module in (markets, trading, state, charts, backtest, stream):
 # handler function — do this AFTER the include loop, which needs the module object.
 from .deps import BROKER_HEALTH  # noqa: E402,F401
 from .routers.backtest import backtest  # noqa: E402,F401
+from .routers.strategy import evaluate_strategy  # noqa: E402,F401
+from .schemas import EvaluateRequest  # noqa: E402,F401
 from .routers.charts import candles, candles_synthetic  # noqa: E402,F401
 from .routers.markets import market_meta  # noqa: E402,F401
 from .routers.state import _broadcast_state, _state_subscribers  # noqa: E402,F401

@@ -17,7 +17,8 @@ import {
   requestBacktestClear,
 } from "./lib/signals";
 import { saveBacktestPeriodsShown } from "./lib/persist";
-import { metricRows, tradeRows, sortTradeRows, type TradeRow } from "./lib/backtestPanelData";
+import { metricGroups, METRIC_INFO, tradeRows, sortTradeRows, type TradeRow } from "./lib/backtestPanelData";
+import InfoTip from "./components/InfoTip";
 import { RESOLUTION_SECONDS } from "./lib/feed";
 import { formatExpiryShort } from "./lib/alertUi";
 
@@ -98,7 +99,7 @@ export default function BacktestPanel() {
           {s.net_pnl.toFixed(2)}
         </span>
         <span>{s.n_trades} trades</span>
-        <span title="Largest peak-to-trough equity drop">−{s.max_drawdown.toFixed(2)} dd</span>
+        <span title="Largest equity drop from a high to a low">−{s.max_drawdown.toFixed(2)} dd</span>
         <span>{(s.win_rate * 100).toFixed(0)}% win</span>
       </span>
       <button
@@ -159,11 +160,21 @@ export default function BacktestPanel() {
       {(
         tab === "overview" ? (
           <div className="bt-panel-overview">
-            {metricRows(result).map((m) => (
-              <div className="bt-panel-card" key={m.label}>
-                <span className="bt-panel-card-label">{m.label}</span>
-                <span className={`bt-panel-card-value${m.tone ? ` ${m.tone}` : ""}`}>{m.value}</span>
-              </div>
+            {metricGroups(result).map((g) => (
+              <section className="bt-panel-group" key={g.title}>
+                <h4 className="bt-panel-group-title">{g.title}</h4>
+                <div className="bt-panel-grid">
+                  {g.rows.map((m) => (
+                    <div className="bt-panel-stat" key={m.label}>
+                      <span className="bt-panel-stat-label">
+                        <span className="bt-panel-stat-name">{m.label}</span>
+                        {METRIC_INFO[m.label] && <InfoTip title={m.label} text={METRIC_INFO[m.label]} />}
+                      </span>
+                      <span className={`bt-panel-stat-value${m.tone ? ` ${m.tone}` : ""}`}>{m.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         ) : (

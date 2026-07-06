@@ -6,6 +6,11 @@ export interface MetricRow {
   tone: "pos" | "neg" | "";
 }
 
+export interface MetricGroup {
+  title: string;
+  rows: MetricRow[];
+}
+
 export interface TradeRow {
   i: number;
   side: string;
@@ -63,11 +68,12 @@ export function metricRows(res: BacktestResult): MetricRow[] {
     tone: "",
   });
 
-  // Profit factor
+  // Profit factor — magnitude-only (always ≥0); >1 is good but sign vs 0 tells
+  // nothing, so leave it uncoloured rather than always-green.
   rows.push({
     label: "Profit factor",
     value: res.metrics.profit_factor !== null ? res.metrics.profit_factor.toFixed(2) : "—",
-    tone: res.metrics.profit_factor !== null ? getTone(res.metrics.profit_factor) : "",
+    tone: "",
   });
 
   // Expectancy
@@ -77,53 +83,60 @@ export function metricRows(res: BacktestResult): MetricRow[] {
     tone: getTone(res.metrics.expectancy),
   });
 
+  // Per-trade magnitudes below are sign-fixed (a win is always ≥0, a loss ≤0),
+  // so colouring them by sign is decoration, not information — leave them plain
+  // and reserve tone for the metrics whose sign is a verdict (P&L, return,
+  // expectancy). Drawdown especially must not read green just for being stored
+  // positive — a drawdown is never good news.
+
   // Avg win
   rows.push({
     label: "Avg win",
     value: res.metrics.avg_win.toFixed(2),
-    tone: getTone(res.metrics.avg_win),
+    tone: "",
   });
 
   // Avg loss
   rows.push({
     label: "Avg loss",
     value: res.metrics.avg_loss.toFixed(2),
-    tone: getTone(res.metrics.avg_loss),
+    tone: "",
   });
 
   // Avg win/loss
   rows.push({
     label: "Avg win/loss",
     value: res.metrics.avg_win_loss_ratio !== null ? res.metrics.avg_win_loss_ratio.toFixed(2) : "—",
-    tone: res.metrics.avg_win_loss_ratio !== null ? getTone(res.metrics.avg_win_loss_ratio) : "",
+    tone: "",
   });
 
   // Largest win
   rows.push({
     label: "Largest win",
     value: res.metrics.largest_win.toFixed(2),
-    tone: getTone(res.metrics.largest_win),
+    tone: "",
   });
 
   // Largest loss
   rows.push({
     label: "Largest loss",
     value: res.metrics.largest_loss.toFixed(2),
-    tone: getTone(res.metrics.largest_loss),
+    tone: "",
   });
 
-  // Max drawdown
+  // Drawdown — the run's max peak-to-trough equity drop (the tooltip spells this
+  // out; the shorter label keeps the stat grid tidy).
   rows.push({
-    label: "Max drawdown",
+    label: "Drawdown",
     value: res.summary.max_drawdown.toFixed(2),
-    tone: getTone(res.summary.max_drawdown),
+    tone: "",
   });
 
-  // Max drawdown %
+  // Drawdown %
   rows.push({
-    label: "Max drawdown %",
+    label: "Drawdown %",
     value: res.metrics.max_drawdown_pct.toFixed(2) + "%",
-    tone: getTone(res.metrics.max_drawdown_pct),
+    tone: "",
   });
 
   // Avg duration
@@ -133,21 +146,62 @@ export function metricRows(res: BacktestResult): MetricRow[] {
     tone: "",
   });
 
-  // Max consec wins
+  // Win streak — the longest run of consecutive winning trades.
   rows.push({
-    label: "Max consec wins",
+    label: "Win streak",
     value: String(res.metrics.max_consec_wins),
     tone: "",
   });
 
-  // Max consec losses
+  // Loss streak — the longest run of consecutive losing trades.
   rows.push({
-    label: "Max consec losses",
+    label: "Loss streak",
     value: String(res.metrics.max_consec_losses),
     tone: "",
   });
 
   return rows;
+}
+
+// The same metrics as metricRows(), arranged into the three questions a reader
+// actually asks of a backtest — did it make money (Performance), how did the
+// individual trades behave (Trades), and what would it have put you through
+// (Risk & extremes). Grouping is the hierarchy the flat grid was missing; order
+// within each group leads with the metric you'd read first.
+const METRIC_GROUPS: { title: string; labels: string[] }[] = [
+  { title: "Performance", labels: ["Net P&L", "Return %", "Profit factor", "Expectancy"] },
+  { title: "Trades", labels: ["Trades", "Win rate", "Avg win", "Avg loss", "Avg win/loss", "Avg duration"] },
+  { title: "Risk & extremes", labels: ["Drawdown", "Drawdown %", "Largest win", "Largest loss", "Win streak", "Loss streak"] },
+];
+
+// One brief line per metric — plain language, keyed by the metric's label.
+// Kept as static copy (not derived) so the tooltip text lives beside the group
+// definitions, away from the value/tone computation.
+export const METRIC_INFO: Record<string, string> = {
+  "Net P&L": "Total profit after costs, across all trades.",
+  "Return %": "Net profit as a % of starting capital.",
+  "Profit factor": "Gross profit divided by gross loss; above 1 is profitable.",
+  "Expectancy": "Average profit or loss per trade.",
+  "Trades": "Number of closed trades.",
+  "Win rate": "Share of trades that closed in profit.",
+  "Avg win": "Average size of a winning trade.",
+  "Avg loss": "Average size of a losing trade.",
+  "Avg win/loss": "Average win divided by average loss.",
+  "Avg duration": "Average time a trade stayed open.",
+  "Drawdown": "Largest equity drop from a high to a low.",
+  "Drawdown %": "That drop as a % of the equity high.",
+  "Largest win": "Biggest single winning trade.",
+  "Largest loss": "Biggest single losing trade.",
+  "Win streak": "Longest run of wins in a row.",
+  "Loss streak": "Longest run of losses in a row.",
+};
+
+export function metricGroups(res: BacktestResult): MetricGroup[] {
+  const byLabel = new Map(metricRows(res).map((r) => [r.label, r]));
+  return METRIC_GROUPS.map((g) => ({
+    title: g.title,
+    rows: g.labels.map((label) => byLabel.get(label)).filter((r): r is MetricRow => r != null),
+  }));
 }
 
 export function tradeRows(res: BacktestResult, resSeconds: number): TradeRow[] {

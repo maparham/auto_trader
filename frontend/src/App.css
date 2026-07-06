@@ -835,18 +835,21 @@
 .bt-section-title .ind-info,
 .bt-field-label .ind-info,
 .bt-tf-label .ind-info,
-.bt-mask-toggle .ind-info {
+.bt-mask-toggle .ind-info,
+.bt-panel-stat-label .ind-info {
   display: inline-flex; align-items: center; padding: 0; border: none;
   background: none; cursor: help; color: var(--text-faint);
 }
 .bt-section-title .ind-info:hover,
 .bt-field-label .ind-info:hover,
 .bt-tf-label .ind-info:hover,
-.bt-mask-toggle .ind-info:hover { color: var(--text-dim); }
+.bt-mask-toggle .ind-info:hover,
+.bt-panel-stat-label .ind-info:hover { color: var(--text-dim); }
 .bt-section-title .ind-info svg,
 .bt-field-label .ind-info svg,
 .bt-tf-label .ind-info svg,
-.bt-mask-toggle .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.bt-mask-toggle .ind-info svg,
+.bt-panel-stat-label .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
 /* Field labels that carry a trailing ⓘ (costs, session, timezone). */
 .bt-field-label { display: inline-flex; align-items: center; gap: 4px; }
 .instrument-grid { margin: 0; }
@@ -963,11 +966,14 @@
 .bt-results-summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   flex-shrink: 0;
   padding: 2px 0 8px;
 }
+/* Metrics are the left-aligned headline; the Periods toggle + clear ✕ cluster
+   together as one control group on the right (margin-left:auto eats the slack
+   so the pill doesn't float in the middle of the row). */
+.bt-results-summary .bt-periods-toggle { margin-left: auto; }
 .bt-results-messages { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 0 0 8px; }
 .bt-body { flex: 1; min-width: 0; min-height: 0; padding: 4px 16px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; scroll-behavior: smooth; }
 /* Each tab's content is now a stacked section in one continuous scroll pane; the
@@ -3311,24 +3317,41 @@
   margin-left: auto;
 }
 
-/* Overview: wrapped grid of small label/value cards. */
+/* Overview: a grouped tearsheet — three sections (Performance / Trades / Risk),
+   each a column-aligned grid of borderless label/value stats. The grouping is
+   the hierarchy the old flat 16-card grid was missing; the panel above already
+   carries the headline, so this reads as the supporting detail. */
 .bt-panel-overview {
-  display: flex; flex-wrap: wrap; gap: 8px; min-height: 0;
-  padding: 2px 0; overflow-y: auto;
+  display: flex; flex-direction: column; min-height: 0;
+  padding: 2px 0 4px; overflow-y: auto;
 }
-.bt-panel-card {
-  display: flex; flex-direction: column; gap: 3px;
-  min-width: 110px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+.bt-panel-group + .bt-panel-group {
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border);
 }
-.bt-panel-card-label {
+.bt-panel-group-title {
+  margin: 0 0 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.bt-panel-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 12px 16px;
+}
+.bt-panel-stat { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bt-panel-stat-label {
+  display: flex; align-items: center; gap: 3px; min-width: 0;
   font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint);
 }
-.bt-panel-card-value {
+.bt-panel-stat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The ⓘ mustn't be squeezed out when the name ellipsizes, and stays put on hover.
+   Sized down to sit proportionate to the 9px label. */
+.bt-panel-stat-label .ind-info { flex-shrink: 0; }
+.bt-panel-stat-label .ind-info svg { width: 11px; height: 11px; }
+.bt-panel-stat-value {
   font-family: var(--mono); font-variant-numeric: tabular-nums;
-  font-size: 13px; font-weight: 600; color: var(--text);
+  font-size: 14px; font-weight: 600; color: var(--text);
 }
-.bt-panel-card-value.pos { color: var(--pos); }
-.bt-panel-card-value.neg { color: var(--neg); }
+.bt-panel-stat-value.pos { color: var(--pos); }
+.bt-panel-stat-value.neg { color: var(--neg); }
 
 /* Trades: the scrollable table wrapper — this is the flex-scroll boundary. */
 .bt-panel-trades-wrap { flex: 1; overflow: auto; min-height: 0; }
@@ -3390,3 +3413,63 @@
 .bt-panel-sort.on { color: var(--text); }
 .bt-panel-sort-caret { font-size: 7px; line-height: 1; }
 .bt-panel-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* --- Live trading panel ------------------------------------------------- */
+.live-panel { width: 440px; }
+.live-env {
+  font-size: 9px; font-weight: 700; letter-spacing: .05em;
+  padding: 2px 6px; border-radius: 9px; margin-left: 8px; vertical-align: middle;
+}
+.live-env.demo { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.live-env.live { background: color-mix(in srgb, var(--neg) 16%, transparent); color: var(--neg); }
+.live-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.live-controls { display: flex; gap: 12px; }
+.live-controls .bt-field { flex: 1; }
+.live-banner {
+  background: color-mix(in srgb, #f4a723 14%, var(--surface));
+  border: 1px solid color-mix(in srgb, #f4a723 45%, transparent);
+  border-radius: 6px; padding: 8px 10px; font-size: 11.5px; color: var(--text);
+}
+.live-banner-err {
+  background: color-mix(in srgb, var(--neg) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--neg) 45%, transparent);
+}
+.live-status { border-top: 1px solid var(--border); padding-top: 10px; }
+.live-status-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+.live-dot.on { background: var(--pos); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pos) 22%, transparent); }
+.live-muted { color: var(--text-faint); font-size: 11px; }
+.live-log { list-style: none; margin: 8px 0 0; padding: 0; font-size: 11px; display: flex; flex-direction: column; gap: 3px; max-height: 140px; overflow-y: auto; }
+.live-log li { color: var(--text); font-variant-numeric: tabular-nums; }
+.live-foot {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 10px 12px; border-top: 1px solid var(--border);
+}
+.live-confirm { flex: 1; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12px; }
+.live-arm, .live-disarm, .live-rearm {
+  padding: 8px 16px; border-radius: 6px; border: none; font-weight: 600; font-size: 12px; cursor: pointer; color: #fff;
+}
+.live-arm { background: var(--accent); margin-left: auto; }
+.live-arm:disabled { opacity: .5; cursor: not-allowed; }
+.live-disarm { background: #5b6570; margin-left: auto; }
+.live-rearm { background: #f4a723; }
+
+/* Strategy-owned position tag in the dock (engine positions). */
+.pp-strat-tag {
+  display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px;
+  font-size: 9px; font-weight: 600; letter-spacing: .04em; vertical-align: middle;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent);
+}
+
+/* Live panel strategy journal */
+.live-journal { border-top: 1px solid var(--border); padding-top: 10px; }
+.live-journal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.live-journal-clear { background: none; border: none; color: var(--text-faint); font-size: 11px; cursor: pointer; }
+.live-journal-clear:hover { color: var(--text); }
+.live-metrics { display: flex; gap: 8px; flex-wrap: wrap; }
+.live-mm { background: var(--surface-2, color-mix(in srgb, var(--text) 5%, transparent)); border-radius: 5px; padding: 5px 8px; min-width: 56px; }
+.live-mm b { display: block; font-size: 13px; font-variant-numeric: tabular-nums; }
+.live-mm span { font-size: 9px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
+.live-mm .pos, .live-journal-list .pos { color: var(--pos); }
+.live-mm .neg, .live-journal-list .neg { color: var(--neg); }
+.live-journal-list { list-style: none; margin: 8px 0 0; padding: 0; font-size: 11px; display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }

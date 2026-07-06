@@ -23,6 +23,7 @@ import {
   alertModalRequest,
   alertsPanelOpen,
   tradePanelOpen,
+  livePanelOpen,
   symbolSearchRequest,
   drawingSettingsRequest,
 } from "./lib/signals";
@@ -181,6 +182,8 @@ export default function Toolbar({
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
   const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
   useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
+  const [liveOpen, setLiveOpen] = useState(livePanelOpen.value);
+  useEffect(() => livePanelOpen.subscribe(setLiveOpen), []);
 
   // App opens a fresh tab → prompt for its symbol (the new tab starts empty).
   useEffect(() => symbolSearchRequest.subscribe(() => setSymModalOpen(true)), []);
@@ -802,6 +805,20 @@ export default function Toolbar({
           stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
           aria-hidden="true">
           <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
+        </svg>
+      </button>
+
+      {/* Live trading panel toggle — a separate surface from the backtest for
+          arming rule strategies against a demo/live broker account. */}
+      <button
+        className={`anchor-btn live-toggle${liveOpen ? " on" : ""}`}
+        title="Show live trading panel"
+        onClick={() => livePanelOpen.set(!livePanelOpen.value)}
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+          aria-hidden="true">
+          <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m10.14 0-2.83-2.83M9.76 9.76 6.93 6.93" />
         </svg>
       </button>
 

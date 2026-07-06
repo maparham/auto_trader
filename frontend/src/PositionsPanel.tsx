@@ -532,7 +532,12 @@ export default function PositionsPanel({
                         }}
                         title="Click to open chart · double-click to edit"
                       >
-                        <td className="pp-c-sym">{t.epic}</td>
+                        <td className="pp-c-sym">
+                          {t.epic}
+                          {t.source === "strategy" && (
+                            <span className="pp-strat-tag" title="Opened by the live trading engine">strat</span>
+                          )}
+                        </td>
                         <td className={`pp-c-side ${long ? "pp-side-long" : "pp-side-short"}`}>
                           {tradeLabel(t.kind, t.side)}
                         </td>

@@ -10,7 +10,8 @@ import ThemeToggle from "./ThemeToggle";
 import SettingsModal from "./Settings";
 import BacktestSettingsModal from "./BacktestSettingsModal";
 import { defaultBacktestConfig } from "./lib/backtestConfig";
-import { loadBacktestLastUsed, saveBacktestLastUsed, loadBacktestOpen, saveBacktestOpen } from "./lib/persist";
+import { loadBacktestLastUsed, saveBacktestLastUsed, loadBacktestOpen, saveBacktestOpen, loadLiveOpen, saveLiveOpen } from "./lib/persist";
+import LiveTradingPanel from "./LiveTradingPanel";
 import AlertModal from "./AlertModal";
 import IndicatorSettings from "./IndicatorSettings";
 import DrawingSettings from "./DrawingSettings";
@@ -36,6 +37,7 @@ import {
   drawingSettingsRequest,
   alertsPanelOpen,
   tradePanelOpen,
+  livePanelOpen,
   alertsChanged,
   bumpAlerts,
   settingsRequest,
@@ -256,6 +258,17 @@ export default function App() {
     saveBacktestOpen(open);
   };
   useEffect(() => backtestSettingsRequest.subscribe(() => openBacktestCfg(true)), []);
+  // The Live trading panel — a separate docked surface from the backtest. Driven
+  // by the livePanelOpen signal; open-state is device-local (loadLiveOpen) so an
+  // armed strategy's panel reopens on reload.
+  const [showLive, setShowLive] = useState(loadLiveOpen);
+  useEffect(() => {
+    if (loadLiveOpen()) livePanelOpen.set(true);
+    return livePanelOpen.subscribe((v) => {
+      setShowLive(v);
+      saveLiveOpen(v);
+    });
+  }, []);
   const [alertReq, setAlertReq] = useState(alertModalRequest.value);
   useEffect(() => alertModalRequest.subscribe(setAlertReq), []);
   const [alertEdit, setAlertEdit] = useState(alertEditRequest.value);
@@ -1606,6 +1619,18 @@ export default function App() {
               requestBacktestRun();
             }}
             onClose={() => openBacktestCfg(false)}
+          />
+        )}
+        {/* Live trading: a separate docked surface from the backtest, so trading
+            real money is never confused with testing. */}
+        {showLive && symbol && period && (
+          <LiveTradingPanel
+            epic={symbol.epic}
+            resolution={period.resolution}
+            brokerId={brokerId}
+            accounts={accounts}
+            defaultAccount={activeAccount}
+            onClose={() => livePanelOpen.set(false)}
           />
         )}
       </div>

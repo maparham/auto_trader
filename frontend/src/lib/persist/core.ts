@@ -116,6 +116,7 @@ const DEVICE_LOCAL_SUFFIXES = ["activeLayoutId", "scratch", "autosave"] as const
 // be added here for the same reason.
 const DEVICE_LOCAL_FLAT_KEYS = new Set([
   `${PREFIX}.backtestOpen`,
+  `${PREFIX}.liveOpen`,
   `${PREFIX}.backtestSide`,
   `${PREFIX}.backtestSplit`,
   `${PREFIX}.backtestPeriodsShown`,

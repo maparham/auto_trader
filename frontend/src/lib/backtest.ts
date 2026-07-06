@@ -42,7 +42,7 @@ import {
   clearBacktestResult,
   type StoredBacktestResult,
 } from "./persist";
-import { computePeriodBands, type BacktestPeriod, type PeriodBand } from "./backtestPeriods";
+import { computePeriodBands, type BacktestPeriod } from "./backtestPeriods";
 
 type Trade = StoredBacktestResult["trades"][number];
 
@@ -534,14 +534,13 @@ function ensureZoneOverlayRegistered(): void {
 
 const PERIOD_OVERLAY = "backtestPeriod";
 
-interface PeriodExtra { label: string }
-
 // The trading-period band: a faint full-pane-height rect in the price pane, and
-// a faint labeled chip in the X-axis pane (createXAxisFigures — the native way to
-// draw on the time axis, so it pans/zooms with the axis). Read-only: lock on
-// create AND every figure ignoreEvent, so it never intercepts clicks or the
-// crosshair — the cursor's time pill (klinecharts' crosshair label, drawn above
-// the overlay layer) stays fully legible over the faint chip.
+// a matching faint rect in the X-axis pane (createXAxisFigures — the native way to
+// draw on the time axis, so it pans/zooms with the axis). No text label — the
+// shading alone marks the traded span, and a per-band label collided with the
+// axis time ticks. Read-only: lock on create AND every figure ignoreEvent, so it
+// never intercepts clicks or the crosshair — the cursor's time pill (klinecharts'
+// crosshair label, drawn above the overlay layer) stays fully legible.
 const periodOverlay: OverlayTemplate = {
   name: PERIOD_OVERLAY,
   totalStep: 2,
@@ -561,39 +560,18 @@ const periodOverlay: OverlayTemplate = {
       },
     ];
   },
-  createXAxisFigures: ({ overlay, coordinates, bounding }) => {
+  createXAxisFigures: ({ coordinates, bounding }) => {
     if (coordinates.length < 2) return [];
-    const { label } = (overlay.extendData as PeriodExtra) ?? { label: "" };
     const x0 = Math.min(coordinates[0].x, coordinates[1].x);
     const x1 = Math.max(coordinates[0].x, coordinates[1].x);
-    const w = x1 - x0;
-    const figures: OverlayFigure[] = [
+    return [
       {
         type: "rect",
-        attrs: { x: x0, y: 0, width: w, height: bounding.height },
+        attrs: { x: x0, y: 0, width: x1 - x0, height: bounding.height },
         styles: { style: PolygonType.Fill, color: `${PERIOD_COLOR}33` }, // ~20%
         ignoreEvent: true,
       },
     ];
-    if (label && w > 44) {
-      figures.push({
-        type: "text",
-        attrs: { x: (x0 + x1) / 2, y: bounding.height / 2, text: label, align: "center", baseline: "middle" },
-        // backgroundColor/borderColor MUST be transparent: klinecharts' default
-        // overlay-text style fills a solid (blue) pill, which on the axis would
-        // mimic the crosshair time label. We want only the faint grey chip rect
-        // above to read, with plain grey text on it.
-        styles: {
-          color: PERIOD_COLOR,
-          size: 10,
-          family: "-apple-system, system-ui, sans-serif",
-          backgroundColor: "transparent",
-          borderColor: "transparent",
-        },
-        ignoreEvent: true,
-      });
-    }
-    return figures;
   },
 };
 
@@ -602,19 +580,6 @@ function ensurePeriodOverlayRegistered(): void {
   if (periodOverlayRegistered) return;
   periodOverlayRegistered = true;
   registerOverlay(periodOverlay);
-}
-
-/** Short label for a band's axis chip: a clock span for an intraday-width band
- * (a mask session), a date span for a multi-day one (the whole window). */
-function periodLabel(b: PeriodBand, period: BacktestPeriod): string {
-  const tz = period.mask?.tz;
-  const multiDay = b.toMs - b.fromMs >= 20 * 3600 * 1000;
-  if (multiDay) {
-    const d: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", ...(tz ? { timeZone: tz } : {}) };
-    return `${new Date(b.fromMs).toLocaleDateString([], d)} – ${new Date(b.toMs).toLocaleDateString([], d)}`;
-  }
-  const t: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", ...(tz ? { timeZone: tz } : {}) };
-  return `${new Date(b.fromMs).toLocaleTimeString([], t)}–${new Date(b.toMs).toLocaleTimeString([], t)}`;
 }
 
 /** Remove this chart's period-band overlays and reset the bookkeeping. */
@@ -646,7 +611,6 @@ function drawPeriodBands(chart: Chart, artifacts: BacktestArtifacts, result: Sto
         { timestamp: b.fromMs, value: yVal },
         { timestamp: b.toMs, value: yVal },
       ],
-      extendData: { label: periodLabel(b, period) } satisfies PeriodExtra,
     });
     if (typeof id === "string") artifacts.periodBandIds.push(id);
   }

@@ -2,8 +2,9 @@
 
 import type { RuleGroup, Costs, RiskConfig, ScalingConfig, RecurrenceMask } from "./lib/backtestConfig";
 import { API_BASE as BASE, errorDetail } from "./lib/http";
+import type { EvaluateRequest, EvaluateResult } from "./lib/liveTypes";
 
-interface Candle {
+export interface Candle {
   time: number; // unix seconds (UTC)
   open: number;
   high: number;
@@ -96,5 +97,15 @@ export async function runBacktest(req: BacktestRequest): Promise<BacktestResult>
     body: JSON.stringify(req),
   });
   if (!res.ok) throw new Error(await errorDetail(res, `request failed (${res.status})`));
+  return res.json();
+}
+
+export async function evaluateStrategy(req: EvaluateRequest): Promise<EvaluateResult> {
+  const res = await fetch(`${BASE}/api/strategy/evaluate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `evaluate failed (${res.status})`));
   return res.json();
 }

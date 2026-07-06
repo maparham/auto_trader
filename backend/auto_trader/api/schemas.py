@@ -369,3 +369,42 @@ class StateValue(BaseModel):
     # The PUT body. `value` is any JSON the frontend stored under this key — we
     # persist it opaquely (never inspect it), exactly like a localStorage value.
     value: Any
+
+
+# --- live trading: /api/strategy/evaluate (one-bar decision layer) -----------
+
+
+class PositionStateDTO(BaseModel):
+    """The reconciled broker position for one epic, or the request omits it (flat)."""
+    side: Literal["buy", "sell"]
+    quantity: float
+    open_level: float
+
+
+class ActionDTO(BaseModel):
+    kind: Literal["open", "close"]
+    leg: Literal["long", "short"]
+    side: Literal["buy", "sell"]
+    reason: str
+    stop_level: float | None = None
+    take_profit_level: float | None = None
+
+
+class EvaluateRequest(BaseModel):
+    epic: str
+    resolution: str
+    candles: list[CandleDTO]
+    series: dict[str, list[float | None]] = {}
+    longEntry: RuleGroupDTO
+    longExit: RuleGroupDTO
+    shortEntry: RuleGroupDTO
+    shortExit: RuleGroupDTO
+    longEnabled: bool = True
+    shortEnabled: bool = True
+    longRisk: RiskConfigDTO | None = None
+    shortRisk: RiskConfigDTO | None = None
+    position: PositionStateDTO | None = None
+
+
+class EvaluateResponse(BaseModel):
+    actions: list[ActionDTO]
