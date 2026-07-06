@@ -597,6 +597,24 @@ export default function ChartCore({
     }, 0);
   };
 
+  // Extend any higher-timeframe EMA/MA overlay to cover the currently-loaded
+  // history. The stashed HTF series is sized to the span loaded WHEN the indicator
+  // was applied/rehydrated, so ANY later history extension — user scroll-back, a
+  // quick-range cover+fit, or the startup drawing/backtest anchor walk — would
+  // otherwise leave the MTF curve stopping mid-chart. Call this after every path
+  // that pages older bars in; the coverage guard inside refreshMtfIndicators makes
+  // it a no-op once the series already reaches far enough. `explicitOldestMs` is
+  // the just-loaded page's first bar when the caller has it (klinecharts may not
+  // have merged the prepend into getDataList yet).
+  const extendMtfCoverage = (explicitOldestMs?: number) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const loaded = chart.getDataList()[0]?.timestamp;
+    const oldest = Math.min(explicitOldestMs ?? Infinity, loaded ?? Infinity);
+    if (!Number.isFinite(oldest)) return;
+    void refreshMtfIndicators(chart, epicRef.current, brokerIdRef.current, oldest);
+  };
+
   // Page older history back until the loaded data reaches `fromTs`, then fit
   // [fromTs, toTs]. The backend caps a single fetch at 1000 bars, so a calendar
   // window (e.g. a month of 30m bars ≈ 1400) won't fit in one request — we walk
@@ -678,6 +696,7 @@ export default function ChartCore({
       if (result !== "aborted" && chartRef.current && pendingRangeRef.current === token) {
         fitVisibleRange(chartRef.current, fromTs, toTs);
         pendingRangeRef.current = null;
+        extendMtfCoverage(); // history just grew — re-cover any HTF EMA/MA
       }
     } finally {
       // Release the mutex only if a newer pick hasn't taken ownership (it holds the
@@ -768,6 +787,9 @@ export default function ChartCore({
       if (!isStale() && backtestFromMs != null && backtestFromMs < first.timestamp) {
         reanchorBacktestMarkers(chart);
       }
+      // History just extended back to the oldest anchor — re-cover any HTF EMA/MA
+      // so its curve reaches the newly-loaded bars (no-op if already covered).
+      if (!isStale()) extendMtfCoverage();
       // Bounded walk: a very old anchor on a very fine interval can exceed the page
       // budget — the drawing/marker then still clamps. Say so instead of failing silently.
       const oldest = chartRef.current?.getDataList()[0];
@@ -2729,6 +2751,11 @@ export default function ChartCore({
               // dataIndex-only overlay points by the prepend size here — do NOT
               // shift them again (see applyOlderBars for the INIT-type path).
               params.callback(fresh, true);
+              // Extend any HTF EMA/MA overlay back over the newly-loaded range so
+              // the MTF curve doesn't stop where the older bars begin. `fresh[0]`
+              // is the new global oldest (explicit — klinecharts may not have merged
+              // the prepend into getDataList yet).
+              extendMtfCoverage(fresh[0].timestamp);
             }
           })
           .catch(() => params.callback([], true))

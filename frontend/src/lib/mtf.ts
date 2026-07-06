@@ -131,6 +131,29 @@ function applyOffset(
   return out;
 }
 
+// A few extra HTF bars of warmup beyond the exact MA length, so tiny rounding
+// at the span edge never leaves the oldest visible bar in the unconverged zone.
+export const HTF_WARMUP_BARS = 10;
+
+/**
+ * The oldest timestamp an MTF indicator's HTF series must reach so it stays
+ * drawn across the chart's whole *loaded* span — not just the most-recent bars.
+ *
+ * `alignHtfToChart` blanks any chart bar older than the oldest HTF bar it was
+ * given, so the HTF fetch must reach back to the oldest loaded chart bar. It
+ * must also reach `length` HTF bars *before* that, or the MA's warmup zone (SMA
+ * undefined / EMA not yet converged) would land on the oldest visible bars and
+ * show a blank or kinked line there — the load-bearing term of the fix.
+ */
+export function htfCoverageStartMs(
+  oldestChartMs: number,
+  htfMs: number,
+  length: number,
+): number {
+  if (!(htfMs > 0)) return oldestChartMs;
+  return oldestChartMs - (Math.max(1, length) + HTF_WARMUP_BARS) * htfMs;
+}
+
 /**
  * Map an HTF value series onto chart bars without lookahead.
  *

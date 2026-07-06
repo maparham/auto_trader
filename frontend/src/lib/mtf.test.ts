@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { KLineData } from "klinecharts";
-import { maSeries } from "./mtf";
+import { maSeries, htfCoverageStartMs, HTF_WARMUP_BARS } from "./mtf";
 
 // Minimal flat bars (open=high=low=close) one step apart.
 function bars(closes: number[]): KLineData[] {
@@ -72,5 +72,27 @@ describe("maSeries smoothing", () => {
     }
     // Smoothing is computed from the unshifted base, so offset does not move it.
     expect(offset.smoothing).toEqual(noOffset.smoothing);
+  });
+});
+
+describe("htfCoverageStartMs", () => {
+  const HOUR = 3_600_000;
+  const oldest = 1_000 * HOUR; // arbitrary oldest chart bar
+
+  it("reaches back to before the oldest chart bar by the MA length plus warmup", () => {
+    // The HTF series must start `length` HTF bars before the oldest chart bar so
+    // alignment covers it and the MA is already converged there.
+    expect(htfCoverageStartMs(oldest, HOUR, 9)).toBe(oldest - (9 + HTF_WARMUP_BARS) * HOUR);
+  });
+
+  it("adds the MA length so the oldest visible bars are not blank/unconverged", () => {
+    // Longer MA => reaches strictly further back (more warmup). Load-bearing term.
+    const short = htfCoverageStartMs(oldest, HOUR, 9);
+    const long = htfCoverageStartMs(oldest, HOUR, 200);
+    expect(short - long).toBe((200 - 9) * HOUR);
+  });
+
+  it("returns the oldest bar unchanged when htfMs is not positive", () => {
+    expect(htfCoverageStartMs(oldest, 0, 9)).toBe(oldest);
   });
 });
