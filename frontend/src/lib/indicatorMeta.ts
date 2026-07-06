@@ -25,6 +25,12 @@ export interface IndicatorInputDef {
   max?: number;
   step?: number;
   options?: Array<{ value: string | number; label: string }>;
+  // Optional ⓘ info tip shown beside the input's label in the settings modal.
+  tip?: string;
+  // Optional conditional visibility: only render this input when another input's
+  // (extend-stored) value is one of `equals`. Used e.g. to hide Pivot Bands'
+  // "Window (K)" unless Mode is "avg". Honored by the generic Inputs renderer.
+  showWhen?: { field: string; equals: Array<string | number> };
 }
 
 interface IndicatorMetaDef {
@@ -193,6 +199,34 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     inputs: [],
     title: "Previous Period High/Low",
     desc: "Two kinds of high/low reference lines: a rolling trailing range (previous N bars/minutes/hours/days/weeks, sliding) and anchored previous-period lines (previous trading day and week). Each aggregates by max/min, average, or median. Toggle and style each in the modal.",
+  },
+  PIVOT_BANDS: {
+    inputs: [
+      {
+        ...num(0, "Strength"),
+        tip: "Bars required each side of a swing. Higher value filters out less prominent (weaker) pivots.",
+      },
+      {
+        key: "mode",
+        label: "Mode",
+        type: "select",
+        source: "extend",
+        field: "mode",
+        default: "last",
+        options: [
+          { value: "last", label: "Last pivot" },
+          { value: "avg", label: "Average of last K" },
+        ],
+        tip: "Last pivot: carry the latest swing forward. Average of last K: carry the mean of the last K swings.",
+      },
+      {
+        ...num(1, "Window (K)"),
+        showWhen: { field: "mode", equals: ["avg"] },
+        tip: "Nuymber of recent pivots to average.",
+      },
+    ],
+    title: "Pivot Bands",
+    desc: "Two step-lines tracking confirmed fractal swing highs and lows separately — a dynamic support/resistance channel. Strength sets the bars required on each side of a pivot. Mode carries either the last pivot or the average of the last K pivots forward; the line only steps when a new pivot confirms (N bars late, no repaint).",
   },
   SESSIONS: {
     inputs: [],

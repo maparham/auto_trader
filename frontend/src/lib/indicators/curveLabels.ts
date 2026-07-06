@@ -117,6 +117,11 @@ export function curveLabel(
       return figKey === "bbi" ? "BBI" : null;
     case "BOLL":
       return bollCurveLabel(figKey, calcParams);
+    case "PIVOT_BANDS":
+      // Two curves, already distinguished by side; the pill just names each.
+      if (figKey === "pivotHigh") return "Pivot High";
+      if (figKey === "pivotLow") return "Pivot Low";
+      return null;
     default:
       return null;
   }

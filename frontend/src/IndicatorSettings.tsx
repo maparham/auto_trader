@@ -104,6 +104,7 @@ const CURVE_LABEL_TYPES = new Set([
   "SMA",
   "BBI",
   "BOLL",
+  "PIVOT_BANDS",
 ]);
 
 // Line-style options for the RSI band / MA selectors (canvas-drawn elements).
@@ -1779,10 +1780,29 @@ export default function IndicatorSettings({
                 </div>
               )}
               {inputs.map((inp) => {
+                // Conditional visibility: skip an input whose showWhen guard isn't
+                // met by the current (extend-stored) value of the controlling field.
+                if (inp.showWhen) {
+                  const ctrl = inputs.find(
+                    (d) => d.source === "extend" && d.field === inp.showWhen!.field,
+                  );
+                  const cur = genExtend[inp.showWhen.field] ?? ctrl?.default;
+                  if (!inp.showWhen.equals.includes(cur as string | number)) return null;
+                }
+                // Label, with an optional ⓘ info tip beside it (matches the
+                // hand-built panels like PREV_HL). Plain <label> when no tip.
+                const labelEl = inp.tip ? (
+                  <span className="ind-row-head">
+                    <label>{inp.label}</label>
+                    <InfoTip title={inp.label} text={inp.tip} />
+                  </span>
+                ) : (
+                  <label>{inp.label}</label>
+                );
                 if (inp.source === "calcParam" && inp.index != null) {
                   return (
                     <div className="ind-row" key={inp.key}>
-                      <label>{inp.label}</label>
+                      {labelEl}
                       <input
                         type="number"
                         min={inp.min}
@@ -1797,7 +1817,7 @@ export default function IndicatorSettings({
                 if (inp.source === "extend" && inp.field && inp.type === "select") {
                   return (
                     <div className="ind-row" key={inp.key}>
-                      <label>{inp.label}</label>
+                      {labelEl}
                       <select
                         value={String(genExtend[inp.field] ?? inp.default ?? "")}
                         onChange={(e) => setExtendInput(inp.field!, e.target.value)}

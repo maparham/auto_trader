@@ -15,6 +15,8 @@ export * from "./indicators/vwap";
 export * from "./indicators/prevHl";
 export * from "./indicators/rsi";
 export * from "./indicators/sessions";
+export * from "./indicators/pivots";
+export * from "./indicators/pivotBands";
 export * from "./indicators/curveLabels";
 
 import { EMA_TEMPLATE, MA_TEMPLATE } from "./indicators/ma";
@@ -23,6 +25,7 @@ import { VWAP_TEMPLATE, AVWAP_TEMPLATE } from "./indicators/vwap";
 import { PREV_HL_TEMPLATE } from "./indicators/prevHl";
 import { RSI_TEMPLATE } from "./indicators/rsi";
 import { SESSIONS_TEMPLATE, registerSessionsAxis } from "./indicators/sessions";
+import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
 
 // Base templates for our custom indicator TYPES, keyed by type. Each is a full
 // klinecharts indicator definition MINUS the `name` (the name is assigned per
@@ -36,7 +39,8 @@ export type CustomIndicatorType =
   | "AVWAP"
   | "PREV_HL"
   | "RSI"
-  | "SESSIONS";
+  | "SESSIONS"
+  | "PIVOT_BANDS";
 
 export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate, "name">> = {
   EMA: EMA_TEMPLATE,
@@ -47,6 +51,7 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   PREV_HL: PREV_HL_TEMPLATE,
   RSI: RSI_TEMPLATE,
   SESSIONS: SESSIONS_TEMPLATE,
+  PIVOT_BANDS: PIVOT_BANDS_TEMPLATE,
 };
 
 // Register each base type under its own name (so a single instance can still use
@@ -71,4 +76,5 @@ export const OVERLAY_INDICATORS = new Set([
   "AVWAP",
   "LR",
   "PREV_HL",
+  "PIVOT_BANDS",
 ]);

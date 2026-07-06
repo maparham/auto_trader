@@ -18,6 +18,7 @@ import {
 import { priceOf, type PriceSource } from "../mtf";
 import { hexToRgba } from "../lineStyle";
 import { fullLine } from "./shared";
+import { isPivotAt } from "./pivots";
 
 export type DivergenceKind = "bullish" | "bearish" | "hiddenBullish" | "hiddenBearish";
 
@@ -130,19 +131,10 @@ export function detectDivergences(
   const hi = Math.max(lo, Math.floor(cfg.rangeMax) || lo);
   // A pivot is confirmed only with lbL valid bars to the LEFT and lbR to the RIGHT
   // (so the most recent lbR bars never form one — the same confirmation lag as
-  // TradingView's ta.pivothigh/low). `want === "low"` finds a local minimum (ties
-  // allowed: no neighbour strictly lower), `"high"` a local maximum.
-  const isPivot = (i: number, want: "low" | "high"): boolean => {
-    const v = rsi[i];
-    if (v === undefined) return false;
-    if (i - lbL < 0 || i + lbR >= n) return false;
-    for (let j = i - lbL; j <= i + lbR; j++) {
-      const w = rsi[j];
-      if (w === undefined) return false;
-      if (j !== i && (want === "low" ? w < v : w > v)) return false;
-    }
-    return true;
-  };
+  // TradingView's ta.pivothigh/low). Ties allowed (strict=false): `"low"` finds a
+  // local minimum with no neighbour strictly lower, `"high"` a local maximum.
+  const isPivot = (i: number, want: "low" | "high"): boolean =>
+    isPivotAt(rsi, i, lbL, lbR, want, false);
   const add = (i: number, seg: DivSegment) => {
     (out[i].divs ??= []).push(seg);
   };
