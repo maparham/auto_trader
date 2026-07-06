@@ -22,9 +22,10 @@ import {
   PRICE_SOURCES,
   SMOOTHING_TYPES,
 } from "./lib/indicatorMeta";
-import { applyMaTimeframe } from "./lib/mtfCoordinator";
+import { applyMaTimeframe, applyPivotBandsTimeframe } from "./lib/mtfCoordinator";
 import type {
   MaExtend,
+  PivotBandsMode,
   AvwapExtend,
   BandMode,
   BandSetting,
@@ -287,6 +288,8 @@ export default function IndicatorSettings({
   const isMa = isMovingAverage(type);
   const isAvwap = type === "AVWAP";
   const isRsi = type === "RSI";
+  // Pivot Bands supports MTF (like EMA/MA) but lives on the generic inputs path.
+  const isPivotBands = type === "PIVOT_BANDS";
   // Overlay indicators with a multi-line channel get per-line show/hide checkboxes
   // (+ opacity) in the Style tab, like TradingView's band toggles.
   const hasLineToggle = isAvwap || type === "LR" || type === "PREV_HL";
@@ -551,6 +554,13 @@ export default function IndicatorSettings({
   function setExtendInput(field: string, value: unknown) {
     const next = { ...genExtend, [field]: value };
     setGenExtend(next);
+    // Pivot Bands' Mode change must recompute the HTF series under an active
+    // timeframe (a plain extend write would only re-align the stale one), so
+    // route it through the coordinator instead of the generic override.
+    if (isPivotBands && field === "mode") {
+      applyPivotBands({ mode: value as string });
+      return;
+    }
     const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
     chart.overrideIndicator(
       { name, extendData: { ...((live?.extendData as object) ?? {}), ...next } },
@@ -771,6 +781,9 @@ export default function IndicatorSettings({
       if (smoothType !== "none") extendData.smoothing = { type: smoothType, length: smoothLen };
       if (timeframe !== "chart") extendData.mtf = { timeframe };
     }
+    // Pivot Bands persists only the chosen timeframe (never the bulky HTF series);
+    // refreshMtfIndicators refetches it on reload, like EMA/MA.
+    if (isPivotBands && timeframe !== "chart") extendData.mtf = { timeframe };
     if (isAvwap) {
       extendData.source = avwapSource;
       extendData.bandMode = bandMode;
@@ -890,6 +903,28 @@ export default function IndicatorSettings({
     );
   }
 
+  // Push a Pivot Bands config (chart-TF or MTF) through the coordinator, which
+  // refetches + recomputes both step-lines on the higher timeframe when one is
+  // set. Reads explicit overrides so a param change never races setState; N/K
+  // come from calcParams, mode from genExtend.
+  function applyPivotBands(
+    next: Partial<{ n: number; k: number; mode: string; timeframe: string }> = {},
+  ) {
+    const n = next.n ?? calcParams[0] ?? 5;
+    const k = next.k ?? calcParams[1] ?? 3;
+    const mode = (next.mode ?? genExtend.mode ?? "last") as PivotBandsMode;
+    const tf = next.timeframe ?? timeframe;
+    void applyPivotBandsTimeframe(
+      chart,
+      epic,
+      name,
+      paneId,
+      { n, k, mode },
+      tf === "chart" ? null : tf,
+      brokerId,
+    );
+  }
+
   // AVWAP source/bands apply: write the config onto extendData and let calc
   // re-run (the generic `apply` only touches calcParams/visible/styles, so it
   // would NOT recompute on a source/band change). Reads explicit overrides so it
@@ -940,6 +975,12 @@ export default function IndicatorSettings({
     if (isMa && index === 0) {
       setMaLength(value);
       applyMa({ length: value });
+    } else if (isPivotBands) {
+      // Strength (0) / Window K (1). Under an active timeframe the HTF series must
+      // be recomputed with the new param, not just re-aligned — route through the
+      // coordinator (which also writes calcParams).
+      apply({ calcParams: nextCp });
+      applyPivotBands({ n: nextCp[0], k: nextCp[1] });
     } else {
       apply({ calcParams: nextCp });
     }
@@ -2001,6 +2042,38 @@ export default function IndicatorSettings({
                       })}
                     </select>
                   </div>
+                </>
+              ) : isPivotBands ? (
+                <>
+                  {/* Higher-timeframe swings aligned onto the chart bars (no
+                      lookahead), same as EMA/MA. */}
+                  <div className="ind-row">
+                    <label>Timeframe</label>
+                    <select
+                      value={timeframe}
+                      onChange={(e) => {
+                        setTimeframe(e.target.value);
+                        applyPivotBands({ timeframe: e.target.value });
+                      }}
+                    >
+                      <option value="chart">Chart</option>
+                      {higherTimeframes.map((p) => (
+                        <option key={p.resolution} value={p.resolution}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input type="checkbox" checked disabled readOnly />
+                      <span>Wait for timeframe closes</span>
+                    </label>
+                    <InfoTip
+                      title="Wait for timeframe closes"
+                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                    />
+                  </span>
                 </>
               ) : (
                 <div className="ind-row">

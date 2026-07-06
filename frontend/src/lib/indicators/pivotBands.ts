@@ -23,11 +23,23 @@ import {
 } from "klinecharts";
 import { fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
+import { alignHtfToChart } from "../mtf";
 
 export type PivotBandsMode = "last" | "avg";
 
 export interface PivotBandsExtend {
   mode?: PivotBandsMode;
+  // Multi-timeframe: compute the bands on a higher timeframe and align onto the
+  // chart bars inside calc (no lookahead). Unlike EMA/MA this carries TWO series
+  // — the pivot-high and pivot-low step-lines — since each is independent. Set by
+  // the MTF coordinator (applyPivotBandsTimeframe); calc re-aligns on scroll-back.
+  mtf?: {
+    timeframe: string | null;
+    htfStarts?: number[]; // HTF bar open timestamps (ms)
+    htfHigh?: Array<number | undefined>; // pivotHigh step-value per HTF bar
+    htfLow?: Array<number | undefined>; // pivotLow step-value per HTF bar
+    htfMs?: number; // HTF bar duration (ms)
+  };
   // Legend toggle (settings modal): hide this indicator's value from the legend.
   hideLegendValue?: boolean;
 }
@@ -64,6 +76,22 @@ export function computePivotBands(
   k: number,
   ext: PivotBandsExtend,
 ): PivotBandsPoint[] {
+  const mtf = ext.mtf;
+  if (mtf?.timeframe && mtf.htfStarts && mtf.htfHigh && mtf.htfLow && mtf.htfMs) {
+    // Multi-timeframe: align the precomputed higher-timeframe step-lines onto the
+    // live chart bars. Each chart bar takes the most recent CLOSED HTF bar
+    // (waitClose=true), so the HTF confirmation lag already baked into the series
+    // is preserved and no chart bar sees a pivot from an HTF bar closing later.
+    // The step-lines carry values forward (heldValue), so the aligned series is
+    // gap-free after the first pivot — exactly what alignHtfToChart's
+    // last-usable-bar rule needs.
+    const ts = dataList.map((k) => k.timestamp);
+    const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
+    const high = alignHtfToChart(ts, htfBars, mtf.htfHigh, mtf.htfMs, true);
+    const low = alignHtfToChart(ts, htfBars, mtf.htfLow, mtf.htfMs, true);
+    return ts.map((_, i) => ({ pivotHigh: high[i] ?? undefined, pivotLow: low[i] ?? undefined }));
+  }
+
   const mode: PivotBandsMode = ext.mode === "avg" ? "avg" : "last";
   const len = dataList.length;
   const out: PivotBandsPoint[] = new Array(len);

@@ -91,3 +91,72 @@ describe("computePivotBands", () => {
     expect(pts[11].pivotHigh).toBe(100); // unchanged from bar 7
   });
 });
+
+describe("computePivotBands MTF alignment", () => {
+  // Chart bars every 1ms; a 4ms "higher timeframe" whose pivot values are supplied
+  // directly on extendData.mtf. Only timestamps matter for alignment.
+  function chartBars(n: number): KLineData[] {
+    return Array.from({ length: n }, (_, i) => ({
+      timestamp: i,
+      open: 0,
+      high: 0,
+      low: 0,
+      close: 0,
+      volume: 0,
+    }));
+  }
+
+  const HTF_MS = 4;
+  // Three HTF bars opening at t=0,4,8. htfHigh/htfLow are already carried-forward
+  // step values (as computePivotBands would produce on the HTF): dense after the
+  // first pivot, undefined before it.
+  const mtf = {
+    timeframe: "4m",
+    htfStarts: [0, 4, 8],
+    htfHigh: [undefined, 100, 110] as Array<number | undefined>,
+    htfLow: [70, 70, 65] as Array<number | undefined>,
+    htfMs: HTF_MS,
+  };
+
+  it("takes the most-recent CLOSED HTF bar for each chart bar (no lookahead)", () => {
+    const pts = computePivotBands(chartBars(13), 2, 3, { mode: "last", mtf });
+
+    // HTF bar 0 closes at t=4, bar 1 at t=8, bar 2 at t=12.
+    // Chart bars 0..3 precede any HTF close → nothing usable yet.
+    for (let i = 0; i <= 3; i++) {
+      expect(pts[i].pivotHigh).toBeUndefined();
+      expect(pts[i].pivotLow).toBeUndefined();
+    }
+    // At t=4 HTF bar 0 has closed: its high was still pre-first-pivot (undefined),
+    // its low was 70.
+    for (let i = 4; i <= 7; i++) {
+      expect(pts[i].pivotHigh).toBeUndefined();
+      expect(pts[i].pivotLow).toBe(70);
+    }
+    // At t=8 HTF bar 1 has closed → high 100, low 70.
+    for (let i = 8; i <= 11; i++) {
+      expect(pts[i].pivotHigh).toBe(100);
+      expect(pts[i].pivotLow).toBe(70);
+    }
+    // At t=12 HTF bar 2 has closed → high 110, low 65.
+    expect(pts[12].pivotHigh).toBe(110);
+    expect(pts[12].pivotLow).toBe(65);
+  });
+
+  it("never lets a chart bar see an HTF bar that closes in its future", () => {
+    const pts = computePivotBands(chartBars(12), 2, 3, { mode: "last", mtf });
+    // Bar at t=11 must NOT yet see HTF bar 2 (closes at t=12).
+    expect(pts[11].pivotHigh).toBe(100);
+    expect(pts[11].pivotLow).toBe(70);
+  });
+
+  it("falls through to chart-timeframe calc when the MTF payload is incomplete", () => {
+    // Missing htfLow → not a usable MTF payload; compute on the chart bars instead.
+    const data = bars({ 5: 100 }, {}, 12);
+    const pts = computePivotBands(data, 2, 3, {
+      mode: "last",
+      mtf: { timeframe: "4m", htfStarts: [0], htfHigh: [100], htfMs: 4 },
+    });
+    expect(pts[7].pivotHigh).toBe(100); // chart-TF confirmation at i+N
+  });
+});

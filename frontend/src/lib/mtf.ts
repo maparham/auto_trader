@@ -18,6 +18,15 @@ export type PriceSource =
   | "ohlc4"
   | "hlcc4";
 
+// Fields common to every MTF indicator's extendData.mtf, regardless of how many
+// value series it carries. Enough for the scroll-back coverage guard and the
+// refresh dispatcher to read timeframe/reach without knowing the series shape.
+export interface MtfSeriesBase {
+  timeframe: string | null;
+  htfStarts?: number[];
+  htfMs?: number;
+}
+
 export function priceOf(k: KLineData, src: PriceSource): number {
   switch (src) {
     case "open": return k.open;
