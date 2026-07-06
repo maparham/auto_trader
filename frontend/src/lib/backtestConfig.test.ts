@@ -38,6 +38,26 @@ describe("seriesName", () => {
   });
 });
 
+describe("seriesName slope suffix", () => {
+  it("appends ~len for a sloped indicator, before any @tf", () => {
+    expect(seriesName({ kind: "indicator", indicator: "EMA", length: 9, slope: { len: 3 } })).toBe("EMA_9~3");
+    expect(
+      seriesName({ kind: "indicator", indicator: "EMA", length: 9, timeframe: "HOUR", slope: { len: 3 } }),
+    ).toBe("EMA_9~3@HOUR");
+  });
+
+  it("gives a sloped price its own series key (plain price still has none)", () => {
+    expect(seriesName({ kind: "price", field: "close" })).toBeNull();
+    expect(seriesName({ kind: "price", field: "close", slope: { len: 1 } })).toBe("close~1");
+  });
+
+  it("keeps a curve and its slope as distinct series", () => {
+    const base = seriesName({ kind: "indicator", indicator: "EMA", length: 9 });
+    const slope = seriesName({ kind: "indicator", indicator: "EMA", length: 9, slope: { len: 3 } });
+    expect(base).not.toBe(slope);
+  });
+});
+
 describe("cloneRule", () => {
   it("preserves the count modifier and the entry-price operand", () => {
     const rule = {
@@ -121,6 +141,48 @@ describe("collectSeriesOperands", () => {
     };
     const names = collectSeriesOperands(cfg).map(seriesName).sort();
     expect(names).toEqual(["AVWAP_1000", "AVWAP_2000"]);
+  });
+});
+
+describe("collectSeriesOperands with slope", () => {
+  it("collects a sloped price operand (which now keys a series)", () => {
+    const cfg: BacktestConfig = {
+      range: { mode: "bars", bars: 500 },
+      longEntry: {
+        combine: "AND",
+        rules: [
+          { left: { kind: "price", field: "close", slope: { len: 2 } }, op: "gt", right: { kind: "const", value: 0 } },
+        ],
+      },
+      longExit: EMPTY_GROUP,
+      shortEntry: EMPTY_GROUP,
+      shortExit: EMPTY_GROUP,
+      longEnabled: true,
+      shortEnabled: true,
+      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+    };
+    expect(collectSeriesOperands(cfg).map(seriesName)).toEqual(["close~2"]);
+  });
+});
+
+describe("longestIndicatorLength with slope", () => {
+  it("adds the slope lookback to the operand's own length", () => {
+    const cfg: BacktestConfig = {
+      range: { mode: "bars", bars: 500 },
+      longEntry: {
+        combine: "AND",
+        rules: [
+          { left: { kind: "indicator", indicator: "EMA", length: 50, slope: { len: 5 } }, op: "gt", right: { kind: "const", value: 0 } },
+        ],
+      },
+      longExit: EMPTY_GROUP,
+      shortEntry: EMPTY_GROUP,
+      shortExit: EMPTY_GROUP,
+      longEnabled: true,
+      shortEnabled: true,
+      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+    };
+    expect(longestIndicatorLength(cfg)).toBe(55);
   });
 });
 

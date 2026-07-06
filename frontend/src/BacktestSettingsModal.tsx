@@ -27,6 +27,7 @@ import {
   type Combine,
   type Costs,
   cloneRule,
+  slopeLen,
   type RiskConfig,
   type StopKind,
   type TargetKind,
@@ -1641,9 +1642,9 @@ export function RuleGroupSection({
       )}
       {group.rules.map((rule, i) => (
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`} key={i}>
-          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} />
+          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} />
           <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
-          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} />
+          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} />
           {isExit && <CountField value={rule.count} onChange={(count) => setRule(i, { ...rule, count })} />}
           <div className="bt-rule-actions">
             <button
@@ -1742,6 +1743,7 @@ function OperandPicker({
   defaultAvwapAnchor,
   baseResolution,
   allowEntry = false,
+  siblingSloped = false,
 }: {
   value: Operand;
   onChange: (op: Operand) => void;
@@ -1749,7 +1751,17 @@ function OperandPicker({
   baseResolution: string;
   // Offer "Entry price" — only in exit rules, where a position exists to read it.
   allowEntry?: boolean;
+  // The rule's OTHER operand is a slope, so this operand — if it's a Number — is
+  // being compared in %/hr; show a unit hint to make that legible.
+  siblingSloped?: boolean;
 }) {
+  // Slope can wrap an indicator or a price (not a constant or the entry price).
+  const canSlope = value.kind === "indicator" || value.kind === "price";
+  const sloped = slopeLen(value) !== null;
+  function setSlope(spec: { len: number } | undefined) {
+    if (value.kind !== "indicator" && value.kind !== "price") return;
+    onChange({ ...value, slope: spec });
+  }
   // Timeframes a rule operand can run on: the base (blank ⇒ follow the run's
   // base timeframe) plus every non-live timeframe strictly higher than base.
   // Lower-than-base is excluded — it can't align onto the coarser base bars
@@ -1771,14 +1783,18 @@ function OperandPicker({
   // the indicator name for indicators, else the kind.
   const typeToken = value.kind === "indicator" ? value.indicator : value.kind;
   const prevLength = value.kind === "indicator" ? value.length : undefined;
+  // Carry the slope transform across a type switch (like `length` above), so
+  // swapping EMA↔SMA or indicator↔price doesn't silently drop an active slope and
+  // turn the rule into a different condition. const/entry can't be sloped.
+  const prevSlope = value.kind === "indicator" || value.kind === "price" ? value.slope : undefined;
   function setType(token: string) {
-    if (token === "price") return onChange({ kind: "price", field: "close" });
+    if (token === "price") return onChange({ kind: "price", field: "close", slope: prevSlope });
     if (token === "const") return onChange({ kind: "const", value: 0 });
     if (token === "entry") return onChange({ kind: "entry" });
     const indicator = token as IndicatorKind;
-    if (indicator === "AVWAP") onChange({ kind: "indicator", indicator, anchor: defaultAvwapAnchor });
-    else if (NO_LENGTH.includes(indicator)) onChange({ kind: "indicator", indicator });
-    else onChange({ kind: "indicator", indicator, length: prevLength ?? 9 });
+    if (indicator === "AVWAP") onChange({ kind: "indicator", indicator, anchor: defaultAvwapAnchor, slope: prevSlope });
+    else if (NO_LENGTH.includes(indicator)) onChange({ kind: "indicator", indicator, slope: prevSlope });
+    else onChange({ kind: "indicator", indicator, length: prevLength ?? 9, slope: prevSlope });
   }
 
   return (
@@ -1832,7 +1848,7 @@ function OperandPicker({
         </>
       )}
       {value.kind === "price" && (
-        <select value={value.field} onChange={(e) => onChange({ kind: "price", field: e.target.value as PriceField })}>
+        <select value={value.field} onChange={(e) => onChange({ ...value, field: e.target.value as PriceField })}>
           {PRICE_FIELDS.map((f) => (
             <option key={f} value={f}>
               {f}
@@ -1841,13 +1857,44 @@ function OperandPicker({
         </select>
       )}
       {value.kind === "const" && (
-        <input
-          type="number"
-          step="any"
-          className="bt-operand-length"
-          value={value.value}
-          onChange={(e) => onChange({ kind: "const", value: Number(cleanNumInput(e.currentTarget)) })}
-        />
+        <>
+          <input
+            type="number"
+            step="any"
+            className="bt-operand-length"
+            value={value.value}
+            onChange={(e) => onChange({ kind: "const", value: Number(cleanNumInput(e.currentTarget)) })}
+          />
+          {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
+        </>
+      )}
+      {canSlope && (
+        <>
+          <Tooltip content="Compare the slope (rate of change, % per hour) of this curve instead of its value">
+            <button
+              type="button"
+              className={`bt-operand-slope${sloped ? " on" : ""}`}
+              onClick={() => setSlope(sloped ? undefined : { len: 1 })}
+              aria-label="Use slope"
+              aria-pressed={sloped}
+            >
+              Δ
+            </button>
+          </Tooltip>
+          {sloped && (
+            <Tooltip content="Slope lookback (bars)">
+              <input
+                type="number"
+                min={1}
+                className="bt-operand-length"
+                value={slopeLen(value) ?? 1}
+                onKeyDown={blockNegKeys}
+                onChange={(e) => setSlope({ len: Number(cleanNumInput(e.currentTarget)) })}
+                onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setSlope({ len: n }))}
+              />
+            </Tooltip>
+          )}
+        </>
       )}
     </div>
   );

@@ -78,6 +78,31 @@ def test_post_backtest_returns_markers_for_a_simple_cross():
     assert len(result.candles) == len(candles)
 
 
+def test_post_backtest_sloped_operand_uses_keyed_series():
+    # The backtest path's D4 check must accept a sloped operand's `~len` key and
+    # the engine must read the slope series (this is the primary, backtest path).
+    candles = _candles([10, 10, 10, 10, 10, 10])
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        # slope>0 first at i=3 -> entry signal there fills at i=4's open (in-range).
+        "series": {"EMA_9~3": [None, None, None, 2.0, 2.0, 2.0]},
+        **_groups(
+            long_entry={"combine": "AND", "rules": [
+                {"left": {"kind": "indicator", "indicator": "EMA", "length": 9, "slope": {"len": 3}},
+                 "op": "gt", "right": {"kind": "const", "value": 0.0}}
+            ]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+    }
+    result = _run(body)  # no 422 -> the posted `EMA_9~3` key matched series_name
+    entries = [m for m in result.markers if m.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].side == "buy" and "slope(EMA_9,3)" in entries[0].reason
+
+
 def test_post_backtest_avwap_anchor_uses_keyed_series():
     candles = _candles([10, 10, 10, 10, 10])
     anchor_ms = candles[0]["time"] * 1000

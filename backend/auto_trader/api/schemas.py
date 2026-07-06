@@ -98,6 +98,10 @@ class BacktestResponse(BaseModel):
 # candles + series + rules; engine does no indicator math and no re-fetch) ---
 
 
+class SlopeDTO(BaseModel):
+    len: int = Field(ge=1)
+
+
 class OperandDTO(BaseModel):
     kind: Literal["indicator", "price", "const", "entry"]
     indicator: Literal["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"] | None = None
@@ -109,6 +113,9 @@ class OperandDTO(BaseModel):
     # frontend aligns it onto the base bars, so the engine never reads this — it
     # only rides along to key the series (series_name); see OperandDTO.to_operand.
     timeframe: str | None = None
+    # Slope transform (indicator/price only): the frontend computes the %/hr slope
+    # as its own series; this only keys it (series_name), like `timeframe`.
+    slope: SlopeDTO | None = None
 
     @model_validator(mode="after")
     def _kind_matches_fields(self) -> "OperandDTO":
@@ -118,6 +125,8 @@ class OperandDTO(BaseModel):
             raise ValueError("price operand requires 'field'")
         if self.kind == "const" and self.value is None:
             raise ValueError("const operand requires 'value'")
+        if self.slope is not None and self.kind not in ("indicator", "price"):
+            raise ValueError("slope is only valid on an indicator or price operand")
         return self
 
     def to_operand(self) -> Operand:
@@ -125,6 +134,7 @@ class OperandDTO(BaseModel):
             kind=self.kind, indicator=self.indicator, length=self.length,
             field=self.field, value=self.value, anchor=self.anchor,
             timeframe=self.timeframe,
+            slope_len=self.slope.len if self.slope else None,
         )
 
 

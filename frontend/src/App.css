@@ -1038,6 +1038,19 @@
 .bt-rule-count.on .bt-rule-count-input { border-color: var(--accent); color: var(--accent); }
 /* Per-operand timeframe: hug the selected value ("Base"/"1H") — never stretch. */
 .bt-operand-tf { flex: 0 0 auto; width: auto; min-width: 0; }
+/* Slope toggle (Δ): use the curve's rate of change instead of its value. Dim
+   until on, accented when active — mirrors the "Nth time" count chip. */
+.bt-operand-slope {
+  flex: 0 0 auto; width: 24px; height: 24px; padding: 0; min-width: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--text-faint);
+}
+.bt-operand-slope:hover { color: var(--text); border-color: var(--text-faint); }
+.bt-operand-slope.on { color: var(--accent); border-color: var(--accent); }
+/* The %/hr unit hint next to a Number operand compared against a slope. */
+.bt-operand-unit { flex: 0 0 auto; font-size: 11px; color: var(--text-faint); }
 /* The base-timeframe select in the Period section: size to its value, not the
    full row (al-row select defaults to flex:1). Field width stays minimal. */
 .al-row select.bt-tf-select { flex: 0 0 auto; width: auto; min-width: 0; }

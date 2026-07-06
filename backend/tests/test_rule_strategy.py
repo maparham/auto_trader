@@ -50,6 +50,97 @@ def test_series_name_contract():
     assert series_name(_const(5)) is None
 
 
+def test_series_name_slope_suffix():
+    # The slope suffix (~len) comes BEFORE the timeframe suffix (@tf); a sloped
+    # price gets a key even though a plain price has none. Lockstep with the
+    # frontend seriesName (backtestConfig.ts).
+    assert series_name(Operand(kind="indicator", indicator="EMA", length=9, slope_len=3)) == "EMA_9~3"
+    assert (
+        series_name(Operand(kind="indicator", indicator="EMA", length=9, timeframe="HOUR", slope_len=3))
+        == "EMA_9~3@HOUR"
+    )
+    assert series_name(Operand(kind="price", field="close", slope_len=1)) == "close~1"
+    assert series_name(_price("close")) is None  # plain price unchanged
+
+
+def test_operand_name_keeps_timeframe_for_sloped_mtf():
+    from auto_trader.strategy.rule import _operand_name
+
+    # A sloped higher-timeframe operand must keep its @tf in the reason, so it's
+    # distinguishable from the same slope on the base timeframe.
+    op = Operand(kind="indicator", indicator="EMA", length=9, timeframe="HOUR", slope_len=3)
+    assert _operand_name(op) == "slope(EMA_9@HOUR,3)"
+    # Base-timeframe slope stays bare.
+    assert _operand_name(Operand(kind="indicator", indicator="EMA", length=9, slope_len=3)) == "slope(EMA_9,3)"
+
+
+def test_sloped_operand_reads_from_series_and_reason_renders():
+    # Flat candles, but the sloped EMA series says slope turns positive at i=4.
+    candles = _series([10, 10, 10, 10, 10, 10])
+    series = {"EMA_9~3": [None, None, None, -1.0, 2.0, 2.0]}
+    entry = RuleGroup(
+        "AND",
+        [Rule(Operand(kind="indicator", indicator="EMA", length=9, slope_len=3), "gt", _const(0))],
+    )
+    strat = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    entries = [f for f in result.fills if f.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].side is Side.BUY
+    assert entries[0].time == candles[5].time  # slope>0 first at i=4 -> fills at i=5 open
+    assert "slope(EMA_9,3) gt 0" in entries[0].reason
+
+
+def test_sloped_price_reads_series_not_candle():
+    # Candles are flat (a candle-diff slope would be 0), but the sloped-close
+    # series says slope>0 at i=2. A correct engine reads the series (fires at
+    # i=2 -> fill i=3); one that fell through to reading close off the candle
+    # would treat it as a plain price (10 > 0 every bar -> fire at i=0).
+    candles = _series([10, 10, 10, 10])
+    series = {"close~1": [None, None, 5.0, 5.0]}
+    entry = RuleGroup("AND", [Rule(Operand(kind="price", field="close", slope_len=1), "gt", _const(0))])
+    strat = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    entries = [f for f in result.fills if f.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].time == candles[3].time
+    assert "slope(close,1)" in entries[0].reason
+
+
+def test_sloped_operand_crosses_zero():
+    candles = _series([10, 10, 10, 10, 10])
+    series = {"EMA_9~1": [None, -1.0, -1.0, 2.0, 2.0]}
+    entry = RuleGroup(
+        "AND",
+        [Rule(Operand(kind="indicator", indicator="EMA", length=9, slope_len=1), "crossesAbove", _const(0))],
+    )
+    strat = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    entries = [f for f in result.fills if f.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].time == candles[4].time  # crosses up at i=3 -> fill i=4
+
+
+def test_slope_vs_slope_comparison():
+    candles = _series([10, 10, 10, 10])
+    series = {"EMA_9~1": [None, 1.0, 3.0, 3.0], "EMA_21~1": [None, 1.0, 1.0, 1.0]}
+    entry = RuleGroup(
+        "AND",
+        [
+            Rule(
+                Operand(kind="indicator", indicator="EMA", length=9, slope_len=1),
+                "gt",
+                Operand(kind="indicator", indicator="EMA", length=21, slope_len=1),
+            )
+        ],
+    )
+    strat = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    entries = [f for f in result.fills if f.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].time == candles[3].time  # fast slope>slow slope first at i=2
+
+
 def test_crosses_above_entry_fills_at_next_open():
     # fast <= slow through index 1, fast > slow at index 2 -> cross at i=2.
     candles = _series([10, 10, 10, 10, 10])

@@ -130,6 +130,21 @@ describe("requiredWarmupBars", () => {
     expect(requiredWarmupBars(c)).toBe(10); // no baseSeconds ⇒ unscaled
   });
 
+  it("adds the slope lookback in the operand's OWN timeframe, then scales", () => {
+    // EMA(10)@5m sloped over 3 bars needs (10+3) 5-minute bars warm = 13 × 5 = 65
+    // base bars, not (10×5)+3.
+    const c = cfg({
+      range: { mode: "bars", bars: 500, history: "minimal" },
+      longEntry: {
+        combine: "AND",
+        rules: [
+          { left: { kind: "indicator", indicator: "EMA", length: 10, timeframe: "MINUTE_5", slope: { len: 3 } }, op: "gt", right: { kind: "const", value: 0 } },
+        ],
+      },
+    });
+    expect(requiredWarmupBars(c, 60)).toBe(65);
+  });
+
   it("bars depth: a higher-timeframe operand can raise the requirement above the asked N", () => {
     // Asking 30 base bars, but EMA(20)@5m needs 20 × 5 = 100 base bars warm.
     const c = cfg({

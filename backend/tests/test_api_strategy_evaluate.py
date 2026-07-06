@@ -117,6 +117,44 @@ def test_close_takes_priority_over_entry_when_holding():
     assert resp.actions[0].kind == "close" and resp.actions[0].leg == "long"
 
 
+def test_sloped_operand_round_trips_and_opens():
+    # A sloped operand posts its slope series under the `~len` key; the endpoint's
+    # series-key check must accept that exact key and the engine reads it.
+    entry = {"combine": "AND", "rules": [
+        {"left": {"kind": "indicator", "indicator": "EMA", "length": 9, "slope": {"len": 3}},
+         "op": "gt", "right": {"kind": "const", "value": 0.0}}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 10, 10]),
+        "series": {"EMA_9~3": [None, None, 1.5]},  # slope>0 on the last bar
+        **_groups(long_entry=entry),
+        "position": None,
+    }
+    resp = _run(body)
+    assert len(resp.actions) == 1
+    assert resp.actions[0].kind == "open" and resp.actions[0].leg == "long"
+
+
+def test_sloped_mtf_operand_key_ordering():
+    # The sloped + higher-timeframe key is `EMA_9~3@HOUR` (slope before tf). A
+    # mismatch here would trip the missing-series check — this pins the ordering.
+    entry = {"combine": "AND", "rules": [
+        {"left": {"kind": "indicator", "indicator": "EMA", "length": 9,
+                  "timeframe": "HOUR", "slope": {"len": 3}},
+         "op": "gt", "right": {"kind": "const", "value": 0.0}}
+    ]}
+    body = {
+        "epic": "EURUSD", "resolution": "MINUTE",
+        "candles": _candles([10, 10, 10]),
+        "series": {"EMA_9~3@HOUR": [None, None, 2.0]},
+        **_groups(long_entry=entry),
+        "position": None,
+    }
+    resp = _run(body)  # no 422 -> the posted key matched series_name
+    assert len(resp.actions) == 1 and resp.actions[0].kind == "open"
+
+
 def test_entry_price_operand_closes_when_below_entry():
     # Holding long opened at 10; `close < entryPrice` must close on the last bar
     # (close 9 < entry 10). entryPrice comes from the position's open_level.

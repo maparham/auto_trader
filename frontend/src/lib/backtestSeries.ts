@@ -12,7 +12,7 @@
 import type { KLineData } from "klinecharts";
 import { maSeries, sma, alignHtfToChart } from "./mtf";
 import { vwapFrom, computeRsi } from "./customIndicators";
-import { collectSeriesOperands, seriesName, riskAtrLengths, scalingAtrLengths, type BacktestConfig, type Operand } from "./backtestConfig";
+import { collectSeriesOperands, seriesName, slopeLen, riskAtrLengths, scalingAtrLengths, type BacktestConfig, type Operand } from "./backtestConfig";
 import { atrSeries } from "./atr";
 import { RESOLUTION_SECONDS } from "./feed";
 
@@ -40,7 +40,7 @@ export async function buildSeries(
     if (name === null) continue;
     const tf = op.kind === "indicator" ? op.timeframe : undefined;
     if (!tf || tf === baseResolution) {
-      out[name] = toNullable(computeRaw(op, candles));
+      out[name] = toNullable(derive(op, candles, tfHours(baseResolution)));
       continue;
     }
     let htf = htfCache.get(tf);
@@ -49,7 +49,11 @@ export async function buildSeries(
       htfCache.set(tf, htf);
     }
     const htfMs = (RESOLUTION_SECONDS[tf] ?? 0) * 1000;
-    const aligned = alignHtfToChart(baseTimestamps, htf, computeRaw(op, htf), htfMs, true);
+    // Slope MUST be taken on the native HTF values (inside derive), BEFORE the
+    // forward-fill — diffing the forward-filled array would read 0 within each
+    // held HTF value and spike at the boundary. The slope divides by elapsed time
+    // in the operand's OWN timeframe, so pass the HTF's hours-per-bar.
+    const aligned = alignHtfToChart(baseTimestamps, htf, derive(op, htf, tfHours(tf)), htfMs, true);
     out[name] = toNullable(aligned);
   }
 
@@ -65,10 +69,43 @@ export async function buildSeries(
   return out;
 }
 
-/** One indicator's per-bar values over the given candles, undefined where the
- * indicator has no value (warm-up gap, unplaced AVWAP, missing volume). Pure in
- * `candles`, so it runs identically on the base bars or a higher timeframe's. */
+/** Hours per bar for a resolution (the "TF" in the slope's time denominator).
+ * Falls back to 1 hour for an unknown resolution. Sub-hour timeframes are < 1
+ * (e.g. a 5-minute bar is 1/12 h). */
+function tfHours(resolution: string): number {
+  return (RESOLUTION_SECONDS[resolution] ?? 3600) / 3600;
+}
+
+/** An operand's per-bar values, applying its slope transform if it has one. The
+ * slope is taken on `candles`' own values (native timeframe) so an HTF operand is
+ * differenced before it's forward-filled onto the base bars, not after.
+ * `barHours` is the hours-per-bar of THIS operand's timeframe. */
+function derive(op: Operand, candles: KLineData[], barHours: number): Array<number | undefined> {
+  const raw = computeRaw(op, candles);
+  const n = slopeLen(op);
+  return n === null ? raw : slopeOf(raw, n, barHours);
+}
+
+/** Tangent rate of change of `raw` in percent per HOUR over `n` bars:
+ *   (v[i] − v[i−n]) / |v[i−n]| / (n × barHours) × 100
+ * The run is elapsed time (n bars × barHours each), not bar count, so the slope
+ * is in %/hr regardless of the operand's timeframe — a 5-min and a 15-min EMA
+ * slope are directly comparable. undefined for the first `n` bars, wherever `raw`
+ * is undefined, or where the denominator is 0. */
+function slopeOf(raw: Array<number | undefined>, n: number, barHours: number): Array<number | undefined> {
+  return raw.map((v, i) => {
+    const prev = raw[i - n];
+    if (i < n || v === undefined || prev === undefined || prev === 0) return undefined;
+    return ((v - prev) / Math.abs(prev) / (n * barHours)) * 100;
+  });
+}
+
+/** One indicator's per-bar values over the given candles (or a price field's, for
+ * a sloped price operand), undefined where there's no value (warm-up gap, unplaced
+ * AVWAP, missing volume). Pure in `candles`, so it runs identically on the base
+ * bars or a higher timeframe's. */
 function computeRaw(op: Operand, candles: KLineData[]): Array<number | undefined> {
+  if (op.kind === "price") return candles.map((k) => k[op.field] ?? undefined);
   if (op.kind !== "indicator") return [];
   switch (op.indicator) {
     case "EMA":

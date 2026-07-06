@@ -5,34 +5,35 @@
 
 ## Problem
 
-Rules today compare the *value* of an indicator or price (e.g. `EMA_9 crossesAbove EMA_21`, `close gt EMA_50`). There's no way to condition on the *slope* of a curve — "EMA is rising", "EMA rising faster than 0.1%/bar", "fast EMA slope > slow EMA slope". Slope/momentum is a common and useful entry/exit gate that the current operand model can't express.
+Rules today compare the *value* of an indicator or price (e.g. `EMA_9 crossesAbove EMA_21`, `close gt EMA_50`). There's no way to condition on the *slope* of a curve — "EMA is rising", "EMA rising faster than 0.1%/hr", "fast EMA slope > slow EMA slope". Slope/momentum is a common and useful entry/exit gate that the current operand model can't express.
 
 ## Goal
 
 Let any indicator or price operand be marked as a **slope**, so its per-bar value becomes the rate of change of the underlying curve. This single feature covers all three uses the user asked for:
 
 - **Direction** — `slope(EMA_9) gt 0` (rising) / `lt 0` (falling).
-- **Numeric threshold** — `slope(EMA_9) gt 0.1` (rising faster than 0.1 %/bar).
+- **Numeric threshold** — `slope(EMA_9) gt 2` (rising faster than 2 %/hr).
 - **Slope vs slope** — `slope(EMA_9) gt slope(EMA_21)` (acceleration / momentum).
 
 It must compose with everything rules already do: the `crosses*` operators, the Nth-time `count` exit modifier, AND/OR groups, and higher-timeframe (MTF) operands. Live trading must inherit it with no live-specific work.
 
 ## Definition
 
-Slope is measured in **percent per bar** over a lookback of `N` bars:
+Slope is a **tangent** rate of change measured in **percent per hour** over a lookback of `N` bars. The "run" is elapsed *time*, `N × TF` hours, where `TF` is the hours-per-bar of the operand's own timeframe:
 
 ```
-slopePctPerBar[i] = (v[i] − v[i−N]) / |v[i−N]| / N × 100
+slopePctPerHour[i] = (v[i] − v[i−N]) / |v[i−N]| / (N × TF) × 100
 ```
 
-where `v` is the underlying series (the indicator or price the operand names).
+where `v` is the underlying series (the indicator or price the operand names) and `TF` is `RESOLUTION_SECONDS[operand-timeframe] / 3600` (a 5-minute bar is `1/12`).
 
 Rationale for each choice:
 
-- **Percent, not raw points** — a threshold that works on EUR/USD also works on gold. Raw price/bar is instrument-dependent and non-portable; presets stay meaningful across symbols. Direction is simply the sign, so `> 0` / `< 0` are scale-free too.
-- **`÷ N`** — dividing by the lookback means changing `N` smooths the measure *without* rescaling the threshold. A user who set `gt 0.1` can widen the window without re-tuning the number. This is deliberate.
+- **Percent, not raw points** — a threshold that works on EUR/USD also works on gold. Raw price/time is instrument-dependent and non-portable; presets stay meaningful across symbols. Direction is simply the sign, so `> 0` / `< 0` are scale-free too.
+- **`÷ (N × TF)` — divide by elapsed *time*, not bar count** — the value is a true geometric tangent in %/hr. Because the denominator is real time, the slope of a 5-min EMA and a 15-min EMA come out in the *same* units and compare directly (important for the higher-timeframe `@tf` operands). It also means a threshold is invariant to the run's base timeframe. `TF` is the operand-timeframe's hours-per-bar (base run timeframe for a `Base` operand, the `@tf` resolution for a higher-timeframe one).
 - **`|v[i−N]|`** (absolute denominator) — keeps the sign of the slope equal to the direction of change even if the base series can go non-positive. (All current bases — EMA/SMA/AVWAP/price/RSI/VOL/VOLMA — are non-negative, but abs is future-safe.)
-- **Denominator is the operand's own past value** — slope-of-RSI is "% change in RSI per bar," not RSI points. Internally consistent, and what makes slope-vs-slope comparisons behave.
+- **Denominator is the operand's own past value** — slope-of-RSI is "% change in RSI per hour," not RSI points. Internally consistent, and what makes slope-vs-slope comparisons behave.
+- **Hours as the fixed time unit** — chosen so intraday thresholds land in a readable range (a strong trend ≈ 1–3 %/hr, a −1.8% / 30-min drop ≈ −3.6 %/hr). Per-minute made realistic thresholds awkwardly tiny (~±0.03); per-day inflates intraday numbers into the tens–hundreds. Daily/swing strategies still work — their slopes just read small.
 
 **Null / warm-up:** the slope value is `null` (no value) when `v[i]` or `v[i−N]` is missing, or when `v[i−N] == 0`. A slope series therefore needs `N` extra bars of warm-up beyond the base indicator; the config's warm-up/history calculation must account for `+N`.
 
@@ -50,7 +51,7 @@ Slope is a **transform flag on the operand**, not a new operand kind and not a n
 ```
 
 - `slope` absent ⇒ the operand behaves exactly as today (byte-for-byte compatible with existing presets).
-- `slope: { len: N }` ⇒ the operand's value is the %/bar slope of the underlying, over `N` bars.
+- `slope: { len: N }` ⇒ the operand's value is the %/hr slope of the underlying, over an `N`-bar (N×TF-hour) run.
 - `const` and `entry` cannot be sloped: a constant's slope is 0; entry price is flat for the trade's life (slope 0). The UI does not offer the toggle for them; the backend never sees `slope` on those kinds.
 
 The backend `Operand` (`rule.py`) mirrors the field: `slope_len: int | None = None` (or an equivalent), decoded from the DTO.
@@ -111,7 +112,7 @@ The engine still does no indicator math: slope is computed frontend-side and pos
 ## UI (`OperandPicker` in `BacktestSettingsModal.tsx`)
 
 - A compact **"Δ" toggle button** next to the length field on indicator and price operands. Off ⇒ plain operand. On ⇒ reveals a small **N** number field (default 1, min 1) and the operand now means its slope. Hidden for `const` and `entry`.
-- When one side of a rule is a slope and the **other side is a Number (`const`)**, show a **"%/bar"** hint next to that number input, so the user knows `0.1` means 0.1 %/bar rather than an absolute price.
+- When one side of a rule is a slope and the **other side is a Number (`const`)**, show a **"%/hr"** hint next to that number input, so the user knows `0.1` means 0.1 %/hr rather than an absolute price.
 - Slope composes with the existing per-operand **timeframe** dropdown (slope of an HTF EMA) and with all operators/count/AND-OR — no other UI changes.
 
 ## Live trading
@@ -121,13 +122,13 @@ Live builds its series through the **same** `buildSeries` (`liveEngine.ts` impor
 ## Scope / non-goals
 
 - Slope on **indicator and price only**. Not on `const` or `entry`.
-- Only the **linear %/bar** definition. No angle-in-degrees (chart/zoom dependent, ill-defined headlessly), no linear-regression slope, no acceleration (2nd derivative) — a sloped-slope is out of scope; if wanted later it's a separate operand transform.
+- Only the **linear %/hr tangent** definition (two-point secant over the lookback). No angle-in-degrees (chart/zoom dependent, ill-defined headlessly), no linear-regression slope, no acceleration (2nd derivative) — a sloped-slope is out of scope; if wanted later it's a separate operand transform.
 - No new operators. Slope reuses `gt/lt/gte/lte/crosses*`.
 
 ## Testing
 
 - **`backtestConfig.test.ts`** — `seriesName` suffix + ordering (`EMA_9~3`, `EMA_9~3@HOUR`, `close~1`); `collectSeriesOperands` now includes sloped price; warm-up length accounts for `+N`.
-- **`backtestSeries.test.ts`** — `slopeOf` numeric correctness (known series → known %/bar), null/warm-up handling, `v[i−N]==0` → null; **MTF: sloped HTF operand is diffed on native candles then forward-filled** (the anti-regression test for the trap — assert the slope is *not* 0-within-bar/spike-at-boundary).
+- **`backtestSeries.test.ts`** — `slopeOf` numeric correctness (known series → known %/hr), division by the operand's timeframe (`÷ N×TF`, not `÷ N`), null/warm-up handling, `v[i−N]==0` → null; **MTF: sloped HTF operand is diffed on native candles then forward-filled** (the anti-regression test for the trap — assert the slope is *not* 0-within-bar/spike-at-boundary).
 - **`test_rule_strategy.py`** — backend reads a sloped series (incl. sloped price from `self.series`, not the candle); `slope(EMA) crossesAbove 0`; slope-vs-slope; `_reason` renders `slope(...)`.
 - **`test_api_strategy_evaluate.py`** — round-trip DTO with `slope`; the D4 key-lockstep check passes for a sloped MTF operand.
 - Baseline to keep green: vitest, pytest, tsc (23 pre-existing tsc errors unrelated).

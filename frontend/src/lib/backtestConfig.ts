@@ -8,18 +8,33 @@ export type PriceField = "close" | "open" | "high" | "low";
 export type Operator = "crossesAbove" | "crossesBelow" | "crosses" | "gt" | "lt" | "gte" | "lte";
 export type Combine = "AND" | "OR";
 
+// `slope`, when set, turns an indicator/price operand into the tangent rate of
+// change of its underlying curve, in percent per HOUR over a `len`-bar lookback:
+//   (v[i] − v[i−len]) / |v[i−len]| / (len × barHours) × 100
+// The run is elapsed time (len bars × the operand-timeframe's hours-per-bar), so
+// the value is %/hr regardless of timeframe — a 5-min and a 15-min slope compare
+// directly. It's part of the series key (seriesName) so a curve and its slope, and
+// two different lookbacks, are distinct series. A sloped operand ALWAYS keys a
+// series (even price, which normally has none). const/entry can't be sloped.
+export interface SlopeSpec { len: number }
+
 export type Operand =
   // `timeframe` (absent ⇒ the run's base timeframe) lets a single rule reference
   // an indicator computed on a higher timeframe than the backtest steps on — the
   // frontend fetches that timeframe, computes the indicator on it, and forward-
   // fills the values onto the base bars (no lookahead). It's part of the series
   // key (seriesName) so `EMA_9` and `EMA_9@HOUR` are distinct series.
-  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number; timeframe?: string }
-  | { kind: "price"; field: PriceField }
+  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number; timeframe?: string; slope?: SlopeSpec }
+  | { kind: "price"; field: PriceField; slope?: SlopeSpec }
   | { kind: "const"; value: number }
   // The open position's entry (fill) price. Only meaningful in an exit rule while
   // a position is held; parameterless. Has no series (read off the position).
   | { kind: "entry" };
+
+/** The slope lookback for an operand, or null if it isn't sloped. */
+export function slopeLen(op: Operand): number | null {
+  return (op.kind === "indicator" || op.kind === "price") && op.slope ? op.slope.len : null;
+}
 
 export type StopKind = "none" | "pct" | "price" | "atr" | "trailPct" | "trailAtr";
 export type TargetKind = "none" | "pct" | "price" | "atr";
@@ -59,7 +74,15 @@ export interface RuleGroup {
  * shallow spread of each is a full deep copy; sharing them instead would let an
  * edit to the original mutate the duplicate (and vice versa). */
 export function cloneRule(rule: Rule): Rule {
-  return { left: { ...rule.left }, op: rule.op, right: { ...rule.right }, enabled: rule.enabled, count: rule.count };
+  return { left: cloneOperand(rule.left), op: rule.op, right: cloneOperand(rule.right), enabled: rule.enabled, count: rule.count };
+}
+
+/** Deep copy of an operand. Operands are otherwise flat value objects, but a
+ * sloped operand nests a `slope` object, so a bare spread would share it. */
+function cloneOperand(op: Operand): Operand {
+  const copy = { ...op };
+  if ((copy.kind === "indicator" || copy.kind === "price") && copy.slope) copy.slope = { ...copy.slope };
+  return copy;
 }
 
 /** A rule group with its disabled rules dropped — what actually gets sent to the
@@ -145,17 +168,29 @@ export interface BacktestConfig {
  * anchor (epoch-ms) so distinct anchors are distinct series; VOL has no length;
  * EMA/SMA/RSI/VOLMA are keyed by `${indicator}_${length}`. */
 export function seriesName(op: Operand): string | null {
-  if (op.kind !== "indicator") return null;
   let base: string;
-  if (op.indicator === "VOL") base = "VOL";
-  else if (op.indicator === "AVWAP") base = `AVWAP_${op.anchor ?? 0}`;
-  else base = `${op.indicator}_${op.length}`;
+  if (op.kind === "indicator") {
+    if (op.indicator === "VOL") base = "VOL";
+    else if (op.indicator === "AVWAP") base = `AVWAP_${op.anchor ?? 0}`;
+    else base = `${op.indicator}_${op.length}`;
+  } else if (op.kind === "price" && op.slope) {
+    // A plain price has no series (read off the candle); a SLOPED price does — its
+    // slope needs v[i−N] so it can't come from a single bar. Keyed by the field.
+    base = op.field;
+  } else {
+    return null;
+  }
+  // A slope suffix (`~len`) comes BEFORE the timeframe suffix (`@tf`); the backend
+  // derives this key identically (rule.py:series_name) — keep the two in lockstep,
+  // ordering included, or the endpoint's D4 key check fails.
+  const sl = slopeLen(op);
+  if (sl !== null) base = `${base}~${sl}`;
   // A per-operand timeframe qualifies the key so a base-timeframe indicator and
   // the same indicator on a higher timeframe are stored/looked-up separately.
   // Absent ⇒ base timeframe ⇒ the bare key (byte-for-byte compatible with older
-  // presets and with same-timeframe operands). The backend derives this key
-  // identically (rule.py:series_name) — keep the two in lockstep.
-  return op.timeframe ? `${base}@${op.timeframe}` : base;
+  // presets and with same-timeframe operands).
+  const tf = op.kind === "indicator" ? op.timeframe : undefined;
+  return tf ? `${base}@${tf}` : base;
 }
 
 /** Every indicator operand referenced by any of the four rule groups, deduped by
@@ -204,7 +239,11 @@ export function scalingAtrLengths(cfg: BacktestConfig): number[] {
 export function longestIndicatorLength(cfg: BacktestConfig): number {
   return Math.max(
     1,
-    ...collectSeriesOperands(cfg).map((op) => (op.kind === "indicator" ? op.length ?? 1 : 1)),
+    // A sloped operand needs `len` extra bars beyond its base indicator's length
+    // before it has a value (it reads v[i] and v[i−len]).
+    ...collectSeriesOperands(cfg).map(
+      (op) => (op.kind === "indicator" ? op.length ?? 1 : 1) + (slopeLen(op) ?? 0),
+    ),
     ...riskAtrLengths(cfg),
     ...scalingAtrLengths(cfg),
   );

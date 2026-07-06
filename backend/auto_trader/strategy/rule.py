@@ -8,7 +8,7 @@ constants).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from auto_trader.core.models import Side, Signal
 from auto_trader.strategy.base import Context, Strategy
@@ -27,6 +27,10 @@ class Operand:
     value: float | None = None
     anchor: int | None = None  # AVWAP only: anchor epoch-ms; keys the series
     timeframe: str | None = None  # higher timeframe this indicator runs on; keys the series (None ⇒ base)
+    # Slope lookback (bars): when set, the operand's value is the %/hr tangent rate
+    # of change of its underlying curve (÷ elapsed time), computed frontend-side and
+    # posted as its own series. Keys the series (series_name). indicator/price only.
+    slope_len: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,24 +53,38 @@ class RuleGroup:
 
 def series_name(op: Operand) -> str | None:
     """The payload key this operand's series lives under, or None if it has no
-    series (price/const are read straight off the candle). AVWAP is keyed by its
-    anchor (epoch-ms) so distinct anchors are distinct series; VOL has no param;
-    the rest are keyed by length."""
-    if op.kind != "indicator":
-        return None
-    if op.indicator == "VOL":
-        base = "VOL"
-    elif op.indicator == "AVWAP":
-        base = f"AVWAP_{op.anchor or 0}"
+    series (a plain price/const is read straight off the candle). AVWAP is keyed by
+    its anchor (epoch-ms) so distinct anchors are distinct series; VOL has no param;
+    the rest are keyed by length. A SLOPED operand always keys a series (even price,
+    which normally has none): the slope suffix `~len` is appended BEFORE any `@tf`."""
+    if op.kind == "indicator":
+        if op.indicator == "VOL":
+            base = "VOL"
+        elif op.indicator == "AVWAP":
+            base = f"AVWAP_{op.anchor or 0}"
+        else:
+            base = f"{op.indicator}_{op.length}"
+    elif op.kind == "price" and op.slope_len is not None:
+        # A plain price has no series; a sloped price does — it needs v[i−N].
+        base = op.field or "price"
     else:
-        base = f"{op.indicator}_{op.length}"
+        return None
+    if op.slope_len is not None:
+        base = f"{base}~{op.slope_len}"
     # A per-operand timeframe qualifies the key so a base-timeframe indicator and
     # the same indicator on a higher timeframe are distinct series. None ⇒ base ⇒
-    # the bare key. Must match the frontend's seriesName (backtestConfig.ts).
+    # the bare key. Must match the frontend's seriesName (backtestConfig.ts),
+    # slope-suffix-before-timeframe ordering included.
     return f"{base}@{op.timeframe}" if op.timeframe else base
 
 
 def _operand_name(op: Operand) -> str:
+    if op.slope_len is not None:
+        # Render sloped operands legibly in exit reasons: slope(EMA_9,3), not the
+        # raw series key EMA_9~3. Keep the timeframe (slope(EMA_9@HOUR,3)) so a
+        # sloped MTF operand is distinguishable from the base-timeframe one.
+        inner = _operand_name(replace(op, slope_len=None))
+        return f"slope({inner},{op.slope_len})"
     name = series_name(op)
     if name is not None:
         return name
@@ -266,11 +284,13 @@ class RuleStrategy(Strategy):
             # entry line naturally).
             ep = ctx.long_entry_price if side == "long" else ctx.short_entry_price
             return ep, ep
-        if op.kind == "price":
+        # A plain price reads off the candle; a SLOPED price (op.slope_len set) is a
+        # derived series like any indicator, so it falls through to the series read.
+        if op.kind == "price" and op.slope_len is None:
             now = getattr(ctx.history[i], op.field)
             prev = getattr(ctx.history[i - 1], op.field) if i > 0 else None
             return now, prev
-        # indicator
+        # indicator, or any sloped operand
         name = series_name(op)
         arr = self.series.get(name, [])
         now = arr[i] if i < len(arr) else None
