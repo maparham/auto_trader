@@ -1,4 +1,4 @@
-import { openLive } from "./feed";
+import { openLive, fetchRecent } from "./feed";
 import { buildSeries as realBuildSeries } from "./backtestSeries";
 import { evaluateStrategy as realEvaluateStrategy } from "../api";
 import { fetchOpenPositions as realFetchOpenPositions } from "./trading";
@@ -21,6 +21,10 @@ export interface CycleDeps {
   fetchOpenPositions: typeof realFetchOpenPositions;
   evaluateStrategy: typeof realEvaluateStrategy;
   placeActions: typeof realPlaceActions;
+  /** Fetch the recent CLOSED bars for a higher timeframe (MTF operands). Injected
+   *  by armLiveEngine (bound to the live epic + broker); base-only configs never
+   *  call it. Absent ⇒ falls back to the base bars (base-only / unit tests). */
+  fetchTimeframe?: (tf: string) => Promise<KBar[]>;
 }
 
 const realDeps: CycleDeps = {
@@ -40,18 +44,42 @@ export async function runOneCycle(
   epic: string,
   deps: CycleDeps = realDeps,
 ): Promise<{ state: LiveState }> {
-  const snap = activeRules(state);
-  if (!snap || state.status !== "armed") return { state };
+  if (state.status !== "armed") return { state };
+  const base = activeRules(state);
+  if (!base) return { state };
 
-  const positions = await deps.fetchOpenPositions(snap.account, epic);
+  const positions = await deps.fetchOpenPositions(base.account, epic);
   const open = positions[0] ?? null;
+
+  // Reconcile: a recorded vintage with no live position means the position closed
+  // OUTSIDE the engine — a broker-side SL/TP bracket fill, or a close from another
+  // device/tab. Clear the stale vintage so the NEXT entry evaluates under the
+  // current armed snapshot's rules, not the closed position's (spec re-arm
+  // semantics). NOTE: journaling a broker-side exit needs the broker's realized
+  // fill and is not attempted here — the metrics under-report such exits.
+  let reconciled = state;
+  if (!open && state.positionVintage) {
+    reconciled = appendLog(
+      setPositionVintage(state, null), barTsSec, "position closed externally (broker bracket)",
+    );
+  }
+  const snap = activeRules(reconciled);
+  if (!snap) return { state: reconciled };
+
   const position = open
     ? { side: open.side, quantity: open.quantity, open_level: open.priceLevel }
     : null;
 
-  // buildSeries wants a fetchTimeframe fn for HTF operands; the live loop passes a
-  // no-lookahead fetcher. For base-only configs it is never called.
-  const series = await deps.buildSeries(bars as never, snap.cfg, resolution, async () => bars as never);
+  // buildSeries wants a fetchTimeframe fn for HTF operands. Use the injected
+  // per-TF fetcher (real broker fetch of that TF's CLOSED bars) so a multi-
+  // timeframe operand is computed on ITS OWN timeframe, matching the backtest;
+  // alignHtfToChart(waitClose=true) gates each HTF bar until it has closed, so no
+  // lookahead. Base-only configs never invoke it; the base-bar fallback keeps
+  // unit tests (and any base-only path) working without a fetcher.
+  const fetchTf = deps.fetchTimeframe ?? (async () => bars);
+  const series = await deps.buildSeries(
+    bars as never, snap.cfg, resolution, (async (tf: string) => await fetchTf(tf)) as never,
+  );
 
   const cfg = snap.cfg;
   const req: EvaluateRequest = {
@@ -73,7 +101,7 @@ export async function runOneCycle(
   };
 
   const { actions } = await deps.evaluateStrategy(req);
-  let next = { ...state, lastEvalSec: barTsSec };
+  let next = { ...reconciled, lastEvalSec: barTsSec };
   if (actions.length === 0) {
     return { state: appendLog(next, barTsSec, "no signal") };
   }
@@ -99,7 +127,7 @@ export async function runOneCycle(
     }
     if (a.kind === "open") {
       markStrategyDeal(o.dealId);
-      next = setPositionVintage(next, state.snapshot);
+      next = setPositionVintage(next, reconciled.snapshot);
     } else {
       if (open && o.fillPrice != null) {
         const dir = a.leg === "long" ? 1 : -1;
@@ -149,18 +177,40 @@ export function armLiveEngine(params: {
 }): LiveEngineHandle {
   const { epic, resolution, brokerId, getState, setState, seedBars = [] } = params;
   const account = getState().snapshot!.account;
+
   const lease = acquireLease(`${epic}|${account}`);
   if (!lease.held) {
     setState(markLost(getState()));
     return { disarm() {} };
   }
-  lease.onLost(() => setState(markLost(getState())));
+
+  // `cancelled` is the single source of truth for "this engine is stopped": set by
+  // disarm() and by a lost lease. It gates BOTH starting a new cycle and applying a
+  // cycle's result, so a stop mid-cycle can't resurrect an armed UI (or trade on).
+  let cancelled = false;
+  let handle: { close: () => void } = { close() {} };
+  const stop = () => {
+    cancelled = true;
+    lease.release();
+    handle.close();
+  };
+
+  lease.onLost(() => {
+    // Losing the lease must tear the engine down — not just flip the label — or the
+    // WS stream and the lease claim leak for the life of the tab.
+    stop();
+    setState(markLost(getState()));
+  });
+
+  // MTF operands read their own timeframe's CLOSED bars, fetched from the same
+  // broker the live stream uses.
+  const deps: CycleDeps = { ...realDeps, fetchTimeframe: (tf) => fetchRecent(epic, tf, 1500, "mid", brokerId) as Promise<KBar[]> };
 
   const bars: KBar[] = [...seedBars];
   let prevTs: number | null = seedBars.length ? seedBars[seedBars.length - 1].timestamp : null;
   let running = false;
 
-  const handle = openLive(epic, resolution, (k) => {
+  handle = openLive(epic, resolution, (k) => {
     const { closed } = detectBarClose(prevTs, k as KBar);
     // Maintain the rolling bar array: replace the in-progress bar or append a new one.
     if (bars.length && bars[bars.length - 1].timestamp === k.timestamp) {
@@ -170,21 +220,30 @@ export function armLiveEngine(params: {
       if (bars.length > 1500) bars.shift(); // bound memory; warmup-sized window
     }
     prevTs = k.timestamp;
-    if (!closed || running) return; // act only on a genuine close; never overlap
+    if (cancelled || !closed || running) return; // stopped, no close, or already running
     // Act on the just-CLOSED bars = everything up to (not including) the in-progress bar.
     const closedBars = bars.slice(0, -1);
     if (closedBars.length < 2) return;
     running = true;
     const barTsSec = Math.floor(closedBars[closedBars.length - 1].timestamp / 1000);
-    void runOneCycle(getState(), closedBars, barTsSec, resolution, epic)
-      .then(({ state }) => setState(state))
+    void runOneCycle(getState(), closedBars, barTsSec, resolution, epic, deps)
+      .then(({ state }) => { if (!cancelled) setState(state); })
       .finally(() => { running = false; });
   }, undefined, "mid", brokerId);
 
-  return {
-    disarm() {
-      lease.release();
-      handle.close();
-    },
-  };
+  return { disarm: stop };
+}
+
+// --- persisted "which account is this epic armed on" pointer ------------------
+// resume() on reload knows the epic (from the cell) but not which account the
+// strategy was armed on — the armed snapshot is keyed per (epic, account). This
+// pointer records it so resume can find the snapshot without guessing the account.
+function armedAccountKey(epic: string): string {
+  return ns("live", `armedAccount.${epic}`);
+}
+export function saveArmedAccount(epic: string, account: string | null): void {
+  save(armedAccountKey(epic), account);
+}
+export function loadArmedAccount(epic: string): string | null {
+  return load<string | null>(armedAccountKey(epic), null);
 }

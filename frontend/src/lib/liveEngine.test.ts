@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { initialLiveState, armSnapshot } from "./liveState";
+import { initialLiveState, armSnapshot, setPositionVintage } from "./liveState";
 import { defaultBacktestConfig } from "./backtestConfig";
 
 // liveEngine → backtestSeries → customIndicators reads LineType at module load;
@@ -35,6 +35,30 @@ describe("runOneCycle", () => {
     expect(deps.placeActions).toHaveBeenCalledTimes(1);
     // opening a position records its vintage (the current snapshot)
     expect(result.state.positionVintage?.armedAtSec).toBe(1700);
+  });
+
+  it("clears a stale vintage when the broker shows flat (bracket closed the position)", async () => {
+    // Armed on v2, but still carrying v1's vintage from an open position.
+    const v1 = armSnapshot(initialLiveState(defaultBacktestConfig(), "capital:demo", 1), "s1", 1000);
+    const v2 = armSnapshot(v1, "s1", 2000); // re-armed → snapshot is v2's
+    const withVintage = setPositionVintage(v2, v1.snapshot); // position opened under v1
+    const deps = {
+      buildSeries: vi.fn().mockResolvedValue({}),
+      fetchOpenPositions: vi.fn().mockResolvedValue([]), // broker flat: bracket closed it
+      evaluateStrategy: vi.fn().mockResolvedValue({ actions: [] }),
+      placeActions: vi.fn(),
+    };
+    const bars = [
+      { timestamp: 1_700_000_000_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+      { timestamp: 1_700_000_060_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+    ];
+    const result = await runOneCycle(withVintage, bars, 1_700_000_060, "MINUTE", "EURUSD", deps as never);
+    // vintage cleared → next entry evaluates under the current (v2) snapshot
+    expect(result.state.positionVintage).toBeNull();
+    // and evaluate saw a flat (null) position, using v2's config
+    expect(deps.evaluateStrategy).toHaveBeenCalledTimes(1);
+    const req = deps.evaluateStrategy.mock.calls[0][0];
+    expect(req.position).toBeNull();
   });
 
   it("no-op when disarmed", async () => {

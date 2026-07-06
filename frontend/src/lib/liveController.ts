@@ -4,7 +4,10 @@
  *  these; the headless loop (liveEngine) does the per-bar work. */
 import { Signal } from "./signals";
 import { fetchRecent } from "./feed";
-import { armLiveEngine, saveArmed, loadArmed, type LiveEngineHandle } from "./liveEngine";
+import {
+  armLiveEngine, saveArmed, loadArmed, saveArmedAccount, loadArmedAccount,
+  type LiveEngineHandle,
+} from "./liveEngine";
 import {
   initialLiveState, armSnapshot, disarm as disarmState, editDraft,
   type LiveState, appendLog,
@@ -23,6 +26,10 @@ export const liveStateSignal = new Signal<LiveState>(
 let engine: LiveEngineHandle | null = null;
 // The epic/resolution/broker the panel is currently pointed at.
 let target = { epic: "", resolution: "MINUTE", brokerId: "capital" };
+// The (epic, account) the RUNNING engine was armed on. Distinct from `target`,
+// which follows the panel — using this for disarm/persistence means re-pointing
+// the panel can't clear the wrong epic's saved snapshot.
+let armedFor: { epic: string; account: string } | null = null;
 
 function get(): LiveState {
   return liveStateSignal.value;
@@ -43,13 +50,19 @@ export function initLive(params: {
   seedDraft?: BacktestConfig;
   quantity?: number;
 }): void {
-  target = { epic: params.epic, resolution: params.resolution, brokerId: params.brokerId };
-  const persisted = loadArmed(params.epic, params.account);
-  const draft = params.seedDraft ?? persisted?.cfg ?? get().draft;
-  // Only reset state if we're not already armed on this same epic+account.
+  // While an engine is armed, never repoint/reset: the panel shows the one running
+  // strategy (v1: one at a time), and the headless engine + panel share a single
+  // signal. Repointing here would clear the wrong epic's snapshot and let a later
+  // cycle overwrite the panel with the old epic's state. Resume/arm own the target.
   const cur = get();
-  if (cur.status === "armed" && cur.snapshot?.account === params.account) return;
-  set(initialLiveState(draft, params.account, params.quantity ?? cur.quantity ?? 1));
+  if (cur.status === "armed") return;
+  target = { epic: params.epic, resolution: params.resolution, brokerId: params.brokerId };
+  // Prefer the account this epic was last armed on (so a reload seeds the panel on
+  // the running strategy's account, and resume() finds its snapshot).
+  const account = loadArmedAccount(params.epic) ?? params.account;
+  const persisted = loadArmed(params.epic, account);
+  const draft = params.seedDraft ?? persisted?.cfg ?? get().draft;
+  set(initialLiveState(draft, account, params.quantity ?? cur.quantity ?? 1));
 }
 
 export function setDraft(cfg: BacktestConfig): void {
@@ -90,6 +103,12 @@ function startLoop(seedBars: KBar[]): void {
 }
 
 export async function arm(): Promise<void> {
+  // Stop any running engine first (e.g. "Re-arm to apply"): without this, startLoop
+  // overwrites `engine` and leaks the old WS + lease, and the new lease self-
+  // conflicts with the still-open old one and immediately marks itself lost.
+  engine?.disarm();
+  engine = null;
+
   const { epic } = target;
   const account = get().account;
   const seedBars = await warmup();
@@ -99,6 +118,8 @@ export async function arm(): Promise<void> {
   const armed = armSnapshot(get(), strategyId, armedAtSec);
   set(appendLog(armed, armedAtSec, `armed ${epic} on ${account}`));
   saveArmed(epic, account, armed.snapshot);
+  saveArmedAccount(epic, account);
+  armedFor = { epic, account };
   startLoop(seedBars);
 }
 
@@ -109,9 +130,15 @@ export async function arm(): Promise<void> {
 export async function resume(): Promise<boolean> {
   const { epic } = target;
   if (get().status === "armed") return false;
-  const account = get().account;
+  // Resolve the account the strategy was armed on (persisted pointer), NOT the
+  // panel's current default — otherwise a strategy armed on a non-default account
+  // is never found and its live position is left unmanaged after a reload.
+  const account = loadArmedAccount(epic) ?? get().account;
   const snap = loadArmed(epic, account);
   if (!snap) return false;
+
+  engine?.disarm();
+  engine = null;
 
   const restored: LiveState = {
     ...initialLiveState(snap.cfg, snap.account, snap.quantity),
@@ -119,6 +146,7 @@ export async function resume(): Promise<boolean> {
     snapshot: snap,
   };
   set(appendLog(restored, Math.floor(Date.now() / 1000), `resumed armed ${epic} on ${snap.account}`));
+  armedFor = { epic, account: snap.account };
   const seedBars = await warmup();
   startLoop(seedBars);
   return true;
@@ -129,8 +157,14 @@ export async function resume(): Promise<boolean> {
 export function disarm(): void {
   engine?.disarm();
   engine = null;
-  const { epic } = target;
+  // Clear persistence under the epic/account the ENGINE was armed on, not the
+  // panel's current target (which may have moved), so we don't strand a snapshot.
+  const armed = armedFor;
+  armedFor = null;
   const next = disarmState(get());
   set(next);
-  saveArmed(epic, next.account, null);
+  const epic = armed?.epic ?? target.epic;
+  const account = armed?.account ?? next.account;
+  saveArmed(epic, account, null);
+  saveArmedAccount(epic, null);
 }
