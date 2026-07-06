@@ -776,8 +776,9 @@ export default function Toolbar({
         />
       )}
 
-      {/* Backtest lives here (moved off the tab bar) so it survives maximized
-          view. controller/period/symbol are already in toolbar scope. */}
+      {/* Backtest + Live sit together here (kept off the tab bar so they survive
+          maximized view): backtest a rule strategy, then arm the same strategy
+          live against a broker account. controller/period/symbol are in scope. */}
       <BacktestButton
         controller={controller}
         period={period}
@@ -785,6 +786,20 @@ export default function Toolbar({
         brokerId={brokerId}
         priceSide={priceSide}
       />
+
+      {/* Live trading panel toggle — arm rule strategies against a demo/live
+          broker account. */}
+      <button
+        className={`anchor-btn live-toggle${liveOpen ? " on" : ""}`}
+        title="Show live trading panel"
+        onClick={() => livePanelOpen.set(!livePanelOpen.value)}
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+          aria-hidden="true">
+          <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m10.14 0-2.83-2.83M9.76 9.76 6.93 6.93" />
+        </svg>
+      </button>
 
       {/* Alerts panel toggle (bell). */}
       <button
@@ -805,20 +820,6 @@ export default function Toolbar({
           stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
           aria-hidden="true">
           <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
-        </svg>
-      </button>
-
-      {/* Live trading panel toggle — a separate surface from the backtest for
-          arming rule strategies against a demo/live broker account. */}
-      <button
-        className={`anchor-btn live-toggle${liveOpen ? " on" : ""}`}
-        title="Show live trading panel"
-        onClick={() => livePanelOpen.set(!livePanelOpen.value)}
-      >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true">
-          <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m10.14 0-2.83-2.83M9.76 9.76 6.93 6.93" />
         </svg>
       </button>
 

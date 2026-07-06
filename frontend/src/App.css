@@ -2600,14 +2600,8 @@
 .anchoring, .anchoring canvas { cursor: crosshair !important; }
 
 .backtest { display: inline-flex; align-items: center; gap: 8px; }
-/* TradingView-style borderless Backtest button (scoped under .toolbar to beat the
-   `.toolbar button { background: var(--accent) }` base rule). */
-.toolbar .backtest > button {
-  background: transparent; color: var(--text); border: none;
-  border-radius: 6px; padding: 5px 10px; cursor: pointer; transition: background 0.12s;
-}
-.toolbar .backtest > button:hover:not(:disabled) { background: var(--hover); }
-.toolbar .backtest > button:disabled { opacity: 0.5; cursor: default; }
+/* The Backtest trigger is now a standard `.anchor-btn` icon button (see Toolbar),
+   matching the Live/Alerts/Trade toggles beside it — no bespoke button styling. */
 .bt-summary {
   display: inline-flex; align-items: center; gap: 10px; font-size: 12px;
   color: var(--text-dim); font-variant-numeric: tabular-nums;

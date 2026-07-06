@@ -206,11 +206,17 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   return (
     <div className="backtest">
       <button
-        className="tabbar-action"
+        className={`anchor-btn backtest-toggle${running ? " on" : ""}`}
         onClick={openBacktestSettings}
-        title="Open the backtest panel"
+        title={running ? "Backtest running…" : "Open the backtest panel"}
       >
-        {running ? "Running…" : "Backtest"}
+        {/* Bar chart + play: run a strategy over historical bars. */}
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+          aria-hidden="true">
+          <path d="M4 20v-8M9 20V8" />
+          <path d="M13.5 9.5 20 13l-6.5 3.5z" />
+        </svg>
       </button>
     </div>
   );
