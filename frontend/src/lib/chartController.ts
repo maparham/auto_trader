@@ -38,6 +38,10 @@ export class ChartController {
   // next mousedown on the chart starts a measurement drag, then disarms. Esc also
   // disarms. Shift+drag measures without arming, so this stays a simple bool.
   readonly measureArmed = new Signal<boolean>(false);
+  // True while the TV-style Slope tool is armed (angle-ruler button toggled on). Like
+  // measureArmed the next two chart clicks place the line; unlike measure it then stays
+  // interactive (drag endpoints / midpoint / rotate knob). Esc disarms.
+  readonly slopeArmed = new Signal<boolean>(false);
   // True while the backtest "Pick Range" tool is armed: the next press-drag on the
   // chart selects a time range (shaded band, crosshair cursor), and on release the
   // picked [fromMs,toMs] is published on rangePickResult and the tool disarms.

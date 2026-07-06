@@ -22,6 +22,8 @@ import type {
 } from "klinecharts";
 import { asDrawingExtra } from "./overlays";
 import { measureMetrics } from "./measureMetrics";
+import { slopeMetrics } from "./slopeMetrics";
+import { slopeHandles } from "./slopeHandles";
 import { UP, DOWN } from "./chartTheme";
 import { hexToRgba } from "./lineStyle";
 
@@ -311,6 +313,129 @@ const measure: OverlayTemplate = {
   },
 };
 
+// --- slope: the transient, interactive angle ruler --------------------------
+// A two-anchor line that reports its slope as an angle (data geometry: +1%/bar = 45°,
+// zoom- and instrument-independent) plus %/bar, price/bar, price/time. Sibling to
+// measure but STAYS interactive after drawing — ChartCore drags its endpoints, a
+// midpoint (translate), and a rotate knob. This template only PAINTS; the handle
+// pixel geometry (midpoint, stem, knob) comes from the shared slopeHandles helper so
+// the drawn knob and its click target can't drift. All figures ignoreEvent:true — the
+// overlay itself is inert; ChartCore's capture-phase handlers own the interaction.
+const HANDLE_R = 4.5; // endpoint / midpoint handle radius
+const KNOB_R = 5.5; // rotate-knob radius
+const slope: OverlayTemplate = {
+  name: "slope",
+  totalStep: 3,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: (params) => {
+    const { overlay, coordinates, precision, bounding } = params;
+    if (coordinates.length < 2) return [];
+    const [c0, c1] = coordinates;
+    const p0 = overlay.points?.[0] ?? {};
+    const p1 = overlay.points?.[1] ?? {};
+    const ext = overlay.extendData as { baseIntervalMinutes?: number } | undefined;
+    const m = slopeMetrics({
+      price0: p0.value ?? 0,
+      price1: p1.value ?? 0,
+      index0: p0.dataIndex ?? 0,
+      index1: p1.dataIndex ?? 0,
+      time0: p0.timestamp ?? 0,
+      time1: p1.timestamp ?? 0,
+      precision: precision.price,
+      baseIntervalMinutes: ext?.baseIntervalMinutes,
+    });
+    const palette = m.up ? MEASURE_UP : MEASURE_DOWN;
+    const h = slopeHandles(c0, c1);
+
+    const figures: OverlayFigure[] = [
+      // The slope line itself.
+      { type: "line", attrs: { coordinates: [c0, c1] }, styles: { color: palette.stroke, size: 2 }, ignoreEvent: true },
+      // Perpendicular stem out to the rotate knob (dashed, quieter than the line).
+      {
+        type: "line",
+        attrs: { coordinates: [h.mid, h.knob] },
+        styles: { color: palette.stroke, size: 1, style: "dashed", dashedValue: [3, 3] },
+        ignoreEvent: true,
+      },
+    ];
+    // Endpoint + midpoint handles: hollow white rings (TV-style grab dots).
+    const ring = (c: Coordinate): OverlayFigure => ({
+      type: "circle",
+      attrs: { x: c.x, y: c.y, r: HANDLE_R },
+      styles: { style: "stroke_fill", color: "#ffffff", borderColor: palette.stroke, borderSize: 2 },
+      ignoreEvent: true,
+    });
+    figures.push(ring(c0), ring(c1), ring(h.mid));
+    // The rotate knob: a solid dot at the stem's end.
+    figures.push({
+      type: "circle",
+      attrs: { x: h.knob.x, y: h.knob.y, r: KNOB_R },
+      styles: { style: "fill", color: palette.stroke },
+      ignoreEvent: true,
+    });
+
+    // Readout pill: angle big, then the three rate lines. Snapped to the widest line.
+    const rows = [
+      { text: m.angleText, tier: PRIMARY },
+      { text: m.pctText, tier: SECONDARY },
+      { text: m.priceBarText, tier: SECONDARY },
+      { text: m.priceTimeText, tier: SECONDARY },
+    ];
+    const padX = 11;
+    const padTop = 6;
+    const padBottom = 7;
+    const gap = 3;
+    const textW = Math.max(...rows.map((r) => textWidth(r.text, r.tier.size, r.tier.weight)));
+    const pillW = Math.ceil(textW) + padX * 2;
+    const pillH = padTop + padBottom + rows.reduce((s, r, i) => s + r.tier.size + (i > 0 ? gap : 0), 0);
+
+    // Anchor near the far (second) end: to its right, flipping left / clamping so the
+    // whole pill stays inside the pane.
+    let pillLeft = c1.x + 14;
+    if (pillLeft + pillW > bounding.width - 2) pillLeft = c1.x - 14 - pillW;
+    pillLeft = Math.max(2, Math.min(pillLeft, bounding.width - pillW - 2));
+    let pillTop = c1.y - pillH / 2;
+    pillTop = Math.max(2, Math.min(pillTop, bounding.height - pillH - 2));
+    const pillCX = pillLeft + pillW / 2;
+
+    figures.push({
+      type: "rect",
+      attrs: { x: pillLeft, y: pillTop, width: pillW, height: pillH },
+      styles: { style: "fill", color: palette.pill, borderRadius: 7 },
+      ignoreEvent: true,
+    });
+    // Text figures MUST null klinecharts' default blue text-box (backgroundColor +
+    // borderColor), same gotcha as the measure pill — the rect above IS the pill.
+    let y = pillTop + padTop;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (i > 0) y += gap;
+      figures.push({
+        type: "text",
+        attrs: { x: pillCX, y, text: r.text, align: "center", baseline: "top" },
+        styles: {
+          color: r.tier.color,
+          size: r.tier.size,
+          weight: r.tier.weight,
+          family: MEASURE_FONT,
+          backgroundColor: "transparent",
+          borderColor: "transparent",
+          borderSize: 0,
+          paddingLeft: 0,
+          paddingRight: 0,
+          paddingTop: 0,
+          paddingBottom: 0,
+        },
+        ignoreEvent: true,
+      });
+      y += r.tier.size;
+    }
+    return figures;
+  },
+};
+
 // --- rangeBand: the transient backtest "Pick Range" selection ---------------
 // A two-anchor overlay that shades a FULL-HEIGHT vertical band between the two
 // anchors' x positions (time-only — the y anchors are ignored). Like measure it
@@ -357,5 +482,6 @@ export function registerCustomOverlays(): void {
   registerOverlay(rayLine);
   registerOverlay(straightLine);
   registerOverlay(measure);
+  registerOverlay(slope);
   registerOverlay(rangeBand);
 }

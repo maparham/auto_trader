@@ -39,7 +39,7 @@ import {
 } from "./visibility";
 import { RESOLUTION_SECONDS } from "./feed";
 
-type Kind = "drawing" | "alert" | "measure" | "rangeBand";
+type Kind = "drawing" | "alert" | "measure" | "rangeBand" | "slope";
 
 // One-level-deep merge of a style patch onto a base style: for each top-level style
 // category present in the patch (line, text, ...), shallow-merge its fields over the
@@ -172,6 +172,14 @@ export class OverlayManager {
   // Fired when a measurement completes (both anchors placed) so the owner can disarm
   // the one-shot ruler. Set via setMeasureDone; the frozen box stays until next interaction.
   private measureDone: (() => void) | null = null;
+  // The live transient Slope line (TV-style angle ruler), or null. Like measure it is
+  // never persisted and single-instance — but UNLIKE measure it stays interactive after
+  // it's drawn: ChartCore drags its endpoints / midpoint / rotate knob via updateSlope.
+  private slopeId: string | null = null;
+  // True while klinecharts is collecting the two anchor clicks (arm → second click).
+  private slopeDrawing = false;
+  // Fired when the two anchors are placed so the owner can disarm the one-shot tool.
+  private slopeDone: (() => void) | null = null;
   // Transient "Pick Range" band (backtest): the shaded time selection driven by a
   // press-drag on the chart. Single-instance; the start/end timestamps are held
   // here (not read back from the overlay) so finishRangePick is exact.
@@ -290,15 +298,16 @@ export class OverlayManager {
   setScope(scope: string): void {
     this.scope = scope;
   }
-  // Push the current global magnet mode onto every existing DRAWING (alerts/measure
-  // never snap). Called when the toolbar toggle changes. Overriding `mode` does NOT
-  // move a placed drawing — mode only affects klinecharts' coordinate→point snap
-  // during a live draw/drag — so this just arms future drags to snap (or stop).
+  // Push the current global magnet mode onto every existing DRAWING and the live slope
+  // line (alerts/measure never snap). Called when the toolbar toggle or the Ctrl/Cmd
+  // invert changes. Overriding `mode` does NOT move a placed drawing — mode only affects
+  // klinecharts' coordinate→point snap during a live DRAW (the slope's two placing
+  // clicks); the slope's post-draw handle drags snap via ChartCore + snapSlopeEndpoint.
   private applyMagnet(): void {
     if (!this.chart) return;
     const mode = effectiveMagnetMode() as OverlayMode;
     for (const [id, kind] of this.entries) {
-      if (kind === "drawing") this.chart.overrideOverlay({ id, mode });
+      if (kind === "drawing" || kind === "slope") this.chart.overrideOverlay({ id, mode });
     }
   }
   // The data broker this cell belongs to. Alerts are stored PER BROKER, and this
@@ -337,6 +346,10 @@ export class OverlayManager {
   // ChartCore sets this to disarm the one-shot ruler when a measurement completes.
   setMeasureDone(fn: (() => void) | null): void {
     this.measureDone = fn;
+  }
+  // ChartCore sets this to disarm the one-shot slope tool when both anchors are placed.
+  setSlopeDone(fn: (() => void) | null): void {
+    this.slopeDone = fn;
   }
   private notifyAlerts(): void {
     this.alertsListener?.(); // ChartCore: redraw on-chart axis pills
@@ -666,6 +679,7 @@ export class OverlayManager {
     const isAlert = kind === "alert";
     const isMeasure = kind === "measure";
     const isRangeBand = kind === "rangeBand";
+    const isSlope = kind === "slope";
     const isDrawing = kind === "drawing";
     const id = this.chart.createOverlay({
       name,
@@ -678,13 +692,14 @@ export class OverlayManager {
       // TV-style Magnet: only user DRAWINGS snap to OHLC — never alert lines or the
       // transient measure ruler. klinecharts does the snapping natively when `mode`
       // is weak/strong on the candle pane (see lib/magnet.ts).
-      mode: isDrawing ? (effectiveMagnetMode() as OverlayMode) : undefined,
-      modeSensitivity: isDrawing ? MAGNET_SENSITIVITY : undefined,
+      // Slope snaps like a drawing (user opted in); alerts/measure/rangeBand never do.
+      mode: isDrawing || isSlope ? (effectiveMagnetMode() as OverlayMode) : undefined,
+      modeSensitivity: isDrawing || isSlope ? MAGNET_SENSITIVITY : undefined,
       // Alerts render their own TV-style axis label (DOM pill in ChartCore), so
       // suppress klinecharts' default y-axis value box to avoid a duplicate. For
       // drawings the price tag is on by default but user-toggleable (Visibility
       // tab) — honor extendData.priceLabels when present so rehydrate restores it.
-      needDefaultYAxisFigure: isAlert || isMeasure || isRangeBand ? false : asDrawingExtra(extra?.extendData).priceLabels ?? true,
+      needDefaultYAxisFigure: isAlert || isMeasure || isRangeBand || isSlope ? false : asDrawingExtra(extra?.extendData).priceLabels ?? true,
       // Returning true marks the right-click handled, suppressing klinecharts'
       // default "delete on right-click" so our context menu can take over.
       onRightClick: (e) => {
@@ -699,6 +714,13 @@ export class OverlayManager {
         if (isMeasure) {
           this.measureDrawing = false;
           this.measureDone?.();
+          return false;
+        }
+        // Slope is transient too, but stays interactive after placing — freeze the
+        // draw state (so ChartCore's handle drags take over) and disarm the one-shot.
+        if (isSlope) {
+          this.slopeDrawing = false;
+          this.slopeDone?.();
           return false;
         }
         this.persist();
@@ -742,6 +764,10 @@ export class OverlayManager {
         if (this.measureId === e.overlay.id) {
           this.measureId = null;
           this.measureDrawing = false;
+        }
+        if (this.slopeId === e.overlay.id) {
+          this.slopeId = null;
+          this.slopeDrawing = false;
         }
         if (this.rangeBandId === e.overlay.id) {
           this.rangeBandId = null;
@@ -862,6 +888,60 @@ export class OverlayManager {
   // placing click apart from a plain "click away that clears the frozen box".
   isMeasureDrawing(): boolean {
     return this.measureDrawing;
+  }
+
+  // --- transient Slope tool (TV-style angle ruler) --------------------------
+  // Begin drawing a slope line: klinecharts collects the two anchors by CLICK, like
+  // measure. onDrawEnd (in create()) freezes the draw state and fires slopeDone so the
+  // caller can disarm. Unlike measure the line then stays interactive — ChartCore drives
+  // its endpoint/midpoint/knob drags through updateSlope. Single-instance.
+  startSlopeDraw(): string | null {
+    if (!this.chart) return null;
+    this.clearSlope();
+    this.drawingInProgress = true; // suppress lock click-align during the two placing clicks
+    // Stamp the base bar interval so the slope readout's price/time is gap-free (each bar
+    // counts as this many minutes, independent of weekend/overnight gaps).
+    const secs = RESOLUTION_SECONDS[this.resolution];
+    const baseIntervalMinutes = secs ? secs / 60 : undefined;
+    const id = this.create("slope", "slope", undefined, null, undefined, { extendData: { baseIntervalMinutes } }); // no points → klinecharts draws it by click
+    if (id) {
+      this.slopeId = id;
+      this.slopeDrawing = true;
+    } else {
+      this.drawingInProgress = false;
+    }
+    return id;
+  }
+
+  // Discard the slope line (Esc, arming a new one, symbol/interval change).
+  clearSlope(): void {
+    if (this.slopeId) this.chart?.removeOverlay(this.slopeId); // onRemoved nulls the fields
+    this.slopeId = null;
+    this.slopeDrawing = false;
+  }
+
+  hasSlope(): boolean {
+    return this.slopeId != null;
+  }
+
+  isSlopeDrawing(): boolean {
+    return this.slopeDrawing;
+  }
+
+  // The slope line's two anchor points ({ timestamp, value, dataIndex }), or null if
+  // there's no live line. ChartCore reads these to hit-test the handles in pixel space.
+  getSlopePoints(): Array<{ timestamp?: number; value?: number; dataIndex?: number }> | null {
+    if (!this.slopeId) return null;
+    const ov = this.chart?.getOverlayById(this.slopeId);
+    return ov?.points ? (ov.points as Array<{ timestamp?: number; value?: number; dataIndex?: number }>) : null;
+  }
+
+  // Move the slope line's anchors during an interactive handle drag (endpoint move,
+  // midpoint translate, or rotate). ChartCore computes the new data-space points from
+  // the cursor and pushes them here; klinecharts re-runs createPointFigures to repaint.
+  updateSlope(points: Array<{ timestamp?: number; value?: number; dataIndex?: number }>): void {
+    if (!this.slopeId || !this.chart) return;
+    this.chart.overrideOverlay({ id: this.slopeId, points: points as Overlay["points"] });
   }
 
   // --- transient "Pick Range" band (backtest) --------------------------------
@@ -1792,7 +1872,7 @@ export class OverlayManager {
     const drawings: SavedOverlay[] = [];
     const alerts: SavedAlert[] = [];
     for (const [id, kind] of this.entries) {
-      if (kind === "measure" || kind === "rangeBand") continue; // transient — never persisted
+      if (kind === "measure" || kind === "rangeBand" || kind === "slope") continue; // transient — never persisted
       const ov = this.chart.getOverlayById(id);
       if (!ov) continue;
       if (kind === "alert") {

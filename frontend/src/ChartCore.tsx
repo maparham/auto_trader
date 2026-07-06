@@ -138,6 +138,9 @@ import {
 } from "./lib/trading";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
 import { BellIcon, MenuIcons } from "./lib/menuIcons";
+import { hitSlopeHandle, type SlopeGrab } from "./lib/slopeHandles";
+import { snapSlopeEndpoint } from "./lib/slopeMagnet";
+import { effectiveMagnetMode } from "./lib/magnet";
 import { chartColors, loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
 import { hexToRgba, DASH_DASHED, DASH_DOTTED } from "./lib/lineStyle";
 import { makeFormatDate } from "./lib/timeFormat";
@@ -543,6 +546,7 @@ export default function ChartCore({
     invertScale,
     scalePriceOnly,
     measureArmed,
+    slopeArmed,
     rangePickArmed,
     rangePickResult,
     selectedIndicator,
@@ -1056,6 +1060,8 @@ export default function ChartCore({
   // True while the Measure ruler is armed — drives the crosshair cursor on the
   // chart container (mirrors `anchoring`), reset when a press consumes the arm.
   const [measureArmedUi, setMeasureArmedUi] = useState(false);
+  // Same, for the Slope tool while it's armed (placing the two anchors).
+  const [slopeArmedUi, setSlopeArmedUi] = useState(false);
   const [rangePickArmedUi, setRangePickArmedUi] = useState(false);
   // Cursor over the chart canvas: "cur-pointer" (hand) over a selectable indicator
   // curve, "cur-default" (arrow) over the legend strip, "" = klinecharts crosshair.
@@ -1691,6 +1697,7 @@ export default function ChartCore({
     const onAnchorDown = (e: MouseEvent) => {
       if (e.button !== 0 || avwapAnchorMode.value) return;
       if (measureArmed.value || overlays.isMeasureDrawing()) return; // placing a measure anchor
+      if (slopeArmed.value || overlays.isSlopeDrawing()) return; // placing a slope anchor
       const c0 = chartRef.current;
       if (!c0 || !selectedAvwapId(c0, selectedIndicator.value)) return;
       const a = anchorPxRef.current;
@@ -1923,6 +1930,7 @@ export default function ChartCore({
     const onLineDown = (e: MouseEvent) => {
       if (e.button !== 0 || avwapAnchorMode.value || e.metaKey || e.ctrlKey) return;
       if (measureArmed.value || overlays.isMeasureDrawing()) return; // placing a measure anchor
+      if (slopeArmed.value || overlays.isSlopeDrawing()) return; // placing a slope anchor
       const c = chartRef.current;
       if (!c) return;
       const r = el.getBoundingClientRect();
@@ -1993,6 +2001,132 @@ export default function ChartCore({
       // Only a plain press with a FROZEN box (not armed, not mid-draw) clears it.
       if (measureArmed.value || overlays.isMeasureDrawing()) return;
       if (overlays.hasMeasure()) overlays.clearMeasure();
+    };
+
+    // --- Slope tool interactive handles ---
+    // Unlike the measure box, a placed slope line STAYS live: press-drag its endpoints
+    // (reshape), its midpoint (translate, keeping length + angle), or the rotate knob
+    // (swing both ends around the midpoint pivot; Shift snaps to 15°). We drive all of
+    // this ourselves — the overlay's figures are inert (ignoreEvent) — hit-testing the
+    // cursor against the handle pixels via the shared slopeHandles geometry and pushing
+    // the new data-space points back through overlays.updateSlope. Capture-phase and
+    // stopPropagation so a handle grab pre-empts klinecharts' pan. While the tool is
+    // still ARMED/placing we bail, leaving those clicks for klinecharts to place anchors.
+    let slopeDragCleanup: (() => void) | null = null;
+    const slopeHandlePixels = (): { a: { x: number; y: number }; b: { x: number; y: number } } | null => {
+      const c = chartRef.current;
+      if (!c) return null;
+      const pts = overlays.getSlopePoints();
+      if (!pts || pts.length < 2) return null;
+      const toPix = (p: { timestamp?: number; value?: number; dataIndex?: number }) =>
+        first(c.convertToPixel([{ timestamp: p.timestamp, value: p.value, dataIndex: p.dataIndex }], { paneId: "candle_pane", absolute: true }));
+      const a = toPix(pts[0]);
+      const b = toPix(pts[1]);
+      if (a.x == null || a.y == null || b.x == null || b.y == null) return null;
+      return { a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y } };
+    };
+    const beginSlopeDrag = (
+      grab: SlopeGrab,
+      a0: { x: number; y: number },
+      b0: { x: number; y: number },
+      startPx: { x: number; y: number },
+    ) => {
+      const pivot = { x: (a0.x + b0.x) / 2, y: (a0.y + b0.y) / 2 };
+      const va = { x: a0.x - pivot.x, y: a0.y - pivot.y };
+      const vb = { x: b0.x - pivot.x, y: b0.y - pivot.y };
+      const grabAngle = Math.atan2(startPx.y - pivot.y, startPx.x - pivot.x);
+      const origLineAngle = Math.atan2(b0.y - a0.y, b0.x - a0.x);
+      const SNAP = (15 * Math.PI) / 180;
+      const onMove = (ev: MouseEvent) => {
+        const c = chartRef.current;
+        if (!c) return;
+        const r = el.getBoundingClientRect();
+        const cur = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+        let na = a0;
+        let nb = b0;
+        if (grab === "a") {
+          na = cur;
+        } else if (grab === "b") {
+          nb = cur;
+        } else if (grab === "mid") {
+          const dx = cur.x - startPx.x;
+          const dy = cur.y - startPx.y;
+          na = { x: a0.x + dx, y: a0.y + dy };
+          nb = { x: b0.x + dx, y: b0.y + dy };
+        } else {
+          // knob: rotate both ends around the midpoint by how far the cursor swept.
+          // Relative — starts at zero delta on grab, so there's no jump.
+          let delta = Math.atan2(cur.y - pivot.y, cur.x - pivot.x) - grabAngle;
+          if (ev.shiftKey) {
+            const target = origLineAngle + delta;
+            delta = Math.round(target / SNAP) * SNAP - origLineAngle;
+          }
+          const cos = Math.cos(delta);
+          const sin = Math.sin(delta);
+          const rot = (v: { x: number; y: number }) => ({
+            x: pivot.x + v.x * cos - v.y * sin,
+            y: pivot.y + v.x * sin + v.y * cos,
+          });
+          na = rot(va);
+          nb = rot(vb);
+        }
+        const da = first(c.convertFromPixel([{ x: na.x, y: na.y }], { paneId: "candle_pane", absolute: true }));
+        const db = first(c.convertFromPixel([{ x: nb.x, y: nb.y }], { paneId: "candle_pane", absolute: true }));
+        if (da.value == null || db.value == null) return;
+        // Magnet: snap the ENDPOINT being dragged to the nearest bar OHLC (weak = within
+        // the px band; strong = always; Ctrl/Cmd inverts). Only endpoints snap — a
+        // midpoint-translate or rotate preserves geometry, so snapping would fight it.
+        let av = da.value;
+        let bv = db.value;
+        const mode = effectiveMagnetMode();
+        if (mode !== "normal" && (grab === "a" || grab === "b")) {
+          const idx = grab === "a" ? da.dataIndex : db.dataIndex;
+          const bar = idx != null ? c.getDataList()[idx] : undefined;
+          if (bar) {
+            const cands = [bar.open, bar.high, bar.low, bar.close].map((price) => ({
+              price,
+              py: first(c.convertToPixel([{ dataIndex: idx, value: price }], { paneId: "candle_pane", absolute: true })).y ?? 0,
+            }));
+            const cursorPy = grab === "a" ? na.y : nb.y;
+            if (grab === "a") av = snapSlopeEndpoint(da.value, cursorPy, cands, mode);
+            else bv = snapSlopeEndpoint(db.value, cursorPy, cands, mode);
+          }
+        }
+        overlays.updateSlope([
+          { timestamp: da.timestamp, value: av, dataIndex: da.dataIndex },
+          { timestamp: db.timestamp, value: bv, dataIndex: db.dataIndex },
+        ]);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp, true);
+        slopeDragCleanup = null;
+        // Swallow the trailing click so it can't fall through to a plain click handler.
+        justDraggedRef.current = true;
+        setTimeout(() => { justDraggedRef.current = false; }, 0);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp, true);
+      slopeDragCleanup = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp, true);
+        slopeDragCleanup = null;
+      };
+    };
+    const onSlopeHandleDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      // Still placing the anchors → let the click reach klinecharts.
+      if (slopeArmed.value || overlays.isSlopeDrawing()) return;
+      if (!overlays.hasSlope()) return;
+      const px = slopeHandlePixels();
+      if (!px) return;
+      const r = el.getBoundingClientRect();
+      const cur = { x: e.clientX - r.left, y: e.clientY - r.top };
+      const grab = hitSlopeHandle(px.a, px.b, cur);
+      if (!grab) return;
+      e.preventDefault();
+      e.stopPropagation();
+      beginSlopeDrag(grab, px.a, px.b, cur);
     };
 
     // --- Pick Range (backtest) ---
@@ -2105,6 +2239,7 @@ export default function ChartCore({
     const onAxisDown = (e: MouseEvent) => {
       if (e.button !== 0 || !autoScale.value) return;
       if (measureArmed.value || overlays.isMeasureDrawing()) return; // measuring owns the press
+      if (slopeArmed.value || overlays.isSlopeDrawing()) return; // slope placing owns the press
       if (overPriceAxis(e)) autoScale.set(false);
     };
     // Double-clicking the price-axis column resets to auto-scale (TV behaviour):
@@ -2469,6 +2604,21 @@ export default function ChartCore({
     });
     overlays.setMeasureDone(() => measureArmed.set(false));
 
+    // Arm/draw the Slope tool off slopeArmed, mirroring measure: arming starts the
+    // click-to-place draw and focuses the wrap (so Esc reaches onKeyDown); disarming
+    // mid-draw cancels it; slopeDone disarms the one-shot once both anchors are placed
+    // (the line then stays live for handle drags). Also drives the crosshair cursor.
+    const unsubSlopeArm = slopeArmed.subscribe((on) => {
+      setSlopeArmedUi(on);
+      if (on) {
+        overlays.startSlopeDraw();
+        wrapRef.current?.focus({ preventScroll: true });
+      } else if (overlays.isSlopeDrawing()) {
+        overlays.clearSlope(); // disarmed before finishing
+      }
+    });
+    overlays.setSlopeDone(() => slopeArmed.set(false));
+
     // Pick Range arm/disarm: toggle the crosshair cursor and disable chart
     // scroll/zoom while armed (so the press-drag selects a range instead of
     // panning), restoring both on disarm and clearing any half-drawn band.
@@ -2503,6 +2653,9 @@ export default function ChartCore({
       el.addEventListener("mousedown", onRangePickDown, true);
       el.addEventListener("mousedown", onMeasureShift, true);
       el.addEventListener("mousedown", onMeasureClear, true);
+      // Slope handles before the line/anchor/pan handlers: a grab on an endpoint /
+      // midpoint / rotate knob owns the press (stopPropagation); a miss falls through.
+      el.addEventListener("mousedown", onSlopeHandleDown, true);
       // Capture-phase so it runs before klinecharts' own canvas mousedown — when we
       // grab the anchor handle we stopPropagation, blocking the chart's pan start.
       el.addEventListener("mousedown", onAnchorDown, true);
@@ -2749,9 +2902,12 @@ export default function ChartCore({
       wsRef.current?.close();
       unsubAnchor();
       unsubMeasureArm();
+      unsubSlopeArm();
       unsubRangePickArm();
       rangePickDragCleanup?.();
+      slopeDragCleanup?.(); // drop an in-flight slope handle drag's window listeners
       overlays.setMeasureDone(null);
+      overlays.setSlopeDone(null);
       unsubRemoved();
       // Backtest chart-sync subscriptions (highlightTradeSignal/focusTradeSignal)
       // strongly capture this chart + its BacktestResult — release them on unmount
@@ -2764,6 +2920,7 @@ export default function ChartCore({
       el.removeEventListener("mousedown", onRangePickDown, true);
       el.removeEventListener("mousedown", onMeasureShift, true);
       el.removeEventListener("mousedown", onMeasureClear, true);
+      el.removeEventListener("mousedown", onSlopeHandleDown, true);
       el.removeEventListener("mousedown", onAnchorDown, true);
       el.removeEventListener("mousedown", onClonePress, true);
       el.removeEventListener("mousedown", onAxisDown, true);
@@ -2987,6 +3144,9 @@ export default function ChartCore({
     if (epicChanged || resChanged) {
       measureArmed.set(false);
       overlays.clearMeasure();
+      // A live slope line maps onto the old timescale too — discard it and disarm.
+      slopeArmed.set(false);
+      overlays.clearSlope();
       // A live Pick Range band is anchored to the old timescale too — disarm it.
       rangePickArmed.set(false);
       overlays.clearRangePick();
@@ -4576,20 +4736,32 @@ export default function ChartCore({
             measureArmed.set(false);
             overlays.clearMeasure();
             e.preventDefault();
+          } else if (slopeArmed.value) {
+            slopeArmed.set(false);
+            overlays.clearSlope();
+            e.preventDefault();
           } else if (overlays.cancelDrawing()) {
             // TV: Esc cancels an armed/mid-placement drawing tool.
             e.preventDefault();
           } else if (overlays.hasMeasure()) {
             overlays.clearMeasure();
             e.preventDefault();
+          } else if (overlays.hasSlope()) {
+            overlays.clearSlope();
+            e.preventDefault();
           }
           return;
         }
         // Escape on a selected trade (discard pending → deselect) is handled by a
         // window listener in App, so it works even when focus isn't on the chart.
-        // Delete / Backspace removes the selected drawing (no modifier).
+        // Delete / Backspace removes the selected drawing, or — failing that — the live
+        // slope line (it's the transient thing on the chart the user most likely means).
         if (e.key === "Delete" || e.key === "Backspace") {
           if (deleteSelectedDrawing()) e.preventDefault();
+          else if (overlays.hasSlope()) {
+            overlays.clearSlope();
+            e.preventDefault();
+          }
           return;
         }
         // Alt/Option+I: TV-style invert scale (flip the price axis upside down).
@@ -4618,7 +4790,7 @@ export default function ChartCore({
     >
       <div
         ref={containerRef}
-        className={anchoring || measureArmedUi || rangePickArmedUi ? "anchoring" : undefined}
+        className={anchoring || measureArmedUi || slopeArmedUi || rangePickArmedUi ? "anchoring" : undefined}
         style={{ width: "100%", height: "100%" }}
       />
       {paneDropTop != null && (

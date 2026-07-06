@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { getSupportedOverlays } from "klinecharts";
 import DrawGlyph from "./DrawIcons";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import { DRAW_TOOLS, toolLabel } from "./lib/drawTools";
 import {
   loadFavoriteDrawings,
@@ -16,7 +17,7 @@ import {
   saveLastDrawTools,
 } from "./lib/persist";
 import { magnetSignal, toggleMagnet, setMagnetStrength } from "./lib/magnet";
-import { MagnetIcon, StrongMagnetIcon, RulerIcon } from "./lib/menuIcons";
+import { MagnetIcon, StrongMagnetIcon, RulerIcon, SlopeIcon } from "./lib/menuIcons";
 import type { ChartController } from "./lib/chartController";
 
 interface Props {
@@ -73,6 +74,13 @@ export default function DrawSidebar({ controller }: Props) {
     if (!controller?.measureArmed) return;
     setMeasuring(controller.measureArmed.value);
     return controller.measureArmed.subscribe(setMeasuring);
+  }, [controller]);
+  // Slope tool mirror (same optional-chain HMR-safe pattern as measure above).
+  const [sloping, setSloping] = useState(controller?.slopeArmed?.value ?? false);
+  useEffect(() => {
+    if (!controller?.slopeArmed) return;
+    setSloping(controller.slopeArmed.value);
+    return controller.slopeArmed.subscribe(setSloping);
   }, [controller]);
 
   // Eye menu: drawings-hidden lives on the manager (existing); indicators/positions
@@ -278,6 +286,26 @@ export default function DrawSidebar({ controller }: Props) {
       >
         <RulerIcon />
       </button>
+
+      {/* Slope tool: click start, click end, then it stays live (drag ends / middle /
+          rotate knob). The tooltip spells out what the angle number means, since it's a
+          fixed rate (1%/bar = 45°), not the line's on-screen tilt. */}
+      <Tooltip
+        placement="right"
+        content={[
+          "Slope. Click a start point, then an end point.",
+          "Then drag either end, drag the middle to slide it, or drag the knob to rotate (hold Shift to snap 15°).",
+          "The angle is a fixed rate: 1%/bar = 45°, the same on every symbol and zoom level.",
+        ]}
+      >
+        <button
+          className={"ds-btn slope-toggle" + (sloping ? " on" : "")}
+          disabled={!controller?.slopeArmed}
+          onClick={() => controller?.slopeArmed?.set(!controller.slopeArmed.value)}
+        >
+          <SlopeIcon />
+        </button>
+      </Tooltip>
 
       {/* Magnet (moved from the toolbar): icon toggles, caret picks strength. */}
       <div className="ds-family" ref={magnetRef}>

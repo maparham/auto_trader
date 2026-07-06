@@ -40,6 +40,22 @@ export function RulerIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// Slope glyph for the angle-ruler toggle: a rising line between two endpoint handles
+// with a little angle arc at the base — reads as "measure the slope / angle". Same
+// currentColor idiom as RulerIcon so it lights up when armed.
+export function SlopeIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 20h16" opacity="0.5" />
+      <path d="M5 19L19 7" />
+      <path d="M5 19a9 9 0 0 0 3.4-4.2" opacity="0.7" />
+      <circle cx="5" cy="19" r="1.9" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="7" r="1.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 // Horseshoe magnet, angled −45° with detached pole caps (matches the user's
 // reference art). "Filled" look built from thick butt-capped strokes so it
 // still inherits currentColor like every other icon here.
