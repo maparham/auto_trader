@@ -91,13 +91,37 @@ changes (subscribe to both; rebuild the spec list and call `render(specs)`).
 Cleared/rebuilt on epic switch and chart teardown, same lifecycle as
 `PositionLines`.
 
+## Coarse-timeframe aggregation (exit markers)
+
+Entry markers never collide: the book is netted to **one open position per epic**,
+so a cell shows at most one entry marker regardless of timeframe.
+
+Exit markers *do* collide on a coarser timeframe — many of a day's 15m closes fall
+into one 1D candle. Handle this exactly like the backtest does:
+
+- **Render gate** — a shared flag (reuse/mirror `backtestRenderFlags`): on the
+  native-or-finer-and-divides timeframe draw **per-exit arrows**; on a **coarser**
+  timeframe draw **one aggregate pill per bar** (exit count + net P&L, green/red)
+  instead.
+- **Bucketing** — reuse `aggregateTradesByBar`'s anchor logic (last-bar-≤-close-ts)
+  to group journal exits into one cluster per chart bar, carrying count + net pnl +
+  the bar's anchor.
+- **Pills** — reuse the backtest DOM cluster layer (`BacktestAggMarkers` +
+  `BacktestClusterPopover`) so a coarse-TF pill hovers to list that bar's exits.
+  This requires generalizing that layer (or a parallel live layer) to take a
+  journal-derived cluster shape, not just `BacktestResult` trades — the one place
+  the DOM-over-canvas machinery is deliberately reused (its per-frame reprojection
+  is needed because DOM pills don't ride the canvas).
+
+So per timeframe:
+- **Native / finer**: per-exit arrow markers (+ the single entry arrow if open).
+- **Coarser**: one aggregate exit pill per bar (+ the single entry arrow if open).
+
 ## Scope boundaries (v1)
 
 - **Off-window cull**: a marker whose anchor bar is older than the oldest loaded
   bar is skipped (reusing the backtest off-window cull), so markers never pile on
   the left edge. **Paging history back** to reach an old entry bar is deferred.
-- **No coarse-TF aggregation**: native per-marker only; two markers on one bar can
-  overlap (rare on a live book). Deferred.
 - **Manual paper closes**: unmarked (not journaled). Accepted.
 
 ## Testing
@@ -116,5 +140,9 @@ Cleared/rebuilt on epic switch and chart teardown, same lifecycle as
 - `frontend/src/lib/tradeMarkers.ts` — new drawer + pure spec builder.
 - `frontend/src/lib/backtest.ts` — export overlay name, register fn, anchor helper.
 - `frontend/src/ChartCore.tsx` (where `PositionLines` is wired) — own + drive a
-  `TradeMarkers` per cell.
-- `frontend/src/lib/tradeMarkers.test.ts` — spec-builder unit tests.
+  `TradeMarkers` per cell; apply the render gate (per-exit arrows vs aggregate).
+- Backtest aggregate layer (`BacktestAggMarkers` / `BacktestClusterPopover` and
+  `aggregateTradesByBar` / `backtestRenderFlags`) — generalize to accept
+  journal-derived exit clusters, or add a thin parallel live layer over the same
+  bucketing.
+- `frontend/src/lib/tradeMarkers.test.ts` — spec-builder + bucketing unit tests.
