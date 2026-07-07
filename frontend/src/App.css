@@ -1720,6 +1720,11 @@
 }
 .ind-check { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
 .ind-check input { cursor: pointer; }
+/* Fib settings: two-column level grid — checkbox · value · color · remove. */
+.fib-levels { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin: 8px 0; }
+.fib-level { display: flex; align-items: center; gap: 6px; }
+.fib-level input[type="number"] { width: 64px; }
+.fib-add-level { justify-self: start; }
 /* AVWAP band rows: checkbox+label on the left of an .ind-row, multiplier on the
    right. Inline so it doesn't grow to full width and push the input off-row. */
 .ind-check-inline { flex: 0 0 auto; color: var(--text-dim); }

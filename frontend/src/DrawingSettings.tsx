@@ -22,6 +22,7 @@ import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility } from "./lib/visibility";
 import { toast } from "./lib/notify";
 import InfoTip from "./components/InfoTip";
+import { type FibConfig, asFibConfig } from "./lib/fibConfig";
 import {
   loadDrawingDefault,
   saveDrawingDefault,
@@ -81,6 +82,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const title = TITLES[name] ?? "Drawing";
   const isTrend = TREND.has(name);
   const isRect = name === "rect";
+  const isFib = name === "fibonacciLine";
 
   const line = (live?.styles?.line ?? {}) as Partial<{ color: string; size: number; style: LineType }>;
   const poly = (live?.styles?.polygon ?? {}) as Partial<{ color: string; borderColor: string; borderSize: number }>;
@@ -105,6 +107,8 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const [text, setText] = useState<string>(extra0.text ?? "");
   const [showMiddle, setShowMiddle] = useState<boolean>(extra0.showMiddle ?? false);
   const [vis, setVis] = useState<VisibilityModel>(extra0.visibility ?? defaultVisibility());
+  // Fib retracement config (fibonacciLine only) — levels/extend/reverse/trend/labels.
+  const [fib, setFib] = useState<FibConfig>(() => asFibConfig(extra0.fib));
 
   // "Defaults ▾" footer menu: this drawing type's default + named templates (global,
   // keyed by overlay name). Mirrors the indicator settings Defaults menu.
@@ -167,6 +171,11 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     overlays.setStyle(curId, { polygon: { borderColor: c, borderSize: s } } as DeepPartial<OverlayStyle>);
   }
 
+  function applyFib(next: FibConfig) {
+    setFib(next);
+    overlays.setFibConfig(curId, next);
+  }
+
   function applyExtend(mode: "none" | "ray" | "both") {
     setExtend(mode);
     const newId = overlays.setExtend(curId, mode);
@@ -223,6 +232,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     }
     if (cfg.polygon?.borderColor !== undefined) setBorderHex(cfg.polygon.borderColor);
     if (cfg.polygon?.borderSize !== undefined) setBorderSize(cfg.polygon.borderSize);
+    if (cfg.fib !== undefined) setFib(cfg.fib);
     if (cfg.showMiddle !== undefined) setShowMiddle(cfg.showMiddle);
     if (cfg.priceLabels !== undefined) setPriceLabels(cfg.priceLabels);
     if (cfg.visibility !== undefined) setVis(cfg.visibility);
@@ -285,6 +295,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
         overlays.setPriceLabels(curId, oExtra.priceLabels ?? true);
         overlays.setText(curId, oExtra.text ?? "");
         overlays.setShowMiddle(curId, oExtra.showMiddle ?? false);
+        if (o.name === "fibonacciLine") overlays.setFibConfig(curId, asFibConfig(oExtra.fib));
         overlays.setVisible(curId, o.visible);
       }
     }
@@ -421,6 +432,124 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                       />
                     </div>
                   </div>
+                </>
+              ) : isFib ? (
+                <>
+                  {/* Shared width + dash for every level line; colors are per-level below. */}
+                  <div className="ind-row ind-style-row">
+                    <label>Lines</label>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        size={size}
+                        onSize={(s) => applyStyle({ size: s })}
+                        lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
+                        onLineStyle={(s) =>
+                          applyStyle({ style: s === "dashed" ? LineType.Dashed : LineType.Solid })
+                        }
+                        lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
+                      />
+                    </div>
+                  </div>
+                  <div className="ind-row">
+                    <label>Extend</label>
+                    <select
+                      value={fib.extend}
+                      onChange={(e) =>
+                        applyFib({ ...fib, extend: e.target.value as FibConfig["extend"] })
+                      }
+                    >
+                      <option value="none">Don't extend</option>
+                      <option value="left">Extend left</option>
+                      <option value="right">Extend right</option>
+                      <option value="both">Extend both</option>
+                    </select>
+                  </div>
+                  <div className="fib-levels">
+                    {fib.levels.map((l, i) => (
+                      <div className="fib-level" key={i}>
+                        <input
+                          type="checkbox"
+                          checked={l.enabled}
+                          onChange={(e) =>
+                            applyFib({
+                              ...fib,
+                              levels: fib.levels.map((x, j) =>
+                                j === i ? { ...x, enabled: e.target.checked } : x,
+                              ),
+                            })
+                          }
+                        />
+                        <input
+                          type="number"
+                          step="any"
+                          value={l.value}
+                          onChange={(e) =>
+                            applyFib({
+                              ...fib,
+                              levels: fib.levels.map((x, j) =>
+                                j === i ? { ...x, value: Number(e.target.value) } : x,
+                              ),
+                            })
+                          }
+                        />
+                        <ColorLineStylePicker
+                          color={l.color}
+                          onColor={(c) =>
+                            applyFib({
+                              ...fib,
+                              levels: fib.levels.map((x, j) =>
+                                j === i ? { ...x, color: c } : x,
+                              ),
+                            })
+                          }
+                        />
+                        <button
+                          className="ind-def-del"
+                          title="Remove level"
+                          onClick={() =>
+                            applyFib({ ...fib, levels: fib.levels.filter((_, j) => j !== i) })
+                          }
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      className="ghost fib-add-level"
+                      onClick={() =>
+                        applyFib({
+                          ...fib,
+                          levels: [...fib.levels, { value: 0, enabled: true, color: "#787b86" }],
+                        })
+                      }
+                    >
+                      + Add level
+                    </button>
+                  </div>
+                  <label className="ind-check">
+                    <input
+                      type="checkbox"
+                      checked={fib.trendLine}
+                      onChange={(e) => applyFib({ ...fib, trendLine: e.target.checked })}
+                    />
+                    <span>Trend line</span>
+                  </label>
+                  <label className="ind-check">
+                    <input
+                      type="checkbox"
+                      checked={fib.reverse}
+                      onChange={(e) => applyFib({ ...fib, reverse: e.target.checked })}
+                    />
+                    <span>Reverse</span>
+                  </label>
+                  <label className="ind-check">
+                    <input
+                      type="checkbox"
+                      checked={fib.labels}
+                      onChange={(e) => applyFib({ ...fib, labels: e.target.checked })}
+                    />
+                    <span>Levels</span>
+                  </label>
                 </>
               ) : (
                 <div className="ind-row ind-style-row">
