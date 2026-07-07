@@ -40,6 +40,7 @@ import {
   barsSpanned,
 } from "./visibility";
 import { RESOLUTION_SECONDS } from "./feed";
+import { type FibConfig, asFibConfig } from "./fibConfig";
 
 type Kind = "drawing" | "alert" | "measure" | "rangeBand" | "slope";
 
@@ -108,6 +109,8 @@ export interface DrawingExtra {
   text?: string;
   showMiddle?: boolean;
   priceLabels?: boolean;
+  // Fib retracement level/extend/… config (custom fibonacciLine overlay only).
+  fib?: FibConfig;
 }
 
 // Narrow unknown extendData to our shape (never throws; non-objects → {}).
@@ -1202,6 +1205,7 @@ export class OverlayManager {
     if (def.showMiddle !== undefined) extendData.showMiddle = def.showMiddle;
     if (def.priceLabels !== undefined) extendData.priceLabels = def.priceLabels;
     if (def.visibility !== undefined) extendData.visibility = def.visibility;
+    if (def.fib !== undefined) extendData.fib = def.fib;
     const styles: DeepPartial<OverlayStyle> = {};
     if (def.line) (styles as { line?: unknown }).line = def.line;
     if (def.polygon) (styles as { polygon?: unknown }).polygon = def.polygon;
@@ -1459,6 +1463,17 @@ export class OverlayManager {
     this.persist();
   }
 
+  // Replace a fib drawing's level/extend/… config (custom-overlay feature). Same
+  // extendData path as setText — overrideOverlay re-invokes createPointFigures.
+  setFibConfig(id: string, fib: FibConfig): void {
+    if (this.entries.get(id) !== "drawing") return;
+    const ov = this.chart?.getOverlayById(id);
+    if (!ov) return;
+    const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), fib };
+    this.chart?.overrideOverlay({ id, extendData: extra });
+    this.persist();
+  }
+
   // Record the chart's current resolution and re-derive every drawing's effective
   // visibility against it. A VIEW reaction, not a user edit — so it does NOT
   // persist (persist samples intent from extendData, untouched here).
@@ -1533,6 +1548,7 @@ export class OverlayManager {
         size: line.size ?? 1,
         style: line.style ?? LineType.Solid,
       },
+      ...(live.name === "fibonacciLine" ? { fib: asFibConfig(extra.fib) } : {}),
       showMiddle: extra.showMiddle,
       priceLabels: extra.priceLabels,
       visibility: extra.visibility,
@@ -1545,6 +1561,7 @@ export class OverlayManager {
   applyDrawingConfig(id: string, cfg: SavedDrawingConfig): void {
     if (cfg.line) this.setStyle(id, { line: cfg.line } as DeepPartial<OverlayStyle>);
     if (cfg.polygon) this.setStyle(id, { polygon: cfg.polygon } as DeepPartial<OverlayStyle>);
+    if (cfg.fib !== undefined) this.setFibConfig(id, cfg.fib);
     if (cfg.showMiddle !== undefined) this.setShowMiddle(id, cfg.showMiddle);
     if (cfg.priceLabels !== undefined) this.setPriceLabels(id, cfg.priceLabels);
     if (cfg.visibility !== undefined) this.setVisibilityModel(id, cfg.visibility);

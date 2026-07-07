@@ -4,6 +4,7 @@
 
 import type { DeepPartial, OverlayStyle, LineType } from "klinecharts";
 import type { VisibilityModel } from "../visibility";
+import type { FibConfig } from "../fibConfig";
 import type { BacktestResult } from "../../api";
 import type { BacktestPeriod } from "../backtestPeriods";
 import { PREFIX, ns, root, load, save, saveLocal, removeKeyEverywhere } from "./core";
@@ -227,6 +228,8 @@ export interface SavedDrawingConfig {
   line?: { color?: string; size?: number; style?: LineType };
   // Rectangle fill + border (klinecharts polygon styles). Only rect drawings set it.
   polygon?: { color?: string; borderColor?: string; borderSize?: number };
+  // Fib retracement level/extend/… config. Only fibonacciLine drawings set it.
+  fib?: FibConfig;
   showMiddle?: boolean;
   priceLabels?: boolean;
   visibility?: VisibilityModel;
