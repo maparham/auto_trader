@@ -19,6 +19,7 @@ import AlertsSidebar, { type AlertNavTarget, type VisibleCell } from "./AlertsSi
 import ConfirmDialog from "./ConfirmDialog";
 import BacktestClusterPopover from "./BacktestClusterPopover";
 import TradeExitClusterPopover from "./TradeExitClusterPopover";
+import TradeMarkerLabelPopover from "./TradeMarkerLabelPopover";
 import BacktestSignalPopover from "./BacktestSignalPopover";
 import Snackbar from "./Snackbar";
 import OrderTicket from "./OrderTicket";
@@ -1830,6 +1831,9 @@ export default function App() {
       {/* Hover popover for a coarse-timeframe LIVE exit pill — that bar's journaled
           closes. Self-driven by liveExitClusterHoverSignal; nothing when idle. */}
       <TradeExitClusterPopover />
+      {/* Hover label for a LIVE trade marker glyph — its full entry/exit text.
+          Self-driven by tradeMarkerHoverSignal; renders nothing when idle. */}
+      <TradeMarkerLabelPopover />
       {/* Hover popover for a backtest signal-candle glyph — the passing rules'
           values that fired the trade. Self-driven by backtestSignalHoverSignal. */}
       <BacktestSignalPopover />

@@ -21,17 +21,15 @@
 // removes what changed.
 
 import type { Chart } from "klinecharts";
-import { LineType } from "klinecharts";
 import { tradeLabel, type TradeView } from "./trading";
 import type { JournalTrade } from "./liveJournal";
-import { MARKER_OVERLAY, ensureMarkerOverlayRegistered, barIndexForTs } from "./backtest";
-
-// Match the backtest marker palette: green won / red lost fills. Entry markers are
-// neutral (win: null) — the overlay renders them with klinecharts' default blue
-// pill, matching PositionLines' entry-blue.
-const WIN_COLOR = "#26a69a";
-const LOSS_COLOR = "#ef5350";
-const ENTRY_COLOR = "#2962ff";
+import {
+  MARKER_OVERLAY,
+  ensureMarkerOverlayRegistered,
+  barIndexForTs,
+  setMarkerHoverCursor,
+} from "./backtest";
+import { tradeMarkerHoverSignal } from "./signals";
 
 /** One live trade marker, ready to hand to the backtest MARKER_OVERLAY. The
  * `timestamp` is the RAW fill/close time in ms; the drawer anchors it to the bar
@@ -175,6 +173,10 @@ export function exitsCollide(clusters: ExitCluster[]): boolean {
 interface DrawnMarker {
   overlayId: string;
   sig: string;
+  // Latest label/win, read by the (create-time) hover handler so a reconciled
+  // update is reflected in the DOM label without re-attaching the handler.
+  label: string;
+  win: boolean | null;
 }
 
 /** Per-cell drawer for live trade markers. Reconciles a flat TradeMarkerSpec[] by
@@ -190,8 +192,8 @@ export class TradeMarkers {
     ensureMarkerOverlayRegistered();
   }
 
-  private sig(s: TradeMarkerSpec, anchorTs: number): string {
-    return `${anchorTs}|${s.price}|${s.label}|${s.win}|${s.placement}`;
+  private sig(s: TradeMarkerSpec, anchorTs: number, anchorValue: number): string {
+    return `${anchorTs}|${anchorValue}|${s.label}|${s.win}|${s.placement}`;
   }
 
   /** Reconcile drawn markers to `specs`, anchoring each to the bar that contains
@@ -199,38 +201,68 @@ export class TradeMarkers {
    * the builder; the empty-chart guard here (idx < 0) keeps a pre-data render a
    * no-op. */
   render(specs: TradeMarkerSpec[]): void {
-    const barTimes = (this.chart.getDataList() ?? []).map((k) => k.timestamp);
+    const bars = this.chart.getDataList() ?? [];
+    const barTimes = bars.map((k) => k.timestamp);
     const seen = new Set<string>();
     for (const spec of specs) {
       const idx = barIndexForTs(barTimes, spec.timestamp);
       if (idx < 0) continue;
       const anchorTs = barTimes[idx];
+      // Anchor at the candle's EXTREME (low for a below-marker, high for an
+      // above one) rather than the entry price, so the overlay's fixed pixel gap
+      // reads off the wick and the glyph always clears the candle — the entry
+      // price can sit mid-body and leave the glyph inside a tall candle.
+      const anchorValue = spec.placement === "below" ? bars[idx].low : bars[idx].high;
       seen.add(spec.key);
-      const sig = this.sig(spec, anchorTs);
-      const extendData = { label: spec.label, win: spec.win, placement: spec.placement };
+      const sig = this.sig(spec, anchorTs, anchorValue);
+      const extendData = {
+        label: spec.label,
+        win: spec.win,
+        placement: spec.placement,
+        style: "live" as const,
+      };
       const existing = this.markers.get(spec.key);
       if (existing) {
         if (existing.sig !== sig) {
           this.chart.overrideOverlay({
             id: existing.overlayId,
-            points: [{ timestamp: anchorTs, value: spec.price }],
+            points: [{ timestamp: anchorTs, value: anchorValue }],
             extendData,
           });
           existing.sig = sig;
+          existing.label = spec.label;
+          existing.win = spec.win;
         }
         continue;
       }
-      // Stem colour: neutral entry blue, or win/loss for an exit (the pill fill is
-      // colored by `win` inside the overlay; the stem matches).
-      const color = spec.win == null ? ENTRY_COLOR : spec.win ? WIN_COLOR : LOSS_COLOR;
+      // The glyph is a compact arrow; its full label is a DOM pill shown only
+      // while hovered (tradeMarkerHoverSignal → App), so it never covers candles.
+      const drawn: DrawnMarker = { overlayId: "", sig, label: spec.label, win: spec.win };
       const id = this.chart.createOverlay({
         name: MARKER_OVERLAY,
-        points: [{ timestamp: anchorTs, value: spec.price }],
+        points: [{ timestamp: anchorTs, value: anchorValue }],
         lock: true, // read-only live artifact, never a user drawing
         extendData,
-        styles: { line: { color, style: LineType.Solid } },
+        onMouseEnter: (e) => {
+          tradeMarkerHoverSignal.set({
+            label: drawn.label,
+            win: drawn.win,
+            x: e.pageX ?? 0,
+            y: e.pageY ?? 0,
+          });
+          setMarkerHoverCursor(this.chart, true);
+          return false;
+        },
+        onMouseLeave: () => {
+          tradeMarkerHoverSignal.set(null);
+          setMarkerHoverCursor(this.chart, false);
+          return false;
+        },
       });
-      if (typeof id === "string") this.markers.set(spec.key, { overlayId: id, sig });
+      if (typeof id === "string") {
+        drawn.overlayId = id;
+        this.markers.set(spec.key, drawn);
+      }
     }
     for (const [key, m] of this.markers) {
       if (!seen.has(key)) {
@@ -243,5 +275,8 @@ export class TradeMarkers {
   clear(): void {
     for (const m of this.markers.values()) this.chart.removeOverlay({ id: m.overlayId });
     this.markers.clear();
+    // Removing a hovered glyph won't fire its onMouseLeave — drop any stale label.
+    tradeMarkerHoverSignal.set(null);
+    setMarkerHoverCursor(this.chart, false);
   }
 }

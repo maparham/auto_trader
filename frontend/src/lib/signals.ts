@@ -136,6 +136,17 @@ export const backtestSignalHoverSignal = new Signal<
   { glyph: SignalGlyph; x: number; y: number } | null
 >(null);
 
+// The LIVE trade-marker label popover: an on-chart entry/exit marker is now a
+// compact arrow glyph (tradeMarkers.ts, MARKER_OVERLAY style "live"); its full
+// label ("Long 100 @ 72.28" / exit P&L) is a DOM pill shown only while the glyph
+// is hovered, so the always-on furniture never covers candles. Set by the glyph's
+// onMouseEnter with the cursor's page position + win (for entry-blue/win-green/
+// loss-red colouring), cleared on leave / teardown; App renders one pill for it.
+// Same global one-at-a-time idiom as the popovers above.
+export const tradeMarkerHoverSignal = new Signal<
+  { label: string; win: boolean | null; x: number; y: number } | null
+>(null);
+
 // A one-shot "scroll the chart to this trade" request (row.i, or null = no-op),
 // set by the trades panel row's onClick. The chart (backtest.ts runAndRender)
 // subscribes and pans/zooms to the trade's entry↔exit span — a second signal

@@ -267,6 +267,11 @@ interface MarkerExtra {
   // Which side of the candle the pill hangs from (see markerPlacement). Absent
   // in older persisted results — treated as "above" (the historical default).
   placement?: "above" | "below";
+  // Rendering variant. Absent/"backtest" → the classic stem + arrow + always-on
+  // label pill (backtest fills). "live" → a compact arrow glyph only, anchored a
+  // gap off the candle's extreme; its label is a DOM pill revealed on hover
+  // (tradeMarkerHoverSignal), so the always-on furniture never covers candles.
+  style?: "backtest" | "live";
 }
 function asMarkerExtra(v: unknown): MarkerExtra {
   return (typeof v === "object" && v !== null ? v : { label: "", win: null }) as MarkerExtra;
@@ -280,12 +285,45 @@ const markerOverlay: OverlayTemplate = {
   needDefaultYAxisFigure: false,
   createPointFigures: ({ overlay, coordinates }) => {
     if (coordinates.length < 1) return [];
-    const { label, win, placement } = asMarkerExtra(overlay.extendData);
+    const { label, win, placement, style } = asMarkerExtra(overlay.extendData);
     const startX = coordinates[0].x;
     // "below" mirrors the historical "above" geometry through the anchor: the
-    // line/arrow/pill grow downward and the pill's baseline flips so it hangs
-    // under the fill instead of over it. `dir` is +1 downward, -1 upward.
+    // arrow/pill grow downward and the pill's baseline flips so it hangs under
+    // the fill instead of over it. `dir` is +1 downward, -1 upward.
     const dir = placement === "below" ? 1 : -1;
+
+    if (style === "live") {
+      // Compact glyph: just an arrow, sitting a fixed GAP off the candle's
+      // extreme (the caller anchors this overlay at the bar low/high, so the gap
+      // reads off the wick). The full label is a DOM pill shown on hover, so the
+      // always-on marker never covers neighbouring candles. Arrow APEX points at
+      // the candle; a transparent finger-sized hit target sits over it because
+      // klinecharts' hit test on a tiny polygon is unreliable (same trick as the
+      // signal glyph). Colour: entry = neutral blue, exit = win/loss.
+      const glyphColor = win == null ? ACCENT_COLOR : win ? BUY_COLOR : SELL_COLOR;
+      const tip = coordinates[0].y + dir * 7; // 7px gap from the wick
+      const base = tip + dir * 8;
+      return [
+        {
+          type: "circle",
+          attrs: { x: startX, y: tip + dir * 4, r: 9 },
+          styles: { style: PolygonType.Fill, color: "rgba(0,0,0,0)" },
+        },
+        {
+          type: "polygon",
+          attrs: {
+            coordinates: [
+              { x: startX, y: tip },
+              { x: startX - 4, y: base },
+              { x: startX + 4, y: base },
+            ],
+          },
+          styles: { style: PolygonType.Fill, color: glyphColor },
+        },
+      ];
+    }
+
+    // Backtest fills: the classic stem + arrow + always-on label pill.
     const startY = coordinates[0].y + dir * 6;
     const lineEndY = startY + dir * 50;
     const arrowEndY = lineEndY + dir * 5;
@@ -403,7 +441,7 @@ function ensureSignalGlyphOverlayRegistered(): void {
 // hovered (onMouseEnter) and restore 'crosshair' on leave — the pane's DOM is
 // the element carrying the cursor style (setting the root container wouldn't
 // override the child pane's own cursor).
-function setMarkerHoverCursor(chart: Chart, hovering: boolean): void {
+export function setMarkerHoverCursor(chart: Chart, hovering: boolean): void {
   const dom = chart.getDom("candle_pane", DomPosition.Main);
   if (dom) dom.style.cursor = hovering ? "pointer" : "crosshair";
 }
