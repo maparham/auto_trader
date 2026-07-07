@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from auto_trader.core.models import Side, Signal
+from auto_trader.core.models import RuleTerm, Side, Signal
 from auto_trader.strategy.base import Context, Strategy
 
 
@@ -108,6 +108,39 @@ def _operand_name(op: Operand) -> str:
     return str(op.value)
 
 
+def _term_label(op: Operand) -> str:
+    """Human-friendly operand label for the signal popover, WITHOUT the timeframe
+    (the frontend appends `@tf` from `_operand_timeframe`). Unlike `_operand_name`
+    (which renders the raw series key `EMA_56` for exit reasons), this renders the
+    readable form `EMA(56)` / `slope(EMA(9),3)`."""
+    if op.slope_len is not None:
+        inner = _term_label(replace(op, slope_len=None))
+        return f"slope({inner},{op.slope_len})"
+    if op.kind == "series":
+        return op.label or op.series_key or "series"
+    if op.kind == "indicator":
+        if op.indicator == "VOL":
+            return "VOL"
+        if op.indicator == "AVWAP":
+            return "AVWAP"
+        return f"{op.indicator}({op.length})"
+    if op.kind == "price":
+        return op.field or "price"
+    if op.kind == "entry":
+        return "entryPrice"
+    return str(op.value)
+
+
+def _operand_timeframe(op: Operand, base_tf: str | None) -> str | None:
+    """The operand's effective timeframe as a Resolution string, or None for a
+    timeframe-less operand (price/const/entry). Only indicator/series operands
+    carry a timeframe (mirrors `series_name`); a base-timeframe one (no explicit
+    `timeframe`) resolves to the run's base TF so base-vs-HTF is distinguishable."""
+    if op.kind in ("indicator", "series"):
+        return op.timeframe or base_tf
+    return None
+
+
 CROSS_OPS = {"crossesAbove", "crossesBelow", "crosses"}
 
 
@@ -144,6 +177,7 @@ class RuleStrategy(Strategy):
         *,
         long_enabled: bool = True,
         short_enabled: bool = True,
+        base_timeframe: str | None = None,
     ) -> None:
         self.long_entry = long_entry
         self.long_exit = long_exit
@@ -154,6 +188,10 @@ class RuleStrategy(Strategy):
         self.trade_from_time = trade_from_time
         self.long_enabled = long_enabled
         self.short_enabled = short_enabled
+        # The run's base timeframe (Resolution string), used only to tag a signal
+        # term's base-timeframe operands. None in live (/evaluate) where terms
+        # aren't surfaced — base operands then carry no timeframe, harmlessly.
+        self.base_timeframe = base_timeframe
 
     def on_bar(self, ctx: Context) -> list[Signal]:
         i = len(ctx.history) - 1
@@ -170,13 +208,19 @@ class RuleStrategy(Strategy):
                 passed, results = self._eval_group(self.long_entry, ctx, i, "long", is_exit=False)
                 if passed:
                     signals.append(
-                        Signal(Side.BUY, self.quantity, self._reason(self.long_entry, results), leg="long")
+                        Signal(
+                            Side.BUY, self.quantity, self._reason(self.long_entry, results), leg="long",
+                            terms=self._terms(self.long_entry, results, ctx, i, "long"), combine=self.long_entry.combine,
+                        )
                     )
             if ctx.position_long > 0:
                 passed, results = self._eval_group(self.long_exit, ctx, i, "long", is_exit=True)
                 if passed:
                     signals.append(
-                        Signal(Side.SELL, self.quantity, self._reason(self.long_exit, results), leg="long")
+                        Signal(
+                            Side.SELL, self.quantity, self._reason(self.long_exit, results), leg="long",
+                            terms=self._terms(self.long_exit, results, ctx, i, "long"), combine=self.long_exit.combine,
+                        )
                     )
 
         if self.short_enabled:
@@ -184,13 +228,19 @@ class RuleStrategy(Strategy):
                 passed, results = self._eval_group(self.short_entry, ctx, i, "short", is_exit=False)
                 if passed:
                     signals.append(
-                        Signal(Side.SELL, self.quantity, self._reason(self.short_entry, results), leg="short")
+                        Signal(
+                            Side.SELL, self.quantity, self._reason(self.short_entry, results), leg="short",
+                            terms=self._terms(self.short_entry, results, ctx, i, "short"), combine=self.short_entry.combine,
+                        )
                     )
             if ctx.position_short > 0:
                 passed, results = self._eval_group(self.short_exit, ctx, i, "short", is_exit=True)
                 if passed:
                     signals.append(
-                        Signal(Side.BUY, self.quantity, self._reason(self.short_exit, results), leg="short")
+                        Signal(
+                            Side.BUY, self.quantity, self._reason(self.short_exit, results), leg="short",
+                            terms=self._terms(self.short_exit, results, ctx, i, "short"), combine=self.short_exit.combine,
+                        )
                     )
 
         return signals
@@ -309,6 +359,32 @@ class RuleStrategy(Strategy):
         now = arr[i] if i < len(arr) else None
         prev = arr[i - 1] if 0 < i and i - 1 < len(arr) else None
         return now, prev
+
+    def _terms(
+        self, group: RuleGroup, results: list[bool], ctx: Context, i: int, side: str
+    ) -> tuple[RuleTerm, ...]:
+        """Capture the exact comparison for each PASSING rule at the firing bar `i`
+        (mirrors the `if passed` filter in `_reason`). The values are read as-of `i`
+        — for a counted exit that is the occurrence bar the count reached N, so the
+        term reflects the bar that actually fired, not an earlier occurrence."""
+        out: list[RuleTerm] = []
+        for r, passed in zip(group.rules, results):
+            if not passed:
+                continue
+            lnow, _ = self._operand_values(r.left, ctx, i, side)
+            rnow, _ = self._operand_values(r.right, ctx, i, side)
+            out.append(
+                RuleTerm(
+                    left_label=_term_label(r.left),
+                    left_val=lnow,
+                    op=r.op,
+                    right_label=_term_label(r.right),
+                    right_val=rnow,
+                    left_tf=_operand_timeframe(r.left, self.base_timeframe),
+                    right_tf=_operand_timeframe(r.right, self.base_timeframe),
+                )
+            )
+        return tuple(out)
 
     def _reason(self, group: RuleGroup, results: list[bool]) -> str:
         joiner = " AND " if group.combine == "AND" else " OR "

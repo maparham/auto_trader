@@ -127,6 +127,9 @@ class BacktestEngine:
                 last_short_open = None
 
             # 1) Fill everything queued on the previous bar at THIS bar's open.
+            # A signal queued here was generated on bar i-1 (its captured term
+            # values are as-of that bar), so stamp the fill with that signal time.
+            signal_time = candles[i - 1].time if i > 0 else None
             for sig in pending:
                 fill_price = self._fill_price(bar.open, sig.side)
                 if sig.leg == "long":
@@ -148,7 +151,10 @@ class BacktestEngine:
                         scaling.spacing, last_open, fill_price, side, atr
                     ):
                         continue  # cap/spacing rejected: no fill, no commission
-                    result.fills.append(Fill(bar.time, sig.side, fill_price, sig.quantity, sig.reason, sig.leg))
+                    result.fills.append(
+                        Fill(bar.time, sig.side, fill_price, sig.quantity, sig.reason, sig.leg,
+                             signal_time=signal_time, terms=sig.terms, combine=sig.combine)
+                    )
                     realized -= self.commission
                     self._open(positions, side, risk, fill_price, bar.time, sig.reason, sig.quantity, i)
                     if side == "long":
@@ -156,7 +162,10 @@ class BacktestEngine:
                     else:
                         last_short_open = fill_price
                 else:
-                    realized = self._close_all(positions, side, result, realized, close_side, fill_price, bar.time, sig.reason)
+                    realized = self._close_all(
+                        positions, side, result, realized, close_side, fill_price, bar.time, sig.reason,
+                        terms=sig.terms, signal_time=signal_time, combine=sig.combine,
+                    )
                     if side == "long":
                         last_long_open = None
                     else:
@@ -240,11 +249,19 @@ class BacktestEngine:
             p.target = target_level(risk.target, fill_price, side, self._atr_at(risk.target.length, i))
         positions.append(p)
 
-    def _close_all(self, positions, side, result, realized, close_side, fill_price, bar_time, reason):
+    def _close_all(
+        self, positions, side, result, realized, close_side, fill_price, bar_time, reason,
+        *, terms=(), signal_time=None, combine=None,
+    ):
         """Close EVERY open position on the side (P2 exit scope). One fill +
-        commission + Trade per position. Returns updated realized."""
+        commission + Trade per position. Returns updated realized. `terms`/
+        `signal_time`/`combine` are set only for a rule-based exit; mechanical closes
+        (session/range-end) leave the defaults (empty/None)."""
         while positions:
-            result.fills.append(Fill(bar_time, close_side, fill_price, positions[0].qty, reason, side))
+            result.fills.append(
+                Fill(bar_time, close_side, fill_price, positions[0].qty, reason, side,
+                     signal_time=signal_time, terms=terms, combine=combine)
+            )
             realized -= self.commission
             realized = self._reduce(positions, side, result, realized, fill_price, bar_time, reason, positions[0].qty)
         return realized

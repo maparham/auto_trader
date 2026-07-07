@@ -3465,6 +3465,22 @@
   color: var(--text-faint); font-size: 11px;
 }
 
+/* Signal-candle popover (shares the .bt-cluster-pop shell). Header names the leg/
+   action/time/combine; each row is one passing rule's comparison. Unlike the
+   cluster popover (fixed 340px so its reason text wraps), this one's 6 nowrap
+   columns must not be clipped — size the box to its content, capped at the
+   viewport so it can't run off-screen. */
+.bt-signal-pop {
+  max-width: 92vw;
+  width: max-content;
+}
+.bt-signal-pop-head {
+  margin-bottom: 5px; padding-bottom: 5px; border-bottom: 1px solid var(--border);
+  color: var(--text-dim); font-size: 11px; white-space: nowrap;
+}
+.bt-signal-pop-op { font-family: var(--mono); }
+.bt-signal-pop-cmp { color: var(--text-dim); text-align: center; font-family: var(--mono); }
+
 .bt-panel-sort {
   font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
   background: none; border: none; padding: 0; margin: 0; cursor: pointer;

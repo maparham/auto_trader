@@ -47,12 +47,34 @@ class CandleCacheGlobalStatsDTO(BaseModel):
     db_size_bytes: int
 
 
+class TermDTO(BaseModel):
+    """One passing rule's comparison at the signal bar (see RuleTerm). `left`/
+    `right` are human labels WITHOUT the timeframe; `leftTf`/`rightTf` are the
+    operand's effective Resolution string (None for a timeframe-less operand), which
+    the frontend prettifies to `@15m`. Values are backend-authoritative."""
+
+    left: str
+    lval: float | None
+    op: str
+    right: str
+    rval: float | None
+    leftTf: str | None
+    rightTf: str | None
+
+
 class MarkerDTO(BaseModel):
     time: int
     side: str
     price: float
     reason: str
     leg: str
+    # Signal-candle provenance (rule-based fills only; None/empty for a mechanical
+    # stop/target/session/range-end fill). `signal_time` is the bar the signal fired
+    # on (unix seconds), `terms` the passing rules' captured values, `combine` the
+    # firing group's AND/OR (how to read the passing-only terms).
+    signal_time: int | None = None
+    terms: list[TermDTO] = []
+    combine: str | None = None
 
 
 class TradeDTO(BaseModel):

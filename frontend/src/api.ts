@@ -13,12 +13,32 @@ export interface Candle {
   volume: number;
 }
 
-interface Marker {
+// One passing rule's comparison at the signal bar (mirrors the backend TermDTO).
+// `left`/`right` are human labels WITHOUT the timeframe; `leftTf`/`rightTf` are the
+// operand's effective Resolution string (null for a timeframe-less operand), which
+// the popover prettifies to `@15m`.
+export interface Term {
+  left: string;
+  lval: number | null;
+  op: string;
+  right: string;
+  rval: number | null;
+  leftTf: string | null;
+  rightTf: string | null;
+}
+
+export interface Marker {
   time: number;
   side: "buy" | "sell";
   price: number;
   reason: string;
   leg: "long" | "short";
+  // Signal-candle provenance (rule-based fills only). `signal_time` is the bar the
+  // signal fired on (unix seconds); `terms` the passing rules' captured values.
+  // Absent/empty for a mechanical stop/target/session/range-end fill.
+  signal_time?: number | null;
+  terms?: Term[];
+  combine?: string | null; // firing group's "AND"/"OR" (how to read the passing-only terms)
 }
 
 interface Trade {

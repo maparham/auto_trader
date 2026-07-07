@@ -18,6 +18,7 @@ from ..schemas import (
     CandleDTO,
     EquityDTO,
     MarkerDTO,
+    TermDTO,
     TradeDTO,
 )
 from .charts import _ts
@@ -79,6 +80,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         req.shortEntry.to_group(), req.shortExit.to_group(),
         req.series, quantity=req.costs.quantity, trade_from_time=req.tradeFromTime,
         long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
+        base_timeframe=req.resolution,
     )
     result = BacktestEngine(
         strategy,
@@ -105,7 +107,19 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         resolution=req.resolution,
         candles=window,
         markers=[
-            MarkerDTO(time=_ts(f.time), side=f.side.value, price=f.price, reason=f.reason, leg=f.leg)
+            MarkerDTO(
+                time=_ts(f.time), side=f.side.value, price=f.price, reason=f.reason, leg=f.leg,
+                signal_time=_ts(f.signal_time) if f.signal_time is not None else None,
+                terms=[
+                    TermDTO(
+                        left=t.left_label, lval=t.left_val, op=t.op,
+                        right=t.right_label, rval=t.right_val,
+                        leftTf=t.left_tf, rightTf=t.right_tf,
+                    )
+                    for t in f.terms
+                ],
+                combine=f.combine,
+            )
             for f in result.fills
         ],
         trades=[

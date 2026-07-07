@@ -31,9 +31,11 @@ import {
   highlightTradeSignal,
   selectedTradeSignal,
   backtestClusterHoverSignal,
+  backtestSignalHoverSignal,
   backtestPeriodsShownSignal,
   backtestSelectNoticeSignal,
 } from "./signals";
+import { buildSignalGlyphs } from "./signalGlyphs";
 import { tradeZones } from "./tradeZones";
 import { minPositiveGap } from "./barInterval";
 import { RESOLUTION_SECONDS } from "./feed";
@@ -323,6 +325,73 @@ function ensureMarkerOverlayRegistered(): void {
   if (markerOverlayRegistered) return;
   markerOverlayRegistered = true;
   registerOverlay(markerOverlay);
+}
+
+// The signal-candle glyph: a small subtle caret on the bar BEFORE a rule-based
+// fill, pointing at the candle (long ⇒ below, short ⇒ above). Deliberately
+// lighter/plainer than the B+/SL fill markers — it's a "why did this fire" hint,
+// not a fill. Hovering opens the terms popover (see drawMarkers). A separate
+// overlay from MARKER_OVERLAY because it anchors on a different bar (signal_time)
+// with caret-only geometry and no win/loss pill.
+const SIGNAL_OVERLAY = "backtestSignal";
+// Muted slate, distinct from the green/red fills and the blue trade lines.
+const SIGNAL_COLOR = "#8a97a5";
+
+interface SignalMarkerExtra {
+  placement: "above" | "below";
+}
+function asSignalMarkerExtra(v: unknown): SignalMarkerExtra {
+  return (typeof v === "object" && v !== null ? v : { placement: "below" }) as SignalMarkerExtra;
+}
+
+const signalGlyphOverlay: OverlayTemplate = {
+  name: SIGNAL_OVERLAY,
+  totalStep: 2,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: ({ overlay, coordinates }) => {
+    if (coordinates.length < 1) return [];
+    const { placement } = asSignalMarkerExtra(overlay.extendData);
+    const x = coordinates[0].x;
+    // `dir` is +1 hanging below the candle (long) / -1 above it (short). The
+    // caret's apex sits nearer the candle (`tip`), base further away, so it
+    // reads as an arrow pointing at the signal bar.
+    const dir = placement === "below" ? 1 : -1;
+    const anchorY = coordinates[0].y;
+    const tip = anchorY + dir * 4;
+    const base = anchorY + dir * 11;
+    return [
+      // Transparent finger-sized hit target FIRST: the visible caret is a tiny
+      // locked polygon, and klinecharts' hit test on such a small figure is
+      // unreliable (the same reason aggregate pills went DOM). A ~9px transparent
+      // circle over the caret gives the hover a dependable target at zero visual
+      // cost; ignoreEvent stays unset so it routes to onMouseEnter/onMouseLeave.
+      {
+        type: "circle",
+        attrs: { x, y: anchorY + dir * 7, r: 9 },
+        styles: { style: PolygonType.Fill, color: "rgba(0,0,0,0)" },
+      },
+      {
+        type: "polygon",
+        attrs: {
+          coordinates: [
+            { x, y: tip },
+            { x: x - 5, y: base },
+            { x: x + 5, y: base },
+          ],
+        },
+        styles: { style: PolygonType.Fill, color: SIGNAL_COLOR },
+      },
+    ];
+  },
+};
+
+let signalGlyphOverlayRegistered = false;
+function ensureSignalGlyphOverlayRegistered(): void {
+  if (signalGlyphOverlayRegistered) return;
+  signalGlyphOverlayRegistered = true;
+  registerOverlay(signalGlyphOverlay);
 }
 
 // klinecharts hard-sets the candle pane's cursor to 'crosshair' in its
@@ -903,6 +972,50 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
           : {}),
       });
       if (typeof id === "string") artifacts.markerIds.push(id);
+
+      // Signal-candle glyph: a subtle caret on the bar BEFORE this fill, drawn
+      // only for a rule-based fill (non-empty terms) whose signal bar is loaded.
+      // Built via the same tested filter the popover uses, and drawn HERE in the
+      // fill's loop iteration so it reuses the already-resolved trade `idx` and
+      // shares the fill marker's highlight group (signal ↔ fill ↔ row light up
+      // together). Tracked in markerIds so teardown/reanchor clears it too.
+      const [glyph] = buildSignalGlyphs([m]);
+      if (glyph && fillWithinLoadedWindow(glyph.signalTime * 1000, barTimes)) {
+        const sigSnapped = snapNearestBar(glyph.signalTime * 1000, barTimes);
+        const sigBar = barByTime.get(sigSnapped);
+        // Anchor at the signal bar's low (long ⇒ glyph hangs below) / high (short
+        // ⇒ above) so the caret clears the body; fall back to the fill price when
+        // the snapped bar isn't in the map.
+        const anchorPrice = sigBar
+          ? glyph.placement === "below"
+            ? sigBar.low
+            : sigBar.high
+          : m.price;
+        ensureSignalGlyphOverlayRegistered();
+        const sid = chart.createOverlay({
+          name: SIGNAL_OVERLAY,
+          points: [{ timestamp: sigSnapped, value: anchorPrice }],
+          lock: true,
+          extendData: { placement: glyph.placement } satisfies SignalMarkerExtra,
+          onMouseEnter: (e) => {
+            if (backtestResultSignal.value === result) {
+              backtestSignalHoverSignal.set({ glyph, x: e.pageX ?? 0, y: e.pageY ?? 0 });
+              if (idx !== undefined) highlightTradeSignal.set(idx);
+              setMarkerHoverCursor(chart, true);
+            }
+            return false;
+          },
+          onMouseLeave: () => {
+            if (backtestResultSignal.value === result) {
+              backtestSignalHoverSignal.set(null);
+              if (idx !== undefined) highlightTradeSignal.set(null);
+              setMarkerHoverCursor(chart, false);
+            }
+            return false;
+          },
+        });
+        if (typeof sid === "string") artifacts.markerIds.push(sid);
+      }
     }
   } else if (artifacts.markerMode === "aggregate") {
     // Aggregate: bucket trades per currently-loaded bar and stash the clusters;
@@ -1235,8 +1348,12 @@ export function teardownArtifacts(chart: Chart): void {
     artifacts.unsub();
     artifacts.unsub = null;
   }
-  // Drop a hover popover left open over one of this chart's aggregate pills.
-  if (backtestResultSignal.value === artifacts.result) backtestClusterHoverSignal.set(null);
+  // Drop a hover popover left open over one of this chart's aggregate pills or
+  // signal glyphs.
+  if (backtestResultSignal.value === artifacts.result) {
+    backtestClusterHoverSignal.set(null);
+    backtestSignalHoverSignal.set(null);
+  }
   artifacts.trades = [];
   // Reset the GLOBAL hover/selection signals ONLY when this chart owns the
   // currently-active backtest — otherwise clearing/unmounting an UNRELATED cell

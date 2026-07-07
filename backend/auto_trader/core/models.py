@@ -56,18 +56,45 @@ class Candle:
 
 
 @dataclass(frozen=True, slots=True)
+class RuleTerm:
+    """One passing rule's exact comparison at the signal bar, kept so the chart
+    can show *why* a trade fired without recomputing. `*_val` is the authoritative
+    value the engine compared (None when the operand had no value there); `*_tf` is
+    the operand's effective timeframe (base ⇒ the run's TF, else the higher TF) as a
+    Resolution string, or None for a timeframe-less operand (price/const/entry). The
+    frontend prettifies `*_tf` for display (e.g. MINUTE_15 → @15m).
+
+    Lives here rather than in strategy/rule.py so Signal/Fill can reference it
+    without a circular import (rule.py imports from this module)."""
+
+    left_label: str
+    left_val: float | None
+    op: str
+    right_label: str
+    right_val: float | None
+    left_tf: str | None = None
+    right_tf: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Signal:
     """A strategy's intent at a given bar. quantity in instrument units.
 
     `leg` picks which position bucket the side acts on (hedging): leg="long"
     + BUY opens/adds long, leg="long" + SELL closes long; leg="short" + SELL
     opens/adds short, leg="short" + BUY closes short.
+
+    `terms` are the passing rules' captured comparison values (empty for a signal
+    with no rule provenance) — the engine threads them onto the resulting Fill.
+    `combine` is the firing group's "AND"/"OR" (how to read the passing-only terms).
     """
 
     side: Side
     quantity: float
     reason: str = ""
     leg: str = "long"
+    terms: tuple[RuleTerm, ...] = ()
+    combine: str = "AND"
 
 
 @dataclass(slots=True)
@@ -91,7 +118,13 @@ class Trade:
 
 @dataclass(slots=True)
 class Fill:
-    """A single executed order. Markers on the chart come from these."""
+    """A single executed order. Markers on the chart come from these.
+
+    `signal_time` is the bar the firing signal was generated on (one bar before
+    this fill, on the run's base timeframe) — None for a mechanical fill with no
+    rule signal (stop/target/trail/session/range-end). `terms` are that signal's
+    passing-rule comparison values, empty for a mechanical fill; `combine` is the
+    firing group's AND/OR, None for a mechanical fill."""
 
     time: datetime
     side: Side
@@ -99,6 +132,9 @@ class Fill:
     quantity: float
     reason: str = ""
     leg: str = "long"
+    signal_time: datetime | None = None
+    terms: tuple[RuleTerm, ...] = ()
+    combine: str | None = None
 
 
 # --- order execution (paper / live) -----------------------------------------

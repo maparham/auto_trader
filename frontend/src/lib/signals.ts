@@ -81,6 +81,7 @@ export const tradePanelOpen = new Signal<boolean>(false);
 // poll, fanned out — a cell draws only the trades whose epic matches its symbol.
 import type { TradeView } from "./trading";
 import type { StoredBacktestResult } from "./persist";
+import type { SignalGlyph } from "./signalGlyphs";
 export const tradesSignal = new Signal<TradeView[]>([]);
 
 // Backtest run result published after a successful run OR restored on rehydrate
@@ -115,6 +116,14 @@ export const selectedTradeSignal = new Signal<number | null>(null);
 // gating needed. Carries the stored trade shape (plain data, no candles).
 export const backtestClusterHoverSignal = new Signal<
   { trades: StoredBacktestResult["trades"]; x: number; y: number } | null
+>(null);
+
+// The signal-candle popover: the glyph the cursor is over (its passing-rule terms
+// + header data) plus the cursor's page position. Set by a signal glyph's
+// onMouseEnter (backtest.ts), cleared on leave / teardown; App renders one popover
+// for it. Same global one-at-a-time idiom as the cluster popover above.
+export const backtestSignalHoverSignal = new Signal<
+  { glyph: SignalGlyph; x: number; y: number } | null
 >(null);
 
 // A one-shot "scroll the chart to this trade" request (row.i, or null = no-op),

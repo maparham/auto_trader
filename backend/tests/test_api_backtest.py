@@ -507,3 +507,38 @@ def test_backtest_time_of_day_window_honoured_over_the_wire():
     # A window that INCLUDES it lets the entry fire.
     included = _run({**base, "mask": {"enabled": True, "timeOfDay": {"startMin": 1300, "endMin": 1400}, "tz": "UTC"}})
     assert len(included.markers) >= 1
+
+
+def test_markers_carry_signal_time_and_terms():
+    # A rule-based entry marker carries the signal bar's time and the passing
+    # rule's authoritative values with per-side timeframe tags (base ⇒ run TF).
+    candles = _candles([10, 10, 10, 10])
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        "series": {"EMA_2": [1.0, 50.0, 1.0, 1.0]},  # above open only at bar 1
+        **_groups(
+            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 2), "op": "gt", "right": {"kind": "price", "field": "open"}}]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+    }
+    result = _run(body)
+    entry = next(m for m in result.markers if m.reason != "range end")
+    assert entry.signal_time == candles[1]["time"]
+    assert entry.combine == "AND"
+    assert len(entry.terms) == 1
+    term = entry.terms[0]
+    assert term.left == "EMA(2)"
+    assert term.lval == 50.0
+    assert term.op == "gt"
+    assert term.right == "open"
+    assert term.rval == 10.0
+    assert term.leftTf == "MINUTE_5"
+    assert term.rightTf is None
+
+    # A mechanical exit (range end) carries no signal provenance.
+    range_end = next(m for m in result.markers if m.reason == "range end")
+    assert range_end.signal_time is None
+    assert range_end.terms == []
