@@ -26,6 +26,7 @@ import {
 // reorder engine so the legend's card index and the engine's reorderable order stay
 // in lockstep (see INTERNAL_INDICATORS in ./lib/indicators).
 import { INTERNAL_INDICATORS } from "./lib/indicators";
+import { periodByResolution } from "./lib/feed";
 
 const UP = "#26a69a";
 const DOWN = "#ef5350";
@@ -682,12 +683,19 @@ function rowsForPane(
   for (const [name, ind] of inds ?? []) {
     const hideValue =
       (ind.extendData as { hideLegendValue?: boolean } | undefined)?.hideLegendValue ?? false;
+    // MTF indicators computed on a higher timeframe show its short label after the
+    // params (TV-style "EMA(50,1D)"), so the legend says which TF the values are from.
+    const mtfRes = (ind.extendData as { mtf?: { timeframe?: string | null } } | undefined)?.mtf
+      ?.timeframe;
+    const mtfTf = mtfRes && mtfRes !== "chart" ? periodByResolution(mtfRes)?.label ?? mtfRes : "";
     const calcParamsText =
       indTypeOf(ind) === "AVWAP"
         ? ""
         : ind.calcParams?.length
-          ? `(${ind.calcParams.join(",")})`
-          : "";
+          ? `(${[...ind.calcParams, ...(mtfTf ? [mtfTf] : [])].join(",")})`
+          : mtfTf
+            ? `(${mtfTf})`
+            : "";
     let lineIdx = 0;
     const figures: LegendFigure[] = [];
     for (const fig of ind.figures) {
