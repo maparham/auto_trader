@@ -92,6 +92,17 @@ export interface RsiExtend {
   hideLegendValue?: boolean;
 }
 
+// The four divergence kinds in the order the RSI series operand exposes them as
+// output lines: line 1 = bullish, 2 = bearish, 3 = hiddenBullish, 4 = hiddenBearish
+// (line 0 is the RSI value). Single source of truth for the line ↔ kind mapping,
+// shared by the compute (backtestSeries) and the picker enumeration (chartOperand).
+export const DIVERGENCE_KINDS: readonly DivergenceKind[] = [
+  "bullish",
+  "bearish",
+  "hiddenBullish",
+  "hiddenBearish",
+];
+
 export const RSI_DIVERGENCE_DEFAULTS: RsiDivergenceConfig = {
   on: false,
   lookbackLeft: 5,
@@ -242,6 +253,44 @@ export function detectDivergences(
       }
     }
   }
+}
+
+// A divergence config that force-detects EXACTLY one kind: the pivot/range params
+// come from the instance's config (or the defaults), but every per-kind flag except
+// `kind` is turned off and the whole feature is turned on — so `detectDivergences`
+// with this config yields only that kind's confirmed segments regardless of which
+// kinds the source RSI instance had toggled. `showForming` is off (the operand is
+// confirmed-only: no repaint, no lookahead).
+export function cfgForKind(
+  div: Partial<RsiDivergenceConfig> | undefined,
+  kind: DivergenceKind,
+): RsiDivergenceConfig {
+  return {
+    ...RSI_DIVERGENCE_DEFAULTS,
+    ...(div ?? {}),
+    on: true,
+    bullish: kind === "bullish",
+    bearish: kind === "bearish",
+    hiddenBullish: kind === "hiddenBullish",
+    hiddenBearish: kind === "hiddenBearish",
+    showForming: false,
+  };
+}
+
+// Confirmed divergences of one `kind` as a per-bar 0/1 event series: `1` on the bar
+// a divergence of that kind confirms (its right pivot, `toIndex`), `0` everywhere
+// else — including the warm-up (never undefined, so a rule comparison stays
+// well-defined). Reuses the exact detector the chart draws with, so backtest ↔ live
+// ↔ chart all agree. `cfg` should force-enable just `kind` (see `cfgForKind`).
+export function divergenceEventSeries(
+  dataList: KLineData[],
+  rsi: Array<number | undefined>,
+  cfg: RsiDivergenceConfig,
+  kind: DivergenceKind,
+): Array<0 | 1> {
+  const out: RsiPoint[] = dataList.map(() => ({}));
+  detectDivergences(dataList, rsi, out, cfg);
+  return dataList.map((_, i) => (out[i].divs?.some((d) => d.kind === kind) ? 1 : 0));
 }
 
 // A moving average over a sparse series (undefined entries are "not ready yet", as

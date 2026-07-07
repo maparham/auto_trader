@@ -162,12 +162,27 @@ describe("indicatorOutputs", () => {
     expect(withAnchor).toContainEqual({ lineIndex: 7, label: "Anchor Low" });
   });
 
-  it("RSI/VWAP/AVWAP: single output (matches computeIndicatorRecipe resolving line 0 only)", () => {
-    expect(indicatorOutputs("RSI", {}, [14])).toEqual([{ lineIndex: 0, label: "Value", base: true }]);
+  it("VWAP/AVWAP: single output (matches computeIndicatorRecipe resolving line 0 only)", () => {
     expect(indicatorOutputs("VWAP", {}, [])).toEqual([{ lineIndex: 0, label: "Value", base: true }]);
     expect(indicatorOutputs("AVWAP", { bands: [{ on: true }] }, [120000])).toEqual([
       { lineIndex: 0, label: "Value", base: true },
     ]);
+  });
+
+  it("RSI: value line + all four divergence outputs, regardless of the instance's divergence flags", () => {
+    const value = { lineIndex: 0, label: "Value", base: true };
+    const divs = [
+      { lineIndex: 1, label: "Bullish divergence" },
+      { lineIndex: 2, label: "Bearish divergence" },
+      { lineIndex: 3, label: "Hidden bullish divergence" },
+      { lineIndex: 4, label: "Hidden bearish divergence" },
+    ];
+    // No divergence config at all → still all four.
+    expect(indicatorOutputs("RSI", {}, [14])).toEqual([value, ...divs]);
+    // Divergence on but only bullish toggled → still all four (compute force-detects).
+    expect(
+      indicatorOutputs("RSI", { divergence: { on: true, bullish: true, bearish: false, hiddenBullish: false, hiddenBearish: false } }, [14]),
+    ).toEqual([value, ...divs]);
   });
 
   it("unsupported types return []", () => {
@@ -194,6 +209,45 @@ describe("chartOperandSources", () => {
     expect(s.outputs.map((o) => o.operand.recipe.source === "indicator" && o.operand.recipe.line)).toEqual([0, 1, 2]);
     const keys = s.outputs.map((o) => o.operand.seriesKey);
     expect(new Set(keys).size).toBe(3); // distinct outputs => distinct series
+  });
+
+  it("RSI: 5 outputs (Value + 4 divergences) with base/suffixed labels and distinct seriesKeys", () => {
+    const s = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "RSI#1", indType: "RSI", calcParams: [14], extendData: {} });
+    expect(s.outputs.map((o) => o.operand.label)).toEqual([
+      "RSI(14)",
+      "RSI(14): Bullish divergence",
+      "RSI(14): Bearish divergence",
+      "RSI(14): Hidden bullish divergence",
+      "RSI(14): Hidden bearish divergence",
+    ]);
+    expect(s.outputs.map((o) => o.operand.recipe.source === "indicator" && o.operand.recipe.line)).toEqual([0, 1, 2, 3, 4]);
+    expect(new Set(s.outputs.map((o) => o.operand.seriesKey)).size).toBe(5);
+    // A divergence recipe snapshots the pivot/range params and omits per-kind flags.
+    const bull = s.outputs[1].operand.recipe;
+    expect(bull.source === "indicator" && bull.extend).toMatchObject({
+      divergence: { lookbackLeft: 5, lookbackRight: 5, rangeMin: 5, rangeMax: 60 },
+    });
+    const div = (bull.source === "indicator" && bull.extend?.divergence) as Record<string, unknown>;
+    expect(div).not.toHaveProperty("bullish");
+    expect(div).not.toHaveProperty("on");
+  });
+
+  it("RSI divergence seriesKey dedups across per-kind-flag/style/smoothing differences, but varies with source & pivot params", () => {
+    const keyFor = (extendData: unknown, line: number) => {
+      const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "R", indType: "RSI", calcParams: [14], extendData });
+      return src.outputs[line].operand.seriesKey;
+    };
+    const baseline = keyFor({ divergence: { on: true, bullish: true, bearish: false } }, 1);
+    // Same pivots, different toggled kinds / style / smoothing → SAME key (dedup).
+    expect(keyFor({ divergence: { on: true, bullish: false, bearish: true, hiddenBullish: true } }, 1)).toBe(baseline);
+    expect(keyFor({ divergence: { on: true }, style: { bull: "#123456" } }, 1)).toBe(baseline);
+    expect(keyFor({ divergence: { on: true }, smoothing: { type: "ema", length: 9 } }, 1)).toBe(baseline);
+    // Different price source → DIFFERENT key (changes the RSI the pivots sit on).
+    expect(keyFor({ divergence: { on: true }, source: "hl2" }, 1)).not.toBe(baseline);
+    // Different pivot params → DIFFERENT key.
+    expect(keyFor({ divergence: { on: true, rangeMax: 30 } }, 1)).not.toBe(baseline);
+    // Different kind (line) → DIFFERENT key.
+    expect(keyFor({ divergence: { on: true } }, 2)).not.toBe(baseline);
   });
 
   it("PREV_HL sub-item labels read 'Prev H/L: Day High' etc.", () => {

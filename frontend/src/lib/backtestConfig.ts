@@ -385,7 +385,16 @@ export function operandBaseLen(op: Operand): number {
   if (op.kind === "series" && op.recipe.source === "indicator") {
     const r = op.recipe;
     const len = r.calcParams[0];
-    return SERIES_LENGTH_TYPES.has(r.indicatorType) && Number.isFinite(len) ? Math.max(1, len) : 1;
+    const base = SERIES_LENGTH_TYPES.has(r.indicatorType) && Number.isFinite(len) ? Math.max(1, len) : 1;
+    // An RSI divergence output (line ≥ 1) needs two pivots within range before the
+    // first signal: RSI length + rangeMax + lookbackLeft + lookbackRight bars. The
+    // detection params are snapshotted in the recipe (fallbacks mirror
+    // RSI_DIVERGENCE_DEFAULTS — inlined to avoid a customIndicators import cycle).
+    if (r.indicatorType === "RSI" && (r.line ?? 0) >= 1) {
+      const d = (r.extend?.divergence ?? {}) as { lookbackLeft?: number; lookbackRight?: number; rangeMax?: number };
+      return base + (d.rangeMax ?? 60) + (d.lookbackLeft ?? 5) + (d.lookbackRight ?? 5);
+    }
+    return base;
   }
   return 1;
 }

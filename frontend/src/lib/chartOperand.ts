@@ -12,6 +12,7 @@ import type { KLineData } from "klinecharts";
 import { recipeKey, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe, type SeriesIndicatorType, type DrawingKind, type Operand } from "./backtestConfig";
 import { LINE_KEYS } from "./backtestSeries";
 import { PREV_HL_PERIODS } from "./indicators/prevHl";
+import { DIVERGENCE_KINDS, RSI_DIVERGENCE_DEFAULTS, type DivergenceKind, type RsiExtend } from "./customIndicators";
 
 /** Custom indicator types copyable into a rule (SESSIONS deferred). */
 const SUPPORTED_INDICATORS = new Set<string>(["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI"]);
@@ -70,8 +71,22 @@ export function indicatorToRecipe(
     calcParams: calcParams.map(Number),
     line,
   };
-  const extend = sanitizeExtend(extendData);
-  if (extend) recipe.extend = extend;
+  if (indType === "RSI" && line >= 1) {
+    // A divergence output (line ≥ 1): the recipe carries ONLY what changes the
+    // detected pivots — the price source (parity: the RSI curve the pivots sit on)
+    // plus the pivot/range params, resolved over the defaults. The per-kind on/off
+    // flags, style, and smoothing are deliberately dropped so two RSIs differing
+    // only in those produce the SAME divergence seriesKey and dedup.
+    const rext = (extendData ?? {}) as RsiExtend;
+    const d = { ...RSI_DIVERGENCE_DEFAULTS, ...(rext.divergence ?? {}) };
+    recipe.extend = {
+      ...(rext.source ? { source: rext.source } : {}),
+      divergence: { lookbackLeft: d.lookbackLeft, lookbackRight: d.lookbackRight, rangeMin: d.rangeMin, rangeMax: d.rangeMax },
+    };
+  } else {
+    const extend = sanitizeExtend(extendData);
+    if (extend) recipe.extend = extend;
+  }
   const mtf = (extendData as { mtf?: { timeframe?: string | null } } | undefined)?.mtf;
   const timeframe = mtf?.timeframe ?? undefined;
   return { recipe, timeframe: timeframe || undefined };
@@ -140,6 +155,15 @@ export interface OutputChoice {
   base?: boolean;
 }
 
+// Picker labels for the RSI divergence outputs, by kind (composed as a base/suffix,
+// e.g. "RSI(14): Bullish divergence" in chartOperandSources).
+const RSI_DIV_LABELS: Record<DivergenceKind, string> = {
+  bullish: "Bullish divergence",
+  bearish: "Bearish divergence",
+  hiddenBullish: "Hidden bullish divergence",
+  hiddenBearish: "Hidden bearish divergence",
+};
+
 // Human labels for the PREV_HL boundary lines, by output key.
 const PREV_HL_LABELS: Record<string, string> = {
   rollingHigh: "Rolling High", rollingLow: "Rolling Low",
@@ -187,8 +211,15 @@ export function indicatorOutputs(indType: string, extendData: unknown, _calcPara
       }
       return out;
     }
-    // RSI/VWAP/AVWAP resolve only line 0 in computeIndicatorRecipe.
+    // RSI: the value line PLUS all four confirmed-divergence event outputs. Always
+    // all four regardless of the instance's divergence flags — the compute
+    // force-detects the chosen kind either way (divergence-operands design).
     case "RSI":
+      return [
+        { lineIndex: 0, label: "Value", base: true },
+        ...DIVERGENCE_KINDS.map((k, i) => ({ lineIndex: i + 1, label: RSI_DIV_LABELS[k] })),
+      ];
+    // VWAP/AVWAP resolve only line 0 in computeIndicatorRecipe.
     case "VWAP":
     case "AVWAP":
       return [{ lineIndex: 0, label: "Value", base: true }];

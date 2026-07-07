@@ -13,6 +13,7 @@ import type { KLineData } from "klinecharts";
 import { maSeries, sma, alignHtfToChart, type MaOptions } from "./mtf";
 import {
   vwapFrom, computeRsi, computeLr, computePrevHl,
+  DIVERGENCE_KINDS, cfgForKind, divergenceEventSeries,
   type AvwapExtend, type RsiExtend, type LrExtend, type PrevHlExtend,
 } from "./customIndicators";
 import {
@@ -201,8 +202,18 @@ function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[]): Array
       const pts = computePrevHl(candles, ext as PrevHlExtend);
       return pickLine(pts as unknown as Array<Record<string, unknown>>, LINE_KEYS.PREV_HL, line);
     }
-    case "RSI":
-      return computeRsi(candles, r.calcParams[0] ?? 14, ext as RsiExtend).map((p) => p.val ?? undefined);
+    case "RSI": {
+      // line 0 = the RSI value line (unchanged). line ≥ 1 = a confirmed-divergence
+      // event series (0/1) for the kind at DIVERGENCE_KINDS[line-1], detected on the
+      // same RSI curve the chart draws — see the divergence-operands design.
+      const rext = ext as RsiExtend;
+      const len = r.calcParams[0] ?? 14;
+      const pts = computeRsi(candles, len, rext);
+      const kind = line >= 1 ? DIVERGENCE_KINDS[line - 1] : undefined;
+      if (!kind) return pts.map((p) => (line === 0 ? p.val ?? undefined : undefined));
+      const rsi = pts.map((p) => p.val);
+      return divergenceEventSeries(candles, rsi, cfgForKind(rext.divergence, kind), kind);
+    }
     default:
       return candles.map(() => undefined);
   }

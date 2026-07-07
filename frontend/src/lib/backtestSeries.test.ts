@@ -13,8 +13,8 @@ vi.mock("klinecharts", () => ({
 
 const { buildSeries } = await import("./backtestSeries");
 const { maSeries, sma } = await import("./mtf");
-const { computeRsi, computeLr, computePrevHl, vwapFrom } = await import("./customIndicators");
-const { recipeKey, seriesName } = await import("./backtestConfig");
+const { computeRsi, computeLr, computePrevHl, vwapFrom, detectDivergences, RSI_DIVERGENCE_DEFAULTS } = await import("./customIndicators");
+const { recipeKey, seriesName, operandBaseLen } = await import("./backtestConfig");
 
 // The base run is on 1-minute bars (candles() stamps every 60_000ms); no rule
 // here references a higher timeframe, so fetchTimeframe is never called.
@@ -485,5 +485,114 @@ describe("series operand — MTF and slope compose", () => {
     expect(requested).toBe("MINUTE_5");
     expect(got.slice(0, 5)).toEqual([null, null, null, null, null]); // before first 5m close
     expect(got[5]).toBe(10); // first 5m bar closed at t=300k
+  });
+});
+
+// RSI divergence outputs (line ≥ 1): a per-bar 0/1 event series, 1 on the bar a
+// confirmed divergence of the chosen kind lands (its right pivot). Reduced pivot
+// params (lbL/lbR=1, range 2..20) + RSI length 2 keep the fixtures short.
+describe("series operand — RSI divergence event series (line ≥ 1)", () => {
+  const DIV = { lookbackLeft: 1, lookbackRight: 1, rangeMin: 2, rangeMax: 20 };
+  // A decelerating downtrend: lower price lows with higher RSI lows → regular bullish
+  // divergences (fires at bars 5 and 7). Mirror for the uptrend → bearish.
+  const BULL = candles([100, 90, 96, 88, 94, 87, 93, 86.5, 92]);
+  const BEAR = candles([100, 110, 104, 112, 106, 113, 107, 113.5, 108]);
+
+  // Direct-detector reference: 1 exactly on each confirmed segment's toIndex for the
+  // one kind, computed on the SAME bars — the operand must reproduce this verbatim.
+  function expectedDiv(bars: KLineData[], kind: string): Array<0 | 1> {
+    const rsi = computeRsi(bars, 2, {}).map((p) => p.val);
+    const out = bars.map(() => ({}) as { divs?: Array<{ kind: string }> });
+    detectDivergences(bars, rsi, out as never, {
+      ...RSI_DIVERGENCE_DEFAULTS, ...DIV, on: true, showForming: false,
+      bullish: kind === "bullish", bearish: kind === "bearish",
+      hiddenBullish: kind === "hiddenBullish", hiddenBearish: kind === "hiddenBearish",
+    });
+    return bars.map((_, i) => (out[i].divs?.some((d) => d.kind === kind) ? 1 : 0));
+  }
+
+  it("line 1 (bullish) is 1 exactly on each confirmed bullish divergence's right pivot", async () => {
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "RSI", calcParams: [2], line: 1, extend: { divergence: DIV } },
+      BULL,
+    );
+    const expected = expectedDiv(BULL, "bullish");
+    expect(got).toEqual(expected);
+    expect(expected.filter((v) => v === 1)).toHaveLength(2); // non-vacuous (bars 5, 7)
+  });
+
+  it("line 2 (bearish) selects the bearish kind on the mirrored uptrend", async () => {
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "RSI", calcParams: [2], line: 2, extend: { divergence: DIV } },
+      BEAR,
+    );
+    const expected = expectedDiv(BEAR, "bearish");
+    expect(got).toEqual(expected);
+    expect(expected.some((v) => v === 1)).toBe(true);
+  });
+
+  it("each line selects its own kind — a bearish operand on bullish data never fires, and vice versa", async () => {
+    const bearOnBull = await seriesFor(
+      { source: "indicator", indicatorType: "RSI", calcParams: [2], line: 2, extend: { divergence: DIV } },
+      BULL,
+    );
+    expect(bearOnBull.every((v) => v === 0)).toBe(true);
+    const bullOnBear = await seriesFor(
+      { source: "indicator", indicatorType: "RSI", calcParams: [2], line: 1, extend: { divergence: DIV } },
+      BEAR,
+    );
+    expect(bullOnBear.every((v) => v === 0)).toBe(true);
+  });
+
+  it("line 0 still returns the RSI value series (regression — value path untouched)", async () => {
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "RSI", calcParams: [2], line: 0, extend: { divergence: DIV } },
+      BULL,
+    );
+    expect(got).toEqual(nul(computeRsi(BULL, 2, { divergence: DIV }).map((p) => p.val ?? undefined)));
+  });
+
+  it("the event series is never undefined/null — 0 through the warm-up, so comparisons stay defined", async () => {
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "RSI", calcParams: [2], line: 1, extend: { divergence: DIV } },
+      BULL,
+    );
+    expect(got.every((v) => v === 0 || v === 1)).toBe(true);
+  });
+
+  it("warm-up folds in the divergence span (RSI length + rangeMax + lookbacks)", () => {
+    const op = {
+      kind: "series", seriesKey: "x", label: "x",
+      recipe: { source: "indicator", indicatorType: "RSI", calcParams: [14], line: 1, extend: { divergence: DIV } },
+    } as Operand;
+    // 14 (length) + 20 (rangeMax) + 1 (lbL) + 1 (lbR).
+    expect(operandBaseLen(op)).toBe(36);
+    // The value line (line 0) keeps the plain RSI warm-up.
+    const valueOp = { ...op, recipe: { ...(op as { recipe: object }).recipe, line: 0 } } as Operand;
+    expect(operandBaseLen(valueOp)).toBe(14);
+  });
+
+  it("MTF: an HTF divergence forward-fills a held 1 across the confirming HTF bar's base bars (rising edge per event)", async () => {
+    // The bullish fixture becomes 5-minute HTF bars (t = i·300k); its divergences at
+    // HTF bars 5 and 7 each forward-fill onto the base bars AFTER that HTF bar closes
+    // (waitClose), held until the next HTF bar closes — one 0→1 rising edge each, so
+    // `crossesAbove 0.5` would fire once per confirming HTF bar.
+    const htf: KLineData[] = BULL.map((k, i) => ({ ...k, timestamp: i * 300_000 }));
+    const base = candles(new Array(48).fill(1)); // 1-min bars, t = 0..2_820k
+    const fetch: FetchTimeframe = async () => htf;
+    const s = await seriesFor(
+      { source: "indicator", indicatorType: "RSI", calcParams: [2], line: 1, extend: { divergence: DIV } },
+      base,
+      { timeframe: "MINUTE_5", fetch },
+    );
+    expect(s).toHaveLength(base.length);
+    // HTF bar 5 (opens 1500k, closes 1800k) holds its 1 over base t ∈ [1800k, 2100k).
+    expect(s[31]).toBe(1); // t = 1_860k — inside the held window
+    expect(s[36]).toBe(0); // t = 2_160k — HTF bar 6 (no divergence) now closed
+    // HTF bar 7 (opens 2100k, closes 2400k) holds its 1 over base t ∈ [2400k, 2700k).
+    expect(s[41]).toBe(1); // t = 2_460k
+    // Exactly two rising edges (0/null → 1) — one per confirming HTF bar.
+    const edges = s.filter((v, i) => v === 1 && s[i - 1] !== 1).length;
+    expect(edges).toBe(2);
   });
 });
