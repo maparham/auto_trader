@@ -19,7 +19,7 @@ import SymbolIcon from "./SymbolIcon";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { loadRecentSymbols, pushRecentSymbol } from "./lib/persist";
 import { brokerLabel } from "./lib/trading";
-import { activeLegFragment, insertLeg, isSyntheticExpr, parseLegs } from "./lib/syntheticExpr";
+import { activeSymbolFragment, insertSymbol, isSyntheticExpr, parseSymbols } from "./lib/syntheticExpr";
 import { registerSynthetic } from "./lib/syntheticRegistry";
 
 interface Props {
@@ -145,9 +145,9 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
   }, [brokerId]);
 
   // The active search term: in formula mode (the box holds an operator) it's just
-  // the leg being typed — the text after the last operator — so autocomplete
-  // targets the active leg, not the whole expression.
-  const term = (isSyntheticExpr(query) ? activeLegFragment(query) : query).trim();
+  // the symbol being typed — the text after the last operator — so autocomplete
+  // targets the active symbol, not the whole expression.
+  const term = (isSyntheticExpr(query) ? activeSymbolFragment(query) : query).trim();
 
   // Debounced keyword search (broker-side) for the active term.
   useEffect(() => {
@@ -174,7 +174,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
   // filters the cached catalogue.
   const shown = useMemo(() => {
     if (query.trim()) {
-      if (!term) return []; // formula mode, empty active leg → the hint shows
+      if (!term) return []; // formula mode, empty active symbol → the hint shows
       const t = term.toLowerCase();
       const local = all.filter(
         (m) => m.epic.toLowerCase().includes(t) || m.name.toLowerCase().includes(t),
@@ -205,21 +205,21 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
 
   const loading = term ? searching : catalogueLoading;
 
-  // A typed arithmetic expression (e.g. OIL_CRUDE/DXY) whose legs all exist in
+  // A typed arithmetic expression (e.g. OIL_CRUDE/DXY) whose symbols all exist in
   // the catalogue becomes a "Create synthetic" row above the results. null when
-  // the query isn't an expression, is malformed, or names an unknown leg.
+  // the query isn't an expression, is malformed, or names an unknown symbol.
   const syntheticCandidate = useMemo(() => {
     const q = query.trim();
     if (!q || !isSyntheticExpr(q) || all.length === 0) return null;
-    let legList: string[];
+    let symbolList: string[];
     try {
-      legList = parseLegs(q);
+      symbolList = parseSymbols(q);
     } catch {
       return null;
     }
-    if (legList.length === 0) return null;
+    if (symbolList.length === 0) return null;
     const byEpic = new Set(all.map((m) => m.epic.toUpperCase()));
-    const missing = legList.filter((l) => !byEpic.has(l.toUpperCase()));
+    const missing = symbolList.filter((l) => !byEpic.has(l.toUpperCase()));
     return { expr: q, missing };
   }, [query, all]);
 
@@ -251,11 +251,12 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
     });
   }
 
-  // Clicking a result adds its epic to the search box (it does NOT open the chart);
-  // the modal stays open so the user can keep building — add an operator + another
-  // symbol for a synthetic, or press Enter to open.
-  function addLeg(epic: string) {
-    setQueryFocused(insertLeg(query, epic));
+  // While the spread-operators toggle is active (build mode) clicking a result
+  // appends its epic as the next symbol and keeps the modal open so the user can keep
+  // building. With the toggle off a click opens the chart directly (see the row
+  // onClick) — this helper is only reached while building a spread.
+  function addSymbol(epic: string) {
+    setQueryFocused(insertSymbol(query, epic));
   }
 
   // Insert a spread operator (from the operators toggle) into the box.
@@ -368,7 +369,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
         </div>
 
         {/* A valid expression has no open-row — press Enter to open it. Only an
-            unknown leg surfaces a message, as validation feedback. */}
+            unknown symbol surfaces a message, as validation feedback. */}
         {syntheticCandidate && syntheticCandidate.missing.length > 0 && (
           <div className="symsearch-synthetic">
             <div className="symsearch-empty">
@@ -386,7 +387,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
                 (m.epic === current.epic ? "selected" : "") +
                 (m.status !== "TRADEABLE" ? " closed" : "")
               }
-              onClick={() => addLeg(m.epic)}
+              onClick={() => (showOps ? addSymbol(m.epic) : pick(m))}
               title={m.status !== "TRADEABLE" ? "Market closed" : undefined}
             >
               <SymbolIcon epic={m.epic} type={m.type} className="ss-icon" />
@@ -413,8 +414,8 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
               </button>
             </li>
           ))}
-          {isSyntheticExpr(query) && activeLegFragment(query) === "" ? (
-            <li className="symsearch-empty">Type to search the next leg…</li>
+          {isSyntheticExpr(query) && activeSymbolFragment(query) === "" ? (
+            <li className="symsearch-empty">Type to search the next symbol…</li>
           ) : (
             <>
               {loading && shown.length === 0 && (

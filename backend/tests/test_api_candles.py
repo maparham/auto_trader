@@ -1,6 +1,6 @@
 """GET /api/candles — seconds-branch regression.
 
-Guards the `_fetch_leg_candles` extraction (task 2, synthetic charts): the
+Guards the `_fetch_symbol_candles` extraction (task 2, synthetic charts): the
 seconds (tick-store) branch must keep returning an empty 200 for an epic with
 no tick history yet (not currently streamed), never a 404 — only the
 native/derived branches 404 on "no data at all". Direct-call convention per

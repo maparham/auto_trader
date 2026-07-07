@@ -16,7 +16,7 @@ describe("syntheticRegistry", () => {
   it("registers and reads back an entry", () => {
     const e = registerSynthetic("OIL_CRUDE/DXY", "capital");
     expect(e.id).toMatch(/^SYN_/);
-    expect(e.legs).toEqual(["OIL_CRUDE", "DXY"]);
+    expect(e.symbols).toEqual(["OIL_CRUDE", "DXY"]);
     expect(getSynthetic(e.id)?.expression).toBe("OIL_CRUDE/DXY");
   });
   it("is idempotent on the same canonical form", () => {

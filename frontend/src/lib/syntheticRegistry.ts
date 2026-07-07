@@ -2,14 +2,14 @@
 // id (used everywhere as an ordinary `epic`) resolves back to the expression the
 // backend needs. Frontend is the source of truth; the backend stays stateless.
 
-import { canonicalize, parseLegs, syntheticId } from "./syntheticExpr";
+import { canonicalize, parseSymbols, syntheticId } from "./syntheticExpr";
 
 export interface SyntheticEntry {
   id: string;
   expression: string;
   canonical: string;
   brokerId: string;
-  legs: string[];
+  symbols: string[];
   precision: number | null;
 }
 
@@ -43,7 +43,7 @@ export function registerSynthetic(expression: string, brokerId: string): Synthet
     expression: expression.trim(),
     canonical,
     brokerId,
-    legs: parseLegs(expression),
+    symbols: parseSymbols(expression),
     precision: null,
   };
   map[id] = entry;

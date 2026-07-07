@@ -3,23 +3,23 @@ from datetime import datetime, timezone
 import pytest
 
 from auto_trader.core.models import Candle
-from auto_trader.core.synthetic import SyntheticError, combine, legs, parse
+from auto_trader.core.synthetic import SyntheticError, combine, symbols, parse
 
 
 def _c(ts: int, o: float, h: float, l: float, cl: float) -> Candle:
     return Candle(datetime.fromtimestamp(ts, tz=timezone.utc), o, h, l, cl, 0.0)
 
 
-def test_legs_distinct_first_seen_order():
+def test_symbols_distinct_first_seen_order():
     node = parse("(AAPL + MSFT) / AAPL")
-    assert legs(node) == ["AAPL", "MSFT"]
+    assert symbols(node) == ["AAPL", "MSFT"]
 
 
 def test_precedence_mul_over_add():
     # 2 + 3 * 4 == 14, not 20
     node = parse("2 + 3 * 4")
     assert combine(node, {})[0].close == pytest.approx(14.0)
-    # combine with no legs still needs a timeline; see constant-only note below.
+    # combine with no symbols still needs a timeline; see constant-only note below.
 
 
 def test_unary_minus_and_parens():

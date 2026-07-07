@@ -68,7 +68,7 @@ describe("SymbolSearchModal — synthetic creation", () => {
     expect(picked.status).toBe("TRADEABLE");
   });
 
-  it("shows an unknown-instrument message and no actionable row for a missing leg", async () => {
+  it("shows an unknown-instrument message and no actionable row for a missing symbol", async () => {
     await renderModal();
 
     const input = screen.getByPlaceholderText("Symbol or name…");
@@ -79,8 +79,8 @@ describe("SymbolSearchModal — synthetic creation", () => {
   });
 });
 
-describe("SymbolSearchModal — inline leg autocomplete", () => {
-  it("clicking a result row adds it to the field and does NOT open the chart", async () => {
+describe("SymbolSearchModal — inline symbol autocomplete", () => {
+  it("clicking a result row with the operators toggle OFF opens the chart immediately", async () => {
     const onPick = vi.fn();
     const onClose = vi.fn();
     render(
@@ -91,9 +91,27 @@ describe("SymbolSearchModal — inline leg autocomplete", () => {
 
     fireEvent.click(screen.getByText("DXY"));
 
+    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ epic: "DXY" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("clicking a result row with the operators toggle ON appends a symbol and does NOT open the chart", async () => {
+    const onPick = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <SymbolSearchModal current={CURRENT} brokerId="capital" onPick={onPick} onClose={onClose} />,
+    );
+    const input = screen.getByPlaceholderText("Symbol or name…") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "OIL_CRUDE / dx" } });
+    // Activating the spread-operators toggle switches to "building a spread" mode.
+    fireEvent.click(screen.getByLabelText("Show spread operators"));
+    await waitFor(() => expect(screen.queryByText("DXY")).not.toBeNull());
+
+    fireEvent.click(screen.getByText("DXY"));
+
     expect(onPick).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
-    expect((screen.getByPlaceholderText("Symbol or name…") as HTMLInputElement).value).toBe("DXY");
+    expect(input.value).toBe("OIL_CRUDE / DXY");
   });
 
   it("the spread-operators toggle reveals operator buttons that insert into the box", async () => {
@@ -130,7 +148,7 @@ describe("SymbolSearchModal — inline leg autocomplete", () => {
     expect(screen.queryByText(/No symbols match/)).toBeNull();
   });
 
-  it("formula-mode search targets the active leg fragment, not the whole box", async () => {
+  it("formula-mode search targets the active symbol fragment, not the whole box", async () => {
     await renderModal();
     const input = screen.getByPlaceholderText("Symbol or name…");
     fireEvent.change(input, { target: { value: "OIL_CRUDE / dx" } });

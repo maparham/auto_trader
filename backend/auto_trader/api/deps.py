@@ -148,7 +148,7 @@ def _parse_resolution(raw: str) -> Resolution:
         raise HTTPException(422, f"unknown resolution '{raw}'") from None
 
 
-async def _fetch_leg_candles(
+async def _fetch_symbol_candles(
     broker_id: str,
     epic: str,
     resolution: str,
@@ -161,7 +161,7 @@ async def _fetch_leg_candles(
     derived (folded from cached base series), or native (cache/broker). Raises the
     same HTTPExceptions as before for bad brokers/windows/IG-derived; does NOT
     raise the native-path "no data at all" 404 — that decision stays with the
-    caller (a leg's emptiness may or may not be fatal depending on context)."""
+    caller (a symbol's emptiness may or may not be fatal depending on context)."""
     if resolution in SECONDS_INTERVALS:
         return await TICK_STORE.bars(broker_id, epic, SECONDS_INTERVALS[resolution], bars)
     if is_derived(resolution):

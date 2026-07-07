@@ -1,6 +1,6 @@
 """GET /api/candles/synthetic — stateless arithmetic-combination endpoint.
 
-No broker calls: `_fetch_leg_candles` is monkeypatched, so the handler is
+No broker calls: `_fetch_symbol_candles` is monkeypatched, so the handler is
 exercised by calling it directly, same pattern as test_api_backtest.py's
 `app_module.backtest(...)` calls (this repo has no pytest-asyncio, so async
 handlers are driven via `asyncio.run`, not an ASGI test client).
@@ -45,7 +45,7 @@ def _run(**overrides):
     return asyncio.run(scenario())
 
 
-def test_synthetic_ratio_combines_legs(monkeypatch):
+def test_synthetic_ratio_combines_symbols(monkeypatch):
     async def fake_fetch(broker_id, epic, resolution, bars, from_ts, to_ts, price_side):
         if epic == "A":
             return [_c(60, 10), _c(120, 20)]
@@ -53,7 +53,7 @@ def test_synthetic_ratio_combines_legs(monkeypatch):
             return [_c(60, 2), _c(120, 4)]
         return []
 
-    monkeypatch.setattr(deps, "_fetch_leg_candles", fake_fetch)  # moved to auto_trader.api.deps
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)  # moved to auto_trader.api.deps
     result = _run(expr="A / B")
     assert [dto.close for dto in result] == [5.0, 5.0]
 
@@ -68,7 +68,7 @@ def test_synthetic_no_overlap_404(monkeypatch):
     async def fake_fetch(broker_id, epic, resolution, bars, from_ts, to_ts, price_side):
         return []
 
-    monkeypatch.setattr(deps, "_fetch_leg_candles", fake_fetch)  # moved to auto_trader.api.deps
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)  # moved to auto_trader.api.deps
     with pytest.raises(HTTPException) as exc:
         _run(expr="A / B")
     assert exc.value.status_code == 404

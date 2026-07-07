@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  activeLegFragment,
+  activeSymbolFragment,
   canonicalize,
-  insertLeg,
+  insertSymbol,
   isSyntheticExpr,
-  parseLegs,
+  parseSymbols,
   syntheticId,
 } from "./syntheticExpr";
 
@@ -19,15 +19,15 @@ describe("isSyntheticExpr", () => {
   });
 });
 
-describe("parseLegs", () => {
-  it("returns distinct legs in order, upper-cased", () => {
-    expect(parseLegs("(aapl + msft) / aapl")).toEqual(["AAPL", "MSFT"]);
+describe("parseSymbols", () => {
+  it("returns distinct symbols in order, upper-cased", () => {
+    expect(parseSymbols("(aapl + msft) / aapl")).toEqual(["AAPL", "MSFT"]);
   });
   it("ignores numeric constants", () => {
-    expect(parseLegs("OIL_CRUDE / DXY * 100")).toEqual(["OIL_CRUDE", "DXY"]);
+    expect(parseSymbols("OIL_CRUDE / DXY * 100")).toEqual(["OIL_CRUDE", "DXY"]);
   });
   it("throws on unbalanced parens", () => {
-    expect(() => parseLegs("(A / B")).toThrow();
+    expect(() => parseSymbols("(A / B")).toThrow();
   });
 });
 
@@ -44,46 +44,46 @@ describe("canonicalize + syntheticId", () => {
   });
 });
 
-describe("activeLegFragment", () => {
+describe("activeSymbolFragment", () => {
   it("returns text after the last operator, trimmed", () => {
-    expect(activeLegFragment("OIL_CRUDE / dx")).toBe("dx");
-    expect(activeLegFragment("OIL_CRUDE /")).toBe("");
-    expect(activeLegFragment("oil")).toBe("oil");
-    expect(activeLegFragment("(AAPL+ms")).toBe("ms");
-    expect(activeLegFragment("")).toBe("");
+    expect(activeSymbolFragment("OIL_CRUDE / dx")).toBe("dx");
+    expect(activeSymbolFragment("OIL_CRUDE /")).toBe("");
+    expect(activeSymbolFragment("oil")).toBe("oil");
+    expect(activeSymbolFragment("(AAPL+ms")).toBe("ms");
+    expect(activeSymbolFragment("")).toBe("");
   });
   it("treats a SPACED minus as an operator but a bare dash as part of the token", () => {
-    expect(activeLegFragment("A - dx")).toBe("dx"); // subtraction
-    expect(activeLegFragment("A-B")).toBe("A-B"); // bare dash: one token, not split
-    expect(activeLegFragment("A-")).toBe("A-");
+    expect(activeSymbolFragment("A - dx")).toBe("dx"); // subtraction
+    expect(activeSymbolFragment("A-B")).toBe("A-B"); // bare dash: one token, not split
+    expect(activeSymbolFragment("A-")).toBe("A-");
   });
 });
 
-describe("insertLeg", () => {
+describe("insertSymbol", () => {
   it("empty box -> the epic", () => {
-    expect(insertLeg("", "DXY")).toBe("DXY");
+    expect(insertSymbol("", "DXY")).toBe("DXY");
   });
   it("no operator -> replaces the whole fragment with the epic", () => {
-    expect(insertLeg("oil", "OIL_CRUDE")).toBe("OIL_CRUDE");
+    expect(insertSymbol("oil", "OIL_CRUDE")).toBe("OIL_CRUDE");
   });
   it("ends in an operator -> appends with one space", () => {
-    expect(insertLeg("OIL_CRUDE /", "DXY")).toBe("OIL_CRUDE / DXY");
-    expect(insertLeg("OIL_CRUDE / ", "DXY")).toBe("OIL_CRUDE / DXY");
+    expect(insertSymbol("OIL_CRUDE /", "DXY")).toBe("OIL_CRUDE / DXY");
+    expect(insertSymbol("OIL_CRUDE / ", "DXY")).toBe("OIL_CRUDE / DXY");
   });
-  it("ends in a leg fragment -> replaces the fragment", () => {
-    expect(insertLeg("OIL_CRUDE / dx", "DXY")).toBe("OIL_CRUDE / DXY");
+  it("ends in a symbol fragment -> replaces the fragment", () => {
+    expect(insertSymbol("OIL_CRUDE / dx", "DXY")).toBe("OIL_CRUDE / DXY");
   });
   it("a spaced minus is an operator; a bare dash is not (no stranded box)", () => {
     // Spaced minus: append after the operator.
-    expect(insertLeg("A -", "DXY")).toBe("A - DXY");
-    expect(insertLeg("A - dx", "DXY")).toBe("A - DXY");
+    expect(insertSymbol("A -", "DXY")).toBe("A - DXY");
+    expect(insertSymbol("A - dx", "DXY")).toBe("A - DXY");
     // Bare dash (typed): the box is one token — replace it, never produce "A- DXY".
-    expect(insertLeg("A-", "DXY")).toBe("DXY");
-    expect(insertLeg("A-B", "DXY")).toBe("DXY");
+    expect(insertSymbol("A-", "DXY")).toBe("DXY");
+    expect(insertSymbol("A-B", "DXY")).toBe("DXY");
   });
   it("leading / consecutive operators stay recoverable (not stranded)", () => {
-    expect(insertLeg("/", "DXY")).toBe("/ DXY");
-    expect(insertLeg("A / /", "DXY")).toBe("A / / DXY");
-    expect(insertLeg("(", "AAPL")).toBe("( AAPL");
+    expect(insertSymbol("/", "DXY")).toBe("/ DXY");
+    expect(insertSymbol("A / /", "DXY")).toBe("A / / DXY");
+    expect(insertSymbol("(", "AAPL")).toBe("( AAPL");
   });
 });

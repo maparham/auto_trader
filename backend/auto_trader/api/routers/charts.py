@@ -11,7 +11,7 @@ from auto_trader.brokers.capital_stream import SECONDS_INTERVALS
 from auto_trader.core.candle_aggregate import DERIVED, is_derived
 from auto_trader.core.candle_cache import CANDLE_CACHE
 from auto_trader.core.models import Candle, Resolution
-from auto_trader.core.synthetic import SyntheticError, combine, legs, parse
+from auto_trader.core.synthetic import SyntheticError, combine, symbols, parse
 
 from .. import deps
 from ..deps import _parse_resolution
@@ -56,7 +56,7 @@ async def candles(
     served from our own tick recorder (warmed while the epic is streamed) and
     extended live over the socket. Scroll-back (from_ts/to_ts) isn't supported
     for them — the chart disables it for live-only intervals."""
-    loaded = await deps._fetch_leg_candles(broker_id, epic, resolution, bars, from_ts, to_ts, price_side)
+    loaded = await deps._fetch_symbol_candles(broker_id, epic, resolution, bars, from_ts, to_ts, price_side)
     # A date window may legitimately be empty (market closed); only 404 when no
     # window was requested at all (likely a bad epic). Seconds resolutions are
     # exempt: an epic that isn't currently streamed has no tick history yet, and
@@ -78,28 +78,28 @@ async def candles_synthetic(
     broker_id: str = Query("capital", alias="broker"),
 ) -> list[CandleDTO]:
     """Candles for a synthetic (arithmetic-combination) chart. Stateless: the raw
-    expression is parsed here, each leg is fetched via the shared candle path
-    against the same broker, and the legs are combined element-wise."""
+    expression is parsed here, each symbol is fetched via the shared candle path
+    against the same broker, and the symbols are combined element-wise."""
     try:
         node = parse(expr)
     except SyntheticError as e:
         raise HTTPException(422, f"bad expression: {e}") from e
-    names = legs(node)
+    names = symbols(node)
     if not names:
         raise HTTPException(422, "expression has no instruments")
 
-    per_leg: dict[str, list[Candle]] = {}
+    per_symbol: dict[str, list[Candle]] = {}
     for name in names:
-        # Reuse the native/derived/cache path per leg; a leg-level HTTPException
+        # Reuse the native/derived/cache path per symbol; a symbol-level HTTPException
         # (unknown broker, IG-derived block) propagates unchanged.
-        per_leg[name] = await deps._fetch_leg_candles(
+        per_symbol[name] = await deps._fetch_symbol_candles(
             broker_id, name, resolution, bars, from_ts, to_ts, price_side
         )
 
-    result = combine(node, per_leg)
+    result = combine(node, per_symbol)
     if not result and from_ts is None:
         raise HTTPException(
-            404, f"no data for synthetic '{expr}' (unknown leg or no overlapping history)"
+            404, f"no data for synthetic '{expr}' (unknown symbol or no overlapping history)"
         )
     return [_candle_dto(c) for c in result]
 

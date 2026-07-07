@@ -7,7 +7,7 @@ Run:  uvicorn auto_trader.api.app:app --reload --port 8000
 
 The routes, DTOs and shared infra were split into domain modules:
 - deps.py — shared singletons (`_registry`, `BROKER_HEALTH`, `get_data`,
-  `get_exec`, `guarded`, `_run_paper_triggers`, `_fetch_leg_candles`,
+  `get_exec`, `guarded`, `_run_paper_triggers`, `_fetch_symbol_candles`,
   `_parse_resolution`).
 - schemas.py — every Pydantic request/response model + their `to_*` converters.
 - routers/ — one APIRouter per domain (markets, trading, state, charts,
