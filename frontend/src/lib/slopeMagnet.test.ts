@@ -23,10 +23,10 @@ describe("snapSlopeEndpoint", () => {
   });
 
   it("weak mode snaps only when the nearest candidate is within sensitivity", () => {
-    // 2px from the close (370) → within default 8px → snaps
+    // 2px from the close (370) → within default 16px → snaps
     expect(snapSlopeEndpoint(100.42, 372, cands, "weak_magnet")).toBe(100.5);
-    // 20px from the nearest candidate → outside 8px → stays raw
-    expect(snapSlopeEndpoint(100.7, 390, cands, "weak_magnet")).toBe(100.7);
+    // 30px from the nearest candidate (open at py 400) → outside 16px → stays raw
+    expect(snapSlopeEndpoint(99.5, 430, cands, "weak_magnet")).toBe(99.5);
   });
 
   it("respects a custom sensitivity threshold", () => {

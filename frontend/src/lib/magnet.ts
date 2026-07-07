@@ -27,9 +27,12 @@ export interface MagnetSetting {
 
 export const DEFAULT_MAGNET: MagnetSetting = { on: false, strength: "weak" };
 
-// WeakMagnet proximity threshold in px — the klinecharts default. Not
-// user-configurable this iteration; a named constant so it's easy to tune later.
-export const MAGNET_SENSITIVITY = 8;
+// WeakMagnet proximity threshold in px — the distance within which a point snaps
+// to the nearest OHLC. This IS the weak magnet's strength: a wider band pulls the
+// point in from farther away. Bumped above the klinecharts default (8) so weak
+// snapping feels less finicky. Not user-configurable this iteration; a named
+// constant so it's easy to tune later.
+export const MAGNET_SENSITIVITY = 16;
 
 // Map a setting to the klinecharts overlay `mode`.
 export function magnetMode(s: MagnetSetting): MagnetMode {

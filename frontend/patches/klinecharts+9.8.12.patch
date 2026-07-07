@@ -1,8 +1,22 @@
 diff --git a/node_modules/klinecharts/dist/index.esm.js b/node_modules/klinecharts/dist/index.esm.js
-index e09fd4c..a1f272d 100644
+index e09fd4c..54ea8cb 100644
 --- a/node_modules/klinecharts/dist/index.esm.js
 +++ b/node_modules/klinecharts/dist/index.esm.js
-@@ -10303,9 +10303,17 @@ var YAxisImp = /** @class */ (function (_super) {
+@@ -8663,7 +8663,12 @@ var OverlayView = /** @class */ (function (_super) {
+                     else if (value < kLineData.low) {
+                         if (overlay.mode === OverlayMode.WeakMagnet) {
+                             var lowY = yAxis.convertToPixel(kLineData.low);
+-                            var buffValue = yAxis.convertFromPixel(lowY - modeSensitivity);
++                            // Below the low the snap band must extend DOWNWARD (larger
++                            // pixels), so add modeSensitivity. Upstream used `- modeSensitivity`
++                            // here (same as the high side), which put buffValue ABOVE the low
++                            // and made `value > buffValue` almost never true — so weak magnet
++                            // never snapped below a candle's low. See app patch notes.
++                            var buffValue = yAxis.convertFromPixel(lowY + modeSensitivity);
+                             if (value > buffValue) {
+                                 value = kLineData.low;
+                             }
+@@ -10303,9 +10308,17 @@ var YAxisImp = /** @class */ (function (_super) {
          var specifyMin = Number.MAX_SAFE_INTEGER;
          var specifyMax = Number.MIN_SAFE_INTEGER;
          var indicatorPrecision = Number.MAX_SAFE_INTEGER;
@@ -20,7 +34,7 @@ index e09fd4c..a1f272d 100644
              if (!shouldOhlc) {
                  shouldOhlc = (_a = indicator.shouldOhlc) !== null && _a !== void 0 ? _a : false;
              }
-@@ -10322,7 +10330,6 @@ var YAxisImp = /** @class */ (function (_super) {
+@@ -10322,7 +10335,6 @@ var YAxisImp = /** @class */ (function (_super) {
              });
          });
          var precision = 4;
