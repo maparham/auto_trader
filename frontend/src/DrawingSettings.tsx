@@ -435,27 +435,20 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                 </>
               ) : isFib ? (
                 <>
-                  {/* Shared width + dash for every level line; colors are per-level below
-                      (ColorLineStylePicker needs a color, so plain selects here). */}
-                  <div className="ind-row">
+                  {/* Shared width + dash for every level line; colors are per-level
+                      below, so the picker runs in its style-only (no-color) mode. */}
+                  <div className="ind-row ind-style-row">
                     <label>Lines</label>
                     <div className="ind-line-controls">
-                      <select value={size} onChange={(e) => applyStyle({ size: Number(e.target.value) })}>
-                        {[1, 2, 3, 4].map((s) => (
-                          <option key={s} value={s}>{s}px</option>
-                        ))}
-                      </select>
-                      <select
-                        value={style === LineType.Dashed ? "dashed" : "solid"}
-                        onChange={(e) =>
-                          applyStyle({
-                            style: e.target.value === "dashed" ? LineType.Dashed : LineType.Solid,
-                          })
+                      <ColorLineStylePicker
+                        size={size}
+                        onSize={(s) => applyStyle({ size: s })}
+                        lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
+                        onLineStyle={(s) =>
+                          applyStyle({ style: s === "dashed" ? LineType.Dashed : LineType.Solid })
                         }
-                      >
-                        <option value="solid">Solid</option>
-                        <option value="dashed">Dashed</option>
-                      </select>
+                        lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
+                      />
                     </div>
                   </div>
                   <div className="ind-row">

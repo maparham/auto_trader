@@ -22,8 +22,10 @@ import Tooltip from "./components/Tooltip";
 export type LineStyleOpt = "solid" | "dashed" | "dotted";
 
 interface Props {
-  color: string; // hex (#RRGGBB)
-  onColor: (hex: string) => void;
+  // Hex (#RRGGBB). Omit BOTH color props for a style-only picker (thickness/dash
+  // but no palette) — e.g. the fib Lines row, where color is per-level elsewhere.
+  color?: string;
+  onColor?: (hex: string) => void;
   // Opacity 0..1. Omit to hide the opacity slider (e.g. drawings / solid fills).
   opacity?: number;
   onOpacity?: (a: number) => void;
@@ -136,10 +138,14 @@ export default function ColorLineStylePicker({
   // colour, thickness and dash style — whenever this picker controls a line. For
   // fill-only call sites (no size / no lineStyle) we keep just the colour chip.
   const showLinePreview = size != null || lineStyle != null;
+  // Style-only mode: no palette / custom-colour sections, and the trigger drops the
+  // colour chip — the line preview (in a neutral ink) is the whole control.
+  const hasColor = color != null && onColor != null;
+  const previewStroke = color ?? "#787b86";
 
   return (
     <>
-      <Tooltip content={title ?? "Color & line style"}>
+      <Tooltip content={title ?? (hasColor ? "Color & line style" : "Line style")}>
         <button
           ref={triggerRef}
           type="button"
@@ -147,10 +153,12 @@ export default function ColorLineStylePicker({
           disabled={disabled}
           onClick={toggle}
         >
-          <span
-            className="clsp-swatch-fill"
-            style={{ background: color, opacity: swatchAlpha }}
-          />
+          {hasColor && (
+            <span
+              className="clsp-swatch-fill"
+              style={{ background: color, opacity: swatchAlpha }}
+            />
+          )}
           {showLinePreview && (
             <svg
               className="clsp-swatch-line"
@@ -163,7 +171,7 @@ export default function ColorLineStylePicker({
                 y1="8"
                 x2="38"
                 y2="8"
-                stroke={color}
+                stroke={previewStroke}
                 strokeOpacity={swatchAlpha}
                 strokeWidth={size ?? 2}
                 strokeDasharray={lineStyle ? LINE_STYLE_DASH[lineStyle] : undefined}
@@ -182,41 +190,45 @@ export default function ColorLineStylePicker({
             style={{ left: pos.x, top: pos.y }}
             role="dialog"
           >
-            <div className="clsp-grid">
-              {PALETTE.map((c) => (
-                <Tooltip key={c} content={c}>
-                  <button
-                    type="button"
-                    className={`clsp-cell${sameColor(c, color) ? " sel" : ""}`}
-                    style={{ background: c }}
-                    onClick={() => onColor(c)}
-                  />
-                </Tooltip>
-              ))}
-            </div>
+            {hasColor && (
+              <>
+                <div className="clsp-grid">
+                  {PALETTE.map((c) => (
+                    <Tooltip key={c} content={c}>
+                      <button
+                        type="button"
+                        className={`clsp-cell${sameColor(c, color) ? " sel" : ""}`}
+                        style={{ background: c }}
+                        onClick={() => onColor(c)}
+                      />
+                    </Tooltip>
+                  ))}
+                </div>
 
-            {/* Custom colour: a "+" tile delegating to the native picker (the escape
-                hatch for any hue not on the grid). */}
-            <div className="clsp-custom">
-              <Tooltip content="Custom color">
-                <button
-                  type="button"
-                  className="clsp-add"
-                  onClick={() => nativeRef.current?.click()}
-                >
-                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                  <input
-                    ref={nativeRef}
-                    type="color"
-                    value={/^#[0-9a-f]{6}$/i.test(color) ? color : "#000000"}
-                    onChange={(e) => onColor(e.target.value)}
-                  />
-                </button>
-              </Tooltip>
-            </div>
+                {/* Custom colour: a "+" tile delegating to the native picker (the
+                    escape hatch for any hue not on the grid). */}
+                <div className="clsp-custom">
+                  <Tooltip content="Custom color">
+                    <button
+                      type="button"
+                      className="clsp-add"
+                      onClick={() => nativeRef.current?.click()}
+                    >
+                      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      <input
+                        ref={nativeRef}
+                        type="color"
+                        value={/^#[0-9a-f]{6}$/i.test(color) ? color : "#000000"}
+                        onChange={(e) => onColor(e.target.value)}
+                      />
+                    </button>
+                  </Tooltip>
+                </div>
+              </>
+            )}
 
             {opacity != null && onOpacity && (
               <div className="clsp-section">
