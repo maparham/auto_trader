@@ -385,7 +385,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
 
   return (
     <FloatingModal
-      className="ind-settings"
+      className={`ind-settings${isFib ? " ind-settings-fib" : ""}`}
       title={<strong>{title}</strong>}
       onClose={cancel}
       closeLabel="Cancel"
@@ -499,6 +499,9 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                             })
                           }
                         />
+                        {/* Same full picker as the Lines row: color is THIS level's;
+                            the thickness/dash sections edit the shared line style
+                            (one width/dash across all levels, like TV). */}
                         <ColorLineStylePicker
                           color={l.color}
                           onColor={(c) =>
@@ -509,29 +512,16 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                               ),
                             })
                           }
-                        />
-                        <button
-                          className="ind-def-del"
-                          title="Remove level"
-                          onClick={() =>
-                            applyFib({ ...fib, levels: fib.levels.filter((_, j) => j !== i) })
+                          size={size}
+                          onSize={(s) => applyStyle({ size: s })}
+                          lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
+                          onLineStyle={(s) =>
+                            applyStyle({ style: s === "dashed" ? LineType.Dashed : LineType.Solid })
                           }
-                        >
-                          ✕
-                        </button>
+                          lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
+                        />
                       </div>
                     ))}
-                    <button
-                      className="ghost fib-add-level"
-                      onClick={() =>
-                        applyFib({
-                          ...fib,
-                          levels: [...fib.levels, { value: 0, enabled: true, color: "#787b86" }],
-                        })
-                      }
-                    >
-                      + Add level
-                    </button>
                   </div>
                   <label className="ind-check">
                     <input
