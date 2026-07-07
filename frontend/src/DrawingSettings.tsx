@@ -435,19 +435,27 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                 </>
               ) : isFib ? (
                 <>
-                  {/* Shared width + dash for every level line; colors are per-level below. */}
-                  <div className="ind-row ind-style-row">
+                  {/* Shared width + dash for every level line; colors are per-level below
+                      (ColorLineStylePicker needs a color, so plain selects here). */}
+                  <div className="ind-row">
                     <label>Lines</label>
                     <div className="ind-line-controls">
-                      <ColorLineStylePicker
-                        size={size}
-                        onSize={(s) => applyStyle({ size: s })}
-                        lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
-                        onLineStyle={(s) =>
-                          applyStyle({ style: s === "dashed" ? LineType.Dashed : LineType.Solid })
+                      <select value={size} onChange={(e) => applyStyle({ size: Number(e.target.value) })}>
+                        {[1, 2, 3, 4].map((s) => (
+                          <option key={s} value={s}>{s}px</option>
+                        ))}
+                      </select>
+                      <select
+                        value={style === LineType.Dashed ? "dashed" : "solid"}
+                        onChange={(e) =>
+                          applyStyle({
+                            style: e.target.value === "dashed" ? LineType.Dashed : LineType.Solid,
+                          })
                         }
-                        lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
-                      />
+                      >
+                        <option value="solid">Solid</option>
+                        <option value="dashed">Dashed</option>
+                      </select>
                     </div>
                   </div>
                   <div className="ind-row">
