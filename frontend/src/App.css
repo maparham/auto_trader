@@ -1862,63 +1862,67 @@
    over the canvas, signalling the line drags vertically (klinecharts sets an
    inline crosshair cursor, so override with !important). */
 .chart-wrap.alert-hover canvas { cursor: ns-resize !important; }
-/* Selected-trade pill. Made to look IDENTICAL to the canvas line pill (same
-   role colour, white text, chevron) so selecting a line just adds buttons to the
-   SAME pill — no second pill stacked on top. The role colour is set per field
-   below. Sits just above the hovered alert pill (47). */
-/* TradingView-style split chip: a solid role-coloured LEAD (signed qty / SL / TP)
-   joined to a light BODY carrying the P/L or level, wrapped in a thin role border.
-   --pill (the role colour, live-P/L-driven on an open position's entry) is set
-   inline per pill and drives the lead fill, border, body text, and button icons. */
+/* Always-on position pill. Selecting a line just adds buttons to the SAME pill — no
+   second pill stacked on top. A hairline surface chip with a hierarchy INSIDE the line:
+   a small uppercase role tag (eyebrow), the price as the hero in tabular mono, then the
+   signed P/L. --pill is the role colour (SL red, TP green, entry a neutral slate) set
+   inline per pill; it tints the border and the eyebrow only, never a fill. Sits just
+   above the hovered alert pill (47). */
 .trade-pill {
   position: absolute; z-index: 47; transform: translateY(-50%);
-  display: flex; align-items: stretch;
-  /* The pill BODY is click-through (pointer-events:none) so it can't steal the second
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 4px 2px 7px;
+  /* The pill body is click-through (pointer-events:none) so it can't steal the second
      click of a double-click on the line it sits over (which would break dblclick→edit
      ticket) or block a line grab. Only its buttons opt back in (see .tp-btn). */
   pointer-events: none;
-  border: 1px solid var(--pill, #2962ff);
-  border-radius: 4px; white-space: nowrap; overflow: hidden;
-  /* Body is a faint wash of the frame colour over the surface (TradingView-style). */
-  background: color-mix(in srgb, var(--pill) 10%, var(--surface-2));
+  /* Hairline border (0.5px reads as a true 1-device-pixel line on retina), tinted so
+     the frame is present without shouting; the eyebrow carries the full role colour. */
+  border: 0.5px solid color-mix(in srgb, var(--pill, #2962ff) 85%, transparent);
+  border-radius: 3px; white-space: nowrap; overflow: hidden;
+  background: var(--surface-2);
   font-family: -apple-system, system-ui, sans-serif;
-  font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums;
   transition: box-shadow .12s, border-color .12s;
 }
 /* Hover A — subtle lift: soft shadow + stronger border; the close button flushes red.
-   Driven by the .hovering class (added while the pill's line is hovered). */
-.trade-pill.hovering { box-shadow: 0 3px 10px rgba(20, 26, 35, .20); border-color: var(--pill); }
-.trade-pill.hovering .tp-btn:not(.tp-apply) { color: var(--neg); }
-/* Solid role-coloured lead: signed qty on the entry (its +/− encodes side), SL/TP
-   on the exits. White text reads on every role colour. */
-.trade-pill .tp-lead {
-  display: flex; align-items: center; padding: 2px 6px;
-  background: var(--pill, #2962ff); color: #fff; font-weight: 600;
+   Driven by the .hovering class (added while the pill's line is hovered). Raised above
+   resting pills (47) so a hovered trade's pills clear an overlapping neighbour's. */
+.trade-pill.hovering { box-shadow: 0 3px 10px rgba(20, 26, 35, .20); border-color: var(--pill); z-index: 48; }
+/* The pill of the focused LINE (selected field, or the hovered one) wins any overlap —
+   it sits on top of every other pill so a stack of close levels stays readable. */
+.trade-pill.focused { z-index: 49; }
+/* Eyebrow tag — TP / SL / the side word (Long, Short, Sell limit…), small + uppercase +
+   letter-spaced, in the role colour. The one place hue lives besides the border. */
+.trade-pill .tp-label {
+  font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--pill, #2962ff);
 }
-/* Light body: the level in the frame colour (.tp-main), the entry's live P/L in its own
-   sign colour (.tp-pnl, via --pnl), and on SL/TP a muted "P/L if hit" (.tp-plhint). */
-.trade-pill .tp-body { display: flex; align-items: center; gap: 6px; padding: 2px 7px; }
-.trade-pill .tp-main { color: var(--pill, #2962ff); }
-.trade-pill .tp-pnl { color: var(--pnl, var(--pill, #2962ff)); }
-.trade-pill .tp-plhint { color: var(--text-faint); font-weight: 400; }
+/* Quantity — mono, muted; rides just after the side word on the entry (never on SL/TP). */
+.trade-pill .tp-qty { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--text-dim); }
+/* Price — the hero readout: tabular mono in the theme's ink so it's crisp on any frame. */
+.trade-pill .tp-price { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--text); }
+.trade-pill .tp-at { color: var(--text-faint); font-weight: 400; margin-right: 1px; }
+/* P/L — a signed accent in mono: the entry's live uPnL by sign (--pnl), an exit's
+   "P/L if hit" muted (.tp-plhint). */
+.trade-pill .tp-pnl { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--pnl, var(--pill, #2962ff)); }
+.trade-pill .tp-plhint { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--text-faint); }
+/* Action icons — ghosted at rest so they don't clutter the readout; they gain presence
+   on hover. Apply commits (green), Close/Cancel/Discard/Remove flush red. */
 .trade-pill .tp-btn {
   display: flex; align-items: center; justify-content: center;
-  background: transparent; border: none;
-  border-left: 1px solid color-mix(in srgb, var(--pill) 22%, transparent);
-  cursor: pointer; color: var(--pill, #2962ff); padding: 0 5px;
+  width: 20px; height: 20px; border-radius: 3px;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-dim); opacity: .85;
   pointer-events: auto; /* buttons stay clickable though the pill body is pass-through */
 }
-.trade-pill .tp-btn svg { width: 12px; height: 12px; display: block; }
-.trade-pill .tp-btn:hover { background: color-mix(in srgb, var(--pill) 12%, transparent); }
-/* Apply commits (green), Close/Cancel/Discard/Remove are destructive (red) — tinted
-   on hover so intent reads regardless of the pill's role colour. */
-.trade-pill .tp-apply { color: var(--pos); }
-.trade-pill .tp-apply:hover { background: color-mix(in srgb, var(--pos) 16%, transparent); }
-/* Icons rest in the pill's own role colour (green ✕ on a profit pill, red on a loss
-   one) and only flush red on hover to read as destructive. */
+.trade-pill .tp-btn svg { width: 14px; height: 14px; display: block; stroke-width: 2.2; }
+.trade-pill .tp-btn:hover { opacity: 1; }
+.trade-pill .tp-apply { color: var(--pos); opacity: .9; }
+.trade-pill .tp-apply:hover { opacity: 1; background: color-mix(in srgb, var(--pos) 14%, transparent); }
 .trade-pill .tp-close:hover,
 .trade-pill .tp-discard:hover,
-.trade-pill .tp-remove:hover { background: color-mix(in srgb, var(--neg) 16%, transparent); color: var(--neg); }
+.trade-pill .tp-remove:hover { color: var(--neg); opacity: 1; background: color-mix(in srgb, var(--neg) 12%, transparent); }
 /* Hover tooltip shown when cursor is over a draggable trade line. */
 /* Confirm-dialog detail rows (e.g. the full position breakdown shown before close). */
 .confirm-details {

@@ -39,9 +39,10 @@ export interface LineSpec {
   onDragEnd?: (newLevel: number) => void;
 }
 
-// Role-based colours (not side-based): blue = your entry/limit level, red = stop,
-// green = target. Side is conveyed by the label (Long / Short / Limit buy…).
-const PRICE_COLOR = "#2962ff";
+// Role-based colours (not side-based): neutral slate = your entry/limit level, red = stop,
+// green = target. Colour carries only profit/loss meaning; the entry is de-hued (its side is
+// conveyed by the label — Long / Short / Limit buy…) so it stops competing with the red/green.
+const PRICE_COLOR = "#6b7280";
 const STOP_COLOR = "#f23645";
 const TP_COLOR = "#089981";
 

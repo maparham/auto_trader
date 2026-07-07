@@ -1276,6 +1276,10 @@ export default function ChartCore({
   // The hovered trade id — drives the pill hover-lift (soft shadow + red close). Kept
   // as light state so a hover only toggles a CSS class, not a full pill rebuild.
   const [hoveredTradeId, setHoveredTradeId] = useState<string | null>(null);
+  // The focused pill, keyed "tradeId:field" — the selected line wins, else the hovered
+  // one. Drives z-order so an overlapped pill in focus rises above its neighbours. Encoded
+  // as a string so React dedupes: staying on the same line doesn't re-render.
+  const [focusedPillKey, setFocusedPillKey] = useState<string | null>(null);
   // The on-line pill is shown while the line is hovered/selected (driven by
   // klinecharts via overlays) OR while the cursor is over the pill itself —
   // moving cursor from canvas line onto the DOM pill ends the line hover, so this
@@ -2558,6 +2562,15 @@ export default function ChartCore({
       }
       hoveredFieldRef.current = hoverField;
       setTradeHovered(hoverTradeId);
+      // Focus for z-order: a selected line wins, else the hovered line. Set here (not only
+      // via the signal) so moving between fields of the SAME hovered trade — which doesn't
+      // change the signal — still re-tops the pill under the cursor.
+      {
+        const sel = tradeUiRef.current.selected;
+        const fId = sel ?? hoverTradeId;
+        const fField = sel != null ? tradeUiRef.current.selectedField : hoverField;
+        setFocusedPillKey(fId ? `${fId}:${fField}` : null);
+      }
       // Repaint the bracket now that BOTH the cursor x (spine) and the hover gate are
       // current for this move — so parking on a line shows it at once, and leaving the
       // lines (nothing selected) clears it. Cheap: a no-op clear when nothing's active.
@@ -3065,6 +3078,13 @@ export default function ChartCore({
         if (selectedChanged || fieldChanged) redrawRef.current();
         // Drive the pill hover-lift (cheap: React bails when the id is unchanged).
         setHoveredTradeId(ui.hovered);
+        // Keep the focused pill (z-order) in sync when selection changes without a mouse
+        // move — e.g. selecting a trade from its dock row. Selected line wins, else hover.
+        {
+          const fId = ui.selected ?? ui.hovered;
+          const fField = ui.selected != null ? ui.selectedField : hoveredFieldRef.current;
+          setFocusedPillKey(fId ? `${fId}:${fField}` : null);
+        }
       });
       // The bracket now keys off EDIT state, which lives in its own signals — repaint it
       // when the edit ticket opens/closes or its target changes (e.g. Cancel sets
@@ -3696,14 +3716,12 @@ export default function ChartCore({
     const epic = epicRef.current;
     const draft = draftRef.current;
     let entry: number | null = null, stop: number | null = null, tp: number | null = null;
-    let side: OrderSide = "buy";
-    let selectMode = false; // side-coloured (selected/draft) vs grey (hover)
+    let selectMode = false; // neutral-coloured (selected/draft) vs grey (hover)
     let activeField: TradeLineField | null = null; // filled (select) / outlined (hover) handle
     if (draft && draft.epic === epic) {
       stop = draft.stop ?? null;
       tp = draft.takeProfit ?? null;
       entry = draft.type === "limit" ? draft.price ?? null : getLivePrice(epic) ?? null;
-      side = draft.side;
       selectMode = true;
     } else {
       const selId = tradeUiRef.current.selected;
@@ -3715,7 +3733,6 @@ export default function ChartCore({
         entry = merged.price ?? t.priceLevel;
         stop = merged.stop;
         tp = merged.takeProfit;
-        side = t.side;
         selectMode = selId != null;
         activeField = selId != null ? tradeUiRef.current.selectedField : hoveredFieldRef.current;
       }
@@ -3751,8 +3768,11 @@ export default function ChartCore({
       ).y;
       return y == null ? null : Math.round(y);
     };
-    const GREY = "#8a93a0", SIDE = side === "buy" ? "#089981" : "#f23645";
-    const roleOf = (f: TradeLineField) => (f === "stop" ? "#f23645" : f === "tp" ? "#089981" : SIDE);
+    // Colour carries ONE meaning here — profit/loss: green = target leg, red = stop leg.
+    // The position itself is de-hued to a neutral slate (it holds no direction the P/L
+    // number doesn't already show), so the two accent colours read as accents, not blocks.
+    const GREY = "#8a93a0", NEUTRAL = "#6b7280", SIDE = NEUTRAL;
+    const roleOf = (f: TradeLineField) => (f === "stop" ? "#f23645" : f === "tp" ? "#089981" : NEUTRAL);
     const bx = TRADE_SPINE_X + 0.5; // crisp 1.5px stroke
     const lines = ([
       ["price", yOf(entry)],
@@ -3760,34 +3780,42 @@ export default function ChartCore({
       ["tp", yOf(tp)],
     ] as [TradeLineField, number | null][]).filter((l): l is [TradeLineField, number] => l[1] != null);
 
-    // Spine — only meaningful when ≥2 lines exist; grey on hover, side colour on select.
+    // Spine as a thin caliper linking the levels — a hairline stem with short tick end-caps,
+    // which reads as the measurement the %/R:R badges describe. Only meaningful with ≥2 lines;
+    // grey on hover, neutral on select.
     if (lines.length >= 2) {
       const ys = lines.map((l) => l[1]);
-      ctx.lineWidth = 1.5;
+      const top = Math.min(...ys), bot = Math.max(...ys);
+      ctx.lineWidth = 1;
       ctx.strokeStyle = selectMode ? SIDE : GREY;
       ctx.beginPath();
-      ctx.moveTo(bx, Math.min(...ys));
-      ctx.lineTo(bx, Math.max(...ys));
+      ctx.moveTo(bx, top);
+      ctx.lineTo(bx, bot);
+      ctx.moveTo(bx - 3, top); ctx.lineTo(bx + 3, top); // end-caps
+      ctx.moveTo(bx - 3, bot); ctx.lineTo(bx + 3, bot);
       ctx.stroke();
     }
     // %/R:R badges to the LEFT of the spine (unsigned magnitudes — colour carries meaning).
     const labels = bracketLabels({ entry, stop, tp });
-    // A small role-coloured pill with white text, right-aligned so it ENDS just left of
-    // the spine (never overlapping the handles or the pills further right).
+    // Chip backdrop so the badge text reads over gridlines/candles.
+    const surfaceBg = getComputedStyle(wrap).getPropertyValue("--surface").trim() || "#161a1f";
+    // A quiet, BORDERLESS mono tag: surface backdrop + role-coloured text, right-aligned so it
+    // ENDS just left of the spine. Borderless (a tier below the bordered pills) so the badges
+    // read as annotation on the caliper, not objects competing with the readout.
     const badge = (y: number, text: string, color: string) => {
       ctx.save();
-      ctx.font = "600 11px -apple-system, system-ui, sans-serif";
-      const pw = Math.round(ctx.measureText(text).width) + 12, ph = 17;
+      ctx.font = '600 10px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+      const pw = Math.round(ctx.measureText(text).width) + 10, ph = 15;
       const left = Math.round(TRADE_SPINE_X - 10 - pw), top = Math.round(y - ph / 2);
-      ctx.fillStyle = color;
       ctx.beginPath();
-      if (typeof ctx.roundRect === "function") ctx.roundRect(left, top, pw, ph, 4);
+      if (typeof ctx.roundRect === "function") ctx.roundRect(left, top, pw, ph, 3);
       else ctx.rect(left, top, pw, ph);
+      ctx.fillStyle = surfaceBg;
       ctx.fill();
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = color;
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      ctx.fillText(text, left + 6, y + 0.5);
+      ctx.fillText(text, left + 5, y + 0.5);
       ctx.restore();
     };
     const badgeFor = (f: TradeLineField, y: number) => {
@@ -3795,7 +3823,7 @@ export default function ChartCore({
         : f === "tp" ? (labels.tpPct != null ? `${labels.tpPct.toFixed(2)}%` : null)
         : (labels.rr != null ? `1:${labels.rr.toFixed(1)}` : null);
       if (txt == null) return;
-      badge(y, txt, f === "price" ? "#2962ff" : roleOf(f));
+      badge(y, txt, roleOf(f)); // price → neutral, stop → red, tp → green
     };
     // Handles — hover: only the hovered handle takes its role colour, rest grey; select:
     // all side colour, the focused one filled. Drawn after the spine so they sit on top.
@@ -3804,9 +3832,10 @@ export default function ChartCore({
       const outline = selectMode ? SIDE : field === activeField ? roleOf(field) : GREY;
       ctx.beginPath();
       ctx.arc(TRADE_SPINE_X, y, TRADE_HANDLE_R, 0, Math.PI * 2);
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1;
       ctx.strokeStyle = outline;
-      ctx.fillStyle = selectMode && field === activeField ? SIDE : "#ffffff";
+      // Hollow (surface backdrop) at rest; the selected/focused handle fills solid neutral.
+      ctx.fillStyle = selectMode && field === activeField ? SIDE : surfaceBg;
       ctx.fill();
       ctx.stroke();
     }
@@ -5516,27 +5545,23 @@ export default function ChartCore({
         const isEntry = p.field === "price";
         const pendKey = p.field === "tp" ? "takeProfit" : p.field; // pendingEdits key
         const sign = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
-        // TradingView-style split chip: a solid LEAD (the side word + qty on the entry —
-        // "Long 100" / "Sell limit 100" — or SL/TP for the exits) joined to a light BODY
-        // carrying the level and, on an open position's entry, the live P/L. The FRAME
-        // colour is the line's role: a filled position's entry takes the position SIDE
-        // colour (long green / short red), a resting order is neutral blue, SL red, TP green.
-        const sideColor = p.side === "buy" ? "#089981" : "#f23645";
+        // A hairline chip with a hierarchy inside the line (see App.css): a small uppercase
+        // role tag (the side word + qty on the entry — "Long 100" / "Sell limit 100" — or
+        // SL/TP for the exits), then the price as the hero in tabular mono, then the signed
+        // P/L. --pill is the role colour: it tints the border and the tag only. Colour carries
+        // ONE meaning — profit/loss: SL red, TP green; the position (entry/order) is de-hued to
+        // a neutral slate, since its direction is already in the tag word and its sign in the P/L.
         const roleColor =
           p.field === "stop" ? "#f23645"
           : p.field === "tp" ? "#089981"
-          : p.kind === "order" ? "#2962ff"
-          : sideColor;
+          : "#5d6673"; // entry / resting order → neutral
         // The P/L NUMBER is coloured independently of the frame — green in profit, red at
         // a loss — so a short (red frame) in profit still shows a green figure.
         const pnlColor = p.pl == null ? null : p.pl >= 0 ? "#089981" : "#f23645";
-        const lead = isEntry
-          ? `${tradeLabel(p.kind, p.side)} ${p.qty}`
-          : p.field === "stop" ? "SL" : "TP";
-        // Body main = the entry/limit price (entry) or the level (SL/TP), in the frame
-        // colour. The entry's live P/L rides alongside in its own sign colour; an exit's
-        // "P/L if hit" rides alongside as a muted hint.
-        const bodyMain = isEntry ? `@ ${p.level.toFixed(prec)}` : p.level.toFixed(prec);
+        // Eyebrow tag: the side word on the entry (Long / Short / Sell limit…), SL/TP on
+        // the exits. Quantity rides alongside the entry tag; the price is the hero readout.
+        const labelText = isEntry ? tradeLabel(p.kind, p.side) : p.field === "stop" ? "SL" : "TP";
+        const priceText = p.level.toFixed(prec);
         const bodyPnl = isEntry && p.pl != null ? sign(p.pl) : null;
         // Remove this SL/TP line: commit the level cleared right away (an explicit
         // action, like delete), then focus the entry pill since this line is gone.
@@ -5558,7 +5583,7 @@ export default function ChartCore({
         return (
           <div
             key={`${p.tradeId}:${p.field}`}
-            className={`trade-pill tp-line-${p.field}${p.tradeId === hoveredTradeId ? " hovering" : ""}`}
+            className={`trade-pill tp-line-${p.field}${p.tradeId === hoveredTradeId ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
             style={{
               top: p.y,
               left: TRADE_PILL_LEFT,
@@ -5567,16 +5592,17 @@ export default function ChartCore({
               ...(isEntry && pnlColor ? { "--pnl": pnlColor } : {}),
             } as React.CSSProperties}
           >
-            <span className="tp-lead">{lead}</span>
-            <span className="tp-body">
-              <span className="tp-main">{bodyMain}</span>
-              {bodyPnl != null && (
-                <span className="tp-pnl" title="Unrealised P&L">{bodyPnl}</span>
-              )}
-              {!isEntry && p.pl != null && (
-                <span className="tp-plhint" title="P&L if this level is hit">{sign(p.pl)}</span>
-              )}
+            <span className="tp-label">{labelText}</span>
+            {isEntry && <span className="tp-qty">{p.qty}</span>}
+            <span className="tp-price">
+              {isEntry && <span className="tp-at">@</span>}{priceText}
             </span>
+            {bodyPnl != null && (
+              <span className="tp-pnl" title="Unrealised P&L">{bodyPnl}</span>
+            )}
+            {!isEntry && p.pl != null && (
+              <span className="tp-plhint" title="P&L if this level is hit">{sign(p.pl)}</span>
+            )}
             {p.changed && (
               <>
                 <button
