@@ -462,18 +462,52 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // The chart-operand picker is modal-owned (opened from deep in the rule builder
   // via a threaded callback). `pickerFor` holds the pick handler; non-null = open.
   const [pickerFor, setPickerFor] = useState<((op: Operand) => void) | null>(null);
-  const openChartPicker = (onPick: (op: Operand) => void) => setPickerFor(() => onPick);
+  // The chart selection that existed BEFORE the picker opened, snapshotted so closing
+  // the picker restores it rather than clobbering it — the picker temporarily drives
+  // the on-chart selection to preview/highlight its rows, but it never owned whatever
+  // the user had selected beforehand.
+  const priorSelection = useRef<{ ind: { paneId: string; name: string } | null; draw: string | null }>({
+    ind: null,
+    draw: null,
+  });
+  const openChartPicker = (onPick: (op: Operand) => void) => {
+    if (controller) {
+      priorSelection.current = {
+        ind: controller.selectedIndicator.value,
+        draw: controller.overlays.getSelectedDrawingId(),
+      };
+    }
+    setPickerFor(() => onPick);
+  };
   const pickerSources = useMemo(() => (pickerFor ? enumerateChartOperands(controller) : []), [pickerFor, controller]);
-  // Emphasize the on-chart element behind the hovered picker row: a drawing thickens
-  // (overlays.hoverDrawing), an indicator curve shows its selection handles
-  // (curveHover). Reconcile BOTH on every change (null clears whichever was active).
+  // Drive the on-chart element behind the picker's EFFECTIVE target (hovered row,
+  // else the selected row — see ChartOperandPicker) into real, persistent SELECTED
+  // mode, so the selected item stays selected on the chart until the picker
+  // selection changes or the picker closes:
+  //  - a drawing → selectDrawing (bookkeeping/keyboard) + a thicken so it's visible
+  //    (klinecharts has no programmatic native-handle API; the thicken is our cue).
+  //  - an indicator → selectedIndicator (the persistent selection that shows the
+  //    hollow handles and, unlike curveHover, survives the user hovering the chart).
+  // Reconcile BOTH on every change; null clears whichever was active.
   const handleHoverSource = (t: EmphasisTarget | null) => {
     if (!controller) return;
-    controller.overlays.hoverDrawing(t?.kind === "drawing" ? t.id : null);
-    const ind = t?.kind === "indicator" ? { paneId: t.paneId, name: t.name } : null;
-    const cur = controller.curveHover.value;
+    // No effective target (nothing hovered/selected in the picker, or the picker is
+    // closing) → RESTORE the pre-picker selection rather than clearing it, so a
+    // selection the user made before opening the picker survives the picker's close.
+    if (t === null) {
+      const prior = priorSelection.current;
+      controller.overlays.hoverDrawing(null);
+      controller.overlays.selectDrawing(prior.draw);
+      controller.selectedIndicator.set(prior.ind);
+      return;
+    }
+    const drawingId = t.kind === "drawing" ? t.id : null;
+    controller.overlays.selectDrawing(drawingId);
+    controller.overlays.hoverDrawing(drawingId);
+    const ind = t.kind === "indicator" ? { paneId: t.paneId, name: t.name } : null;
+    const cur = controller.selectedIndicator.value;
     if ((cur?.paneId ?? null) !== (ind?.paneId ?? null) || (cur?.name ?? null) !== (ind?.name ?? null)) {
-      controller.curveHover.set(ind);
+      controller.selectedIndicator.set(ind);
     }
   };
 

@@ -12,7 +12,7 @@
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import CloseButton from "./CloseButton";
+import FloatingModal from "./components/FloatingModal";
 import type { Chart, Indicator } from "klinecharts";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
@@ -68,8 +68,6 @@ import {
 } from "./lib/persist";
 import { applyIndicator, removeIndicatorById } from "./lib/indicators";
 import { toast } from "./lib/notify";
-import { useDraggable } from "./lib/useDraggable";
-import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import InfoTip from "./components/InfoTip";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
@@ -309,7 +307,6 @@ export default function IndicatorSettings({
   });
 
   const [tab, setTab] = useState<Tab>("inputs");
-  const drag = useDraggable();
   const [calcParams, setCalcParams] = useState<number[]>(original.current.calcParams);
   // Intent, not the live effective flag: `ind.visible` can be false merely because
   // the interval filter (applyIndicatorIntervalVisibility) hid it on this
@@ -1096,8 +1093,6 @@ export default function IndicatorSettings({
     onClose();
   }
 
-  useCloseOnEscape(cancel);
-
   // --- TradingView-style "Defaults" menu (footer) ----------------------------
   // Global per-TYPE presets: a single default that seeds freshly-added instances,
   // plus named presets applied on demand. Both store the SAME SavedIndicatorConfig
@@ -1290,18 +1285,96 @@ export default function IndicatorSettings({
     </>
   );
 
-  return (
-    <div className="modal-backdrop modal-backdrop--clear" onMouseDown={cancel}>
-      <div
-        className={`modal ind-settings${type === "PREV_HL" ? " ind-settings-wide" : ""}`}
-        style={drag.style}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="modal-head" {...drag.handleProps}>
-          <strong>{shortName}</strong>
-          <CloseButton onClick={cancel} label="Cancel" />
-        </div>
+  const foot = (
+    <>
+      {/* TradingView-style "Defaults" menu: type default + named presets, all
+          global. Pinned left (margin-right:auto) opposite Cancel/Ok. */}
+      <div className="menu ind-def-menu" ref={defMenuRef}>
+        <span className="ind-row-head">
+          <button
+            className={`ghost ${defOpen ? "on" : ""}`}
+            onClick={() => setDefOpen((v) => !v)}
+          >
+            Defaults ▾
+          </button>
+          <InfoTip
+            title="Defaults"
+            text="Save these settings as the default for this indicator, or store named presets."
+          />
+        </span>
+        {defOpen && (
+          <div className="dropdown ind-def-dropdown">
+            <ul>
+              <li onClick={resetToDefault}>Reset settings</li>
+              <li onClick={saveAsDefault}>Save as default</li>
+              {loadIndicatorDefault(type) && (
+                <li
+                  onClick={() => {
+                    clearIndicatorDefault(type);
+                    setDefOpen(false);
+                    toast(`Cleared ${type} default`);
+                  }}
+                >
+                  Clear default
+                </li>
+              )}
+              <li className="sep" />
+              {Object.keys(loadIndicatorPresets(type)).map((nm) => (
+                <li key={nm} className="ind-def-preset">
+                  <span onClick={() => applyPreset(nm)} title={`Apply "${nm}"`}>
+                    {nm}
+                  </span>
+                  <button
+                    className="ind-def-del"
+                    title={`Delete "${nm}"`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removePreset(nm);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+              {naming ? (
+                <li className="ind-def-name">
+                  <input
+                    autoFocus
+                    placeholder="Preset name…"
+                    value={presetName}
+                    onChange={(e) => setPresetName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitPreset();
+                      if (e.key === "Escape") {
+                        setNaming(false);
+                        setPresetName("");
+                      }
+                    }}
+                  />
+                  <button onClick={commitPreset}>Save</button>
+                </li>
+              ) : (
+                <li onClick={() => setNaming(true)}>Save as preset…</li>
+              )}
+            </ul>
+          </div>
+        )}
+      </div>
+      <button className="ghost" onClick={cancel}>
+        Cancel
+      </button>
+      <button onClick={onClose}>Ok</button>
+    </>
+  );
 
+  return (
+    <FloatingModal
+      className={`ind-settings${type === "PREV_HL" ? " ind-settings-wide" : ""}`}
+      title={<strong>{shortName}</strong>}
+      onClose={cancel}
+      closeLabel="Cancel"
+      footer={foot}
+    >
         <div className="ind-tabs">
           {((isRsi
             ? ["inputs", "divergence", "style", "visibility"]
@@ -2386,87 +2459,6 @@ export default function IndicatorSettings({
             </>
           )}
         </div>
-
-        <div className="modal-foot">
-          {/* TradingView-style "Defaults" menu: type default + named presets, all
-              global. Pinned left (margin-right:auto) opposite Cancel/Ok. */}
-          <div className="menu ind-def-menu" ref={defMenuRef}>
-            <span className="ind-row-head">
-              <button
-                className={`ghost ${defOpen ? "on" : ""}`}
-                onClick={() => setDefOpen((v) => !v)}
-              >
-                Defaults ▾
-              </button>
-              <InfoTip
-                title="Defaults"
-                text="Save these settings as the default for this indicator, or store named presets."
-              />
-            </span>
-            {defOpen && (
-              <div className="dropdown ind-def-dropdown">
-                <ul>
-                  <li onClick={resetToDefault}>Reset settings</li>
-                  <li onClick={saveAsDefault}>Save as default</li>
-                  {loadIndicatorDefault(type) && (
-                    <li
-                      onClick={() => {
-                        clearIndicatorDefault(type);
-                        setDefOpen(false);
-                        toast(`Cleared ${type} default`);
-                      }}
-                    >
-                      Clear default
-                    </li>
-                  )}
-                  <li className="sep" />
-                  {Object.keys(loadIndicatorPresets(type)).map((nm) => (
-                    <li key={nm} className="ind-def-preset">
-                      <span onClick={() => applyPreset(nm)} title={`Apply "${nm}"`}>
-                        {nm}
-                      </span>
-                      <button
-                        className="ind-def-del"
-                        title={`Delete "${nm}"`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removePreset(nm);
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                  {naming ? (
-                    <li className="ind-def-name">
-                      <input
-                        autoFocus
-                        placeholder="Preset name…"
-                        value={presetName}
-                        onChange={(e) => setPresetName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") commitPreset();
-                          if (e.key === "Escape") {
-                            setNaming(false);
-                            setPresetName("");
-                          }
-                        }}
-                      />
-                      <button onClick={commitPreset}>Save</button>
-                    </li>
-                  ) : (
-                    <li onClick={() => setNaming(true)}>Save as preset…</li>
-                  )}
-                </ul>
-              </div>
-            )}
-          </div>
-          <button className="ghost" onClick={cancel}>
-            Cancel
-          </button>
-          <button onClick={onClose}>Ok</button>
-        </div>
-      </div>
-    </div>
+    </FloatingModal>
   );
 }

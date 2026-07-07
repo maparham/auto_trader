@@ -4,11 +4,9 @@
 // signal, and from the sidebar/line for editing via alertEditRequest.
 
 import { useEffect, useRef, useState } from "react";
-import CloseButton from "./CloseButton";
+import FloatingModal from "./components/FloatingModal";
 import type { AlertCondition, AlertNotifyChannels, AlertTrigger } from "./lib/persist";
 import type { AlertDefaults } from "./theme";
-import { useDraggable } from "./lib/useDraggable";
-import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import {
   CONDITIONS,
   expiryOptions,
@@ -79,10 +77,6 @@ export default function AlertModal({
   const [notify, setNotify] = useState<AlertNotifyChannels>(
     initial?.notify ?? (isEdit ? ALL_ON : defaults.notify),
   );
-  const drag = useDraggable();
-
-  useCloseOnEscape(onClose);
-
   const num = Number(value);
   const valid = value.trim() !== "" && Number.isFinite(num);
   const condLabel = CONDITIONS.find((c) => c.value === condition)?.label ?? "";
@@ -93,17 +87,40 @@ export default function AlertModal({
     onCreate(num, { condition, trigger, message: message.trim() || autoMsg, expiresAt, notify });
   }
 
-  return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal alert-modal" style={drag.style} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-head" {...drag.handleProps}>
-          <span>
-            {isEdit ? "Edit alert on " : "Create alert on "}
-            <strong>{epic}</strong>
-          </span>
-          <CloseButton onClick={onClose} />
-        </div>
+  const foot = (
+    <>
+      {isEdit && onDelete && (
+        <button className="al-trash" onClick={onDelete} title="Delete alert" aria-label="Delete alert">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            <line x1="10" y1="11" x2="10" y2="17" />
+            <line x1="14" y1="11" x2="14" y2="17" />
+          </svg>
+        </button>
+      )}
+      <button className="ghost" onClick={onClose}>
+        Cancel
+      </button>
+      <button onClick={create} disabled={!valid}>
+        {isEdit ? "Save" : "Create"}
+      </button>
+    </>
+  );
 
+  return (
+    <FloatingModal
+      className="alert-modal"
+      title={
+        <span>
+          {isEdit ? "Edit alert on " : "Create alert on "}
+          <strong>{epic}</strong>
+        </span>
+      }
+      onClose={onClose}
+      footer={foot}
+    >
         <div className="alert-body">
           {/* Condition block, TradingView-style: source (Price) + operator share one
               row under a single label, value below. Not a <label> — it wraps two
@@ -191,28 +208,7 @@ export default function AlertModal({
             </div>
           </div>
         </div>
-
-        <div className="modal-foot">
-          {isEdit && onDelete && (
-            <button className="al-trash" onClick={onDelete} title="Delete alert" aria-label="Delete alert">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                <line x1="10" y1="11" x2="10" y2="17" />
-                <line x1="14" y1="11" x2="14" y2="17" />
-              </svg>
-            </button>
-          )}
-          <button className="ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button onClick={create} disabled={!valid}>
-            {isEdit ? "Save" : "Create"}
-          </button>
-        </div>
-      </div>
-    </div>
+    </FloatingModal>
   );
 }
 

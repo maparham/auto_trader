@@ -1125,8 +1125,16 @@ export default function ChartCore({
   const [selectedName, setSelectedName] = useState<string | null>(
     selectedIndicator.value?.name ?? null,
   );
+  // Also repaint the canvas on change so a selection driven from OUTSIDE the chart
+  // (e.g. the chart-operand picker selecting an indicator) shows its hollow handles.
+  // The in-chart click path pairs its own set() with a repaint(), so this just
+  // double-covers that (idempotent) and covers external setters that don't.
   useEffect(
-    () => selectedIndicator.subscribe((s) => setSelectedName(s?.name ?? null)),
+    () =>
+      selectedIndicator.subscribe((s) => {
+        setSelectedName(s?.name ?? null);
+        redrawRef.current();
+      }),
     [],
   );
   // Hovering an indicator's legend row also shows its curve in "selected mode"

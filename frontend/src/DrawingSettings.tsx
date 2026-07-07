@@ -12,12 +12,10 @@
 // layout matches TV, with those fields noted as coming soon.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import CloseButton from "./CloseButton";
+import FloatingModal from "./components/FloatingModal";
 import { LineType } from "klinecharts";
 import type { DeepPartial, OverlayStyle } from "klinecharts";
 import { type OverlayManager, asDrawingExtra } from "./lib/overlays";
-import { useDraggable } from "./lib/useDraggable";
-import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility } from "./lib/visibility";
@@ -67,7 +65,6 @@ const TITLES: Record<string, string> = {
 };
 
 export default function DrawingSettings({ overlays, id, onIdChange, onClose }: Props) {
-  const drag = useDraggable();
   // Live id (changes if Extend recreates the overlay). All reads/writes use this;
   // every handler below is recreated each render, so it closes over the current id.
   const [curId, setCurId] = useState(id);
@@ -262,18 +259,95 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     onClose();
   }
 
-  useCloseOnEscape(cancel);
-
   if (!live && !original) return null;
 
-  return (
-    <div className="modal-backdrop" onMouseDown={cancel}>
-      <div className="modal ind-settings" style={drag.style} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-head" {...drag.handleProps}>
-          <strong>{title}</strong>
-          <CloseButton onClick={cancel} label="Cancel" />
-        </div>
+  const foot = (
+    <>
+      {/* TV-style "Defaults" menu: this drawing type's default + named templates,
+          all global. Pinned left opposite Cancel/Ok. */}
+      <div className="menu ind-def-menu" ref={defMenuRef}>
+        <span className="ind-row-head">
+          <button className={`ghost ${defOpen ? "on" : ""}`} onClick={() => setDefOpen((v) => !v)}>
+            Defaults ▾
+          </button>
+          <InfoTip
+            title="Defaults"
+            text="Save these settings as the default for this drawing type, or store named templates."
+          />
+        </span>
+        {defOpen && (
+          <div className="dropdown ind-def-dropdown">
+            <ul>
+              <li onClick={resetToDefault}>Reset settings</li>
+              <li onClick={saveAsDefault}>Save as default</li>
+              {loadDrawingDefault(name) && (
+                <li
+                  onClick={() => {
+                    clearDrawingDefault(name);
+                    setDefOpen(false);
+                    toast(`Cleared ${title} default`);
+                  }}
+                >
+                  Clear default
+                </li>
+              )}
+              <li className="sep" />
+              {Object.keys(loadDrawingPresets(name)).map((nm) => (
+                <li key={nm} className="ind-def-preset">
+                  <span onClick={() => applyPreset(nm)} title={`Apply "${nm}"`}>
+                    {nm}
+                  </span>
+                  <button
+                    className="ind-def-del"
+                    title={`Delete "${nm}"`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removePreset(nm);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+              {naming ? (
+                <li className="ind-def-name">
+                  <input
+                    autoFocus
+                    placeholder="Template name…"
+                    value={presetName}
+                    onChange={(e) => setPresetName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitPreset();
+                      if (e.key === "Escape") {
+                        setNaming(false);
+                        setPresetName("");
+                      }
+                    }}
+                  />
+                  <button onClick={commitPreset}>Save</button>
+                </li>
+              ) : (
+                <li onClick={() => setNaming(true)}>Save as template…</li>
+              )}
+            </ul>
+          </div>
+        )}
+      </div>
+      <button className="ghost" onClick={cancel}>
+        Cancel
+      </button>
+      <button onClick={onClose}>Ok</button>
+    </>
+  );
 
+  return (
+    <FloatingModal
+      className="ind-settings"
+      title={<strong>{title}</strong>}
+      onClose={cancel}
+      closeLabel="Cancel"
+      footer={foot}
+    >
         <div className="ind-tabs">
           {(["style", "text", "coordinates", "visibility"] as Tab[]).map((t) => (
             <button key={t} className={`ind-tab ${tab === t ? "on" : ""}`} onClick={() => setTab(t)}>
@@ -406,84 +480,6 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
             </>
           )}
         </div>
-
-        <div className="modal-foot">
-          {/* TV-style "Defaults" menu: this drawing type's default + named templates,
-              all global. Pinned left opposite Cancel/Ok. */}
-          <div className="menu ind-def-menu" ref={defMenuRef}>
-            <span className="ind-row-head">
-              <button className={`ghost ${defOpen ? "on" : ""}`} onClick={() => setDefOpen((v) => !v)}>
-                Defaults ▾
-              </button>
-              <InfoTip
-                title="Defaults"
-                text="Save these settings as the default for this drawing type, or store named templates."
-              />
-            </span>
-            {defOpen && (
-              <div className="dropdown ind-def-dropdown">
-                <ul>
-                  <li onClick={resetToDefault}>Reset settings</li>
-                  <li onClick={saveAsDefault}>Save as default</li>
-                  {loadDrawingDefault(name) && (
-                    <li
-                      onClick={() => {
-                        clearDrawingDefault(name);
-                        setDefOpen(false);
-                        toast(`Cleared ${title} default`);
-                      }}
-                    >
-                      Clear default
-                    </li>
-                  )}
-                  <li className="sep" />
-                  {Object.keys(loadDrawingPresets(name)).map((nm) => (
-                    <li key={nm} className="ind-def-preset">
-                      <span onClick={() => applyPreset(nm)} title={`Apply "${nm}"`}>
-                        {nm}
-                      </span>
-                      <button
-                        className="ind-def-del"
-                        title={`Delete "${nm}"`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removePreset(nm);
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                  {naming ? (
-                    <li className="ind-def-name">
-                      <input
-                        autoFocus
-                        placeholder="Template name…"
-                        value={presetName}
-                        onChange={(e) => setPresetName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") commitPreset();
-                          if (e.key === "Escape") {
-                            setNaming(false);
-                            setPresetName("");
-                          }
-                        }}
-                      />
-                      <button onClick={commitPreset}>Save</button>
-                    </li>
-                  ) : (
-                    <li onClick={() => setNaming(true)}>Save as template…</li>
-                  )}
-                </ul>
-              </div>
-            )}
-          </div>
-          <button className="ghost" onClick={cancel}>
-            Cancel
-          </button>
-          <button onClick={onClose}>Ok</button>
-        </div>
-      </div>
-    </div>
+    </FloatingModal>
   );
 }
