@@ -21,6 +21,7 @@ import type {
   Bounding,
 } from "klinecharts";
 import { asDrawingExtra } from "./overlays";
+import { asFibConfig, fibLevelSegments } from "./fibConfig";
 import { measureMetrics } from "./measureMetrics";
 import { slopeMetrics } from "./slopeMetrics";
 import { slopeHandles } from "./slopeHandles";
@@ -214,6 +215,89 @@ const rect: OverlayTemplate = {
     const extra = asDrawingExtra(overlay.extendData);
     if (extra.text && extra.text.trim()) {
       figures.push(labelFigure((left + right) / 2, (top + bottom) / 2, extra.text, "center", "middle"));
+    }
+    return figures;
+  },
+};
+
+// fibonacciLine: TV-style fib retracement OVERRIDING klinecharts' built-in, which
+// paints every level across the full chart width. Levels/extend/reverse/labels
+// live in extendData.fib (asFibConfig defaults when absent — including for fibs
+// saved before this existed). Level lines span the anchors' x-range unless
+// extended; width/dash come from styles.line, color is per-level.
+const fibonacciLine: OverlayTemplate = {
+  name: "fibonacciLine",
+  totalStep: 3,
+  needDefaultPointFigure: true,
+  needDefaultXAxisFigure: true,
+  needDefaultYAxisFigure: true,
+  createPointFigures: (params) => {
+    const { overlay, coordinates, bounding, precision } = params;
+    if (coordinates.length < 2) return [];
+    const cfg = asFibConfig((overlay.extendData as { fib?: unknown } | undefined)?.fib);
+    const p0 = overlay.points?.[0]?.value;
+    const p1 = overlay.points?.[1]?.value;
+    if (typeof p0 !== "number" || typeof p1 !== "number") return [];
+    const segs = fibLevelSegments({
+      cfg,
+      coordinates,
+      values: [p0, p1],
+      boundingWidth: bounding.width,
+      precision: precision.price,
+    });
+    const line = (overlay.styles?.line ?? {}) as {
+      size?: number;
+      style?: string;
+      dashedValue?: number[];
+    };
+    const figures: OverlayFigure[] = [];
+    if (cfg.trendLine) {
+      figures.push({
+        type: "line",
+        attrs: { coordinates: [coordinates[0], coordinates[1]] },
+        styles: { color: "#787b86", size: 1, style: "dashed", dashedValue: [4, 4] },
+        ignoreEvent: true, // the level lines + handles are the drag targets
+      });
+    }
+    for (const s of segs) {
+      figures.push({
+        type: "line",
+        attrs: { coordinates: [{ x: s.x1, y: s.y }, { x: s.x2, y: s.y }] },
+        styles: {
+          color: s.color,
+          size: line.size ?? 1,
+          style: line.style ?? "solid",
+          dashedValue: line.dashedValue ?? [4, 4],
+        },
+      });
+      if (cfg.labels) {
+        // Label at the right end, just above the line; hug the pane edge when the
+        // span is extended to it so the text never clips off-screen.
+        const atEdge = s.x2 >= bounding.width - 1;
+        figures.push({
+          type: "text",
+          attrs: {
+            x: atEdge ? bounding.width - 2 : s.x2 + 4,
+            y: s.y - 2,
+            text: s.label,
+            align: atEdge ? "right" : "left",
+            baseline: "bottom",
+          },
+          styles: {
+            color: s.color,
+            size: 12,
+            family: "-apple-system, system-ui, sans-serif",
+            backgroundColor: "transparent",
+            borderColor: "transparent",
+            borderSize: 0,
+            paddingLeft: 0,
+            paddingRight: 0,
+            paddingTop: 0,
+            paddingBottom: 0,
+          },
+          ignoreEvent: true,
+        });
+      }
     }
     return figures;
   },
@@ -550,6 +634,7 @@ export function registerCustomOverlays(): void {
   registerOverlay(rayLine);
   registerOverlay(straightLine);
   registerOverlay(rect);
+  registerOverlay(fibonacciLine);
   registerOverlay(measure);
   registerOverlay(slope);
   registerOverlay(rangeBand);
