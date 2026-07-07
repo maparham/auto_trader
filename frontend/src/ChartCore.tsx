@@ -4193,7 +4193,7 @@ export default function ChartCore({
       subPaneLegendsSigRef.current = sub.sig;
       setSubPaneLegends(sub.subPanes);
     }
-    legendHandleRef.current?.updateValues(crosshairIdxRef.current);
+    legendHandleRef.current?.updateValues(legendBarIdxRef.current());
     // Higher-timeframe backtest markers: project each aggregate cluster's bar-high
     // anchor to a pixel and feed the DOM pill layer. Runs every redraw so the pills
     // track scroll/zoom/tick; getBacktestAggregate returns null (→ []) unless this
@@ -4294,17 +4294,43 @@ export default function ChartCore({
     };
   }, [redraw]);
 
+  // The bar the legend should show values for: this cell's own crosshair when the
+  // cursor is over it, else the bar holding a sibling's synced-crosshair timestamp
+  // (last bar at-or-before it — the cells' intervals may differ), else null (the
+  // legend then falls back to the last bar). Reads only refs, so it's safe to call
+  // from any effect closure regardless of which render captured it.
+  const legendBarIdx = (): number | null => {
+    if (crosshairIdxRef.current != null) return crosshairIdxRef.current;
+    const ts = syncCrosshairRef.current ? syncedTsRef.current : null;
+    if (ts == null) return null;
+    const data = chartRef.current?.getDataList();
+    if (!data || data.length === 0 || ts < data[0].timestamp) return null;
+    let lo = 0;
+    let hi = data.length - 1;
+    while (lo < hi) {
+      const m = (lo + hi + 1) >> 1;
+      if (data[m].timestamp <= ts) lo = m;
+      else hi = m - 1;
+    }
+    return lo;
+  };
+  const legendBarIdxRef = useRef(legendBarIdx);
+  legendBarIdxRef.current = legendBarIdx;
+
   // The DOM legend's values track the crosshair (TradingView-style): on each
   // crosshair change, remember the hovered bar index and push the values for that
   // bar imperatively (textContent). When the crosshair leaves the chart, klinecharts
-  // fires with no dataIndex → fall back to the last bar. klinecharts already
+  // fires with no dataIndex → fall back to the last bar (or to a sibling's synced
+  // crosshair bar when the crosshair link is on). klinecharts already
   // rAF-throttles crosshair changes, and we only touch textContent (no re-render).
   useEffect(() => {
     const chart = chartRef.current;
     const onCrosshair = (data?: { dataIndex?: number }) => {
       const idx = typeof data?.dataIndex === "number" ? data.dataIndex : null;
       crosshairIdxRef.current = idx;
-      legendHandleRef.current?.updateValues(idx);
+      // idx null (cursor left) falls through to a sibling's synced bar if one is
+      // active, else to the last bar — same resolution as every other update site.
+      legendHandleRef.current?.updateValues(legendBarIdxRef.current());
       // While the cursor is over THIS chart it's the link source, not a receiver, so
       // drop any sibling guide it was painting and repaint — otherwise that guide
       // stays frozen under this cell's own crosshair when the pointer crosses straight
@@ -4350,10 +4376,19 @@ export default function ChartCore({
   useEffect(() => {
     const unsub = chartSync.subscribe(tabId, (m) => {
       if (m.sourceCellId === cellId) return; // ignore our own broadcasts
+      // A sibling broadcasting means the cursor is over THAT cell, so any crosshair
+      // index we still hold is stale (crossing straight off this chart doesn't
+      // reliably fire its "cursor left" event) — drop it or it would keep beating
+      // the synced timestamp in legendBarIdx.
+      crosshairIdxRef.current = null;
       const next = syncCrosshair ? m.timestamp : null;
       if (syncedTsRef.current === next) return;
       syncedTsRef.current = next;
       redrawRef.current();
+      // The legend follows the synced crosshair too (TV-style): show the values of
+      // OUR bar holding the broadcast timestamp, not just paint the guide. null
+      // (source cursor left) falls back to the last bar inside updateValues.
+      legendHandleRef.current?.updateValues(legendBarIdxRef.current());
     });
     return () => {
       unsub();
@@ -4361,6 +4396,7 @@ export default function ChartCore({
       if (syncedTsRef.current != null) {
         syncedTsRef.current = null;
         redrawRef.current();
+        legendHandleRef.current?.updateValues(legendBarIdxRef.current());
       }
     };
   }, [tabId, cellId, syncCrosshair]);
