@@ -84,6 +84,31 @@ describe("computePivotBands", () => {
     expect(k3[15].pivotHigh).toBe(120); // mean of all 3: (100+120+140)/3
   });
 
+  it("source 'close' detects BOTH lines on the close series, ignoring high/low", () => {
+    // Flat highs (90) and lows (80) → the default "hl" would find no pivots. The
+    // close series carries a strict peak (bar 5 = 100) and trough (bar 8 = 70).
+    const closes: Record<number, number> = { 5: 100, 8: 70 };
+    const data: KLineData[] = Array.from({ length: 12 }, (_, i) => ({
+      timestamp: i,
+      open: 90,
+      high: 90,
+      low: 80,
+      close: closes[i] ?? 90,
+      volume: 0,
+    }));
+
+    // Default hl: flat highs/lows → nothing on either line.
+    const hl = computePivotBands(data, N, 3, { mode: "last" });
+    expect(hl[11].pivotHigh).toBeUndefined();
+    expect(hl[11].pivotLow).toBeUndefined();
+
+    // Source close: swing high confirms at bar 7 (=100), swing low at bar 10 (=70).
+    const close = computePivotBands(data, N, 3, { mode: "last", source: "close" });
+    for (let i = 0; i <= 6; i++) expect(close[i].pivotHigh).toBeUndefined();
+    expect(close[7].pivotHigh).toBe(100);
+    expect(close[10].pivotLow).toBe(70);
+  });
+
   it("leaves the trailing N bars flat (no confirmed pivot in the tail)", () => {
     const data = bars({ 5: 100 }, {}, 12);
     const pts = computePivotBands(data, N, 3, { mode: "last" });

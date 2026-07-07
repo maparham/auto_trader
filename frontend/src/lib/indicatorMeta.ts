@@ -77,6 +77,13 @@ export const PRICE_SOURCES: Array<{ value: string; label: string }> = [
   { value: "hlcc4", label: "(H + L + C + C)/4" },
 ];
 
+// Pivot Bands' Source options: the classic asymmetric "High / Low" default plus
+// the shared single-series price sources (used for both lines when picked).
+export const PIVOT_SOURCES: Array<{ value: string; label: string }> = [
+  { value: "hl", label: "High / Low" },
+  ...PRICE_SOURCES,
+];
+
 export const SMOOTHING_TYPES: Array<{ value: string; label: string }> = [
   { value: "none", label: "None" },
   { value: "sma", label: "SMA" },
@@ -222,7 +229,17 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       {
         ...num(1, "Window (K)"),
         showWhen: { field: "mode", equals: ["avg"] },
-        tip: "Nuymber of recent pivots to average.",
+        tip: "Number of recent pivots to average.",
+      },
+      {
+        key: "source",
+        label: "Source",
+        type: "select",
+        source: "extend",
+        field: "source",
+        default: "hl",
+        options: PIVOT_SOURCES,
+        tip: "Price the swings are detected on. High / Low uses highs for the upper line and lows for the lower line; any other source uses that single series for both lines.",
       },
     ],
     title: "Pivot Bands",

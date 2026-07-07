@@ -23,12 +23,21 @@ import {
 } from "klinecharts";
 import { fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
-import { alignHtfToChart } from "../mtf";
+import { alignHtfToChart, priceOf, type PriceSource } from "../mtf";
 
 export type PivotBandsMode = "last" | "avg";
 
+// Price series the swings are detected on. "hl" (default) keeps the classic
+// asymmetry — pivot-highs off each bar's high, pivot-lows off its low. Any other
+// value is a single PriceSource used for BOTH lines (e.g. "close" detects swing
+// highs AND lows on the close series).
+export type PivotBandsSource = "hl" | PriceSource;
+
 export interface PivotBandsExtend {
   mode?: PivotBandsMode;
+  // Price series the swings are detected on (default "hl" = high for the
+  // pivot-high line, low for the pivot-low line). See PivotBandsSource.
+  source?: PivotBandsSource;
   // Multi-timeframe: compute the bands on a higher timeframe and align onto the
   // chart bars inside calc (no lookahead). Unlike EMA/MA this carries TWO series
   // — the pivot-high and pivot-low step-lines — since each is independent. Set by
@@ -95,8 +104,11 @@ export function computePivotBands(
   const mode: PivotBandsMode = ext.mode === "avg" ? "avg" : "last";
   const len = dataList.length;
   const out: PivotBandsPoint[] = new Array(len);
-  const highs = dataList.map((d) => d.high);
-  const lows = dataList.map((d) => d.low);
+  // Default "hl": swing-highs off the high series, swing-lows off the low series.
+  // Any other source drives BOTH sides off that single series.
+  const src = ext.source && ext.source !== "hl" ? ext.source : null;
+  const highs = src ? dataList.map((d) => priceOf(d, src)) : dataList.map((d) => d.high);
+  const lows = src ? dataList.map((d) => priceOf(d, src)) : dataList.map((d) => d.low);
 
   // Pre-compute the confirmed pivot prices, keyed by the bar where they CONFIRM
   // (pivot at bar i confirms at i+N). Strict extremes (no flat tops/bottoms).

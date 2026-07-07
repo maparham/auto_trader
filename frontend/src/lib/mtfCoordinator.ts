@@ -16,6 +16,7 @@ import {
   computePivotBands,
   type PivotBandsExtend,
   type PivotBandsMode,
+  type PivotBandsSource,
 } from "./indicators/pivotBands";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
@@ -137,6 +138,7 @@ interface PivotBandsConfig {
   n: number; // strength (calcParams[0])
   k: number; // avg window (calcParams[1])
   mode: PivotBandsMode;
+  source: PivotBandsSource; // price the swings are detected on ("hl" default)
 }
 
 // Pivot Bands need enough HTF history *before* the oldest visible bar to have a
@@ -164,7 +166,7 @@ export async function applyPivotBandsTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   const ind = chart.getIndicatorByPaneId(paneId, name) as { extendData?: PivotBandsExtend } | null;
-  const ext: PivotBandsExtend = { ...(ind?.extendData ?? {}), mode: config.mode };
+  const ext: PivotBandsExtend = { ...(ind?.extendData ?? {}), mode: config.mode, source: config.source };
   const calcParams = [config.n, config.k];
 
   if (!timeframe || timeframe === "chart") {
@@ -184,7 +186,7 @@ export async function applyPivotBandsTimeframe(
   // Reuse the exact chart-TF math on the HTF bars: computePivotBands already
   // carries each side's value forward (dense after the first pivot) and bakes in
   // the N-bar confirmation lag, so the aligned series stays gap-free and honest.
-  const pts = computePivotBands(htf, config.n, config.k, { mode: config.mode });
+  const pts = computePivotBands(htf, config.n, config.k, { mode: config.mode, source: config.source });
   ext.mtf = {
     timeframe,
     htfStarts: htf.map((b) => b.timestamp),
@@ -264,8 +266,18 @@ export async function refreshMtfIndicators(
         const k = Number(ind.calcParams?.[1]) || 3;
         if (covered(pivotWarmup(n, k))) return;
         const mode: PivotBandsMode = ind.extendData?.mode === "avg" ? "avg" : "last";
+        const source: PivotBandsSource = ind.extendData?.source ?? "hl";
         jobs.push(
-          applyPivotBandsTimeframe(chart, epic, id, paneId, { n, k, mode }, tf, brokerId, oldestChartMs),
+          applyPivotBandsTimeframe(
+            chart,
+            epic,
+            id,
+            paneId,
+            { n, k, mode, source },
+            tf,
+            brokerId,
+            oldestChartMs,
+          ),
         );
       }
     });

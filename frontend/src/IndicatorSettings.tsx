@@ -26,6 +26,7 @@ import { applyMaTimeframe, applyPivotBandsTimeframe } from "./lib/mtfCoordinator
 import type {
   MaExtend,
   PivotBandsMode,
+  PivotBandsSource,
   AvwapExtend,
   BandMode,
   BandSetting,
@@ -554,11 +555,11 @@ export default function IndicatorSettings({
   function setExtendInput(field: string, value: unknown) {
     const next = { ...genExtend, [field]: value };
     setGenExtend(next);
-    // Pivot Bands' Mode change must recompute the HTF series under an active
-    // timeframe (a plain extend write would only re-align the stale one), so
-    // route it through the coordinator instead of the generic override.
-    if (isPivotBands && field === "mode") {
-      applyPivotBands({ mode: value as string });
+    // Pivot Bands' Mode/Source change must recompute the HTF series under an
+    // active timeframe (a plain extend write would only re-align the stale one),
+    // so route it through the coordinator instead of the generic override.
+    if (isPivotBands && (field === "mode" || field === "source")) {
+      applyPivotBands(field === "mode" ? { mode: value as string } : { source: value as string });
       return;
     }
     const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
@@ -908,18 +909,19 @@ export default function IndicatorSettings({
   // set. Reads explicit overrides so a param change never races setState; N/K
   // come from calcParams, mode from genExtend.
   function applyPivotBands(
-    next: Partial<{ n: number; k: number; mode: string; timeframe: string }> = {},
+    next: Partial<{ n: number; k: number; mode: string; source: string; timeframe: string }> = {},
   ) {
     const n = next.n ?? calcParams[0] ?? 5;
     const k = next.k ?? calcParams[1] ?? 3;
     const mode = (next.mode ?? genExtend.mode ?? "last") as PivotBandsMode;
+    const source = (next.source ?? genExtend.source ?? "hl") as PivotBandsSource;
     const tf = next.timeframe ?? timeframe;
     void applyPivotBandsTimeframe(
       chart,
       epic,
       name,
       paneId,
-      { n, k, mode },
+      { n, k, mode, source },
       tf === "chart" ? null : tf,
       brokerId,
     );
