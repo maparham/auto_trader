@@ -26,6 +26,18 @@ describe("asFibConfig", () => {
     expect(d.trendLine).toBe(true);
     expect(d.labels).toBe(true);
   });
+  it("keeps per-level width/dash overrides and drops malformed ones", () => {
+    const c = asFibConfig({
+      levels: [
+        { value: 0.5, enabled: true, color: "#123456", size: 3, style: "dashed" },
+        { value: 0.618, enabled: true, color: "#654321", size: "fat", style: "wavy" },
+      ],
+    });
+    expect(c.levels[0].size).toBe(3);
+    expect(c.levels[0].style).toBe("dashed");
+    expect(c.levels[1].size).toBeUndefined();
+    expect(c.levels[1].style).toBeUndefined();
+  });
   it("keeps a valid stored config verbatim and fills missing flags", () => {
     const stored = { levels: [{ value: 0.5, enabled: true, color: "#123456" }], reverse: true };
     const c = asFibConfig(stored);
@@ -74,6 +86,16 @@ describe("fibLevelSegments", () => {
     const s = seg(cfg)[0];
     expect(s.y).toBeCloseTo(0 + (200 - 0) * 1.618); // beyond point0
     expect(s.label).toBe("1.618 (77.64)"); // 110 - 1.618*20
+  });
+  it("carries per-level width/dash overrides onto the segment", () => {
+    const cfg = base();
+    cfg.levels = [
+      { value: 0.5, enabled: true, color: "#123456", size: 2, style: "dashed" },
+      { value: 0.618, enabled: true, color: "#654321" },
+    ];
+    const [a, b] = seg(cfg);
+    expect([a.size, a.style]).toEqual([2, "dashed"]);
+    expect([b.size, b.style]).toEqual([undefined, undefined]);
   });
   it("returns [] when fewer than 2 coordinates", () => {
     expect(

@@ -265,8 +265,8 @@ const fibonacciLine: OverlayTemplate = {
         attrs: { coordinates: [{ x: s.x1, y: s.y }, { x: s.x2, y: s.y }] },
         styles: {
           color: s.color,
-          size: line.size ?? 1,
-          style: line.style ?? "solid",
+          size: s.size ?? line.size ?? 1,
+          style: s.style ?? line.style ?? "solid",
           dashedValue: line.dashedValue ?? [4, 4],
         },
       });

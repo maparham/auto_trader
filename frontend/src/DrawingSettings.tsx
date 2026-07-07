@@ -499,9 +499,10 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                             })
                           }
                         />
-                        {/* Same full picker as the Lines row: color is THIS level's;
-                            the thickness/dash sections edit the shared line style
-                            (one width/dash across all levels, like TV). */}
+                        {/* Same full picker as the Lines row, but everything here is
+                            THIS level's: color, and width/dash stored as per-level
+                            overrides that win over the shared line style. Unset
+                            overrides display the shared values. */}
                         <ColorLineStylePicker
                           color={l.color}
                           onColor={(c) =>
@@ -512,11 +513,21 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                               ),
                             })
                           }
-                          size={size}
-                          onSize={(s) => applyStyle({ size: s })}
-                          lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
+                          size={l.size ?? size}
+                          onSize={(s) =>
+                            applyFib({
+                              ...fib,
+                              levels: fib.levels.map((x, j) => (j === i ? { ...x, size: s } : x)),
+                            })
+                          }
+                          lineStyle={l.style ?? (style === LineType.Dashed ? "dashed" : "solid")}
                           onLineStyle={(s) =>
-                            applyStyle({ style: s === "dashed" ? LineType.Dashed : LineType.Solid })
+                            applyFib({
+                              ...fib,
+                              levels: fib.levels.map((x, j) =>
+                                j === i ? { ...x, style: s === "dashed" ? "dashed" : "solid" } : x,
+                              ),
+                            })
                           }
                           lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
                         />

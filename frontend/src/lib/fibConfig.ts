@@ -7,6 +7,10 @@ export interface FibLevel {
   value: number;
   enabled: boolean;
   color: string;
+  // Per-level width/dash OVERRIDES. Absent ⇒ the level uses the drawing's shared
+  // styles.line; set (by the level's own picker) ⇒ this level wins.
+  size?: number;
+  style?: "solid" | "dashed";
 }
 export type FibExtend = "none" | "left" | "right" | "both";
 export interface FibConfig {
@@ -49,15 +53,22 @@ export function asFibConfig(v: unknown): FibConfig {
   if (!v || typeof v !== "object") return d;
   const o = v as Partial<FibConfig>;
   const levels = Array.isArray(o.levels)
-    ? o.levels.filter(
-        (l): l is FibLevel =>
-          !!l &&
-          typeof l === "object" &&
-          typeof l.value === "number" &&
-          Number.isFinite(l.value) &&
-          typeof l.enabled === "boolean" &&
-          typeof l.color === "string",
-      )
+    ? o.levels
+        .filter(
+          (l): l is FibLevel =>
+            !!l &&
+            typeof l === "object" &&
+            typeof l.value === "number" &&
+            Number.isFinite(l.value) &&
+            typeof l.enabled === "boolean" &&
+            typeof l.color === "string",
+        )
+        // Drop malformed per-level overrides rather than the whole level.
+        .map((l) => ({
+          ...l,
+          size: typeof l.size === "number" && Number.isFinite(l.size) ? l.size : undefined,
+          style: l.style === "solid" || l.style === "dashed" ? l.style : undefined,
+        }))
     : d.levels;
   return {
     levels: levels.length ? levels : d.levels,
@@ -75,6 +86,9 @@ export interface FibSegment {
   x2: number;
   color: string;
   label: string;
+  // Present only when the level overrides the shared width/dash.
+  size?: number;
+  style?: "solid" | "dashed";
 }
 
 // One horizontal segment per ENABLED level. y/price interpolate between the two
@@ -108,6 +122,8 @@ export function fibLevelSegments(args: {
         x2,
         color: l.color,
         label: `${l.value} (${price.toFixed(precision)})`,
+        size: l.size,
+        style: l.style,
       };
     });
 }
