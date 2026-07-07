@@ -1,9 +1,25 @@
 # Backlog
 
-Desired-but-not-yet-built work. Each entry links to a spec/plan when one exists.
+Desired-but-not-yet-built work. Each entry links to its spec. Once a spec ships,
+remove it from here (git history and the memory index track shipped features).
 
-## Specced, awaiting implementation
+## Specced, ready to implement
 
 - **Sync indicators across layout cells** — layout-wide indicator mirroring
   (add/remove/edit propagate to all cells; AVWAP anchor fan-out).
-  Spec: [docs/superpowers/specs/2026-07-07-sync-indicators-design.md](superpowers/specs/2026-07-07-sync-indicators-design.md)
+  [spec](superpowers/specs/2026-07-07-sync-indicators-design.md)
+
+- **Slope-colored moving averages** — render EMA/SMA/VWAP/AVWAP with
+  slope-based color coding (up vs. down segments).
+  [spec](superpowers/specs/2026-07-06-slope-colored-ma-design.md)
+
+- **Custom range calendar picker** — visual calendar for backtest range
+  selection, replacing the native `datetime-local` inputs.
+  [spec](superpowers/specs/2026-07-06-custom-range-calendar-picker-design.md)
+
+## Deferred / forward-looking
+
+- **Node backtest compute offload** — run backtest math in a Node service to
+  move heavy work off the browser. Explicitly not a current pain point; revisit
+  on real slowness or headless/scheduled-run demand.
+  [spec](superpowers/specs/2026-07-07-node-backtest-compute-offload-design.md)
