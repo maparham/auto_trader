@@ -253,7 +253,10 @@ export function fitBacktestTrades(chart: Chart, result: StoredBacktestResult): v
 // inherits `defaultStyles[type]` merged with the overlay-level `styles` we pass
 // at createOverlay — the same merge the built-in relied on (only the vertical
 // line is side-colored; arrow + text use theme defaults).
-const MARKER_OVERLAY = "backtestMarker";
+// Exported so the live trade-marker drawer (tradeMarkers.ts) reuses this exact
+// overlay glyph rather than defining a parallel one — same arrow/pill geometry,
+// same extendData contract (label / win / placement).
+export const MARKER_OVERLAY = "backtestMarker";
 
 // extendData for a `backtestMarker`: the label text plus the trade's outcome so
 // the label pill can be win/loss colored (green won, red lost). `win` is null
@@ -321,7 +324,7 @@ const markerOverlay: OverlayTemplate = {
 };
 
 let markerOverlayRegistered = false;
-function ensureMarkerOverlayRegistered(): void {
+export function ensureMarkerOverlayRegistered(): void {
   if (markerOverlayRegistered) return;
   markerOverlayRegistered = true;
   registerOverlay(markerOverlay);
@@ -432,40 +435,48 @@ export interface TradeCluster {
   toTs: number;
 }
 
+/** Index of the loaded bar that CONTAINS `ms` — the last bar whose timestamp is
+ * `<= ms`, clamped to `[0, last]`. The same "last bar at or before this time"
+ * rule klinecharts uses to snap an overlay, rather than `floor(t / seconds)`
+ * math — daily/weekly/derived bars don't align to epoch multiples. A time before
+ * the first / after the last loaded bar clamps to the edge bar so it stays
+ * discoverable. Empty `barTimes` returns -1. Pure + exported (shared by
+ * `aggregateTradesByBar` and the live trade-marker drawer). */
+export function barIndexForTs(barTimes: number[], ms: number): number {
+  const last = barTimes.length - 1;
+  if (last < 0) return -1;
+  if (ms <= barTimes[0]) return 0;
+  if (ms >= barTimes[last]) return last;
+  let lo = 0;
+  let hi = last;
+  let idx = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (barTimes[mid] <= ms) {
+      idx = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return idx;
+}
+
 /** Bucket trades into the loaded chart bar that CONTAINS each trade's entry
- * (the bar whose `[timestamp, nextTimestamp)` window covers `entry_time`). We
- * find the containing bar by the same "last bar at or before this time" rule
- * klinecharts uses to snap an overlay, rather than `floor(t / seconds)` math —
- * daily/weekly/derived bars don't align to epoch multiples. Trades before the
- * first / after the last loaded bar clamp to the edge bar so they stay
- * discoverable. Pure + exported for tests. */
+ * (the bar whose `[timestamp, nextTimestamp)` window covers `entry_time`), by
+ * the shared `barIndexForTs` rule. Trades before the first / after the last
+ * loaded bar clamp to the edge bar so they stay discoverable. Pure + exported
+ * for tests. */
 export function aggregateTradesByBar(
   trades: Trade[],
   bars: { timestamp: number; high: number }[],
 ): TradeCluster[] {
   if (bars.length === 0) return [];
-  const last = bars.length - 1;
+  const barTimes = bars.map((b) => b.timestamp);
   const byBar = new Map<number, TradeCluster>();
   for (let i = 0; i < trades.length; i++) {
     const t = trades[i];
     const entryMs = t.entry_time * 1000;
     const exitMs = t.exit_time * 1000;
-    // idx = last bar with timestamp <= entryMs, clamped to [0, last].
-    let idx: number;
-    if (entryMs <= bars[0].timestamp) idx = 0;
-    else if (entryMs >= bars[last].timestamp) idx = last;
-    else {
-      let lo = 0;
-      let hi = last;
-      idx = 0;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (bars[mid].timestamp <= entryMs) {
-          idx = mid;
-          lo = mid + 1;
-        } else hi = mid - 1;
-      }
-    }
+    const idx = barIndexForTs(barTimes, entryMs);
     let cl = byBar.get(idx);
     if (!cl) {
       cl = {

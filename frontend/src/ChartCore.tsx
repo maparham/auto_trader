@@ -124,6 +124,16 @@ import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRa
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, SIDE_CHEVRON, bracketLabels, drawPositionBracket } from "./lib/positionLines";
 import {
+  TradeMarkers,
+  entryMarkerSpecs,
+  exitMarkerSpecs,
+  aggregateExitsByBar,
+  exitsCollide,
+  type ExitCluster,
+} from "./lib/tradeMarkers";
+import { journalSignal } from "./lib/liveJournal";
+import TradeExitAggMarkers, { type TradeExitAggMarkersHandle, type ExitPill } from "./TradeExitAggMarkers";
+import {
   brokerLabel,
   setLivePrice,
   subscribeTrades,
@@ -976,6 +986,16 @@ export default function ChartCore({
   // On-chart trade lines (entry/SL/TP for positions + resting orders). Server-
   // owned, non-persisted; see positionLines.ts.
   const posLinesRef = useRef<PositionLines | null>(null);
+  // On-chart LIVE trade markers: entry arrow per open position + exit arrow per
+  // journaled close, reusing the backtest fill glyph. Owned/lifecycled exactly
+  // like posLines (per cell, filtered to this epic); see tradeMarkers.ts.
+  const tradeMarkersRef = useRef<TradeMarkers | null>(null);
+  // Latest journal (closed live trades) from journalSignal — the exit-marker
+  // source, mirrored so an epic change / redraw can re-filter without a poll.
+  const journalRef = useRef(journalSignal.value);
+  // Redraw the live trade markers filtered to the current epic; set in chart init,
+  // called again after a symbol-change rehydrate (paired with posDrawRef).
+  const tradeMarkersDrawRef = useRef<() => void>(() => {});
   // Latest trades + pending drags from the shared signals, so an epic change can
   // re-filter/re-merge without waiting for the next poll tick.
   const tradesRef = useRef<TradeView[]>([]);
@@ -1035,6 +1055,11 @@ export default function ChartCore({
   // legend's imperative-update pattern (no React churn per crosshair pixel).
   const curveLabelsRef = useRef<CurveLabelsHandle>(null);
   const aggMarkersRef = useRef<BacktestAggMarkersHandle>(null);
+  // Coarse-timeframe LIVE exit pills (one per bar, count + net P&L) — the live
+  // analog of aggMarkersRef. Clusters are recomputed in drawTradeMarkers and
+  // projected to pixels each redraw, like the backtest aggregate pills.
+  const exitAggMarkersRef = useRef<TradeExitAggMarkersHandle>(null);
+  const exitClustersRef = useRef<ExitCluster[]>([]);
   // While the cursor is parked over the "+" affordance, klinecharts has lost the
   // canvas hover and dropped its crosshair. We redraw just the HORIZONTAL crosshair
   // line ourselves at this y (the vertical one is intentionally gone — x is
@@ -2921,10 +2946,58 @@ export default function ChartCore({
         );
       };
       posDrawRef.current = drawPositions;
+      // Live trade markers (entry per open position, exit per journaled close),
+      // reusing the backtest fill glyph. Redraw on the same trades/journal updates
+      // that drive the position lines, filtered to this cell's epic. Native
+      // timestamp-anchored overlays reproject themselves on pan/zoom, so — unlike
+      // the coarse-TF aggregate pills — they need no per-frame projection loop.
+      const tradeMarkers = new TradeMarkers(chart);
+      tradeMarkersRef.current = tradeMarkers;
+      const drawTradeMarkers = () => {
+        if (isSynthetic(epicRef.current)) {
+          tradeMarkers.render([]); // analysis-only: no trade markers
+          exitClustersRef.current = [];
+          return;
+        }
+        const bars = chart.getDataList() ?? [];
+        const oldestLoadedMs = bars[0]?.timestamp ?? null;
+        const opts = {
+          trades: tradesRef.current,
+          journal: journalRef.current,
+          epic: epicRef.current,
+          precision: precisionRef.current,
+          oldestLoadedMs,
+        };
+        // The entry arrow is always native (one netted position per epic can't
+        // collide). Exits collide on a coarse view — bucket them per bar and, if
+        // any bar packs ≥2 closes, draw one aggregate pill per bar instead of
+        // per-fill arrows (mirrors the backtest's native/aggregate render gate,
+        // but data-driven since live markers have no fixed native timeframe).
+        const entry = entryMarkerSpecs(opts);
+        const clusters = aggregateExitsByBar(
+          journalRef.current,
+          epicRef.current,
+          bars.map((k) => ({ timestamp: k.timestamp, high: k.high })),
+        );
+        if (exitsCollide(clusters)) {
+          tradeMarkers.render(entry); // exits go to the DOM pill layer, not arrows
+          exitClustersRef.current = clusters;
+        } else {
+          tradeMarkers.render([...entry, ...exitMarkerSpecs(opts)]);
+          exitClustersRef.current = [];
+        }
+      };
+      tradeMarkersDrawRef.current = drawTradeMarkers;
       const unsubTrades = subscribeTrades((t) => {
         tradesRef.current = t;
         drawPositions();
+        drawTradeMarkers();
         redrawRef.current(); // refresh the selected-trade pill (label/uPnL/levels)
+      });
+      const unsubJournal = journalSignal.subscribe((j) => {
+        journalRef.current = j;
+        drawTradeMarkers();
+        redrawRef.current(); // re-project the coarse-TF exit pills
       });
       const unsubPending = pendingEditsSignal.subscribe((p) => {
         pendingRef.current = p;
@@ -2982,6 +3055,7 @@ export default function ChartCore({
       const unsubPositionsHidden = controller.positionsHidden.subscribe(() => drawPositions());
       posUnsubRef.current = () => {
         unsubTrades();
+        unsubJournal();
         unsubPending();
         unsubDraft();
         unsubConfirm();
@@ -3180,6 +3254,7 @@ export default function ChartCore({
     chartRef.current?.setPriceVolumePrecision(effPrecision, 0);
     overlays.setPricePrecision(effPrecision); // keep alert-level rounding in lockstep
     redrawRef.current(); // re-place the price/bid/ask pills at the new decimals
+    tradeMarkersDrawRef.current(); // entry labels carry the price at this precision
   }, [effPrecision]);
 
   // Timezone changes -> retime the axis ("" follows the browser), and rebucket the
@@ -3369,6 +3444,9 @@ export default function ChartCore({
       // Redraw position lines for the (possibly new) epic at the current precision.
       posLinesRef.current?.setPrecision(effPrecision);
       posDrawRef.current();
+      // Same for the live trade markers — the epic's entry/exit arrows against the
+      // freshly loaded bars (reconcile drops the old epic's markers).
+      tradeMarkersDrawRef.current();
       // Re-evaluate the selected-trade pill against the now-current epic: selecting a
       // dock row for an OFF-chart symbol switches the epic here, and the pill only
       // shows for a trade on this epic — so refresh once the rehydrate lands rather
@@ -4227,6 +4305,35 @@ export default function ChartCore({
       aggMarkersRef.current?.setPills(pills);
     } else {
       aggMarkersRef.current?.setPills([]);
+    }
+    // Coarse-timeframe LIVE exit pills: project each per-bar cluster's bar-high
+    // anchor to a pixel and feed the DOM pill layer, same as the backtest aggregate
+    // above. exitClustersRef is non-empty only when this cell's journaled exits
+    // collide on the current (coarser) timeframe (see drawTradeMarkers).
+    const exitClusters = exitClustersRef.current;
+    if (exitClusters.length > 0) {
+      const paneW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      const exitPills: ExitPill[] = [];
+      for (const cl of exitClusters) {
+        const px = first(
+          chart.convertToPixel([{ timestamp: cl.barTs, value: cl.high }], {
+            paneId: "candle_pane",
+            absolute: true,
+          }),
+        );
+        if (px.x == null || px.y == null || px.x < 0 || px.x > paneW) continue;
+        exitPills.push({
+          key: `exit-agg:${cl.barTs}`,
+          x: px.x,
+          y: Math.max(px.y, 14),
+          count: cl.exits.length,
+          net: cl.net,
+          exits: cl.exits,
+        });
+      }
+      exitAggMarkersRef.current?.setPills(exitPills);
+    } else {
+      exitAggMarkersRef.current?.setPills([]);
     }
     // Keep the position bracket glued to its lines as geometry shifts (scroll/zoom/
     // tick/drag) — the cursor needn't move for the lines to.
@@ -5094,6 +5201,10 @@ export default function ChartCore({
           backtest viewed on a coarser timeframe. Hover opens the trade-list
           popover; click drills into the native timeframe. Fed by the redraw loop. */}
       <BacktestAggMarkers handleRef={aggMarkersRef} onDrillIn={onBacktestDrillIn} />
+      {/* Coarse-timeframe LIVE exit pills (count + net P&L) — the live analog of the
+          backtest aggregate markers, for journaled closes that collide on the current
+          timeframe. Hover lists that bar's exits; no drill-in. Fed by the redraw loop. */}
+      <TradeExitAggMarkers handleRef={exitAggMarkersRef} />
       {/* Top-left legend as crisp DOM (the candle/OHLC row + one row per candle-pane
           indicator), replacing klinecharts' blurry canvas legend. Row membership is
           React state (signature-gated); values update imperatively via the handle. */}

@@ -82,6 +82,7 @@ export const tradePanelOpen = new Signal<boolean>(false);
 import type { TradeView } from "./trading";
 import type { StoredBacktestResult } from "./persist";
 import type { SignalGlyph } from "./signalGlyphs";
+import type { JournalTrade } from "./liveJournal";
 export const tradesSignal = new Signal<TradeView[]>([]);
 
 // Backtest run result published after a successful run OR restored on rehydrate
@@ -116,6 +117,15 @@ export const selectedTradeSignal = new Signal<number | null>(null);
 // gating needed. Carries the stored trade shape (plain data, no candles).
 export const backtestClusterHoverSignal = new Signal<
   { trades: StoredBacktestResult["trades"]; x: number; y: number } | null
+>(null);
+
+// The LIVE exit-cluster popover: journaled closes bucketed into one bar (a coarse-
+// timeframe live pill the cursor is over) plus the cursor's page position. The live
+// analog of backtestClusterHoverSignal — set by a live exit pill's onMouseEnter
+// (TradeExitAggMarkers), cleared on leave / teardown; App renders one popover for
+// it. Same global one-at-a-time idiom. Carries journal exits (no drill-in target).
+export const liveExitClusterHoverSignal = new Signal<
+  { exits: JournalTrade[]; x: number; y: number } | null
 >(null);
 
 // The signal-candle popover: the glyph the cursor is over (its passing-rule terms
