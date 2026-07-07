@@ -275,6 +275,10 @@ export interface BacktestConfig {
   longScaling?: ScalingConfig;
   shortScaling?: ScalingConfig;
   costs: Costs;
+  // Whether the equity curve is drawn in its own sub-pane after a run. Off by
+  // default — the curve is a heavy overlay most runs don't need. Optional so a
+  // preset saved before this existed loads with it absent (treated as hidden).
+  showEquity?: boolean;
 }
 
 /** The payload key an operand's series lives under, or null if it has no
@@ -406,5 +410,6 @@ export function defaultBacktestConfig(): BacktestConfig {
     longEnabled: true,
     shortEnabled: true,
     costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+    showEquity: false,
   };
 }

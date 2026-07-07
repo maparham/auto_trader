@@ -177,6 +177,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           toMs: windowToMs,
           mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
         },
+        cfg.showEquity ?? false,
       );
       // The summary chip is driven by the signal subscription above, so just
       // publish the result (rehydrate uses the same publish path).

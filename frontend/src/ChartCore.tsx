@@ -49,6 +49,8 @@ import CurveLabels, { type CurveLabelsHandle, type CurveLabelPill } from "./Curv
 import {
   teardownArtifacts,
   rehydrateBacktest,
+  selectedTradeForChart,
+  restoreTradeSelection,
   getBacktestAggregate,
   getBacktestCoverageFromTs,
   reanchorBacktestMarkers,
@@ -580,6 +582,12 @@ export default function ChartCore({
     side: PriceSide;
   };
   const pendingRangeRef = useRef<RangeReq | null>(null);
+  // Trade index to re-select after a timeframe switch's coverage walks settle
+  // (see the data-load effect). A ref, not an effect local, so a SECOND switch
+  // arriving before the first walk settles still carries the selection over —
+  // the shared selection signal is already nulled by then, so re-capturing from
+  // it would lose the trade. Cleared once a restore is attempted or on epic change.
+  const pendingTradeRestoreRef = useRef<number | null>(null);
   // The token a walk-back has already been launched for, so a re-run of the
   // data-load effect (priceSide/broker change, same pending pick) can't start a
   // second concurrent walk over the same token.
@@ -3235,7 +3243,12 @@ export default function ChartCore({
     overlays.setBroker(brokerId);
     // Backtest markers/equity belong to the previous series — drop the live
     // artifacts immediately (keep the persisted result; rehydrateBacktest below
-    // redraws it for the new series once its bars are loaded).
+    // redraws it for the new series once its bars are loaded). Capture the
+    // selected trade FIRST: teardown nulls the shared selection, so we grab it
+    // here (while this chart still owns the panel) to re-center on it after the
+    // switch. Fall back to a restore a superseded run never got to attempt, so
+    // rapid TF switches don't drop the selection.
+    const capturedSelectedTrade = selectedTradeForChart(chart) ?? pendingTradeRestoreRef.current;
     teardownArtifacts(chart);
     // Reset scroll-back state for the new series.
     loadingRef.current = false;
@@ -3250,6 +3263,10 @@ export default function ChartCore({
     //   today" marker is still valid at any interval).
     const epicChanged = prevEpicRef.current !== symbol.epic;
     const resChanged = prevResRef.current !== period.resolution;
+    // Park the captured trade for the post-walk restore below. An epic change
+    // loads a DIFFERENT backtest whose trade array the old index wouldn't map
+    // onto — drop it instead.
+    pendingTradeRestoreRef.current = epicChanged ? null : capturedSelectedTrade;
     prevEpicRef.current = symbol.epic;
     prevResRef.current = period.resolution;
     // A symbol or interval change invalidates any live measurement (its anchors map
@@ -3338,6 +3355,8 @@ export default function ChartCore({
       // bars; equity only on the native one; a coarser timeframe draws nothing
       // but keeps the result saved. Republishes backtestResultSignal so the
       // trades panel + summary chip come back.
+      // (Re-selecting the previously-studied trade waits until the coverage
+      // walks below settle — see the anchor-coverage chain.)
       rehydrateBacktest(chartRef.current, scope, symbol.epic, period.resolution);
       // Redraw position lines for the (possibly new) epic at the current precision.
       posLinesRef.current?.setPrecision(effPrecision);
@@ -3399,8 +3418,24 @@ export default function ChartCore({
       // (the walk also would have gated it via pendingRangeRef, which it clears
       // only on completion). Live-only intervals have no history to page.
       if (!period.liveOnly) {
-        if (rangeWalk) void rangeWalk.then(() => ensureAnchorCoverage());
-        else void ensureAnchorCoverage();
+        const anchorWalk = rangeWalk
+          ? rangeWalk.then(() => ensureAnchorCoverage())
+          : ensureAnchorCoverage();
+        // Re-select the trade the user was studying before the switch — only NOW,
+        // once the switch-time coverage walks have settled. The walks prepend
+        // pages via applyNewData, which resets the view to realtime each page; a
+        // re-center issued while one is still running lands on the trade and then
+        // snaps back to the live edge. Re-emitting the selection fires the
+        // subscription renderArtifacts installed: redraw the R/R zone, page the
+        // trade's own bars in if still off-window (coverBacktestTradeTo), scroll.
+        // A superseded run (cancelled) leaves the ref parked for its successor.
+        void anchorWalk.then(() => {
+          if (cancelled || !chartRef.current) return;
+          const restore = pendingTradeRestoreRef.current;
+          if (restore == null) return;
+          pendingTradeRestoreRef.current = null;
+          restoreTradeSelection(chartRef.current, restore);
+        });
       }
 
       // Live updates for the current bar.

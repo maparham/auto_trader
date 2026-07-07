@@ -781,6 +781,7 @@ export async function runAndRender(
   scope: string,
   displayResolution: string,
   period?: BacktestPeriod,
+  showEquity = false,
 ): Promise<StoredBacktestResult> {
   const result = await runBacktest(req);
   // Drops the previous run's markers/equity/highlight/selection zone AND
@@ -791,8 +792,9 @@ export async function runAndRender(
   teardownArtifacts(chart);
   // Persist so the markers/equity/trades survive a timeframe switch and a full
   // reload (candles stripped — see saveBacktestResult). Attach the period so the
-  // shading persists + rehydrates like the markers.
-  saveBacktestResult(scope, req.epic, result, period);
+  // shading persists + rehydrates like the markers, and the equity-curve choice
+  // so the reload honors it.
+  saveBacktestResult(scope, req.epic, result, period, showEquity);
   // Render for the CURRENTLY displayed timeframe, not blindly native: the run's
   // base TF (req.resolution) can differ from the chart's TF (the settings panel's
   // "base TF" dropdown lets you run e.g. 5m while viewing 1H), and running does
@@ -802,7 +804,8 @@ export async function runAndRender(
   // Render the freshly-STORED object (which carries `period`) so the shading is
   // present at render time.
   const stored = loadBacktestResult(scope, req.epic) ?? result;
-  renderArtifacts(chart, stored, backtestRenderFlags(displayResolution, req.resolution));
+  const flags = backtestRenderFlags(displayResolution, req.resolution);
+  renderArtifacts(chart, stored, { ...flags, drawEquity: flags.drawEquity && showEquity });
   return stored;
 }
 
@@ -1136,6 +1139,35 @@ export function backtestRenderFlags(
   return { markerMode, drawEquity: current === native };
 }
 
+/** The trade index the user has selected on THIS chart's active backtest, or
+ * null when this chart doesn't own the panel. ChartCore captures it BEFORE its
+ * synchronous teardownArtifacts nulls the shared selection on a timeframe switch,
+ * then hands it to restoreTradeSelection to re-center on the same trade. The
+ * ownership gate (artifacts.result === the published result) mirrors the rest of
+ * this module so a split-layout cell that doesn't own the panel can't restore
+ * over another cell's selection. */
+export function selectedTradeForChart(chart: Chart): number | null {
+  const a = artifactsByChart.get(chart);
+  return a && backtestResultSignal.value === a.result ? selectedTradeSignal.value : null;
+}
+
+/** Re-select the trade the user was studying before a timeframe switch —
+ * ChartCore calls this AFTER its switch-time coverage walks settle (drawing/
+ * backtest anchor paging), NOT right at rehydrate: those walks prepend pages via
+ * applyNewData, which resets the view to realtime, so an immediate re-center
+ * would land and then get thrown back to the live edge mid-walk. Re-emitting the
+ * index fires the selection subscription renderArtifacts installed: redraw the
+ * R/R zone, page the trade's own bars in if still off-window, and scroll to it.
+ * No-op when this chart no longer owns the panel (split-cell guard), when the
+ * user selected something else during the walk, or when the index no longer maps
+ * to a trade (the subscription's own `if (!t) return` guard). */
+export function restoreTradeSelection(chart: Chart, index: number): void {
+  const a = artifactsByChart.get(chart);
+  if (!a || backtestResultSignal.value !== a.result) return;
+  if (selectedTradeSignal.value != null) return; // user re-selected mid-walk — keep theirs
+  selectedTradeSignal.set(index);
+}
+
 /** Restore a cell's saved backtest onto the chart after a symbol/timeframe
  * change or a page reload — the counterpart to overlays.rehydrate for backtest
  * artifacts. Called from ChartCore once the new series' bars are loaded.
@@ -1167,10 +1199,15 @@ export function rehydrateBacktest(
     if (owned) backtestResultSignal.set(null);
     return;
   }
-  renderArtifacts(chart, saved, backtestRenderFlags(resolution, saved.resolution));
+  const flags = backtestRenderFlags(resolution, saved.resolution);
+  renderArtifacts(chart, saved, { ...flags, drawEquity: flags.drawEquity && (saved.showEquity ?? false) });
   // Publish with THIS exact object so renderArtifacts' identity-gated sync binds
   // to it, and the trades panel / summary chip repopulate.
   backtestResultSignal.set(saved);
+  // NOTE: re-selecting the previously-studied trade is deliberately NOT done
+  // here — ChartCore defers it (restoreTradeSelection) until its switch-time
+  // coverage walks settle, because their applyNewData prepends reset the view
+  // and would clobber the re-center scroll.
 }
 
 /** Remove a chart's live backtest artifacts (markers, equity pane, highlight +

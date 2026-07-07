@@ -49,6 +49,7 @@ import {
   loadBacktestPresets,
   saveBacktestPreset,
   deleteBacktestPreset,
+  saveBacktestLastUsed,
   loadBacktestSide,
   saveBacktestSide,
   loadBacktestSplit,
@@ -321,6 +322,27 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // re-opening the modal returns to the side you were working on.
   const [side, setSide] = useState<"long" | "short">(loadBacktestSide);
   const [tab, setTab] = useState<BacktestTab>("period");
+  // Auto-persist the config on every edit, so changes like deleting a rule stick
+  // even if the modal is closed without running. Previously the last-used config
+  // was saved ONLY on Run, so an edit made and then abandoned reappeared on the
+  // next reload (loadBacktestLastUsed returned the stale saved copy). The backend
+  // mirror (save() → PUT) is un-debounced, so we coalesce edits with a short timer
+  // rather than firing a request per keystroke. `initial` already came from
+  // loadBacktestLastUsed(), so skip the mount pass to avoid a redundant re-mirror.
+  const firstCfgSave = useRef(true);
+  const cfgRef = useRef(cfg);
+  cfgRef.current = cfg;
+  useEffect(() => {
+    if (firstCfgSave.current) {
+      firstCfgSave.current = false;
+      return;
+    }
+    const t = setTimeout(() => saveBacktestLastUsed(cfg), 400);
+    return () => clearTimeout(t);
+  }, [cfg]);
+  // Flush the latest config when the modal unmounts, so an edit made inside the
+  // debounce window right before closing isn't dropped by the timer cleanup above.
+  useEffect(() => () => saveBacktestLastUsed(cfgRef.current), []);
   // "Pick Range" ↔ chart wiring: mirror the armed flag for the button state, and
   // when the chart publishes a picked range drop it into the Custom from/to (and
   // switch to Custom mode). Re-subscribes if the focused cell changes.
@@ -358,6 +380,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     saveBacktestSplit(split);
   }, [split]);
   const toggleResults = () => setSplit((s) => ({ ...s, collapsed: !s.collapsed }));
+  // Clearing the results (the pane's ✕, via backtestClearRequest) collapses the
+  // now-empty results section — the mirror of run() expanding it. Subscribing here
+  // keeps the split state (owned by this modal) in sync with the clear the panel
+  // triggers. Guarded so it only collapses when currently expanded.
+  useEffect(
+    () =>
+      backtestClearRequest.subscribe(() => setSplit((s) => (s.collapsed ? s : { ...s, collapsed: true }))),
+    [],
+  );
   function startResize(e: React.PointerEvent) {
     if (!splitRef.current) return;
     e.preventDefault();
@@ -973,6 +1004,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 />
               </label>
             </div>
+            <label className="al-row bt-mask-toggle">
+              <input
+                type="checkbox"
+                checked={cfg.showEquity ?? false}
+                onChange={(e) => setCfg({ ...cfg, showEquity: e.target.checked })}
+              />
+              <span>Show equity curve</span>
+              <InfoTip text="Draw the account balance over time in its own sub-pane after a run. Off by default; shown only on the backtest's own timeframe." />
+            </label>
           </Section>
             </section>
 
