@@ -93,7 +93,21 @@ function decorations(params: OverlayCreateFiguresCallbackParams): OverlayFigure[
       // Label sits just above the midpoint of the line.
       attrs: { x: mid.x, y: mid.y - 8, text: extra.text, align: "center", baseline: "bottom" },
       // Canvas font family — a real stack, not "inherit" (not a valid canvas token).
-      styles: { color: TEXT_COLOR, size: 12, family: "-apple-system, system-ui, sans-serif" },
+      // klinecharts' default overlay-text style paints a BLUE box (backgroundColor +
+      // borderColor); without nulling those out the blue label text renders on a blue
+      // box and is unreadable (same gotcha the measure/slope pills document below).
+      styles: {
+        color: TEXT_COLOR,
+        size: 12,
+        family: "-apple-system, system-ui, sans-serif",
+        backgroundColor: "transparent",
+        borderColor: "transparent",
+        borderSize: 0,
+        paddingLeft: 0,
+        paddingRight: 0,
+        paddingTop: 0,
+        paddingBottom: 0,
+      },
       ignoreEvent: true,
     });
   }
