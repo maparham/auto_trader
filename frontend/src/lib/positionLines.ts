@@ -77,6 +77,10 @@ export interface SpecBuildOpts {
   // A new order being staged on this epic. Its lines are always draggable and
   // report under the id "draft".
   draft?: DraftOrder | null;
+  // Blank every position/order line's canvas label (the entry/SL/TP text pill), leaving
+  // just the line — used when the always-on DOM pills render those labels instead, so
+  // the two don't double up. Draft labels are unaffected (the draft has no DOM pill).
+  hideTradeLabels?: boolean;
 }
 
 export const DRAFT_ID = "draft";
@@ -113,7 +117,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         level: price,
         color: PRICE_COLOR,
         side: t.side,
-        label: focusedField === "price" ? "" : `${word} ${t.quantity} @ ${fmt(price)}${pnlStr}`,
+        label: o.hideTradeLabels || focusedField === "price" ? "" : `${word} ${t.quantity} @ ${fmt(price)}${pnlStr}`,
         // A resting order's price line is draggable to reprice it; a filled
         // position's entry is fixed (you can't change a fill), so never draggable.
         draggable: t.kind === "order",
@@ -127,7 +131,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         key: `${t.id}:stop`,
         level: stop,
         color: STOP_COLOR,
-        label: focusedField === "stop" ? "" : `SL ${fmt(stop)}`,
+        label: o.hideTradeLabels || focusedField === "stop" ? "" : `SL ${fmt(stop)}`,
         draggable: o.levelsDraggable,
         highlight,
         selected,
@@ -139,7 +143,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         key: `${t.id}:tp`,
         level: tp,
         color: TP_COLOR,
-        label: focusedField === "tp" ? "" : `TP ${fmt(tp)}`,
+        label: o.hideTradeLabels || focusedField === "tp" ? "" : `TP ${fmt(tp)}`,
         draggable: o.levelsDraggable,
         highlight,
         selected,

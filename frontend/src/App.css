@@ -1866,6 +1866,10 @@
    role colour, white text, chevron) so selecting a line just adds buttons to the
    SAME pill — no second pill stacked on top. The role colour is set per field
    below. Sits just above the hovered alert pill (47). */
+/* TradingView-style split chip: a solid role-coloured LEAD (signed qty / SL / TP)
+   joined to a light BODY carrying the P/L or level, wrapped in a thin role border.
+   --pill (the role colour, live-P/L-driven on an open position's entry) is set
+   inline per pill and drives the lead fill, border, body text, and button icons. */
 .trade-pill {
   position: absolute; z-index: 47; transform: translateY(-50%);
   display: flex; align-items: stretch;
@@ -1873,35 +1877,48 @@
      click of a double-click on the line it sits over (which would break dblclick→edit
      ticket) or block a line grab. Only its buttons opt back in (see .tp-btn). */
   pointer-events: none;
-  border-radius: 3px; white-space: nowrap; overflow: hidden;
-  color: #fff;
+  border: 1px solid var(--pill, #2962ff);
+  border-radius: 4px; white-space: nowrap; overflow: hidden;
+  /* Body is a faint wash of the frame colour over the surface (TradingView-style). */
+  background: color-mix(in srgb, var(--pill) 10%, var(--surface-2));
   font-family: -apple-system, system-ui, sans-serif;
   font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums;
+  transition: box-shadow .12s, border-color .12s;
 }
-/* Role colours mirror the canvas pill: blue entry/limit, red stop, green target. */
-.trade-pill.tp-line-price { background: #2962ff; }
-.trade-pill.tp-line-stop  { background: #f23645; }
-.trade-pill.tp-line-tp    { background: #089981; }
-.trade-pill .tp-text { display: flex; align-items: center; padding: 3px 6px; }
-/* P/L rides inside the pill in white (like the canvas pill's "(+1.23)"); the
-   +/− sign carries direction, so no red/green needed on the coloured fill. */
-.trade-pill .tp-upnl { display: flex; align-items: center; padding: 3px 6px 3px 0; color: rgba(255, 255, 255, 0.85); }
+/* Hover A — subtle lift: soft shadow + stronger border; the close button flushes red.
+   Driven by the .hovering class (added while the pill's line is hovered). */
+.trade-pill.hovering { box-shadow: 0 3px 10px rgba(20, 26, 35, .20); border-color: var(--pill); }
+.trade-pill.hovering .tp-btn:not(.tp-apply) { color: var(--neg); }
+/* Solid role-coloured lead: signed qty on the entry (its +/− encodes side), SL/TP
+   on the exits. White text reads on every role colour. */
+.trade-pill .tp-lead {
+  display: flex; align-items: center; padding: 2px 6px;
+  background: var(--pill, #2962ff); color: #fff; font-weight: 600;
+}
+/* Light body: the level in the frame colour (.tp-main), the entry's live P/L in its own
+   sign colour (.tp-pnl, via --pnl), and on SL/TP a muted "P/L if hit" (.tp-plhint). */
+.trade-pill .tp-body { display: flex; align-items: center; gap: 6px; padding: 2px 7px; }
+.trade-pill .tp-main { color: var(--pill, #2962ff); }
+.trade-pill .tp-pnl { color: var(--pnl, var(--pill, #2962ff)); }
+.trade-pill .tp-plhint { color: var(--text-faint); font-weight: 400; }
 .trade-pill .tp-btn {
   display: flex; align-items: center; justify-content: center;
-  background: rgba(255, 255, 255, 0.14); border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.28);
-  cursor: pointer; color: #fff; padding: 0 6px;
+  background: transparent; border: none;
+  border-left: 1px solid color-mix(in srgb, var(--pill) 22%, transparent);
+  cursor: pointer; color: var(--pill, #2962ff); padding: 0 5px;
   pointer-events: auto; /* buttons stay clickable though the pill body is pass-through */
 }
-.trade-pill .tp-btn svg { width: 13px; height: 13px; display: block; }
-.trade-pill .tp-btn:hover { background: rgba(255, 255, 255, 0.3); }
-/* Keep the positive/destructive affordance on hover even over the coloured fill:
-   translucent green/red tints layer over blue/red/green and stay legible, so Apply
-   reads as "commit" and Close/Cancel/Discard/Remove read as "destructive". */
-.trade-pill .tp-apply:hover { background: color-mix(in srgb, var(--pos) 55%, transparent); }
+.trade-pill .tp-btn svg { width: 12px; height: 12px; display: block; }
+.trade-pill .tp-btn:hover { background: color-mix(in srgb, var(--pill) 12%, transparent); }
+/* Apply commits (green), Close/Cancel/Discard/Remove are destructive (red) — tinted
+   on hover so intent reads regardless of the pill's role colour. */
+.trade-pill .tp-apply { color: var(--pos); }
+.trade-pill .tp-apply:hover { background: color-mix(in srgb, var(--pos) 16%, transparent); }
+/* Icons rest in the pill's own role colour (green ✕ on a profit pill, red on a loss
+   one) and only flush red on hover to read as destructive. */
 .trade-pill .tp-close:hover,
 .trade-pill .tp-discard:hover,
-.trade-pill .tp-remove:hover { background: color-mix(in srgb, var(--neg) 55%, transparent); }
+.trade-pill .tp-remove:hover { background: color-mix(in srgb, var(--neg) 16%, transparent); color: var(--neg); }
 /* Hover tooltip shown when cursor is over a draggable trade line. */
 /* Confirm-dialog detail rows (e.g. the full position breakdown shown before close). */
 .confirm-details {

@@ -122,7 +122,7 @@ import {
 } from "./lib/customIndicators";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
-import { PositionLines, tradeLineSpecs, DRAFT_ID, SIDE_CHEVRON, bracketLabels, drawPositionBracket } from "./lib/positionLines";
+import { PositionLines, tradeLineSpecs, DRAFT_ID, bracketLabels } from "./lib/positionLines";
 import {
   TradeMarkers,
   entryMarkerSpecs,
@@ -211,6 +211,14 @@ const DEFAULT_BAR_SPACE = 8;
 // when AVWAP is selected, draggable left/right to re-anchor (TradingView-style).
 const ANCHOR_HANDLE_R = 6; // drawn radius
 const ANCHOR_GRAB_PX = 11; // mousedown hit radius (forgiving)
+
+// TradingView-style position furniture, left→right: %/R:R badges · connector spine
+// + per-line circle handles · always-on pills. The spine sits IN from the left edge
+// so the badges have room on its left; pills sit just to its right. Shared by the DOM
+// pills (TRADE_PILL_LEFT) and the canvas spine/handles/badges (TRADE_SPINE_X).
+const TRADE_SPINE_X = 92;
+const TRADE_PILL_LEFT = TRADE_SPINE_X + 14; // pills anchored just right of the spine
+const TRADE_HANDLE_R = 4.5; // circle-handle radius on the spine
 
 // A selectable indicator line resolved to pixel coordinates for the current
 // view. One entry per `type:"line"` figure — an indicator can plot several
@@ -986,6 +994,9 @@ export default function ChartCore({
   // On-chart trade lines (entry/SL/TP for positions + resting orders). Server-
   // owned, non-persisted; see positionLines.ts.
   const posLinesRef = useRef<PositionLines | null>(null);
+  // Master-hide ("Hide positions and orders" eye toggle), mirrored as a ref so the
+  // pill-building redraw loop can skip drawing pills without reaching into `controller`.
+  const positionsHiddenRef = useRef(false);
   // On-chart LIVE trade markers: entry arrow per open position + exit arrow per
   // journaled close, reusing the backtest fill glyph. Owned/lifecycled exactly
   // like posLines (per cell, filtered to this epic); see tradeMarkers.ts.
@@ -1024,16 +1035,17 @@ export default function ChartCore({
   const lineCacheRef = useRef<LineCache[]>([]);
   // The H position bracket: a split-colour spine linking the SELECTED trade's (or the
   // staged draft's) entry to its SL/TP, with %/R:R badges. Its own canvas so it can be
-  // repainted cheaply without touching the heavier selection/redraw layer.
-  // `bracketShownRef` lets us clear it exactly once on the active→idle transition so the
-  // common nothing-selected move costs ~nothing. The spine appears WHERE the cursor is
-  // but does NOT track it (constant horizontal drift was just visual noise): `bracketXRef`
-  // freezes the x at activation and `bracketKeyRef` re-freezes when the subject changes.
+  // repainted cheaply without touching the heavier selection/redraw layer. The spine is
+  // pinned at TRADE_SPINE_X (a fixed left column, in from the edge), appears on hover
+  // (grey) / selection (position side colour, selected handle filled), with the %/R:R
+  // badges to ITS LEFT. `bracketShownRef` clears it exactly once on the active→idle
+  // transition so the common nothing-active move costs ~nothing.
   const bracketCanvasRef = useRef<HTMLCanvasElement>(null);
   const bracketShownRef = useRef(false);
-  const bracketXRef = useRef<number | null>(null);
-  const bracketKeyRef = useRef<string | null>(null);
   const paintBracketRef = useRef<() => void>(() => {});
+  // The hovered LINE's field (price/stop/tp), captured by the hover hit-test so the
+  // connector can outline just that handle in its colour while nothing is selected.
+  const hoveredFieldRef = useRef<TradeLineField | null>(null);
   // The period-start separator: a dashed vertical line + date pill marking where
   // the active quick-range begins (e.g. start of today for 1D). Painted on its own
   // canvas in the redraw cycle so it tracks scroll/zoom; cleared when no range is
@@ -1261,6 +1273,9 @@ export default function ChartCore({
   // Shared x for the trade pill, frozen at selection so the buttons sit still. null
   // until a trade is selected (mirrors pillLeftRef's "don't snap to 0" intent).
   const tradePillLeftRef = useRef<number | null>(null);
+  // The hovered trade id — drives the pill hover-lift (soft shadow + red close). Kept
+  // as light state so a hover only toggles a CSS class, not a full pill rebuild.
+  const [hoveredTradeId, setHoveredTradeId] = useState<string | null>(null);
   // The on-line pill is shown while the line is hovered/selected (driven by
   // klinecharts via overlays) OR while the cursor is over the pill itself —
   // moving cursor from canvas line onto the DOM pill ends the line hover, so this
@@ -2532,14 +2547,16 @@ export default function ChartCore({
       // The cursor is over EITHER the chart or a dock row at any moment (never
       // both), so this and the row handler never fight over `hovered`.
       let hoverTradeId: string | null = null;
+      let hoverField: TradeLineField | null = null;
       if (!nextOnAxis) {
         let bestD = Infinity;
         for (const t of tlp) {
           if (t.id === DRAFT_ID || t.y == null) continue; // the draft has no dock row
           const d = Math.abs(t.y - y);
-          if (d <= HIT_TOLERANCE_PX && d < bestD) { bestD = d; hoverTradeId = t.id; }
+          if (d <= HIT_TOLERANCE_PX && d < bestD) { bestD = d; hoverTradeId = t.id; hoverField = t.field; }
         }
       }
+      hoveredFieldRef.current = hoverField;
       setTradeHovered(hoverTradeId);
       // Repaint the bracket now that BOTH the cursor x (spine) and the hover gate are
       // current for this move — so parking on a line shows it at once, and leaving the
@@ -2940,8 +2957,10 @@ export default function ChartCore({
                 hidden: new Set(tradeUiRef.current.hidden),
                 hovered: tradeUiRef.current.hovered,
                 selected: tradeUiRef.current.selected,
-                // Blank the focused line's own label so its pill takes that spot (Idea C).
                 selectedField: tradeUiRef.current.selectedField,
+                // Always-on DOM pills carry the labels now — blank the canvas text so the
+                // two don't double up; just the bare lines are drawn here.
+                hideTradeLabels: true,
               }),
         );
       };
@@ -3044,6 +3063,8 @@ export default function ChartCore({
           else tradePillLeftRef.current = null;
         }
         if (selectedChanged || fieldChanged) redrawRef.current();
+        // Drive the pill hover-lift (cheap: React bails when the id is unchanged).
+        setHoveredTradeId(ui.hovered);
       });
       // The bracket now keys off EDIT state, which lives in its own signals — repaint it
       // when the edit ticket opens/closes or its target changes (e.g. Cancel sets
@@ -3052,7 +3073,12 @@ export default function ChartCore({
       const unsubEditId = editTradeSignal.subscribe(() => paintBracketRef.current());
       // Sidebar eye menu "Hide positions and orders" toggle: re-run drawPositions
       // (which reads controller.positionsHidden.value itself, above).
-      const unsubPositionsHidden = controller.positionsHidden.subscribe(() => drawPositions());
+      positionsHiddenRef.current = controller.positionsHidden.value;
+      const unsubPositionsHidden = controller.positionsHidden.subscribe((h) => {
+        positionsHiddenRef.current = h;
+        drawPositions();
+        redrawRef.current(); // pills follow the same show/hide
+      });
       posUnsubRef.current = () => {
         unsubTrades();
         unsubJournal();
@@ -3648,12 +3674,14 @@ export default function ChartCore({
     };
   })();
 
-  // Paint the H position bracket for the active trade/draft on its own canvas. Cheap
-  // and React-free, so it runs on every mousemove (to track the cursor's x) as well as
-  // from `redraw` (so the spine stays glued to its lines through scroll/zoom/ticks and
-  // line drags). Stable — reads refs only.
+  // Paint the position CONNECTOR for the active trade/draft on its own canvas: a fixed
+  // left-column spine linking the line's entry/SL/TP with a circle handle on each, and
+  // the %/R:R badges to its LEFT. Cheap and React-free, so it runs on every mousemove
+  // (hover gate) and from `redraw` (so it stays glued to its lines through scroll/zoom/
+  // ticks and line drags). Appears on HOVER (grey spine, hovered handle outlined in its
+  // colour) or SELECTION (position side colour, selected handle filled). Reads refs only.
   const paintBracket = useCallback(() => {
-    if (isSynthetic(epicRef.current)) return; // analysis-only: no position bracket
+    if (isSynthetic(epicRef.current)) return; // analysis-only: no position connector
     const chart = chartRef.current;
     const canvas = bracketCanvasRef.current;
     const wrap = wrapRef.current;
@@ -3662,58 +3690,46 @@ export default function ChartCore({
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
 
-    // Resolve the bracket's source: the staged draft (if on this epic) takes priority,
-    // else the click-selected trade. Anything else → nothing to group.
+    // Resolve the subject: the staged draft (this epic) first, else the click-selected
+    // trade, else the hovered trade. Selection paints in the side colour with the focused
+    // handle filled; a mere hover paints grey with just the hovered handle outlined.
     const epic = epicRef.current;
     const draft = draftRef.current;
-    let entry: number | null = null;
-    let stop: number | null = null;
-    let tp: number | null = null;
-    // The subject the bracket is drawn for — used to re-freeze the spine x when it
-    // changes (hover trade A → hover trade B should re-appear at the new cursor, not
-    // keep A's x).
-    let activeKey: string | null = null;
+    let entry: number | null = null, stop: number | null = null, tp: number | null = null;
+    let side: OrderSide = "buy";
+    let selectMode = false; // side-coloured (selected/draft) vs grey (hover)
+    let activeField: TradeLineField | null = null; // filled (select) / outlined (hover) handle
     if (draft && draft.epic === epic) {
-      // A draft is actively being staged → always grouped.
       stop = draft.stop ?? null;
       tp = draft.takeProfit ?? null;
-      // A limit draft has an entry line; a market draft fills at market, so anchor its
-      // %/R:R on the live price instead (suppressed below if no price is flowing).
       entry = draft.type === "limit" ? draft.price ?? null : getLivePrice(epic) ?? null;
-      activeKey = "draft";
+      side = draft.side;
+      selectMode = true;
     } else {
-      // An existing trade's bracket shows ONLY while it's in EDIT state — i.e. the edit
-      // ticket is open for it (opened by double-clicking a line or the dock pencil).
-      // Mere hover or a single-click selection no longer trigger it: showing R:R/% on a
-      // casual hover was just visual noise. Dragging a line WHILE the ticket is open
-      // keeps it (editId stays set), so the spine stays glued through the drag.
-      const editId = tradePanelOpen.value ? editTradeSignal.value : null;
-      const sel = editId
-        ? tradesRef.current.find((t) => t.id === editId && t.epic === epic)
-        : null;
-      if (sel) {
-        const merged = mergeTradeLevels(sel, pendingRef.current[sel.id] ?? {});
-        entry = merged.price ?? sel.priceLevel;
+      const selId = tradeUiRef.current.selected;
+      const hovId = tradeUiRef.current.hovered;
+      const id = selId ?? hovId;
+      const t = id ? tradesRef.current.find((x) => x.id === id && x.epic === epic) : null;
+      if (t) {
+        const merged = mergeTradeLevels(t, pendingRef.current[t.id] ?? {});
+        entry = merged.price ?? t.priceLevel;
         stop = merged.stop;
         tp = merged.takeProfit;
-        activeKey = sel.id;
+        side = t.side;
+        selectMode = selId != null;
+        activeField = selId != null ? tradeUiRef.current.selectedField : hoveredFieldRef.current;
       }
     }
 
-    // Nothing active (no SL and no TP, or no entry anchor) → clear once and bail. The
-    // wrap.clientWidth/Height reads below force a layout reflow, so the overwhelmingly
-    // common nothing-selected mousemove bails HERE first (cheap ref reads only) and never
-    // touches the canvas unless it had previously drawn a bracket that needs clearing.
-    if (entry == null || (stop == null && tp == null)) {
+    // Nothing active (no entry anchor) → clear once and bail. The clientWidth/Height reads
+    // below force a reflow, so the common nothing-active mousemove bails HERE first (cheap
+    // ref reads) and only touches the canvas if it had drawn something that needs clearing.
+    if (entry == null) {
       if (bracketShownRef.current) {
-        const cw = wrap.clientWidth;
-        const ch = wrap.clientHeight;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, cw, ch);
+        ctx.clearRect(0, 0, wrap.clientWidth, wrap.clientHeight);
         bracketShownRef.current = false;
       }
-      bracketKeyRef.current = null;
-      bracketXRef.current = null;
       return;
     }
     const w = wrap.clientWidth;
@@ -3735,26 +3751,65 @@ export default function ChartCore({
       ).y;
       return y == null ? null : Math.round(y);
     };
-    const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? w;
-    // The spine APPEARS where the cursor is, then stays put — tracking the cursor was
-    // just visual churn. Freeze the x when the bracket activates or its subject changes;
-    // reuse it otherwise. Fallback (selected from a dock row with no chart cursor): a
-    // third across, mirroring the trade pill.
-    if (activeKey !== bracketKeyRef.current || bracketXRef.current == null) {
-      const cx = cursorXRef.current > 0 ? cursorXRef.current : Math.round(mainW / 3);
-      bracketXRef.current = cx;
-      bracketKeyRef.current = activeKey;
+    const GREY = "#8a93a0", SIDE = side === "buy" ? "#089981" : "#f23645";
+    const roleOf = (f: TradeLineField) => (f === "stop" ? "#f23645" : f === "tp" ? "#089981" : SIDE);
+    const bx = TRADE_SPINE_X + 0.5; // crisp 1.5px stroke
+    const lines = ([
+      ["price", yOf(entry)],
+      ["stop", yOf(stop)],
+      ["tp", yOf(tp)],
+    ] as [TradeLineField, number | null][]).filter((l): l is [TradeLineField, number] => l[1] != null);
+
+    // Spine — only meaningful when ≥2 lines exist; grey on hover, side colour on select.
+    if (lines.length >= 2) {
+      const ys = lines.map((l) => l[1]);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = selectMode ? SIDE : GREY;
+      ctx.beginPath();
+      ctx.moveTo(bx, Math.min(...ys));
+      ctx.lineTo(bx, Math.max(...ys));
+      ctx.stroke();
     }
-    const spineX = Math.max(60, Math.min(mainW - 12, bracketXRef.current));
-    drawPositionBracket({
-      ctx,
-      entryY: yOf(entry),
-      stopY: yOf(stop),
-      tpY: yOf(tp),
-      spineX,
-      mainW,
-      labels: bracketLabels({ entry, stop, tp }),
-    });
+    // %/R:R badges to the LEFT of the spine (unsigned magnitudes — colour carries meaning).
+    const labels = bracketLabels({ entry, stop, tp });
+    // A small role-coloured pill with white text, right-aligned so it ENDS just left of
+    // the spine (never overlapping the handles or the pills further right).
+    const badge = (y: number, text: string, color: string) => {
+      ctx.save();
+      ctx.font = "600 11px -apple-system, system-ui, sans-serif";
+      const pw = Math.round(ctx.measureText(text).width) + 12, ph = 17;
+      const left = Math.round(TRADE_SPINE_X - 10 - pw), top = Math.round(y - ph / 2);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      if (typeof ctx.roundRect === "function") ctx.roundRect(left, top, pw, ph, 4);
+      else ctx.rect(left, top, pw, ph);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, left + 6, y + 0.5);
+      ctx.restore();
+    };
+    const badgeFor = (f: TradeLineField, y: number) => {
+      const txt = f === "stop" ? (labels.slPct != null ? `${labels.slPct.toFixed(2)}%` : null)
+        : f === "tp" ? (labels.tpPct != null ? `${labels.tpPct.toFixed(2)}%` : null)
+        : (labels.rr != null ? `1:${labels.rr.toFixed(1)}` : null);
+      if (txt == null) return;
+      badge(y, txt, f === "price" ? "#2962ff" : roleOf(f));
+    };
+    // Handles — hover: only the hovered handle takes its role colour, rest grey; select:
+    // all side colour, the focused one filled. Drawn after the spine so they sit on top.
+    for (const [field, y] of lines) {
+      badgeFor(field, y);
+      const outline = selectMode ? SIDE : field === activeField ? roleOf(field) : GREY;
+      ctx.beginPath();
+      ctx.arc(TRADE_SPINE_X, y, TRADE_HANDLE_R, 0, Math.PI * 2);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = outline;
+      ctx.fillStyle = selectMode && field === activeField ? SIDE : "#ffffff";
+      ctx.fill();
+      ctx.stroke();
+    }
   }, []);
   paintBracketRef.current = paintBracket;
 
@@ -4004,39 +4059,41 @@ export default function ChartCore({
     const act = tags.find((t) => t.active);
     if (act) lastActivePillIdRef.current = act.id;
 
-    // The ACTIVE line's pill, only for a trade on THIS cell's epic. Levels merge
-    // pending over server (so a dragged line is tracked); recomputed here so the pill
-    // follows its line through scroll/zoom/live ticks. Only the focused line shows.
-    const selId = tradeUiRef.current.selected;
-    const field = tradeUiRef.current.selectedField;
-    const sel = selId
-      ? tradesRef.current.find((t) => t.id === selId && t.epic === epicRef.current)
-      : null;
-    if (!sel || !field) {
-      setTradePills([]);
-    } else {
-      const pend = pendingRef.current[sel.id] ?? {};
-      const merged = mergeTradeLevels(sel, pend);
-      const dir = sel.side === "buy" ? 1 : -1;
-      // P/L a level would realise if price reached it (from the fixed open level).
-      const plAt = (lvl: number) => dir * sel.quantity * (lvl - sel.priceLevel);
-      const common = {
-        tradeId: sel.id, kind: sel.kind, side: sel.side, qty: sel.quantity,
-      };
-      let pill: (typeof tradePills)[number] | null = null;
-      if (field === "price") {
-        const lvl = merged.price ?? sel.priceLevel;
-        const y = yOf(lvl);
-        if (y != null) pill = { ...common, field, y, level: lvl, pl: sel.upnl, changed: pend.price !== undefined };
-      } else if (field === "stop" && merged.stop != null) {
-        const y = yOf(merged.stop);
-        if (y != null) pill = { ...common, field, y, level: merged.stop, pl: plAt(merged.stop), changed: pend.stop !== undefined };
-      } else if (field === "tp" && merged.takeProfit != null) {
-        const y = yOf(merged.takeProfit);
-        if (y != null) pill = { ...common, field, y, level: merged.takeProfit, pl: plAt(merged.takeProfit), changed: pend.takeProfit !== undefined };
+    // Always-on clean pills: one per line (entry always; SL/TP when set) for EVERY
+    // position/order on this cell's epic — identical whether selected or not. Levels
+    // merge pending over server (so a dragged line is tracked); recomputed here so pills
+    // follow their lines through scroll/zoom/live ticks. Hidden trades (eye icon) are
+    // skipped unless hovered/selected; the master-hide toggle drops them all.
+    const uiSel = tradeUiRef.current.selected;
+    const uiHov = tradeUiRef.current.hovered;
+    const hiddenSet = new Set(tradeUiRef.current.hidden);
+    const pills: typeof tradePills = [];
+    if (!positionsHiddenRef.current) {
+      for (const t of tradesRef.current) {
+        if (t.epic !== epicRef.current) continue;
+        if (hiddenSet.has(t.id) && t.id !== uiHov && t.id !== uiSel) continue;
+        const pend = pendingRef.current[t.id] ?? {};
+        const merged = mergeTradeLevels(t, pend);
+        const dir = t.side === "buy" ? 1 : -1;
+        // P/L a level would realise if price reached it (from the fixed open level).
+        const plAt = (lvl: number) => dir * t.quantity * (lvl - t.priceLevel);
+        const common = { tradeId: t.id, kind: t.kind, side: t.side, qty: t.quantity };
+        const priceLvl = merged.price ?? t.priceLevel;
+        const yP = yOf(priceLvl);
+        // Entry pill carries live uPnL for an open position; a resting order has none.
+        if (yP != null)
+          pills.push({ ...common, field: "price", y: yP, level: priceLvl, pl: t.kind === "position" ? t.upnl : null, changed: pend.price !== undefined });
+        if (merged.stop != null) {
+          const y = yOf(merged.stop);
+          if (y != null) pills.push({ ...common, field: "stop", y, level: merged.stop, pl: plAt(merged.stop), changed: pend.stop !== undefined });
+        }
+        if (merged.takeProfit != null) {
+          const y = yOf(merged.takeProfit);
+          if (y != null) pills.push({ ...common, field: "tp", y, level: merged.takeProfit, pl: plAt(merged.takeProfit), changed: pend.takeProfit !== undefined });
+        }
       }
-      setTradePills(pill ? [pill] : []);
     }
+    setTradePills(pills);
 
     // Indicator-selection overlay (one canvas above klinecharts'): the hollow
     // selection handles on the curve, plus the white legend CARDS for hovered/
@@ -5458,13 +5515,29 @@ export default function ChartCore({
         const prec = precisionRef.current;
         const isEntry = p.field === "price";
         const pendKey = p.field === "tp" ? "takeProfit" : p.field; // pendingEdits key
-        // Entry pill mirrors the canvas pill exactly (side chevron + label), so
-        // selecting a line just adds buttons to the SAME blue pill — no separate
-        // pill stacked on top. SL/TP carry no side chevron.
-        const label = isEntry
-          ? `${SIDE_CHEVRON[p.side]} ${tradeLabel(p.kind, p.side)} ${p.qty} @ ${p.level.toFixed(prec)}`
-          : `${p.field === "stop" ? "SL" : "TP"} ${p.level.toFixed(prec)}`;
         const sign = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
+        // TradingView-style split chip: a solid LEAD (the side word + qty on the entry —
+        // "Long 100" / "Sell limit 100" — or SL/TP for the exits) joined to a light BODY
+        // carrying the level and, on an open position's entry, the live P/L. The FRAME
+        // colour is the line's role: a filled position's entry takes the position SIDE
+        // colour (long green / short red), a resting order is neutral blue, SL red, TP green.
+        const sideColor = p.side === "buy" ? "#089981" : "#f23645";
+        const roleColor =
+          p.field === "stop" ? "#f23645"
+          : p.field === "tp" ? "#089981"
+          : p.kind === "order" ? "#2962ff"
+          : sideColor;
+        // The P/L NUMBER is coloured independently of the frame — green in profit, red at
+        // a loss — so a short (red frame) in profit still shows a green figure.
+        const pnlColor = p.pl == null ? null : p.pl >= 0 ? "#089981" : "#f23645";
+        const lead = isEntry
+          ? `${tradeLabel(p.kind, p.side)} ${p.qty}`
+          : p.field === "stop" ? "SL" : "TP";
+        // Body main = the entry/limit price (entry) or the level (SL/TP), in the frame
+        // colour. The entry's live P/L rides alongside in its own sign colour; an exit's
+        // "P/L if hit" rides alongside as a muted hint.
+        const bodyMain = isEntry ? `@ ${p.level.toFixed(prec)}` : p.level.toFixed(prec);
+        const bodyPnl = isEntry && p.pl != null ? sign(p.pl) : null;
         // Remove this SL/TP line: commit the level cleared right away (an explicit
         // action, like delete), then focus the entry pill since this line is gone.
         const removeLevel = async () => {
@@ -5485,18 +5558,25 @@ export default function ChartCore({
         return (
           <div
             key={`${p.tradeId}:${p.field}`}
-            className={`trade-pill tp-line-${p.field}`}
-            style={{ top: p.y, left: tradePillLeftRef.current ?? undefined }}
+            className={`trade-pill tp-line-${p.field}${p.tradeId === hoveredTradeId ? " hovering" : ""}`}
+            style={{
+              top: p.y,
+              left: TRADE_PILL_LEFT,
+              "--pill": roleColor,
+              // Entry P/L number is coloured by sign; SL/TP body falls back to the frame.
+              ...(isEntry && pnlColor ? { "--pnl": pnlColor } : {}),
+            } as React.CSSProperties}
           >
-            <span className="tp-text">{label}</span>
-            {p.pl != null && (
-              <span
-                className="tp-upnl"
-                title={isEntry ? "Unrealised P&L" : "P&L if this level is hit"}
-              >
-                {sign(p.pl)}
-              </span>
-            )}
+            <span className="tp-lead">{lead}</span>
+            <span className="tp-body">
+              <span className="tp-main">{bodyMain}</span>
+              {bodyPnl != null && (
+                <span className="tp-pnl" title="Unrealised P&L">{bodyPnl}</span>
+              )}
+              {!isEntry && p.pl != null && (
+                <span className="tp-plhint" title="P&L if this level is hit">{sign(p.pl)}</span>
+              )}
+            </span>
             {p.changed && (
               <>
                 <button
