@@ -17,6 +17,12 @@ remove it from here (git history and the memory index track shipped features).
   selection, replacing the native `datetime-local` inputs.
   [spec](superpowers/specs/2026-07-06-custom-range-calendar-picker-design.md)
 
+## In progress
+
+- **Slim large modules** — split the 10 biggest modules into focused files.
+  Partially done (3 of 9 committed); the rest remain.
+  [plan](superpowers/plans/2026-07-05-slim-large-modules.md)
+
 ## Deferred / forward-looking
 
 - **Node backtest compute offload** — run backtest math in a Node service to
