@@ -15,6 +15,7 @@ export const DRAW_TOOLS: DrawTool[] = [
   { name: "straightLine", label: "Extended line" },
   { name: "horizontalStraightLine", label: "Horizontal line" },
   { name: "verticalStraightLine", label: "Vertical line" },
+  { name: "rect", label: "Rectangle" },
   { name: "priceLine", label: "Price line" },
   { name: "priceChannelLine", label: "Parallel channel" },
   { name: "fibonacciLine", label: "Fib retracement" },

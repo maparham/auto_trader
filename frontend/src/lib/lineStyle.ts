@@ -58,6 +58,26 @@ export function hexToRgba(hex: string, alpha: number): string {
   return hex;
 }
 
+// Inverse of hexToRgba: split a stored color (hex or rgba) into a #RRGGBB hex plus a
+// 0..1 alpha, for seeding the color-picker controls (which speak hex + opacity).
+export function rgbaToHexAlpha(color: string, fallbackHex = "#2962ff"): { hex: string; alpha: number } {
+  if (!color) return { hex: fallbackHex, alpha: 1 };
+  let m = /^#?([0-9a-fA-F]{6})$/.exec(color);
+  if (m) return { hex: `#${m[1].toLowerCase()}`, alpha: 1 };
+  m = /^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/.exec(color);
+  if (m) return { hex: `#${m[1]}${m[1]}${m[2]}${m[2]}${m[3]}${m[3]}`.toLowerCase(), alpha: 1 };
+  m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(color);
+  if (m) {
+    const hex =
+      "#" +
+      [m[1], m[2], m[3]]
+        .map((v) => Math.max(0, Math.min(255, Math.round(Number(v)))).toString(16).padStart(2, "0"))
+        .join("");
+    return { hex, alpha: m[4] !== undefined ? Number(m[4]) : 1 };
+  }
+  return { hex: fallbackHex, alpha: 1 };
+}
+
 // klinecharts {style, dashedValue} → our option. Solid wins on style; among dashed,
 // a short "on" segment (≤2px) reads as dotted, otherwise dashed. `style` is typed
 // loosely (it's read straight off persisted/klinecharts styles).

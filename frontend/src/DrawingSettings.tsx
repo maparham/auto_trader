@@ -17,6 +17,7 @@ import { LineType } from "klinecharts";
 import type { DeepPartial, OverlayStyle } from "klinecharts";
 import { type OverlayManager, asDrawingExtra } from "./lib/overlays";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
+import { hexToRgba, rgbaToHexAlpha } from "./lib/lineStyle";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility } from "./lib/visibility";
 import { toast } from "./lib/notify";
@@ -59,6 +60,7 @@ const TITLES: Record<string, string> = {
   straightLine: "Trend line",
   horizontalStraightLine: "Horizontal line",
   verticalStraightLine: "Vertical line",
+  rect: "Rectangle",
   priceLine: "Price line",
   priceChannelLine: "Parallel channel",
   fibonacciLine: "Fib retracement",
@@ -78,12 +80,20 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const name = live?.name ?? original?.name ?? "";
   const title = TITLES[name] ?? "Drawing";
   const isTrend = TREND.has(name);
+  const isRect = name === "rect";
 
   const line = (live?.styles?.line ?? {}) as Partial<{ color: string; size: number; style: LineType }>;
+  const poly = (live?.styles?.polygon ?? {}) as Partial<{ color: string; borderColor: string; borderSize: number }>;
+  const fill0 = rgbaToHexAlpha(poly.color ?? "rgba(41, 98, 255, 0.12)");
   const [tab, setTab] = useState<Tab>("style");
   const [color, setColor] = useState(line.color ?? "#2962ff");
   const [size, setSize] = useState<number>(line.size ?? 1);
   const [style, setStyle] = useState<LineType>(line.style ?? LineType.Solid);
+  // Rectangle fill (hex + opacity) and border (hex + width) — separate from `line`.
+  const [fillHex, setFillHex] = useState(fill0.hex);
+  const [fillAlpha, setFillAlpha] = useState(fill0.alpha);
+  const [borderHex, setBorderHex] = useState(poly.borderColor ?? "#2962ff");
+  const [borderSize, setBorderSize] = useState<number>(poly.borderSize ?? 1);
   const [extend, setExtend] = useState<"none" | "ray" | "both">(EXTEND_OF[name] ?? "none");
   const [visible, setVisible] = useState<boolean>(live?.visible ?? true);
 
@@ -142,6 +152,21 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     } as DeepPartial<OverlayStyle>);
   }
 
+  function applyRectFill(next: Partial<{ hex: string; alpha: number }>) {
+    const hex = next.hex ?? fillHex;
+    const alpha = next.alpha ?? fillAlpha;
+    setFillHex(hex);
+    setFillAlpha(alpha);
+    overlays.setStyle(curId, { polygon: { color: hexToRgba(hex, alpha) } } as DeepPartial<OverlayStyle>);
+  }
+  function applyRectBorder(next: Partial<{ color: string; size: number }>) {
+    const c = next.color ?? borderHex;
+    const s = next.size ?? borderSize;
+    setBorderHex(c);
+    setBorderSize(s);
+    overlays.setStyle(curId, { polygon: { borderColor: c, borderSize: s } } as DeepPartial<OverlayStyle>);
+  }
+
   function applyExtend(mode: "none" | "ray" | "both") {
     setExtend(mode);
     const newId = overlays.setExtend(curId, mode);
@@ -191,6 +216,13 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     if (cfg.line?.color !== undefined) setColor(cfg.line.color);
     if (cfg.line?.size !== undefined) setSize(cfg.line.size);
     if (cfg.line?.style !== undefined) setStyle(cfg.line.style);
+    if (cfg.polygon?.color !== undefined) {
+      const { hex, alpha } = rgbaToHexAlpha(cfg.polygon.color);
+      setFillHex(hex);
+      setFillAlpha(alpha);
+    }
+    if (cfg.polygon?.borderColor !== undefined) setBorderHex(cfg.polygon.borderColor);
+    if (cfg.polygon?.borderSize !== undefined) setBorderSize(cfg.polygon.borderSize);
     if (cfg.showMiddle !== undefined) setShowMiddle(cfg.showMiddle);
     if (cfg.priceLabels !== undefined) setPriceLabels(cfg.priceLabels);
     if (cfg.visibility !== undefined) setVis(cfg.visibility);
@@ -365,24 +397,51 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
         <div className="ind-body">
           {tab === "style" && (
             <>
-              <div className="ind-row ind-style-row">
-                <label>Line</label>
-                <div className="ind-line-controls">
-                  {/* klinecharts overlays support Solid / Dashed only (no dotted),
-                      so the picker offers just those two line styles. */}
-                  <ColorLineStylePicker
-                    color={color}
-                    onColor={(hex) => applyStyle({ color: hex })}
-                    size={size}
-                    onSize={(s) => applyStyle({ size: s })}
-                    lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
-                    onLineStyle={(s) =>
-                      applyStyle({ style: s === "dashed" ? LineType.Dashed : LineType.Solid })
-                    }
-                    lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
-                  />
+              {isRect ? (
+                <>
+                  <div className="ind-row ind-style-row">
+                    <label>Fill</label>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={fillHex}
+                        onColor={(hex) => applyRectFill({ hex })}
+                        opacity={fillAlpha}
+                        onOpacity={(a) => applyRectFill({ alpha: a })}
+                      />
+                    </div>
+                  </div>
+                  <div className="ind-row ind-style-row">
+                    <label>Border</label>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={borderHex}
+                        onColor={(c) => applyRectBorder({ color: c })}
+                        size={borderSize}
+                        onSize={(s) => applyRectBorder({ size: s })}
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="ind-row ind-style-row">
+                  <label>Line</label>
+                  <div className="ind-line-controls">
+                    {/* klinecharts overlays support Solid / Dashed only (no dotted),
+                        so the picker offers just those two line styles. */}
+                    <ColorLineStylePicker
+                      color={color}
+                      onColor={(hex) => applyStyle({ color: hex })}
+                      size={size}
+                      onSize={(s) => applyStyle({ size: s })}
+                      lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
+                      onLineStyle={(s) =>
+                        applyStyle({ style: s === "dashed" ? LineType.Dashed : LineType.Solid })
+                      }
+                      lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
               {isTrend && (
                 <div className="ind-row">
                   <label>Extend</label>
@@ -400,7 +459,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
           )}
 
           {tab === "text" &&
-            (isTrend ? (
+            (isTrend || isRect ? (
               <>
                 <div className="ind-row ind-style-row">
                   <label>Label</label>
@@ -412,19 +471,22 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                     style={{ flex: 1 }}
                   />
                 </div>
-                <label className="ind-check">
-                  <input
-                    type="checkbox"
-                    checked={showMiddle}
-                    onChange={(e) => applyShowMiddle(e.target.checked)}
-                  />
-                  <span>Show midpoint marker</span>
-                </label>
+                {/* Midpoint marker is a line-only affordance; the rectangle centers
+                    its label instead, so no marker toggle there. */}
+                {isTrend && (
+                  <label className="ind-check">
+                    <input
+                      type="checkbox"
+                      checked={showMiddle}
+                      onChange={(e) => applyShowMiddle(e.target.checked)}
+                    />
+                    <span>Show midpoint marker</span>
+                  </label>
+                )}
               </>
             ) : (
               <p className="ind-note">
-                Text labels and the midpoint marker are available on trend lines
-                (segment, ray, extended line).
+                Text labels are available on trend lines and rectangles.
               </p>
             ))}
 

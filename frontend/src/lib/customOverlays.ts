@@ -88,30 +88,41 @@ function decorations(params: OverlayCreateFiguresCallbackParams): OverlayFigure[
     });
   }
   if (extra.text && extra.text.trim()) {
-    out.push({
-      type: "text",
-      // Label sits just above the midpoint of the line.
-      attrs: { x: mid.x, y: mid.y - 8, text: extra.text, align: "center", baseline: "bottom" },
-      // Canvas font family — a real stack, not "inherit" (not a valid canvas token).
-      // klinecharts' default overlay-text style paints a BLUE box (backgroundColor +
-      // borderColor); without nulling those out the blue label text renders on a blue
-      // box and is unreadable (same gotcha the measure/slope pills document below).
-      styles: {
-        color: TEXT_COLOR,
-        size: 12,
-        family: "-apple-system, system-ui, sans-serif",
-        backgroundColor: "transparent",
-        borderColor: "transparent",
-        borderSize: 0,
-        paddingLeft: 0,
-        paddingRight: 0,
-        paddingTop: 0,
-        paddingBottom: 0,
-      },
-      ignoreEvent: true,
-    });
+    // Label sits just above the midpoint of the line.
+    out.push(labelFigure(mid.x, mid.y - 8, extra.text, "center", "bottom"));
   }
   return out;
+}
+
+// A drawing's text label, styled once so lines and the rectangle read identically.
+// Canvas font family — a real stack, not "inherit" (not a valid canvas token).
+// klinecharts' default overlay-text style paints a BLUE box (backgroundColor +
+// borderColor); without nulling those out the blue label text renders on a blue box
+// and is unreadable (same gotcha the measure/slope pills document below).
+function labelFigure(
+  x: number,
+  y: number,
+  text: string,
+  align: "left" | "center" | "right",
+  baseline: "top" | "middle" | "bottom",
+): OverlayFigure {
+  return {
+    type: "text",
+    attrs: { x, y, text, align, baseline },
+    styles: {
+      color: TEXT_COLOR,
+      size: 12,
+      family: "-apple-system, system-ui, sans-serif",
+      backgroundColor: "transparent",
+      borderColor: "transparent",
+      borderSize: 0,
+      paddingLeft: 0,
+      paddingRight: 0,
+      paddingTop: 0,
+      paddingBottom: 0,
+    },
+    ignoreEvent: true,
+  };
 }
 
 // segment: a plain two-point line (built-in geometry is exactly this).
@@ -162,6 +173,49 @@ const straightLine: OverlayTemplate = {
       figures.push({ type: "line", attrs: { coordinates: straightLineCoords(coordinates, bounding) } });
     }
     return [...figures, ...decorations(params)];
+  },
+};
+
+// rect: a persistent, interactive rectangle — two draggable corner points with a
+// translucent fill + border box between them. Unlike rangeBand (transient, fixed
+// color, full-pane height) this is a real drawing: the polygon figure carries NO
+// explicit styles so klinecharts resolves them from `overlay.styles.polygon`
+// (⊕ defaultStyles.polygon), which is what makes fill/border editable in the
+// settings modal and persisted per-instance. Corner handles come from
+// needDefaultPointFigure.
+const rect: OverlayTemplate = {
+  name: "rect",
+  totalStep: 3,
+  needDefaultPointFigure: true,
+  needDefaultXAxisFigure: true,
+  needDefaultYAxisFigure: true,
+  createPointFigures: (params) => {
+    const { overlay, coordinates } = params;
+    if (coordinates.length < 2) return [];
+    const [c0, c1] = coordinates;
+    const left = Math.min(c0.x, c1.x);
+    const right = Math.max(c0.x, c1.x);
+    const top = Math.min(c0.y, c1.y);
+    const bottom = Math.max(c0.y, c1.y);
+    const figures: OverlayFigure[] = [
+      {
+        type: "polygon",
+        attrs: {
+          coordinates: [
+            { x: left, y: top },
+            { x: right, y: top },
+            { x: right, y: bottom },
+            { x: left, y: bottom },
+          ],
+        },
+      },
+    ];
+    // Optional centered label (extendData.text) — same styling as line labels.
+    const extra = asDrawingExtra(overlay.extendData);
+    if (extra.text && extra.text.trim()) {
+      figures.push(labelFigure((left + right) / 2, (top + bottom) / 2, extra.text, "center", "middle"));
+    }
+    return figures;
   },
 };
 
@@ -495,6 +549,7 @@ export function registerCustomOverlays(): void {
   registerOverlay(segment);
   registerOverlay(rayLine);
   registerOverlay(straightLine);
+  registerOverlay(rect);
   registerOverlay(measure);
   registerOverlay(slope);
   registerOverlay(rangeBand);

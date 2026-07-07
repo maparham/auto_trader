@@ -12,6 +12,7 @@
 // shared list safe (each cell renders, and persists, the complete set).
 
 import { LineType } from "klinecharts";
+import type { PolygonType } from "klinecharts";
 import type { Chart, KLineData, Overlay, OverlayEvent, DeepPartial, OverlayStyle, OverlayMode } from "klinecharts";
 import { effectiveMagnetMode, magnetSignal, magnetInvertSignal, MAGNET_SENSITIVITY } from "./magnet";
 import {
@@ -31,6 +32,7 @@ import {
 } from "./persist";
 import { bumpAlerts } from "./signals";
 import { hexToRgba } from "./lineStyle";
+import { snapScreenAngle, snapSquare, isShiftHeld, type Pt } from "./snapAngle";
 import {
   type VisibilityModel,
   defaultVisibility,
@@ -148,6 +150,13 @@ const HIDDEN_TEXT = {
 const ALERT_LINE_STYLE: DeepPartial<OverlayStyle> = {
   line: { color: ALERT_LINE_COLOR, style: LineType.Dashed, dashedValue: [4, 4], size: ALERT_LINE_SIZE },
   text: HIDDEN_TEXT,
+};
+
+// Built-in default look for a fresh rectangle (no saved default yet): translucent
+// accent fill + solid border. Reuses the app accent used by rangeBand. Overridable
+// per-instance in the settings modal and via "set as default".
+const RECT_DEFAULT_STYLE: DeepPartial<OverlayStyle> = {
+  polygon: { style: "stroke_fill" as PolygonType, color: "rgba(41, 98, 255, 0.12)", borderColor: "#2962ff", borderSize: 1 },
 };
 
 export class OverlayManager {
@@ -807,11 +816,21 @@ export class OverlayManager {
         if (isAlert) this.notifyAlerts();
         return false;
       },
-      onPressedMoving: () => {
+      // TV-style Shift snap while drawing a straight line / rectangle: fires AFTER
+      // klinecharts sets the moving point, and its return is ignored — so we just
+      // overwrite points[last] in place and the redraw picks it up.
+      onDrawing: (e) => {
+        if (isDrawing) this.maybeSnapDrawing(e);
+        return false;
+      },
+      onPressedMoving: (e) => {
         if (isAlert) {
           this.draggingAlert = true;
           this.notifyAlerts(); // keep the label glued during a drag
         }
+        // Shift snap while dragging an endpoint/corner: returning true tells
+        // klinecharts to SKIP its own point update so our snapped point stands.
+        if (isDrawing && isShiftHeld() && this.maybeSnapPressed(e)) return true;
         return false;
       },
       onPressedMoveEnd: (e) => {
@@ -924,6 +943,65 @@ export class OverlayManager {
     if (typeof id !== "string") return null;
     this.entries.set(id, kind);
     return id;
+  }
+
+  // --- TV-style Shift snap for straight lines + rectangle -------------------
+  // Snapping is in SCREEN (pixel) space — that is what "45° on screen" / "a square"
+  // mean — so we convert data↔pixel around the pure geometry in lib/snapAngle.ts.
+  // Straight lines snap the moving endpoint to the nearest 45°; the rectangle snaps
+  // to a square. Anything else (channels, fib, H/V lines, price lines) is ignored.
+  private snapFnFor(name: string): ((f: Pt, m: Pt) => Pt) | null {
+    if (name === "segment" || name === "rayLine" || name === "straightLine") return snapScreenAngle;
+    if (name === "rect") return snapSquare;
+    return null;
+  }
+
+  // Convert one data point to a pane-pixel coordinate (pane-relative, matching the
+  // convention klinecharts uses for overlay event coordinates). null if unavailable.
+  private toPx(overlay: Overlay, point: Overlay["points"][number]): Pt | null {
+    const c = this.chart?.convertToPixel(point, { paneId: overlay.paneId }) as Partial<Pt> | undefined;
+    return c && typeof c.x === "number" && typeof c.y === "number" ? { x: c.x, y: c.y } : null;
+  }
+  private fromPx(overlay: Overlay, p: Pt): Overlay["points"][number] | null {
+    const pts = this.chart?.convertFromPixel([p], { paneId: overlay.paneId }) as
+      | Array<Overlay["points"][number]>
+      | undefined;
+    return pts?.[0] ?? null;
+  }
+
+  // Draw path: klinecharts already placed points[last]. If Shift is held, snap it
+  // about the anchor (points[0]) and overwrite in place.
+  private maybeSnapDrawing(e: OverlayEvent): void {
+    if (!isShiftHeld()) return;
+    const overlay = e.overlay;
+    const snap = this.snapFnFor(overlay.name);
+    if (!snap || overlay.points.length !== 2) return;
+    const fixed = this.toPx(overlay, overlay.points[0]);
+    const moving = this.toPx(overlay, overlay.points[1]);
+    if (!fixed || !moving) return;
+    const snapped = this.fromPx(overlay, snap(fixed, moving));
+    if (snapped) overlay.points[1] = snapped;
+  }
+
+  // Edit path: the dragged endpoint/corner is points[figureIndex]; snap it about the
+  // OTHER point using the cursor's pixel position. Returns true when it took over
+  // (caller returns true to skip klinecharts' native point update).
+  private maybeSnapPressed(e: OverlayEvent): boolean {
+    const overlay = e.overlay;
+    const snap = this.snapFnFor(overlay.name);
+    // Only an anchor-handle drag (figureKey "overlay_figure_point_N") — never a
+    // whole-overlay body translate.
+    if (!snap || overlay.points.length !== 2) return false;
+    if (!e.figureKey?.startsWith("overlay_figure_point_")) return false;
+    const idx = e.figureIndex;
+    if (idx !== 0 && idx !== 1) return false;
+    if (typeof e.x !== "number" || typeof e.y !== "number") return false;
+    const fixed = this.toPx(overlay, overlay.points[idx === 0 ? 1 : 0]);
+    if (!fixed) return false;
+    const snapped = this.fromPx(overlay, snap(fixed, { x: e.x, y: e.y }));
+    if (!snapped) return false;
+    overlay.points[idx] = snapped;
+    return true;
   }
 
   // --- transient measure tool (TV ruler) ------------------------------------
@@ -1088,7 +1166,10 @@ export class OverlayManager {
     // so existing drawings are never restyled. extendData also drives the y-axis tag
     // (needDefaultYAxisFigure reads priceLabels in create()).
     const seed = this.seedFromDefault(name);
-    const id = this.create("drawing", name, points, seed?.styles, undefined, {
+    // Fresh rectangle with no saved default → seed the built-in translucent look so
+    // it never renders with klinecharts' opaque polygon default.
+    const styles = seed?.styles ?? (name === "rect" ? RECT_DEFAULT_STYLE : undefined);
+    const id = this.create("drawing", name, points, styles, undefined, {
       extendData: seed?.extendData,
     });
     if (id && points) {
@@ -1121,8 +1202,11 @@ export class OverlayManager {
     if (def.showMiddle !== undefined) extendData.showMiddle = def.showMiddle;
     if (def.priceLabels !== undefined) extendData.priceLabels = def.priceLabels;
     if (def.visibility !== undefined) extendData.visibility = def.visibility;
+    const styles: DeepPartial<OverlayStyle> = {};
+    if (def.line) (styles as { line?: unknown }).line = def.line;
+    if (def.polygon) (styles as { polygon?: unknown }).polygon = def.polygon;
     return {
-      styles: def.line ? ({ line: def.line } as DeepPartial<OverlayStyle>) : undefined,
+      styles: Object.keys(styles).length ? styles : undefined,
       extendData: Object.keys(extendData).length ? extendData : undefined,
     };
   }
@@ -1424,6 +1508,20 @@ export class OverlayManager {
     if (!live) return null;
     const line = (live.styles?.line ?? {}) as { color?: string; size?: number; style?: LineType };
     const extra = asDrawingExtra(live.extendData);
+    // Rectangle carries its look in polygon styles (fill/border) rather than line.
+    if (live.name === "rect") {
+      const poly = (live.styles?.polygon ?? {}) as { color?: string; borderColor?: string; borderSize?: number };
+      const dflt = RECT_DEFAULT_STYLE.polygon as { color: string; borderColor: string; borderSize: number };
+      return {
+        polygon: {
+          color: poly.color ?? dflt.color,
+          borderColor: poly.borderColor ?? dflt.borderColor,
+          borderSize: poly.borderSize ?? dflt.borderSize,
+        },
+        priceLabels: extra.priceLabels,
+        visibility: extra.visibility,
+      };
+    }
     return {
       // CONCRETE values, never the overlay's implicit `undefined`s: klinecharts' style
       // merge skips undefined fields, so an undefined size/style would never overwrite
@@ -1446,6 +1544,7 @@ export class OverlayManager {
   // overlay name, so no recreate is needed.
   applyDrawingConfig(id: string, cfg: SavedDrawingConfig): void {
     if (cfg.line) this.setStyle(id, { line: cfg.line } as DeepPartial<OverlayStyle>);
+    if (cfg.polygon) this.setStyle(id, { polygon: cfg.polygon } as DeepPartial<OverlayStyle>);
     if (cfg.showMiddle !== undefined) this.setShowMiddle(id, cfg.showMiddle);
     if (cfg.priceLabels !== undefined) this.setPriceLabels(id, cfg.priceLabels);
     if (cfg.visibility !== undefined) this.setVisibilityModel(id, cfg.visibility);

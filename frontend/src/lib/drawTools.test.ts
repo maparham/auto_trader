@@ -17,10 +17,10 @@ const { DRAW_TOOLS, toolLabel } = await import("./drawTools");
 const P = await import("./persist");
 
 describe("draw-tool registry", () => {
-  it("is a single flat list of the 8 tools, in order", () => {
+  it("is a single flat list of the tools, in order", () => {
     expect(DRAW_TOOLS.map((t) => t.name)).toEqual([
       "segment", "rayLine", "straightLine",
-      "horizontalStraightLine", "verticalStraightLine", "priceLine",
+      "horizontalStraightLine", "verticalStraightLine", "rect", "priceLine",
       "priceChannelLine", "fibonacciLine",
     ]);
   });

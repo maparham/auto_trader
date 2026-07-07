@@ -79,6 +79,14 @@ const GLYPHS: Record<string, () => ReactNode> = {
       <Dot x={14} y={4} />
     </svg>
   ),
+  // Rectangle: a box with two opposite corners dotted (the draggable anchors).
+  rect: () => (
+    <svg {...S}>
+      <rect x="4" y="6" width="12" height="8" rx="0.5" />
+      <Dot x={4} y={6} />
+      <Dot x={16} y={14} />
+    </svg>
+  ),
   // Fib retracement: stacked horizontal levels, top+bottom anchored.
   fibonacciLine: () => (
     <svg {...S}>

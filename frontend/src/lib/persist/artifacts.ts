@@ -225,6 +225,8 @@ export interface SavedIndicatorConfig {
 // tab edits (lib/visibility.ts) — a plain JSON object, safe to persist.
 export interface SavedDrawingConfig {
   line?: { color?: string; size?: number; style?: LineType };
+  // Rectangle fill + border (klinecharts polygon styles). Only rect drawings set it.
+  polygon?: { color?: string; borderColor?: string; borderSize?: number };
   showMiddle?: boolean;
   priceLabels?: boolean;
   visibility?: VisibilityModel;
