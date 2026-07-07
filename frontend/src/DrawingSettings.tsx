@@ -435,12 +435,18 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                 </>
               ) : isFib ? (
                 <>
-                  {/* Shared width + dash for every level line; colors are per-level
-                      below, so the picker runs in its style-only (no-color) mode. */}
+                  {/* Shared width + dash for every level line. The chip is TV's
+                      "use one color": picking one recolors EVERY level at once;
+                      the per-level swatches below still override individually. */}
                   <div className="ind-row ind-style-row">
                     <label>Lines</label>
                     <div className="ind-line-controls">
                       <ColorLineStylePicker
+                        color={color}
+                        onColor={(hex) => {
+                          applyStyle({ color: hex });
+                          applyFib({ ...fib, levels: fib.levels.map((l) => ({ ...l, color: hex })) });
+                        }}
                         size={size}
                         onSize={(s) => applyStyle({ size: s })}
                         lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
