@@ -422,14 +422,62 @@ class MT5Broker(MarketDataBroker):
             "status": "TRADEABLE",
         }
 
+    async def _calc_margin(self, epic: str, volume_lots: float, price: float) -> float | None:
+        """Margin (in ACCOUNT currency) required to open a 1-lot buy, via MetaApi's
+        calculateMargin. This applies the account's real per-symbol margin rules —
+        so it reflects AvaTrade's per-instrument leverage cap, not the raw account
+        coefficient. Uses the RPC application path (our connection is RPC, not
+        streaming), reaching the websocket client through the connection since the
+        SDK only exposes calculate_margin on the streaming wrapper. Best-effort:
+        None on any failure, so the caller degrades to "no leverage shown"."""
+        conn = await self._ensure()
+        ws = getattr(conn, "_websocket_client", None)
+        acct = self._acct
+        if ws is None or acct is None:
+            return None
+        order = {
+            "symbol": epic,
+            "type": "ORDER_TYPE_BUY",
+            "volume": volume_lots,
+            "openPrice": price,
+        }
+        try:
+            res = await ws.calculate_margin(
+                acct.id, "RPC", getattr(acct, "reliability", "regular"), order
+            )
+        except Exception:
+            log.debug("mt5: calculate_margin failed for %s", epic, exc_info=True)
+            return None
+        margin = res.get("margin") if isinstance(res, dict) else None
+        return margin if isinstance(margin, (int, float)) and margin > 0 else None
+
+    async def _effective_leverage(self, epic: str, spec: dict, price: dict) -> float | None:
+        """True per-instrument leverage = 1-lot notional ÷ required margin, both in
+        ACCOUNT currency. The notional is taken from `profitTickValue` (the money
+        value of one tick of one lot, already denominated in the account currency by
+        MetaApi) — notional = price × profitTickValue / tickSize — which sidesteps
+        any cross-currency FX conversion (a EUR account gets 30 for EURUSD, 20 for
+        the DAX, 2 for BTC). None when inputs are missing or the margin call fails."""
+        ask = price.get("ask")
+        tick_size = spec.get("tickSize")
+        tick_value = price.get("profitTickValue")
+        if not ask or not tick_size or not tick_value:
+            return None
+        margin = await self._calc_margin(epic, 1.0, ask)
+        if not margin:
+            return None
+        notional_acct = ask * tick_value / tick_size
+        lev = notional_acct / margin
+        return round(lev) if lev > 0 else None
+
     async def get_market_detail(self, epic: str) -> dict | None:
         """Instrument detail for the legend ⓘ popover. MT5 has no single "market
         details" call like Capital's, so we build the three sections the popover
         reads from the MetaApi symbol specification plus a live quote. The full raw
         spec is passed through under `instrument` so "All details" hides nothing;
         a handful of fields are surfaced under the keys the curated header reads
-        (currency, type, snapshot bid/offer, min/max size). None if the symbol is
-        unknown."""
+        (currency, type, snapshot bid/offer, min/max size, leverage). None if the
+        symbol is unknown."""
         spec = await self._get_spec(epic)
         if not spec:
             return None
@@ -443,7 +491,14 @@ class MT5Broker(MarketDataBroker):
         if spec.get("profitCurrency"):  # currency price/PnL is denominated in
             instrument["currency"] = spec["profitCurrency"]
 
-        bid, ask = await self.get_quote(epic)
+        # Full price dict (not just bid/ask) — the leverage calc also needs
+        # profitTickValue, which get_quote drops.
+        try:
+            price = await self.read(lambda c: c.get_symbol_price(epic)) or {}
+        except Exception:
+            log.debug("mt5: get_symbol_price failed for %s", epic, exc_info=True)
+            price = {}
+        bid, ask = price.get("bid"), price.get("ask")
         snapshot: dict = {}
         if bid is not None:
             snapshot["bid"] = bid
@@ -463,7 +518,14 @@ class MT5Broker(MarketDataBroker):
             if v is not None:
                 dealing[out_key] = {"value": round(v * cs, 8), "unit": "units"}
 
-        return {"instrument": instrument, "dealingRules": dealing, "snapshot": snapshot}
+        out = {"instrument": instrument, "dealingRules": dealing, "snapshot": snapshot}
+        # accountLeverage drives BOTH the popover's Leverage ("X:1") and Margin
+        # ("Y%") rows — the same field Capital populates from its per-asset-class
+        # setting. Here it's the true effective leverage from calculateMargin.
+        lev = await self._effective_leverage(epic, spec, price)
+        if lev:
+            out["accountLeverage"] = lev
+        return out
 
 
 class MT5ExecutionBroker(ExecutionBroker):

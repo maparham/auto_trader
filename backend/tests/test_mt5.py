@@ -300,3 +300,32 @@ def test_market_detail_none_for_unknown_symbol():
     conn = _FakeTradeConn(spec=None)
     data = _data_with(conn)
     assert asyncio.run(data.get_market_detail("NOPE")) is None
+
+
+def test_effective_leverage_uses_tick_value_not_fx():
+    # DAX-style: notional = ask × profitTickValue / tickSize, in ACCOUNT currency,
+    # so no cross-currency FX conversion. 25147.5 × 1 / 0.1 = 251475 notional;
+    # ÷ 12573.75 margin = 20:1. The (misleading) accountCurrencyExchangeRate is
+    # deliberately NOT used.
+    spec = {"contractSize": 10, "tickSize": 0.1}
+    price = {"ask": 25147.5, "profitTickValue": 1.0, "accountCurrencyExchangeRate": 1.143}
+    data = _data_with(_FakeTradeConn())
+
+    async def _fake_margin(epic, lots, px):
+        return 12573.75
+
+    data._calc_margin = _fake_margin
+    lev = asyncio.run(data._effective_leverage("GERMANY_40", spec, price))
+    assert lev == 20
+
+
+def test_effective_leverage_none_when_margin_unavailable():
+    spec = {"contractSize": 10, "tickSize": 0.1}
+    price = {"ask": 100.0, "profitTickValue": 1.0}
+    data = _data_with(_FakeTradeConn())
+
+    async def _no_margin(epic, lots, px):
+        return None
+
+    data._calc_margin = _no_margin
+    assert asyncio.run(data._effective_leverage("X", spec, price)) is None
