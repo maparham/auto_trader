@@ -59,7 +59,15 @@ def get_data(broker_id: str) -> MarketDataBroker:
 # Per-broker circuit breaker shared by every data-broker route. Keeps one down or
 # slow broker from holding shared connection slots and starving the others — see
 # auto_trader.core.broker_health.
-BROKER_HEALTH = BrokerHealth()
+# MT5/MetaApi fetches deep history slowly — a MetaApi characteristic, not a fault:
+# ~500 daily bars (~2y) take 10-35s and ~500 weekly bars (~10y) take 30-45s, since
+# latency scales with how far back the request reaches. So MT5 gets a much larger
+# wall-clock budget than the default 8s. The cost is paid ONCE per symbol+resolution
+# — the result populates the sqlite candle cache and every load after serves from it
+# (incl. across restarts). Monthly/yearly are cheaper: they derive from the daily
+# base series, which the cache bounds. Budget covers weekly's worst case (~45-70s
+# through the server) with headroom; scoped to mt5 so a hang can't stall the others.
+BROKER_HEALTH = BrokerHealth(per_key_timeout={"mt5": 90.0})
 
 T = TypeVar("T")
 

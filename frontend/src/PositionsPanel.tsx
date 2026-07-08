@@ -238,22 +238,32 @@ export default function PositionsPanel({
   // `deposit` field is unrelated to used margin — see position-margin notes — so we
   // derive used margin from balance/available, not deposit.)
   const liveBalanceInclPnl = accountSummary != null && isCapital(activeBroker);
+  // Some brokers (MT5) report account value + margin-in-use authoritatively. When both
+  // are present, use them verbatim for equity/margin/margin-level instead of the
+  // balance−available derivation below (which drifts by swap/commission). MetaApi's
+  // identity freeMargin = equity − margin keeps `available + margin = equity` exact.
+  const brokerEquity = accountSummary?.equity ?? null;
+  const brokerMargin = accountSummary?.margin ?? null;
+  const brokerFiguresKnown = brokerEquity != null && brokerMargin != null;
   // Account margin (deposit tied up by open positions). When the broker reports
   // per-position margin (Capital) sum those rows so the strip footer adds up to the
   // MARGIN column exactly. Otherwise derive used margin from the broker's balance −
   // available, adding `pnl` ONLY for cash-balance brokers (for Capital the balance
   // already includes it). For paper, compute from leverage.
-  const accountMargin = accountSummary
-    ? brokerMarginAllKnown
-      ? positions.reduce((s, p) => s + (p.margin ?? 0), 0) + ordersMargin
-      : Math.max(0, balance + (liveBalanceInclPnl ? 0 : pnl) - available - ordersMargin)
-    : usedMargin(positions, lev);
+  const accountMargin = brokerFiguresKnown
+    ? brokerMargin
+    : accountSummary
+      ? brokerMarginAllKnown
+        ? positions.reduce((s, p) => s + (p.margin ?? 0), 0) + ordersMargin
+        : Math.max(0, balance + (liveBalanceInclPnl ? 0 : pnl) - available - ordersMargin)
+      : usedMargin(positions, lev);
   // Equity (account value). When the broker's per-position margin is known, equity =
   // available + margin-in-use (broker-agnostic). Otherwise: Capital's `balance` IS the
   // equity (already includes uPnL) — adding `pnl` would double-count it (the bug);
   // a cash balance (IG / paper) needs balance + open P&L.
-  const equity =
-    accountSummary && brokerMarginAllKnown
+  const equity = brokerFiguresKnown
+    ? brokerEquity
+    : accountSummary && brokerMarginAllKnown
       ? available + accountMargin
       : liveBalanceInclPnl
         ? balance
@@ -271,6 +281,14 @@ export default function PositionsPanel({
     isCapital(activeBroker)
       ? " Capital.com issues a margin call at 100% (no new trades) and again at 75%; at 50% or below it starts closing positions (margin close-out)."
       : "";
+  // A real-money account must NEVER show fabricated paper figures. Until the broker's
+  // summary lands (or if the fetch fails), blank the broker-derived stats rather than
+  // falling back to the configured paper balance. uPnL stays — it's real (server-marked
+  // per position), not derived from the paper balance.
+  const noBrokerData = isLive && accountSummary?.balance == null;
+  const money = (n: number) => (noBrokerData ? "—" : `${cash(n)} ${cur}`);
+  const pct = (n: number | null) => (noBrokerData || n == null ? "—" : `${n.toFixed(2)}%`);
+
   // P&L carries a directional caret + sign-driven tone (the one coloured stat).
   const pnlTone = pnl > 0 ? "pp-pos" : pnl < 0 ? "pp-neg" : "";
   const caret = pnl > 0 ? "▲" : pnl < 0 ? "▼" : "";
@@ -676,7 +694,7 @@ export default function PositionsPanel({
               {posCount} {posCount === 1 ? "position" : "positions"}
             </span>
             <span className="pp-ticker-dot" />
-            <span>buffer {marginBuffer.toFixed(2)}%</span>
+            <span>buffer {pct(marginBuffer)}</span>
           </div>
         ) : (
           <div className="pp-acct">
@@ -692,7 +710,7 @@ export default function PositionsPanel({
             </div>
             <Stat
               label="Balance"
-              value={`${cash(balance)} ${cur}`}
+              value={money(balance)}
               title={
                 isLive
                   ? "Account value reported by the broker (cash plus open P&L)"
@@ -701,32 +719,32 @@ export default function PositionsPanel({
             />
             <Stat
               label="Equity"
-              value={`${cash(equity)} ${cur}`}
+              value={money(equity)}
               title="Account value = available margin + margin in use (cash plus open P&L). What the account is worth right now."
             />
             <Stat
               label="Account margin"
-              value={`${cash(accountMargin)} ${cur}`}
+              value={money(accountMargin)}
               title="Total deposit currently tied up by open positions — the sum of each position's MARGIN (broker figures for live accounts)"
             />
             <Stat
               label="Available"
-              value={`${cash(available)} ${cur}`}
+              value={money(available)}
               title="Free margin available to open new positions (broker-reported for live accounts)"
             />
             <Stat
               label="Orders margin"
-              value={`${cash(ordersMargin)} ${cur}`}
+              value={money(ordersMargin)}
               title="Margin reserved by resting (not-yet-filled) working orders"
             />
             <Stat
               label="Margin buffer"
-              value={`${marginBuffer.toFixed(2)}%`}
+              value={pct(marginBuffer)}
               title={`Free margin as a share of equity (available ÷ equity). Higher = more headroom before a margin call.${marginCallNote}`}
             />
             <Stat
               label="Margin level"
-              value={marginLevel != null ? `${marginLevel.toFixed(2)}%` : "—"}
+              value={pct(marginLevel)}
               title={`Equity as a share of margin in use (equity ÷ account margin) — Capital's 'CFD Margin %'. Falls toward 100% as risk rises.${marginCallNote}`}
             />
           </div>

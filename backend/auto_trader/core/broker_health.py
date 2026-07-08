@@ -45,11 +45,19 @@ class BrokerHealth:
         fail_threshold: int = 2,
         cooldown: float = 20.0,
         call_timeout: float = 8.0,
+        per_key_timeout: dict[str, float] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._fail_threshold = fail_threshold
         self._cooldown = cooldown
         self._call_timeout = call_timeout
+        # Per-broker wall-clock budget overrides. Most brokers answer REST history in
+        # well under the default; a broker whose upstream is inherently slow for some
+        # requests (MT5/MetaApi fetching deep daily history takes ~10-30s) needs a
+        # bigger budget so its FIRST fetch completes and populates the cache instead
+        # of timing out forever. Scoped per key so one slow broker can't relax the
+        # tight budget that protects the others.
+        self._per_key_timeout = per_key_timeout or {}
         self._clock = clock
         self._fails: dict[str, int] = {}
         self._open_until: dict[str, float] = {}
@@ -99,7 +107,8 @@ class BrokerHealth:
                 raise BrokerUnavailable(key)
             self._half_open.add(key)
         try:
-            result = await asyncio.wait_for(factory(), self._call_timeout)
+            timeout = self._per_key_timeout.get(key, self._call_timeout)
+            result = await asyncio.wait_for(factory(), timeout)
         except ignore:
             # Expected business error — the broker RESPONDED, so it's reachable.
             # In the closed state we deliberately leave the breaker untouched

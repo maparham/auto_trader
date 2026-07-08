@@ -402,6 +402,12 @@ class AccountSummaryDTO(BaseModel):
     deposit: float | None = None
     profitLoss: float | None = None
     currency: str | None = None
+    # Broker-authoritative account value + margin-in-use (MT5 reports these directly).
+    # When present the dock uses them verbatim instead of re-deriving margin/equity from
+    # balance − available (which drifts by swap/commission and leverage estimates); left
+    # None by Capital/IG so their existing derivation is unchanged.
+    equity: float | None = None
+    margin: float | None = None
 
 
 # --- chart workspace state (localStorage mirror, backend-wins-on-load sync) --

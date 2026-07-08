@@ -81,8 +81,8 @@ class BrokerRegistry:
 def build_registry() -> BrokerRegistry:
     """Wire every broker the app ships with. Adding a broker is one block here:
     register its data broker, then register the executors that price off it."""
-    from auto_trader.brokers import capital, ig
-    from auto_trader.config import ig_settings
+    from auto_trader.brokers import capital, ig, mt5
+    from auto_trader.config import ig_settings, mt5_settings
 
     from auto_trader.config import settings
 
@@ -98,4 +98,13 @@ def build_registry() -> BrokerRegistry:
     for side in ("demo", "live"):
         if ig_settings.has(side):
             ig.register(registry, side)
+    # MT5/AvaTrade via MetaApi: "mt5" data broker + mt5:paper + mt5:live. Only when
+    # token + account id are present.
+    if mt5_settings.has():
+        mt5.register(
+            registry,
+            token=mt5_settings.token,
+            account_id=mt5_settings.account_id,
+            region=mt5_settings.region,
+        )
     return registry

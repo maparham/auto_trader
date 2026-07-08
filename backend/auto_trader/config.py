@@ -123,3 +123,35 @@ class IGSettings(BaseSettings):
 
 
 ig_settings = IGSettings()
+
+
+# MetaApi (metaapi.cloud) bridges an MT5 broker (AvaTrade) over a cloud API, so no
+# local MT5 terminal is needed. One account registers as the "mt5" data broker
+# with a paper sim ("mt5:paper") and the real-money dealing account ("mt5:live").
+# Registered only when token + account_id are set (see `has`), so an absent MT5
+# account never shows a dead entry in the broker selector.
+class MTSettings(BaseSettings):
+    """MetaApi credentials for one MT5 account (env-prefixed METAAPI_).
+
+    `token` is a MetaApi access token scoped to this account (needs the
+    trading-account-management + REST + RPC + streaming APIs). `account_id` is the
+    MetaApi account UUID (not the MT5 login). `region` is the MetaApi hosting
+    region the account was provisioned in ("london" | "new-york")."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="METAAPI_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    token: str = ""
+    account_id: str = ""
+    region: str = "london"
+
+    def has(self) -> bool:
+        """True only when the account is fully credentialed (gates registration)."""
+        return bool(self.token and self.account_id)
+
+
+mt5_settings = MTSettings()

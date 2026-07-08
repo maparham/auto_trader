@@ -246,6 +246,10 @@ export interface AccountSummary {
   deposit: number | null;
   profitLoss: number | null;
   currency: string | null;
+  // Broker-authoritative account value + margin-in-use (MT5). When present the dock
+  // uses them verbatim instead of re-deriving margin/equity; omitted by Capital/IG.
+  equity?: number | null;
+  margin?: number | null;
 }
 
 /** The account's real balance/available/currency (live dealing accounts). Returns

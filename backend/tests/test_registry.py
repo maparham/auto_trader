@@ -15,17 +15,18 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from auto_trader.config import IGSettings, Settings, settings
+from auto_trader.config import IGSettings, MTSettings, Settings, settings
 from auto_trader.brokers.registry import BrokerRegistry, build_registry
 
 
 @pytest.fixture(autouse=True)
 def _no_ig(monkeypatch):
-    """Default: pretend IG and Capital-live are unconfigured so the base assertions
-    are deterministic regardless of the local .env. Tests that want them opt back in
-    explicitly. Capital-live is cleared via the underlying creds (not a has_live()
-    override) so tests can still exercise the real has_live() gating logic."""
+    """Default: pretend IG, Capital-live and MT5 are unconfigured so the base
+    assertions are deterministic regardless of the local .env. Tests that want them
+    opt back in explicitly. Capital-live is cleared via the underlying creds (not a
+    has_live() override) so tests can still exercise the real has_live() gating."""
     monkeypatch.setattr(IGSettings, "has", lambda self, side: False)
+    monkeypatch.setattr(MTSettings, "has", lambda self: False)
     monkeypatch.setattr(settings, "live_api_key", "", raising=False)
     monkeypatch.setattr(settings, "live_password", "", raising=False)
 
@@ -104,6 +105,22 @@ def test_ig_live_is_real_money(monkeypatch) -> None:
     )
     keys = {e["key"]: e for e in build_registry().describe()["exec"]}
     assert keys["ig-live:live"]["isRealMoney"] is True
+
+
+def test_mt5_registers_data_paper_and_live(monkeypatch) -> None:
+    """A configured MT5/MetaApi account adds the "mt5" data broker plus a paper
+    sim and a real-money dealing exec. Construction is lazy (no network), so
+    build_registry() doesn't touch MetaApi."""
+    monkeypatch.setattr(MTSettings, "has", lambda self: True)
+    monkeypatch.setattr(MTSettings, "token", "tok", raising=False)
+    monkeypatch.setattr(MTSettings, "account_id", "acct-uuid", raising=False)
+    described = build_registry().describe()
+    assert "mt5" in described["data"]
+    keys = {e["key"]: e for e in described["exec"]}
+    assert keys["mt5:paper"]["env"] == "paper"
+    assert keys["mt5:paper"]["isRealMoney"] is False
+    assert keys["mt5:live"]["env"] == "live"
+    assert keys["mt5:live"]["isRealMoney"] is True
 
 
 def test_get_data_unknown_broker_is_404() -> None:
