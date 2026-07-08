@@ -8,7 +8,7 @@ import asyncio
 import pytest
 
 from auto_trader.brokers.mt5 import MT5Broker, MT5ExecutionBroker, _classify_symbol
-from auto_trader.core.models import Order, OrderType, Side
+from auto_trader.core.models import Order, OrderStatus, OrderType, Side
 
 
 class _FakeConn:
@@ -176,6 +176,14 @@ class _FakeTradeConn:
         self.calls.append(("close_partial", deal_id, volume))
         return {"orderId": "c1"}
 
+    async def modify_order(self, order_id, price, sl, tp, options=None):
+        self.calls.append(("modify_order", order_id, price, sl, tp))
+        return {"stringCode": "TRADE_RETCODE_DONE"}
+
+    async def modify_position(self, deal_id, sl, tp, options=None):
+        self.calls.append(("modify_position", deal_id, sl, tp))
+        return {"stringCode": "TRADE_RETCODE_DONE"}
+
 
 def _data_with(conn):
     """A real MT5Broker whose connection is the fake conn, so the conversion
@@ -329,3 +337,40 @@ def test_effective_leverage_none_when_margin_unavailable():
 
     data._calc_margin = _no_margin
     assert asyncio.run(data._effective_leverage("X", spec, price)) is None
+
+
+def test_modify_working_order_matches_string_id():
+    # MetaApi returns the order id as a string over the wire; the lookup must match
+    # it against the (string) order_id from the API without an int coercion, or
+    # editing a working order fails with "working order not found" (a 422).
+    conn = _FakeTradeConn(
+        orders=[{"id": "151882527", "symbol": "CrudeOIL",
+                 "type": "ORDER_TYPE_SELL_LIMIT", "openPrice": 74.99,
+                 "stopLoss": 0, "takeProfit": 0}],
+    )
+    broker = MT5ExecutionBroker(_data_with(conn))
+    res = asyncio.run(broker.modify_working_order("151882527", limit_level=74.8))
+    assert res.status is OrderStatus.FILLED
+    assert ("modify_order", "151882527", 74.8, 0, 0) in conn.calls
+
+
+def test_modify_working_order_rejects_unknown_id():
+    conn = _FakeTradeConn(orders=[])
+    broker = MT5ExecutionBroker(_data_with(conn))
+    res = asyncio.run(broker.modify_working_order("999", limit_level=1.0))
+    assert res.status is OrderStatus.REJECTED
+    assert res.reason == "working order not found"
+
+
+def test_modify_position_carries_levels_with_string_id():
+    # Same string-id lookup for an open position's SL/TP modify; the untouched
+    # level must be carried forward from the matched position.
+    conn = _FakeTradeConn(
+        positions=[{"id": "77", "symbol": "CrudeOIL", "type": "POSITION_TYPE_BUY",
+                    "volume": 0.1, "stopLoss": 70.0, "takeProfit": 80.0}],
+    )
+    broker = MT5ExecutionBroker(_data_with(conn))
+    res = asyncio.run(broker.modify_position("77", stop_level=71.0))
+    assert res.status is OrderStatus.FILLED
+    # TP (untouched) carried forward from the matched position, SL updated.
+    assert ("modify_position", "77", 71.0, 80.0) in conn.calls

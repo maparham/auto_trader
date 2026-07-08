@@ -745,7 +745,7 @@ class MT5ExecutionBroker(ExecutionBroker):
         # the untouched one forward; 0 removes a level. The pre-fetch goes through
         # read() so a dropped connection self-heals like every other read.
         positions = await self._data.read(lambda c: c.get_positions())
-        current = {p.get("id"): p for p in positions}.get(_maybe_int(deal_id))
+        current = {str(p.get("id")): p for p in positions}.get(str(deal_id))
         conn = await self._data._ensure()
         cur_sl = current.get("stopLoss") if current else None
         cur_tp = current.get("takeProfit") if current else None
@@ -796,7 +796,7 @@ class MT5ExecutionBroker(ExecutionBroker):
         clear_take_profit: bool = False,
     ) -> OrderResult:
         orders = await self._data.read(lambda c: c.get_orders())
-        current = {o.get("id"): o for o in orders}.get(_maybe_int(order_id))
+        current = {str(o.get("id")): o for o in orders}.get(str(order_id))
         conn = await self._data._ensure()
         if current is None:
             return OrderResult(
@@ -835,15 +835,6 @@ class MT5ExecutionBroker(ExecutionBroker):
             reason=resp.get("stringCode", ""),
             resolved_at=datetime.now(timezone.utc),
         )
-
-
-def _maybe_int(v):
-    """Position/order ids come back as ints from MetaApi but we carry them as str
-    (the domain contract). Coerce for dict lookups against raw MetaApi payloads."""
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return v
 
 
 def register(registry: "BrokerRegistry", *, token: str, account_id: str, region: str = "london") -> MT5Broker:
