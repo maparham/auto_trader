@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -100,6 +101,75 @@ def _is_closed(c: Candle, resolution: Resolution, now: datetime) -> bool:
     return c.time + timedelta(seconds=resolution.seconds) <= now
 
 
+# --- symbol-search categorisation -------------------------------------------
+# MetaApi's get_symbols() returns bare symbol strings with no category metadata
+# (unlike Capital's instrumentType), so the symbol-search modal's chips (Stocks/
+# Forex/Crypto/Indices/Commodities) have nothing to filter on. We infer the
+# category from AvaTrade's naming conventions. This is a best-effort classifier
+# tuned to AvaTrade's actual symbol list; unrecognised symbols return None and
+# stay browsable under "All" + free-text search rather than being mislabelled.
+
+# ISO-4217 fiat codes AvaTrade quotes forex in. Deliberately excludes the metal
+# codes (XAU/XAG/XPT/XPD) so "XAUUSD"-style symbols don't read as a forex pair.
+_FIAT_CODES = frozenset(
+    "USD EUR GBP JPY CHF CAD AUD NZD SEK NOK DKK SGD HKD MXN ZAR TRY PLN CZK "
+    "HUF ILS RUB CNY CNH CLP".split()
+)
+# Crypto base tickers; a symbol whose alnum form starts with one (e.g. BTCUSD,
+# MATICUSD, PEPEUSD) is crypto. "CRYPTO" also catches AvaTrade's CRYPTO10 basket.
+_CRYPTO_BASES = (
+    "BTC", "ETH", "LTC", "BCH", "XRP", "XLM", "DOGE", "SOL", "LINK", "UNI",
+    "MATIC", "PEPE", "BTG", "ADA", "DOT", "AVAX", "TRX", "EOS", "DASH", "SHIB",
+)
+_METAL_CODES = ("XAU", "XAG", "XPT", "XPD")
+# AvaTrade names commodities in words (GOLD, BRENT_OIL, NATURAL_GAS), not tickers.
+_COMMODITY_KW = (
+    "GOLD", "SILVER", "PLATINUM", "PALLADIUM", "COPPER", "ALUMINIUM", "ALUMINUM",
+    "NICKEL", "OIL", "CRUDE", "BRENT", "GASOLINE", "GAS", "HEATING", "COCOA",
+    "COFFEE", "CORN", "COTTON", "SOYBEAN", "SUGAR", "WHEAT",
+)
+_COMMODITY_EXACT = frozenset({"SI_FUTURE"})  # silver future, named off-pattern
+# Region-benchmark indices (US_30, GERMANY_40, JAPAN_225) + AvaTrade's thematic
+# baskets (FAANG, AIRLINES, AI_INDX), which it groups under indices.
+_INDEX_KW = (
+    "INDX", "INDEX", "FAANG", "AIRLINES", "GIANTS", "INTERNET", "VACCINE",
+    "CANNABIS", "GREEN_ENERGY", "BATTERY", "STRATEGIC_METALS", "RACING",
+)
+_INDEX_REGION = (
+    "US_", "UK_", "GERMANY", "FRANCE", "ITALY", "JAPAN", "AUS_", "HK_",
+    "CHINA_", "EUROPE", "NED_", "SWISS", "TAIWAN", "CANADA", "SPAIN", "SPA_",
+)
+
+
+def _classify_symbol(sym: str) -> str | None:
+    """AvaTrade MT5 symbol -> symbol-search category, matching the frontend chip
+    types (SHARES/CURRENCIES/CRYPTOCURRENCIES/INDICES/COMMODITIES). None means
+    "no chip" — the symbol still appears under All and in search. First match wins;
+    order matters (bonds before indices so JAPAN_BOND isn't read as a JAPAN index;
+    metals before forex so XAUUSD isn't read as a currency pair)."""
+    if sym.startswith(("#", "_")):
+        return "SHARES"  # AvaTrade prefixes equities with # (US) or _ (EU)
+    s = sym.upper()
+    if "BOND" in s or "BUND" in s:
+        return None  # no bonds chip; keep out of the region-index bucket
+    alnum = re.sub(r"[^A-Z0-9]", "", s)
+    if "CRYPTO" in s or any(
+        alnum.startswith(b) and len(alnum) > len(b) for b in _CRYPTO_BASES
+    ):
+        return "CRYPTOCURRENCIES"
+    if (
+        sym in _COMMODITY_EXACT
+        or alnum[:3] in _METAL_CODES
+        or any(kw in s for kw in _COMMODITY_KW)
+    ):
+        return "COMMODITIES"
+    if any(kw in s for kw in _INDEX_KW) or s.startswith(_INDEX_REGION):
+        return "INDICES"
+    if len(alnum) == 6 and alnum[:3] in _FIAT_CODES and alnum[3:] in _FIAT_CODES:
+        return "CURRENCIES"
+    return None
+
+
 def _pos_side(raw_type: str) -> Side:
     """MT5 position/order type string -> Side. Buys contain "_BUY"."""
     return Side.BUY if "BUY" in (raw_type or "").upper() else Side.SELL
@@ -128,6 +198,11 @@ class MT5Broker(MarketDataBroker):
         self._conn = None
         self._synced = False
         self._lock = asyncio.Lock()
+        # Per-symbol MetaApi specification cache (contractSize/volumeStep/digits are
+        # static), plus a set tracking which symbols we've already warned about
+        # missing a contractSize, so the fallback warning fires at most once each.
+        self._spec_cache: dict[str, dict] = {}
+        self._warned_no_contract: set[str] = set()
 
     # --- connection -----------------------------------------------------------
 
@@ -254,8 +329,9 @@ class MT5Broker(MarketDataBroker):
     # --- catalogue ------------------------------------------------------------
 
     async def all_markets(self) -> list[dict]:
-        """Full MT5 symbol list. Stocks are '#'-prefixed on AvaTrade; we tag those
-        SHARES and everything else CURRENCIES for the symbol-search modal's filter."""
+        """Full MT5 symbol list, each tagged with a symbol-search category inferred
+        from AvaTrade's naming (see _classify_symbol) so the modal's Stocks/Forex/
+        Crypto/Indices/Commodities chips filter correctly."""
         try:
             conn = await self._ensure()
             syms = await conn.get_symbols()
@@ -265,9 +341,9 @@ class MT5Broker(MarketDataBroker):
         return [
             {
                 "epic": s,
-                "name": s.lstrip("#"),
+                "name": s.lstrip("#_"),
                 "status": "TRADEABLE",
-                "type": "SHARES" if s.startswith("#") else "CURRENCIES",
+                "type": _classify_symbol(s),
             }
             for s in syms
         ]
@@ -278,23 +354,116 @@ class MT5Broker(MarketDataBroker):
         hits = [m for m in markets if q in m["epic"].upper()]
         return hits[:limit]
 
-    async def get_market_meta(self, epic: str) -> dict | None:
-        """Display precision (decimal digits) + tradeable status for one symbol."""
+    # --- lots <-> units -------------------------------------------------------
+    # MT5 speaks LOTS; the rest of the app works in instrument units. This broker
+    # converts at its boundary — reads multiply by contractSize (lots→units),
+    # writes divide (units→lots, which MetaApi requires). contractSize comes from
+    # the symbol specification and is static, so it's cached per symbol.
+
+    async def _get_spec(self, symbol: str) -> dict | None:
+        """The MetaApi symbol specification, cached per symbol. Returns None on a
+        failed lookup (not cached, so a transient failure can be retried)."""
+        cached = self._spec_cache.get(symbol)
+        if cached is not None:
+            return cached
         try:
             conn = await self._ensure()
-            spec = await conn.get_symbol_specification(epic)
+            spec = await conn.get_symbol_specification(symbol)
         except Exception:
-            log.debug("mt5: get_symbol_specification failed for %s", epic, exc_info=True)
+            log.debug("mt5: get_symbol_specification failed for %s", symbol, exc_info=True)
             return None
+        if spec:
+            self._spec_cache[symbol] = spec
+        return spec
+
+    async def _contract_size(self, symbol: str) -> float:
+        """Units per lot for `symbol`. Falls back to 1.0 (a no-op multiplier, i.e.
+        today's lots-as-units behaviour) with a one-time warning if the spec has no
+        usable contractSize — never raises, so a bad spec degrades gracefully."""
+        spec = await self._get_spec(symbol)
+        cs = (spec or {}).get("contractSize")
+        if not cs:  # None or 0
+            if symbol not in self._warned_no_contract:
+                self._warned_no_contract.add(symbol)
+                log.warning(
+                    "mt5: no contractSize for %s; treating quantity as units (lots=units)",
+                    symbol,
+                )
+            return 1.0
+        return float(cs)
+
+    async def _units_to_lots(self, symbol: str, units: float) -> float:
+        """Convert an instrument-unit quantity to MT5 lots for submission, snapped
+        to the symbol's volumeStep so float division can't leave sub-step dust."""
+        cs = await self._contract_size(symbol)
+        lots = units / cs
+        step = (await self._get_spec(symbol) or {}).get("volumeStep")
+        if step:
+            lots = round(lots / step) * step
+        return round(lots, 8)  # kill floating-point dust regardless of step
+
+    async def get_market_meta(self, epic: str) -> dict | None:
+        """Display precision (decimal digits), order-sizing bounds, and contract
+        size for one symbol. minVolume/volumeStep are returned in instrument UNITS
+        (× contractSize) so the whole meta object is consistent with the rest of
+        the app, which works in units."""
+        spec = await self._get_spec(epic)
         if not spec:
             return None
+        cs = spec.get("contractSize") or 1.0
+        min_vol = spec.get("minVolume")
+        step = spec.get("volumeStep")
         return {
             "epic": epic,
             "precision": spec.get("digits"),
-            "minVolume": spec.get("minVolume"),
-            "volumeStep": spec.get("volumeStep"),
+            "minVolume": (min_vol * cs) if min_vol is not None else None,
+            "volumeStep": (step * cs) if step is not None else None,
+            "contractSize": cs,
             "status": "TRADEABLE",
         }
+
+    async def get_market_detail(self, epic: str) -> dict | None:
+        """Instrument detail for the legend ⓘ popover. MT5 has no single "market
+        details" call like Capital's, so we build the three sections the popover
+        reads from the MetaApi symbol specification plus a live quote. The full raw
+        spec is passed through under `instrument` so "All details" hides nothing;
+        a handful of fields are surfaced under the keys the curated header reads
+        (currency, type, snapshot bid/offer, min/max size). None if the symbol is
+        unknown."""
+        spec = await self._get_spec(epic)
+        if not spec:
+            return None
+        cs = spec.get("contractSize") or 1.0
+
+        # Raw spec verbatim + the curated aliases the popover header looks for.
+        instrument = dict(spec)
+        instrument["epic"] = epic
+        instrument["name"] = spec.get("description") or epic.lstrip("#_")
+        instrument["type"] = _classify_symbol(epic)
+        if spec.get("profitCurrency"):  # currency price/PnL is denominated in
+            instrument["currency"] = spec["profitCurrency"]
+
+        bid, ask = await self.get_quote(epic)
+        snapshot: dict = {}
+        if bid is not None:
+            snapshot["bid"] = bid
+        if ask is not None:
+            snapshot["offer"] = ask
+        if spec.get("digits") is not None:
+            snapshot["decimalPlacesFactor"] = spec["digits"]
+
+        # Sizing bounds in instrument UNITS (× contractSize), matching get_market_meta.
+        dealing: dict = {}
+        for out_key, spec_key in (
+            ("minDealSize", "minVolume"),
+            ("maxDealSize", "maxVolume"),
+            ("dealSizeStep", "volumeStep"),
+        ):
+            v = spec.get(spec_key)
+            if v is not None:
+                dealing[out_key] = {"value": round(v * cs, 8), "unit": "units"}
+
+        return {"instrument": instrument, "dealingRules": dealing, "snapshot": snapshot}
 
 
 class MT5ExecutionBroker(ExecutionBroker):
@@ -373,13 +542,16 @@ class MT5ExecutionBroker(ExecutionBroker):
         conn = await self._data._ensure()
         sl = order.stop_level
         tp = order.take_profit_level
+        # order.quantity is in instrument units (the app's convention); MetaApi
+        # deals in lots. Convert once here; filled_quantity is reported in units.
+        lots = await self._data._units_to_lots(order.epic, order.quantity)
         submitted_at = datetime.now(timezone.utc)
         try:
             if order.type is OrderType.MARKET:
                 if order.side is Side.BUY:
-                    resp = await conn.create_market_buy_order(order.epic, order.quantity, sl, tp)
+                    resp = await conn.create_market_buy_order(order.epic, lots, sl, tp)
                 else:
-                    resp = await conn.create_market_sell_order(order.epic, order.quantity, sl, tp)
+                    resp = await conn.create_market_sell_order(order.epic, lots, sl, tp)
                 # A market order fills into a position immediately. The trade
                 # response carries no fill price, so read it back off the position
                 # (matching Capital/IG, which surface the fill level) — best-effort.
@@ -405,9 +577,9 @@ class MT5ExecutionBroker(ExecutionBroker):
                         resolved_at=datetime.now(timezone.utc),
                     )
                 if order.side is Side.BUY:
-                    resp = await conn.create_limit_buy_order(order.epic, order.quantity, order.limit_level, sl, tp)
+                    resp = await conn.create_limit_buy_order(order.epic, lots, order.limit_level, sl, tp)
                 else:
-                    resp = await conn.create_limit_sell_order(order.epic, order.quantity, order.limit_level, sl, tp)
+                    resp = await conn.create_limit_sell_order(order.epic, lots, order.limit_level, sl, tp)
                 result = OrderResult(
                     client_order_id=order.client_order_id,
                     status=OrderStatus.PENDING,
@@ -448,13 +620,15 @@ class MT5ExecutionBroker(ExecutionBroker):
         raw = await self._data.read(lambda c: c.get_positions())
         out: list[Position] = []
         for p in raw:
-            if epic is not None and p.get("symbol") != epic:
+            symbol = p.get("symbol")
+            if epic is not None and symbol != epic:
                 continue
+            cs = await self._data._contract_size(symbol)
             out.append(
                 Position(
-                    epic=p.get("symbol"),
+                    epic=symbol,
                     side=_pos_side(p.get("type", "")),
-                    quantity=p.get("volume", 0.0),
+                    quantity=(p.get("volume", 0.0) or 0.0) * cs,  # lots → units
                     open_level=p.get("openPrice"),
                     deal_id=str(p.get("id")),
                     stop_level=_lvl(p.get("stopLoss")),
@@ -471,7 +645,19 @@ class MT5ExecutionBroker(ExecutionBroker):
             if quantity is None:
                 resp = await conn.close_position(deal_id)
             else:
-                resp = await conn.close_position_partially(deal_id, quantity)
+                # quantity is in units; MetaApi's partial close wants lots. Look up
+                # the position's symbol to get the contractSize (close_position has
+                # only the deal_id). If the position can't be found, fall back to
+                # passing the value through (×1) rather than guessing.
+                positions = await self._data.read(lambda c: c.get_positions())
+                current = {str(p.get("id")): p for p in positions}.get(str(deal_id))
+                symbol = current.get("symbol") if current else None
+                lots = (
+                    await self._data._units_to_lots(symbol, quantity)
+                    if symbol
+                    else quantity
+                )
+                resp = await conn.close_position_partially(deal_id, lots)
         except Exception as exc:
             return self._fail(f"close-{deal_id}", exc)
         return OrderResult(
@@ -519,13 +705,15 @@ class MT5ExecutionBroker(ExecutionBroker):
         raw = await self._data.read(lambda c: c.get_orders())
         out: list[WorkingOrder] = []
         for o in raw:
-            if epic is not None and o.get("symbol") != epic:
+            symbol = o.get("symbol")
+            if epic is not None and symbol != epic:
                 continue
+            cs = await self._data._contract_size(symbol)
             out.append(
                 WorkingOrder(
-                    epic=o.get("symbol"),
+                    epic=symbol,
                     side=_pos_side(o.get("type", "")),
-                    quantity=o.get("volume", o.get("currentVolume", 0.0)),
+                    quantity=(o.get("volume", o.get("currentVolume", 0.0)) or 0.0) * cs,
                     limit_level=o.get("openPrice"),
                     order_id=str(o.get("id")),
                     stop_level=_lvl(o.get("stopLoss")),
