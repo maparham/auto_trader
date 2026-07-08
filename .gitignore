@@ -232,6 +232,10 @@ app_state.db
 app_state.db-wal
 app_state.db-shm
 
+# MetaApi SDK local terminal-state cache (created at runtime by the streaming/RPC
+# connection; per-machine, never source)
+.metaapi/
+
 # The Python `lib/` rule near the top also matches the frontend's source directory
 # (frontend/src/lib). Re-include it so the app's client logic isn't silently dropped.
 !frontend/src/lib/

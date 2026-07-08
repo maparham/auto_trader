@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from auto_trader.brokers import ig_stream
+from auto_trader.brokers import ig_stream, mt5_stream
 from auto_trader.brokers.capital_stream import (
     SECONDS_INTERVALS,
     StreamFatalError,
@@ -17,6 +17,7 @@ from auto_trader.brokers.capital_stream import (
     stream_tick_candles,
 )
 from auto_trader.brokers.ig import IGBroker
+from auto_trader.brokers.mt5 import MT5Broker
 from auto_trader.core.candle_aggregate import (
     DERIVED,
     aggregate_candle_stream,
@@ -73,20 +74,21 @@ async def ws_candles(websocket: WebSocket) -> None:
         await websocket.close()
 
     is_ig = isinstance(broker, IGBroker)
+    is_mt5 = isinstance(broker, MT5Broker)
     # Sub-minute intervals are built by bucketing the tick stream; native ones merge
     # the OHLC + tick channels. Sub-minute is mid-only (served from the single-price
     # TICK_STORE), so price_side intentionally doesn't apply there.
     if res_raw in SECONDS_INTERVALS:
-        if is_ig:
-            # IG sub-minute streaming + tick history aren't built yet (the chart
+        if is_ig or is_mt5:
+            # IG/MT5 sub-minute streaming + tick history aren't built yet (the chart
             # disables scroll-back for these anyway); stop the client retrying.
             return await _fatal(f"{broker_id}: seconds intervals not streamed yet")
         stream = stream_tick_candles(broker, epic, SECONDS_INTERVALS[res_raw])
     elif is_derived(res_raw):
         # Derived timeframes stream by re-folding the native base (DAY/WEEK) stream
-        # into the forming aggregate bucket. IG base-bar streaming for these isn't
-        # wired, so it keeps its REST view (fatal stops the client retrying).
-        if is_ig:
+        # into the forming aggregate bucket. IG/MT5 base-bar streaming for these
+        # isn't wired, so they keep their REST view (fatal stops the client retrying).
+        if is_ig or is_mt5:
             return await _fatal(f"{broker_id}: {res_raw} is not streamed live")
         rule = DERIVED[res_raw]
         base = rule.base
@@ -127,6 +129,13 @@ async def ws_candles(websocket: WebSocket) -> None:
                 # live midnight bucket wouldn't align with REST history).
                 return await _fatal(f"{broker_id}: {res_raw} is not streamed live")
             stream = ig_stream.stream_candles(broker, epic, resolution, price_side)
+        elif is_mt5:
+            # MT5 folds quote ticks into epoch buckets, which only align cleanly for
+            # intraday. DAY/WEEK have no plain epoch-bucket boundary (v1 defers them),
+            # so they keep REST history; fatal stops the client retrying.
+            if resolution.seconds >= Resolution.DAY.seconds:
+                return await _fatal(f"{broker_id}: {res_raw} is not streamed live")
+            stream = mt5_stream.stream_candles(broker, epic, resolution, price_side)
         else:
             stream = stream_candles(broker, epic, resolution, price_side)
 

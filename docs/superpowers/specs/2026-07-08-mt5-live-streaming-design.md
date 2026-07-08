@@ -93,11 +93,16 @@ AsyncIterator[LiveBar]`:
 
 1. `await broker._ensure_stream()`.
 2. `queue = broker.register_tick_queue(epic)` (subscribes upstream if first).
-3. Seed a tick-only forming bar from `broker.get_recent_candles(epic, resolution,
-   1)` — real open/high/low/close/volume for the current bucket, best-effort (a
-   failed fetch cold-starts from the first tick, never stalls the stream). Only
-   seed if the fetched bar's bucket matches the current clock bucket (same guard
-   Capital uses, so a stale bar from a rollover gap can't pin the live bar).
+3. Seed a tick-only forming bar from `broker.get_forming_candle(epic, resolution)`
+   — real open/high/low/close/volume for the current bucket, best-effort (a failed
+   fetch cold-starts from the first tick, never stalls the stream). Only seed if the
+   fetched bar's bucket matches the current clock bucket, so a stale bar from a
+   rollover gap can't pin the live bar. **Must be `get_forming_candle`, not
+   `get_recent_candles`:** MT5's `get_recent_candles` is closed-only (drops the
+   forming bar), so its bucket is always the *previous* one and the guard would
+   never match — a cold start on every connect, worst on higher TFs. A new
+   `MT5Broker.get_forming_candle` returns the raw last (still-forming) bar MetaApi
+   delivers, which `get_recent_candles` deliberately discards.
 4. Drain the queue. For each tick: `mid = (bid + ask) / 2` (respect `price_side`
    for the plotted candle; keep raw bid/ask for the price lines). Roll the bar
    when `ts // step` advances (epoch-bucket boundary — intraday only). Fold the
@@ -156,8 +161,14 @@ MetaApi streaming conn ──on_symbol_price_updated(price for ANY symbol)──
 
 - Unknown broker / non-streaming broker / bad resolution: unchanged router
   `fatal` frames.
-- Stale streaming socket: `_ensure_stream` reconnect-once, then propagate.
-- Permanent per-epic fault: `StreamFatalError` → `fatal=True`.
+- Stale/dropped streaming socket: handled by the MetaApi SDK, not us — its
+  `SubscriptionManager` auto-reconnects and `on_synchronization_started` re-applies
+  the tracked market-data subscriptions, so ticks resume on the consumer queue
+  after a recoverable drop. (A *permanent* outage leaves the consumer awaiting with
+  no error frame — a documented v1 limitation; see Out of scope.)
+- Permanent per-epic fault (bad/unknown epic): the upstream subscribe fails,
+  `register_tick_queue` rolls back, and `stream_candles` raises `StreamFatalError`
+  → router sends `fatal=True` so the client stops retrying.
 - Seed fetch failure: best-effort, cold-start from first tick, never stalls.
 - Consumer disconnect: router cancels `forward()`, generator `finally`
   deregisters + drops the subscription refcount; shared connection stays up.
@@ -181,3 +192,7 @@ MetaApi streaming conn ──on_symbol_price_updated(price for ANY symbol)──
 - Derived-timeframe live folding for MT5.
 - Serving `get_quote` from the streaming connection's `terminal_state` to drop
   RPC polling.
+- Surfacing a "feed down" error frame on a *permanent* streaming outage (a
+  heartbeat/timeout around `queue.get()` that raises `RuntimeError` after N idle
+  seconds, mirroring Capital/IG). v1 relies on the SDK's auto-reconnect for
+  recoverable drops and freezes silently on a permanent one.

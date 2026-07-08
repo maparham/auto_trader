@@ -181,13 +181,17 @@ def _lvl(v: float | None) -> float | None:
 
 
 class MT5Broker(MarketDataBroker):
-    """Market data + the shared MetaApi connection for one AvaTrade MT5 account.
+    """Market data + the shared MetaApi connection(s) for one AvaTrade MT5 account.
 
-    Holds the single RPC connection the execution broker also trades through, so
-    only one MetaApi session exists per account. Streaming isn't wired yet
-    (supports_streaming stays False): charts load REST history and the live price
-    comes from get_quote polling, same as the IG adapter.
+    Holds the RPC connection the execution broker also trades through (reads +
+    trades), plus a second streaming connection for the live tick feed (see
+    _ensure_stream). supports_streaming is True: native intraday charts tick live
+    via mt5_stream, and MT5 paper limit/SL/TP orders fire off the same tick feed.
+    DAY/WEEK, seconds, and derived timeframes are fatal-gated in the /ws/candles
+    router and keep their REST history.
     """
+
+    supports_streaming = True
 
     def __init__(self, *, token: str, account_id: str, region: str = "london") -> None:
         self._token = token
@@ -198,6 +202,16 @@ class MT5Broker(MarketDataBroker):
         self._conn = None
         self._synced = False
         self._lock = asyncio.Lock()
+        # Streaming lives on a SECOND, stateful MetaApi connection alongside the RPC
+        # one (they coexist — verified live). One shared connection multiplexes every
+        # symbol; its listener fans ticks out to per-symbol consumer queues, and
+        # subscriptions are ref-counted so N charts on one symbol share one upstream
+        # subscribe. Lazily connected on first stream (see _ensure_stream).
+        self._stream_conn = None
+        self._stream_synced = False
+        self._stream_lock = asyncio.Lock()
+        self._tick_subs: dict[str, set[asyncio.Queue]] = {}
+        self._sub_refcount: dict[str, int] = {}
         # Per-symbol MetaApi specification cache (contractSize/volumeStep/digits are
         # static), plus a set tracking which symbols we've already warned about
         # missing a contractSize, so the fallback warning fires at most once each.
@@ -250,16 +264,85 @@ class MT5Broker(MarketDataBroker):
             conn = await self._ensure()
             return await make_coro(conn)
 
+    # --- streaming connection -------------------------------------------------
+
+    async def _ensure_stream(self):
+        """Connect + synchronize the shared streaming connection once, then reuse.
+        Re-entrant like `_ensure`. The single `_TickListener` is attached on first
+        connect and lives for the connection's lifetime; per-symbol subscriptions
+        are layered on by register_tick_queue."""
+        if self._stream_synced and self._stream_conn is not None:
+            return self._stream_conn
+        async with self._stream_lock:
+            if self._stream_synced and self._stream_conn is not None:
+                return self._stream_conn
+            await self._ensure()  # ensures the account is deployed + self._acct set
+            from auto_trader.brokers.mt5_stream import _TickListener
+
+            conn = self._acct.get_streaming_connection()
+            conn.add_synchronization_listener(_TickListener(self._tick_subs))
+            await conn.connect()
+            await conn.wait_synchronized({"timeoutInSeconds": 120})
+            self._stream_conn = conn
+            self._stream_synced = True
+            log.info("mt5: streaming connection synchronized (account %s)", self._account_id)
+            return conn
+
+    async def register_tick_queue(self, symbol: str) -> asyncio.Queue:
+        """Register a consumer queue for `symbol`'s ticks; returns the queue. The
+        FIRST consumer of a symbol subscribes it upstream (ref-counted), so N charts
+        on one symbol share a single MetaApi subscription."""
+        q: asyncio.Queue = asyncio.Queue()
+        async with self._stream_lock:
+            first = not self._tick_subs.get(symbol)
+            self._tick_subs.setdefault(symbol, set()).add(q)
+            self._sub_refcount[symbol] = self._sub_refcount.get(symbol, 0) + 1
+            if first:
+                try:
+                    await self._stream_conn.subscribe_to_market_data(symbol, [{"type": "quotes"}])
+                except BaseException:
+                    # A failed subscribe (unknown epic) OR a CancelledError (the client
+                    # disconnected while this first subscribe was in flight) must leave
+                    # no orphan registration/refcount. CancelledError is a BaseException,
+                    # so a plain `except Exception` would miss it — leaving a dead queue
+                    # + refcount 1 that permanently blocks re-subscribing this symbol
+                    # (first=False forever → the symbol silently never ticks again).
+                    self._tick_subs.pop(symbol, None)
+                    self._sub_refcount.pop(symbol, None)
+                    raise
+        return q
+
+    async def unregister_tick_queue(self, symbol: str, q: asyncio.Queue) -> None:
+        """Drop a consumer queue; the LAST consumer of a symbol unsubscribes it
+        upstream. Never closes the shared connection."""
+        async with self._stream_lock:
+            subs = self._tick_subs.get(symbol)
+            if subs:
+                subs.discard(q)
+            self._sub_refcount[symbol] = max(0, self._sub_refcount.get(symbol, 0) - 1)
+            if self._sub_refcount[symbol] == 0:
+                self._sub_refcount.pop(symbol, None)
+                self._tick_subs.pop(symbol, None)
+                if self._stream_conn is not None:
+                    try:
+                        await self._stream_conn.unsubscribe_from_market_data(
+                            symbol, [{"type": "quotes"}]
+                        )
+                    except Exception:  # best-effort; a failed unsubscribe is harmless
+                        log.debug("mt5: unsubscribe failed for %s", symbol, exc_info=True)
+
     async def aclose(self) -> None:
-        """Close the connection on shutdown. The account is left DEPLOYED — tearing
+        """Close both connections on shutdown. The account is left DEPLOYED — tearing
         it down would stop live trading and re-deploying is slow + costs a deploy
         charge; deployment is managed in the MetaApi dashboard, not per process."""
         conn, self._conn, self._synced = self._conn, None, False
-        if conn is not None:
-            try:
-                await conn.close()
-            except Exception:  # best-effort on shutdown
-                log.debug("mt5: error closing connection", exc_info=True)
+        stream, self._stream_conn, self._stream_synced = self._stream_conn, None, False
+        for c in (conn, stream):
+            if c is not None:
+                try:
+                    await c.close()
+                except Exception:  # best-effort on shutdown
+                    log.debug("mt5: error closing connection", exc_info=True)
 
     # --- candles --------------------------------------------------------------
 
@@ -316,6 +399,24 @@ class MT5Broker(MarketDataBroker):
         closed = [c for c in (_to_candle(r) for r in batch) if _is_closed(c, resolution, now)]
         closed.sort(key=lambda c: c.time)
         return closed[-count:]
+
+    async def get_forming_candle(
+        self, epic: str, resolution: Resolution, price_side: str = "mid"
+    ) -> Candle | None:
+        """The CURRENT, still-forming bar for `epic` — MetaApi returns it as the last
+        historical element, which `get_recent_candles` deliberately drops (closed-only
+        contract). The live stream seeds its forming bar from this so it carries the
+        in-progress bucket's real OHLCV from frame one instead of cold-starting the
+        open at the first tick. None if unavailable. `price_side` is accepted for
+        interface parity but not applied (MT5 candles are a single bid-based series)."""
+        await self._ensure()
+        tf = _TIMEFRAME[resolution]
+        try:
+            batch = await self._acct.get_historical_candles(epic, tf, None, 1)
+        except Exception:
+            log.debug("mt5: get_forming_candle failed for %s", epic, exc_info=True)
+            return None
+        return _to_candle(batch[-1]) if batch else None
 
     async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
         """Latest (bid, ask), or (None, None) if the symbol has no live price."""
