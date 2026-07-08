@@ -24,6 +24,7 @@ import {
   refreshTrades,
   subscribeTrades,
   tradeLabel,
+  type AccountSummary,
   type Quote,
   type TradeAccount,
   type TradeView,
@@ -45,6 +46,10 @@ interface Props {
   precision?: number;
   instrumentType?: string | null;
   trading: TradingSettings;
+  // The active account's real balance/available/currency for a live account
+  // (null for paper). When present, the Margin line shows the broker's true
+  // figures instead of the configured paper balance.
+  accountSummary?: AccountSummary | null;
 }
 
 // Real-money accounts are the live env (key "{broker}:live"); the backend enforces
@@ -61,6 +66,7 @@ export default function OrderTicket({
   precision = 2,
   instrumentType,
   trading,
+  accountSummary,
 }: Props) {
   // A chart-staged draft (the price-axis "+" menu's Buy/Sell limit items) is placed
   // on draftOrderSignal BEFORE this ticket mounts; seed local state from it (same-epic
@@ -249,7 +255,9 @@ export default function OrderTicket({
   const pct = (level: number | null) =>
     level != null && entryPrice ? ((level - entryPrice) / entryPrice) * 100 : null;
 
-  const cur = trading.accountCurrency;
+  // A live account shows the broker's true figures; paper falls back to the
+  // configured balance/currency (accountSummary is null for the paper sim).
+  const cur = accountSummary?.currency ?? trading.accountCurrency;
   const lev = leverageFor(trading, instrumentType ?? undefined);
   const openPositions = positions.filter((t) => t.kind === "position");
   const info = computeOrderInfo({
@@ -258,8 +266,9 @@ export default function OrderTicket({
     stop: slVal,
     takeProfit: tpVal,
     leverage: lev,
-    balance: trading.accountBalance,
+    balance: accountSummary?.balance ?? trading.accountBalance,
     usedMargin: usedMargin(openPositions, trading.defaultLeverage),
+    available: accountSummary?.available,
   });
 
   async function submit() {

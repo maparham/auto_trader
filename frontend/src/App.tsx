@@ -1621,6 +1621,7 @@ export default function App() {
               precision={symbol.pricePrecision ?? 2}
               instrumentType={symbol.type}
               trading={settings.trading}
+              accountSummary={accountSummary}
             />
           </aside>
         )}

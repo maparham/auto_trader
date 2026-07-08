@@ -12,6 +12,10 @@ export interface OrderInfoInput {
   leverage: number; // for this instrument's type
   balance: number;
   usedMargin: number; // margin already tied up by open positions
+  // A live account's broker-reported free margin. When set, it's the real
+  // available and overrides the `balance − usedMargin` estimate (which is only
+  // right for the paper sim). Drives the margin ratio + over-leverage flag too.
+  available?: number | null;
 }
 
 export interface OrderInfo {
@@ -31,7 +35,8 @@ export function computeOrderInfo(i: OrderInfoInput): OrderInfo | null {
   const tradeValue = i.quantity * i.price;
   const lev = i.leverage > 0 ? i.leverage : 1;
   const margin = tradeValue / lev;
-  const available = Math.max(0, i.balance - i.usedMargin);
+  const available =
+    i.available != null ? Math.max(0, i.available) : Math.max(0, i.balance - i.usedMargin);
   const overLeveraged = margin > available;
   const marginRatio = available > 0 ? Math.min(1, margin / available) : 1;
 

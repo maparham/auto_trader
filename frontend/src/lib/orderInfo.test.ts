@@ -45,6 +45,15 @@ describe("computeOrderInfo", () => {
     expect(r.rewardCash).toBeNull();
     expect(r.rr).toBeNull();
   });
+
+  it("uses the broker's real available when provided (live account)", () => {
+    // A live account passes the broker's true free margin; it overrides the
+    // balance − usedMargin estimate and drives margin ratio / over-leverage.
+    const r = computeOrderInfo({ ...base, balance: 1421.32, available: 1243.21 })!;
+    expect(r.available).toBe(1243.21);
+    expect(r.marginRatio).toBeCloseTo(700 / 1243.21, 6);
+    expect(r.overLeveraged).toBe(false);
+  });
 });
 
 describe("usedMargin", () => {
