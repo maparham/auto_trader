@@ -71,4 +71,13 @@ describe("signalHeader", () => {
     expect(signalHeader({ side: "sell", leg: "short", combine: "AND" }, "t")).toBe("Short entry — signal t (AND)");
     expect(signalHeader({ side: "buy", leg: "short", combine: "AND" }, "t")).toBe("Short exit — signal t (AND)");
   });
+
+  it("prefixes the dock trade number when resolved and omits it otherwise", () => {
+    expect(signalHeader({ side: "buy", leg: "long", combine: "AND", tradeNo: 12 }, "t")).toBe(
+      "#12 Long entry — signal t (AND)",
+    );
+    expect(signalHeader({ side: "buy", leg: "long", combine: "AND", tradeNo: undefined }, "t")).toBe(
+      "Long entry — signal t (AND)",
+    );
+  });
 });

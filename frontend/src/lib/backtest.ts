@@ -1029,6 +1029,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       // shares the fill marker's highlight group (signal ↔ fill ↔ row light up
       // together). Tracked in markerIds so teardown/reanchor clears it too.
       const [glyph] = buildSignalGlyphs([m]);
+      if (glyph && idx !== undefined) glyph.tradeNo = idx + 1; // dock row number
       if (glyph && fillWithinLoadedWindow(glyph.signalTime * 1000, barTimes)) {
         const sigSnapped = snapNearestBar(glyph.signalTime * 1000, barTimes);
         const sigBar = barByTime.get(sigSnapped);

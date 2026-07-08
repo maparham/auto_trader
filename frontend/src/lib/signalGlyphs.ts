@@ -21,6 +21,7 @@ export interface SignalGlyph {
   placement: "above" | "below";
   terms: Term[];
   combine: string; // "AND" | "OR" — how to read the passing-only terms
+  tradeNo?: number; // 1-based trade row number (matches the dock), when resolved
 }
 
 /** Derive the signal glyphs from a run's fill markers: one per marker that
@@ -88,13 +89,15 @@ export function isEntryFill(side: "buy" | "sell", leg: "long" | "short"): boolea
   return (leg === "long" && side === "buy") || (leg === "short" && side === "sell");
 }
 
-/** The popover header, e.g. `Long entry — signal 11 Mar 15:30 (AND)`. `timeStr` is
- * the caller-formatted local time of the signal bar. */
+/** The popover header, e.g. `#12 Long entry — signal 11 Mar 15:30 (AND)`. The
+ * leading `#N` is the trade's dock row number (omitted when unresolved). `timeStr`
+ * is the caller-formatted local time of the signal bar. */
 export function signalHeader(
-  glyph: Pick<SignalGlyph, "side" | "leg" | "combine">,
+  glyph: Pick<SignalGlyph, "side" | "leg" | "combine" | "tradeNo">,
   timeStr: string,
 ): string {
   const legLabel = glyph.leg === "long" ? "Long" : "Short";
   const action = isEntryFill(glyph.side, glyph.leg) ? "entry" : "exit";
-  return `${legLabel} ${action} — signal ${timeStr} (${glyph.combine})`;
+  const num = glyph.tradeNo != null ? `#${glyph.tradeNo} ` : "";
+  return `${num}${legLabel} ${action} — signal ${timeStr} (${glyph.combine})`;
 }
