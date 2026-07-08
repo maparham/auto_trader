@@ -77,6 +77,8 @@ import {
 import {
   hydrateFromBackend,
   subscribeToBackendUpdates,
+  PREFIX,
+  parseAlertsStateKey,
   purgeTabScope,
   purgeScope,
   primaryCellScope,
@@ -544,18 +546,38 @@ export default function App() {
   // LayoutManager index. We can't cheaply know which key changed (persist applies
   // it to localStorage before calling back), so we compare the resolved workspace:
   // remount only when our visible tabs actually changed.
-  const onBackendPush = () => {
+  const onBackendPush = (key: string) => {
     const r = resolveStartup();
     const sameView =
       r.activeLayoutId === activeLayoutIdRef.current &&
       JSON.stringify(r.ws.tabs) === JSON.stringify(workspaceRef.current.tabs);
-    if (sameView) {
-      setLayoutRev((n) => n + 1); // index/default may have changed; view didn't
-      // The push may have been a settings change (which never touches the view).
-      syncSettingsFromLocal();
-    } else {
+    // A per-cell CONTENT change (an alert, drawing, or indicator on a cell we're ALSO
+    // showing) never alters the tabs array, so the sameView check below treats it as
+    // "not our view" and skips it — leaving our on-chart overlays stale until our next
+    // persist() stomps the other tab's edit back to storage (cross-tab data loss: the
+    // reported alerts/drawings vanishing when the app is open in two tabs). Route those
+    // keys explicitly so the mounted cells re-sync to storage:
+    //  - alerts are global-per-epic and reconcile IN PLACE off the alerts signal
+    //    (every mounted same-epic cell); no remount needed.
+    //  - drawings/indicators/avwap are per-cell-scope and have no in-place reconcile,
+    //    so remount the grid (rehydrate re-reads storage) when the changed key belongs
+    //    to a cell that's currently on screen.
+    if (parseAlertsStateKey(key)) bumpAlerts();
+    const visibleScopes =
+      workspaceRef.current.tabs
+        .find((t) => t.id === workspaceRef.current.activeTabId)
+        ?.cells.map((c) => c.scope) ?? [];
+    const isVisibleCellContent = visibleScopes.some((s) => key.startsWith(`${PREFIX}.${s}.`));
+    if (!sameView) {
       reseedFromLocal(); // also syncs settings
+      return;
     }
+    setLayoutRev((n) => n + 1); // index/default may have changed; view didn't
+    // The push may have been a settings change (which never touches the view).
+    syncSettingsFromLocal();
+    // A drawing/indicator edit from another tab on a visible cell: force a remount so
+    // it rehydrates from the just-updated storage (alerts already reconciled above).
+    if (isVisibleCellContent) setHydrateEpoch((n) => n + 1);
   };
   // Pull settings from (just-updated) localStorage into React state, but only if
   // they actually changed — re-setting an identical object would re-run the save()

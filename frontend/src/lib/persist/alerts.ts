@@ -129,6 +129,18 @@ const alertsKey = (epic: string, broker: string = getPersistBroker()) =>
 export function loadAlerts(epic: string, broker: string = getPersistBroker()): SavedAlert[] {
   return load<SavedAlert[]>(alertsKey(epic, broker), []);
 }
+// Matches a per-epic alerts storage key `auto-trader.b.<broker>.alerts.<epic>`, with
+// the epic captured. `[^.]+` for the broker (never dotted); `(.+)` for the epic so a
+// dotted IG epic (e.g. CS.D.EURUSD.MINI.IP) is captured whole. Compiled once.
+const ALERTS_KEY_RE = new RegExp(`^${PREFIX}\\.b\\.[^.]+\\.alerts\\.(.+)$`);
+// The epic of a per-epic alerts key, or null when `key` isn't one. The live cross-tab
+// push handler uses this to reconcile mounted alert overlays when ANOTHER tab edits
+// this epic's (shared, global-per-epic) alert list — otherwise the push updates
+// localStorage but not our on-chart lines, and our next persist() stomps it back.
+export function parseAlertsStateKey(key: string): string | null {
+  const m = ALERTS_KEY_RE.exec(key);
+  return m ? m[1] : null;
+}
 // Raw stored JSON for an epic's alerts (null if unset). The hot-path alert engine
 // uses this as a cheap per-tick cache key: a getItem + string compare avoids a
 // JSON.parse + per-alert normalize allocation on every tick when nothing changed,

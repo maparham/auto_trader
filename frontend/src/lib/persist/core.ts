@@ -412,7 +412,9 @@ export function onTradesDirty(cb: (account: string) => void): () => void {
   return () => _tradesDirty.delete(cb);
 }
 
-export function subscribeToBackendUpdates(onChange: () => void): () => void {
+export function subscribeToBackendUpdates(
+  onChange: (key: string) => void,
+): () => void {
   if (typeof WebSocket === "undefined") return () => {};
   const url = `${API_BASE.replace(/^http/, "ws")}/ws/state`;
   let ws: WebSocket | null = null;
@@ -450,7 +452,13 @@ export function subscribeToBackendUpdates(onChange: () => void): () => void {
         // (see remoteEcho) — otherwise two differing tabs ping-pong and the feed thrashes.
         remoteEcho.set(msg.key, serialized);
       }
-      onChange();
+      // Forward the changed KEY so the handler can tell a per-cell CONTENT change
+      // (drawings/indicators/alerts on a cell we're showing) from a layout/tabs
+      // change. The old no-arg callback forced App to guess via a tabs-array compare,
+      // which silently missed content changes to a mounted cell — another tab's edit
+      // updated our localStorage but not our on-chart overlays, so our next persist()
+      // stomped it back (cross-tab data loss). See App.onBackendPush.
+      onChange(msg.key);
     };
     ws.onclose = () => {
       if (closed) return;

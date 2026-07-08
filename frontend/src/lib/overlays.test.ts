@@ -520,6 +520,69 @@ describe("OverlayManager reconcile re-entrancy (self-triggered alerts signal)", 
   });
 });
 
+// Two browser tabs open the SAME workspace → both mount the SAME cell (same scope +
+// epic) and write the SAME shared alert/drawing keys. Cross-tab, another tab's edit
+// reaches this tab's localStorage via /ws/state WITHOUT firing this tab's in-memory
+// alerts signal, so a mounted cell can hold a STALE overlay set. Its next persist()
+// then blows away what the other tab stored — the reported "alerts/drawings vanish
+// when the app is open in two tabs" data loss. The fix (App.onBackendPush) reconciles
+// a cell to storage on every relevant remote push BEFORE it can persist a stale set.
+describe("OverlayManager cross-tab shared-storage stomp (two same-epic/scope cells)", () => {
+  const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
+  function cell() {
+    const chart = new FakeChart();
+    const m = new OverlayManager();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    m.attach(chart as any);
+    m.setScope("tab.A");
+    m.setEpic("US100");
+    m.rehydrate(); // real cells rehydrate on mount; arms persist()'s epic guard
+    return { chart, m };
+  }
+
+  it("a cell that reconciles before persisting keeps alerts another tab stored (the fix)", () => {
+    const A = cell();
+    const B = cell(); // second tab, same scope + epic → shared storage keys
+    // Tab A adds two alerts (shared storage now [100, 200]). Tab B, mounted earlier,
+    // has NOT materialised them — a real cross-tab push updates localStorage but does
+    // not fire THIS tab's alerts signal.
+    A.m.addAlert(100, cfg);
+    A.m.addAlert(200, cfg);
+    expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100, 200]);
+    // The fix: on a remote alerts push, App bumps the alerts signal, so every mounted
+    // same-epic cell reconciles to storage BEFORE it can persist a stale set.
+    B.m.reconcileAlerts();
+    // Tab B now draws a line — persist() writes B's whole set. Because B reconciled,
+    // its set includes A's alerts, so the shared list survives.
+    B.m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
+    expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100, 200]);
+  });
+
+  it("documents the bug: a STALE cell's persist wipes alerts it never reconciled", () => {
+    const A = cell();
+    const B = cell();
+    A.m.addAlert(100, cfg);
+    A.m.addAlert(200, cfg);
+    // B never reconciled: any B action that persists (here, drawing a line) writes B's
+    // EMPTY alert set over the shared key → A's alerts vanish, untriggered. This is why
+    // the push handler MUST reconcile mounted cells; overlays alone can't prevent it.
+    B.m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
+    expect(P.loadAlerts("US100")).toEqual([]);
+  });
+});
+
+describe("parseAlertsStateKey (routing per-epic alert pushes to reconcile)", () => {
+  it("matches a per-epic alerts key and extracts the epic; rejects others", () => {
+    expect(P.parseAlertsStateKey("auto-trader.b.capital-live.alerts.OIL_CRUDE")).toBe("OIL_CRUDE");
+    expect(P.parseAlertsStateKey("auto-trader.b.capital.alerts.US100")).toBe("US100");
+    // Per-cell drawing key (must remount, not bumpAlerts) → not an alerts key.
+    expect(P.parseAlertsStateKey("auto-trader.tab.abc.drawings.OIL_CRUDE")).toBeNull();
+    // Layout / settings keys → not alerts.
+    expect(P.parseAlertsStateKey("auto-trader.b.capital.tabs")).toBeNull();
+    expect(P.parseAlertsStateKey("auto-trader.settings")).toBeNull();
+  });
+});
+
 describe("OverlayManager setExtend preserves extendData (text + intervals survive name-swap)", () => {
   it("text and pinned intervals ride through segment -> ray -> straight", () => {
     const { m } = setup();
