@@ -133,17 +133,16 @@ describe("BacktestSettingsModal rule duplicate/copy/paste", () => {
 });
 
 describe("chart-operand entry points", () => {
-  it("an empty rule group offers '+ Rule from chart' and opens the picker", () => {
+  it("an empty rule group offers '+ Rule from chart' (footer) and opens the picker", () => {
     renderModal();
     openStrategy();
-    // Empty the seeded "Buy to open" group so the empty-state entry point (the
-    // reported bug — no pre-added rule needed) is what's actually exercised.
+    // Empty the seeded "Buy to open" group so the empty group is what's exercised.
     const entry = groupSection("Buy to open");
     fireEvent.click(within(entry).getByLabelText("Delete rule"));
     expect(ruleRows(entry)).toHaveLength(0);
-    // Both the empty-state hint and the footer offer it once the group is empty.
+    // The always-present footer offers it exactly once (no redundant empty-state copy).
     const btns = within(entry).getAllByRole("button", { name: "+ Rule from chart" });
-    expect(btns.length).toBeGreaterThan(0);
+    expect(btns).toHaveLength(1);
     fireEvent.click(btns[0]);
     // No controller in the test harness -> picker shows its empty state.
     expect(screen.getByText(/No indicators on this chart/i)).toBeTruthy();
@@ -154,5 +153,18 @@ describe("chart-operand entry points", () => {
     openStrategy();
     fireEvent.click(screen.getAllByRole("button", { name: "+ Add rule" })[0]);
     expect(screen.getAllByRole("button", { name: "Add from chart" }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("parked side", () => {
+  it("makes the whole side inert when its trade toggle is off (switch stays live)", () => {
+    renderModal();
+    openStrategy();
+    const sideRules = groupSection("Buy to open").closest(".bt-side-rules") as HTMLElement;
+    expect(sideRules.hasAttribute("inert")).toBe(false);
+    // Toggle the long side off.
+    fireEvent.click(screen.getByRole("switch", { name: "Trade the long side" }));
+    expect(sideRules.hasAttribute("inert")).toBe(true);
+    expect(sideRules.className).toContain("bt-parked");
   });
 });

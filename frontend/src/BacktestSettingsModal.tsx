@@ -1332,7 +1332,10 @@ function SidePanel({
           Rules are kept — the {side} side won't open or close positions until you switch it back on.
         </div>
       )}
-      <div className={`bt-side-rules${enabled ? "" : " bt-parked"}`}>
+      {/* When the side is parked, `inert` makes every rule/field/button inside
+          non-interactive (pointer AND keyboard) — the switch above stays live so
+          it can be turned back on. `.bt-parked` supplies the dimmed visual cue. */}
+      <div className={`bt-side-rules${enabled ? "" : " bt-parked"}`} inert={!enabled}>
         <RuleGroupSection
           title={isLong ? "Buy to open" : "Sell to open"}
           info={`Conditions that open a ${side} position. Multiple rules combine with the AND/OR switch.`}
@@ -1732,21 +1735,7 @@ export function RuleGroupSection({
   return (
     <Section title={title} info={info}>
       {group.rules.length === 0 && (
-        <div className="al-note bt-empty-rules">
-          {emptyHint}
-          {openChartPicker && (
-            <div className="bt-empty-actions">
-              <Tooltip content="Add a rule seeded from a chart indicator or drawing">
-                <button
-                  className="ghost"
-                  onClick={() => openChartPicker((op) => onChange({ ...group, rules: [ruleFromChartOperand(op)] }))}
-                >
-                  + Rule from chart
-                </button>
-              </Tooltip>
-            </div>
-          )}
-        </div>
+        <div className="al-note bt-empty-rules">{emptyHint}</div>
       )}
       {group.rules.length > 0 && (
         <div className="bt-rule-groophead">
