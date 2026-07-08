@@ -1275,7 +1275,10 @@ export default function ChartCore({
   const tradePillLeftRef = useRef<number | null>(null);
   // The hovered trade id — drives the pill hover-lift (soft shadow + red close). Kept
   // as light state so a hover only toggles a CSS class, not a full pill rebuild.
-  const [hoveredTradeId, setHoveredTradeId] = useState<string | null>(null);
+  // The hovered pill, keyed "tradeId:field" — ONLY the line under the cursor (not the
+  // whole trade), so its hover-lift shadow is scoped to that one pill. Hover-only: a
+  // selected-but-unhovered pill gets no shadow. String-encoded so React dedupes.
+  const [hoveredPillKey, setHoveredPillKey] = useState<string | null>(null);
   // The focused pill, keyed "tradeId:field" — the selected line wins, else the hovered
   // one. Drives z-order so an overlapped pill in focus rises above its neighbours. Encoded
   // as a string so React dedupes: staying on the same line doesn't re-render.
@@ -2562,6 +2565,8 @@ export default function ChartCore({
       }
       hoveredFieldRef.current = hoverField;
       setTradeHovered(hoverTradeId);
+      // Hover-lift shadow is scoped to the single line under the cursor, not the trade.
+      setHoveredPillKey(hoverTradeId ? `${hoverTradeId}:${hoverField}` : null);
       // Focus for z-order: a selected line wins, else the hovered line. Set here (not only
       // via the signal) so moving between fields of the SAME hovered trade — which doesn't
       // change the signal — still re-tops the pill under the cursor.
@@ -3076,8 +3081,6 @@ export default function ChartCore({
           else tradePillLeftRef.current = null;
         }
         if (selectedChanged || fieldChanged) redrawRef.current();
-        // Drive the pill hover-lift (cheap: React bails when the id is unchanged).
-        setHoveredTradeId(ui.hovered);
         // Keep the focused pill (z-order) in sync when selection changes without a mouse
         // move — e.g. selecting a trade from its dock row. Selected line wins, else hover.
         {
@@ -5583,7 +5586,7 @@ export default function ChartCore({
         return (
           <div
             key={`${p.tradeId}:${p.field}`}
-            className={`trade-pill tp-line-${p.field}${p.tradeId === hoveredTradeId ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
+            className={`trade-pill tp-line-${p.field}${`${p.tradeId}:${p.field}` === hoveredPillKey ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
             style={{
               top: p.y,
               left: TRADE_PILL_LEFT,
