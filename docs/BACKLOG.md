@@ -5,6 +5,13 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Specced, ready to implement
 
+- **Tauri menu-bar Mac app** — thin always-on native shell that loads the
+  existing localhost UI so the browser-driven live engine can't be closed by
+  accident. Menu-bar tray icon + status glyph, ⌘⌥T hotkey, close/⌘W/⌘Q all hide
+  (tray Quit only), user-settable URL + Settings window, launch-at-login, native
+  alert toasts, unread badge, connection splash, App-Nap prevention.
+  [spec](superpowers/specs/2026-07-08-tauri-menubar-wrapper-design.md)
+
 - **Sync indicators across layout cells** — layout-wide indicator mirroring
   (add/remove/edit propagate to all cells; AVWAP anchor fan-out).
   [spec](superpowers/specs/2026-07-07-sync-indicators-design.md)

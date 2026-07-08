@@ -28,6 +28,11 @@ We want a dedicated, always-alive Mac app that:
 The URL is **user-settable** (see Settings), defaulting to localhost but able to
 point anywhere — including a future hosted URL — without a rebuild.
 
+**No proxy handling.** The web view loads localhost, so it needs none; broker
+traffic goes through the backend (which already honors `HTTPS_PROXY`). If the
+URL is ever pointed at a hosted app, WKWebView uses the macOS system proxy
+automatically. An app-specific proxy field is explicitly deferred.
+
 ## Approach
 
 A minimal **Tauri v2** app. Tauri was chosen over Electron and over Chrome's
@@ -111,9 +116,46 @@ default above. The shell reloads the new URL immediately on save — no rebuild.
 - Result: real macOS notifications (Notification Center) that fire **even when
   the window is hidden** — which is the normal state for this app. The in-page
   toast and ping stay as-is.
-- This is the **one intentional frontend change** — isolated to `notify.ts`; no
-  other frontend file is touched. The Tauri shell adds
-  `tauri-plugin-notification` and requests notification permission on launch.
+- The Tauri shell adds `tauri-plugin-notification` and requests notification
+  permission on launch.
+
+### App Nap / background throttling prevention (correctness, not polish)
+- macOS "App Nap" and timer coalescing throttle hidden/background apps — for a
+  browser-driven live engine that runs its loop *while the window is hidden*,
+  that risks slowed timers and a stalled WebSocket.
+- The shell disables this: set `NSAppSleepDisabled` in the app's Info.plist and
+  hold a `NSProcessInfo` "background activity" assertion
+  (`.userInitiated | .idleSystemSleepDisabled` semantics via a Tauri/Rust call)
+  for the app's lifetime, so the hidden window keeps running at full speed.
+- Shell-only; no frontend change.
+
+### Menu-bar status glyph
+- The tray icon reflects live-engine health at a glance: **green** = engine
+  running/connected, **grey** = idle/stopped, **red** = disconnected/error.
+- Driven by the frontend: on each engine state transition it calls a tiny Tauri
+  command (`set_status(state)`), guarded by `window.__TAURI__` so plain-browser
+  runs are unaffected. The shell swaps the tray icon/template accordingly.
+
+### Unread alert badge
+- Alerts firing while the window is hidden accumulate an **unread count** shown
+  as a badge on the dock (and reflected in the tray). Piggybacks on the same
+  `notify()` bridge — the shell increments the badge when it posts a
+  notification while hidden.
+- **Cleared to zero** when the window is shown/focused.
+
+### Connection splash + retry
+- When the configured UI URL isn't reachable yet (backend/Vite not started),
+  the window shows a local **"Waiting for <url>…"** splash instead of a raw
+  browser error, and **auto-retries** on an interval.
+- As soon as the URL responds, it navigates to the real app. A manual **Retry**
+  button and the tray **Reload** also trigger it.
+
+### Frontend changes (summary)
+Only two small, isolated seams in `frontend/`, both guarded by `window.__TAURI__`
+so plain-browser behavior is unchanged:
+1. `lib/notify.ts` — route alert banners through the Tauri notification plugin.
+2. Engine-state emit — call `set_status(state)` where the live engine's
+   running/connected state changes. `backend/` does not change.
 
 ## Components
 
@@ -121,19 +163,21 @@ default above. The shell reloads the new URL immediately on save — no rebuild.
 tauri-shell/                    (new; lives alongside frontend/ and backend/)
   src-tauri/
     tauri.conf.json             window + bundle config
-    src/main.rs                 tray, hotkey, close-to-hide, autostart, settings
-    icons/                      menu-bar + dock/app icons
+    src/main.rs                 tray, hotkey, close-to-hide, autostart, settings,
+                                app-nap assertion, status glyph, badge, set_status cmd
+    icons/                      menu-bar (green/grey/red) + dock/app icons
   settings.html                 the small Settings window UI (URL + autostart)
+  splash.html                   "waiting for <url>…" + retry, shown until reachable
   README.md                     how to build + run
 ```
 
 Plugins: `tauri-plugin-global-shortcut`, `tauri-plugin-autostart`,
 `tauri-plugin-window-state` (remember size/position), `tauri-plugin-store`
-(persist the settings JSON).
+(persist the settings JSON), `tauri-plugin-notification`.
 
-Everything is contained in `tauri-shell/`, with **one deliberate exception** in
-the frontend for native notifications (see Notifications). `backend/` does not
-change.
+Everything is contained in `tauri-shell/`, with **two small, deliberate seams**
+in the frontend (native notifications + engine-state emit — see "Frontend
+changes"), both guarded by `window.__TAURI__`. `backend/` does not change.
 
 ## Data flow
 
@@ -145,10 +189,9 @@ networking of its own.
 
 ## Error handling
 
-- **UI URL not up yet** (backend/Vite not started): the web view shows a browser
-  "can't connect" error. Acceptable for v1; the tray **Reload** item recovers it
-  once the servers are up. (A nicer "waiting for localhost…" splash is a
-  possible later polish, not v1.)
+- **UI URL not up yet** (backend/Vite not started): the shell shows the
+  **splash** ("waiting for <url>…") and auto-retries until the URL responds,
+  then navigates to the app (see Connection splash).
 - **Wedged / blank UI:** tray **Reload** re-navigates.
 - **Charts render wrong in WebKit:** caught in the first verification step →
   Electron fallback (see Approach).
@@ -171,6 +214,14 @@ Manual, since it's a personal shell:
    with the menu-bar icon present.
 8. **Native notification** — fire an alert while the window is hidden; a macOS
    banner appears and clicking it shows the window.
+9. **Status glyph** — start/stop/disconnect the engine; tray icon turns
+   green/grey/red accordingly.
+10. **Unread badge** — fire alerts while hidden → dock badge counts them; opening
+    the window clears it.
+11. **Connection splash** — launch with servers down → splash + retry; start the
+    servers → it navigates to the app on its own.
+12. **App Nap** — with the window hidden and the machine otherwise idle, the
+    engine's timers/WebSocket keep ticking at full rate (spot-check timestamps).
 
 ## Resolved decisions
 
