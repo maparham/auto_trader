@@ -94,6 +94,41 @@ describe("stored-alert direct edits (loadStoredAlert / updateStoredAlert / delet
     P.deleteStoredAlert("US100", "ghost"); // no-op
     expect(P.loadAlerts("US100").map((x) => x.id)).toEqual(["a2"]);
   });
+
+  it("addStoredAlert appends a row, preserving its id + createdAt", () => {
+    P.saveAlerts("US100", [A]);
+    P.addStoredAlert("US100", {
+      id: "a2", level: 7, condition: "less", trigger: "once", message: "hi",
+      expiresAt: null, notify: { toast: true, browser: true, sound: true }, createdAt: 4242,
+    });
+    const list = P.loadAlerts("US100");
+    expect(list.map((x) => x.id)).toEqual(["a1", "a2"]);
+    const a2 = list.find((x) => x.id === "a2")!;
+    expect(a2.level).toBe(7);
+    expect(a2.createdAt).toBe(4242);
+  });
+
+  it("addStoredAlert is idempotent by id (a re-add of the same id is a no-op)", () => {
+    P.saveAlerts("US100", [A]);
+    P.addStoredAlert("US100", { ...A, level: 999 }); // same id, different level
+    const list = P.loadAlerts("US100");
+    expect(list).toHaveLength(1); // not duplicated
+    expect(list[0].level).toBe(5); // original row untouched
+  });
+
+  it("addStoredAlert leaves a legacy sibling byte-for-byte (no id/default backfill)", () => {
+    // A legacy row (no stored id) must not be re-normalized when a new alert is
+    // appended — that would mint+lock its backfilled id from the wrong index.
+    const legacyRaw = [{ level: 3, condition: "crossing" }];
+    localStorage.setItem("auto-trader.b.capital.alerts.BTC", JSON.stringify(legacyRaw));
+    P.addStoredAlert("BTC", {
+      id: "new1", level: 9, condition: "greater", trigger: "every", message: "",
+      expiresAt: null, notify: { toast: true, browser: true, sound: true }, createdAt: 1,
+    });
+    const rawAfter = JSON.parse(localStorage.getItem("auto-trader.b.capital.alerts.BTC")!);
+    expect(rawAfter[0]).toEqual({ level: 3, condition: "crossing" }); // sibling verbatim
+    expect(rawAfter[1].id).toBe("new1");
+  });
 });
 
 describe("loadTabs migration (v1 single-chart → cell-based)", () => {

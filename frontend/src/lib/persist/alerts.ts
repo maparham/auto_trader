@@ -204,6 +204,21 @@ export function updateStoredAlert(
   if (changed) saveAlerts(epic, next, broker);
 }
 
+// Append one alert to the epic's stored list, keyed by its stable id. Idempotent:
+// a re-add of an id already present is a no-op (so a double-dispatch, or a
+// create-then-reconcile, can't duplicate). The new row keeps the caller's id +
+// createdAt. Existing rows are written back BYTE-FOR-BYTE (not re-normalized), so
+// appending never mints/locks a legacy sibling's backfilled id from a stale index.
+export function addStoredAlert(
+  epic: string,
+  alert: SavedAlert,
+  broker: string = getPersistBroker(),
+): void {
+  const raw = loadAlerts(epic, broker);
+  if (raw.some((r, i) => normalizeAlert(r, i).id === alert.id)) return; // already present
+  saveAlerts(epic, [...raw, alert], broker);
+}
+
 // Remove a stored alert by its (normalized) stable id. No-op if absent.
 export function deleteStoredAlert(
   epic: string,

@@ -32,7 +32,7 @@ import { openLive, DEFAULT_BROKER, type LiveHandle } from "./feed";
 import {
   loadAlerts,
   loadAlertsRaw,
-  saveAlerts,
+  deleteStoredAlert,
   pushTriggered,
   normalizeAlert,
   type ChartTab,
@@ -175,15 +175,18 @@ class AlertEngine {
     if (!alerts.length) return;
 
     let firedSound = false;
-    const survivors: SavedAlert[] = [];
-    let removed = false;
+    // Ids removed this tick (fired "once" / expired). Removed by a by-id delete
+    // intent below — never a whole-list saveAlerts(survivors) overwrite, so a
+    // concurrent user/peer edit on this epic can't be clobbered by the engine
+    // re-writing a stale survivor list. The engine never ADDS alerts.
+    const removedIds: string[] = [];
 
     for (const a of alerts) {
       const key = stateKey(epic, a.id);
       // Expired alerts are pruned WITHOUT firing (client-side enforcement —
       // only checked while a tab is open). Treated like a fired "once".
       if (a.expiresAt != null && now > a.expiresAt) {
-        removed = true;
+        removedIds.push(a.id);
         this.forget(key);
         continue;
       }
@@ -216,18 +219,18 @@ class AlertEngine {
         this.fire(epic, a, price);
       }
       if (r.remove) {
-        removed = true;
+        removedIds.push(a.id);
         this.forget(key);
-        continue; // dropped from survivors → removed from storage below
+        continue; // removed from storage by id below
       }
       if (r.nextArmed !== armed) this.armed.set(key, r.nextArmed);
-      survivors.push(a);
     }
 
-    if (removed) {
-      // Persist removal of fired "once"/expired alerts; the active cell's overlay
-      // reconciles off the alerts signal (drops lines no longer in storage).
-      saveAlerts(epic, survivors, this.brokerId);
+    if (removedIds.length) {
+      // Remove each fired "once"/expired alert by id (loop if a tick removed more
+      // than one); the active cell's overlay reconciles off the alerts signal
+      // (drops lines no longer in storage).
+      for (const id of removedIds) deleteStoredAlert(epic, id, this.brokerId);
       bumpAlerts();
     }
 

@@ -1,7 +1,26 @@
 # Alert write decoupling — targeted per-ID edits instead of full-snapshot overwrite
 
 **Date:** 2026-07-08
-**Status:** Approved (design)
+**Status:** Implemented (2026-07-08)
+
+## Implementation notes
+
+- `addAlert` draws the line **synchronously** via `materializeSavedAlert` (approach A)
+  rather than deferring the draw to the signal→reconcile pass. This preserves the
+  `addAlert(): string | null` overlay-id contract every caller/test depends on, still
+  honors the invariant (the write is `addStoredAlert`; `persist()` never derives an
+  alert write), and the self-bump's reconcile is idempotent (finds the alert already
+  present by id → no double-draw). The spec's "create-then-select" risk does not arise:
+  no caller selects on create today, so no selection behavior was added.
+- The `persist()` guards (`hydrating`, `hydratedEpic === epic`) are re-applied at every
+  by-id alert write site via `canWriteAlerts()` — moving alert writes out from behind
+  `persist()` would otherwise lose them (the symbol-change-window test proves this).
+- Section 6 (debug instrumentation removal) was a no-op: no `debugLog`/`overlay-log`/
+  `mgrId` instrumentation existed in the tree.
+- The engine arm is a behavior-preserving refactor (per-id `deleteStoredAlert` instead
+  of `saveAlerts(survivors)`); its concurrency benefit isn't observable single-threaded,
+  so existing engine tests (updated to assert the by-id delete end-state) stand as the
+  guard rather than a fabricated new test.
 
 ## Problem
 

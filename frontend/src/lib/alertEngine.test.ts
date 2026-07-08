@@ -19,17 +19,22 @@ vi.mock("./feed", () => ({
 
 // In-memory alert store keyed by epic (alerts are global per instrument).
 const store = new Map<string, unknown[]>();
-const saveSpy = vi.fn();
+const deleteSpy = vi.fn();
 const pushSpy = vi.fn();
+// The mock's id derivation, matching normalizeAlert below (stored id, else `lg-<level>`).
+const rowId = (a: Record<string, unknown>) => (a.id as string) ?? `lg-${a.level}`;
 
 vi.mock("./persist", () => ({
   loadAlerts: (epic: string) => store.get(epic) ?? [],
   // Raw cache key for onTick: stringify the stored list so it flips whenever the
   // list changes (mirrors the real localStorage-backed getItem).
   loadAlertsRaw: (epic: string) => (store.has(epic) ? JSON.stringify(store.get(epic)) : null),
-  saveAlerts: (epic: string, list: unknown[]) => {
-    saveSpy(epic, list);
-    store.set(epic, list);
+  // The engine now removes fired-once/expired alerts by id (not a whole-list save).
+  // Mirror the real deleteStoredAlert: re-read the list and drop only the matching id.
+  deleteStoredAlert: (epic: string, id: string) => {
+    deleteSpy(epic, id);
+    const list = (store.get(epic) ?? []) as Record<string, unknown>[];
+    store.set(epic, list.filter((a) => rowId(a) !== id));
   },
   pushTriggered: (e: unknown) => pushSpy(e),
   normalizeAlert: (a: Record<string, unknown>) => ({
@@ -69,7 +74,7 @@ const tab = (id: string, epic: string) => ({
 beforeEach(() => {
   alertEngine.stop();
   store.clear();
-  saveSpy.mockClear();
+  deleteSpy.mockClear();
   pushSpy.mockClear();
   closeSpy.mockClear();
   emit = undefined;
@@ -96,8 +101,9 @@ describe("alertEngine (background firing)", () => {
     emit!({ close: 99 });
     emit!({ close: 101 }); // fires once
     expect(pushSpy).toHaveBeenCalledTimes(1);
-    // Persisted with the alert removed.
-    expect(saveSpy).toHaveBeenCalledWith("BTC", []);
+    // Removed from storage by a by-id delete intent, leaving the list empty.
+    expect(deleteSpy).toHaveBeenCalledWith("BTC", "lg-100");
+    expect(store.get("BTC")).toEqual([]);
 
     // Subsequent crossings must NOT re-fire (it's gone from storage).
     emit!({ close: 99 });
@@ -144,7 +150,8 @@ describe("alertEngine (background firing)", () => {
     emit!({ close: 99 });
     emit!({ close: 101 }); // crosses 100 — but the alert is expired
     expect(pushSpy).not.toHaveBeenCalled();
-    expect(saveSpy).toHaveBeenCalledWith("BTC", []); // pruned from storage
+    expect(deleteSpy).toHaveBeenCalledWith("BTC", "lg-100"); // pruned from storage by id
+    expect(store.get("BTC")).toEqual([]);
   });
 
   it("does not fire on the very first tick (two-sample crossing guard)", () => {
@@ -171,7 +178,7 @@ describe("alertEngine (background firing)", () => {
     store.set("BTC", alert(104));
     emit!({ close: 103 }); // 106 -> 103 would cross a stale 104; must NOT fire
     expect(pushSpy).not.toHaveBeenCalled();
-    expect(saveSpy).not.toHaveBeenCalledWith("BTC", []); // not wiped
+    expect(deleteSpy).not.toHaveBeenCalled(); // not removed
     expect(store.get("BTC")).toHaveLength(1); // alert survives
 
     // A GENUINE crossing after the move still fires (we re-seeded, didn't mute).

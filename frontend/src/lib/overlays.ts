@@ -19,7 +19,9 @@ import {
   loadDrawings,
   saveDrawings,
   loadAlerts,
-  saveAlerts,
+  addStoredAlert,
+  updateStoredAlert,
+  deleteStoredAlert,
   normalizeAlert,
   newAlertId,
   loadDrawingDefault,
@@ -384,6 +386,37 @@ export class OverlayManager {
     this.alertsListener?.(); // ChartCore: redraw on-chart axis pills
     bumpAlerts(); // alerts sidebar: re-pull the live list (add / delete / drag)
   }
+
+  // May an alert INTENT write storage right now? Mirrors the two guards persist()
+  // used to enforce, re-applied at each by-id alert write site now that alert writes
+  // no longer flow through persist(): the chart must be mounted, we must not be mid
+  // programmatic rebuild (hydrating), and `entries` must reflect the current epic
+  // (else the symbol-change load window would write the wrong epic's shared list).
+  private canWriteAlerts(): boolean {
+    return !!this.chart && !this.hydrating && this.hydratedEpic === this.epic;
+  }
+
+  // Write one alert edit (level + cfg) to storage by its stable id. The single seam
+  // for edit / drag-end / trigger-toggle — each a genuine user intent. No-op when a
+  // write isn't allowed (rebuild / symbol-change window) or the overlay has no saved
+  // id yet. Storage is source of truth; the on-chart line is updated by the caller.
+  private writeAlertUpdate(ovId: string, level: number, cfg: AlertConfig): void {
+    const savedId = this.alertIds.get(ovId);
+    if (!savedId || !this.canWriteAlerts()) return;
+    updateStoredAlert(
+      this.epic,
+      savedId,
+      level,
+      {
+        condition: cfg.condition,
+        trigger: cfg.trigger,
+        message: cfg.message,
+        expiresAt: cfg.expiresAt ?? null,
+        notify: cfg.notify ?? { toast: true, browser: true, sound: true },
+      },
+      this.broker || undefined,
+    );
+  }
   // The click-selected alert line (null when none). ChartCore freezes that line's
   // pill in place — a selected pill must stay put so its delete button is reachable.
   getSelectedAlertId(): string | null {
@@ -419,14 +452,18 @@ export class OverlayManager {
   endAlertDrag(id: string): void {
     this.draggingAlert = false;
     this.draggingAlertId = null;
-    // Quantize the raw cursor-pixel price to instrument precision before persisting,
-    // so the stored level matches the rendered pill (mirrors onPressedMoveEnd).
+    // Quantize the raw cursor-pixel price to instrument precision before writing, so
+    // the stored level matches the rendered pill (mirrors onPressedMoveEnd). The
+    // dropped level is written by the by-id update intent — NOT persist() (now
+    // drawings-only), or the level wouldn't stick and the ensuing reconcile would
+    // snap the line back to its pre-drag price.
     const raw = this.chart?.getOverlayById(id)?.points?.[0]?.value;
     if (raw != null) {
       const rounded = this.roundLevel(raw);
       if (rounded !== raw) this.chart?.overrideOverlay({ id, points: [{ value: rounded }] });
+      const cfg = this.alertCfg.get(id);
+      if (cfg) this.writeAlertUpdate(id, rounded, cfg);
     }
-    this.persist();
     this.notifyAlerts();
   }
 
@@ -752,8 +789,10 @@ export class OverlayManager {
     if (!this.chart || this.entries.get(id) !== "alert") return;
     const cfg = this.alertCfg.get(id);
     if (!cfg) return;
-    this.alertCfg.set(id, { ...cfg, trigger: cfg.trigger === "once" ? "every" : "once" });
-    this.persist();
+    const next: AlertConfig = { ...cfg, trigger: cfg.trigger === "once" ? "every" : "once" };
+    this.alertCfg.set(id, next);
+    const level = this.chart.getOverlayById(id)?.points?.[0]?.value;
+    if (level != null) this.writeAlertUpdate(id, level, next); // by-id intent, not persist()
     this.notifyAlerts();
   }
 
@@ -844,9 +883,10 @@ export class OverlayManager {
         return false;
       },
       onPressedMoveEnd: (e) => {
-        // A drag leaves the alert line at a raw cursor-pixel price. Quantize it
-        // back to the instrument precision BEFORE persisting, so the stored level
-        // matches the rendered pill (and reconcileAlerts' String(level) key agrees).
+        // A drag leaves the alert line at a raw cursor-pixel price. Quantize it back
+        // to the instrument precision BEFORE writing, so the stored level matches the
+        // rendered pill (and reconcileAlerts' level compare agrees). The dropped level
+        // is written by a by-id storage intent, never a chart-snapshot persist().
         if (isAlert) {
           this.draggingAlert = false;
           this.draggingAlertId = null;
@@ -854,13 +894,19 @@ export class OverlayManager {
           if (raw != null) {
             const rounded = this.roundLevel(raw);
             if (rounded !== raw) this.chart?.overrideOverlay({ id: e.overlay.id, points: [{ value: rounded }] });
+            const cfg = this.alertCfg.get(e.overlay.id);
+            if (cfg) this.writeAlertUpdate(e.overlay.id, rounded, cfg);
           }
+          this.notifyAlerts();
+          return false;
         }
-        this.persist();
-        if (isAlert) this.notifyAlerts();
+        this.persist(); // a dragged drawing endpoint
         return false;
       },
       onRemoved: (e) => {
+        // Grab the alert's stable saved id BEFORE the id maps are cleared below —
+        // a genuine user delete writes a by-id delete intent to storage (guarded).
+        const alertSavedId = isAlert ? this.alertIds.get(e.overlay.id) ?? null : null;
         this.entries.delete(e.overlay.id);
         if (this.measureId === e.overlay.id) {
           this.measureId = null;
@@ -901,7 +947,14 @@ export class OverlayManager {
           this.selectedDrawingId = null;
           this.drawingListener?.();
         }
-        if (!this.hydrating) this.persist();
+        if (!this.hydrating) this.persist(); // drawings-only; a drawing was removed
+        // A GENUINE user delete (not programmatic teardown/reconcile churn) removes
+        // the alert from storage by id. canWriteAlerts() gates out hydrating rebuilds
+        // and the symbol-change window — the same holes that made a snapshot persist()
+        // catastrophic. deleteStoredAlert is a no-op if the id is already gone.
+        if (isAlert && alertSavedId != null && this.canWriteAlerts()) {
+          deleteStoredAlert(this.epic, alertSavedId, this.broker || undefined);
+        }
         // Guarded (hydrating) removals are programmatic churn — rehydrate tears
         // every overlay down and re-notifies ONCE at its end, and reconcile
         // notifies itself when something changed. Bumping the alerts signal per
@@ -1658,18 +1711,20 @@ export class OverlayManager {
     return newId;
   }
 
-  // Create a configured price alert (from the modal). Draggable priceLine. Mints a
-  // fresh stable id now, so the alert keeps one identity across drags and edits.
+  // Create a configured price alert (from the modal). Draggable priceLine that mints
+  // a fresh stable id now, so it keeps one identity across drags and edits. The write
+  // is a by-id storage intent (addStoredAlert), NOT a persist() of the chart snapshot;
+  // the line is then materialised through the same single draw path rehydrate/reconcile
+  // use, so this cell and every same-epic peer render identically. Returns the new
+  // overlay id (the synchronous contract callers rely on), or null in a rebuild /
+  // symbol-change window where a write isn't allowed.
   addAlert(level: number, cfg: AlertConfig): string | null {
+    if (!this.canWriteAlerts()) return null;
     level = this.roundLevel(level);
-    const id = this.create("alert", "priceLine", [{ value: level }], ALERT_LINE_STYLE);
-    if (id) {
-      this.alertCfg.set(id, cfg);
-      this.alertIds.set(id, newAlertId());
-      this.alertCreatedAt.set(id, Date.now());
-      this.persist();
-      this.notifyAlerts();
-    }
+    const saved = normalizeAlert({ id: newAlertId(), level, ...cfg, createdAt: Date.now() });
+    addStoredAlert(this.epic, saved, this.broker || undefined);
+    const id = this.materializeSavedAlert(saved);
+    if (id) this.notifyAlerts(); // peers reconcile off the bump; sidebar re-pulls
     return id;
   }
 
@@ -1680,9 +1735,9 @@ export class OverlayManager {
   updateAlert(id: string, level: number, cfg: AlertConfig): void {
     if (!this.chart || this.entries.get(id) !== "alert") return;
     level = this.roundLevel(level);
-    this.chart.overrideOverlay({ id, points: [{ value: level }] });
+    this.chart.overrideOverlay({ id, points: [{ value: level }] }); // update the view
     this.alertCfg.set(id, cfg);
-    this.persist();
+    this.writeAlertUpdate(id, level, cfg); // by-id storage intent, not persist()
     this.notifyAlerts();
   }
 
@@ -2087,51 +2142,43 @@ export class OverlayManager {
     });
   }
 
+  // persist() is DRAWINGS-ONLY. Alerts are never written from the chart's in-memory
+  // snapshot — they mutate through the by-id storage intents (addStoredAlert /
+  // updateStoredAlert / deleteStoredAlert) at each user-intent site instead. That is
+  // the alert-write decoupling: a redraw/rehydrate/drawing action produces no alert
+  // write, so it structurally cannot stomp the shared per-epic alert list. See
+  // docs/superpowers/specs/2026-07-08-alert-write-decoupling-design.md.
   private persist(): void {
     if (this.hydrating || !this.chart) return;
     // Guard the symbol-change window: setEpic() advanced this.epic but the old
     // epic's overlays are still in `entries` until rehydrate() rebuilds. Writing now
-    // would save the OLD overlays under the NEW epic's shared global alert key.
+    // would save the OLD overlays under the NEW epic's drawings key.
     if (this.hydratedEpic !== this.epic) return;
     const drawings: SavedOverlay[] = [];
-    const alerts: SavedAlert[] = [];
     for (const [id, kind] of this.entries) {
-      if (kind === "measure" || kind === "rangeBand" || kind === "slope") continue; // transient — never persisted
+      // Alerts don't persist here (by-id intents own their writes); transient
+      // overlays never persist at all.
+      if (kind === "alert" || kind === "measure" || kind === "rangeBand" || kind === "slope") continue;
       const ov = this.chart.getOverlayById(id);
       if (!ov) continue;
-      if (kind === "alert") {
-        const level = ov.points?.[0]?.value;
-        if (level == null) continue;
-        const cfg = this.alertCfg.get(id);
-        // Reuse the alert's stable id; mint one only if somehow missing (keeps a
-        // backfilled legacy id from drifting on the next save).
-        let aid = this.alertIds.get(id);
-        if (!aid) {
-          aid = newAlertId();
-          this.alertIds.set(id, aid);
-        }
-        alerts.push(normalizeAlert({ id: aid, level, ...cfg, createdAt: this.alertCreatedAt.get(id) ?? 0 }));
-      } else {
-        drawings.push({
-          name: ov.name,
-          // Stable anchors only (timestamp/value) — see stablePoints for why a
-          // beyond-data anchor's dataIndex becomes an extrapolated timestamp.
-          points: this.stablePoints(ov.points),
-          // The stashed canonical style while this id is a ghost (faded interval/
-          // auto-hide stub) — ov.styles is the FADED color in that state, and
-          // persist() must never write that; see canonicalStyles/fadedStyles.
-          styles: this.canonicalStyles(id, ov) ?? undefined,
-          lock: ov.lock,
-          // Persist INTENT, not the live (effective) flag — the overlay's `visible`
-          // is interval-filtered, so reading it here would corrupt the user's choice
-          // when they save while on a filtered interval. extendData carries intent.
-          visible: asDrawingExtra(ov.extendData).userVisible ?? true,
-          zLevel: ov.zLevel,
-          extendData: ov.extendData,
-        });
-      }
+      drawings.push({
+        name: ov.name,
+        // Stable anchors only (timestamp/value) — see stablePoints for why a
+        // beyond-data anchor's dataIndex becomes an extrapolated timestamp.
+        points: this.stablePoints(ov.points),
+        // The stashed canonical style while this id is a ghost (faded interval/
+        // auto-hide stub) — ov.styles is the FADED color in that state, and
+        // persist() must never write that; see canonicalStyles/fadedStyles.
+        styles: this.canonicalStyles(id, ov) ?? undefined,
+        lock: ov.lock,
+        // Persist INTENT, not the live (effective) flag — the overlay's `visible`
+        // is interval-filtered, so reading it here would corrupt the user's choice
+        // when they save while on a filtered interval. extendData carries intent.
+        visible: asDrawingExtra(ov.extendData).userVisible ?? true,
+        zLevel: ov.zLevel,
+        extendData: ov.extendData,
+      });
     }
     saveDrawings(this.scope, this.epic, drawings);
-    saveAlerts(this.epic, alerts, this.broker || undefined);
   }
 }

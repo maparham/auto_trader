@@ -520,6 +520,70 @@ describe("OverlayManager reconcile re-entrancy (self-triggered alerts signal)", 
   });
 });
 
+// The alert-write decoupling: persist() is drawings-only. Alert mutations go through
+// by-id storage intents (add/update/delete), never a whole-list snapshot of the
+// chart's view — so a redraw/rehydrate/drawing action writes the alerts key ZERO
+// times, and only a genuine user intent touches it. See docs
+// 2026-07-08-alert-write-decoupling-design.md.
+describe("OverlayManager alert-write decoupling (persist is drawings-only)", () => {
+  const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
+  // Count localStorage writes to THIS epic's shared alerts key.
+  function alertWrites(spy: ReturnType<typeof vi.spyOn>) {
+    return spy.mock.calls.filter(([k]) => String(k).includes(".alerts.")).length;
+  }
+
+  it("a drawing action does not write the alerts key", () => {
+    const { m } = setup();
+    m.addAlert(100, cfg); // one legitimate alert intent
+    const spy = vi.spyOn(localStorage, "setItem");
+    m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
+    expect(alertWrites(spy)).toBe(0); // drawing persist must not touch alerts
+    spy.mockRestore();
+  });
+
+  it("a full rehydrate of a cell holding alerts + drawings writes the alerts key zero times", () => {
+    const { m } = setup();
+    m.addAlert(100, cfg);
+    m.addAlert(200, cfg);
+    m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
+    // Wire the cell's reconcile to the GLOBAL alerts signal exactly as ChartCore does,
+    // so a teardown removal that rings the signal re-enters reconcileAlerts live.
+    const unsub = alertsChanged.subscribe(() => m.reconcileAlerts());
+    const spy = vi.spyOn(localStorage, "setItem");
+    m.rehydrate(); // teardown + rebuild — a pure view op
+    expect(alertWrites(spy)).toBe(0); // the class is dead: no view op writes alerts
+    unsub();
+    spy.mockRestore();
+    expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100, 200]); // survived
+  });
+
+  it("addAlert routes through the storage intent (line drawn + selectable + persisted)", () => {
+    const { chart, m } = setup();
+    const ovId = m.addAlert(100, cfg)!;
+    expect(ovId).toBeTruthy(); // synchronous overlay id contract preserved
+    expect(chart.getOverlayById(ovId)).not.toBeNull(); // line drawn
+    const saved = P.loadAlerts("US100");
+    expect(saved).toHaveLength(1);
+    expect(saved[0].level).toBe(100);
+  });
+
+  it("endAlertDrag persists the dropped level by id (ChartCore-driven drag commit)", () => {
+    const { m } = setup();
+    const ovId = m.addAlert(100, cfg)!;
+    const savedId = P.loadAlerts("US100")[0].id;
+    // The ChartCore manual-drag gesture: begin → move → end. The drop must persist
+    // the new level (via the by-id update intent), keeping the same stable id — not
+    // rely on persist(), which is now drawings-only and would leave storage at 100.
+    m.beginAlertDrag(ovId);
+    m.dragAlertTo(ovId, 105);
+    m.endAlertDrag(ovId);
+    const saved = P.loadAlerts("US100");
+    expect(saved).toHaveLength(1);
+    expect(saved[0].id).toBe(savedId); // identity survives the drag
+    expect(saved[0].level).toBe(105); // dropped level stuck
+  });
+});
+
 // Two browser tabs open the SAME workspace → both mount the SAME cell (same scope +
 // epic) and write the SAME shared alert/drawing keys. Cross-tab, another tab's edit
 // reaches this tab's localStorage via /ws/state WITHOUT firing this tab's in-memory
@@ -558,16 +622,18 @@ describe("OverlayManager cross-tab shared-storage stomp (two same-epic/scope cel
     expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100, 200]);
   });
 
-  it("documents the bug: a STALE cell's persist wipes alerts it never reconciled", () => {
+  it("a STALE cell's drawing persist can no longer wipe alerts it never reconciled", () => {
+    // This inverts the old "documents the bug" case. Before the write decoupling,
+    // persist() wrote BOTH keys from the chart's in-memory snapshot, so a stale B
+    // drawing a line stomped A's alerts to []. Now persist() is drawings-only —
+    // alert writes are by-id intents — so B's drawing can't touch the alerts key at
+    // all, and A's alerts survive even without B reconciling first.
     const A = cell();
     const B = cell();
     A.m.addAlert(100, cfg);
     A.m.addAlert(200, cfg);
-    // B never reconciled: any B action that persists (here, drawing a line) writes B's
-    // EMPTY alert set over the shared key → A's alerts vanish, untriggered. This is why
-    // the push handler MUST reconcile mounted cells; overlays alone can't prevent it.
     B.m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
-    expect(P.loadAlerts("US100")).toEqual([]);
+    expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100, 200]);
   });
 });
 
