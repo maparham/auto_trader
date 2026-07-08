@@ -21,6 +21,7 @@ import {
   type BacktestConfig, type Operand, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe,
 } from "./backtestConfig";
 import { atrSeries } from "./atr";
+import { computePivotBands, type PivotBandsExtend } from "./indicators/pivotBands";
 import { RESOLUTION_SECONDS } from "./feed";
 
 function toNullable(arr: Array<number | undefined>): Array<number | null> {
@@ -161,6 +162,7 @@ export const LINE_KEYS: Record<string, readonly string[]> = {
   VWAP: ["vwap"],
   AVWAP: ["vwap"],
   PREV_HL: ["rollingHigh", "rollingLow", "dayHigh", "dayLow", "weekHigh", "weekLow", "anchorHigh", "anchorLow"],
+  PIVOT_BANDS: ["pivotHigh", "pivotLow"],
 };
 
 function pickLine(points: Array<Record<string, unknown>>, keys: readonly string[], line: number): Array<number | undefined> {
@@ -213,6 +215,15 @@ function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[]): Array
       if (!kind) return pts.map((p) => (line === 0 ? p.val ?? undefined : undefined));
       const rsi = pts.map((p) => p.val);
       return divergenceEventSeries(candles, rsi, cfgForKind(rext.divergence, kind), kind);
+    }
+    case "PIVOT_BANDS": {
+      // N (strength) and K (avg window) clamped exactly like the chart template
+      // (Math.max(1, …||default)) so the rule reproduces the on-chart curve — the
+      // loose `?? 0` other cases use would give N=0 and break isPivotAt.
+      const n = Math.max(1, Number(r.calcParams[0]) || 5);
+      const k = Math.max(1, Number(r.calcParams[1]) || 3);
+      const pts = computePivotBands(candles, n, k, ext as PivotBandsExtend);
+      return pickLine(pts as unknown as Array<Record<string, unknown>>, LINE_KEYS.PIVOT_BANDS, line);
     }
     default:
       return candles.map(() => undefined);

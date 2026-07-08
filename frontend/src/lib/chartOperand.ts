@@ -3,7 +3,7 @@
 // snapshot: once copied it stands alone, so editing/deleting the chart
 // instance never changes the rule.
 //
-// v1 covers the app's 8 custom indicator types minus SESSIONS (which has no price
+// Covers the app's custom indicator types minus SESSIONS (which has no price
 // line and nothing to click-select) and the straight-line drawing family. Anything
 // else (klinecharts stock built-ins, channels, fibs, vertical lines) is unsupported
 // and the copy action is greyed out with a reason.
@@ -15,7 +15,7 @@ import { PREV_HL_PERIODS } from "./indicators/prevHl";
 import { DIVERGENCE_KINDS, RSI_DIVERGENCE_DEFAULTS, type DivergenceKind, type RsiExtend } from "./customIndicators";
 
 /** Custom indicator types copyable into a rule (SESSIONS deferred). */
-const SUPPORTED_INDICATORS = new Set<string>(["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI"]);
+const SUPPORTED_INDICATORS = new Set<string>(["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI", "PIVOT_BANDS"]);
 /** Straight-line drawings evaluable as a per-bar price series. */
 const SUPPORTED_DRAWINGS = new Set<string>([
   "segment", "rayLine", "straightLine", "horizontalStraightLine", "priceLine",
@@ -141,6 +141,7 @@ export function recipeLabel(recipe: SeriesRecipe): string {
   }
   const t = recipe.indicatorType;
   // Types whose calcParams aren't a meaningful "(length)" label.
+  if (t === "PIVOT_BANDS") return "Pivot Bands";
   if (t === "VWAP" || t === "AVWAP" || t === "PREV_HL") return t === "PREV_HL" ? "Prev H/L" : t;
   const params = recipe.calcParams.filter((n) => Number.isFinite(n));
   return params.length ? `${t}(${params.join(", ")})` : t;
@@ -218,6 +219,13 @@ export function indicatorOutputs(indType: string, extendData: unknown, _calcPara
       return [
         { lineIndex: 0, label: "Value", base: true },
         ...DIVERGENCE_KINDS.map((k, i) => ({ lineIndex: i + 1, label: RSI_DIV_LABELS[k] })),
+      ];
+    // Pivot Bands: both step-lines, always present (no per-line style-hide). Neither
+    // is "primary", so mirror PREV_HL — no base line, both suffixed.
+    case "PIVOT_BANDS":
+      return [
+        { lineIndex: 0, label: "Pivot High" },
+        { lineIndex: 1, label: "Pivot Low" },
       ];
     // VWAP/AVWAP resolve only line 0 in computeIndicatorRecipe.
     case "VWAP":

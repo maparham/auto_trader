@@ -29,7 +29,7 @@ export interface SlopeSpec { len: number }
 
 /** The app's custom indicator types reachable as a rule operand (SESSIONS is
  * deferred — it has no price line and nothing to click-select). */
-export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI";
+export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI" | "PIVOT_BANDS";
 /** The straight-line drawing family evaluable as a per-bar price series. */
 export type DrawingKind = "segment" | "rayLine" | "straightLine" | "horizontalStraightLine" | "priceLine";
 
@@ -393,6 +393,15 @@ export function operandBaseLen(op: Operand): number {
     if (r.indicatorType === "RSI" && (r.line ?? 0) >= 1) {
       const d = (r.extend?.divergence ?? {}) as { lookbackLeft?: number; lookbackRight?: number; rangeMax?: number };
       return base + (d.rangeMax ?? 60) + (d.lookbackLeft ?? 5) + (d.lookbackRight ?? 5);
+    }
+    // Pivot Bands: a pivot at bar i confirms at i+N, and "avg" mode needs K pivots.
+    // 2N+K is the chart's established best-effort reach-back (pivots are sparse, so
+    // no fixed length guarantees one — a blank left edge is correct). N/K clamped
+    // to match the template defaults.
+    if (r.indicatorType === "PIVOT_BANDS") {
+      const n = Math.max(1, Number(r.calcParams[0]) || 5);
+      const k = Math.max(1, Number(r.calcParams[1]) || 3);
+      return 2 * n + k;
     }
     return base;
   }

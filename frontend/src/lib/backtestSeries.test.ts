@@ -14,6 +14,7 @@ vi.mock("klinecharts", () => ({
 const { buildSeries } = await import("./backtestSeries");
 const { maSeries, sma } = await import("./mtf");
 const { computeRsi, computeLr, computePrevHl, vwapFrom, detectDivergences, RSI_DIVERGENCE_DEFAULTS } = await import("./customIndicators");
+const { computePivotBands } = await import("./indicators/pivotBands");
 const { recipeKey, seriesName, operandBaseLen } = await import("./backtestConfig");
 
 // The base run is on 1-minute bars (candles() stamps every 60_000ms); no rule
@@ -408,6 +409,75 @@ describe("series operand — indicator recipes match the chart template", () => 
     const recipe = (upper.operand as Extract<Operand, { kind: "series" }>).recipe;
     const got = await seriesFor(recipe, bars);
     expect(got).toEqual(nul(computeLr(bars, 5, 2, {}).map((p) => (p as Record<string, number | undefined>).up)));
+  });
+});
+
+describe("series operand — Pivot Bands recipe", () => {
+  // A zigzag so isPivotAt finds strict swing highs/lows on the close series
+  // (candles() stamps high=low=close, so both bands detect on the same series).
+  const ZIG = candles([1, 3, 2, 4, 2, 5, 3, 6, 4, 7, 5, 8, 6]);
+
+  it("line 0 = pivotHigh, line 1 = pivotLow, matching computePivotBands()", async () => {
+    const pts = computePivotBands(ZIG, 1, 1, {}) as unknown as Array<Record<string, number | undefined>>;
+    const high = await seriesFor({ source: "indicator", indicatorType: "PIVOT_BANDS", calcParams: [1, 1], line: 0 }, ZIG);
+    const low = await seriesFor({ source: "indicator", indicatorType: "PIVOT_BANDS", calcParams: [1, 1], line: 1 }, ZIG);
+    expect(high).toEqual(nul(pts.map((p) => p.pivotHigh)));
+    expect(low).toEqual(nul(pts.map((p) => p.pivotLow)));
+    // sanity: the bands actually produced values (not an all-null parity)
+    expect(high.some((v) => v !== null)).toBe(true);
+  });
+
+  it("defaults N/K like the chart template (0/NaN → template defaults 5/3, then max 1)", async () => {
+    // A ramp up-then-down so a strict swing high exists at the default strength N=5.
+    const LONG = candles([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 2, 3, 4]);
+    const got = await seriesFor({ source: "indicator", indicatorType: "PIVOT_BANDS", calcParams: [0, 0], line: 0 }, LONG);
+    // Number(0)||5 → 5, Number(0)||3 → 3, mirroring the chart template's calc.
+    const ref = computePivotBands(LONG, 5, 3, {}) as unknown as Array<Record<string, number | undefined>>;
+    expect(got).toEqual(nul(ref.map((p) => p.pivotHigh)));
+    expect(got.some((v) => v !== null)).toBe(true);
+  });
+
+  it("carries mode/source in the recipe extend", async () => {
+    const ext = { mode: "avg" as const, source: "close" as const };
+    const got = await seriesFor({ source: "indicator", indicatorType: "PIVOT_BANDS", calcParams: [1, 2], line: 1, extend: ext }, ZIG);
+    const ref = computePivotBands(ZIG, 1, 2, ext) as unknown as Array<Record<string, number | undefined>>;
+    expect(got).toEqual(nul(ref.map((p) => p.pivotLow)));
+  });
+
+  it("a picker-built 'Pivot Low' operand resolves end-to-end", async () => {
+    const { chartOperandSources } = await import("./chartOperand");
+    const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "PIVOT_BANDS#x", indType: "PIVOT_BANDS", calcParams: [1, 1], extendData: {} });
+    const low = src.outputs.find((o) => o.operand.label.endsWith("Pivot Low"))!;
+    const recipe = (low.operand as Extract<Operand, { kind: "series" }>).recipe;
+    const got = await seriesFor(recipe, ZIG);
+    const ref = computePivotBands(ZIG, 1, 1, {}) as unknown as Array<Record<string, number | undefined>>;
+    expect(got).toEqual(nul(ref.map((p) => p.pivotLow)));
+  });
+
+  it("warm-up is 2N+K", () => {
+    const op = { kind: "series", seriesKey: "x", label: "x", recipe: { source: "indicator", indicatorType: "PIVOT_BANDS", calcParams: [5, 3], line: 0 } } as Operand;
+    expect(operandBaseLen(op)).toBe(2 * 5 + 3);
+  });
+
+  it("an MTF Pivot Bands recipe fetches the higher timeframe and forward-fills", async () => {
+    // Base window must extend past the confirmed HTF pivot's close: the n=1 pivot
+    // high is at HTF index 1 (t=300k), confirmed at index 2 (t=600k), whose 5m bar
+    // closes at 900k. 20 one-minute base bars reach t=1140k, so late bars see it.
+    const base = candles(new Array(20).fill(10)); // 1-min, t=0..1140k
+    const htf: KLineData[] = [1, 3, 2, 4].map((c, i) => ({
+      timestamp: i * 300_000, open: c, high: c, low: c, close: c, volume: 0,
+    }));
+    let requested = "";
+    const fetch: FetchTimeframe = async (r) => { requested = r; return htf; };
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "PIVOT_BANDS", calcParams: [1, 1], line: 0 },
+      base,
+      { timeframe: "MINUTE_5", fetch },
+    );
+    expect(requested).toBe("MINUTE_5");
+    // A confirmed HTF pivot high (value 3) forward-fills onto the late base bars.
+    expect(got.some((v) => v === 3)).toBe(true);
+    expect(got[0]).toBeNull(); // before any confirmed HTF pivot
   });
 });
 
