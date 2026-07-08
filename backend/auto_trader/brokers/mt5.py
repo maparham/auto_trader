@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,7 @@ from metaapi_cloud_sdk.clients.timeout_exception import TimeoutException
 from metaapi_cloud_sdk.logger import LoggerManager
 
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
+from auto_trader.core.broker_health import BrokerReconnecting
 from auto_trader.core.models import (
     Candle,
     Order,
@@ -193,6 +195,28 @@ class MT5Broker(MarketDataBroker):
 
     supports_streaming = True
 
+    # Per-call wall-clock budget for an RPC read/trade. Short so a wedged socket
+    # surfaces as "reconnecting" in seconds rather than hanging the SDK's 60s
+    # request timeout. Candle history uses a SEPARATE account path
+    # (get_historical_candles / historicalMarketDataRequestTimeout) and is not
+    # bounded by this.
+    RPC_BUDGET = 8.0
+
+    # Minimum gap between background reconnect attempts, so a burst of polls during
+    # an outage can't spawn a full-client rebuild every poll. Consecutive failed
+    # rebuilds double the gap (capped) — a persistently-down broker must not spawn
+    # a fresh MetaApi client every 5s; each attempt costs sockets + SDK tasks.
+    RECONNECT_COOLDOWN = 5.0
+    RECONNECT_BACKOFF_MAX = 300.0
+
+    # Wall-clock bounds on tearing down a retired/wedged SDK client (see _reap_api)
+    # and on closing connections at shutdown (see aclose). Shutdown MUST be bounded:
+    # uvicorn --reload join()s the old process with no timeout while the parent
+    # keeps the listening socket, so a hung close means every request — static
+    # endpoints included — hangs until the process is killed by hand.
+    REAP_BUDGET = 10.0
+    CLOSE_BUDGET = 5.0
+
     def __init__(self, *, token: str, account_id: str, region: str = "london") -> None:
         self._token = token
         self._account_id = account_id
@@ -202,6 +226,19 @@ class MT5Broker(MarketDataBroker):
         self._conn = None
         self._synced = False
         self._lock = asyncio.Lock()
+        # Wedge recovery. A long-lived MetaApi RPC socket can go half-open: every
+        # request then hangs the full request timeout and never heals, because
+        # flipping `_synced` only makes `_ensure` re-hand-out the SAME dead cached
+        # connection. So RPC calls are bounded (RPC_BUDGET); two consecutive
+        # timeouts escalate to a background full-client rebuild (see `_rebuild`),
+        # and calls fast-fail as BrokerReconnecting while it runs. `_gen` makes the
+        # rebuild single-flight — a stale rebuild task (older gen) is a no-op.
+        self._state = "OK"  # "OK" | "RECONNECTING"
+        self._gen = 0
+        self._fail_streak = 0
+        self._rebuild_fails = 0  # consecutive failed rebuilds — drives the backoff
+        self._rebuild_task: asyncio.Task | None = None
+        self._last_rebuild_at = float("-inf")
         # Streaming lives on a SECOND, stateful MetaApi connection alongside the RPC
         # one (they coexist — verified live). One shared connection multiplexes every
         # symbol; its listener fans ticks out to per-symbol consumer queues, and
@@ -251,18 +288,212 @@ class MT5Broker(MarketDataBroker):
             log.info("mt5: connected + synchronized (account %s)", self._account_id)
             return conn
 
-    async def read(self, make_coro):
-        """Run a read-only RPC coroutine, reconnecting ONCE if the connection has
-        dropped (MetaApi raises TimeoutException when the socket is stale). Safe to
-        retry precisely because the caller has no side effects — never route a trade
-        through here, only reads (quotes, positions, orders, catalogue)."""
-        conn = await self._ensure()
+    async def _bounded(self, make_coro):
+        """Run an RPC coroutine against the CACHED RPC connection, bounded to
+        RPC_BUDGET. Crucially it never performs the SDK connect itself — that can
+        block up to wait_synchronized's 120s — so a caller can never hang on it:
+
+          * reconnect in flight  -> fast-fail (TimeoutException);
+          * not synchronized     -> fast-fail AND kick a background reconnect (the
+            unbounded connect lives only in `_rebuild`, off the request path);
+          * synchronized         -> run the call under wait_for; a timeout feeds the
+            consecutive-failure streak that escalates to a rebuild.
+
+        Raises TimeoutException on any wedge so callers map it: reads surface
+        reconnecting, trades fall to their UNKNOWN/reconcile path."""
+        if self._state == "RECONNECTING":
+            raise TimeoutException("mt5: reconnecting")
+        if not self._synced or self._conn is None:
+            self._trigger_rebuild_if_idle()
+            raise TimeoutException("mt5: connecting")
+        conn = self._conn
+        gen = self._gen
         try:
-            return await make_coro(conn)
-        except TimeoutException:
-            self._synced = False  # drop the stale connection; _ensure re-syncs
-            conn = await self._ensure()
-            return await make_coro(conn)
+            result = await asyncio.wait_for(make_coro(conn), self.RPC_BUDGET)
+        except (asyncio.TimeoutError, TimeoutException) as exc:
+            self._note_rpc_timeout(gen)
+            raise TimeoutException("mt5: rpc timed out") from exc
+        except asyncio.CancelledError:
+            # A CancelledError raised from INSIDE the RPC — the SDK cancels its own
+            # `_wait_connect_promises` future when the account connection drops
+            # mid-call (observed live). That's a wedge, not a cancellation of us:
+            # map it like a timeout so it surfaces as reconnecting (503, not a raw
+            # 500) and feeds the streak that schedules a rebuild. But if OUR task is
+            # the one being cancelled (shutdown, client disconnect), `cancelling()`
+            # is > 0 — never swallow that; re-raise so cancellation propagates.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling() > 0:
+                raise
+            self._note_rpc_timeout(gen)
+            raise TimeoutException("mt5: rpc cancelled (connection dropped)")
+        self._fail_streak = 0
+        self._rebuild_fails = 0  # a working RPC proves the broker healed — reset backoff
+        return result
+
+    async def read(self, make_coro):
+        """Run a read-only RPC bounded to RPC_BUDGET. A wedged/stale connection is
+        surfaced as BrokerReconnecting instead of being left to hang; two
+        consecutive timeouts trigger a background full-client rebuild. We do NOT
+        retry inline — the frontend polls, so the next poll rides the healed
+        connection. Never route a trade through here, only reads."""
+        try:
+            return await self._bounded(make_coro)
+        except TimeoutException as exc:
+            raise BrokerReconnecting("mt5") from exc
+
+    def _note_rpc_timeout(self, gen: int) -> None:
+        """Count a consecutive RPC timeout; on the second (a persistent wedge on a
+        still-'synchronized' socket, not a one-off blip) kick off a single-flight
+        background rebuild. The `gen` guard means a timeout observed against an
+        already-superseded connection doesn't schedule a redundant rebuild."""
+        self._fail_streak += 1
+        if self._state == "OK" and self._fail_streak >= 2 and gen == self._gen:
+            self._start_rebuild()
+
+    def _rebuild_cooldown(self) -> float:
+        """Current gap to respect between reconnect attempts: the base cooldown,
+        doubled per consecutive failed rebuild, capped so recovery after a long
+        outage is minutes away at worst."""
+        return min(self.RECONNECT_COOLDOWN * (2 ** self._rebuild_fails), self.RECONNECT_BACKOFF_MAX)
+
+    def _trigger_rebuild_if_idle(self) -> None:
+        """Kick a background reconnect when disconnected (cold start, or a prior
+        attempt that hasn't landed), unless one is already running or we tried
+        too recently — so a burst of polls doesn't rebuild the client every poll,
+        and a persistent outage backs off instead of churning out SDK clients."""
+        if self._state == "OK" and (time.monotonic() - self._last_rebuild_at) >= self._rebuild_cooldown():
+            self._start_rebuild()
+
+    def _start_rebuild(self) -> None:
+        self._last_rebuild_at = time.monotonic()
+        self._state = "RECONNECTING"
+        # Capture the connection this rebuild is meant to replace. A plain `_ensure`
+        # from the streaming/candle paths can connect a fresh client concurrently
+        # WITHOUT bumping `_gen`, so the rebuild also checks identity (below) to
+        # avoid tearing down a connection that was replaced while it was queued.
+        suspect = self._conn
+        self._rebuild_task = asyncio.create_task(self._rebuild(self._gen, suspect))
+
+    async def _rebuild(self, gen: int, suspect=None) -> None:
+        """Force a genuine reconnect by recreating the whole MetaApi client — the
+        in-process equivalent of a process restart, since `get_rpc_connection`
+        otherwise re-hands-out the same cached, dead connection. The rebuilt client
+        drops the shared websocket, so we also re-establish streaming and
+        re-subscribe every live symbol. Single-flight via `_gen`.
+
+        Lock discipline: everything that touches `_lock` is done and RELEASED before
+        any streaming work, because `_ensure_stream` acquires `_stream_lock` then
+        `_lock` — holding `_lock` across a `_stream_lock` acquisition would deadlock."""
+        async with self._lock:
+            if gen != self._gen or self._conn is not suspect:
+                # A newer rebuild ran, OR a plain reconnect already replaced the
+                # connection this one targeted — don't tear the fresh client down.
+                return
+            self._gen += 1
+            old_api = self._api
+            self._api = None
+            self._acct = None
+            self._conn = None
+            self._synced = False
+            self._stream_conn = None
+            self._stream_synced = False
+            symbols = list(self._tick_subs.keys())
+        # _lock released — safe to reconnect streaming (which locks _stream_lock -> _lock).
+        if old_api is not None:
+            await self._reap_api(old_api)
+        try:
+            await self._ensure()  # fresh RPC connection over a fresh socket
+            if symbols:
+                await self._ensure_stream()
+                for sym in symbols:
+                    try:
+                        await self._stream_conn.subscribe_to_market_data(
+                            sym, [{"type": "quotes"}]
+                        )
+                    except Exception:
+                        log.warning(
+                            "mt5: re-subscribe failed for %s after reconnect",
+                            sym,
+                            exc_info=True,
+                        )
+            log.info("mt5: reconnected after wedge (account %s)", self._account_id)
+            self._rebuild_fails = 0
+        except Exception:
+            self._rebuild_fails += 1
+            log.warning(
+                "mt5: reconnect attempt %d failed; next retry in >= %.0fs",
+                self._rebuild_fails,
+                self._rebuild_cooldown(),
+                exc_info=True,
+            )
+        finally:
+            self._fail_streak = 0
+            self._state = "OK"
+
+    async def _reap_api(self, api) -> None:
+        """Fully tear down a retired MetaApi client, bounded. The SDK's own
+        `close()` is fire-and-forget: it spawns `ws.close()` as an orphan task that
+        never resolves over a wedged socket (`socket.disconnect()` hangs), and it
+        leaks the per-socket synchronization-throttler interval tasks and engineio's
+        ping/read/write loops — whose ping loop swallows CancelledError while its
+        state is 'connected' (verified against metaapi_cloud_sdk 29.1.1 / that
+        repeated rebuilds leak ~6 tasks each). Those survivors outlive asyncio.run's
+        shutdown cancellation and wedge uvicorn --reload's old process forever, which
+        hangs EVERY request because the reload parent keeps the listening socket.
+        So: bounded await of the websocket close (wait_for cancels it on timeout),
+        then force-kill the stragglers by hand."""
+        ws = getattr(api, "_metaapi_websocket_client", None)
+        if ws is None:  # not a real SDK client (tests/fakes) — its close() is enough
+            try:
+                api.close()
+            except Exception:
+                log.debug("mt5: error closing wedged client", exc_info=True)
+            return
+        # Snapshot the socket instances BEFORE closing: ws.close() empties the
+        # per-region instance lists, so a post-close walk would tear down nothing
+        # (which is how the throttler-interval leak survived a first fix attempt).
+        try:
+            instances_snapshot = [
+                instance
+                for instances_by_number in (ws._socket_instances or {}).values()
+                for instances in instances_by_number.values()
+                for instance in instances
+            ]
+        except Exception:
+            instances_snapshot = []
+        try:
+            await asyncio.wait_for(ws.close(), self.REAP_BUDGET)
+        except Exception:
+            log.debug("mt5: bounded sdk ws close failed/timed out", exc_info=True)
+        try:
+            for timer in getattr(ws, "_status_timers", {}).values():
+                timer.cancel()  # 60s zombie timers for hosts that no longer exist
+            for instance in instances_snapshot:
+                throttler = instance.get("synchronizationThrottler")
+                if throttler is not None:
+                    throttler.stop()
+                eio = getattr(instance.get("socket"), "eio", None)
+                if eio is None:
+                    continue
+                # The ping loop ignores cancellation while state is
+                # 'connected' — flip the state FIRST so the cancel lands.
+                eio.state = "disconnected"
+                for name in ("ping_loop_task", "read_loop_task", "write_loop_task"):
+                    task = getattr(eio, name, None)
+                    if task is not None and not task.done():
+                        task.cancel()
+        except Exception:
+            log.debug("mt5: force-teardown of sdk socket tasks failed", exc_info=True)
+        # The sync tail of MetaApi.close(), minus its create_task(ws.close()) —
+        # that orphan re-close is exactly the hang we just avoided.
+        for stop in (
+            lambda: ws.stop(),
+            lambda: api._terminal_hash_manager._stop(),
+        ):
+            try:
+                stop()
+            except Exception:
+                log.debug("mt5: error stopping sdk jobs", exc_info=True)
 
     # --- streaming connection -------------------------------------------------
 
@@ -332,17 +563,24 @@ class MT5Broker(MarketDataBroker):
                         log.debug("mt5: unsubscribe failed for %s", symbol, exc_info=True)
 
     async def aclose(self) -> None:
-        """Close both connections on shutdown. The account is left DEPLOYED — tearing
-        it down would stop live trading and re-deploying is slow + costs a deploy
-        charge; deployment is managed in the MetaApi dashboard, not per process."""
+        """Close both connections on shutdown, BOUNDED. The account is left DEPLOYED —
+        tearing it down would stop live trading and re-deploying is slow + costs a
+        deploy charge; deployment is managed in the MetaApi dashboard, not per
+        process. Bounded because lifespan shutdown awaits this: a close that hangs
+        on a wedged socket would hang uvicorn --reload's process swap and with it
+        every request. The client is then reaped so no cancellation-immune SDK task
+        survives into asyncio.run's shutdown."""
         conn, self._conn, self._synced = self._conn, None, False
         stream, self._stream_conn, self._stream_synced = self._stream_conn, None, False
         for c in (conn, stream):
             if c is not None:
                 try:
-                    await c.close()
+                    await asyncio.wait_for(c.close(), self.CLOSE_BUDGET)
                 except Exception:  # best-effort on shutdown
                     log.debug("mt5: error closing connection", exc_info=True)
+        api, self._api, self._acct = self._api, None, None
+        if api is not None:
+            await self._reap_api(api)
 
     # --- candles --------------------------------------------------------------
 
@@ -669,11 +907,11 @@ class MT5ExecutionBroker(ExecutionBroker):
                 resolved_at=datetime.now(timezone.utc),
             )
         log.warning("mt5: trade submission raised (state unknown)", exc_info=True)
-        if isinstance(exc, TimeoutException):
-            # The socket was stale — force a reconnect before the next call so we
-            # don't compound a dropped connection. We do NOT retry the trade: an
-            # UNKNOWN must be reconciled via get_positions, never blindly re-sent.
-            self._data._synced = False
+        # A TimeoutException here already fed the wedge detector inside `_bounded`
+        # (which owns reconnection). We must NOT drop `_synced` — doing so would send
+        # the very next read into the unbounded SDK connect and hang the poll. And we
+        # do NOT retry the trade: an UNKNOWN must be reconciled via get_positions,
+        # never blindly re-sent.
         return OrderResult(
             client_order_id=client_order_id,
             status=OrderStatus.UNKNOWN,
@@ -681,13 +919,15 @@ class MT5ExecutionBroker(ExecutionBroker):
             resolved_at=datetime.now(timezone.utc),
         )
 
-    async def _fill_price(self, conn, position_id) -> float | None:
+    async def _fill_price(self, position_id) -> float | None:
         """Open level of the just-filled position, or None if it can't be read
-        (never fail a confirmed fill just because the price lookup didn't land)."""
+        (never fail a confirmed fill just because the price lookup didn't land).
+        Goes through the bounded read path, so a wedge just yields None, never a
+        hang."""
         if position_id is None:
             return None
         try:
-            for p in await conn.get_positions():
+            for p in await self._data.read(lambda c: c.get_positions()):
                 if str(p.get("id")) == str(position_id):
                     return p.get("openPrice")
         except Exception:
@@ -702,7 +942,6 @@ class MT5ExecutionBroker(ExecutionBroker):
         if prior is not None:  # idempotent retry: return the recorded outcome
             return prior
 
-        conn = await self._data._ensure()
         sl = order.stop_level
         tp = order.take_profit_level
         # order.quantity is in instrument units (the app's convention); MetaApi
@@ -712,14 +951,19 @@ class MT5ExecutionBroker(ExecutionBroker):
         try:
             if order.type is OrderType.MARKET:
                 if order.side is Side.BUY:
-                    resp = await conn.create_market_buy_order(order.epic, lots, sl, tp)
+                    resp = await self._data._bounded(
+                        lambda c: c.create_market_buy_order(order.epic, lots, sl, tp)
+                    )
                 else:
-                    resp = await conn.create_market_sell_order(order.epic, lots, sl, tp)
+                    resp = await self._data._bounded(
+                        lambda c: c.create_market_sell_order(order.epic, lots, sl, tp)
+                    )
                 # A market order fills into a position immediately. The trade
                 # response carries no fill price, so read it back off the position
                 # (matching Capital/IG, which surface the fill level) — best-effort.
                 position_id = resp.get("positionId")
-                fill_price = await self._fill_price(conn, position_id)
+                # Read the fill level back (best-effort, bounded — never blocks).
+                fill_price = await self._fill_price(position_id)
                 result = OrderResult(
                     client_order_id=order.client_order_id,
                     status=OrderStatus.FILLED,
@@ -740,9 +984,13 @@ class MT5ExecutionBroker(ExecutionBroker):
                         resolved_at=datetime.now(timezone.utc),
                     )
                 if order.side is Side.BUY:
-                    resp = await conn.create_limit_buy_order(order.epic, lots, order.limit_level, sl, tp)
+                    resp = await self._data._bounded(
+                        lambda c: c.create_limit_buy_order(order.epic, lots, order.limit_level, sl, tp)
+                    )
                 else:
-                    resp = await conn.create_limit_sell_order(order.epic, lots, order.limit_level, sl, tp)
+                    resp = await self._data._bounded(
+                        lambda c: c.create_limit_sell_order(order.epic, lots, order.limit_level, sl, tp)
+                    )
                 result = OrderResult(
                     client_order_id=order.client_order_id,
                     status=OrderStatus.PENDING,
@@ -803,10 +1051,9 @@ class MT5ExecutionBroker(ExecutionBroker):
         return out
 
     async def close_position(self, deal_id: str, quantity: float | None = None) -> OrderResult:
-        conn = await self._data._ensure()
         try:
             if quantity is None:
-                resp = await conn.close_position(deal_id)
+                resp = await self._data._bounded(lambda c: c.close_position(deal_id))
             else:
                 # quantity is in units; MetaApi's partial close wants lots. Look up
                 # the position's symbol to get the contractSize (close_position has
@@ -820,7 +1067,9 @@ class MT5ExecutionBroker(ExecutionBroker):
                     if symbol
                     else quantity
                 )
-                resp = await conn.close_position_partially(deal_id, lots)
+                resp = await self._data._bounded(
+                    lambda c: c.close_position_partially(deal_id, lots)
+                )
         except Exception as exc:
             return self._fail(f"close-{deal_id}", exc)
         return OrderResult(
@@ -847,13 +1096,14 @@ class MT5ExecutionBroker(ExecutionBroker):
         # read() so a dropped connection self-heals like every other read.
         positions = await self._data.read(lambda c: c.get_positions())
         current = {str(p.get("id")): p for p in positions}.get(str(deal_id))
-        conn = await self._data._ensure()
         cur_sl = current.get("stopLoss") if current else None
         cur_tp = current.get("takeProfit") if current else None
         new_sl = 0 if clear_stop else (stop_level if stop_level is not None else cur_sl)
         new_tp = 0 if clear_take_profit else (take_profit_level if take_profit_level is not None else cur_tp)
         try:
-            resp = await conn.modify_position(deal_id, new_sl, new_tp)
+            resp = await self._data._bounded(
+                lambda c: c.modify_position(deal_id, new_sl, new_tp)
+            )
         except Exception as exc:
             return self._fail(f"modify-{deal_id}", exc)
         return OrderResult(
@@ -898,7 +1148,6 @@ class MT5ExecutionBroker(ExecutionBroker):
     ) -> OrderResult:
         orders = await self._data.read(lambda c: c.get_orders())
         current = {str(o.get("id")): o for o in orders}.get(str(order_id))
-        conn = await self._data._ensure()
         if current is None:
             return OrderResult(
                 client_order_id=f"modify-{order_id}",
@@ -912,7 +1161,9 @@ class MT5ExecutionBroker(ExecutionBroker):
         new_sl = 0 if clear_stop else (stop_level if stop_level is not None else cur_sl)
         new_tp = 0 if clear_take_profit else (take_profit_level if take_profit_level is not None else cur_tp)
         try:
-            resp = await conn.modify_order(order_id, new_price, new_sl, new_tp)
+            resp = await self._data._bounded(
+                lambda c: c.modify_order(order_id, new_price, new_sl, new_tp)
+            )
         except Exception as exc:
             return self._fail(f"modify-{order_id}", exc)
         return OrderResult(
@@ -924,9 +1175,8 @@ class MT5ExecutionBroker(ExecutionBroker):
         )
 
     async def cancel_working_order(self, order_id: str) -> OrderResult:
-        conn = await self._data._ensure()
         try:
-            resp = await conn.cancel_order(order_id)
+            resp = await self._data._bounded(lambda c: c.cancel_order(order_id))
         except Exception as exc:
             return self._fail(f"cancel-{order_id}", exc)
         return OrderResult(

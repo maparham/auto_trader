@@ -6,8 +6,10 @@ reports size in lots while the rest of the app works in instrument units."""
 import asyncio
 
 import pytest
+from metaapi_cloud_sdk.clients.timeout_exception import TimeoutException
 
 from auto_trader.brokers.mt5 import MT5Broker, MT5ExecutionBroker, _classify_symbol
+from auto_trader.core.broker_health import BrokerReconnecting
 from auto_trader.core.models import Order, OrderStatus, OrderType, Side
 
 
@@ -187,13 +189,17 @@ class _FakeTradeConn:
 
 def _data_with(conn):
     """A real MT5Broker whose connection is the fake conn, so the conversion
-    helpers (_contract_size / _units_to_lots / get_market_meta) run for real."""
+    helpers (_contract_size / _units_to_lots / get_market_meta) run for real.
+    Presents as a healthy, synchronized connection (the bounded RPC path reads
+    `_conn`/`_synced` directly)."""
     data = MT5Broker(token="t", account_id="a")
 
     async def _ensure():
         return conn
 
     data._ensure = _ensure
+    data._conn = conn
+    data._synced = True
     return data
 
 
@@ -374,3 +380,523 @@ def test_modify_position_carries_levels_with_string_id():
     assert res.status is OrderStatus.FILLED
     # TP (untouched) carried forward from the matched position, SL updated.
     assert ("modify_position", "77", 71.0, 80.0) in conn.calls
+
+
+# --- wedged-connection recovery -------------------------------------------------
+#
+# The failure this guards against: MetaApi's long-lived RPC connection goes stale
+# (half-open socket) and every request hangs the full 60s request timeout without
+# recovering — because flipping our `_synced` flag only makes `_ensure` hand back
+# the SAME cached-and-dead underlying connection. Reads must (1) fail fast instead
+# of hanging, (2) after a persistent wedge rebuild the whole client in the
+# background (the in-process equivalent of a process restart), and (3) fast-fail
+# while that rebuild is in flight.
+
+
+def _broker_with_conn(conn):
+    """MT5Broker presenting `conn` as a healthy, synchronized RPC connection."""
+    broker = MT5Broker(token="t", account_id="a")
+
+    async def _ensure():
+        broker._synced = True
+        return conn
+
+    broker._ensure = _ensure
+    broker._conn = conn
+    broker._synced = True
+    return broker
+
+
+class _WedgedConn:
+    """A conn whose RPC always times out the way a stale MetaApi socket does."""
+
+    async def get_orders(self, options=None):
+        raise TimeoutException("wedged")
+
+
+def test_slow_rpc_is_bounded_and_surfaces_reconnecting():
+    # A read that runs past the per-call budget is cancelled and surfaced as a
+    # reconnecting signal, never left to hang for the SDK's full 60s timeout.
+    class _SlowConn:
+        async def get_orders(self, options=None):
+            await asyncio.sleep(1)
+            return []
+
+    broker = _broker_with_conn(_SlowConn())
+    broker.RPC_BUDGET = 0.02
+    with pytest.raises(BrokerReconnecting):
+        asyncio.run(broker.read(lambda c: c.get_orders()))
+
+
+def test_sdk_cancelled_rpc_surfaces_reconnecting_and_feeds_wedge_detection():
+    # Observed live: when the account connection drops mid-RPC, the SDK cancels its
+    # own internal `_wait_connect_promises` future, so the RPC coroutine raises a
+    # bare CancelledError (NOT a timeout). That must map to BrokerReconnecting (503,
+    # not a 500) AND count toward the wedge streak so a rebuild is scheduled — else
+    # the connection never self-heals and every poll 500s.
+    class _SdkCancelsConn:
+        async def get_orders(self, options=None):
+            # Mimic `await self._wait_connect_promises[account_id]` being cancelled
+            # by the SDK — a CancelledError raised from inside the RPC, unrelated to
+            # any cancellation of OUR task.
+            fut = asyncio.get_event_loop().create_future()
+            fut.cancel()
+            await fut
+
+    broker = _broker_with_conn(_SdkCancelsConn())
+    with pytest.raises(BrokerReconnecting):
+        asyncio.run(broker.read(lambda c: c.get_orders()))
+    assert broker._fail_streak == 1  # fed the detector, so a 2nd drop triggers rebuild
+
+
+def test_genuine_task_cancellation_is_never_swallowed():
+    # The CancelledError handling must NOT eat a real cancellation of our own task
+    # (server shutdown, client disconnect) — that has to propagate as CancelledError,
+    # never be masked as a reconnecting signal.
+    class _SlowConn:
+        async def get_orders(self, options=None):
+            await asyncio.sleep(10)
+            return []
+
+    broker = _broker_with_conn(_SlowConn())
+
+    async def scenario():
+        task = asyncio.ensure_future(broker.read(lambda c: c.get_orders()))
+        await asyncio.sleep(0.01)  # let the read enter the bounded RPC
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+
+def test_two_consecutive_timeouts_schedule_one_background_rebuild():
+    broker = _broker_with_conn(_WedgedConn())
+    rebuilt: list[int] = []
+
+    async def _fake_rebuild(gen, suspect=None):
+        rebuilt.append(gen)
+        broker._state = "OK"
+
+    broker._rebuild = _fake_rebuild
+
+    async def scenario():
+        # First timeout: a transient blip must NOT tear down the client.
+        with pytest.raises(BrokerReconnecting):
+            await broker.read(lambda c: c.get_orders())
+        assert rebuilt == []
+        # Second consecutive timeout escalates to a rebuild — scheduled once.
+        with pytest.raises(BrokerReconnecting):
+            await broker.read(lambda c: c.get_orders())
+        await asyncio.sleep(0)  # let the detached rebuild task run
+        assert len(rebuilt) == 1
+
+    asyncio.run(scenario())
+
+
+def test_read_fast_fails_without_touching_conn_while_reconnecting():
+    broker = MT5Broker(token="t", account_id="a")
+    broker._state = "RECONNECTING"
+    touched: list[int] = []
+
+    async def _ensure():
+        touched.append(1)
+        return object()
+
+    broker._ensure = _ensure
+    with pytest.raises(BrokerReconnecting):
+        asyncio.run(broker.read(lambda c: c.get_orders()))
+    assert touched == []  # a reconnecting broker never re-hits the dead socket
+
+
+def test_success_after_a_single_timeout_resets_the_failure_streak():
+    class _FlakyConn:
+        def __init__(self):
+            self.n = 0
+
+        async def get_orders(self, options=None):
+            self.n += 1
+            if self.n == 1:
+                raise TimeoutException("blip")
+            return []
+
+    broker = _broker_with_conn(_FlakyConn())
+    scheduled: list[int] = []
+    broker._start_rebuild = lambda: scheduled.append(broker._gen)
+
+    async def scenario():
+        with pytest.raises(BrokerReconnecting):  # 1st timeout -> streak 1
+            await broker.read(lambda c: c.get_orders())
+        assert broker._fail_streak == 1
+        assert await broker.read(lambda c: c.get_orders()) == []  # success recovers
+        assert broker._fail_streak == 0  # streak reset, so a later blip starts fresh
+        assert scheduled == []  # one lone timeout never reached the 2-strike rebuild
+
+    asyncio.run(scenario())
+
+
+def test_rebuild_tears_down_old_client_and_resubscribes_live_symbols():
+    broker = MT5Broker(token="t", account_id="a")
+    closed: list[bool] = []
+
+    class _OldApi:
+        def close(self):
+            closed.append(True)
+
+    broker._api = _OldApi()
+    broker._acct = object()
+    broker._conn = object()
+    broker._synced = True
+    broker._state = "RECONNECTING"
+    broker._tick_subs = {"CrudeOil": {asyncio.Queue()}, "EURUSD": {asyncio.Queue()}}
+    gen0 = broker._gen
+
+    ensured: list[str] = []
+
+    async def _ensure():
+        ensured.append("rpc")
+        broker._synced = True
+        return object()
+
+    subs: list[str] = []
+
+    class _StreamConn:
+        async def subscribe_to_market_data(self, symbol, subscriptions=None):
+            subs.append(symbol)
+
+    async def _ensure_stream():
+        broker._stream_conn = _StreamConn()
+        broker._stream_synced = True
+        return broker._stream_conn
+
+    broker._ensure = _ensure
+    broker._ensure_stream = _ensure_stream
+
+    asyncio.run(broker._rebuild(gen0, broker._conn))
+
+    assert closed == [True]              # old wedged client torn down
+    assert ensured == ["rpc"]            # fresh RPC connection built
+    assert broker._gen == gen0 + 1       # generation advanced (guards re-entry)
+    assert broker._state == "OK"
+    assert sorted(subs) == ["CrudeOil", "EURUSD"]  # streaming re-subscribed
+
+
+def test_disconnected_read_fast_fails_without_blocking_on_connect():
+    # A read must never perform the SDK's unbounded connect itself — a slow/blocking
+    # `_ensure` (wait_synchronized can take up to 120s) would hang the poll for
+    # minutes. While disconnected the read fast-fails and hands the (unbounded)
+    # reconnect to a background task instead.
+    import time as _time
+
+    broker = MT5Broker(token="t", account_id="a")
+    broker._synced = False  # disconnected: cold start, or a reconnect not yet landed
+    ensure_awaited: list[int] = []
+
+    async def _slow_ensure():
+        ensure_awaited.append(1)
+        await asyncio.sleep(5)
+        return object()
+
+    broker._ensure = _slow_ensure
+    rebuilt: list[int] = []
+
+    async def _fake_rebuild(gen, suspect=None):
+        rebuilt.append(gen)
+        broker._state = "OK"
+
+    broker._rebuild = _fake_rebuild
+
+    async def scenario():
+        t0 = _time.monotonic()
+        with pytest.raises(BrokerReconnecting):
+            await broker.read(lambda c: c.get_orders())
+        assert _time.monotonic() - t0 < 1.0  # did not block on the 5s connect
+        assert ensure_awaited == []           # read never drove the blocking connect
+        await asyncio.sleep(0)                 # let the detached reconnect run
+        assert len(rebuilt) == 1               # a background reconnect was scheduled
+
+    asyncio.run(scenario())
+
+
+def test_trade_timeout_does_not_flip_synced_so_next_read_stays_bounded():
+    # Regression guard: `_fail` must NOT drop `_synced`. If it did, the poll right
+    # after a trade timeout would enter the unbounded connect path and hang.
+    class _SlowCancelConn:
+        async def cancel_order(self, order_id, options=None):
+            await asyncio.sleep(1)
+
+    data = _data_with(_SlowCancelConn())
+    data.RPC_BUDGET = 0.02
+    broker = MT5ExecutionBroker(data)
+    res = asyncio.run(broker.cancel_working_order("42"))
+    assert res.status is OrderStatus.UNKNOWN
+    assert data._synced is True  # connection state untouched — recovery owns reconnect
+
+
+def test_cancel_is_bounded_and_feeds_wedge_detection():
+    # The original symptom: a cancel whose RPC hangs must fail fast (bounded), map
+    # to UNKNOWN (fill state unknown — never blindly re-sent), and count toward the
+    # consecutive-timeout streak that heals the connection.
+    class _SlowCancelConn:
+        async def cancel_order(self, order_id, options=None):
+            await asyncio.sleep(1)
+
+    data = _data_with(_SlowCancelConn())
+    data.RPC_BUDGET = 0.02
+    broker = MT5ExecutionBroker(data)
+    res = asyncio.run(broker.cancel_working_order("42"))
+    assert res.status is OrderStatus.UNKNOWN
+    assert data._fail_streak == 1
+
+
+def test_rebuild_bails_when_connection_was_replaced_by_a_plain_reconnect():
+    # Cold-start race: a plain `_ensure` (streaming/candles) can connect a fresh
+    # client WITHOUT bumping `_gen`. A rebuild scheduled against the old connection
+    # must not tear that fresh client down — the gen guard alone wouldn't catch it,
+    # so `_rebuild` also checks connection identity.
+    broker = MT5Broker(token="t", account_id="a")
+    closed: list[bool] = []
+
+    class _Api:
+        def close(self):
+            closed.append(True)
+
+    broker._api = _Api()
+    suspect = object()          # the connection the rebuild was scheduled against
+    broker._conn = object()     # ...but a plain reconnect already replaced it
+    broker._synced = True
+    asyncio.run(broker._rebuild(broker._gen, suspect))
+    assert closed == []         # fresh client left intact
+
+
+def test_rebuild_is_a_noop_when_generation_already_advanced():
+    # A rebuild task whose generation is stale (another rebuild already ran) must
+    # not tear the fresh client down again.
+    broker = MT5Broker(token="t", account_id="a")
+    closed: list[bool] = []
+
+    class _Api:
+        def close(self):
+            closed.append(True)
+
+    broker._api = _Api()
+    stale_gen = broker._gen - 1
+    asyncio.run(broker._rebuild(stale_gen, broker._conn))
+    assert closed == []  # nothing torn down for a superseded rebuild
+
+
+# --- retired-client teardown (reaping) --------------------------------------
+#
+# The SDK's own MetaApi.close() is fire-and-forget: it spawns ws.close() as an
+# orphan task that never resolves on a wedged socket, and it leaks the per-socket
+# synchronization-throttler interval tasks and engineio's ping/read/write loops
+# (whose ping loop swallows CancelledError). Those leaks survive asyncio.run's
+# shutdown cancellation, which wedges uvicorn --reload's child process forever —
+# the parent then holds the listening socket and EVERY request hangs. So a
+# retired client must be reaped: bounded ws close + explicit kill of stragglers.
+
+
+class _FakeEio:
+    """engineio client stand-in: its ping loop swallows CancelledError (verbatim
+    behaviour of engineio.asyncio_client._ping_loop) and only exits via `state`."""
+
+    def __init__(self):
+        self.state = "connected"
+
+        async def ping_loop():
+            while self.state == "connected":
+                try:
+                    await asyncio.sleep(3600)
+                except asyncio.CancelledError:
+                    pass  # engineio swallows the cancel — task survives shutdown
+
+        self.ping_loop_task = asyncio.ensure_future(ping_loop())
+        self.read_loop_task = None
+        self.write_loop_task = None
+
+
+class _FakeThrottler:
+    def __init__(self, stopped):
+        self._stopped = stopped
+
+    def stop(self):
+        self._stopped.append(True)
+
+
+class _FakeSdkWs:
+    """MetaApiWebsocketClient stand-in whose async close() hangs forever, like a
+    real close over a wedged socket (await socket.disconnect() never resolves)."""
+
+    def __init__(self, instances, stopped):
+        self._socket_instances = instances
+        self._stopped = stopped
+
+    async def close(self):
+        await asyncio.sleep(3600)
+
+    def stop(self):
+        self._stopped.append("ws-stop")
+
+
+class _FakeHashManager:
+    def __init__(self, stopped):
+        self._stopped = stopped
+
+    def _stop(self):
+        self._stopped.append("hash-stop")
+
+
+def _fake_sdk_api(stopped):
+    class _Sock:
+        pass
+
+    eio = _FakeEio.__new__(_FakeEio)  # built inside the running loop by the test
+    sock = _Sock()
+    instance = {
+        "socket": sock,
+        "synchronizationThrottler": _FakeThrottler(stopped),
+        "connected": True,
+    }
+
+    class _Api:
+        pass
+
+    api = _Api()
+    api._metaapi_websocket_client = _FakeSdkWs({"london": {0: [instance]}}, stopped)
+    api._terminal_hash_manager = _FakeHashManager(stopped)
+    return api, sock, eio
+
+
+def test_reap_is_bounded_and_kills_cancel_immune_sdk_tasks():
+    broker = MT5Broker(token="t", account_id="a")
+    broker.REAP_BUDGET = 0.05
+    stopped: list = []
+
+    async def scenario():
+        api, sock, eio = _fake_sdk_api(stopped)
+        eio.__init__()  # start the cancel-swallowing ping loop in this loop
+        sock.eio = eio
+
+        import time as _time
+
+        t0 = _time.monotonic()
+        await broker._reap_api(api)
+        assert _time.monotonic() - t0 < 1.0  # hung ws.close() didn't hold us up
+
+        # The cancel-swallowing ping loop must actually END (state flip + cancel),
+        # or it would survive asyncio.run's shutdown and wedge uvicorn --reload.
+        await asyncio.wait_for(eio.ping_loop_task, 1.0)
+        assert eio.state == "disconnected"
+        # Throttler intervals + ws jobs + hash-tree jobs all stopped.
+        assert True in stopped and "ws-stop" in stopped and "hash-stop" in stopped
+
+    asyncio.run(scenario())
+
+
+def test_rebuild_reaps_sdk_client_even_when_its_close_hangs():
+    broker = MT5Broker(token="t", account_id="a")
+    broker.REAP_BUDGET = 0.05
+    stopped: list = []
+    broker._acct = object()
+    broker._conn = object()
+    broker._synced = True
+    broker._state = "RECONNECTING"
+
+    async def _ensure():
+        broker._synced = True
+        return object()
+
+    broker._ensure = _ensure
+
+    async def scenario():
+        api, sock, eio = _fake_sdk_api(stopped)
+        eio.__init__()
+        sock.eio = eio
+        broker._api = api
+
+        import time as _time
+
+        t0 = _time.monotonic()
+        await broker._rebuild(broker._gen, broker._conn)
+        assert _time.monotonic() - t0 < 1.0  # rebuild not hostage to the hung close
+        assert "ws-stop" in stopped
+        await asyncio.wait_for(eio.ping_loop_task, 1.0)
+
+    asyncio.run(scenario())
+
+
+def test_aclose_is_bounded_when_connection_close_hangs():
+    # Lifespan shutdown awaits aclose(); an unbounded close over a wedged socket
+    # would hang uvicorn --reload's child forever (parent join()s with no timeout).
+    class _HungConn:
+        async def close(self):
+            await asyncio.sleep(3600)
+
+    broker = MT5Broker(token="t", account_id="a")
+    broker.CLOSE_BUDGET = 0.05
+    broker._conn = _HungConn()
+    broker._synced = True
+    broker._stream_conn = _HungConn()
+    broker._stream_synced = True
+
+    import time as _time
+
+    t0 = _time.monotonic()
+    asyncio.run(broker.aclose())
+    assert _time.monotonic() - t0 < 1.0
+    assert broker._conn is None and broker._stream_conn is None
+
+
+def test_failed_rebuilds_back_off_exponentially():
+    # A persistently-down broker must not spawn a fresh MetaApi client every
+    # cooldown tick — each attempt costs sockets/tasks, and the pileup is what
+    # wedged the server. Consecutive failures stretch the retry gap; success resets.
+    import time as _time
+
+    broker = MT5Broker(token="t", account_id="a")
+    broker._synced = False
+    started: list[int] = []
+    broker._start_rebuild = lambda: started.append(1)
+
+    broker._last_rebuild_at = _time.monotonic()  # just tried...
+    broker._rebuild_fails = 3                    # ...and has failed 3× in a row
+    broker._trigger_rebuild_if_idle()
+    assert started == []  # 5s cooldown is NOT enough after 3 failures
+
+    # 8× the base cooldown ago (2**3) — now it may retry.
+    broker._last_rebuild_at = _time.monotonic() - broker.RECONNECT_COOLDOWN * 8.1
+    broker._trigger_rebuild_if_idle()
+    assert started == [1]
+
+    # Backoff is capped so recovery is never hours away.
+    broker._rebuild_fails = 50
+    assert broker._rebuild_cooldown() == broker.RECONNECT_BACKOFF_MAX
+
+
+def test_rebuild_outcome_drives_the_backoff_counter():
+    broker = MT5Broker(token="t", account_id="a")
+    broker._acct = object()
+    broker._conn = object()
+    broker._synced = True
+    broker._state = "RECONNECTING"
+    broker._rebuild_fails = 2
+
+    async def _failing_ensure():
+        raise TimeoutException("still down")
+
+    broker._ensure = _failing_ensure
+    asyncio.run(broker._rebuild(broker._gen, broker._conn))
+    assert broker._rebuild_fails == 3  # failure widens the next retry gap
+
+    broker._acct = object()
+    broker._conn = object()
+    broker._synced = True
+    broker._state = "RECONNECTING"
+
+    async def _ok_ensure():
+        broker._synced = True
+        return object()
+
+    broker._ensure = _ok_ensure
+    asyncio.run(broker._rebuild(broker._gen, broker._conn))
+    assert broker._rebuild_fails == 0  # success resets the backoff

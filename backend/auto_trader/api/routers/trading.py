@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
+from auto_trader.core.broker_health import BrokerReconnecting
 from auto_trader.core.models import (
     Order,
     OrderResult,
@@ -137,6 +138,8 @@ async def account_summary(account: str = Query("capital:paper")) -> AccountSumma
         raise HTTPException(status_code=404, detail="account summary unavailable")
     try:
         return AccountSummaryDTO(**await fn())
+    except BrokerReconnecting as e:
+        raise HTTPException(503, f"{account}: broker reconnecting — retry shortly") from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"account summary failed: {e}") from e
 
@@ -148,6 +151,8 @@ async def positions(
     broker = get_exec(account)
     try:
         found = await broker.get_positions(epic or None)
+    except BrokerReconnecting as e:
+        raise HTTPException(503, f"{account}: broker reconnecting — retry shortly") from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"positions failed: {e}") from e
     return [_position_dto(p) for p in found]
@@ -197,6 +202,8 @@ async def working_orders(
     broker = get_exec(account)
     try:
         found = await broker.get_working_orders(epic or None)
+    except BrokerReconnecting as e:
+        raise HTTPException(503, f"{account}: broker reconnecting — retry shortly") from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"working orders failed: {e}") from e
     return [_working_order_dto(w) for w in found]

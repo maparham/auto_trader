@@ -38,6 +38,14 @@ class BrokerTimeout(Exception):
     """A single broker call exceeded its per-call wall-clock budget."""
 
 
+class BrokerReconnecting(Exception):
+    """The broker's own connection is wedged and being rebuilt in the background.
+    Distinct from BrokerUnavailable (which is the shared circuit breaker fast-
+    failing): this is raised by a broker that self-heals a stale long-lived socket,
+    so the caller should surface a transient "reconnecting" state and retry, not
+    treat it as a hard error."""
+
+
 class BrokerHealth:
     def __init__(
         self,

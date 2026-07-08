@@ -25,6 +25,7 @@ from auto_trader.brokers.paper_exec import PaperExecutionBroker
 from auto_trader.brokers.registry import BrokerRegistry
 from auto_trader.core.broker_health import (
     BrokerHealth,
+    BrokerReconnecting,
     BrokerTimeout,
     BrokerUnavailable,
 )
@@ -84,14 +85,22 @@ async def guarded(
     allowance being spent is a 429 with a clear, actionable message — and it does
     NOT trip the breaker (the broker is healthy; only REST history is locked out)."""
     try:
+        # BrokerReconnecting is `ignore`d at the breaker: a broker self-healing a
+        # wedged socket (only MT5 raises it, via its own rebuild path) is transient
+        # and owns its recovery — it must not count toward tripping the SHARED
+        # breaker, which would pin every other call for that broker into cooldown.
         return await BROKER_HEALTH.run(
-            broker_id, factory, ignore=(IGAllowanceExceeded,)
+            broker_id, factory, ignore=(IGAllowanceExceeded, BrokerReconnecting)
         )
     except IGAllowanceExceeded as e:
         raise HTTPException(
             429,
             "IG historical-data limit reached — resets weekly. "
             "Live prices still stream.",
+        ) from e
+    except BrokerReconnecting as e:
+        raise HTTPException(
+            503, f"{label}: broker '{broker_id}' reconnecting — retry shortly"
         ) from e
     except BrokerUnavailable as e:
         raise HTTPException(
