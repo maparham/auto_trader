@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 import CloseButton from "./CloseButton";
 import ChartOperandPicker from "./ChartOperandPicker";
 import InfoTip from "./components/InfoTip";
+import NumberField from "./components/NumberField";
 import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
 import { requestGoLive, requestConfirm, backtestClearRequest } from "./lib/signals";
@@ -1168,12 +1169,19 @@ export function RiskSection({
   };
   // `floor` opts a field into positive-only: block negatives and snap ≤0 up to
   // the floor on blur. Left off for price levels / ATR multiples, which are free.
-  const num = (v: number | undefined, set: (n: number) => void, step = "any", floor?: number) => (
-    <input type="number" step={step} value={v ?? 0} className="bt-num" min={floor}
-      onKeyDown={floor != null ? blockNegKeys : undefined}
-      onChange={(e) => set(Number(cleanNumInput(e.currentTarget)))}
-      onBlur={floor != null ? (e) => clampPosOnBlur(e.currentTarget, floor, set) : undefined} />
-  );
+  const num = (v: number | undefined, set: (n: number) => void, step = "any", floor?: number) =>
+    // Decimal fields go through NumberField so the dot is always the decimal
+    // separator regardless of locale (native number inputs follow the locale and
+    // reject "." on comma-decimal machines). Integer fields ("1" step) have no
+    // separator to worry about, so keep the native input and its spinner.
+    step === "any" ? (
+      <NumberField value={v} onChange={set} floor={floor} className="bt-num" />
+    ) : (
+      <input type="number" step={step} value={v ?? 0} className="bt-num" min={floor}
+        onKeyDown={floor != null ? blockNegKeys : undefined}
+        onChange={(e) => set(Number(cleanNumInput(e.currentTarget)))}
+        onBlur={floor != null ? (e) => clampPosOnBlur(e.currentTarget, floor, set) : undefined} />
+    );
 
   return (
     <div className="bt-risk">
@@ -1186,7 +1194,7 @@ export function RiskSection({
           {STOP_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
         {(risk.stop.kind === "pct" || risk.stop.kind === "trailPct") &&
-          <>{num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }), "any", 1)}<span>%</span></>}
+          <>{num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }), "any", 0.01)}<span>%</span></>}
         {(risk.stop.kind === "atr" || risk.stop.kind === "trailAtr") && <>
           {num(risk.stop.mult, (n) => onChange({ ...risk, stop: { ...risk.stop, mult: n } }))}
           <span>× ATR</span>
@@ -1201,7 +1209,7 @@ export function RiskSection({
           {TARGET_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
         {risk.target.kind === "pct" &&
-          <>{num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }), "any", 1)}<span>%</span></>}
+          <>{num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }), "any", 0.01)}<span>%</span></>}
         {risk.target.kind === "atr" && <>
           {num(risk.target.mult, (n) => onChange({ ...risk, target: { ...risk.target, mult: n } }))}
           <span>× ATR</span>
