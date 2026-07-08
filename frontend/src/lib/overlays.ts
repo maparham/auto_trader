@@ -260,7 +260,14 @@ export class OverlayManager {
   // rather than risk mangling a high-precision instrument with the wrong default.
   private pricePrecision: number | null = null;
   // Echo guard: suppress persistence while we programmatically rebuild overlays.
-  private hydrating = false;
+  // A DEPTH COUNTER, not a boolean (0 = not hydrating): guarded blocks NEST — a
+  // teardown removeOverlay inside rehydrate() fires onRemoved → notifyAlerts →
+  // alertsChanged, and the cell's own subscription synchronously runs
+  // reconcileAlerts, whose guarded() must not clear the flag the still-running
+  // rehydrate depends on. A boolean did exactly that (its finally reset the flag
+  // mid-teardown), so every remaining removal persisted a partial, shrinking
+  // list — the 2026-07-08 "alerts/drawings vanish on timeframe switch" data loss.
+  private hydrating = 0;
   // Re-entrancy guard for reconcileAlerts: its removeOverlay/notifyAlerts churn
   // synchronously re-fires the alerts signal this cell is subscribed to, so the
   // method can recurse into itself; bail on re-entry (see reconcileAlerts).
@@ -895,7 +902,12 @@ export class OverlayManager {
           this.drawingListener?.();
         }
         if (!this.hydrating) this.persist();
-        if (isAlert) this.notifyAlerts();
+        // Guarded (hydrating) removals are programmatic churn — rehydrate tears
+        // every overlay down and re-notifies ONCE at its end, and reconcile
+        // notifies itself when something changed. Bumping the alerts signal per
+        // teardown removal synchronously re-entered reconcileAlerts mid-rehydrate
+        // (see `hydrating`), which is how the TF-switch vanish started.
+        if (isAlert && !this.hydrating) this.notifyAlerts();
         return false;
       },
       // Hover/selection drive the TV-style on-line pill. klinecharts keeps a
@@ -1847,12 +1859,14 @@ export class OverlayManager {
 
   // Run a block with the echo guard on, so programmatic remove/create inside it
   // does NOT re-persist a transient intermediate state. Returns the block's value.
+  // Depth-counted so a guarded block that (indirectly, via the alerts signal)
+  // re-enters another guarded block can't un-guard its caller — see `hydrating`.
   private guarded<T>(fn: () => T): T {
-    this.hydrating = true;
+    this.hydrating++;
     try {
       return fn();
     } finally {
-      this.hydrating = false;
+      this.hydrating--;
     }
   }
 
@@ -1906,7 +1920,7 @@ export class OverlayManager {
     // selection; we re-select the line that still carries this saved id below.
     const prevSelectedSavedId =
       this.selectedAlertId != null ? this.alertIds.get(this.selectedAlertId) ?? null : null;
-    this.hydrating = true;
+    this.hydrating++;
     try {
       for (const id of [...this.entries.keys()]) this.chart.removeOverlay(id);
       this.entries.clear();
@@ -1961,7 +1975,7 @@ export class OverlayManager {
       // entries now reflect this.epic — let persist() write through again.
       this.hydratedEpic = this.epic;
     } finally {
-      this.hydrating = false;
+      this.hydrating--;
     }
     this.notifyAlerts();
   }

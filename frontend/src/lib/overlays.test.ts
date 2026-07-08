@@ -1449,3 +1449,33 @@ describe("OverlayManager picker-hover emphasis (thicken on chart, never persist 
     expect(liveLine(chart, id).color).toMatch(/^rgba\(/); // re-faded
   });
 });
+
+describe("OverlayManager rehydrate teardown vs re-entrant reconcile (TF-switch data loss)", () => {
+  // THE 2026-07-08 vanish bug. A same-epic rehydrate (timeframe switch) tears down
+  // every overlay; removing an ALERT fires onRemoved → notifyAlerts → alertsChanged,
+  // and the cell's live subscription (ChartCore) synchronously runs reconcileAlerts,
+  // whose guarded() finally CLEARED the shared boolean `hydrating` flag while the
+  // teardown loop was still mid-flight. Every remaining removal then persisted a
+  // partial, shrinking list — alerts AND drawings spiralled to [] in storage, and
+  // the rebuild phase re-read the freshly-stomped keys and recreated nothing.
+  it("a same-epic rehydrate with the live alertsChanged→reconcileAlerts wiring keeps storage intact", () => {
+    const { m } = setup();
+    // Real cell wiring (ChartCore.tsx): every alertsChanged bump reconciles this cell.
+    const unsub = alertsChanged.subscribe(() => m.reconcileAlerts());
+    try {
+      m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
+      for (const lvl of [10, 20, 30, 40]) {
+        m.addAlert(lvl, { condition: "crossing", trigger: "every", message: "" });
+      }
+      expect(P.loadAlerts("US100")).toHaveLength(4);
+      expect(P.loadDrawings("tab.A", "US100")).toHaveLength(1);
+
+      m.rehydrate("MINUTE_5"); // the timeframe switch
+
+      expect(P.loadAlerts("US100").map((a) => a.level)).toEqual([10, 20, 30, 40]);
+      expect(P.loadDrawings("tab.A", "US100")).toHaveLength(1);
+    } finally {
+      unsub();
+    }
+  });
+});
