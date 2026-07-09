@@ -105,6 +105,16 @@ export default function BacktestPanel() {
         <span>{s.n_trades} trades</span>
         <span title="Largest equity drop from a high to a low">−{s.max_drawdown.toFixed(2)} dd</span>
         <span>{(s.win_rate * 100).toFixed(0)}% win</span>
+        {(() => {
+          // Effective reward:risk actually realized (avg win ÷ avg loss) — the true
+          // payoff, which can differ sharply from the configured stop/target RR.
+          const rr = result.metrics.avg_win_loss_ratio;
+          const rrTitle =
+            "Effective reward:risk — average win ÷ average loss. Contrast with your configured stop/target RR.";
+          if (rr != null) return <span title={rrTitle}>{rr.toFixed(2)} RR</span>;
+          // null = no losing trades: infinite RR when there were any winners, else nothing to show.
+          return s.win_rate > 0 ? <span title={rrTitle}>∞ RR</span> : null;
+        })()}
       </span>
       <button
         className={`bt-periods-toggle${periodsShown ? " on" : ""}`}
