@@ -123,6 +123,19 @@ def test_mt5_registers_data_paper_and_live(monkeypatch) -> None:
     assert keys["mt5:live"]["isRealMoney"] is True
 
 
+def test_describe_labels_reflect_broker_reported_names(monkeypatch) -> None:
+    """The labels map is sparse: empty until a broker learns its real name at
+    runtime (MT5 fills display_name from MetaApi account information), then it
+    appears keyed by broker id."""
+    monkeypatch.setattr(MTSettings, "has", lambda self: True)
+    monkeypatch.setattr(MTSettings, "token", "tok", raising=False)
+    monkeypatch.setattr(MTSettings, "account_id", "acct-uuid", raising=False)
+    reg = build_registry()
+    assert reg.describe()["labels"] == {}
+    reg.data["mt5"].display_name = "Ava Trade Ltd (demo)"
+    assert reg.describe()["labels"] == {"mt5": "Ava Trade Ltd (demo)"}
+
+
 def test_get_data_unknown_broker_is_404() -> None:
     with pytest.raises(HTTPException) as exc:
         build_registry().get_data("nope")

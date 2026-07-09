@@ -23,7 +23,11 @@ class _FakeConn:
 
 class _FakeData:
     """Stands in for MT5Broker: `read` just runs the coroutine against a fake conn,
-    skipping the real connect/sync."""
+    skipping the real connect/sync. Borrows the real note_account_info so the
+    summary path's display-name refresh is exercised against the real logic."""
+
+    display_name = None
+    note_account_info = MT5Broker.note_account_info
 
     def __init__(self, info):
         self._conn = _FakeConn(info)
@@ -53,6 +57,39 @@ def test_account_summary_maps_metaapi_fields():
     assert out["currency"] == "USD"
     # profitLoss is the floating component: equity − balance (a loss here).
     assert out["profitLoss"] == pytest.approx(83753.68 - 100000.0)
+
+
+def test_note_account_info_composes_display_name():
+    # Broker field verbatim + demo/live suffix from the trade mode — the selector
+    # label ("Ava Trade Ltd (demo)") in the "Capital.com (demo)" style.
+    broker = MT5Broker(token="t", account_id="a")
+    assert broker.display_name is None
+    broker.note_account_info({"broker": "Ava Trade Ltd", "type": "ACCOUNT_TRADE_MODE_DEMO"})
+    assert broker.display_name == "Ava Trade Ltd (demo)"
+    broker.note_account_info({"broker": "Ava Trade Ltd", "type": "ACCOUNT_TRADE_MODE_REAL"})
+    assert broker.display_name == "Ava Trade Ltd (live)"
+
+
+def test_note_account_info_partial_payloads():
+    broker = MT5Broker(token="t", account_id="a")
+    # Unknown/missing trade mode → bare name (no invented suffix).
+    broker.note_account_info({"broker": "Ava Trade Ltd", "type": "ACCOUNT_TRADE_MODE_CONTEST"})
+    assert broker.display_name == "Ava Trade Ltd"
+    # No name → keep the last-known label rather than blanking it.
+    broker.note_account_info({"type": "ACCOUNT_TRADE_MODE_DEMO"})
+    assert broker.display_name == "Ava Trade Ltd"
+    broker.note_account_info(None)
+    assert broker.display_name == "Ava Trade Ltd"
+
+
+def test_account_summary_refreshes_display_name():
+    # Every summary read doubles as a label refresh, so the selector heals even
+    # if the one-shot startup fetch missed.
+    data = _FakeData(
+        {"balance": 1.0, "equity": 1.0, "broker": "Ava Trade Ltd", "type": "ACCOUNT_TRADE_MODE_DEMO"}
+    )
+    asyncio.run(MT5ExecutionBroker(data).get_account_summary())
+    assert data.display_name == "Ava Trade Ltd (demo)"
 
 
 def test_account_summary_tolerates_missing_fields():

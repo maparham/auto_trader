@@ -644,6 +644,10 @@ export default function PositionsPanel({
             broker, so the active env always reads clearly. Each tab carries its own
             open/close chevron: the active tab's toggles the dock, an inactive tab's
             switches to that account and opens its book. */}
+        {/* Broker identity — the env tabs switch WITHIN this broker, so its name
+            reads once, to their left. Backend-reported real name when the broker
+            provides one (MT5 → "Ava Trade Ltd (demo)"), static label otherwise. */}
+        <span className="pp-acct-broker">{brokerLabel(activeBroker)}</span>
         <div className="pp-acct-tabs" role="tablist" aria-label="Account">
           {acctTabs.map((a) => {
             const isActive = a.key === account;

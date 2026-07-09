@@ -96,8 +96,20 @@ const BROKER_LABELS: Record<string, string> = {
   "ig-demo": "IG (demo)",
   "ig-live": "IG (live)",
 };
+// Broker-reported display names from /api/brokers (e.g. mt5 → "Ava Trade Ltd
+// (demo)", read from MetaApi account information). They win over the static map
+// because they're the broker's own name for itself. Fed by fetchBrokers /
+// cachedBrokers, so a reload shows the last-known name before the fetch lands.
+let backendLabels: Record<string, string> = {};
+export function noteBrokerLabels(labels: Record<string, string> | undefined): void {
+  if (labels) backendLabels = labels;
+}
 export function brokerLabel(brokerId: string): string {
-  return BROKER_LABELS[brokerId] ?? brokerId.charAt(0).toUpperCase() + brokerId.slice(1);
+  return (
+    backendLabels[brokerId] ??
+    BROKER_LABELS[brokerId] ??
+    brokerId.charAt(0).toUpperCase() + brokerId.slice(1)
+  );
 }
 
 // True for any Capital.com feed (demo or live). Capital's reported account balance
@@ -133,6 +145,8 @@ export interface BrokerAccount {
 export interface BrokerInfo {
   data: string[];
   exec: BrokerAccount[];
+  // Sparse broker-reported display names by broker id (see noteBrokerLabels).
+  labels?: Record<string, string>;
 }
 
 // The account list is purely descriptive (no broker network call), so it should
@@ -149,7 +163,9 @@ const BROKERS_TIMEOUT_MS = 6_000;
 export function cachedBrokers(): BrokerInfo | null {
   try {
     const raw = localStorage.getItem(BROKERS_CACHE_KEY);
-    return raw ? (JSON.parse(raw) as BrokerInfo) : null;
+    const info = raw ? (JSON.parse(raw) as BrokerInfo) : null;
+    if (info) noteBrokerLabels(info.labels);
+    return info;
   } catch {
     return null;
   }
@@ -164,6 +180,7 @@ export async function fetchBrokers(): Promise<BrokerInfo> {
     const res = await fetch(`${BASE}/api/brokers`, { signal: ctrl.signal });
     if (!res.ok) throw new Error(`brokers failed (${res.status})`);
     const info = (await res.json()) as BrokerInfo;
+    noteBrokerLabels(info.labels);
     try {
       localStorage.setItem(BROKERS_CACHE_KEY, JSON.stringify(info));
     } catch {

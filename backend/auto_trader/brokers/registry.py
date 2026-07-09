@@ -57,6 +57,15 @@ class BrokerRegistry:
         each executor, so a new account shows up here with no extra wiring."""
         return {
             "data": sorted(self.data),
+            # Broker-reported display names, keyed by broker id. Sparse: only
+            # brokers that know their real name at runtime appear (MT5 reads it
+            # from MetaApi account information); the frontend keeps its static
+            # label for the rest.
+            "labels": {
+                broker_id: label
+                for broker_id, broker in self.data.items()
+                if (label := getattr(broker, "display_name", None))
+            },
             "exec": [
                 {
                     "key": key,

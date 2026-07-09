@@ -177,6 +177,11 @@ def _pos_side(raw_type: str) -> Side:
     return Side.BUY if "BUY" in (raw_type or "").upper() else Side.SELL
 
 
+# MetaApi account trade mode → the selector label's env suffix. CONTEST (and any
+# future mode) is deliberately unmapped: better a bare broker name than a wrong tag.
+_TRADE_MODE_ENV = {"ACCOUNT_TRADE_MODE_DEMO": "demo", "ACCOUNT_TRADE_MODE_REAL": "live"}
+
+
 def _lvl(v: float | None) -> float | None:
     """MT5 reports absent stop/target as 0 (or None). Normalise both to None."""
     return v if v else None
@@ -254,6 +259,9 @@ class MT5Broker(MarketDataBroker):
         # missing a contractSize, so the fallback warning fires at most once each.
         self._spec_cache: dict[str, dict] = {}
         self._warned_no_contract: set[str] = set()
+        # One-shot background fetch of the account's real broker name for the
+        # selector label (see start_display_name_fetch).
+        self._label_task: asyncio.Task | None = None
 
     # --- connection -----------------------------------------------------------
 
@@ -340,6 +348,41 @@ class MT5Broker(MarketDataBroker):
             return await self._bounded(make_coro)
         except TimeoutException as exc:
             raise BrokerReconnecting("mt5") from exc
+
+    # --- display name -----------------------------------------------------------
+
+    def note_account_info(self, info: dict | None) -> None:
+        """Cache the account's real broker name off a MetaApi account-information
+        payload — `broker` verbatim (the registered name, e.g. "Ava Trade Ltd")
+        plus a demo/live suffix from the trade mode, matching the selector's
+        "Capital.com (demo)" style. Called opportunistically by every account-info
+        read so the label heals itself even if the startup fetch missed."""
+        name = (info or {}).get("broker")
+        if not name:
+            return
+        env = _TRADE_MODE_ENV.get(info.get("type"))
+        self.display_name = f"{name} ({env})" if env else name
+
+    def start_display_name_fetch(self) -> None:
+        """Kick the one-shot background fetch of the broker name, so the selector
+        shows it even if the user never routes a read through this broker. Quiet
+        and bounded: a down broker just leaves the frontend's fallback label. A
+        no-op outside a running loop (unit tests construct brokers directly)."""
+        try:
+            self._label_task = asyncio.get_running_loop().create_task(self._fetch_display_name())
+        except RuntimeError:
+            pass
+
+    async def _fetch_display_name(self) -> None:
+        # `read` fast-fails while the connection is still coming up (and itself
+        # triggers the connect), so poll until one read lands. ~5 minutes covers
+        # a slow MetaApi deploy; past that, give up — summary reads still heal it.
+        for _ in range(60):
+            try:
+                self.note_account_info(await self.read(lambda c: c.get_account_information()))
+                return
+            except Exception:
+                await asyncio.sleep(5.0)
 
     def _note_rpc_timeout(self, gen: int) -> None:
         """Count a consecutive RPC timeout; on the second (a persistent wedge on a
@@ -570,6 +613,9 @@ class MT5Broker(MarketDataBroker):
         on a wedged socket would hang uvicorn --reload's process swap and with it
         every request. The client is then reaped so no cancellation-immune SDK task
         survives into asyncio.run's shutdown."""
+        if self._label_task is not None:
+            self._label_task.cancel()
+            self._label_task = None
         conn, self._conn, self._synced = self._conn, None, False
         stream, self._stream_conn, self._stream_synced = self._stream_conn, None, False
         for c in (conn, stream):
@@ -1015,6 +1061,7 @@ class MT5ExecutionBroker(ExecutionBroker):
         through verbatim so the dock uses MT5's own margin/margin-level rather than
         re-deriving them (which would drift by swap/commission)."""
         info = await self._data.read(lambda c: c.get_account_information())
+        self._data.note_account_info(info)  # keeps the selector's broker label fresh
         balance = info.get("balance")
         equity = info.get("equity")
         pnl = equity - balance if (equity is not None and balance is not None) else None
@@ -1198,4 +1245,5 @@ def register(registry: "BrokerRegistry", *, token: str, account_id: str, region:
     registry.add_data("mt5", broker)
     paper_exec.register(registry, broker, broker_id="mt5")  # mt5:paper
     registry.add_exec("mt5:live", MT5ExecutionBroker(broker))
+    broker.start_display_name_fetch()  # real broker name for the selector label
     return broker

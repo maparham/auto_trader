@@ -8,8 +8,13 @@ import { installMemStorage } from "./testMemStorage";
 // localStorage before importing the module under test.
 installMemStorage();
 
-const { clampLevelToPrice, brokerLabel, isCapital, migrateCapitalLiveAccountKeys } =
-  await import("./trading");
+const {
+  clampLevelToPrice,
+  brokerLabel,
+  noteBrokerLabels,
+  isCapital,
+  migrateCapitalLiveAccountKeys,
+} = await import("./trading");
 
 const TICK = 0.01;
 const PRICE = 100;
@@ -65,6 +70,23 @@ describe("capital feed labels + isCapital", () => {
     expect(isCapital("capital")).toBe(true);
     expect(isCapital("capital-live")).toBe(true);
     expect(isCapital("ig-live")).toBe(false);
+  });
+});
+
+describe("backend-reported broker labels", () => {
+  it("falls back to a capitalized id for an unknown broker with no label", () => {
+    expect(brokerLabel("mt5")).toBe("Mt5");
+  });
+  it("prefers the backend label over the static map and the fallback", () => {
+    noteBrokerLabels({ mt5: "Ava Trade Ltd (demo)", capital: "Capital (renamed)" });
+    expect(brokerLabel("mt5")).toBe("Ava Trade Ltd (demo)");
+    expect(brokerLabel("capital")).toBe("Capital (renamed)");
+    // A later payload without labels keeps the last-known names.
+    noteBrokerLabels(undefined);
+    expect(brokerLabel("mt5")).toBe("Ava Trade Ltd (demo)");
+    // Cleanup: restore the static labels for other describe blocks.
+    noteBrokerLabels({});
+    expect(brokerLabel("capital")).toBe("Capital.com (demo)");
   });
 });
 

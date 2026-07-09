@@ -3086,7 +3086,8 @@
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.pp-bar-title {
+.pp-bar-title,
+.pp-acct-broker {
   font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;
   white-space: nowrap;
 }
@@ -3101,6 +3102,9 @@
    segmented control: only the active env is filled; a per-tier dot marks risk, and
    a live (real-money) tab carries the danger accent. Clicking anywhere on a tab
    toggles its book (trailing chevron shows open/closed). */
+/* Broker identity to the left of the env tabs — shares .pp-bar-title's quiet caps
+   treatment (see above) so it reads as a label, not another tab. */
+.pp-acct-broker { color: var(--text-dim); margin-right: 6px; }
 .pp-acct-tabs { display: flex; align-items: center; gap: 2px; }
 .pp-acct-tab {
   display: inline-flex; align-items: center; gap: 6px;
