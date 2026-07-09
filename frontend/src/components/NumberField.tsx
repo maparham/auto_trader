@@ -16,6 +16,7 @@ export default function NumberField({
   value,
   onChange,
   floor,
+  signed = false,
   className,
 }: {
   value: number | undefined;
@@ -23,6 +24,9 @@ export default function NumberField({
   /** When set, the field can't commit a non-positive value: an empty or ≤0
    *  entry snaps up to `floor` on blur, matching the old min= guard. */
   floor?: number;
+  /** Allow a single leading minus so negative thresholds (e.g. a slope < -0.05)
+   *  can be entered. Off by default — magnitude/quantity fields stay unsigned. */
+  signed?: boolean;
   className?: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -32,13 +36,17 @@ export default function NumberField({
     // Keep digits and dots only — a comma (the decimal key on a comma-locale
     // keyboard) is simply ignored, so it can never act as a separator.
     let raw = e.currentTarget.value.replace(/[^0-9.]/g, "");
+    // A single leading minus (signed mode only) — read it off the raw text
+    // before the digit-only strip, then re-prepend it below.
+    const neg = signed && e.currentTarget.value.trimStart().startsWith("-");
     // Collapse any dots after the first, then strip redundant leading zeros
     // ("05" -> "5") while leaving "0." and "0.x" intact.
     const dot = raw.indexOf(".");
     if (dot !== -1) raw = raw.slice(0, dot + 1) + raw.slice(dot + 1).replace(/\./g, "");
     raw = raw.replace(/^0+(?=\d)/, "");
+    if (neg) raw = "-" + raw;
     setDraft(raw);
-    if (raw !== "" && raw !== ".") {
+    if (raw !== "" && raw !== "." && raw !== "-" && raw !== "-.") {
       const n = Number(raw);
       if (Number.isFinite(n)) onChange(n);
     }

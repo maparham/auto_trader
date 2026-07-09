@@ -2073,12 +2073,11 @@ function OperandPicker({
       )}
       {value.kind === "const" && (
         <>
-          <input
-            type="number"
-            step="any"
-            className="bt-operand-length"
+          <NumberField
+            signed
             value={value.value}
-            onChange={(e) => onChange({ kind: "const", value: Number(cleanNumInput(e.currentTarget)) })}
+            onChange={(n) => onChange({ kind: "const", value: n })}
+            className="bt-operand-length"
           />
           {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
         </>
