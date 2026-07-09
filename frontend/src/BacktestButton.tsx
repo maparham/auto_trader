@@ -107,6 +107,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     backtestResultSignal.set(null);
     try {
       const cfg = loadBacktestLastUsed() ?? defaultBacktestConfig();
+      const coded = cfg.mode === "coded";
+      if (coded && !cfg.codedStrategy) {
+        setError("no coded strategy selected — pick one in the backtest panel");
+        return;
+      }
       // The config timeframe overrides the active chart timeframe when set;
       // absent means follow the chart (the historical behavior).
       const runResolution = cfg.range.resolution ?? period.resolution;
@@ -155,7 +160,8 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       const fetchTimeframe = (resolution: string) =>
         fetchRange(epic, resolution, htfFromSec, toSec, priceSide, brokerId);
       const tSeries0 = performance.now();
-      const series = await buildSeries(bars, cfg, runResolution, fetchTimeframe);
+      // Coded strategies compute indicators in Python — nothing to precompute.
+      const series = coded ? {} : await buildSeries(bars, cfg, runResolution, fetchTimeframe);
       const tSeries1 = performance.now();
       const candles = bars.map((k) => ({
         time: Math.round(k.timestamp / 1000),
@@ -178,18 +184,24 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           resolution: runResolution,
           candles,
           series,
+          // Coded strategies compute indicators in Python — nothing to precompute.
+          codedStrategy: coded ? cfg.codedStrategy : undefined,
+          // Coded strategies' ad-hoc ctx.ema(tf=...) calls need the backend to fetch
+          // that timeframe itself — same broker/price side the chart is showing.
+          broker: coded ? brokerId : undefined,
+          priceSide: coded ? priceSide : undefined,
           // Disabled rules are kept in the config but dropped from the run.
-          longEntry: activeGroup(cfg.longEntry),
-          longExit: activeGroup(cfg.longExit),
-          shortEntry: activeGroup(cfg.shortEntry),
-          shortExit: activeGroup(cfg.shortExit),
+          longEntry: coded ? { combine: "AND", rules: [] } : activeGroup(cfg.longEntry),
+          longExit: coded ? { combine: "AND", rules: [] } : activeGroup(cfg.longExit),
+          shortEntry: coded ? { combine: "AND", rules: [] } : activeGroup(cfg.shortEntry),
+          shortExit: coded ? { combine: "AND", rules: [] } : activeGroup(cfg.shortExit),
           // `!== false` so a preset predating these flags (undefined) still trades.
           longEnabled: cfg.longEnabled !== false,
           shortEnabled: cfg.shortEnabled !== false,
-          longRisk: cfg.longRisk,
-          shortRisk: cfg.shortRisk,
-          longScaling: cfg.longScaling,
-          shortScaling: cfg.shortScaling,
+          longRisk: coded ? undefined : cfg.longRisk,
+          shortRisk: coded ? undefined : cfg.shortRisk,
+          longScaling: coded ? undefined : cfg.longScaling,
+          shortScaling: coded ? undefined : cfg.shortScaling,
           costs: cfg.costs,
           tradeFromTime,
           mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,

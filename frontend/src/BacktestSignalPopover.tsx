@@ -43,15 +43,22 @@ export default function BacktestSignalPopover() {
       </div>
       <table className="bt-cluster-pop-table">
         <tbody>
-          {glyph.terms.map((t, i) => (
-            <tr key={i}>
-              <td className="bt-signal-pop-op">{termLabel(t.left, t.leftTf)}</td>
-              <td className="bt-cluster-pop-num">{fmt(t.lval)}</td>
-              <td className="bt-signal-pop-cmp">{opSymbol(t.op)}</td>
-              <td className="bt-signal-pop-op">{termLabel(t.right, t.rightTf)}</td>
-              <td className="bt-cluster-pop-num">{fmt(t.rval)}</td>
-            </tr>
-          ))}
+          {glyph.terms.map((t, i) =>
+            t.op === "" ? (
+              <tr key={i}>
+                <td className="bt-signal-pop-op">{termLabel(t.left, t.leftTf)}</td>
+                <td className="bt-cluster-pop-num">{fmt(t.lval)}</td>
+              </tr>
+            ) : (
+              <tr key={i}>
+                <td className="bt-signal-pop-op">{termLabel(t.left, t.leftTf)}</td>
+                <td className="bt-cluster-pop-num">{fmt(t.lval)}</td>
+                <td className="bt-signal-pop-cmp">{opSymbol(t.op)}</td>
+                <td className="bt-signal-pop-op">{termLabel(t.right, t.rightTf)}</td>
+                <td className="bt-cluster-pop-num">{fmt(t.rval)}</td>
+              </tr>
+            ),
+          )}
         </tbody>
       </table>
     </div>,

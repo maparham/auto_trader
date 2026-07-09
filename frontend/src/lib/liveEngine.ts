@@ -12,7 +12,7 @@ import {
 import { activeGroup } from "./backtestConfig";
 import { markStrategyDeal, forgetStrategyDeal } from "./liveTags";
 import { recordClose } from "./liveJournal";
-import type { EvaluateRequest } from "./liveTypes";
+import type { EvaluateRequest, EvaluateResult } from "./liveTypes";
 
 type KBar = { timestamp: number; open: number; high: number; low: number; close: number; volume: number };
 
@@ -43,6 +43,7 @@ export async function runOneCycle(
   resolution: string,
   epic: string,
   deps: CycleDeps = realDeps,
+  brokerId?: string,
 ): Promise<{ state: LiveState }> {
   if (state.status !== "armed") return { state };
   const base = activeRules(state);
@@ -81,12 +82,27 @@ export async function runOneCycle(
   // alignHtfToChart(waitClose=true) gates each HTF bar until it has closed, so no
   // lookahead. Base-only configs never invoke it; the base-bar fallback keeps
   // unit tests (and any base-only path) working without a fetcher.
-  const fetchTf = deps.fetchTimeframe ?? (async () => bars);
-  const series = await deps.buildSeries(
-    bars as never, snap.cfg, resolution, (async (tf: string) => await fetchTf(tf)) as never,
-  );
-
+  // Coded strategy: the backend .py file computes its own indicators from the
+  // candles, so no frontend series and no rule groups — just the filename.
   const cfg = snap.cfg;
+  // Fail safe: "coded" mode with no file picked must NEVER fall through to the
+  // rules branch below — that would trade whatever stale rule groups happen to
+  // sit in cfg (e.g. defaultBacktestConfig's seed EMA-cross) while the user
+  // believes nothing is armed. Refuse the cycle outright instead.
+  if (cfg.mode === "coded" && !cfg.codedStrategy) {
+    return {
+      state: appendLog(reconciled, barTsSec, "coded mode but no strategy selected — not trading"),
+    };
+  }
+  const coded = cfg.mode === "coded" && !!cfg.codedStrategy;
+  const fetchTf = deps.fetchTimeframe ?? (async () => bars);
+  const series = coded
+    ? {}
+    : await deps.buildSeries(
+        bars as never, snap.cfg, resolution, (async (tf: string) => await fetchTf(tf)) as never,
+      );
+
+  const emptyGroup = { combine: "AND" as const, rules: [] };
   const req: EvaluateRequest = {
     epic, resolution,
     candles: bars.map((b) => ({
@@ -94,18 +110,29 @@ export async function runOneCycle(
       open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
     })),
     series,
-    longEntry: activeGroup(cfg.longEntry),
-    longExit: activeGroup(cfg.longExit),
-    shortEntry: activeGroup(cfg.shortEntry),
-    shortExit: activeGroup(cfg.shortExit),
+    longEntry: coded ? emptyGroup : activeGroup(cfg.longEntry),
+    longExit: coded ? emptyGroup : activeGroup(cfg.longExit),
+    shortEntry: coded ? emptyGroup : activeGroup(cfg.shortEntry),
+    shortExit: coded ? emptyGroup : activeGroup(cfg.shortExit),
     longEnabled: cfg.longEnabled !== false,
     shortEnabled: cfg.shortEnabled !== false,
-    longRisk: cfg.longRisk ?? null,
-    shortRisk: cfg.shortRisk ?? null,
+    longRisk: coded ? undefined : cfg.longRisk ?? null,
+    shortRisk: coded ? undefined : cfg.shortRisk ?? null,
     position,
+    codedStrategy: coded ? cfg.codedStrategy : undefined,
+    // Coded strategies' ad-hoc ctx.ema(tf=...) calls need the backend to fetch
+    // that timeframe itself — same broker/price side the live stream uses (mid).
+    broker: coded ? brokerId : undefined,
+    priceSide: coded ? "mid" : undefined,
   };
 
-  const { actions } = await deps.evaluateStrategy(req);
+  let actions: EvaluateResult["actions"];
+  try {
+    ({ actions } = await deps.evaluateStrategy(req));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { state: appendLog(reconciled, barTsSec, `evaluate failed: ${msg}`) };
+  }
   let next = { ...reconciled, lastEvalSec: barTsSec };
   if (actions.length === 0) {
     return { state: appendLog(next, barTsSec, "no signal") };
@@ -231,8 +258,18 @@ export function armLiveEngine(params: {
     if (closedBars.length < 2) return;
     running = true;
     const barTsSec = Math.floor(closedBars[closedBars.length - 1].timestamp / 1000);
-    void runOneCycle(getState(), closedBars, barTsSec, resolution, epic, deps)
+    void runOneCycle(getState(), closedBars, barTsSec, resolution, epic, deps, brokerId)
       .then(({ state }) => { if (!cancelled) setState(state); })
+      .catch((e) => {
+        // Backstop for anything the inner try/catch doesn't cover (e.g.
+        // fetchOpenPositions/buildSeries/placeActions rejecting) — the primary
+        // surface for evaluateStrategy failures is the try/catch above.
+        console.error("live cycle failed", e);
+        if (!cancelled) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setState(appendLog(getState(), barTsSec, `cycle failed: ${msg}`));
+        }
+      })
       .finally(() => { running = false; });
   }, undefined, "mid", brokerId);
 

@@ -1,7 +1,7 @@
 // PositionLines reconcile + tradeLineSpecs (pending-merge, labels, draggability).
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { PositionLines, tradeLineSpecs, bracketLabels, type LineSpec } from "./positionLines";
+import { PositionLines, tradeLineSpecs, bracketLabels, restingLineEndX, type LineSpec } from "./positionLines";
 import type { TradeView } from "./trading";
 
 interface Call {
@@ -10,10 +10,13 @@ interface Call {
   arg?: unknown;
 }
 
-function fakeChart() {
+function fakeChart(bars: { timestamp: number }[] = []) {
   const calls: Call[] = [];
   let seq = 0;
   const chart = {
+    getDataList() {
+      return bars;
+    },
     createOverlay(arg: unknown) {
       const id = `ov-${++seq}`;
       calls.push({ fn: "create", id, arg });
@@ -31,7 +34,7 @@ function fakeChart() {
 }
 
 function spec(over: Partial<LineSpec> = {}): LineSpec {
-  return { key: "k1", level: 100, color: "#000", label: "L", draggable: false, ...over };
+  return { key: "k1", level: 100, color: "#000", label: "L", draggable: false, restKind: "full", ...over };
 }
 
 function trade(over: Partial<TradeView> = {}): TradeView {
@@ -300,6 +303,83 @@ describe("tradeLineSpecs", () => {
     ]);
     expect(specs.find((s) => s.key === "D2:price")?.selected).toBe(false);
   });
+
+  it("a position entry line is bar-anchored to its open time; SL/TP are stubs", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ openedAt: 1_700_000_000_000, stop: 95, takeProfit: 105 })],
+    });
+    const price = specs.find((s) => s.key === "D1:price");
+    expect(price?.restKind).toBe("bar");
+    expect(price?.entryTs).toBe(1_700_000_000_000);
+    expect(specs.find((s) => s.key === "D1:stop")?.restKind).toBe("stub");
+    expect(specs.find((s) => s.key === "D1:tp")?.restKind).toBe("stub");
+  });
+
+  it("a position with no open time falls back to a stub entry (can't anchor)", () => {
+    const specs = tradeLineSpecs({ ...base, trades: [trade({ openedAt: null })] });
+    expect(specs[0].restKind).toBe("stub");
+    expect(specs[0].entryTs).toBeUndefined();
+  });
+
+  it("a resting order's entry spans the pane (full), not bar-anchored", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ kind: "order", openedAt: 1_700_000_000_000 })],
+    });
+    expect(specs[0].restKind).toBe("full");
+    expect(specs[0].entryTs).toBeUndefined();
+  });
+
+  it("draft lines always span the pane (full)", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [],
+      draft: { epic: "EURUSD", side: "buy", quantity: 1, type: "limit", price: 99, stop: 98, takeProfit: 101 },
+    });
+    expect(specs.every((s) => s.restKind === "full")).toBe(true);
+  });
+
+  it("emphasized is set by hover, select, or an active drag", () => {
+    const t = [trade({ id: "D1", stop: 95 }), trade({ id: "D2", priceLevel: 200 })];
+    const hov = tradeLineSpecs({ ...base, trades: t, hovered: "D1" });
+    expect(hov.filter((s) => s.emphasized).map((s) => s.key)).toEqual(["D1:price", "D1:stop"]);
+    const sel = tradeLineSpecs({ ...base, trades: t, selected: "D1" });
+    expect(sel.filter((s) => s.emphasized).map((s) => s.key)).toEqual(["D1:price", "D1:stop"]);
+    const drag = tradeLineSpecs({ ...base, trades: t, dragging: "D1" });
+    expect(drag.filter((s) => s.emphasized).map((s) => s.key)).toEqual(["D1:price", "D1:stop"]);
+    expect(drag.find((s) => s.key === "D2:price")?.emphasized).toBe(false);
+  });
+});
+
+describe("restingLineEndX", () => {
+  const W = 1000;
+
+  it("spans the pane when emphasized or restKind full", () => {
+    expect(restingLineEndX({ restKind: "bar", emphasized: true, entryX: 400, width: W })).toEqual({ endX: W, dotX: null });
+    expect(restingLineEndX({ restKind: "full", emphasized: false, entryX: null, width: W })).toEqual({ endX: W, dotX: null });
+  });
+
+  it("stubs a stub line, no dot", () => {
+    expect(restingLineEndX({ restKind: "stub", emphasized: false, entryX: null, width: W })).toEqual({ endX: 136, dotX: null });
+  });
+
+  it("ends a bar line at its entry candle with a dot when on-body", () => {
+    expect(restingLineEndX({ restKind: "bar", emphasized: false, entryX: 400, width: W })).toEqual({ endX: 400, dotX: 400 });
+  });
+
+  it("degrades to a stub (no dot) when the entry candle is off the left edge", () => {
+    expect(restingLineEndX({ restKind: "bar", emphasized: false, entryX: -50, width: W })).toEqual({ endX: 136, dotX: null });
+  });
+
+  it("stays full-width (no dot) when the entry candle is off the right edge", () => {
+    // Viewing history from before the entry: everything visible predates it.
+    expect(restingLineEndX({ restKind: "bar", emphasized: false, entryX: 1200, width: W })).toEqual({ endX: W, dotX: null });
+  });
+
+  it("falls back to a stub when a bar line has no resolvable entry x", () => {
+    expect(restingLineEndX({ restKind: "bar", emphasized: false, entryX: null, width: W })).toEqual({ endX: 136, dotX: null });
+  });
 });
 
 describe("bracketLabels", () => {
@@ -335,6 +415,46 @@ describe("bracketLabels", () => {
     const l = bracketLabels({ entry: 0, stop: -5, tp: 5 });
     expect(l.tpPct).toBeNull();
     expect(l.slPct).toBeNull();
+  });
+});
+
+describe("PositionLines bar anchoring", () => {
+  const barSpec = (over: Partial<LineSpec> = {}) =>
+    spec({ restKind: "bar", entryTs: 1_000, ...over });
+
+  it("adds a second, bar-snapped point for a bar-anchored spec", () => {
+    // Bars at 900 / 1000 / 1100; entry at 1050 sits in the bar that CONTAINS it (1000),
+    // matching how the entry marker anchors (barIndexForTs, not nearest).
+    const chart = fakeChart([{ timestamp: 900 }, { timestamp: 1000 }, { timestamp: 1100 }]);
+    const lines = new PositionLines(chart.chart, 5);
+    lines.render([barSpec({ entryTs: 1050 })]);
+    const create = chart.calls.find((c) => c.fn === "create");
+    const arg = create?.arg as { points: { value?: number; timestamp?: number }[]; extendData: { hasBar: boolean } };
+    expect(arg.points).toHaveLength(2);
+    expect(arg.points[1].timestamp).toBe(1000);
+    expect(arg.extendData.hasBar).toBe(true);
+  });
+
+  it("falls back to a single point (stub) when the entry predates the loaded window", () => {
+    const chart = fakeChart([{ timestamp: 1000 }, { timestamp: 1100 }]);
+    const lines = new PositionLines(chart.chart, 5);
+    lines.render([barSpec({ entryTs: 500 })]); // older than oldest loaded bar (1000)
+    const create = chart.calls.find((c) => c.fn === "create");
+    const arg = create?.arg as { points: unknown[]; extendData: { hasBar: boolean } };
+    expect(arg.points).toHaveLength(1);
+    expect(arg.extendData.hasBar).toBe(false);
+  });
+
+  it("re-reconciles when the snapped entry bar changes (scroll pages it in)", () => {
+    const chart = fakeChart([{ timestamp: 1000 }, { timestamp: 1100 }]);
+    const lines = new PositionLines(chart.chart, 5);
+    lines.render([barSpec({ entryTs: 500 })]); // off-window → stub
+    chart.calls.length = 0;
+    // Same spec, but now the entry bar is loaded → the sig must change and override.
+    const chart2Bars = [{ timestamp: 400 }, { timestamp: 500 }, { timestamp: 1000 }];
+    (chart.chart as unknown as { getDataList: () => unknown }).getDataList = () => chart2Bars;
+    lines.render([barSpec({ entryTs: 500 })]);
+    expect(chart.calls.filter((c) => c.fn === "override")).toHaveLength(1);
   });
 });
 

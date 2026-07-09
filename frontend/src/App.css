@@ -2096,6 +2096,14 @@
      the halo below. */
   text-shadow: 0 0 2px var(--bg), 0 0 2px var(--bg);
 }
+/* The candle-pane legend rides ABOVE the trade pills (z 47–49) so open-position
+   pills — anchored at the pane's left edge (x=106) — tuck BEHIND it instead of
+   covering it; the legend wins the overlap and the pills stay put. Scoped to the
+   candle-pane legend only: the sub-pane legend never meets a pill, so it keeps its
+   original z 11. 50 is the lowest value that clears the pill band; still below the
+   right-axis alert/price tags (which never overlap the top-left legend) and the
+   menus/modals at z 60+. */
+.chart-legend:not(.sub-pane-legend) { z-index: 50; }
 /* Sub-pane indicator legend (Volume/MACD/RSI…): same card as the candle legend, but
    positioned at each pane's top (set inline by ChartCore from getSize). The `top:6px`
    from .chart-legend is overridden inline; a small inset keeps it off the separator
@@ -2147,7 +2155,18 @@
      hover/selected border doesn't shift the row. */
   height: 22px; padding: 0 6px;
   border: 1px solid transparent; border-radius: 3px;
+  /* Opaque plate in the chart-background colour so a trade pill sitting behind the
+     candle-pane legend (pills are z 47–49, legend z 50) is fully masked instead of
+     bleeding through. Over the empty chart this is invisible (same colour as --bg);
+     over candles it reads as a tight TradingView-style plate. Low specificity (one
+     class) so hover/selected rows still win with --surface (see .cl-ind:hover). */
+  background: var(--bg);
 }
+/* Sub-pane legend rows never sit behind a pill (pills live on the candle pane), so
+   they don't need the mask — keep them transparent (halo only), as before. Placed
+   before the .cl-ind:hover block so a hovered sub-pane row still gets its --surface
+   plate by source order (equal specificity, later rule wins). */
+.sub-pane-legend .cl-row { background: transparent; }
 /* Tiny gap between adjacent segments, TradingView-tight. */
 .cl-row > * + * { margin-left: 6px; }
 .cl-row > .cl-ohlc-item + .cl-ohlc-item,
@@ -3621,3 +3640,25 @@
 .bt-operand-add { flex: 0 0 auto; width: 24px; height: 24px; padding: 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1; cursor: pointer; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--accent); }
 .bt-operand-add:hover { background: var(--accent); color: var(--accent-text); }
 .bt-swap-sides { white-space: nowrap; }
+
+/* Rules | Strategy mode switch atop the strategy section (reuses .seg). */
+.bt-mode-tabs { width: 100%; margin-top: 4px; }
+.bt-mode-tabs button { flex: 1; }
+
+/* Coded-strategy picker (backtest panel Strategy mode). */
+.strat-picker { display: flex; flex-direction: column; gap: 6px; }
+.strat-picker-row { display: flex; gap: 6px; align-items: center; }
+.strat-picker-row .anchor-btn { flex: 0 0 auto; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); }
+.strat-picker-row .anchor-btn:hover { background: var(--hover); }
+.strat-picker-select { flex: 1; min-width: 0; }
+.strat-picker-meta { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.strat-picker-name { font-weight: 600; }
+.strat-picker-file { color: var(--text-dim); font-size: 12px; }
+.strat-picker-badge { font-size: 11px; padding: 1px 6px; border: 1px solid currentColor; border-radius: 3px; color: var(--neg); }
+.strat-picker-desc { margin: 0; font-size: 13px; }
+.strat-picker-desc-empty { color: var(--text-dim); font-style: italic; }
+.strat-picker-error { color: var(--neg); font-size: 12px; white-space: pre-wrap; }
+.strat-picker-src-toggle { align-self: flex-start; background: none; border: none; cursor: pointer; padding: 0; font: inherit; color: inherit; }
+.strat-picker-src { max-height: 320px; overflow: auto; font-size: 12px; border: 1px solid var(--border); padding: 8px; margin: 0; }
+/* Live panel: read-only coded-strategy summary shown in place of the rule editors */
+.live-strat-summary { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }

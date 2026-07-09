@@ -51,6 +51,7 @@ import {
 import { SESSION_PRESETS, buildRangeChips, coverage, isActive, resolveMask } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
+import StrategyPicker from "./StrategyPicker";
 import {
   loadBacktestPresets,
   saveBacktestPreset,
@@ -948,6 +949,27 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 style={{ "--side": side === "long" ? "var(--pos)" : "var(--neg)" } as CSSProperties}
                 data-parked={(side === "long" ? cfg.longEnabled : cfg.shortEnabled) === false}
               >
+          <div className="bt-side-tabs seg bt-mode-tabs">
+            <button
+              className={(cfg.mode ?? "rules") === "rules" ? "seg-on" : ""}
+              onClick={() => setCfg({ ...cfg, mode: "rules" })}
+            >
+              Rules
+            </button>
+            <button
+              className={cfg.mode === "coded" ? "seg-on" : ""}
+              onClick={() => setCfg({ ...cfg, mode: "coded" })}
+            >
+              Strategy
+            </button>
+          </div>
+          {cfg.mode === "coded" ? (
+            <StrategyPicker
+              value={cfg.codedStrategy}
+              onChange={(filename) => setCfg({ ...cfg, codedStrategy: filename })}
+            />
+          ) : (
+            <>
           <div className="bt-side-tabs seg">
             <button
               className={`bt-side-long${side === "long" ? " seg-on" : ""}`}
@@ -983,6 +1005,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               Volume-based operands (Volume, Volume-MA, AVWAP) read 0 on epics that don't report
               trade volume (e.g. many forex/CFD instruments) — they'll never fire there.
             </div>
+          )}
+            </>
           )}
               </div>
             </section>

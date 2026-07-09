@@ -19,6 +19,7 @@ import type {
 } from "klinecharts";
 import { tradeLabel, type TradeView } from "./trading";
 import type { PendingEdit, DraftOrder } from "./signals";
+import { barIndexForTs } from "./backtest";
 
 export interface LineSpec {
   key: string; // stable per line, e.g. `${tradeId}:stop`
@@ -36,6 +37,16 @@ export interface LineSpec {
   // Drawn click-selected (solid, sticky) — a stronger emphasis than hover. When both
   // are true, selected wins.
   selected?: boolean;
+  // How far the line extends at REST (declutter): "bar" ends it at the entry candle
+  // (needs `entryTs`), "stub" tucks it under the left pill, "full" spans the pane.
+  // Any emphasis (hover/select/drag) overrides this to full width regardless.
+  restKind: "bar" | "stub" | "full";
+  // Raw entry time (ms) for a "bar" line — the drawer snaps it to the containing
+  // candle and truncates the resting line there. Ignored for stub/full.
+  entryTs?: number;
+  // Fully revealed (full width + end marker suppressed) — hover, click-select, or an
+  // active drag of this trade. Precomputed by the caller since drag state lives there.
+  emphasized?: boolean;
   onDragEnd?: (newLevel: number) => void;
 }
 
@@ -71,6 +82,10 @@ export interface SpecBuildOpts {
   hovered?: string | null;
   // The click-selected trade id: its lines render solid (sticky emphasis).
   selected?: string | null;
+  // The trade whose line is being actively dragged (SL/TP/limit). Like hover/select
+  // it fully reveals that trade's lines — so a dragged SL doesn't jump as a stub in
+  // no-confirm mode, where a drag doesn't select. Null when nothing is dragging.
+  dragging?: string | null;
   // The focused LINE of the selected trade (the one whose DOM pill is showing). That
   // line's own canvas label is blanked so the richer pill can take its place WITHOUT
   // doubling the text — the label "grows" into the pill at the same spot.
@@ -95,6 +110,8 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
     if (t.epic !== o.epic) continue;
     const selected = o.selected === t.id;
     const highlight = o.hovered === t.id;
+    // Any of hover / click-select / active-drag fully reveals this trade's lines.
+    const emphasized = highlight || selected || o.dragging === t.id;
     // The focused line whose pill is up (only for the selected trade) — its label is
     // suppressed so the pill replaces it in place rather than overlapping it.
     const focusedField = selected ? o.selectedField ?? null : null;
@@ -124,6 +141,12 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         draggable: t.kind === "order",
         highlight,
         selected,
+        emphasized,
+        // A filled position's entry line ends at its entry candle (declutter); a
+        // resting order's entry is a live level you watch price approach, so it
+        // spans the pane. A position with no open time can't be anchored → stub.
+        restKind: t.kind === "order" ? "full" : t.openedAt != null ? "bar" : "stub",
+        entryTs: t.kind === "position" ? t.openedAt ?? undefined : undefined,
         onDragEnd: (lvl) => o.onDrag(t.id, "price", lvl),
       });
     }
@@ -136,6 +159,8 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         draggable: o.levelsDraggable,
         highlight,
         selected,
+        emphasized,
+        restKind: "stub",
         onDragEnd: (lvl) => o.onDrag(t.id, "stop", lvl),
       });
     }
@@ -148,6 +173,8 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         draggable: o.levelsDraggable,
         highlight,
         selected,
+        emphasized,
+        restKind: "stub",
         onDragEnd: (lvl) => o.onDrag(t.id, "takeProfit", lvl),
       });
     }
@@ -165,6 +192,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         side: d.side,
         label: `${verb} limit ${d.quantity} @ ${fmt(d.price)}`,
         draggable: true,
+        restKind: "full",
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "price", lvl),
       });
     }
@@ -175,6 +203,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         color: STOP_COLOR,
         label: `SL ${fmt(d.stop)}`,
         draggable: true,
+        restKind: "full",
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "stop", lvl),
       });
     }
@@ -185,6 +214,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         color: TP_COLOR,
         label: `TP ${fmt(d.takeProfit)}`,
         draggable: true,
+        restKind: "full",
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "takeProfit", lvl),
       });
     }
@@ -198,12 +228,48 @@ interface LineExtra {
   side?: "buy" | "sell";
   highlight?: boolean;
   selected?: boolean;
+  restKind?: "bar" | "stub" | "full";
+  emphasized?: boolean;
+  // Whether the overlay carries a second, bar-anchored point (its x = the entry
+  // candle). Set alongside restKind "bar"; when absent the "bar" line falls back to
+  // a stub (entry candle not resolvable — e.g. older than the loaded window).
+  hasBar?: boolean;
 }
 
 function asLineExtra(v: unknown): LineExtra {
   return v && typeof v === "object"
     ? (v as LineExtra)
     : { label: "", color: "#888", highlight: false, selected: false };
+}
+
+// Resting lines stop here (px from the pane's left edge), tucked UNDER the always-on
+// DOM pill (anchored at ChartCore TRADE_PILL_LEFT=106) so no ink pokes into the chart
+// body. Erring short of a pill's right edge is safe — the opaque pill hides the stub;
+// overshooting past it would re-introduce the clutter we're removing.
+const RESTING_STUB_X = 136;
+
+/** Where a trade line stops (px from the pane's left edge) and, for a bar-anchored
+ *  entry, where its terminal dot sits. The SINGLE source of the resting extent, shared
+ *  by the canvas overlay (what's drawn) and ChartCore's click hit-test (what's
+ *  clickable) so the two can't drift. Emphasis and "full" lines span the pane; a "stub"
+ *  tucks under the left pill; a "bar" line ends at its entry candle (`entryX`), clamped
+ *  to [stub, width] so an entry scrolled off-left degrades to a stub and one off-right
+ *  (viewing history before the entry) stays full — with a dot only when the candle is
+ *  truly on-body. */
+export function restingLineEndX(o: {
+  restKind: "bar" | "stub" | "full";
+  emphasized: boolean;
+  entryX: number | null; // entry-candle x; null if not bar-anchored or unresolvable
+  width: number;
+}): { endX: number; dotX: number | null } {
+  const { restKind, emphasized, entryX, width } = o;
+  if (emphasized || restKind === "full") return { endX: width, dotX: null };
+  if (restKind === "bar" && entryX != null && Number.isFinite(entryX)) {
+    const endX = Math.min(Math.max(entryX, RESTING_STUB_X), width);
+    const dotX = entryX >= RESTING_STUB_X && entryX <= width ? entryX : null;
+    return { endX, dotX };
+  }
+  return { endX: Math.min(RESTING_STUB_X, width), dotX: null };
 }
 
 // One-point horizontal line spanning the chart width, with a left-anchored label
@@ -217,16 +283,32 @@ const tradeLine: OverlayTemplate = {
   createPointFigures: (params) => {
     const { coordinates, bounding, overlay } = params;
     if (coordinates.length < 1) return [];
-    const y = coordinates[0].y;
+    // Point[0] is value-only (x defaults to 0) → its y is the price row and always
+    // resolves. A bar-anchored line adds point[1] at the entry candle; take whichever
+    // y is present so ordering can't strand us with a null.
+    const y = coordinates[0].y ?? coordinates[1]?.y ?? 0;
     const extra = asLineExtra(overlay.extendData);
     // The line must RECEIVE pointer events to be grabbable when unlocked (we draw
     // no default point handles). When locked it ignores events so it can't be
     // selected/dragged or steal clicks from the chart underneath.
     const grabbable = overlay.lock === false;
+    const width = bounding.width;
+    // Resting extent (declutter). Emphasis (hover/select/drag) and "full" lines span
+    // the pane; a "stub" tucks under the left pill; a "bar" line ends at its entry
+    // candle — with a terminal dot when that candle is actually in the chart body.
+    // The entry x can land negative (scrolled off left) or past the pane (viewing
+    // history before the entry); clamp to [stub, width] so it degrades to a stub or
+    // full segment at the edges, and only dot when the candle is truly on-body.
+    const { endX, dotX } = restingLineEndX({
+      restKind: extra.restKind ?? "full",
+      emphasized: extra.emphasized ?? false,
+      entryX: extra.hasBar ? coordinates[1]?.x ?? null : null,
+      width,
+    });
     const figures: OverlayFigure[] = [
       {
         type: "line",
-        attrs: { coordinates: [{ x: 0, y }, { x: bounding.width, y }] },
+        attrs: { coordinates: [{ x: 0, y }, { x: endX, y }] },
         // Emphasised (hovered OR selected) lines stay dashed but draw thicker (2px)
         // so the row↔line link reads at a glance; the rest are thin (1px). Selection
         // looks identical to hover on the chart — it just persists after the cursor
@@ -240,6 +322,16 @@ const tradeLine: OverlayTemplate = {
         ignoreEvent: !grabbable,
       },
     ];
+    // Terminal dot marking the entry candle — reads the truncation as intentional
+    // ("the line ends where I got in") rather than a clipped/broken line.
+    if (dotX != null) {
+      figures.push({
+        type: "circle",
+        attrs: { x: dotX, y, r: 2.5 },
+        styles: { style: "fill", color: extra.color },
+        ignoreEvent: true,
+      });
+    }
     if (extra.label) {
       // A ∧/∨ chevron prefixed inside the pill marks the side on entry/limit lines
       // (buy = up, sell = down); SL/TP lines carry no side, so no chevron.
@@ -312,8 +404,21 @@ export class PositionLines {
     return Number(level.toFixed(this.precision));
   }
 
-  private sig(s: LineSpec): string {
-    return `${s.level}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}`;
+  // The bar (ms) an entry line truncates at — the snapped candle for a "bar" spec, or
+  // null when it isn't bar-anchored or the entry predates the loaded window (stub
+  // fallback). Folded into the sig so a scroll that pages the entry candle in/out
+  // re-reconciles the overlay's points. `barTimes` is built ONCE per render() and passed
+  // in — render runs on every mousemove during a line drag, so a per-spec bars.map()
+  // over thousands of candles would churn a fresh array each call.
+  private anchorTs(s: LineSpec, barTimes: number[]): number | null {
+    if (s.restKind !== "bar" || s.entryTs == null) return null;
+    if (barTimes.length === 0 || s.entryTs < barTimes[0]) return null; // off-window → stub
+    const idx = barIndexForTs(barTimes, s.entryTs);
+    return idx < 0 ? null : barTimes[idx];
+  }
+
+  private sig(s: LineSpec, anchorTs: number | null): string {
+    return `${s.level}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.restKind}|${s.emphasized ?? false}|${anchorTs ?? ""}`;
   }
 
   private onMoveEnd = (e: OverlayEvent): boolean => {
@@ -337,9 +442,33 @@ export class PositionLines {
   /** Reconcile drawn lines to `specs`. */
   render(specs: LineSpec[]): void {
     const seen = new Set<string>();
+    // Snapped once for every bar-anchored spec this render (not per spec) — and only
+    // built when at least one spec needs it (skips the getDataList map for order/draft-
+    // only renders).
+    const barTimes = specs.some((s) => s.restKind === "bar" && s.entryTs != null)
+      ? (this.chart.getDataList() ?? []).map((b) => b.timestamp)
+      : [];
     for (const spec of specs) {
       seen.add(spec.key);
-      const sig = this.sig(spec);
+      const anchorTs = this.anchorTs(spec, barTimes);
+      const sig = this.sig(spec, anchorTs);
+      // Point[0] (value-only) fixes the price row and drives drag/hit-test. A
+      // bar-anchored entry adds point[1] at the entry candle so the overlay can
+      // truncate there — reprojected natively on pan/zoom (no per-frame loop).
+      const points =
+        anchorTs != null
+          ? [{ value: spec.level }, { timestamp: anchorTs, value: spec.level }]
+          : [{ value: spec.level }];
+      const extendData = {
+        label: spec.label,
+        color: spec.color,
+        side: spec.side,
+        highlight: spec.highlight ?? false,
+        selected: spec.selected ?? false,
+        restKind: spec.restKind,
+        emphasized: spec.emphasized ?? false,
+        hasBar: anchorTs != null,
+      };
       const existing = this.lines.get(spec.key);
       if (existing) {
         existing.onDragEnd = spec.onDragEnd; // always use the latest closure
@@ -347,10 +476,10 @@ export class PositionLines {
         if (existing.sig !== sig) {
           this.chart.overrideOverlay({
             id: existing.overlayId,
-            points: [{ value: spec.level }],
+            points,
             lock: !spec.draggable,
             needDefaultPointFigure: spec.draggable,
-            extendData: { label: spec.label, color: spec.color, side: spec.side, highlight: spec.highlight ?? false, selected: spec.selected ?? false },
+            extendData,
           });
           existing.sig = sig;
         }
@@ -358,12 +487,12 @@ export class PositionLines {
       }
       const overlayId = this.chart.createOverlay({
         name: "tradeLine",
-        points: [{ value: spec.level }],
+        points,
         lock: !spec.draggable,
         // The default point figure is klinecharts' drag handle — only show/enable
         // it for a draggable line (a locked line has none, can't be moved).
         needDefaultPointFigure: spec.draggable,
-        extendData: { label: spec.label, color: spec.color, side: spec.side, highlight: spec.highlight ?? false, selected: spec.selected ?? false },
+        extendData,
         styles: { line: { color: spec.color } },
         onRightClick: () => true, // suppress klinecharts' default delete menu
         onPressedMoveEnd: this.onMoveEnd,

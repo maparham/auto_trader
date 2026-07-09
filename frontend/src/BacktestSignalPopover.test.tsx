@@ -52,4 +52,23 @@ describe("BacktestSignalPopover", () => {
     render(<BacktestSignalPopover />);
     expect(screen.getByText(/Short entry — signal .* \(AND\)/)).toBeTruthy();
   });
+
+  it("renders note-style terms (empty op) as plain key/value", () => {
+    backtestSignalHoverSignal.set({
+      glyph: glyph({
+        terms: [{ left: "rsi", lval: 71.23, op: "", right: "", rval: null, leftTf: null, rightTf: null }],
+      }),
+      x: 10,
+      y: 10,
+    });
+    render(<BacktestSignalPopover />);
+
+    expect(screen.getByText("rsi")).toBeTruthy();
+    expect(screen.getByText("71.23")).toBeTruthy();
+
+    // No dangling operator glyph or empty right-side cell for a note term.
+    const row = screen.getByRole("row");
+    const cells = row.querySelectorAll("td");
+    expect(cells).toHaveLength(2);
+  });
 });

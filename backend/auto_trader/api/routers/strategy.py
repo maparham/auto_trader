@@ -12,14 +12,30 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
+from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle, Side
 from auto_trader.engine.risk import stop_level, target_level
 from auto_trader.strategy.base import Context
+from auto_trader.strategy.coded import CodedStrategy, NeedTimeframe, StrategyRuntimeError
 from auto_trader.strategy.rule import RuleStrategy, series_name
+from auto_trader.strategy import loader
+from auto_trader.strategy.loader import StrategyLoadError
 
+from .. import deps
 from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse
 
 router = APIRouter()
+
+# Cap on fetch-retry passes for a coded strategy's ad-hoc tf= calls (Task 15).
+_MAX_TF_PASSES = 5
+
+# Extra HTF bars to fetch BEFORE the base window's start so ad-hoc tf= indicators
+# warm up. The live loop seeds only ~500 base bars, so on a low base TF the raw
+# tf= window can be a handful of HTF bars — an EMA/SMA would seed from those and
+# report a wrong (non-None) value fed straight into a live decision. Matches the
+# backtest route's warm-up; the align step still gates each HTF bar to its close
+# (no lookahead), so older bars only help warm-up.
+_HTF_WARMUP_BARS = 300
 
 
 def _candle(c) -> Candle:
@@ -46,11 +62,13 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             raise HTTPException(
                 422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}"
             )
-    for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
-        for op in group.operands():
-            name = series_name(op.to_operand())
-            if name is not None and name not in req.series:
-                raise HTTPException(422, f"missing series '{name}' referenced by a rule")
+
+    if req.codedStrategy is None:
+        for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
+            for op in group.operands():
+                name = series_name(op.to_operand())
+                if name is not None and name not in req.series:
+                    raise HTTPException(422, f"missing series '{name}' referenced by a rule")
 
     candles = [_candle(c) for c in req.candles]
     i = len(candles) - 1
@@ -59,12 +77,24 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
     pos_long = req.position.quantity if req.position and req.position.side == "buy" else 0.0
     pos_short = req.position.quantity if req.position and req.position.side == "sell" else 0.0
 
-    strategy = RuleStrategy(
-        req.longEntry.to_group(), req.longExit.to_group(),
-        req.shortEntry.to_group(), req.shortExit.to_group(),
-        req.series, quantity=1.0, trade_from_time=None,
-        long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
-    )
+    if req.codedStrategy is not None:
+        try:
+            module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
+        except StrategyLoadError as e:
+            raise HTTPException(422, str(e))
+        meta = getattr(module, "meta", None)
+        if isinstance(meta, dict) and meta.get("hedged"):
+            raise HTTPException(
+                422, f"'{req.codedStrategy}' is hedged — backtest-only, refused for live"
+            )
+    else:
+        strategy = RuleStrategy(
+            req.longEntry.to_group(), req.longExit.to_group(),
+            req.shortEntry.to_group(), req.shortExit.to_group(),
+            req.series, quantity=1.0, trade_from_time=None,
+            long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
+        )
+
     ctx = Context()
     ctx.history = candles
     ctx.position_long = pos_long
@@ -85,7 +115,40 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
         elif pos_short > 0:
             ctx.short_entry_price = entry_price
             ctx.short_entry_time = entry_time
-    signals = strategy.on_bar(ctx)
+
+    if req.codedStrategy is not None:
+        htf_candles: dict[str, list[Candle]] = {}
+        for _ in range(_MAX_TF_PASSES):
+            strategy = CodedStrategy(
+                module, candles, quantity=1.0, htf_candles=htf_candles,
+                base_timeframe=req.resolution,
+            )
+            try:
+                signals = strategy.on_bar(ctx)
+                break
+            except NeedTimeframe as need:
+                warmup_from = (
+                    req.candles[0].time
+                    - _HTF_WARMUP_BARS * resolution_seconds(need.timeframe)
+                )
+                fetched = await deps._fetch_symbol_candles(
+                    req.broker, req.epic, need.timeframe, 1000,
+                    warmup_from, req.candles[-1].time, req.priceSide,
+                )
+                if not fetched:
+                    raise HTTPException(
+                        422, f"no candles for timeframe '{need.timeframe}'"
+                    )
+                htf_candles[need.timeframe] = fetched
+            except StrategyRuntimeError as e:
+                raise HTTPException(422, str(e))
+        else:
+            raise HTTPException(422, "strategy needs too many timeframes (max 5)")
+    else:
+        try:
+            signals = strategy.on_bar(ctx)
+        except StrategyRuntimeError as e:
+            raise HTTPException(422, str(e))
 
     close = candles[-1].close
     any_held = pos_long > 0 or pos_short > 0
@@ -107,7 +170,9 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
                 continue  # already holding (no scale-in) or already opening this bar
             risk = req.longRisk if sig.leg == "long" else req.shortRisk
             stop = tp = None
-            if risk is not None:
+            if sig.stop_level is not None or sig.target_level is not None:
+                stop, tp = sig.stop_level, sig.target_level
+            elif risk is not None:
                 stop = stop_level(
                     risk.stop.to_spec(), close, sig.leg, _atr(risk.stop, req.series, i), close
                 )
@@ -117,6 +182,7 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             open_action = ActionDTO(
                 kind="open", leg=sig.leg, side=sig.side.value, reason=sig.reason,
                 stop_level=stop, take_profit_level=tp,
+                quantity=sig.quantity if sig.quantity_explicit else None,
             )
         else:
             held = pos_long if sig.leg == "long" else pos_short

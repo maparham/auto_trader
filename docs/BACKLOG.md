@@ -5,6 +5,12 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Specced, ready to implement
 
+- **Chart replay** — TradingView-style bar replay per cell: curtained or
+  random-jump start, masked clock for blind sessions, step/play controls,
+  manual paper trading with a session ledger + report card, progressive
+  strategy reveal. Frontend-sliced over the candle cache; minute+ TFs only.
+  [spec](superpowers/specs/2026-07-09-chart-replay-design.md)
+
 - **Time Highlight indicator** — highlight candles inside user-defined
   time-of-day windows (device-local timezone): translucent band, recolored
   candles, or both; multiple windows per instance; Sessions-style editor.

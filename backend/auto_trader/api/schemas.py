@@ -321,6 +321,13 @@ class BacktestRequest(BaseModel):
     costs: CostsDTO
     tradeFromTime: int
     mask: RecurrenceMaskDTO | None = None
+    # Coded strategy (a backend/strategies/*.py filename). When set, the rule
+    # groups above are ignored and the file's on_bar drives the run; series stays
+    # empty (Python computes indicators ad hoc — the frontend posts none).
+    codedStrategy: str | None = None
+    # Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
+    broker: str = "capital"
+    priceSide: str = "mid"
 
 
 # --- order execution (paper now; demo/live later) ----------------------------
@@ -439,6 +446,10 @@ class ActionDTO(BaseModel):
     reason: str
     stop_level: float | None = None
     take_profit_level: float | None = None
+    # Author-specified size from a coded strategy's ctx.buy(qty=)/ctx.sell(qty=).
+    # None = caller's default sizing (the live panel's configured quantity).
+    # Only ever set on "open" actions — closes are always whole-position.
+    quantity: float | None = None
 
 
 class EvaluateRequest(BaseModel):
@@ -455,7 +466,32 @@ class EvaluateRequest(BaseModel):
     longRisk: RiskConfigDTO | None = None
     shortRisk: RiskConfigDTO | None = None
     position: PositionStateDTO | None = None
+    # Coded strategy filename (backend/strategies/*.py). When set the rule groups
+    # are ignored; a meta["hedged"] strategy is refused (backtest-only).
+    codedStrategy: str | None = None
+    # Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
+    broker: str = "capital"
+    priceSide: str = "mid"
 
 
 class EvaluateResponse(BaseModel):
     actions: list[ActionDTO]
+
+
+# --- coded strategies: /api/strategies discovery ------------------------------
+
+
+class StrategyInfoDTO(BaseModel):
+    """One discovered backend/strategies/*.py file. A file that fails to load is
+    still listed with `error` set, so the picker can show it as broken."""
+
+    filename: str
+    name: str
+    description: str
+    hedged: bool
+    error: str | None = None
+
+
+class StrategySourceDTO(BaseModel):
+    filename: str
+    source: str

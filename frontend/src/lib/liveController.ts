@@ -4,6 +4,7 @@
  *  these; the headless loop (liveEngine) does the per-bar work. */
 import { Signal } from "./signals";
 import { fetchRecent } from "./feed";
+import { fetchStrategies } from "../api";
 import {
   armLiveEngine, saveArmed, loadArmed, saveArmedAccount, loadArmedAccount,
   type LiveEngineHandle,
@@ -103,6 +104,38 @@ function startLoop(seedBars: KBar[]): void {
 }
 
 export async function arm(): Promise<void> {
+  // Fail safe: refuse to arm "coded" mode with no file picked, BEFORE tearing down
+  // any currently-running engine below — a refused arm must never kill a
+  // legitimately armed strategy. Without this guard the cycle gate elsewhere would
+  // silently fall back to trading whatever stale rule groups sit in the draft.
+  const draftCfg = get().draft;
+  if (draftCfg.mode === "coded" && !draftCfg.codedStrategy) {
+    set(appendLog(get(), Math.floor(Date.now() / 1000),
+      "cannot arm: coded mode selected but no strategy file chosen"));
+    return;
+  }
+
+  // Refuse to arm a hedged coded strategy up front — it opens both long and short
+  // buckets at once, which the live route's netted single-position model can't
+  // represent (the backend already refuses it per-cycle with a 422, surfaced via
+  // the "evaluate failed" log, but arming should never even start the loop). Done
+  // BEFORE tearing down any running engine below, same rationale as the guard
+  // above. If the strategy list can't be fetched (backend down), don't block
+  // arming on it — the backend still refuses per-cycle and that's now surfaced.
+  if (draftCfg.mode === "coded" && draftCfg.codedStrategy) {
+    try {
+      const strategies = await fetchStrategies();
+      const picked = strategies.find((s) => s.filename === draftCfg.codedStrategy);
+      if (picked?.hedged) {
+        set(appendLog(get(), Math.floor(Date.now() / 1000),
+          "cannot arm: hedged strategies are backtest-only"));
+        return;
+      }
+    } catch {
+      // backend unreachable — skip the check, don't block arming.
+    }
+  }
+
   // Stop any running engine first (e.g. "Re-arm to apply"): without this, startLoop
   // overwrites `engine` and leaks the old WS + lease, and the new lease self-
   // conflicts with the still-open old one and immediately marks itself lost.

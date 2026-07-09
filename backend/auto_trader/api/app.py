@@ -28,7 +28,7 @@ from auto_trader.brokers.registry import build_registry
 from auto_trader.core.tick_store import TICK_STORE
 
 from . import deps
-from .routers import backtest, charts, markets, state, strategy, stream, trading
+from .routers import backtest, charts, markets, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for _module in (markets, trading, state, charts, backtest, strategy, stream):
+for _module in (markets, trading, state, charts, backtest, strategy, stream, strategies):
     app.include_router(_module.router)
 
 

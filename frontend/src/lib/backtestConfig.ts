@@ -279,6 +279,10 @@ export interface BacktestConfig {
   // default — the curve is a heavy overlay most runs don't need. Optional so a
   // preset saved before this existed loads with it absent (treated as hidden).
   showEquity?: boolean;
+  // Strategy source: point-and-click rules (default) or a coded backend/strategies
+  // .py file. `codedStrategy` is that file's name; only read when mode === "coded".
+  mode?: "rules" | "coded";
+  codedStrategy?: string;
 }
 
 /** The payload key an operand's series lives under, or null if it has no

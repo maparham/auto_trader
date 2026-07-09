@@ -8,6 +8,9 @@ export interface LiveAction {
   reason: string;
   stop_level?: number | null;
   take_profit_level?: number | null;
+  // Author-specified size from a coded strategy's ctx.buy(qty=)/ctx.sell(qty=).
+  // null/undefined = caller's default sizing (the live panel's quantity).
+  quantity?: number | null;
 }
 
 export interface PositionState {
@@ -33,6 +36,10 @@ export interface EvaluateRequest {
   longRisk?: RiskConfig | null;
   shortRisk?: RiskConfig | null;
   position: PositionState | null;
+  codedStrategy?: string; // coded strategy filename — when set, rule groups are ignored (Strategy tab)
+  // Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
+  broker?: string;
+  priceSide?: string;
 }
 
 export interface EvaluateResult {

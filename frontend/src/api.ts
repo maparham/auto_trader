@@ -108,6 +108,10 @@ export interface BacktestRequest {
   costs: Costs;
   tradeFromTime: number; // unix seconds — the window's start (D6)
   mask?: RecurrenceMask; // recurrence/activity mask (resolved: no `session` field)
+  codedStrategy?: string; // coded strategy filename — when set, rule groups are ignored (Strategy tab)
+  // Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
+  broker?: string;
+  priceSide?: string;
 }
 
 export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {
@@ -139,4 +143,27 @@ export async function evaluateStrategy(req: EvaluateRequest): Promise<EvaluateRe
   });
   if (!res.ok) throw new Error(await errorDetail(res, `evaluate failed (${res.status})`));
   return res.json();
+}
+
+// --- coded strategies (backend/strategies/*.py) ------------------------------
+
+export interface StrategyInfo {
+  filename: string;
+  name: string;
+  description: string;
+  hedged: boolean;
+  error: string | null;
+}
+
+export async function fetchStrategies(): Promise<StrategyInfo[]> {
+  const res = await fetch(`${BASE}/api/strategies`);
+  if (!res.ok) throw new Error(await errorDetail(res, `strategies failed (${res.status})`));
+  return res.json();
+}
+
+export async function fetchStrategySource(filename: string): Promise<string> {
+  const res = await fetch(`${BASE}/api/strategies/${encodeURIComponent(filename)}/source`);
+  if (!res.ok) throw new Error(await errorDetail(res, `source failed (${res.status})`));
+  const body = await res.json();
+  return body.source;
 }

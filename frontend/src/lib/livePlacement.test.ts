@@ -23,6 +23,29 @@ describe("placeActions", () => {
     }));
   });
 
+  it("uses the action's explicit quantity when a coded strategy sets one", async () => {
+    const placeOrder = vi.fn().mockResolvedValue({ status: "filled" });
+    const closePosition = vi.fn();
+    const withQty: LiveAction = { ...openAction, quantity: 0.5 };
+    await placeActions([withQty], {
+      strategyId: "s1", barTsSec: 1700, epic: "EURUSD", account: "capital:demo",
+      quantity: 2, confirm: false, openPosition: null,
+      _deps: { placeOrder, closePosition },
+    });
+    expect(placeOrder).toHaveBeenCalledWith(expect.objectContaining({ quantity: 0.5 }));
+  });
+
+  it("falls back to the panel quantity when the action has no explicit size", async () => {
+    const placeOrder = vi.fn().mockResolvedValue({ status: "filled" });
+    const closePosition = vi.fn();
+    await placeActions([openAction], {
+      strategyId: "s1", barTsSec: 1700, epic: "EURUSD", account: "capital:demo",
+      quantity: 2, confirm: false, openPosition: null,
+      _deps: { placeOrder, closePosition },
+    });
+    expect(placeOrder).toHaveBeenCalledWith(expect.objectContaining({ quantity: 2 }));
+  });
+
   it("closes the matching open position", async () => {
     const placeOrder = vi.fn();
     const closePosition = vi.fn().mockResolvedValue({ status: "filled" });

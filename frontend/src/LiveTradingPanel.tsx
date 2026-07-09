@@ -147,42 +147,53 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
           </div>
         )}
 
-        {/* Side toggle */}
-        <div className="bt-side-tabs seg">
-          <button className={`bt-side-long${isLong ? " seg-on" : ""}`} onClick={() => setSide("long")}>Long</button>
-          <button className={`bt-side-short${!isLong ? " seg-on" : ""}`} onClick={() => setSide("short")}>Short</button>
-        </div>
+        {cfg.mode === "coded" ? (
+          /* Coded strategy: the .py file owns entries/exits/risk — show which
+             file is armed instead of the rule editors. */
+          <div className="live-strat-summary">
+            <span className="strat-picker-name">{cfg.codedStrategy ?? "no strategy selected"}</span>
+            <p className="strat-picker-desc">Coded strategy — entries, exits and risk are defined in the file.</p>
+          </div>
+        ) : (
+          <>
+            {/* Side toggle */}
+            <div className="bt-side-tabs seg">
+              <button className={`bt-side-long${isLong ? " seg-on" : ""}`} onClick={() => setSide("long")}>Long</button>
+              <button className={`bt-side-short${!isLong ? " seg-on" : ""}`} onClick={() => setSide("short")}>Short</button>
+            </div>
 
-        <RuleGroupSection
-          title={isLong ? "Buy to open" : "Sell to open"}
-          info={`Conditions that open a ${side} position.`}
-          group={entry}
-          onChange={(g) => setGroup(isLong ? "longEntry" : "shortEntry", g)}
-          emptyHint={`No ${side}-entry rules — this strategy won't open any ${side} positions.`}
-          defaultAvwapAnchor={Date.now()}
-          baseResolution={resolution}
-          clipboard={clipboard}
-          onCopy={(r) => setClipboard(cloneRule(r))}
-          groupClipboard={groupClipboard}
-          onCopyAll={(rs) => setGroupClipboard(rs.map(cloneRule))}
-        />
-        <RuleGroupSection
-          title={isLong ? "Sell to close" : "Buy to close"}
-          info={`Conditions that close an open ${side} position. The broker stop/target can close it first.`}
-          group={exit}
-          onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
-          emptyHint={`No ${side}-exit rules — an open ${side} holds until the stop/target hits.`}
-          defaultAvwapAnchor={Date.now()}
-          baseResolution={resolution}
-          clipboard={clipboard}
-          onCopy={(r) => setClipboard(cloneRule(r))}
-          groupClipboard={groupClipboard}
-          onCopyAll={(rs) => setGroupClipboard(rs.map(cloneRule))}
-        />
-        <RiskSection
-          risk={risk}
-          onChange={(r) => patch({ [isLong ? "longRisk" : "shortRisk"]: r })}
-        />
+            <RuleGroupSection
+              title={isLong ? "Buy to open" : "Sell to open"}
+              info={`Conditions that open a ${side} position.`}
+              group={entry}
+              onChange={(g) => setGroup(isLong ? "longEntry" : "shortEntry", g)}
+              emptyHint={`No ${side}-entry rules — this strategy won't open any ${side} positions.`}
+              defaultAvwapAnchor={Date.now()}
+              baseResolution={resolution}
+              clipboard={clipboard}
+              onCopy={(r) => setClipboard(cloneRule(r))}
+              groupClipboard={groupClipboard}
+              onCopyAll={(rs) => setGroupClipboard(rs.map(cloneRule))}
+            />
+            <RuleGroupSection
+              title={isLong ? "Sell to close" : "Buy to close"}
+              info={`Conditions that close an open ${side} position. The broker stop/target can close it first.`}
+              group={exit}
+              onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
+              emptyHint={`No ${side}-exit rules — an open ${side} holds until the stop/target hits.`}
+              defaultAvwapAnchor={Date.now()}
+              baseResolution={resolution}
+              clipboard={clipboard}
+              onCopy={(r) => setClipboard(cloneRule(r))}
+              groupClipboard={groupClipboard}
+              onCopyAll={(rs) => setGroupClipboard(rs.map(cloneRule))}
+            />
+            <RiskSection
+              risk={risk}
+              onChange={(r) => patch({ [isLong ? "longRisk" : "shortRisk"]: r })}
+            />
+          </>
+        )}
 
         {/* Status */}
         <div className="live-status">

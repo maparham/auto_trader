@@ -75,9 +75,12 @@ describe("BacktestSettingsModal period scheduling", () => {
 });
 
 // The rule builder now lives under the "Strategy" vertical tab, so tests must
-// open it before the Long/Short groups exist in the DOM.
+// open it before the Long/Short groups exist in the DOM. Scoped to the .bt-htabs
+// nav — the Rules|Strategy mode switch inside the section reuses the same
+// "Strategy" label, so an unscoped query would match both.
 function openStrategy() {
-  fireEvent.click(screen.getByRole("button", { name: "Strategy" }));
+  const nav = document.querySelector(".bt-htabs") as HTMLElement;
+  fireEvent.click(within(nav).getByRole("button", { name: "Strategy" }));
 }
 
 // Row actions now live behind a ⋮ menu. Open the first row's menu in `section`,

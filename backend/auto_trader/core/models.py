@@ -95,6 +95,16 @@ class Signal:
     leg: str = "long"
     terms: tuple[RuleTerm, ...] = ()
     combine: str = "AND"
+    # Per-signal bracket levels (coded strategies): absolute stop/target prices
+    # attached to an OPENING signal. When set, the engine seeds the new position's
+    # bracket from them instead of the side-level RiskConfig. None = not set.
+    stop_level: float | None = None
+    target_level: float | None = None
+    # True when `quantity` is an author-specified size from a coded strategy's
+    # ctx.buy(qty=...)/ctx.sell(qty=...) (explicit sizing), as opposed to the
+    # run's default quantity. Live forwards explicit sizing to the order; a
+    # default-sized signal instead uses the panel's configured quantity.
+    quantity_explicit: bool = False
 
 
 @dataclass(slots=True)

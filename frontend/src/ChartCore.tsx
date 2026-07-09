@@ -124,7 +124,7 @@ import {
 } from "./lib/customIndicators";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
-import { PositionLines, tradeLineSpecs, DRAFT_ID, bracketLabels } from "./lib/positionLines";
+import { PositionLines, tradeLineSpecs, DRAFT_ID, bracketLabels, restingLineEndX } from "./lib/positionLines";
 import {
   TradeMarkers,
   entryMarkerSpecs,
@@ -1156,6 +1156,10 @@ export default function ChartCore({
   const draggingAnchorRef = useRef(false);
   const dragMovedRef = useRef(false);
   const justDraggedRef = useRef(false);
+  // The trade id whose line is being actively dragged, so its lines render fully
+  // revealed (not a resting stub that jumps under the cursor) even in no-confirm mode
+  // where a drag doesn't select. Cleared on drop/abort. See tradeLineSpecs `dragging`.
+  const draggingTradeRef = useRef<string | null>(null);
   const pendingAnchorXRef = useRef(0);
   const anchorRafRef = useRef(0);
   // Trade- and alert-line drags are driven by makeLineDrag instances created inside the
@@ -1725,6 +1729,11 @@ export default function ChartCore({
       level: number;
       draggable: boolean;
       y: number | undefined;
+      // Resting extent, for the click hit-test to match the DRAWN line (not the full
+      // y-band). Grab/hover/snap ignore these and stay full-width by design.
+      restKind: "bar" | "stub" | "full";
+      entryTs: number | undefined;
+      emphasized: boolean;
     };
     const tradeLinePixels = (): TradeLinePx[] => {
       const c = chartRef.current;
@@ -1740,6 +1749,7 @@ export default function ChartCore({
         hidden: new Set(tradeUiRef.current.hidden),
         hovered: tradeUiRef.current.hovered,
         selected: tradeUiRef.current.selected,
+        dragging: draggingTradeRef.current,
       });
       return specs.map((s) => {
         const sep = s.key.lastIndexOf(":");
@@ -1751,14 +1761,24 @@ export default function ChartCore({
           y: first(
             c.convertToPixel([{ value: s.level }], { paneId: "candle_pane", absolute: true }),
           ).y,
+          restKind: s.restKind,
+          entryTs: s.entryTs,
+          emphasized: s.emphasized ?? false,
         };
       });
     };
 
-    // Trade-line hit-test (chart -> dock, for hover + click-select): the TRADE id +
-    // field of the entry/SL/TP line within HIT_TOLERANCE_PX of (x,y) in the candle
-    // pane, or null. A locked position-entry line ignores klinecharts overlay events,
-    // so this manual test (not onMouseEnter) covers every line. Excludes the draft.
+    // Trade-line hit-test (for click-select + double-click-edit): the TRADE id + field
+    // of the entry/SL/TP line within HIT_TOLERANCE_PX of (x,y) in the candle pane, or
+    // null. A locked position-entry line ignores klinecharts overlay events, so this
+    // manual test (not onMouseEnter) covers every line. Excludes the draft.
+    //
+    // Unlike grab/hover/snap (deliberately full-width y-bands so a truncated SL/TP is
+    // still grabbable anywhere), a CLICK must land on the DRAWN line — else clicking
+    // empty chart space at a truncated line's price would select a trade with no visible
+    // line under the cursor. So gate x to each line's resting extent (restingLineEndX,
+    // the same source the overlay draws from); an emphasised line is full-width, so once
+    // revealed it stays clickable across the pane.
     const tradeLineHitTest = (
       x: number,
       y: number,
@@ -1767,11 +1787,22 @@ export default function ChartCore({
       if (!c) return null;
       const mainW = c.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
       if (x > mainW) return null;
+      const bars = c.getDataList() ?? [];
+      const oldestTs = bars.length ? bars[0].timestamp : null;
       let best: { id: string; field: TradeLineField; d: number } | null = null;
       for (const t of tradeLinePixels()) {
         if (t.id === DRAFT_ID || t.y == null) continue;
         const d = Math.abs(t.y - y);
-        if (d <= HIT_TOLERANCE_PX && (!best || d < best.d)) best = { id: t.id, field: t.field, d };
+        if (d > HIT_TOLERANCE_PX || (best && d >= best.d)) continue;
+        // Entry-candle x (only for a bar line whose entry is within the loaded window —
+        // mirrors PositionLines.render's off-window→stub fallback).
+        const entryX =
+          t.restKind === "bar" && t.entryTs != null && oldestTs != null && t.entryTs >= oldestTs
+            ? first(c.convertToPixel([{ timestamp: t.entryTs }], { paneId: "candle_pane", absolute: true })).x ?? null
+            : null;
+        const { endX } = restingLineEndX({ restKind: t.restKind, emphasized: t.emphasized, entryX, width: mainW });
+        if (x > endX + HIT_TOLERANCE_PX) continue; // past the drawn line → not a hit
+        best = { id: t.id, field: t.field, d };
       }
       return best ? { id: best.id, field: best.field } : null;
     };
@@ -2048,6 +2079,10 @@ export default function ChartCore({
       onBegin: () => draggingLineSignal.set(true), // pause no-confirm auto-apply until the drop
       onMove: (hit, value, c) => {
         let level = Number(value.toFixed(precisionRef.current));
+        // Reveal this trade's lines full-width for the duration of the drag (below,
+        // drawPositions reads draggingTradeRef) so a stub SL/TP doesn't jump mid-drag.
+        // Draft lines are already full-width, so skip the reveal bookkeeping for them.
+        if (hit.id !== DRAFT_ID) draggingTradeRef.current = hit.id;
         // A staged DRAFT line (limit-order entry / SL / TP) edits the draft order, not a
         // server trade — route it there and bail. The backend validates levels on submit,
         // so no client-side clamp here (matches the draft's old native-drag behaviour).
@@ -2094,6 +2129,13 @@ export default function ChartCore({
         // A press with no move is a plain click → let onClick select/toggle (don't swallow).
         if (!moved) return false;
         draggingLineSignal.set(false); // let no-confirm auto-apply commit the final level
+        // Drop done: drop the drag-reveal and retract the line to its resting extent
+        // (unless still hovered/selected, which drawPositions re-derives). Only when a
+        // real trade was revealed — a draft never sets the ref, so skip its redundant redraw.
+        if (draggingTradeRef.current != null) {
+          draggingTradeRef.current = null;
+          posDrawRef.current();
+        }
         // A real drag must not also fire the trailing click (which would toggle the
         // just-focused line's selection back off) — swallow it.
         return true;
@@ -2101,7 +2143,13 @@ export default function ChartCore({
       // draggingLineSignal is a GLOBAL signal (pauses no-confirm auto-apply across every
       // cell). If this cell unmounts mid-drag, onCommit never runs — reset it here so it
       // can't stay paused forever. Idempotent: harmless if the drag never moved.
-      onAbort: () => draggingLineSignal.set(false),
+      onAbort: () => {
+        draggingLineSignal.set(false);
+        if (draggingTradeRef.current != null) {
+          draggingTradeRef.current = null;
+          posDrawRef.current();
+        }
+      },
     });
 
     // Alert lines. klinecharts' native alert drag only engages on a press dead-on the
@@ -3036,6 +3084,7 @@ export default function ChartCore({
                 hidden: new Set(tradeUiRef.current.hidden),
                 hovered: tradeUiRef.current.hovered,
                 selected: tradeUiRef.current.selected,
+                dragging: draggingTradeRef.current,
                 selectedField: tradeUiRef.current.selectedField,
                 // Always-on DOM pills carry the labels now — blank the canvas text so the
                 // two don't double up; just the bare lines are drawn here.
@@ -3792,14 +3841,19 @@ export default function ChartCore({
     } else {
       const selId = tradeUiRef.current.selected;
       const hovId = tradeUiRef.current.hovered;
-      const id = selId ?? hovId;
+      // An active drag reveals the bracket too — in no-confirm mode a drag sets neither
+      // selection nor hover. A drag is the live gesture, so it takes PRECEDENCE: dragging
+      // trade B while trade A is selected must paint B's spine (which its now-full-width
+      // line needs), not A's.
+      const dragId = draggingTradeRef.current;
+      const id = dragId ?? selId ?? hovId;
       const t = id ? tradesRef.current.find((x) => x.id === id && x.epic === epic) : null;
       if (t) {
         const merged = mergeTradeLevels(t, pendingRef.current[t.id] ?? {});
         entry = merged.price ?? t.priceLevel;
         stop = merged.stop;
         tp = merged.takeProfit;
-        selectMode = selId != null;
+        selectMode = id === dragId || id === selId;
         activeField = selId != null ? tradeUiRef.current.selectedField : hoveredFieldRef.current;
       }
     }

@@ -38,7 +38,7 @@ export async function placeActions(
         const res = await deps.placeOrder({
           epic: params.epic,
           side: action.side,
-          quantity: params.quantity,
+          quantity: action.quantity ?? params.quantity,
           account: params.account,
           source: "strategy",
           type: "market",
