@@ -115,6 +115,8 @@ import {
 } from "./lib/indicators";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
 import { maybeAutoApplyTemplate } from "./lib/templates";
+import { onLayoutChanged } from "./lib/persist/layoutEvents";
+import { scheduleAutoSave, cancelAutoSave } from "./lib/templateAutosave";
 import {
   indTypeOf,
   setIndicatorTimezone,
@@ -1447,6 +1449,24 @@ export default function ChartCore({
   // The value only changes via toggleScalePriceOnly (a user action after mount), so
   // the initial useState seed is authoritative — just subscribe to later flips.
   useEffect(() => scalePriceOnly.subscribe(setScaleOnly), [scalePriceOnly]);
+  // Auto-save this cell's per-symbol template on real layout edits. layoutEvents
+  // fires only for genuine edits (merge-applies are suppressed at the emitter, and
+  // mount/symbol hydration doesn't persist), so this never fights hydration. The
+  // engine itself no-ops when auto-save is off or the content is unchanged.
+  useEffect(() => {
+    const myScope = scope;
+    const epic = symbol.epic;
+    const off = onLayoutChanged((changedScope) => {
+      if (changedScope === myScope) scheduleAutoSave(myScope, epic);
+    });
+    // Cancel any pending save on teardown: a timer that fires after the cell's
+    // scope storage is purged (cell/tab close) would capture an empty layout and
+    // blank the symbol's real template.
+    return () => {
+      off();
+      cancelAutoSave(myScope, epic);
+    };
+  }, [scope, symbol.epic]);
   // Invert scale (Alt/Option+I or the toolbar "I" button): push the flip onto the
   // live chart. Candle pane only — klinecharts' YAxisImp.isReverse() ignores
   // yAxis.reverse for sub-panes. Session-only, so no initial apply is needed

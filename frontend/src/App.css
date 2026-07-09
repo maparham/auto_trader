@@ -749,6 +749,15 @@
   display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px;
 }
 .setting-row label { color: var(--text-dim); }
+.setting-row label.label-info { display: inline-flex; align-items: center; gap: 6px; }
+/* InfoTip ⓘ inside a settings label: strip the default button chrome (otherwise
+   it renders as a black-filled box — see the .ind-info note near the top). */
+.setting-row .ind-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; padding: 0; color: var(--text-dim); cursor: help;
+}
+.setting-row .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.setting-row .ind-info:hover { color: var(--text); }
 .tz-select {
   background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
@@ -1476,6 +1485,17 @@
   background: var(--danger, #e5534b); border: 1px solid var(--danger, #e5534b); color: #fff;
 }
 .modal-foot .confirm-danger:hover { filter: brightness(1.08); }
+/* Non-destructive primary action (e.g. Save as default template). */
+.modal-foot .confirm-primary {
+  background: var(--accent, #2962ff); border: 1px solid var(--accent, #2962ff); color: #fff;
+}
+.modal-foot .confirm-primary:hover { filter: brightness(1.08); }
+.modal-foot .confirm-primary:disabled { opacity: 0.5; cursor: default; filter: none; }
+/* Save-as-default indicator checklist. */
+.sdt-list { list-style: none; margin: 10px 0 0; padding: 0; }
+.sdt-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
+.sdt-row .ind-name { color: var(--text); }
+.sdt-params { margin-left: auto; opacity: 0.6; }
 /* Edit-mode delete button, pinned to the footer's far left (TradingView). */
 .modal-foot .al-trash {
   margin-right: auto; display: inline-flex; align-items: center; justify-content: center;

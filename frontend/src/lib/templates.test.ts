@@ -418,3 +418,22 @@ describe("applySymbolTemplate merge (additive, existing wins)", () => {
     expect(P.loadIndicators(SCOPE).filter((i) => i.type === "RSI")).toHaveLength(2);
   });
 });
+
+describe("captureDefaultTemplate includeIds", () => {
+  it("captures only the selected instance ids", () => {
+    P.saveIndicators(SCOPE, [
+      { id: "EMA#1", type: "EMA" },
+      { id: "RSI#1", type: "RSI" },
+    ]);
+    const only = T.captureDefaultTemplate(SCOPE, new Set(["EMA#1"]));
+    expect(only.indicators.map((i) => i.id)).toEqual(["EMA#1"]);
+  });
+  it("captures all symbol-agnostic indicators when includeIds omitted", () => {
+    P.saveIndicators(SCOPE, [
+      { id: "EMA#1", type: "EMA" },
+      { id: "AVWAP#1", type: "AVWAP" },
+    ]);
+    const all = T.captureDefaultTemplate(SCOPE);
+    expect(all.indicators.map((i) => i.id)).toEqual(["EMA#1"]); // AVWAP filtered
+  });
+});

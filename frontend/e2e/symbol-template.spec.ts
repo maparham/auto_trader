@@ -94,6 +94,30 @@ async function focusedDrawingCount(page: Page): Promise<number> {
   });
 }
 
+// Indicator TYPE names stored in the (per-broker) symbol template, read from storage.
+// Empty array when no template exists yet.
+async function templateIndicatorTypes(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const k = Object.keys(localStorage).find((key) =>
+      /^auto-trader\.b\.[^.]+\.template\./.test(key),
+    );
+    if (!k) return [];
+    const t = JSON.parse(localStorage.getItem(k) || "null");
+    return (t?.indicators ?? []).map((i: { type: string }) => i.type);
+  });
+}
+
+// Auto-save is a global app setting (Settings → General). The engine reads it live
+// from the `auto-trader.settings` blob on each debounced save, so flipping the
+// stored flag directly is enough to gate the next auto-save — no UI needed.
+async function setAutoSave(page: Page, on: boolean) {
+  await page.evaluate((val) => {
+    const KEY = "auto-trader.settings";
+    const cur = JSON.parse(localStorage.getItem(KEY) || "{}");
+    localStorage.setItem(KEY, JSON.stringify({ ...cur, autoSaveTemplates: val }));
+  }, on);
+}
+
 test("a saved symbol template auto-applies to a new tab on the same symbol", async ({
   page,
 }) => {
@@ -130,19 +154,13 @@ test("a saved symbol template auto-applies to a new tab on the same symbol", asy
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect.poll(() => focusedDrawingCount(page)).toBe(1);
 
-  // --- Save this as the symbol's template. ---
-  await page.locator(".menu button", { hasText: "Template" }).click();
-  await page.locator(".menu .dropdown li", { hasText: /^Save US100 template$/ }).click();
-  // The template is stored per-broker (`auto-trader.b.<broker>.template.<epic>`,
-  // see persist.ts's workspace-isolation header) rather than under the flat
-  // `auto-trader.template.` prefix this check originally used.
+  // --- Auto-save (on by default) writes the symbol's template in the background,
+  // ~800ms after the edits settle — no manual Save. Stored per-broker
+  // (`auto-trader.b.<broker>.template.<epic>`, see persist.ts's workspace-isolation
+  // header). Wait until EMA lands in it. ---
   await expect
-    .poll(() =>
-      page.evaluate(() =>
-        Object.keys(localStorage).some((k) => /^auto-trader\.b\.[^.]+\.template\./.test(k)),
-      ),
-    )
-    .toBe(true);
+    .poll(() => templateIndicatorTypes(page), { timeout: 5000 })
+    .toContain("EMA");
 
   // --- Open a NEW tab (same default symbol) → auto-apply should fire. ---
   await page.locator(".tab-add").click();
@@ -180,22 +198,16 @@ test("manual Apply merges into a populated chart — keeps drawings, no duplicat
   await page.locator(".tab-bar").waitFor();
   await waitForData(page);
 
-  // --- Save a template containing just EMA (no drawings). ---
+  // --- Auto-save captures a template containing just EMA (no drawings). Then turn
+  // auto-save OFF so the later divergence (RSI + line) does NOT update the template
+  // — the merge below must apply an EMA-only, drawing-free template. ---
   const m = indicatorMenu(page);
   await m.add("EMA");
   await expect.poll(() => activeTypes(page)).toContain("EMA");
-  await page.locator(".menu button", { hasText: "Template" }).click();
-  await page.locator(".menu .dropdown li", { hasText: /^Save US100 template$/ }).click();
-  // The template is now stored per-broker (`auto-trader.b.<broker>.template.<epic>`,
-  // see persist.ts's workspace-isolation header) rather than under the flat
-  // `auto-trader.template.` prefix this check originally used.
   await expect
-    .poll(() =>
-      page.evaluate(() =>
-        Object.keys(localStorage).some((k) => /^auto-trader\.b\.[^.]+\.template\./.test(k)),
-      ),
-    )
-    .toBe(true);
+    .poll(() => templateIndicatorTypes(page), { timeout: 5000 })
+    .toEqual(["EMA"]);
+  await setAutoSave(page, false);
 
   // --- Change the chart: add RSI and draw a horizontal line. ---
   await m.add("RSI");
@@ -210,6 +222,9 @@ test("manual Apply merges into a populated chart — keeps drawings, no duplicat
     .click();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect.poll(() => focusedDrawingCount(page)).toBe(1);
+
+  // Auto-save is off, so the template never picked up RSI or the line.
+  await expect.poll(() => templateIndicatorTypes(page)).toEqual(["EMA"]);
 
   // --- Apply the (drawing-free) template. OLD behavior wiped the drawing and
   // replaced the indicator set; merge must keep BOTH the line and RSI, and must

@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import CloseButton from "./CloseButton";
+import InfoTip from "./components/InfoTip";
 import type {
   AlertDefaults,
   AlertExpiry,
@@ -272,6 +273,27 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
                     key={String(value)}
                     className={settings.showWeekday === value ? "seg-on" : ""}
                     onClick={() => onChange({ ...settings, showWeekday: value as boolean })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <label className="label-info">
+                Auto-save templates
+                <InfoTip text="Save indicators and drawings per symbol. Fresh charts open with their saved template." />
+              </label>
+              <div className="seg">
+                {[
+                  [false, "Off"],
+                  [true, "On"],
+                ].map(([value, label]) => (
+                  <button
+                    key={String(value)}
+                    className={settings.autoSaveTemplates === value ? "seg-on" : ""}
+                    onClick={() => onChange({ ...settings, autoSaveTemplates: value as boolean })}
                   >
                     {label}
                   </button>

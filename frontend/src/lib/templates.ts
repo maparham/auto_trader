@@ -38,6 +38,7 @@ import {
   drawingSignature,
   type IndicatorIdentity,
 } from "./templateSignatures";
+import { withLayoutEventsSuppressed } from "./persist/layoutEvents";
 
 // Snapshot a cell's current layout for `epic` into a template. Reads the persisted
 // per-cell stores (authoritative), plus each AVWAP instance's separately-stored
@@ -103,6 +104,10 @@ export function applySymbolTemplate(
   epic: string,
   t: SymbolTemplate,
 ): void {
+  // Suppress layout-change events for the whole merge: apply mints NEW instance
+  // ids, so letting these writes fire would make auto-save capture a re-id'd copy
+  // and churn the stored template on every apply/auto-apply.
+  withLayoutEventsSuppressed(() => {
   // --- indicators: add what's missing, never touch what exists ---------------
   const existing = loadIndicators(scope);
   const existingCfgs = loadIndicatorConfigs(scope);
@@ -167,6 +172,7 @@ export function applySymbolTemplate(
     // to the first loaded bar with the wrong slope.
     controller.coverDrawingAnchors?.();
   }
+  });
 }
 
 // --- global default template (symbol-agnostic) ------------------------------
@@ -177,8 +183,13 @@ export function applySymbolTemplate(
 // meaningless. AVWAP instances are excluded entirely — an anchor-less AVWAP would
 // land at an arbitrary bar — so the default is a clean set of symbol-agnostic
 // indicators (Volume, RSI, MACD, …).
-export function captureDefaultTemplate(scope: string): DefaultTemplate {
-  const indicators = loadIndicators(scope).filter((inst) => inst.type !== "AVWAP");
+export function captureDefaultTemplate(
+  scope: string,
+  includeIds?: Set<string>,
+): DefaultTemplate {
+  const indicators = loadIndicators(scope)
+    .filter((inst) => inst.type !== "AVWAP")
+    .filter((inst) => !includeIds || includeIds.has(inst.id));
   const allConfigs = loadIndicatorConfigs(scope);
   const indicatorConfigs: Record<string, SavedIndicatorConfig> = {};
   for (const inst of indicators) {

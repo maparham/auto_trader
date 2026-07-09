@@ -67,6 +67,16 @@ export function requestConfirm(req: ConfirmRequest): void {
   confirmRequest.set(req);
 }
 
+// Request to open the "Save as default template" picker. Toolbar sets it with the
+// current chart's symbol-agnostic indicators as candidates; App renders one modal.
+// onConfirm gets the checked instance ids. null = closed.
+export interface SaveDefaultTemplateRequest {
+  candidates: Array<{ id: string; label: string; params: string }>;
+  onConfirm: (selectedIds: string[]) => void;
+}
+export const saveDefaultTemplateRequest =
+  new Signal<SaveDefaultTemplateRequest | null>(null);
+
 // True while the alerts sidebar panel is open. Toggled by the toolbar bell's
 // companion button; read by App to render the panel beside the chart.
 export const alertsPanelOpen = new Signal<boolean>(false);

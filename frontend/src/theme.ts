@@ -90,6 +90,9 @@ export interface Settings {
   alertDefaults: AlertDefaults;
   // Trading preferences (Settings → Trading tab).
   trading: TradingSettings;
+  // Auto-save each symbol's chart template as you edit (global, all symbols).
+  // Default on. See lib/templateAutosave.ts.
+  autoSaveTemplates: boolean;
 }
 
 export interface TradingSettings {
@@ -172,6 +175,7 @@ const DEFAULT_SETTINGS: Settings = {
   crosshair: DEFAULT_CROSSHAIR,
   alertDefaults: DEFAULT_ALERT_DEFAULTS,
   trading: DEFAULT_TRADING_SETTINGS,
+  autoSaveTemplates: true,
 };
 
 export function loadSettings(): Settings {

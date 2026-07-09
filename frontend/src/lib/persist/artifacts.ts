@@ -8,6 +8,7 @@ import type { FibConfig } from "../fibConfig";
 import type { BacktestResult } from "../../api";
 import type { BacktestPeriod } from "../backtestPeriods";
 import { PREFIX, ns, root, load, save, saveLocal, removeKeyEverywhere } from "./core";
+import { emitLayoutChanged } from "./layoutEvents";
 
 // --- drawings (overlays the user drew) ---------------------------------------
 
@@ -30,6 +31,7 @@ export function loadDrawings(scope: string, epic: string): SavedOverlay[] {
 }
 export function saveDrawings(scope: string, epic: string, list: SavedOverlay[]): void {
   save(drawingsKey(scope, epic), list);
+  emitLayoutChanged(scope);
 }
 
 // --- backtest result (per cell, per epic) ------------------------------------
@@ -100,6 +102,7 @@ export function loadIndicators(scope: string): IndicatorInstance[] {
 }
 export function saveIndicators(scope: string, list: IndicatorInstance[]): void {
   save(indicatorsKey(scope), list);
+  emitLayoutChanged(scope);
 }
 
 // --- price-axis scale source (per cell) --------------------------------------
@@ -246,6 +249,7 @@ export function saveIndicatorConfig(scope: string, id: string, cfg: SavedIndicat
   const all = loadIndicatorConfigs(scope);
   all[id] = cfg;
   save(indicatorCfgKey(scope), all);
+  emitLayoutChanged(scope);
 }
 // Patch only the `visible` flag, preserving the rest of the snapshot. Used by the
 // legend / tooltip eye toggle, which (unlike the settings modal) doesn't have a
@@ -259,6 +263,7 @@ export function saveIndicatorVisible(scope: string, id: string, visible: boolean
   const prev = all[id];
   all[id] = { ...prev, visible, extendData: { ...prev?.extendData, userVisible: visible } };
   save(indicatorCfgKey(scope), all);
+  emitLayoutChanged(scope);
 }
 // Drop a removed instance's config so it doesn't leak storage (instances are now
 // unbounded; the old one-per-name model never needed cleanup).
@@ -267,6 +272,7 @@ export function deleteIndicatorConfig(scope: string, id: string): void {
   if (id in all) {
     delete all[id];
     save(indicatorCfgKey(scope), all);
+    emitLayoutChanged(scope);
   }
 }
 
@@ -288,4 +294,5 @@ export function loadAvwapAnchor(scope: string, epic: string, id: string): number
 }
 export function saveAvwapAnchor(scope: string, epic: string, id: string, anchorMs: number): void {
   save(avwapKey(scope, epic, id), anchorMs);
+  emitLayoutChanged(scope);
 }

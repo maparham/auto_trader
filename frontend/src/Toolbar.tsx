@@ -26,6 +26,7 @@ import {
   livePanelOpen,
   symbolSearchRequest,
   drawingSettingsRequest,
+  saveDefaultTemplateRequest,
 } from "./lib/signals";
 import {
   saveIndicators,
@@ -33,16 +34,15 @@ import {
   saveFavoriteIndicators,
   loadFavoriteResolutions,
   saveFavoriteResolutions,
-  saveSymbolTemplate,
   loadSymbolTemplate,
-  deleteSymbolTemplate,
   saveDefaultTemplate,
   loadDefaultTemplate,
   deleteDefaultTemplate,
+  loadIndicators,
+  loadIndicatorConfigs,
 } from "./lib/persist";
 import { addIndicatorInstance, isSubPaneIndicator } from "./lib/indicators";
 import {
-  captureSymbolTemplate,
   applySymbolTemplate,
   captureDefaultTemplate,
   applyDefaultTemplate,
@@ -305,13 +305,6 @@ export default function Toolbar({
   // the cell's current layout (overwriting the symbol's single default); Apply
   // MERGES it into the cell — adds what's missing, skips equivalents, never touches existing work;
   // Delete removes the symbol's default so fresh charts start blank again.
-  function saveTemplate() {
-    if (!controller || !symbol) return;
-    saveSymbolTemplate(captureSymbolTemplate(controller.scope, symbol.epic));
-    setTmplOpen(false);
-    toast(`Saved ${symbol.epic} template`);
-  }
-
   function applyTemplate() {
     if (!chart || !controller || !symbol) return;
     const t = loadSymbolTemplate(symbol.epic);
@@ -321,21 +314,32 @@ export default function Toolbar({
     toast(`Applied ${symbol.epic} template`);
   }
 
-  function deleteTemplate() {
-    if (!symbol) return;
-    deleteSymbolTemplate(symbol.epic);
-    setTmplOpen(false);
-    toast(`Deleted ${symbol.epic} template`);
-  }
-
   // --- global default template (symbol-agnostic) -------------------------------
-  // Saves the focused cell's indicators as THE default applied to every fresh
-  // chart (any symbol). Drawings/anchors are stripped at capture (see templates.ts).
+  // Opens the selectable picker: the user checks which of this chart's
+  // symbol-agnostic indicators become THE default applied to every fresh chart
+  // (any symbol). Drawings/anchors are stripped at capture (see templates.ts).
   function saveDefault() {
     if (!controller) return;
-    saveDefaultTemplate(captureDefaultTemplate(controller.scope));
+    const scope = controller.scope;
+    const configs = loadIndicatorConfigs(scope);
+    const candidates = loadIndicators(scope)
+      .filter((inst) => inst.type !== "AVWAP")
+      .map((inst) => {
+        const params = (configs[inst.id]?.calcParams ?? []) as unknown[];
+        return {
+          id: inst.id,
+          label: inst.type,
+          params: params.length ? params.join(", ") : "—",
+        };
+      });
     setTmplOpen(false);
-    toast("Saved default template");
+    saveDefaultTemplateRequest.set({
+      candidates,
+      onConfirm: (ids) => {
+        saveDefaultTemplate(captureDefaultTemplate(scope, new Set(ids)));
+        toast("Saved default template");
+      },
+    });
   }
 
   function applyDefault() {
@@ -695,33 +699,15 @@ export default function Toolbar({
         {tmplOpen && (
           <div className="dropdown dropdown-right tmpl-dropdown">
             <ul>
-              <li onClick={saveTemplate}>
-                <span className="tmpl-ic">{MenuIcons.save}</span>
-                <span className="ind-name">Save {symbol.epic} template</span>
-                <InfoTip
-                  title={`Save ${symbol.epic} template`}
-                  text={`Saves this chart's indicators and drawings as ${symbol.epic}'s template, replacing the previous one. Fresh ${symbol.epic} charts start with it automatically.`}
-                />
-              </li>
               {loadSymbolTemplate(symbol.epic) ? (
-                <>
-                  <li onClick={applyTemplate}>
-                    <span className="tmpl-ic">{MenuIcons.apply}</span>
-                    <span className="ind-name">Apply {symbol.epic} template</span>
-                    <InfoTip
-                      title={`Apply ${symbol.epic} template`}
-                      text="Adds the template's indicators and drawings that are missing from this chart. What's already here is never changed or removed."
-                    />
-                  </li>
-                  <li onClick={deleteTemplate}>
-                    <span className="tmpl-ic">{MenuIcons.remove}</span>
-                    <span className="ind-name">Delete {symbol.epic} template</span>
-                    <InfoTip
-                      title={`Delete ${symbol.epic} template`}
-                      text={`Removes ${symbol.epic}'s saved template. Open charts keep their layout; fresh ${symbol.epic} charts fall back to the default template if one is set, otherwise start blank.`}
-                    />
-                  </li>
-                </>
+                <li onClick={applyTemplate}>
+                  <span className="tmpl-ic">{MenuIcons.apply}</span>
+                  <span className="ind-name">Apply {symbol.epic} template</span>
+                  <InfoTip
+                    title={`Apply ${symbol.epic} template`}
+                    text="Adds the template's indicators and drawings that are missing from this chart. What's already here is never changed or removed."
+                  />
+                </li>
               ) : (
                 <li className="empty">no saved template</li>
               )}

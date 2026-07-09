@@ -17,6 +17,7 @@ import IndicatorSettings from "./IndicatorSettings";
 import DrawingSettings from "./DrawingSettings";
 import AlertsSidebar, { type AlertNavTarget, type VisibleCell } from "./AlertsSidebar";
 import ConfirmDialog from "./ConfirmDialog";
+import SaveDefaultTemplateModal from "./SaveDefaultTemplateModal";
 import BacktestClusterPopover from "./BacktestClusterPopover";
 import TradeExitClusterPopover from "./TradeExitClusterPopover";
 import TradeMarkerLabelPopover from "./TradeMarkerLabelPopover";
@@ -36,6 +37,7 @@ import {
   alertGlobalEditRequest,
   confirmRequest,
   requestConfirm,
+  saveDefaultTemplateRequest,
   indicatorSettingsRequest,
   drawingSettingsRequest,
   alertsPanelOpen,
@@ -286,6 +288,8 @@ export default function App() {
   useEffect(() => alertGlobalEditRequest.subscribe(setAlertGlobalEdit), []);
   const [confirm, setConfirm] = useState(confirmRequest.value);
   useEffect(() => confirmRequest.subscribe(setConfirm), []);
+  const [saveDefaultReq, setSaveDefaultReq] = useState(saveDefaultTemplateRequest.value);
+  useEffect(() => saveDefaultTemplateRequest.subscribe(setSaveDefaultReq), []);
   const [indSettings, setIndSettings] = useState(indicatorSettingsRequest.value);
   useEffect(() => indicatorSettingsRequest.subscribe(setIndSettings), []);
   const [drawSettings, setDrawSettings] = useState(drawingSettingsRequest.value);
@@ -1845,6 +1849,13 @@ export default function App() {
           details={confirm.details}
           onConfirm={confirm.onConfirm}
           onClose={() => confirmRequest.set(null)}
+        />
+      )}
+
+      {saveDefaultReq && (
+        <SaveDefaultTemplateModal
+          req={saveDefaultReq}
+          onClose={() => saveDefaultTemplateRequest.set(null)}
         />
       )}
 
