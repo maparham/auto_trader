@@ -1,5 +1,49 @@
 # Slim the Ten Largest Modules — Implementation Plan
 
+> **Addendum 2026-07-10 — codebase re-survey.** Tasks 1–3 (persist, customIndicators,
+> api/app.py) are done and committed. All line numbers below are stale — locate
+> symbols by name. Per-task drift found by a fresh survey:
+>
+> - **Task 4 (BacktestSettingsModal, now 2,482 lines, +59%):** grew via the sweep
+>   feature + coded-strategies panel. All four planned extractions still map, BUT
+>   `RiskSection` and `RuleGroupSection` are now **exported and imported by
+>   `LiveTradingPanel.tsx`** — extract them to files both can import (the planned
+>   `RuleBuilder.tsx` / `RiskScalingSections.tsx` work; update LiveTradingPanel's
+>   imports in the same commit). `RiskSection` also gained an optional sweep prop.
+>   New: `SweepAxisRow` (small) belongs with RiskScalingSections.
+> - **Task 5 (IndicatorSettings, now 2,590 lines):** plan applies as-is. Two NEW
+>   families since the plan — SESSIONS and TIME_HIGHLIGHT — follow the same
+>   pattern; add `SessionsPanels.tsx` + `TimeHighlightPanels.tsx` extractions (or
+>   fold into one `TimePanels.tsx`) after the planned five.
+> - **Task 6 (capital/ig dedup):** valid as written EXCEPT Step 3's `_parse_prices`
+>   dedup — the bodies differ (capital parses `snapshotTimeUTC` only; IG falls back
+>   to local `snapshotTime`, no resolution param). Keep both; extract only the
+>   genuinely shared helpers. **mt5.py (1,245 lines) is NOT a SessionAuthBroker
+>   candidate** — SDK-based auth, no duplication with capital/ig; leave it alone.
+> - **Task 7 (overlays.ts, now 2,184 lines):** plan applies cleanly; no new method
+>   groups; 4 importers now (was 3).
+> - **Task 8 (App.tsx, now 1,876 lines):** plan applies; ~10 modal subscriptions
+>   now (sweep + live added, same pattern). New orthogonal UI state
+>   (`maximized`/`dockMaximized`/`maximizedCellId`) can stay in App.
+> - **Task 9 (ChartCore, now 5,951 lines, +961 since plan):** core extractions all
+>   still valid. Adjustments: ChartHandle needs the newer refs
+>   (`aggMarkersRef`, `exitAggMarkersRef`, `paintBracketRef`, `paintSeparatorRef`, …);
+>   Step 13's `useLineDrag` must decide whether it owns the NEW slope-tool handle
+>   drag (~130 lines, recommend: yes, same engine); add a NEW extraction
+>   **`useTradeMarkers.ts`** (trade markers + exit clustering + aggregate pills,
+>   ~200 lines) distinct from the position-pill system; TradePills needs a state
+>   hook (positioning/hover state stays in ChartCore or a `useTradePills`).
+>
+> **New candidates found (not in the original ten) — appended as Tasks 10–11:**
+> - **Task 10: `lib/backtest.ts` (1,477 lines, 47 importers)** — extract overlay
+>   factories (~250 lines), artifacts lifecycle (~200), marker drawing (~140)
+>   behind a barrel. Strongest new candidate.
+> - **Task 11: `lib/feed.ts` (680 lines, 22 importers)** — resolution tables / API
+>   fetch / metadata / WebSocket are separable; barrel keeps importers stable.
+> - Assessed and rejected: PositionsPanel, OrderTicket, positionLines,
+>   customOverlays, ChartLegend (cohesive); Toolbar, trading.ts (marginal, defer);
+>   paper_exec, capital_stream, schemas, coded.py, routers (backend fine).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Split the ten oversized modules in `auto_trader` into focused files with one responsibility each, changing zero behavior.
