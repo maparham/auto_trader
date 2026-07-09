@@ -5,6 +5,11 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Specced, ready to implement
 
+- **Time Highlight indicator** — highlight candles inside user-defined
+  time-of-day windows (device-local timezone): translucent band, recolored
+  candles, or both; multiple windows per instance; Sessions-style editor.
+  [spec](superpowers/specs/2026-07-09-time-highlight-indicator-design.md)
+
 - **Tauri menu-bar Mac app** — thin always-on native shell that loads the
   existing localhost UI so the browser-driven live engine can't be closed by
   accident. Menu-bar tray icon + status glyph, ⌘⌥T hotkey, close/⌘W/⌘Q all hide
