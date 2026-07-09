@@ -96,13 +96,6 @@ def _to_candle(c: dict) -> Candle:
     )
 
 
-def _is_closed(c: Candle, resolution: Resolution, now: datetime) -> bool:
-    """True once the bar's interval has fully elapsed. MetaApi returns the current
-    forming bar as the last element; we drop it so callers see closed bars only
-    (matching the Capital/IG contract and the candle cache)."""
-    return c.time + timedelta(seconds=resolution.seconds) <= now
-
-
 # --- symbol-search categorisation -------------------------------------------
 # MetaApi's get_symbols() returns bare symbol strings with no category metadata
 # (unlike Capital's instrumentType), so the symbol-search modal's chips (Stocks/
@@ -192,10 +185,11 @@ class MT5Broker(MarketDataBroker):
 
     Holds the RPC connection the execution broker also trades through (reads +
     trades), plus a second streaming connection for the live tick feed (see
-    _ensure_stream). supports_streaming is True: native intraday charts tick live
-    via mt5_stream, and MT5 paper limit/SL/TP orders fire off the same tick feed.
-    DAY/WEEK, seconds, and derived timeframes are fatal-gated in the /ws/candles
-    router and keep their REST history.
+    _ensure_stream). supports_streaming is True: intraday, DAY and WEEK charts tick
+    live via mt5_stream (WEEK phased to the broker's week-open), MONTH ticks via the
+    router folding the live DAY stream, and MT5 paper limit/SL/TP orders fire off the
+    same tick feed. Seconds and the wider derived timeframes (2W/3W/6W, 2M/3M, 1Y)
+    are fatal-gated in the /ws/candles router and keep their REST history.
     """
 
     supports_streaming = True
@@ -638,8 +632,13 @@ class MT5Broker(MarketDataBroker):
         end: datetime,
         price_side: str = "mid",
     ) -> list[Candle]:
-        """Closed candles in [start, end], ascending. Pages backward from `end`
-        (MetaApi returns ≤1000 bars up to and including the anchor time).
+        """Candles in [start, end], ascending. Pages backward from `end` (MetaApi
+        returns ≤1000 bars up to and including the anchor time).
+
+        MetaApi returns the current, still-forming bar as the last element; we pass
+        it through (matching Capital/IG). The candle cache stores closed bars only
+        but forwards the broker's forming bar so the chart shows today's live candle
+        — dropping it here made today's DAY/WEEK bar go missing on MT5 charts.
 
         MT5 candles are a single series (no separate bid/ask history like Capital),
         so `price_side` is accepted for interface parity but not applied — AvaTrade
@@ -661,11 +660,7 @@ class MT5Broker(MarketDataBroker):
             if oldest <= start or len(batch) < _MAX_CANDLES_PER_CALL:
                 break
             anchor = oldest - timedelta(seconds=1)  # step strictly before this page
-        now = datetime.now(timezone.utc)
-        return sorted(
-            (c for c in by_time.values() if _is_closed(c, resolution, now)),
-            key=lambda c: c.time,
-        )
+        return sorted(by_time.values(), key=lambda c: c.time)
 
     async def get_recent_candles(
         self,
@@ -674,25 +669,26 @@ class MT5Broker(MarketDataBroker):
         count: int,
         price_side: str = "mid",
     ) -> list[Candle]:
-        """Most recent `count` CLOSED candles (robust when the market is shut).
-        Over-fetches by one to absorb dropping the forming bar."""
+        """Most recent `count` candles regardless of date (robust when the market
+        is shut). MetaApi returns the current, still-forming bar as the last element;
+        we keep it (matching Capital/IG) so the candle cache can forward today's live
+        bar to the chart — the cache itself stores closed bars only."""
         await self._ensure()
         tf = _TIMEFRAME[resolution]
-        batch = await self._acct.get_historical_candles(epic, tf, None, count + 1)
-        now = datetime.now(timezone.utc)
-        closed = [c for c in (_to_candle(r) for r in batch) if _is_closed(c, resolution, now)]
-        closed.sort(key=lambda c: c.time)
-        return closed[-count:]
+        batch = await self._acct.get_historical_candles(epic, tf, None, count)
+        candles = sorted((_to_candle(r) for r in batch), key=lambda c: c.time)
+        return candles[-count:]
 
     async def get_forming_candle(
         self, epic: str, resolution: Resolution, price_side: str = "mid"
     ) -> Candle | None:
         """The CURRENT, still-forming bar for `epic` — MetaApi returns it as the last
-        historical element, which `get_recent_candles` deliberately drops (closed-only
-        contract). The live stream seeds its forming bar from this so it carries the
-        in-progress bucket's real OHLCV from frame one instead of cold-starting the
-        open at the first tick. None if unavailable. `price_side` is accepted for
-        interface parity but not applied (MT5 candles are a single bid-based series)."""
+        historical element. `get_recent_candles`/`get_candles` also return it (last
+        element), but there the candle cache stores it or not by bucket; this method
+        fetches JUST that forming bar so the live stream can seed its forming bar from
+        it — carrying the in-progress bucket's real OHLCV from frame one instead of
+        cold-starting the open at the first tick. None if unavailable. `price_side` is
+        accepted for interface parity but not applied (MT5 candles are bid-based)."""
         await self._ensure()
         tf = _TIMEFRAME[resolution]
         try:

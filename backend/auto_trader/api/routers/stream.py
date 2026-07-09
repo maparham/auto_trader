@@ -86,12 +86,18 @@ async def ws_candles(websocket: WebSocket) -> None:
         stream = stream_tick_candles(broker, epic, SECONDS_INTERVALS[res_raw])
     elif is_derived(res_raw):
         # Derived timeframes stream by re-folding the native base (DAY/WEEK) stream
-        # into the forming aggregate bucket. IG/MT5 base-bar streaming for these
-        # isn't wired, so they keep their REST view (fatal stops the client retrying).
-        if is_ig or is_mt5:
+        # into the forming aggregate bucket. IG base-bar streaming isn't wired. MT5
+        # streams its base (DAY/WEEK) natively, so we fold it here — but only for
+        # MONTH (the scoped set is DAY/WEEK/MONTH); the wider derived TFs (2W/3W/6W,
+        # 2M/3M, 1Y) stay on REST for MT5 for now. Fatal stops the client retrying.
+        if is_ig or (is_mt5 and res_raw != "MONTH"):
             return await _fatal(f"{broker_id}: {res_raw} is not streamed live")
         rule = DERIVED[res_raw]
         base = rule.base
+        # The base bar stream is broker-specific: MT5 folds ticks into DAY bars via
+        # its own streamer; Capital uses its OHLC+tick websocket. Same LiveBar shape,
+        # so aggregate_candle_stream consumes either.
+        base_stream_candles = mt5_stream.stream_candles if is_mt5 else stream_candles
 
         async def _seed(bucket_ts: int) -> list[Candle]:
             # Closed base bars already elapsed in the current bucket (reconnect
@@ -114,7 +120,7 @@ async def ws_candles(websocket: WebSocket) -> None:
                 return []
 
         stream = aggregate_candle_stream(
-            stream_candles(broker, epic, base, price_side), rule, _seed
+            base_stream_candles(broker, epic, base, price_side), rule, _seed
         )
     else:
         try:
@@ -130,11 +136,10 @@ async def ws_candles(websocket: WebSocket) -> None:
                 return await _fatal(f"{broker_id}: {res_raw} is not streamed live")
             stream = ig_stream.stream_candles(broker, epic, resolution, price_side)
         elif is_mt5:
-            # MT5 folds quote ticks into epoch buckets, which only align cleanly for
-            # intraday. DAY/WEEK have no plain epoch-bucket boundary (v1 defers them),
-            # so they keep REST history; fatal stops the client retrying.
-            if resolution.seconds >= Resolution.DAY.seconds:
-                return await _fatal(f"{broker_id}: {res_raw} is not streamed live")
+            # MT5 folds quote ticks into buckets: intraday + DAY on the plain epoch
+            # bucket (DAY = 00:00 UTC, where AvaTrade opens dailies), WEEK phased to
+            # the broker's actual week-open (see mt5_stream._bucket_ms). MONTH rides
+            # the derived path above; seconds aren't wired.
             stream = mt5_stream.stream_candles(broker, epic, resolution, price_side)
         else:
             stream = stream_candles(broker, epic, resolution, price_side)

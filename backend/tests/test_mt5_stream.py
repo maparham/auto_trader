@@ -80,6 +80,19 @@ def test_bucket_ms_floors_to_step() -> None:
     assert _bucket_ms(120_000, step) == 120_000
 
 
+def test_bucket_ms_phases_to_anchor() -> None:
+    # A weekly step anchored on a Sunday must open its buckets on Sundays, not on
+    # the Thursday a plain epoch floor (anchor 0) lands on. Anchor at t=100, step 10:
+    step = 10
+    anchor = 100
+    assert _bucket_ms(100, step, anchor) == 100  # exactly on the anchor
+    assert _bucket_ms(107, step, anchor) == 100  # within the first bucket
+    assert _bucket_ms(110, step, anchor) == 110  # next bucket opens at anchor+step
+    assert _bucket_ms(125, step, anchor) == 120  # phased, not floored to 120 from 0
+    # A timestamp before the anchor floors to the bucket below it (still phased).
+    assert _bucket_ms(95, step, anchor) == 90
+
+
 # --- tick-fold bar builder -------------------------------------------------
 
 def test_bar_unpriced_yields_none() -> None:
@@ -361,3 +374,80 @@ def test_stream_cold_starts_when_no_forming_candle() -> None:
     bar = asyncio.run(_first_bar(broker, Resolution.MINUTE))
     assert bar.candle.open == 5.0     # cold start: open pins to the first tick
     assert bar.candle.close == 5.0
+
+
+def _current_week_open(weekday_open: int) -> datetime:
+    """00:00 UTC of the most recent `weekday_open` (Mon=0 … Sun=6) at or before now
+    — i.e. the open of the week that contains `now`, for a broker whose weeks start
+    on that weekday. Used to build a forming WEEKLY seed for the current bucket."""
+    now = datetime.now(timezone.utc)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    from datetime import timedelta
+
+    days_since = (now.weekday() - weekday_open) % 7
+    return midnight - timedelta(days=days_since)
+
+
+def test_stream_weekly_anchors_to_broker_week_open_not_epoch_thursday() -> None:
+    from auto_trader.core.models import Resolution
+
+    # AvaTrade opens weekly bars on Sunday for some instruments; a plain epoch week
+    # (604800s) opens on a Thursday. Seed the current SUNDAY-opening week and prove
+    # the live bar carries that Sunday open, not the epoch-Thursday bucket.
+    sunday_open = _current_week_open(6)  # Sun=6
+    seed = Candle(time=sunday_open, open=1.0, high=1.4, low=0.9, close=1.1, volume=42)
+    broker = _FakeStreamBroker(seed, ticks=[(5.0, 5.0)])
+    bar = asyncio.run(_first_bar(broker, Resolution.WEEK))
+
+    assert bar.candle.time == sunday_open   # phased to the broker's week-open
+    assert bar.candle.open == 1.0           # seeded, not cold-started at 5.0
+    assert bar.candle.close == 5.0          # tick moved close
+
+    # Guard the point of the test: the un-anchored epoch bucket would land elsewhere
+    # (a Thursday), so equality above only holds because of the anchor fix.
+    step_ms = Resolution.WEEK.seconds * 1000
+    epoch_bucket_ms = _bucket_ms(int(sunday_open.timestamp() * 1000), step_ms)
+    assert epoch_bucket_ms != int(sunday_open.timestamp() * 1000)
+
+
+def test_stream_weekly_without_seed_fails_recoverably_not_misanchored() -> None:
+    from auto_trader.core.models import Resolution
+
+    # No forming weekly bar (RPC blip / mid-reconnect) means no correct week-open
+    # anchor. Rather than fold onto the epoch-Thursday bucket and emit a weekly bar
+    # at the wrong time (a spurious candle beside history), stream_candles must raise
+    # a RECOVERABLE RuntimeError so the client retries — the retry's seed usually lands.
+    broker = _FakeStreamBroker(None, ticks=[(5.0, 5.0)])
+    with pytest.raises(RuntimeError):
+        asyncio.run(_first_bar(broker, Resolution.WEEK))
+
+
+def test_stream_daily_anchors_to_seed_day() -> None:
+    from auto_trader.core.models import Resolution
+
+    # DAY phases its bucket to the seed's open. For AvaTrade that's today's 00:00
+    # UTC, but anchoring to the seed keeps it correct for a broker whose dailies
+    # open at some other (server-time) hour. Seed today's bar; the live bar keeps it.
+    now = datetime.now(timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    seed = Candle(time=today, open=2.0, high=2.2, low=1.9, close=2.1, volume=7)
+    broker = _FakeStreamBroker(seed, ticks=[(9.0, 9.0)])
+    bar = asyncio.run(_first_bar(broker, Resolution.DAY))
+
+    assert bar.candle.time == today   # anchored to the seed's day-open
+    assert bar.candle.open == 2.0     # seeded
+    assert bar.candle.close == 9.0    # tick moved close
+
+
+def test_stream_daily_without_seed_cold_starts_not_raises() -> None:
+    from auto_trader.core.models import Resolution
+
+    # Unlike WEEK, DAY tolerates a missing seed: the epoch day (anchor 0) opens at
+    # 00:00 UTC, where AvaTrade dailies open, so a cold start lands on the right
+    # bucket. It must NOT raise (that path is WEEK-only).
+    broker = _FakeStreamBroker(None, ticks=[(9.0, 9.0)])
+    bar = asyncio.run(_first_bar(broker, Resolution.DAY))
+
+    now_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    assert bar.candle.time == now_day  # epoch day = today 00:00 UTC
+    assert bar.candle.open == 9.0      # cold start pins open to the first tick

@@ -144,6 +144,78 @@ def test_classify_symbol(sym, expected):
     assert _classify_symbol(sym) == expected
 
 
+# --- forming daily bar --------------------------------------------------------
+# MetaApi returns the current, still-forming bar as the LAST historical element
+# (verified live: a "1d" fetch mid-session returns today's date last). The candle
+# cache stores closed bars only but passes the broker's forming bar through so the
+# chart shows today's live candle — Capital/IG both hand it over. MT5 must too, or
+# today's daily candle silently goes missing on MT5 charts.
+
+
+class _CandleAcct:
+    """A synchronized RPC account whose get_historical_candles hands back a fixed
+    daily series ending in today's forming bar (ignores the limit — the methods
+    under test only slice/sort what they get)."""
+
+    def __init__(self, bars):
+        self._bars = bars
+
+    async def get_historical_candles(self, symbol, timeframe, start_time, limit):
+        return list(self._bars)
+
+
+def _daily_bars_ending_today():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Oldest → newest; the last one opens today and is therefore still forming.
+    return [
+        {"time": today - timedelta(days=3), "open": 1, "high": 1, "low": 1, "close": 1, "tickVolume": 10},
+        {"time": today - timedelta(days=2), "open": 2, "high": 2, "low": 2, "close": 2, "tickVolume": 20},
+        {"time": today - timedelta(days=1), "open": 3, "high": 3, "low": 3, "close": 3, "tickVolume": 30},
+        {"time": today, "open": 4, "high": 4, "low": 4, "close": 4, "tickVolume": 40},
+    ], today
+
+
+def _candle_broker(bars):
+    broker = MT5Broker(token="t", account_id="a")
+    broker._acct = _CandleAcct(bars)
+
+    async def _ensure():
+        broker._synced = True
+        return broker._acct
+
+    broker._ensure = _ensure
+    return broker
+
+
+def test_get_recent_candles_includes_todays_forming_bar():
+    from auto_trader.core.models import Resolution
+
+    bars, today = _daily_bars_ending_today()
+    broker = _candle_broker(bars)
+    out = asyncio.run(broker.get_recent_candles("EURUSD", Resolution.DAY, 3))
+
+    assert out, "expected candles"
+    assert out[-1].time == today, "today's forming daily bar must be the last element"
+
+
+def test_get_candles_includes_todays_forming_bar():
+    from datetime import timedelta
+
+    from auto_trader.core.models import Resolution
+
+    bars, today = _daily_bars_ending_today()
+    broker = _candle_broker(bars)
+    out = asyncio.run(
+        broker.get_candles("EURUSD", Resolution.DAY, today - timedelta(days=3), today)
+    )
+
+    assert out, "expected candles"
+    assert out[-1].time == today, "today's forming daily bar must be returned in-window"
+
+
 def test_all_markets_tags_categories():
     """all_markets runs every symbol through the classifier and strips the equity
     prefix from the display name."""

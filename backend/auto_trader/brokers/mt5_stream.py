@@ -14,8 +14,11 @@ optional bid & ask price lines for free. The forming bar is seeded from the curr
 still-forming REST bar (get_forming_candle) so it carries the in-progress bucket's
 real OHLCV from the first frame instead of cold-starting the open at the first tick.
 
-Scope: native intraday only (1m–4h). DAY/WEEK have no clean epoch-bucket boundary
-and are fatal-gated in the router; seconds/derived aren't wired.
+Scope: native resolutions (1m–4h, plus DAY and WEEK). DAY and WEEK phase their
+bucket to the broker's actual bar-open, taken from the seed candle (AvaTrade opens
+dailies at 00:00 UTC and weeklies on Sun/Mon per instrument — see `_bucket_ms`).
+MONTH is built one level up by folding this DAY stream in the router's derived
+path. Seconds intervals aren't wired.
 """
 
 from __future__ import annotations
@@ -53,9 +56,19 @@ def _pick_side(bid: float | None, ask: float | None, side: str) -> float | None:
     return (bid + ask) / 2
 
 
-def _bucket_ms(ts_ms: int, step_ms: int) -> int:
-    """Floor a millisecond timestamp to its bar-open time for a `step_ms` bucket."""
-    return (ts_ms // step_ms) * step_ms
+def _bucket_ms(ts_ms: int, step_ms: int, anchor_ms: int = 0) -> int:
+    """Floor a millisecond timestamp to its bar-open time for a `step_ms` bucket,
+    phased to `anchor_ms`.
+
+    anchor_ms=0 (the default) gives plain epoch buckets — correct for intraday,
+    whose bars are already epoch-aligned. DAY and WEEK pass a non-zero anchor (the
+    seed candle's open) so the bucket lands on the broker's actual bar-open: a
+    604800s epoch week opens on a Thursday (the Unix epoch was a Thursday) but the
+    broker's weeks open Sun/Mon per instrument, and other MT5 brokers open dailies
+    at server-time midnight rather than 00:00 UTC. Phasing to the seed is correct
+    for any such convention; anchor 0 would only be right when the broker's bar
+    happens to open on an epoch boundary."""
+    return anchor_ms + ((ts_ms - anchor_ms) // step_ms) * step_ms
 
 
 class _Bar:
@@ -173,9 +186,29 @@ async def stream_candles(
             seed = await broker.get_forming_candle(epic, resolution, price_side)
         except Exception:  # noqa: BLE001 — best-effort; fall back to cold start
             seed = None
+        # DAY and WEEK phase their bucket to the broker's actual bar-open, taken from
+        # the seed candle's time, rather than a plain epoch floor. AvaTrade opens
+        # dailies at 00:00 UTC (so the epoch day happens to be right), but a 604800s
+        # epoch week opens on a Thursday while the broker's weeks open Sun/Mon (per
+        # instrument) — and other MT5 brokers open dailies at server-time midnight,
+        # not UTC. Anchoring to the seed makes the current bucket match on connect
+        # regardless of that convention, so the bar seeds instead of cold-starting.
+        # Intraday stays epoch-anchored (anchor 0): its bars are already epoch-aligned.
+        # No seed means no anchor: DAY safely falls back to the epoch day (00:00 UTC,
+        # where AvaTrade dailies open), but WEEK on the epoch-Thursday bucket would
+        # stamp the weekly bar at the wrong time (the client renders a SPURIOUS candle
+        # beside history, not an update), so WEEK fails recoverably — the client shows
+        # the feed down and retries, and the retry's seed fetch usually lands.
+        anchor_ms = 0
+        if resolution.seconds >= Resolution.DAY.seconds:
+            if seed is not None:
+                anchor_ms = int(seed.time.timestamp() * 1000)
+            elif resolution is Resolution.WEEK:
+                raise RuntimeError(f"mt5 weekly stream needs a seed for {epic}; retrying")
         now_ms = int(time.time() * 1000)
         if seed is not None and (
-            _bucket_ms(int(seed.time.timestamp() * 1000), step_ms) == _bucket_ms(now_ms, step_ms)
+            _bucket_ms(int(seed.time.timestamp() * 1000), step_ms, anchor_ms)
+            == _bucket_ms(now_ms, step_ms, anchor_ms)
         ):
             bar.seed(seed)
 
@@ -188,8 +221,13 @@ async def stream_candles(
             # so the chart freezes silently rather than reporting the feed down.
             bid, ask = await queue.get()
             ts_ms = int(time.time() * 1000)
-            bucket = _bucket_ms(ts_ms, step_ms)
+            bucket = _bucket_ms(ts_ms, step_ms, anchor_ms)
             if bar.t is None or bucket > bar.t:
+                # A new bucket cold-starts (open = first tick), same as the daily
+                # bar at midnight. The CURRENT bucket was seeded from REST on
+                # connect, so a rollover only cold-starts if the user is watching
+                # across the exact week/day boundary — rare and self-heals on the
+                # next reload's REST seed.
                 bar.roll(bucket)
             price = _pick_side(bid, ask, price_side)
             if price is None:
