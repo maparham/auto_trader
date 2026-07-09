@@ -29,7 +29,7 @@ import {
   barIndexForTs,
   setMarkerHoverCursor,
 } from "./backtest";
-import { tradeMarkerHoverSignal } from "./signals";
+import { tradeMarkerHoverSignal, selectTradeLine } from "./signals";
 
 /** One live trade marker, ready to hand to the backtest MARKER_OVERLAY. The
  * `timestamp` is the RAW fill/close time in ms; the drawer anchors it to the bar
@@ -42,6 +42,10 @@ export interface TradeMarkerSpec {
   label: string;
   win: boolean | null;
   placement: "above" | "below";
+  // Open-position id for ENTRY markers only — lets a click select the matching
+  // dock row (same id as tradeLineUiSignal.selected). Exit markers leave it unset:
+  // a closed trade has no row in the positions list to select.
+  tradeId?: string;
 }
 
 export interface TradeMarkerSpecOpts {
@@ -78,6 +82,7 @@ export function entryMarkerSpecs(o: TradeMarkerSpecOpts): TradeMarkerSpec[] {
     if (t.openedAt == null || !drawableAt(t.openedAt, o.oldestLoadedMs)) continue;
     specs.push({
       key: `entry:${t.id}`,
+      tradeId: t.id,
       timestamp: t.openedAt, // already ms (Date.parse of created_at)
       price: t.priceLevel,
       label: `${tradeLabel(t.kind, t.side)} ${t.quantity} @ ${t.priceLevel.toFixed(o.precision)}`,
@@ -186,9 +191,14 @@ interface DrawnMarker {
 export class TradeMarkers {
   private chart: Chart;
   private markers = new Map<string, DrawnMarker>();
+  // When true, marker clicks are inert — the owning cell is in a mode where a
+  // chart click means something else (e.g. AVWAP anchor placement), so a click
+  // that happens to land on a marker must not also toggle the trade selection.
+  private ignoreClicks: () => boolean;
 
-  constructor(chart: Chart) {
+  constructor(chart: Chart, ignoreClicks: () => boolean = () => false) {
     this.chart = chart;
+    this.ignoreClicks = ignoreClicks;
     ensureMarkerOverlayRegistered();
   }
 
@@ -237,6 +247,12 @@ export class TradeMarkers {
       }
       // The glyph is a compact arrow; its full label is a DOM pill shown only
       // while hovered (tradeMarkerHoverSignal → App), so it never covers candles.
+      // The hover signal also carries the ENTRY marker's tradeId: ChartCore's DOM
+      // click handlers read it to know the click landed on a marker (skip the
+      // line hit-test and the empty-space deselect — same idiom as the drawings'
+      // getHoveredDrawingId guard) and to open the editor on double-click.
+      // tradeId is stable per key, so capturing it at create time is safe across
+      // reconciles; exit markers have none, so they stay non-interactive.
       const drawn: DrawnMarker = { overlayId: "", sig, label: spec.label, win: spec.win };
       const id = this.chart.createOverlay({
         name: MARKER_OVERLAY,
@@ -249,6 +265,7 @@ export class TradeMarkers {
             win: drawn.win,
             x: e.pageX ?? 0,
             y: e.pageY ?? 0,
+            tradeId: spec.tradeId,
           });
           setMarkerHoverCursor(this.chart, true);
           return false;
@@ -256,6 +273,15 @@ export class TradeMarkers {
         onMouseLeave: () => {
           tradeMarkerHoverSignal.set(null);
           setMarkerHoverCursor(this.chart, false);
+          return false;
+        },
+        // Clicking an ENTRY marker selects/deselects its open position in the
+        // dock — same call as single-clicking the position's chart lines
+        // (highlight only, no edit ticket). Inert while the owning cell is in a
+        // click-means-something-else mode (ignoreClicks).
+        onClick: () => {
+          const tid = spec.tradeId;
+          if (tid && !this.ignoreClicks()) selectTradeLine(tid, "price", false);
           return false;
         },
       });

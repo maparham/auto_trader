@@ -143,8 +143,11 @@ export const backtestSignalHoverSignal = new Signal<
 // onMouseEnter with the cursor's page position + win (for entry-blue/win-green/
 // loss-red colouring), cleared on leave / teardown; App renders one pill for it.
 // Same global one-at-a-time idiom as the popovers above.
+// `tradeId` is set while hovering an ENTRY marker (open position) — ChartCore's
+// click handlers read it to select the trade / open its editor and to treat the
+// click as on-a-marker rather than empty space; exit markers leave it unset.
 export const tradeMarkerHoverSignal = new Signal<
-  { label: string; win: boolean | null; x: number; y: number } | null
+  { label: string; win: boolean | null; x: number; y: number; tradeId?: string } | null
 >(null);
 
 // A one-shot "scroll the chart to this trade" request (row.i, or null = no-op),

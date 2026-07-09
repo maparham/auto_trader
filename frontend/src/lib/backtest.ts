@@ -980,6 +980,17 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       const idx = tradeIndexByFill.get(`${m.time}|${m.leg}`);
       const snappedTs = snapNearestBar(m.time * 1000, barTimes);
       const bar = barByTime.get(snappedTs);
+      // Shared click handler for this trade's fill marker AND its signal caret:
+      // sticky-select the trade, same as clicking its dock row — the
+      // selectedTradeSignal subscription draws the risk/reward zone and scrolls
+      // to it. Clicking the already-selected trade toggles it back off. One
+      // definition so the two glyphs of the same trade can't drift apart.
+      const toggleTradeSelect = () => {
+        if (backtestResultSignal.value === result && idx !== undefined) {
+          selectedTradeSignal.set(selectedTradeSignal.value === idx ? null : idx);
+        }
+        return false;
+      };
       const id = chart.createOverlay({
         name: MARKER_OVERLAY,
         points: [{ timestamp: snappedTs, value: m.price }],
@@ -1006,17 +1017,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
                 }
                 return false;
               },
-              // Clicking a marker sticky-selects its trade, same as clicking its
-              // row — draws the risk/reward zone overlay and scrolls to it (the
-              // selectedTradeSignal subscription does the drawing/scrolling for
-              // both this and the panel's row click). Clicking the already-selected
-              // trade again toggles it back off (deselect).
-              onClick: () => {
-                if (backtestResultSignal.value === result) {
-                  selectedTradeSignal.set(selectedTradeSignal.value === idx ? null : idx);
-                }
-                return false;
-              },
+              onClick: toggleTradeSelect,
             }
           : {}),
       });
@@ -1063,6 +1064,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
             }
             return false;
           },
+          onClick: toggleTradeSelect,
         });
         if (typeof sid === "string") artifacts.markerIds.push(sid);
       }

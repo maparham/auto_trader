@@ -80,6 +80,8 @@ import {
   discardPendingField,
   confirmLineEditsSignal,
   draggingLineSignal,
+  tradeMarkerHoverSignal,
+  highlightTradeSignal,
   type PendingEdit,
   type TradeLineField,
   type DraftOrder,
@@ -1635,12 +1637,23 @@ export default function ChartCore({
       // Trade-line selection (chart -> dock). Single-click focuses THAT line (its pill
       // shows + dock row lights up) without opening the edit ticket — double-click
       // opens it. A click on empty space drops the trade.
-      const tradeHit = tradeLineHitTest(x, y);
+      // A click on a live trade MARKER is handled by the marker's own overlay
+      // onClick (klinecharts fires it from its mouseup, before this DOM click) —
+      // hovering the glyph is the tell, same idiom as getHoveredDrawingId above.
+      // Skip the line hit-test for that click too: a trade line passing within
+      // tolerance of the glyph would otherwise select in the same gesture and,
+      // selectTradeLine being a toggle, cancel or hijack the marker's selection.
+      const overTradeMarker = tradeMarkerHoverSignal.value != null;
+      const tradeHit = overTradeMarker ? null : tradeLineHitTest(x, y);
       if (tradeHit) selectTradeLine(tradeHit.id, tradeHit.field, false /* openPanel */);
-      // Click on empty space drops the trade — UNLESS the edit ticket is open. Clicking
-      // away from the lines must not slam an open ticket shut (you're still editing it);
-      // it closes only via its own Cancel/✕/Escape, or by opening another trade.
-      else if (!tradePanelOpen.value) setTradeSelected(null);
+      // Click on empty space drops the trade — UNLESS the edit ticket is open (clicking
+      // away from the lines must not slam an open ticket shut; it closes only via its
+      // own Cancel/✕/Escape, or by opening another trade), and UNLESS the click landed
+      // on a trade marker: a live glyph (its own onClick just applied the selection)
+      // or a backtest fill/caret glyph (hover sets highlightTradeSignal) — inspecting
+      // a backtest trade must not deselect the live position as a side effect.
+      else if (!overTradeMarker && highlightTradeSignal.value == null && !tradePanelOpen.value)
+        setTradeSelected(null);
     };
 
     // Shared alert-line hit-test (used by single-click select and double-click
@@ -1733,6 +1746,16 @@ export default function ChartCore({
       const rect = el.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
+      // Double-click a trade MARKER: an entry glyph opens its position's edit
+      // ticket (mirroring dblclick on the trade's lines; the two preceding clicks
+      // toggled the selection on/off through the marker's own onClick, hence the
+      // force-set openTradeEditor). Any marker dblclick returns here so it can't
+      // fall through to the empty-space collapse of the bottom sub-panes.
+      const hoverMarker = tradeMarkerHoverSignal.value;
+      if (hoverMarker) {
+        if (hoverMarker.tradeId) openTradeEditor(hoverMarker.tradeId, "price");
+        return;
+      }
       // Double-click a trade line -> force the edit ticket open. Using openTradeEditor
       // rather than selectTradeLine because a dblclick is preceded by two clicks that
       // may have toggled selection back to its start state — force-set unconditionally.
@@ -2988,7 +3011,9 @@ export default function ChartCore({
       // that drive the position lines, filtered to this cell's epic. Native
       // timestamp-anchored overlays reproject themselves on pan/zoom, so — unlike
       // the coarse-TF aggregate pills — they need no per-frame projection loop.
-      const tradeMarkers = new TradeMarkers(chart);
+      // Marker clicks are inert while AVWAP anchor placement is armed — that
+      // click is placing the anchor, not selecting the position under it.
+      const tradeMarkers = new TradeMarkers(chart, () => avwapAnchorMode.value != null);
       tradeMarkersRef.current = tradeMarkers;
       const drawTradeMarkers = () => {
         if (isSynthetic(epicRef.current)) {
