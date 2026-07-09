@@ -1324,6 +1324,25 @@ export default function ChartCore({
   // Shared x for the trade pill, frozen at selection so the buttons sit still. null
   // until a trade is selected (mirrors pillLeftRef's "don't snap to 0" intent).
   const tradePillLeftRef = useRef<number | null>(null);
+  // Live trade-pill DOM nodes keyed "tradeId:field". The pill body is pointer-events:
+  // none (see .trade-pill) so it can't carry its own cursor/click — instead the chart's
+  // mousemove/click handlers rect-test the cursor against these nodes to show the hand
+  // cursor over a pill and let a click anywhere on the pill select its line.
+  const tradePillNodesRef = useRef(new Map<string, HTMLDivElement>());
+  // The pill (if any) under the given viewport point, as its line's id + field.
+  const tradePillHitTest = (
+    clientX: number,
+    clientY: number,
+  ): { id: string; field: TradeLineField } | null => {
+    for (const [key, node] of tradePillNodesRef.current) {
+      const r = node.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+        const i = key.lastIndexOf(":");
+        return { id: key.slice(0, i), field: key.slice(i + 1) as TradeLineField };
+      }
+    }
+    return null;
+  };
   // The hovered trade id — drives the pill hover-lift (soft shadow + red close). Kept
   // as light state so a hover only toggles a CSS class, not a full pill rebuild.
   // The hovered pill, keyed "tradeId:field" — ONLY the line under the cursor (not the
@@ -1654,6 +1673,12 @@ export default function ChartCore({
         justDraggedRef.current = false;
         return;
       }
+      // A pill button's click (Apply/Discard/Close/Remove — the pointer-events:auto
+      // islands in the click-through trade pill) bubbles up to this native listener
+      // BEFORE React's root-delegated handlers run, so the button can't stop it
+      // itself. The button's own action is the whole click — it must not also
+      // toggle/deselect the line (or anything else) underneath.
+      if (e.target instanceof Element && e.target.closest(".tp-btn")) return;
       const rect = el.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -1711,7 +1736,12 @@ export default function ChartCore({
       // tolerance of the glyph would otherwise select in the same gesture and,
       // selectTradeLine being a toggle, cancel or hijack the marker's selection.
       const overTradeMarker = tradeMarkerHoverSignal.value != null;
-      const tradeHit = overTradeMarker ? null : tradeLineHitTest(x, y);
+      // A pill click (its body is pointer-events:none, so it lands here on the canvas)
+      // selects the pill's line even where the pill pokes past the line's ±6px click
+      // band — the hand cursor shows across the whole pill, so the whole pill selects.
+      const tradeHit = overTradeMarker
+        ? null
+        : tradeLineHitTest(x, y) ?? tradePillHitTest(e.clientX, e.clientY);
       if (tradeHit) selectTradeLine(tradeHit.id, tradeHit.field, false /* openPanel */);
       // Click on empty space drops the trade — UNLESS the edit ticket is open (clicking
       // away from the lines must not slam an open ticket shut; it closes only via its
@@ -1837,6 +1867,9 @@ export default function ChartCore({
     const onDblClick = (e: MouseEvent) => {
       const c = chartRef.current;
       if (!c) return;
+      // Same guard as onClick: a dblclick on a pill button is two button actions,
+      // not a line-edit or empty-space gesture.
+      if (e.target instanceof Element && e.target.closest(".tp-btn")) return;
       const rect = el.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -1853,7 +1886,10 @@ export default function ChartCore({
       // Double-click a trade line -> force the edit ticket open. Using openTradeEditor
       // rather than selectTradeLine because a dblclick is preceded by two clicks that
       // may have toggled selection back to its start state — force-set unconditionally.
-      const tradeHit = tradeLineHitTest(x, y);
+      // The pill-rect fallback mirrors onClick's: the whole pill is one hit target,
+      // so a dblclick on its outer strips opens the ticket too instead of falling
+      // through to the empty-space sub-pane collapse.
+      const tradeHit = tradeLineHitTest(x, y) ?? tradePillHitTest(e.clientX, e.clientY);
       if (tradeHit) {
         openTradeEditor(tradeHit.id, tradeHit.field);
         return;
@@ -2636,11 +2672,18 @@ export default function ChartCore({
         !avwapAnchorMode.value &&
         !!a &&
         Math.hypot(lx - a.x, ly - a.y) <= ANCHOR_GRAB_PX;
+      // Over a trade pill (the always-on entry/SL/TP chip): a hand cursor signals the
+      // pill is clickable — a click selects its line. Wins over the line's ns-resize
+      // drag cursor within the pill's rect (see the !overTradePillNow gate below).
+      // The hit itself also feeds the hover state below, so the pill lift and dock-row
+      // highlight agree with the cursor across the whole pill.
+      const pillHit = avwapAnchorMode.value ? null : tradePillHitTest(e.clientX, e.clientY);
+      const overTradePillNow = pillHit != null;
       const nextCursor = avwapAnchorMode.value
         ? ""
         : overAnchor
           ? "cur-grab"
-          : overLine
+          : overTradePillNow || overLine
             ? "cur-pointer"
             : "";
       if (nextCursor !== cursorModeRef.current) {
@@ -2696,6 +2739,10 @@ export default function ChartCore({
           const d = Math.abs(t.y - y);
           if (d <= HIT_TOLERANCE_PX && d < bestD) { bestD = d; hoverTradeId = t.id; hoverField = t.field; }
         }
+        // The pill (22px tall) pokes past the line's ±6px band. Inside its rect the
+        // hand cursor shows and a click selects, so the hover affordances (pill lift,
+        // dock-row highlight) must agree even on the strips the band misses.
+        if (!hoverTradeId && pillHit) { hoverTradeId = pillHit.id; hoverField = pillHit.field; }
       }
       hoveredFieldRef.current = hoverField;
       setTradeHovered(hoverTradeId);
@@ -2797,6 +2844,7 @@ export default function ChartCore({
       if (
         snapTarget?.draggable === true &&
         x <= mainW &&
+        !overTradePillNow && // the pill's hand cursor wins inside its rect
         (cursorModeRef.current as string) !== "cur-ns"
       ) {
         cursorModeRef.current = "cur-ns";
@@ -5737,6 +5785,11 @@ export default function ChartCore({
         return (
           <div
             key={`${p.tradeId}:${p.field}`}
+            ref={(node) => {
+              const key = `${p.tradeId}:${p.field}`;
+              if (node) tradePillNodesRef.current.set(key, node);
+              else tradePillNodesRef.current.delete(key);
+            }}
             className={`trade-pill tp-line-${p.field}${`${p.tradeId}:${p.field}` === hoveredPillKey ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
             style={{
               top: p.y,
