@@ -12,7 +12,7 @@ import type { Chart } from "klinecharts";
 import { OverlayManager } from "./overlays";
 import { Signal } from "./signals";
 import type { IndicatorInstance } from "./persist";
-import { loadScalePriceOnly } from "./persist";
+import { loadScalePriceOnly, loadSnapshotMeta } from "./persist";
 
 // The selected indicator (TradingView-style): clicking an indicator's curve or its
 // legend row selects it (hollow handles appear); clicking empty chart space
@@ -28,6 +28,15 @@ export class ChartController {
   readonly scope: string;
   // This cell's overlay manager (drawings + price-alert lines), scoped to the cell.
   readonly overlays = new OverlayManager();
+
+  // Read-only snapshot view: true while this cell's scope carries snapshotMeta
+  // (a tab restored from a snapshot is a frozen study copy). THE single sentinel
+  // for "this cell may not be mutated" — App picks the toolbar and mounts the
+  // draw sidebar off it, and ChartCore's mutating handlers gate on its ref
+  // mirror — rather than each surface re-reading storage. Seeded from the scope
+  // here at construction, re-asserted by ChartCore's data-load effect, and
+  // cleared by Unlock (which deletes the scope's snapshotMeta).
+  readonly readOnly = new Signal<boolean>(false);
 
   // --- per-cell UI signals (were module globals in signals.ts) ----------------
   // The AVWAP INSTANCE id the user is currently placing ("click a bar to anchor"),
@@ -127,6 +136,7 @@ export class ChartController {
     this.cellId = cellId;
     this.scope = scope;
     this.overlays.setScope(scope);
+    this.readOnly.set(loadSnapshotMeta(scope) != null);
     this.scalePriceOnly.set(loadScalePriceOnly(scope));
   }
 }

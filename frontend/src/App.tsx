@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { Chart } from "klinecharts";
 import ChartGrid from "./ChartGrid";
 import Toolbar from "./Toolbar";
+import SnapshotToolbar from "./SnapshotToolbar";
 import DrawSidebar from "./DrawSidebar";
 import LayoutPicker from "./LayoutPicker";
 import BrokerSelector from "./BrokerSelector";
@@ -25,6 +26,9 @@ import BacktestSignalPopover from "./BacktestSignalPopover";
 import Snackbar from "./Snackbar";
 import OrderTicket from "./OrderTicket";
 import PositionsPanel from "./PositionsPanel";
+import SnapshotGallery from "./SnapshotGallery";
+import { writeSnapshotToScope } from "./lib/snapshots";
+import { saveSnapshotOfChart } from "./lib/snapshotSave";
 import { registerCustomIndicators } from "./lib/customIndicators";
 import { registerBacktestIndicators } from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
@@ -53,6 +57,8 @@ import {
   pendingEditsSignal,
   setTradeSelected,
   discardPendingEdit,
+  snapshotsGalleryOpen,
+  snapshotViewChanged,
 } from "./lib/signals";
 import { alertEngine } from "./lib/alertEngine";
 import {
@@ -111,9 +117,11 @@ import {
   mergeTabInto,
   canMergeTabs,
   unmergeScopes,
+  loadSnapshotMeta,
   type ChartTab,
   type LayoutKind,
   type Workspace,
+  type ChartSnapshot,
 } from "./lib/persist";
 import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
@@ -808,6 +816,13 @@ export default function App() {
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
   const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
   useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
+  const [snapGalleryOpen, setSnapGalleryOpen] = useState(snapshotsGalleryOpen.value);
+  useEffect(() => snapshotsGalleryOpen.subscribe(setSnapGalleryOpen), []);
+  // Unlocking a snapshot view clears the cell controller's readOnly flag;
+  // re-render so focusedReadOnly recomputes (toolbar swap, DrawSidebar, gallery
+  // save button).
+  const [, bumpSnapViewTick] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => snapshotViewChanged.subscribe(() => bumpSnapViewTick()), []);
   // Closing the trading panel exits edit mode AND drops the trade selection (the
   // chart pills + row highlight clear). Done here — a state transition — rather than
   // in OrderTicket's unmount cleanup, which StrictMode fires spuriously on mount.
@@ -1153,6 +1168,39 @@ export default function App() {
     }
   };
 
+  // Restore a saved snapshot into a fresh one-cell tab. Unlike detachCell this never
+  // touches an existing tab/scope, so it can rely on the autosave effect (no sync
+  // save needed) — same shape as addTab. writeSnapshotToScope must run BEFORE the
+  // new tab is added to state: the cell mounts and reads its scope on the very next
+  // render, so the blobs (drawings/indicators/AVWAP anchors) have to already be there.
+  const restoreSnapshot = (s: ChartSnapshot) => {
+    const id = newTabId();
+    const cid = `${id}-c0`;
+    const scope = primaryCellScope(id);
+    writeSnapshotToScope(s, scope);
+    const t: ChartTab = {
+      id,
+      layout: "1",
+      activeCellId: cid,
+      cells: [{ id: cid, symbol: s.symbol, period: s.period, scope }],
+    };
+    setTabs([...tabs, t]);
+    setActiveId(id);
+    snapshotsGalleryOpen.set(false);
+  };
+
+  // Gallery "Save current chart": snapshot the focused cell without leaving the
+  // modal; the gallery refreshes itself so the new card on top is the feedback.
+  const saveCurrentSnapshot = async (): Promise<ChartSnapshot | null> => {
+    if (!focused || !focusedCell) return null;
+    return saveSnapshotOfChart(
+      focused.chart,
+      focusedCell.scope,
+      focusedCell.symbol,
+      focusedCell.period,
+    );
+  };
+
   // Close ONE cell of a multi-cell layout (✕ corner button). Confirms first —
   // the cell's drawings/indicators are purged — then removes the cell and
   // downgrades the layout kind to the remaining count (2×2 → three columns →
@@ -1443,6 +1491,15 @@ export default function App() {
 
   const focusedController = focused?.controller ?? null;
 
+  // Whether the FOCUSED cell is a read-only snapshot view. The controller's
+  // readOnly flag is the sentinel (seeded at cell mount, cleared by Unlock, which
+  // also bumps snapshotViewChanged so this re-renders); for the brief window
+  // before the cell's controller registers, fall back to the scope's stored
+  // snapshotMeta so a restoring tab never flashes the full editing chrome.
+  const focusedReadOnly = focusedController
+    ? focusedController.readOnly.value
+    : focusedCell != null && loadSnapshotMeta(focusedCell.scope) != null;
+
   // Per-epic price precision for the whole-book trading dock: its rows span every
   // symbol that has an open position/order, not just the focused chart, so each row
   // formats prices with its own symbol's precision (gleaned from any open cell on
@@ -1546,22 +1603,41 @@ export default function App() {
         }
       />
       )}
-      <Toolbar
-        controller={focusedController}
-        symbol={symbol}
-        period={period}
-        onSymbol={setSymbol}
-        onPeriod={setPeriod}
-        brokerId={brokerId}
-        priceSide={settings.priceSide}
-        accounts={accounts}
-        onSelectBroker={selectBroker}
-        maximized={maximized}
-        onToggleMaximize={() => setMaximized((m) => !m)}
-      />
+      {/* One engine, two chromes: a snapshot view gets the whitelist-only
+          SnapshotToolbar; everything else gets the full Toolbar. */}
+      {focusedReadOnly ? (
+        <SnapshotToolbar
+          controller={focusedController}
+          symbol={symbol}
+          period={period}
+          onPeriod={setPeriod}
+          brokerId={brokerId}
+          accounts={accounts}
+          onSelectBroker={selectBroker}
+          maximized={maximized}
+          onToggleMaximize={() => setMaximized((m) => !m)}
+        />
+      ) : (
+        <Toolbar
+          controller={focusedController}
+          symbol={symbol}
+          period={period}
+          onSymbol={setSymbol}
+          onPeriod={setPeriod}
+          brokerId={brokerId}
+          priceSide={settings.priceSide}
+          accounts={accounts}
+          onSelectBroker={selectBroker}
+          maximized={maximized}
+          onToggleMaximize={() => setMaximized((m) => !m)}
+        />
+      )}
       <div className={`workspace${dockMaximized ? " dock-hidden" : ""}`}>
         <main className="chart">
-          {active && <DrawSidebar controller={focusedController} />}
+          {/* No draw sidebar in a read-only snapshot view (nothing may be drawn). */}
+          {active && !focusedReadOnly && (
+            <DrawSidebar controller={focusedController} />
+          )}
           <div className="chart-cells">
           {active ? (
             /* Multi-chart grid for the active tab. Switching tabs swaps the cell
@@ -1836,6 +1912,18 @@ export default function App() {
           onAction={undoMerge}
           onDismiss={() => setPendingUndo(null)}
           anchorSelector={`.tab-bar .tab[data-tab-id="${pendingUndo.targetId}"]`}
+        />
+      )}
+
+      {snapGalleryOpen && (
+        <SnapshotGallery
+          onRestore={restoreSnapshot}
+          onClose={() => snapshotsGalleryOpen.set(false)}
+          onSaveCurrent={
+            // No "Save current chart" while the focused tab is itself a restored
+            // snapshot — same rule as the hidden toolbar camera.
+            focusedReadOnly ? undefined : saveCurrentSnapshot
+          }
         />
       )}
 

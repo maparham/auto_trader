@@ -174,6 +174,10 @@ export class OverlayManager {
   // per broker; "" until set, in which case the alert helpers fall back to the
   // active broker (correct before the first setBroker).
   private broker = "";
+  // Read-only snapshot view (a tab restored from a snapshot): drawings materialize
+  // locked, alert lines don't materialize at all, and add/remove are no-ops. Set by
+  // ChartCore before rehydrate; flipped false on Unlock (followed by a rehydrate).
+  private readOnly = false;
   private entries = new Map<string, Kind>();
   // The live transient measure overlay (TV ruler), or null. Never persisted; a new
   // measure removes the old, and the next plain interaction / Esc / symbol change
@@ -328,6 +332,12 @@ export class OverlayManager {
   }
   setScope(scope: string): void {
     this.scope = scope;
+  }
+  setReadOnly(readOnly: boolean): void {
+    this.readOnly = readOnly;
+  }
+  isReadOnly(): boolean {
+    return this.readOnly;
   }
   // Push the current global magnet mode onto every existing DRAWING and the live slope
   // line (alerts/measure never snap). Called when the toolbar toggle or the Ctrl/Cmd
@@ -1220,6 +1230,7 @@ export class OverlayManager {
   // Place a drawing. With points it's created in place (e.g. a horizontal line
   // at a price from the "+" menu); without, klinecharts enters interactive draw.
   addDrawing(name: string, points?: SavedOverlay["points"]): string | null {
+    if (this.readOnly) return null; // snapshot view: no new drawings
     // Re-arming replaces the in-progress tool: klinecharts keeps ONE progress slot
     // and silently overwrites it WITHOUT firing onRemoved, which would strand the
     // previous overlay's id in `entries` forever (getOverlayById(ghost) → null, so
@@ -1758,6 +1769,7 @@ export class OverlayManager {
   }
 
   remove(id: string): void {
+    if (this.readOnly) return; // snapshot view: nothing gets deleted
     this.chart?.removeOverlay(id); // onRemoved unregisters + persists
   }
 
@@ -2006,7 +2018,7 @@ export class OverlayManager {
           userVisible: base.userVisible ?? d.visible ?? true,
           visibility: base.visibility ?? defaultVisibility(),
         };
-        this.create("drawing", d.name, d.points, d.styles, d.lock, {
+        this.create("drawing", d.name, d.points, d.styles, this.readOnly || d.lock, {
           visible: this.effectiveVisible(extra, d.points),
           zLevel: d.zLevel,
           extendData: extra,
@@ -2016,9 +2028,14 @@ export class OverlayManager {
       // than the plain effectiveVisible above, which would leave it invisible) — so a
       // reload on e.g. a minute chart still shows a faint, clickable stand-in.
       this.applyIntervalVisibility();
-      const rawAlerts = loadAlerts(this.epic, this.broker || undefined);
-      for (let ai = 0; ai < rawAlerts.length; ai++) {
-        this.materializeSavedAlert(normalizeAlert(rawAlerts[ai], ai));
+      // Read-only snapshot view: alerts are LIVE global state per epic — rendering
+      // (let alone dragging) them on a frozen study copy would be anachronistic
+      // clutter and an accidental-edit hazard. Skip them entirely.
+      if (!this.readOnly) {
+        const rawAlerts = loadAlerts(this.epic, this.broker || undefined);
+        for (let ai = 0; ai < rawAlerts.length; ai++) {
+          this.materializeSavedAlert(normalizeAlert(rawAlerts[ai], ai));
+        }
       }
       // Re-select the line that still carries the previously-selected saved id (gone
       // if its alert was removed). Restores selection across a same-epic rebuild.

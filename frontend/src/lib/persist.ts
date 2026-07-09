@@ -15,3 +15,4 @@ export * from "./persist/workspace";
 export * from "./persist/artifacts";
 export * from "./persist/defaults";
 export * from "./persist/alerts";
+export * from "./persist/snapshots";

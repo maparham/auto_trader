@@ -85,6 +85,13 @@ export const alertsPanelOpen = new Signal<boolean>(false);
 // toolbar's trade button; read by App to render the panel beside the chart.
 export const tradePanelOpen = new Signal<boolean>(false);
 
+/** Snapshots gallery modal (global, rendered by App). */
+export const snapshotsGalleryOpen = new Signal<boolean>(false);
+
+/** A scope's read-only snapshot view just changed (Unlock deleted its
+ *  snapshotMeta). App/Toolbar subscribe to re-render their gating. */
+export const snapshotViewChanged = new Signal<string>("");
+
 // Open positions + resting orders (paper env) as a unified TradeView[], kept
 // fresh by a single shared poller (see trading.ts subscribeTrades). The trading
 // panel AND every chart cell subscribe to this one signal so there's exactly one

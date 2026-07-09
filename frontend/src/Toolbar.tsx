@@ -7,33 +7,23 @@
 // still owns the right-click drawing context menu (Lock/Settings/Delete).
 // Everything drives the Chart instance directly via its public API.
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { getSupportedIndicators, YAxisType } from "klinecharts";
-import {
-  PERIOD_GROUPS,
-  quickBarPeriods,
-  DEFAULT_RESOLUTIONS,
-  type Instrument,
-  type Period,
-} from "./lib/feed";
+import { useEffect, useRef, useState } from "react";
+import { getSupportedIndicators } from "klinecharts";
+import { type Instrument, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
 import { ensureNotifyPermission, primeSound, toast } from "./lib/notify";
 import { EQUITY_INDICATOR } from "./lib/backtest";
 import {
   alertModalRequest,
-  alertsPanelOpen,
-  tradePanelOpen,
-  livePanelOpen,
   symbolSearchRequest,
   drawingSettingsRequest,
   saveDefaultTemplateRequest,
+  snapshotsGalleryOpen,
 } from "./lib/signals";
 import {
   saveIndicators,
   loadFavoriteIndicators,
   saveFavoriteIndicators,
-  loadFavoriteResolutions,
-  saveFavoriteResolutions,
   loadSymbolTemplate,
   saveDefaultTemplate,
   loadDefaultTemplate,
@@ -41,6 +31,8 @@ import {
   loadIndicators,
   loadIndicatorConfigs,
 } from "./lib/persist";
+import { saveSnapshotOfChart } from "./lib/snapshotSave";
+import Snackbar from "./Snackbar";
 import { addIndicatorInstance, isSubPaneIndicator } from "./lib/indicators";
 import {
   applySymbolTemplate,
@@ -52,7 +44,14 @@ import IndicatorRow from "./IndicatorRow";
 import type { ChartController } from "./lib/chartController";
 import ContextMenu from "./ContextMenu";
 import InfoTip from "./components/InfoTip";
-import { BellIcon, MenuIcons } from "./lib/menuIcons";
+import { MenuIcons } from "./lib/menuIcons";
+import {
+  Caret,
+  IntervalControls,
+  ScaleControls,
+  PanelToggles,
+  MaximizeToggle,
+} from "./ToolbarControls";
 import SymbolIcon from "./SymbolIcon";
 import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
@@ -95,22 +94,6 @@ interface Props {
   onToggleMaximize: () => void;
 }
 
-// Shared dropdown caret — the same SVG chevron the symbol chip uses, so every
-// toolbar caret renders identically (replacing the plain "▾" text triangles that
-// rendered in a different style beside the SVG one).
-function Caret({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className ? `tb-caret ${className}` : "tb-caret"}
-      viewBox="0 0 24 24" width="11" height="11" fill="none"
-      stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
-}
-
 export default function Toolbar({
   controller,
   symbol,
@@ -124,7 +107,10 @@ export default function Toolbar({
   maximized,
   onToggleMaximize,
 }: Props) {
-  // The toolbar drives the focused cell's chart + overlays.
+  // The toolbar drives the focused cell's chart + overlays. (A cell restored
+  // FROM a snapshot never reaches this component — App renders SnapshotToolbar
+  // instead while controller.readOnly is set — so nothing here needs a
+  // read-only gate.)
   const chart = controller?.chart ?? null;
   const overlays = controller?.overlays ?? null;
 
@@ -135,55 +121,22 @@ export default function Toolbar({
   // instance; there's no checkmark/active state anymore (an indicator can appear any
   // number of times). Removal is per-instance via the legend ⋯/trash.
   const [indOpen, setIndOpen] = useState(false);
+  const [snapSavedName, setSnapSavedName] = useState<string | null>(null);
   const [indFilter, setIndFilter] = useState("");
   // Starred indicator types (global preference), shown in the menu's Favorites
   // section. Seeded from localStorage; toggled by the per-row star.
   const [favIndicators, setFavIndicators] = useState<string[]>(loadFavoriteIndicators);
-
-  // Favorite timeframes (global preference), merged with the defaults to form the
-  // quick bar. Seeded from localStorage; toggled via the per-row star in the
-  // interval dropdown (defaults are always present and have no star).
-  const [favResolutions, setFavResolutions] = useState<string[]>(loadFavoriteResolutions);
-
-  // grouped interval menu (TV-style; quick-bar stays fixed)
-  const [intervalOpen, setIntervalOpen] = useState(false);
 
   // per-symbol template menu (Save / Apply / Delete the symbol's default layout)
   const [tmplOpen, setTmplOpen] = useState(false);
 
   // dropdown wrappers (for outside-click close)
   const indMenuRef = useRef<HTMLDivElement>(null);
-  const intervalMenuRef = useRef<HTMLDivElement>(null);
   const tmplMenuRef = useRef<HTMLDivElement>(null);
 
   // drawing right-click context menu (Lock/Settings/Delete etc — the tools that
   // CREATE drawings now live in DrawSidebar; this menu still fires from the chart).
   const [drawMenu, setDrawMenu] = useState<DrawMenu | null>(null);
-
-  // price-scale
-  const [log, setLog] = useState(false);
-  // "A" auto-scale mode (mirrors the focused cell's signal; on = highlighted).
-  const [auto, setAuto] = useState(controller?.autoScale.value ?? true);
-  useEffect(() => {
-    if (!controller) return;
-    setAuto(controller.autoScale.value);
-    return controller.autoScale.subscribe(setAuto);
-  }, [controller]);
-  // "I" invert-scale mode (mirrors the focused cell's signal; on = highlighted).
-  const subscribeInvert = useCallback(
-    (cb: () => void) => controller?.invertScale.subscribe(cb) ?? (() => {}),
-    [controller],
-  );
-  const inverted = useSyncExternalStore(
-    subscribeInvert,
-    () => controller?.invertScale.value ?? false,
-  );
-  const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
-  useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
-  const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
-  useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
-  const [liveOpen, setLiveOpen] = useState(livePanelOpen.value);
-  useEffect(() => livePanelOpen.subscribe(setLiveOpen), []);
 
   // App opens a fresh tab → prompt for its symbol (the new tab starts empty).
   useEffect(() => symbolSearchRequest.subscribe(() => setSymModalOpen(true)), []);
@@ -195,18 +148,16 @@ export default function Toolbar({
   // Close dropdowns on click outside. The ref wraps button+dropdown, so clicking
   // the toggle stays "inside" and doesn't fight the button's own onClick.
   useEffect(() => {
-    if (!indOpen && !intervalOpen && !tmplOpen) return;
+    if (!indOpen && !tmplOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (indOpen && indMenuRef.current && !indMenuRef.current.contains(t)) setIndOpen(false);
-      if (intervalOpen && intervalMenuRef.current && !intervalMenuRef.current.contains(t))
-        setIntervalOpen(false);
       if (tmplOpen && tmplMenuRef.current && !tmplMenuRef.current.contains(t))
         setTmplOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [indOpen, intervalOpen, tmplOpen]);
+  }, [indOpen, tmplOpen]);
 
   // Right-clicking any overlay (drawn live or rehydrated) opens our context menu.
   // Bound to the FOCUSED cell's overlay manager; re-bind when focus changes.
@@ -257,18 +208,6 @@ export default function Toolbar({
         ? prev.filter((t) => t !== type)
         : [...prev, type];
       saveFavoriteIndicators(next);
-      return next;
-    });
-  }
-
-  // Pin/unpin a timeframe on the quick bar (global preference). Defaults are never
-  // passed here — their buttons/rows offer no context action.
-  function toggleFavResolution(resolution: string) {
-    setFavResolutions((prev) => {
-      const next = prev.includes(resolution)
-        ? prev.filter((r) => r !== resolution)
-        : [...prev, resolution];
-      saveFavoriteResolutions(next);
       return next;
     });
   }
@@ -357,6 +296,19 @@ export default function Toolbar({
     toast("Cleared default template");
   }
 
+  // --- snapshots: instant capture of the focused cell's state ------------------
+  // Camera saves immediately (no dialog); a snackbar anchored under the control
+  // confirms and offers "View" (opens the gallery).
+  const saveSnapshot_ = async () => {
+    if (!chart || !controller || !symbol || !period) return;
+    const snap = await saveSnapshotOfChart(chart, controller.scope, symbol, period);
+    if (!snap) {
+      toast("Chart not ready — nothing to snapshot");
+      return;
+    }
+    setSnapSavedName(snap.name);
+  };
+
   // Copy the right-clicked drawing to the system clipboard, in the same tagged
   // envelope ChartCore's Ctrl/Cmd+C uses, so menu-copy and keyboard-copy are
   // interchangeable (and a menu-copied drawing pastes with Ctrl/Cmd+V).
@@ -415,20 +367,6 @@ export default function Toolbar({
       ]
     : [];
 
-  function setScale(type: YAxisType) {
-    chart?.setStyles({ yAxis: { type } });
-    setLog(type === YAxisType.Log);
-  }
-
-  function autoFit() {
-    // klinecharts auto-fits the price axis to visible bars; re-applying the
-    // axis style recomputes the range, clearing any manual zoom ("fit to data").
-    chart?.setStyles({ yAxis: { type: log ? YAxisType.Log : YAxisType.Normal } });
-    // Re-enter auto mode (TV-style): stays highlighted until the user manually
-    // scales the price axis again (ChartCore flips it back off).
-    controller?.autoScale.set(true);
-  }
-
   // Blank workspace (no open tab/cell): the chart controls have nothing to act on,
   // so render just the layout manager — the user opens or creates a layout from it.
   // After this guard TypeScript narrows symbol/period to non-undefined, so the
@@ -438,9 +376,6 @@ export default function Toolbar({
   if (!symbol || !period) {
     return <header className="toolbar toolbar-empty" />;
   }
-
-  // Merged quick bar: defaults (1m–1W) ∪ pinned favorites, duration-sorted.
-  const quickBar = quickBarPeriods(favResolutions);
 
   return (
     <header className="toolbar">
@@ -464,99 +399,11 @@ export default function Toolbar({
 
       <span className="tb-div" aria-hidden="true" />
 
-      <div className="periods">
-        {quickBar.map((p) => (
-          <button
-            key={p.resolution}
-            className={p.resolution === period.resolution ? "on" : ""}
-            title={`${p.label} interval`}
-            onClick={() => onPeriod(p)}
-          >
-            {p.label}
-          </button>
-        ))}
-        {/* When the active interval isn't on the quick-bar (e.g. a seconds TF),
-            surface it as a highlighted chip just left of the dropdown toggle. */}
-        {quickBar.every((p) => p.resolution !== period.resolution) && (
-          <button
-            className="on extra-period"
-            title={`${period.label} interval`}
-            onClick={() => setIntervalOpen((v) => !v)}
-          >
-            {period.label}
-          </button>
-        )}
-        {/* TV-style grouped interval menu (adds the live-only seconds group). */}
-        <div className="menu interval-menu" ref={intervalMenuRef}>
-          <button
-            className="interval-toggle"
-            title="Chart interval"
-            onClick={() => setIntervalOpen((v) => !v)}
-          >
-            <Caret />
-          </button>
-          {intervalOpen && (
-            <div className="dropdown interval-dropdown">
-              {PERIOD_GROUPS.map((g) => (
-                <div key={g.label} className="interval-group">
-                  <div className="interval-group-label">{g.label}</div>
-                  <ul>
-                    {g.periods.map((p) => (
-                      <li
-                        key={p.resolution}
-                        className={p.resolution === period.resolution ? "on" : ""}
-                        onClick={() => {
-                          onPeriod(p);
-                          setIntervalOpen(false);
-                        }}
-                      >
-                        <span className="tf-label">
-                          {p.label}
-                          {p.liveOnly && <span className="live-only">live</span>}
-                        </span>
-                        {/* Defaults (1m–1W) are always on the quick bar; only the
-                            other intervals get a favourite toggle. The star is
-                            always visible (not hover-revealed) for discoverability. */}
-                        {!DEFAULT_RESOLUTIONS.has(p.resolution) && (
-                          <button
-                            className={
-                              "ind-star tf-star" +
-                              (favResolutions.includes(p.resolution) ? " on" : "")
-                            }
-                            title={
-                              favResolutions.includes(p.resolution)
-                                ? "Remove from quick bar"
-                                : "Add to quick bar"
-                            }
-                            aria-label={
-                              favResolutions.includes(p.resolution)
-                                ? "Remove from quick bar"
-                                : "Add to quick bar"
-                            }
-                            aria-pressed={favResolutions.includes(p.resolution)}
-                            onClick={(e) => {
-                              e.stopPropagation(); // toggle only; don't switch interval
-                              toggleFavResolution(p.resolution);
-                            }}
-                          >
-                            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                              <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
-                            </svg>
-                          </button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      <IntervalControls period={period} onPeriod={onPeriod} />
 
       <span className="tb-div" aria-hidden="true" />
 
-      {/* Searchable indicator menu */}
+      {/* Searchable indicator menu. */}
       <div className="menu" ref={indMenuRef}>
         <button
           className={indOpen ? "on" : ""}
@@ -656,36 +503,49 @@ export default function Toolbar({
       )}
 
       {/* Price-scale A / L / I (auto-fit, logarithmic, invert) */}
-      <div className="scale">
+      <ScaleControls controller={controller} />
+
+      {/* Snapshots: ONE split control. The camera face saves instantly; the
+          slim caret on its right edge opens the gallery. Sits just before the
+          Template menu in the right-side cluster. */}
+      <div className="snap-split">
         <button
-          title="Auto (fits data to screen)"
-          className={auto ? "on" : ""}
-          onClick={autoFit}
+          className="anchor-btn snap-save"
+          title="Save a snapshot of this chart (state + drawings + indicators)"
+          disabled={!chart || !symbol || !period}
+          onClick={() => void saveSnapshot_()}
         >
-          A
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+            <circle cx="12" cy="13" r="4" />
+          </svg>
         </button>
         <button
-          title="Logarithmic scale"
-          className={log ? "on" : ""}
-          onClick={() => setScale(log ? YAxisType.Normal : YAxisType.Log)}
+          className="anchor-btn snap-gallery"
+          title="Browse saved snapshots"
+          onClick={() => snapshotsGalleryOpen.set(true)}
         >
-          L
-        </button>
-        <button
-          title="Invert scale (Option+I)"
-          className={inverted ? "on" : ""}
-          onClick={() => controller?.invertScale.set(!controller.invertScale.value)}
-        >
-          I
+          <Caret />
         </button>
       </div>
+      {snapSavedName && (
+        <Snackbar
+          message={`Snapshot saved — ${snapSavedName}`}
+          actionLabel="View"
+          onAction={() => {
+            setSnapSavedName(null);
+            snapshotsGalleryOpen.set(true);
+          }}
+          onDismiss={() => setSnapSavedName(null)}
+          duration={5000}
+          anchorSelector=".snap-split"
+        />
+      )}
 
       {/* Per-symbol template: save/apply/delete the symbol's default layout. Labels
           carry the live epic so it's clear which symbol they act on (TV-style
           "apply default to <symbol>"). Auto-applies to fresh charts of the symbol.
-          First of the right-side cluster (margin-left:auto via .tmpl-menu) so the
-          template / backtest / workspace-layouts / layout cluster sits at the far
-          right; dropdown right-aligned so it doesn't spill off-screen. */}
+          Dropdown right-aligned so it doesn't spill off-screen. */}
       <div className="menu tmpl-menu" ref={tmplMenuRef}>
         <button
           className={tmplOpen ? "on" : ""}
@@ -773,63 +633,8 @@ export default function Toolbar({
         priceSide={priceSide}
       />
 
-      {/* Live trading panel toggle — arm rule strategies against a demo/live
-          broker account. */}
-      <button
-        className={`anchor-btn live-toggle${liveOpen ? " on" : ""}`}
-        title="Show live trading panel"
-        onClick={() => livePanelOpen.set(!livePanelOpen.value)}
-      >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true">
-          <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m10.14 0-2.83-2.83M9.76 9.76 6.93 6.93" />
-        </svg>
-      </button>
-
-      {/* Alerts panel toggle (bell). */}
-      <button
-        className={`anchor-btn alerts-toggle${panelOpen ? " on" : ""}`}
-        title="Show alerts panel"
-        onClick={() => alertsPanelOpen.set(!alertsPanelOpen.value)}
-      >
-        <BellIcon size={16} />
-      </button>
-
-      {/* Trading panel toggle (order ticket + positions). */}
-      <button
-        className={`anchor-btn trade-toggle${tradeOpen ? " on" : ""}`}
-        title="Show trading panel"
-        onClick={() => tradePanelOpen.set(!tradePanelOpen.value)}
-      >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true">
-          <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
-        </svg>
-      </button>
-
-      {/* Maximize / restore: hides the tab bar to focus the active tab. Icon
-          reflects state (expand when normal, compress when maximized). */}
-      <button
-        className={`anchor-btn maximize-toggle${maximized ? " on" : ""}`}
-        title={maximized ? "Exit maximized view (Esc)" : "Maximize view"}
-        onClick={onToggleMaximize}
-      >
-        {maximized ? (
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            aria-hidden="true">
-            <path d="M9 9H4m5 0V4m0 5L4 4m11 5h5m-5 0V4m0 5 5-5M9 15H4m5 0v5m0-5-5 5m11-5h5m-5 0v5m0-5 5 5" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            aria-hidden="true">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        )}
-      </button>
+      <PanelToggles />
+      <MaximizeToggle maximized={maximized} onToggleMaximize={onToggleMaximize} />
 
       {symModalOpen && (
         <SymbolSearchModal

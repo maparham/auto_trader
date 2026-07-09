@@ -82,6 +82,7 @@ import {
   draggingLineSignal,
   tradeMarkerHoverSignal,
   highlightTradeSignal,
+  snapshotViewChanged,
   type PendingEdit,
   type TradeLineField,
   type DraftOrder,
@@ -97,10 +98,15 @@ import {
   loadLegendCollapsed,
   saveLegendCollapsed,
   CONDITION_LABELS,
+  loadSnapshotMeta,
+  saveSnapshotMeta,
+  deleteSnapshotMeta,
+  type SnapshotMeta,
   type AlertCondition,
   type AlertTrigger,
   type SavedIndicatorConfig,
 } from "./lib/persist";
+import { renderSnapshotMarker } from "./lib/snapshotMarker";
 import {
   addIndicatorInstance,
   applyIndicatorVisibility,
@@ -612,6 +618,52 @@ export default function ChartCore({
   // the shared selection signal is already nulled by then, so re-capturing from
   // it would lose the trade. Cleared once a restore is attempted or on epic change.
   const pendingTradeRestoreRef = useRef<number | null>(null);
+  // The current snapshot-moment marker overlay's id, so the data-load effect
+  // can remove it before recreating on a symbol/TF switch (see renderSnapshotMarker).
+  const snapMarkerIdRef = useRef<string | null>(null);
+  // Read-only snapshot view. controller.readOnly is THE sentinel (seeded from the
+  // scope's snapshotMeta at construction, re-asserted by the data-load effect,
+  // cleared by Unlock); snapView holds the meta CONTENT the banner renders (name),
+  // and snapViewRef mirrors the controller flag for the non-React callbacks
+  // (klinecharts handlers, keyboard/paste) that gate every mutating action.
+  const [snapView, setSnapView] = useState<SnapshotMeta | null>(() => loadSnapshotMeta(scope));
+  const snapViewRef = useRef<boolean>(controller.readOnly.value);
+  useEffect(
+    () =>
+      controller.readOnly.subscribe((v) => {
+        snapViewRef.current = v;
+      }),
+    [controller],
+  );
+
+  // Unlock = graduate the study copy into a normal editable chart: delete the
+  // scope's snapshotMeta sentinel, drop the marker, lift the overlay read-only
+  // mode (rehydrate unlocks drawings + materializes the epic's live alert lines),
+  // and redraw position lines. snapshotViewChanged tells App/Toolbar to re-render
+  // their own gates (DrawSidebar, menus). The saved snapshot is not affected.
+  const unlockSnapshotView = () => {
+    requestConfirm({
+      title: "Unlock snapshot view",
+      message:
+        "Turn this snapshot view into a normal editable chart? The saved snapshot itself is not affected.",
+      confirmLabel: "Unlock",
+      onConfirm: () => {
+        deleteSnapshotMeta(scope);
+        controller.readOnly.set(false);
+        setSnapView(null);
+        const c = chartRef.current;
+        if (c && snapMarkerIdRef.current) {
+          c.removeOverlay(snapMarkerIdRef.current);
+          snapMarkerIdRef.current = null;
+        }
+        overlays.setReadOnly(false);
+        overlays.rehydrate();
+        // Same-value set still notifies: re-runs drawPositions + pill redraw.
+        controller.positionsHidden.set(controller.positionsHidden.value);
+        snapshotViewChanged.set(scope);
+      },
+    });
+  };
   // The token a walk-back has already been launched for, so a re-run of the
   // data-load effect (priceSide/broker change, same pending pick) can't start a
   // second concurrent walk over the same token.
@@ -1481,7 +1533,11 @@ export default function ChartCore({
     const myScope = scope;
     const epic = symbol.epic;
     const off = onLayoutChanged((changedScope) => {
-      if (changedScope === myScope) scheduleAutoSave(myScope, epic);
+      // Never auto-save the template from a snapshot-restored tab: edits to a
+      // study copy must not become the symbol's template.
+      if (changedScope === myScope && !snapViewRef.current) {
+        scheduleAutoSave(myScope, epic);
+      }
     });
     // Cancel any pending save on teardown: a timer that fires after the cell's
     // scope storage is purged (cell/tab close) would capture an empty layout and
@@ -1634,6 +1690,7 @@ export default function ChartCore({
       (data?: { paneId: string; indicatorName: string; iconId: string }) => {
         const c = chartRef.current;
         if (!c || !data) return;
+        if (snapViewRef.current) return; // read-only snapshot view
         const { paneId, indicatorName: name, iconId } = data;
         if (iconId === "setting") {
           indicatorSettingsRequest.set({ paneId, name });
@@ -1903,13 +1960,13 @@ export default function ChartCore({
       // is set by the overlay's onMouseEnter, so it's reliable here.
       const drawingId = overlays.getHoveredDrawingId();
       if (drawingId) {
-        drawingSettingsRequest.set({ id: drawingId });
+        if (!snapViewRef.current) drawingSettingsRequest.set({ id: drawingId });
         return;
       }
       // Double-click an indicator's curve -> open its settings (TradingView-style).
       const hit = hitTestCache(lineCacheRef.current, x, y);
       if (hit) {
-        indicatorSettingsRequest.set({ paneId: hit.paneId, name: hit.name });
+        if (!snapViewRef.current) indicatorSettingsRequest.set({ paneId: hit.paneId, name: hit.name });
         return;
       }
       // Double-click empty chart space -> hide/unhide the bottom sub-pane indicators
@@ -3144,7 +3201,7 @@ export default function ChartCore({
         // line (render([]) removes the previously-rendered ones) instead of
         // building specs from the (unaffected) underlying trade state.
         posLines.render(
-          controller.positionsHidden.value
+          controller.positionsHidden.value || snapViewRef.current
             ? []
             : tradeLineSpecs({
                 trades: tradesRef.current,
@@ -3665,7 +3722,32 @@ export default function ChartCore({
       // timeframe's width on every switch (trendline slope changed, and the
       // next persist baked the drift in). This also re-derives each drawing's
       // per-interval visibility, so no separate setResolution call remains.
+      // Read-only snapshot view must be set BEFORE rehydrate: it decides whether
+      // drawings materialize locked and whether the epic's live alert lines
+      // materialize at all. This is the one storage read; it re-asserts
+      // controller.readOnly (whose subscription mirrors it into snapViewRef) and
+      // refreshes the banner state (effect re-runs on TF switches; meta only
+      // actually changes via Unlock).
+      const markerMeta = loadSnapshotMeta(scope);
+      controller.readOnly.set(markerMeta != null);
+      setSnapView(markerMeta);
+      overlays.setReadOnly(markerMeta != null);
       overlays.rehydrate(period.resolution);
+      // Snapshot-moment marker: dashed vertical line + time-axis chip at the
+      // taken-at timestamp of a restored snapshot tab, independent of the
+      // pendingRange walk below. Remove the previous marker first — this effect
+      // re-runs on every symbol/TF switch, and the old overlay id no longer
+      // matches the freshly loaded series. Clicking the chip = Unlock (same flow
+      // as the banner button).
+      if (snapMarkerIdRef.current) {
+        chartRef.current.removeOverlay(snapMarkerIdRef.current);
+        snapMarkerIdRef.current = null;
+      }
+      if (markerMeta) {
+        snapMarkerIdRef.current = renderSnapshotMarker(chartRef.current, markerMeta, () => {
+          unlockSnapshotView();
+        });
+      }
       // Restore this cell's saved backtest (markers/equity/trades) for the new
       // series — the backtest counterpart to overlays.rehydrate. Markers show on
       // the backtest's native timeframe and any finer one where fills align to
@@ -3728,19 +3810,93 @@ export default function ChartCore({
       // Auto-apply this symbol's default template onto a FRESH cell (no saved
       // indicators or drawings yet). Runs after rehydrate so the empty-cell gate
       // sees the final state; a populated/customized cell is left untouched.
-      maybeAutoApplyTemplate(chartRef.current, controller, scope, symbol.epic);
+      // Skip entirely for a restored snapshot tab (markerMeta non-null — written
+      // unconditionally by writeSnapshotToScope): an empty snapshot has
+      // no saved indicators/drawings either, so the auto-apply gate can't tell
+      // it apart from a fresh cell, and would silently graft the symbol's default
+      // template onto it, contradicting "restore reproduces the saved state exactly".
+      if (!markerMeta) {
+        maybeAutoApplyTemplate(chartRef.current, controller, scope, symbol.epic);
+      }
+
+      // A restored snapshot tab parks a one-shot pendingRange on this scope's
+      // snapshotMeta (see writeSnapshotToScope) — page history back to cover it.
+      // Reuses coverBacktestTradeTo directly — it has no backtest-only guards,
+      // just a generic bounded page-back-to-a-target walk that no-ops the
+      // backtest-marker redraw when there's no rendered result. Both this walk
+      // and the anchor walk below are already running by the time either
+      // .then() fires — the chaining doesn't sequence their execution. What
+      // actually prevents the two pagers from contending for loadingRef is
+      // coverBacktestTradeTo's own pendingRangeRef bail (each walk gates the
+      // others) plus the bounded loadingRef wait; the .then() chain only
+      // controls when positionSnapshotRange/ensureAnchorCoverage run relative
+      // to the pagers' settling. The snapshot range usually already covers the
+      // restored drawings' anchors (captured inside that same window), so
+      // ensureAnchorCoverage typically finds nothing left to do.
+      const snapMeta = markerMeta;
+      const pendingRange = snapMeta?.pendingRange ?? null;
+      const snapshotWalk = pendingRange ? coverBacktestTradeTo(pendingRange.from) : null;
+      // Position the window on the saved snapshot range and clear pendingRange
+      // (one-shot — a later reload of this same tab must not re-scroll). Called
+      // only once the walk(s) ahead of it have fully settled: paging via
+      // applyNewData resets the view to realtime on every page it applies, so
+      // positioning any earlier risks being clobbered by a later page (e.g. a
+      // drawing anchor older than the snapshot's own saved range).
+      const positionSnapshotRange = (reached: boolean) => {
+        if (cancelled || !pendingRange) return;
+        // A quick-range pick made right after restore preempts this walk (see
+        // coverBacktestTradeTo's own pendingRangeRef bail, which is why `reached`
+        // can be false here without history actually being exhausted). Bail
+        // before touching the view or meta so the user's pick stands, and leave
+        // pendingRange unconsumed on snapMeta — a later effect run (e.g. the next
+        // symbol/TF switch) retries the snapshot positioning then.
+        if (pendingRangeRef.current !== null) return;
+        const c = chartRef.current;
+        if (!c) return;
+        const data = c.getDataList() ?? [];
+        if (data.length === 0) return;
+        const oldest = data[0].timestamp;
+        applyVisibleRange(c, Math.max(pendingRange.from, oldest), pendingRange.to);
+        // The marker chip's dismiss confirm (above) may have deleted this scope's
+        // snapshotMeta while this walk was still in flight — re-check before
+        // writing it back, otherwise this unconditionally resurrects the record
+        // the user just removed. The positioning itself still applies: dismissing
+        // the marker is a decision about the meta/marker, not the scroll.
+        if (loadSnapshotMeta(scope)) {
+          saveSnapshotMeta(scope, {
+            snapshotId: snapMeta!.snapshotId,
+            name: snapMeta!.name,
+            takenAt: snapMeta!.takenAt,
+          });
+        }
+        if (!reached && oldest > pendingRange.from) {
+          toast("History doesn't reach the snapshot range — showing oldest available");
+        }
+      };
 
       // Page back (no fit) until every saved drawing anchor maps onto a loaded bar —
       // otherwise klinecharts clamps older anchors to the first loaded bar and the
       // drawing renders with the wrong slope on this interval. Runs AFTER the
-      // template auto-apply so template-added drawings count, and chained after a
-      // quick-range walk so the two pagers don't contend for the loading mutex
-      // (the walk also would have gated it via pendingRangeRef, which it clears
-      // only on completion). Live-only intervals have no history to page.
+      // template auto-apply so template-added drawings count. It's chained after
+      // the quick-range walk and the snapshot walk above, but that chaining is
+      // just ordering of the .then() callbacks — the walks themselves are already
+      // running concurrently by then, and mutual exclusion for the loading mutex
+      // comes from pendingRangeRef/loadingRef (each walk bails if another already
+      // owns it), not from this chain. Live-only intervals have no history to
+      // page, so the snapshot walk (which also no-ops without history) settles on
+      // its own and positions directly.
       if (!period.liveOnly) {
-        const anchorWalk = rangeWalk
-          ? rangeWalk.then(() => ensureAnchorCoverage())
+        const baseWalk = snapshotWalk
+          ? rangeWalk
+            ? snapshotWalk.then(() => rangeWalk)
+            : snapshotWalk
+          : rangeWalk;
+        const anchorWalk = baseWalk
+          ? baseWalk.then(() => ensureAnchorCoverage())
           : ensureAnchorCoverage();
+        if (snapshotWalk) {
+          void anchorWalk.then(() => snapshotWalk.then(positionSnapshotRange)).catch(() => {});
+        }
         // Re-select the trade the user was studying before the switch — only NOW,
         // once the switch-time coverage walks have settled. The walks prepend
         // pages via applyNewData, which resets the view to realtime each page; a
@@ -3756,6 +3912,8 @@ export default function ChartCore({
           pendingTradeRestoreRef.current = null;
           restoreTradeSelection(chartRef.current, restore);
         });
+      } else if (snapshotWalk) {
+        void snapshotWalk.then(positionSnapshotRange).catch(() => {});
       }
 
       // Live updates for the current bar.
@@ -4290,7 +4448,7 @@ export default function ChartCore({
     const uiHov = tradeUiRef.current.hovered;
     const hiddenSet = new Set(tradeUiRef.current.hidden);
     const pills: typeof tradePills = [];
-    if (!positionsHiddenRef.current) {
+    if (!positionsHiddenRef.current && !snapViewRef.current) {
       for (const t of tradesRef.current) {
         if (t.epic !== epicRef.current) continue;
         if (hiddenSet.has(t.id) && t.id !== uiHov && t.id !== uiSel) continue;
@@ -4921,7 +5079,7 @@ export default function ChartCore({
   // AND sub-pane indicators (Volume/MACD/RSI) alike.
   const onLegendToggleVisible = useCallback((name: string) => {
     const c = chartRef.current;
-    if (!c) return;
+    if (!c || snapViewRef.current) return; // read-only snapshot view
     const paneId = paneIdOf(name);
     const ind = c.getIndicatorByPaneId(paneId, name) as
       | { visible?: boolean; extendData?: unknown }
@@ -4945,11 +5103,12 @@ export default function ChartCore({
     redrawRef.current();
   }, [paneIdOf, period.resolution]);
   const onLegendOpenSettings = useCallback((name: string) => {
+    if (snapViewRef.current) return; // read-only snapshot view
     indicatorSettingsRequest.set({ paneId: paneIdOf(name), name });
   }, [paneIdOf]);
   const onLegendRemove = useCallback((name: string) => {
     const c = chartRef.current;
-    if (!c) return;
+    if (!c || snapViewRef.current) return; // read-only snapshot view
     removeIndicatorById(c, scope, name);
     const next = controller.indicators.value.filter((i) => i.id !== name);
     controller.indicators.set(next);
@@ -5002,7 +5161,7 @@ export default function ChartCore({
   // config, so a pasted AVWAP keeps the source's exact anchor.
   const pasteIndicator = useCallback(async () => {
     const c = chartRef.current;
-    if (!c) return;
+    if (!c || snapViewRef.current) return; // read-only snapshot view: no paste
     let text = "";
     try {
       text = (await navigator.clipboard?.readText()) ?? "";
@@ -5080,7 +5239,7 @@ export default function ChartCore({
   // source (TradingView-style). Returns true when it consumed a drawing payload.
   const pasteDrawing = useCallback(async (): Promise<boolean> => {
     const c = chartRef.current;
-    if (!c) return false;
+    if (!c || snapViewRef.current) return false; // read-only snapshot view: no paste
     let text = "";
     try {
       text = (await navigator.clipboard?.readText()) ?? "";
@@ -5289,6 +5448,7 @@ export default function ChartCore({
 
   // The legend's ⋯ "more" button opens the menu (anchored below the button).
   const onLegendOpenMenu = useCallback((name: string, x: number, y: number) => {
+    if (snapViewRef.current) return; // read-only snapshot view: no ⋯ edit menu
     setIndMenu({ x, y, paneId: paneIdOf(name), name });
   }, [paneIdOf]);
 
@@ -5493,6 +5653,22 @@ export default function ChartCore({
           backtest aggregate markers, for journaled closes that collide on the current
           timeframe. Hover lists that bar's exits; no drill-in. Fed by the redraw loop. */}
       <TradeExitAggMarkers handleRef={exitAggMarkersRef} />
+      {/* Read-only snapshot view banner: top-center pill naming the snapshot, a
+          READ-ONLY tag, and Unlock (graduates the tab into a normal chart). The
+          one always-visible cue that editing is deliberately off on this cell. */}
+      {snapView && (
+        <div className="snapshot-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+            <circle cx="12" cy="13" r="4" />
+          </svg>
+          <span className="snapshot-banner-name">{snapView.name}</span>
+          <span className="snapshot-banner-tag">Read-only</span>
+          <button className="snapshot-banner-unlock" onClick={unlockSnapshotView}>
+            Unlock
+          </button>
+        </div>
+      )}
       {/* Top-left legend as crisp DOM (the candle/OHLC row + one row per candle-pane
           indicator), replacing klinecharts' blurry canvas legend. Row membership is
           React state (signature-gated); values update imperatively via the handle. */}
@@ -5924,7 +6100,7 @@ export default function ChartCore({
         );
       })}
 
-      {!isSynthetic(symbol.epic) && (
+      {!isSynthetic(symbol.epic) && !snapView && (
       <div
         ref={plusBtnRef}
         className="axis-plus"

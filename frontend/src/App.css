@@ -2393,7 +2393,10 @@
   background: transparent; border: none; border-radius: 6px;
   padding: 5px 10px; font-size: 14px; transition: background 0.12s;
 }
-.toolbar button.sym:hover { background: var(--hover-strong); }
+.toolbar button.sym:hover:not(:disabled) { background: var(--hover-strong); }
+/* Snapshot view: symbol is fixed — chip stays readable, just not interactive. */
+.toolbar button.sym:disabled { cursor: default; }
+.toolbar button.sym:disabled .sym-caret { visibility: hidden; }
 .toolbar button.sym .sym-caret { color: var(--text-dim); transition: color 0.12s; margin-left: 1px; }
 .toolbar button.sym:hover .sym-caret { color: var(--accent); }
 /* Instrument logo / glyph in the chip (18px round): glyph base + logo overlay. */
@@ -2644,6 +2647,74 @@
 .toolbar .anchor-btn:hover:not(:disabled) { background: var(--hover); }
 .toolbar .anchor-btn.on { background: var(--hover-strong); }
 .toolbar .anchor-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Snapshot split control: ONE control — the camera face saves instantly, the
+   slim caret opens the gallery. No gap; the halves share the rounded ends so
+   the pair reads as a single button. */
+.toolbar .snap-split { display: flex; gap: 0; align-items: stretch; }
+.toolbar .snap-split .snap-save { border-radius: 6px 0 0 6px; }
+.toolbar .snap-split .snap-gallery {
+  border-radius: 0 6px 6px 0; padding: 5px 3px;
+  display: inline-flex; align-items: center;
+}
+
+/* Read-only snapshot view banner: top-center pill inside the chart cell. Flat
+   (no shadow), light-first; above the canvas, below modals. */
+.snapshot-banner {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 40;
+  display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 10px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 999px; font-size: 12px;
+  white-space: nowrap;
+}
+.snapshot-banner svg { color: var(--text-faint); flex: 0 0 auto; }
+.snapshot-banner-name { font-weight: 600; }
+.snapshot-banner-tag {
+  text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; font-weight: 700;
+  color: var(--text-faint); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 5px;
+}
+.snapshot-banner-unlock {
+  border: none; background: transparent; color: var(--accent); font-weight: 600;
+  font-size: 12px; padding: 2px 6px; border-radius: 5px; cursor: pointer;
+}
+.snapshot-banner-unlock:hover { background: var(--hover); }
+
+/* Snapshot gallery modal: card grid, one card per saved snapshot. Flat borders
+   (no shadow) to match the rest of the app's card styling. */
+.snap-bar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.snap-add {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent); color: var(--accent-text); border: none;
+  border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+}
+.snap-add:disabled { opacity: 0.6; cursor: default; }
+.snap-empty { color: var(--text-faint); font-size: 13px; padding: 20px 4px; text-align: center; }
+.snap-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.snap-card {
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+  background: var(--surface-2);
+}
+.snap-thumb { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 6px; }
+.snap-thumb-empty {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg); color: var(--text-faint); font-size: 12px;
+}
+.snap-name {
+  background: transparent; border: none; color: var(--text); font-weight: 600;
+  font-size: 13px; width: 100%; padding: 2px 0;
+}
+.snap-name:focus { outline: none; background: var(--input-bg); border-radius: 4px; }
+.snap-sub { color: var(--text-faint); font-size: 11px; }
+.snap-note {
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); font-size: 12px; padding: 4px 6px; resize: none;
+}
+.snap-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
 
 /* Broker selector (tab bar). Picks the active data-broker — a workspace-scope
    action; the account/env (paper/demo/live) is chosen in the dock account strip.
