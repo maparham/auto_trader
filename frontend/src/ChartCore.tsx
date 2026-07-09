@@ -143,6 +143,8 @@ import {
   subscribeTrades,
   tradeLabel,
   mergeTradeLevels,
+  isBreakeven,
+  isBreakevenTarget,
   clampLevelToPrice,
   applyEditedLevels,
   closePosition,
@@ -1314,6 +1316,9 @@ export default function ChartCore({
       level: number;
       pl: number | null; // entry: uPnL; SL/TP: P/L if that level is hit
       changed: boolean; // this line has an un-applied drag → show Apply/Discard
+      // entry pill only: which level merged into the entry at breakeven (SL or TP sits
+      // at entry) → show a "BE" chip; the field says which pending edit Discard clears.
+      breakevenField?: "stop" | "takeProfit";
     }>
   >([]);
   // Shared x for the trade pill, frozen at selection so the buttons sit still. null
@@ -4243,20 +4248,29 @@ export default function ChartCore({
         if (hiddenSet.has(t.id) && t.id !== uiHov && t.id !== uiSel) continue;
         const pend = pendingRef.current[t.id] ?? {};
         const merged = mergeTradeLevels(t, pend);
+        const priceLvl = merged.price ?? t.priceLevel;
+        // A position's SL or TP sitting at entry merges into the entry line (stop wins
+        // if both compute true — they can't validly). The merged field drives the "BE"
+        // chip and which pending edit its Apply/Discard commits/clears.
+        const stopBE = t.kind === "position" && isBreakeven(priceLvl, merged.stop, precisionRef.current);
+        const tpBE = t.kind === "position" && isBreakevenTarget(priceLvl, merged.takeProfit, precisionRef.current);
+        const beField = stopBE ? "stop" : tpBE ? "takeProfit" : undefined;
         const dir = t.side === "buy" ? 1 : -1;
         // P/L a level would realise if price reached it (from the fixed open level).
         const plAt = (lvl: number) => dir * t.quantity * (lvl - t.priceLevel);
         const common = { tradeId: t.id, kind: t.kind, side: t.side, qty: t.quantity };
-        const priceLvl = merged.price ?? t.priceLevel;
         const yP = yOf(priceLvl);
         // Entry pill carries live uPnL for an open position; a resting order has none.
+        // `changed` also lights up when a breakeven-staged SL/TP is pending (drag path):
+        // the merged level's own pill is suppressed at breakeven, so its Apply/Discard
+        // affordance must surface here, or a dragged-to-entry SL/TP would strand un-commit-able.
         if (yP != null)
-          pills.push({ ...common, field: "price", y: yP, level: priceLvl, pl: t.kind === "position" ? t.upnl : null, changed: pend.price !== undefined });
-        if (merged.stop != null) {
+          pills.push({ ...common, field: "price", y: yP, level: priceLvl, pl: t.kind === "position" ? t.upnl : null, changed: pend.price !== undefined || (beField != null && pend[beField] !== undefined), breakevenField: beField });
+        if (merged.stop != null && !stopBE) {
           const y = yOf(merged.stop);
           if (y != null) pills.push({ ...common, field: "stop", y, level: merged.stop, pl: plAt(merged.stop), changed: pend.stop !== undefined });
         }
-        if (merged.takeProfit != null) {
+        if (merged.takeProfit != null && !tpBE) {
           const y = yOf(merged.takeProfit);
           if (y != null) pills.push({ ...common, field: "tp", y, level: merged.takeProfit, pl: plAt(merged.takeProfit), changed: pend.takeProfit !== undefined });
         }
@@ -5737,6 +5751,14 @@ export default function ChartCore({
             <span className="tp-price">
               {isEntry && <span className="tp-at">@</span>}{priceText}
             </span>
+            {p.breakevenField && (
+              <span
+                className="tp-be"
+                title={p.breakevenField === "stop" ? "Stop at breakeven" : "Target at breakeven"}
+              >
+                BE
+              </span>
+            )}
             {bodyPnl != null && (
               <span className="tp-pnl" title="Unrealised P&L">{bodyPnl}</span>
             )}
@@ -5768,7 +5790,12 @@ export default function ChartCore({
                 <button
                   className="tp-btn tp-discard"
                   title="Discard changes"
-                  onClick={() => discardPendingField(p.tradeId, pendKey)}
+                  onClick={() => {
+                    discardPendingField(p.tradeId, pendKey);
+                    // Entry pendKey is "price"; at breakeven the merged SL/TP also rides
+                    // this pill (its own pill is suppressed), so discard it too or it strands.
+                    if (p.breakevenField) discardPendingField(p.tradeId, p.breakevenField);
+                  }}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <line x1="18" y1="6" x2="6" y2="18" />

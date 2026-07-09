@@ -1927,6 +1927,19 @@
    "P/L if hit" muted (.tp-plhint). */
 .trade-pill .tp-pnl { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--pnl, var(--pill, #2962ff)); }
 .trade-pill .tp-plhint { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--text-faint); }
+/* Breakeven chip on the merged entry pill: the stop sits at entry, so the pill is
+   red (role color) and carries a compact "BE" tag instead of a second SL pill. */
+.trade-pill .tp-be {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: var(--pill);
+  border-radius: 3px;
+  padding: 0 3px;
+  line-height: 14px;
+}
 /* Action icons — ghosted at rest so they don't clutter the readout; they gain presence
    on hover. Apply commits (green), Close/Cancel/Discard/Remove flush red. */
 .trade-pill .tp-btn {
@@ -3055,6 +3068,20 @@
   background: #fff; transition: transform 0.15s ease;
 }
 .ot-switch.on .ot-switch-knob { transform: translateX(16px); }
+
+/* Compact secondary action under the Stop-loss row: moves SL to the entry price. */
+.ot-exit-head-actions { display: flex; align-items: center; gap: 8px; }
+.ot-be-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ot-be-btn:hover { color: var(--text); border-color: var(--text-faint); }
 
 /* order info */
 .ot-info { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }

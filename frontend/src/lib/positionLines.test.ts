@@ -350,6 +350,91 @@ describe("tradeLineSpecs", () => {
     expect(drag.filter((s) => s.emphasized).map((s) => s.key)).toEqual(["D1:price", "D1:stop"]);
     expect(drag.find((s) => s.key === "D2:price")?.emphasized).toBe(false);
   });
+
+  it("merges entry+SL into one red '· BE' line when SL sits at entry (position)", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ priceLevel: 100, stop: 100, openedAt: 1_700_000_000_000 })],
+    });
+    // Only the entry line survives — no separate :stop.
+    expect(specs.map((s) => s.key)).toEqual(["D1:price"]);
+    const merged = specs[0];
+    expect(merged.color).toBe("#f23645"); // STOP_COLOR — the stop is the live constraint
+    expect(merged.draggable).toBe(false); // display-only; un-breakeven via the form
+    expect(merged.restKind).toBe("bar"); // keeps the entry-candle anchor + dot
+    expect(merged.label).toBe("Long 2 @ 100.00 · BE");
+  });
+
+  it("does NOT merge when SL is a tick away from entry", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ priceLevel: 100, stop: 99.99, openedAt: 1 })],
+    });
+    expect(specs.map((s) => s.key)).toEqual(["D1:price", "D1:stop"]);
+    expect(specs[0].color).toBe("#6b7280"); // PRICE_COLOR — normal entry
+  });
+
+  it("respects a pending SL dragged to entry (merges) via presence-merge", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ priceLevel: 100, stop: 95, openedAt: 1 })],
+      pending: { D1: { stop: 100 } },
+    });
+    expect(specs.map((s) => s.key)).toEqual(["D1:price"]);
+    expect(specs[0].label).toBe("Long 2 @ 100.00 · BE");
+  });
+
+  it("never merges a resting order (no fill) even if stop equals price", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ kind: "order", id: "O1", priceLevel: 100, stop: 100 })],
+    });
+    expect(specs.map((s) => s.key)).toEqual(["O1:price", "O1:stop"]);
+    expect(specs.find((s) => s.key === "O1:price")?.color).toBe("#6b7280");
+  });
+
+  it("merges entry+TP into one green '· BE' line when TP sits at entry (position)", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ priceLevel: 100, takeProfit: 100, openedAt: 1_700_000_000_000 })],
+    });
+    // Only the entry line survives — no separate :tp.
+    expect(specs.map((s) => s.key)).toEqual(["D1:price"]);
+    const merged = specs[0];
+    expect(merged.color).toBe("#089981"); // TP_COLOR — the target is the merged level
+    expect(merged.draggable).toBe(false); // display-only; un-breakeven via the form
+    expect(merged.restKind).toBe("bar"); // keeps the entry-candle anchor + dot
+    expect(merged.label).toBe("Long 2 @ 100.00 · BE");
+  });
+
+  it("does NOT merge when TP is a tick away from entry", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ priceLevel: 100, takeProfit: 100.01, openedAt: 1 })],
+    });
+    expect(specs.map((s) => s.key)).toEqual(["D1:price", "D1:tp"]);
+    expect(specs[0].color).toBe("#6b7280"); // PRICE_COLOR — normal entry
+  });
+
+  it("respects a pending TP dragged to entry (merges) via presence-merge", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ priceLevel: 100, takeProfit: 105, openedAt: 1 })],
+      pending: { D1: { takeProfit: 100 } },
+    });
+    expect(specs.map((s) => s.key)).toEqual(["D1:price"]);
+    expect(specs[0].label).toBe("Long 2 @ 100.00 · BE");
+  });
+
+  it("stop-breakeven wins when SL and TP both sit at entry (line is red)", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ priceLevel: 100, stop: 100, takeProfit: 100, openedAt: 1 })],
+    });
+    // Both collapse; the entry line takes the stop's red and only it survives.
+    expect(specs.map((s) => s.key)).toEqual(["D1:price"]);
+    expect(specs[0].color).toBe("#f23645"); // STOP_COLOR — stop precedence
+  });
 });
 
 describe("restingLineEndX", () => {

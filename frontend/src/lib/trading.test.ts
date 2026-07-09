@@ -14,6 +14,10 @@ const {
   noteBrokerLabels,
   isCapital,
   migrateCapitalLiveAccountKeys,
+  isBreakeven,
+  isBreakevenTarget,
+  breakevenEligible,
+  breakevenTargetEligible,
 } = await import("./trading");
 
 const TICK = 0.01;
@@ -127,5 +131,111 @@ describe("capital:live → capital-live:live migration", () => {
     const map = JSON.parse(localStorage.getItem("lastAccountByBroker")!);
     expect(map["capital-live"]).toBeUndefined();
     expect(map["capital"]).toBe("capital:paper");
+  });
+});
+
+describe("isBreakeven", () => {
+  it("true when stop equals price", () => {
+    expect(isBreakeven(100, 100, 2)).toBe(true);
+  });
+  it("true when within one tick", () => {
+    expect(isBreakeven(100, 100.004, 2)).toBe(true); // tick = 0.01
+  });
+  it("false when a full tick apart", () => {
+    expect(isBreakeven(100, 100.01, 2)).toBe(false);
+  });
+  it("false when either level is null", () => {
+    expect(isBreakeven(null, 100, 2)).toBe(false);
+    expect(isBreakeven(100, null, 2)).toBe(false);
+  });
+  it("respects precision (5dp: 0.00001 tick)", () => {
+    expect(isBreakeven(1.23456, 1.234569, 5)).toBe(true);
+    expect(isBreakeven(1.23456, 1.23457, 5)).toBe(false);
+  });
+  it("true just inside one tick (float-noise guard doesn't over-exclude)", () => {
+    expect(isBreakeven(100, 100.0099, 2)).toBe(true);
+  });
+});
+
+describe("breakevenEligible", () => {
+  const pos = (over = {}) => ({
+    kind: "position" as const, id: "D1", epic: "EURUSD", side: "buy" as const,
+    quantity: 2, priceLevel: 100, stop: null, takeProfit: null, upnl: null,
+    openedAt: null, leverage: null, margin: null, ...over,
+  });
+  it("long in profit (price above entry) is eligible", () => {
+    expect(breakevenEligible(pos(), 101, 2)).toBe(true);
+  });
+  it("long at a loss (price below entry) is NOT eligible", () => {
+    expect(breakevenEligible(pos(), 99, 2)).toBe(false);
+  });
+  it("short in profit (price below entry) is eligible", () => {
+    expect(breakevenEligible(pos({ side: "sell" }), 99, 2)).toBe(true);
+  });
+  it("not eligible without a latest price", () => {
+    expect(breakevenEligible(pos(), null, 2)).toBe(false);
+  });
+  it("not eligible for a resting order", () => {
+    expect(breakevenEligible(pos({ kind: "order" }), 101, 2)).toBe(false);
+  });
+  it("not eligible when the stop is already at breakeven", () => {
+    expect(breakevenEligible(pos({ stop: 100 }), 101, 2)).toBe(false);
+  });
+  it("rounds entry to precision before the side check (sub-tick sliver)", () => {
+    // entry 100.507 rounds to 100.51 at 2dp; latest 100.509 is barely in profit
+    // but round(entry) 100.51 is NOT below it → staging BE would be rejected → hide.
+    expect(breakevenEligible(pos({ priceLevel: 100.507 }), 100.509, 2)).toBe(false);
+  });
+});
+
+describe("isBreakevenTarget", () => {
+  it("true when the take-profit equals price", () => {
+    expect(isBreakevenTarget(100, 100, 2)).toBe(true);
+  });
+  it("true when within one tick", () => {
+    expect(isBreakevenTarget(100, 100.004, 2)).toBe(true); // tick = 0.01
+  });
+  it("false when a full tick apart", () => {
+    expect(isBreakevenTarget(100, 100.01, 2)).toBe(false);
+  });
+  it("false when either level is null", () => {
+    expect(isBreakevenTarget(null, 100, 2)).toBe(false);
+    expect(isBreakevenTarget(100, null, 2)).toBe(false);
+  });
+  it("respects precision (5dp: 0.00001 tick)", () => {
+    expect(isBreakevenTarget(1.23456, 1.234569, 5)).toBe(true);
+    expect(isBreakevenTarget(1.23456, 1.23457, 5)).toBe(false);
+  });
+});
+
+describe("breakevenTargetEligible", () => {
+  const pos = (over = {}) => ({
+    kind: "position" as const, id: "D1", epic: "EURUSD", side: "buy" as const,
+    quantity: 2, priceLevel: 100, stop: null, takeProfit: null, upnl: null,
+    openedAt: null, leverage: null, margin: null, ...over,
+  });
+  it("long at a loss (price below entry) is eligible", () => {
+    expect(breakevenTargetEligible(pos(), 99, 2)).toBe(true);
+  });
+  it("long in profit (price above entry) is NOT eligible", () => {
+    expect(breakevenTargetEligible(pos(), 101, 2)).toBe(false);
+  });
+  it("short at a loss (price above entry) is eligible", () => {
+    expect(breakevenTargetEligible(pos({ side: "sell" }), 101, 2)).toBe(true);
+  });
+  it("not eligible without a latest price", () => {
+    expect(breakevenTargetEligible(pos(), null, 2)).toBe(false);
+  });
+  it("not eligible for a resting order", () => {
+    expect(breakevenTargetEligible(pos({ kind: "order" }), 99, 2)).toBe(false);
+  });
+  it("not eligible when the take-profit is already at breakeven", () => {
+    expect(breakevenTargetEligible(pos({ takeProfit: 100 }), 99, 2)).toBe(false);
+  });
+  it("rounds entry to precision before the side check (sub-tick sliver)", () => {
+    // entry 100.504 rounds to 100.50 at 2dp; latest 100.503 is barely at a loss
+    // (raw entry above it) but round(entry) 100.50 is NOT above 100.503 → staging TP
+    // there would be rejected (TP must sit above the market for a long) → hide.
+    expect(breakevenTargetEligible(pos({ priceLevel: 100.504 }), 100.503, 2)).toBe(false);
   });
 });

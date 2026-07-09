@@ -581,6 +581,79 @@ export function clampLevelToPrice(
   return below ? Math.min(level, reference - tick) : Math.max(level, reference + tick);
 }
 
+/** True when a level sits at the entry (within one tick) — the shared core of both
+ *  breakeven states (SL-at-entry and TP-at-entry), where that level's line and the
+ *  entry line would render on the same price row and collapse into one. */
+function atEntry(price: number | null, level: number | null, precision: number): boolean {
+  if (price == null || level == null) return false;
+  const tick = 10 ** -precision;
+  const diff = Math.abs(level - price);
+  // Guard against float noise at the exact-one-tick boundary (e.g. 1.23457 -
+  // 1.23456 computes as ~9.999999e-6, a hair under 1e-5) without rounding away
+  // genuinely sub-tick differences.
+  // 1e-6 is a RELATIVE tolerance (fraction of one tick), validated across this
+  // app's 0-5dp instrument precisions: far above float error (~1e-15) so it never
+  // misses real noise, far below any genuine sub-tick gap so it never over-merges.
+  return tick - diff > tick * 1e-6;
+}
+
+/** True when a stop sits at its entry (within one tick) — the "breakeven" state
+ *  where the SL and entry lines would render on the same price row and collapse
+ *  into one. Level-derived; shared by the chart line specs, the DOM pill, and the
+ *  edit form so they never disagree. */
+export function isBreakeven(
+  price: number | null,
+  stop: number | null,
+  precision: number,
+): boolean {
+  return atEntry(price, stop, precision);
+}
+
+/** True when a take-profit sits at its entry (within one tick) — the mirror of
+ *  isBreakeven for a losing position that set its TP to entry to exit flat when
+ *  price recovers. The TP and entry lines collapse into one green '· BE' line. */
+export function isBreakevenTarget(
+  price: number | null,
+  tp: number | null,
+  precision: number,
+): boolean {
+  return atEntry(price, tp, precision);
+}
+
+/** Whether the edit form should offer "Set to breakeven": an OPEN position, in
+ *  profit, whose rounded entry would be a VALID stop (below the latest for a long,
+ *  above for a short), and not already at breakeven. Gating on the ROUNDED entry —
+ *  not raw `latest > entry` — closes the sub-tick sliver where round(entry) lands
+ *  the wrong side of a barely-profitable price and Update would be rejected. */
+export function breakevenEligible(
+  trade: TradeView,
+  latest: number | null,
+  precision: number,
+): boolean {
+  if (trade.kind !== "position" || latest == null) return false;
+  const be = Number(trade.priceLevel.toFixed(precision));
+  const validStop = trade.side === "buy" ? be < latest : be > latest;
+  if (!validStop) return false;
+  return !isBreakeven(trade.priceLevel, trade.stop, precision);
+}
+
+/** Whether the edit form should offer "Set target to breakeven": an OPEN position,
+ *  at a LOSS, whose rounded entry would be a VALID take-profit (above the latest for
+ *  a long, below for a short), and not already at TP-breakeven. The valid-TP gate is
+ *  only satisfied when price is on the losing side of entry, so this naturally
+ *  restricts the button to losing positions — the mirror of breakevenEligible. */
+export function breakevenTargetEligible(
+  trade: TradeView,
+  latest: number | null,
+  precision: number,
+): boolean {
+  if (trade.kind !== "position" || latest == null) return false;
+  const be = Number(trade.priceLevel.toFixed(precision));
+  const validTarget = trade.side === "buy" ? be > latest : be < latest;
+  if (!validTarget) return false;
+  return !isBreakevenTarget(trade.priceLevel, trade.takeProfit, precision);
+}
+
 /** Merge a trade's pending (un-applied) edits over its server levels, BY PRESENCE
  *  (a field set to `null` means "removed", `undefined` means "unchanged"). Returns
  *  the resolved entry/stop/tp the user currently sees on the chart lines. Shared by

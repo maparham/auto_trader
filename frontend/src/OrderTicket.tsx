@@ -18,6 +18,8 @@ import {
   applyEditedLevels,
   mergeTradeLevels,
   clampLevelToPrice,
+  breakevenEligible,
+  breakevenTargetEligible,
   getLivePrice,
   fetchQuote,
   placeOrder,
@@ -39,6 +41,7 @@ import {
 } from "./lib/signals";
 import { computeOrderInfo, usedMargin } from "./lib/orderInfo";
 import { leverageFor, type TradingSettings } from "./theme";
+import Tooltip from "./components/Tooltip";
 
 interface Props {
   epic: string;
@@ -606,6 +609,17 @@ function EditTicket({
     return below ? level < latest : level > latest;
   };
   const stopValid = sideValid("stop", stop);
+  // "Set to breakeven": stage SL exactly at the fill (rounded to precision). Offered
+  // only for an in-profit open position whose rounded entry is a valid stop (see
+  // breakevenEligible) — so clicking can never stage a stop the broker would reject.
+  const canBreakeven = breakevenEligible(trade, latest, precision);
+  const setBreakeven = () => patch({ stop: round(trade.priceLevel) });
+  // "Set target to breakeven": stage TP exactly at the fill for a LOSING position, so
+  // it exits flat when price recovers to entry. Offered only when the rounded entry is
+  // a valid take-profit (see breakevenTargetEligible) — mutually exclusive with the
+  // stop-breakeven button (a position can't be both in profit and at a loss).
+  const canBreakevenTarget = breakevenTargetEligible(trade, latest, precision);
+  const setBreakevenTarget = () => patch({ takeProfit: round(trade.priceLevel) });
   const tpValid = sideValid("tp", tp);
   const levelError =
     latest == null
@@ -670,6 +684,8 @@ function EditTicket({
           invalid={!tpValid}
           onToggle={(on) => toggleExit("tp", on)}
           onChange={(v) => setExit("tp", v)}
+          onBreakeven={canBreakevenTarget ? setBreakevenTarget : undefined}
+          breakevenTip="Move the take-profit to your entry price, so the trade closes flat if price recovers to entry."
         />
         <ExitRow
           label="Stop loss"
@@ -679,6 +695,8 @@ function EditTicket({
           invalid={!stopValid}
           onToggle={(on) => toggleExit("sl", on)}
           onChange={(v) => setExit("sl", v)}
+          onBreakeven={canBreakeven ? setBreakeven : undefined}
+          breakevenTip="Move the stop-loss to your entry price, so the trade can't turn into a loss from here."
         />
       </div>
 
@@ -710,6 +728,8 @@ function ExitRow({
   invalid = false,
   onToggle,
   onChange,
+  onBreakeven,
+  breakevenTip,
 }: {
   label: string;
   on: boolean;
@@ -718,19 +738,32 @@ function ExitRow({
   invalid?: boolean;
   onToggle: (on: boolean) => void;
   onChange: (v: string) => void;
+  // When set, an inline "Set Breakeven" button sits next to the toggle — offered
+  // only when moving this level to entry is valid (SL for a winner, TP for a loser).
+  onBreakeven?: () => void;
+  breakevenTip?: string; // hover text for that button
 }) {
   return (
     <div className="ot-exit">
       <div className="ot-exit-head">
         <span className="ot-flabel">{label}, price</span>
-        <button
-          className={`ot-switch${on ? " on" : ""}`}
-          role="switch"
-          aria-checked={on}
-          onClick={() => onToggle(!on)}
-        >
-          <span className="ot-switch-knob" />
-        </button>
+        <div className="ot-exit-head-actions">
+          {onBreakeven && (
+            <Tooltip content={breakevenTip}>
+              <button className="ot-be-btn" type="button" onClick={onBreakeven}>
+                Set Breakeven
+              </button>
+            </Tooltip>
+          )}
+          <button
+            className={`ot-switch${on ? " on" : ""}`}
+            role="switch"
+            aria-checked={on}
+            onClick={() => onToggle(!on)}
+          >
+            <span className="ot-switch-knob" />
+          </button>
+        </div>
       </div>
       <div className={`ot-input-row${on ? "" : " disabled"}${invalid ? " invalid" : ""}`}>
         <input

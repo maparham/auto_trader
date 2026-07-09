@@ -17,7 +17,7 @@ import type {
   OverlayFigure,
   OverlayEvent,
 } from "klinecharts";
-import { tradeLabel, type TradeView } from "./trading";
+import { tradeLabel, isBreakeven, isBreakevenTarget, type TradeView } from "./trading";
 import type { PendingEdit, DraftOrder } from "./signals";
 import { barIndexForTs } from "./backtest";
 
@@ -124,6 +124,15 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
     const stop = pend.stop !== undefined ? pend.stop : t.stop;
     const tp = pend.takeProfit !== undefined ? pend.takeProfit : t.takeProfit;
     const word = tradeLabel(t.kind, t.side);
+    // A position whose SL or TP sits at its entry (within a tick) is at BREAKEVEN:
+    // that level's line and the entry line would render on the same row. Collapse
+    // them into ONE '· BE'-tagged entry line — red when it's the stop, green when
+    // it's the take-profit — and drop the separate SL/TP line. Orders never merge.
+    // Both can't be validly true at once (SL-at-entry needs price above entry, TP-at-
+    // entry below), but stop wins if they ever both compute true.
+    const stopBE = t.kind === "position" && isBreakeven(price, stop, o.precision);
+    const tpBE = t.kind === "position" && isBreakevenTarget(price, tp, o.precision);
+    const breakeven = stopBE || tpBE;
     if (price != null) {
       // Show unrealized P/L on the entry label for open positions (not orders).
       const pnlStr =
@@ -133,9 +142,14 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
       specs.push({
         key: `${t.id}:price`,
         level: price,
-        color: PRICE_COLOR,
+        // At breakeven the one line IS the merged level: red for the stop, green for
+        // the take-profit; otherwise neutral entry.
+        color: stopBE ? STOP_COLOR : tpBE ? TP_COLOR : PRICE_COLOR,
         side: t.side,
-        label: o.hideTradeLabels || focusedField === "price" ? "" : `${word} ${t.quantity} @ ${fmt(price)}${pnlStr}`,
+        label:
+          o.hideTradeLabels || focusedField === "price"
+            ? ""
+            : `${word} ${t.quantity} @ ${fmt(price)}${pnlStr}${breakeven ? " · BE" : ""}`,
         // A resting order's price line is draggable to reprice it; a filled
         // position's entry is fixed (you can't change a fill), so never draggable.
         draggable: t.kind === "order",
@@ -150,7 +164,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         onDragEnd: (lvl) => o.onDrag(t.id, "price", lvl),
       });
     }
-    if (stop != null) {
+    if (stop != null && !stopBE) {
       specs.push({
         key: `${t.id}:stop`,
         level: stop,
@@ -164,7 +178,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         onDragEnd: (lvl) => o.onDrag(t.id, "stop", lvl),
       });
     }
-    if (tp != null) {
+    if (tp != null && !tpBE) {
       specs.push({
         key: `${t.id}:tp`,
         level: tp,
