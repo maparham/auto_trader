@@ -11,7 +11,12 @@ import InfoTip from "./components/InfoTip";
 import NumberField from "./components/NumberField";
 import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
-import { requestGoLive, requestConfirm, backtestClearRequest } from "./lib/signals";
+import {
+  requestGoLive,
+  requestConfirm,
+  backtestClearRequest,
+  backtestRunningSignal,
+} from "./lib/signals";
 import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
 import type { EmphasisTarget } from "./lib/chartOperand";
 import { resolveWindow } from "./lib/backtestWindow";
@@ -370,6 +375,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     setSide(s);
     saveBacktestSide(s);
   };
+
+  // Mirror the in-flight run state (owned by BacktestButton) so the footer's
+  // "Run backtest" reads as unavailable while a run is going — its click was
+  // already a no-op mid-run, but the button looked active.
+  const [runInFlight, setRunInFlight] = useState(backtestRunningSignal.value);
+  useEffect(() => backtestRunningSignal.subscribe(setRunInFlight), []);
 
   // Settings (top) / results (bottom) vertical split. resultsHeight 0 means
   // "unset" — the CSS default flex-basis governs until the user drags. Persisted
@@ -1126,7 +1137,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           >
             Go live →
           </button>
-          <button onClick={run}>Run backtest</button>
+          <button onClick={run} disabled={runInFlight}>
+            {runInFlight ? "Running…" : "Run backtest"}
+          </button>
         </div>
     </aside>
       {pickerFor && (

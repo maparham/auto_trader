@@ -111,13 +111,24 @@ export interface BacktestRequest {
 }
 
 export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {
+  // Temporary phase timing (perf investigation): split serialize / backend / parse.
+  const t0 = performance.now();
+  const body = JSON.stringify(req);
+  const t1 = performance.now();
   const res = await fetch(`${BASE}/api/backtest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
+    body,
   });
+  const t2 = performance.now();
   if (!res.ok) throw new Error(await errorDetail(res, `request failed (${res.status})`));
-  return res.json();
+  const json = await res.json();
+  const t3 = performance.now();
+  console.info(
+    `[backtest perf] request: serialize ${(t1 - t0).toFixed(0)}ms (${(body.length / 1048576).toFixed(2)} MB), ` +
+      `backend+network ${(t2 - t1).toFixed(0)}ms, parse ${(t3 - t2).toFixed(0)}ms`,
+  );
+  return json;
 }
 
 export async function evaluateStrategy(req: EvaluateRequest): Promise<EvaluateResult> {

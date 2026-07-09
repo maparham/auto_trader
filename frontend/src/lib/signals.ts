@@ -366,6 +366,12 @@ export function requestBacktestRun(): void {
   backtestRunRequest.set(backtestRunRequest.value + 1);
 }
 
+// True while a backtest run is in flight (BacktestButton.run owns the state and
+// publishes it here). The settings modal disables its "Run backtest" button off
+// this — the run guard already dropped mid-run clicks silently; this makes the
+// button LOOK unavailable too.
+export const backtestRunningSignal = new Signal<boolean>(false);
+
 // Bumped when the results pane's clear (✕) is clicked. Like the run request,
 // BacktestButton owns the chart-side teardown (it has the chart/controller/epic),
 // so the results pane just asks for a clear rather than duplicating that logic.

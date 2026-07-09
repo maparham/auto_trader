@@ -745,6 +745,17 @@ export default function ChartCore({
   // drawing anchor is covered — bounded like a quick-range walk, and with NO fit:
   // the view stays parked at the live edge. Alerts are horizontal (no timestamp),
   // so only drawings matter here.
+  // Anchors the walk below already gave up on (budget hit before reaching the
+  // target): series key -> the target it failed to reach + how deep it got.
+  // Without this, EVERY later trigger (each backtest run, template apply, range
+  // pick) re-walks a full 16-page budget toward the same unreachable anchor,
+  // prepending ~8k more bars each time — and each prepend is a full-array
+  // applyNewData re-init, so back-to-back runs slow down quadratically (measured
+  // 1.9s → 6.9s → 31.4s walks). Retry only when the oldest anchor got NEWER
+  // (e.g. the old drawing was deleted) or something else loaded history deeper
+  // than the failed walk reached (the remaining gap shrank).
+  const cappedAnchorRef = useRef(new Map<string, { target: number; reached: number }>());
+
   const ensureAnchorCoverage = async () => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -763,9 +774,25 @@ export default function ChartCore({
     const backtestFromMs = getBacktestCoverageFromTs(chart);
     if (backtestFromMs != null) anchors.push(backtestFromMs);
     if (!anchors.length) return;
-    const fromTs = Math.min(...anchors);
     const first = chart.getDataList()[0];
-    if (!first || fromTs >= first.timestamp) return; // already covered (or nothing to extend)
+    if (!first) return;
+    const cappedKey = `${broker}|${epic}|${resolution}|${side}`;
+    const capped = cappedAnchorRef.current.get(cappedKey);
+    // Drop anchors a prior walk already burned its budget failing to reach —
+    // but ONLY those. The rest (e.g. a backtest's fills, which the TF-switch
+    // rehydrate + selected-trade restore rely on getting covered) still get
+    // their walk; skipping wholesale would starve them whenever one ancient
+    // drawing anchor exists. Hopeless anchors get retried only when something
+    // else has since loaded history deeper than the failed walk reached (the
+    // remaining gap shrank, so a fresh budget might close it).
+    const fullFromTs = Math.min(...anchors);
+    const targets =
+      capped && first.timestamp >= capped.reached
+        ? anchors.filter((t) => t > capped.target)
+        : anchors;
+    if (!targets.length) return;
+    const fromTs = Math.min(...targets);
+    if (fromTs >= first.timestamp) return; // already covered (or nothing to extend)
     // A quick-range pick owns paging (it covers + fits its own window) — stay out of
     // its way now, and abort via isStale if one starts mid-walk.
     if (pendingRangeRef.current) return;
@@ -820,13 +847,24 @@ export default function ChartCore({
       // so its curve reaches the newly-loaded bars (no-op if already covered).
       if (!isStale()) extendMtfCoverage();
       // Bounded walk: a very old anchor on a very fine interval can exceed the page
-      // budget — the drawing/marker then still clamps. Say so instead of failing silently.
+      // budget — the drawing/marker then still clamps. Say so instead of failing
+      // silently, and remember the failure so later triggers don't re-walk a full
+      // budget toward the same unreachable anchor (see cappedAnchorRef).
       const oldest = chartRef.current?.getDataList()[0];
       if (oldest && oldest.timestamp > fromTs) {
+        // Failed even the filtered (newest hopeless) target — record IT, so the
+        // hopeless set only ever grows toward newer anchors, never re-deepens.
+        cappedAnchorRef.current.set(cappedKey, { target: fromTs, reached: oldest.timestamp });
         console.debug(
-          `[chart] anchor coverage capped for ${epic}@${resolution}: oldest anchor ${new Date(fromTs).toISOString()} predates loaded history`,
+          `[chart] anchor coverage capped for ${epic}@${resolution}: oldest anchor ${new Date(fromTs).toISOString()} predates loaded history (won't retry until the anchor set or loaded depth changes)`,
         );
+      } else if (oldest && oldest.timestamp <= fullFromTs) {
+        // EVERY anchor (including previously-hopeless ones) is now covered —
+        // e.g. a quick-range pick loaded far deeper history. Clear the record.
+        cappedAnchorRef.current.delete(cappedKey);
       }
+      // Covered the filtered target but older hopeless anchors remain: keep the
+      // record so they stay filtered on the next trigger.
     } finally {
       // Release only if a quick-range pick hasn't taken the mutex for its own walk.
       if (pendingRangeRef.current === null) {

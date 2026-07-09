@@ -142,6 +142,20 @@ export function registerBacktestPager(
   else pagerByChart.delete(chart);
 }
 
+/** Page history back to `fromTs` via the chart's registered backtest pager
+ * (ChartCore's coverBacktestTradeTo — bounded walk, stops as soon as coverage
+ * reaches the target, reanchors the markers after). Used by a fresh run to
+ * cover ITS OWN oldest fill before fitting — deliberately NOT the drawings
+ * walk (ensureAnchorCoverage): that one targets the oldest saved drawing
+ * anchor, which can be years older than the run and re-trigger a deep,
+ * budget-capped page-back on every single run. Resolves false when no pager
+ * is registered or the walk couldn't reach the target. */
+export async function coverBacktestHistory(chart: Chart, fromTs: number): Promise<boolean> {
+  const pager = pagerByChart.get(chart);
+  if (!pager) return false;
+  return pager(fromTs);
+}
+
 function artifactsFor(chart: Chart): BacktestArtifacts {
   let a = artifactsByChart.get(chart);
   if (!a) {
@@ -901,7 +915,10 @@ export async function runAndRender(
   period?: BacktestPeriod,
   showEquity = false,
 ): Promise<StoredBacktestResult> {
+  // Temporary phase timing (perf investigation).
+  const t0 = performance.now();
   const result = await runBacktest(req);
+  const t1 = performance.now();
   // Drops the previous run's markers/equity/highlight/selection zone AND
   // detaches its highlight/selection subscriptions + resets
   // highlightTradeSignal/selectedTradeSignal — so a stale trade index from the
@@ -923,7 +940,14 @@ export async function runAndRender(
   // present at render time.
   const stored = loadBacktestResult(scope, req.epic) ?? result;
   const flags = backtestRenderFlags(displayResolution, req.resolution);
+  const t2 = performance.now();
   renderArtifacts(chart, stored, { ...flags, drawEquity: flags.drawEquity && showEquity });
+  const t3 = performance.now();
+  console.info(
+    `[backtest perf] runAndRender: backend total ${(t1 - t0).toFixed(0)}ms, ` +
+      `teardown+persist ${(t2 - t1).toFixed(0)}ms, render ${(t3 - t2).toFixed(0)}ms ` +
+      `(${stored.trades.length} trades, ${stored.markers.length} markers)`,
+  );
   return stored;
 }
 

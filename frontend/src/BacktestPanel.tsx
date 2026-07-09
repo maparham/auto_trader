@@ -15,6 +15,7 @@ import {
   backtestMessagesSignal,
   backtestSelectNoticeSignal,
   backtestPeriodsShownSignal,
+  backtestRunningSignal,
   requestBacktestClear,
 } from "./lib/signals";
 import { saveBacktestPeriodsShown } from "./lib/persist";
@@ -30,6 +31,7 @@ const subscribeHighlight = (cb: () => void) => highlightTradeSignal.subscribe(cb
 const subscribeSelected = (cb: () => void) => selectedTradeSignal.subscribe(cb);
 const subscribeMessages = (cb: () => void) => backtestMessagesSignal.subscribe(cb);
 const subscribeSelectNotice = (cb: () => void) => backtestSelectNoticeSignal.subscribe(cb);
+const subscribeRunning = (cb: () => void) => backtestRunningSignal.subscribe(cb);
 
 type Tab = "overview" | "trades";
 type SortDir = "asc" | "desc";
@@ -50,6 +52,7 @@ export default function BacktestPanel() {
   const selected = useSyncExternalStore(subscribeSelected, () => selectedTradeSignal.value);
   const messages = useSyncExternalStore(subscribeMessages, () => backtestMessagesSignal.value);
   const selectNotice = useSyncExternalStore(subscribeSelectNotice, () => backtestSelectNoticeSignal.value);
+  const running = useSyncExternalStore(subscribeRunning, () => backtestRunningSignal.value);
   const periodsShown = useSyncExternalStore(
     (cb) => backtestPeriodsShownSignal.subscribe(cb),
     () => backtestPeriodsShownSignal.value,
@@ -89,7 +92,9 @@ export default function BacktestPanel() {
     return (
       <div className="bt-results">
         {msgRow}
-        <div className="bt-results-empty">Run a backtest to see results here.</div>
+        <div className="bt-results-empty">
+          {running ? "Backtest running…" : "Run a backtest to see results here."}
+        </div>
       </div>
     );
   }

@@ -5,7 +5,13 @@
 // the focused controller + the active period/broker.
 
 import { useEffect, useState } from "react";
-import { runAndRender, clearBacktest, fitBacktestTrades } from "./lib/backtest";
+import {
+  runAndRender,
+  clearBacktest,
+  fitBacktestTrades,
+  coverBacktestHistory,
+  oldestBacktestAnchorMs,
+} from "./lib/backtest";
 import type { ChartController } from "./lib/chartController";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
@@ -27,6 +33,7 @@ import {
   backtestResultSignal,
   backtestMessagesSignal,
   backtestPeriodsShownSignal,
+  backtestRunningSignal,
 } from "./lib/signals";
 
 interface Props {
@@ -86,8 +93,18 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   async function run() {
     if (!chart || !epic || !period || running) return;
     setRunning(true);
+    // Published imperatively (not via an effect on `running`) so the settings
+    // modal's disabled "Run backtest" can never strand: the finally below always
+    // resets it, even if this component were unmounted mid-run.
+    backtestRunningSignal.set(true);
     setError(null);
     setWarning(null);
+    // Drop the previous run's results from the pane right away: when two runs
+    // produce identical numbers, a pane that never visibly changes reads as "the
+    // click did nothing". Emptying it (the pane shows its running state) makes
+    // every run observable. Chart artifacts are torn down later by runAndRender,
+    // once the fresh result is in hand.
+    backtestResultSignal.set(null);
     try {
       const cfg = loadBacktestLastUsed() ?? defaultBacktestConfig();
       // The config timeframe overrides the active chart timeframe when set;
@@ -102,6 +119,8 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
 
       const required = requiredWarmupBars(cfg, resSeconds);
       const depth = cfg.range.history ?? "full";
+      // Temporary phase timing (perf investigation) — logged as [backtest perf].
+      const tFetch0 = performance.now();
       let bars = await fetchBars(resolveHistoryStart(cfg, windowFromMs, resSeconds));
 
       // The requested depth can exceed what the broker/account actually serves
@@ -135,7 +154,9 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       const htfFromSec = Math.floor(Math.max(0, bars[0].timestamp) / 1000);
       const fetchTimeframe = (resolution: string) =>
         fetchRange(epic, resolution, htfFromSec, toSec, priceSide, brokerId);
+      const tSeries0 = performance.now();
       const series = await buildSeries(bars, cfg, runResolution, fetchTimeframe);
+      const tSeries1 = performance.now();
       const candles = bars.map((k) => ({
         time: Math.round(k.timestamp / 1000),
         open: k.open,
@@ -145,6 +166,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         volume: k.volume ?? 0,
       }));
 
+      console.info(
+        `[backtest perf] prepare: bars fetch ${(tSeries0 - tFetch0).toFixed(0)}ms (${bars.length} bars), ` +
+          `buildSeries ${(tSeries1 - tSeries0).toFixed(0)}ms (${Object.keys(series).length} series)`,
+      );
+      const tRun0 = performance.now();
       const res = await runAndRender(
         chart,
         {
@@ -184,18 +210,29 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       backtestResultSignal.set(res);
       // The run's range can predate the chart's currently-loaded (recent) bars —
       // runAndRender then culls those fills as out-of-window. Page history back to
-      // cover the run, which reanchors the markers onto their real candles (same
-      // walk the timeframe-switch rehydrate uses). No-op when already covered.
-      // Await the coverage walk so trades predating the loaded window are paged
-      // in, then fit the chart to the full traded span — no more panning back to
-      // find the trades. Only on a fresh run: reload/TF-switch go via renderArtifacts.
-      await controller?.coverDrawingAnchors?.();
+      // the RUN'S OWN oldest fill (not the drawings walk: its target is the oldest
+      // saved drawing anchor, which can be years older than the run and drag a
+      // deep budget-capped page-back into every run), which reanchors the markers
+      // onto their real candles. No-op when already covered. Await it so trades
+      // predating the loaded window are paged in, then fit the chart to the full
+      // traded span. Only on a fresh run: reload/TF-switch go via renderArtifacts.
+      const tCover0 = performance.now();
+      const oldestFillMs = oldestBacktestAnchorMs(res.markers);
+      if (chart && oldestFillMs != null) await coverBacktestHistory(chart, oldestFillMs);
+      const tCover1 = performance.now();
       if (chart) fitBacktestTrades(chart, res);
+      const tFit1 = performance.now();
+      console.info(
+        `[backtest perf] land: runAndRender ${(tCover0 - tRun0).toFixed(0)}ms, ` +
+          `coverage walk ${(tCover1 - tCover0).toFixed(0)}ms, fit ${(tFit1 - tCover1).toFixed(0)}ms, ` +
+          `run total ${(tFit1 - tFetch0).toFixed(0)}ms`,
+      );
       saveBacktestLastUsed(cfg);
     } catch (e) {
       setError(e instanceof Error ? e.message : "backtest failed");
     } finally {
       setRunning(false);
+      backtestRunningSignal.set(false);
     }
   }
 
