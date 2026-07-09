@@ -24,7 +24,7 @@ import {
   type OverlayTemplate,
   type OverlayFigure,
 } from "klinecharts";
-import { runBacktest, type BacktestRequest } from "../api";
+import { runBacktest, type BacktestRequest, type Marker } from "../api";
 import { applyVisibleRange, applyVisibleRangeKeepStart } from "./chartSync";
 import {
   backtestResultSignal,
@@ -35,7 +35,7 @@ import {
   backtestPeriodsShownSignal,
   backtestSelectNoticeSignal,
 } from "./signals";
-import { buildSignalGlyphs } from "./signalGlyphs";
+import { buildSignalGlyphs, isEntryFill } from "./signalGlyphs";
 import { tradeZones } from "./tradeZones";
 import { minPositiveGap } from "./barInterval";
 import { RESOLUTION_SECONDS } from "./feed";
@@ -1077,19 +1077,34 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
   }
 }
 
-/** The oldest trade-fill timestamp (ms) this chart needs loaded to draw its
- * backtest markers, or null when nothing is drawn (markerMode "none" / no
- * result). ChartCore folds this into the history-coverage page-back so a
- * finer-timeframe view — whose initial load starts well after the run — pages
- * back far enough to cover the run, then calls reanchorBacktestMarkers. Reads the
- * already-rendered artifacts (rehydrate ran first), so it honors the current
- * timeframe's markerMode decision. */
+/** The oldest bar timestamp (ms) a set of fill markers needs loaded so ALL their
+ * on-chart artifacts can be drawn — the min over each marker's fill time AND its
+ * `signal_time`. A rule-based fill's signal caret anchors ONE bar before the fill
+ * (the signal bar), so covering only the oldest fill can leave the leftmost
+ * entry's signal bar just outside the loaded window: reanchor then draws the fill
+ * but the caret's window guard (see drawMarkers) skips it, and no later reanchor
+ * fires to add it. Folding signal_time in pages back the extra bar so the caret
+ * draws too. null when there are no markers. Pure + exported for tests. */
+export function oldestBacktestAnchorMs(markers: Marker[]): number | null {
+  let min = Infinity;
+  for (const m of markers) {
+    min = Math.min(min, m.time * 1000);
+    if (m.signal_time != null) min = Math.min(min, m.signal_time * 1000);
+  }
+  return Number.isFinite(min) ? min : null;
+}
+
+/** The oldest bar timestamp (ms) this chart needs loaded to draw its backtest
+ * markers, or null when nothing is drawn (markerMode "none" / no result).
+ * ChartCore folds this into the history-coverage page-back so a finer-timeframe
+ * view — whose initial load starts well after the run — pages back far enough to
+ * cover the run, then calls reanchorBacktestMarkers. Reads the already-rendered
+ * artifacts (rehydrate ran first), so it honors the current timeframe's
+ * markerMode decision. */
 export function getBacktestCoverageFromTs(chart: Chart): number | null {
   const a = artifactsByChart.get(chart);
   if (!a || !a.result || a.markerMode === "none") return null;
-  let min = Infinity;
-  for (const m of a.result.markers) min = Math.min(min, m.time * 1000);
-  return Number.isFinite(min) ? min : null;
+  return oldestBacktestAnchorMs(a.result.markers);
 }
 
 /** Redraw a chart's backtest markers against the CURRENT loaded bars — call
@@ -1229,10 +1244,19 @@ export function renderArtifacts(
     if (!t) return;
     const entryTs = t.entry_time * 1000;
     const exitTs = t.exit_time * 1000;
+    // A rule-based entry's signal caret anchors one bar BEFORE the entry fill
+    // (its signal bar). Fold that bar into the coverage span so paging to reach
+    // this trade loads it too — otherwise the page-back lands exactly on the
+    // entry bar, leaving the signal bar just outside the window, and drawMarkers
+    // draws the arrow but skips the caret (the leftmost-entry "missing caret" bug).
+    const entryMarker = result.markers.find(
+      (m) => m.time === t.entry_time && m.leg === t.leg && isEntryFill(m.side, m.leg),
+    );
+    const signalTs = entryMarker?.signal_time != null ? entryMarker.signal_time * 1000 : entryTs;
     const data = chart.getDataList();
     const firstTs = data?.[0]?.timestamp;
     const lastTs = data?.[data.length - 1]?.timestamp;
-    const lo = Math.min(entryTs, exitTs);
+    const lo = Math.min(entryTs, exitTs, signalTs);
     const hi = Math.max(entryTs, exitTs);
     // In the loaded window → draw + scroll straight away (the common case; also
     // when firstTs/lastTs are unknown, let drawSelectionZone's own guard decide).
