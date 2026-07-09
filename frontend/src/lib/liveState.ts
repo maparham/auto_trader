@@ -1,4 +1,5 @@
 import type { BacktestConfig } from "./backtestConfig";
+import type { CodedStrategyConfig } from "./codedConfig";
 
 export type LiveStatus = "disarmed" | "armed" | "lost-lease";
 
@@ -8,6 +9,11 @@ export interface ArmedSnapshot {
   account: string;
   quantity: number;
   armedAtSec: number;
+  // Coded mode only: the LIVE coded set (params/risk/exit groups) frozen at arm
+  // time — every evaluate cycle reads THIS, never a live-reloaded value, so
+  // editing the live panel while armed can't silently change a running trade
+  // (surfaced instead via codedCfgsDiffer against the snapshot in the panel).
+  coded?: CodedStrategyConfig;
 }
 
 export interface LiveLogEntry {
@@ -52,13 +58,19 @@ export function initialLiveState(
   };
 }
 
-export function armSnapshot(state: LiveState, strategyId: string, armedAtSec: number): LiveState {
+export function armSnapshot(
+  state: LiveState,
+  strategyId: string,
+  armedAtSec: number,
+  coded?: CodedStrategyConfig,
+): LiveState {
   const snapshot: ArmedSnapshot = {
     strategyId,
     cfg: freeze(state.draft),
     account: state.account,
     quantity: state.quantity,
     armedAtSec,
+    coded: coded ? structuredClone(coded) : undefined,
   };
   return { ...state, status: "armed", snapshot, pendingEdits: false };
 }

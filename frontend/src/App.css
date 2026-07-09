@@ -2772,6 +2772,12 @@
 }
 .bt-summary .pos { color: var(--pos); font-weight: 600; }
 .bt-summary .neg { color: var(--neg); font-weight: 600; }
+/* "file sl/tp overridden" transparency chip — a muted outline so it reads as a
+   note rather than a metric, but is never silent about the override. */
+.bt-chip-muted {
+  border: 1px dashed var(--border); border-radius: 5px; padding: 1px 6px;
+  font-size: 11px; color: var(--text-dim); cursor: default;
+}
 .bt-clear {
   background: transparent; color: var(--text-dim); border: none;
   border-radius: 6px; padding: 2px 6px; cursor: pointer; font-size: 11px; transition: background 0.12s;
@@ -2794,6 +2800,8 @@
 .bt-error { color: var(--neg); font-size: 12px; }
 .bt-warning { color: var(--text-dim); font-size: 12px; cursor: help; }
 .bt-notice { color: var(--text-dim); font-size: 12px; }
+/* A run's 422 naming a declared coded-strategy param, shown under Parameters. */
+.bt-param-error { color: var(--neg); }
 
 .scale { display: inline-flex; gap: 2px; margin-left: 4px; }
 .scale button {
@@ -3707,5 +3715,94 @@
 .strat-picker-error { color: var(--neg); font-size: 12px; white-space: pre-wrap; }
 .strat-picker-src-toggle { align-self: flex-start; background: none; border: none; cursor: pointer; padding: 0; font: inherit; color: inherit; }
 .strat-picker-src { max-height: 320px; overflow: auto; font-size: 12px; border: 1px solid var(--border); padding: 8px; margin: 0; }
+
+/* StrategyParams: one control per coded strategy's declared ctx.param() knob */
+.strategy-params { display: flex; flex-direction: column; gap: 6px; }
+.sp-head { display: flex; align-items: center; justify-content: space-between; }
+.sp-title { font-weight: 600; font-size: 13px; }
+.sp-reset { background: none; border: none; cursor: pointer; padding: 0; font: inherit; color: var(--accent); }
+.sp-row { display: flex; align-items: center; gap: 8px; }
+.sp-label { display: flex; align-items: center; gap: 4px; font-size: 13px; flex: 1; min-width: 0; }
+.sp-changed .sp-label { color: var(--accent); }
+.sp-num { width: 72px; }
+.sp-default { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+.sp-switch {
+  width: 34px; height: 18px; border-radius: 9px; border: none; cursor: pointer;
+  background: var(--border); position: relative; transition: background 0.15s ease; padding: 0; flex: 0 0 auto;
+}
+.sp-switch.on { background: var(--accent); }
+.sp-switch-knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; transition: transform 0.15s ease;
+}
+.sp-switch.on .sp-switch-knob { transform: translateX(16px); }
+.sp-sweep { background: none; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; padding: 2px 6px; color: var(--text-dim); flex: 0 0 auto; }
+.sp-sweep.on { border-color: var(--accent); color: var(--accent); }
+
+/* Sweep axis from/to/step row — replaces the swept param's single NumberField */
+.sweep-axis-row { padding-left: 8px; }
+.sweep-axis-fields { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+
+/* Footer combo counter next to "Run backtest" / "Run sweep" */
+.sweep-counter { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sweep-counter.sweep-over-cap { color: var(--neg); }
+
+/* Sweep results — table + heatmap, shown in the modal's results region in
+   place of BacktestPanel while a sweep is active. */
+.sweep-panel { display: flex; flex-direction: column; gap: 8px; height: 100%; overflow: auto; }
+.sweep-cancel { align-self: flex-start; }
+.sweep-results { display: flex; flex-direction: column; gap: 10px; }
+
+.sweep-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.sweep-progress-bar { flex: 1; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.sweep-progress-fill { height: 100%; background: var(--accent); transition: width 0.15s ease; }
+
+.sweep-table-wrap { overflow: auto; }
+.sweep-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.sweep-table th {
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
+  text-align: left; font-weight: 500; font-size: 10px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-faint);
+  padding: 5px 10px 6px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.sweep-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.sweep-c-num { text-align: right; font-family: var(--mono); }
+.sweep-row { cursor: pointer; }
+.sweep-row:hover { background: var(--hover); }
+.sweep-row.sweep-error { color: var(--text-faint); font-style: italic; }
+.sweep-row.sweep-row-disabled { cursor: not-allowed; opacity: 0.55; }
+.sweep-row.sweep-row-disabled:hover { background: none; }
+.sweep-apply-hint { font-style: italic; }
+.sweep-best { color: var(--accent); font-weight: 600; }
+.sweep-sort {
+  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+  background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.sweep-sort:hover { color: var(--text-dim); }
+.sweep-sort.on { color: var(--text); }
+.sweep-sort-caret { font-size: 7px; line-height: 1; }
+
+.sweep-heatmap { display: flex; flex-direction: column; gap: 6px; }
+.sweep-heat-metric { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.sweep-heat-grid { display: grid; gap: 2px; font-size: 11px; }
+.sweep-heat-corner { }
+.sweep-heat-xlabel, .sweep-heat-ylabel {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-faint); font-family: var(--mono); padding: 2px;
+}
+.sweep-cell {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 26px; padding: 2px 4px; cursor: pointer; border-radius: 2px;
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+}
+.sweep-cell:hover { outline: 1px solid var(--accent); }
+.sweep-cell.sweep-error { color: var(--text-faint); font-style: italic; }
+.sweep-cell.sweep-cell-disabled { cursor: not-allowed; opacity: 0.55; }
+.sweep-cell.sweep-cell-disabled:hover { outline: none; }
+
 /* Live panel: read-only coded-strategy summary shown in place of the rule editors */
 .live-strat-summary { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+.live-coded-head { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.live-copy-backtest { font-size: 11px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); cursor: pointer; }
+.live-copy-backtest:hover { background: var(--surface-2, color-mix(in srgb, var(--text) 5%, transparent)); }

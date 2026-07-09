@@ -32,6 +32,14 @@ BAD_RETURN = '''def on_bar(ctx):
     return "not an action"
 '''
 
+PARAMS_STRAT = '''
+meta = {"params": [{"name": "n", "type": "int", "default": 3, "min": 1, "max": 50}]}
+def on_bar(ctx):
+    if ctx.position.is_flat and len(ctx.closes) >= ctx.param("n"):
+        return [ctx.buy(reason="go")]
+    return []
+'''
+
 
 def make_candles(n=30):
     t0 = 1_700_000_000
@@ -61,6 +69,7 @@ def strategies(tmp_path, monkeypatch):
     (tmp_path / "explicit_qty.py").write_text(EXPLICIT_QTY)
     (tmp_path / "raises.py").write_text(RAISES)
     (tmp_path / "bad_return.py").write_text(BAD_RETURN)
+    (tmp_path / "params.py").write_text(PARAMS_STRAT)
     monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
     yield
 
@@ -75,6 +84,20 @@ def test_flat_opens_with_signal_bracket(strategies):
     last_close = make_candles()[-1]["close"]
     assert a["stop_level"] == pytest.approx(last_close * 0.98)
     assert a["take_profit_level"] == pytest.approx(last_close * 1.04)
+
+
+def test_panel_risk_overrides_file_brackets(strategies):
+    """When the panel configures longRisk, the file's sl=/tp= on the long leg
+    are stripped before the engine, so the panel's stop/target land on the
+    ActionDTO instead of the file's."""
+    req = base_request("always_in.py")
+    req["longRisk"] = {"stop": {"kind": "pct", "value": 5}, "target": {"kind": "none"}}
+    res = client.post("/api/strategy/evaluate", json=req)
+    assert res.status_code == 200, res.text
+    a = res.json()["actions"][0]
+    last_close = make_candles()[-1]["close"]
+    assert a["stop_level"] == pytest.approx(last_close * 0.95)
+    assert a["take_profit_level"] is None
 
 
 def test_held_closes(strategies):
@@ -125,3 +148,115 @@ def test_strategy_raises_422(strategies):
 def test_strategy_bad_return_422(strategies):
     res = client.post("/api/strategy/evaluate", json=base_request("bad_return.py"))
     assert res.status_code == 422
+
+
+def test_evaluate_coded_params_change_behavior(strategies):
+    req = base_request("params.py")
+    r1 = client.post("/api/strategy/evaluate", json=req).json()
+    assert len(r1["actions"]) == 1  # default n=3, 30 candles -> fires
+    req["codedParams"] = {"n": 50}
+    r2 = client.post("/api/strategy/evaluate", json=req).json()
+    assert len(r2["actions"]) == 0  # n=50 > 30 candles -> no action
+
+
+def test_evaluate_coded_params_bad_value_422(strategies):
+    req = base_request("params.py")
+    req["codedParams"] = {"n": "lots"}
+    resp = client.post("/api/strategy/evaluate", json=req)
+    assert resp.status_code == 422
+    assert "n" in resp.json()["detail"]
+
+
+HOLD_ONLY = '''def on_bar(ctx):
+    if ctx.position.is_flat:
+        return [ctx.buy(reason="in")]
+    return []
+'''
+
+
+def test_panel_exit_rule_closes_coded_position(strategies, tmp_path, monkeypatch):
+    """A held position + a panel-authored longExit rule that's TRUE now must
+    close through CodedWithRuleExits even though the coded file never exits
+    itself."""
+    (tmp_path / "hold_only.py").write_text(HOLD_ONLY)
+    monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
+
+    candles = make_candles()
+    series = {"SIG": [1.0] * len(candles)}
+    pos = {"side": "buy", "quantity": 1, "open_level": 100,
+           "open_time": candles[0]["time"]}
+    req = base_request("hold_only.py", pos)
+    req["series"] = series
+    req["longExit"] = {"combine": "AND", "rules": [{
+        "left": {"kind": "series", "seriesKey": "SIG"},
+        "op": "gt",
+        "right": {"kind": "const", "value": 0.0},
+    }]}
+    res = client.post("/api/strategy/evaluate", json=req)
+    assert res.status_code == 200, res.text
+    actions = res.json()["actions"]
+    assert len(actions) == 1
+    assert actions[0]["kind"] == "close"
+    assert actions[0]["reason"] == "SIG gt 0.0"
+
+
+def test_evaluate_none_none_risk_keeps_file_brackets(strategies):
+    """C1 (critical): a none/none longRisk posted from the live evaluate path
+    must NOT strip the file's own sl=/tp= — same rule as backtest."""
+    req = base_request("always_in.py")
+    req["longRisk"] = {"stop": {"kind": "none"}, "target": {"kind": "none"}}
+    res = client.post("/api/strategy/evaluate", json=req)
+    assert res.status_code == 200, res.text
+    a = res.json()["actions"][0]
+    last_close = make_candles()[-1]["close"]
+    assert a["stop_level"] == pytest.approx(last_close * 0.98)
+    assert a["take_profit_level"] == pytest.approx(last_close * 1.04)
+
+
+ATR_RISK_STRAT = '''def on_bar(ctx):
+    if ctx.position.is_flat:
+        return [ctx.buy(reason="in")]
+    return []
+'''
+
+
+def test_evaluate_coded_atr_risk_missing_series_422(strategies, tmp_path, monkeypatch):
+    """I4: ATR-kind panel risk on a coded evaluate cycle needs the same
+    missing-series 422 guard rule mode gets."""
+    (tmp_path / "atr_risk.py").write_text(ATR_RISK_STRAT)
+    monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
+    req = base_request("atr_risk.py")
+    req["longRisk"] = {
+        "stop": {"kind": "atr", "mult": 2.0, "length": 14},
+        "target": {"kind": "none"},
+    }
+    res = client.post("/api/strategy/evaluate", json=req)
+    assert res.status_code == 422
+    assert "ATR_14" in res.json()["detail"]
+
+
+def test_evaluate_coded_atr_risk_with_series_200(strategies, tmp_path, monkeypatch):
+    (tmp_path / "atr_risk.py").write_text(ATR_RISK_STRAT)
+    monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
+    req = base_request("atr_risk.py")
+    req["series"] = {"ATR_14": [1.0] * len(make_candles())}
+    req["longRisk"] = {
+        "stop": {"kind": "atr", "mult": 2.0, "length": 14},
+        "target": {"kind": "none"},
+    }
+    res = client.post("/api/strategy/evaluate", json=req)
+    assert res.status_code == 200, res.text
+
+
+def test_evaluate_coded_with_exit_rules_missing_series_422(strategies):
+    """The missing-series 422 guard must also cover a coded request whose exit
+    rule groups reference a series that wasn't posted."""
+    req = base_request("always_in.py")
+    req["longExit"] = {"combine": "AND", "rules": [{
+        "left": {"kind": "series", "seriesKey": "SIG"},
+        "op": "gt",
+        "right": {"kind": "const", "value": 0.0},
+    }]}
+    res = client.post("/api/strategy/evaluate", json=req)
+    assert res.status_code == 422
+    assert "missing series 'SIG'" in res.json()["detail"]

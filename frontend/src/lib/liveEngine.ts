@@ -10,6 +10,7 @@ import {
   type LiveState, type ArmedSnapshot, activeRules, appendLog, setPositionVintage, markLost,
 } from "./liveState";
 import { activeGroup } from "./backtestConfig";
+import { sendableRisk } from "./codedConfig";
 import { markStrategyDeal, forgetStrategyDeal } from "./liveTags";
 import { recordClose } from "./liveJournal";
 import type { EvaluateRequest, EvaluateResult } from "./liveTypes";
@@ -95,14 +96,30 @@ export async function runOneCycle(
     };
   }
   const coded = cfg.mode === "coded" && !!cfg.codedStrategy;
-  const fetchTf = deps.fetchTimeframe ?? (async () => bars);
-  const series = coded
-    ? {}
-    : await deps.buildSeries(
-        bars as never, snap.cfg, resolution, (async (tf: string) => await fetchTf(tf)) as never,
-      );
-
+  // Coded mode: the snapshot's FROZEN live coded set (params/risk/exit rule
+  // groups) drives the run — entries stay empty (the .py file opens positions
+  // itself). Feeding this into buildSeries unchanged (empty entry groups ⇒
+  // only exit-rule operands + risk-ATR series come out) is the same
+  // "effective cfg" trick the backtest panel uses (Task 8); one buildSeries
+  // call covers both modes (effCfg === cfg for rule mode).
+  const codedCfg = coded ? snap.coded : null;
   const emptyGroup = { combine: "AND" as const, rules: [] };
+  const effCfg = coded
+    ? {
+        ...cfg,
+        longEntry: emptyGroup,
+        shortEntry: emptyGroup,
+        longExit: codedCfg?.longExit ?? emptyGroup,
+        shortExit: codedCfg?.shortExit ?? emptyGroup,
+        longRisk: sendableRisk(codedCfg?.longRisk),
+        shortRisk: sendableRisk(codedCfg?.shortRisk),
+      }
+    : cfg;
+  const fetchTf = deps.fetchTimeframe ?? (async () => bars);
+  const series = await deps.buildSeries(
+    bars as never, effCfg, resolution, (async (tf: string) => await fetchTf(tf)) as never,
+  );
+
   const req: EvaluateRequest = {
     epic, resolution,
     candles: bars.map((b) => ({
@@ -110,20 +127,25 @@ export async function runOneCycle(
       open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
     })),
     series,
-    longEntry: coded ? emptyGroup : activeGroup(cfg.longEntry),
-    longExit: coded ? emptyGroup : activeGroup(cfg.longExit),
-    shortEntry: coded ? emptyGroup : activeGroup(cfg.shortEntry),
-    shortExit: coded ? emptyGroup : activeGroup(cfg.shortExit),
-    longEnabled: cfg.longEnabled !== false,
-    shortEnabled: cfg.shortEnabled !== false,
-    longRisk: coded ? undefined : cfg.longRisk ?? null,
-    shortRisk: coded ? undefined : cfg.shortRisk ?? null,
+    longEntry: coded ? effCfg.longEntry : activeGroup(cfg.longEntry),
+    longExit: coded ? activeGroup(effCfg.longExit) : activeGroup(cfg.longExit),
+    shortEntry: coded ? effCfg.shortEntry : activeGroup(cfg.shortEntry),
+    shortExit: coded ? activeGroup(effCfg.shortExit) : activeGroup(cfg.shortExit),
+    // longEnabled/shortEnabled are rules-mode UI; RuleStrategy gates EXITS on
+    // them (rule.py). A coded run must never let a rules-mode toggle silently
+    // disable that side's panel exit rules while the .py file still opens
+    // positions on it (I1) — so coded mode always sends both sides enabled.
+    longEnabled: coded ? true : cfg.longEnabled !== false,
+    shortEnabled: coded ? true : cfg.shortEnabled !== false,
+    longRisk: coded ? effCfg.longRisk ?? undefined : cfg.longRisk ?? null,
+    shortRisk: coded ? effCfg.shortRisk ?? undefined : cfg.shortRisk ?? null,
     position,
     codedStrategy: coded ? cfg.codedStrategy : undefined,
     // Coded strategies' ad-hoc ctx.ema(tf=...) calls need the backend to fetch
     // that timeframe itself — same broker/price side the live stream uses (mid).
     broker: coded ? brokerId : undefined,
     priceSide: coded ? "mid" : undefined,
+    codedParams: coded ? codedCfg?.params : undefined,
   };
 
   let actions: EvaluateResult["actions"];

@@ -9,13 +9,15 @@
 // or "1." survive a keystroke (a purely controlled number field would round
 // them away and wipe the trailing dot). On each valid keystroke it commits the
 // parsed number to `onChange`; on blur it drops the draft and, when `floor` is
-// given, snaps a non-positive/empty field up to that floor.
+// given, snaps a non-positive/empty field up to that floor, and when `step`
+// is given, snaps the committed value to the nearest multiple of it.
 import { useState, type ChangeEvent } from "react";
 
 export default function NumberField({
   value,
   onChange,
   floor,
+  step,
   signed = false,
   className,
 }: {
@@ -24,6 +26,10 @@ export default function NumberField({
   /** When set, the field can't commit a non-positive value: an empty or ≤0
    *  entry snaps up to `floor` on blur, matching the old min= guard. */
   floor?: number;
+  /** When set, the typed value snaps to the nearest multiple of `step` on
+   *  blur (not per-keystroke, so mid-typing values like "2" of "25" aren't
+   *  clobbered before the rest of the digits land). */
+  step?: number;
   /** Allow a single leading minus so negative thresholds (e.g. a slope < -0.05)
    *  can be entered. Off by default — magnitude/quantity fields stay unsigned. */
   signed?: boolean;
@@ -53,7 +59,19 @@ export default function NumberField({
   }
 
   function handleBlur() {
-    if (floor != null && !(Number(draft ?? "") > 0)) onChange(floor);
+    if (floor != null && !(Number(draft ?? "") > 0)) {
+      onChange(floor);
+    } else if (step != null && draft != null) {
+      const n = Number(draft);
+      if (Number.isFinite(n)) {
+        // Clean the quotient before rounding (0.35/0.1 is 3.4999…96, which
+        // would snap the wrong way), then clean the product to the step's own
+        // decimal places so binary-float garbage never gets committed.
+        const decimals = (String(step).split(".")[1] ?? "").length;
+        const snapped = Math.round(Number((n / step).toPrecision(12))) * step;
+        onChange(Number(snapped.toFixed(decimals)));
+      }
+    }
     setDraft(null);
   }
 

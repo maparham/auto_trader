@@ -16,8 +16,10 @@ import type { ChartController } from "./lib/chartController";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
 import { buildSeries } from "./lib/backtestSeries";
-import { defaultBacktestConfig, activeGroup } from "./lib/backtestConfig";
+import { defaultBacktestConfig, activeGroup, type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
 import { resolveMask } from "./lib/backtestSchedule";
+import { loadCodedCfg, resolveParamValues, sendableRisk } from "./lib/codedConfig";
+import { fetchStrategies } from "./api";
 import {
   resolveWindow,
   resolveHistoryStart,
@@ -34,7 +36,12 @@ import {
   backtestMessagesSignal,
   backtestPeriodsShownSignal,
   backtestRunningSignal,
+  sweepAxesSignal,
+  sweepStateSignal,
+  sweepCancelRequest,
 } from "./lib/signals";
+import { runSweep, sweepCatchState } from "./lib/sweep";
+import type { BacktestRequest, SweepRow } from "./api";
 
 interface Props {
   controller: ChartController | null;
@@ -112,6 +119,36 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         setError("no coded strategy selected — pick one in the backtest panel");
         return;
       }
+      // Coded mode: the panel's per-file config (params + risk + exit rules,
+      // Task 8) drives the run — entries stay empty (the .py file opens
+      // positions itself). Feeding this into `buildSeries` unchanged (empty
+      // entry groups ⇒ only exit-rule operands + risk-ATR series come out) is
+      // the "effective cfg" trick other tasks reuse, so no other machinery needs
+      // to know coded mode exists.
+      const EMPTY_GROUP: RuleGroup = { combine: "AND", rules: [] };
+      const codedCfg = coded ? loadCodedCfg("backtest", cfg.codedStrategy!) : null;
+      const effCfg: BacktestConfig = coded
+        ? {
+            ...cfg,
+            longEntry: EMPTY_GROUP,
+            shortEntry: EMPTY_GROUP,
+            longExit: codedCfg!.longExit,
+            shortExit: codedCfg!.shortExit,
+            longRisk: codedCfg!.longRisk,
+            shortRisk: codedCfg!.shortRisk,
+            longScaling: undefined,
+            shortScaling: undefined,
+          }
+        : cfg;
+      // The strategy's declared params schema, so panel-tuned values are
+      // clamped/defaulted the same way the Parameters section shows them. A
+      // stale schema (file edited since the values were saved) is harmless —
+      // the backend re-validates codedParams itself. A FAILED fetch must abort
+      // the run (via the catch below), not resolve against an empty schema:
+      // that would silently drop every tuned value and run on file defaults.
+      const codedParams = coded
+        ? resolveParamValues((await fetchStrategies()).find((s) => s.filename === cfg.codedStrategy)?.params ?? [], codedCfg!.params)
+        : undefined;
       // The config timeframe overrides the active chart timeframe when set;
       // absent means follow the chart (the historical behavior).
       const runResolution = cfg.range.resolution ?? period.resolution;
@@ -160,8 +197,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       const fetchTimeframe = (resolution: string) =>
         fetchRange(epic, resolution, htfFromSec, toSec, priceSide, brokerId);
       const tSeries0 = performance.now();
-      // Coded strategies compute indicators in Python — nothing to precompute.
-      const series = coded ? {} : await buildSeries(bars, cfg, runResolution, fetchTimeframe);
+      // Coded mode's empty entry groups mean buildSeries only computes what the
+      // panel-configured exit rules + risk ATR need (collectSeriesOperands /
+      // riskAtrLengths read effCfg's four rule groups + longRisk/shortRisk the
+      // same way rule mode does) — the strategy file's OWN indicators are
+      // computed in Python and never touch this series map.
+      const series = await buildSeries(bars, effCfg, runResolution, fetchTimeframe);
       const tSeries1 = performance.now();
       const candles = bars.map((k) => ({
         time: Math.round(k.timestamp / 1000),
@@ -177,35 +218,86 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           `buildSeries ${(tSeries1 - tSeries0).toFixed(0)}ms (${Object.keys(series).length} series)`,
       );
       const tRun0 = performance.now();
+      const baseReq: BacktestRequest = {
+        epic,
+        resolution: runResolution,
+        candles,
+        series,
+        // Coded strategies compute indicators in Python — nothing to precompute.
+        codedStrategy: coded ? cfg.codedStrategy : undefined,
+        // Coded strategies' ad-hoc ctx.ema(tf=...) calls need the backend to fetch
+        // that timeframe itself — same broker/price side the chart is showing.
+        broker: coded ? brokerId : undefined,
+        priceSide: coded ? priceSide : undefined,
+        // Panel-tuned ctx.param() overrides for the coded strategy.
+        codedParams,
+        // Disabled rules are kept in the config but dropped from the run. Coded
+        // entries are always the empty group (the .py file opens positions
+        // itself); coded exits come from the panel's per-file config.
+        longEntry: activeGroup(effCfg.longEntry),
+        longExit: activeGroup(effCfg.longExit),
+        shortEntry: activeGroup(effCfg.shortEntry),
+        shortExit: activeGroup(effCfg.shortExit),
+        // `!== false` so a preset predating these flags (undefined) still trades.
+        // Coded mode: longEnabled/shortEnabled are rules-mode UI; RuleStrategy
+        // gates EXITS on them (rule.py). A coded run must never let a
+        // rules-mode toggle silently disable that side's panel exit rules
+        // while the .py file still opens positions on it (I1).
+        longEnabled: coded ? true : cfg.longEnabled !== false,
+        shortEnabled: coded ? true : cfg.shortEnabled !== false,
+        // A none/none risk (RiskSection touched then reset) must be
+        // indistinguishable from no panel risk at all, or the backend strips
+        // the coded file's own sl=/tp= while applying no stop either (C1).
+        longRisk: sendableRisk(effCfg.longRisk),
+        shortRisk: sendableRisk(effCfg.shortRisk),
+        longScaling: effCfg.longScaling,
+        shortScaling: effCfg.shortScaling,
+        costs: cfg.costs,
+        tradeFromTime,
+        mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
+      };
+
+      // Sweep mode (Task 10): the modal populated sweepAxesSignal and asked for
+      // this same run — chunk through runSweep instead of a single runAndRender.
+      // Nothing renders on the chart; results stream into sweepStateSignal for
+      // the modal's <SweepResults> to show. Clicking a result applies it, which
+      // clears the axes and re-enters this function on the normal path.
+      const sweepAxes = sweepAxesSignal.value;
+      if (sweepAxes.length > 0) {
+        const ctl = new AbortController();
+        const unsubCancel = sweepCancelRequest.subscribe(() => ctl.abort());
+        sweepStateSignal.set({ rows: [], done: 0, total: 0, running: true });
+        try {
+          const landed: SweepRow[] = [];
+          const rows = await runSweep(baseReq, sweepAxes, {
+            signal: ctl.signal,
+            onRows: (chunkRows, done, total) => {
+              // After an abort (modal closed / Cancel) the state may already be
+              // cleared — a late chunk must not resurrect a ghost sweep.
+              if (ctl.signal.aborted) return;
+              landed.push(...chunkRows);
+              sweepStateSignal.set({ rows: landed, done, total, running: true });
+            },
+          });
+          sweepStateSignal.set({ rows, done: rows.length, total: rows.length, running: false });
+        } catch (e) {
+          // A user Cancel and a real chunk failure both reject the same
+          // promise — check the controller's own signal (not the error's
+          // message) to tell them apart, so Cancel never renders as an error.
+          // When the modal already tore the state down (unmount cancel), stay
+          // torn down instead of re-publishing a cancelled ghost.
+          if (!(ctl.signal.aborted && sweepStateSignal.value === null)) {
+            sweepStateSignal.set(sweepCatchState(sweepStateSignal.value, ctl.signal.aborted, e));
+          }
+        } finally {
+          unsubCancel();
+        }
+        return;
+      }
+
       const res = await runAndRender(
         chart,
-        {
-          epic,
-          resolution: runResolution,
-          candles,
-          series,
-          // Coded strategies compute indicators in Python — nothing to precompute.
-          codedStrategy: coded ? cfg.codedStrategy : undefined,
-          // Coded strategies' ad-hoc ctx.ema(tf=...) calls need the backend to fetch
-          // that timeframe itself — same broker/price side the chart is showing.
-          broker: coded ? brokerId : undefined,
-          priceSide: coded ? priceSide : undefined,
-          // Disabled rules are kept in the config but dropped from the run.
-          longEntry: coded ? { combine: "AND", rules: [] } : activeGroup(cfg.longEntry),
-          longExit: coded ? { combine: "AND", rules: [] } : activeGroup(cfg.longExit),
-          shortEntry: coded ? { combine: "AND", rules: [] } : activeGroup(cfg.shortEntry),
-          shortExit: coded ? { combine: "AND", rules: [] } : activeGroup(cfg.shortExit),
-          // `!== false` so a preset predating these flags (undefined) still trades.
-          longEnabled: cfg.longEnabled !== false,
-          shortEnabled: cfg.shortEnabled !== false,
-          longRisk: coded ? undefined : cfg.longRisk,
-          shortRisk: coded ? undefined : cfg.shortRisk,
-          longScaling: coded ? undefined : cfg.longScaling,
-          shortScaling: coded ? undefined : cfg.shortScaling,
-          costs: cfg.costs,
-          tradeFromTime,
-          mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
-        },
+        baseReq,
         controller!.scope,
         // Displayed TF, so runAndRender picks native/aggregate/none correctly when
         // the run's base TF (runResolution) differs from what the chart shows.

@@ -242,3 +242,28 @@ def test_bad_return_type_is_an_error():
     candles = make_candles()
     with pytest.raises(StrategyRuntimeError, match="Action"):
         run_engine(lambda ctx: ["not an action"], candles)
+
+
+def test_ctx_param_reads_sent_value_and_default():
+    candles = make_candles(10)
+
+    def on_bar(ctx):
+        if ctx.position.is_flat and len(ctx.closes) >= ctx.param("n"):
+            return [ctx.buy(reason=f"n={ctx.param('n')}")]
+        return []
+
+    mod = module_from(on_bar)
+    mod.meta = {"params": [{"name": "n", "type": "int", "default": 3}]}
+    default_run = BacktestEngine(CodedStrategy(mod, candles, quantity=1.0)).run(candles)
+    sent_run = BacktestEngine(
+        CodedStrategy(mod, candles, quantity=1.0, params={"n": 8})
+    ).run(candles)
+    # With n=8 the first entry comes later than with the default n=3.
+    assert sent_run.fills[0].time > default_run.fills[0].time
+
+
+def test_ctx_param_unknown_name_raises():
+    candles = make_candles(5)
+    mod = module_from(lambda ctx: [] if ctx.param("nope") else [])
+    with pytest.raises(StrategyRuntimeError, match="nope"):
+        BacktestEngine(CodedStrategy(mod, candles, quantity=1.0)).run(candles)

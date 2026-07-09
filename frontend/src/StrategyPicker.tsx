@@ -2,31 +2,28 @@
 // IDE): dropdown of discovered files, always-visible description, ⟳ reload
 // (the file list changes on disk between runs), and a collapsed read-only
 // source view so you can confirm WHICH version you're about to run.
+//
+// The discovered list is fetched by the PARENT (BacktestSettingsModal) and
+// passed in, rather than fetched here, so the parent can also read the
+// selected strategy's `params` schema (for the Parameters/Risk/Exit sections)
+// without a second, out-of-sync fetch. This component keeps the reload button
+// — clicking it calls the parent's `onReload`.
 
 import { useEffect, useState } from "react";
-import { fetchStrategies, fetchStrategySource, type StrategyInfo } from "./api";
+import { fetchStrategySource, type StrategyInfo } from "./api";
 import Tooltip from "./components/Tooltip";
 
 interface Props {
   value: string | undefined;
   onChange: (filename: string) => void;
+  list: StrategyInfo[];
+  loadError: string | null;
+  onReload: () => void;
 }
 
-export default function StrategyPicker({ value, onChange }: Props) {
-  const [list, setList] = useState<StrategyInfo[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+export default function StrategyPicker({ value, onChange, list, loadError, onReload }: Props) {
   const [source, setSource] = useState<string | null>(null);
   const [showSource, setShowSource] = useState(false);
-
-  async function reload() {
-    try {
-      setList(await fetchStrategies());
-      setLoadError(null);
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "failed to load strategies");
-    }
-  }
-  useEffect(() => void reload(), []);
 
   // Source view follows the selection; refetch on toggle so it's never stale.
   async function toggleSource() {
@@ -65,7 +62,7 @@ export default function StrategyPicker({ value, onChange }: Props) {
           ))}
         </select>
         <Tooltip content="Re-scan backend/strategies/ for new or edited files">
-          <button className="anchor-btn" aria-label="Reload strategies" onClick={() => void reload()}>
+          <button className="anchor-btn" aria-label="Reload strategies" onClick={onReload}>
             ⟳
           </button>
         </Tooltip>

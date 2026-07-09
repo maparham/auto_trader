@@ -114,6 +114,7 @@ class BacktestResponse(BaseModel):
     equity: list[EquityDTO]
     summary: dict
     metrics: dict = {}
+    fileBracketsOverridden: bool = False
 
 
 # --- rule-based backtest request (D1/D4/D6: frontend computes series, posts
@@ -235,6 +236,14 @@ class RiskConfigDTO(BaseModel):
                 names.append(f"ATR_{spec.length}")
         return names
 
+    def is_configured(self) -> bool:
+        """A leg only counts as panel-configured when at least one of its
+        stop/target specs is a real kind. A none/none config (RiskSection
+        touched then reset back to None) must be indistinguishable from no
+        panel risk at all — otherwise it silently strips the coded file's own
+        sl=/tp= brackets while applying no engine-side stop either (C1)."""
+        return self.stop.kind != "none" or self.target.kind != "none"
+
 
 class SpacingSpecDTO(BaseModel):
     kind: Literal["pct", "atr"]
@@ -325,9 +334,33 @@ class BacktestRequest(BaseModel):
     # groups above are ignored and the file's on_bar drives the run; series stays
     # empty (Python computes indicators ad hoc — the frontend posts none).
     codedStrategy: str | None = None
+    # Panel-tuned values for the coded strategy's declared meta["params"];
+    # unset/omitted params fall back to their declared defaults.
+    codedParams: dict[str, int | float | bool | str] | None = None
     # Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
     broker: str = "capital"
     priceSide: str = "mid"
+    # Parameter/risk sweep: when set, POST /api/backtest/sweep runs one combo
+    # per entry instead of the single codedParams/longRisk/shortRisk on this
+    # request. Ignored by POST /api/backtest.
+    sweep: SweepDTO | None = None
+
+
+class SweepDTO(BaseModel):
+    """Explicit combo list — the frontend enumerates the grid and chunks it.
+    Keys: "param:<name>" (codedParams override) or
+    "risk:<long|short>.<stop|target>.<value|mult>"."""
+    combos: list[dict[str, float | int | bool | str]]
+
+
+class SweepRowDTO(BaseModel):
+    combo: dict[str, float | int | bool | str]
+    metrics: dict | None = None
+    error: str | None = None
+
+
+class SweepResponse(BaseModel):
+    rows: list[SweepRowDTO]
 
 
 # --- order execution (paper now; demo/live later) ----------------------------
@@ -469,6 +502,9 @@ class EvaluateRequest(BaseModel):
     # Coded strategy filename (backend/strategies/*.py). When set the rule groups
     # are ignored; a meta["hedged"] strategy is refused (backtest-only).
     codedStrategy: str | None = None
+    # Panel-tuned values for the coded strategy's declared meta["params"];
+    # unset/omitted params fall back to their declared defaults.
+    codedParams: dict[str, int | float | bool | str] | None = None
     # Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
     broker: str = "capital"
     priceSide: str = "mid"
@@ -481,6 +517,19 @@ class EvaluateResponse(BaseModel):
 # --- coded strategies: /api/strategies discovery ------------------------------
 
 
+class ParamSpecDTO(BaseModel):
+    """One tunable knob a coded strategy declares in meta['params']."""
+    name: str
+    label: str
+    type: Literal["int", "float", "bool", "choice"]
+    default: int | float | bool | str
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
+    options: list[str] | None = None
+    help: str | None = None
+
+
 class StrategyInfoDTO(BaseModel):
     """One discovered backend/strategies/*.py file. A file that fails to load is
     still listed with `error` set, so the picker can show it as broken."""
@@ -489,6 +538,7 @@ class StrategyInfoDTO(BaseModel):
     name: str
     description: str
     hedged: bool
+    params: list[ParamSpecDTO] = []
     error: str | None = None
 
 

@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 
 from auto_trader.strategy import loader
 
-from ..schemas import StrategyInfoDTO, StrategySourceDTO
+from ..schemas import ParamSpecDTO, StrategyInfoDTO, StrategySourceDTO
 
 router = APIRouter()
 
@@ -21,7 +21,8 @@ async def strategies() -> list[StrategyInfoDTO]:
     return [
         StrategyInfoDTO(
             filename=i.filename, name=i.name, description=i.description,
-            hedged=i.hedged, error=i.error,
+            hedged=i.hedged, params=[ParamSpecDTO(**p) for p in i.params],
+            error=i.error,
         )
         for i in loader.list_strategies(loader.STRATEGIES_DIR)
     ]

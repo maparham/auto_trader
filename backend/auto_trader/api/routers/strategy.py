@@ -15,14 +15,20 @@ from fastapi import APIRouter, HTTPException
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle, Side
 from auto_trader.engine.risk import stop_level, target_level
-from auto_trader.strategy.base import Context
-from auto_trader.strategy.coded import CodedStrategy, NeedTimeframe, StrategyRuntimeError
+from auto_trader.strategy.base import Context, Strategy
+from auto_trader.strategy.coded import (
+    CodedStrategy,
+    CodedWithRuleExits,
+    NeedTimeframe,
+    StrategyRuntimeError,
+)
+from auto_trader.strategy.params import resolve_params
 from auto_trader.strategy.rule import RuleStrategy, series_name
 from auto_trader.strategy import loader
 from auto_trader.strategy.loader import StrategyLoadError
 
 from .. import deps
-from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse
+from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse, RuleGroupDTO
 
 router = APIRouter()
 
@@ -69,6 +75,23 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
                 name = series_name(op.to_operand())
                 if name is not None and name not in req.series:
                     raise HTTPException(422, f"missing series '{name}' referenced by a rule")
+    else:
+        # Coded run: series-shaped checks a pure rule run gets, mirrored here
+        # because coded runs skip the rule-mode validation block above (coded
+        # ignores the entry groups; only panel exit rules + panel risk apply).
+        # Runs whenever codedStrategy is set, not only when exit rules exist
+        # (I4 — ATR-kind panel risk with a missing ATR series must 422 too).
+        for group in (req.longExit, req.shortExit):
+            for op in group.operands():
+                name = series_name(op.to_operand())
+                if name is not None and name not in req.series:
+                    raise HTTPException(422, f"missing series '{name}' referenced by a rule")
+        for risk in (req.longRisk, req.shortRisk):
+            if risk is None:
+                continue
+            for name in risk.atr_series_names():
+                if name not in req.series:
+                    raise HTTPException(422, f"missing series '{name}' referenced by a stop/target")
 
     candles = [_candle(c) for c in req.candles]
     i = len(candles) - 1
@@ -87,6 +110,10 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             raise HTTPException(
                 422, f"'{req.codedStrategy}' is hedged — backtest-only, refused for live"
             )
+        try:
+            resolved_params = resolve_params(module, req.codedParams)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
     else:
         strategy = RuleStrategy(
             req.longEntry.to_group(), req.longExit.to_group(),
@@ -117,12 +144,25 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             ctx.short_entry_time = entry_time
 
     if req.codedStrategy is not None:
+        panel_risk_legs = frozenset(
+            leg for leg, r in (("long", req.longRisk), ("short", req.shortRisk))
+            if r is not None and r.is_configured()
+        )
         htf_candles: dict[str, list[Candle]] = {}
         for _ in range(_MAX_TF_PASSES):
-            strategy = CodedStrategy(
+            strategy: Strategy = CodedStrategy(
                 module, candles, quantity=1.0, htf_candles=htf_candles,
-                base_timeframe=req.resolution,
+                base_timeframe=req.resolution, params=resolved_params,
+                panel_risk_legs=panel_risk_legs,
             )
+            if req.longExit.rules or req.shortExit.rules:
+                empty = RuleGroupDTO(combine="AND", rules=[]).to_group()
+                strategy = CodedWithRuleExits(strategy, RuleStrategy(
+                    empty, req.longExit.to_group(), empty, req.shortExit.to_group(),
+                    req.series, quantity=1.0,
+                    long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
+                    base_timeframe=req.resolution,
+                ))
             try:
                 signals = strategy.on_bar(ctx)
                 break

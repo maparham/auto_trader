@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { render, screen, fireEvent, cleanup, within, act } from "@testing-library/react";
+import { installMemStorage } from "./lib/testMemStorage";
+
+// jsdom's localStorage isn't wired up in this project's vitest config (see
+// codedConfig.test.ts) — install the in-memory shim before any module reads it,
+// so the coded-mode tests' persistence round-trip actually lands.
+installMemStorage();
 
 // The modal now threads openChartPicker -> enumerateChartOperands, which pulls in
 // backtestSeries -> customIndicators, which reads LineType at module load (AVWAP
@@ -12,12 +18,28 @@ vi.mock("klinecharts", () => ({
   registerIndicator: () => {},
 }));
 
+// Coded-mode tests stub the strategy list so the modal doesn't hit the network.
+// Defaults to an empty list so rules-mode tests (which never touch it) don't
+// have to care.
+const mockStrategies = vi.fn().mockResolvedValue([]);
+vi.mock("./api", async () => {
+  const actual = await vi.importActual<typeof import("./api")>("./api");
+  return { ...actual, fetchStrategies: (...args: unknown[]) => mockStrategies(...args) };
+});
+
 import BacktestSettingsModal from "./BacktestSettingsModal";
 import { defaultBacktestConfig } from "./lib/backtestConfig";
+import { loadCodedCfg } from "./lib/codedConfig";
+import { sweepStateSignal, sweepAxesSignal } from "./lib/signals";
+import type { SweepRow } from "./api";
 
 // See VisibilityTab.test.tsx: vitest isn't run with jest-style globals, so RTL's
 // automatic cleanup never registers. Without this each render leaks into the next.
 afterEach(cleanup);
+beforeEach(() => {
+  localStorage.clear();
+  mockStrategies.mockReset().mockResolvedValue([]);
+});
 
 // The rule group whose <div class="bt-section"> heading matches `title`. Each
 // group renders its rows and Add/Paste footer inside that section.
@@ -32,12 +54,13 @@ function ruleRows(section: HTMLElement): HTMLElement[] {
   return [...section.querySelectorAll(".bt-rule-row")] as HTMLElement[];
 }
 
-function renderModal() {
+function renderModal(initial = defaultBacktestConfig()) {
   return render(
     <BacktestSettingsModal
-      initial={defaultBacktestConfig()}
+      initial={initial}
       epic="TEST"
       resolution="MINUTE"
+      controller={null}
       onRun={vi.fn()}
       onClose={vi.fn()}
     />,
@@ -169,5 +192,120 @@ describe("parked side", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Trade the long side" }));
     expect(sideRules.hasAttribute("inert")).toBe(true);
     expect(sideRules.className).toContain("bt-parked");
+  });
+});
+
+describe("coded mode: params, risk, and exit-rule sections", () => {
+  const strategies = [
+    {
+      filename: "ema_cross.py",
+      name: "EMA Cross",
+      description: "",
+      hedged: false,
+      error: null,
+      params: [
+        { name: "ema_fast", label: "Fast EMA", type: "int" as const, default: 9, min: 2, max: 50, step: 1, options: null, help: null },
+      ],
+    },
+  ];
+
+  it("coded mode shows params, risk and exit-rule sections editing the backtest set", async () => {
+    mockStrategies.mockResolvedValue(strategies);
+    const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
+    renderModal(initial);
+    openStrategy();
+
+    // Params render once the strategy list resolves.
+    expect(await screen.findByText("Fast EMA")).toBeTruthy();
+
+    // Risk sections (one per side) — RiseSection's actual heading copy.
+    expect(screen.getAllByText("Stop & take profit").length).toBeGreaterThan(0);
+
+    // Exit rule-group titles, reused from rules mode.
+    expect(screen.getByText("Sell to close")).toBeTruthy();
+    expect(screen.getByText("Buy to close")).toBeTruthy();
+
+    // Entry groups are hidden in coded mode.
+    expect(screen.queryByText("Buy to open")).toBeNull();
+    expect(screen.queryByText("Sell to open")).toBeNull();
+
+    // Editing a param persists into the "backtest" coded set for this filename.
+    const input = screen.getByDisplayValue("9") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "12" } });
+    fireEvent.blur(input);
+    expect(loadCodedCfg("backtest", "ema_cross.py").params.ema_fast).toBe(12);
+  });
+
+  it("rules mode is unchanged (no params/coded sections)", () => {
+    renderModal();
+    openStrategy();
+    expect(screen.queryByText("Parameters")).toBeNull();
+    expect(screen.getByText("Buy to open")).toBeTruthy();
+  });
+});
+
+describe("sweep results: click-to-apply mid-sweep (I2)", () => {
+  const strategies = [
+    {
+      filename: "ema_cross.py", name: "EMA Cross", description: "", hedged: false, error: null,
+      params: [
+        { name: "ema_fast", label: "Fast EMA", type: "int" as const, default: 9, min: 2, max: 50, step: 1, options: null, help: null },
+      ],
+    },
+  ];
+  const rows: SweepRow[] = [
+    { combo: { "param:ema_fast": 12 }, metrics: { net_pnl: 10, n_trades: 3, win_rate: 0.5, max_drawdown: 1, profit_factor: 1.2, return_pct: 1 }, error: null },
+  ];
+
+  afterEach(() => {
+    sweepStateSignal.set(null);
+    sweepAxesSignal.set([]);
+  });
+
+  it("clicking a sweep row while the sweep is still running does NOT apply the combo", async () => {
+    mockStrategies.mockResolvedValue(strategies);
+    const onRun = vi.fn();
+    const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
+    render(
+      <BacktestSettingsModal
+        initial={initial} epic="TEST" resolution="MINUTE" controller={null}
+        onRun={onRun} onClose={vi.fn()}
+      />,
+    );
+    openStrategy();
+    await screen.findByText("Fast EMA");
+    act(() => sweepStateSignal.set({ rows, done: 1, total: 2, running: true }));
+
+    // The disabled state must be visible, not just non-functional.
+    expect(screen.getByText(/Cancel the sweep to apply a combo/)).toBeTruthy();
+    const row = document.querySelector(".sweep-row") as HTMLElement;
+    expect(row.className).toContain("sweep-row-disabled");
+
+    fireEvent.click(row);
+
+    // Mid-sweep click must be a no-op: no re-run requested, no combo persisted.
+    expect(onRun).not.toHaveBeenCalled();
+    expect(loadCodedCfg("backtest", "ema_cross.py").params.ema_fast).toBeUndefined();
+  });
+
+  it("clicking a sweep row after the sweep finishes applies the combo normally", async () => {
+    mockStrategies.mockResolvedValue(strategies);
+    const onRun = vi.fn();
+    const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
+    render(
+      <BacktestSettingsModal
+        initial={initial} epic="TEST" resolution="MINUTE" controller={null}
+        onRun={onRun} onClose={vi.fn()}
+      />,
+    );
+    openStrategy();
+    await screen.findByText("Fast EMA");
+    act(() => sweepStateSignal.set({ rows, done: 2, total: 2, running: false }));
+
+    const row = document.querySelector(".sweep-row") as HTMLElement;
+    fireEvent.click(row);
+
+    expect(onRun).toHaveBeenCalledTimes(1);
+    expect(loadCodedCfg("backtest", "ema_cross.py").params.ema_fast).toBe(12);
   });
 });

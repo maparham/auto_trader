@@ -5,6 +5,12 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Specced, ready to implement
 
+- **Chart replay** — TradingView-style bar replay per cell: curtained or
+  random-jump start, masked clock for blind sessions, step/play controls,
+  manual paper trading with a session ledger + report card, progressive
+  strategy reveal. Frontend-sliced over the candle cache; minute+ TFs only.
+  [spec](superpowers/specs/2026-07-09-chart-replay-design.md)
+
 - **Tauri menu-bar Mac app** — thin always-on native shell that loads the
   existing localhost UI so the browser-driven live engine can't be closed by
   accident. Menu-bar tray icon + status glyph, ⌘⌥T hotkey, close/⌘W/⌘Q all hide

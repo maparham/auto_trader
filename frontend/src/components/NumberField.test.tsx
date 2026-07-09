@@ -61,4 +61,42 @@ describe("NumberField", () => {
     expect(input.value).toBe("-");
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("snaps to the nearest step multiple on blur", () => {
+    const onChange = vi.fn();
+    render(<NumberField value={0} step={5} onChange={onChange} />);
+    const input = screen.getByRole("textbox") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "22" } });
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenLastCalledWith(20);
+  });
+
+  it("snaps to the nearest fractional step multiple on blur", () => {
+    const onChange = vi.fn();
+    render(<NumberField value={0} step={0.5} onChange={onChange} />);
+    const input = screen.getByRole("textbox") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "1.2" } });
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it("snaps cleanly with a fractional step (no binary-float garbage)", () => {
+    // 0.35/0.1 is 3.4999…96 in binary floats — naive Math.round snaps DOWN and
+    // the product commits as 0.30000000000000004. Both halves must be cleaned.
+    const onChange = vi.fn();
+    render(<NumberField value={0} step={0.1} onChange={onChange} />);
+    const input = screen.getByRole("textbox") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "0.35" } });
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenLastCalledWith(0.4);
+  });
+
+  it("does not snap when no step is given", () => {
+    const onChange = vi.fn();
+    render(<NumberField value={0} onChange={onChange} />);
+    const input = screen.getByRole("textbox") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "22" } });
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenLastCalledWith(22);
+  });
 });

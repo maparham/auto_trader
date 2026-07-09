@@ -1,5 +1,5 @@
 import type { RuleGroup, RiskConfig } from "./backtestConfig";
-import type { Candle } from "../api";
+import type { Candle, ParamValues } from "../api";
 
 export interface LiveAction {
   kind: "open" | "close";
@@ -40,6 +40,7 @@ export interface EvaluateRequest {
   // Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
   broker?: string;
   priceSide?: string;
+  codedParams?: ParamValues; // panel-tuned ctx.param() overrides for `codedStrategy`
 }
 
 export interface EvaluateResult {

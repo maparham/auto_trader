@@ -16,6 +16,10 @@ import {
   requestConfirm,
   backtestClearRequest,
   backtestRunningSignal,
+  backtestMessagesSignal,
+  sweepAxesSignal,
+  sweepStateSignal,
+  requestSweepCancel,
 } from "./lib/signals";
 import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
 import type { EmphasisTarget } from "./lib/chartOperand";
@@ -52,6 +56,17 @@ import { SESSION_PRESETS, buildRangeChips, coverage, isActive, resolveMask } fro
 import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
+import { StrategyParams } from "./components/StrategyParams";
+import { SweepResults } from "./SweepResults";
+import { comboCount, SWEEP_MAX_COMBOS, type SweepAxis } from "./lib/sweep";
+import { fetchStrategies, type StrategyInfo, type ParamSpec } from "./api";
+import {
+  loadCodedCfg,
+  saveCodedCfg,
+  defaultCodedCfg,
+  resolveParamValues,
+  type CodedStrategyConfig,
+} from "./lib/codedConfig";
 import {
   loadBacktestPresets,
   saveBacktestPreset,
@@ -377,6 +392,132 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     saveBacktestSide(s);
   };
 
+  // Coded strategies (mode === "coded"): the discovered file list is fetched
+  // HERE (not inside StrategyPicker) so this modal can also read the selected
+  // file's `params` schema for the Parameters/Risk/Exit sections below the
+  // picker — StrategyPicker just renders whatever list it's given.
+  const [strategyList, setStrategyList] = useState<StrategyInfo[]>([]);
+  const [strategyListError, setStrategyListError] = useState<string | null>(null);
+  const reloadStrategies = () => {
+    fetchStrategies()
+      .then((list) => {
+        setStrategyList(list);
+        setStrategyListError(null);
+      })
+      .catch((e) => setStrategyListError(e instanceof Error ? e.message : "failed to load strategies"));
+  };
+  useEffect(() => void reloadStrategies(), []);
+  const selectedStrategy = strategyList.find((s) => s.filename === cfg.codedStrategy);
+
+  // The per-strategy-file panel config (params + risk + exit groups), loaded
+  // from the "backtest" coded set whenever the selected file changes. Every
+  // edit writes straight through to storage via updateCoded.
+  const [codedCfg, setCodedCfg] = useState<CodedStrategyConfig>(() =>
+    cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg(),
+  );
+  useEffect(() => {
+    setCodedCfg(cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg.codedStrategy]);
+  const updateCoded = (c: CodedStrategyConfig) => {
+    setCodedCfg(c);
+    if (cfg.codedStrategy) saveCodedCfg("backtest", cfg.codedStrategy, c);
+  };
+
+  // Sweep axes (Task 10): session-only, never persisted — cleared on close/apply.
+  // Max 2; toggling a third un-toggles the oldest (a plain array shift). Written
+  // to sweepAxesSignal right before a run so BacktestButton can branch on it.
+  const [sweepAxes, setSweepAxes] = useState<SweepAxis[]>([]);
+  const toggleSweepAxis = (target: string, spec: ParamSpec) => {
+    setSweepAxes((axes) => {
+      if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
+      const next: SweepAxis = {
+        target,
+        label: spec.label,
+        from: spec.min ?? (spec.default as number),
+        to: spec.max ?? (spec.default as number) * 2,
+        step: spec.step ?? 1,
+      };
+      const appended = [...axes, next];
+      return appended.length > 2 ? appended.slice(appended.length - 2) : appended;
+    });
+  };
+  // Risk numeric fields have no declared min/max/step — pick sensible defaults
+  // from the field's current value (from = current, to = 2x, step = a coarse
+  // fraction so a first sweep is immediately useful without hand-tuning).
+  const toggleRiskSweepAxis = (target: string, current: number) => {
+    setSweepAxes((axes) => {
+      if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
+      const base = current || 1;
+      const next: SweepAxis = {
+        target,
+        label: target.split(".").slice(1).join(" "),
+        from: base,
+        to: base * 2,
+        step: Math.max(base / 10, 0.1),
+      };
+      const appended = [...axes, next];
+      return appended.length > 2 ? appended.slice(appended.length - 2) : appended;
+    });
+  };
+  const sweepCombos = comboCount(sweepAxes);
+  const sweepOverCap = !isFinite(sweepCombos) || sweepCombos > SWEEP_MAX_COMBOS;
+  const [sweepState, setSweepState] = useState(sweepStateSignal.value);
+  useEffect(() => sweepStateSignal.subscribe(setSweepState), []);
+  // Clear any leftover sweep run/axes when the modal unmounts/closes, so a
+  // stale in-flight state (or un-applied axes) from a previous session can't
+  // bleed into a fresh open. Also cancel a still-running sweep — without it,
+  // the loop in BacktestButton keeps chunking and would re-publish the state
+  // this cleanup just tore down (a ghost sweep with no axes on reopen).
+  useEffect(() => () => {
+    requestSweepCancel();
+    sweepStateSignal.set(null);
+    sweepAxesSignal.set([]);
+  }, []);
+
+  function applySweepCombo(combo: Record<string, number | boolean | string>) {
+    if (!cfg.codedStrategy) return;
+    // I2: a streaming sweep's run() no-ops while a run is already in flight
+    // (BacktestButton guards on `running`), so applying mid-sweep would clear
+    // the axes/state and silently fail to re-run, stranding the panel showing
+    // stale results. Rows are visually disabled while running (SweepResults);
+    // this is the belt-and-braces guard against a stale click still landing.
+    if (sweepStateSignal.value?.running) return;
+    let next = codedCfg;
+    for (const [key, value] of Object.entries(combo)) {
+      if (key.startsWith("param:")) {
+        const name = key.slice("param:".length);
+        next = { ...next, params: { ...next.params, [name]: value } };
+      } else if (key.startsWith("risk:")) {
+        const [, side, field, prop] = key.split(/[:.]/); // risk:<side>.<field>.<prop>
+        const riskKey = side === "long" ? "longRisk" : "shortRisk";
+        const risk = next[riskKey] ?? EMPTY_RISK;
+        next = {
+          ...next,
+          [riskKey]: { ...risk, [field]: { ...risk[field as "stop" | "target"], [prop]: value } },
+        };
+      }
+    }
+    updateCoded(next);
+    setSweepAxes([]);
+    sweepAxesSignal.set([]);
+    sweepStateSignal.set(null);
+    run();
+  }
+
+  // A run's 422 can name a declared param (a stale schema mid-edit) — surfaced
+  // in red under the Parameters section instead of only the generic run-error
+  // spot, so it's clear which knob is at fault.
+  const [messages, setMessages] = useState(backtestMessagesSignal.value);
+  useEffect(() => backtestMessagesSignal.subscribe(setMessages), []);
+  // Anchored on the backend's exact "param '<name>':" message shape — a bare
+  // substring match on the name misfires for short names (a param `n` would
+  // claim "no candles in the selected range").
+  const paramError =
+    cfg.mode === "coded" && messages.error && selectedStrategy?.params.some((p) => messages.error!.includes(`param '${p.name}'`))
+      ? messages.error
+      : null;
+
   // Mirror the in-flight run state (owned by BacktestButton) so the footer's
   // "Run backtest" reads as unavailable while a run is going — its click was
   // already a no-op mid-run, but the button looked active.
@@ -575,6 +716,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   function run() {
     onRun(cfg);
     setSplit((s) => (s.collapsed ? { ...s, collapsed: false } : s));
+  }
+  // Footer "Run backtest": publish the CURRENT sweep axes right before firing —
+  // separate from applySweepCombo's own run(), which explicitly clears the
+  // signal to [] first for its single-combo follow-up run.
+  function runFromFooter() {
+    sweepAxesSignal.set(sweepAxes);
+    run();
   }
 
   function savePreset() {
@@ -952,7 +1100,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           <div className="bt-side-tabs seg bt-mode-tabs">
             <button
               className={(cfg.mode ?? "rules") === "rules" ? "seg-on" : ""}
-              onClick={() => setCfg({ ...cfg, mode: "rules" })}
+              onClick={() => {
+                // Sweep axes are coded-mode-only UI; left set, the footer would
+                // still read "Run sweep" and send a codedStrategy-less sweep
+                // the backend 422s — with no visible toggle to clear them.
+                setSweepAxes([]);
+                setCfg({ ...cfg, mode: "rules" });
+              }}
             >
               Rules
             </button>
@@ -964,10 +1118,80 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             </button>
           </div>
           {cfg.mode === "coded" ? (
-            <StrategyPicker
-              value={cfg.codedStrategy}
-              onChange={(filename) => setCfg({ ...cfg, codedStrategy: filename })}
-            />
+            <>
+              <StrategyPicker
+                value={cfg.codedStrategy}
+                onChange={(filename) => setCfg({ ...cfg, codedStrategy: filename })}
+                list={strategyList}
+                loadError={strategyListError}
+                onReload={reloadStrategies}
+              />
+              <StrategyParams
+                specs={selectedStrategy?.params ?? []}
+                values={resolveParamValues(selectedStrategy?.params ?? [], codedCfg.params)}
+                onChange={(params) => updateCoded({ ...codedCfg, params })}
+                sweep={{ axes: sweepAxes, onToggle: toggleSweepAxis }}
+              />
+              {sweepAxes
+                .filter((a) => a.target.startsWith("param:"))
+                .map((a) => (
+                  <SweepAxisRow
+                    key={a.target}
+                    axis={a}
+                    onChange={(patch) =>
+                      setSweepAxes((axes) => axes.map((x) => (x.target === a.target ? { ...x, ...patch } : x)))
+                    }
+                  />
+                ))}
+              {paramError && <div className="al-note bt-param-error">{paramError}</div>}
+              {(["long", "short"] as const).map((s) => {
+                const isLong = s === "long";
+                return (
+                  <div key={s} style={{ "--side": isLong ? "var(--pos)" : "var(--neg)" } as CSSProperties}>
+                    <RuleGroupSection
+                      title={isLong ? "Sell to close" : "Buy to close"}
+                      info={`Conditions that close an open ${s} position. A stop or target can close it first.`}
+                      group={isLong ? codedCfg.longExit : codedCfg.shortExit}
+                      onChange={(g) => updateCoded({ ...codedCfg, [isLong ? "longExit" : "shortExit"]: g })}
+                      emptyHint={`No ${s}-exit rules — an open ${s} holds until the trading window ends.`}
+                      defaultAvwapAnchor={defaultAvwapAnchor}
+                      baseResolution={effectiveRes}
+                      clipboard={clipboard}
+                      onCopy={(rule) => setClipboard(cloneRule(rule))}
+                      groupClipboard={groupClipboard}
+                      onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
+                      openChartPicker={openChartPicker}
+                      isExit
+                    />
+                    <RiskSection
+                      risk={(isLong ? codedCfg.longRisk : codedCfg.shortRisk) ?? EMPTY_RISK}
+                      onChange={(r) => updateCoded({ ...codedCfg, [isLong ? "longRisk" : "shortRisk"]: r })}
+                      sweep={{
+                        axes: sweepAxes,
+                        side: s,
+                        onToggle: toggleRiskSweepAxis,
+                        onKindChange: (field) =>
+                          setSweepAxes((axes) => axes.filter((a) => !a.target.startsWith(`risk:${s}.${field}.`))),
+                      }}
+                    />
+                    {sweepAxes
+                      .filter((a) => a.target.startsWith(`risk:${s}.`))
+                      .map((a) => (
+                        <SweepAxisRow
+                          key={a.target}
+                          axis={a}
+                          onChange={(patch) =>
+                            setSweepAxes((axes) => axes.map((x) => (x.target === a.target ? { ...x, ...patch } : x)))
+                          }
+                        />
+                      ))}
+                  </div>
+                );
+              })}
+              <div className="al-note">
+                When set here, stop/target overrides any sl=/tp= the strategy file passes.
+              </div>
+            </>
           ) : (
             <>
           <div className="bt-side-tabs seg">
@@ -1146,7 +1370,30 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             </span>
             Results
           </button>
-          {!split.collapsed && <BacktestPanel />}
+          {!split.collapsed && (
+            sweepState ? (
+              <div className="sweep-panel">
+                {sweepState.running && (
+                  <button className="ghost sweep-cancel" onClick={requestSweepCancel}>
+                    Cancel sweep
+                  </button>
+                )}
+                {sweepState.cancelled ? (
+                  <div className="al-note">Cancelled — kept {sweepState.done} of {sweepState.total}</div>
+                ) : sweepState.error ? (
+                  <div className="al-note bt-param-error">{sweepState.error}</div>
+                ) : null}
+                <SweepResults
+                  rows={sweepState.rows}
+                  axes={sweepAxes}
+                  onApply={applySweepCombo}
+                  progress={sweepState.running ? { done: sweepState.done, total: sweepState.total } : null}
+                />
+              </div>
+            ) : (
+              <BacktestPanel />
+            )
+          )}
         </div>
         </div>
 
@@ -1161,8 +1408,27 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           >
             Go live →
           </button>
-          <button onClick={run} disabled={runInFlight}>
-            {runInFlight ? "Running…" : "Run backtest"}
+          {sweepAxes.length > 0 && (
+            <span className={`sweep-counter${sweepOverCap ? " sweep-over-cap" : ""}`}>
+              {/* Per-axis counts via the SAME comboCount the runner/cap use — a
+                  single axis's own combo count is exactly its step count (or
+                  Infinity for a degenerate step), so this can never drift from
+                  the total it multiplies to below. */}
+              {sweepAxes.map((a, i) => {
+                const n = comboCount([a]);
+                return (
+                  <span key={a.target}>
+                    {i > 0 && " × "}
+                    {isFinite(n) ? n : "∞"}
+                  </span>
+                );
+              })}
+              {" = "}
+              {isFinite(sweepCombos) ? sweepCombos : "∞"} runs
+            </span>
+          )}
+          <button onClick={runFromFooter} disabled={runInFlight || (sweepAxes.length > 0 && sweepOverCap)}>
+            {runInFlight ? "Running…" : sweepAxes.length > 0 ? "Run sweep" : "Run backtest"}
           </button>
         </div>
     </aside>
@@ -1178,6 +1444,29 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   );
 }
 
+// One swept axis's from/to/step controls — replaces the param's/risk field's
+// single NumberField while it's toggled on (Task 10).
+function SweepAxisRow({
+  axis,
+  onChange,
+}: {
+  axis: SweepAxis;
+  onChange: (patch: Partial<Pick<SweepAxis, "from" | "to" | "step">>) => void;
+}) {
+  return (
+    <div className="sp-row sweep-axis-row">
+      <span className="sp-label">{axis.label} sweep</span>
+      <span className="sweep-axis-fields">
+        <NumberField value={axis.from} onChange={(n) => onChange({ from: n })} className="bt-num" />
+        <span>to</span>
+        <NumberField value={axis.to} onChange={(n) => onChange({ to: n })} className="bt-num" />
+        <span>step</span>
+        <NumberField value={axis.step} onChange={(n) => onChange({ step: n })} className="bt-num" />
+      </span>
+    </div>
+  );
+}
+
 // The stop/target block for one side. A stop is one dropdown (fixed %/price/ATR
 // or trailing %/ATR); a target is the same minus the trailing kinds. Off by
 // default (kind "none") so existing presets are untouched. ATR kinds expose a
@@ -1186,11 +1475,25 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
 export function RiskSection({
   risk,
   onChange,
+  sweep,
 }: {
   risk: RiskConfig;
   onChange: (r: RiskConfig) => void;
+  // Task 10: optional per-side sweep toggle for the value/mult numeric fields.
+  // Undefined (rule mode, Live panel) renders exactly as before.
+  sweep?: {
+    axes: SweepAxis[];
+    side: "long" | "short";
+    onToggle: (target: string, current: number) => void;
+    onKindChange: (field: "stop" | "target") => void;
+  };
 }) {
+  // Changing a kind drops any sweep axis on that field: the axis target
+  // doesn't encode the kind, so a stale `stop.value` axis under an ATR stop
+  // would sweep a field the engine never reads (N identical rows), and under
+  // none/none the whole risk is stripped and the backend 422s every chunk.
   const setStopKind = (kind: StopKind) => {
+    sweep?.onKindChange("stop");
     const next: RiskConfig["stop"] = { kind };
     if (kind === "atr" || kind === "trailAtr") { next.mult = risk.stop.mult ?? 2; next.length = risk.stop.length ?? 14; }
     else if (kind === "pct" || kind === "trailPct") next.value = risk.stop.value ?? 2;
@@ -1198,6 +1501,7 @@ export function RiskSection({
     onChange({ ...risk, stop: next });
   };
   const setTargetKind = (kind: TargetKind) => {
+    sweep?.onKindChange("target");
     const next: RiskConfig["target"] = { kind };
     if (kind === "atr") { next.mult = risk.target.mult ?? 3; next.length = risk.target.length ?? 14; }
     else if (kind === "pct") next.value = risk.target.value ?? 4;
@@ -1220,6 +1524,24 @@ export function RiskSection({
         onBlur={floor != null ? (e) => clampPosOnBlur(e.currentTarget, floor, set) : undefined} />
     );
 
+  // Sweep toggle (⇄) next to a stop/target value or ATR mult — mirrors
+  // StrategyParams' per-param toggle. Only rendered when the caller (coded
+  // mode) passed a `sweep` prop; absent in rule mode / the Live panel.
+  const swept = (field: "stop" | "target", prop: "value" | "mult") =>
+    sweep?.axes.some((a) => a.target === `risk:${sweep.side}.${field}.${prop}`) ?? false;
+  const sweepBtn = (field: "stop" | "target", prop: "value" | "mult", current: number) =>
+    sweep && (
+      <Tooltip content="Sweep this field">
+        <button
+          type="button"
+          className={`sp-sweep${swept(field, prop) ? " on" : ""}`}
+          onClick={() => sweep.onToggle(`risk:${sweep.side}.${field}.${prop}`, current)}
+        >
+          ⇄
+        </button>
+      </Tooltip>
+    );
+
   return (
     <div className="bt-risk">
       <SectionTitle info="Price-level exits for this side. Whichever triggers first — stop, target, or a close rule — ends the trade.">
@@ -1230,13 +1552,21 @@ export function RiskSection({
         <select value={risk.stop.kind} onChange={(e) => setStopKind(e.target.value as StopKind)}>
           {STOP_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
-        {(risk.stop.kind === "pct" || risk.stop.kind === "trailPct") &&
-          <>{num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }), "any", 0.01)}<span>%</span></>}
-        {(risk.stop.kind === "atr" || risk.stop.kind === "trailAtr") && <>
-          {num(risk.stop.mult, (n) => onChange({ ...risk, stop: { ...risk.stop, mult: n } }))}
-          <span>× ATR</span>
-          {num(risk.stop.length, (n) => onChange({ ...risk, stop: { ...risk.stop, length: Math.max(1, Math.round(n)) } }), "1")}
-        </>}
+        {(risk.stop.kind === "pct" || risk.stop.kind === "trailPct") && (
+          <>
+            {swept("stop", "value") ? null : num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }), "any", 0.01)}
+            <span>%</span>
+            {sweepBtn("stop", "value", risk.stop.value ?? 2)}
+          </>
+        )}
+        {(risk.stop.kind === "atr" || risk.stop.kind === "trailAtr") && (
+          <>
+            {swept("stop", "mult") ? null : num(risk.stop.mult, (n) => onChange({ ...risk, stop: { ...risk.stop, mult: n } }))}
+            <span>× ATR</span>
+            {num(risk.stop.length, (n) => onChange({ ...risk, stop: { ...risk.stop, length: Math.max(1, Math.round(n)) } }), "1")}
+            {sweepBtn("stop", "mult", risk.stop.mult ?? 2)}
+          </>
+        )}
         {risk.stop.kind === "price" &&
           num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }))}
       </div>
@@ -1245,13 +1575,21 @@ export function RiskSection({
         <select value={risk.target.kind} onChange={(e) => setTargetKind(e.target.value as TargetKind)}>
           {TARGET_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
-        {risk.target.kind === "pct" &&
-          <>{num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }), "any", 0.01)}<span>%</span></>}
-        {risk.target.kind === "atr" && <>
-          {num(risk.target.mult, (n) => onChange({ ...risk, target: { ...risk.target, mult: n } }))}
-          <span>× ATR</span>
-          {num(risk.target.length, (n) => onChange({ ...risk, target: { ...risk.target, length: Math.max(1, Math.round(n)) } }), "1")}
-        </>}
+        {risk.target.kind === "pct" && (
+          <>
+            {swept("target", "value") ? null : num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }), "any", 0.01)}
+            <span>%</span>
+            {sweepBtn("target", "value", risk.target.value ?? 4)}
+          </>
+        )}
+        {risk.target.kind === "atr" && (
+          <>
+            {swept("target", "mult") ? null : num(risk.target.mult, (n) => onChange({ ...risk, target: { ...risk.target, mult: n } }))}
+            <span>× ATR</span>
+            {num(risk.target.length, (n) => onChange({ ...risk, target: { ...risk.target, length: Math.max(1, Math.round(n)) } }), "1")}
+            {sweepBtn("target", "mult", risk.target.mult ?? 3)}
+          </>
+        )}
         {risk.target.kind === "price" &&
           num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }))}
       </div>

@@ -88,6 +88,9 @@ export interface BacktestResult {
     max_consec_wins: number;
     max_consec_losses: number;
   };
+  // True when a coded strategy's own ctx.stop/target calls overrode the panel's
+  // longRisk/shortRisk bracket for this run (Strategy tab transparency).
+  fileBracketsOverridden?: boolean;
 }
 
 export interface BacktestRequest {
@@ -112,6 +115,7 @@ export interface BacktestRequest {
   // Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
   broker?: string;
   priceSide?: string;
+  codedParams?: ParamValues; // panel-tuned ctx.param() overrides for `codedStrategy`
 }
 
 export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {
@@ -147,12 +151,30 @@ export async function evaluateStrategy(req: EvaluateRequest): Promise<EvaluateRe
 
 // --- coded strategies (backend/strategies/*.py) ------------------------------
 
+// A coded strategy's ctx.param()-declared tunable, as exposed by the panel
+// (mirrors the backend ParamSpecDTO). min/max/step/options/help are null when
+// not applicable to the param's type.
+export interface ParamSpec {
+  name: string;
+  label: string;
+  type: "int" | "float" | "bool" | "choice";
+  default: number | boolean | string;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  options: string[] | null;
+  help: string | null;
+}
+
+export type ParamValues = Record<string, number | boolean | string>;
+
 export interface StrategyInfo {
   filename: string;
   name: string;
   description: string;
   hedged: boolean;
   error: string | null;
+  params: ParamSpec[];
 }
 
 export async function fetchStrategies(): Promise<StrategyInfo[]> {
@@ -166,4 +188,33 @@ export async function fetchStrategySource(filename: string): Promise<string> {
   if (!res.ok) throw new Error(await errorDetail(res, `source failed (${res.status})`));
   const body = await res.json();
   return body.source;
+}
+
+// --- param sweeps -------------------------------------------------------------
+
+export interface SweepRow {
+  combo: Record<string, number | boolean | string>;
+  metrics: {
+    net_pnl: number;
+    n_trades: number;
+    win_rate: number;
+    max_drawdown: number;
+    profit_factor: number | null;
+    return_pct: number;
+  } | null;
+  error: string | null;
+}
+
+export async function runSweepChunk(
+  req: BacktestRequest,
+  combos: Array<Record<string, number | boolean | string>>,
+): Promise<SweepRow[]> {
+  const res = await fetch(`${BASE}/api/backtest/sweep`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...req, sweep: { combos } }),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `sweep failed (${res.status})`));
+  const json = await res.json();
+  return json.rows as SweepRow[];
 }

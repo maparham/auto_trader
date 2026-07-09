@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
+from auto_trader.strategy.params import validate_params_schema
+
 # backend/auto_trader/strategy/loader.py -> backend/strategies/
 STRATEGIES_DIR = Path(__file__).resolve().parents[2] / "strategies"
 
@@ -29,6 +31,7 @@ class StrategyInfo:
     name: str
     description: str
     hedged: bool
+    params: tuple[dict, ...] = ()
     error: str | None = None
 
 
@@ -36,11 +39,16 @@ def _describe(module: ModuleType, filename: str) -> StrategyInfo:
     meta = getattr(module, "meta", None)
     meta = meta if isinstance(meta, dict) else {}
     doc = (module.__doc__ or "").strip()
+    try:
+        params = validate_params_schema(meta)
+    except ValueError as e:
+        raise StrategyLoadError(f"{filename}: bad meta['params'] — {e}") from e
     return StrategyInfo(
         filename=filename,
         name=str(meta.get("name") or Path(filename).stem),
         description=str(meta.get("description") or doc),
         hedged=bool(meta.get("hedged", False)),
+        params=tuple(params),
     )
 
 
@@ -82,7 +90,7 @@ def list_strategies(directory: Path | None = None) -> list[StrategyInfo]:
         except StrategyLoadError as e:
             out.append(StrategyInfo(
                 filename=path.name, name=path.stem, description="",
-                hedged=False, error=str(e),
+                hedged=False, params=(), error=str(e),
             ))
         except BaseException as e:
             # A strategy file can call sys.exit()/raise KeyboardInterrupt at import
@@ -92,6 +100,6 @@ def list_strategies(directory: Path | None = None) -> list[StrategyInfo]:
             # whole discovery scan; the user is mid-edit and needs to see it's broken.
             out.append(StrategyInfo(
                 filename=path.name, name=path.stem, description="",
-                hedged=False, error=f"{path.name}: failed to load — {e}",
+                hedged=False, params=(), error=f"{path.name}: failed to load — {e}",
             ))
     return out

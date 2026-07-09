@@ -14,6 +14,7 @@ import {
   type LiveState, appendLog,
 } from "./liveState";
 import { defaultBacktestConfig, type BacktestConfig } from "./backtestConfig";
+import { loadCodedCfg, resolveParamValues } from "./codedConfig";
 import type { KLineData } from "klinecharts";
 
 type KBar = { timestamp: number; open: number; high: number; low: number; close: number; volume: number };
@@ -120,19 +121,31 @@ export async function arm(): Promise<void> {
   // represent (the backend already refuses it per-cycle with a 422, surfaced via
   // the "evaluate failed" log, but arming should never even start the loop). Done
   // BEFORE tearing down any running engine below, same rationale as the guard
-  // above. If the strategy list can't be fetched (backend down), don't block
-  // arming on it — the backend still refuses per-cycle and that's now surfaced.
+  // above. Also used below to resolve/clamp the frozen coded params (I3) —
+  // fetched once and reused, rather than a second round-trip. If the strategy
+  // list can't be fetched (backend down), REFUSE the arm: freezing raw
+  // unresolved params would reintroduce I3 (a stale out-of-range value 422s
+  // every evaluate cycle, silently halting a supposedly-armed strategy), and
+  // an arm with the backend down can't warm up or evaluate anyway.
+  let pickedStrategy: Awaited<ReturnType<typeof fetchStrategies>>[number] | undefined;
   if (draftCfg.mode === "coded" && draftCfg.codedStrategy) {
     try {
       const strategies = await fetchStrategies();
-      const picked = strategies.find((s) => s.filename === draftCfg.codedStrategy);
-      if (picked?.hedged) {
-        set(appendLog(get(), Math.floor(Date.now() / 1000),
-          "cannot arm: hedged strategies are backtest-only"));
-        return;
-      }
+      pickedStrategy = strategies.find((s) => s.filename === draftCfg.codedStrategy);
     } catch {
-      // backend unreachable — skip the check, don't block arming.
+      set(appendLog(get(), Math.floor(Date.now() / 1000),
+        "cannot arm: strategy list unavailable — params can't be validated; retry"));
+      return;
+    }
+    if (!pickedStrategy) {
+      set(appendLog(get(), Math.floor(Date.now() / 1000),
+        `cannot arm: '${draftCfg.codedStrategy}' not found in the strategy list`));
+      return;
+    }
+    if (pickedStrategy.hedged) {
+      set(appendLog(get(), Math.floor(Date.now() / 1000),
+        "cannot arm: hedged strategies are backtest-only"));
+      return;
     }
   }
 
@@ -148,7 +161,25 @@ export async function arm(): Promise<void> {
 
   const strategyId = `${epic}|${account}`;
   const armedAtSec = Math.floor(Date.now() / 1000);
-  const armed = armSnapshot(get(), strategyId, armedAtSec);
+  // Coded mode: freeze the LIVE coded set (params/risk/exits) into the snapshot
+  // at the same moment the draft is frozen — every evaluate cycle reads this
+  // frozen copy, never a live-reloaded value (drift shows in the panel instead).
+  // Params are resolved against the strategy's CURRENT schema here (I3): a
+  // raw stored value can go stale (out of range / mistyped, e.g. the file's
+  // min/max changed since the value was saved) and the backend 422s on it
+  // every cycle, silently halting a supposedly-armed strategy while the panel
+  // still shows the resolved default. Resolving once at arm time means the
+  // frozen snapshot always carries a value the backend will accept.
+  const coded =
+    draftCfg.mode === "coded" && draftCfg.codedStrategy
+      ? (() => {
+          // pickedStrategy is guaranteed here — a coded arm without a fetched
+          // schema was refused above.
+          const cfg = loadCodedCfg("live", draftCfg.codedStrategy!);
+          return { ...cfg, params: resolveParamValues(pickedStrategy!.params, cfg.params) };
+        })()
+      : undefined;
+  const armed = armSnapshot(get(), strategyId, armedAtSec, coded);
   set(appendLog(armed, armedAtSec, `armed ${epic} on ${account}`));
   saveArmed(epic, account, armed.snapshot);
   saveArmedAccount(epic, account);

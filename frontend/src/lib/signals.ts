@@ -398,6 +398,37 @@ export const backtestMessagesSignal = new Signal<{ error: string | null; warning
   warning: null,
 });
 
+// Parameter-sweep wiring (Task 10). The modal owns the axes (session-only —
+// never persisted) and writes them here before bumping backtestRunRequest;
+// BacktestButton.run() reads them to decide whether to branch into runSweep
+// instead of a normal single run. Kept as a plain module import (not React
+// state) for the same reason the other backtest signals are: the modal and
+// the button are siblings under App, not parent/child.
+import type { SweepAxis } from "./sweep";
+export const sweepAxesSignal = new Signal<SweepAxis[]>([]);
+
+// Live sweep progress + landed rows, published by BacktestButton as chunks
+// come back; the modal renders <SweepResults> off this. Null = no sweep run
+// in flight / completed this session.
+export interface SweepRunState {
+  rows: import("../api").SweepRow[];
+  done: number;
+  total: number;
+  running: boolean;
+  error?: string;
+  // Set when the user hit Cancel (as opposed to a real chunk failure) — the
+  // modal shows a neutral note instead of the red error box.
+  cancelled?: boolean;
+}
+export const sweepStateSignal = new Signal<SweepRunState | null>(null);
+
+// Bumped by the modal's Cancel button; BacktestButton holds the AbortController
+// for the in-flight sweep and aborts it on the next tick after this changes.
+export const sweepCancelRequest = new Signal<number>(0);
+export function requestSweepCancel(): void {
+  sweepCancelRequest.set(sweepCancelRequest.value + 1);
+}
+
 // Transient notice shown when selecting a trade row can't navigate the chart to
 // it — the trade predates the history reachable at the current timeframe (a fine
 // timeframe whose loaded/pageable window doesn't reach that far back). Set by the

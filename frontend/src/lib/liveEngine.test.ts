@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { initialLiveState, armSnapshot, setPositionVintage } from "./liveState";
-import { defaultBacktestConfig } from "./backtestConfig";
+import { defaultBacktestConfig, type Rule } from "./backtestConfig";
+import type { CodedStrategyConfig } from "./codedConfig";
 
 // liveEngine → backtestSeries → customIndicators reads LineType at module load;
 // stub klinecharts' runtime surface (same as backtestSeries.test.ts).
@@ -61,7 +62,7 @@ describe("runOneCycle", () => {
     expect(req.position).toBeNull();
   });
 
-  it("coded mode skips buildSeries and posts codedStrategy", async () => {
+  it("coded mode without a coded snapshot still sends empty groups, no risk, and calls buildSeries", async () => {
     const cfg = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
     const deps = {
@@ -75,7 +76,9 @@ describe("runOneCycle", () => {
       { timestamp: 1_700_000_060_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
     ];
     await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", deps as never, "capital");
-    expect(deps.buildSeries).not.toHaveBeenCalled();
+    // Regression guard: no coded snapshot ⇒ request shape matches today's (empty
+    // groups, no risk) even though buildSeries is now always invoked.
+    expect(deps.buildSeries).toHaveBeenCalled();
     expect(deps.evaluateStrategy).toHaveBeenCalledTimes(1);
     const req = deps.evaluateStrategy.mock.calls[0][0];
     expect(req.codedStrategy).toBe("ema_cross.py");
@@ -86,9 +89,98 @@ describe("runOneCycle", () => {
     expect(req.shortExit).toEqual({ combine: "AND", rules: [] });
     expect(req.longRisk).toBeUndefined();
     expect(req.shortRisk).toBeUndefined();
+    expect(req.codedParams).toBeUndefined();
     // Coded mode needs the backend to fetch ad-hoc HTF timeframes itself.
     expect(req.broker).toBe("capital");
     expect(req.priceSide).toBe("mid");
+  });
+
+  it("coded cycle sends params, risk, exit groups and exit-scoped series from the snapshot", async () => {
+    const RSI_EXIT_RULE: Rule = {
+      left: { kind: "indicator", indicator: "RSI", length: 14 },
+      op: "gt",
+      right: { kind: "const", value: 70 },
+      enabled: true,
+    };
+    const coded: CodedStrategyConfig = {
+      params: { ema_fast: 12 },
+      longRisk: { stop: { kind: "pct", value: 2 }, target: { kind: "none" } },
+      longExit: { combine: "AND", rules: [RSI_EXIT_RULE] },
+      shortExit: { combine: "AND", rules: [] },
+    };
+    const cfg = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
+    let s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    s = { ...s, snapshot: { ...s.snapshot!, coded } };
+    const deps = {
+      buildSeries: vi.fn().mockResolvedValue({ RSI_14: [70] }),
+      fetchOpenPositions: vi.fn().mockResolvedValue([]), // flat
+      evaluateStrategy: vi.fn().mockResolvedValue({ actions: [] }),
+      placeActions: vi.fn(),
+    };
+    const bars = [
+      { timestamp: 1_700_000_000_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+      { timestamp: 1_700_000_060_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+    ];
+    await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", deps as never, "capital");
+    expect(deps.buildSeries).toHaveBeenCalled();
+    const req = deps.evaluateStrategy.mock.calls[0][0];
+    expect(req.codedParams).toEqual({ ema_fast: 12 });
+    expect(req.longRisk).toEqual(coded.longRisk);
+    expect(req.shortRisk).toBeUndefined();
+    expect(req.longExit.rules.length).toBe(1);
+    expect(req.shortExit.rules.length).toBe(0);
+    expect(req.series).toEqual({ RSI_14: [70] });
+  });
+
+  it("coded mode always sends longEnabled/shortEnabled true, ignoring rules-mode toggles (I1)", async () => {
+    // longEnabled/shortEnabled are rules-mode UI; RuleStrategy gates EXITS on
+    // them. A disabled side from rules mode must not silently disable that
+    // side's panel exit rules on a coded run while the .py still opens
+    // positions on that side.
+    const cfg = {
+      ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py",
+      longEnabled: true, shortEnabled: false,
+    };
+    const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    const deps = {
+      buildSeries: vi.fn().mockResolvedValue({}),
+      fetchOpenPositions: vi.fn().mockResolvedValue([]),
+      evaluateStrategy: vi.fn().mockResolvedValue({ actions: [] }),
+      placeActions: vi.fn(),
+    };
+    const bars = [
+      { timestamp: 1_700_000_000_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+      { timestamp: 1_700_000_060_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+    ];
+    await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", deps as never);
+    const req = deps.evaluateStrategy.mock.calls[0][0];
+    expect(req.longEnabled).toBe(true);
+    expect(req.shortEnabled).toBe(true);
+  });
+
+  it("coded mode normalizes a none/none snapshot risk to undefined before sending (C1)", async () => {
+    const coded: CodedStrategyConfig = {
+      params: {},
+      longRisk: { stop: { kind: "none" }, target: { kind: "none" } },
+      longExit: { combine: "AND", rules: [] },
+      shortExit: { combine: "AND", rules: [] },
+    };
+    const cfg = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
+    let s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    s = { ...s, snapshot: { ...s.snapshot!, coded } };
+    const deps = {
+      buildSeries: vi.fn().mockResolvedValue({}),
+      fetchOpenPositions: vi.fn().mockResolvedValue([]),
+      evaluateStrategy: vi.fn().mockResolvedValue({ actions: [] }),
+      placeActions: vi.fn(),
+    };
+    const bars = [
+      { timestamp: 1_700_000_000_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+      { timestamp: 1_700_000_060_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+    ];
+    await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", deps as never);
+    const req = deps.evaluateStrategy.mock.calls[0][0];
+    expect(req.longRisk).toBeUndefined();
   });
 
   it("refuses to trade when coded mode has no strategy selected (never falls back to rules)", async () => {

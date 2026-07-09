@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import CloseButton from "./CloseButton";
 import { RuleGroupSection, RiskSection, EMPTY_RISK } from "./BacktestSettingsModal";
 import { liveStateSignal, initLive, setDraft, setAccount, setQuantity, arm, disarm, resume } from "./lib/liveController";
@@ -7,6 +7,16 @@ import { journalSignal, journalMetrics, clearJournal, type JournalTrade } from "
 import { cloneRule, type BacktestConfig, type RuleGroup, type Rule } from "./lib/backtestConfig";
 import type { BrokerAccount } from "./lib/trading";
 import type { LiveState } from "./lib/liveState";
+import { StrategyParams } from "./components/StrategyParams";
+import { fetchStrategies, type StrategyInfo } from "./api";
+import {
+  loadCodedCfg,
+  saveCodedCfg,
+  defaultCodedCfg,
+  resolveParamValues,
+  codedCfgsDiffer,
+  type CodedStrategyConfig,
+} from "./lib/codedConfig";
 
 interface Props {
   epic: string;
@@ -66,6 +76,38 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
   const acct = accounts.find((a) => a.key === state.account);
   const realMoney = acct?.isRealMoney ?? state.account.endsWith(":live");
   const isLong = side === "long";
+
+  // Coded strategies (mode === "coded"): the discovered file list, fetched here
+  // so the panel can read the selected file's `params` schema for the
+  // Parameters/Risk/Exit sections below the picker.
+  const [strategyList, setStrategyList] = useState<StrategyInfo[]>([]);
+  useEffect(() => {
+    fetchStrategies().then(setStrategyList).catch(() => setStrategyList([]));
+  }, []);
+  const selectedStrategy = strategyList.find((s) => s.filename === cfg.codedStrategy);
+
+  // The LIVE coded set (params + risk + exit groups) — deliberately SEPARATE
+  // from the backtest set (codedConfig.ts): fiddling with a backtest knob must
+  // never change what an armed live strategy does. Loaded from storage per
+  // selected file; every edit writes straight through via updateCoded.
+  const [liveCoded, setLiveCoded] = useState<CodedStrategyConfig>(() =>
+    cfg.codedStrategy ? loadCodedCfg("live", cfg.codedStrategy) : defaultCodedCfg(),
+  );
+  useEffect(() => {
+    setLiveCoded(cfg.codedStrategy ? loadCodedCfg("live", cfg.codedStrategy) : defaultCodedCfg());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg.codedStrategy]);
+  const updateCoded = (c: CodedStrategyConfig) => {
+    setLiveCoded(c);
+    if (cfg.codedStrategy) saveCodedCfg("live", cfg.codedStrategy, c);
+  };
+  const backtestCoded = cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg();
+  const differsFromBacktest = codedCfgsDiffer(liveCoded, backtestCoded);
+  // Drift vs the FROZEN armed snapshot: the running engine still trades the
+  // snapshot's coded config, so an edit here hasn't taken effect yet — same
+  // "pending changes" idea as the rule-mode draft, just keyed off the separate
+  // coded store instead of `state.draft`.
+  const codedPendingEdits = armed && !!state.snapshot?.coded && codedCfgsDiffer(liveCoded, state.snapshot.coded);
 
   function patch(p: Partial<BacktestConfig>) {
     setDraft({ ...cfg, ...p });
@@ -136,7 +178,7 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
         </div>
 
         {/* Pending-edits banner (armed + edited) */}
-        {armed && state.pendingEdits && (
+        {armed && (state.pendingEdits || codedPendingEdits) && (
           <div className="live-banner">
             <span>⚠ Pending changes — not trading yet. Applies to new entries; an open position finishes on its original rules.</span>
           </div>
@@ -148,11 +190,60 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
         )}
 
         {cfg.mode === "coded" ? (
-          /* Coded strategy: the .py file owns entries/exits/risk — show which
-             file is armed instead of the rule editors. */
+          /* Coded strategy: the .py file owns entries/exits — the panel tunes
+             its declared params + risk + exit rules, mirroring the backtest
+             panel (Task 8) but against the SEPARATE live set. */
           <div className="live-strat-summary">
             <span className="strat-picker-name">{cfg.codedStrategy ?? "no strategy selected"}</span>
-            <p className="strat-picker-desc">Coded strategy — entries, exits and risk are defined in the file.</p>
+            <p className="strat-picker-desc">Coded strategy — entries are defined in the file.</p>
+            {cfg.codedStrategy && (
+              <>
+                <div className="live-coded-head">
+                  <button
+                    type="button"
+                    className="live-copy-backtest"
+                    onClick={() => updateCoded(loadCodedCfg("backtest", cfg.codedStrategy!))}
+                  >
+                    Copy from backtest
+                  </button>
+                  {differsFromBacktest && <span className="al-note">differs from backtest</span>}
+                </div>
+                {codedPendingEdits && <div className="al-note">edits apply on next arm</div>}
+                <StrategyParams
+                  specs={selectedStrategy?.params ?? []}
+                  values={resolveParamValues(selectedStrategy?.params ?? [], liveCoded.params)}
+                  onChange={(params) => updateCoded({ ...liveCoded, params })}
+                />
+                {(["long", "short"] as const).map((s) => {
+                  const codedIsLong = s === "long";
+                  return (
+                    <div key={s} style={{ "--side": codedIsLong ? "var(--pos)" : "var(--neg)" } as CSSProperties}>
+                      <RuleGroupSection
+                        title={codedIsLong ? "Sell to close" : "Buy to close"}
+                        info={`Conditions that close an open ${s} position. A stop or target can close it first.`}
+                        group={codedIsLong ? liveCoded.longExit : liveCoded.shortExit}
+                        onChange={(g) => updateCoded({ ...liveCoded, [codedIsLong ? "longExit" : "shortExit"]: g })}
+                        emptyHint={`No ${s}-exit rules — an open ${s} holds until the trading window ends.`}
+                        defaultAvwapAnchor={Date.now()}
+                        baseResolution={resolution}
+                        clipboard={clipboard}
+                        onCopy={(r) => setClipboard(cloneRule(r))}
+                        groupClipboard={groupClipboard}
+                        onCopyAll={(rs) => setGroupClipboard(rs.map(cloneRule))}
+                        isExit
+                      />
+                      <RiskSection
+                        risk={(codedIsLong ? liveCoded.longRisk : liveCoded.shortRisk) ?? EMPTY_RISK}
+                        onChange={(r) => updateCoded({ ...liveCoded, [codedIsLong ? "longRisk" : "shortRisk"]: r })}
+                      />
+                    </div>
+                  );
+                })}
+                <div className="al-note">
+                  When set here, stop/target overrides any sl=/tp= the strategy file passes.
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <>
@@ -264,7 +355,7 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
           </button>
         ) : (
           <>
-            {state.pendingEdits && (
+            {(state.pendingEdits || codedPendingEdits) && (
               <button className="live-rearm" disabled={busy} onClick={onArm}>
                 Re-arm to apply
               </button>

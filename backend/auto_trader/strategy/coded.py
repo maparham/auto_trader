@@ -20,6 +20,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from types import ModuleType
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -34,6 +35,10 @@ from auto_trader.indicators.core import (
 )
 from auto_trader.indicators.mtf import align_htf_to_base, slope_of
 from auto_trader.strategy.base import Context, Strategy
+from auto_trader.strategy.params import resolve_params
+
+if TYPE_CHECKING:
+    from auto_trader.strategy.rule import RuleStrategy
 
 
 class StrategyRuntimeError(Exception):
@@ -271,6 +276,17 @@ class StrategyContext:
             raise StrategyRuntimeError(f"unknown slope source '{indicator}'")
         return self._values_for(key, tf, values_fn)[self._i]
 
+    def param(self, name: str):
+        """A panel-tunable value declared in meta["params"] (panel value if
+        set, else the declared default)."""
+        try:
+            return self._strategy.params[name]
+        except KeyError:
+            declared = sorted(self._strategy.params) or ["<none declared>"]
+            raise StrategyRuntimeError(
+                f"unknown param '{name}' — declared params: {declared}"
+            ) from None
+
     # --- actions ------------------------------------------------------------
     def buy(self, qty: float | None = None, sl: float | None = None,
             tp: float | None = None, reason: str = "", note: dict | None = None) -> Action:
@@ -318,7 +334,9 @@ class CodedStrategy(Strategy):
     def __init__(self, module: ModuleType, candles: list[Candle], quantity: float,
                  trade_from_time: int | None = None,
                  htf_candles: dict[str, list[Candle]] | None = None,
-                 base_timeframe: str | None = None) -> None:
+                 base_timeframe: str | None = None,
+                 params: dict | None = None,
+                 panel_risk_legs: frozenset[str] = frozenset()) -> None:
         self.module = module
         self.candles = candles
         self.quantity = quantity
@@ -328,6 +346,16 @@ class CodedStrategy(Strategy):
         self.base_times_ms = [int(c.time.timestamp() * 1000) for c in candles]
         meta = getattr(module, "meta", None)
         self.hedged = bool(meta.get("hedged", False)) if isinstance(meta, dict) else False
+        # Resolved panel params (defaults when none sent). Direct instantiation
+        # (tests) may omit them; routes resolve first so a bad value 422s
+        # before any bars run.
+        self.params = params if params is not None else resolve_params(module, None)
+        # Legs ("long"/"short") for which the panel configured risk: on those
+        # sides the file's per-signal sl=/tp= are stripped so the engine's
+        # side-level RiskConfig applies instead (never silently — see
+        # file_brackets_overridden below).
+        self.panel_risk_legs = panel_risk_legs
+        self.file_brackets_overridden = False
         self._cache: dict[str, list[float | None]] = {}
         self._arrays: dict[str, np.ndarray] = {
             "open": np.array([c.open for c in candles], dtype=np.float64),
@@ -380,10 +408,17 @@ class CodedStrategy(Strategy):
                     continue
                 side = Side.BUY if a.leg == "long" else Side.SELL
                 qty = a.qty if a.qty is not None else self.quantity
+                stop, target = a.stop, a.target
+                if a.leg in self.panel_risk_legs:
+                    # Panel risk owns this side's exits: the file's sl=/tp= are
+                    # dropped so the engine's side-level RiskConfig applies.
+                    if stop is not None or target is not None:
+                        self.file_brackets_overridden = True
+                    stop = target = None
                 signals.append(Signal(
                     side, qty, a.reason, leg=a.leg,
                     terms=_note_terms(a.note),
-                    stop_level=a.stop, target_level=a.target,
+                    stop_level=stop, target_level=target,
                     quantity_explicit=a.qty is not None,
                 ))
                 opened_this_bar = True
@@ -399,3 +434,37 @@ class CodedStrategy(Strategy):
                         side, size, a.reason, leg=leg, terms=_note_terms(a.note),
                     ))
         return signals
+
+
+class CodedWithRuleExits(Strategy):
+    """A coded strategy plus panel-authored exit rule groups: the coded module
+    supplies entries (and any exits of its own); a RuleStrategy configured with
+    EMPTY entry groups contributes rule-based exits. One close per leg per bar
+    — the coded module's own close wins when both fire."""
+
+    _CLOSES = {("long", Side.SELL), ("short", Side.BUY)}
+
+    def __init__(self, coded: CodedStrategy, rule_exits: "RuleStrategy") -> None:
+        self.coded = coded
+        self.rule_exits = rule_exits
+        self.hedged = coded.hedged
+
+    @property
+    def file_brackets_overridden(self) -> bool:
+        return self.coded.file_brackets_overridden
+
+    def on_bar(self, ctx: Context) -> list[Signal]:
+        out = self.coded.on_bar(ctx)
+        closed = {s.leg for s in out if (s.leg, s.side) in self._CLOSES}
+        for s in self.rule_exits.on_bar(ctx):
+            if (s.leg, s.side) in self._CLOSES and s.leg not in closed:
+                # Rule exits close the WHOLE held side, like coded ctx.exit().
+                # size can be 0 on the coded entry's own signal bar (the buy
+                # hasn't filled yet) — a zero-size close must not be emitted.
+                size = ctx.position_long if s.leg == "long" else ctx.position_short
+                if size <= 0:
+                    continue
+                out.append(Signal(s.side, size, s.reason, leg=s.leg,
+                                  terms=s.terms, combine=s.combine))
+                closed.add(s.leg)
+        return out

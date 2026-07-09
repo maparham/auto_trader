@@ -1,0 +1,99 @@
+// Panel controls for a coded strategy's declared meta["params"] knobs.
+// One row per spec: NumberField (int/float, clamped + stepped), the app's
+// switch idiom (bool, matches OrderTicket's ExitRow), or a select (choice),
+// with the default shown subtly and changed values tinted.
+
+import type { ParamSpec, ParamValues } from "../api";
+import type { SweepAxis } from "../lib/sweep";
+import InfoTip from "./InfoTip";
+import NumberField from "./NumberField";
+import Tooltip from "./Tooltip";
+
+interface Props {
+  specs: ParamSpec[];
+  values: ParamValues;
+  onChange: (values: ParamValues) => void;
+  // Task 10 wires this; undefined = no sweep toggles shown.
+  sweep?: { axes: SweepAxis[]; onToggle: (target: string, spec: ParamSpec) => void };
+}
+
+export function StrategyParams({ specs, values, onChange, sweep }: Props) {
+  if (!specs.length) return null;
+
+  const set = (name: string, v: number | boolean | string) =>
+    onChange({ ...values, [name]: v });
+  const defaults = Object.fromEntries(specs.map((s) => [s.name, s.default])) as ParamValues;
+  const anyChanged = specs.some((s) => values[s.name] !== s.default);
+
+  return (
+    <div className="strategy-params">
+      <div className="sp-head">
+        <span className="sp-title">Parameters</span>
+        {anyChanged && (
+          <button type="button" className="sp-reset" onClick={() => onChange(defaults)}>
+            Reset all
+          </button>
+        )}
+      </div>
+      {specs.map((s) => {
+        const v = values[s.name] ?? s.default;
+        const changed = v !== s.default;
+        const swept = sweep?.axes.some((a) => a.target === `param:${s.name}`) ?? false;
+
+        return (
+          <div key={s.name} className={`sp-row${changed ? " sp-changed" : ""}`}>
+            <span className="sp-label">
+              {s.label}
+              {s.help && <InfoTip text={s.help} />}
+            </span>
+            {s.type === "bool" ? (
+              <button
+                type="button"
+                className={`sp-switch${v ? " on" : ""}`}
+                role="switch"
+                aria-checked={v as boolean}
+                onClick={() => set(s.name, !(v as boolean))}
+              >
+                <span className="sp-switch-knob" />
+              </button>
+            ) : s.type === "choice" ? (
+              <select value={v as string} onChange={(e) => set(s.name, e.target.value)}>
+                {(s.options ?? []).map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            ) : swept ? null : (
+              <NumberField
+                value={v as number}
+                step={s.step ?? undefined}
+                onChange={(n) => set(s.name, clamp(s, n))}
+                className="sp-num"
+              />
+            )}
+            {(s.type === "int" || s.type === "float") && sweep && (
+              <Tooltip content="Sweep this parameter">
+                <button
+                  type="button"
+                  className={`sp-sweep${swept ? " on" : ""}`}
+                  onClick={() => sweep.onToggle(`param:${s.name}`, s)}
+                >
+                  ⇄
+                </button>
+              </Tooltip>
+            )}
+            <span className="sp-default">default {String(s.default)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function clamp(s: ParamSpec, n: number): number {
+  let v = s.type === "int" ? Math.round(n) : n;
+  if (s.min !== null) v = Math.max(s.min, v);
+  if (s.max !== null) v = Math.min(s.max, v);
+  return v;
+}

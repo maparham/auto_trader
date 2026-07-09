@@ -21,6 +21,7 @@ import {
 import { saveBacktestPeriodsShown } from "./lib/persist";
 import { metricGroups, METRIC_INFO, tradeRows, sortTradeRows, type TradeRow } from "./lib/backtestPanelData";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import { RESOLUTION_SECONDS } from "./lib/feed";
 import { formatExpiryShort } from "./lib/alertUi";
 
@@ -120,6 +121,11 @@ export default function BacktestPanel() {
           // null = no losing trades: infinite RR when there were any winners, else nothing to show.
           return s.win_rate > 0 ? <span title={rrTitle}>∞ RR</span> : null;
         })()}
+        {result.fileBracketsOverridden && (
+          <Tooltip content="The strategy file passed sl=/tp= but panel risk is configured — panel risk was applied.">
+            <span className="bt-chip-muted">file sl/tp overridden</span>
+          </Tooltip>
+        )}
       </span>
       <button
         className={`bt-periods-toggle${periodsShown ? " on" : ""}`}
