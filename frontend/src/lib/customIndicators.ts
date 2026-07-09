@@ -15,6 +15,7 @@ export * from "./indicators/vwap";
 export * from "./indicators/prevHl";
 export * from "./indicators/rsi";
 export * from "./indicators/sessions";
+export * from "./indicators/timeHighlight";
 export * from "./indicators/pivots";
 export * from "./indicators/pivotBands";
 export * from "./indicators/curveLabels";
@@ -25,6 +26,7 @@ import { VWAP_TEMPLATE, AVWAP_TEMPLATE } from "./indicators/vwap";
 import { PREV_HL_TEMPLATE } from "./indicators/prevHl";
 import { RSI_TEMPLATE } from "./indicators/rsi";
 import { SESSIONS_TEMPLATE, registerSessionsAxis } from "./indicators/sessions";
+import { TIME_HIGHLIGHT_TEMPLATE } from "./indicators/timeHighlight";
 import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
 
 // Base templates for our custom indicator TYPES, keyed by type. Each is a full
@@ -40,6 +42,7 @@ export type CustomIndicatorType =
   | "PREV_HL"
   | "RSI"
   | "SESSIONS"
+  | "TIME_HIGHLIGHT"
   | "PIVOT_BANDS";
 
 export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate, "name">> = {
@@ -51,6 +54,7 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   PREV_HL: PREV_HL_TEMPLATE,
   RSI: RSI_TEMPLATE,
   SESSIONS: SESSIONS_TEMPLATE,
+  TIME_HIGHLIGHT: TIME_HIGHLIGHT_TEMPLATE,
   PIVOT_BANDS: PIVOT_BANDS_TEMPLATE,
 };
 
@@ -77,4 +81,5 @@ export const OVERLAY_INDICATORS = new Set([
   "LR",
   "PREV_HL",
   "PIVOT_BANDS",
+  "TIME_HIGHLIGHT",
 ]);

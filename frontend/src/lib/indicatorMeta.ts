@@ -250,6 +250,11 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Trading Sessions",
     desc: "Shades the FX trading sessions (Sydney, Tokyo, London, New York) across the time axis in a compact strip. Overlapping sessions split the row. Edit, add, recolor, or retime each session in the settings.",
   },
+  TIME_HIGHLIGHT: {
+    inputs: [],
+    title: "Time Highlight",
+    desc: "Highlights candles that fall inside time-of-day windows, in your device's local timezone. Each window can shade a translucent background band, recolor its candles, or both. Add, retime, recolor, or restyle each window in the settings.",
+  },
 };
 
 // Friendly name + description for klinecharts built-ins that DON'T need a custom

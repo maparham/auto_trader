@@ -41,6 +41,9 @@ import type {
   CurveLabelAlign,
   SessionDef,
   SessionsExtend,
+  TimeWindowDef,
+  TimeHighlightExtend,
+  TimeHighlightMode,
 } from "./lib/customIndicators";
 import {
   AVWAP_DEFAULT_BANDS,
@@ -48,6 +51,7 @@ import {
   RSI_SMOOTHING_DEFAULTS,
   RSI_STYLE_DEFAULTS,
   DEFAULT_SESSIONS,
+  DEFAULT_TIME_WINDOWS,
   indTypeOf,
   prevHlAnchorToInput,
   prevHlInputToAnchor,
@@ -601,6 +605,41 @@ export default function IndicatorSettings({
     ]);
   }
 
+  // --- TIME_HIGHLIGHT: editable per-window list (extendData.windows) ---
+  // Like SESSIONS, the whole indicator config is this list, but times are always
+  // device-local (no per-window zone) and each window carries a visual mode
+  // (band / candles / both). Times live on the Inputs tab, colours on the Style
+  // tab. Writes merge live extendData (preserve indType); persistence is the
+  // snapshot effect (keyed on `windows`).
+  const windowsExt0 = (ind?.extendData ?? {}) as TimeHighlightExtend;
+  const [windows, setWindows] = useState<TimeWindowDef[]>(() =>
+    (windowsExt0.windows ?? DEFAULT_TIME_WINDOWS).map((wn) => ({ ...wn })),
+  );
+  function writeWindows(next: TimeWindowDef[]) {
+    setWindows(next);
+    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    chart.overrideIndicator(
+      { name, extendData: { ...((live?.extendData as object) ?? {}), windows: next } },
+      paneId,
+    );
+  }
+  function patchWindow(i: number, patch: Partial<TimeWindowDef>) {
+    writeWindows(windows.map((wn, j) => (j === i ? { ...wn, ...patch } : wn)));
+  }
+  function addWindow() {
+    writeWindows([
+      ...windows,
+      {
+        id: `w${Math.random().toString(36).slice(2, 8)}`,
+        color: "#787b86",
+        from: "09:00",
+        to: "17:00",
+        mode: "band",
+        enabled: true,
+      },
+    ]);
+  }
+
   // PREV_HL timezone override: write extendData.tz and let calc re-bucket. "chart"
   // stores no tz (omit the key) so the instance follows the global chart zone.
   // Merges live extendData to preserve lineHidden / indType. Persistence is handled
@@ -842,6 +881,14 @@ export default function IndicatorSettings({
       // instance carries no key and picks up future default changes).
       extendData.sessions = sessions;
     }
+    if (
+      type === "TIME_HIGHLIGHT" &&
+      JSON.stringify(windows) !== JSON.stringify(DEFAULT_TIME_WINDOWS)
+    ) {
+      // The whole window list (only when edited away from defaults, mirroring
+      // SESSIONS, so a fresh instance carries no key).
+      extendData.windows = windows;
+    }
     if (!showValue) extendData.hideLegendValue = true;
     // Per-timeframe visibility (TV Visibility tab) — model only when non-default,
     // but userVisible (the intent) is always written once touched, so a later read
@@ -866,7 +913,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
 
   // Push a moving-average config (chart-TF or MTF) through the coordinator, which
   // refetches HTF data when a timeframe is set. Reads explicit overrides so it
@@ -1827,9 +1874,12 @@ export default function IndicatorSettings({
 
           {tab === "inputs" && !isMa && !isAvwap && !isRsi && (
             <>
-              {inputs.length === 0 && type !== "PREV_HL" && type !== "SESSIONS" && (
-                <p className="ind-note">This indicator has no adjustable inputs.</p>
-              )}
+              {inputs.length === 0 &&
+                type !== "PREV_HL" &&
+                type !== "SESSIONS" &&
+                type !== "TIME_HIGHLIGHT" && (
+                  <p className="ind-note">This indicator has no adjustable inputs.</p>
+                )}
               {type === "SESSIONS" && (
                 <div className="sessions-editor">
                   <p className="ind-note">
@@ -1892,6 +1942,62 @@ export default function IndicatorSettings({
                   ))}
                   <button type="button" className="session-add" onClick={addSession}>
                     + Add session
+                  </button>
+                </div>
+              )}
+              {type === "TIME_HIGHLIGHT" && (
+                <div className="sessions-editor">
+                  <p className="ind-note">
+                    Times are your device's local time. Set colours in the Style tab.
+                  </p>
+                  {windows.map((wn, i) => (
+                    <div className={`session-row${wn.enabled ? "" : " is-off"}`} key={wn.id}>
+                      <label className="ind-check ind-check-inline">
+                        <input
+                          type="checkbox"
+                          checked={wn.enabled}
+                          onChange={(e) => patchWindow(i, { enabled: e.target.checked })}
+                        />
+                      </label>
+                      <input
+                        className="session-time"
+                        type="time"
+                        value={wn.from}
+                        aria-label="Window start"
+                        onChange={(e) => patchWindow(i, { from: e.target.value })}
+                      />
+                      <span className="session-dash">–</span>
+                      <input
+                        className="session-time"
+                        type="time"
+                        value={wn.to}
+                        aria-label="Window end"
+                        onChange={(e) => patchWindow(i, { to: e.target.value })}
+                      />
+                      <select
+                        className="tz-select session-tz"
+                        value={wn.mode}
+                        aria-label="Highlight style"
+                        onChange={(e) =>
+                          patchWindow(i, { mode: e.target.value as TimeHighlightMode })
+                        }
+                      >
+                        <option value="band">Band</option>
+                        <option value="candles">Candles</option>
+                        <option value="both">Both</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="session-remove"
+                        aria-label="Remove window"
+                        onClick={() => writeWindows(windows.filter((_, j) => j !== i))}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <button type="button" className="session-add" onClick={addWindow}>
+                    + Add window
                   </button>
                 </div>
               )}
@@ -2068,8 +2174,10 @@ export default function IndicatorSettings({
                   );
                 })()
               )}
-              {type !== "SESSIONS" && <div className="ind-group">Calculation</div>}
-              {type === "SESSIONS" ? null : type === "PREV_HL" ? (
+              {type !== "SESSIONS" && type !== "TIME_HIGHLIGHT" && (
+                <div className="ind-group">Calculation</div>
+              )}
+              {type === "SESSIONS" || type === "TIME_HIGHLIGHT" ? null : type === "PREV_HL" ? (
                 <>
                   {/* How the rolling time-span treats closed-market time. */}
                   <div className="ind-row">
@@ -2168,7 +2276,7 @@ export default function IndicatorSettings({
             <>
               {/* Non-PREV_HL toggles its figure values at the top. PREV_HL shows a
                   range summary instead, and that toggle lives at the bottom (below). */}
-              {type !== "PREV_HL" && type !== "SESSIONS" && (
+              {type !== "PREV_HL" && type !== "SESSIONS" && type !== "TIME_HIGHLIGHT" && (
                 <label className="ind-check">
                   <input
                     type="checkbox"
@@ -2189,6 +2297,24 @@ export default function IndicatorSettings({
                         color={s.color}
                         onColor={(hex) => patchSession(i, { color: hex })}
                         title={`${s.name} colour`}
+                      />
+                    </div>
+                  </div>
+                ))}
+              {type === "TIME_HIGHLIGHT" &&
+                windows.map((wn, i) => (
+                  <div
+                    className={`ind-row ind-style-row${wn.enabled ? "" : " is-off"}`}
+                    key={wn.id}
+                  >
+                    <span className="ind-row-head">
+                      <label>{`${wn.from}–${wn.to}`}</label>
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={wn.color}
+                        onColor={(hex) => patchWindow(i, { color: hex })}
+                        title={`${wn.from}–${wn.to} colour`}
                       />
                     </div>
                   </div>
