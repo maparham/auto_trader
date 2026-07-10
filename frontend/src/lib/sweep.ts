@@ -7,7 +7,11 @@ import { runSweepChunk, type BacktestRequest, type SweepRow } from "../api";
 import type { SweepRunState } from "./signals";
 
 export interface SweepAxis {
-  target: string;   // "param:<name>" | "risk:<side>.<stop|target>.<value|mult>"
+  // "param:<name>" | "risk:<side>.<stop|target>.<value|mult>" |
+  // "rule:<side>.<entry|exit>.<idx>.<left|right>.length" |
+  // "rule:<side>.<entry|exit>.<idx>.<left|right>.value" |
+  // "rule:<side>.<entry|exit>.<idx>.count"
+  target: string;
   label: string;
   from: number;
   to: number;
@@ -16,6 +20,21 @@ export interface SweepAxis {
 
 export const SWEEP_MAX_COMBOS = 200;
 export const SWEEP_CHUNK_SIZE = 20;
+
+/** Builds a `rule:` sweep-axis target path for a rule operand's numeric field
+ * (`length` on an indicator, `value` on a const) — `ruleAxisTarget("long",
+ * "entry", 0, "left.length")` → `"rule:long.entry.0.left.length"`. Also used
+ * for an exit rule's own `count` field, which has no operand side: pass
+ * `"count"` as the leaf. Must match the backend's rule-sweep target grammar —
+ * keep in sync with the doc-comment on SweepAxis.target above. */
+export function ruleAxisTarget(
+  side: "long" | "short",
+  group: "entry" | "exit",
+  idx: number,
+  leaf: "left.length" | "right.length" | "left.value" | "right.value" | "count",
+): string {
+  return `rule:${side}.${group}.${idx}.${leaf}`;
+}
 
 function axisValues(a: SweepAxis): number[] {
   if (!(a.step > 0) || a.to < a.from) return [];

@@ -77,6 +77,45 @@ export async function buildSeries(
   return out;
 }
 
+/** Like `buildSeries`, but only for `kind:"series"` chart-operand/drawing
+ * operands — the ones the backend can't recompute itself (it doesn't know
+ * about on-chart indicator instances or drawings). Native indicators, price,
+ * and slope-only operands are skipped: the backend now recomputes those from
+ * the rule config directly, so the browser no longer ships them. ATR
+ * risk/scaling series are dropped too (backend computes ATR). A chart operand
+ * may still reference a higher timeframe, so the HTF fetch/align path is kept. */
+export async function buildChartOperandSeries(
+  candles: KLineData[],
+  cfg: BacktestConfig,
+  baseResolution: string,
+  fetchTimeframe: FetchTimeframe,
+): Promise<Record<string, Array<number | null>>> {
+  const out: Record<string, Array<number | null>> = {};
+  const baseTimestamps = candles.map((k) => k.timestamp);
+  const htfCache = new Map<string, KLineData[]>();
+
+  for (const op of collectSeriesOperands(cfg)) {
+    if (op.kind !== "series") continue;
+    const name = seriesName(op);
+    if (name === null) continue;
+    const tf = op.timeframe;
+    if (!tf || tf === baseResolution) {
+      out[name] = toNullable(derive(op, candles, tfHours(baseResolution)));
+      continue;
+    }
+    let htf = htfCache.get(tf);
+    if (!htf) {
+      htf = await fetchTimeframe(tf);
+      htfCache.set(tf, htf);
+    }
+    const htfMs = (RESOLUTION_SECONDS[tf] ?? 0) * 1000;
+    const aligned = alignHtfToChart(baseTimestamps, htf, derive(op, htf, tfHours(tf)), htfMs, true);
+    out[name] = toNullable(aligned);
+  }
+
+  return out;
+}
+
 /** Hours per bar for a resolution (the "TF" in the slope's time denominator).
  * Falls back to 1 hour for an unknown resolution. Sub-hour timeframes are < 1
  * (e.g. a 5-minute bar is 1/12 h). */

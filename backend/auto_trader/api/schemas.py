@@ -348,8 +348,10 @@ class BacktestRequest(BaseModel):
 
 class SweepDTO(BaseModel):
     """Explicit combo list — the frontend enumerates the grid and chunks it.
-    Keys: "param:<name>" (codedParams override) or
-    "risk:<long|short>.<stop|target>.<value|mult>"."""
+    Keys: "param:<name>" (codedParams override),
+    "risk:<long|short>.<stop|target>.<value|mult>", or
+    "rule:<long|short>.<entry|exit>.<idx>.<left|right>.<length|value>" /
+    "rule:<long|short>.<entry|exit>.<idx>.count" (rule-tree operand/count patch)."""
     combos: list[dict[str, float | int | bool | str]]
 
 

@@ -58,7 +58,7 @@ import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
 import { StrategyParams } from "./components/StrategyParams";
 import { SweepResults } from "./SweepResults";
-import { comboCount, SWEEP_MAX_COMBOS, type SweepAxis } from "./lib/sweep";
+import { comboCount, ruleAxisTarget, SWEEP_MAX_COMBOS, type SweepAxis } from "./lib/sweep";
 import { fetchStrategies, type StrategyInfo, type ParamSpec } from "./api";
 import {
   loadCodedCfg,
@@ -460,6 +460,24 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       return appended.length > 2 ? appended.slice(appended.length - 2) : appended;
     });
   };
+  // Rule-operand numeric fields (indicator length, const value, exit count) —
+  // same heuristic as toggleRiskSweepAxis (no declared min/max/step to draw
+  // from), keyed on the `rule:` path built by ruleAxisTarget at the call site.
+  const toggleRuleSweepAxis = (target: string, current: number) => {
+    setSweepAxes((axes) => {
+      if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
+      const base = current || 1;
+      const next: SweepAxis = {
+        target,
+        label: target.replace(/^rule:/, ""),
+        from: base,
+        to: base * 2,
+        step: Math.max(base / 10, 1),
+      };
+      const appended = [...axes, next];
+      return appended.length > 2 ? appended.slice(appended.length - 2) : appended;
+    });
+  };
   const sweepCombos = comboCount(sweepAxes);
   const sweepOverCap = !isFinite(sweepCombos) || sweepCombos > SWEEP_MAX_COMBOS;
   const [sweepState, setSweepState] = useState(sweepStateSignal.value);
@@ -475,7 +493,51 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     sweepAxesSignal.set([]);
   }, []);
 
+  // Rule mode's own combo-apply — patches the operand/count a `rule:` axis
+  // targets back onto cfg's rule groups. Kept separate from the coded branch
+  // below (different config shape: RuleGroup arrays on `cfg`, not `codedCfg`).
+  function applyRuleSweepCombo(combo: Record<string, number | boolean | string>) {
+    if (sweepStateSignal.value?.running) return;
+    let next = cfg;
+    for (const [key, value] of Object.entries(combo)) {
+      if (!key.startsWith("rule:") || typeof value !== "number") continue;
+      // rule:<side>.<entry|exit>.<idx>.<left|right>.<length|value>
+      // rule:<side>.<entry|exit>.<idx>.count
+      const parts = key.slice("rule:".length).split(".");
+      const [side, group, idxStr, ...rest] = parts;
+      const idx = Number(idxStr);
+      const groupKey = `${side}${group === "entry" ? "Entry" : "Exit"}` as
+        "longEntry" | "longExit" | "shortEntry" | "shortExit";
+      const ruleGroup = next[groupKey];
+      const rule = ruleGroup.rules[idx];
+      if (!rule) continue;
+      let patched: Rule;
+      if (rest[0] === "count") {
+        patched = { ...rule, count: value };
+      } else {
+        const [operandSide, leaf] = rest as ["left" | "right", "length" | "value"];
+        const operand = rule[operandSide];
+        if (operand.kind === "indicator" && leaf === "length") {
+          patched = { ...rule, [operandSide]: { ...operand, length: value } };
+        } else if (operand.kind === "const" && leaf === "value") {
+          patched = { ...rule, [operandSide]: { ...operand, value } };
+        } else {
+          continue;   // stale axis (operand kind changed since the axis was created)
+        }
+      }
+      const rules = ruleGroup.rules.slice();
+      rules[idx] = patched;
+      next = { ...next, [groupKey]: { ...ruleGroup, rules } };
+    }
+    setCfg(next);
+    setSweepAxes([]);
+    sweepAxesSignal.set([]);
+    sweepStateSignal.set(null);
+    run(next);
+  }
+
   function applySweepCombo(combo: Record<string, number | boolean | string>) {
+    if (cfg.mode !== "coded") return applyRuleSweepCombo(combo);
     if (!cfg.codedStrategy) return;
     // I2: a streaming sweep's run() no-ops while a run is already in flight
     // (BacktestButton guards on `running`), so applying mid-sweep would clear
@@ -713,8 +775,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // against the chart beside it. The header ✕ is the only close. Results live in
   // the always-visible bottom pane, so there's no tab to jump to — but a run
   // must expand the results pane if the user had collapsed it.
-  function run() {
-    onRun(cfg);
+  // Optional override lets a caller that just computed a new cfg via setCfg
+  // (a setState, not synchronous) run against that value immediately instead
+  // of the stale `cfg` still in this closure — see applyRuleSweepCombo.
+  function run(override?: BacktestConfig) {
+    onRun(override ?? cfg);
     setSplit((s) => (s.collapsed ? { ...s, collapsed: false } : s));
   }
   // Footer "Run backtest": publish the CURRENT sweep axes right before firing —
@@ -1101,9 +1166,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             <button
               className={(cfg.mode ?? "rules") === "rules" ? "seg-on" : ""}
               onClick={() => {
-                // Sweep axes are coded-mode-only UI; left set, the footer would
-                // still read "Run sweep" and send a codedStrategy-less sweep
-                // the backend 422s — with no visible toggle to clear them.
+                // Sweep axes are mode-scoped (`param:`/`risk:` in coded, `rule:`
+                // in rules); left set across a mode switch, applySweepCombo would
+                // silently ignore the other mode's axes (correct but confusing) or
+                // — for a stale `rule:` axis surviving into coded mode — get
+                // filtered out yet still count toward the sweep, sending a
+                // combo the backend rejects. Clear on every mode switch.
                 setSweepAxes([]);
                 setCfg({ ...cfg, mode: "rules" });
               }}
@@ -1112,7 +1180,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             </button>
             <button
               className={cfg.mode === "coded" ? "seg-on" : ""}
-              onClick={() => setCfg({ ...cfg, mode: "coded" })}
+              onClick={() => {
+                setSweepAxes([]);
+                setCfg({ ...cfg, mode: "coded" });
+              }}
             >
               Strategy
             </button>
@@ -1222,7 +1293,22 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             groupClipboard={groupClipboard}
             onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
             openChartPicker={openChartPicker}
+            sweep={{ axes: sweepAxes, side, onToggle: toggleRuleSweepAxis }}
           />
+          {/* Rendered here (not inside SidePanel) so a swept field on the
+              inactive side stays visible/editable even while its side tab isn't
+              selected — rule mode shows one side at a time, but sweeps span both. */}
+          {sweepAxes
+            .filter((a) => a.target.startsWith("rule:"))
+            .map((a) => (
+              <SweepAxisRow
+                key={a.target}
+                axis={a}
+                onChange={(patch) =>
+                  setSweepAxes((axes) => axes.map((x) => (x.target === a.target ? { ...x, ...patch } : x)))
+                }
+              />
+            ))}
 
           {usesVolume && (
             <div className="al-note">
@@ -1663,6 +1749,7 @@ function SidePanel({
   groupClipboard,
   onCopyAll,
   openChartPicker,
+  sweep,
 }: {
   side: "long" | "short";
   cfg: BacktestConfig;
@@ -1677,6 +1764,9 @@ function SidePanel({
   // Absent in surfaces with no chart to pick from (e.g. the Live panel) — the
   // affordances that need it simply don't render.
   openChartPicker?: (onPick: (op: Operand) => void) => void;
+  // Task 9: optional per-operand-field sweep toggle for rule mode. Undefined
+  // (coded mode's own RuleGroupSection use, the Live panel) renders as before.
+  sweep?: { axes: SweepAxis[]; side: "long" | "short"; onToggle: (target: string, current: number) => void };
 }) {
   const isLong = side === "long";
   const enabled = (isLong ? cfg.longEnabled : cfg.shortEnabled) !== false;
@@ -1724,6 +1814,7 @@ function SidePanel({
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
           openChartPicker={openChartPicker}
+          sweep={sweep && { ...sweep, group: "entry" }}
         />
         <RuleGroupSection
           title={isLong ? "Sell to close" : "Buy to close"}
@@ -1739,6 +1830,7 @@ function SidePanel({
           onCopyAll={onCopyAll}
           openChartPicker={openChartPicker}
           isExit
+          sweep={sweep && { ...sweep, group: "exit" }}
         />
         <RiskSection
           risk={(isLong ? cfg.longRisk : cfg.shortRisk) ?? EMPTY_RISK}
@@ -2031,6 +2123,7 @@ export function RuleGroupSection({
   onCopyAll,
   openChartPicker,
   isExit = false,
+  sweep,
 }: {
   title: string;
   info?: string;
@@ -2049,6 +2142,11 @@ export function RuleGroupSection({
   // Exit groups can reference the entry price and carry an "Nth time" count;
   // entry groups can't (there's no position yet).
   isExit?: boolean;
+  // Task 9: per-operand-field sweep toggle (rule mode only — SidePanel passes
+  // it, coded mode's exit-rule use leaves it undefined). `group` here is this
+  // section's entry/exit half of the `rule:` target path, distinct from the
+  // `RuleGroup` prop above.
+  sweep?: { axes: SweepAxis[]; side: "long" | "short"; group: "entry" | "exit"; onToggle: (target: string, current: number) => void };
 }) {
   function setCombine(combine: Combine) {
     onChange({ ...group, combine });
@@ -2154,10 +2252,22 @@ export function RuleGroupSection({
       )}
       {group.rules.map((rule, i) => (
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`} key={i}>
-          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} openChartPicker={openChartPicker} />
+          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} openChartPicker={openChartPicker} sweep={sweep && { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, i, `left.${leaf}`) }} />
           <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
-          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} openChartPicker={openChartPicker} />
-          {isExit && <CountField value={rule.count} onChange={(count) => setRule(i, { ...rule, count })} />}
+          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} openChartPicker={openChartPicker} sweep={sweep && { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, i, `right.${leaf}`) }} />
+          {isExit && (
+            <CountField
+              value={rule.count}
+              onChange={(count) => setRule(i, { ...rule, count })}
+              sweep={
+                sweep && {
+                  axes: sweep.axes,
+                  onToggle: sweep.onToggle,
+                  target: ruleAxisTarget(sweep.side, sweep.group, i, "count"),
+                }
+              }
+            />
+          )}
           <div className="bt-rule-actions">
             <button
               className="bt-rule-toggle"
@@ -2239,8 +2349,19 @@ function ordinal(n: number): string {
 // The optional "Nth time" modifier on an exit rule. Blank/1 ⇒ fire on the first
 // occurrence (the default); N ≥ 2 ⇒ fire on the Nth bar since entry the
 // condition is true (cumulative — non-consecutive bars count).
-function CountField({ value, onChange }: { value?: number; onChange: (n?: number) => void }) {
+function CountField({
+  value,
+  onChange,
+  sweep,
+}: {
+  value?: number;
+  onChange: (n?: number) => void;
+  // Task 9: optional sweep toggle on the count itself, keyed by the exact
+  // `rule:...count` target the caller already built.
+  sweep?: { axes: SweepAxis[]; target: string; onToggle: (target: string, current: number) => void };
+}) {
   const n = value && value > 1 ? value : undefined;
+  const swept = sweep?.axes.some((a) => a.target === sweep.target) ?? false;
   // Keep a local text buffer so the field shows exactly what the user typed
   // mid-edit. Deriving the input value straight from the model breaks typing:
   // a bare "1" (the default) maps to undefined, so a controlled value would
@@ -2251,37 +2372,52 @@ function CountField({ value, onChange }: { value?: number; onChange: (n?: number
     setText(n ? String(n) : "");
   }, [n]);
   return (
-    <Tooltip
-      content={[
-        "Fire on the Nth time since entry this condition is true.",
-        "Counts every bar it's true, consecutive or not. Blank or 1 = the first time.",
-      ]}
-    >
-      <label className={`bt-rule-count${n ? " on" : ""}`}>
-        <input
-          type="number"
-          // Floor at 2: 1 is the default and reads as blank, so letting the
-          // native spinner step to 1 would make the up-arrow appear dead.
-          min={2}
-          step={1}
-          className="bt-rule-count-input"
-          placeholder="1st"
-          value={text}
-          onKeyDown={blockNegKeys}
-          onChange={(e) => {
-            const raw = cleanNumInput(e.currentTarget);
-            setText(raw);
-            const num = Math.round(Number(raw));
-            onChange(raw === "" || num <= 1 || !Number.isFinite(num) ? undefined : num);
-          }}
-          // A stray "1" (or anything that resolves to the default) snaps back to
-          // the blank "1st" placeholder on blur so the field never lingers on a
-          // value the model dropped.
-          onBlur={() => setText(n ? String(n) : "")}
-        />
-        <span className="bt-rule-count-suffix" aria-hidden="true">{n ? ordinal(n) : ""}</span>
-      </label>
-    </Tooltip>
+    <>
+      <Tooltip
+        content={[
+          "Fire on the Nth time since entry this condition is true.",
+          "Counts every bar it's true, consecutive or not. Blank or 1 = the first time.",
+        ]}
+      >
+        <label className={`bt-rule-count${n ? " on" : ""}`}>
+          {!swept && (
+            <input
+              type="number"
+              // Floor at 2: 1 is the default and reads as blank, so letting the
+              // native spinner step to 1 would make the up-arrow appear dead.
+              min={2}
+              step={1}
+              className="bt-rule-count-input"
+              placeholder="1st"
+              value={text}
+              onKeyDown={blockNegKeys}
+              onChange={(e) => {
+                const raw = cleanNumInput(e.currentTarget);
+                setText(raw);
+                const num = Math.round(Number(raw));
+                onChange(raw === "" || num <= 1 || !Number.isFinite(num) ? undefined : num);
+              }}
+              // A stray "1" (or anything that resolves to the default) snaps back to
+              // the blank "1st" placeholder on blur so the field never lingers on a
+              // value the model dropped.
+              onBlur={() => setText(n ? String(n) : "")}
+            />
+          )}
+          <span className="bt-rule-count-suffix" aria-hidden="true">{n ? ordinal(n) : ""}</span>
+        </label>
+      </Tooltip>
+      {sweep && (
+        <Tooltip content="Sweep this field">
+          <button
+            type="button"
+            className={`sp-sweep${swept ? " on" : ""}`}
+            onClick={() => sweep.onToggle(sweep.target, n ?? 1)}
+          >
+            ⇄
+          </button>
+        </Tooltip>
+      )}
+    </>
   );
 }
 
@@ -2293,6 +2429,7 @@ function OperandPicker({
   allowEntry = false,
   siblingSloped = false,
   openChartPicker,
+  sweep,
 }: {
   value: Operand;
   onChange: (op: Operand) => void;
@@ -2306,10 +2443,34 @@ function OperandPicker({
   // Absent in surfaces with no chart to pick from (e.g. the Live panel) — the
   // affordances that need it simply don't render.
   openChartPicker?: (onPick: (op: Operand) => void) => void;
+  // Task 9: optional sweep toggle for this operand's numeric field (indicator
+  // `length` or const `value`). `target` builds the full `rule:` path from the
+  // leaf field name — the caller (RuleGroupSection) already knows the side/
+  // group/rule-index this operand sits at.
+  sweep?: {
+    axes: SweepAxis[];
+    onToggle: (target: string, current: number) => void;
+    target: (leaf: "length" | "value") => string;
+  };
 }) {
   // Slope can wrap an indicator, a price, or a pasted chart operand (not a constant
   // or the entry price).
   const canSlope = value.kind === "indicator" || value.kind === "price" || value.kind === "series";
+  const sweptTarget = (leaf: "length" | "value") => sweep?.target(leaf);
+  const isSwept = (leaf: "length" | "value") =>
+    sweep ? sweep.axes.some((a) => a.target === sweptTarget(leaf)) : false;
+  const sweepToggle = (leaf: "length" | "value", current: number) =>
+    sweep && (
+      <Tooltip content="Sweep this field">
+        <button
+          type="button"
+          className={`sp-sweep${isSwept(leaf) ? " on" : ""}`}
+          onClick={() => sweep.onToggle(sweptTarget(leaf)!, current)}
+        >
+          ⇄
+        </button>
+      </Tooltip>
+    );
   const sloped = slopeLen(value) !== null;
   function setSlope(spec: { len: number } | undefined) {
     if (value.kind !== "indicator" && value.kind !== "price" && value.kind !== "series") return;
@@ -2412,15 +2573,20 @@ function OperandPicker({
             />
           )}
           {!NO_LENGTH.includes(value.indicator) && (
-            <input
-              type="number"
-              min={1}
-              className="bt-operand-length"
-              value={value.length ?? 9}
-              onKeyDown={blockNegKeys}
-              onChange={(e) => onChange({ ...value, length: Number(cleanNumInput(e.currentTarget)) })}
-              onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => onChange({ ...value, length: n }))}
-            />
+            <>
+              {!isSwept("length") && (
+                <input
+                  type="number"
+                  min={1}
+                  className="bt-operand-length"
+                  value={value.length ?? 9}
+                  onKeyDown={blockNegKeys}
+                  onChange={(e) => onChange({ ...value, length: Number(cleanNumInput(e.currentTarget)) })}
+                  onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => onChange({ ...value, length: n }))}
+                />
+              )}
+              {sweepToggle("length", value.length ?? 9)}
+            </>
           )}
           <select
             className="bt-operand-tf"
@@ -2448,13 +2614,16 @@ function OperandPicker({
       )}
       {value.kind === "const" && (
         <>
-          <NumberField
-            signed
-            value={value.value}
-            onChange={(n) => onChange({ kind: "const", value: n })}
-            className="bt-operand-length"
-          />
+          {!isSwept("value") && (
+            <NumberField
+              signed
+              value={value.value}
+              onChange={(n) => onChange({ kind: "const", value: n })}
+              className="bt-operand-length"
+            />
+          )}
           {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
+          {sweepToggle("value", value.value)}
         </>
       )}
       {openChartPicker && (

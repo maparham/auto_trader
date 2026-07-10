@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { comboCount, enumerateCombos, runSweep, sweepCatchState, SWEEP_CHUNK_SIZE } from "./sweep";
+import { comboCount, enumerateCombos, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_CHUNK_SIZE } from "./sweep";
 import * as api from "../api";
 
 const axis = (target: string, from: number, to: number, step: number) =>
@@ -65,6 +65,20 @@ describe("runSweep", () => {
     await expect(p).rejects.toThrow(/aborted/i);
     expect(spy).toHaveBeenCalledTimes(1);            // no post-cancel retry
     expect(onRows).not.toHaveBeenCalled();
+  });
+});
+
+describe("ruleAxisTarget", () => {
+  it("builds an operand length target", () => {
+    expect(ruleAxisTarget("long", "entry", 0, "left.length")).toBe("rule:long.entry.0.left.length");
+  });
+
+  it("builds an operand value target for the right side", () => {
+    expect(ruleAxisTarget("short", "exit", 2, "right.value")).toBe("rule:short.exit.2.right.value");
+  });
+
+  it("builds a count target with no operand side", () => {
+    expect(ruleAxisTarget("long", "exit", 1, "count")).toBe("rule:long.exit.1.count");
   });
 });
 

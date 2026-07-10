@@ -1,0 +1,370 @@
+{
+  "baseResolution": "HOUR",
+  "candles": [
+    {
+      "timestamp": 0,
+      "open": 10,
+      "high": 11,
+      "low": 9,
+      "close": 10,
+      "volume": 1
+    },
+    {
+      "timestamp": 3600000,
+      "open": 11,
+      "high": 12,
+      "low": 10,
+      "close": 11,
+      "volume": 2
+    },
+    {
+      "timestamp": 7200000,
+      "open": 12,
+      "high": 13,
+      "low": 11,
+      "close": 12,
+      "volume": 3
+    },
+    {
+      "timestamp": 10800000,
+      "open": 13,
+      "high": 14,
+      "low": 12,
+      "close": 13,
+      "volume": 4
+    },
+    {
+      "timestamp": 14400000,
+      "open": 14,
+      "high": 15,
+      "low": 13,
+      "close": 14,
+      "volume": 5
+    },
+    {
+      "timestamp": 18000000,
+      "open": 15,
+      "high": 16,
+      "low": 14,
+      "close": 15,
+      "volume": 6
+    },
+    {
+      "timestamp": 21600000,
+      "open": 16,
+      "high": 17,
+      "low": 15,
+      "close": 16,
+      "volume": 7
+    },
+    {
+      "timestamp": 25200000,
+      "open": 17,
+      "high": 18,
+      "low": 16,
+      "close": 17,
+      "volume": 8
+    },
+    {
+      "timestamp": 28800000,
+      "open": 18,
+      "high": 19,
+      "low": 17,
+      "close": 18,
+      "volume": 9
+    },
+    {
+      "timestamp": 32400000,
+      "open": 19,
+      "high": 20,
+      "low": 18,
+      "close": 19,
+      "volume": 10
+    },
+    {
+      "timestamp": 36000000,
+      "open": 20,
+      "high": 21,
+      "low": 19,
+      "close": 20,
+      "volume": 11
+    },
+    {
+      "timestamp": 39600000,
+      "open": 21,
+      "high": 22,
+      "low": 20,
+      "close": 21,
+      "volume": 12
+    },
+    {
+      "timestamp": 43200000,
+      "open": 22,
+      "high": 23,
+      "low": 21,
+      "close": 22,
+      "volume": 13
+    },
+    {
+      "timestamp": 46800000,
+      "open": 23,
+      "high": 24,
+      "low": 22,
+      "close": 23,
+      "volume": 14
+    },
+    {
+      "timestamp": 50400000,
+      "open": 24,
+      "high": 25,
+      "low": 23,
+      "close": 24,
+      "volume": 15
+    },
+    {
+      "timestamp": 54000000,
+      "open": 15,
+      "high": 16,
+      "low": 14,
+      "close": 15,
+      "volume": 16
+    },
+    {
+      "timestamp": 57600000,
+      "open": 16,
+      "high": 17,
+      "low": 15,
+      "close": 16,
+      "volume": 17
+    },
+    {
+      "timestamp": 61200000,
+      "open": 17,
+      "high": 18,
+      "low": 16,
+      "close": 17,
+      "volume": 18
+    },
+    {
+      "timestamp": 64800000,
+      "open": 18,
+      "high": 19,
+      "low": 17,
+      "close": 18,
+      "volume": 19
+    },
+    {
+      "timestamp": 68400000,
+      "open": 19,
+      "high": 20,
+      "low": 18,
+      "close": 19,
+      "volume": 20
+    }
+  ],
+  "htf": {
+    "HOUR_4": [
+      {
+        "timestamp": 0,
+        "open": 10,
+        "high": 11,
+        "low": 9,
+        "close": 10,
+        "volume": 1
+      },
+      {
+        "timestamp": 14400000,
+        "open": 14,
+        "high": 15,
+        "low": 13,
+        "close": 14,
+        "volume": 2
+      },
+      {
+        "timestamp": 28800000,
+        "open": 18,
+        "high": 19,
+        "low": 17,
+        "close": 18,
+        "volume": 3
+      },
+      {
+        "timestamp": 43200000,
+        "open": 15,
+        "high": 16,
+        "low": 14,
+        "close": 15,
+        "volume": 4
+      },
+      {
+        "timestamp": 57600000,
+        "open": 19,
+        "high": 20,
+        "low": 18,
+        "close": 19,
+        "volume": 5
+      }
+    ]
+  },
+  "config": {
+    "range": {
+      "mode": "bars",
+      "bars": 20,
+      "history": "full"
+    },
+    "longEntry": {
+      "combine": "AND",
+      "rules": [
+        {
+          "left": {
+            "kind": "indicator",
+            "indicator": "EMA",
+            "length": 3
+          },
+          "op": "gt",
+          "right": {
+            "kind": "indicator",
+            "indicator": "EMA",
+            "length": 2,
+            "timeframe": "HOUR_4"
+          }
+        },
+        {
+          "left": {
+            "kind": "price",
+            "field": "close",
+            "slope": {
+              "len": 2
+            }
+          },
+          "op": "gt",
+          "right": {
+            "kind": "const",
+            "value": 0
+          }
+        }
+      ]
+    },
+    "longExit": {
+      "combine": "AND",
+      "rules": []
+    },
+    "shortEntry": {
+      "combine": "AND",
+      "rules": []
+    },
+    "shortExit": {
+      "combine": "AND",
+      "rules": []
+    },
+    "longEnabled": true,
+    "shortEnabled": true,
+    "longRisk": {
+      "stop": {
+        "kind": "atr",
+        "mult": 2,
+        "length": 3
+      },
+      "target": {
+        "kind": "none"
+      }
+    },
+    "costs": {
+      "quantity": 1,
+      "commissionPerSide": 0,
+      "slippage": 0,
+      "startingCash": 10000
+    },
+    "showEquity": false
+  },
+  "series": {
+    "EMA_3": [
+      10,
+      10.5,
+      11.25,
+      12.125,
+      13.0625,
+      14.03125,
+      15.015625,
+      16.0078125,
+      17.00390625,
+      18.001953125,
+      19.0009765625,
+      20.00048828125,
+      21.000244140625,
+      22.0001220703125,
+      23.00006103515625,
+      19.000030517578125,
+      17.500015258789062,
+      17.25000762939453,
+      17.625003814697266,
+      18.312501907348633
+    ],
+    "EMA_2@HOUR_4": [
+      null,
+      null,
+      null,
+      null,
+      10,
+      10,
+      10,
+      10,
+      12.666666666666666,
+      12.666666666666666,
+      12.666666666666666,
+      12.666666666666666,
+      16.22222222222222,
+      16.22222222222222,
+      16.22222222222222,
+      16.22222222222222,
+      15.407407407407408,
+      15.407407407407408,
+      15.407407407407408,
+      15.407407407407408
+    ],
+    "close~2": [
+      null,
+      null,
+      10,
+      9.090909090909092,
+      8.333333333333332,
+      7.6923076923076925,
+      7.142857142857142,
+      6.666666666666667,
+      6.25,
+      5.88235294117647,
+      5.555555555555555,
+      5.263157894736842,
+      5,
+      4.761904761904762,
+      4.545454545454546,
+      -17.391304347826086,
+      -16.666666666666664,
+      6.666666666666667,
+      6.25,
+      5.88235294117647
+    ],
+    "ATR_3": [
+      null,
+      null,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      4.666666666666667,
+      3.777777777777778,
+      3.1851851851851856,
+      2.7901234567901234,
+      2.5267489711934155
+    ]
+  }
+}

@@ -15,7 +15,7 @@ import {
 import type { ChartController } from "./lib/chartController";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
-import { buildSeries } from "./lib/backtestSeries";
+import { buildChartOperandSeries } from "./lib/backtestSeries";
 import { defaultBacktestConfig, activeGroup, type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
 import { resolveMask } from "./lib/backtestSchedule";
 import { loadCodedCfg, resolveParamValues, sendableRisk } from "./lib/codedConfig";
@@ -121,10 +121,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       }
       // Coded mode: the panel's per-file config (params + risk + exit rules,
       // Task 8) drives the run — entries stay empty (the .py file opens
-      // positions itself). Feeding this into `buildSeries` unchanged (empty
-      // entry groups ⇒ only exit-rule operands + risk-ATR series come out) is
-      // the "effective cfg" trick other tasks reuse, so no other machinery needs
-      // to know coded mode exists.
+      // positions itself). Feeding this into `buildChartOperandSeries`
+      // unchanged (empty entry groups ⇒ only exit-rule chart-operand series
+      // come out; natives/ATR are computed server-side) is the "effective
+      // cfg" trick other tasks reuse, so no other machinery needs to know
+      // coded mode exists.
       const EMPTY_GROUP: RuleGroup = { combine: "AND", rules: [] };
       const codedCfg = coded ? loadCodedCfg("backtest", cfg.codedStrategy!) : null;
       const effCfg: BacktestConfig = coded
@@ -190,19 +191,20 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         setWarning(`only ${warmup} of ${required} warm-up bars available — indicators may be cold at the start of the window`);
       }
 
-      // A rule operand may reference a higher timeframe than the base run; fetch
-      // each such timeframe over the same span as the base history so its
-      // indicator is warm, then buildSeries forward-fills it onto the base bars.
+      // A chart-operand rule may reference a higher timeframe than the base
+      // run; fetch each such timeframe over the same span as the base history
+      // so its indicator is warm, then buildChartOperandSeries forward-fills
+      // it onto the base bars.
       const htfFromSec = Math.floor(Math.max(0, bars[0].timestamp) / 1000);
       const fetchTimeframe = (resolution: string) =>
         fetchRange(epic, resolution, htfFromSec, toSec, priceSide, brokerId);
       const tSeries0 = performance.now();
-      // Coded mode's empty entry groups mean buildSeries only computes what the
-      // panel-configured exit rules + risk ATR need (collectSeriesOperands /
-      // riskAtrLengths read effCfg's four rule groups + longRisk/shortRisk the
-      // same way rule mode does) — the strategy file's OWN indicators are
-      // computed in Python and never touch this series map.
-      const series = await buildSeries(bars, effCfg, runResolution, fetchTimeframe);
+      // The backend now recomputes native indicators/price/slope/ATR series
+      // itself from the rule config, so the browser only ships kind:"series"
+      // chart-operand/drawing series here — the ones the backend can't derive
+      // on its own. Coded mode's strategy-file indicators are computed in
+      // Python and never touch this series map either way.
+      const series = await buildChartOperandSeries(bars, effCfg, runResolution, fetchTimeframe);
       const tSeries1 = performance.now();
       const candles = bars.map((k) => ({
         time: Math.round(k.timestamp / 1000),
@@ -215,7 +217,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
 
       console.info(
         `[backtest perf] prepare: bars fetch ${(tSeries0 - tFetch0).toFixed(0)}ms (${bars.length} bars), ` +
-          `buildSeries ${(tSeries1 - tSeries0).toFixed(0)}ms (${Object.keys(series).length} series)`,
+          `buildChartOperandSeries ${(tSeries1 - tSeries0).toFixed(0)}ms (${Object.keys(series).length} series)`,
       );
       const tRun0 = performance.now();
       const baseReq: BacktestRequest = {
@@ -225,10 +227,15 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         series,
         // Coded strategies compute indicators in Python — nothing to precompute.
         codedStrategy: coded ? cfg.codedStrategy : undefined,
-        // Coded strategies' ad-hoc ctx.ema(tf=...) calls need the backend to fetch
-        // that timeframe itself — same broker/price side the chart is showing.
-        broker: coded ? brokerId : undefined,
-        priceSide: coded ? priceSide : undefined,
+        // The backend fetches higher-timeframe candles itself for BOTH coded
+        // strategies (ctx.ema(tf=...)) and rule mode (a native indicator on a
+        // non-base @tf, incl. sloped operands) — always over the same broker/
+        // price side the chart is showing, so its cache/side matches the base
+        // candles we shipped. Omitting these in rule mode made the backend fall
+        // back to its "capital"/"mid" defaults and fetch the wrong series → an
+        // empty HTF set → "no candles for timeframe '…'".
+        broker: brokerId,
+        priceSide,
         // Panel-tuned ctx.param() overrides for the coded strategy.
         codedParams,
         // Disabled rules are kept in the config but dropped from the run. Coded

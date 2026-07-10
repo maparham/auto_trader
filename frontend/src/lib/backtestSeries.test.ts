@@ -11,7 +11,7 @@ vi.mock("klinecharts", () => ({
   registerIndicator: () => {},
 }));
 
-const { buildSeries } = await import("./backtestSeries");
+const { buildSeries, buildChartOperandSeries } = await import("./backtestSeries");
 const { maSeries, sma } = await import("./mtf");
 const { computeRsi, computeLr, computePrevHl, vwapFrom, detectDivergences, RSI_DIVERGENCE_DEFAULTS } = await import("./customIndicators");
 const { computePivotBands } = await import("./indicators/pivotBands");
@@ -664,5 +664,51 @@ describe("series operand — RSI divergence event series (line ≥ 1)", () => {
     // Exactly two rising edges (0/null → 1) — one per confirming HTF bar.
     const edges = s.filter((v, i) => v === 1 && s[i - 1] !== 1).length;
     expect(edges).toBe(2);
+  });
+});
+
+// The backend now recomputes native indicator/price/slope/ATR series itself
+// from the rule config, so the browser only needs to ship kind:"series"
+// chart-operand/drawing series — the ones the backend can't derive on its own.
+describe("buildChartOperandSeries", () => {
+  it("emits an empty map when the config only references native indicators", async () => {
+    const bars = candles([1, 2, 3, 4, 5]);
+    const config = cfg({
+      longEntry: {
+        combine: "AND",
+        rules: [
+          {
+            left: { kind: "indicator", indicator: "EMA", length: 3 },
+            op: "gt",
+            right: { kind: "const", value: 0 },
+          },
+        ],
+      },
+      longRisk: { stop: { kind: "trailAtr", mult: 2, length: 3 }, target: { kind: "none" } },
+    });
+    const out = await buildChartOperandSeries(bars, config, BASE, noFetch);
+    expect(Object.keys(out)).toHaveLength(0);
+  });
+
+  it("emits the chart-operand series, keyed by its seriesKey, when a kind:'series' operand is present", async () => {
+    const bars = candles([1, 2, 3, 4, 5, 6, 7, 8]);
+    const recipe: SeriesRecipe = { source: "indicator", indicatorType: "EMA", calcParams: [3], line: 0 };
+    const op = { kind: "series", seriesKey: recipeKey(recipe), label: "chip", recipe } as Operand;
+    const config = cfg({
+      longEntry: {
+        combine: "AND",
+        rules: [
+          {
+            left: { kind: "indicator", indicator: "EMA", length: 3 }, // native — should be dropped
+            op: "gt",
+            right: op, // chart operand — should be kept
+          },
+        ],
+      },
+    });
+    const out = await buildChartOperandSeries(bars, config, BASE, noFetch);
+    const name = seriesName(op)!;
+    expect(Object.keys(out)).toEqual([name]);
+    expect(out[name]).toEqual(nul(maSeries(bars, "ema", 3, {}).base));
   });
 });

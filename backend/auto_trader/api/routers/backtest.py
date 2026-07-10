@@ -23,6 +23,7 @@ from auto_trader.strategy.loader import StrategyLoadError
 from auto_trader.strategy.base import Strategy
 from auto_trader.strategy.params import resolve_params, validate_params_schema
 from auto_trader.strategy.rule import RuleStrategy, series_name
+from auto_trader.strategy.rule_series import build_rule_series, htf_timeframes
 
 from .. import deps
 from ..schemas import (
@@ -61,6 +62,88 @@ def _candle_from_dto(c: CandleDTO) -> Candle:
         time=datetime.fromtimestamp(c.time, tz=timezone.utc),
         open=c.open, high=c.high, low=c.low, close=c.close, volume=c.volume,
     )
+
+
+def _rule_operands(req: BacktestRequest) -> list:
+    ops = []
+    for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
+        ops += [o.to_operand() for o in group.operands()]
+    return ops
+
+
+def _rule_atr_lengths(req: BacktestRequest) -> list[int]:
+    lengths: list[int] = []
+    for cfg in (req.longRisk, req.shortRisk, req.longScaling, req.shortScaling):
+        if cfg is None:
+            continue
+        for name in cfg.atr_series_names():
+            lengths.append(int(name.split("_")[1]))
+    return lengths
+
+
+async def _assemble_rule_series(
+    req: BacktestRequest, candles: list[Candle],
+    htf_candles: dict[str, list[Candle]] | None = None,
+) -> dict[str, list[float | None]]:
+    """Backend-owned rule series: recompute native indicators from `candles`,
+    fetch+align any higher timeframes, and merge in the browser-supplied
+    chart-operand series (kind='series', which cannot be recomputed server-side).
+    On a native/chart-operand key collision the recomputed value wins.
+
+    `htf_candles`, when passed, is used as-is (no fetch) — callers that already
+    fetched the HTF set once (e.g. the sweep, which reuses it across every combo
+    since combos never sweep `timeframe`) pass it in. When None (the single-run
+    call sites), the HTF set is fetched here as before."""
+    ops = _rule_operands(req)
+    if htf_candles is None:
+        htf_candles = {}
+        for tf in htf_timeframes(ops, req.resolution):
+            warmup_from = req.candles[0].time - _HTF_WARMUP_BARS * resolution_seconds(tf)
+            fetched = await deps._fetch_symbol_candles(
+                req.broker, req.epic, tf, 1000, warmup_from, req.candles[-1].time, req.priceSide,
+            )
+            if not fetched:
+                raise HTTPException(422, f"no candles for timeframe '{tf}'")
+            htf_candles[tf] = fetched
+    computed = build_rule_series(ops, candles, req.resolution, htf_candles, _rule_atr_lengths(req))
+    # Chart-operand/drawing series stay browser-supplied; native keys recompute.
+    chart_series = {
+        series_name(o.to_operand()): req.series.get(series_name(o.to_operand()))
+        for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit)
+        for o in group.operands()
+        if o.kind == "series"
+    }
+    return {**{k: v for k, v in chart_series.items() if v is not None}, **computed}
+
+
+async def _run_rule(
+    req: BacktestRequest, candles: list[Candle],
+    htf_candles: dict[str, list[Candle]] | None = None,
+) -> BacktestResult:
+    """Backend-recomputed rule run used by both the single-run /api/backtest
+    route and the sweep. `htf_candles`: see `_assemble_rule_series` — sweep
+    callers pass a pre-fetched, combo-shared dict; single-run callers omit it."""
+    series = await _assemble_rule_series(req, candles, htf_candles)
+    strategy = RuleStrategy(
+        req.longEntry.to_group(), req.longExit.to_group(),
+        req.shortEntry.to_group(), req.shortExit.to_group(),
+        series, quantity=req.costs.quantity, trade_from_time=req.tradeFromTime,
+        long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
+        base_timeframe=req.resolution,
+    )
+    engine = BacktestEngine(
+        strategy,
+        starting_cash=req.costs.startingCash,
+        commission_per_side=req.costs.commissionPerSide,
+        slippage=req.costs.slippage,
+        long_risk=req.longRisk.to_risk() if req.longRisk else None,
+        short_risk=req.shortRisk.to_risk() if req.shortRisk else None,
+        long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
+        short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
+        series=series,
+        mask=req.mask.to_mask() if req.mask else None,
+    )
+    return engine.run(candles)
 
 
 async def _run_coded(
@@ -164,35 +247,20 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         raise HTTPException(422, "candles must not be empty")
 
     if req.codedStrategy is None:
-        for name, arr in req.series.items():
-            if len(arr) != len(req.candles):
-                raise HTTPException(
-                    422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}"
-                )
-
-        # D4: re-derive each referenced operand's series name and make sure it's
-        # actually in the payload (price/const operands have no series to check).
+        # Native indicators/ATR are recomputed server-side, so only chart-operand
+        # (kind=='series') keys — which cannot be recomputed — are required from
+        # the request's posted `series`.
         for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
             for op in group.operands():
+                if op.kind != "series":
+                    continue
                 name = series_name(op.to_operand())
-                if name is not None and name not in req.series:
+                arr = req.series.get(name)
+                if arr is None:
                     raise HTTPException(422, f"missing series '{name}' referenced by a rule")
-
-        # Stop/target ATR sizing reads the same posted-series channel as rules do.
-        for risk in (req.longRisk, req.shortRisk):
-            if risk is None:
-                continue
-            for name in risk.atr_series_names():
-                if name not in req.series:
-                    raise HTTPException(422, f"missing series '{name}' referenced by a stop/target")
-
-        # Scaling spacing ATR sizing reads the same posted-series channel as risk does.
-        for cfg in (req.longScaling, req.shortScaling):
-            if cfg is None:
-                continue
-            for name in cfg.atr_series_names():
-                if name not in req.series:
-                    raise HTTPException(422, f"missing series '{name}' referenced by spacing")
+                if len(arr) != len(req.candles):
+                    raise HTTPException(
+                        422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}")
     elif req.codedStrategy is not None:
         _validate_coded_exit_series(req)
 
@@ -214,27 +282,8 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         except StrategyRuntimeError as e:
             raise HTTPException(422, str(e))
     else:
-        strategy = RuleStrategy(
-            req.longEntry.to_group(), req.longExit.to_group(),
-            req.shortEntry.to_group(), req.shortExit.to_group(),
-            req.series, quantity=req.costs.quantity, trade_from_time=req.tradeFromTime,
-            long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
-            base_timeframe=req.resolution,
-        )
-        engine = BacktestEngine(
-            strategy,
-            starting_cash=req.costs.startingCash,
-            commission_per_side=req.costs.commissionPerSide,
-            slippage=req.costs.slippage,
-            long_risk=req.longRisk.to_risk() if req.longRisk else None,
-            short_risk=req.shortRisk.to_risk() if req.shortRisk else None,
-            long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
-            short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
-            series=req.series,
-            mask=req.mask.to_mask() if req.mask else None,
-        )
         try:
-            result = engine.run(candles)
+            result = await _run_rule(req, candles)
         except StrategyRuntimeError as e:
             raise HTTPException(422, str(e))
 
@@ -302,6 +351,9 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
 
 _SWEEP_MAX_COMBOS = 50
 _RISK_TARGET = re.compile(r"^risk:(long|short)\.(stop|target)\.(value|mult)$")
+_RULE_TARGET = re.compile(
+    r"^rule:(long|short)\.(entry|exit)\.(\d+)\.(?:(left|right)\.(length|value)|(count))$"
+)
 
 
 def _apply_combo(
@@ -332,14 +384,100 @@ def _apply_combo(
     return params, risks["long"], risks["short"]
 
 
+def _apply_rule_combo(req: BacktestRequest, combo: dict) -> BacktestRequest:
+    """Return a copy of `req` with each combo target patched into the rule tree /
+    risk DTO. Reuses `_apply_combo` for `risk:` keys. 422s a malformed or
+    out-of-range path so a stale axis can't silently no-op."""
+    groups = {
+        ("long", "entry"): [r.model_copy(deep=True) for r in req.longEntry.rules],
+        ("long", "exit"): [r.model_copy(deep=True) for r in req.longExit.rules],
+        ("short", "entry"): [r.model_copy(deep=True) for r in req.shortEntry.rules],
+        ("short", "exit"): [r.model_copy(deep=True) for r in req.shortExit.rules],
+    }
+    risk_combo: dict = {}
+    for target, value in combo.items():
+        if target.startswith("risk:"):
+            risk_combo[target] = value
+            continue
+        m = _RULE_TARGET.match(target)
+        if not m:
+            raise HTTPException(422, f"bad sweep target '{target}'")
+        side, grp, idx_s, operand, field, count = m.groups()
+        rules = groups[(side, grp)]
+        idx = int(idx_s)
+        if idx >= len(rules):
+            raise HTTPException(422, f"sweep target '{target}' index out of range")
+        rule = rules[idx]
+        if count:
+            rules[idx] = rule.model_copy(update={"count": int(value)})
+        else:
+            op = getattr(rule, operand)
+            rules[idx] = rule.model_copy(update={
+                operand: op.model_copy(update={field: value})})
+    _, long_risk, short_risk = _apply_combo(req, risk_combo)  # risk-only combo
+    return req.model_copy(update={
+        "longEntry": req.longEntry.model_copy(update={"rules": groups[("long", "entry")]}),
+        "longExit": req.longExit.model_copy(update={"rules": groups[("long", "exit")]}),
+        "shortEntry": req.shortEntry.model_copy(update={"rules": groups[("short", "entry")]}),
+        "shortExit": req.shortExit.model_copy(update={"rules": groups[("short", "exit")]}),
+        "longRisk": long_risk, "shortRisk": short_risk,
+    })
+
+
 @router.post("/api/backtest/sweep", response_model=SweepResponse)
 async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
     if req.sweep is None or not req.sweep.combos:
         raise HTTPException(422, "sweep.combos is required")
     if len(req.sweep.combos) > _SWEEP_MAX_COMBOS:
         raise HTTPException(422, f"too many combos in one request (max {_SWEEP_MAX_COMBOS})")
+
+    candles = [_candle_from_dto(c) for c in req.candles]
+
     if req.codedStrategy is None:
-        raise HTTPException(422, "sweep requires a coded strategy")
+        # Rule sweep: chart-operand (kind='series') keys are browser-supplied and
+        # can't be recomputed server-side, so validate they're present once,
+        # up front — then patch + recompute the whole series map per combo.
+        # Un-swept native series (e.g. an EMA nobody is sweeping) still recompute
+        # on every combo (build_rule_series dedupes only WITHIN one call's ops,
+        # not across combos) — that's accepted for now; see task-7-brief note.
+        for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
+            for op in group.operands():
+                if op.kind == "series" and series_name(op.to_operand()) not in req.series:
+                    raise HTTPException(422, f"missing series '{series_name(op.to_operand())}'")
+        # HTF set is combo-invariant (combos never sweep `timeframe`), so fetch
+        # it once here and reuse for every combo — mirrors the coded branch's
+        # shared htf_candles below.
+        rule_htf_candles: dict[str, list[Candle]] = {}
+        for tf in htf_timeframes(_rule_operands(req), req.resolution):
+            warmup_from = req.candles[0].time - _HTF_WARMUP_BARS * resolution_seconds(tf)
+            fetched = await deps._fetch_symbol_candles(
+                req.broker, req.epic, tf, 1000, warmup_from, req.candles[-1].time, req.priceSide,
+            )
+            if not fetched:
+                raise HTTPException(422, f"no candles for timeframe '{tf}'")
+            rule_htf_candles[tf] = fetched
+        rows: list[SweepRowDTO] = []
+        for combo in req.sweep.combos:
+            try:
+                patched = _apply_rule_combo(req, combo)
+                result = await _run_rule(patched, candles, htf_candles=rule_htf_candles)
+            except HTTPException:
+                raise                              # request-shaped problems fail the chunk
+            except Exception as e:                 # noqa: BLE001 — one combo must not kill the rest
+                rows.append(SweepRowDTO(combo=combo, error=str(e)))
+                continue
+            metrics = compute_metrics(result.trades, result.equity, result.net_pnl,
+                                      req.costs.startingCash, resolution_seconds(req.resolution))
+            rows.append(SweepRowDTO(combo=combo, metrics={
+                "net_pnl": round(result.net_pnl, 5),
+                "n_trades": result.n_trades,
+                "win_rate": round(result.win_rate, 4),
+                "max_drawdown": round(result.max_drawdown, 5),
+                "profit_factor": metrics.get("profit_factor"),
+                "return_pct": metrics.get("return_pct"),
+            }))
+        return SweepResponse(rows=rows)
+
     _validate_coded_exit_series(req)
     try:
         module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
@@ -356,7 +494,6 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
             if target.startswith("param:") and target[len("param:"):] not in declared:
                 raise HTTPException(
                     422, f"sweep target '{target}' names a param the strategy does not declare")
-    candles = [_candle_from_dto(c) for c in req.candles]
     htf_candles: dict[str, list[Candle]] = {}     # shared across every combo
     rows: list[SweepRowDTO] = []
     for combo in req.sweep.combos:

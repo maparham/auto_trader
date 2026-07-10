@@ -53,15 +53,14 @@ def _run(body: dict):
 
 
 def test_post_backtest_returns_markers_for_a_simple_cross():
-    candles = _candles([10, 10, 10, 10, 10])
+    # Real recompute: a flat-then-rising close series makes the shorter EMA(5)
+    # cross above EMA(9) exactly once. Ship no series — the backend recomputes.
+    candles = _candles([10, 10, 10, 10, 11, 12, 13, 14, 15, 16])
     body = {
         "epic": "EURUSD",
         "resolution": "MINUTE_5",
         "candles": candles,
-        "series": {
-            "EMA_5": [1.0, 1.0, 3.0, 3.0, 3.0],
-            "EMA_9": [2.0, 2.0, 2.0, 2.0, 2.0],
-        },
+        "series": {},
         **_groups(
             long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
         ),
@@ -78,39 +77,20 @@ def test_post_backtest_returns_markers_for_a_simple_cross():
     assert len(result.candles) == len(candles)
 
 
-def test_post_backtest_sloped_operand_uses_keyed_series():
-    # The backtest path's D4 check must accept a sloped operand's `~len` key and
-    # the engine must read the slope series (this is the primary, backtest path).
-    candles = _candles([10, 10, 10, 10, 10, 10])
-    body = {
-        "epic": "EURUSD",
-        "resolution": "MINUTE_5",
-        "candles": candles,
-        # slope>0 first at i=3 -> entry signal there fills at i=4's open (in-range).
-        "series": {"EMA_9~3": [None, None, None, 2.0, 2.0, 2.0]},
-        **_groups(
-            long_entry={"combine": "AND", "rules": [
-                {"left": {"kind": "indicator", "indicator": "EMA", "length": 9, "slope": {"len": 3}},
-                 "op": "gt", "right": {"kind": "const", "value": 0.0}}
-            ]},
-        ),
-        "costs": _costs(),
-        "tradeFromTime": candles[0]["time"],
-    }
-    result = _run(body)  # no 422 -> the posted `EMA_9~3` key matched series_name
-    entries = [m for m in result.markers if m.reason != "range end"]
-    assert len(entries) == 1
-    assert entries[0].side == "buy" and "slope(EMA_9,3)" in entries[0].reason
-
-
-def test_post_backtest_avwap_anchor_uses_keyed_series():
-    candles = _candles([10, 10, 10, 10, 10])
+def test_post_backtest_avwap_recomputed_when_series_absent():
+    # AVWAP is a native indicator, so an empty `series` no longer 422s — the
+    # backend recomputes it from candles. With rising closes above the anchored
+    # VWAP a marker fires; the essential contract here is that the run succeeds.
+    candles = [
+        {"time": 1_700_000_000 + i * 60, "open": c, "high": c, "low": c, "close": c, "volume": 1.0}
+        for i, c in enumerate([9, 10, 11, 12, 13])
+    ]
     anchor_ms = candles[0]["time"] * 1000
     body = {
         "epic": "EURUSD",
         "resolution": "MINUTE_5",
         "candles": candles,
-        "series": {"AVWAP_%d" % anchor_ms: [9.0, 9.0, 9.0, 9.0, 9.0]},
+        "series": {},  # AVWAP recomputed server-side; no longer required in payload
         **_groups(
             long_entry={"combine": "AND", "rules": [
                 {"left": {"kind": "price", "field": "close"}, "op": "gt",
@@ -120,62 +100,22 @@ def test_post_backtest_avwap_anchor_uses_keyed_series():
         "costs": _costs(),
         "tradeFromTime": candles[0]["time"],
     }
-    # D4 validation passes (keyed series present) and the rule fires (close 10 > 9).
-    result = _run(body)
-    assert len(result.markers) >= 1
-
-
-def test_post_backtest_422_when_avwap_keyed_series_missing():
-    candles = _candles([10, 10, 10])
-    anchor_ms = candles[0]["time"] * 1000
-    body = {
-        "epic": "EURUSD",
-        "resolution": "MINUTE_5",
-        "candles": candles,
-        "series": {},  # AVWAP_<anchor> referenced but not provided
-        **_groups(
-            long_entry={"combine": "AND", "rules": [
-                {"left": {"kind": "price", "field": "close"}, "op": "gt",
-                 "right": _ind("AVWAP", anchor=anchor_ms)}
-            ]},
-        ),
-        "costs": _costs(),
-        "tradeFromTime": candles[0]["time"],
-    }
-    with pytest.raises(HTTPException) as e:
-        _run(body)
-    assert e.value.status_code == 422
-
-
-def test_post_backtest_short_config_produces_short_trades_with_leg():
-    candles = _candles([10, 10, 10, 10, 10, 10])
-    body = {
-        "epic": "EURUSD",
-        "resolution": "MINUTE_5",
-        "candles": candles,
-        "series": {"EMA_5": [1.0, 1.0, 3.0, 3.0, 1.0, 1.0], "EMA_9": [2.0] * 6},
-        **_groups(
-            short_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesBelow", "right": _ind("EMA", 9)}]},
-            short_exit={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
-        ),
-        "costs": _costs(),
-        "tradeFromTime": candles[0]["time"],
-    }
-    result = _run(body)
-    assert result.markers
-    assert all(m.leg in ("long", "short") for m in result.markers)
-    assert any(m.leg == "short" for m in result.markers)
+    result = _run(body)  # no 422 — recomputed AVWAP means the series need not be posted
+    assert result.epic == "EURUSD"
+    assert len(result.markers) >= 1  # close rises above the anchored VWAP
 
 
 def _both_sides_cross_body():
-    """A config where BOTH a long entry and a short entry fire (EMA_5 crosses
-    above EMA_9 at i=2, below at i=4), used to test the per-side enable flags."""
-    candles = _candles([10, 10, 10, 10, 10, 10, 10])
+    """Real-recompute config where BOTH a long entry and a short entry fire: a
+    rise-then-fall close series makes EMA(5) cross ABOVE EMA(9) on the rise and
+    BELOW it on the fall. Used to test the per-side enable flags on the real
+    recompute path (verified empirically: one long-leg + one short-leg marker)."""
+    candles = _candles([10, 10, 10, 11, 13, 15, 15, 13, 11, 10, 10])
     return {
         "epic": "EURUSD",
         "resolution": "MINUTE_5",
         "candles": candles,
-        "series": {"EMA_5": [1.0, 1.0, 3.0, 3.0, 1.0, 1.0, 1.0], "EMA_9": [2.0] * 7},
+        "series": {},
         **_groups(
             long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
             short_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesBelow", "right": _ind("EMA", 9)}]},
@@ -222,14 +162,19 @@ def test_post_backtest_422_on_empty_candles():
 
 
 def test_post_backtest_422_on_series_length_mismatch():
+    # Chart-operand (kind='series') keys can't be recomputed, so their length is
+    # still validated against the candles.
     candles = _candles([10, 10, 10])
     body = {
         "epic": "EURUSD",
         "resolution": "MINUTE_5",
         "candles": candles,
-        "series": {"EMA_5": [1.0, 2.0]},  # too short
+        "series": {"CHART_x": [1.0, 2.0]},  # too short
         **_groups(
-            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "gt", "right": {"kind": "const", "value": 0}}]},
+            long_entry={"combine": "AND", "rules": [
+                {"left": {"kind": "series", "seriesKey": "CHART_x", "label": "foo"},
+                 "op": "gt", "right": {"kind": "const", "value": 0}}
+            ]},
         ),
         "costs": _costs(),
         "tradeFromTime": candles[0]["time"],
@@ -240,14 +185,18 @@ def test_post_backtest_422_on_series_length_mismatch():
 
 
 def test_post_backtest_422_on_missing_series_name():
+    # A chart-operand series referenced by a rule but not posted still 422s.
     candles = _candles([10, 10, 10])
     body = {
         "epic": "EURUSD",
         "resolution": "MINUTE_5",
         "candles": candles,
-        "series": {},  # EMA_5 referenced by the rule but not provided
+        "series": {},  # CHART_x referenced by the rule but not provided
         **_groups(
-            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "gt", "right": {"kind": "const", "value": 0}}]},
+            long_entry={"combine": "AND", "rules": [
+                {"left": {"kind": "series", "seriesKey": "CHART_x", "label": "foo"},
+                 "op": "gt", "right": {"kind": "const", "value": 0}}
+            ]},
         ),
         "costs": _costs(),
         "tradeFromTime": candles[0]["time"],
@@ -255,6 +204,7 @@ def test_post_backtest_422_on_missing_series_name():
     with pytest.raises(HTTPException) as e:
         _run(body)
     assert e.value.status_code == 422
+    assert "missing series 'CHART_x'" in e.value.detail
 
 
 def test_post_backtest_trims_response_to_trade_from_time():
@@ -351,13 +301,14 @@ def _min_body():
     }
 
 
-def test_atr_risk_without_series_is_rejected():
+def test_atr_risk_without_series_now_runs():
+    # ATR is a native indicator recomputed server-side, so an ATR-sized stop no
+    # longer requires a posted ATR series — the run succeeds.
     body = _min_body()
     body["longRisk"] = {"stop": {"kind": "atr", "mult": 2, "length": 14},
                         "target": {"kind": "none"}}
     r = client.post("/api/backtest", json=body)
-    assert r.status_code == 422
-    assert "ATR_14" in r.json()["detail"]
+    assert r.status_code == 200
 
 
 def test_pct_risk_needs_no_series_and_runs():
@@ -367,21 +318,12 @@ def test_pct_risk_needs_no_series_and_runs():
     assert r.status_code == 200
 
 
-def test_atr_risk_with_series_runs():
-    body = _min_body()
-    body["series"] = {"ATR_14": [1, 2, 4, 4]}
-    body["longRisk"] = {"stop": {"kind": "atr", "mult": 2, "length": 14},
-                        "target": {"kind": "none"}}
-    r = client.post("/api/backtest", json=body)
-    assert r.status_code == 200
-
-
-def test_scaling_atr_spacing_without_series_is_rejected():
+def test_scaling_atr_spacing_now_runs():
+    # Scaling-spacing ATR is likewise recomputed server-side; no posted series.
     body = _min_body()
     body["longScaling"] = {"maxConcurrent": 3, "spacing": {"kind": "atr", "mult": 2, "length": 14}}
     r = client.post("/api/backtest", json=body)
-    assert r.status_code == 422
-    assert "ATR_14" in r.json()["detail"]
+    assert r.status_code == 200
 
 
 def test_scaling_pct_spacing_runs():
@@ -434,19 +376,22 @@ def test_trade_dto_carries_stop_target_levels():
 # --- recurrence mask (period scheduling) ---
 
 
+def _always_true_entry():
+    # close > 0 fires on every in-range bar — a mask-independent entry so these
+    # tests exercise mask wiring, not indicator recompute.
+    return {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "gt",
+         "right": {"kind": "const", "value": 0}}]}
+
+
 def test_backtest_accepts_recurrence_mask():
     candles = _candles([10, 10, 10, 10, 10])
     body = {
         "epic": "EURUSD",
         "resolution": "MINUTE_5",
         "candles": candles,
-        "series": {
-            "EMA_5": [1.0, 1.0, 3.0, 3.0, 3.0],
-            "EMA_9": [2.0, 2.0, 2.0, 2.0, 2.0],
-        },
-        **_groups(
-            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
-        ),
+        "series": {},
+        **_groups(long_entry=_always_true_entry()),
         "costs": _costs(),
         "tradeFromTime": candles[0]["time"],
         "mask": {"enabled": True, "daysOfWeek": [1], "tz": "America/New_York"},
@@ -466,36 +411,29 @@ def test_backtest_without_mask_still_works():
         "epic": "EURUSD",
         "resolution": "MINUTE_5",
         "candles": candles,
-        "series": {
-            "EMA_5": [1.0, 1.0, 3.0, 3.0, 3.0],
-            "EMA_9": [2.0, 2.0, 2.0, 2.0, 2.0],
-        },
-        **_groups(
-            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
-        ),
+        "series": {},
+        **_groups(long_entry=_always_true_entry()),
         "costs": _costs(),
         "tradeFromTime": candles[0]["time"],
     }
     result = _run(body)
-    # One entry marker; the still-open long adds a "range end" exit marker.
-    assert len([m for m in result.markers if m.reason != "range end"]) == 1
+    # price>0 fires each in-range bar; at least one non-"range end" entry marker.
+    assert len([m for m in result.markers if m.reason != "range end"]) >= 1
 
 
 def test_backtest_time_of_day_window_honoured_over_the_wire():
     # Regression: the frontend sends the clock filter as a nested
     # `timeOfDay: {startMin, endMin}` object; the DTO must read that shape (a
     # flat timeStartMin/timeEndMin silently drops it). Candles here sit at
-    # ~22:13–22:17 UTC (minute-of-day ~1333); the EMA_5/EMA_9 cross at index 2
-    # fills at index 3.
+    # ~22:13–22:17 UTC (minute-of-day ~1333); an always-true price>0 entry fires
+    # on each in-range bar so the mask window is what gates the markers.
     candles = _candles([10, 10, 10, 10, 10])
     base = {
         "epic": "EURUSD",
         "resolution": "MINUTE_5",
         "candles": candles,
-        "series": {"EMA_5": [1.0, 1.0, 3.0, 3.0, 3.0], "EMA_9": [2.0, 2.0, 2.0, 2.0, 2.0]},
-        **_groups(
-            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
-        ),
+        "series": {},
+        **_groups(long_entry=_always_true_entry()),
         "costs": _costs(),
         "tradeFromTime": candles[0]["time"],
     }
@@ -511,32 +449,38 @@ def test_backtest_time_of_day_window_honoured_over_the_wire():
 
 def test_markers_carry_signal_time_and_terms():
     # A rule-based entry marker carries the signal bar's time and the passing
-    # rule's authoritative values with per-side timeframe tags (base ⇒ run TF).
-    candles = _candles([10, 10, 10, 10])
+    # rule's authoritative values with per-side timeframe tags. Real recompute:
+    # a rising close series makes `close gt EMA(3)` fire once (at bar 1), and the
+    # DTO must serialize the REAL recomputed term values (not injected constants).
+    candles = _candles([10, 11, 12, 13])
     body = {
         "epic": "EURUSD",
         "resolution": "MINUTE_5",
         "candles": candles,
-        "series": {"EMA_2": [1.0, 50.0, 1.0, 1.0]},  # above open only at bar 1
+        "series": {},
         **_groups(
-            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 2), "op": "gt", "right": {"kind": "price", "field": "open"}}]},
+            long_entry={"combine": "AND", "rules": [
+                {"left": {"kind": "price", "field": "close"}, "op": "gt", "right": _ind("EMA", 3)}]},
         ),
         "costs": _costs(),
         "tradeFromTime": candles[0]["time"],
     }
     result = _run(body)
     entry = next(m for m in result.markers if m.reason != "range end")
-    assert entry.signal_time == candles[1]["time"]
+    assert entry.signal_time == candles[1]["time"]  # first bar where close > EMA(3)
     assert entry.combine == "AND"
     assert len(entry.terms) == 1
     term = entry.terms[0]
-    assert term.left == "EMA(2)"
-    assert term.lval == 50.0
+    # Left is the price close at bar 1 (11.0); right is the REAL recomputed EMA(3)
+    # there (EMA seeds at 10, so at bar 1 it is 10 + (11-10)*2/4 = 10.5).
+    assert term.left == "close"
+    assert term.lval == 11.0
     assert term.op == "gt"
-    assert term.right == "open"
-    assert term.rval == 10.0
-    assert term.leftTf == "MINUTE_5"
-    assert term.rightTf is None
+    assert term.right == "EMA(3)"
+    assert term.rval == 10.5
+    assert term.lval > term.rval  # the passing condition, on real recomputed values
+    assert term.leftTf is None  # price operand carries no timeframe tag
+    assert term.rightTf == "MINUTE_5"  # indicator on the base run TF
 
     # A mechanical exit (range end) carries no signal provenance.
     range_end = next(m for m in result.markers if m.reason == "range end")
