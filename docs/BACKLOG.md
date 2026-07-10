@@ -33,7 +33,7 @@ remove it from here (git history and the memory index track shipped features).
 ## In progress
 
 - **Slim large modules** — split the 10 biggest modules into focused files.
-  Partially done (3 of 9 committed); the rest remain.
+  Partially done (5 of 9 committed: persist, customIndicators, app.py, brokers dedup, IndicatorSettings); the rest remain.
   [plan](superpowers/plans/2026-07-05-slim-large-modules.md)
 
 ## Deferred / forward-looking
