@@ -63,6 +63,41 @@ def test_ctx_price_history_and_indicators():
     assert seen["closes_type"] is np.ndarray
 
 
+def test_indicator_back_offset_reads_prior_bars():
+    """back=n reads the value n bars ago; back=0 == current; warm-up = None."""
+    candles = make_candles()
+    closes = [c.close for c in candles]
+    ema9 = ema_series(closes, 9)
+    seen = {}
+
+    def on_bar(ctx):
+        i = len(ctx.closes) - 1
+        if i == 30:
+            seen["now"] = ctx.ema(9)
+            seen["back0"] = ctx.ema(9, back=0)
+            seen["back1"] = ctx.ema(9, back=1)
+            seen["back3"] = ctx.ema(9, back=3)
+        if i == 0:
+            seen["warmup"] = ctx.ema(9, back=1)   # steps before the series start
+        return []
+
+    run_engine(on_bar, candles)
+    assert seen["now"] == ema9[30]
+    assert seen["back0"] == ema9[30]              # back=0 is byte-identical to now
+    assert seen["back1"] == ema9[29]
+    assert seen["back3"] == ema9[27]
+    assert seen["warmup"] is None                 # bar -1 doesn't exist
+
+
+def test_indicator_negative_back_is_rejected():
+    """A negative back would read the future — refused outright."""
+    def on_bar(ctx):
+        return [ctx.buy()] if ctx.ema(9, back=-1) else []
+
+    with pytest.raises(StrategyRuntimeError, match="no lookahead"):
+        run_engine(on_bar, make_candles())
+
+
 def test_indicator_memoization():
     """ctx.ema(9) computes the full series ONCE per run, not once per bar."""
     candles = make_candles()

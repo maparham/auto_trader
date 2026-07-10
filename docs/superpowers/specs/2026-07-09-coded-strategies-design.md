@@ -112,7 +112,7 @@ def on_bar(ctx):
 | Group | Members | Notes |
 |---|---|---|
 | **Price** | `ctx.open/high/low/close/volume`, `ctx.time` | current (closed) bar |
-| **Indicators** | `ctx.ema(len, tf=None)`, `ctx.sma`, `ctx.rsi`, `ctx.atr`, `ctx.avwap(anchor)`, `ctx.vol`, `ctx.volma`, `ctx.slope(indicator, length, n, tf=None)` | memoized; return current-bar value; `tf=` is Phase 4 |
+| **Indicators** | `ctx.ema(len, tf=None, back=0)`, `ctx.sma`, `ctx.rsi`, `ctx.atr`, `ctx.avwap(anchor)`, `ctx.vol`, `ctx.volma`, `ctx.slope(indicator, length, n, tf=None)` | memoized; default current-bar value; `back=n` reads n closed bars back (crossovers), warm-up = None, `back<0` rejected; `tf=` is Phase 4 |
 | **History** | `ctx.closes`, `ctx.highs`, `ctx.lows`, `ctx.opens`, `ctx.volumes`, `ctx.bars_since_entry` | numpy arrays over closed bars, for lookback/custom math |
 | **Position** | `ctx.position.is_long/is_short/is_flat`, `.entry_price`, `.entry_time`, `.qty` | netted single position |
 | **Actions** | `ctx.buy(qty=, sl=, tp=, reason=, note=)`, `ctx.sell(...)`, `ctx.close_long(reason=)`, `ctx.close_short(...)`, `ctx.exit(...)` | return a list; `sl/tp` hand a bracket to the engine |

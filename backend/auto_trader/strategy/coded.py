@@ -210,40 +210,52 @@ class StrategyContext:
         self._cache[cache_key] = arr
         return arr
 
-    def ema(self, length: int, tf: str | None = None) -> float | None:
-        return self._values_for(
+    def _read(self, series: list[float | None], back: int) -> float | None:
+        """Read `series` `back` bars before the current one (back=0 = now). A
+        negative `back` would read the future — rejected outright. Before the
+        series starts (warm-up) reads as None. With tf=, `back` steps BASE bars,
+        not HTF bars: a forward-filled HTF value repeats across base bars, so a
+        small `back` can return the same value."""
+        if back < 0:
+            raise StrategyRuntimeError(f"back must be >= 0 (no lookahead), got {back}")
+        j = self._i - back
+        return series[j] if j >= 0 else None
+
+    def ema(self, length: int, tf: str | None = None, back: int = 0) -> float | None:
+        return self._read(self._values_for(
             f"EMA_{length}", tf,
             lambda cs: ema_series([c.close for c in cs], length),
-        )[self._i]
+        ), back)
 
-    def sma(self, length: int, tf: str | None = None) -> float | None:
-        return self._values_for(
+    def sma(self, length: int, tf: str | None = None, back: int = 0) -> float | None:
+        return self._read(self._values_for(
             f"SMA_{length}", tf,
             lambda cs: sma_series([c.close for c in cs], length),
-        )[self._i]
+        ), back)
 
-    def rsi(self, length: int, tf: str | None = None) -> float | None:
-        return self._values_for(
+    def rsi(self, length: int, tf: str | None = None, back: int = 0) -> float | None:
+        return self._read(self._values_for(
             f"RSI_{length}", tf,
             lambda cs: rsi_series([c.close for c in cs], length),
-        )[self._i]
+        ), back)
 
-    def atr(self, length: int, tf: str | None = None) -> float | None:
-        return self._values_for(f"ATR_{length}", tf, lambda cs: atr_series(cs, length))[self._i]
+    def atr(self, length: int, tf: str | None = None, back: int = 0) -> float | None:
+        return self._read(
+            self._values_for(f"ATR_{length}", tf, lambda cs: atr_series(cs, length)), back)
 
-    def avwap(self, anchor_ms: int, tf: str | None = None) -> float | None:
-        return self._values_for(
+    def avwap(self, anchor_ms: int, tf: str | None = None, back: int = 0) -> float | None:
+        return self._read(self._values_for(
             f"AVWAP_{anchor_ms}", tf, lambda cs: avwap_series(cs, anchor_ms)
-        )[self._i]
+        ), back)
 
     def vol(self) -> float | None:
         return self._candles[self._i].volume
 
-    def volma(self, length: int, tf: str | None = None) -> float | None:
-        return self._values_for(
+    def volma(self, length: int, tf: str | None = None, back: int = 0) -> float | None:
+        return self._read(self._values_for(
             f"VOLMA_{length}", tf,
             lambda cs: sma_series([c.volume for c in cs], length),
-        )[self._i]
+        ), back)
 
     _SLOPE_SOURCES = {"EMA": ema_series, "SMA": sma_series, "RSI": rsi_series}
 
