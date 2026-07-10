@@ -13,10 +13,11 @@ on 401). The differences from Capital that matter here:
     polled from `/confirms/{dealReference}`.
 
 Pure, broker-agnostic helpers (rate limiter, bid/mid/ask selection, opening-hours
-parsing, price precision, UTC parsing) are reused from `capital.py` — the same
-cross-broker reuse `paper_exec` already does with `pick_side`. Live streaming lives
-in `ig_stream.py` (IG streams over Lightstreamer, not a raw WebSocket); the login
-response's `lightstreamerEndpoint` is captured here as the streaming endpoint.
+parsing, price precision, UTC parsing) live in neutral modules (`_prices.py`,
+`_market_hours.py`) shared with `capital.py` — the same cross-broker reuse
+`paper_exec` already does with `pick_side`. Live streaming lives in `ig_stream.py`
+(IG streams over Lightstreamer, not a raw WebSocket); the login response's
+`lightstreamerEndpoint` is captured here as the streaming endpoint.
 
 Docs: https://labs.ig.com/rest-trading-api-reference.html
 """
@@ -25,17 +26,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import httpx
 
 from auto_trader.brokers.base import MarketDataBroker
-from auto_trader.brokers.capital import (
+from auto_trader.brokers._ig_dealing import (
+    _close_body,
+    _currency_from_raw,
+    _first_affected,
+    _market_open_body,
+)
+from auto_trader.brokers._market_hours import _market_hours_state
+from auto_trader.brokers._session import SessionAuthBroker
+from auto_trader.brokers._prices import (
     PriceSide,
     _RateLimiter,
-    _market_hours_state,
     _mid,
     _price_precision,
     _to_utc,
@@ -101,11 +108,9 @@ MAX_BARS_PER_REQUEST = 1000
 # limiter just smooths bursts. Stay well under.
 _MAX_REQUESTS_PER_SEC = 5
 _RATE_LIMIT_RETRIES = 3
-_SESSION_MAX_RETRIES = 4
-_SESSION_RETRY_BACKOFF = 1.0
 
 
-class IGBroker(MarketDataBroker):
+class IGBroker(SessionAuthBroker, MarketDataBroker):
     """IG market data for one side (demo or live). One session per host+creds,
     shared by the paper + dealing executors that price/route off this feed."""
 
@@ -113,6 +118,7 @@ class IGBroker(MarketDataBroker):
     # dispatches to it. The endpoint + account id + CST/XST captured at login are
     # the streaming credentials.
     supports_streaming = True
+    SESSION_TTL = SESSION_TTL
 
     def __init__(self, side: str) -> None:
         self._side = side  # "demo" | "live"
@@ -135,46 +141,32 @@ class IGBroker(MarketDataBroker):
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    # --- auth -------------------------------------------------------------
+    # --- auth (shared lifecycle lives in SessionAuthBroker) -----------------
 
-    def _session_valid(self) -> bool:
+    def _login_path(self) -> str:
+        return "/session"
+
+    def _login_headers(self) -> dict:
+        return {"X-IG-API-KEY": self._api_key, "Version": "2"}
+
+    def _login_json(self) -> dict:
+        return {"identifier": self._identifier, "password": self._password}
+
+    def _missing_creds_message(self) -> str:
         return (
-            self._cst is not None
-            and self._authed_at is not None
-            and datetime.now(timezone.utc) - self._authed_at < SESSION_TTL
+            f"IG {self._side} credentials missing. Set "
+            f"IG_{self._side.upper()}_API_KEY / _IDENTIFIER / _PASSWORD."
         )
 
-    async def _ensure_session(self) -> None:
-        if self._session_valid():
-            return
-        async with self._auth_lock:
-            if self._session_valid():  # another task may have just authed
-                return
-            if not (self._api_key and self._identifier and self._password):
-                raise RuntimeError(
-                    f"IG {self._side} credentials missing. Set "
-                    f"IG_{self._side.upper()}_API_KEY / _IDENTIFIER / _PASSWORD."
-                )
-            for attempt in range(_SESSION_MAX_RETRIES):
-                resp = await self._client.post(
-                    "/session",
-                    headers={"X-IG-API-KEY": self._api_key, "Version": "2"},
-                    json={"identifier": self._identifier, "password": self._password},
-                )
-                if resp.status_code == 429 and attempt < _SESSION_MAX_RETRIES - 1:
-                    await asyncio.sleep(_SESSION_RETRY_BACKOFF * (attempt + 1))
-                    continue
-                break
-            resp.raise_for_status()
-            self._cst = resp.headers["CST"]
-            self._security_token = resp.headers["X-SECURITY-TOKEN"]
-            body = resp.json()
-            # v2 login returns the active account; dealing routes to it. Keep what
-            # IG selected by default rather than guessing among the account list.
-            self._account_id = body.get("currentAccountId") or body.get("accountId")
-            # Lightstreamer server for live streaming (ig_stream.py).
-            self._ls_endpoint = body.get("lightstreamerEndpoint")
-            self._authed_at = datetime.now(timezone.utc)
+    def _capture_login(self, resp: httpx.Response) -> None:
+        self._cst = resp.headers["CST"]
+        self._security_token = resp.headers["X-SECURITY-TOKEN"]
+        body = resp.json()
+        # v2 login returns the active account; dealing routes to it. Keep what
+        # IG selected by default rather than guessing among the account list.
+        self._account_id = body.get("currentAccountId") or body.get("accountId")
+        # Lightstreamer server for live streaming (ig_stream.py).
+        self._ls_endpoint = body.get("lightstreamerEndpoint")
 
     def _auth_headers(self, version: str) -> dict[str, str]:
         headers = {
@@ -216,11 +208,7 @@ class IGBroker(MarketDataBroker):
                 method, path, params=params, json=json, headers=_headers()
             )
             if resp.status_code == 401:  # token rejected mid-flight; re-auth once
-                async with self._auth_lock:
-                    if self._cst == sent_cst:
-                        self._cst = None
-                        self._authed_at = None
-                await self._ensure_session()
+                await self._reauth(sent_cst)
                 await self._rate.acquire()
                 resp = await self._client.request(
                     method, path, params=params, json=json, headers=_headers()
@@ -714,117 +702,6 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
         /api/account and the dock silently falls back to paper numbers."""
         resp = await self._broker._request("GET", "/accounts", version="1")
         return account_summary_from_accounts(resp.json())
-
-
-def _currency_from_raw(raw: dict | None) -> str | None:
-    """Dealable currency code from a market-detail payload (default, else first)."""
-    currencies = ((raw or {}).get("instrument") or {}).get("currencies") or []
-    if not currencies:
-        return None
-    default = next((c for c in currencies if c.get("isDefault")), currencies[0])
-    return default.get("code")
-
-
-def _market_open_body(
-    order: Order, direction: str, ccy: str | None, raw: dict | None
-) -> tuple[dict, str | None]:
-    """Build the /positions/otc body for an immediate ('market') fill, returning
-    (body, error). IG only accepts a plain `orderType: MARKET` when the epic's
-    `dealingRules.marketOrderPreference` allows it; many epics (e.g. weekend
-    indices) reject it with `market-orders.not-supported-for-epic`. For those we
-    send a *marketable limit* instead — orderType LIMIT at the current dealing
-    price (offer to buy, bid to sell) with EXECUTE_AND_ELIMINATE, which fills
-    immediately at that price or better and kills any unfilled remainder. The
-    attached stop/take-profit ride along identically either way."""
-    rules = (raw or {}).get("dealingRules") or {}
-    snapshot = (raw or {}).get("snapshot") or {}
-    pref = str(rules.get("marketOrderPreference") or "").upper()
-    common = {
-        "epic": order.epic, "expiry": "-", "direction": direction,
-        "size": order.quantity, "guaranteedStop": False, "forceOpen": True,
-        "currencyCode": ccy, "stopLevel": order.stop_level,
-        "limitLevel": order.take_profit_level,
-    }
-    if pref.startswith("AVAILABLE"):
-        return _clean({**common, "orderType": "MARKET"}), None
-    # Marketable limit fallback: price a buffer THROUGH the market.
-    level = _marketable_level(order.side is Side.BUY, snapshot)
-    if level is None:
-        return {}, "no quote available to price a market order"
-    return _clean({
-        **common, "orderType": "LIMIT", "level": level,
-        "timeInForce": "EXECUTE_AND_ELIMINATE",
-    }), None
-
-
-def _close_body(
-    deal_id: str, opposite: str, size: float, raw: dict | None
-) -> tuple[dict, str | None]:
-    """Body for closing a position, MARKET when the epic allows it, else a
-    marketable LIMIT at the crossing quote (the close direction `opposite` sells
-    at bid / buys at offer). Returns (body, error)."""
-    rules = (raw or {}).get("dealingRules") or {}
-    snapshot = (raw or {}).get("snapshot") or {}
-    common = {"dealId": deal_id, "direction": opposite, "size": size}
-    if str(rules.get("marketOrderPreference") or "").upper().startswith("AVAILABLE"):
-        return {**common, "orderType": "MARKET"}, None
-    level = _marketable_level(opposite == "BUY", snapshot)
-    if level is None:
-        return {}, "no quote available to price the close"
-    return {
-        **common, "orderType": "LIMIT", "level": level,
-        "timeInForce": "EXECUTE_AND_ELIMINATE",
-    }, None
-
-
-def _marketable_level(is_buy: bool, snapshot: dict) -> float | None:
-    """A limit level priced a buffer THROUGH the current quote so the order is
-    reliably marketable (a BUY a touch above the offer, a SELL a touch below the
-    bid). With EXECUTE_AND_ELIMINATE the actual fill is the best available price up
-    to this level, so the buffer guarantees an immediate fill without ever
-    worsening it — and absorbs the tick of movement between quoting and dealing
-    that otherwise trips IG's LIMIT_ORDER_WRONG_SIDE_OF_MARKET. Returns None when
-    the needed side of the quote is missing."""
-    bid = snapshot.get("bid")
-    offer = snapshot.get("offer")
-    anchor = offer if is_buy else bid
-    if anchor is None:
-        return None
-    # Buffer = the spread (a natural, instrument-scaled distance), with a small
-    # price-relative floor for zero/te spreads.
-    spread = (offer - bid) if (bid is not None and offer is not None) else 0.0
-    buffer = max(spread, abs(anchor) * 0.0005)
-    level = anchor + buffer if is_buy else anchor - buffer
-    # Quantize to the instrument's price precision: an over-precise dealing level
-    # (e.g. 6dp on a 5dp FX epic) can be rejected by IG — exactly on the epics that
-    # already refuse plain MARKET, the reason this fallback exists. Round in the
-    # marketable direction (buy up, sell down) so quantizing can only push further
-    # through the market, never pull the level back across it.
-    return _quantize_level(level, _snapshot_precision(snapshot), up=is_buy)
-
-
-def _snapshot_precision(snapshot: dict) -> int | None:
-    """Decimal places from IG's snapshot.decimalPlacesFactor (an integer count), or
-    None when it's absent/non-integer (then the level is left unrounded)."""
-    dpf = snapshot.get("decimalPlacesFactor")
-    if isinstance(dpf, (int, float)) and not isinstance(dpf, bool) and dpf == int(dpf):
-        return int(dpf)
-    return None
-
-
-def _quantize_level(level: float, precision: int | None, *, up: bool) -> float:
-    """Round `level` to `precision` dp, ceiling for a buy and floor for a sell so the
-    result stays at-or-through the market. No-op when precision is unknown."""
-    if precision is None:
-        return level
-    factor = 10**precision
-    rounded = math.ceil(level * factor) if up else math.floor(level * factor)
-    return rounded / factor
-
-
-def _first_affected(confirm: dict) -> str | None:
-    affected = confirm.get("affectedDeals") or []
-    return affected[0].get("dealId") if affected else None
 
 
 def register(registry: "BrokerRegistry", side: str) -> "IGBroker":
