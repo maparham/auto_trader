@@ -936,7 +936,7 @@ export default function ChartCore({
   // TradingView-style right-click menu for the CHART itself (empty space) — Paste an
   // indicator or drawing copied earlier. Opened by a right-click that isn't on an
   // indicator curve.
-  const [chartMenu, setChartMenu] = useState<{ x: number; y: number } | null>(null);
+  const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number | null } | null>(null);
   // TradingView-style right-click menu for the PRICE AXIS column — a single "Scale
   // price chart only" toggle (see onContextMenu, which opens it over the axis strip).
   const [axisMenu, setAxisMenu] = useState<{ x: number; y: number } | null>(null);
@@ -1503,7 +1503,23 @@ export default function ChartCore({
         return;
       }
       e.preventDefault();
-      setChartMenu({ x: e.clientX, y: e.clientY });
+      // Price under the cursor at right-click, so buy/sell-limit (and alert/line)
+      // actions in the menu land on the confluence level the user just eyeballed —
+      // computed fresh from clientY (not plusPriceRef) so it skips the alert/trade
+      // snapping onMove applies and honours the raw-cursor-price behaviour.
+      const menuY = e.clientY - rect.top;
+      // Only the candle pane's y-axis is a price. Over a sub-pane (RSI/MACD/Volume)
+      // convertFromPixel still returns an EXTRAPOLATED number, not null — so guard on
+      // the candle pane's own bounds (mirroring onMove's candleBottom check) and leave
+      // price null there, so the menu shows only Paste/Settings.
+      const cb = c.getSize("candle_pane", DomPosition.Root);
+      const inCandle =
+        cb != null && menuY >= cb.top && menuY <= cb.top + cb.height;
+      const pt = inCandle
+        ? first(c.convertFromPixel([{ y: menuY }], { paneId: "candle_pane", absolute: true }))
+        : null;
+      const price = pt != null && typeof pt.value === "number" ? pt.value : null;
+      setChartMenu({ x: e.clientX, y: e.clientY, price });
     };
 
     // AVWAP anchor drag. When AVWAP is selected and the cursor presses on its
@@ -3871,6 +3887,52 @@ export default function ChartCore({
     [reorderPaneByName],
   );
 
+  // Shared source of truth for the four price-level actions offered by both the
+  // axis "+" menu and the empty-chart right-click menu. `price` is the level under
+  // the cursor at the moment the menu opened.
+  const priceActionItems = useCallback(
+    (price: number): MenuItem[] => {
+      const label = price.toFixed(precision);
+      // Quantize to instrument precision (matches the label) so a valid limit level —
+      // not a raw many-decimal float — is staged and later sent to the broker.
+      const level = Number(price.toFixed(precision));
+      return [
+        {
+          label: `Add alert at ${label}`,
+          icon: MenuIcons.bell,
+          // Create immediately, inheriting the user's alert defaults (no modal).
+          // Matches TV's quick "add alert here" — editable afterwards (dbl-click).
+          onClick: () => {
+            const ad = loadSettings().alertDefaults;
+            overlays.addAlert(price, {
+              condition: ad.condition,
+              trigger: ad.trigger,
+              message: "",
+              expiresAt: resolveExpiry(ad.expiry, Date.now()),
+              notify: ad.notify,
+            });
+          },
+        },
+        {
+          label: `Buy limit at ${label}`,
+          icon: MenuIcons.chevronUp,
+          onClick: () => stageChartOrder({ epic: symbol.epic, side: "buy", price: level }),
+        },
+        {
+          label: `Sell limit at ${label}`,
+          icon: MenuIcons.chevronDown,
+          onClick: () => stageChartOrder({ epic: symbol.epic, side: "sell", price: level }),
+        },
+        {
+          label: `Draw line at ${label}`,
+          icon: MenuIcons.horizontalLine,
+          onClick: () => overlays.addDrawing("horizontalStraightLine", [{ value: price }]),
+        },
+      ];
+    },
+    [precision, symbol.epic, overlays],
+  );
+
   // The shared TradingView-style menu, used by both triggers (legend row + curve).
   const indicatorMenuItems = useCallback(
     (paneId: string, name: string): MenuItem[] => {
@@ -4206,6 +4268,12 @@ export default function ChartCore({
           x={chartMenu.x}
           y={chartMenu.y}
           items={[
+            // Price-level actions at the cursor's level, so a confluence point picked
+            // mid-chart can be traded/alerted/drawn without traveling to the axis "+".
+            // Gated to non-synthetic epics, matching the hidden "+" button there.
+            ...(chartMenu.price != null && !isSynthetic(symbol.epic)
+              ? priceActionItems(chartMenu.price)
+              : []),
             {
               label: "Paste",
               icon: MenuIcons.paste,
@@ -4602,52 +4670,7 @@ export default function ChartCore({
         <ContextMenu
           x={plusMenu.x}
           y={plusMenu.y}
-          items={[
-            {
-              label: `Add alert at ${plusMenu.price.toFixed(precision)}`,
-              icon: MenuIcons.bell,
-              // Create immediately, inheriting the user's alert defaults (no modal).
-              // Matches TV's quick "add alert here" — editable afterwards (dbl-click).
-              onClick: () => {
-                const ad = loadSettings().alertDefaults;
-                overlays.addAlert(plusMenu.price, {
-                  condition: ad.condition,
-                  trigger: ad.trigger,
-                  message: "",
-                  expiresAt: resolveExpiry(ad.expiry, Date.now()),
-                  notify: ad.notify,
-                });
-              },
-            },
-            {
-              label: `Draw line at ${plusMenu.price.toFixed(precision)}`,
-              icon: MenuIcons.horizontalLine,
-              onClick: () =>
-                overlays.addDrawing("horizontalStraightLine", [{ value: plusMenu.price }]),
-            },
-            {
-              label: `Buy limit at ${plusMenu.price.toFixed(precision)}`,
-              icon: MenuIcons.chevronUp,
-              // Quantize to instrument precision (matches the label) so a valid limit
-              // level — not a 14-decimal float — is staged and later sent to the broker.
-              onClick: () =>
-                stageChartOrder({
-                  epic: symbol.epic,
-                  side: "buy",
-                  price: Number(plusMenu.price.toFixed(precision)),
-                }),
-            },
-            {
-              label: `Sell limit at ${plusMenu.price.toFixed(precision)}`,
-              icon: MenuIcons.chevronDown,
-              onClick: () =>
-                stageChartOrder({
-                  epic: symbol.epic,
-                  side: "sell",
-                  price: Number(plusMenu.price.toFixed(precision)),
-                }),
-            },
-          ]}
+          items={priceActionItems(plusMenu.price)}
           onClose={() => {
             setPlusMenu(null);
             if (plusBtnRef.current) plusBtnRef.current.style.display = "none";
