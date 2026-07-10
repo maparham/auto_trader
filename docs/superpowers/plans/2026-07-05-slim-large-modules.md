@@ -1,15 +1,32 @@
 # Slim the Ten Largest Modules — Implementation Plan
 
-> **Status 2026-07-10 (end of day):** Tasks 1–3, 5, and 6 are DONE and committed to
-> main (final review clean). Task 6 landed as `_market_hours.py` + `_prices.py` +
-> `_session.py` (SessionAuthBroker) + `_ig_dealing.py`; `_parse_prices` kept per-broker.
+> **Status 2026-07-10 (end of day):** Tasks 1–3, 5, 6, and **9** are DONE and committed
+> to main (each final-reviewed clean). Task 6 landed as `_market_hours.py` + `_prices.py`
+> + `_session.py` (SessionAuthBroker) + `_ig_dealing.py`; `_parse_prices` kept per-broker.
 > Task 5 landed as `indicatorSettings/{shared.tsx,DefaultsMenu,RsiPanels,PrevHlPanels,
 > MaAvwapPanels,SessionsPanels,TimeHighlightPanels}` with one adjustment to the task
 > text below: family state + the persistence effect + `currentConfig()` stay in the
 > shell (moving state into panels would delay saves a render tick and corrupt the
 > Cancel snapshot); panels own JSX + writers + `<family>Config()` delegates. Apply the
-> same shape to future component splits (T4). Remaining: T4, T7, T8, T9, and new
-> candidates T10/T11 below.
+> same shape to future component splits (T4).
+>
+> **Task 9 (ChartCore) DONE — landed 2026-07-10** (6,195 → 3,516 lines, −43%). Shipped
+> `chart/{chartGeometry.ts, chartPainters.ts, chartHandle.ts}` + six hooks
+> `{useLiveMarketData, useRangeNavigation, useChartPaint, useIndicatorCommands,
+> useLineDrag, usePointerCrosshair}` + two components `{AlertTags.tsx, TradePills.tsx}`;
+> plus a dead-code deletion in `lib/positionLines.ts` (orphaned `drawPositionBracket`,
+> −132 lines). Key decisions: (1) a single `ChartHandle` (`chart/chartHandle.ts`, 36
+> members) threads shared refs into every hook; hooks that need a value not on the
+> handle take it via a `deps` object. (2) Cross-hook coupling uses **bridge refs**
+> published by one hook and read by another (`redrawRef`/`paintBracketRef` ← useChartPaint;
+> `tradeDragActiveRef`/`alertDragActiveRef` ← useLineDrag → read by usePointerCrosshair;
+> `alertHitTestRef`/`tradeLinePixelsRef`/`ensureCoverageAndFitRef` etc.) — this is how the
+> init-effect split preserved behavior. (3) **useTradeMarkers was DEFERRED** (the addendum
+> suggested it as a 7th hook) — `drawTradeMarkers` still lives inline in ChartCore behind
+> `tradeMarkersDrawRef`; revisit as a follow-up. (4) The one load-bearing risk (drag
+> mousedown listeners re-register last, after the init effect) was proven dispatch-safe:
+> only `onRangePickDown` uses `stopImmediatePropagation` and it registers first in both
+> orderings. Remaining: T4, T7, T8, and new candidates T10/T11 below.
 >
 > **Addendum 2026-07-10 — codebase re-survey.** All line numbers below are stale —
 > locate symbols by name. Per-task drift found by a fresh survey:
