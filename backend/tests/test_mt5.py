@@ -353,6 +353,21 @@ def test_place_market_order_submits_units_as_lots():
     assert res.filled_quantity == pytest.approx(15.0)  # reported in units
 
 
+def test_quote_returns_bid_ask_mid():
+    conn = _FakeTradeConn(price={"bid": 183.70, "ask": 183.80})
+    broker = MT5ExecutionBroker(_data_with(conn))
+    q = asyncio.run(broker.quote("CrudeOil"))
+    assert q == {"bid": 183.70, "ask": 183.80, "mid": pytest.approx(183.75)}
+
+
+def test_quote_none_when_price_unavailable():
+    # get_symbol_price → None → get_quote catches → (None, None); no fabricated 0.0.
+    conn = _FakeTradeConn(price=None)
+    broker = MT5ExecutionBroker(_data_with(conn))
+    q = asyncio.run(broker.quote("CrudeOil"))
+    assert q == {"bid": None, "ask": None, "mid": None}
+
+
 def test_close_partial_submits_units_as_lots():
     conn = _FakeTradeConn(
         spec=_SPEC_100,

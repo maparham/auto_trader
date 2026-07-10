@@ -35,6 +35,7 @@ from metaapi_cloud_sdk.clients.metaapi.trade_exception import TradeException
 from metaapi_cloud_sdk.clients.timeout_exception import TimeoutException
 from metaapi_cloud_sdk.logger import LoggerManager
 
+from auto_trader.brokers._prices import pick_side
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.core.broker_health import BrokerReconnecting
 from auto_trader.core.models import (
@@ -935,6 +936,14 @@ class MT5ExecutionBroker(ExecutionBroker):
 
     async def aclose(self) -> None:  # connection is owned + closed by the data broker
         return None
+
+    async def quote(self, epic: str) -> dict[str, float | None]:
+        """bid/ask/mid for the order ticket, from the shared MT5 data connection.
+        Goes through the data broker's wedge-safe read path, so a wedge yields
+        (None, None) rather than hanging the ticket. Mirrors
+        CapitalExecutionBroker.quote."""
+        bid, ask = await self._data.get_quote(epic)
+        return {"bid": bid, "ask": ask, "mid": pick_side(bid, ask, "mid")}
 
     # --- helpers --------------------------------------------------------------
 
