@@ -91,6 +91,27 @@ describe("NumberField", () => {
     expect(onChange).toHaveBeenLastCalledWith(0.4);
   });
 
+  it("leaves an untouched floored field alone on blur (no reset to floor)", () => {
+    // Focusing and blurring without typing must NOT clobber the value: the draft
+    // is still null, so the floor-snap must not fire and wipe the real value.
+    const onChange = vi.fn();
+    render(<NumberField value={4} floor={0.01} onChange={onChange} />);
+    const input = screen.getByRole("textbox") as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.blur(input);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(input.value).toBe("4");
+  });
+
+  it("snaps an emptied floored field up to the floor on blur", () => {
+    const onChange = vi.fn();
+    render(<NumberField value={4} floor={0.01} onChange={onChange} />);
+    const input = screen.getByRole("textbox") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenLastCalledWith(0.01);
+  });
+
   it("does not snap when no step is given", () => {
     const onChange = vi.fn();
     render(<NumberField value={0} onChange={onChange} />);

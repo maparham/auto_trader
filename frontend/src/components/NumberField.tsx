@@ -59,9 +59,16 @@ export default function NumberField({
   }
 
   function handleBlur() {
-    if (floor != null && !(Number(draft ?? "") > 0)) {
+    // Only the two edit-driven cases below act on blur. An untouched field
+    // (draft === null — focused and blurred without a keystroke) must be left
+    // exactly as-is; otherwise the floor branch would read Number("") === 0 and
+    // silently overwrite a good value (e.g. 4) with the floor (0.01).
+    if (draft == null) {
+      return;
+    }
+    if (floor != null && !(Number(draft) > 0)) {
       onChange(floor);
-    } else if (step != null && draft != null) {
+    } else if (step != null) {
       const n = Number(draft);
       if (Number.isFinite(n)) {
         // Clean the quotient before rounding (0.35/0.1 is 3.4999…96, which
