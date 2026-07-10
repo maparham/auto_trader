@@ -467,7 +467,7 @@ const measure: OverlayTemplate = {
 
 // --- slope: the transient, interactive angle ruler --------------------------
 // A two-anchor line that reports its slope as an angle (data geometry: +1%/bar = 45°,
-// zoom- and instrument-independent) plus %/bar, price/bar, price/time. Sibling to
+// zoom- and instrument-independent) plus %/bar, %/hr, price/bar, price/time. Sibling to
 // measure but STAYS interactive after drawing — ChartCore drags its endpoints, a
 // midpoint (translate), and a rotate knob. This template only PAINTS; the handle
 // pixel geometry (midpoint, stem, knob) comes from the shared slopeHandles helper so
@@ -528,10 +528,12 @@ const slope: OverlayTemplate = {
       ignoreEvent: true,
     });
 
-    // Readout pill: angle big, then the three rate lines. Snapped to the widest line.
+    // Readout pill: angle big, then the rate lines — percentages first (bar, then the
+    // %/hr a slope rule compares against), then absolute price (bar, then per time).
     const rows = [
       { text: m.angleText, tier: PRIMARY },
       { text: m.pctText, tier: SECONDARY },
+      { text: m.pctTimeText, tier: SECONDARY },
       { text: m.priceBarText, tier: SECONDARY },
       { text: m.priceTimeText, tier: SECONDARY },
     ];

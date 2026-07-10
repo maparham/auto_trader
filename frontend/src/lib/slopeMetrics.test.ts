@@ -126,4 +126,36 @@ describe("slopeMetrics", () => {
     expect(m.pctPerBar).toBe(0);
     expect(m.pricePerBar).toBe(0);
   });
+
+  it("reports %/hr matching a slope rule's %/hr operand (5m base)", () => {
+    // The EMA(9) case from the slope-verify session: the curve rose
+    // 28769.72085 → 28833.62668 over one 5-minute bar. A slope rule reads this as
+    // ~2.6655 %/hr; the ruler's new %/hr line must report the same quantity so the
+    // two can be compared without mentally multiplying %/bar by bars-per-hour.
+    const m = slopeMetrics({
+      price0: 28769.72085254716,
+      price1: 28833.626682037728,
+      index0: 0,
+      index1: 1,
+      time0: 0,
+      time1: 5 * 60_000,
+      precision: 2,
+      baseIntervalMinutes: 5,
+    });
+    expect(m.timeUnit).toBe("hr");
+    expect(m.pctPerBar).toBeCloseTo(0.2221, 4);
+    expect(m.pctPerTime).toBeCloseTo(m.pctPerBar * 12, 9); // 12 five-minute bars per hour
+    expect(m.pctPerTime).toBeCloseTo(2.6655, 3);
+    expect(m.pctTimeText).toBe("2.67%/hr");
+  });
+
+  it("scales %/hr to %/day for daily bars", () => {
+    const m = slopeMetrics({
+      price0: 100, price1: 110, index0: 0, index1: 10, time0: 0, time1: 10 * DAY, precision: 2,
+    });
+    expect(m.timeUnit).toBe("day");
+    // +1%/bar over daily bars → 1%/day.
+    expect(m.pctPerTime).toBeCloseTo(1, 5);
+    expect(m.pctTimeText).toBe("1.00%/day");
+  });
 });

@@ -1,6 +1,6 @@
 // Pure helpers for the Slope tool's readout. Sibling to measureMetrics.ts: given the
 // two anchor points' price, bar index, timestamp, and the instrument precision, it
-// reports the line's ANGLE plus rate-of-change readouts (%/bar, price/bar, price/time).
+// reports the line's ANGLE plus rate-of-change readouts (%/bar, %/time, price/bar, price/time).
 // Side-effect-free (no klinecharts, no DOM) so it's unit-testable and the overlay's
 // createPointFigures just formats whatever it reads off the two points.
 //
@@ -30,6 +30,7 @@ export interface SlopeInput {
 export interface SlopeMetrics {
   angleDeg: number; // canonical data-geometry angle, in (−90, 90]; +rising / −falling
   pctPerBar: number; // percent-per-bar, relative to the anchor (earlier) price
+  pctPerTime: number; // percent per hour or per day — the %/hr the rule engine uses
   pricePerBar: number; // absolute price change per bar
   pricePerTime: number; // price change per hour or per day (see timeUnit)
   timeUnit: "hr" | "day";
@@ -37,6 +38,7 @@ export interface SlopeMetrics {
   up: boolean; // rose (or flat) from earlier → later bar → green edge
   angleText: string; // "45.0°"
   pctText: string; // "1.00%/bar"
+  pctTimeText: string; // "1.00%/hr" | "1.00%/day" — matches a slope rule's %/hr operand
   priceBarText: string; // "1.00/bar"
   priceTimeText: string; // "1.00/hr" | "1.00/day"
 }
@@ -102,11 +104,17 @@ export function slopeMetrics(inp: SlopeInput): SlopeMetrics {
   const totalMinutes = bars * minutesPerBar;
   const unitMinutes = timeUnit === "day" ? DAY_MINUTES : 60;
   const pricePerTime = totalMinutes > 0 ? dPrice / (totalMinutes / unitMinutes) : 0;
+  // Percent-per-time: %/bar scaled to the same time unit as pricePerTime. This is the
+  // SAME quantity a slope rule operand uses (%/hr regardless of timeframe — see
+  // slope-conditions / backtestSeries), so the readout can be compared to a rule's
+  // threshold directly instead of mentally multiplying %/bar by bars-per-hour.
+  const pctPerTime = minutesPerBar > 0 ? pctPerBar * (unitMinutes / minutesPerBar) : 0;
 
   const pd = Math.max(0, inp.precision);
   return {
     angleDeg,
     pctPerBar,
+    pctPerTime,
     pricePerBar,
     pricePerTime,
     timeUnit,
@@ -114,6 +122,7 @@ export function slopeMetrics(inp: SlopeInput): SlopeMetrics {
     up,
     angleText: `${signed(angleDeg, 1)}°`,
     pctText: `${signed(pctPerBar, 2)}%/bar`,
+    pctTimeText: `${signed(pctPerTime, 2)}%/${timeUnit}`,
     priceBarText: `${signed(pricePerBar, pd)}/bar`,
     priceTimeText: `${signed(pricePerTime, pd)}/${timeUnit}`,
   };
