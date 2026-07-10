@@ -11,18 +11,13 @@
 //
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import type { Chart, Indicator } from "klinecharts";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
-import {
-  resolveInputs,
-  isMovingAverage,
-  PRICE_SOURCES,
-  SMOOTHING_TYPES,
-} from "./lib/indicatorMeta";
-import { applyMaTimeframe, applyPivotBandsTimeframe } from "./lib/mtfCoordinator";
+import { resolveInputs, isMovingAverage } from "./lib/indicatorMeta";
+import { applyPivotBandsTimeframe } from "./lib/mtfCoordinator";
 import type {
   MaExtend,
   PivotBandsMode,
@@ -34,16 +29,13 @@ import type {
   RsiExtend,
   RsiDivergenceConfig,
   RsiSmoothing,
-  RsiSmoothType,
   RsiStyle,
-  RsiElement,
   CurveLabelSide,
   CurveLabelAlign,
   SessionDef,
   SessionsExtend,
   TimeWindowDef,
   TimeHighlightExtend,
-  TimeHighlightMode,
 } from "./lib/customIndicators";
 import {
   AVWAP_DEFAULT_BANDS,
@@ -53,29 +45,65 @@ import {
   DEFAULT_SESSIONS,
   DEFAULT_TIME_WINDOWS,
   indTypeOf,
-  prevHlAnchorToInput,
-  prevHlInputToAnchor,
   curveLabelConfig,
 } from "./lib/customIndicators";
 import { PERIODS, RESOLUTION_SECONDS } from "./lib/feed";
-import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import {
   saveIndicatorConfig,
   loadIndicatorConfigs,
-  loadIndicatorDefault,
-  saveIndicatorDefault,
-  clearIndicatorDefault,
-  loadIndicatorPresets,
-  saveIndicatorPreset,
-  deleteIndicatorPreset,
   type SavedIndicatorConfig,
 } from "./lib/persist";
-import { applyIndicator, removeIndicatorById } from "./lib/indicators";
-import { toast } from "./lib/notify";
 import InfoTip from "./components/InfoTip";
-import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
+import ColorLineStylePicker from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
 import { cloneStyles } from "./lib/overlays";
+import DefaultsMenu from "./indicatorSettings/DefaultsMenu";
+import { RsiInputsPanel, RsiDivergencePanel, RsiStylePanel, rsiConfig } from "./indicatorSettings/RsiPanels";
+import {
+  makeSetPrevHlTimezone,
+  makeSetPrevHlLength,
+  makeSetPrevHlAgg,
+  makeSetPrevHlRolling,
+  makeSetPrevHlAnchorInput,
+  makeSetBoundaryVisible,
+  PrevHlInputsPanel,
+  PrevHlCalculationRows,
+  PrevHlStylePairs,
+  PrevHlLegendToggle,
+  prevHlConfig,
+} from "./indicatorSettings/PrevHlPanels";
+import {
+  makeApplyMa,
+  MaInputsPanel,
+  maConfig,
+  makeApplyAvwap,
+  AvwapInputsPanel,
+  avwapConfig,
+} from "./indicatorSettings/MaAvwapPanels";
+import {
+  makeWriteSessions,
+  makePatchSession,
+  makeAddSession,
+  SessionsInputsPanel,
+  SessionsStylePanel,
+  sessionsConfig,
+} from "./indicatorSettings/SessionsPanels";
+import {
+  makeWriteWindows,
+  makePatchWindow,
+  makeAddWindow,
+  TimeHighlightInputsPanel,
+  TimeHighlightStylePanel,
+  timeHighlightConfig,
+} from "./indicatorSettings/TimeHighlightPanels";
+import {
+  DEFAULT_LINE_PALETTE,
+  CURVE_LABEL_TYPES,
+  parseColor,
+  toColor,
+  type PrevHlKind,
+  type LineDraft,
+} from "./indicatorSettings/shared";
 
 interface Props {
   chart: Chart;
@@ -91,185 +119,6 @@ interface Props {
 }
 
 type Tab = "inputs" | "divergence" | "style" | "visibility";
-
-const DEFAULT_LINE_PALETTE = ["#FF9600", "#935EBD", "#2962ff", "#E11D74", "#01C5C4"];
-
-// Indicator types that plot curves and have a per-curve key parameter to label.
-// Keep in sync with curveLabel()'s switch in customIndicators.ts. Includes the
-// klinecharts built-in overlays (SMA/BBI/BOLL) alongside our custom indicators.
-const CURVE_LABEL_TYPES = new Set([
-  "EMA",
-  "MA",
-  "LR",
-  "VWAP",
-  "AVWAP",
-  "PREV_HL",
-  "RSI",
-  "SMA",
-  "BBI",
-  "BOLL",
-  "PIVOT_BANDS",
-]);
-
-// Line-style options for the RSI band / MA selectors (canvas-drawn elements).
-type RsiLineStyleOpt = "solid" | "dashed" | "dotted";
-type RsiHiddenKey = RsiElement;
-
-// RSI "Smoothing" MA types, mirroring TradingView's RSI panel dropdown.
-const RSI_SMOOTHING_OPTIONS: { value: RsiSmoothType; label: string }[] = [
-  { value: "none", label: "None" },
-  { value: "sma", label: "SMA" },
-  { value: "sma_bb", label: "SMA + Bollinger Bands" },
-  { value: "ema", label: "EMA" },
-  { value: "rma", label: "SMMA (RMA)" },
-  { value: "wma", label: "WMA" },
-  { value: "vwma", label: "VWMA" },
-];
-
-// PREV_HL lookback inputs: one length + aggregation function per boundary (collapse
-// the high/low over the previous N completed periods). Order matches the Style-tab
-// rows. "interval" is the chart's own bar timeframe, so the indicator works on any
-// TF (e.g. previous N 1H bars).
-// PREV_HL has TWO orthogonal concepts, kept in separate Inputs-tab groups:
-//  - "rolling": ONE sliding trailing window (the general lookback). Its unit selector
-//    spans bars/minutes/hours/days/weeks — the whole nested ladder lives on this one
-//    axis, so there are no redundant per-unit rows.
-//  - "day"/"week": ANCHORED previous-period lines (the classic PDH/PDL) — calendar
-//    periods that step at their boundary, not sliding windows.
-type PrevHlKind = "rolling" | "day" | "week" | "anchor";
-// Each boundary has a `tip` explaining what its High/Low lines track.
-const PREV_HL_LENGTH_FIELDS: { kind: PrevHlKind; label: string; tip: string }[] = [
-  {
-    kind: "rolling",
-    label: "Range",
-    tip: "High and Low of the last N units. The window slides with every new bar.",
-  },
-  {
-    kind: "day",
-    label: "Day",
-    tip: "High and Low of the previous trading days. Skips weekends, so Monday looks back to Friday.",
-  },
-  {
-    kind: "week",
-    label: "Week",
-    tip: "High and Low of the previous weeks. Each week starts Monday.",
-  },
-];
-const PREV_HL_AGG_OPTIONS: { value: PrevHlAgg; label: string; tip: string }[] = [
-  {
-    value: "extreme",
-    label: "Max / Min",
-    tip: "Top line is the highest high. Bottom line is the lowest low.",
-  },
-  {
-    value: "avg",
-    label: "Average",
-    tip: "Top line is the average of the highs. Bottom line is the average of the lows.",
-  },
-  {
-    value: "median",
-    label: "Median",
-    tip: "Like Average, but ignores one odd spike.",
-  },
-];
-// Unit for the rolling window. "bars" = the chart's own bars (any timeframe); the
-// rest are clock spans. They're all the same axis (1 hour = 60 minutes = …).
-const PREV_HL_ROLLING_UNITS: { value: string; label: string }[] = [
-  { value: "bars", label: "bars" },
-  { value: "minute", label: "minutes" },
-  { value: "hour", label: "hours" },
-  { value: "day", label: "days" },
-  { value: "week", label: "weeks" },
-];
-// Whether the rolling time-span counts closed-market time (time units only).
-const PREV_HL_GAP_OPTIONS: { value: "trading" | "wallclock"; label: string; tip: string }[] = [
-  {
-    value: "trading",
-    label: "Trading time",
-    tip: "Counts trading bars only. Skips weekends and overnight gaps.",
-  },
-  {
-    value: "wallclock",
-    label: "Wall-clock",
-    tip: "Counts real clock time. Gaps eat into the window.",
-  },
-];
-// PREV_HL Style-tab rows pair a boundary's High + Low figures on one row.
-const PREV_HL_STYLE_PAIRS: { kind: PrevHlKind; label: string; hiKey: string; loKey: string }[] = [
-  { kind: "rolling", label: "Range", hiKey: "rollingHigh", loKey: "rollingLow" },
-  { kind: "day", label: "Day", hiKey: "dayHigh", loKey: "dayLow" },
-  { kind: "week", label: "Week", hiKey: "weekHigh", loKey: "weekLow" },
-  { kind: "anchor", label: "Anchor", hiKey: "anchorHigh", loKey: "anchorLow" },
-];
-
-// Color is stored on the indicator as either `#RRGGBB` (alpha 1) or
-// `rgba(r,g,b,a)`. The Style tab needs hex (for <input type="color">, which
-// rejects rgba and silently snaps to #000000) and alpha SEPARATELY — so we parse
-// the stored color → {hex, alpha} exactly once (on load, in lineDefs) and
-// recombine to rgba only when applying/persisting (lineOverrides). Scoped to the
-// two shapes we emit; not a general CSS-color parser.
-function parseColor(c: string): { hex: string; alpha: number } {
-  const m = c.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i);
-  if (m) {
-    const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
-    const hex = "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
-    return { hex, alpha: m[4] != null ? Number(m[4]) : 1 };
-  }
-  return { hex: /^#[0-9a-f]{6}$/i.test(c) ? c : "#000000", alpha: 1 };
-}
-function toColor(hex: string, alpha: number): string {
-  if (alpha >= 1) return hex;
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-// Controlled integer input that stays clearable: committing `floor(Number(v)) || d`
-// on every keystroke would snap an emptied field straight back to the default (the
-// falsy-zero trap), so keep the raw string as a draft while focused and only commit
-// keystrokes that parse; blur drops the draft back to the committed value.
-function IntInput({
-  value,
-  min,
-  max,
-  disabled,
-  commit,
-}: {
-  value: number;
-  min?: number;
-  max?: number;
-  disabled?: boolean;
-  commit: (n: number) => void;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  return (
-    <input
-      type="number"
-      min={min}
-      max={max}
-      step={1}
-      disabled={disabled}
-      value={draft ?? value}
-      onChange={(e) => {
-        setDraft(e.target.value);
-        const n = Math.floor(Number(e.target.value));
-        if (e.target.value !== "" && Number.isFinite(n)) commit(n);
-      }}
-      onBlur={() => setDraft(null)}
-    />
-  );
-}
-
-interface LineDraft {
-  key: string; // figure key (vwap/up1/dn1/…) — operations key by this, not row index
-  label: string;
-  color: string; // hex (#RRGGBB); opacity carried separately
-  opacity: number; // 0..1, becomes the rgba alpha on apply
-  size: number;
-  lineStyle: LineStyleOpt; // solid/dashed/dotted → klinecharts {style, dashedValue}
-  visible: boolean; // per-line show/hide (calc-omit via extendData.lineHidden)
-}
 
 export default function IndicatorSettings({
   chart,
@@ -574,155 +423,44 @@ export default function IndicatorSettings({
   // The whole indicator config is this list. Hours are LOCAL time in each session's
   // timezone (Inputs tab); colours live in the Style tab. Writes merge live
   // extendData (preserve indType); persistence is the snapshot effect (keyed on
-  // `sessions`).
+  // `sessions`). Writers moved to SessionsPanels.tsx.
   const sessionsExt0 = (ind?.extendData ?? {}) as SessionsExtend;
   const [sessions, setSessions] = useState<SessionDef[]>(() =>
     (sessionsExt0.sessions ?? DEFAULT_SESSIONS).map((s) => ({ ...s })),
   );
-  function writeSessions(next: SessionDef[]) {
-    setSessions(next);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      { name, extendData: { ...((live?.extendData as object) ?? {}), sessions: next } },
-      paneId,
-    );
-  }
-  function patchSession(i: number, patch: Partial<SessionDef>) {
-    writeSessions(sessions.map((s, j) => (j === i ? { ...s, ...patch } : s)));
-  }
-  function addSession() {
-    writeSessions([
-      ...sessions,
-      {
-        id: `s${Math.random().toString(36).slice(2, 8)}`,
-        name: "New session",
-        color: "#787b86",
-        timezone: "Europe/London",
-        open: "08:00",
-        close: "16:00",
-        enabled: true,
-      },
-    ]);
-  }
+  const writeSessions = makeWriteSessions(chart, paneId, name, setSessions);
+  const patchSession = makePatchSession(sessions, writeSessions);
+  const addSession = makeAddSession(sessions, writeSessions);
 
   // --- TIME_HIGHLIGHT: editable per-window list (extendData.windows) ---
   // Like SESSIONS, the whole indicator config is this list, but times are always
   // device-local (no per-window zone) and each window carries a visual mode
   // (band / candles / both). Times live on the Inputs tab, colours on the Style
   // tab. Writes merge live extendData (preserve indType); persistence is the
-  // snapshot effect (keyed on `windows`).
+  // snapshot effect (keyed on `windows`). Writers moved to TimeHighlightPanels.tsx.
   const windowsExt0 = (ind?.extendData ?? {}) as TimeHighlightExtend;
   const [windows, setWindows] = useState<TimeWindowDef[]>(() =>
     (windowsExt0.windows ?? DEFAULT_TIME_WINDOWS).map((wn) => ({ ...wn })),
   );
-  function writeWindows(next: TimeWindowDef[]) {
-    setWindows(next);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      { name, extendData: { ...((live?.extendData as object) ?? {}), windows: next } },
-      paneId,
-    );
-  }
-  function patchWindow(i: number, patch: Partial<TimeWindowDef>) {
-    writeWindows(windows.map((wn, j) => (j === i ? { ...wn, ...patch } : wn)));
-  }
-  function addWindow() {
-    writeWindows([
-      ...windows,
-      {
-        id: `w${Math.random().toString(36).slice(2, 8)}`,
-        color: "#787b86",
-        from: "09:00",
-        to: "17:00",
-        mode: "band",
-        enabled: true,
-      },
-    ]);
-  }
+  const writeWindows = makeWriteWindows(chart, paneId, name, setWindows);
+  const patchWindow = makePatchWindow(windows, writeWindows);
+  const addWindow = makeAddWindow(windows, writeWindows);
 
-  // PREV_HL timezone override: write extendData.tz and let calc re-bucket. "chart"
-  // stores no tz (omit the key) so the instance follows the global chart zone.
-  // Merges live extendData to preserve lineHidden / indType. Persistence is handled
-  // by the snapshot effect (keyed on prevHlTz).
-  function setPrevHlTimezone(tz: string) {
-    setPrevHlTz(tz);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    const ext = { ...((live?.extendData as object) ?? {}) } as { tz?: string };
-    if (tz === "chart") delete ext.tz;
-    else ext.tz = tz;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
-  }
-
-  // PREV_HL lookback length for one boundary: write extendData.lengths and let calc
-  // re-aggregate. A length of 1 (the default) is omitted from the stored map so a
-  // default-everywhere instance carries no `lengths` key. Merges live extendData.
-  function setPrevHlLength(kind: PrevHlKind, value: number) {
-    const v = Math.max(1, Math.floor(value || 1));
-    const nextLengths = { ...prevHlLengths, [kind]: v };
-    setPrevHlLengths(nextLengths);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    const ext = { ...((live?.extendData as object) ?? {}) } as {
-      lengths?: Partial<Record<PrevHlKind, number>>;
-    };
-    const lengths: Partial<Record<PrevHlKind, number>> = {};
-    for (const f of PREV_HL_LENGTH_FIELDS) {
-      if (nextLengths[f.kind] > 1) lengths[f.kind] = nextLengths[f.kind];
-    }
-    if (Object.keys(lengths).length) ext.lengths = lengths;
-    else delete ext.lengths;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
-  }
-
-  // PREV_HL aggregation function for one boundary: write extendData.aggs and let
-  // calc re-aggregate. "extreme" (the default) is omitted so a default instance
-  // carries no `aggs` key. Merges live extendData to preserve lengths/tz/lineHidden.
-  function setPrevHlAgg(kind: PrevHlKind, fn: PrevHlAgg) {
-    const nextAggs = { ...prevHlAggs, [kind]: fn };
-    setPrevHlAggs(nextAggs);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    const ext = { ...((live?.extendData as object) ?? {}) } as {
-      aggs?: Partial<Record<PrevHlKind, PrevHlAgg>>;
-    };
-    const aggs: Partial<Record<PrevHlKind, PrevHlAgg>> = {};
-    for (const f of PREV_HL_LENGTH_FIELDS) {
-      if (nextAggs[f.kind] !== "extreme") aggs[f.kind] = nextAggs[f.kind];
-    }
-    if (Object.keys(aggs).length) ext.aggs = aggs;
-    else delete ext.aggs;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
-  }
-
-  // PREV_HL rolling unit (bars/minute/hour/day/week) and gap mode (trading/wallclock):
-  // write onto extendData and recompute. Defaults ("hour"/"trading") are omitted. Both
-  // share this writer so the merge logic stays in one place.
-  function setPrevHlRolling(next: { unit?: string; gap?: "trading" | "wallclock" }) {
-    const unit = next.unit ?? prevHlRollingUnit;
-    const gap = next.gap ?? prevHlGapMode;
-    if (next.unit) setPrevHlRollingUnit(next.unit);
-    if (next.gap) setPrevHlGapMode(next.gap);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    const ext = { ...((live?.extendData as object) ?? {}) } as {
-      rollingUnit?: string;
-      gapMode?: "trading" | "wallclock";
-    };
-    if (unit !== "hour") ext.rollingUnit = unit;
-    else delete ext.rollingUnit;
-    if (gap !== "trading") ext.gapMode = gap;
-    else delete ext.gapMode;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
-  }
-
-  // PREV_HL anchor: parse the typed datetime-local (in the instance's timezone) to an
-  // epoch ms and write extendData.anchorTs. Empty clears it (unplaced → no line).
-  function setPrevHlAnchorInput(input: string) {
-    const ts = prevHlInputToAnchor(input, prevHlTz === "chart" ? undefined : prevHlTz);
-    setPrevHlAnchorTs(ts);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    const ext = { ...((live?.extendData as object) ?? {}) } as { anchorTs?: number };
-    if (ts > 0) ext.anchorTs = ts;
-    else delete ext.anchorTs;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
-  }
+  // PREV_HL family writers (moved to PrevHlPanels.tsx; state stays here since the
+  // persistence effect + currentConfig() read it directly).
+  const setPrevHlTimezone = makeSetPrevHlTimezone(chart, paneId, name, setPrevHlTz);
+  const setPrevHlLength = makeSetPrevHlLength(chart, paneId, name, prevHlLengths, setPrevHlLengths);
+  const setPrevHlAgg = makeSetPrevHlAgg(chart, paneId, name, prevHlAggs, setPrevHlAggs);
+  const setPrevHlRolling = makeSetPrevHlRolling(
+    chart,
+    paneId,
+    name,
+    prevHlRollingUnit,
+    prevHlGapMode,
+    setPrevHlRollingUnit,
+    setPrevHlGapMode,
+  );
+  const setPrevHlAnchorInput = makeSetPrevHlAnchorInput(chart, paneId, name, prevHlTz, setPrevHlAnchorTs);
 
   // Only timeframes strictly higher than the chart's qualify for MTF.
   const chartSecs = RESOLUTION_SECONDS[chartResolution] ?? 0;
@@ -813,44 +551,31 @@ export default function IndicatorSettings({
   function currentConfig(): SavedIndicatorConfig {
     const extendData: Record<string, unknown> = {};
     if (isMa) {
-      extendData.source = source;
-      extendData.offset = offset;
-      if (smoothType !== "none") extendData.smoothing = { type: smoothType, length: smoothLen };
-      if (timeframe !== "chart") extendData.mtf = { timeframe };
+      maConfig(extendData, source, offset, smoothType, smoothLen, timeframe);
     }
     // Pivot Bands persists only the chosen timeframe (never the bulky HTF series);
     // refreshMtfIndicators refetches it on reload, like EMA/MA.
     if (isPivotBands && timeframe !== "chart") extendData.mtf = { timeframe };
     if (isAvwap) {
-      extendData.source = avwapSource;
-      extendData.bandMode = bandMode;
-      extendData.bands = bands;
+      avwapConfig(extendData, avwapSource, bandMode, bands);
     }
     if (!isMa) {
       // Generic extendData inputs (e.g. LR's Source). For AVWAP, source is set
       // above; this also catches any future extend-input indicators.
       Object.assign(extendData, genExtend);
     }
-    if (type === "PREV_HL" && prevHlTz !== "chart") {
-      // Per-instance timezone override; "chart" follows the global zone (no key).
-      extendData.tz = prevHlTz;
-    }
     if (type === "PREV_HL") {
-      // Per-boundary lookback lengths + agg functions; only store non-defaults
-      // (length > 1, agg !== "extreme") so a default instance carries neither key.
-      const lengths: Partial<Record<PrevHlKind, number>> = {};
-      const aggs: Partial<Record<PrevHlKind, PrevHlAgg>> = {};
-      for (const f of PREV_HL_LENGTH_FIELDS) {
-        if (prevHlLengths[f.kind] > 1) lengths[f.kind] = prevHlLengths[f.kind];
-        if (prevHlAggs[f.kind] !== "extreme") aggs[f.kind] = prevHlAggs[f.kind];
-      }
-      if (Object.keys(lengths).length) extendData.lengths = lengths;
-      if (Object.keys(aggs).length) extendData.aggs = aggs;
-      // Rolling unit + gap mode (non-default only).
-      if (prevHlRollingUnit !== "hour") extendData.rollingUnit = prevHlRollingUnit;
-      if (prevHlGapMode !== "trading") extendData.gapMode = prevHlGapMode;
-      // Anchor timestamp (epoch ms); omitted when unplaced.
-      if (prevHlAnchorTs > 0) extendData.anchorTs = prevHlAnchorTs;
+      // Per-instance timezone override + per-boundary lookback lengths/agg
+      // functions + rolling unit/gap mode + anchor timestamp (non-defaults only).
+      prevHlConfig(
+        extendData,
+        prevHlTz,
+        prevHlLengths,
+        prevHlAggs,
+        prevHlRollingUnit,
+        prevHlGapMode,
+        prevHlAnchorTs,
+      );
     }
     if (isAvwap || !isMa) {
       // Per-line visibility (Style tab) → only the hidden lines, by figure key.
@@ -861,13 +586,7 @@ export default function IndicatorSettings({
     if (type === "RSI") {
       // Source + smoothing + divergence: only persist each when it differs from the
       // defaults, so a plain RSI carries no extra keys.
-      if (rsiSource !== "close") extendData.source = rsiSource;
-      if (rsiSmooth.type !== "none") extendData.smoothing = rsiSmooth;
-      const isDefault = (Object.keys(RSI_DIVERGENCE_DEFAULTS) as Array<keyof RsiDivergenceConfig>).every(
-        (k) => rsiDiv[k] === RSI_DIVERGENCE_DEFAULTS[k],
-      );
-      if (!isDefault) extendData.divergence = rsiDiv;
-      if (JSON.stringify(rsiStyle) !== JSON.stringify(RSI_STYLE_DEFAULTS)) extendData.style = rsiStyle;
+      rsiConfig(extendData, rsiSource, rsiSmooth, rsiDiv, rsiStyle);
     }
     if (hasCurveLabels) {
       // Curve-end labels: omit when fully default so a plain instance carries no key;
@@ -876,18 +595,11 @@ export default function IndicatorSettings({
       const st = curveLabelState();
       if (!curveLabelIsDefault(st)) extendData.curveLabels = curveLabelObj(st);
     }
-    if (type === "SESSIONS" && JSON.stringify(sessions) !== JSON.stringify(DEFAULT_SESSIONS)) {
-      // The whole session list (only when edited away from defaults, so a fresh
-      // instance carries no key and picks up future default changes).
-      extendData.sessions = sessions;
+    if (type === "SESSIONS") {
+      sessionsConfig(extendData, sessions);
     }
-    if (
-      type === "TIME_HIGHLIGHT" &&
-      JSON.stringify(windows) !== JSON.stringify(DEFAULT_TIME_WINDOWS)
-    ) {
-      // The whole window list (only when edited away from defaults, mirroring
-      // SESSIONS, so a fresh instance carries no key).
-      extendData.windows = windows;
+    if (type === "TIME_HIGHLIGHT") {
+      timeHighlightConfig(extendData, windows);
     }
     if (!showValue) extendData.hideLegendValue = true;
     // Per-timeframe visibility (TV Visibility tab) — model only when non-default,
@@ -915,38 +627,16 @@ export default function IndicatorSettings({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
 
-  // Push a moving-average config (chart-TF or MTF) through the coordinator, which
-  // refetches HTF data when a timeframe is set. Reads explicit overrides so it
-  // never races setState.
-  function applyMa(next: Partial<{
-    length: number;
-    source: string;
-    offset: number;
-    smoothType: string;
-    smoothLen: number;
-    timeframe: string;
-  }> = {}) {
-    const length = next.length ?? maLength;
-    const src = (next.source ?? source) as MaExtend["source"];
-    const off = next.offset ?? offset;
-    const st = next.smoothType ?? smoothType;
-    const sl = next.smoothLen ?? smoothLen;
-    const tf = next.timeframe ?? timeframe;
-    const options: MaExtend = {
-      source: src,
-      offset: off,
-      smoothing: st === "none" ? undefined : { type: st as "sma" | "ema", length: sl },
-    };
-    void applyMaTimeframe(
-      chart,
-      epic,
-      name,
-      paneId,
-      { kind: type === "EMA" ? "ema" : "sma", length, options },
-      tf === "chart" ? null : tf,
-      brokerId,
-    );
-  }
+  // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
+  // setParam's isMa branch below, so it stays a shell-local binding.
+  const applyMa = makeApplyMa(chart, epic, name, paneId, brokerId, type, {
+    maLength,
+    source,
+    offset,
+    smoothType,
+    smoothLen,
+    timeframe,
+  });
 
   // Push a Pivot Bands config (chart-TF or MTF) through the coordinator, which
   // refetches + recomputes both step-lines on the higher timeframe when one is
@@ -971,28 +661,9 @@ export default function IndicatorSettings({
     );
   }
 
-  // AVWAP source/bands apply: write the config onto extendData and let calc
-  // re-run (the generic `apply` only touches calcParams/visible/styles, so it
-  // would NOT recompute on a source/band change). Reads explicit overrides so it
-  // never races setState, and merges live extendData to preserve hideLegendValue.
-  function applyAvwap(
-    next: Partial<{
-      source: string;
-      bandMode: BandMode;
-      bands: [BandSetting, BandSetting, BandSetting];
-      lineHidden: Record<string, boolean>;
-    }> = {},
-  ) {
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    const ext: AvwapExtend = {
-      ...((live?.extendData as AvwapExtend) ?? {}),
-      source: (next.source ?? avwapSource) as AvwapExtend["source"],
-      bandMode: next.bandMode ?? bandMode,
-      bands: next.bands ?? bands,
-      ...(next.lineHidden ? { lineHidden: next.lineHidden } : {}),
-    };
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
-  }
+  // AVWAP source/bands apply (moved to MaAvwapPanels.tsx). Also called from
+  // setLineVisible's isAvwap branch below, so it stays a shell-local binding.
+  const applyAvwap = makeApplyAvwap(chart, name, paneId, { avwapSource, bandMode, bands });
 
   // Generic (non-MA) calcParam apply.
   function apply(next: { calcParams?: number[]; visible?: boolean; lines?: LineDraft[] }) {
@@ -1066,24 +737,8 @@ export default function IndicatorSettings({
   // PREV_HL: toggle a whole boundary (its High AND Low) from the Inputs-tab row
   // checkbox. Shares the SAME `lines`/lineHidden source of truth as the Style-tab
   // per-line checkboxes, so the two stay in sync. Unchecking hides both lines;
-  // checking shows both.
-  function setBoundaryVisible(kind: PrevHlKind, visible: boolean) {
-    const keys = new Set([`${kind}High`, `${kind}Low`]);
-    const next = lines.map((l) => (keys.has(l.key) ? { ...l, visible } : l));
-    setLines(next);
-    const lineHidden: Record<string, boolean> = {};
-    for (const l of next) if (!l.visible) lineHidden[l.key] = true;
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      { name, extendData: { ...((live?.extendData as object) ?? {}), lineHidden } },
-      paneId,
-    );
-  }
-  // A boundary is "on" if either of its lines is still visible (so the row
-  // checkbox reflects, and re-enables, the boundary as a whole).
-  function boundaryActive(kind: PrevHlKind): boolean {
-    return lines.some((l) => (l.key === `${kind}High` || l.key === `${kind}Low`) && l.visible);
-  }
+  // checking shows both. (Moved to PrevHlPanels.tsx.)
+  const setBoundaryVisible = makeSetBoundaryVisible(chart, paneId, name, lines, setLines);
 
   // Toggle the "Show on chart" checkbox: records intent in extendData.userVisible
   // (never falls back to reading the live effective `visible`) and applies the
@@ -1138,74 +793,6 @@ export default function IndicatorSettings({
     // Revert the persisted snapshot too (the effect saved edits eagerly).
     if (originalCfg.current) saveIndicatorConfig(scope, name, originalCfg.current);
     onClose();
-  }
-
-  // --- TradingView-style "Defaults" menu (footer) ----------------------------
-  // Global per-TYPE presets: a single default that seeds freshly-added instances,
-  // plus named presets applied on demand. Both store the SAME SavedIndicatorConfig
-  // currentConfig() produces (see persist.ts). Applying recreates the instance from
-  // the chosen config (the established copy/paste mechanism) and closes the modal —
-  // reopening reads the fresh live state. We DON'T try to push a config back into the
-  // modal's ~12 useState fields.
-  const [defOpen, setDefOpen] = useState(false);
-  const [naming, setNaming] = useState(false); // inline "Save as preset…" name field
-  const [presetName, setPresetName] = useState("");
-  const defMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!defOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (defMenuRef.current && !defMenuRef.current.contains(e.target as Node)) {
-        setDefOpen(false);
-        setNaming(false);
-      }
-    };
-    // Capture phase: the modal body calls stopPropagation on mousedown, which
-    // would otherwise prevent this document-level listener from ever seeing
-    // clicks inside the modal.
-    document.addEventListener("mousedown", onDown, true);
-    return () => document.removeEventListener("mousedown", onDown, true);
-  }, [defOpen]);
-
-  // Recreate THIS instance (same id) from `cfg`, then close. Reuses the same
-  // remove+add path as paste; reusing the id keeps its per-cell config key aligned.
-  // `cfg === null` resets to the type baseline (no config → BASE_TEMPLATES defaults).
-  // `rehydrate: true` so an AVWAP keeps its placed anchor across the recreate (the
-  // anchor lives in per-epic storage, NOT in the preset config which is anchorless).
-  function applyConfigToOpenInstance(cfg: SavedIndicatorConfig | null) {
-    removeIndicatorById(chart, scope, name); // also clears this id's per-cell config
-    saveIndicatorConfig(scope, name, cfg ?? {}); // persist the new config for next reload
-    applyIndicator(chart, scope, epic, { id: name, type }, { config: cfg ?? {}, rehydrate: true });
-    setDefOpen(false);
-    onClose();
-  }
-
-  function saveAsDefault() {
-    saveIndicatorDefault(type, currentConfig());
-    setDefOpen(false);
-    toast(`Saved ${type} default`);
-  }
-  function resetToDefault() {
-    // Type default if one exists, else the bare type baseline.
-    applyConfigToOpenInstance(loadIndicatorDefault(type));
-  }
-  function commitPreset() {
-    const nm = presetName.trim();
-    if (!nm) return;
-    saveIndicatorPreset(type, nm, currentConfig());
-    setNaming(false);
-    setPresetName("");
-    setDefOpen(false);
-    toast(`Saved preset "${nm}"`);
-  }
-  function applyPreset(nm: string) {
-    const cfg = loadIndicatorPresets(type)[nm];
-    if (cfg) applyConfigToOpenInstance(cfg);
-  }
-  function removePreset(nm: string) {
-    deleteIndicatorPreset(type, nm);
-    // keep the menu open so the user can delete several; force a re-read by toggling
-    setDefOpen(false);
-    setTimeout(() => setDefOpen(true), 0);
   }
 
   if (!ind) return null;
@@ -1336,77 +923,15 @@ export default function IndicatorSettings({
     <>
       {/* TradingView-style "Defaults" menu: type default + named presets, all
           global. Pinned left (margin-right:auto) opposite Cancel/Ok. */}
-      <div className="menu ind-def-menu" ref={defMenuRef}>
-        <span className="ind-row-head">
-          <button
-            className={`ghost ${defOpen ? "on" : ""}`}
-            onClick={() => setDefOpen((v) => !v)}
-          >
-            Defaults ▾
-          </button>
-          <InfoTip
-            title="Defaults"
-            text="Save these settings as the default for this indicator, or store named presets."
-          />
-        </span>
-        {defOpen && (
-          <div className="dropdown ind-def-dropdown">
-            <ul>
-              <li onClick={resetToDefault}>Reset settings</li>
-              <li onClick={saveAsDefault}>Save as default</li>
-              {loadIndicatorDefault(type) && (
-                <li
-                  onClick={() => {
-                    clearIndicatorDefault(type);
-                    setDefOpen(false);
-                    toast(`Cleared ${type} default`);
-                  }}
-                >
-                  Clear default
-                </li>
-              )}
-              <li className="sep" />
-              {Object.keys(loadIndicatorPresets(type)).map((nm) => (
-                <li key={nm} className="ind-def-preset">
-                  <span onClick={() => applyPreset(nm)} title={`Apply "${nm}"`}>
-                    {nm}
-                  </span>
-                  <button
-                    className="ind-def-del"
-                    title={`Delete "${nm}"`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removePreset(nm);
-                    }}
-                  >
-                    ✕
-                  </button>
-                </li>
-              ))}
-              {naming ? (
-                <li className="ind-def-name">
-                  <input
-                    autoFocus
-                    placeholder="Preset name…"
-                    value={presetName}
-                    onChange={(e) => setPresetName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitPreset();
-                      if (e.key === "Escape") {
-                        setNaming(false);
-                        setPresetName("");
-                      }
-                    }}
-                  />
-                  <button onClick={commitPreset}>Save</button>
-                </li>
-              ) : (
-                <li onClick={() => setNaming(true)}>Save as preset…</li>
-              )}
-            </ul>
-          </div>
-        )}
-      </div>
+      <DefaultsMenu
+        chart={chart}
+        scope={scope}
+        epic={epic}
+        name={name}
+        type={type}
+        currentConfig={currentConfig}
+        onClose={onClose}
+      />
       <button className="ghost" onClick={cancel}>
         Cancel
       </button>
@@ -1438,438 +963,54 @@ export default function IndicatorSettings({
 
         <div className="ind-body">
           {tab === "inputs" && isMa && (
-            <>
-              <div className="ind-row">
-                <label>Length</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={maLength}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setMaLength(v);
-                    applyMa({ length: v });
-                  }}
-                />
-              </div>
-              <div className="ind-row">
-                <label>Source</label>
-                <select
-                  value={source}
-                  onChange={(e) => {
-                    setSource(e.target.value);
-                    applyMa({ source: e.target.value });
-                  }}
-                >
-                  {PRICE_SOURCES.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="ind-row">
-                <label>Offset</label>
-                <input
-                  type="number"
-                  step={1}
-                  value={offset}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setOffset(v);
-                    applyMa({ offset: v });
-                  }}
-                />
-              </div>
-
-              <div className="ind-group">Smoothing</div>
-              <div className="ind-row">
-                <label>Type</label>
-                <select
-                  value={smoothType}
-                  onChange={(e) => {
-                    setSmoothType(e.target.value);
-                    applyMa({ smoothType: e.target.value });
-                  }}
-                >
-                  {SMOOTHING_TYPES.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {smoothType !== "none" && (
-                <div className="ind-row">
-                  <label>Length</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={smoothLen}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      setSmoothLen(v);
-                      applyMa({ smoothLen: v });
-                    }}
-                  />
-                </div>
-              )}
-
-              <div className="ind-group">Calculation</div>
-              <div className="ind-row">
-                <label>Timeframe</label>
-                <select
-                  value={timeframe}
-                  onChange={(e) => {
-                    setTimeframe(e.target.value);
-                    applyMa({ timeframe: e.target.value });
-                  }}
-                >
-                  <option value="chart">Chart</option>
-                  {higherTimeframes.map((p) => (
-                    <option key={p.resolution} value={p.resolution}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <span className="ind-row-head">
-                <label className="ind-check">
-                  <input type="checkbox" checked disabled readOnly />
-                  <span>Wait for timeframe closes</span>
-                </label>
-                <InfoTip
-                  title="Wait for timeframe closes"
-                  text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
-                />
-              </span>
-            </>
+            <MaInputsPanel
+              maLength={maLength}
+              setMaLength={setMaLength}
+              source={source}
+              setSource={setSource}
+              offset={offset}
+              setOffset={setOffset}
+              smoothType={smoothType}
+              setSmoothType={setSmoothType}
+              smoothLen={smoothLen}
+              setSmoothLen={setSmoothLen}
+              timeframe={timeframe}
+              setTimeframe={setTimeframe}
+              higherTimeframes={higherTimeframes}
+              applyMa={applyMa}
+            />
           )}
 
           {tab === "inputs" && isAvwap && (
-            <>
-              <div className="ind-group">Bands Settings</div>
-              <div className="ind-row">
-                <label>Mode</label>
-                <select
-                  className="ind-wide-select"
-                  value={bandMode}
-                  onChange={(e) => {
-                    const v = e.target.value as BandMode;
-                    setBandMode(v);
-                    applyAvwap({ bandMode: v });
-                  }}
-                >
-                  <option value="stdev">Standard Deviation</option>
-                  <option value="percentage">Percentage</option>
-                </select>
-              </div>
-              {bands.map((b, i) => (
-                <div className="ind-row" key={i}>
-                  <label className="ind-check ind-check-inline">
-                    <input
-                      type="checkbox"
-                      checked={b.on}
-                      onChange={(e) => {
-                        const nextB = bands.map((x, j) =>
-                          j === i ? { ...x, on: e.target.checked } : x,
-                        ) as [BandSetting, BandSetting, BandSetting];
-                        setBands(nextB);
-                        applyAvwap({ bands: nextB });
-                      }}
-                    />
-                    <span>Bands Multiplier #{i + 1}</span>
-                  </label>
-                  <input
-                    type="number"
-                    step={0.1}
-                    min={0}
-                    value={b.mult}
-                    onChange={(e) => {
-                      const nextB = bands.map((x, j) =>
-                        j === i ? { ...x, mult: Number(e.target.value) } : x,
-                      ) as [BandSetting, BandSetting, BandSetting];
-                      setBands(nextB);
-                      applyAvwap({ bands: nextB });
-                    }}
-                  />
-                </div>
-              ))}
-              <div className="ind-row">
-                <label>Source</label>
-                <select
-                  value={avwapSource}
-                  onChange={(e) => {
-                    setAvwapSource(e.target.value);
-                    applyAvwap({ source: e.target.value });
-                  }}
-                >
-                  {PRICE_SOURCES.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </>
+            <AvwapInputsPanel
+              bandMode={bandMode}
+              setBandMode={setBandMode}
+              bands={bands}
+              setBands={setBands}
+              avwapSource={avwapSource}
+              setAvwapSource={setAvwapSource}
+              applyAvwap={applyAvwap}
+            />
           )}
 
           {tab === "inputs" && isRsi && (
             // TradingView-style RSI inputs: length + source, an optional smoothing MA
             // (with Bollinger Bands), and divergence detection.
-            <>
-              <div className="ind-group">RSI Settings</div>
-              <div className="ind-row">
-                <label>RSI Length</label>
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={Number.isFinite(calcParams[0]) ? calcParams[0] : ""}
-                  onChange={(e) => setParam(0, Math.max(1, Math.floor(Number(e.target.value)) || 1))}
-                />
-              </div>
-              <div className="ind-row">
-                <label>Source</label>
-                <select value={rsiSource} onChange={(e) => setRsiExtend({ source: e.target.value })}>
-                  {PRICE_SOURCES.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="ind-group">Smoothing</div>
-              <div className="ind-row">
-                <label>Type</label>
-                <select
-                  value={rsiSmooth.type}
-                  onChange={(e) =>
-                    setRsiExtend({ smoothing: { ...rsiSmooth, type: e.target.value as RsiSmoothType } })
-                  }
-                >
-                  {RSI_SMOOTHING_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {/* TV always shows Length + BB StdDev, greying each when inapplicable:
-                  Length is off when Type is None; BB StdDev only applies to
-                  'SMA + Bollinger Bands'. */}
-              <div className={`ind-row${rsiSmooth.type === "none" ? " is-off" : ""}`}>
-                <label>Length</label>
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={rsiSmooth.length}
-                  disabled={rsiSmooth.type === "none"}
-                  onChange={(e) =>
-                    setRsiExtend({
-                      smoothing: { ...rsiSmooth, length: Math.max(1, Math.floor(Number(e.target.value)) || 1) },
-                    })
-                  }
-                />
-              </div>
-              <div className={`ind-row${rsiSmooth.type === "sma_bb" ? "" : " is-off"}`}>
-                <span className="ind-row-head">
-                  <label>BB StdDev</label>
-                  <InfoTip
-                    title="BB StdDev"
-                    text="Bollinger Band width in standard deviations. Only used by 'SMA + Bollinger Bands'."
-                  />
-                </span>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={rsiSmooth.bbStdDev}
-                  disabled={rsiSmooth.type !== "sma_bb"}
-                  onChange={(e) =>
-                    setRsiExtend({
-                      smoothing: { ...rsiSmooth, bbStdDev: Math.max(0, Number(e.target.value) || 0) },
-                    })
-                  }
-                />
-              </div>
-
-              <div className="ind-group">Calculation</div>
-              <div className="ind-row">
-                <span className="ind-row-head">
-                  <label>Timeframe</label>
-                  <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA and MA." />
-                </span>
-                <select value="chart" disabled>
-                  <option value="chart">Chart</option>
-                </select>
-              </div>
-            </>
+            <RsiInputsPanel
+              calcParams={calcParams}
+              setParam={setParam}
+              rsiSource={rsiSource}
+              rsiSmooth={rsiSmooth}
+              setRsiExtend={setRsiExtend}
+            />
           )}
 
           {tab === "divergence" && isRsi && (
-            <>
-              <div className="ind-group">Divergence</div>
-              <label className="ind-check">
-                <input
-                  type="checkbox"
-                  checked={rsiDiv.on}
-                  onChange={(e) => setRsiDivergence({ on: e.target.checked })}
-                />
-                <span>Calculate Divergence</span>
-                <InfoTip
-                  title="Calculate Divergence"
-                  text="Marks divergences on the plot: price makes a new high or low but the RSI does not."
-                />
-              </label>
-              <div className={`ind-row ind-row-pair${rsiDiv.on ? "" : " is-off"}`}>
-                <span className="ind-pair-cell">
-                  <span className="ind-row-head">
-                    <label>Lookback left</label>
-                    <InfoTip title="Pivot lookback left" text="Bars required to the left of a swing for it to count as a pivot." />
-                  </span>
-                  <IntInput
-                    min={1}
-                    disabled={!rsiDiv.on}
-                    value={rsiDiv.lookbackLeft}
-                    commit={(n) => setRsiDivergence({ lookbackLeft: Math.max(1, n) })}
-                  />
-                </span>
-                <span className="ind-pair-cell">
-                  <span className="ind-row-head">
-                    <label>right</label>
-                    <InfoTip title="Pivot lookback right" text="Bars required to the right to confirm a pivot (the detection lag)." />
-                  </span>
-                  <IntInput
-                    min={1}
-                    disabled={!rsiDiv.on}
-                    value={rsiDiv.lookbackRight}
-                    commit={(n) => {
-                      const lookbackRight = Math.max(1, n);
-                      // Keep forming right-lookback ≤ lookbackRight-1 so the shown value never
-                      // exceeds what detection can use after lowering the confirmed lookback.
-                      const formingLookbackRight = Math.min(rsiDiv.formingLookbackRight, Math.max(1, lookbackRight - 1));
-                      setRsiDivergence({ lookbackRight, formingLookbackRight });
-                    }}
-                  />
-                </span>
-              </div>
-              <div className={`ind-row ind-row-pair${rsiDiv.on ? "" : " is-off"}`}>
-                <span className="ind-pair-cell">
-                  <span className="ind-row-head">
-                    <label>Range min</label>
-                    <InfoTip title="Range min" text="Fewest bars allowed between the two pivots being compared. Always ≤ Range max." />
-                  </span>
-                  <IntInput
-                    min={1}
-                    max={rsiDiv.rangeMax}
-                    disabled={!rsiDiv.on}
-                    value={rsiDiv.rangeMin}
-                    commit={(n) => setRsiDivergence({ rangeMin: Math.min(rsiDiv.rangeMax, Math.max(1, n)) })}
-                  />
-                </span>
-                <span className="ind-pair-cell">
-                  <span className="ind-row-head">
-                    <label>max</label>
-                    <InfoTip title="Range max" text="Most bars allowed between the two pivots being compared. Always ≥ Range min." />
-                  </span>
-                  <IntInput
-                    min={1}
-                    disabled={!rsiDiv.on}
-                    value={rsiDiv.rangeMax}
-                    commit={(n) => setRsiDivergence({ rangeMax: Math.max(rsiDiv.rangeMin, n) })}
-                  />
-                </span>
-              </div>
-              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
-                <input
-                  type="checkbox"
-                  disabled={!rsiDiv.on}
-                  checked={rsiDiv.bullish}
-                  onChange={(e) => setRsiDivergence({ bullish: e.target.checked })}
-                />
-                <span>Regular bullish</span>
-                <InfoTip title="Regular bullish" text="Price makes a lower low while RSI makes a higher low." />
-              </label>
-              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
-                <input
-                  type="checkbox"
-                  disabled={!rsiDiv.on}
-                  checked={rsiDiv.bearish}
-                  onChange={(e) => setRsiDivergence({ bearish: e.target.checked })}
-                />
-                <span>Regular bearish</span>
-                <InfoTip title="Regular bearish" text="Price makes a higher high while RSI makes a lower high." />
-              </label>
-              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
-                <input
-                  type="checkbox"
-                  disabled={!rsiDiv.on}
-                  checked={rsiDiv.hiddenBullish}
-                  onChange={(e) => setRsiDivergence({ hiddenBullish: e.target.checked })}
-                />
-                <span>Hidden bullish</span>
-                <InfoTip title="Hidden bullish" text="Price makes a higher low while RSI makes a lower low." />
-              </label>
-              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
-                <input
-                  type="checkbox"
-                  disabled={!rsiDiv.on}
-                  checked={rsiDiv.hiddenBearish}
-                  onChange={(e) => setRsiDivergence({ hiddenBearish: e.target.checked })}
-                />
-                <span>Hidden bearish</span>
-                <InfoTip title="Hidden bearish" text="Price makes a lower high while RSI makes a higher high." />
-              </label>
-              <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
-                <input
-                  type="checkbox"
-                  disabled={!rsiDiv.on}
-                  checked={rsiDiv.showForming}
-                  onChange={(e) => setRsiDivergence({ showForming: e.target.checked })}
-                />
-                <span>Show forming divergence</span>
-                <InfoTip title="Show forming divergence" text="Also show the latest still-forming divergence (dotted, may be invalidated)." />
-              </label>
-              <div className={`ind-row${rsiDiv.on && rsiDiv.showForming ? "" : " is-off"}`}>
-                <span className="ind-row-head">
-                  <label>Forming lookback right</label>
-                  <InfoTip title="Forming lookback right" text="Right-side bars for a tentative pivot; lower = earlier but jumpier. Always < Pivot lookback right." />
-                </span>
-                <IntInput
-                  min={1}
-                  max={Math.max(1, rsiDiv.lookbackRight - 1)}
-                  disabled={!rsiDiv.on || !rsiDiv.showForming}
-                  value={rsiDiv.formingLookbackRight}
-                  commit={(n) =>
-                    setRsiDivergence({
-                      formingLookbackRight: Math.min(
-                        Math.max(1, rsiDiv.lookbackRight - 1),
-                        Math.max(1, n),
-                      ),
-                    })
-                  }
-                />
-              </div>
-              <label className={`ind-check${rsiDiv.on && rsiDiv.showForming ? "" : " is-off"}`}>
-                <input
-                  type="checkbox"
-                  disabled={!rsiDiv.on || !rsiDiv.showForming}
-                  checked={rsiDiv.formingScanBack}
-                  onChange={(e) => setRsiDivergence({ formingScanBack: e.target.checked })}
-                />
-                <span>Scan back for forming</span>
-                <InfoTip title="Scan back for forming" text="If the latest tentative swing isn't diverging, look further back for an older one that is." />
-              </label>
-              <div className="ind-row">
-                <button type="button" className="ghost" onClick={resetDivergence}>
-                  Reset to defaults
-                </button>
-                <InfoTip title="Reset to defaults" text="Restore the divergence tuning to defaults (keeps the on/off toggle)." />
-              </div>
-            </>
+            <RsiDivergencePanel
+              rsiDiv={rsiDiv}
+              setRsiDivergence={setRsiDivergence}
+              resetDivergence={resetDivergence}
+            />
           )}
 
           {tab === "inputs" && !isMa && !isAvwap && !isRsi && (
@@ -1881,125 +1022,20 @@ export default function IndicatorSettings({
                   <p className="ind-note">This indicator has no adjustable inputs.</p>
                 )}
               {type === "SESSIONS" && (
-                <div className="sessions-editor">
-                  <p className="ind-note">
-                    Hours are local time in each session's timezone. Set colours in the Style tab.
-                  </p>
-                  {sessions.map((s, i) => (
-                    <div className={`session-row${s.enabled ? "" : " is-off"}`} key={s.id}>
-                      <label className="ind-check ind-check-inline">
-                        <input
-                          type="checkbox"
-                          checked={s.enabled}
-                          onChange={(e) => patchSession(i, { enabled: e.target.checked })}
-                        />
-                      </label>
-                      <input
-                        className="session-name"
-                        type="text"
-                        value={s.name}
-                        aria-label="Session name"
-                        onChange={(e) => patchSession(i, { name: e.target.value })}
-                      />
-                      <select
-                        className="tz-select session-tz"
-                        value={s.timezone}
-                        aria-label="Session timezone"
-                        onChange={(e) => patchSession(i, { timezone: e.target.value })}
-                      >
-                        {/* City name only — the offset is dropped to keep the row
-                            short; the selected zone's city is enough to identify it. */}
-                        {TIMEZONES.filter((tz) => tz.value).map((tz) => (
-                          <option key={tz.value} value={tz.value}>
-                            {tz.label}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        className="session-time"
-                        type="time"
-                        value={s.open}
-                        aria-label="Session open"
-                        onChange={(e) => patchSession(i, { open: e.target.value })}
-                      />
-                      <span className="session-dash">–</span>
-                      <input
-                        className="session-time"
-                        type="time"
-                        value={s.close}
-                        aria-label="Session close"
-                        onChange={(e) => patchSession(i, { close: e.target.value })}
-                      />
-                      <button
-                        type="button"
-                        className="session-remove"
-                        aria-label={`Remove ${s.name}`}
-                        onClick={() => writeSessions(sessions.filter((_, j) => j !== i))}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  <button type="button" className="session-add" onClick={addSession}>
-                    + Add session
-                  </button>
-                </div>
+                <SessionsInputsPanel
+                  sessions={sessions}
+                  patchSession={patchSession}
+                  writeSessions={writeSessions}
+                  addSession={addSession}
+                />
               )}
               {type === "TIME_HIGHLIGHT" && (
-                <div className="sessions-editor">
-                  <p className="ind-note">
-                    Times are your device's local time. Set colours in the Style tab.
-                  </p>
-                  {windows.map((wn, i) => (
-                    <div className={`session-row${wn.enabled ? "" : " is-off"}`} key={wn.id}>
-                      <label className="ind-check ind-check-inline">
-                        <input
-                          type="checkbox"
-                          checked={wn.enabled}
-                          onChange={(e) => patchWindow(i, { enabled: e.target.checked })}
-                        />
-                      </label>
-                      <input
-                        className="session-time"
-                        type="time"
-                        value={wn.from}
-                        aria-label="Window start"
-                        onChange={(e) => patchWindow(i, { from: e.target.value })}
-                      />
-                      <span className="session-dash">–</span>
-                      <input
-                        className="session-time"
-                        type="time"
-                        value={wn.to}
-                        aria-label="Window end"
-                        onChange={(e) => patchWindow(i, { to: e.target.value })}
-                      />
-                      <select
-                        className="tz-select session-tz"
-                        value={wn.mode}
-                        aria-label="Highlight style"
-                        onChange={(e) =>
-                          patchWindow(i, { mode: e.target.value as TimeHighlightMode })
-                        }
-                      >
-                        <option value="band">Band</option>
-                        <option value="candles">Candles</option>
-                        <option value="both">Both</option>
-                      </select>
-                      <button
-                        type="button"
-                        className="session-remove"
-                        aria-label="Remove window"
-                        onClick={() => writeWindows(windows.filter((_, j) => j !== i))}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  <button type="button" className="session-add" onClick={addWindow}>
-                    + Add window
-                  </button>
-                </div>
+                <TimeHighlightInputsPanel
+                  windows={windows}
+                  patchWindow={patchWindow}
+                  writeWindows={writeWindows}
+                  addWindow={addWindow}
+                />
               )}
               {inputs.map((inp) => {
                 // Conditional visibility: skip an input whose showWhen guard isn't
@@ -2056,176 +1092,30 @@ export default function IndicatorSettings({
                 return null;
               })}
               {type === "PREV_HL" && (
-                // Two groups: a single sliding "Rolling range" (the general lookback)
-                // and the anchored "Previous period" lines (day/week PDH-PDL).
-                (() => {
-                  // One row renderer shared by both groups. Checkbox toggles the
-                  // boundary's H/L lines; greyed + disabled when off. The rolling row
-                  // also shows a unit selector (bars/minutes/hours/days/weeks).
-                  const renderRow = (f: (typeof PREV_HL_LENGTH_FIELDS)[number]) => {
-                    const on = boundaryActive(f.kind);
-                    const aggTip = PREV_HL_AGG_OPTIONS.find((o) => o.value === prevHlAggs[f.kind])?.tip ?? "";
-                    const aggLabel = PREV_HL_AGG_OPTIONS.find((o) => o.value === prevHlAggs[f.kind])?.label ?? "";
-                    return (
-                      <div className={`ind-row${on ? "" : " is-off"}`} key={f.kind}>
-                        <span className="ind-row-head">
-                          <label className="ind-check ind-check-inline">
-                            <input
-                              type="checkbox"
-                              checked={on}
-                              onChange={(e) => setBoundaryVisible(f.kind, e.target.checked)}
-                            />
-                            <span>{f.label}</span>
-                          </label>
-                          <InfoTip
-                            title={f.label}
-                            text={[f.tip, `Function (${aggLabel}): ${aggTip}`]}
-                          />
-                        </span>
-                        <div className="ind-line-controls ind-prevhl-controls">
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={prevHlLengths[f.kind]}
-                            disabled={!on}
-                            onChange={(e) => setPrevHlLength(f.kind, Number(e.target.value))}
-                          />
-                          {f.kind === "rolling" && (
-                            <select
-                              className="ind-unit-select"
-                              value={prevHlRollingUnit}
-                              disabled={!on}
-                              onChange={(e) => setPrevHlRolling({ unit: e.target.value })}
-                            >
-                              {PREV_HL_ROLLING_UNITS.map((u) => (
-                                <option key={u.value} value={u.value}>
-                                  {u.label}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                          <select
-                            value={prevHlAggs[f.kind]}
-                            disabled={!on}
-                            onChange={(e) => setPrevHlAgg(f.kind, e.target.value as PrevHlAgg)}
-                          >
-                            {PREV_HL_AGG_OPTIONS.map((o) => (
-                              <option key={o.value} value={o.value}>
-                                {o.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    );
-                  };
-                  return (
-                    <>
-                      <div className="ind-group ind-group-head">
-                        <span>Rolling range</span>
-                        <InfoTip
-                          title="Rolling range"
-                          text="One sliding window that follows price. Pick the size and the unit. 1 hour = 60 minutes = 4 bars on a 15m chart, all the same line."
-                        />
-                      </div>
-                      {PREV_HL_LENGTH_FIELDS.filter((f) => f.kind === "rolling").map(renderRow)}
-                      <div className="ind-group ind-group-head">
-                        <span>Previous period</span>
-                        <InfoTip
-                          title="Previous period"
-                          text="High and Low of recent days and weeks. They reset at each new day or week."
-                        />
-                      </div>
-                      {PREV_HL_LENGTH_FIELDS.filter((f) => f.kind !== "rolling").map(renderRow)}
-                      <div className="ind-group ind-group-head">
-                        <span>Anchored</span>
-                        <InfoTip
-                          title="Anchored"
-                          text="Highest high and lowest low since a date you pick. The lines run from that point to now. Nothing shows before it. The date uses the Timezone below."
-                        />
-                      </div>
-                      {(() => {
-                        const on = boundaryActive("anchor");
-                        return (
-                          <div className={`ind-row${on ? "" : " is-off"}`}>
-                            <label className="ind-check ind-check-inline">
-                              <input
-                                type="checkbox"
-                                checked={on}
-                                onChange={(e) => setBoundaryVisible("anchor", e.target.checked)}
-                              />
-                              <span>Anchor</span>
-                            </label>
-                            <input
-                              type="datetime-local"
-                              className="ind-anchor-input"
-                              disabled={!on}
-                              value={prevHlAnchorToInput(
-                                prevHlAnchorTs,
-                                prevHlTz === "chart" ? undefined : prevHlTz,
-                              )}
-                              onChange={(e) => setPrevHlAnchorInput(e.target.value)}
-                            />
-                          </div>
-                        );
-                      })()}
-                    </>
-                  );
-                })()
+                <PrevHlInputsPanel
+                  lines={lines}
+                  prevHlLengths={prevHlLengths}
+                  prevHlAggs={prevHlAggs}
+                  prevHlRollingUnit={prevHlRollingUnit}
+                  prevHlAnchorTs={prevHlAnchorTs}
+                  prevHlTz={prevHlTz}
+                  setBoundaryVisible={setBoundaryVisible}
+                  setPrevHlLength={setPrevHlLength}
+                  setPrevHlRolling={setPrevHlRolling}
+                  setPrevHlAgg={setPrevHlAgg}
+                  setPrevHlAnchorInput={setPrevHlAnchorInput}
+                />
               )}
               {type !== "SESSIONS" && type !== "TIME_HIGHLIGHT" && (
                 <div className="ind-group">Calculation</div>
               )}
               {type === "SESSIONS" || type === "TIME_HIGHLIGHT" ? null : type === "PREV_HL" ? (
-                <>
-                  {/* How the rolling time-span treats closed-market time. */}
-                  <div className="ind-row">
-                    <span className="ind-row-head">
-                      <label>Rolling span</label>
-                      <InfoTip
-                        title="Rolling span"
-                        text="How the Range window handles market gaps. Trading time skips them; Wall-clock counts them. Only affects time units, not bars."
-                      />
-                    </span>
-                    <select
-                      value={prevHlGapMode}
-                      onChange={(e) => setPrevHlRolling({ gap: e.target.value as "trading" | "wallclock" })}
-                    >
-                      {PREV_HL_GAP_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {/* Timezone decides where the Day/Week boundaries fall. "chart"
-                      follows the global axis zone; a specific zone anchors them. */}
-                  <div className="ind-row">
-                    <span className="ind-row-head">
-                      <label>Timezone</label>
-                      <InfoTip
-                        title="Timezone"
-                        text="Sets when a new day or week starts. 'Chart' uses the chart's timezone; or pick a market's zone."
-                      />
-                    </span>
-                    <select
-                      className="tz-select"
-                      value={prevHlTz}
-                      onChange={(e) => setPrevHlTimezone(e.target.value)}
-                    >
-                      <option value="chart">Chart</option>
-                      {TIMEZONES.filter((tz) => tz.value).map((tz) => {
-                        const off = offsetLabel(tz.value);
-                        return (
-                          <option key={tz.value} value={tz.value}>
-                            {off ? `${tz.label} ${off}` : tz.label}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </div>
-                </>
+                <PrevHlCalculationRows
+                  prevHlGapMode={prevHlGapMode}
+                  prevHlTz={prevHlTz}
+                  setPrevHlRolling={setPrevHlRolling}
+                  setPrevHlTimezone={setPrevHlTimezone}
+                />
               ) : isPivotBands ? (
                 <>
                   {/* Higher-timeframe swings aligned onto the chart bars (no
@@ -2286,79 +1176,16 @@ export default function IndicatorSettings({
                   <span>Show value in legend</span>
                 </label>
               )}
-              {type === "SESSIONS" &&
-                sessions.map((s, i) => (
-                  <div className={`ind-row ind-style-row${s.enabled ? "" : " is-off"}`} key={s.id}>
-                    <span className="ind-row-head">
-                      <label>{s.name}</label>
-                    </span>
-                    <div className="ind-line-controls">
-                      <ColorLineStylePicker
-                        color={s.color}
-                        onColor={(hex) => patchSession(i, { color: hex })}
-                        title={`${s.name} colour`}
-                      />
-                    </div>
-                  </div>
-                ))}
-              {type === "TIME_HIGHLIGHT" &&
-                windows.map((wn, i) => (
-                  <div
-                    className={`ind-row ind-style-row${wn.enabled ? "" : " is-off"}`}
-                    key={wn.id}
-                  >
-                    <span className="ind-row-head">
-                      <label>{`${wn.from}–${wn.to}`}</label>
-                    </span>
-                    <div className="ind-line-controls">
-                      <ColorLineStylePicker
-                        color={wn.color}
-                        onColor={(hex) => patchWindow(i, { color: hex })}
-                        title={`${wn.from}–${wn.to} colour`}
-                      />
-                    </div>
-                  </div>
-                ))}
+              {type === "SESSIONS" && (
+                <SessionsStylePanel sessions={sessions} patchSession={patchSession} />
+              )}
+              {type === "TIME_HIGHLIGHT" && (
+                <TimeHighlightStylePanel windows={windows} patchWindow={patchWindow} />
+              )}
               {/* PREV_HL: pair each boundary's High and Low on ONE row —
                   "Day  High [color][size]  Low [color][size]" — halving the list.
                   The boundary is greyed when deactivated in the Inputs tab. */}
-              {type === "PREV_HL" &&
-                PREV_HL_STYLE_PAIRS.map((p) => {
-                  const hi = lines.find((l) => l.key === p.hiKey);
-                  const lo = lines.find((l) => l.key === p.loKey);
-                  if (!hi || !lo) return null;
-                  const off = !boundaryActive(p.kind);
-                  const ctl = (l: LineDraft, side: string) => (
-                    <ColorLineStylePicker
-                      color={l.color}
-                      onColor={(hex) => setLine(l.key, { color: hex })}
-                      size={l.size}
-                      onSize={(s) => setLine(l.key, { size: s })}
-                      lineStyle={l.lineStyle}
-                      onLineStyle={(s) => setLine(l.key, { lineStyle: s })}
-                      disabled={off}
-                      title={`${p.label} ${side} line`}
-                    />
-                  );
-                  const rowTip = off
-                    ? `${p.label} is off. Turn it on in the Inputs tab to edit its lines.`
-                    : `Colour and thickness of the ${p.label} High and Low lines. Set visibility and lookback in the Inputs tab.`;
-                  return (
-                    <div
-                      className={`ind-row ind-style-row ind-style-pair${off ? " is-off" : ""}`}
-                      key={p.kind}
-                    >
-                      <span className="ind-pair-boundary">
-                        {p.label}
-                        <InfoTip title={p.label} text={rowTip} />
-                      </span>
-                      <span className="ind-pair-side">High</span>
-                      <div className="ind-line-controls">{ctl(hi, "High")}</div>
-                      <span className="ind-pair-side ind-pair-side-lo">Low</span>
-                      <div className="ind-line-controls">{ctl(lo, "Low")}</div>
-                    </div>
-                  );
-                })}
+              {type === "PREV_HL" && <PrevHlStylePairs lines={lines} setLine={setLine} />}
               {type !== "PREV_HL" && !isRsi &&
                 styleRows.map((l) => {
                 // A band line whose multiplier is OFF in the Inputs tab can't draw,
@@ -2412,133 +1239,14 @@ export default function IndicatorSettings({
                   bands add an editable level. The RSI line is the klinecharts figure
                   (colour/width via setLine); the rest are canvas-drawn (extendData
                   .style). A box toggles `style.hidden[key]` (unchecked → hidden). */}
-              {isRsi &&
-                (() => {
-                  const toggle = (key: RsiHiddenKey) => (e: ChangeEvent<HTMLInputElement>) =>
-                    setRsiStylePatch({ hidden: { ...rsiStyle.hidden, [key]: !e.target.checked } });
-                  const check = (key: RsiHiddenKey, label: string) => (
-                    <label className="ind-check ind-check-inline">
-                      <input type="checkbox" checked={!rsiStyle.hidden[key]} onChange={toggle(key)} />
-                      <span>{label}</span>
-                    </label>
-                  );
-                  // A line element (MA, bands): one swatch with colour + line style.
-                  const lineSwatch = (
-                    color: string,
-                    style: RsiLineStyleOpt,
-                    onColor: (c: string) => void,
-                    onStyle: (v: RsiLineStyleOpt) => void,
-                  ) => (
-                    <ColorLineStylePicker
-                      color={color}
-                      onColor={onColor}
-                      lineStyle={style}
-                      onLineStyle={(v) => onStyle(v as RsiLineStyleOpt)}
-                    />
-                  );
-                  // A fill / divergence element: colour only.
-                  const fillSwatch = (color: string, onColor: (c: string) => void) => (
-                    <ColorLineStylePicker color={color} onColor={onColor} title="Color" />
-                  );
-                  const rsiLine = lines.find((l) => l.key === "rsi");
-                  return (
-                    <div className="ind-rsi-style">
-                      {/* The RSI line (figure): always shown (the indicator's whole
-                          point), so its checkbox is permanently checked + disabled.
-                          Colour + thickness via setLine. */}
-                      <div className="ind-row ind-style-row">
-                        <label className="ind-check ind-check-inline">
-                          <input type="checkbox" checked disabled readOnly />
-                          <span>RSI</span>
-                        </label>
-                        <div className="ind-line-controls">
-                          <ColorLineStylePicker
-                            color={rsiLine?.color ?? "#7E57C2"}
-                            onColor={(hex) => setLine("rsi", { color: hex })}
-                            size={rsiLine?.size ?? 1}
-                            onSize={(s) => setLine("rsi", { size: s })}
-                          />
-                        </div>
-                      </div>
-                      {/* RSI-based MA: colour + line style. */}
-                      <div className="ind-row ind-style-row">
-                        {check("ma", "RSI-based MA")}
-                        <div className="ind-line-controls">
-                          {lineSwatch(
-                            rsiStyle.ma,
-                            rsiStyle.maLineStyle,
-                            (c) => setRsiStylePatch({ ma: c }),
-                            (v) => setRsiStylePatch({ maLineStyle: v }),
-                          )}
-                        </div>
-                      </div>
-                      {/* Divergence colours. */}
-                      <div className="ind-row ind-style-row">
-                        {check("bull", "Regular Bullish")}
-                        <div className="ind-line-controls">
-                          {fillSwatch(rsiStyle.bull, (c) => setRsiStylePatch({ bull: c }))}
-                        </div>
-                      </div>
-                      <div className="ind-row ind-style-row">
-                        {check("bear", "Regular Bearish")}
-                        <div className="ind-line-controls">
-                          {fillSwatch(rsiStyle.bear, (c) => setRsiStylePatch({ bear: c }))}
-                        </div>
-                      </div>
-                      {/* Band lines: colour + line style + level. */}
-                      {(
-                        [
-                          ["RSI Upper Band", "upper"],
-                          ["RSI Middle Band", "middle"],
-                          ["RSI Lower Band", "lower"],
-                        ] as Array<[string, "upper" | "middle" | "lower"]>
-                      ).map(([label, key]) => (
-                        <div className="ind-row ind-style-row" key={key}>
-                          {check(key, label)}
-                          <div className="ind-line-controls">
-                            {lineSwatch(
-                              rsiStyle[key].color,
-                              rsiStyle[key].lineStyle,
-                              (c) => setRsiStylePatch({ [key]: { ...rsiStyle[key], color: c } }),
-                              (v) => setRsiStylePatch({ [key]: { ...rsiStyle[key], lineStyle: v } }),
-                            )}
-                            <input
-                              type="number"
-                              min={0}
-                              max={100}
-                              step={1}
-                              value={rsiStyle[key].level}
-                              onChange={(e) =>
-                                setRsiStylePatch({
-                                  [key]: {
-                                    ...rsiStyle[key],
-                                    level: Math.max(0, Math.min(100, Math.floor(Number(e.target.value)) || 0)),
-                                  },
-                                })
-                              }
-                              title="Level"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                      {/* Fills: colour only. */}
-                      {(
-                        [
-                          ["RSI Background Fill", "bgFill", "bg"],
-                          ["Overbought Gradient Fill", "obFill", "ob"],
-                          ["Oversold Gradient Fill", "osFill", "os"],
-                        ] as Array<[string, "bgFill" | "obFill" | "osFill", RsiHiddenKey]>
-                      ).map(([label, key, hk]) => (
-                        <div className="ind-row ind-style-row" key={key}>
-                          {check(hk, label)}
-                          <div className="ind-line-controls">
-                            {fillSwatch(rsiStyle[key], (c) => setRsiStylePatch({ [key]: c }))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })()}
+              {isRsi && (
+                <RsiStylePanel
+                  lines={lines}
+                  setLine={setLine}
+                  rsiStyle={rsiStyle}
+                  setRsiStylePatch={setRsiStylePatch}
+                />
+              )}
               {/* Curve-end labels live on the Style tab — they're presentation, not
                   a calculation input (TradingView convention). */}
               {hasCurveLabels && (
@@ -2551,17 +1259,7 @@ export default function IndicatorSettings({
                   instead of per-bar values; this toggle controls that. Kept at the
                   bottom of the Style tab. */}
               {type === "PREV_HL" && (
-                <>
-                  <div className="ind-group">Legend</div>
-                  <label className="ind-check">
-                    <input
-                      type="checkbox"
-                      checked={showValue}
-                      onChange={(e) => toggleShowValue(e.target.checked)}
-                    />
-                    <span>Show ranges in legend</span>
-                  </label>
-                </>
+                <PrevHlLegendToggle showValue={showValue} toggleShowValue={toggleShowValue} />
               )}
             </>
           )}
