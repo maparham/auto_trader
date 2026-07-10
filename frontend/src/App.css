@@ -3813,8 +3813,21 @@
   background: #fff; transition: transform 0.15s ease;
 }
 .sp-switch.on .sp-switch-knob { transform: translateX(16px); }
-.sp-sweep { background: none; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; padding: 2px 6px; color: var(--text-dim); flex: 0 0 auto; }
-.sp-sweep.on { border-color: var(--accent); color: var(--accent); }
+/* Square icon-toggle sized to sit as a pair with the adjacent NumberField.
+   Off = quiet (dim, hairline border); hover borrows the shared --hover feedback
+   every other toggle uses; on = accent, tinted with the same color-mix idiom as
+   .tab.on (the accent border is the fallback where color-mix is unsupported). */
+.sp-sweep {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0;
+  background: none; border: 1px solid var(--border); border-radius: 5px;
+  color: var(--text-dim); cursor: pointer; flex: 0 0 auto;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.sp-sweep:hover { background: var(--hover); color: var(--text); }
+.sp-sweep.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.sp-sweep.on:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.bt-sweep-icon { display: block; }
 
 /* Sweep axis from/to/step row — replaces the swept param's single NumberField */
 .sweep-axis-row { padding-left: 8px; }

@@ -1530,6 +1530,20 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   );
 }
 
+// Sweep toggle icon: three equalizer faders at staggered heights — a parameter
+// sweep tunes a value across a range of settings. `currentColor` so it inherits
+// the button's colour, including the accent when the axis is on (.sp-sweep.on).
+function SweepGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" className="bt-sweep-icon">
+      <g fill="none" stroke="currentColor" strokeLinecap="round">
+        <path d="M4 2.5 V13.5 M8 2.5 V13.5 M12 2.5 V13.5" strokeWidth="1.2" opacity="0.55" />
+        <path d="M2.4 9 H5.6 M6.4 5 H9.6 M10.4 10.5 H13.6" strokeWidth="2.2" />
+      </g>
+    </svg>
+  );
+}
+
 // One swept axis's from/to/step controls — replaces the param's/risk field's
 // single NumberField while it's toggled on (Task 10).
 function SweepAxisRow({
@@ -1610,7 +1624,7 @@ export function RiskSection({
         onBlur={floor != null ? (e) => clampPosOnBlur(e.currentTarget, floor, set) : undefined} />
     );
 
-  // Sweep toggle (⇄) next to a stop/target value or ATR mult — mirrors
+  // Sweep toggle (equalizer glyph) next to a stop/target value or ATR mult — mirrors
   // StrategyParams' per-param toggle. Only rendered when the caller (coded
   // mode) passed a `sweep` prop; absent in rule mode / the Live panel.
   const swept = (field: "stop" | "target", prop: "value" | "mult") =>
@@ -1623,7 +1637,7 @@ export function RiskSection({
           className={`sp-sweep${swept(field, prop) ? " on" : ""}`}
           onClick={() => sweep.onToggle(`risk:${sweep.side}.${field}.${prop}`, current)}
         >
-          ⇄
+          <SweepGlyph />
         </button>
       </Tooltip>
     );
@@ -2413,7 +2427,7 @@ function CountField({
             className={`sp-sweep${swept ? " on" : ""}`}
             onClick={() => sweep.onToggle(sweep.target, n ?? 1)}
           >
-            ⇄
+            <SweepGlyph />
           </button>
         </Tooltip>
       )}
@@ -2467,7 +2481,7 @@ function OperandPicker({
           className={`sp-sweep${isSwept(leaf) ? " on" : ""}`}
           onClick={() => sweep.onToggle(sweptTarget(leaf)!, current)}
         >
-          ⇄
+          <SweepGlyph />
         </button>
       </Tooltip>
     );
