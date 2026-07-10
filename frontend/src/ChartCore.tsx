@@ -15,28 +15,22 @@ import {
   type KLineData,
 } from "klinecharts";
 import {
-  fetchRecent,
   fetchRange,
   fetchMarketMeta,
   fetchCandleCacheStats,
-  openLive,
   RESOLUTION_SECONDS,
   type Instrument,
   type LiveHandle,
   type LiveStatus,
   type Period,
   type CandleCacheStats,
-  PERIODS,
   periodByResolution,
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
-import { rangeWindow, goToDateTs, type RangeKey } from "./lib/rangeWindow";
+import { type RangeKey } from "./lib/rangeWindow";
 import { pageHistoryBack } from "./lib/historyPaging";
-import { minPositiveGap } from "./lib/barInterval";
 import { klineStyles } from "./lib/chartTheme";
 import ChartLegend, {
-  buildLegendRows,
-  buildSubPaneLegends,
   type ChartLegendHandle,
   type LegendRow,
   type SubPaneLegendData,
@@ -45,18 +39,13 @@ import { ChartController } from "./lib/chartController";
 import { isInvertShortcut } from "./lib/invertShortcut";
 import MarketInfoPopover from "./MarketInfoPopover";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
-import CurveLabels, { type CurveLabelsHandle, type CurveLabelPill } from "./CurveLabels";
+import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
 import {
   teardownArtifacts,
-  rehydrateBacktest,
-  selectedTradeForChart,
-  restoreTradeSelection,
-  getBacktestAggregate,
-  getBacktestCoverageFromTs,
   reanchorBacktestMarkers,
   registerBacktestPager,
 } from "./lib/backtest";
-import BacktestAggMarkers, { type BacktestAggMarkersHandle, type AggPill } from "./BacktestAggMarkers";
+import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
 import { toast } from "./lib/notify";
 import {
   alertEditRequest,
@@ -89,8 +78,6 @@ import {
   type TradeLineUi,
 } from "./lib/signals";
 import {
-  loadAvwapAnchor,
-  loadDrawings,
   saveAvwapAnchor,
   saveIndicatorVisible,
   saveIndicators,
@@ -99,20 +86,17 @@ import {
   saveLegendCollapsed,
   CONDITION_LABELS,
   loadSnapshotMeta,
-  saveSnapshotMeta,
   deleteSnapshotMeta,
   type SnapshotMeta,
   type AlertCondition,
   type AlertTrigger,
   type SavedIndicatorConfig,
 } from "./lib/persist";
-import { renderSnapshotMarker } from "./lib/snapshotMarker";
 import {
   addIndicatorInstance,
   applyIndicatorVisibility,
   collapseSubPanes,
   expandSubPanes,
-  forceCollapseSubPanes,
   hydrateIndicators,
   isSubPaneIndicator,
   removeIndicatorById,
@@ -120,19 +104,26 @@ import {
   subPaneOrder,
 } from "./lib/indicators";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
-import { maybeAutoApplyTemplate } from "./lib/templates";
 import { onLayoutChanged } from "./lib/persist/layoutEvents";
 import { scheduleAutoSave, cancelAutoSave } from "./lib/templateAutosave";
 import {
   indTypeOf,
   setIndicatorTimezone,
-  curveLabel,
-  curveLabelConfig,
-  curveLabelPosFor,
 } from "./lib/customIndicators";
+import {
+  HIT_TOLERANCE_PX,
+  ALERT_SNAP_PX,
+  type LineCache,
+  hitTestCache,
+  selectedAvwapId,
+} from "./chart/chartGeometry";
+import {
+  browserTimezone,
+  first,
+} from "./chart/chartPainters";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
-import { PositionLines, tradeLineSpecs, DRAFT_ID, bracketLabels, restingLineEndX } from "./lib/positionLines";
+import { PositionLines, tradeLineSpecs, DRAFT_ID, restingLineEndX } from "./lib/positionLines";
 import {
   TradeMarkers,
   entryMarkerSpecs,
@@ -142,15 +133,12 @@ import {
   type ExitCluster,
 } from "./lib/tradeMarkers";
 import { journalSignal } from "./lib/liveJournal";
-import TradeExitAggMarkers, { type TradeExitAggMarkersHandle, type ExitPill } from "./TradeExitAggMarkers";
+import TradeExitAggMarkers, { type TradeExitAggMarkersHandle } from "./TradeExitAggMarkers";
 import {
   brokerLabel,
-  setLivePrice,
   subscribeTrades,
   tradeLabel,
   mergeTradeLevels,
-  isBreakeven,
-  isBreakevenTarget,
   clampLevelToPrice,
   applyEditedLevels,
   closePosition,
@@ -166,62 +154,22 @@ import { BellIcon, MenuIcons } from "./lib/menuIcons";
 import { hitSlopeHandle, type SlopeGrab } from "./lib/slopeHandles";
 import { snapSlopeEndpoint } from "./lib/slopeMagnet";
 import { effectiveMagnetMode } from "./lib/magnet";
-import { chartColors, loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
-import { hexToRgba, DASH_DASHED, DASH_DOTTED } from "./lib/lineStyle";
+import { loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
+import { hexToRgba } from "./lib/lineStyle";
 import { makeFormatDate } from "./lib/timeFormat";
 import { formatRemaining, resolveExpiry } from "./lib/alertUi";
-import { isSynthetic, setSyntheticPrecision } from "./lib/syntheticRegistry";
+import { isSynthetic } from "./lib/syntheticRegistry";
+import type { ChartHandle, RangeReq } from "./chart/chartHandle";
+import { useLiveMarketData } from "./chart/useLiveMarketData";
+import { useRangeNavigation } from "./chart/useRangeNavigation";
+import { useChartPaint } from "./chart/useChartPaint";
 
-// The browser's IANA timezone (e.g. "Europe/London"), used when the user picks
-// "Browser time". klinecharts needs an explicit name; passing "" can leave the
-// previous timezone in place, so we always resolve to a concrete zone.
-function browserTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
-  }
-}
-
-// convertFromPixel/convertToPixel are typed to return T | T[]; we always pass a
-// one-element array, so normalize to the single result.
-function first<T>(r: T | T[]): T {
-  return (Array.isArray(r) ? r[0] : r) as T;
-}
-
-// Decimals for ~5 significant figures on a synthetic ratio/spread of unknown magnitude. Clamped 0..8.
-function synthPrecision(sampleClose: number): number {
-  const v = Math.abs(sampleClose);
-  if (!Number.isFinite(v) || v === 0) return 2;
-  const digitsLeft = Math.floor(Math.log10(v)) + 1;
-  return Math.min(8, Math.max(0, 5 - digitsLeft));
-}
-
-// How close (px) a click/cursor must be to a curve to select/hover it.
-const HIT_TOLERANCE_PX = 6;
-// How close (px) the cursor must come to a trade/alert line for the price guide (the
-// "+" affordance + its price) to MAGNET onto that line's exact level, AND the single
-// band a press must fall within to GRAB that line. Grab-band == cursor-band: the
-// ns-resize cursor that signals "draggable" shows within this same distance (see the
-// snapTarget logic in onMove), so a line grabs exactly where its cursor appeared —
-// no dead zone where the line drags but no cursor warned you, or vice-versa.
-const ALERT_SNAP_PX = 5;
-const DOT_RADIUS = 3.5; // selection marker radius
-// Selection markers are anchored to fixed BARS (every DOT_STEP-th bar by
-// timestamp phase), NOT to fixed screen spacing — so they stay glued to the
-// chart through zoom/scroll instead of sliding along the curve. When zoomed out
-// far enough that they'd crowd below MIN_DOT_GAP_PX, the step doubles (octave
-// thinning): half the dots drop out but the rest stay put (a multiple of the
-// base step), so they still never slide.
-const DOT_STEP = 6; // ~48px apart at the default bar spacing (8px)
-const MIN_DOT_GAP_PX = 30;
 // klinecharts' own initial bar spacing (its DEFAULT_BAR_SPACE, not exported) — used to
 // restore the time axis on double-click, matching what a freshly loaded chart starts at.
 const DEFAULT_BAR_SPACE = 8;
 
 // AVWAP anchor drag handle: a larger solid grab handle painted at the anchor bar
 // when AVWAP is selected, draggable left/right to re-anchor (TradingView-style).
-const ANCHOR_HANDLE_R = 6; // drawn radius
 const ANCHOR_GRAB_PX = 11; // mousedown hit radius (forgiving)
 
 // TradingView-style position furniture, left→right: %/R:R badges · connector spine
@@ -230,264 +178,7 @@ const ANCHOR_GRAB_PX = 11; // mousedown hit radius (forgiving)
 // pills (TRADE_PILL_LEFT) and the canvas spine/handles/badges (TRADE_SPINE_X).
 const TRADE_SPINE_X = 92;
 const TRADE_PILL_LEFT = TRADE_SPINE_X + 14; // pills anchored just right of the spine
-const TRADE_HANDLE_R = 4.5; // circle-handle radius on the spine
 
-// A selectable indicator line resolved to pixel coordinates for the current
-// view. One entry per `type:"line"` figure — an indicator can plot several
-// (e.g. MACD's DIF/DEA). Each point keeps its bar timestamp `t` so the dot
-// painter can anchor markers to bars. Rebuilt each redraw and read by BOTH the
-// painter and the click/hover hit-test, so neither re-runs convertToPixel.
-interface LineCache {
-  paneId: string;
-  name: string;
-  // The figure key of this specific line (e.g. "dayHigh") and the indicator's
-  // type — together they resolve the curve's key-parameter tag for the end label.
-  figKey: string;
-  indType: string;
-  extendData: unknown; // carries per-curve label text + config (curveLabels)
-  calcParams?: unknown[]; // lengths/multipliers, for name+params curve labels
-  color: string;
-  coords: Array<{ x: number; y: number; t: number }>;
-}
-
-// Distance from point (px,py) to the segment (ax,ay)-(bx,by).
-function distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const len2 = dx * dx + dy * dy;
-  let t = len2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  const cx = ax + t * dx;
-  const cy = ay + t * dy;
-  return Math.hypot(px - cx, py - cy);
-}
-
-// Resolve every visible indicator line across ALL panes to pixel coordinates.
-// Skips hidden indicators, non-line figures (bars/histograms — TV puts handles
-// on plotted lines, not on the MACD histogram), and warmup/unplaced gaps (null
-// result values; our indicators have no mid-series holes so adjacent valid
-// points never bridge a real gap). Coordinates are container-absolute
-// (convertToPixel absolute:true adds each pane's top offset), so a single
-// full-height overlay canvas aligns sub-pane dots (RSI/MACD) too.
-function buildLineCache(chart: Chart): LineCache[] {
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
-  if (!panes) return [];
-  const dl = chart.getDataList();
-  const vr = chart.getVisibleRange();
-  const lineStyles = chart.getStyles().indicator.lines;
-  const out: LineCache[] = [];
-  for (const [paneId, inds] of panes) {
-    for (const [name, ind] of inds) {
-      if (ind.visible === false) continue;
-      const result = ind.result as Array<Record<string, number | undefined>>;
-      const indType = indTypeOf(ind);
-      let lineIdx = 0;
-      for (const fig of ind.figures) {
-        if (fig.type !== "line") continue;
-        const styleIdx = lineIdx++;
-        const pts: Array<{ timestamp: number; value: number }> = [];
-        for (let i = vr.from; i < vr.to; i++) {
-          const v = result[i]?.[fig.key];
-          const k = dl[i];
-          if (k && typeof v === "number" && Number.isFinite(v)) {
-            pts.push({ timestamp: k.timestamp, value: v });
-          }
-        }
-        if (pts.length < 2) continue;
-        const px = chart.convertToPixel(pts, { paneId, absolute: true }) as Array<{
-          x: number;
-          y: number;
-        }>;
-        const coords = px.map((c, k) => ({ x: c.x, y: c.y, t: pts[k].timestamp }));
-        const color =
-          ind.styles?.lines?.[styleIdx]?.color ??
-          lineStyles[styleIdx % lineStyles.length]?.color ??
-          "#FF9600";
-        out.push({
-          paneId,
-          name,
-          figKey: fig.key,
-          indType,
-          extendData: ind.extendData,
-          calcParams: ind.calcParams,
-          color,
-          coords,
-        });
-      }
-    }
-  }
-  return out;
-}
-
-// Nearest cached line within HIT_TOLERANCE_PX of (px,py), as pane+name — so a
-// curve click/hover identifies its indicator (sub-pane indicators included).
-function hitTestCache(
-  cache: LineCache[],
-  px: number,
-  py: number,
-): { paneId: string; name: string } | null {
-  let best: { paneId: string; name: string; d: number } | null = null;
-  for (const line of cache) {
-    const c = line.coords;
-    for (let i = 1; i < c.length; i++) {
-      const d = distToSegment(px, py, c[i - 1].x, c[i - 1].y, c[i].x, c[i].y);
-      if (d <= HIT_TOLERANCE_PX && (!best || d < best.d)) {
-        best = { paneId: line.paneId, name: line.name, d };
-      }
-    }
-  }
-  return best ? { paneId: best.paneId, name: best.name } : null;
-}
-
-// Draw TradingView-style hollow selection handles (background-filled circle +
-// colored ring) at screen-equidistant points along the selected indicator's
-// line(s), onto the dedicated overlay canvas (above klinecharts' canvases, so
-// the ring sits ON TOP of the line). Returns nothing; clears nothing.
-function paintSelectionDots(
-  ctx: CanvasRenderingContext2D,
-  cache: LineCache[],
-  sel: { paneId: string; name: string },
-  fill: string,
-  barSpace: number,
-): void {
-  for (const line of cache) {
-    if (line.paneId !== sel.paneId || line.name !== sel.name) continue;
-    const coords = line.coords;
-    if (coords.length < 2) continue;
-    // Bar interval (ms): the smallest positive gap between adjacent bars (so
-    // weekend/overnight gaps don't distort the per-bar phase used for anchoring).
-    const barMs = minPositiveGap(coords.map((c) => c.t));
-    if (barMs == null) continue;
-    // Octave-thin when zoomed out so dots never crowd, but only by doubling the
-    // step (a multiple of the base) so the surviving dots stay anchored to the
-    // same bars — they thin/reappear on zoom, never slide.
-    let step = DOT_STEP;
-    while (step * barSpace < MIN_DOT_GAP_PX) step *= 2;
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = line.color;
-    ctx.fillStyle = fill;
-    for (const p of coords) {
-      if (Math.round(p.t / barMs) % step !== 0) continue;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, DOT_RADIUS, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    }
-  }
-}
-
-// Build the curve-end label pills. A line gets a pill when its labels are enabled
-// AND either (a) its config is "always" (permanent) or (b) the indicator is ACTIVE
-// — selected/legend-hovered/curve-hovered, the same triggers that show the selection
-// handles. One pill per figure that resolves a non-empty key-parameter tag. Anchored
-// to the curve's last coord for side:"right", its first for side:"left" — both in
-// container space.
-function buildCurveLabelPills(
-  cache: LineCache[],
-  targets: Array<{ paneId: string; name: string }>,
-  maxX: number, // right edge of the main plot, so right-side pills stay on-chart
-): CurveLabelPill[] {
-  const active = (paneId: string, name: string) =>
-    targets.some((t) => t.paneId === paneId && t.name === name);
-  const pills: CurveLabelPill[] = [];
-  for (const line of cache) {
-    if (line.coords.length === 0) continue;
-    const cfg = curveLabelConfig(line.extendData);
-    if (!cfg.enabled) continue;
-    if (!cfg.always && !active(line.paneId, line.name)) continue;
-    const text = curveLabel(line.indType, line.figKey, line.extendData, line.calcParams);
-    if (!text) continue;
-    // High and Low curves get independently-configured positions.
-    const pos = curveLabelPosFor(cfg, line.figKey);
-    const end = pos.side === "right" ? line.coords[line.coords.length - 1] : line.coords[0];
-    pills.push({
-      key: `${line.paneId}:${line.name}:${line.figKey}`,
-      text,
-      x: end.x,
-      y: end.y,
-      color: line.color,
-      side: pos.side,
-      align: pos.align,
-      maxX,
-    });
-  }
-  return pills;
-}
-
-// Resolve the AVWAP anchor bar to a pixel point on the candle pane, or null when
-// AVWAP isn't placed/active or the anchor bar is scrolled outside the visible
-// range. Returns the anchor bar's timestamp and the line color too, so the
-// handle can be painted in the plot color and hit-tested against the cursor.
-function avwapAnchorPixel(
-  chart: Chart,
-  id: string, // the AVWAP INSTANCE id (its klinecharts name)
-): { x: number; y: number; ts: number; color: string } | null {
-  const ind = chart.getIndicatorByPaneId("candle_pane", id) as Indicator | null | undefined;
-  if (!ind || ind.visible === false) return null;
-  const anchorTs = Number(ind.calcParams?.[0]) || 0;
-  if (anchorTs <= 0) return null; // unplaced
-  const dl = chart.getDataList();
-  const idx = dl.findIndex((k) => k.timestamp >= anchorTs);
-  if (idx < 0) return null; // anchor is newer than the last loaded bar
-  const vr = chart.getVisibleRange();
-  if (idx < vr.from || idx >= vr.to) return null; // off-screen: no handle
-  const result = ind.result as Array<Record<string, number | undefined>>;
-  const v = result[idx]?.vwap;
-  if (typeof v !== "number" || !Number.isFinite(v)) return null;
-  const px = chart.convertToPixel([{ timestamp: dl[idx].timestamp, value: v }], {
-    paneId: "candle_pane",
-    absolute: true,
-  }) as Array<{ x: number; y: number }>;
-  if (!px[0]) return null;
-  const color =
-    ind.styles?.lines?.[0]?.color ??
-    chart.getStyles().indicator.lines[0]?.color ??
-    "#FF9600";
-  return { x: px[0].x, y: px[0].y, ts: dl[idx].timestamp, color };
-}
-
-// If the selected indicator is an AVWAP INSTANCE, return its id (its klinecharts
-// name); else null. Resolves type via extendData.indType so it works regardless of
-// the instance id (e.g. "AVWAP#a1b2"). Used to scope the anchor handle/drag to the
-// selected AVWAP when several may exist.
-function selectedAvwapId(
-  chart: Chart,
-  sel: { paneId: string; name: string } | null,
-): string | null {
-  if (!sel) return null;
-  const ind = chart.getIndicatorByPaneId(sel.paneId, sel.name) as Indicator | null | undefined;
-  return ind && indTypeOf(ind) === "AVWAP" ? sel.name : null;
-}
-
-// Paint the AVWAP anchor grab handle: a solid disc with a white ring, larger than
-// the selection dots so it reads as the draggable base of the anchored VWAP.
-function paintAnchorHandle(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  color: string,
-  ring: string,
-): void {
-  ctx.beginPath();
-  ctx.arc(x, y, ANCHOR_HANDLE_R, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = ring;
-  ctx.stroke();
-}
-
-function fmtCountdown(totalSec: number): string {
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  const mm = String(m).padStart(2, "0");
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
-}
 
 interface Props {
   // Identity + storage scope for this cell (one tab can hold several cells).
@@ -536,8 +227,6 @@ interface Props {
   // activated preset targets the owning cell even without a prior pointer-down.
   onPeriod?: (cellId: string, p: Period) => void;
 }
-
-const BA_TAG_H = 18; // .ba-tag height; used to stack bid/ask clear of the price pill
 
 const PAGE_BARS = 500; // older bars to request per scroll-back page
 // Empty windows can be legitimate (weekend/overnight gaps), so step back a few
@@ -603,15 +292,14 @@ export default function ChartCore({
   // was issued for). Acts as an ownership token: ensureCoverageAndFit bails if a
   // newer pick replaces it OR the epic/broker/side drifts from what it captured.
   // The data-load effect consumes it once the (possibly new-resolution) bars land.
-  type RangeReq = {
-    resolution: string;
-    fromTs: number;
-    toTs: number;
-    epic: string;
-    broker: string;
-    side: PriceSide;
-  };
+  // (RangeReq now lives in chart/chartHandle.ts so the extracted hooks share it.)
   const pendingRangeRef = useRef<RangeReq | null>(null);
+  // Bridge refs for the range-coverage walks (defined below as ChartCore locals,
+  // moving to useRangeNavigation in Step 7). Assigned in render (before any effect
+  // runs) so useLiveMarketData can call them across the extraction boundary via
+  // handle.*.current() — staleness-proof, same pattern as redrawRef.
+  const ensureCoverageAndFitRef = useRef<(token: RangeReq) => Promise<void>>(async () => {});
+  const ensureAnchorCoverageRef = useRef<() => Promise<void>>(async () => {});
   // Trade index to re-select after a timeframe switch's coverage walks settle
   // (see the data-load effect). A ref, not an effect local, so a SECOND switch
   // arriving before the first walk settles still carries the selection over —
@@ -703,234 +391,19 @@ export default function ChartCore({
     void refreshMtfIndicators(chart, epicRef.current, brokerIdRef.current, oldest);
   };
 
-  // Page older history back until the loaded data reaches `fromTs`, then fit
-  // [fromTs, toTs]. The backend caps a single fetch at 1000 bars, so a calendar
-  // window (e.g. a month of 30m bars ≈ 1400) won't fit in one request — we walk
-  // back in PAGE_BARS windows (mirroring the scroll-back driver, gaps and all).
-  // `token` is the pendingRangeRef object; we abort if a newer pick replaces it.
-  //
-  // DESIGN DEBT: this and the setLoadDataCallback scroll-back loader are TWO paging
-  // paths coordinating through loose shared refs (cursorSecRef/exhaustedRef/
-  // loadingRef/emptyStreakRef). We close the races here with the loadingRef mutex +
-  // wait-out + identity guard, but a third consumer (chart replay) should collapse
-  // both into one HistoryPager owner — see the "Known design debt" note in
-  // docs/superpowers/plans/2026-06-30-visible-range-selector.md.
-  const ensureCoverageAndFit = async (token: RangeReq) => {
-    // Re-entry guard: the data-load effect can re-run (priceSide/broker change)
-    // and call this again with the SAME pending token while a walk is in flight.
-    if (launchedTokenRef.current === token) return;
-    launchedTokenRef.current = token;
-    const { resolution } = token;
-    // Quick-range windows end at "now" (rangeWindow), which on a closed market sits
-    // hours-to-days past the last bar. applyVisibleRange renders that dead time as
-    // whitespace bars (wall-clock, at this chart's interval — the date-range-link
-    // semantics), which on a minute chart over a weekend would squeeze the actual
-    // data off screen. The preset's intent is "this much time, up to the latest
-    // data", so slide the window back to end at the latest bar, span preserved —
-    // clamped BEFORE the coverage walk so the walk covers the window we'll fit.
-    // A live market is unaffected (last bar ≈ now). The latest bar is already
-    // loaded here: this runs from the data-load effect / an unchanged-resolution
-    // pick, and the back-walk below only prepends OLDER bars.
-    const dl = chartRef.current?.getDataList();
-    const lastTs = dl?.length ? dl[dl.length - 1].timestamp : token.toTs;
-    const toTs = Math.min(token.toTs, lastTs);
-    const fromTs = toTs - (token.toTs - token.fromTs);
-    // Stale once a newer pick replaces the token, the chart is torn down, or the
-    // series identity drifts from what this pick captured (epic/broker/side/
-    // resolution) — the same defence the scroll-back loader applies.
-    const isStale = () =>
-      pendingRangeRef.current !== token ||
-      !chartRef.current ||
-      epicRef.current !== token.epic ||
-      brokerIdRef.current !== token.broker ||
-      priceSideRef.current !== token.side ||
-      resRef.current !== token.resolution;
-    // Take the scroll-back loader's mutex so klinecharts' own Forward-load (which
-    // our applyNewData(more=true) keeps arming) can't page concurrently and race us
-    // over cursorSecRef/exhaustedRef. If a scroll-back page is ALREADY in flight,
-    // wait it out first — otherwise its .finally would flip loadingRef false partway
-    // through our walk and reopen the gate. (Bounded so active scrolling can't wedge
-    // us; once we hold the mutex, further scroll-back loads bail.)
-    for (let i = 0; loadingRef.current && i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      if (isStale()) return;
-    }
-    loadingRef.current = true;
-    try {
-      const result = await pageHistoryBack<KLineData>({
-        fromTs,
-        toTs,
-        resSec: RESOLUTION_SECONDS[resolution] ?? 60,
-        pageBars: PAGE_BARS,
-        maxPages: 16,
-        maxEmpty: 4,
-        isStale,
-        getData: () => chartRef.current?.getDataList(),
-        fetchOlder: (fromSec, toSec) =>
-          fetchRange(token.epic, resolution, fromSec, toSec, token.side, token.broker),
-        // Prepend through the overlay manager so beyond-data (dataIndex-only)
-        // anchors shift BEFORE the data lands (see OverlayManager.applyOlderBars).
-        applyData: (merged) => overlays.applyOlderBars(merged),
-        onCursor: (sec) => {
-          cursorSecRef.current = sec;
-        },
-        onProgress: () => {
-          exhaustedRef.current = false;
-        },
-        onExhausted: () => {
-          exhaustedRef.current = true;
-        },
-      });
-      if (result !== "aborted" && chartRef.current && pendingRangeRef.current === token) {
-        fitVisibleRange(chartRef.current, fromTs, toTs);
-        pendingRangeRef.current = null;
-        extendMtfCoverage(); // history just grew — re-cover any HTF EMA/MA
-      }
-    } finally {
-      // Release the mutex only if a newer pick hasn't taken ownership (it holds the
-      // mutex for its own walk); the current owner — or a settled idle state —
-      // releases it.
-      if (pendingRangeRef.current === token || pendingRangeRef.current === null) {
-        loadingRef.current = false;
-      }
-    }
-  };
+  // (ensureCoverageAndFit + ensureAnchorCoverage moved into
+  // chart/useRangeNavigation.ts; that hook assigns them onto
+  // handle.ensureCoverageAndFitRef / handle.ensureAnchorCoverageRef so the
+  // data-load effect can still call them across the extraction boundary.)
 
-  // Drawings anchor by timestamp, and klinecharts snaps a timestamp to the NEAREST
-  // LOADED bar — an anchor older than the initial 500-bar window clamps to the left
-  // edge of the loaded data, pivoting the drawing to a wrong slope until the user
-  // happens to scroll back far enough (paint-time re-resolution self-heals once the
-  // bars exist). After a load, silently page history back until the oldest saved
-  // drawing anchor is covered — bounded like a quick-range walk, and with NO fit:
-  // the view stays parked at the live edge. Alerts are horizontal (no timestamp),
-  // so only drawings matter here.
-  // Anchors the walk below already gave up on (budget hit before reaching the
-  // target): series key -> the target it failed to reach + how deep it got.
-  // Without this, EVERY later trigger (each backtest run, template apply, range
-  // pick) re-walks a full 16-page budget toward the same unreachable anchor,
-  // prepending ~8k more bars each time — and each prepend is a full-array
-  // applyNewData re-init, so back-to-back runs slow down quadratically (measured
-  // 1.9s → 6.9s → 31.4s walks). Retry only when the oldest anchor got NEWER
-  // (e.g. the old drawing was deleted) or something else loaded history deeper
-  // than the failed walk reached (the remaining gap shrank).
+  // Anchor-coverage "hopeless anchor" memo: series key -> the target a prior walk
+  // failed to reach + how deep it got. Read/written by ensureAnchorCoverage (now in
+  // chart/useRangeNavigation.ts via handle.cappedAnchorRef); kept on the handle so
+  // that walk and this component share the same instance. Without it, EVERY later
+  // trigger (backtest run, template apply, range pick) would re-walk a full 16-page
+  // budget toward the same unreachable anchor, slowing back-to-back runs
+  // quadratically (measured 1.9s → 6.9s → 31.4s).
   const cappedAnchorRef = useRef(new Map<string, { target: number; reached: number }>());
-
-  const ensureAnchorCoverage = async () => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    const epic = epicRef.current;
-    const resolution = resRef.current;
-    const broker = brokerIdRef.current;
-    const side = priceSideRef.current;
-    const anchors = loadDrawings(scope, epic)
-      .flatMap((d) => d.points ?? [])
-      .map((p) => p.timestamp)
-      .filter((t): t is number => t != null);
-    // Backtest fills have the SAME clamp problem as drawing anchors: on a finer
-    // timeframe the initial recent-only load starts after the run, so renderArtifacts
-    // culled every fill (drawing them would pile at the left edge). Fold the oldest
-    // fill into the walk so it pages back far enough, then reanchor the markers below.
-    const backtestFromMs = getBacktestCoverageFromTs(chart);
-    if (backtestFromMs != null) anchors.push(backtestFromMs);
-    if (!anchors.length) return;
-    const first = chart.getDataList()[0];
-    if (!first) return;
-    const cappedKey = `${broker}|${epic}|${resolution}|${side}`;
-    const capped = cappedAnchorRef.current.get(cappedKey);
-    // Drop anchors a prior walk already burned its budget failing to reach —
-    // but ONLY those. The rest (e.g. a backtest's fills, which the TF-switch
-    // rehydrate + selected-trade restore rely on getting covered) still get
-    // their walk; skipping wholesale would starve them whenever one ancient
-    // drawing anchor exists. Hopeless anchors get retried only when something
-    // else has since loaded history deeper than the failed walk reached (the
-    // remaining gap shrank, so a fresh budget might close it).
-    const fullFromTs = Math.min(...anchors);
-    const targets =
-      capped && first.timestamp >= capped.reached
-        ? anchors.filter((t) => t > capped.target)
-        : anchors;
-    if (!targets.length) return;
-    const fromTs = Math.min(...targets);
-    if (fromTs >= first.timestamp) return; // already covered (or nothing to extend)
-    // A quick-range pick owns paging (it covers + fits its own window) — stay out of
-    // its way now, and abort via isStale if one starts mid-walk.
-    if (pendingRangeRef.current) return;
-    const isStale = () =>
-      !chartRef.current ||
-      pendingRangeRef.current !== null ||
-      epicRef.current !== epic ||
-      brokerIdRef.current !== broker ||
-      priceSideRef.current !== side ||
-      resRef.current !== resolution;
-    // Same mutex dance as ensureCoverageAndFit: wait out an in-flight scroll-back
-    // page (bounded), then hold the mutex so the two pagers can't interleave.
-    for (let i = 0; loadingRef.current && i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      if (isStale()) return;
-    }
-    if (isStale()) return;
-    loadingRef.current = true;
-    try {
-      await pageHistoryBack<KLineData>({
-        fromTs,
-        toTs: first.timestamp,
-        resSec: RESOLUTION_SECONDS[resolution] ?? 60,
-        pageBars: PAGE_BARS,
-        maxPages: 16,
-        maxEmpty: 4,
-        isStale,
-        getData: () => chartRef.current?.getDataList(),
-        fetchOlder: (fromSec, toSec) => fetchRange(epic, resolution, fromSec, toSec, side, broker),
-        applyData: (merged) => overlays.applyOlderBars(merged),
-        onCursor: (sec) => {
-          cursorSecRef.current = sec;
-        },
-        onProgress: () => {
-          exhaustedRef.current = false;
-        },
-        onExhausted: () => {
-          exhaustedRef.current = true;
-        },
-      });
-      // Redraw backtest markers against the now-extended history. renderArtifacts
-      // culled the fills the recent-only initial load didn't cover, and paging back
-      // does NOT move existing overlays — so recreate them here, now that their bars
-      // exist. Guard on !isStale() so a symbol/TF switch that raced in (its own
-      // rehydrate will redraw) doesn't double-draw; gate on the backtest actually
-      // needing coverage so a drawing-only walk doesn't churn the markers. Fills
-      // still older than the broker's finest history stay culled, not piled.
-      if (!isStale() && backtestFromMs != null && backtestFromMs < first.timestamp) {
-        reanchorBacktestMarkers(chart);
-      }
-      // History just extended back to the oldest anchor — re-cover any HTF EMA/MA
-      // so its curve reaches the newly-loaded bars (no-op if already covered).
-      if (!isStale()) extendMtfCoverage();
-      // Bounded walk: a very old anchor on a very fine interval can exceed the page
-      // budget — the drawing/marker then still clamps. Say so instead of failing
-      // silently, and remember the failure so later triggers don't re-walk a full
-      // budget toward the same unreachable anchor (see cappedAnchorRef).
-      const oldest = chartRef.current?.getDataList()[0];
-      if (oldest && oldest.timestamp > fromTs) {
-        // Failed even the filtered (newest hopeless) target — record IT, so the
-        // hopeless set only ever grows toward newer anchors, never re-deepens.
-        cappedAnchorRef.current.set(cappedKey, { target: fromTs, reached: oldest.timestamp });
-        console.debug(
-          `[chart] anchor coverage capped for ${epic}@${resolution}: oldest anchor ${new Date(fromTs).toISOString()} predates loaded history (won't retry until the anchor set or loaded depth changes)`,
-        );
-      } else if (oldest && oldest.timestamp <= fullFromTs) {
-        // EVERY anchor (including previously-hopeless ones) is now covered —
-        // e.g. a quick-range pick loaded far deeper history. Clear the record.
-        cappedAnchorRef.current.delete(cappedKey);
-      }
-      // Covered the filtered target but older hopeless anchors remain: keep the
-      // record so they stay filtered on the next trigger.
-    } finally {
-      // Release only if a quick-range pick hasn't taken the mutex for its own walk.
-      if (pendingRangeRef.current === null) {
-        loadingRef.current = false;
-      }
-    }
-  };
 
   // On-demand page-back so the backtest trades panel can scroll to a trade whose
   // entry predates the loaded bars. ensureAnchorCoverage pages to the OLDEST anchor
@@ -1010,47 +483,6 @@ export default function ChartCore({
     }
   };
 
-  // A quick-range button: switch interval if needed (the data-load effect then
-  // covers + fits once bars land), else cover + fit over the current interval now.
-  const onRangePick = (key: RangeKey) => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    // Keyboard activation (Enter/Space) fires no pointer-down, so focus this cell
-    // explicitly — otherwise an interval switch would target whatever cell was
-    // focused before (the period setter is cell-scoped, so this also makes the
-    // marker/pill land on the cell the user actually clicked).
-    onFocus?.(cellId);
-    const { resolution, fromTs, toTs } = rangeWindow(
-      key,
-      Date.now(),
-      timezone || browserTimezone(),
-    );
-    setActiveRange(key);
-    // Mark the period start for the on-chart separator (fromTs=0 for "All" sits
-    // off the left edge, so paintSeparator just won't draw it — intended).
-    separatorTsRef.current = fromTs;
-    const token: RangeReq = {
-      resolution,
-      fromTs,
-      toTs,
-      epic: symbol.epic,
-      broker: brokerId,
-      side: priceSide,
-    };
-    pendingRangeRef.current = token;
-    if (resolution !== period.resolution) {
-      const target = PERIODS.find((p) => p.resolution === resolution);
-      if (target) onPeriod?.(cellId, target);
-      return;
-    }
-    // Chain the anchor-coverage walk behind the fit: the picked window may still
-    // not reach the oldest drawing anchor, and coverage would otherwise stay
-    // gated on pendingRangeRef for the walk's whole duration.
-    void ensureCoverageAndFit(token).then(() => {
-      if (!period.liveOnly) void ensureAnchorCoverage();
-    });
-  };
-
   // Drill into a backtest aggregate pill (higher-timeframe view): switch this
   // cell to the backtest's native timeframe and zoom to the bar's [fromMs, toMs]
   // trade span, where the per-fill arrows render. Mirrors onRangePick's
@@ -1076,20 +508,6 @@ export default function ChartCore({
     onPeriod?.(cellId, target);
   };
 
-  // Calendar "go to date": center the chosen date in the current window, keeping
-  // the interval. Degrades to the loaded extent if the date predates history.
-  const onGoToDate = (dateStr: string) => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    // Resolve the picked day in the chart timezone (consistent with the range
-    // buttons / separator), not UTC midnight.
-    const dateMs = goToDateTs(dateStr, timezone || browserTimezone());
-    const cur = readVisibleRange(chart);
-    const span = cur ? cur.toTs - cur.fromTs : 30 * 86_400_000;
-    setActiveRange(null);
-    separatorTsRef.current = null;
-    fitVisibleRange(chart, dateMs - span / 2, dateMs + span / 2);
-  };
   // On-chart trade lines (entry/SL/TP for positions + resting orders). Server-
   // owned, non-persisted; see positionLines.ts.
   const posLinesRef = useRef<PositionLines | null>(null);
@@ -1152,10 +570,9 @@ export default function ChartCore({
   const sepCanvasRef = useRef<HTMLCanvasElement>(null);
   const separatorTsRef = useRef<number | null>(null);
   const paintSeparatorRef = useRef<() => void>(() => {});
-  // Detect epic vs interval changes in the data-load effect so a stale quick-range
-  // (separator + pill + in-flight fit) doesn't bleed onto a different series/interval.
-  const prevEpicRef = useRef(symbol.epic);
-  const prevResRef = useRef(period.resolution);
+  // (prevEpicRef/prevResRef moved into useLiveMarketData — the data-load effect is
+  // their only reader; they detect epic-vs-interval changes to drop a stale
+  // quick-range that would otherwise bleed onto a different series/interval.)
   // Cache for the separator's label + accent so paintSeparator doesn't rebuild an
   // Intl formatter / read getComputedStyle every redraw (it runs on every tick).
   const sepCacheRef = useRef<{ ts: number; tz: string; theme: string; label: string; accent: string } | null>(
@@ -1652,11 +1069,88 @@ export default function ChartCore({
   const themeRef = useRef(theme);
   themeRef.current = theme;
 
-  // Scroll-back pagination state (reset per symbol/period load).
+  // Scroll-back pagination state (reset per symbol/period load). Declared ABOVE
+  // the handle useMemo so they can be folded into it — three consumers coordinate
+  // through these (the init effect's scroll-back loader, the range-navigation
+  // walks, and the live-data reset), so every consumer must reach the SAME ref
+  // instances via handle.*.
   const loadingRef = useRef(false); // re-entrancy guard
   const exhaustedRef = useRef(false); // no older history left
   const cursorSecRef = useRef(0); // unix-sec boundary we've loaded back to
   const emptyStreakRef = useRef(0); // consecutive empty windows (gap-walking)
+
+  // Single imperative handle bundling the refs + controller objects that the
+  // one-time init effect and the later callbacks share. Declared once all its
+  // member refs exist; stable for the mount ([] deps), so `handle.redrawRef` is
+  // the SAME object as `redrawRef` — this is a pure access-shape consolidation
+  // (no logic change) that lets later hook extractions reach every shared ref
+  // through `handle.*`. `overlays` is a stable controller value (not a ref); the
+  // controller carries the per-cell UI signals.
+  const handle: ChartHandle = useMemo(
+    () => ({
+      controller,
+      overlays,
+      chartRef,
+      redrawRef,
+      posDrawRef,
+      posLinesRef,
+      tradesRef,
+      pendingRef,
+      draftRef,
+      tradeUiRef,
+      resRef,
+      crosshairRef,
+      aggMarkersRef,
+      exitAggMarkersRef,
+      paintBracketRef,
+      paintSeparatorRef,
+      // Live-data + range-navigation shared refs (folded in for the hook extractions).
+      wsRef,
+      bidRef,
+      askRef,
+      epicRef,
+      brokerIdRef,
+      priceSideRef,
+      loadingRef,
+      exhaustedRef,
+      cursorSecRef,
+      emptyStreakRef,
+      pendingRangeRef,
+      launchedTokenRef,
+      cappedAnchorRef,
+      separatorTsRef,
+      programmaticMoveRef,
+      pendingTradeRestoreRef,
+      snapMarkerIdRef,
+      tradeMarkersDrawRef,
+      // Cross-boundary call bridges to useRangeNavigation (assigned there in Step 7).
+      ensureCoverageAndFitRef,
+      ensureAnchorCoverageRef,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // Range coverage/fit + quick-range/go-to-date callbacks. The hook also assigns
+  // the two coverage walks onto handle.ensureCoverageAndFitRef /
+  // handle.ensureAnchorCoverageRef (in render, before any effect runs) so
+  // useLiveMarketData + the init effect can call them across the boundary.
+  const { onRangePick, onGoToDate } = useRangeNavigation(handle, {
+    pageHistoryBack,
+    pageBars: PAGE_BARS,
+    fitVisibleRange,
+    extendMtfCoverage,
+    scope,
+    symbol,
+    brokerId,
+    priceSide,
+    period,
+    timezone,
+    cellId,
+    onFocus,
+    onPeriod,
+    setActiveRange,
+  });
 
   // Create the chart once (StrictMode-safe: init has no idempotent guard).
   useEffect(() => {
@@ -1717,7 +1211,7 @@ export default function ChartCore({
     // Repaint the selection overlay. Our dots live on our OWN canvas (not
     // klinecharts'), so we just re-run the component's redraw (wired via ref once
     // mounted), which rebuilds the line cache and repaints the canvas.
-    const repaint = () => redrawRef.current();
+    const repaint = () => handle.redrawRef.current();
 
     // Chart clicks drive, in priority order:
     //  1. AVWAP anchor placement (while in anchor mode) — resolve x to a bar ts.
@@ -2212,7 +1706,7 @@ export default function ChartCore({
           if (d) {
             const key = hit.field === "tp" ? "takeProfit" : hit.field; // price|stop|takeProfit
             draftOrderSignal.set({ ...d, [key]: level });
-            paintBracketRef.current(); // keep the draft's bracket glued while dragging
+            handle.paintBracketRef.current(); // keep the draft's bracket glued while dragging
           }
           return;
         }
@@ -2239,7 +1733,7 @@ export default function ChartCore({
         // Keep the bracket glued to the line AS it drags. The pending-edit subscription
         // only repaints on the next rAF, so the line (redrawn synchronously) would
         // otherwise pull ahead of its spine/legs for a frame — repaint now, in lockstep.
-        paintBracketRef.current();
+        handle.paintBracketRef.current();
         // Confirm mode: focus the dragged line so its pill (Apply/Discard) shows — but
         // openPanel=false, so DRAGGING a line never pops the edit ticket open (only an
         // explicit double-click does). No-confirm mode leaves selection alone (the dock
@@ -2255,7 +1749,7 @@ export default function ChartCore({
         // real trade was revealed — a draft never sets the ref, so skip its redundant redraw.
         if (draggingTradeRef.current != null) {
           draggingTradeRef.current = null;
-          posDrawRef.current();
+          handle.posDrawRef.current();
         }
         // A real drag must not also fire the trailing click (which would toggle the
         // just-focused line's selection back off) — swallow it.
@@ -2268,7 +1762,7 @@ export default function ChartCore({
         draggingLineSignal.set(false);
         if (draggingTradeRef.current != null) {
           draggingTradeRef.current = null;
-          posDrawRef.current();
+          handle.posDrawRef.current();
         }
       },
     });
@@ -2820,7 +2314,7 @@ export default function ChartCore({
       // Repaint the bracket now that BOTH the cursor x (spine) and the hover gate are
       // current for this move — so parking on a line shows it at once, and leaving the
       // lines (nothing selected) clears it. Cheap: a no-op clear when nothing's active.
-      paintBracketRef.current();
+      handle.paintBracketRef.current();
       // Over ANY alert line — selected or not — the WHOLE "+" affordance (circle + price
       // box) stays and looks IDENTICAL to a normal hover: the price readout is ALWAYS
       // visible (the box, z-49, reads on top of the never-hidden amber tag), the shape
@@ -2991,7 +2485,7 @@ export default function ChartCore({
       setTradeHovered(null);
       // Clear a hover-only bracket now that the hover is gone (a SELECTED trade's bracket
       // stays). Runs after setTradeHovered so paintBracket sees the cleared hover.
-      paintBracketRef.current();
+      handle.paintBracketRef.current();
       if (onAxisRef.current) {
         onAxisRef.current = false;
         setOnAxis(false);
@@ -3225,7 +2719,7 @@ export default function ChartCore({
               }),
         );
       };
-      posDrawRef.current = drawPositions;
+      handle.posDrawRef.current = drawPositions;
       // Live trade markers (entry per open position, exit per journaled close),
       // reusing the backtest fill glyph. Redraw on the same trades/journal updates
       // that drive the position lines, filtered to this cell's epic. Native
@@ -3274,12 +2768,12 @@ export default function ChartCore({
         tradesRef.current = t;
         drawPositions();
         drawTradeMarkers();
-        redrawRef.current(); // refresh the selected-trade pill (label/uPnL/levels)
+        handle.redrawRef.current(); // refresh the selected-trade pill (label/uPnL/levels)
       });
       const unsubJournal = journalSignal.subscribe((j) => {
         journalRef.current = j;
         drawTradeMarkers();
-        redrawRef.current(); // re-project the coarse-TF exit pills
+        handle.redrawRef.current(); // re-project the coarse-TF exit pills
       });
       const unsubPending = pendingEditsSignal.subscribe((p) => {
         pendingRef.current = p;
@@ -3290,13 +2784,13 @@ export default function ChartCore({
         if (pendingRedrawRafRef.current) return;
         pendingRedrawRafRef.current = requestAnimationFrame(() => {
           pendingRedrawRafRef.current = 0;
-          redrawRef.current();
+          handle.redrawRef.current();
         });
       });
       const unsubDraft = draftOrderSignal.subscribe((d) => {
         draftRef.current = d;
         drawPositions();
-        paintBracketRef.current(); // the bracket follows the draft's SL/TP too
+        handle.paintBracketRef.current(); // the bracket follows the draft's SL/TP too
       });
       const unsubConfirm = confirmLineEditsSignal.subscribe((v) => {
         confirmLineEditsRef.current = v;
@@ -3325,7 +2819,7 @@ export default function ChartCore({
           if (ui.selected) freezeTradePillX();
           else tradePillLeftRef.current = null;
         }
-        if (selectedChanged || fieldChanged) redrawRef.current();
+        if (selectedChanged || fieldChanged) handle.redrawRef.current();
         // Keep the focused pill (z-order) in sync when selection changes without a mouse
         // move — e.g. selecting a trade from its dock row. Selected line wins, else hover.
         {
@@ -3337,15 +2831,15 @@ export default function ChartCore({
       // The bracket now keys off EDIT state, which lives in its own signals — repaint it
       // when the edit ticket opens/closes or its target changes (e.g. Cancel sets
       // tradePanelOpen=false without a tradeLineUiSignal change).
-      const unsubEditOpen = tradePanelOpen.subscribe(() => paintBracketRef.current());
-      const unsubEditId = editTradeSignal.subscribe(() => paintBracketRef.current());
+      const unsubEditOpen = tradePanelOpen.subscribe(() => handle.paintBracketRef.current());
+      const unsubEditId = editTradeSignal.subscribe(() => handle.paintBracketRef.current());
       // Sidebar eye menu "Hide positions and orders" toggle: re-run drawPositions
       // (which reads controller.positionsHidden.value itself, above).
       positionsHiddenRef.current = controller.positionsHidden.value;
       const unsubPositionsHidden = controller.positionsHidden.subscribe((h) => {
         positionsHiddenRef.current = h;
         drawPositions();
-        redrawRef.current(); // pills follow the same show/hide
+        handle.redrawRef.current(); // pills follow the same show/hide
       });
       posUnsubRef.current = () => {
         unsubTrades();
@@ -3375,7 +2869,7 @@ export default function ChartCore({
       // Let a template apply (templates.ts writes drawings + rehydrates outside
       // this component) request the anchor-coverage walk, so a template drawing
       // anchored before the loaded window doesn't render clamped to the left edge.
-      controller.coverDrawingAnchors = () => ensureAnchorCoverage();
+      controller.coverDrawingAnchors = () => handle.ensureAnchorCoverageRef.current();
       // Let the backtest trades panel page an out-of-window trade in before
       // scrolling to it (see coverBacktestTradeTo). Registered per-chart so the
       // panel's selection subscription — which only holds the Chart — can reach it.
@@ -3434,7 +2928,7 @@ export default function ChartCore({
       posUnsubRef.current = () => {};
       posLinesRef.current?.clear();
       posLinesRef.current = null;
-      posDrawRef.current = () => {};
+      handle.posDrawRef.current = () => {};
       overlays.detach();
       controller.chart = null;
       controller.focusChart = null;
@@ -3539,7 +3033,7 @@ export default function ChartCore({
   // ref, so a re-render alone won't). The tab badge is sourced separately by an
   // App-level epic poll, so this cell only needs to refresh its own price label.
   useEffect(() => {
-    redrawRef.current();
+    handle.redrawRef.current();
   }, [marketClosed]);
 
   // Apply precision to the chart whenever it resolves (the async fetch lands after
@@ -3547,7 +3041,7 @@ export default function ChartCore({
   useEffect(() => {
     chartRef.current?.setPriceVolumePrecision(effPrecision, 0);
     overlays.setPricePrecision(effPrecision); // keep alert-level rounding in lockstep
-    redrawRef.current(); // re-place the price/bid/ask pills at the new decimals
+    handle.redrawRef.current(); // re-place the price/bid/ask pills at the new decimals
     tradeMarkersDrawRef.current(); // entry labels carry the price at this precision
   }, [effPrecision]);
 
@@ -3607,371 +3101,31 @@ export default function ChartCore({
   }, [clock, dateFormat, showWeekday, timezone]);
 
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
-  useEffect(() => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    let cancelled = false;
+  // Extracted to chart/useLiveMarketData.ts; every value it read from this
+  // closure is passed via `handle` or the deps object below.
+  useLiveMarketData(handle, {
+    symbol,
+    brokerId,
+    priceSide,
+    period,
+    scope,
+    effPrecision,
+    setStatus,
+    setLastPrice,
+    setHasData,
+    setLoadError,
+    setErrorOpen,
+    setFetchedPrecision,
+    setSnapView,
+    setActiveRange,
+    setMarketClosed,
+    sepCacheRef,
+    lastCandleAtRef,
+    marketClosedRef,
+    unlockSnapshotView,
+    coverBacktestTradeTo,
+  });
 
-    chart.setPriceVolumePrecision(effPrecision, 0);
-    overlays.setPricePrecision(effPrecision); // keep alert-level rounding in lockstep
-    overlays.setEpic(symbol.epic);
-    // Alerts are stored per broker; address them with THIS cell's broker (not the
-    // ambient persistBroker the toolbar may flip mid-switch). In lockstep with setEpic.
-    overlays.setBroker(brokerId);
-    // Backtest markers/equity belong to the previous series — drop the live
-    // artifacts immediately (keep the persisted result; rehydrateBacktest below
-    // redraws it for the new series once its bars are loaded). Capture the
-    // selected trade FIRST: teardown nulls the shared selection, so we grab it
-    // here (while this chart still owns the panel) to re-center on it after the
-    // switch. Fall back to a restore a superseded run never got to attempt, so
-    // rapid TF switches don't drop the selection.
-    const capturedSelectedTrade = selectedTradeForChart(chart) ?? pendingTradeRestoreRef.current;
-    teardownArtifacts(chart);
-    // Reset scroll-back state for the new series.
-    loadingRef.current = false;
-    exhaustedRef.current = false;
-    emptyStreakRef.current = 0;
-
-    // Drop a stale quick-range when this re-run isn't the range pick itself.
-    // - Epic change: the boundary belongs to the OLD instrument's timeline — clear
-    //   the separator, the pill, and any in-flight fit (it targeted the old series).
-    // - Manual interval change (toolbar, no pending pick): the view no longer
-    //   matches the preset, so drop the pill; the separator stays (a "start of
-    //   today" marker is still valid at any interval).
-    const epicChanged = prevEpicRef.current !== symbol.epic;
-    const resChanged = prevResRef.current !== period.resolution;
-    // Park the captured trade for the post-walk restore below. An epic change
-    // loads a DIFFERENT backtest whose trade array the old index wouldn't map
-    // onto — drop it instead.
-    pendingTradeRestoreRef.current = epicChanged ? null : capturedSelectedTrade;
-    prevEpicRef.current = symbol.epic;
-    prevResRef.current = period.resolution;
-    // A symbol or interval change invalidates any live measurement (its anchors map
-    // onto the old timescale) — discard it and disarm the ruler.
-    if (epicChanged || resChanged) {
-      measureArmed.set(false);
-      overlays.clearMeasure();
-      // A live slope line maps onto the old timescale too — discard it and disarm.
-      slopeArmed.set(false);
-      overlays.clearSlope();
-      // A live Pick Range band is anchored to the old timescale too — disarm it.
-      rangePickArmed.set(false);
-      overlays.clearRangePick();
-    }
-    if (epicChanged) {
-      separatorTsRef.current = null;
-      sepCacheRef.current = null;
-      pendingRangeRef.current = null;
-      setActiveRange(null);
-    } else if (resChanged) {
-      // A pending pick whose target interval doesn't match the one that just
-      // loaded was OVERRIDDEN (the user changed interval again before its walk
-      // ran) — it can never be consumed (consumption requires resolution
-      // equality below), and leaving it parked would permanently gate the
-      // drawing-anchor coverage walk. Drop it along with the pill.
-      if (pendingRangeRef.current && pendingRangeRef.current.resolution !== period.resolution) {
-        pendingRangeRef.current = null;
-      }
-      if (!pendingRangeRef.current) setActiveRange(null);
-    }
-    // No data for the new series until history loads or a live tick arrives. The
-    // banner is grace-gated, so this can't flash during a normal load — only when
-    // the broker is genuinely unreachable.
-    setHasData(false);
-    setLoadError(null);
-    setErrorOpen(false);
-
-    (async () => {
-      // Tolerate a failed initial load (offline/DNS/refused/CORS make fetchRecent
-      // REJECT, not return []): fall back to no history and carry on. Crucially this
-      // still reaches rehydrate() below, which advances overlays.hydratedEpic — skip
-      // it and persist() stays gated on the stale epic forever, silently dropping
-      // every alert/drawing the user adds until they switch symbol again.
-      let bars: KLineData[];
-      try {
-        bars = await fetchRecent(symbol.epic, period.resolution, 500, priceSide, brokerId);
-      } catch (err) {
-        console.warn(`[chart] initial load failed for ${symbol.epic}; continuing with no history`, err);
-        bars = [];
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
-      }
-      if (cancelled || !chartRef.current) return;
-      // Cursor starts at the oldest loaded bar; scroll-back requests older windows.
-      cursorSecRef.current = bars.length
-        ? Math.floor(bars[0].timestamp / 1000)
-        : Math.floor(Date.now() / 1000);
-      // more=true enables klinecharts to request older history (Forward) when the
-      // user scrolls to the left edge; setLoadDataCallback above answers it.
-      // Live-only (seconds) intervals have no history, so disable scroll-back to
-      // avoid firing empty fetchRange windows that walk back for nothing.
-      chartRef.current.applyNewData(bars, !period.liveOnly);
-      if (isSynthetic(symbol.epic) && bars.length > 0) {
-        const p = synthPrecision(bars[bars.length - 1].close);
-        setFetchedPrecision(p);
-        setSyntheticPrecision(symbol.epic, p);
-      }
-      // Live-only (seconds) intervals legitimately start empty and fill from the
-      // stream, so don't badge them no-data on the empty history; the first tick
-      // below flips hasData true. Native intervals with no history are genuinely
-      // empty until proven otherwise.
-      setHasData(bars.length > 0);
-      // Anchor to the latest bars so the live/forming candle is on-screen.
-      chartRef.current.scrollToRealTime();
-      // Rehydrate this symbol's saved drawings + alerts now that the data (and
-      // therefore the timescale their points map onto) is loaded. Passing the
-      // resolution makes rehydrate adopt it BEFORE points materialize — a
-      // future-anchored point decodes its timestamp with the bar width, and a
-      // trailing setResolution() call left it decoding with the PREVIOUS
-      // timeframe's width on every switch (trendline slope changed, and the
-      // next persist baked the drift in). This also re-derives each drawing's
-      // per-interval visibility, so no separate setResolution call remains.
-      // Read-only snapshot view must be set BEFORE rehydrate: it decides whether
-      // drawings materialize locked and whether the epic's live alert lines
-      // materialize at all. This is the one storage read; it re-asserts
-      // controller.readOnly (whose subscription mirrors it into snapViewRef) and
-      // refreshes the banner state (effect re-runs on TF switches; meta only
-      // actually changes via Unlock).
-      const markerMeta = loadSnapshotMeta(scope);
-      controller.readOnly.set(markerMeta != null);
-      setSnapView(markerMeta);
-      overlays.setReadOnly(markerMeta != null);
-      overlays.rehydrate(period.resolution);
-      // Snapshot-moment marker: dashed vertical line + time-axis chip at the
-      // taken-at timestamp of a restored snapshot tab, independent of the
-      // pendingRange walk below. Remove the previous marker first — this effect
-      // re-runs on every symbol/TF switch, and the old overlay id no longer
-      // matches the freshly loaded series. Clicking the chip = Unlock (same flow
-      // as the banner button).
-      if (snapMarkerIdRef.current) {
-        chartRef.current.removeOverlay(snapMarkerIdRef.current);
-        snapMarkerIdRef.current = null;
-      }
-      if (markerMeta) {
-        snapMarkerIdRef.current = renderSnapshotMarker(chartRef.current, markerMeta, () => {
-          unlockSnapshotView();
-        });
-      }
-      // Restore this cell's saved backtest (markers/equity/trades) for the new
-      // series — the backtest counterpart to overlays.rehydrate. Markers show on
-      // the backtest's native timeframe and any finer one where fills align to
-      // bars; equity only on the native one; a coarser timeframe draws nothing
-      // but keeps the result saved. Republishes backtestResultSignal so the
-      // trades panel + summary chip come back.
-      // (Re-selecting the previously-studied trade waits until the coverage
-      // walks below settle — see the anchor-coverage chain.)
-      rehydrateBacktest(chartRef.current, scope, symbol.epic, period.resolution);
-      // Redraw position lines for the (possibly new) epic at the current precision.
-      posLinesRef.current?.setPrecision(effPrecision);
-      posDrawRef.current();
-      // Same for the live trade markers — the epic's entry/exit arrows against the
-      // freshly loaded bars (reconcile drops the old epic's markers).
-      tradeMarkersDrawRef.current();
-      // Re-evaluate the selected-trade pill against the now-current epic: selecting a
-      // dock row for an OFF-chart symbol switches the epic here, and the pill only
-      // shows for a trade on this epic — so refresh once the rehydrate lands rather
-      // than waiting for the next live tick.
-      redrawRef.current();
-      // Mirror the drawings' interval filter for indicators: re-derive each
-      // indicator's effective visibility (user intent AND interval match) against
-      // the now-current resolution. Runs here so both a fresh rehydrate (above)
-      // and a plain period switch (this effect re-runs on period.resolution) land
-      // on the right on-chart state — a view reaction only, nothing persisted.
-      // Guard: the sidebar "Hide indicators" master switch overrides this re-derive —
-      // while it's on, re-assert all-hidden instead of un-hiding.
-      applyIndicatorVisibility(chartRef.current, period.resolution, controller.indicatorsHidden.value);
-      // A symbol switch recreates the sub-panes at their default height, so re-assert
-      // the double-click "hide bottom sub-panes" collapse if it's on. forceCollapse
-      // (not collapseSubPanes) so it doesn't overwrite the captured heights with the
-      // freshly-recreated defaults — the map from the original toggle is the source of
-      // truth for restore (recreated panes have new ids and fall back to the default).
-      if (controller.subPanesHidden.value) forceCollapseSubPanes(chartRef.current);
-      // A quick-range pick that switched interval parked its window here; the
-      // initial new-resolution bars are loaded, so page back to the period start
-      // (if needed) and fit. ensureCoverageAndFit clears pendingRangeRef when done.
-      const pend = pendingRangeRef.current;
-      const rangeWalk =
-        pend && pend.resolution === period.resolution && chartRef.current
-          ? ensureCoverageAndFit(pend)
-          : null;
-      // Re-apply each AVWAP instance's anchor for this epic (anchors are per-epic,
-      // per-instance; no-op if no AVWAP is active).
-      const candlePane = chartRef.current.getIndicatorByPaneId("candle_pane") as
-        | Map<string, Indicator>
-        | null
-        | undefined;
-      for (const [id, ind] of candlePane ?? []) {
-        if (indTypeOf(ind) !== "AVWAP") continue;
-        chartRef.current.overrideIndicator({
-          name: id,
-          calcParams: [loadAvwapAnchor(scope, symbol.epic, id)],
-        });
-      }
-      // Re-fetch HTF data for any EMA/MA pinned to a higher timeframe — the
-      // stashed series belonged to the previous epic/range (no-op otherwise).
-      void refreshMtfIndicators(chartRef.current, symbol.epic, brokerId);
-
-      // Auto-apply this symbol's default template onto a FRESH cell (no saved
-      // indicators or drawings yet). Runs after rehydrate so the empty-cell gate
-      // sees the final state; a populated/customized cell is left untouched.
-      // Skip entirely for a restored snapshot tab (markerMeta non-null — written
-      // unconditionally by writeSnapshotToScope): an empty snapshot has
-      // no saved indicators/drawings either, so the auto-apply gate can't tell
-      // it apart from a fresh cell, and would silently graft the symbol's default
-      // template onto it, contradicting "restore reproduces the saved state exactly".
-      if (!markerMeta) {
-        maybeAutoApplyTemplate(chartRef.current, controller, scope, symbol.epic);
-      }
-
-      // A restored snapshot tab parks a one-shot pendingRange on this scope's
-      // snapshotMeta (see writeSnapshotToScope) — page history back to cover it.
-      // Reuses coverBacktestTradeTo directly — it has no backtest-only guards,
-      // just a generic bounded page-back-to-a-target walk that no-ops the
-      // backtest-marker redraw when there's no rendered result. Both this walk
-      // and the anchor walk below are already running by the time either
-      // .then() fires — the chaining doesn't sequence their execution. What
-      // actually prevents the two pagers from contending for loadingRef is
-      // coverBacktestTradeTo's own pendingRangeRef bail (each walk gates the
-      // others) plus the bounded loadingRef wait; the .then() chain only
-      // controls when positionSnapshotRange/ensureAnchorCoverage run relative
-      // to the pagers' settling. The snapshot range usually already covers the
-      // restored drawings' anchors (captured inside that same window), so
-      // ensureAnchorCoverage typically finds nothing left to do.
-      const snapMeta = markerMeta;
-      const pendingRange = snapMeta?.pendingRange ?? null;
-      const snapshotWalk = pendingRange ? coverBacktestTradeTo(pendingRange.from) : null;
-      // Position the window on the saved snapshot range and clear pendingRange
-      // (one-shot — a later reload of this same tab must not re-scroll). Called
-      // only once the walk(s) ahead of it have fully settled: paging via
-      // applyNewData resets the view to realtime on every page it applies, so
-      // positioning any earlier risks being clobbered by a later page (e.g. a
-      // drawing anchor older than the snapshot's own saved range).
-      const positionSnapshotRange = (reached: boolean) => {
-        if (cancelled || !pendingRange) return;
-        // A quick-range pick made right after restore preempts this walk (see
-        // coverBacktestTradeTo's own pendingRangeRef bail, which is why `reached`
-        // can be false here without history actually being exhausted). Bail
-        // before touching the view or meta so the user's pick stands, and leave
-        // pendingRange unconsumed on snapMeta — a later effect run (e.g. the next
-        // symbol/TF switch) retries the snapshot positioning then.
-        if (pendingRangeRef.current !== null) return;
-        const c = chartRef.current;
-        if (!c) return;
-        const data = c.getDataList() ?? [];
-        if (data.length === 0) return;
-        const oldest = data[0].timestamp;
-        applyVisibleRange(c, Math.max(pendingRange.from, oldest), pendingRange.to);
-        // The marker chip's dismiss confirm (above) may have deleted this scope's
-        // snapshotMeta while this walk was still in flight — re-check before
-        // writing it back, otherwise this unconditionally resurrects the record
-        // the user just removed. The positioning itself still applies: dismissing
-        // the marker is a decision about the meta/marker, not the scroll.
-        if (loadSnapshotMeta(scope)) {
-          saveSnapshotMeta(scope, {
-            snapshotId: snapMeta!.snapshotId,
-            name: snapMeta!.name,
-            takenAt: snapMeta!.takenAt,
-          });
-        }
-        if (!reached && oldest > pendingRange.from) {
-          toast("History doesn't reach the snapshot range — showing oldest available");
-        }
-      };
-
-      // Page back (no fit) until every saved drawing anchor maps onto a loaded bar —
-      // otherwise klinecharts clamps older anchors to the first loaded bar and the
-      // drawing renders with the wrong slope on this interval. Runs AFTER the
-      // template auto-apply so template-added drawings count. It's chained after
-      // the quick-range walk and the snapshot walk above, but that chaining is
-      // just ordering of the .then() callbacks — the walks themselves are already
-      // running concurrently by then, and mutual exclusion for the loading mutex
-      // comes from pendingRangeRef/loadingRef (each walk bails if another already
-      // owns it), not from this chain. Live-only intervals have no history to
-      // page, so the snapshot walk (which also no-ops without history) settles on
-      // its own and positions directly.
-      if (!period.liveOnly) {
-        const baseWalk = snapshotWalk
-          ? rangeWalk
-            ? snapshotWalk.then(() => rangeWalk)
-            : snapshotWalk
-          : rangeWalk;
-        const anchorWalk = baseWalk
-          ? baseWalk.then(() => ensureAnchorCoverage())
-          : ensureAnchorCoverage();
-        if (snapshotWalk) {
-          void anchorWalk.then(() => snapshotWalk.then(positionSnapshotRange)).catch(() => {});
-        }
-        // Re-select the trade the user was studying before the switch — only NOW,
-        // once the switch-time coverage walks have settled. The walks prepend
-        // pages via applyNewData, which resets the view to realtime each page; a
-        // re-center issued while one is still running lands on the trade and then
-        // snaps back to the live edge. Re-emitting the selection fires the
-        // subscription renderArtifacts installed: redraw the R/R zone, page the
-        // trade's own bars in if still off-window (coverBacktestTradeTo), scroll.
-        // A superseded run (cancelled) leaves the ref parked for its successor.
-        void anchorWalk.then(() => {
-          if (cancelled || !chartRef.current) return;
-          const restore = pendingTradeRestoreRef.current;
-          if (restore == null) return;
-          pendingTradeRestoreRef.current = null;
-          restoreTradeSelection(chartRef.current, restore);
-        });
-      } else if (snapshotWalk) {
-        void snapshotWalk.then(positionSnapshotRange).catch(() => {});
-      }
-
-      // Live updates for the current bar.
-      wsRef.current?.close();
-      setStatus("connecting");
-      setLastPrice(null);
-      wsRef.current = openLive(
-        symbol.epic,
-        period.resolution,
-        (k: KLineData, bid: number | null, ask: number | null) => {
-          const chart = chartRef.current;
-          if (!chart) return;
-          // Latest raw spread sides for the bid/ask lines (redraw reads the refs).
-          bidRef.current = bid;
-          askRef.current = ask;
-          // updateData updates the last bar (==ts) or appends (>ts); an older ts
-          // is silently ignored by klinecharts. Log regressions so a frozen chart
-          // is diagnosable rather than mysterious.
-          const list = chart.getDataList();
-          const lastTs = list.length ? list[list.length - 1].timestamp : 0;
-          if (k.timestamp < lastTs) {
-            console.warn(
-              `[live] stale candle ${k.timestamp} < last ${lastTs} for ${symbol.epic}; ignoring`,
-            );
-            return;
-          }
-          chart.updateData(k);
-          setHasData(true); // a flowing stream clears the no-data banner (React no-ops if unchanged)
-          setLastPrice(k.close);
-          // Publish the price so the positions dock can mark P&L to market without
-          // polling the server (see trading.setLivePrice / PositionsPanel).
-          setLivePrice(symbol.epic, k.close);
-          // A live candle proves the market is open: record it (so the status check
-          // stays event-driven) and flip the badge open instantly if it was closed.
-          lastCandleAtRef.current = Date.now();
-          if (marketClosedRef.current) setMarketClosed(false);
-          redraw(); // keep the price/alert pills glued as the bar moves
-          // NOTE: alert FIRING is owned by the background alertEngine (the single
-          // authority across all tabs, active included) — not here. This chart feed
-          // only drives the visible candles/pills. The engine persists fired/removed
-          // alerts and bumps the alerts signal; overlays reconciles its lines off it.
-        },
-        setStatus,
-        priceSide,
-        brokerId,
-      );
-    })();
-
-    return () => {
-      cancelled = true;
-      wsRef.current?.close();
-      wsRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol.epic, period.resolution, priceSide, brokerId]);
 
   // Two independent hide gestures, each with its own live effect:
   //  • Sidebar eye menu "Hide indicators" — masks every indicator's curve IN PLACE
@@ -3992,7 +3146,7 @@ export default function ChartCore({
       if (!c) return;
       if (hidden) collapsedHeightsRef.current = collapseSubPanes(c);
       else expandSubPanes(c, collapsedHeightsRef.current);
-      redrawRef.current(); // refresh the DOM legends (drop/restore the sub-pane cards)
+      handle.redrawRef.current(); // refresh the DOM legends (drop/restore the sub-pane cards)
     });
     return () => {
       unsubAll();
@@ -4043,761 +3197,91 @@ export default function ChartCore({
     };
   })();
 
+  // The bar the legend should show values for: this cell's own crosshair when the
+  // cursor is over it, else the bar holding a sibling's synced-crosshair timestamp
+  // (last bar at-or-before it — the cells' intervals may differ), else null (the
+  // legend then falls back to the last bar). Reads only refs, so it's safe to call
+  // from any effect closure regardless of which render captured it.
+  const legendBarIdx = (): number | null => {
+    if (crosshairIdxRef.current != null) return crosshairIdxRef.current;
+    const ts = syncCrosshairRef.current ? syncedTsRef.current : null;
+    if (ts == null) return null;
+    const data = chartRef.current?.getDataList();
+    if (!data || data.length === 0 || ts < data[0].timestamp) return null;
+    let lo = 0;
+    let hi = data.length - 1;
+    while (lo < hi) {
+      const m = (lo + hi + 1) >> 1;
+      if (data[m].timestamp <= ts) lo = m;
+      else hi = m - 1;
+    }
+    return lo;
+  };
+  const legendBarIdxRef = useRef(legendBarIdx);
+  legendBarIdxRef.current = legendBarIdx;
+
   // Paint the position CONNECTOR for the active trade/draft on its own canvas: a fixed
   // left-column spine linking the line's entry/SL/TP with a circle handle on each, and
   // the %/R:R badges to its LEFT. Cheap and React-free, so it runs on every mousemove
   // (hover gate) and from `redraw` (so it stays glued to its lines through scroll/zoom/
   // ticks and line drags). Appears on HOVER (grey spine, hovered handle outlined in its
   // colour) or SELECTION (position side colour, selected handle filled). Reads refs only.
-  const paintBracket = useCallback(() => {
-    if (isSynthetic(epicRef.current)) return; // analysis-only: no position connector
-    const chart = chartRef.current;
-    const canvas = bracketCanvasRef.current;
-    const wrap = wrapRef.current;
-    if (!chart || !canvas || !wrap) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+  //
+  // The master redraw loop + its two self-drawn painters (paintBracket, paintSeparator/
+  // fmtSeparatorLabel) live in chart/useChartPaint.ts. It publishes onto the bridge refs
+  // (handle.paintBracketRef / paintSeparatorRef / redrawRef) in render, and returns
+  // `redraw` for the ChartCore effects that subscribe it to the 1s tick / scroll / zoom.
+  const { redraw } = useChartPaint(handle, {
+    setPriceTag,
+    setBidTag,
+    setAskTag,
+    setAlertTags,
+    setTradePills,
+    setLegendRows,
+    setSubPaneLegends,
+    timezone,
+    theme,
+    containerRef,
+    wrapRef,
+    bracketCanvasRef,
+    sepCanvasRef,
+    selCanvasRef,
+    bracketShownRef,
+    draggingTradeRef,
+    hoveredFieldRef,
+    marketClosedRef,
+    statusRef,
+    bidAskRef,
+    bidAskStyleRef,
+    lastPriceHiddenRef,
+    lastActivePillIdRef,
+    positionsHiddenRef,
+    snapViewRef,
+    sepCacheRef,
+    lineCacheRef,
+    plusCrosshairYRef,
+    syncCrosshairRef,
+    syncedTsRef,
+    crosshairLabelFmtRef,
+    curveLabelsRef,
+    legendRowsSigRef,
+    subPaneLegendsSigRef,
+    legendHandleRef,
+    legendBarIdxRef,
+    exitClustersRef,
+    precisionRef,
+    themeRef,
+    anchorPxRef,
+    period,
+  });
 
-    // Resolve the subject: the staged draft (this epic) first, else the click-selected
-    // trade, else the hovered trade. Selection paints in the side colour with the focused
-    // handle filled; a mere hover paints grey with just the hovered handle outlined.
-    const epic = epicRef.current;
-    const draft = draftRef.current;
-    let entry: number | null = null, stop: number | null = null, tp: number | null = null;
-    let selectMode = false; // neutral-coloured (selected/draft) vs grey (hover)
-    let activeField: TradeLineField | null = null; // filled (select) / outlined (hover) handle
-    if (draft && draft.epic === epic) {
-      stop = draft.stop ?? null;
-      tp = draft.takeProfit ?? null;
-      entry = draft.type === "limit" ? draft.price ?? null : getLivePrice(epic) ?? null;
-      selectMode = true;
-    } else {
-      const selId = tradeUiRef.current.selected;
-      const hovId = tradeUiRef.current.hovered;
-      // An active drag reveals the bracket too — in no-confirm mode a drag sets neither
-      // selection nor hover. A drag is the live gesture, so it takes PRECEDENCE: dragging
-      // trade B while trade A is selected must paint B's spine (which its now-full-width
-      // line needs), not A's.
-      const dragId = draggingTradeRef.current;
-      const id = dragId ?? selId ?? hovId;
-      const t = id ? tradesRef.current.find((x) => x.id === id && x.epic === epic) : null;
-      if (t) {
-        const merged = mergeTradeLevels(t, pendingRef.current[t.id] ?? {});
-        entry = merged.price ?? t.priceLevel;
-        stop = merged.stop;
-        tp = merged.takeProfit;
-        selectMode = id === dragId || id === selId;
-        activeField = selId != null ? tradeUiRef.current.selectedField : hoveredFieldRef.current;
-      }
-    }
-
-    // Nothing active (no entry anchor) → clear once and bail. The clientWidth/Height reads
-    // below force a reflow, so the common nothing-active mousemove bails HERE first (cheap
-    // ref reads) and only touches the canvas if it had drawn something that needs clearing.
-    if (entry == null) {
-      if (bracketShownRef.current) {
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, wrap.clientWidth, wrap.clientHeight);
-        bracketShownRef.current = false;
-      }
-      return;
-    }
-    const w = wrap.clientWidth;
-    const h = wrap.clientHeight;
-    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-      canvas.width = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    bracketShownRef.current = true;
-
-    const yOf = (v: number | null): number | null => {
-      if (v == null) return null;
-      const y = first(
-        chart.convertToPixel([{ value: v }], { paneId: "candle_pane", absolute: true }),
-      ).y;
-      return y == null ? null : Math.round(y);
-    };
-    // Colour carries ONE meaning here — profit/loss: green = target leg, red = stop leg.
-    // The position itself is de-hued to a neutral slate (it holds no direction the P/L
-    // number doesn't already show), so the two accent colours read as accents, not blocks.
-    const GREY = "#8a93a0", NEUTRAL = "#6b7280", SIDE = NEUTRAL;
-    const roleOf = (f: TradeLineField) => (f === "stop" ? "#f23645" : f === "tp" ? "#089981" : NEUTRAL);
-    const bx = TRADE_SPINE_X + 0.5; // crisp 1.5px stroke
-    const lines = ([
-      ["price", yOf(entry)],
-      ["stop", yOf(stop)],
-      ["tp", yOf(tp)],
-    ] as [TradeLineField, number | null][]).filter((l): l is [TradeLineField, number] => l[1] != null);
-
-    // Spine as a thin caliper linking the levels — a hairline stem with short tick end-caps,
-    // which reads as the measurement the %/R:R badges describe. Only meaningful with ≥2 lines;
-    // grey on hover, neutral on select.
-    if (lines.length >= 2) {
-      const ys = lines.map((l) => l[1]);
-      const top = Math.min(...ys), bot = Math.max(...ys);
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = selectMode ? SIDE : GREY;
-      ctx.beginPath();
-      ctx.moveTo(bx, top);
-      ctx.lineTo(bx, bot);
-      ctx.moveTo(bx - 3, top); ctx.lineTo(bx + 3, top); // end-caps
-      ctx.moveTo(bx - 3, bot); ctx.lineTo(bx + 3, bot);
-      ctx.stroke();
-    }
-    // %/R:R badges to the LEFT of the spine (unsigned magnitudes — colour carries meaning).
-    const labels = bracketLabels({ entry, stop, tp });
-    // Chip backdrop so the badge text reads over gridlines/candles.
-    const surfaceBg = getComputedStyle(wrap).getPropertyValue("--surface").trim() || "#161a1f";
-    // A quiet, BORDERLESS mono tag: surface backdrop + role-coloured text, right-aligned so it
-    // ENDS just left of the spine. Borderless (a tier below the bordered pills) so the badges
-    // read as annotation on the caliper, not objects competing with the readout.
-    const badge = (y: number, text: string, color: string) => {
-      ctx.save();
-      ctx.font = '600 10px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
-      const pw = Math.round(ctx.measureText(text).width) + 10, ph = 15;
-      const left = Math.round(TRADE_SPINE_X - 10 - pw), top = Math.round(y - ph / 2);
-      ctx.beginPath();
-      if (typeof ctx.roundRect === "function") ctx.roundRect(left, top, pw, ph, 3);
-      else ctx.rect(left, top, pw, ph);
-      ctx.fillStyle = surfaceBg;
-      ctx.fill();
-      ctx.fillStyle = color;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      ctx.fillText(text, left + 5, y + 0.5);
-      ctx.restore();
-    };
-    const badgeFor = (f: TradeLineField, y: number) => {
-      const txt = f === "stop" ? (labels.slPct != null ? `${labels.slPct.toFixed(2)}%` : null)
-        : f === "tp" ? (labels.tpPct != null ? `${labels.tpPct.toFixed(2)}%` : null)
-        : (labels.rr != null ? `1:${labels.rr.toFixed(1)}` : null);
-      if (txt == null) return;
-      badge(y, txt, roleOf(f)); // price → neutral, stop → red, tp → green
-    };
-    // Handles — hover: only the hovered handle takes its role colour, rest grey; select:
-    // all side colour, the focused one filled. Drawn after the spine so they sit on top.
-    for (const [field, y] of lines) {
-      badgeFor(field, y);
-      const outline = selectMode ? SIDE : field === activeField ? roleOf(field) : GREY;
-      ctx.beginPath();
-      ctx.arc(TRADE_SPINE_X, y, TRADE_HANDLE_R, 0, Math.PI * 2);
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = outline;
-      // Hollow (surface backdrop) at rest; the selected/focused handle fills solid neutral.
-      ctx.fillStyle = selectMode && field === activeField ? SIDE : surfaceBg;
-      ctx.fill();
-      ctx.stroke();
-    }
-  }, []);
-  paintBracketRef.current = paintBracket;
-
-  // Recompute the axis overlays (live price+countdown pill, alert label pills)
-  // from the chart's current geometry. Stable (reads refs), so it can be wired to
-  // the 1s tick, scroll/zoom, live ticks, and overlay changes without churn.
-  // Format the separator's pill in the chart's timezone (so it matches the time
-  // axis): always date + "HH:mm", e.g. "1 Jun 00:00".
-  const fmtSeparatorLabel = useCallback(
-    (ts: number): string =>
-      new Intl.DateTimeFormat("en-GB", {
-        timeZone: timezone || undefined,
-        day: "numeric",
-        month: "short",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      })
-        .format(ts)
-        .replace(",", ""),
-    [timezone],
-  );
-
-  // Paint (or clear) the period-start separator on its own canvas.
-  const paintSeparator = useCallback(() => {
-    const chart = chartRef.current;
-    const canvas = sepCanvasRef.current;
-    const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
-    const w = wrap.clientWidth;
-    const h = wrap.clientHeight;
-    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-      canvas.width = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    const ts = separatorTsRef.current;
-    if (ts == null || !chart) return;
-    // Don't draw a boundary the loaded history doesn't actually reach: klinecharts
-    // clamps an out-of-range timestamp to the OLDEST bar's x (it doesn't extrapolate),
-    // which would plant the line on the wrong bar with the true period date — a
-    // confident-looking lie. Allow up to one bar of slack for exact-edge snapping.
-    const data = chart.getDataList();
-    const oldest = data?.[0]?.timestamp;
-    const resMs = (RESOLUTION_SECONDS[resRef.current] ?? 60) * 1000;
-    if (oldest != null && ts < oldest - resMs) return;
-    const x = first(
-      chart.convertToPixel([{ timestamp: ts }], { paneId: "candle_pane", absolute: true }),
-    )?.x;
-    if (!Number.isFinite(x) || x < 0 || x > w) return; // off-screen / unmappable
-    const xr = Math.round(x as number) + 0.5;
-    // Stop the line at the bottom of the candle pane (above the time axis), so the
-    // pill sits in the axis gutter like a TradingView session marker.
-    const mainH = chart.getSize("candle_pane", DomPosition.Main)?.height ?? h;
-
-    // Label + accent are derived from (ts, tz, theme) only — cache so a live-ticking
-    // chart doesn't rebuild an Intl formatter / flush style on every frame.
-    if (
-      !sepCacheRef.current ||
-      sepCacheRef.current.ts !== ts ||
-      sepCacheRef.current.tz !== timezone ||
-      sepCacheRef.current.theme !== theme
-    ) {
-      sepCacheRef.current = {
-        ts,
-        tz: timezone,
-        theme,
-        label: fmtSeparatorLabel(ts),
-        accent: getComputedStyle(wrap).getPropertyValue("--accent").trim() || "#2962ff",
-      };
-    }
-    const { label, accent } = sepCacheRef.current;
-
-    ctx.save();
-    ctx.strokeStyle = accent;
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(xr, 0);
-    ctx.lineTo(xr, mainH);
-    ctx.stroke();
-    ctx.restore();
-
-    // Date pill anchored at the boundary, just above the time axis.
-    ctx.save();
-    ctx.font = '10px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
-    const tw = ctx.measureText(label).width;
-    const padX = 5;
-    const pillH = 15;
-    const pillW = tw + padX * 2;
-    let pillX = xr - pillW / 2;
-    pillX = Math.max(2, Math.min(pillX, w - pillW - 2)); // keep on-screen
-    const pillY = mainH - pillH - 3;
-    ctx.fillStyle = accent;
-    if (ctx.roundRect) {
-      ctx.beginPath();
-      ctx.roundRect(pillX, pillY, pillW, pillH, 3);
-      ctx.fill();
-    } else {
-      ctx.fillRect(pillX, pillY, pillW, pillH);
-    }
-    ctx.fillStyle = "#ffffff";
-    ctx.textBaseline = "middle";
-    ctx.fillText(label, pillX + padX, pillY + pillH / 2 + 0.5);
-    ctx.restore();
-  }, [fmtSeparatorLabel, timezone, theme]);
-  paintSeparatorRef.current = paintSeparator;
-
-  const redraw = useCallback(() => {
-    const chart = chartRef.current;
-    if (!chart) {
-      setPriceTag(null);
-      setAlertTags([]);
-      paintSeparatorRef.current();
-      return;
-    }
-    // Round the pixel y: these pills center with transform: translateY(-50%) over
-    // an even height, so a fractional top would land their text on half-pixels
-    // (blurry). Rounding the top keeps it crisp.
-    const yOf = (value: number): number | undefined => {
-      const y = first(chart.convertToPixel([{ value }], { paneId: "candle_pane", absolute: true })).y;
-      return y == null ? undefined : Math.round(y);
-    };
-
-    // Last-price pill y + height, captured so the bid/ask pills below can stack
-    // around it instead of hiding behind it on a tight spread (TradingView does
-    // the same). Height matches .price-tag CSS: 40px with countdown, else 20px.
-    let lastPriceY: number | null = null;
-    let priceTagHeight = 20;
-    const dl = chart.getDataList();
-    if (dl.length) {
-      const last = dl[dl.length - 1];
-      const y = yOf(last.close);
-      if (y == null) {
-        setPriceTag(null);
-      } else {
-        let countdown: string | null = null;
-        if (marketClosedRef.current) {
-          // Closed market: the WS still connects (status "live"), so the timer
-          // would otherwise tick to 0:00 and freeze. Show "closed" in its place.
-          countdown = "closed";
-        } else if (statusRef.current === "live") {
-          const resSec = RESOLUTION_SECONDS[resRef.current] ?? 60;
-          const rem = Math.max(
-            0,
-            Math.floor((last.timestamp + resSec * 1000 - Date.now()) / 1000),
-          );
-          countdown = fmtCountdown(rem);
-        }
-        // Width of the price-axis column, so the pill fills it exactly (its left
-        // edge lands on the column border) instead of spilling into the chart.
-        const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? 0;
-        const totalW = containerRef.current?.clientWidth ?? mainW;
-        const dir = last.close >= last.open ? "up" : "down";
-        setPriceTag({ y, price: last.close, countdown, w: Math.max(0, totalW - mainW), dir });
-        lastPriceY = y;
-        priceTagHeight = countdown ? 40 : 20;
-      }
-    } else {
-      setPriceTag(null);
-    }
-
-    // Live bid & ask axis pills. Shown only when enabled, the feed is live, and the
-    // side is known (the lines themselves are painted on the overlay canvas below).
-    const showBidAsk = bidAskRef.current !== "off" && statusRef.current === "live";
-    const bidV = bidRef.current;
-    const askV = askRef.current;
-    if (showBidAsk && (bidV != null || askV != null)) {
-      const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? 0;
-      const totalW = containerRef.current?.clientWidth ?? mainW;
-      const w = Math.max(0, totalW - mainW);
-      let by = bidV != null ? yOf(bidV) : undefined;
-      let ay = askV != null ? yOf(askV) : undefined;
-      // bid <= close <= ask always, so on the axis ask sits at/above the last-price
-      // pill and bid at/below it. When the spread is tighter than the pills are
-      // tall they'd overlap the last-price pill; push ask up / bid down just enough
-      // to clear it (BA_TAG_H matches .ba-tag height) so all three stay readable.
-      if (lastPriceY != null) {
-        const gap = priceTagHeight / 2 + BA_TAG_H / 2;
-        if (ay != null) ay = Math.min(ay, lastPriceY - gap);
-        if (by != null) by = Math.max(by, lastPriceY + gap);
-      }
-      // Suppress the side the main price line already IS: when candles use the bid
-      // (priceSide "bid"), the last-price pill is the bid, so a separate Bid label
-      // is redundant — hide it (same for "ask").
-      const side = priceSideRef.current;
-      setBidTag(side !== "bid" && bidV != null && by != null ? { y: by, price: bidV, w } : null);
-      setAskTag(side !== "ask" && askV != null && ay != null ? { y: ay, price: askV, w } : null);
-    } else {
-      setBidTag(null);
-      setAskTag(null);
-    }
-
-    const tags: Array<{
-      id: string;
-      y: number;
-      level: number;
-      condition: AlertCondition;
-      trigger: AlertTrigger;
-      expiresAt: number | null;
-      hovered: boolean;
-      active: boolean;
-      selected: boolean;
-    }> = [];
-    for (const a of overlays.getAlerts()) {
-      const y = yOf(a.level);
-      if (y != null)
-        tags.push({
-          id: a.id,
-          y,
-          level: a.level,
-          condition: a.condition,
-          trigger: a.trigger,
-          expiresAt: a.expiresAt,
-          hovered: a.hovered,
-          active: a.active,
-          selected: a.selected,
-        });
-    }
-    // When a click-SELECTED alert sits ON the live-price row, the live price line and
-    // its axis pill step aside so the selected alert owns that row unobstructed
-    // (TV-style). This is SCOPED to overlap: selecting an alert on a different row
-    // must NOT hide the live price (you still want the live read) — only the alert
-    // the user is actively working at the price level does. Hover never counts —
-    // only selection — so a passing cursor never hides the live price. The overlap
-    // band is half the price pill plus half an alert tag (~20px): within it the two
-    // axis pills visually collide. Suppress the dotted last-price line via klinecharts
-    // styles (guarded by a ref so we only setStyles on a transition) and drop the DOM
-    // price pill here.
-    const ALERT_TAG_HALF = 10; // .alert-tag is 20px tall (App.css)
-    const priceObscured =
-      lastPriceY != null &&
-      tags.some((t) => t.selected && Math.abs(t.y - lastPriceY!) <= priceTagHeight / 2 + ALERT_TAG_HALF);
-    if (priceObscured !== lastPriceHiddenRef.current) {
-      lastPriceHiddenRef.current = priceObscured;
-      chart.setStyles({ candle: { priceMark: { last: { line: { show: !priceObscured } } } } });
-    }
-    if (priceObscured) setPriceTag(null);
-    setAlertTags(tags);
-    const act = tags.find((t) => t.active);
-    if (act) lastActivePillIdRef.current = act.id;
-
-    // Always-on clean pills: one per line (entry always; SL/TP when set) for EVERY
-    // position/order on this cell's epic — identical whether selected or not. Levels
-    // merge pending over server (so a dragged line is tracked); recomputed here so pills
-    // follow their lines through scroll/zoom/live ticks. Hidden trades (eye icon) are
-    // skipped unless hovered/selected; the master-hide toggle drops them all.
-    const uiSel = tradeUiRef.current.selected;
-    const uiHov = tradeUiRef.current.hovered;
-    const hiddenSet = new Set(tradeUiRef.current.hidden);
-    const pills: typeof tradePills = [];
-    if (!positionsHiddenRef.current && !snapViewRef.current) {
-      for (const t of tradesRef.current) {
-        if (t.epic !== epicRef.current) continue;
-        if (hiddenSet.has(t.id) && t.id !== uiHov && t.id !== uiSel) continue;
-        const pend = pendingRef.current[t.id] ?? {};
-        const merged = mergeTradeLevels(t, pend);
-        const priceLvl = merged.price ?? t.priceLevel;
-        // A position's SL or TP sitting at entry merges into the entry line (stop wins
-        // if both compute true — they can't validly). The merged field drives the "BE"
-        // chip and which pending edit its Apply/Discard commits/clears.
-        const stopBE = t.kind === "position" && isBreakeven(priceLvl, merged.stop, precisionRef.current);
-        const tpBE = t.kind === "position" && isBreakevenTarget(priceLvl, merged.takeProfit, precisionRef.current);
-        const beField = stopBE ? "stop" : tpBE ? "takeProfit" : undefined;
-        const dir = t.side === "buy" ? 1 : -1;
-        // P/L a level would realise if price reached it (from the fixed open level).
-        const plAt = (lvl: number) => dir * t.quantity * (lvl - t.priceLevel);
-        const common = { tradeId: t.id, kind: t.kind, side: t.side, qty: t.quantity };
-        const yP = yOf(priceLvl);
-        // Entry pill carries live uPnL for an open position; a resting order has none.
-        // `changed` also lights up when a breakeven-staged SL/TP is pending (drag path):
-        // the merged level's own pill is suppressed at breakeven, so its Apply/Discard
-        // affordance must surface here, or a dragged-to-entry SL/TP would strand un-commit-able.
-        if (yP != null)
-          pills.push({ ...common, field: "price", y: yP, level: priceLvl, pl: t.kind === "position" ? t.upnl : null, changed: pend.price !== undefined || (beField != null && pend[beField] !== undefined), breakevenField: beField });
-        if (merged.stop != null && !stopBE) {
-          const y = yOf(merged.stop);
-          if (y != null) pills.push({ ...common, field: "stop", y, level: merged.stop, pl: plAt(merged.stop), changed: pend.stop !== undefined });
-        }
-        if (merged.takeProfit != null && !tpBE) {
-          const y = yOf(merged.takeProfit);
-          if (y != null) pills.push({ ...common, field: "tp", y, level: merged.takeProfit, pl: plAt(merged.takeProfit), changed: pend.takeProfit !== undefined });
-        }
-      }
-    }
-    setTradePills(pills);
-
-    // Indicator-selection overlay (one canvas above klinecharts'): the hollow
-    // selection handles on the curve, plus the white legend CARDS for hovered/
-    // selected candle-pane rows (opaque, so they cover the grid/candles behind
-    // them and read as solid in any theme).
-    lineCacheRef.current = buildLineCache(chart);
-    const canvas = selCanvasRef.current;
-    const wrap = wrapRef.current;
-    if (canvas && wrap) {
-      const dpr = window.devicePixelRatio || 1;
-      const w = wrap.clientWidth;
-      const h = wrap.clientHeight;
-      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-        canvas.width = Math.round(w * dpr);
-        canvas.height = Math.round(h * dpr);
-        canvas.style.width = `${w}px`;
-        canvas.style.height = `${h}px`;
-      }
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, w, h);
-        // Self-drawn horizontal crosshair: only when the cursor is parked over the "+"
-        // and NOT snapped (klinecharts dropped its own there, and we don't want a line
-        // doubling an alert/trade line under a snap). Mirrors the chart's crosshair line style.
-        // We gate only on the top-level show flags, NOT hl.show — that flag is what
-        // setSuppressNativeLine writes to hide the native line, so reading it here would
-        // cancel our own draw. cs.show / cs.horizontal.show still honor user preference.
-        const py = plusCrosshairYRef.current;
-        if (py != null) {
-          const cs = chart.getStyles().crosshair;
-          const hl = cs.horizontal.line;
-          if (cs.show !== false && cs.horizontal.show !== false) {
-            const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? w;
-            ctx.save();
-            ctx.strokeStyle = hl.color;
-            ctx.lineWidth = hl.size || 1;
-            if (hl.style === "dashed") ctx.setLineDash(hl.dashedValue ?? [4, 2]);
-            const yy = Math.round(py) + 0.5;
-            ctx.beginPath();
-            ctx.moveTo(0, yy);
-            ctx.lineTo(mainW, yy);
-            ctx.stroke();
-            ctx.restore();
-          }
-        }
-        // Crosshair link: a vertical time guide AND its x-axis time label at a
-        // sibling cell's hovered bar — so every linked chart shows the matching
-        // timestamp pill, TradingView-style, not just the chart under the cursor.
-        const syncTs = syncCrosshairRef.current ? syncedTsRef.current : null;
-        if (syncTs != null) {
-          const cs = chart.getStyles().crosshair;
-          if (cs.show !== false && cs.vertical.show !== false) {
-            const sx = first(
-              chart.convertToPixel([{ timestamp: syncTs }], {
-                paneId: "candle_pane",
-                absolute: true,
-              }),
-            ).x;
-            if (sx != null) {
-              const vl = cs.vertical.line;
-              if (vl.show !== false) {
-                ctx.save();
-                ctx.strokeStyle = vl.color;
-                ctx.lineWidth = vl.size || 1;
-                if (vl.style === "dashed") ctx.setLineDash(vl.dashedValue ?? [4, 2]);
-                const xx = Math.round(sx) + 0.5;
-                ctx.beginPath();
-                ctx.moveTo(xx, 0);
-                ctx.lineTo(xx, h);
-                ctx.stroke();
-                ctx.restore();
-              }
-              // The x-axis time label pill, mirroring klinecharts' own crosshair
-              // label (read the resolved style + reuse the same formatter). The
-              // x-axis is the bottom strip; its height comes from its own pane.
-              const txt = cs.vertical.text;
-              const label = txt.show !== false ? crosshairLabelFmtRef.current(syncTs) : "";
-              const xAxisH = chart.getSize("x_axis_pane", DomPosition.Root)?.height ?? 0;
-              if (label && xAxisH > 1) {
-                ctx.save();
-                ctx.font = `${txt.weight} ${txt.size}px ${txt.family}`;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                const boxW = ctx.measureText(label).width + txt.paddingLeft + txt.paddingRight;
-                const boxH = txt.size + txt.paddingTop + txt.paddingBottom;
-                // Center on the guide x, clamped to stay within the plot width. The
-                // upper bound is floored at boxW/2 so a label wider than the pane
-                // (very narrow cell + long timestamp) pins to the left edge rather
-                // than overflowing off it (w - boxW/2 would otherwise go negative).
-                const cx = Math.min(Math.max(sx, boxW / 2), Math.max(boxW / 2, w - boxW / 2));
-                const cy = h - xAxisH / 2; // vertically centered in the x-axis strip
-                const left = cx - boxW / 2;
-                const top = cy - boxH / 2;
-                const r = Math.min(txt.borderRadius, boxH / 2);
-                ctx.beginPath();
-                ctx.moveTo(left + r, top);
-                ctx.arcTo(left + boxW, top, left + boxW, top + boxH, r);
-                ctx.arcTo(left + boxW, top + boxH, left, top + boxH, r);
-                ctx.arcTo(left, top + boxH, left, top, r);
-                ctx.arcTo(left, top, left + boxW, top, r);
-                ctx.closePath();
-                ctx.fillStyle = txt.backgroundColor as string;
-                ctx.fill();
-                if (txt.borderSize > 0) {
-                  ctx.lineWidth = txt.borderSize;
-                  ctx.strokeStyle = txt.borderColor;
-                  ctx.stroke();
-                }
-                ctx.fillStyle = txt.color;
-                ctx.fillText(label, cx, cy);
-                ctx.restore();
-              }
-            }
-          }
-        }
-        // Bid & ask price lines (TradingView style): dashed horizontals across the
-        // main pane at the live bid (blue) and ask (red). Labels are DOM pills; this
-        // draws only the lines, and only in "lines" mode while the feed is live.
-        if (bidAskRef.current === "lines" && statusRef.current === "live") {
-          const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? w;
-          const st = bidAskStyleRef.current;
-          // opacity + dash apply to the lines (the labels stay opaque). hexToRgba
-          // folds the opacity into the stroke since canvas has no line-alpha field.
-          const dash =
-            st.lineStyle === "solid" ? [] : st.lineStyle === "dotted" ? DASH_DOTTED : DASH_DASHED;
-          const drawLevel = (value: number | null, hex: string) => {
-            if (value == null) return;
-            const ly = first(
-              chart.convertToPixel([{ value }], { paneId: "candle_pane", absolute: true }),
-            ).y;
-            if (ly == null) return;
-            ctx.save();
-            ctx.strokeStyle = hexToRgba(hex, st.opacity);
-            ctx.lineWidth = 1;
-            ctx.setLineDash(dash);
-            const yy = Math.round(ly) + 0.5;
-            ctx.beginPath();
-            ctx.moveTo(0, yy);
-            ctx.lineTo(mainW, yy);
-            ctx.stroke();
-            ctx.restore();
-          };
-          // Skip the side the main price line already coincides with (see pills).
-          const side = priceSideRef.current;
-          if (side !== "ask") drawLevel(askRef.current, st.askColor);
-          if (side !== "bid") drawLevel(bidRef.current, st.bidColor);
-        }
-        const sel = selectedIndicator.value;
-        if (sel) {
-          paintSelectionDots(
-            ctx,
-            lineCacheRef.current,
-            sel,
-            chartColors[themeRef.current].bg,
-            chart.getBarSpace(),
-          );
-        }
-        // Hovering a candle-pane indicator's legend row also shows its curve in
-        // selected mode (handles), unless it's already the selected one (no double
-        // paint). Driven by the legendHoverName signal (set by <ChartLegend>).
-        const hovName = legendHoverName.value;
-        if (hovName && !(sel?.paneId === "candle_pane" && sel.name === hovName)) {
-          paintSelectionDots(
-            ctx,
-            lineCacheRef.current,
-            { paneId: "candle_pane", name: hovName },
-            chartColors[themeRef.current].bg,
-            chart.getBarSpace(),
-          );
-        }
-        // Hovering an indicator's CURVE (any pane) shows it in selected mode too —
-        // the inverse of the legend-row hover above, but pane-exact (curveHover
-        // carries paneId), so sub-pane curves (RSI/MACD/Volume) get handles as well.
-        // Skip when it's already the selected indicator (no double paint).
-        const curveHov = curveHover.value;
-        if (curveHov && !(sel?.paneId === curveHov.paneId && sel.name === curveHov.name)) {
-          paintSelectionDots(
-            ctx,
-            lineCacheRef.current,
-            curveHov,
-            chartColors[themeRef.current].bg,
-            chart.getBarSpace(),
-          );
-        }
-        // AVWAP anchor grab handle — only while AVWAP is selected and its anchor
-        // bar is on-screen. anchorPxRef is read by the drag hit-test and the
-        // grab-cursor check, so refresh it every redraw (null otherwise).
-        const avwapId = selectedAvwapId(chart, sel);
-        const anchor = avwapId ? avwapAnchorPixel(chart, avwapId) : null;
-        anchorPxRef.current = anchor;
-        if (anchor) {
-          paintAnchorHandle(ctx, anchor.x, anchor.y, anchor.color, chartColors[themeRef.current].bg);
-        }
-        // Curve-end key-parameter labels for the SAME active indicators that show
-        // selection handles (selected + legend-hover candle row + curve-hover any
-        // pane). DOM pills, pushed imperatively — see <CurveLabels>.
-        const labelTargets: Array<{ paneId: string; name: string }> = [];
-        if (sel) labelTargets.push(sel);
-        if (hovName && !(sel?.paneId === "candle_pane" && sel.name === hovName)) {
-          labelTargets.push({ paneId: "candle_pane", name: hovName });
-        }
-        if (curveHov && !(sel?.paneId === curveHov.paneId && sel.name === curveHov.name)) {
-          labelTargets.push(curveHov);
-        }
-        // Always rebuild — pills can show with no selection at all (an "always"
-        // indicator) or for the selected/hovered targets. buildCurveLabelPills
-        // returns [] when nothing qualifies, clearing the overlay.
-        curveLabelsRef.current?.setPills(
-          buildCurveLabelPills(
-            lineCacheRef.current,
-            labelTargets,
-            chart.getSize("candle_pane", DomPosition.Main)?.width ?? w,
-          ),
-        );
-      }
-    }
-
-    // Refresh the DOM legend: re-derive the candle-pane indicator rows and only
-    // setState when the shallow signature changes (add/remove/visibility/recolor),
-    // then push the latest values imperatively (for the crosshair bar, or the last
-    // bar when no crosshair) — never a React re-render per crosshair pixel.
-    const { rows, sig } = buildLegendRows(chart, period.label);
-    if (sig !== legendRowsSigRef.current) {
-      legendRowsSigRef.current = sig;
-      setLegendRows(rows);
-    }
-    // Same for the sub-pane legends (Volume/MACD/RSI…); the signature folds in each
-    // pane's top so a separator drag repositions the cards (see buildSubPaneLegends).
-    const sub = buildSubPaneLegends(chart);
-    if (sub.sig !== subPaneLegendsSigRef.current) {
-      subPaneLegendsSigRef.current = sub.sig;
-      setSubPaneLegends(sub.subPanes);
-    }
-    legendHandleRef.current?.updateValues(legendBarIdxRef.current());
-    // Higher-timeframe backtest markers: project each aggregate cluster's bar-high
-    // anchor to a pixel and feed the DOM pill layer. Runs every redraw so the pills
-    // track scroll/zoom/tick; getBacktestAggregate returns null (→ []) unless this
-    // cell's backtest is being viewed on a coarser timeframe. Off-screen pills are
-    // culled by x; y is clamped so a pill whose bar-high sits above the pane still
-    // shows just inside the top.
-    const agg = getBacktestAggregate(chart);
-    if (agg) {
-      const paneW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
-      const pills: AggPill[] = [];
-      for (const cl of agg.clusters) {
-        const px = first(
-          chart.convertToPixel([{ timestamp: cl.barTs, value: cl.high }], {
-            paneId: "candle_pane",
-            absolute: true,
-          }),
-        );
-        if (px.x == null || px.y == null || px.x < 0 || px.x > paneW) continue;
-        pills.push({
-          key: `agg:${cl.barTs}`,
-          x: px.x,
-          y: Math.max(px.y, 14),
-          count: cl.trades.length,
-          net: cl.net,
-          trades: cl.trades.map((t) => t.trade),
-          resolution: agg.result.resolution,
-          fromMs: cl.fromTs,
-          toMs: cl.toTs,
-        });
-      }
-      aggMarkersRef.current?.setPills(pills);
-    } else {
-      aggMarkersRef.current?.setPills([]);
-    }
-    // Coarse-timeframe LIVE exit pills: project each per-bar cluster's bar-high
-    // anchor to a pixel and feed the DOM pill layer, same as the backtest aggregate
-    // above. exitClustersRef is non-empty only when this cell's journaled exits
-    // collide on the current (coarser) timeframe (see drawTradeMarkers).
-    const exitClusters = exitClustersRef.current;
-    if (exitClusters.length > 0) {
-      const paneW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
-      const exitPills: ExitPill[] = [];
-      for (const cl of exitClusters) {
-        const px = first(
-          chart.convertToPixel([{ timestamp: cl.barTs, value: cl.high }], {
-            paneId: "candle_pane",
-            absolute: true,
-          }),
-        );
-        if (px.x == null || px.y == null || px.x < 0 || px.x > paneW) continue;
-        exitPills.push({
-          key: `exit-agg:${cl.barTs}`,
-          x: px.x,
-          y: Math.max(px.y, 14),
-          count: cl.exits.length,
-          net: cl.net,
-          exits: cl.exits,
-        });
-      }
-      exitAggMarkersRef.current?.setPills(exitPills);
-    } else {
-      exitAggMarkersRef.current?.setPills([]);
-    }
-    // Keep the position bracket glued to its lines as geometry shifts (scroll/zoom/
-    // tick/drag) — the cursor needn't move for the lines to.
-    paintBracket();
-    // Period-start separator follows the same geometry (via ref so it isn't a dep).
-    paintSeparatorRef.current();
-  }, [paintBracket]);
-  redrawRef.current = redraw;
 
   // Apply a bid/ask display OR style change immediately (pills + lines) instead of
   // waiting for the next tick. redraw reads bidAskRef/bidAskStyleRef, kept current
   // above; the label colors come from the bidAskStyle prop in render. priceSide is
   // here too so hiding the redundant bid/ask side updates at once on a side switch.
   useEffect(() => {
-    redrawRef.current();
+    handle.redrawRef.current();
   }, [bidAsk, bidAskStyle, priceSide]);
 
   // 1s tick keeps the countdown live and tracks slow price/scroll drift.
@@ -4822,7 +3306,7 @@ export default function ChartCore({
     // settle the pane geometry without another action, so re-read after layout on
     // pointerup (rAF = post-layout). A ResizeObserver on the container catches the
     // remaining cases (window / split-cell resize) where panes move without a drag.
-    const onPointerUp = () => requestAnimationFrame(() => redrawRef.current());
+    const onPointerUp = () => requestAnimationFrame(() => handle.redrawRef.current());
     window.addEventListener("pointerup", onPointerUp);
     // Tell klinecharts to re-measure first, THEN redraw. On a split-layout switch
     // (e.g. 2h→1) the surviving cell keeps its id, so <ChartCore> is not remounted
@@ -4832,7 +3316,7 @@ export default function ChartCore({
     // refits the panes to the new width; redraw then reads fresh getSize() for the pills.
     const ro = new ResizeObserver(() => {
       chartRef.current?.resize();
-      redrawRef.current();
+      handle.redrawRef.current();
     });
     if (containerRef.current) ro.observe(containerRef.current);
     // The background alertEngine can fire/remove an alert on THIS (active) epic and
@@ -4849,29 +3333,6 @@ export default function ChartCore({
       chart?.unsubscribeAction(ActionType.OnPaneDrag, redraw);
     };
   }, [redraw]);
-
-  // The bar the legend should show values for: this cell's own crosshair when the
-  // cursor is over it, else the bar holding a sibling's synced-crosshair timestamp
-  // (last bar at-or-before it — the cells' intervals may differ), else null (the
-  // legend then falls back to the last bar). Reads only refs, so it's safe to call
-  // from any effect closure regardless of which render captured it.
-  const legendBarIdx = (): number | null => {
-    if (crosshairIdxRef.current != null) return crosshairIdxRef.current;
-    const ts = syncCrosshairRef.current ? syncedTsRef.current : null;
-    if (ts == null) return null;
-    const data = chartRef.current?.getDataList();
-    if (!data || data.length === 0 || ts < data[0].timestamp) return null;
-    let lo = 0;
-    let hi = data.length - 1;
-    while (lo < hi) {
-      const m = (lo + hi + 1) >> 1;
-      if (data[m].timestamp <= ts) lo = m;
-      else hi = m - 1;
-    }
-    return lo;
-  };
-  const legendBarIdxRef = useRef(legendBarIdx);
-  legendBarIdxRef.current = legendBarIdx;
 
   // The DOM legend's values track the crosshair (TradingView-style): on each
   // crosshair change, remember the hovered bar index and push the values for that
@@ -4894,7 +3355,7 @@ export default function ChartCore({
       // redraw isn't wired to crosshair changes, so clear it here explicitly.
       if (idx != null && syncedTsRef.current != null) {
         syncedTsRef.current = null;
-        redrawRef.current();
+        handle.redrawRef.current();
       }
       // Crosshair link: broadcast the hovered bar's timestamp to sibling cells (or
       // null when the cursor leaves this chart, so their guides clear).
@@ -4940,7 +3401,7 @@ export default function ChartCore({
       const next = syncCrosshair ? m.timestamp : null;
       if (syncedTsRef.current === next) return;
       syncedTsRef.current = next;
-      redrawRef.current();
+      handle.redrawRef.current();
       // The legend follows the synced crosshair too (TV-style): show the values of
       // OUR bar holding the broadcast timestamp, not just paint the guide. null
       // (source cursor left) falls back to the last bar inside updateValues.
@@ -4951,7 +3412,7 @@ export default function ChartCore({
       // Drop any lingering guide when this cell stops listening (tab/sync change).
       if (syncedTsRef.current != null) {
         syncedTsRef.current = null;
-        redrawRef.current();
+        handle.redrawRef.current();
         legendHandleRef.current?.updateValues(legendBarIdxRef.current());
       }
     };
@@ -5103,7 +3564,7 @@ export default function ChartCore({
     // Visibility persists by scope+name (pane-agnostic) and is re-applied on hydrate,
     // so sub-pane indicators now keep their hidden state across reloads too.
     saveIndicatorVisible(scope, name, next);
-    redrawRef.current();
+    handle.redrawRef.current();
   }, [paneIdOf, period.resolution]);
   const onLegendOpenSettings = useCallback((name: string) => {
     if (snapViewRef.current) return; // read-only snapshot view
@@ -5120,14 +3581,14 @@ export default function ChartCore({
     // Refresh the row list now (indicatorRemoved only repaints when the removed
     // indicator was the selected one; an unselected removal would otherwise linger
     // until the next 1s tick).
-    redrawRef.current();
+    handle.redrawRef.current();
   }, [controller, scope, indicatorRemoved]);
   const onLegendSelectRow = useCallback((name: string) => {
     const paneId = paneIdOf(name);
     const cur = selectedIndicator.value;
     if (cur?.paneId === paneId && cur?.name === name) return;
     selectedIndicator.set({ paneId, name });
-    redrawRef.current();
+    handle.redrawRef.current();
   }, [paneIdOf]);
 
   // Copy an indicator's full live config (type + calcParams / visibility / per-line
@@ -5197,7 +3658,7 @@ export default function ChartCore({
     const next = [...controller.indicators.value, inst];
     controller.indicators.set(next);
     saveIndicators(scope, next);
-    redrawRef.current();
+    handle.redrawRef.current();
     toast(`Pasted ${parsed.type}`);
   }, [controller, scope]);
 
@@ -5308,7 +3769,7 @@ export default function ChartCore({
     const next = !(ind?.visible ?? true);
     c.overrideIndicator({ name, visible: next }, paneId);
     if (paneId === "candle_pane") saveIndicatorVisible(scope, name, next);
-    redrawRef.current();
+    handle.redrawRef.current();
   }, []);
   const removeOn = useCallback(
     (_paneId: string, name: string) => {
@@ -5319,7 +3780,7 @@ export default function ChartCore({
       controller.indicators.set(next);
       saveIndicators(scope, next);
       indicatorRemoved.set(name);
-      redrawRef.current();
+      handle.redrawRef.current();
     },
     [controller, scope, indicatorRemoved],
   );
@@ -5345,7 +3806,7 @@ export default function ChartCore({
       saveIndicators(scope, next);
       const sel = selectedIndicator.value;
       if (sel) selectedIndicator.set({ paneId: paneIdOf(sel.name), name: sel.name });
-      redrawRef.current();
+      handle.redrawRef.current();
     },
     [paneIdOf, scope, controller, selectedIndicator],
   );
