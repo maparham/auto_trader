@@ -9,6 +9,7 @@ import {
   PERIOD_GROUPS,
   quickBarPeriods,
   DEFAULT_RESOLUTIONS,
+  type Instrument,
   type Period,
 } from "./lib/feed";
 import {
@@ -22,6 +23,8 @@ import {
 } from "./lib/persist";
 import type { ChartController } from "./lib/chartController";
 import { BellIcon } from "./lib/menuIcons";
+import SymbolIcon from "./SymbolIcon";
+import { isSynthetic } from "./lib/syntheticRegistry";
 
 // Shared dropdown caret — the same SVG chevron the symbol chip uses, so every
 // toolbar caret renders identically (replacing the plain "▾" text triangles that
@@ -36,6 +39,35 @@ export function Caret({ className }: { className?: string }) {
     >
       <path d="m6 9 6 6 6-6" />
     </svg>
+  );
+}
+
+// The toolbar's symbol chip (TV-style resting chip: logo + epic + chevron).
+// The full Toolbar makes it clickable (opens the symbol-search modal); the
+// snapshot toolbar renders it disabled (the snapshot is OF this symbol).
+export function SymbolChip({
+  symbol,
+  title,
+  disabled,
+  onClick,
+}: {
+  symbol: Instrument;
+  title: string;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button className="sym" title={title} disabled={disabled} onClick={onClick}>
+      <SymbolIcon epic={symbol.epic} type={symbol.type} className="sym-logo" />
+      <span className="sym-epic">
+        {isSynthetic(symbol.epic) ? (symbol.name ?? symbol.epic) : symbol.epic}
+      </span>
+      <svg className="sym-caret" viewBox="0 0 24 24" width="12" height="12" fill="none"
+        stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+        aria-hidden="true">
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </button>
   );
 }
 
@@ -179,18 +211,32 @@ export function IntervalControls({
 }
 
 // Price-scale A / L / I (auto-fit, logarithmic, invert) for the focused cell.
+// All three mirror per-cell controller signals, so the buttons reflect the
+// FOCUSED cell's axis and survive toolbar remounts (the Toolbar/SnapshotToolbar
+// swap) — toolbar-local state here would go stale and autoFit would write the
+// stale scale type back onto the chart.
 export function ScaleControls({ controller }: { controller: ChartController | null }) {
   const chart = controller?.chart ?? null;
 
-  const [log, setLog] = useState(false);
-  // "A" auto-scale mode (mirrors the focused cell's signal; on = highlighted).
-  const [auto, setAuto] = useState(controller?.autoScale.value ?? true);
-  useEffect(() => {
-    if (!controller) return;
-    setAuto(controller.autoScale.value);
-    return controller.autoScale.subscribe(setAuto);
-  }, [controller]);
-  // "I" invert-scale mode (mirrors the focused cell's signal; on = highlighted).
+  // "A" auto-scale mode (on = highlighted).
+  const subscribeAuto = useCallback(
+    (cb: () => void) => controller?.autoScale.subscribe(cb) ?? (() => {}),
+    [controller],
+  );
+  const auto = useSyncExternalStore(
+    subscribeAuto,
+    () => controller?.autoScale.value ?? true,
+  );
+  // "L" logarithmic scale (on = highlighted).
+  const subscribeLog = useCallback(
+    (cb: () => void) => controller?.logScale.subscribe(cb) ?? (() => {}),
+    [controller],
+  );
+  const log = useSyncExternalStore(
+    subscribeLog,
+    () => controller?.logScale.value ?? false,
+  );
+  // "I" invert-scale mode (on = highlighted).
   const subscribeInvert = useCallback(
     (cb: () => void) => controller?.invertScale.subscribe(cb) ?? (() => {}),
     [controller],
@@ -202,7 +248,7 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
 
   function setScale(type: YAxisType) {
     chart?.setStyles({ yAxis: { type } });
-    setLog(type === YAxisType.Log);
+    controller?.logScale.set(type === YAxisType.Log);
   }
 
   function autoFit() {

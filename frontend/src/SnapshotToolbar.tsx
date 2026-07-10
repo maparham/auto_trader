@@ -15,11 +15,10 @@
 
 import { type Instrument, type Period } from "./lib/feed";
 import type { ChartController } from "./lib/chartController";
-import SymbolIcon from "./SymbolIcon";
 import BrokerSelector from "./BrokerSelector";
 import type { BrokerAccount } from "./lib/trading";
-import { isSynthetic } from "./lib/syntheticRegistry";
 import {
+  SymbolChip,
   IntervalControls,
   ScaleControls,
   PanelToggles,
@@ -58,21 +57,11 @@ export default function SnapshotToolbar({
   return (
     <header className="toolbar">
       {/* The symbol chip, non-clickable: a snapshot is OF this symbol. */}
-      <button
-        className="sym"
+      <SymbolChip
+        symbol={symbol}
         title="Symbol is fixed in a snapshot view (Unlock to change)"
         disabled
-      >
-        <SymbolIcon epic={symbol.epic} type={symbol.type} className="sym-logo" />
-        <span className="sym-epic">
-          {isSynthetic(symbol.epic) ? (symbol.name ?? symbol.epic) : symbol.epic}
-        </span>
-        <svg className="sym-caret" viewBox="0 0 24 24" width="12" height="12" fill="none"
-          stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true">
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
+      />
 
       <span className="tb-div" aria-hidden="true" />
 

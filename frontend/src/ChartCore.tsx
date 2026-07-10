@@ -628,13 +628,16 @@ export default function ChartCore({
   // (klinecharts handlers, keyboard/paste) that gate every mutating action.
   const [snapView, setSnapView] = useState<SnapshotMeta | null>(() => loadSnapshotMeta(scope));
   const snapViewRef = useRef<boolean>(controller.readOnly.value);
-  useEffect(
-    () =>
-      controller.readOnly.subscribe((v) => {
-        snapViewRef.current = v;
-      }),
-    [controller],
-  );
+  useEffect(() => {
+    // Re-seed before subscribing: a scope change without a remount (merging a
+    // cell into the active tab keeps its cell id) swaps in a NEW controller,
+    // and a subscription alone only hears FUTURE set() calls — the fresh
+    // controller's constructor-seeded value would otherwise be missed.
+    snapViewRef.current = controller.readOnly.value;
+    return controller.readOnly.subscribe((v) => {
+      snapViewRef.current = v;
+    });
+  }, [controller]);
 
   // Unlock = graduate the study copy into a normal editable chart: delete the
   // scope's snapshotMeta sentinel, drop the marker, lift the overlay read-only

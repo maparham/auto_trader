@@ -67,6 +67,11 @@ export class ChartController {
   // TradingView-style "invert scale" (Alt/Option+I + toolbar "I" button): flips
   // the candle-pane price axis via yAxis.reverse. Session-only — never persisted.
   readonly invertScale = new Signal<boolean>(false);
+  // Logarithmic price scale (toolbar "L" button). Session-only, per cell — lives
+  // here (not toolbar-local state) so the button reflects THIS cell's axis after
+  // focus switches and toolbar remounts (the Toolbar/SnapshotToolbar swap) instead
+  // of a stale local bool that autoFit would then write back to the chart.
+  readonly logScale = new Signal<boolean>(false);
   // Sidebar eye menu (session-only, per cell): master switches that hide whole
   // categories without touching per-item state.
   readonly indicatorsHidden = new Signal<boolean>(false);

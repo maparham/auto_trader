@@ -1,8 +1,18 @@
 # Slim the Ten Largest Modules — Implementation Plan
 
-> **Addendum 2026-07-10 — codebase re-survey.** Tasks 1–3 (persist, customIndicators,
-> api/app.py) are done and committed. All line numbers below are stale — locate
-> symbols by name. Per-task drift found by a fresh survey:
+> **Status 2026-07-10 (end of day):** Tasks 1–3, 5, and 6 are DONE and committed to
+> main (final review clean). Task 6 landed as `_market_hours.py` + `_prices.py` +
+> `_session.py` (SessionAuthBroker) + `_ig_dealing.py`; `_parse_prices` kept per-broker.
+> Task 5 landed as `indicatorSettings/{shared.tsx,DefaultsMenu,RsiPanels,PrevHlPanels,
+> MaAvwapPanels,SessionsPanels,TimeHighlightPanels}` with one adjustment to the task
+> text below: family state + the persistence effect + `currentConfig()` stay in the
+> shell (moving state into panels would delay saves a render tick and corrupt the
+> Cancel snapshot); panels own JSX + writers + `<family>Config()` delegates. Apply the
+> same shape to future component splits (T4). Remaining: T4, T7, T8, T9, and new
+> candidates T10/T11 below.
+>
+> **Addendum 2026-07-10 — codebase re-survey.** All line numbers below are stale —
+> locate symbols by name. Per-task drift found by a fresh survey:
 >
 > - **Task 4 (BacktestSettingsModal, now 2,482 lines, +59%):** grew via the sweep
 >   feature + coded-strategies panel. All four planned extractions still map, BUT
