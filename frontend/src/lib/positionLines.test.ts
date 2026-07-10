@@ -49,6 +49,7 @@ function trade(over: Partial<TradeView> = {}): TradeView {
     takeProfit: null,
     upnl: null,
     openedAt: null,
+    expiresAt: null,
     ...over,
   };
 }
@@ -203,6 +204,7 @@ describe("tradeLineSpecs", () => {
         price: 99,
         stop: 98,
         takeProfit: 101,
+        expiresAt: null,
       },
     });
     expect(specs.map((s) => s.key)).toEqual(["draft:price", "draft:stop", "draft:tp"]);
@@ -222,6 +224,7 @@ describe("tradeLineSpecs", () => {
         price: null,
         stop: 101,
         takeProfit: 99,
+        expiresAt: null,
       },
     });
     expect(specs.map((s) => s.key)).toEqual(["draft:stop", "draft:tp"]);
@@ -233,7 +236,7 @@ describe("tradeLineSpecs", () => {
       trades: [],
       draft: {
         epic: "US100", side: "buy", quantity: 1, type: "limit",
-        price: 99, stop: 98, takeProfit: 101,
+        price: 99, stop: 98, takeProfit: 101, expiresAt: null,
       },
     });
     expect(specs).toHaveLength(0);
@@ -335,7 +338,7 @@ describe("tradeLineSpecs", () => {
     const specs = tradeLineSpecs({
       ...base,
       trades: [],
-      draft: { epic: "EURUSD", side: "buy", quantity: 1, type: "limit", price: 99, stop: 98, takeProfit: 101 },
+      draft: { epic: "EURUSD", side: "buy", quantity: 1, type: "limit", price: 99, stop: 98, takeProfit: 101, expiresAt: null },
     });
     expect(specs.every((s) => s.restKind === "full")).toBe(true);
   });

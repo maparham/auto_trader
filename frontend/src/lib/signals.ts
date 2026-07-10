@@ -185,6 +185,7 @@ export interface PendingEdit {
   price?: number | null;
   stop?: number | null;
   takeProfit?: number | null;
+  expiresAt?: number | null;
 }
 export const pendingEditsSignal = new Signal<Record<string, PendingEdit>>({});
 
@@ -338,6 +339,7 @@ export interface DraftOrder {
   price: number | null; // entry/limit level (limit only; null for a market draft)
   stop: number | null;
   takeProfit: number | null;
+  expiresAt: number | null; // good-till-date, epoch ms; null = Good-Till-Cancelled
 }
 export const draftOrderSignal = new Signal<DraftOrder | null>(null);
 
@@ -356,6 +358,7 @@ export function stageChartOrder(o: { epic: string; side: "buy" | "sell"; price: 
     price: o.price,
     stop: null,
     takeProfit: null,
+    expiresAt: null,
   });
   tradePanelOpen.set(true);
 }

@@ -110,6 +110,18 @@ def validate_levels(
     return None
 
 
+def expired_order_ids(now: datetime, working: list[WorkingOrder]) -> list[str]:
+    """PURE: order_ids whose good-till-date has passed. A None expiry (GTC) never
+    expires. Kept separate from evaluate_triggers because expiry is time-driven,
+    not price-driven — it must fire even for an epic with no live tick."""
+    def _utc(dt: datetime) -> datetime:
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    return [
+        w.order_id for w in working
+        if w.expires_at is not None and _utc(w.expires_at) <= now
+    ]
+
+
 class PaperExecutionBroker(ExecutionBroker):
     """Simulated executor. Fills at the live bid/ask snapshot; books positions
     in memory; dedupes on `client_order_id`."""
@@ -225,6 +237,7 @@ class PaperExecutionBroker(ExecutionBroker):
                     stop_level=order.stop_level,
                     take_profit_level=order.take_profit_level,
                     created_at=submitted,
+                    expires_at=order.expires_at,
                 )
                 # A resting order is PENDING (not filled): check_triggers fills it
                 # when the market reaches the level.
@@ -534,6 +547,8 @@ class PaperExecutionBroker(ExecutionBroker):
         take_profit_level: float | None = None,
         clear_stop: bool = False,
         clear_take_profit: bool = False,
+        expires_at: datetime | None = None,
+        clear_expiry: bool = False,
     ) -> OrderResult:
         async with self._lock:
             wo = self._working.get(order_id)
@@ -557,6 +572,10 @@ class PaperExecutionBroker(ExecutionBroker):
                     else wo.take_profit_level
                 )
             )
+            new_expiry = (
+                None if clear_expiry
+                else (expires_at if expires_at is not None else wo.expires_at)
+            )
             bad = validate_levels(wo.side, new_level, new_stop, new_tp)
             if bad:
                 return OrderResult(
@@ -571,6 +590,7 @@ class PaperExecutionBroker(ExecutionBroker):
                 stop_level=new_stop,
                 take_profit_level=new_tp,
                 created_at=wo.created_at,
+                expires_at=new_expiry,
             )
             return OrderResult(
                 client_order_id="", status=OrderStatus.PENDING, deal_id=order_id
@@ -602,6 +622,10 @@ class PaperExecutionBroker(ExecutionBroker):
         push a 'trades changed' notification instead of the frontend polling."""
         changed = False
         async with self._lock:
+            now = datetime.now(timezone.utc)
+            for oid in expired_order_ids(now, list(self._working.values())):
+                self._working.pop(oid, None)
+                changed = True
             epics = {p.epic for p in self._book.values()}
             epics |= {w.epic for w in self._working.values()}
             for epic in epics:

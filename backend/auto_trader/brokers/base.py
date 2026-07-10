@@ -190,9 +190,12 @@ class ExecutionBroker(ABC):
         take_profit_level: float | None = None,
         clear_stop: bool = False,
         clear_take_profit: bool = False,
+        expires_at: datetime | None = None,
+        clear_expiry: bool = False,
     ) -> OrderResult:
-        """Change a resting order's price and/or its attached SL/TP. A None level
-        leaves it unchanged; clear_stop / clear_take_profit remove it."""
+        """Change a resting order's price and/or its attached SL/TP and expiry. A
+        None level/expiry leaves it unchanged; clear_stop / clear_take_profit /
+        clear_expiry remove it."""
         raise NotImplementedError
 
     @abstractmethod

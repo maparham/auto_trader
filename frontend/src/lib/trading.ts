@@ -12,6 +12,7 @@ import { isCapitalBroker, onTradesDirty } from "./persist";
 import { isStrategyDeal } from "./liveTags";
 import { tradesSignal } from "./signals";
 import { API_BASE as BASE, errorDetail } from "./http";
+import { expiryToApi } from "./expiry";
 
 // A registry account key "{broker}:{env}", e.g. "capital:paper". Opaque to the
 // frontend — it comes from GET /api/brokers and routes orders/positions.
@@ -131,6 +132,7 @@ export interface OrderRequest {
   limit_level?: number | null;
   stop_level?: number | null;
   take_profit_level?: number | null;
+  expires_at?: string | null; // UTC ISO good-till-date; null/absent = GTC
   confirm?: boolean; // required for real-money (live) orders
   client_order_id?: string; // derived idempotency key (live engine); absent ⇒ minted
 }
@@ -228,6 +230,7 @@ interface WorkingOrder {
   stop_level: number | null;
   take_profit_level: number | null;
   created_at: string | null;
+  expires_at?: string | null;
 }
 
 // Normalized view of a position OR a resting order — the one shape the panel and
@@ -243,6 +246,7 @@ export interface TradeView {
   takeProfit: number | null;
   upnl: number | null; // positions only
   openedAt: number | null; // created_at as epoch ms (position open / order placed)
+  expiresAt: number | null; // working orders: good-till-date epoch ms; null = GTC
   leverage: number | null; // broker per-position leverage (null → fall back to configured)
   margin: number | null; // broker deposit requirement, account currency (null → estimate)
   source?: "manual" | "strategy"; // "strategy" = opened by the live engine (dock `strat` tag)
@@ -359,6 +363,7 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
         takeProfit: p.take_profit_level,
         upnl: p.upnl,
         openedAt: p.created_at ? Date.parse(p.created_at) : null,
+        expiresAt: null,
         leverage: p.leverage,
         margin: p.margin,
         source: isStrategyDeal(p.deal_id) ? "strategy" : "manual",
@@ -376,6 +381,7 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
         takeProfit: o.take_profit_level,
         upnl: null,
         openedAt: o.created_at ? Date.parse(o.created_at) : null,
+        expiresAt: o.expires_at != null ? Date.parse(o.expires_at) : null,
         leverage: null,
         margin: null,
         source: "manual",
@@ -538,6 +544,8 @@ export interface LevelEdit {
   // form's toggle-off sends these to clear an SL/TP).
   clear_stop?: boolean;
   clear_take_profit?: boolean;
+  expires_at?: string | null;
+  clear_expiry?: boolean;
 }
 
 /** Apply edited levels to a position (SL/TP) or a resting order (price + SL/TP),
@@ -676,9 +684,10 @@ export function mergeTradeLevels(
  *  the two can't diverge (e.g. ticket toggles SL off → Apply must actually clear it). */
 export async function applyEditedLevels(
   trade: { kind: "position" | "order"; id: string },
-  merged: { price: number | null; stop: number | null; takeProfit: number | null },
+  merged: { price: number | null; stop: number | null; takeProfit: number | null; expiresAt?: number | null },
   account: TradeAccount = DEFAULT_ACCOUNT,
 ): Promise<OrderResult> {
+  const exp = merged.expiresAt ?? null;
   return applyLevels(
     trade,
     {
@@ -687,6 +696,10 @@ export async function applyEditedLevels(
       take_profit_level: merged.takeProfit,
       clear_stop: merged.stop == null,
       clear_take_profit: merged.takeProfit == null,
+      // Expiry only applies to a resting order; a position ignores it.
+      ...(trade.kind === "order"
+        ? { expires_at: expiryToApi(exp), clear_expiry: exp == null }
+        : {}),
     },
     account,
   );

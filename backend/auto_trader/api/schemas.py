@@ -379,6 +379,7 @@ class OrderRequest(BaseModel):
     limit_level: float | None = None  # required when type == "limit"
     stop_level: float | None = None
     take_profit_level: float | None = None
+    expires_at: datetime | None = None  # good-till-date (UTC); None = GTC
     confirm: bool = False  # required for real-money (live) orders
 
 
@@ -392,6 +393,8 @@ class LevelsRequest(BaseModel):
     take_profit_level: float | None = None
     clear_stop: bool = False
     clear_take_profit: bool = False
+    expires_at: datetime | None = None  # None = keep the order's current expiry
+    clear_expiry: bool = False  # True = reset to Good-Till-Cancelled
 
 
 class WorkingOrderDTO(BaseModel):
@@ -403,6 +406,7 @@ class WorkingOrderDTO(BaseModel):
     stop_level: float | None = None
     take_profit_level: float | None = None
     created_at: datetime | None = None
+    expires_at: datetime | None = None
 
 
 class OrderResultDTO(BaseModel):

@@ -196,6 +196,9 @@ class Order:
     limit_level: float | None = None
     stop_level: float | None = None
     take_profit_level: float | None = None
+    # Good-till-date expiry for a resting LIMIT order (UTC). None = Good-Till-
+    # Cancelled (rests until filled or cancelled). Ignored for MARKET.
+    expires_at: datetime | None = None
     source: OrderSource = OrderSource.MANUAL
     reason: str = ""
 
@@ -261,3 +264,6 @@ class WorkingOrder:
     stop_level: float | None = None
     take_profit_level: float | None = None
     created_at: datetime | None = None
+    # Good-till-date expiry (UTC). None = Good-Till-Cancelled. The paper executor
+    # cancels the order once now >= expires_at; real brokers enforce server-side.
+    expires_at: datetime | None = None

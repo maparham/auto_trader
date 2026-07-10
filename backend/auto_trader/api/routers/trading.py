@@ -66,6 +66,7 @@ def _working_order_dto(w) -> WorkingOrderDTO:
         stop_level=w.stop_level,
         take_profit_level=w.take_profit_level,
         created_at=w.created_at,
+        expires_at=w.expires_at,
     )
 
 
@@ -106,6 +107,7 @@ async def place_order(req: OrderRequest) -> OrderResultDTO:
         stop_level=req.stop_level,
         take_profit_level=req.take_profit_level,
         source=source,
+        expires_at=req.expires_at,
     )
     try:
         result = await broker.place_order(order)
@@ -222,6 +224,8 @@ async def modify_working_order(
             take_profit_level=req.take_profit_level,
             clear_stop=req.clear_stop,
             clear_take_profit=req.clear_take_profit,
+            expires_at=req.expires_at,
+            clear_expiry=req.clear_expiry,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"modify failed: {e}") from e

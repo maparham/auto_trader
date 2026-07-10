@@ -608,6 +608,7 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
                 body = _clean({
                     "epic": order.epic, "direction": direction, "size": order.quantity,
                     "level": order.limit_level, "type": "LIMIT", "guaranteedStop": False,
+                    "goodTillDate": _capital_gtd(order.expires_at) if order.expires_at is not None else None,
                     "stopLevel": order.stop_level, "profitLevel": order.take_profit_level,
                 })
                 status, confirm = await self._submit_and_confirm(
@@ -811,6 +812,7 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
                     stop_level=_f(wod.get("stopLevel")),
                     take_profit_level=_f(wod.get("profitLevel")),
                     created_at=_parse_dt(wod.get("createdDateUTC")),
+                    expires_at=_parse_dt(wod.get("goodTillDate")),
                 )
             )
         return out
@@ -824,6 +826,8 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
         take_profit_level: float | None = None,
         clear_stop: bool = False,
         clear_take_profit: bool = False,
+        expires_at: datetime | None = None,
+        clear_expiry: bool = False,
     ) -> OrderResult:
         # Raw fetch for current level + SL/TP + stop FLAGS in one call (see
         # modify_position for why). Capital's PUT replaces, so resend every kept field.
@@ -844,10 +848,20 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
         new_level = limit_level if limit_level is not None else _f(wod.get("orderLevel"))
         new_stop = None if clear_stop else (stop_level if stop_level is not None else _f(wod.get("stopLevel")))
         new_tp = None if clear_take_profit else (take_profit_level if take_profit_level is not None else _f(wod.get("profitLevel")))
+        # Capital's PUT replaces the order, so a kept expiry must be re-sent. Prefer
+        # the caller's resolved value; fall back to the order's current goodTillDate.
+        if clear_expiry:
+            new_gtd = None
+        elif expires_at is not None:
+            new_gtd = _capital_gtd(expires_at)
+        else:
+            new_gtd = wod.get("goodTillDate")  # echo the current value verbatim
         # As with modify_position: kept fields resend their value, a clear sends null,
         # and the body is sent raw (NOT _clean'd) so a null clear isn't dropped. `type`
         # is fixed at creation, so the amend only carries level + SL/TP.
         body = {"level": new_level, "stopLevel": new_stop, "profitLevel": new_tp, "guaranteedStop": False, "trailingStop": False}
+        if new_gtd is not None:
+            body["goodTillDate"] = new_gtd
         status, confirm = await self._submit_and_confirm(
             "PUT", f"/api/v1/workingorders/{order_id}", body
         )
@@ -901,6 +915,11 @@ def _parse_dt(s: str | None) -> "datetime | None":
         return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
     except (ValueError, TypeError):
         return None
+
+
+def _capital_gtd(expires_at: datetime) -> str:
+    """Capital.com good-till-date: UTC, 'YYYY-MM-DDTHH:MM:SS' (no milliseconds)."""
+    return expires_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _register_capital_feed(

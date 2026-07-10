@@ -3119,6 +3119,9 @@
    form also shows why + disables Update). */
 .ot-input-row.invalid,
 .ot-input-row.invalid:focus-within { border-color: var(--neg); }
+/* Expires "Custom…" reveal: stacked relative/absolute radio rows. */
+.ot-expiry-custom { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.ot-expiry-custom label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .ot-input {
   flex: 1; min-width: 0; background: transparent; border: none; color: var(--text);
   padding: 7px 0; font-size: 13px; font-variant-numeric: tabular-nums;
@@ -3351,6 +3354,9 @@
 .pp-neg { color: var(--neg); }
 /* Time column — opened/placed timestamp, quiet mono, left-aligned. */
 .pp-table .pp-c-time { font-family: var(--mono); color: var(--text-dim); }
+/* A working order's good-till-date, stacked under the placed time — quieter
+   still since it's secondary context, not the row's headline figure. */
+.pp-expiry { display: block; font-size: 10px; color: var(--text-faint); }
 /* Leverage reads as quiet context, not a headline figure. */
 .pp-table .pp-c-lev { color: var(--text-dim); }
 

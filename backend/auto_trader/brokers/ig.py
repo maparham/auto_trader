@@ -97,6 +97,29 @@ def _is_allowance_error(resp: httpx.Response) -> bool:
         return False
 
 
+def _ig_gtd(expires_at: datetime) -> str:
+    """IG good-till-date string: UTC, 'yyyy/MM/dd HH:mm:ss' (NOT ISO-8601)."""
+    return expires_at.astimezone(timezone.utc).strftime("%Y/%m/%d %H:%M:%S")
+
+
+def _ig_parse_gtd(s: "str | int | float | None") -> "datetime | None":
+    """Inverse of _ig_gtd: IG returns goodTillDate in UTC 'yyyy/MM/dd HH:mm:ss'.
+    Tolerant — returns None on anything unparseable (IG dealing is demo/untested;
+    format not live-verified). Also accepts a unix-ms integer, IG's documented
+    alternative return shape."""
+    if not s:
+        return None
+    try:
+        if isinstance(s, (int, float)):
+            return datetime.fromtimestamp(s / 1000, tz=timezone.utc)
+        return datetime.strptime(s, "%Y/%m/%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError, OverflowError, OSError):
+        # OverflowError/OSError guard a pathological out-of-range unix-ms value in
+        # fromtimestamp — a parse error must never break get_working_orders for the
+        # whole order list.
+        return None
+
+
 # IG sessions (v2 CST/X-SECURITY-TOKEN) last ~6h; refresh early.
 SESSION_TTL = timedelta(hours=5)
 # IG expects naive ISO timestamps in /prices from/to, e.g. 2022-02-24T00:00:00.
@@ -481,10 +504,13 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
             if order.type is OrderType.LIMIT:
                 if order.limit_level is None:
                     return self._reject(order, "limit order requires a level", submitted)
+                gtd = order.expires_at is not None
                 body = _clean({
                     "epic": order.epic, "expiry": "-", "direction": direction,
                     "size": order.quantity, "level": order.limit_level, "type": "LIMIT",
-                    "timeInForce": "GOOD_TILL_CANCELLED", "guaranteedStop": False,
+                    "timeInForce": "GOOD_TILL_DATE" if gtd else "GOOD_TILL_CANCELLED",
+                    "goodTillDate": _ig_gtd(order.expires_at) if gtd else None,
+                    "guaranteedStop": False,
                     "forceOpen": True, "currencyCode": ccy,
                     "stopLevel": order.stop_level, "limitLevel": order.take_profit_level,
                 })
@@ -640,6 +666,7 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
                     order_id=wod.get("dealId"),
                     stop_level=_f(wod.get("stopLevel")),
                     take_profit_level=_f(wod.get("limitLevel")),
+                    expires_at=_ig_parse_gtd(wod.get("goodTillDate")),
                 )
             )
         return out
@@ -653,6 +680,8 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
         take_profit_level: float | None = None,
         clear_stop: bool = False,
         clear_take_profit: bool = False,
+        expires_at: datetime | None = None,
+        clear_expiry: bool = False,
     ) -> OrderResult:
         wo = next((w for w in await self.get_working_orders() if w.order_id == order_id), None)
         if wo is None:
@@ -660,6 +689,7 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
         new_level = limit_level if limit_level is not None else wo.limit_level
         new_stop = None if clear_stop else (stop_level if stop_level is not None else wo.stop_level)
         new_tp = None if clear_take_profit else (take_profit_level if take_profit_level is not None else wo.take_profit_level)
+        new_expiry = None if clear_expiry else (expires_at if expires_at is not None else wo.expires_at)
         # IG's amend REPLACES levels, so a kept field resends its current value and a
         # cleared one must send literal null — exactly like modify_position. Do NOT
         # route through _clean: it drops None keys, which IG reads as "leave
@@ -667,10 +697,14 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
         # money — the dragged-off stop stays attached and can still trigger).
         # (PUT /workingorders/otc; null-clears mirrors the /positions amend — if IG
         # ever rejects null on this route, see labs.ig.com or demo-test the amend.)
+        gtd = new_expiry is not None
         body = {
-            "level": new_level, "type": "LIMIT", "timeInForce": "GOOD_TILL_CANCELLED",
+            "level": new_level, "type": "LIMIT",
+            "timeInForce": "GOOD_TILL_DATE" if gtd else "GOOD_TILL_CANCELLED",
             "guaranteedStop": False, "stopLevel": new_stop, "limitLevel": new_tp,
         }
+        if gtd:
+            body["goodTillDate"] = _ig_gtd(new_expiry)
         status, confirm = await self._submit_and_confirm(
             "PUT", f"/workingorders/otc/{order_id}", body, version="2"
         )

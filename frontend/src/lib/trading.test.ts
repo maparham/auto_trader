@@ -1,7 +1,7 @@
 // SL/TP must stay on the valid side of a reference price (clampLevelToPrice) —
 // the market price for an open position, the order's limit for a working order.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { installMemStorage } from "./testMemStorage";
 
 // vitest runs in the 'node' env (see vite.config.ts); provide a tiny in-memory
@@ -18,6 +18,7 @@ const {
   isBreakevenTarget,
   breakevenEligible,
   breakevenTargetEligible,
+  applyEditedLevels,
 } = await import("./trading");
 
 const TICK = 0.01;
@@ -161,7 +162,7 @@ describe("breakevenEligible", () => {
   const pos = (over = {}) => ({
     kind: "position" as const, id: "D1", epic: "EURUSD", side: "buy" as const,
     quantity: 2, priceLevel: 100, stop: null, takeProfit: null, upnl: null,
-    openedAt: null, leverage: null, margin: null, ...over,
+    openedAt: null, expiresAt: null, leverage: null, margin: null, ...over,
   });
   it("long in profit (price above entry) is eligible", () => {
     expect(breakevenEligible(pos(), 101, 2)).toBe(true);
@@ -212,7 +213,7 @@ describe("breakevenTargetEligible", () => {
   const pos = (over = {}) => ({
     kind: "position" as const, id: "D1", epic: "EURUSD", side: "buy" as const,
     quantity: 2, priceLevel: 100, stop: null, takeProfit: null, upnl: null,
-    openedAt: null, leverage: null, margin: null, ...over,
+    openedAt: null, expiresAt: null, leverage: null, margin: null, ...over,
   });
   it("long at a loss (price below entry) is eligible", () => {
     expect(breakevenTargetEligible(pos(), 99, 2)).toBe(true);
@@ -237,5 +238,36 @@ describe("breakevenTargetEligible", () => {
     // (raw entry above it) but round(entry) 100.50 is NOT above 100.503 → staging TP
     // there would be rejected (TP must sit above the market for a long) → hide.
     expect(breakevenTargetEligible(pos({ priceLevel: 100.504 }), 100.503, 2)).toBe(false);
+  });
+});
+
+describe("applyEditedLevels expiry", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sends expires_at ISO for a working order and clear_expiry when null", async () => {
+    const calls: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: any) => {
+      calls.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ status: "pending" }) } as Response;
+    }));
+
+    const at = Date.UTC(2026, 6, 11, 16, 0, 0);
+    await applyEditedLevels(
+      { kind: "order", id: "WO-1" },
+      { price: 1.1, stop: null, takeProfit: null, expiresAt: at },
+      "capital:paper",
+    );
+    expect(calls[0].expires_at).toBe("2026-07-11T16:00:00.000Z");
+    expect(calls[0].clear_expiry).toBe(false);
+
+    await applyEditedLevels(
+      { kind: "order", id: "WO-1" },
+      { price: 1.1, stop: null, takeProfit: null, expiresAt: null },
+      "capital:paper",
+    );
+    expect(calls[1].expires_at).toBeNull();
+    expect(calls[1].clear_expiry).toBe(true);
   });
 });

@@ -334,6 +334,118 @@ def test_clear_stop_on_working_order_sends_null_not_omitted(monkeypatch) -> None
     assert seen["body"]["limitLevel"] == 110.0
 
 
+def test_gtc_amend_body_omits_goodtilldate_key(monkeypatch) -> None:
+    """I1: a GTC (no expiry) amend must NOT include a goodTillDate key at all —
+    sending `goodTillDate: null` is a key the pre-feature amend body never had,
+    and could break ALL IG working-order edits if IG's PUT rejects it. The GTC
+    body must be byte-identical to before the expiry feature."""
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        p = req.url.path
+        if p == "/session":
+            return _session_response()
+        if p == "/workingorders" and req.method == "GET":
+            return httpx.Response(200, json={"workingOrders": [{
+                "workingOrderData": {"dealId": "WO9", "epic": "EPIC1", "direction": "BUY",
+                                     "orderSize": 1.0, "orderLevel": 90.0,
+                                     "stopLevel": 85.0, "limitLevel": 110.0},
+            }]})
+        if p == "/workingorders/otc/WO9" and req.method == "PUT":
+            seen["body"] = json.loads(req.content)
+            return httpx.Response(200, json={"dealReference": "AREF"})
+        if p == "/confirms/AREF":
+            return httpx.Response(200, json={"dealStatus": "ACCEPTED", "dealId": "WO9"})
+        raise AssertionError(f"{req.method} {p}")
+
+    b = _broker(handler, monkeypatch)
+    ex = IGExecutionBroker(b)
+    res = asyncio.run(ex.modify_working_order("WO9", limit_level=91.0))
+    asyncio.run(b.aclose())
+    assert res.status is OrderStatus.PENDING
+    assert "goodTillDate" not in seen["body"]
+    assert seen["body"]["timeInForce"] == "GOOD_TILL_CANCELLED"
+    assert seen["body"] == {
+        "level": 91.0, "type": "LIMIT", "timeInForce": "GOOD_TILL_CANCELLED",
+        "guaranteedStop": False, "stopLevel": 85.0, "limitLevel": 110.0,
+    }
+
+
+def test_gtd_amend_body_includes_goodtilldate(monkeypatch) -> None:
+    """A GTD amend must send goodTillDate in IG's yyyy/MM/dd HH:mm:ss format."""
+    from datetime import datetime, timezone
+
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        p = req.url.path
+        if p == "/session":
+            return _session_response()
+        if p == "/workingorders" and req.method == "GET":
+            return httpx.Response(200, json={"workingOrders": [{
+                "workingOrderData": {"dealId": "WO9", "epic": "EPIC1", "direction": "BUY",
+                                     "orderSize": 1.0, "orderLevel": 90.0,
+                                     "stopLevel": 85.0, "limitLevel": 110.0},
+            }]})
+        if p == "/workingorders/otc/WO9" and req.method == "PUT":
+            seen["body"] = json.loads(req.content)
+            return httpx.Response(200, json={"dealReference": "AREF"})
+        if p == "/confirms/AREF":
+            return httpx.Response(200, json={"dealStatus": "ACCEPTED", "dealId": "WO9"})
+        raise AssertionError(f"{req.method} {p}")
+
+    b = _broker(handler, monkeypatch)
+    ex = IGExecutionBroker(b)
+    expiry = datetime(2026, 7, 11, 16, 30, tzinfo=timezone.utc)
+    res = asyncio.run(ex.modify_working_order("WO9", expires_at=expiry))
+    asyncio.run(b.aclose())
+    assert res.status is OrderStatus.PENDING
+    assert seen["body"]["timeInForce"] == "GOOD_TILL_DATE"
+    assert seen["body"]["goodTillDate"] == "2026/07/11 16:30:00"
+
+
+def test_get_working_orders_reads_back_expires_at(monkeypatch) -> None:
+    """C1 (best-effort, IG dealing untested): a resting order's goodTillDate must
+    round-trip into WorkingOrder.expires_at."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        p = req.url.path
+        if p == "/session":
+            return _session_response()
+        if p == "/workingorders" and req.method == "GET":
+            return httpx.Response(200, json={"workingOrders": [{
+                "workingOrderData": {"dealId": "WOG", "epic": "EPIC1", "direction": "BUY",
+                                     "orderSize": 1.0, "orderLevel": 90.0,
+                                     "goodTillDate": "2026/07/11 16:30:00"},
+            }]})
+        raise AssertionError(f"{req.method} {p}")
+
+    b = _broker(handler, monkeypatch)
+    ex = IGExecutionBroker(b)
+    [wo] = asyncio.run(ex.get_working_orders())
+    asyncio.run(b.aclose())
+    from datetime import datetime, timezone
+    assert wo.expires_at == datetime(2026, 7, 11, 16, 30, tzinfo=timezone.utc)
+
+
+def test_get_working_orders_expires_at_none_without_goodtilldate(monkeypatch) -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        p = req.url.path
+        if p == "/session":
+            return _session_response()
+        if p == "/workingorders" and req.method == "GET":
+            return httpx.Response(200, json={"workingOrders": [{
+                "workingOrderData": {"dealId": "WOC", "epic": "EPIC1", "direction": "BUY",
+                                     "orderSize": 1.0, "orderLevel": 90.0},
+            }]})
+        raise AssertionError(f"{req.method} {p}")
+
+    b = _broker(handler, monkeypatch)
+    ex = IGExecutionBroker(b)
+    [wo] = asyncio.run(ex.get_working_orders())
+    asyncio.run(b.aclose())
+    assert wo.expires_at is None
+
+
 def test_rejected_confirm_maps_to_rejected_with_reason(monkeypatch) -> None:
     def handler(req: httpx.Request) -> httpx.Response:
         p = req.url.path

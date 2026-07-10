@@ -16,6 +16,7 @@ function position(over: Partial<TradeView> = {}): TradeView {
     takeProfit: null,
     upnl: null,
     openedAt: 2_000, // ms
+    expiresAt: null,
     leverage: null,
     margin: null,
     ...over,

@@ -54,7 +54,7 @@ describe("placeActions", () => {
       strategyId: "s1", barTsSec: 1700, epic: "EURUSD", account: "capital:demo",
       quantity: 1, confirm: false,
       openPosition: { kind: "position", id: "deal-9", epic: "EURUSD", side: "buy", quantity: 1,
-        priceLevel: 10, stop: null, takeProfit: null, upnl: 0, openedAt: null, leverage: null, margin: null },
+        priceLevel: 10, stop: null, takeProfit: null, upnl: 0, openedAt: null, expiresAt: null, leverage: null, margin: null },
       _deps: { placeOrder, closePosition },
     });
     expect(closePosition).toHaveBeenCalledWith("deal-9", "capital:demo");

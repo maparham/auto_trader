@@ -181,6 +181,56 @@ def _lvl(v: float | None) -> float | None:
     return v if v else None
 
 
+def _mt5_expiration(expires_at: datetime | None) -> dict | None:
+    """MetaApi PendingTradeOptions payload for a good-till-date, or None for GTC.
+    Passes the datetime object through — the SDK serializes it to UTC ISO itself."""
+    if expires_at is None:
+        return None
+    return {"expiration": {"type": "ORDER_TIME_SPECIFIED", "time": expires_at}}
+
+
+def _as_utc(dt: datetime) -> datetime:
+    """Coerce a naive datetime to UTC (MetaApi returns aware; be defensive)."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _order_is_gtc(current: dict) -> bool:
+    """Whether a MetaApi order dict represents a Good-Till-Cancelled order."""
+    etype = current.get("expirationType")
+    etime = current.get("expirationTime")
+    return etype == "ORDER_TIME_GTC" or (etime is None and etype in (None, "ORDER_TIME_GTC"))
+
+
+def _order_original_expiration(current: dict) -> dict | None:
+    """Reconstruct the PendingTradeOptions expiration payload from a MetaApi order
+    dict's own expirationType/expirationTime — used to recreate the original order
+    on a cancel-replace rollback. None for a GTC order."""
+    etype = current.get("expirationType")
+    etime = current.get("expirationTime")
+    if not etype or etype == "ORDER_TIME_GTC" or etime is None:
+        return None
+    return {"expiration": {"type": etype, "time": etime}}
+
+
+def _mt5_expiry_changes(
+    current: dict, expires_at: datetime | None, clear_expiry: bool
+) -> bool:
+    """Whether a modify request would ALTER the order's expiration.
+
+    MT5's ORDER_MODIFY cannot change expiration (MetaApi/MT5 protocol limitation,
+    verified against the SDK, the trade-API docs, and a live account), so a real
+    expiry change must be done by cancel-and-replace. A level-only edit (no expiry
+    change) keeps the cheap in-place modify. `current` is the MetaApi order dict."""
+    if clear_expiry:
+        return not _order_is_gtc(current)  # clearing an already-GTC order is a no-op
+    if expires_at is None:
+        return False  # this edit carries no expiry → unchanged (carry-forward)
+    cur_time = current.get("expirationTime")
+    if cur_time is None:
+        return True  # GTC → a specific expiry is a change
+    return abs((_as_utc(expires_at) - _as_utc(cur_time)).total_seconds()) >= 1
+
+
 class MT5Broker(MarketDataBroker):
     """Market data + the shared MetaApi connection(s) for one AvaTrade MT5 account.
 
@@ -1034,13 +1084,20 @@ class MT5ExecutionBroker(ExecutionBroker):
                         reason="limit order requires limit_level",
                         resolved_at=datetime.now(timezone.utc),
                     )
+                opts = _mt5_expiration(order.expires_at)
                 if order.side is Side.BUY:
                     resp = await self._data._bounded(
-                        lambda c: c.create_limit_buy_order(order.epic, lots, order.limit_level, sl, tp)
+                        lambda c: c.create_limit_buy_order(
+                            order.epic, lots, order.limit_level, sl, tp,
+                            *((opts,) if opts else ()),
+                        )
                     )
                 else:
                     resp = await self._data._bounded(
-                        lambda c: c.create_limit_sell_order(order.epic, lots, order.limit_level, sl, tp)
+                        lambda c: c.create_limit_sell_order(
+                            order.epic, lots, order.limit_level, sl, tp,
+                            *((opts,) if opts else ()),
+                        )
                     )
                 result = OrderResult(
                     client_order_id=order.client_order_id,
@@ -1184,6 +1241,7 @@ class MT5ExecutionBroker(ExecutionBroker):
                     stop_level=_lvl(o.get("stopLoss")),
                     take_profit_level=_lvl(o.get("takeProfit")),
                     created_at=o.get("time"),
+                    expires_at=o.get("expirationTime"),
                 )
             )
         return out
@@ -1197,6 +1255,8 @@ class MT5ExecutionBroker(ExecutionBroker):
         take_profit_level: float | None = None,
         clear_stop: bool = False,
         clear_take_profit: bool = False,
+        expires_at: datetime | None = None,
+        clear_expiry: bool = False,
     ) -> OrderResult:
         orders = await self._data.read(lambda c: c.get_orders())
         current = {str(o.get("id")): o for o in orders}.get(str(order_id))
@@ -1212,6 +1272,17 @@ class MT5ExecutionBroker(ExecutionBroker):
         cur_tp = current.get("takeProfit")
         new_sl = 0 if clear_stop else (stop_level if stop_level is not None else cur_sl)
         new_tp = 0 if clear_take_profit else (take_profit_level if take_profit_level is not None else cur_tp)
+
+        # MT5's ORDER_MODIFY cannot change a pending order's expiration (MetaApi/MT5
+        # protocol limitation — verified against the SDK, the trade-API docs, and a
+        # live account; the SDK sends the field but the server drops it). A genuine
+        # expiry change must be done by cancel-and-replace; a level-only edit keeps
+        # the cheap in-place modify.
+        if _mt5_expiry_changes(current, expires_at, clear_expiry):
+            return await self._replace_working_order(
+                current, new_price, new_sl, new_tp, expires_at, clear_expiry
+            )
+
         try:
             resp = await self._data._bounded(
                 lambda c: c.modify_order(order_id, new_price, new_sl, new_tp)
@@ -1222,6 +1293,100 @@ class MT5ExecutionBroker(ExecutionBroker):
             client_order_id=f"modify-{order_id}",
             status=OrderStatus.FILLED,
             deal_id=order_id,
+            reason=resp.get("stringCode", ""),
+            resolved_at=datetime.now(timezone.utc),
+        )
+
+    async def _replace_working_order(
+        self,
+        current: dict,
+        new_price: float,
+        new_sl: float,
+        new_tp: float,
+        expires_at: datetime | None,
+        clear_expiry: bool,
+    ) -> OrderResult:
+        """Change a pending order's expiration by cancel-and-replace (MT5 can't
+        amend expiration in place). NON-ATOMIC: there's a window between the cancel
+        and the recreate. If the recreate fails, roll back by recreating the
+        original order so the account is never left silently orderless."""
+        order_id = str(current.get("id"))
+        symbol = current.get("symbol")
+        side = _pos_side(current.get("type", ""))
+        lots = current.get("volume") or current.get("currentVolume")
+        sl_arg = _lvl(new_sl)  # 0/None → None (no stop)
+        tp_arg = _lvl(new_tp)
+        exp_opts = None if clear_expiry else _mt5_expiration(expires_at)
+
+        def _create(price, sl, tp, opts):
+            # Limit-only: this project has no stop-entry order path, so a working
+            # order is always a limit. If STOP orders are ever added, this must
+            # branch on the original order type too, or it would silently recreate a
+            # stop as a limit at the stop price (wrong side of the market).
+            def run(c):
+                fn = (
+                    c.create_limit_buy_order
+                    if side is Side.BUY
+                    else c.create_limit_sell_order
+                )
+                return fn(symbol, lots, price, sl, tp, *((opts,) if opts else ()))
+
+            return run
+
+        # 1. Cancel the existing order. If THIS fails, nothing changed — reject and
+        # leave the original order intact.
+        try:
+            await self._data._bounded(lambda c: c.cancel_order(order_id))
+        except Exception as exc:
+            return self._fail(f"replace-{order_id}", exc)
+
+        # 2. Recreate with the merged levels + the new expiration.
+        try:
+            resp = await self._data._bounded(_create(new_price, sl_arg, tp_arg, exp_opts))
+        except Exception as exc:
+            # An AMBIGUOUS create failure (timeout / connection drop — anything but a
+            # clean server reject) may have ALREADY placed the replacement on the
+            # server; recreating the original now would leave TWO live orders. Only a
+            # TradeException means the server definitively rejected and NO order was
+            # placed, so only then is a rollback safe. Otherwise → UNKNOWN so the
+            # caller reconciles (refetches working orders), with NO second create.
+            if not isinstance(exc, TradeException):
+                return self._fail(f"replace-{order_id}", exc)
+            # Clean reject: the order was cancelled but not replaced. Recreate the
+            # ORIGINAL (its pre-cancel price/SL/TP + original expiration) so real
+            # money isn't left exposed with no resting order.
+            orig_opts = _order_original_expiration(current)
+            try:
+                await self._data._bounded(
+                    _create(
+                        current.get("openPrice"),
+                        _lvl(current.get("stopLoss")),
+                        _lvl(current.get("takeProfit")),
+                        orig_opts,
+                    )
+                )
+                restored = True
+            except Exception:
+                log.exception("MT5 expiry cancel-replace rollback FAILED for %s", order_id)
+                restored = False
+            reason = (
+                f"expiry change failed; original order restored: {exc}"
+                if restored
+                else f"expiry change failed AND rollback failed — order {order_id} "
+                f"is CANCELLED with no replacement: {exc}"
+            )
+            return OrderResult(
+                client_order_id=f"replace-{order_id}",
+                status=OrderStatus.REJECTED,
+                reason=reason,
+                resolved_at=datetime.now(timezone.utc),
+            )
+
+        # The replacement is a fresh pending order with a new ticket id.
+        return OrderResult(
+            client_order_id=f"replace-{order_id}",
+            status=OrderStatus.PENDING,
+            deal_id=resp.get("orderId"),
             reason=resp.get("stringCode", ""),
             resolved_at=datetime.now(timezone.utc),
         )

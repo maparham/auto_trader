@@ -42,6 +42,8 @@ import {
 import { computeOrderInfo, usedMargin } from "./lib/orderInfo";
 import { leverageFor, type TradingSettings } from "./theme";
 import Tooltip from "./components/Tooltip";
+import ExpirySelect from "./components/ExpirySelect";
+import { expiryToApi, isValidExpiry } from "./lib/expiry";
 
 interface Props {
   epic: string;
@@ -209,6 +211,7 @@ export default function OrderTicket({
       price: entry,
       stop: seed(d?.stop != null, !long),
       takeProfit: seed(d?.takeProfit != null, long),
+      expiresAt: d?.expiresAt ?? null,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [side, orderType, epic, mid, editId]);
@@ -281,6 +284,11 @@ export default function OrderTicket({
       setMsg("Enter a valid size.");
       return;
     }
+    const expMs = isLimit ? myDraft?.expiresAt ?? null : null;
+    if (!isValidExpiry(expMs, Date.now())) {
+      setMsg("Expiration must be in the future.");
+      return;
+    }
     const realMoney = isRealMoneyAccount(account);
     if (realMoney && !confirm(`Place a REAL-money ${side.toUpperCase()} of ${qty} ${epic}?`))
       return;
@@ -297,6 +305,7 @@ export default function OrderTicket({
         limit_level: isLimit ? entryPrice : null,
         stop_level: slVal,
         take_profit_level: tpVal,
+        expires_at: expiryToApi(expMs),
         confirm: realMoney,
       });
       if (result.status === "rejected") {
@@ -397,6 +406,13 @@ export default function OrderTicket({
             </span>
           </div>
         </label>
+      )}
+
+      {isLimit && (
+        <ExpirySelect
+          value={myDraft?.expiresAt ?? null}
+          onChange={(ms) => patchDraft({ expiresAt: ms })}
+        />
       )}
 
       {/* Units + value. */}
@@ -630,11 +646,24 @@ function EditTicket({
           ? `Take profit must be ${long ? "above" : "below"} the current price (${latest.toFixed(precision)})`
           : null;
 
+  // Resolved expiry: the pending edit if the user touched it this session, else
+  // carried forward from the order's current value — sent on EVERY update (not
+  // just on change) because IG/Capital's amend REPLACES the order, so a
+  // level-only edit that omitted expiry would silently downgrade a GTD order
+  // back to GTC.
+  const mergedExpiry = pending.expiresAt !== undefined ? pending.expiresAt : (trade.expiresAt ?? null);
+  const expiryValid = !isOrder || isValidExpiry(mergedExpiry, Date.now());
+  const expiryError = expiryValid ? null : "Expiration must be in the future.";
+
   async function update() {
+    if (isOrder && !isValidExpiry(mergedExpiry, Date.now())) {
+      setMsg("Expiration must be in the future.");
+      return;
+    }
     setBusy(true);
     setMsg(null);
     try {
-      await applyEditedLevels(trade, { price, stop, takeProfit: tp }, account);
+      await applyEditedLevels(trade, { price, stop, takeProfit: tp, expiresAt: mergedExpiry }, account);
       refreshTrades();
       exit();
     } catch (e) {
@@ -675,6 +704,13 @@ function EditTicket({
         </div>
       </label>
 
+      {isOrder && (
+        <ExpirySelect
+          value={pending.expiresAt !== undefined ? pending.expiresAt : (trade.expiresAt ?? null)}
+          onChange={(ms) => patch({ expiresAt: ms })}
+        />
+      )}
+
       <div className="ot-exits">
         <ExitRow
           label="Take profit"
@@ -703,7 +739,7 @@ function EditTicket({
       <div className="ot-edit-actions">
         <button
           className="ot-action ot-edit-update"
-          disabled={busy || levelError != null}
+          disabled={busy || levelError != null || expiryError != null}
           onClick={update}
         >
           Update {isOrder ? "order" : "position"}
@@ -713,8 +749,8 @@ function EditTicket({
         </button>
       </div>
 
-      <div className={`ot-msg${msg || levelError ? " show ot-msg-err" : ""}`}>
-        {msg ?? levelError ?? ""}
+      <div className={`ot-msg${msg || levelError || expiryError ? " show ot-msg-err" : ""}`}>
+        {msg ?? levelError ?? expiryError ?? ""}
       </div>
     </div>
   );

@@ -588,7 +588,14 @@ export default function PositionsPanel({
                         </td>
                         <td className="pp-c-num pp-c-lev">{t.leverage}:1</td>
                         <td className="pp-c-num">{cash(t.margin)}</td>
-                        <td className="pp-c-time">{fmtTime(t.openedAt)}</td>
+                        <td className="pp-c-time">
+                          {fmtTime(t.openedAt)}
+                          {t.kind === "order" && t.expiresAt != null && (
+                            <span className="pp-expiry">
+                              exp {new Date(t.expiresAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                            </span>
+                          )}
+                        </td>
                         <td className="pp-c-act">
                           <div className="pp-actions">
                             <button
