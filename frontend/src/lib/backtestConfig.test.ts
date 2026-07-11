@@ -4,6 +4,7 @@ import {
   collectSeriesOperands,
   cloneRule,
   longestIndicatorLength,
+  operandBaseLen,
   defaultBacktestConfig,
   riskAtrLengths,
   scalingAtrLengths,
@@ -296,6 +297,21 @@ describe("longestIndicatorLength with slope", () => {
       right: { kind: "const", value: 0 },
     });
     expect(longestIndicatorLength(avwap)).toBe(1);
+  });
+
+  it("operandBaseLen caps SLOPE's length list at 5, matching the series (K agreement)", () => {
+    // 6 configured lengths; slopeLengths() caps to the first 5 → [9,21,50,100,200],
+    // so K=5. line 5 is the MA operand for the FIRST kept length (index 5-K=0),
+    // i.e. lengths[0]=9 -> just its MA warm-up (9). Without the cap, K would be 6
+    // and line 5 would fall into the SLOPE branch for lengths[5]=300, producing a
+    // much larger (and wrong) value.
+    const op = ser({
+      source: "indicator",
+      indicatorType: "SLOPE",
+      calcParams: [9, 21, 50, 100, 200, 300],
+      line: 5,
+    });
+    expect(operandBaseLen(op)).toBe(9);
   });
 });
 

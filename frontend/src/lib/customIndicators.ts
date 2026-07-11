@@ -19,6 +19,7 @@ export * from "./indicators/timeHighlight";
 export * from "./indicators/pivots";
 export * from "./indicators/pivotBands";
 export * from "./indicators/curveLabels";
+export * from "./indicators/slope";
 
 import { EMA_TEMPLATE, MA_TEMPLATE } from "./indicators/ma";
 import { LR_TEMPLATE } from "./indicators/lr";
@@ -28,6 +29,7 @@ import { RSI_TEMPLATE } from "./indicators/rsi";
 import { SESSIONS_TEMPLATE, registerSessionsAxis } from "./indicators/sessions";
 import { TIME_HIGHLIGHT_TEMPLATE } from "./indicators/timeHighlight";
 import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
+import { SLOPE_TEMPLATE } from "./indicators/slope";
 
 // Base templates for our custom indicator TYPES, keyed by type. Each is a full
 // klinecharts indicator definition MINUS the `name` (the name is assigned per
@@ -43,7 +45,8 @@ export type CustomIndicatorType =
   | "RSI"
   | "SESSIONS"
   | "TIME_HIGHLIGHT"
-  | "PIVOT_BANDS";
+  | "PIVOT_BANDS"
+  | "SLOPE";
 
 export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate, "name">> = {
   EMA: EMA_TEMPLATE,
@@ -56,6 +59,7 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   SESSIONS: SESSIONS_TEMPLATE,
   TIME_HIGHLIGHT: TIME_HIGHLIGHT_TEMPLATE,
   PIVOT_BANDS: PIVOT_BANDS_TEMPLATE,
+  SLOPE: SLOPE_TEMPLATE,
 };
 
 // Register each base type under its own name (so a single instance can still use

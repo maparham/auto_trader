@@ -15,7 +15,7 @@ import { PREV_HL_PERIODS } from "./indicators/prevHl";
 import { DIVERGENCE_KINDS, RSI_DIVERGENCE_DEFAULTS, type DivergenceKind, type RsiExtend } from "./customIndicators";
 
 /** Custom indicator types copyable into a rule (SESSIONS deferred). */
-const SUPPORTED_INDICATORS = new Set<string>(["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI", "PIVOT_BANDS"]);
+const SUPPORTED_INDICATORS = new Set<string>(["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI", "PIVOT_BANDS", "SLOPE"]);
 /** Straight-line drawings evaluable as a per-bar price series. */
 const SUPPORTED_DRAWINGS = new Set<string>([
   "segment", "rayLine", "straightLine", "horizontalStraightLine", "priceLine",
@@ -142,6 +142,7 @@ export function recipeLabel(recipe: SeriesRecipe): string {
   const t = recipe.indicatorType;
   // Types whose calcParams aren't a meaningful "(length)" label.
   if (t === "PIVOT_BANDS") return "Pivot Bands";
+  if (t === "SLOPE") return "MA Slope";
   if (t === "VWAP" || t === "AVWAP" || t === "PREV_HL") return t === "PREV_HL" ? "Prev H/L" : t;
   const params = recipe.calcParams.filter((n) => Number.isFinite(n));
   return params.length ? `${t}(${params.join(", ")})` : t;
@@ -177,7 +178,7 @@ const PREV_HL_LABELS: Record<string, string> = {
  * (backtestSeries.ts) can resolve — so a picked line always reproduces a real curve.
  * `[]` for unsupported types. Reads the RAW extendData (which still carries the
  * render-state keys lineHidden/smoothing/anchorTs that the recipe snapshot strips). */
-export function indicatorOutputs(indType: string, extendData: unknown, _calcParams: number[]): OutputChoice[] {
+export function indicatorOutputs(indType: string, extendData: unknown, calcParams: number[]): OutputChoice[] {
   if (!isSupportedIndicatorType(indType)) return [];
   const ext = (extendData && typeof extendData === "object" ? extendData : {}) as Record<string, unknown>;
   switch (indType) {
@@ -231,6 +232,18 @@ export function indicatorOutputs(indType: string, extendData: unknown, _calcPara
     case "VWAP":
     case "AVWAP":
       return [{ lineIndex: 0, label: "Value", base: true }];
+    case "SLOPE": {
+      // Each configured length exposes TWO picker rows: its slope (lineIndex
+      // 0..K-1) and its raw underlying MA (lineIndex K..2K-1) — see the SLOPE
+      // `line` encoding in backtestSeries.ts's computeIndicatorRecipe.
+      const lengths = (Array.isArray(calcParams) ? calcParams : []).map(Number)
+        .filter((v) => Number.isFinite(v) && v !== 0).slice(0, 5);
+      const ls = lengths.length ? lengths : [9];
+      const K = ls.length;
+      const slopes = ls.map((len, i) => ({ lineIndex: i, label: `Slope MA ${len}`, ...(i === 0 ? { base: true } : {}) }));
+      const mas = ls.map((len, i) => ({ lineIndex: K + i, label: `MA ${len}` }));
+      return [...slopes, ...mas];
+    }
     default:
       return [];
   }

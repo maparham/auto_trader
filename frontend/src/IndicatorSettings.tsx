@@ -16,8 +16,10 @@ import FloatingModal from "./components/FloatingModal";
 import type { Chart, Indicator } from "klinecharts";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
-import { resolveInputs, isMovingAverage } from "./lib/indicatorMeta";
-import { applyPivotBandsTimeframe } from "./lib/mtfCoordinator";
+import { resolveInputs, isMovingAverage, SMOOTHING_TYPES } from "./lib/indicatorMeta";
+import { applyPivotBandsTimeframe, applySlopeTimeframe } from "./lib/mtfCoordinator";
+import { slopeLengths, type SlopeExtend, type SlopeSmoothing, type SlopeUnit } from "./lib/indicators/slope";
+import type { PriceSource } from "./lib/mtf";
 import type {
   MaExtend,
   PivotBandsMode,
@@ -142,6 +144,9 @@ export default function IndicatorSettings({
   const isRsi = type === "RSI";
   // Pivot Bands supports MTF (like EMA/MA) but lives on the generic inputs path.
   const isPivotBands = type === "PIVOT_BANDS";
+  // Slope also supports MTF (like EMA/MA/Pivot Bands) but lives on the generic
+  // inputs path too (maLen/slopeN via calcParams, maType/units/source via extend).
+  const isSlope = type === "SLOPE";
   // Overlay indicators with a multi-line channel get per-line show/hide checkboxes
   // (+ opacity) in the Style tab, like TradingView's band toggles.
   const hasLineToggle = isAvwap || type === "LR" || type === "PREV_HL";
@@ -269,6 +274,20 @@ export default function IndicatorSettings({
   const [bandMode, setBandMode] = useState<BandMode>(avwapExt0.bandMode ?? "stdev");
   const [bands, setBands] = useState<[BandSetting, BandSetting, BandSetting]>(
     avwapExt0.bands ?? AVWAP_DEFAULT_BANDS,
+  );
+
+  // --- SLOPE: MA lengths (calcParams, up to 5) + slope period/smoothing/
+  // color-by-direction (extendData). maType/units/source ride the generic
+  // genExtend path above (meta-declared selects); these four don't fit that
+  // fixed schema (a variable list + a nested {type,length} object + a bool
+  // that's meaningful only for one length), so they get dedicated state here.
+  const slopeExt0 = (ind?.extendData ?? {}) as SlopeExtend;
+  const [slopePeriod, setSlopePeriod] = useState<number>(slopeExt0.slopePeriod ?? 3);
+  const [smoothing, setSmoothing] = useState<SlopeSmoothing>(
+    slopeExt0.smoothing ?? { type: "none", length: 9 },
+  );
+  const [colorByDirection, setColorByDirection] = useState<boolean>(
+    slopeExt0.colorByDirection ?? true,
   );
 
   // --- PREV_HL: per-instance timezone override + per-boundary length/agg (Inputs) ---
@@ -410,6 +429,13 @@ export default function IndicatorSettings({
     // so route it through the coordinator instead of the generic override.
     if (isPivotBands && (field === "mode" || field === "source")) {
       applyPivotBands(field === "mode" ? { mode: value as string } : { source: value as string });
+      return;
+    }
+    // Slope's MA Type/Units/Source changes must recompute the HTF series under an
+    // active timeframe too (a plain extend write would only re-align the stale
+    // one), so route them through the coordinator instead of the generic override.
+    if (isSlope && (field === "maType" || field === "units" || field === "source")) {
+      applySlope({ [field]: value as string });
       return;
     }
     const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
@@ -556,6 +582,16 @@ export default function IndicatorSettings({
     // Pivot Bands persists only the chosen timeframe (never the bulky HTF series);
     // refreshMtfIndicators refetches it on reload, like EMA/MA.
     if (isPivotBands && timeframe !== "chart") extendData.mtf = { timeframe };
+    // Slope persists only the chosen timeframe (never the bulky HTF series);
+    // refreshMtfIndicators refetches it on reload, like Pivot Bands/EMA/MA.
+    if (isSlope && timeframe !== "chart") extendData.mtf = { timeframe };
+    if (isSlope) {
+      // slopePeriod/smoothing/colorByDirection don't ride genExtend (they're not
+      // meta-declared selects) — persist them explicitly so they survive reload.
+      extendData.slopePeriod = slopePeriod;
+      if (smoothing.type !== "none") extendData.smoothing = smoothing;
+      extendData.colorByDirection = colorByDirection;
+    }
     if (isAvwap) {
       avwapConfig(extendData, avwapSource, bandMode, bands);
     }
@@ -625,7 +661,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
 
   // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
   // setParam's isMa branch below, so it stays a shell-local binding.
@@ -656,6 +692,68 @@ export default function IndicatorSettings({
       name,
       paneId,
       { n, k, mode, source },
+      tf === "chart" ? null : tf,
+      brokerId,
+    );
+  }
+
+  // Push a Slope config (chart-TF or MTF) through the coordinator, which refetches
+  // + recomputes the slope on the higher timeframe's native bars when one is set
+  // (mirrors applyPivotBands above). `lengths` is the calcParams LIST (one MA
+  // length per line, up to 5 — mirrors the Pivot Bands N/K pattern but as an
+  // array); slopeN/maType/units/source/smoothing come from extendData
+  // (slopePeriod/genExtend.maType/genExtend.units/genExtend.source/smoothing
+  // state). Reads explicit overrides so a param change never races setState.
+  //
+  // applySlopeTimeframe's `ext` only explicitly sets maType/units/config.options
+  // (source/offset) — slopePeriod/smoothing/colorByDirection ride through ONLY
+  // via its leading `...ind.extendData` spread, i.e. whatever is ALREADY stored
+  // on the live indicator. So a slopePeriod/smoothing edit must land on the live
+  // indicator's extendData BEFORE calling the coordinator, or the coordinator's
+  // recompute (chart-TF included) would use the stale stored value instead of
+  // the just-changed one.
+  function applySlope(
+    next: Partial<{
+      lengths: number[];
+      slopeN: number;
+      maType: string;
+      units: string;
+      source: string;
+      smoothing: SlopeSmoothing;
+      colorByDirection: boolean;
+      timeframe: string;
+    }> = {},
+  ): void {
+    const tf = next.timeframe ?? timeframe;
+    const nextSlopeN = next.slopeN ?? slopePeriod;
+    const nextSmoothing = next.smoothing ?? smoothing;
+    const nextColorByDirection = next.colorByDirection ?? colorByDirection;
+    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    chart.overrideIndicator(
+      {
+        name,
+        extendData: {
+          ...((live?.extendData as object) ?? {}),
+          slopePeriod: nextSlopeN,
+          smoothing: nextSmoothing.type === "none" ? undefined : nextSmoothing,
+          colorByDirection: nextColorByDirection,
+        },
+      },
+      paneId,
+    );
+    void applySlopeTimeframe(
+      chart,
+      epic,
+      name,
+      paneId,
+      {
+        maType: (next.maType ?? (genExtend.maType === "sma" ? "sma" : "ema")) as "ema" | "sma",
+        lengths: next.lengths ?? slopeLengths(calcParams),
+        slopeN: nextSlopeN,
+        units: (next.units ?? (genExtend.units as SlopeUnit) ?? "pctHr") as SlopeUnit,
+        smoothing: nextSmoothing.type === "none" ? undefined : nextSmoothing,
+        options: { source: (next.source ?? genExtend.source ?? "close") as PriceSource, offset },
+      },
       tf === "chart" ? null : tf,
       brokerId,
     );
@@ -698,6 +796,9 @@ export default function IndicatorSettings({
       // coordinator (which also writes calcParams).
       apply({ calcParams: nextCp });
       applyPivotBands({ n: nextCp[0], k: nextCp[1] });
+      // isSlope has no calcParam-sourced input left (MA Lengths is the dedicated
+      // editor below, which writes calcParams + calls applySlope directly), so
+      // this generic setParam path is never reached for SLOPE.
     } else {
       apply({ calcParams: nextCp });
     }
@@ -1037,6 +1138,59 @@ export default function IndicatorSettings({
                   addWindow={addWindow}
                 />
               )}
+              {isSlope && (
+                <div className="slope-lengths">
+                  <label>
+                    MA Lengths{" "}
+                    <InfoTip
+                      title="MA Lengths"
+                      text="One slope line per moving-average length. Add up to 5 to compare fast and slow momentum."
+                    />
+                  </label>
+                  {calcParams.map((len, i) => (
+                    <span className="slope-length-chip" key={i}>
+                      <input
+                        type="number"
+                        min={1}
+                        value={Number.isFinite(len) ? len : ""}
+                        onChange={(e) => {
+                          const nextCp = calcParams.slice();
+                          nextCp[i] = Number(e.target.value);
+                          setCalcParams(nextCp);
+                          applySlope({ lengths: slopeLengths(nextCp) });
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="slope-length-remove"
+                        aria-label={`Remove length ${i + 1}`}
+                        disabled={calcParams.length <= 1}
+                        onClick={() => {
+                          const nextCp = calcParams.filter((_, j) => j !== i);
+                          setCalcParams(nextCp);
+                          applySlope({ lengths: slopeLengths(nextCp) });
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <button
+                    type="button"
+                    className="slope-length-add"
+                    aria-label="Add MA length"
+                    title="Add another MA length"
+                    disabled={calcParams.length >= 5}
+                    onClick={() => {
+                      const nextCp = [...calcParams, 9];
+                      setCalcParams(nextCp);
+                      applySlope({ lengths: slopeLengths(nextCp) });
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+              )}
               {inputs.map((inp) => {
                 // Conditional visibility: skip an input whose showWhen guard isn't
                 // met by the current (extend-stored) value of the controlling field.
@@ -1091,6 +1245,102 @@ export default function IndicatorSettings({
                 }
                 return null;
               })}
+              {isSlope && (
+                <>
+                  <div className="ind-row">
+                    <span className="ind-row-head">
+                      <label>Slope Period</label>
+                      <InfoTip
+                        title="Slope Period"
+                        text="The number of bars the slope is measured over. Larger is smoother and slower to turn."
+                      />
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={slopePeriod}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setSlopePeriod(v);
+                        applySlope({ slopeN: v });
+                      }}
+                    />
+                  </div>
+                  <div className="ind-group">Smoothing</div>
+                  <div className="ind-row">
+                    <span className="ind-row-head">
+                      <label>Type</label>
+                      <InfoTip
+                        title="Smoothing"
+                        text="The averaging function for the slope line to cut noise. None keeps the raw slope; SMA/EMA smooth it."
+                      />
+                    </span>
+                    <select
+                      value={smoothing.type}
+                      onChange={(e) => {
+                        const next: SlopeSmoothing = {
+                          type: e.target.value as SlopeSmoothing["type"],
+                          length: smoothing.length,
+                        };
+                        setSmoothing(next);
+                        applySlope({ smoothing: next });
+                      }}
+                    >
+                      {SMOOTHING_TYPES.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {smoothing.type !== "none" && (
+                    <div className="ind-row">
+                      <span className="ind-row-head">
+                        <label>Length</label>
+                        <InfoTip
+                          title="Smoothing Length"
+                          text="The number of bars in the smoothing average. Longer is smoother but adds more lag."
+                        />
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={smoothing.length}
+                        onChange={(e) => {
+                          const next: SlopeSmoothing = {
+                            type: smoothing.type,
+                            length: Number(e.target.value),
+                          };
+                          setSmoothing(next);
+                          applySlope({ smoothing: next });
+                        }}
+                      />
+                    </div>
+                  )}
+                  <span className="ind-row-head">
+                    <label
+                      className={`ind-check${calcParams.length > 1 ? " ind-check-disabled" : ""}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={colorByDirection}
+                        disabled={calcParams.length > 1}
+                        onChange={(e) => {
+                          setColorByDirection(e.target.checked);
+                          applySlope({ colorByDirection: e.target.checked });
+                        }}
+                      />
+                      <span>Color by direction</span>
+                    </label>
+                    {calcParams.length > 1 && (
+                      <InfoTip
+                        title="Color by direction"
+                        text="Green when the slope is rising, red when falling. Available only with a single line."
+                      />
+                    )}
+                  </span>
+                </>
+              )}
               {type === "PREV_HL" && (
                 <PrevHlInputsPanel
                   lines={lines}
@@ -1148,11 +1398,49 @@ export default function IndicatorSettings({
                     />
                   </span>
                 </>
+              ) : isSlope ? (
+                <>
+                  {/* Higher-timeframe slope computed on native HTF bars, aligned
+                      onto the chart bars (no lookahead), same as EMA/MA. */}
+                  <div className="ind-row">
+                    <span className="ind-row-head">
+                      <label>Timeframe</label>
+                      <InfoTip
+                        title="Timeframe"
+                        text="Compute the slope on this timeframe instead of the chart's. A higher timeframe gives a steadier, slower trend read."
+                      />
+                    </span>
+                    <select
+                      value={timeframe}
+                      onChange={(e) => {
+                        setTimeframe(e.target.value);
+                        applySlope({ timeframe: e.target.value });
+                      }}
+                    >
+                      <option value="chart">Chart</option>
+                      {higherTimeframes.map((p) => (
+                        <option key={p.resolution} value={p.resolution}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input type="checkbox" checked disabled readOnly />
+                      <span>Wait for timeframe closes</span>
+                    </label>
+                    <InfoTip
+                      title="Wait for timeframe closes"
+                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                    />
+                  </span>
+                </>
               ) : (
                 <div className="ind-row">
                   <span className="ind-row-head">
                     <label>Timeframe</label>
-                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA and MA." />
+                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, and Slope." />
                   </span>
                   <select value="chart" disabled>
                     <option value="chart">Chart</option>

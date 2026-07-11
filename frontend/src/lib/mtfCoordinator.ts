@@ -18,6 +18,14 @@ import {
   type PivotBandsMode,
   type PivotBandsSource,
 } from "./indicators/pivotBands";
+import {
+  slopeLineSeries,
+  inferBarHours,
+  slopeLengths,
+  type SlopeUnit,
+  type SlopeExtend,
+  type SlopeSmoothing,
+} from "./indicators/slope";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
 // so a wide loaded span needs several pages walked back — kept under the cap.
@@ -197,6 +205,75 @@ export async function applyPivotBandsTimeframe(
   chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
 }
 
+interface SlopeConfig {
+  maType: "ema" | "sma";
+  lengths: number[]; // calcParams — one MA length per line
+  slopeN: number;
+  units: SlopeUnit;
+  smoothing?: SlopeSmoothing;
+  options: MaExtend; // source/offset
+}
+
+/**
+ * Point the Slope indicator at a higher timeframe (or back to the chart timeframe
+ * when `timeframe` is null/"chart"). Slope is computed on the NATIVE HTF bars
+ * (with HTF barHours via inferBarHours) BEFORE alignment, matching the rule path
+ * (buildChartOperandSeries runs the recipe on native HTF candles) so visual↔rule
+ * MTF parity holds. One slope series is computed per MA length and stashed on
+ * extendData.mtf.htfSeriesByLine (same length/order as calcParams) —
+ * computeSlopeCalc's MTF branch assumes this.
+ */
+export async function applySlopeTimeframe(
+  chart: Chart,
+  epic: string,
+  name: string,
+  paneId: string,
+  config: SlopeConfig,
+  timeframe: string | null,
+  brokerId?: string,
+  oldestChartMs?: number,
+): Promise<void> {
+  const ind = chart.getIndicatorByPaneId(paneId, name) as { extendData?: SlopeExtend } | null;
+  const ext: SlopeExtend = {
+    ...(ind?.extendData ?? {}),
+    ...config.options,
+    maType: config.maType,
+    units: config.units,
+  };
+  const calcParams = config.lengths;
+
+  if (!timeframe || timeframe === "chart") {
+    ext.mtf = { timeframe: null };
+    chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
+    return;
+  }
+
+  // Reach back the longest MA length + slope period (+ smoothing) so the HTF
+  // left edge is populated for every line.
+  const smLen = config.smoothing && config.smoothing.type !== "none" ? Number(config.smoothing.length) || 0 : 0;
+  const { htf, htfMs } = await fetchHtfBars(
+    chart,
+    epic,
+    timeframe,
+    Math.max(...config.lengths) + config.slopeN + smLen,
+    brokerId,
+    oldestChartMs,
+  );
+  // Slope computed on native HTF bars with HTF barHours (inferBarHours matches the
+  // rule path's computeIndicatorRecipe), BEFORE alignHtfToChart forward-fills.
+  const barHours = inferBarHours(htf);
+  const byLine = config.lengths.map((len) =>
+    slopeLineSeries(htf, config.maType, len, config.slopeN, config.units, config.options.source, config.smoothing, barHours),
+  );
+  ext.mtf = {
+    timeframe,
+    htfStarts: htf.map((b) => b.timestamp),
+    htfSeriesByLine: byLine,
+    htfMs,
+  };
+  chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
+}
+
 /**
  * Re-fetch HTF data for every MTF indicator (EMA/MA and Pivot Bands) already
  * configured for a timeframe — call after the symbol or chart timeframe changes,
@@ -225,7 +302,7 @@ export async function refreshMtfIndicators(
       const ind = indUnknown as {
         name?: string;
         calcParams?: unknown[];
-        extendData?: MaExtend & PivotBandsExtend;
+        extendData?: MaExtend & PivotBandsExtend & SlopeExtend;
       };
       const type = indTypeOf({ name: id, extendData: ind.extendData });
       const tf = (ind.extendData?.mtf as MtfSeriesBase | undefined)?.timeframe;
@@ -274,6 +351,31 @@ export async function refreshMtfIndicators(
             id,
             paneId,
             { n, k, mode, source },
+            tf,
+            brokerId,
+            oldestChartMs,
+          ),
+        );
+      } else if (type === "SLOPE") {
+        const ext = ind.extendData ?? {};
+        const lengths = slopeLengths(ind.calcParams);
+        const slopeN = Number(ext.slopePeriod) || 3;
+        const smLen = ext.smoothing && ext.smoothing.type !== "none" ? Number(ext.smoothing.length) || 0 : 0;
+        if (covered(Math.max(...lengths) + slopeN + smLen)) return;
+        jobs.push(
+          applySlopeTimeframe(
+            chart,
+            epic,
+            id,
+            paneId,
+            {
+              maType: ext.maType === "sma" ? "sma" : "ema",
+              lengths,
+              slopeN,
+              units: ext.units ?? "pctHr",
+              smoothing: ext.smoothing,
+              options: { source: ext.source, offset: ext.offset },
+            },
             tf,
             brokerId,
             oldestChartMs,

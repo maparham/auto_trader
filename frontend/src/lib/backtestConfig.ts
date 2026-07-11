@@ -29,7 +29,7 @@ export interface SlopeSpec { len: number }
 
 /** The app's custom indicator types reachable as a rule operand (SESSIONS is
  * deferred — it has no price line and nothing to click-select). */
-export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI" | "PIVOT_BANDS";
+export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI" | "PIVOT_BANDS" | "SLOPE";
 /** The straight-line drawing family evaluable as a per-bar price series. */
 export type DrawingKind = "segment" | "rayLine" | "straightLine" | "horizontalStraightLine" | "priceLine";
 
@@ -406,6 +406,26 @@ export function operandBaseLen(op: Operand): number {
       const n = Math.max(1, Number(r.calcParams[0]) || 5);
       const k = Math.max(1, Number(r.calcParams[1]) || 3);
       return 2 * n + k;
+    }
+    // Slope needs its underlying MA warmed up PLUS the slope lookback itself —
+    // except a line >= K (the raw-MA operand for that length), which only needs
+    // the MA warm-up. K is capped at 5 lengths (mirrors slopeLengths in
+    // indicators/slope.ts) so K agrees with the series the operand actually reads.
+    if (r.indicatorType === "SLOPE") {
+      const ext = (r.extend ?? {}) as { slopePeriod?: number; smoothing?: { type?: string; length?: number } };
+      // Mirror slopeLengths() (indicators/slope.ts) inline rather than importing it —
+      // that module pulls in klinecharts at load time, which breaks this file's
+      // pure-config test isolation (no klinecharts mock there). Keep the filter +
+      // cap + default in lockstep with slopeLengths by hand.
+      const raw = (r.calcParams ?? []).map(Number).filter((v) => Number.isFinite(v) && v !== 0);
+      const lengths = (raw.length ? raw.slice(0, 5) : [9]);
+      const K = lengths.length;
+      const line = r.line ?? 0;
+      if (line >= K) return lengths[line - K] ?? lengths[0]; // MA operand: just MA warm-up
+      const len = lengths[line] ?? lengths[0];
+      const n = Number(ext.slopePeriod) || 3;
+      const sm = ext.smoothing && ext.smoothing.type && ext.smoothing.type !== "none" ? (Number(ext.smoothing.length) || 0) : 0;
+      return len + n + sm;
     }
     return base;
   }

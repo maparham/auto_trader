@@ -255,6 +255,41 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Time Highlight",
     desc: "Highlights candles that fall inside time-of-day windows, in your device's local timezone. Each window can shade a translucent background band, recolor its candles, or both. Add, retime, recolor, or restyle each window in the settings.",
   },
+  SLOPE: {
+    // MA Lengths (calcParams, a variable-length list up to 5) and Smoothing
+    // (extendData.smoothing = {type, length}) can't be expressed by this fixed
+    // schema — both are rendered by dedicated controls in the SLOPE branch of
+    // IndicatorSettings.tsx instead. Only the plain selects stay here.
+    inputs: [
+      {
+        key: "maType", label: "MA Type", type: "select",
+        source: "extend", field: "maType", default: "ema",
+        tip: "EMA reacts faster to recent price; SMA weights every bar equally.",
+        options: [
+          { value: "ema", label: "EMA" },
+          { value: "sma", label: "SMA" },
+        ],
+      },
+      {
+        key: "units", label: "Units", type: "select",
+        source: "extend", field: "units", default: "pctHr",
+        tip: "Slope scale. % / hour is time-normalized and comparable across timeframes; % / bar and price / bar are per bar.",
+        options: [
+          { value: "pctHr", label: "% / hour" },
+          { value: "pctBar", label: "% / bar" },
+          { value: "priceBar", label: "Price / bar" },
+        ],
+      },
+      {
+        key: "source", label: "Source", type: "select",
+        source: "extend", field: "source", default: "close",
+        tip: "Price the moving average is built from (close, HL2, …).",
+        options: PRICE_SOURCES,
+      },
+    ],
+    title: "MA Slope",
+    desc: "Rate of change of an EMA or SMA over a lookback period (%/hr, %/bar, or price/bar).",
+  },
 };
 
 // Friendly name + description for klinecharts built-ins that DON'T need a custom

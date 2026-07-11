@@ -55,6 +55,28 @@ function ema(values: number[], length: number): Array<number | undefined> {
   return out;
 }
 
+/** Exponential moving average over a possibly-gappy series: `undefined` inputs
+ * pass through until the first defined value seeds it. Mirrors `sma()`'s
+ * array signature for callers (e.g. slope smoothing) that need EMA over a
+ * series with a leading warm-up gap. */
+export function emaGappy(
+  values: Array<number | undefined>,
+  length: number,
+): Array<number | undefined> {
+  const k = 2 / (length + 1);
+  const out: Array<number | undefined> = [];
+  let prev: number | undefined;
+  for (const v of values) {
+    if (v === undefined) {
+      out.push(undefined);
+      continue;
+    }
+    prev = prev === undefined ? v : v * k + prev * (1 - k);
+    out.push(prev);
+  }
+  return out;
+}
+
 /** Simple moving average over `length` (undefined until enough samples). */
 export function sma(values: number[], length: number): Array<number | undefined> {
   const out: Array<number | undefined> = new Array(values.length).fill(undefined);

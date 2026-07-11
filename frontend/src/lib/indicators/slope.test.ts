@@ -1,0 +1,124 @@
+import { describe, it, expect, vi } from "vitest";
+import type { KLineData } from "klinecharts";
+
+// SLOPE_TEMPLATE reads LineType/IndicatorSeries at module load; stub klinecharts'
+// runtime surface like the other indicator tests do.
+vi.mock("klinecharts", () => ({
+  LineType: { Solid: "solid", Dashed: "dashed" },
+  IndicatorSeries: { Normal: "normal", Price: "price" },
+  registerIndicator: () => {},
+}));
+
+const { inferBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries } =
+  await import("./slope");
+
+const bar = (t: number, c: number): KLineData =>
+  ({ timestamp: t, open: c, high: c, low: c, close: c, volume: 1 }) as KLineData;
+
+describe("inferBarHours", () => {
+  it("returns hours from the smallest positive timestamp gap", () => {
+    const c = [bar(0, 1), bar(300_000, 1), bar(900_000, 1)]; // 5-min min gap
+    expect(inferBarHours(c)).toBeCloseTo(1 / 12, 10);
+  });
+  it("falls back to 1 for a single bar", () => {
+    expect(inferBarHours([bar(0, 1)])).toBe(1);
+  });
+});
+
+describe("slopeWithUnits", () => {
+  const raw = [100, 101, 102, 103]; // +1 per bar off a 100 base
+  it("pctBar = percent change per bar", () => {
+    // (102-100)/100/2*100 = 1
+    expect(slopeWithUnits(raw, 2, 1 / 12, "pctBar")[2]).toBeCloseTo(1, 10);
+  });
+  it("pctHr divides pctBar-run by elapsed hours", () => {
+    // pctBar 1 over 2 bars * (1/12 h each) => 1 / (2 * 1/12) *? -> reuse formula
+    // (102-100)/100/(2 * 1/12)*100 = 12
+    expect(slopeWithUnits(raw, 2, 1 / 12, "pctHr")[2]).toBeCloseTo(12, 10);
+  });
+  it("priceBar = raw price change per bar", () => {
+    // (102-100)/2 = 1
+    expect(slopeWithUnits(raw, 2, 1 / 12, "priceBar")[2]).toBeCloseTo(1, 10);
+  });
+  it("undefined for the first n bars and where prev is 0", () => {
+    expect(slopeWithUnits(raw, 2, 1, "pctBar")[1]).toBeUndefined();
+    expect(slopeWithUnits([0, 1, 2], 1, 1, "pctBar")[1]).toBeUndefined(); // prev===0
+  });
+});
+
+describe("computeSlope", () => {
+  it("slopes the SMA of close over n bars", () => {
+    const c = [bar(0, 10), bar(60_000, 12), bar(120_000, 14), bar(180_000, 16)];
+    // sma length 1 = close itself; priceBar slope n=1 = adjacent diff = 2
+    const pts = computeSlope(c, "sma", 1, 1, "priceBar", {}, 1);
+    expect(pts[3].slope).toBeCloseTo(2, 10);
+    expect(pts[0].slope).toBeUndefined();
+  });
+});
+
+describe("SLOPE_TEMPLATE", () => {
+  const bar2 = (t: number, c: number): KLineData =>
+    ({ timestamp: t, open: c, high: c, low: c, close: c, volume: 1 }) as KLineData;
+  it("is a sub-pane single-line indicator", () => {
+    expect(SLOPE_TEMPLATE.series).toBe("normal");
+    expect(SLOPE_TEMPLATE.figures?.[0]?.key).toBe("slope0");
+  });
+  it("calc reads maType/units from extendData and slopes the MA", () => {
+    const c = [bar2(0, 10), bar2(60_000, 12), bar2(120_000, 14)];
+    const out = SLOPE_TEMPLATE.calc!(c, {
+      calcParams: [1],
+      extendData: { maType: "sma", units: "priceBar", slopePeriod: 1 },
+    } as never) as Array<{ slope0?: number }>;
+    expect(out[2].slope0).toBeCloseTo(2, 10); // adjacent diff of a length-1 SMA
+  });
+});
+
+describe("multi-line SLOPE", () => {
+  const bar3 = (t: number, c: number): KLineData =>
+    ({ timestamp: t, open: c, high: c, low: c, close: c, volume: 1 }) as KLineData;
+  it("calc returns slope0..slopeK, one per calcParams length", () => {
+    const c = [10, 11, 12, 13, 14].map((v, i) => bar3(i * 60_000, v));
+    const out = SLOPE_TEMPLATE.calc!(c, {
+      calcParams: [1, 2], // two MA lengths
+      extendData: { maType: "sma", units: "priceBar", slopePeriod: 1 },
+    } as never) as Array<Record<string, number | undefined>>;
+    expect("slope0" in out[4] && "slope1" in out[4]).toBe(true);
+    expect(out[4].slope0).toBeCloseTo(1, 10); // sma len1 → +1/bar priceBar slope
+  });
+  it("regenerateFigures emits one titled line figure per length", () => {
+    const figs = SLOPE_TEMPLATE.regenerateFigures!([9, 21, 50]);
+    expect(figs.map((f) => f.key)).toEqual(["slope0", "slope1", "slope2"]);
+    expect(figs.every((f) => f.type === "line")).toBe(true);
+    // every figure is titled (by its length) so the legend shows all slope values
+    expect(figs.map((f) => f.title)).toEqual(["Slope 9: ", "Slope 21: ", "Slope 50: "]);
+  });
+});
+
+describe("smoothSeries", () => {
+  it("none returns input unchanged", () => {
+    const v = [1, 2, 3];
+    expect(smoothSeries(v, { type: "none", length: 3 })).toEqual(v);
+    expect(smoothSeries(v, undefined)).toEqual(v);
+  });
+  it("sma length 2 averages the last 2 defined values", () => {
+    // sma over [10,20,30] len2 => [undefined,15,25] (first bar has no full window)
+    expect(smoothSeries([10, 20, 30], { type: "sma", length: 2 })).toEqual([undefined, 15, 25]);
+  });
+  it("passes undefined gaps through (leading warm-up preserved)", () => {
+    const out = smoothSeries([undefined, 10, 20], { type: "sma", length: 2 });
+    expect(out[0]).toBeUndefined();
+  });
+});
+
+describe("slopeLineSeries", () => {
+  it("MA→slope→smoothing, price/bar, sma len1 = adjacent diff then smoothed", () => {
+    const c = [10, 12, 14, 16, 18].map((v, i) => bar(i * 60_000, v));
+    // sma len1 MA = close; priceBar slope n=1 = +2 each bar; smoothing none => 2s
+    const raw = slopeLineSeries(c, "sma", 1, 1, "priceBar", "close", { type: "none", length: 3 }, 1);
+    expect(raw[4]).toBeCloseTo(2, 10);
+    // with sma-2 smoothing the 2s stay 2 (constant), but the first slope bar drops
+    const sm = slopeLineSeries(c, "sma", 1, 1, "priceBar", "close", { type: "sma", length: 2 }, 1);
+    expect(sm[4]).toBeCloseTo(2, 10);
+    expect(sm[1]).toBeUndefined(); // slope bar1 exists(2) but sma-2 needs 2 → undefined
+  });
+});

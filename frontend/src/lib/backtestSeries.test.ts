@@ -15,6 +15,7 @@ const { buildSeries, buildChartOperandSeries } = await import("./backtestSeries"
 const { maSeries, sma } = await import("./mtf");
 const { computeRsi, computeLr, computePrevHl, vwapFrom, detectDivergences, RSI_DIVERGENCE_DEFAULTS } = await import("./customIndicators");
 const { computePivotBands } = await import("./indicators/pivotBands");
+const { SLOPE_TEMPLATE } = await import("./indicators/slope");
 const { recipeKey, seriesName, operandBaseLen } = await import("./backtestConfig");
 
 // The base run is on 1-minute bars (candles() stamps every 60_000ms); no rule
@@ -478,6 +479,137 @@ describe("series operand — Pivot Bands recipe", () => {
     // A confirmed HTF pivot high (value 3) forward-fills onto the late base bars.
     expect(got.some((v) => v === 3)).toBe(true);
     expect(got[0]).toBeNull(); // before any confirmed HTF pivot
+  });
+});
+
+describe("series operand — SLOPE recipe parity", () => {
+  // Irregular spacing so pctHr differs from pctBar and inferBarHours actually
+  // matters — mirrors the barHours-inference contract slope.ts documents.
+  const bars: KLineData[] = [0, 1, 2, 3, 4, 6, 8].map((h, i) => ({
+    timestamp: h * 3_600_000,
+    open: 10 + i,
+    high: 10 + i,
+    low: 10 + i,
+    close: 10 + i,
+    volume: 0,
+  }));
+
+  it("operand series equals the plotted SLOPE line (pctBar units)", async () => {
+    const plotted = (
+      SLOPE_TEMPLATE.calc!(bars, {
+        calcParams: [3, 2],
+        extendData: { maType: "sma", units: "pctBar" },
+      } as never) as Array<{ slope0?: number }>
+    ).map((p) => p.slope0 ?? null);
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "SLOPE", calcParams: [3, 2], line: 0, extend: { maType: "sma", units: "pctBar" } },
+      bars,
+    );
+    expect(got).toEqual(plotted);
+    expect(got.some((v) => v !== null)).toBe(true);
+  });
+
+  it("operand series equals the plotted SLOPE line (pctHr units, proves inferBarHours parity)", async () => {
+    const plotted = (
+      SLOPE_TEMPLATE.calc!(bars, {
+        calcParams: [2, 1],
+        extendData: { maType: "ema", units: "pctHr" },
+      } as never) as Array<{ slope0?: number }>
+    ).map((p) => p.slope0 ?? null);
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "SLOPE", calcParams: [2, 1], line: 0, extend: { maType: "ema", units: "pctHr" } },
+      bars,
+    );
+    expect(got).toEqual(plotted);
+    expect(got.some((v) => v !== null)).toBe(true);
+  });
+
+  // calcParams is now a lengths array (K=1 here), so the slope-lookback n comes
+  // from ext.slopePeriod (default 3) rather than calcParams[1].
+  it("warm-up is length + slopePeriod", () => {
+    const op = { kind: "series", seriesKey: "x", label: "x", recipe: { source: "indicator", indicatorType: "SLOPE", calcParams: [9], line: 0, extend: { slopePeriod: 3 } } } as Operand;
+    expect(operandBaseLen(op)).toBe(9 + 3);
+  });
+
+  it("a picker-built 'MA Slope' operand resolves end-to-end (label + extend + parity)", async () => {
+    const { chartOperandSources } = await import("./chartOperand");
+    const src = chartOperandSources({
+      kind: "indicator", paneId: "candle_pane", id: "SLOPE#x",
+      indType: "SLOPE", calcParams: [3, 2], extendData: { maType: "sma", units: "pctBar" },
+    });
+    // K=2 lengths → 2K=4 picker rows: slopes (lineIndex 0,1) then raw MAs (2,3).
+    expect(src.outputs.map((o) => o.label)).toEqual(["Slope MA 3", "Slope MA 2", "MA 3", "MA 2"]);
+    expect(src.outputs.map((o) => o.lineIndex)).toEqual([0, 1, 2, 3]);
+    const out = src.outputs[0];
+    // recipeLabel(SLOPE) is the fixed "MA Slope" base label (unchanged by this
+    // task); line-0's base:true output carries it unsuffixed, per chartOperandSources.
+    expect(out.operand.label).toBe("MA Slope");
+    const recipe = (out.operand as Extract<Operand, { kind: "series" }>).recipe;
+    expect(recipe).toMatchObject({ extend: { maType: "sma", units: "pctBar" } });
+    const got = await seriesFor(recipe, bars);
+    const plotted = (
+      SLOPE_TEMPLATE.calc!(bars, {
+        calcParams: [3, 2],
+        extendData: { maType: "sma", units: "pctBar" },
+      } as never) as Array<{ slope0?: number }>
+    ).map((p) => p.slope0 ?? null);
+    expect(got).toEqual(plotted);
+  });
+
+  it("a truthy sub-1 length must NOT be clamped — matches the unclamped visual (all-null)", async () => {
+    const plotted = (
+      SLOPE_TEMPLATE.calc!(bars, {
+        calcParams: [0.5],
+        extendData: { maType: "ema", units: "pctHr" },
+      } as never) as Array<{ slope0?: number }>
+    ).map((p) => p.slope0 ?? null);
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "SLOPE", calcParams: [0.5], line: 0, extend: { maType: "ema", units: "pctHr" } },
+      bars,
+    );
+    expect(got).toEqual(plotted);
+    // Both the recipe and the visual should be entirely undefined for a sub-1
+    // MA length — if the recipe clamps with Math.max(1, …) it computes a real
+    // MA instead and this assertion (and the toEqual above) fails.
+    expect(got.every((v) => v === null)).toBe(true);
+  });
+
+  // Two lengths (K=2): line 1 must resolve to lengths[1]'s slope (slope1 on the
+  // template), not fall back to line 0 — proves the recipe indexes by `line`
+  // into its own calcParams rather than always using calcParams[0].
+  it("recipe line 1 (of K=2) matches the plotted slope1, including smoothing", async () => {
+    const ext = { maType: "sma" as const, units: "pctBar" as const, slopePeriod: 1, smoothing: { type: "sma" as const, length: 2 } };
+    const plotted = (
+      SLOPE_TEMPLATE.calc!(bars, {
+        calcParams: [1, 2],
+        extendData: ext,
+      } as never) as Array<{ slope1?: number }>
+    ).map((p) => p.slope1 ?? null);
+    const got = await seriesFor(
+      { source: "indicator", indicatorType: "SLOPE", calcParams: [1, 2], line: 1, extend: ext },
+      bars,
+    );
+    expect(got).toEqual(plotted);
+    expect(got.some((v) => v !== null)).toBe(true);
+  });
+
+  // line >= K (K=2 here) exposes the RAW underlying MA for lengths[line-K] — no
+  // slope, no smoothing — via maSeries directly.
+  it("recipe line >= K returns the raw underlying MA (no slope, no smoothing)", async () => {
+    const ext = { maType: "sma" as const, units: "pctBar" as const, slopePeriod: 1 };
+    const maLen1 = await seriesFor(
+      { source: "indicator", indicatorType: "SLOPE", calcParams: [1, 2], line: 2 /* K=2, +0 */, extend: ext },
+      bars,
+    );
+    const maLen2 = await seriesFor(
+      { source: "indicator", indicatorType: "SLOPE", calcParams: [1, 2], line: 3 /* K=2, +1 */, extend: ext },
+      bars,
+    );
+    const expected1 = nul(maSeries(bars, "sma", 1, {}).base);
+    const expected2 = nul(maSeries(bars, "sma", 2, {}).base);
+    expect(maLen1).toEqual(expected1);
+    expect(maLen2).toEqual(expected2);
+    expect(maLen1.some((v) => v !== null)).toBe(true);
   });
 });
 

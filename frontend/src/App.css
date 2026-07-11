@@ -1740,6 +1740,32 @@
 }
 .ind-check { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
 .ind-check input { cursor: pointer; }
+.ind-check-disabled { color: var(--text-faint); cursor: not-allowed; }
+.ind-check-disabled input { cursor: not-allowed; }
+
+/* Slope indicator: the configured MA lengths (Inputs tab) as compact chips that
+   wrap onto as few rows as fit, each a small length input + remove ×, with a
+   trailing "+" add chip (capped at 5, see slopeLengths). */
+.slope-lengths { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0; }
+.slope-lengths > label { flex-basis: 100%; color: var(--text-dim); }
+.slope-length-chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 2px 1px 6px;
+}
+.slope-length-chip input[type="number"] {
+  width: 40px; border: none; background: none; padding: 2px 0; text-align: center;
+}
+.slope-length-remove {
+  border: none; background: none; color: var(--text-faint); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 1px 3px; border-radius: 4px;
+}
+.slope-length-remove:hover:not(:disabled) { color: var(--sell); background: var(--hover); }
+.slope-length-remove:disabled { color: var(--text-faint); opacity: 0.4; cursor: not-allowed; }
+.slope-length-add {
+  border: 1px dashed var(--border); background: none; color: var(--accent);
+  cursor: pointer; font-size: 14px; line-height: 1; padding: 3px 8px; border-radius: 4px;
+}
+.slope-length-add:disabled { color: var(--text-faint); border-color: var(--border); opacity: 0.5; cursor: not-allowed; }
 /* Fib settings: two-column level grid — checkbox · value · picker · remove. The
    full color+style picker per row needs more width than the 360px default. */
 .ind-settings-fib { width: 400px; }

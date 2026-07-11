@@ -22,6 +22,7 @@ import {
 } from "./backtestConfig";
 import { atrSeries } from "./atr";
 import { computePivotBands, type PivotBandsExtend } from "./indicators/pivotBands";
+import { slopeLineSeries, inferBarHours, slopeLengths, type SlopeUnit, type SlopeExtend } from "./indicators/slope";
 import { RESOLUTION_SECONDS } from "./feed";
 
 function toNullable(arr: Array<number | undefined>): Array<number | null> {
@@ -128,7 +129,7 @@ function tfHours(resolution: string): number {
  * differenced before it's forward-filled onto the base bars, not after.
  * `barHours` is the hours-per-bar of THIS operand's timeframe. */
 function derive(op: Operand, candles: KLineData[], barHours: number): Array<number | undefined> {
-  const raw = computeRaw(op, candles);
+  const raw = computeRaw(op, candles, barHours);
   const n = slopeLen(op);
   return n === null ? raw : slopeOf(raw, n, barHours);
 }
@@ -151,9 +152,9 @@ function slopeOf(raw: Array<number | undefined>, n: number, barHours: number): A
  * a sloped price operand), undefined where there's no value (warm-up gap, unplaced
  * AVWAP, missing volume). Pure in `candles`, so it runs identically on the base
  * bars or a higher timeframe's. */
-function computeRaw(op: Operand, candles: KLineData[]): Array<number | undefined> {
+function computeRaw(op: Operand, candles: KLineData[], barHours: number): Array<number | undefined> {
   if (op.kind === "price") return candles.map((k) => k[op.field] ?? undefined);
-  if (op.kind === "series") return computeSeriesRecipe(op.recipe, candles);
+  if (op.kind === "series") return computeSeriesRecipe(op.recipe, candles, barHours);
   if (op.kind !== "indicator") return [];
   switch (op.indicator) {
     case "EMA":
@@ -187,9 +188,9 @@ function computeRaw(op: Operand, candles: KLineData[]): Array<number | undefined
 /** A copied chart operand's per-bar values. Runs the SAME pure compute function
  * the chart uses (so the operand reproduces the exact curve), then extracts the
  * selected output line. Pure in `candles`, so MTF just runs it on HTF bars. */
-function computeSeriesRecipe(recipe: SeriesRecipe, candles: KLineData[]): Array<number | undefined> {
+function computeSeriesRecipe(recipe: SeriesRecipe, candles: KLineData[], barHours: number): Array<number | undefined> {
   return recipe.source === "indicator"
-    ? computeIndicatorRecipe(recipe, candles)
+    ? computeIndicatorRecipe(recipe, candles, barHours)
     : computeDrawingRecipe(recipe, candles);
 }
 
@@ -212,7 +213,11 @@ function pickLine(points: Array<Record<string, unknown>>, keys: readonly string[
   });
 }
 
-function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[]): Array<number | undefined> {
+// `_barHours` is intentionally unused by every case below except SLOPE, which
+// deliberately ignores it in favor of inferBarHours(candles) for visual parity
+// (see the SLOPE case). Threaded through only so the signature stays uniform
+// with computeSeriesRecipe/computeRaw.
+function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[], _barHours: number): Array<number | undefined> {
   const ext = (r.extend ?? {}) as Record<string, unknown>;
   const line = r.line ?? 0;
   switch (r.indicatorType) {
@@ -263,6 +268,27 @@ function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[]): Array
       const k = Math.max(1, Number(r.calcParams[1]) || 3);
       const pts = computePivotBands(candles, n, k, ext as PivotBandsExtend);
       return pickLine(pts as unknown as Array<Record<string, unknown>>, LINE_KEYS.PIVOT_BANDS, line);
+    }
+    case "SLOPE": {
+      // Uses inferBarHours(candles) — NOT the threaded barHours param — so this
+      // matches SLOPE_TEMPLATE.calc exactly (recipe/visual parity). The threaded
+      // barHours instead drives the operand-level `~slope` transform in derive().
+      // Each configured length exposes TWO operands: line < K is that length's
+      // slope; line >= K is the raw underlying MA (no slope, no smoothing) — see
+      // the `line` encoding note above computeIndicatorRecipe.
+      const sext = ext as SlopeExtend;
+      const lengths = slopeLengths(r.calcParams);
+      const K = lengths.length;
+      const line = r.line ?? 0;
+      const maType = sext.maType === "sma" ? "sma" : "ema";
+      if (line >= K) {
+        const len = lengths[line - K] ?? lengths[0];
+        return maSeries(candles, maType, len, { source: sext.source }).base;
+      }
+      const len = lengths[line] ?? lengths[0];
+      const n = Number(sext.slopePeriod) || 3;
+      const units: SlopeUnit = sext.units ?? "pctHr";
+      return slopeLineSeries(candles, maType, len, n, units, sext.source, sext.smoothing, inferBarHours(candles));
     }
     default:
       return candles.map(() => undefined);
