@@ -2260,6 +2260,22 @@
 @media (prefers-reduced-motion: reduce) {
   .cl-live-dot::after { animation: none; }
 }
+/* Stalled feed: the socket is connected but no ticks have arrived for a while on
+   an open market (a silently-wedged upstream). Amber, and a slow breathing pulse
+   instead of the confident green "ping" — signals "connected but not receiving",
+   distinct from both live (green ping) and closed (no dot). */
+.cl-live-dot.cl-stale { background: #f5a623; }
+.cl-live-dot.cl-stale::after {
+  background: none;
+  animation: cl-stale-breathe 1.6s ease-in-out infinite;
+}
+@keyframes cl-stale-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #f5a623 60%, transparent); }
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, #f5a623 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cl-live-dot.cl-stale::after { animation: none; }
+}
 /* Info button next to the symbol — the discoverable way into the details modal.
    A rounded-square accent chip with a serif "i": being non-round, it never competes
    with the circular markers on the chart, and avoids the old "bullseye" (a ringed ⓘ

@@ -37,7 +37,7 @@ from metaapi_cloud_sdk.logger import LoggerManager
 
 from auto_trader.brokers._prices import pick_side
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
-from auto_trader.core.broker_health import BrokerReconnecting
+from auto_trader.core.broker_health import BrokerReconnecting, BrokerTimeout
 from auto_trader.core.models import (
     Candle,
     Order,
@@ -248,9 +248,19 @@ class MT5Broker(MarketDataBroker):
     # Per-call wall-clock budget for an RPC read/trade. Short so a wedged socket
     # surfaces as "reconnecting" in seconds rather than hanging the SDK's 60s
     # request timeout. Candle history uses a SEPARATE account path
-    # (get_historical_candles / historicalMarketDataRequestTimeout) and is not
-    # bounded by this.
+    # (get_historical_candles / historicalMarketDataRequestTimeout), bounded by
+    # HISTORY_BUDGET below instead.
     RPC_BUDGET = 8.0
+
+    # Per-PAGE budget for one get_historical_candles call. Deep daily/weekly
+    # pages are legitimately SLOW (~10–35s for ~500 daily bars — MetaApi
+    # generates them server-side), which is why the mt5 circuit breaker runs a
+    # 90s per-key budget in deps.py (the whole multi-page fetch); 45s per page
+    # sits comfortably above the slowest real page observed while still cutting
+    # off a genuine hang: MetaApi's history REST API was observed hanging a
+    # read past 60s during a cloud-side outage, holding chart requests open
+    # indefinitely.
+    HISTORY_BUDGET = 45.0
 
     # Minimum gap between background reconnect attempts, so a burst of polls during
     # an outage can't spawn a full-client rebuild every poll. Consecutive failed
@@ -675,6 +685,33 @@ class MT5Broker(MarketDataBroker):
 
     # --- candles --------------------------------------------------------------
 
+    async def _history_page(self, epic: str, tf: str, anchor, count: int) -> list[dict]:
+        """One bounded get_historical_candles page, with the SDK's failure modes
+        mapped onto the broker-health exceptions guarded() understands:
+
+          * hang past HISTORY_BUDGET -> BrokerTimeout (504), not an indefinite hold
+            on the chart request;
+          * SDK-internal CancelledError (the client cancels its own futures when
+            its account connection drops mid-call — observed live) ->
+            BrokerReconnecting (503). Unmapped it escapes guarded()'s
+            `except Exception` (CancelledError is a BaseException) and surfaces
+            as a raw 500 with no server-side log.
+
+        A cancellation of OUR task (shutdown, client disconnect) is re-raised
+        untouched — same discipline as _bounded."""
+        try:
+            return await asyncio.wait_for(
+                self._acct.get_historical_candles(epic, tf, anchor, count),
+                self.HISTORY_BUDGET,
+            )
+        except (asyncio.TimeoutError, TimeoutException) as exc:
+            raise BrokerTimeout(f"mt5: history fetch timed out for {epic}") from exc
+        except asyncio.CancelledError as exc:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling() > 0:
+                raise
+            raise BrokerReconnecting("mt5") from exc
+
     async def get_candles(
         self,
         epic: str,
@@ -700,7 +737,7 @@ class MT5Broker(MarketDataBroker):
         by_time: dict[datetime, Candle] = {}
         anchor = end
         for _ in range(_MAX_PAGES):
-            batch = await self._acct.get_historical_candles(epic, tf, anchor, _MAX_CANDLES_PER_CALL)
+            batch = await self._history_page(epic, tf, anchor, _MAX_CANDLES_PER_CALL)
             if not batch:
                 break
             for raw in batch:
@@ -726,7 +763,7 @@ class MT5Broker(MarketDataBroker):
         bar to the chart — the cache itself stores closed bars only."""
         await self._ensure()
         tf = _TIMEFRAME[resolution]
-        batch = await self._acct.get_historical_candles(epic, tf, None, count)
+        batch = await self._history_page(epic, tf, None, count)
         candles = sorted((_to_candle(r) for r in batch), key=lambda c: c.time)
         return candles[-count:]
 
@@ -743,7 +780,7 @@ class MT5Broker(MarketDataBroker):
         await self._ensure()
         tf = _TIMEFRAME[resolution]
         try:
-            batch = await self._acct.get_historical_candles(epic, tf, None, 1)
+            batch = await self._history_page(epic, tf, None, 1)
         except Exception:
             log.debug("mt5: get_forming_candle failed for %s", epic, exc_info=True)
             return None

@@ -546,6 +546,34 @@ export async function fetchRange(
 
 export type LiveStatus = "connecting" | "live" | "down";
 
+/**
+ * Whether a connected live feed has gone silent long enough to be flagged stale.
+ *
+ * Silence is measured from the LATER of the last candle and the current
+ * connection's open time (`streamLiveAt`), so a stream that connects and then
+ * never delivers a tick is caught too — measuring from the last candle alone
+ * (which stays 0 in that case) would miss it. Only meaningful while the socket
+ * reports "live" and the market is open: a "down" feed already shows via status,
+ * and a closed market legitimately has no ticks. `lastCandleAt`/`streamLiveAt`
+ * are ms epochs (0 = none yet).
+ */
+export function isFeedStale(args: {
+  status: LiveStatus;
+  marketClosed: boolean;
+  lastCandleAt: number;
+  streamLiveAt: number;
+  now: number;
+  staleMs: number;
+}): boolean {
+  const base = Math.max(args.lastCandleAt, args.streamLiveAt);
+  return (
+    base > 0 &&
+    args.status === "live" &&
+    !args.marketClosed &&
+    args.now - base > args.staleMs
+  );
+}
+
 export interface LiveHandle {
   close: () => void;
 }
@@ -585,13 +613,18 @@ export function openLive(
     onStatus?.("connecting");
     ws = new WebSocket(url);
     ws.onopen = () => {
-      retry = 0;
+      // Deliberately do NOT reset `retry` here: the handshake succeeding proves
+      // nothing when the server accepts and then drops the relay immediately
+      // (e.g. a wedged MT5 upstream). Resetting on open pinned every reconnect
+      // to the 1s floor — a ~2s open/close storm for as long as the upstream
+      // was down. Only a real candle frame (below) proves the stream is healthy.
       onStatus?.("live");
     };
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === "candle") {
+          retry = 0; // data flowing = healthy; future drops back off from 1s again
           onStatus?.("live");
           onCandle(toKLine(msg.candle), msg.bid ?? null, msg.ask ?? null);
         } else if (msg.type === "error") {

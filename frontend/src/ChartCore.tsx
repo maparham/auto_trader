@@ -24,6 +24,7 @@ import {
   type LiveStatus,
   type Period,
   type CandleCacheStats,
+  isFeedStale,
   periodByResolution,
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
@@ -708,6 +709,12 @@ export default function ChartCore({
   );
 
   const [status, setStatus] = useState<LiveStatus>("connecting");
+  // The socket reports "live" (handshake up) but no candle has arrived for a while
+  // on an open market — a silently-wedged upstream (e.g. a MetaApi stream that
+  // hangs awaiting ticks with no error frame). Drives the amber legend dot + a
+  // greyed price tag so a frozen chart doesn't keep looking fully live. See the
+  // staleness watchdog effect below.
+  const [streamStale, setStreamStale] = useState(false);
   const [lastPrice, setLastPrice] = useState<number | null>(null);
   // True once the chart has candles to show (history loaded or a live tick arrived).
   const [hasData, setHasData] = useState(false);
@@ -1034,6 +1041,46 @@ export default function ChartCore({
   // event-driven: a ticking stream means the market is open (no server call), so
   // we only re-check status when the stream falls silent (see the effect below).
   const lastCandleAtRef = useRef(0);
+  // When the live socket last transitioned to "live" (stamped by the effect below).
+  // The staleness watchdog measures silence from max(lastCandle, thisConnect) so a
+  // stream that connects and then NEVER delivers a first tick is caught too — a
+  // last-candle-only baseline (which stays 0) would miss that case entirely. Kept
+  // SEPARATE from lastCandleAtRef so it doesn't feed the market open/closed
+  // fallback (which must see real ticks, not a bare connect, to infer "open").
+  const streamLiveAtRef = useRef(0);
+  // Stamp the connect time on each true transition INTO "live". A setState no-op
+  // (openLive re-emits "live" on every candle) doesn't re-run this, so it captures
+  // when the socket came up, not each tick — exactly the baseline the watchdog wants.
+  useEffect(() => {
+    if (status === "live") streamLiveAtRef.current = Date.now();
+  }, [status]);
+  // Staleness watchdog: the socket can report "live" while the upstream is silently
+  // wedged (a MetaApi stream that hangs on `queue.get()` sends no error frame — a
+  // known limitation), so status alone never flips off and the chart freezes while
+  // looking live. Flag it when an OPEN market's connected feed has been silent past
+  // STALE_MS. We do NOT auto-reconnect: a client socket bounce re-attaches to the
+  // same backend stream (`_ensure_stream` short-circuits on cached sync;
+  // `register_tick_queue` is ref-counted) — the wedge only clears via the SDK's own
+  // resync, so a bounce would flap the indicator without recovering anything.
+  // Threshold sits above the illiquid-but-open quiet gaps we'd otherwise cry wolf on;
+  // a genuine close resolves via the marketClosed gate (the 180s market re-check).
+  useEffect(() => {
+    const STALE_MS = 90_000;
+    setStreamStale(false);
+    const id = setInterval(() => {
+      setStreamStale(
+        isFeedStale({
+          status: statusRef.current,
+          marketClosed: marketClosedRef.current,
+          lastCandleAt: lastCandleAtRef.current,
+          streamLiveAt: streamLiveAtRef.current,
+          now: Date.now(),
+          staleMs: STALE_MS,
+        }),
+      );
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [symbol.epic, period.resolution, brokerId]);
   // Market-info popover anchor (viewport coords of the legend ⓘ); null = closed.
   const [detailsAnchor, setDetailsAnchor] = useState<{ x: number; y: number } | null>(null);
   const [cacheStatsOpen, setCacheStatsOpen] = useState(false);
@@ -3240,7 +3287,10 @@ export default function ChartCore({
           precision,
           // The socket connects to OUR backend, so status alone stays "live"
           // through a market close — gate the dot on the market being open too.
-          live: status === "live" && !marketClosed,
+          // A stale (silently-wedged) feed shows the amber dot instead of green;
+          // the two are mutually exclusive.
+          live: status === "live" && !marketClosed && !streamStale,
+          stale: streamStale && !marketClosed && status === "live",
           broker: brokerLabel(brokerId),
         }}
         rows={legendRows}
@@ -3340,7 +3390,7 @@ export default function ChartCore({
 
       {priceTag && (
         <div
-          className={`price-tag ${status === "live" ? `live ${priceTag.dir}` : "stale"}`}
+          className={`price-tag ${status === "live" && !streamStale ? `live ${priceTag.dir}` : "stale"}`}
           style={{ top: priceTag.y, width: priceTag.w }}
         >
           <span className="pt-price">

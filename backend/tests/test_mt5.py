@@ -216,6 +216,68 @@ def test_get_candles_includes_todays_forming_bar():
     assert out[-1].time == today, "today's forming daily bar must be returned in-window"
 
 
+# --- history-path failure mapping ---------------------------------------------
+# get_historical_candles rides a REST path outside _bounded, so its failure modes
+# must be mapped explicitly (see _history_page): an SDK-internal CancelledError
+# escaped guarded()'s `except Exception` as a raw 500, and a MetaApi-side hang
+# held the chart request open past 60s (both observed live during a cloud outage).
+
+
+class _CancellingAcct:
+    """SDK client that cancels its own future mid-call (connection dropped)."""
+
+    async def get_historical_candles(self, symbol, timeframe, start_time, limit):
+        raise asyncio.CancelledError
+
+
+class _HangingAcct:
+    """MetaApi history REST hanging — must be cut off by HISTORY_BUDGET."""
+
+    async def get_historical_candles(self, symbol, timeframe, start_time, limit):
+        await asyncio.sleep(3600)
+
+
+def test_history_sdk_internal_cancel_maps_to_reconnecting():
+    from auto_trader.core.broker_health import BrokerReconnecting
+    from auto_trader.core.models import Resolution
+
+    broker = _candle_broker([])
+    broker._acct = _CancellingAcct()
+    with pytest.raises(BrokerReconnecting):
+        asyncio.run(broker.get_recent_candles("EURUSD", Resolution.MINUTE, 50))
+
+
+def test_history_hang_maps_to_broker_timeout():
+    from auto_trader.core.broker_health import BrokerTimeout
+    from auto_trader.core.models import Resolution
+
+    broker = _candle_broker([])
+    broker._acct = _HangingAcct()
+    broker.HISTORY_BUDGET = 0.05
+    with pytest.raises(BrokerTimeout):
+        asyncio.run(broker.get_recent_candles("EURUSD", Resolution.MINUTE, 50))
+
+
+def test_history_our_cancellation_propagates():
+    """Cancelling the REQUEST task (shutdown/disconnect) must propagate as
+    CancelledError, never be swallowed into a broker-health error."""
+    from auto_trader.core.models import Resolution
+
+    broker = _candle_broker([])
+    broker._acct = _HangingAcct()
+
+    async def scenario():
+        task = asyncio.ensure_future(
+            broker.get_recent_candles("EURUSD", Resolution.MINUTE, 50)
+        )
+        await asyncio.sleep(0.01)  # let it enter the hanging SDK call
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+
 def test_all_markets_tags_categories():
     """all_markets runs every symbol through the classifier and strips the equity
     prefix from the display name."""

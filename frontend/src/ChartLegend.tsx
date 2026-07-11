@@ -71,6 +71,10 @@ interface LegendCtx {
   period: string;
   precision: number;
   live: boolean;
+  // The socket is up but no ticks have arrived for a while on an open market — a
+  // silently-wedged upstream. Shown as an amber dot in place of the green live one
+  // (never both; ChartCore makes them mutually exclusive).
+  stale: boolean;
   broker: string; // display name of the data source ("Capital.com", "IG (demo)")
 }
 
@@ -296,7 +300,14 @@ export default function ChartLegend({
       <div className="cl-row cl-ohlc">
         {/* Live "ping" dot — signals streaming without overloading the symbol with the
             UP/green color (green on a down bar reads as a mixed signal). */}
-        {ctx.live && <span className="cl-live-dot" title="Live" aria-hidden="true" />}
+        {ctx.stale ? (
+          <span
+            className="cl-live-dot cl-stale"
+            title="No recent data — the feed is connected but not receiving ticks"
+          />
+        ) : (
+          ctx.live && <span className="cl-live-dot" title="Live" aria-hidden="true" />
+        )}
         <span
           className="cl-sym cl-sym-clickable"
           title="Change instrument"
