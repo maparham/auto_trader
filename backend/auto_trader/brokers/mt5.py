@@ -79,9 +79,20 @@ def _quiet_sdk_logging() -> None:
     """Route the MetaApi SDK's own logging through Python's `logging` (it prints to
     stdout otherwise) and silence the transient `SubscriptionManager` subscribe
     timeouts it emits while the terminal state syncs. We trade via RPC, not market-
-    data subscriptions, so those retries are cosmetic noise, not real failures."""
+    data subscriptions, so those retries are cosmetic noise, not real failures.
+
+    `DomainClient` is silenced for two reasons that compound during a MetaApi
+    provisioning-API blip: (1) its "Failed to update domain settings cache" errors
+    are transient — the SDK retries the domain-cache update internally with backoff
+    and self-heals; (2) worse, it emits them via `logger.error(msg, json_string)`,
+    passing the error payload as a positional arg to a message with no `%s`, so
+    Python's logging raises `TypeError: not all arguments converted` and dumps a
+    ~100-line "Logging error" traceback for EVERY occurrence — flooding the log. The
+    failed history fetch is already surfaced to us as a broker timeout/reconnect via
+    _history_page, so the SDK's own log line is pure noise."""
     LoggerManager.use_logging()
     logging.getLogger("SubscriptionManager").setLevel(logging.CRITICAL)
+    logging.getLogger("DomainClient").setLevel(logging.CRITICAL)
 
 
 def _to_candle(c: dict) -> Candle:

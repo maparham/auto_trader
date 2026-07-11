@@ -8,7 +8,12 @@ import asyncio
 import pytest
 from metaapi_cloud_sdk.clients.timeout_exception import TimeoutException
 
-from auto_trader.brokers.mt5 import MT5Broker, MT5ExecutionBroker, _classify_symbol
+from auto_trader.brokers.mt5 import (
+    MT5Broker,
+    MT5ExecutionBroker,
+    _classify_symbol,
+    _quiet_sdk_logging,
+)
 from auto_trader.core.broker_health import BrokerReconnecting
 from auto_trader.core.models import Order, OrderStatus, OrderType, Side
 
@@ -276,6 +281,20 @@ def test_history_our_cancellation_propagates():
             await task
 
     asyncio.run(scenario())
+
+
+def test_quiet_sdk_logging_silences_domain_client_spam():
+    """The SDK logs transient domain-cache failures via `logger.error(msg, json)` —
+    a positional arg to a message with no `%s`, so each one dumps a ~100-line
+    "Logging error" traceback. _quiet_sdk_logging must silence DomainClient (as it
+    does SubscriptionManager) so a MetaApi provisioning blip can't flood the log."""
+    import logging
+
+    _quiet_sdk_logging()
+    for name in ("DomainClient", "SubscriptionManager"):
+        logger = logging.getLogger(name)
+        # CRITICAL means .error() short-circuits before ever formatting the bad args.
+        assert not logger.isEnabledFor(logging.ERROR), f"{name} should be silenced"
 
 
 def test_all_markets_tags_categories():
