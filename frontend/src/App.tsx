@@ -33,6 +33,7 @@ import { registerCustomIndicators } from "./lib/customIndicators";
 import { registerBacktestIndicators } from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
 import { installMagnetModifierKeys } from "./lib/magnet";
+import { compositeOverHex } from "./lib/lineStyle";
 import { registerPositionLine } from "./lib/positionLines";
 import type { ChartController } from "./lib/chartController";
 import {
@@ -125,7 +126,7 @@ import {
 } from "./lib/persist";
 import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
-import { loadSettings, saveSettings, type Settings } from "./theme";
+import { loadSettings, saveSettings, chartColors, type Settings } from "./theme";
 import TabBar from "./TabBar";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { isSynthetic } from "./lib/syntheticRegistry";
@@ -832,6 +833,22 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
+    // Chart-pane background override: set the `--chart-bg` var (consumed by
+    // .chart-cell) when a custom color is chosen, else clear it so the cell falls
+    // back to the theme's `--bg`. Opacity composites the color OVER the theme
+    // background (not toward transparent) so it stays opaque — otherwise a low
+    // opacity would reveal the grey grid behind the pane. So opacity 0 = the theme
+    // background, opacity 1 = the full picked color, a clean dim/wash-out knob.
+    if (settings.chartBg) {
+      const bg = compositeOverHex(
+        settings.chartBg,
+        chartColors[settings.theme].bg,
+        settings.chartBgOpacity ?? 1,
+      );
+      document.documentElement.style.setProperty("--chart-bg", bg);
+    } else {
+      document.documentElement.style.removeProperty("--chart-bg");
+    }
     // Don't re-mirror a change that came FROM a remote sync. persist writes the
     // pushed value to localStorage before calling syncSettingsFromLocal, so if our
     // state already equals localStorage this update is that sync echo — re-saving it

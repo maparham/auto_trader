@@ -78,6 +78,30 @@ export function rgbaToHexAlpha(color: string, fallbackHex = "#2962ff"): { hex: s
   return { hex: fallbackHex, alpha: 1 };
 }
 
+// Alpha-composite a foreground color over an opaque background, returning an OPAQUE
+// `rgb(...)`. Unlike hexToRgba (which yields a translucent color that reveals
+// whatever is painted behind it), this bakes the blend in: alpha 0 = the background,
+// alpha 1 = the foreground. Both inputs accept #RRGGBB / #RGB; a non-hex fg is
+// returned unchanged (nothing sensible to blend).
+export function compositeOverHex(fg: string, bg: string, alpha: number): string {
+  const parse = (h: string): [number, number, number] | null => {
+    let m = /^#?([0-9a-fA-F]{6})$/.exec(h);
+    if (m) {
+      const n = parseInt(m[1], 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+    m = /^#?([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/.exec(h);
+    if (m) return [parseInt(m[1] + m[1], 16), parseInt(m[2] + m[2], 16), parseInt(m[3] + m[3], 16)];
+    return null;
+  };
+  const f = parse(fg);
+  const b = parse(bg);
+  if (!f || !b) return fg;
+  const a = Math.max(0, Math.min(1, alpha));
+  const mix = (i: number) => Math.round(f[i] * a + b[i] * (1 - a));
+  return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`;
+}
+
 // klinecharts {style, dashedValue} → our option. Solid wins on style; among dashed,
 // a short "on" segment (≤2px) reads as dotted, otherwise dashed. `style` is typed
 // loosely (it's read straight off persisted/klinecharts styles).

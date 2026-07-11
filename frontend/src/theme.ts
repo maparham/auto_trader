@@ -93,6 +93,16 @@ export interface Settings {
   // Auto-save each symbol's chart template as you edit (global, all symbols).
   // Default on. See lib/templateAutosave.ts.
   autoSaveTemplates: boolean;
+  // Override the chart pane background (candle + sub-panes) with a custom color,
+  // e.g. a dimmer grey between the light and dark themes. Undefined follows the
+  // theme's default background. Global, independent of the light/dark theme.
+  // Applied via the `--chart-bg` CSS variable in App.tsx.
+  chartBg?: string;
+  // Opacity 0..1 for the chart background override. Composited OVER the theme
+  // background (App.tsx) into an opaque `--chart-bg`, so 0 = the theme background
+  // and 1 = the full picked color — a dim/wash-out knob, not real transparency
+  // (which would reveal the grey grid behind the pane). Only meaningful with chartBg.
+  chartBgOpacity?: number;
 }
 
 export interface TradingSettings {

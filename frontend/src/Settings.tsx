@@ -122,6 +122,43 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
             </div>
 
             <div className="setting-row">
+              <label className="label-info">
+                Chart background
+                <InfoTip text="Override the chart pane's background with a custom color — e.g. a dimmer grey between light and dark for night use. Applies to all charts." />
+              </label>
+              <div className="chart-bg-ctl">
+                <ColorLineStylePicker
+                  title="Chart background"
+                  // Show the resolved color: the override if set, else the theme's
+                  // default background, so the swatch reflects what's drawn.
+                  color={settings.chartBg || chartColors[settings.theme].bg}
+                  onColor={(hex) => onChange({ ...settings, chartBg: hex })}
+                  opacity={settings.chartBgOpacity ?? 1}
+                  onOpacity={(a) =>
+                    onChange({
+                      // Tuning opacity first activates the override on the theme's
+                      // current default color so the change is visible immediately.
+                      ...settings,
+                      chartBg: settings.chartBg || chartColors[settings.theme].bg,
+                      chartBgOpacity: a,
+                    })
+                  }
+                />
+                {settings.chartBg && (
+                  <button
+                    type="button"
+                    className="bg-reset"
+                    onClick={() =>
+                      onChange({ ...settings, chartBg: undefined, chartBgOpacity: undefined })
+                    }
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="setting-row">
               <label>Price</label>
               <div className="seg">
                 {PRICE_SIDES.map((p) => (
