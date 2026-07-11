@@ -81,7 +81,7 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
     onChange({ ...settings, trading: { ...tr, ...patch } });
 
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
+    <div className="modal-backdrop modal-backdrop--clear" onMouseDown={onClose}>
       <div className="modal" style={drag.style} onMouseDown={(e) => e.stopPropagation()}>
         <header className="modal-head" {...drag.handleProps}>
           <strong>Settings</strong>
