@@ -22,6 +22,7 @@ import {
 } from "./backtestConfig";
 import { atrSeries } from "./atr";
 import { computePivotBands, type PivotBandsExtend } from "./indicators/pivotBands";
+import { computePivotAnalysis } from "./indicators/pivotAnalysis";
 import { slopeLineSeries, inferBarHours, slopeLengths, type SlopeUnit, type SlopeExtend } from "./indicators/slope";
 import { RESOLUTION_SECONDS } from "./feed";
 
@@ -203,6 +204,7 @@ export const LINE_KEYS: Record<string, readonly string[]> = {
   AVWAP: ["vwap"],
   PREV_HL: ["rollingHigh", "rollingLow", "dayHigh", "dayLow", "weekHigh", "weekLow", "anchorHigh", "anchorLow"],
   PIVOT_BANDS: ["pivotHigh", "pivotLow"],
+  PIVOT_ANALYSIS: ["pivotHigh", "pivotLow", "deltaPct", "deltaT"],
 };
 
 function pickLine(points: Array<Record<string, unknown>>, keys: readonly string[], line: number): Array<number | undefined> {
@@ -268,6 +270,15 @@ function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[], _barHo
       const k = Math.max(1, Number(r.calcParams[1]) || 3);
       const pts = computePivotBands(candles, n, k, ext as PivotBandsExtend);
       return pickLine(pts as unknown as Array<Record<string, unknown>>, LINE_KEYS.PIVOT_BANDS, line);
+    }
+    case "PIVOT_ANALYSIS": {
+      // Strength (length) clamped exactly like the chart template so the rule
+      // reproduces the on-chart values. Line 0/1 = forward-carried pivot high/low
+      // price, 2/3 = the most recent swing's Δ%/Δt — all confirmed-only (no
+      // lookahead), keys per LINE_KEYS.PIVOT_ANALYSIS.
+      const length = Math.max(1, Number(r.calcParams[0]) || 50);
+      const pts = computePivotAnalysis(candles, length);
+      return pickLine(pts as unknown as Array<Record<string, unknown>>, LINE_KEYS.PIVOT_ANALYSIS, line);
     }
     case "SLOPE": {
       // Uses inferBarHours(candles) — NOT the threaded barHours param — so this

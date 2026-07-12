@@ -15,6 +15,7 @@ const { buildSeries, buildChartOperandSeries } = await import("./backtestSeries"
 const { maSeries, sma } = await import("./mtf");
 const { computeRsi, computeLr, computePrevHl, vwapFrom, detectDivergences, RSI_DIVERGENCE_DEFAULTS } = await import("./customIndicators");
 const { computePivotBands } = await import("./indicators/pivotBands");
+const { computePivotAnalysis } = await import("./indicators/pivotAnalysis");
 const { SLOPE_TEMPLATE } = await import("./indicators/slope");
 const { recipeKey, seriesName, operandBaseLen } = await import("./backtestConfig");
 
@@ -479,6 +480,44 @@ describe("series operand — Pivot Bands recipe", () => {
     // A confirmed HTF pivot high (value 3) forward-fills onto the late base bars.
     expect(got.some((v) => v === 3)).toBe(true);
     expect(got[0]).toBeNull(); // before any confirmed HTF pivot
+  });
+});
+
+describe("series operand — Pivots High/Low Analysis recipe", () => {
+  // A zigzag so strict swing highs/lows exist (candles() stamps high=low=close,
+  // so both sides detect on the same series).
+  const ZIG = candles([1, 3, 2, 4, 2, 5, 3, 6, 4, 7, 5, 8, 6]);
+
+  it("lines 0..3 = pivotHigh / pivotLow / Δ% / Δt, matching computePivotAnalysis()", async () => {
+    const pts = computePivotAnalysis(ZIG, 1) as unknown as Array<Record<string, number | undefined>>;
+    for (const [line, key] of [[0, "pivotHigh"], [1, "pivotLow"], [2, "deltaPct"], [3, "deltaT"]] as const) {
+      const got = await seriesFor({ source: "indicator", indicatorType: "PIVOT_ANALYSIS", calcParams: [1], line }, ZIG);
+      expect(got).toEqual(nul(pts.map((p) => p[key])));
+    }
+    // sanity: the operand actually produced values (not an all-null parity).
+    const high = await seriesFor({ source: "indicator", indicatorType: "PIVOT_ANALYSIS", calcParams: [1], line: 0 }, ZIG);
+    expect(high.some((v) => v !== null)).toBe(true);
+  });
+
+  it("defaults Length like the chart template (0/NaN → 50, then max 1)", async () => {
+    const got = await seriesFor({ source: "indicator", indicatorType: "PIVOT_ANALYSIS", calcParams: [0], line: 0 }, ZIG);
+    expect(got).toEqual(nul(computePivotAnalysis(ZIG, 50).map((p) => p.pivotHigh)));
+  });
+
+  it("a picker-built 'Δ% (last pivot)' operand resolves end-to-end", async () => {
+    const { chartOperandSources } = await import("./chartOperand");
+    const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "PIVOT_ANALYSIS#x", indType: "PIVOT_ANALYSIS", calcParams: [1], extendData: {} });
+    const delta = src.outputs.find((o) => o.operand.label.includes("Δ%"))!;
+    const recipe = (delta.operand as Extract<Operand, { kind: "series" }>).recipe;
+    const got = await seriesFor(recipe, ZIG);
+    expect(got).toEqual(nul(computePivotAnalysis(ZIG, 1).map((p) => p.deltaPct)));
+  });
+
+  it("warm-up is 2·Length (defaulting Length like the template)", () => {
+    const op = { kind: "series", seriesKey: "x", label: "x", recipe: { source: "indicator", indicatorType: "PIVOT_ANALYSIS", calcParams: [50], line: 0 } } as Operand;
+    expect(operandBaseLen(op)).toBe(100);
+    const def = { kind: "series", seriesKey: "y", label: "y", recipe: { source: "indicator", indicatorType: "PIVOT_ANALYSIS", calcParams: [0], line: 0 } } as Operand;
+    expect(operandBaseLen(def)).toBe(100); // 0 → 50 → ×2
   });
 });
 

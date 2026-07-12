@@ -1243,6 +1243,19 @@ export default function IndicatorSettings({
                     </div>
                   );
                 }
+                if (inp.source === "extend" && inp.field && inp.type === "boolean") {
+                  const checked = (genExtend[inp.field] ?? inp.default ?? false) as boolean;
+                  return (
+                    <div className="ind-row" key={inp.key}>
+                      {labelEl}
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setExtendInput(inp.field!, e.target.checked)}
+                      />
+                    </div>
+                  );
+                }
                 return null;
               })}
               {isSlope && (

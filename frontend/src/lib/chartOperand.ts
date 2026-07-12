@@ -15,7 +15,7 @@ import { PREV_HL_PERIODS } from "./indicators/prevHl";
 import { DIVERGENCE_KINDS, RSI_DIVERGENCE_DEFAULTS, type DivergenceKind, type RsiExtend } from "./customIndicators";
 
 /** Custom indicator types copyable into a rule (SESSIONS deferred). */
-const SUPPORTED_INDICATORS = new Set<string>(["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI", "PIVOT_BANDS", "SLOPE"]);
+const SUPPORTED_INDICATORS = new Set<string>(["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI", "PIVOT_BANDS", "PIVOT_ANALYSIS", "SLOPE"]);
 /** Straight-line drawings evaluable as a per-bar price series. */
 const SUPPORTED_DRAWINGS = new Set<string>([
   "segment", "rayLine", "straightLine", "horizontalStraightLine", "priceLine",
@@ -142,6 +142,7 @@ export function recipeLabel(recipe: SeriesRecipe): string {
   const t = recipe.indicatorType;
   // Types whose calcParams aren't a meaningful "(length)" label.
   if (t === "PIVOT_BANDS") return "Pivot Bands";
+  if (t === "PIVOT_ANALYSIS") return "Pivots High/Low [LuxAlgo]";
   if (t === "SLOPE") return "MA Slope";
   if (t === "VWAP" || t === "AVWAP" || t === "PREV_HL") return t === "PREV_HL" ? "Prev H/L" : t;
   const params = recipe.calcParams.filter((n) => Number.isFinite(n));
@@ -227,6 +228,15 @@ export function indicatorOutputs(indType: string, extendData: unknown, calcParam
       return [
         { lineIndex: 0, label: "Pivot High" },
         { lineIndex: 1, label: "Pivot Low" },
+      ];
+    // Pivots High/Low Analysis: the two forward-carried levels plus the most
+    // recent swing's Δ%/Δt. Order matches LINE_KEYS.PIVOT_ANALYSIS. No base line.
+    case "PIVOT_ANALYSIS":
+      return [
+        { lineIndex: 0, label: "Pivot High" },
+        { lineIndex: 1, label: "Pivot Low" },
+        { lineIndex: 2, label: "Δ% (last pivot)" },
+        { lineIndex: 3, label: "Δt (last pivot)" },
       ];
     // VWAP/AVWAP resolve only line 0 in computeIndicatorRecipe.
     case "VWAP":

@@ -29,7 +29,7 @@ export interface SlopeSpec { len: number }
 
 /** The app's custom indicator types reachable as a rule operand (SESSIONS is
  * deferred — it has no price line and nothing to click-select). */
-export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI" | "PIVOT_BANDS" | "SLOPE";
+export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI" | "PIVOT_BANDS" | "PIVOT_ANALYSIS" | "SLOPE";
 /** The straight-line drawing family evaluable as a per-bar price series. */
 export type DrawingKind = "segment" | "rayLine" | "straightLine" | "horizontalStraightLine" | "priceLine";
 
@@ -406,6 +406,14 @@ export function operandBaseLen(op: Operand): number {
       const n = Math.max(1, Number(r.calcParams[0]) || 5);
       const k = Math.max(1, Number(r.calcParams[1]) || 3);
       return 2 * n + k;
+    }
+    // Pivots High/Low [LuxAlgo]: a pivot at bar i confirms at i+Length, and the Δ%/Δt
+    // outputs need a SECOND same-type pivot to hold a value. 2·Length is the same
+    // best-effort reach-back as Pivot Bands (pivots are sparse, so no fixed length
+    // guarantees one — a blank left edge is correct). Length clamped like the template.
+    if (r.indicatorType === "PIVOT_ANALYSIS") {
+      const n = Math.max(1, Number(r.calcParams[0]) || 50);
+      return 2 * n;
     }
     // Slope needs its underlying MA warmed up PLUS the slope lookback itself —
     // except a line >= K (the raw-MA operand for that length), which only needs

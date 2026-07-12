@@ -5,7 +5,8 @@
 import { minPositiveGap } from "../lib/barInterval";
 import { curveLabel, curveLabelConfig, curveLabelPosFor } from "../lib/customIndicators";
 import { type CurveLabelPill } from "../CurveLabels";
-import { type LineCache, DOT_RADIUS, ANCHOR_HANDLE_R } from "./chartGeometry";
+import { type LineCache, type PivotDeltaLabel, DOT_RADIUS, ANCHOR_HANDLE_R } from "./chartGeometry";
+import { PIVOT_DELTA_PLATE, PIVOT_LABEL_COLOR } from "../lib/indicators/pivotAnalysis";
 import { type CrossingDot } from "./curveCrossings";
 
 // The browser's IANA timezone (e.g. "Europe/London"), used when the user picks
@@ -165,6 +166,42 @@ export function paintAnchorHandle(
   ctx.lineWidth = 2;
   ctx.strokeStyle = ring;
   ctx.stroke();
+}
+
+// Draw ALL the Pivots-High/Low Δ%/Δt labels for a cell in one pass — the indicator
+// no longer draws them itself, so this is the single owner and each pivot's label
+// renders exactly once (no on-canvas + overlay doubling). Each label is small at
+// rest; the one under the cursor (`hovered`, by object identity) is drawn in a
+// larger font at the SAME anchor + baselines, so it reads as that label growing in
+// place — no background plate, no second label. Above a high pivot / below a low.
+const PIVOT_LABEL_LINE_H = 12; // at-rest line spacing (matches the 10px font)
+export function paintPivotDeltaLabels(
+  ctx: CanvasRenderingContext2D,
+  labels: PivotDeltaLabel[],
+  hovered: PivotDeltaLabel | null,
+): void {
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.fillStyle = PIVOT_LABEL_COLOR;
+  for (const l of labels) {
+    const big = l === hovered;
+    // Enlarged label uses the plate's bigger font + wider line spacing so its two
+    // lines don't collide; at rest it's the compact 10px.
+    ctx.font = big ? PIVOT_DELTA_PLATE.font : "10px sans-serif";
+    const lineH = big ? PIVOT_DELTA_PLATE.lineH : PIVOT_LABEL_LINE_H;
+    const x = l.markerX + 4;
+    const [l1, l2] = l.lines;
+    if (l.side === "high") {
+      ctx.textBaseline = "bottom";
+      ctx.fillText(l1, x, l.anchorY - lineH - 2);
+      ctx.fillText(l2, x, l.anchorY - 2);
+    } else {
+      ctx.textBaseline = "top";
+      ctx.fillText(l1, x, l.anchorY + 2);
+      ctx.fillText(l2, x, l.anchorY + 2 + lineH);
+    }
+  }
+  ctx.restore();
 }
 
 export function fmtCountdown(totalSec: number): string {

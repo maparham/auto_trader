@@ -29,7 +29,15 @@ import { useEffect } from "react";
 import { DomPosition } from "klinecharts";
 import { DRAFT_ID } from "../lib/positionLines";
 import { Signal, setTradeHovered, type TradeLineField } from "../lib/signals";
-import { HIT_TOLERANCE_PX, ALERT_SNAP_PX, hitTestCache, type LineCache } from "./chartGeometry";
+import {
+  HIT_TOLERANCE_PX,
+  ALERT_SNAP_PX,
+  hitTestCache,
+  hasPivotAnalysisIndicator,
+  buildPivotDeltaLabels,
+  pivotDeltaLabelAt,
+  type LineCache,
+} from "./chartGeometry";
 import { first } from "./chartPainters";
 import type { SelectedIndicator } from "../lib/chartController";
 import type { ChartHandle } from "./chartHandle";
@@ -50,6 +58,11 @@ export interface PointerCrosshairDeps {
   draggingAnchorRef: React.MutableRefObject<boolean>;
   anchorPxRef: React.MutableRefObject<{ x: number; y: number; ts: number; color: string } | null>;
   lineCacheRef: React.MutableRefObject<LineCache[]>;
+  // Cursor position in container pixels, shared with the paint loop for the
+  // Pivots-High/Low Δ-label hover-enlarge pixel hit-test. pivotHoverKeyRef holds
+  // the currently-enlarged pivot's identity so a move only repaints on a change.
+  pointerPxRef: React.MutableRefObject<{ x: number; y: number } | null>;
+  pivotHoverKeyRef: React.MutableRefObject<string | null>;
   plusCrosshairYRef: React.MutableRefObject<number | null>;
   plusBtnRef: React.RefObject<HTMLDivElement | null>;
   plusMenuOpenRef: React.MutableRefObject<boolean>;
@@ -88,6 +101,8 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     draggingAnchorRef,
     anchorPxRef,
     lineCacheRef,
+    pointerPxRef,
+    pivotHoverKeyRef,
     plusCrosshairYRef,
     plusBtnRef,
     plusMenuOpenRef,
@@ -127,15 +142,45 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       }
     };
 
+    // Track the cursor pixel for the Pivots-High/Low Δ-label hover-enlarge and
+    // repaint only when the pivot under the cursor CHANGES (enter/leave/switch), so
+    // the pixel hit-test doesn't force a full redraw on every mousemove. Gated by
+    // hasPivotAnalysisIndicator so charts without the indicator never pay for it —
+    // the redraw loop reads pointerPxRef and re-hit-tests, so a stationary cursor's
+    // plate still stays glued through scroll/zoom/tick.
+    const setPointerPx = (px: { x: number; y: number } | null) => {
+      pointerPxRef.current = px;
+      const c = chartRef.current;
+      if (!c || !hasPivotAnalysisIndicator(c)) {
+        if (pivotHoverKeyRef.current !== null) {
+          pivotHoverKeyRef.current = null;
+          repaint();
+        }
+        return;
+      }
+      const hit = px ? pivotDeltaLabelAt(buildPivotDeltaLabels(c), px) : null;
+      const key = hit ? `${hit.name}:${hit.index}:${hit.side}` : null;
+      if (key !== pivotHoverKeyRef.current) {
+        pivotHoverKeyRef.current = key;
+        repaint();
+      }
+    };
+
     // "+" affordance follows the cursor's price on the right axis (TV-style).
     const onMove = (e: MouseEvent) => {
       const c = chartRef.current;
       const btn = plusBtnRef.current;
       if (!c) return;
-      if (draggingAnchorRef.current || tradeDragActiveRef.current()) return; // window listeners drive the drag
+      if (draggingAnchorRef.current || tradeDragActiveRef.current()) {
+        setPointerPx(null); // window listeners drive the drag; drop the Δ-label hover
+        return;
+      }
       const r = el.getBoundingClientRect();
       const lx = e.clientX - r.left;
       const ly = e.clientY - r.top;
+      // Feed the Pivots-High/Low Δ-label hover-enlarge before any of onMove's later
+      // early-returns, so parking on a marker/label always registers.
+      setPointerPx({ x: lx, y: ly });
       // Legend hover (crosshair-hide + per-row icons/highlight) is now owned by the
       // DOM <ChartLegend> via its own mouse events — nothing to do here.
       // Cursor affordance: hand over a selectable indicator curve, else the chart's
@@ -411,6 +456,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     };
     const onLeave = () => {
       setPlusCrosshair(null);
+      setPointerPx(null); // drop the Δ-label hover-enlarge as the cursor leaves
       if (snapActiveRef.current) { overlays.setSuppressNativeLine(false); snapActiveRef.current = false; }
       // Drop a snap-driven alert hover as the cursor leaves (klinecharts' own
       // onMouseLeave covers the on-line case; this covers the wider magnet band).

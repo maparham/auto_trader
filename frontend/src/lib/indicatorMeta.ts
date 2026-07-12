@@ -8,7 +8,7 @@
 // reshape. Anything not listed here falls back to generic numeric inputs read
 // from the live indicator's calcParams (see `resolveInputs`).
 
-type IndicatorInputType = "number" | "select";
+type IndicatorInputType = "number" | "select" | "boolean";
 
 export interface IndicatorInputDef {
   key: string;
@@ -20,7 +20,7 @@ export interface IndicatorInputDef {
   source: "calcParam" | "extend";
   index?: number;
   field?: string;
-  default?: number | string;
+  default?: number | string | boolean;
   min?: number;
   max?: number;
   step?: number;
@@ -244,6 +244,25 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     ],
     title: "Pivot Bands",
     desc: "Two step-lines tracking confirmed fractal swing highs and lows separately — a dynamic support/resistance channel. Strength sets the bars required on each side of a pivot. Mode carries either the last pivot or the average of the last K pivots forward; the line only steps when a new pivot confirms (N bars late, no repaint).",
+  },
+  PIVOT_ANALYSIS: {
+    inputs: [
+      {
+        ...num(0, "Length"),
+        tip: "Bars required each side of a swing. Higher value marks only the more prominent pivots (and confirms them later).",
+      },
+      {
+        key: "showLevels",
+        label: "Previous H/L lines",
+        type: "boolean",
+        source: "extend",
+        field: "showLevels",
+        default: true,
+        tip: "Carry the most recent confirmed pivot high and low forward as level lines.",
+      },
+    ],
+    title: "Pivots High/Low [LuxAlgo]",
+    desc: "Marks each confirmed fractal swing high/low, connects it to the previous same-type pivot with a Δ% / Δt label, and (optionally) carries the latest pivot high/low forward as a level line. Length sets the bars required each side of a swing; pivots confirm that many bars late (no repaint). Pivot high/low, Δ% and Δt are available as rule operands.",
   },
   SESSIONS: {
     inputs: [],

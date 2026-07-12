@@ -118,7 +118,9 @@ export function curveLabel(
     case "BOLL":
       return bollCurveLabel(figKey, calcParams);
     case "PIVOT_BANDS":
-      // Two curves, already distinguished by side; the pill just names each.
+    case "PIVOT_ANALYSIS":
+      // Two curves, already distinguished by side; the pill just names each. The
+      // Δ%/Δt figures are operand-only (no plotted curve) → no pill.
       if (figKey === "pivotHigh") return "Pivot High";
       if (figKey === "pivotLow") return "Pivot Low";
       return null;

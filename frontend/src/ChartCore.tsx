@@ -81,6 +81,8 @@ import {
   saveScalePriceOnly,
   loadLegendCollapsed,
   saveLegendCollapsed,
+  loadCandleHidden,
+  saveCandleHidden,
   CONDITION_LABELS,
   loadSnapshotMeta,
   deleteSnapshotMeta,
@@ -578,6 +580,12 @@ export default function ChartCore({
   // meaningless on the axis strip). Also used to draw the snapped crosshair when the
   // cursor is within ALERT_SNAP_PX of an alert line. null = neither case active.
   const plusCrosshairYRef = useRef<number | null>(null);
+  // Cursor pixel (container space) for the Pivots-High/Low Δ-label hover-enlarge,
+  // shared between the pointer handlers (which set it + repaint on hover change)
+  // and the paint loop (which re-hit-tests it every redraw). pivotHoverKeyRef holds
+  // the enlarged pivot's identity so a move only repaints when it changes.
+  const pointerPxRef = useRef<{ x: number; y: number } | null>(null);
+  const pivotHoverKeyRef = useRef<string | null>(null);
   // Tracks whether the snap was active on the last onMove so we only call
   // setSuppressNativeLine when the state actually changes.
   const snapActiveRef = useRef(false);
@@ -657,6 +665,21 @@ export default function ChartCore({
     const next = !legendCollapsed;
     setLegendCollapsed(next);
     saveLegendCollapsed(scope, next);
+  };
+  // TV-style "hide main series": when true, the candlesticks render transparent (via
+  // klineStyles' candleHidden arg) while indicators/drawings/price marks stay. Per-cell,
+  // persisted. A ref mirrors it so the various klineStyles(...) call sites (theme/symbol
+  // re-applies) read the current value, like crosshairRef.
+  const [candleHidden, setCandleHidden] = useState(() => loadCandleHidden(scope));
+  const candleHiddenRef = useRef(candleHidden);
+  candleHiddenRef.current = candleHidden;
+  const toggleCandleHidden = () => {
+    const next = !candleHidden;
+    setCandleHidden(next);
+    saveCandleHidden(scope, next);
+    chartRef.current?.setStyles(
+      klineStyles(themeRef.current, legendHovered.value, crosshairRef.current, next),
+    );
   };
   // Sub-pane indicator legends (Volume/MACD/RSI…): same signature-gated pattern as
   // the candle rows, but the signature also folds in each pane's `top` so the cards
@@ -1217,7 +1240,7 @@ export default function ChartCore({
     // is ready and show blank icons.
     document.fonts
       ?.load("16px 'Material Symbols Outlined'")
-      .then(() => chartRef.current?.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current)))
+      .then(() => chartRef.current?.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current, candleHiddenRef.current)))
       .catch(() => {});
 
     // Indicator legend action icons (TradingView-style, configured in chartTheme):
@@ -1960,7 +1983,7 @@ export default function ChartCore({
     });
 
     if (chart) {
-      chart.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current));
+      chart.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current, candleHiddenRef.current));
       el.addEventListener("click", onClick);
       el.addEventListener("dblclick", onDblClick); // alert-line -> edit; curve -> settings
       el.addEventListener("contextmenu", onContextMenu); // right-click -> Paste menu
@@ -2386,6 +2409,8 @@ export default function ChartCore({
     draggingAnchorRef,
     anchorPxRef,
     lineCacheRef,
+    pointerPxRef,
+    pivotHoverKeyRef,
     plusCrosshairYRef,
     plusBtnRef,
     plusMenuOpenRef,
@@ -2415,7 +2440,7 @@ export default function ChartCore({
   // re-apply on those too. crosshair (style/color/opacity) restyles here too so a
   // settings change shows at once instead of waiting for the next mouse move.
   useEffect(() => {
-    chartRef.current?.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current));
+    chartRef.current?.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current, candleHiddenRef.current));
     // A full base-style re-apply resets priceMark.last.line.show to its default
     // (visible). If an alert is selected the last-price line must stay hidden, so
     // re-assert it here. lastPriceHiddenRef already reflects the desired state, so
@@ -2539,7 +2564,7 @@ export default function ChartCore({
     if (!c) return;
     const fmt = makeFormatDate(clock, dateFormat, showWeekday);
     c.setCustomApi({ formatDate: fmt });
-    c.setStyles(klineStyles(themeRef.current, legendHovered.value, crosshairRef.current));
+    c.setStyles(klineStyles(themeRef.current, legendHovered.value, crosshairRef.current, candleHiddenRef.current));
     // The full base-style re-apply un-hides the last-price line; if an alert is
     // selected it must stay hidden, so re-assert (see the theme effect's rationale).
     if (lastPriceHiddenRef.current) {
@@ -2725,6 +2750,7 @@ export default function ChartCore({
     snapViewRef,
     sepCacheRef,
     lineCacheRef,
+    pointerPxRef,
     plusCrosshairYRef,
     syncCrosshairRef,
     syncedTsRef,
@@ -2811,6 +2837,9 @@ export default function ChartCore({
     const onCrosshair = (data?: { dataIndex?: number }) => {
       const idx = typeof data?.dataIndex === "number" ? data.dataIndex : null;
       crosshairIdxRef.current = idx;
+      // (The Pivots-High/Low Δ-label hover-enlarge is now driven by a real pixel
+      // hit-test off the cursor position in usePointerCrosshair's onMove, not this
+      // bar-change crosshair action — so no pivot-specific redraw is needed here.)
       // idx null (cursor left) falls through to a sibling's synced bar if one is
       // active, else to the last bar — same resolution as every other update site.
       legendHandleRef.current?.updateValues(legendBarIdxRef.current());
@@ -3296,6 +3325,8 @@ export default function ChartCore({
         rows={legendRows}
         collapsed={legendCollapsed}
         onToggleCollapsed={toggleLegendCollapsed}
+        candleHidden={candleHidden}
+        onToggleCandle={toggleCandleHidden}
         subPanes={subPaneLegends}
         selectedName={selectedName}
         highlightedName={curveHoverNameState}

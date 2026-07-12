@@ -4,6 +4,12 @@
 // without either re-running convertToPixel.
 import { type Chart, type Indicator } from "klinecharts";
 import { indTypeOf } from "../lib/customIndicators";
+import {
+  PIVOT_DELTA_PLATE,
+  pivotDeltaHit,
+  pivotDeltaLabelLines,
+  type PivotAnalysisPoint,
+} from "../lib/indicators/pivotAnalysis";
 
 // How close (px) a click/cursor must be to a curve to select/hover it.
 export const HIT_TOLERANCE_PX = 6;
@@ -173,4 +179,131 @@ export function selectedAvwapId(
   if (!sel) return null;
   const ind = chart.getIndicatorByPaneId(sel.paneId, sel.name) as Indicator | null | undefined;
   return ind && indTypeOf(ind) === "AVWAP" ? sel.name : null;
+}
+
+// One resolved Pivots-High/Low Δ label — the identity + the pixel geometry the
+// overlay needs to paint it (and to pixel-hit-test the cursor against it).
+export interface PivotDeltaLabel {
+  name: string; // owning indicator instance (candle-pane key)
+  index: number; // swing-bar data index (identity for the hovered-match)
+  side: "high" | "low";
+  markerX: number; // pixel x of the pivot's swing bar (label sits just right of it)
+  markerY: number; // pixel y of the swing marker (for the marker-dot hit radius)
+  anchorY: number; // anchor pixel y (topmost point for a high, bottom for a low)
+  textW: number; // widest Δ line in the enlarged font, for the hit rect
+  lines: [string, string];
+}
+
+// The marker dot is drawn r=3; give the grab a little slack (matches the curve
+// hit tolerance) so the dot is easy to land on.
+const PIVOT_MARKER_HIT_PX = HIT_TOLERANCE_PX;
+
+// Lazily-created offscreen 2D context, used only to measure the Δ-label text width
+// (in PIVOT_DELTA_PLATE.font) so the hit-test rect matches the painted plate. Kept
+// lazy so importing this module stays side-effect-free (tests don't touch canvas).
+let measureCtx: CanvasRenderingContext2D | null = null;
+function measurePlateTextWidth(lines: [string, string]): number {
+  if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
+  if (!measureCtx) return lines[0].length * 7; // jsdom fallback; unused in-browser
+  measureCtx.font = PIVOT_DELTA_PLATE.font;
+  return Math.max(measureCtx.measureText(lines[0]).width, measureCtx.measureText(lines[1]).width);
+}
+
+// Whether this cell has a visible Pivots-High/Low indicator on the candle pane.
+// Gates the extra crosshair-driven redraw (for the hover-enlarge) so charts
+// without the indicator keep the cheap textContent-only crosshair path.
+export function hasPivotAnalysisIndicator(chart: Chart): boolean {
+  const inds = (chart.getIndicatorByPaneId() as Map<string, Map<string, Indicator>> | null | undefined)?.get(
+    "candle_pane",
+  );
+  if (!inds) return false;
+  for (const [, ind] of inds) {
+    if (ind.visible !== false && indTypeOf(ind) === "PIVOT_ANALYSIS") return true;
+  }
+  return false;
+}
+
+// Every visible Pivots-High/Low Δ label, resolved to pixels, across all instances
+// on the candle pane. This is the SINGLE source the overlay paints from (the
+// indicator no longer draws the labels itself) — so each pivot's label renders
+// exactly once, and the hovered one can be enlarged in place with no doubling.
+export function buildPivotDeltaLabels(chart: Chart): PivotDeltaLabel[] {
+  const panes = chart.getIndicatorByPaneId() as Map<string, Map<string, Indicator>> | null | undefined;
+  if (!panes) return [];
+  const inds = panes.get("candle_pane");
+  if (!inds) return [];
+  const vr = chart.getVisibleRange();
+  const dl = chart.getDataList();
+  const labels: PivotDeltaLabel[] = [];
+  // Scan a one-bar margin past the edges so a pivot whose marker/label peeks in
+  // from just off-screen is still drawn.
+  const lo = Math.max(0, vr.from - 1);
+  for (const [name, ind] of inds) {
+    if (ind.visible === false || indTypeOf(ind) !== "PIVOT_ANALYSIS") continue;
+    const result = ind.result as PivotAnalysisPoint[];
+    const hi = Math.min(result.length, vr.to + 1);
+    for (let i = lo; i < hi; i++) {
+      const cands: Array<["high" | "low", PivotAnalysisPoint["phEvent"]]> = [
+        ["high", result[i]?.phEvent],
+        ["low", result[i]?.plEvent],
+      ];
+      const k = dl[i];
+      if (!k) continue;
+      for (const [side, ev] of cands) {
+        if (!ev) continue;
+        const lines = pivotDeltaLabelLines(ev);
+        if (!lines) continue; // first-of-type pivot: marker only, no label
+        // Marker pixel (price level) + the anchor y like the on-chart label: the
+        // topmost of (pivot, prev pivot) for a high (label above), bottom for a low.
+        const pair = chart.convertToPixel(
+          [
+            { timestamp: k.timestamp, value: ev.price },
+            { timestamp: k.timestamp, value: ev.prevPrice ?? ev.price },
+          ],
+          { paneId: "candle_pane", absolute: true },
+        ) as Array<{ x: number; y: number }>;
+        if (!pair[0] || !pair[1]) continue;
+        const anchorY = side === "high" ? Math.min(pair[0].y, pair[1].y) : Math.max(pair[0].y, pair[1].y);
+        labels.push({
+          name,
+          index: i,
+          side,
+          markerX: pair[0].x,
+          markerY: pair[0].y,
+          anchorY,
+          textW: measurePlateTextWidth(lines),
+          lines,
+        });
+      }
+    }
+  }
+  return labels;
+}
+
+// The Δ label to enlarge: the one whose marker dot or Δ-label plate the cursor is
+// genuinely over (a real pixel hit-test, so it works at any zoom). `pointer` is the
+// cursor's container-pixel position (null when off the chart) → returns null then,
+// so the enlarge is hover-only. Keeps the nearest marker when several overlap.
+export function pivotDeltaLabelAt(
+  labels: PivotDeltaLabel[],
+  pointer: { x: number; y: number } | null,
+): PivotDeltaLabel | null {
+  if (!pointer) return null;
+  let best: PivotDeltaLabel | null = null;
+  let bestDist = Infinity;
+  for (const l of labels) {
+    const { hit, dist } = pivotDeltaHit(pointer, {
+      markerX: l.markerX,
+      markerY: l.markerY,
+      anchorY: l.anchorY,
+      side: l.side,
+      textW: l.textW,
+      radius: PIVOT_MARKER_HIT_PX,
+    });
+    if (hit && dist < bestDist) {
+      bestDist = dist;
+      best = l;
+    }
+  }
+  return best;
 }

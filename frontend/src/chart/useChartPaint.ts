@@ -23,6 +23,7 @@ import {
   paintCrossingDots,
   buildCurveLabelPills,
   paintAnchorHandle,
+  paintPivotDeltaLabels,
   fmtCountdown,
 } from "./chartPainters";
 import { crossingsForSelection } from "./curveCrossings";
@@ -31,6 +32,8 @@ import {
   buildLineCache,
   avwapAnchorPixel,
   selectedAvwapId,
+  buildPivotDeltaLabels,
+  pivotDeltaLabelAt,
 } from "./chartGeometry";
 import { buildLegendRows, buildSubPaneLegends, type LegendRow, type SubPaneLegendData, type ChartLegendHandle } from "../ChartLegend";
 import { getBacktestAggregate } from "../lib/backtest";
@@ -125,6 +128,10 @@ export interface ChartPaintDeps {
   snapViewRef: React.MutableRefObject<boolean>;
   sepCacheRef: React.MutableRefObject<{ ts: number; tz: string; theme: string; label: string; accent: string } | null>;
   lineCacheRef: React.MutableRefObject<LineCache[]>;
+  // Cursor position in container pixels (null when off the chart) — drives the
+  // Pivots-High/Low Δ-label hover-enlarge pixel hit-test. Set/cleared in
+  // usePointerCrosshair's onMove/onLeave.
+  pointerPxRef: React.MutableRefObject<{ x: number; y: number } | null>;
   plusCrosshairYRef: React.MutableRefObject<number | null>;
   syncCrosshairRef: React.MutableRefObject<boolean>;
   syncedTsRef: React.MutableRefObject<number | null>;
@@ -171,6 +178,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     snapViewRef,
     sepCacheRef,
     lineCacheRef,
+    pointerPxRef,
     plusCrosshairYRef,
     syncCrosshairRef,
     syncedTsRef,
@@ -868,6 +876,15 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
             chart.getSize("candle_pane", DomPosition.Main)?.width ?? w,
           ),
         );
+        // Draw every Pivots-High/Low Δ%/Δt label here (the indicator no longer draws
+        // them itself), each small at rest, enlarging in place the one the cursor is
+        // genuinely over — a real pixel hit-test, so it works at any zoom. Re-hit-tested
+        // every redraw, so it stays correct through scroll/zoom. pointerPxRef is null
+        // when the cursor is off the chart → nothing enlarged. Painted last → on top.
+        const pivotLabels = buildPivotDeltaLabels(chart);
+        if (pivotLabels.length) {
+          paintPivotDeltaLabels(ctx, pivotLabels, pivotDeltaLabelAt(pivotLabels, pointerPxRef.current));
+        }
       }
     }
 
