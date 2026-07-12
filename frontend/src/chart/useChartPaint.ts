@@ -20,10 +20,12 @@ import { DomPosition } from "klinecharts";
 import {
   first,
   paintSelectionDots,
+  paintCrossingDots,
   buildCurveLabelPills,
   paintAnchorHandle,
   fmtCountdown,
 } from "./chartPainters";
+import { crossingsForSelection } from "./curveCrossings";
 import {
   type LineCache,
   buildLineCache,
@@ -38,6 +40,7 @@ import { mergeTradeLevels, isBreakeven, isBreakevenTarget, getLivePrice, type Or
 import { type TradeLineField } from "../lib/signals";
 import { bracketLabels } from "../lib/positionLines";
 import { hexToRgba, DASH_DASHED, DASH_DOTTED } from "../lib/lineStyle";
+import { UP, DOWN } from "../lib/chartTheme";
 import { isSynthetic } from "../lib/syntheticRegistry";
 import { chartColors, type BidAskStyle, type Theme } from "../theme";
 import { RESOLUTION_SECONDS, type LiveStatus } from "../lib/feed";
@@ -797,6 +800,15 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
             sel,
             chartColors[themeRef.current].bg,
             chart.getBarSpace(),
+          );
+          // Crossing dots: where the selected curve crosses every other
+          // candle-pane curve, painted after the handles so they sit on top.
+          paintCrossingDots(
+            ctx,
+            crossingsForSelection(lineCacheRef.current, sel),
+            UP,
+            DOWN,
+            chartColors[themeRef.current].bg,
           );
         }
         // Hovering a candle-pane indicator's legend row also shows its curve in

@@ -6,6 +6,7 @@ import { minPositiveGap } from "../lib/barInterval";
 import { curveLabel, curveLabelConfig, curveLabelPosFor } from "../lib/customIndicators";
 import { type CurveLabelPill } from "../CurveLabels";
 import { type LineCache, DOT_RADIUS, ANCHOR_HANDLE_R } from "./chartGeometry";
+import { type CrossingDot } from "./curveCrossings";
 
 // The browser's IANA timezone (e.g. "Europe/London"), used when the user picks
 // "Browser time". klinecharts needs an explicit name; passing "" can leave the
@@ -75,6 +76,38 @@ export function paintSelectionDots(
       ctx.fill();
       ctx.stroke();
     }
+  }
+}
+
+// Crossing-marker arrow geometry: small enough to sit between 1m bars.
+const CROSS_ARROW_W = 3.5; // half-width of the arrow base
+const CROSS_ARROW_H = 7; // tip-to-base height
+
+// Draw the crossing markers for the selected curve: a little arrow whose TIP
+// sits exactly on each intersection with another candle-pane curve — an
+// up-arrow (body below the crossing) when the selected curve crossed above,
+// a down-arrow (body above) when it crossed below, in the app's candle up/down
+// colors, outlined in the chart background so they read on top of both lines.
+export function paintCrossingDots(
+  ctx: CanvasRenderingContext2D,
+  dots: CrossingDot[],
+  upColor: string,
+  downColor: string,
+  ring: string,
+): void {
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = ring;
+  ctx.lineJoin = "round";
+  for (const d of dots) {
+    const s = d.dir === "up" ? 1 : -1; // body extends below an up-arrow's tip
+    ctx.beginPath();
+    ctx.moveTo(d.x, d.y);
+    ctx.lineTo(d.x - CROSS_ARROW_W, d.y + s * CROSS_ARROW_H);
+    ctx.lineTo(d.x + CROSS_ARROW_W, d.y + s * CROSS_ARROW_H);
+    ctx.closePath();
+    ctx.fillStyle = d.dir === "up" ? upColor : downColor;
+    ctx.fill();
+    ctx.stroke();
   }
 }
 
