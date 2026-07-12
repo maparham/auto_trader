@@ -2266,19 +2266,13 @@
      hover/selected border doesn't shift the row. */
   height: 22px; padding: 0 6px;
   border: 1px solid transparent; border-radius: 3px;
-  /* Opaque plate in the chart-background colour so a trade pill sitting behind the
-     candle-pane legend (pills are z 47–49, legend z 50) is fully masked instead of
-     bleeding through. Matches the chart-pane background (--chart-bg mood/override,
-     falling back to the theme --bg) so it's invisible over the empty chart; over
-     candles it reads as a tight TradingView-style plate. Low specificity (one
-     class) so hover/selected rows still win with --surface (see .cl-ind:hover). */
-  background: var(--chart-bg, var(--bg));
+  /* Idle rows are transparent (TradingView-style: text + halo only, no plate) so
+     the mood/theme background shows through untouched; hover/selected rows get an
+     opaque --surface card (see .cl-ind:hover). A trade pill sitting behind the
+     candle-pane legend (pills z 47–49, legend z 50) shows through the idle text —
+     accepted; the halo keeps the text readable. */
+  background: transparent;
 }
-/* Sub-pane legend rows never sit behind a pill (pills live on the candle pane), so
-   they don't need the mask — keep them transparent (halo only), as before. Placed
-   before the .cl-ind:hover block so a hovered sub-pane row still gets its --surface
-   plate by source order (equal specificity, later rule wins). */
-.sub-pane-legend .cl-row { background: transparent; }
 /* Tiny gap between adjacent segments, TradingView-tight. */
 .cl-row > * + * { margin-left: 6px; }
 .cl-row > .cl-ohlc-item + .cl-ohlc-item,
