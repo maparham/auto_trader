@@ -1871,11 +1871,48 @@ function SectionTitle({ info, children }: { info?: string | string[]; children: 
   );
 }
 
+// Remember which sections the user collapsed, keyed by section title, across
+// reloads. A shared blob so one key holds every section's state.
+const SECTION_COLLAPSE_KEY = "bt-section-collapsed";
+function loadCollapsedSections(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(SECTION_COLLAPSE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+// A collapsible settings section. The chevron + title is a toggle button; the ⓘ
+// sits outside it (nesting InfoTip's own <button> inside would be invalid HTML)
+// and swallows its own click, so tapping it never collapses the section.
 function Section({ title, info, children }: { title: string; info?: string | string[]; children: ReactNode }) {
+  const [collapsed, setCollapsed] = useState<boolean>(() => loadCollapsedSections()[title] ?? false);
+  const toggle = () => {
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        const all = loadCollapsedSections();
+        all[title] = next;
+        localStorage.setItem(SECTION_COLLAPSE_KEY, JSON.stringify(all));
+      } catch {}
+      return next;
+    });
+  };
   return (
-    <div className="bt-section">
-      <SectionTitle info={info}>{title}</SectionTitle>
-      {children}
+    <div className={`bt-section${collapsed ? " collapsed" : ""}`}>
+      <div className="bt-section-head">
+        <button type="button" className="bt-section-toggle" onClick={toggle} aria-expanded={!collapsed}>
+          <span className={`bt-section-chevron${collapsed ? " collapsed" : ""}`} aria-hidden="true">
+            ▾
+          </span>
+          <span className="instrument-section-title bt-section-title">
+            <span>{title}</span>
+          </span>
+        </button>
+        {info && <InfoTip text={info} />}
+      </div>
+      {!collapsed && children}
     </div>
   );
 }

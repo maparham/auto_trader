@@ -900,6 +900,7 @@
 /* Info ⓘ triggers in the backtest panel: a bare icon button (no button chrome),
    drawn as an outlined glyph (fill:none) rather than a solid dot. */
 .bt-section-title .ind-info,
+.bt-section-head .ind-info,
 .bt-field-label .ind-info,
 .bt-tf-label .ind-info,
 .bt-mask-toggle .ind-info,
@@ -908,11 +909,13 @@
   background: none; cursor: help; color: var(--text-faint);
 }
 .bt-section-title .ind-info:hover,
+.bt-section-head .ind-info:hover,
 .bt-field-label .ind-info:hover,
 .bt-tf-label .ind-info:hover,
 .bt-mask-toggle .ind-info:hover,
 .bt-panel-stat-label .ind-info:hover { color: var(--text-dim); }
 .bt-section-title .ind-info svg,
+.bt-section-head .ind-info svg,
 .bt-field-label .ind-info svg,
 .bt-tf-label .ind-info svg,
 .bt-mask-toggle .ind-info svg,
@@ -1063,6 +1066,26 @@
    whitespace alone (dividers live at the group boundary, see bt-scroll-section).
    A touch more vertical padding lets the dense panel breathe. */
 .bt-section { display: flex; flex-direction: column; gap: 10px; padding: 16px 0; }
+/* Heading row: the chevron + title is a toggle button; the ⓘ sits beside it as
+   a sibling (not nested) so tapping it never collapses the section. */
+.bt-section-head { display: flex; align-items: center; gap: 5px; }
+.bt-section-toggle {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.bt-section-toggle .bt-section-title { margin-bottom: 0; }
+.bt-section-toggle:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.bt-section-chevron {
+  transition: transform 0.15s ease;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.bt-section-chevron.collapsed { transform: rotate(-90deg); }
+.bt-section-toggle:hover .bt-section-chevron { color: var(--text); }
 /* Numbers in this modal read like a terminal, matching the rest of the app
    (price/qty columns) rather than plain form fields. */
 .bt-body input[type="number"] { font-family: var(--mono); font-variant-numeric: tabular-nums; }
