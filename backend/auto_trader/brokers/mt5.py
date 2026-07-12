@@ -308,6 +308,13 @@ class MT5Broker(MarketDataBroker):
         self._state = "OK"  # "OK" | "RECONNECTING"
         self._gen = 0
         self._fail_streak = 0
+        # History (get_historical_candles) rides its own REST path on the account
+        # object, not the RPC connection — so it wedges independently. Observed
+        # live: every history call insta-cancelled for hours while RPC reads stayed
+        # healthy (whose successes kept resetting _fail_streak), so no rebuild ever
+        # fired and candle fetches 503'd until a process restart. Tracked separately
+        # so a history-only wedge escalates to the same rebuild.
+        self._hist_fail_streak = 0
         self._rebuild_fails = 0  # consecutive failed rebuilds — drives the backoff
         self._rebuild_task: asyncio.Task | None = None
         self._last_rebuild_at = float("-inf")
@@ -452,12 +459,23 @@ class MT5Broker(MarketDataBroker):
                 await asyncio.sleep(5.0)
 
     def _note_rpc_timeout(self, gen: int) -> None:
-        """Count a consecutive RPC timeout; on the second (a persistent wedge on a
-        still-'synchronized' socket, not a one-off blip) kick off a single-flight
-        background rebuild. The `gen` guard means a timeout observed against an
-        already-superseded connection doesn't schedule a redundant rebuild."""
+        """Count a consecutive RPC timeout toward the RPC path's wedge streak."""
         self._fail_streak += 1
-        if self._state == "OK" and self._fail_streak >= 2 and gen == self._gen:
+        self._maybe_rebuild(self._fail_streak, gen)
+
+    def _note_history_failure(self, gen: int) -> None:
+        """Count a history failure toward the history path's OWN wedge streak —
+        history wedges independently of the RPC connection, and healthy RPC reads
+        must not mask a wedged history path (see __init__)."""
+        self._hist_fail_streak += 1
+        self._maybe_rebuild(self._hist_fail_streak, gen)
+
+    def _maybe_rebuild(self, streak: int, gen: int) -> None:
+        """Shared escalation rule: two consecutive failures on one path are a
+        persistent wedge (not a one-off blip) — kick the single-flight background
+        rebuild. The `gen` guard means a failure observed against an already-
+        superseded connection doesn't schedule a redundant rebuild."""
+        if self._state == "OK" and streak >= 2 and gen == self._gen:
             self._start_rebuild()
 
     def _rebuild_cooldown(self) -> float:
@@ -538,6 +556,7 @@ class MT5Broker(MarketDataBroker):
             )
         finally:
             self._fail_streak = 0
+            self._hist_fail_streak = 0
             self._state = "OK"
 
     async def _reap_api(self, api) -> None:
@@ -710,19 +729,29 @@ class MT5Broker(MarketDataBroker):
             as a raw 500 with no server-side log.
 
         A cancellation of OUR task (shutdown, client disconnect) is re-raised
-        untouched — same discipline as _bounded."""
+        untouched — same discipline as _bounded.
+
+        Both failure shapes feed the history wedge streak (_note_history_failure):
+        history rides its own REST path, so a healthy RPC connection says nothing
+        about it — without this, a wedged history path never triggers the rebuild
+        and every candle fetch fails until a process restart (observed live)."""
+        gen = self._gen
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self._acct.get_historical_candles(epic, tf, anchor, count),
                 self.HISTORY_BUDGET,
             )
         except (asyncio.TimeoutError, TimeoutException) as exc:
+            self._note_history_failure(gen)
             raise BrokerTimeout(f"mt5: history fetch timed out for {epic}") from exc
         except asyncio.CancelledError as exc:
             task = asyncio.current_task()
             if task is not None and task.cancelling() > 0:
                 raise
+            self._note_history_failure(gen)
             raise BrokerReconnecting("mt5") from exc
+        self._hist_fail_streak = 0
+        return result
 
     async def get_candles(
         self,

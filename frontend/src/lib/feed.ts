@@ -508,8 +508,22 @@ async function fetchWithTimeout(
   }
 }
 
-/** Candles in [fromSec, toSec]. Used for scroll-back pagination. */
-export async function fetchRange(
+/** A non-2xx /api/candles response (e.g. the 503 a broker returns while
+ * reconnecting). fetchRange flattens exactly this to an empty page; genuine
+ * network errors (refused / DNS / offline) propagate from both variants. */
+export class CandlesFetchError extends Error {
+  constructor(public status: number) {
+    super(`candles fetch failed: ${status}`);
+  }
+}
+
+/**
+ * Candles in [fromSec, toSec]. Throws CandlesFetchError on a non-2xx response
+ * so callers that must tell "broker down" apart from "no data" can (the MTF
+ * coordinator's retry). Most call sites want the forgiving shape — use
+ * fetchRange.
+ */
+export async function fetchRangeStrict(
   epic: string,
   resolution: string,
   fromSec: number,
@@ -518,30 +532,44 @@ export async function fetchRange(
   brokerId: string = DEFAULT_BROKER,
 ): Promise<KLineData[]> {
   const syn = getSynthetic(epic);
-  if (syn) {
-    const qs = new URLSearchParams({
-      expr: syn.canonical,
-      resolution,
-      from_ts: String(fromSec),
-      to_ts: String(toSec),
-      priceSide,
-      broker: brokerId,
-    });
-    const res = await fetch(`${BASE}/api/candles/synthetic?${qs}`);
-    if (!res.ok) return [];
-    return ((await res.json()) as RawCandle[]).map(toKLine);
-  }
-  const qs = new URLSearchParams({
-    epic,
-    resolution,
-    from_ts: String(fromSec),
-    to_ts: String(toSec),
-    priceSide,
-    broker: brokerId,
-  });
-  const res = await fetch(`${BASE}/api/candles?${qs}`);
-  if (!res.ok) return [];
+  const qs = syn
+    ? new URLSearchParams({
+        expr: syn.canonical,
+        resolution,
+        from_ts: String(fromSec),
+        to_ts: String(toSec),
+        priceSide,
+        broker: brokerId,
+      })
+    : new URLSearchParams({
+        epic,
+        resolution,
+        from_ts: String(fromSec),
+        to_ts: String(toSec),
+        priceSide,
+        broker: brokerId,
+      });
+  const res = await fetch(`${BASE}/api/candles${syn ? "/synthetic" : ""}?${qs}`);
+  if (!res.ok) throw new CandlesFetchError(res.status);
   return ((await res.json()) as RawCandle[]).map(toKLine);
+}
+
+/** Candles in [fromSec, toSec], a failed response as an empty page. Used for
+ * scroll-back pagination, where paging just stops at what's loaded. */
+export async function fetchRange(
+  epic: string,
+  resolution: string,
+  fromSec: number,
+  toSec: number,
+  priceSide: PriceSide = "mid",
+  brokerId: string = DEFAULT_BROKER,
+): Promise<KLineData[]> {
+  try {
+    return await fetchRangeStrict(epic, resolution, fromSec, toSec, priceSide, brokerId);
+  } catch (e) {
+    if (e instanceof CandlesFetchError) return [];
+    throw e;
+  }
 }
 
 export type LiveStatus = "connecting" | "live" | "down";

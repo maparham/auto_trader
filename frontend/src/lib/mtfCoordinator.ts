@@ -8,7 +8,7 @@
 // endpoint (see [[capital-com-api]] / charting-stack memory).
 
 import type { Chart, KLineData } from "klinecharts";
-import { fetchRange, RESOLUTION_SECONDS } from "./feed";
+import { fetchRangeStrict, RESOLUTION_SECONDS } from "./feed";
 import { maSeries, htfCoverageStartMs, type MtfSeriesBase } from "./mtf";
 import { pageHistoryBack } from "./historyPaging";
 import { indTypeOf, type MaExtend } from "./customIndicators";
@@ -35,6 +35,123 @@ const HTF_PAGE_BARS = 900;
 const HTF_MAX_PAGES = 40;
 const HTF_MAX_EMPTY = 3; // consecutive empty windows before declaring exhausted
 
+// --- fetch-failure retry -------------------------------------------------
+// A failed HTF fetch (broker briefly down or reconnecting — e.g. the backend's
+// 503 while MT5 rebuilds a wedged connection) must not leave the curve blank
+// until the user re-touches the indicator: the failing apply schedules itself
+// again with backoff. State is PER CHART (a WeakMap, so a disposed chart's
+// entries free with it) because instance names repeat across cells — the first
+// instance of a type keeps the bare name ("EMA") in every cell, on the same
+// pane id. Any newer apply for the same indicator supersedes the pending retry
+// (cancelled at apply start), and the fired retry re-checks that the indicator
+// still wants the retried timeframe, so a stale epic/config captured by a
+// timer can never stomp fresh state.
+const RETRY_BASE_MS = 4_000;
+const RETRY_MAX_MS = 60_000;
+interface MtfRetryEntry {
+  timer: ReturnType<typeof setTimeout> | null;
+  attempt: number;
+}
+const mtfRetries = new WeakMap<Chart, Map<string, MtfRetryEntry>>();
+
+const mtfRetryKey = (paneId: string, name: string) => `${paneId}:${name}`;
+
+function chartRetries(chart: Chart): Map<string, MtfRetryEntry> {
+  let m = mtfRetries.get(chart);
+  if (!m) {
+    m = new Map();
+    mtfRetries.set(chart, m);
+  }
+  return m;
+}
+
+/** Stop a pending retry but keep the attempt count — a retry-initiated apply
+ * runs through the same apply function, and must not reset its own backoff. */
+function cancelMtfRetry(chart: Chart, paneId: string, name: string): void {
+  const e = mtfRetries.get(chart)?.get(mtfRetryKey(paneId, name));
+  if (e?.timer) {
+    clearTimeout(e.timer);
+    e.timer = null;
+  }
+}
+
+/** A successful apply (or a switch back to the chart timeframe): retry state
+ * is finished with, including the backoff counter. */
+function clearMtfRetry(chart: Chart, paneId: string, name: string): void {
+  cancelMtfRetry(chart, paneId, name);
+  mtfRetries.get(chart)?.delete(mtfRetryKey(paneId, name));
+}
+
+function scheduleMtfRetry(
+  chart: Chart,
+  paneId: string,
+  name: string,
+  timeframe: string,
+  run: () => Promise<void>,
+): void {
+  const retries = chartRetries(chart);
+  const key = mtfRetryKey(paneId, name);
+  const e = retries.get(key) ?? { timer: null, attempt: 0 };
+  retries.set(key, e);
+  if (e.timer) clearTimeout(e.timer);
+  const delay = Math.min(RETRY_BASE_MS * 2 ** e.attempt, RETRY_MAX_MS);
+  e.attempt += 1;
+  e.timer = setTimeout(() => {
+    e.timer = null;
+    void (async () => {
+      // Drop the chain unless this indicator still wants the retried timeframe.
+      // Covers removal, chart disposal, AND removed-then-re-added: a fresh
+      // first instance re-mints the same bare name but has no mtf set, and the
+      // stale closure must not convert it back to the old configuration.
+      const ind = chart.getIndicatorByPaneId(paneId, name) as {
+        extendData?: { mtf?: { timeframe?: string | null } };
+      } | null;
+      if (ind?.extendData?.mtf?.timeframe !== timeframe) {
+        retries.delete(key);
+        return;
+      }
+      await run();
+    })().catch(() => {
+      retries.delete(key); // disposed chart mid-flight — stop retrying
+    });
+  }, delay);
+}
+
+/**
+ * Shared tail of every apply*Timeframe after its HTF fetch: decide whether the
+ * caller stashes the fetched series. Returns true to continue (fetch succeeded,
+ * or partial pages landed — render them; the retry extends). On a failure with
+ * nothing usable it writes the indicator itself and returns false: an
+ * already-stashed series for this timeframe is kept (stale beats blank),
+ * otherwise the timeframe-only shape — the same one a persisted MTF indicator
+ * reloads with — renders on the chart timeframe until a retry lands. Either
+ * way the merged extendData/calcParams ARE written, so config edits made while
+ * the broker is down still stick.
+ */
+function mtfFetchTail(
+  chart: Chart,
+  paneId: string,
+  name: string,
+  timeframe: string,
+  failed: boolean,
+  hasBars: boolean,
+  prev: MtfSeriesBase | undefined,
+  ext: object,
+  calcParams: unknown[],
+  retry: () => Promise<void>,
+): boolean {
+  if (!failed) {
+    clearMtfRetry(chart, paneId, name);
+    return true;
+  }
+  scheduleMtfRetry(chart, paneId, name, timeframe, retry);
+  if (hasBars) return true;
+  const mtf =
+    prev?.timeframe === timeframe && prev.htfStarts?.length ? prev : { timeframe };
+  chart.overrideIndicator({ name, calcParams, extendData: { ...ext, mtf } }, paneId);
+  return false;
+}
+
 interface MaConfig {
   kind: "ema" | "sma";
   length: number;
@@ -48,8 +165,10 @@ interface MaConfig {
  *
  * `warmupBars` is how many HTF bars of history the indicator needs *before* the
  * oldest visible bar so its left edge is populated (MA warmup for EMA/MA; enough
- * pivot history for Pivot Bands). A failed fetch (broker down) resolves to an
- * empty list rather than throwing, so the base indicator keeps working.
+ * pivot history for Pivot Bands). A failed fetch (broker down/reconnecting)
+ * never throws — it returns whatever pages already landed with `failed: true`,
+ * so the caller can render partial data and schedule a retry, while the base
+ * indicator keeps working.
  */
 async function fetchHtfBars(
   chart: Chart,
@@ -58,7 +177,7 @@ async function fetchHtfBars(
   warmupBars: number,
   brokerId: string | undefined,
   oldestChartMs: number | undefined,
-): Promise<{ htf: KLineData[]; htfMs: number }> {
+): Promise<{ htf: KLineData[]; htfMs: number; failed: boolean }> {
   const htfSec = RESOLUTION_SECONDS[timeframe] ?? 0;
   const htfMs = htfSec * 1000;
   // Cover the chart's whole loaded span, not just recent bars: reach back to the
@@ -70,6 +189,7 @@ async function fetchHtfBars(
   const fromMs = htfCoverageStartMs(oldest, htfMs, warmupBars);
 
   let htf: KLineData[] = [];
+  let failed = false;
   try {
     await pageHistoryBack<KLineData>({
       fromTs: fromMs,
@@ -80,15 +200,24 @@ async function fetchHtfBars(
       maxEmpty: HTF_MAX_EMPTY,
       isStale: () => false,
       getData: () => htf,
-      fetchOlder: (fSec, tSec) => fetchRange(epic, timeframe, fSec, tSec, "mid", brokerId),
+      // A non-2xx page marks the whole fetch failed (the rethrow stops the
+      // walk); pages that already landed are kept and rendered.
+      fetchOlder: async (fSec, tSec) => {
+        try {
+          return await fetchRangeStrict(epic, timeframe, fSec, tSec, "mid", brokerId);
+        } catch (e) {
+          failed = true;
+          throw e;
+        }
+      },
       applyData: (merged) => {
         htf = merged;
       },
     });
   } catch {
-    htf = [];
+    failed = true;
   }
-  return { htf, htfMs };
+  return { htf, htfMs, failed };
 }
 
 /**
@@ -113,16 +242,18 @@ export async function applyMaTimeframe(
   // paged so the overlay spans the whole loaded range, not just recent bars.
   oldestChartMs?: number,
 ): Promise<void> {
+  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
   const ind = chart.getIndicatorByPaneId(paneId, name) as { extendData?: MaExtend } | null;
   const ext: MaExtend = { ...(ind?.extendData ?? {}), ...config.options };
 
   if (!timeframe || timeframe === "chart") {
+    clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
     chart.overrideIndicator({ name, calcParams: [config.length], extendData: ext }, paneId);
     return;
   }
 
-  const { htf, htfMs } = await fetchHtfBars(
+  const { htf, htfMs, failed } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -130,6 +261,19 @@ export async function applyMaTimeframe(
     brokerId,
     oldestChartMs,
   );
+  const proceed = mtfFetchTail(
+    chart,
+    paneId,
+    name,
+    timeframe,
+    failed,
+    htf.length > 0,
+    ind?.extendData?.mtf,
+    ext,
+    [config.length],
+    () => applyMaTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+  );
+  if (!proceed) return;
   // MTF carries the base line only (smoothing is not shown under MTF — see
   // computeMa's MTF branch), so take the base series here.
   const { base } = maSeries(htf, config.kind, config.length, config.options);
@@ -173,17 +317,19 @@ export async function applyPivotBandsTimeframe(
   brokerId?: string,
   oldestChartMs?: number,
 ): Promise<void> {
+  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
   const ind = chart.getIndicatorByPaneId(paneId, name) as { extendData?: PivotBandsExtend } | null;
   const ext: PivotBandsExtend = { ...(ind?.extendData ?? {}), mode: config.mode, source: config.source };
   const calcParams = [config.n, config.k];
 
   if (!timeframe || timeframe === "chart") {
+    clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
     chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
     return;
   }
 
-  const { htf, htfMs } = await fetchHtfBars(
+  const { htf, htfMs, failed } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -191,6 +337,19 @@ export async function applyPivotBandsTimeframe(
     brokerId,
     oldestChartMs,
   );
+  const proceed = mtfFetchTail(
+    chart,
+    paneId,
+    name,
+    timeframe,
+    failed,
+    htf.length > 0,
+    ind?.extendData?.mtf,
+    ext,
+    calcParams,
+    () => applyPivotBandsTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+  );
+  if (!proceed) return;
   // Reuse the exact chart-TF math on the HTF bars: computePivotBands already
   // carries each side's value forward (dense after the first pivot) and bakes in
   // the N-bar confirmation lag, so the aligned series stays gap-free and honest.
@@ -233,6 +392,7 @@ export async function applySlopeTimeframe(
   brokerId?: string,
   oldestChartMs?: number,
 ): Promise<void> {
+  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
   const ind = chart.getIndicatorByPaneId(paneId, name) as { extendData?: SlopeExtend } | null;
   const ext: SlopeExtend = {
     ...(ind?.extendData ?? {}),
@@ -243,6 +403,7 @@ export async function applySlopeTimeframe(
   const calcParams = config.lengths;
 
   if (!timeframe || timeframe === "chart") {
+    clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
     chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
     return;
@@ -251,7 +412,7 @@ export async function applySlopeTimeframe(
   // Reach back the longest MA length + slope period (+ smoothing) so the HTF
   // left edge is populated for every line.
   const smLen = config.smoothing && config.smoothing.type !== "none" ? Number(config.smoothing.length) || 0 : 0;
-  const { htf, htfMs } = await fetchHtfBars(
+  const { htf, htfMs, failed } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -259,6 +420,19 @@ export async function applySlopeTimeframe(
     brokerId,
     oldestChartMs,
   );
+  const proceed = mtfFetchTail(
+    chart,
+    paneId,
+    name,
+    timeframe,
+    failed,
+    htf.length > 0,
+    ind?.extendData?.mtf,
+    ext,
+    calcParams,
+    () => applySlopeTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+  );
+  if (!proceed) return;
   // Slope computed on native HTF bars with HTF barHours (inferBarHours matches the
   // rule path's computeIndicatorRecipe), BEFORE alignHtfToChart forward-fills.
   const barHours = inferBarHours(htf);

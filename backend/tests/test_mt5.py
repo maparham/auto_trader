@@ -283,6 +283,101 @@ def test_history_our_cancellation_propagates():
     asyncio.run(scenario())
 
 
+def _with_fake_rebuild(broker):
+    """Replace the real rebuild with a recorder that just flips state back."""
+    rebuilt: list[int] = []
+
+    async def _fake_rebuild(gen, suspect=None):
+        rebuilt.append(gen)
+        broker._state = "OK"
+
+    broker._rebuild = _fake_rebuild
+    return rebuilt
+
+
+def test_history_wedge_feeds_detection_and_schedules_rebuild():
+    """A history-only wedge must self-heal. Observed live: the RPC path stayed
+    healthy (positions/quotes fine, so its fail streak kept resetting) while every
+    get_historical_candles call was insta-cancelled by the SDK — candle fetches
+    503'd "reconnecting" indefinitely because nothing ever scheduled the rebuild.
+    Two consecutive history failures must escalate exactly like two RPC timeouts."""
+    from auto_trader.core.broker_health import BrokerReconnecting
+    from auto_trader.core.models import Resolution
+
+    broker = _candle_broker([])
+    broker._acct = _CancellingAcct()
+    rebuilt = _with_fake_rebuild(broker)
+
+    async def scenario():
+        # First failure: a transient blip must NOT tear down the client.
+        with pytest.raises(BrokerReconnecting):
+            await broker.get_recent_candles("EURUSD", Resolution.MINUTE, 50)
+        assert rebuilt == []
+        # Second consecutive failure escalates to a rebuild — scheduled once.
+        with pytest.raises(BrokerReconnecting):
+            await broker.get_recent_candles("EURUSD", Resolution.MINUTE, 50)
+        await asyncio.sleep(0)  # let the detached rebuild task run
+        assert len(rebuilt) == 1
+
+    asyncio.run(scenario())
+
+
+def test_history_timeout_also_feeds_wedge_detection():
+    """A hang is the other live-observed wedge shape (MetaApi holding a history
+    read open past 60s); two consecutive bounded timeouts must also escalate."""
+    from auto_trader.core.broker_health import BrokerTimeout
+    from auto_trader.core.models import Resolution
+
+    broker = _candle_broker([])
+    broker._acct = _HangingAcct()
+    broker.HISTORY_BUDGET = 0.02
+    rebuilt = _with_fake_rebuild(broker)
+
+    async def scenario():
+        for _ in range(2):
+            with pytest.raises(BrokerTimeout):
+                await broker.get_recent_candles("EURUSD", Resolution.MINUTE, 50)
+        await asyncio.sleep(0)
+        assert len(rebuilt) == 1
+
+    asyncio.run(scenario())
+
+
+def test_history_success_resets_the_wedge_streak():
+    """fail → success → fail is a flaky link, not a wedge: no rebuild."""
+    from auto_trader.core.broker_health import BrokerReconnecting
+    from auto_trader.core.models import Resolution
+
+    bars, _today = _daily_bars_ending_today()
+
+    class _FlakyAcct:
+        def __init__(self):
+            self.n = 0
+
+        async def get_historical_candles(self, symbol, timeframe, start_time, limit):
+            self.n += 1
+            if self.n == 2:
+                return list(bars)
+            raise asyncio.CancelledError
+
+    broker = _candle_broker([])
+    broker._acct = _FlakyAcct()
+    rebuilt = _with_fake_rebuild(broker)
+
+    async def scenario():
+        from auto_trader.core.models import Resolution as R
+
+        with pytest.raises(BrokerReconnecting):
+            await broker.get_recent_candles("EURUSD", R.DAY, 3)
+        await broker.get_recent_candles("EURUSD", R.DAY, 3)  # heals the streak
+        with pytest.raises(BrokerReconnecting):
+            await broker.get_recent_candles("EURUSD", R.DAY, 3)
+        await asyncio.sleep(0)
+        assert rebuilt == []
+
+    asyncio.run(scenario())
+
+
 def test_quiet_sdk_logging_silences_domain_client_spam():
     """The SDK logs transient domain-cache failures via `logger.error(msg, json)` —
     a positional arg to a message with no `%s`, so each one dumps a ~100-line
