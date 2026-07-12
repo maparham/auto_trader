@@ -103,6 +103,11 @@ export interface Settings {
   // and 1 = the full picked color — a dim/wash-out knob, not real transparency
   // (which would reveal the grey grid behind the pane). Only meaningful with chartBg.
   chartBgOpacity?: number;
+  // Per-slot color overrides for the fixed background "mood" presets (the one-click
+  // switcher in the tab bar — see lib/bgMoods.ts / AppearanceMenu.tsx). Keyed by mood
+  // id; an absent slot uses its built-in default color. Only the colors are
+  // customisable — the slots and their names are fixed.
+  bgMoods?: Record<string, { color: string; opacity?: number }>;
 }
 
 export interface TradingSettings {

@@ -398,6 +398,39 @@
 .tab-bar-actions .menu { display: inline-flex; }
 .tab-bar-actions .layout-dropdown,
 .tab-bar-actions .layout-mgr-menu { left: auto; right: 0; }
+
+/* Appearance menu (theme + editable background "moods"), right-aligned under the
+   bar like the other cluster dropdowns. */
+.tab-bar-actions .appearance-dropdown { left: auto; right: 0; min-width: 244px; }
+.appr-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-faint); padding: 4px 6px 2px;
+}
+.appr-bg-label {
+  display: flex; align-items: center; justify-content: space-between; margin-top: 6px;
+}
+.appr-reset {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--text-dim); font-size: 11px; text-decoration: underline;
+  text-transform: none; letter-spacing: 0;
+}
+.appr-reset:hover { color: var(--text); }
+.appr-theme { display: flex; width: 100%; margin: 2px 0; }
+.appr-theme button { flex: 1; padding: 5px 8px; font-size: 12px; }
+.appr-mood-label {
+  flex: 1; text-align: left; background: none; border: none; color: inherit;
+  cursor: pointer; font-size: 13px; padding: 0;
+}
+.appr-mood.on { background: var(--hover-strong); }
+.appr-mood.on .appr-mood-label { color: var(--text); font-weight: 500; }
+.appr-check { color: var(--accent); font-size: 12px; flex: 0 0 auto; }
+/* The "Theme default" swatch mirrors the theme background (var(--bg)); mood swatches
+   are the ColorLineStylePicker's own chip. */
+.appr-swatch {
+  width: 28px; height: 24px; flex: 0 0 auto;
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.appr-swatch--default { background: var(--bg); }
 /* Backtest summary chip sits inline after the button; keep it compact so it
    doesn't blow out the 34px row. */
 .tab-bar-actions .backtest { display: inline-flex; align-items: center; gap: 8px; }

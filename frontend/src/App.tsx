@@ -7,7 +7,7 @@ import DrawSidebar from "./DrawSidebar";
 import LayoutPicker from "./LayoutPicker";
 import BrokerSelector from "./BrokerSelector";
 import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor } from "./lib/chartSync";
-import ThemeToggle from "./ThemeToggle";
+import AppearanceMenu from "./AppearanceMenu";
 import SettingsModal from "./Settings";
 import BacktestSettingsModal from "./BacktestSettingsModal";
 import { defaultBacktestConfig } from "./lib/backtestConfig";
@@ -1591,15 +1591,7 @@ export default function App() {
                 onToggleLock={toggleLock}
               />
             )}
-            <ThemeToggle
-              theme={settings.theme}
-              onToggle={() =>
-                setSettings((s) => ({
-                  ...s,
-                  theme: s.theme === "dark" ? "light" : "dark",
-                }))
-              }
-            />
+            <AppearanceMenu settings={settings} onChange={setSettings} />
             <button
               className="tabbar-action icon-only gear"
               onClick={() => setShowSettings(true)}
