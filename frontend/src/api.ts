@@ -27,6 +27,42 @@ export interface Term {
   rightTf: string | null;
 }
 
+// --- bar inspector (session-only per-bar trace; see BacktestInspectorPanel) ---
+
+// One rule's comparison at an inspected bar. Like Term but for EVERY rule (not
+// just passing ones), so `passed` carries the raw result — failing terms show too.
+export interface InspectorTerm {
+  left: string;
+  lval: number | null;
+  op: string;
+  right: string;
+  rval: number | null;
+  leftTf: string | null;
+  rightTf: string | null;
+  passed: boolean;
+}
+
+export interface BarGroupTrace {
+  group: "longEntry" | "shortEntry" | "longExit" | "shortExit";
+  combine: string;
+  terms: InspectorTerm[];
+  passed: boolean;
+}
+
+// The engine's per-bar snapshot: all four rule groups + the outcome and gate
+// flags. `action` is opened/suppressed/none; `reason` explains a suppression.
+export interface BarTrace {
+  time: number; // bar open time, unix seconds
+  groups: BarGroupTrace[];
+  action: "opened" | "suppressed" | "none";
+  reason: string | null;
+  inPositionLong: boolean;
+  inPositionShort: boolean;
+  windowActive: boolean;
+  warmedUp: boolean;
+  spacingOk: boolean | null;
+}
+
 export interface Marker {
   time: number;
   side: "buy" | "sell";
@@ -91,6 +127,9 @@ export interface BacktestResult {
   // True when a coded strategy's own ctx.stop/target calls overrode the panel's
   // longRisk/shortRisk bracket for this run (Strategy tab transparency).
   fileBracketsOverridden?: boolean;
+  // Per-bar inspector trace — present only when the request set `inspect` and the
+  // strategy is rule-based. Session-only: held in memory, never persisted.
+  bar_traces?: BarTrace[] | null;
 }
 
 export interface BacktestRequest {
@@ -116,6 +155,7 @@ export interface BacktestRequest {
   broker?: string;
   priceSide?: string;
   codedParams?: ParamValues; // panel-tuned ctx.param() overrides for `codedStrategy`
+  inspect?: boolean; // opt into the per-bar inspector trace (bar_traces on the result)
 }
 
 export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {

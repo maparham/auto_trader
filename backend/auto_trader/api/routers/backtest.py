@@ -29,8 +29,11 @@ from .. import deps
 from ..schemas import (
     BacktestRequest,
     BacktestResponse,
+    BarGroupTraceDTO,
+    BarTraceDTO,
     CandleDTO,
     EquityDTO,
+    InspectorTermDTO,
     MarkerDTO,
     RiskConfigDTO,
     RuleGroupDTO,
@@ -142,6 +145,7 @@ async def _run_rule(
         short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
         series=series,
         mask=req.mask.to_mask() if req.mask else None,
+        inspect=req.inspect,
     )
     return engine.run(candles)
 
@@ -344,7 +348,45 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         fileBracketsOverridden=(
             strategy.file_brackets_overridden if req.codedStrategy is not None else False
         ),
+        bar_traces=_bar_traces_dto(result, req.tradeFromTime) if req.inspect else None,
     )
+
+
+def _bar_traces_dto(result: BacktestResult, trade_from_time: int) -> list[BarTraceDTO] | None:
+    """Map the engine's per-bar traces to DTOs, keeping only bars in the trading
+    window (time >= tradeFromTime, matching equity/markers). Returns None when the
+    run produced no traces (e.g. a coded strategy, which has no rule groups)."""
+    traces = [
+        BarTraceDTO(
+            time=t.time,
+            groups=[
+                BarGroupTraceDTO(
+                    group=g.group,
+                    combine=g.combine,
+                    terms=[
+                        InspectorTermDTO(
+                            left=term.left_label, lval=term.left_val, op=term.op,
+                            right=term.right_label, rval=term.right_val,
+                            leftTf=term.left_tf, rightTf=term.right_tf, passed=term.passed,
+                        )
+                        for term in g.terms
+                    ],
+                    passed=g.passed,
+                )
+                for g in t.groups
+            ],
+            action=t.action,
+            reason=t.reason,
+            inPositionLong=t.in_position_long,
+            inPositionShort=t.in_position_short,
+            windowActive=t.window_active,
+            warmedUp=t.warmed_up,
+            spacingOk=t.spacing_ok,
+        )
+        for t in result.bar_traces
+        if t.time >= trade_from_time
+    ]
+    return traces or None
 
 
 # --- parameter/risk sweep: N coded runs sharing one HTF fetch cache ----------

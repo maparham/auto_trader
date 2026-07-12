@@ -41,6 +41,7 @@ import {
   sweepCancelRequest,
 } from "./lib/signals";
 import { runSweep, sweepCatchState } from "./lib/sweep";
+import { inspectModeSignal } from "./lib/backtestInspect";
 import type { BacktestRequest, SweepRow } from "./api";
 
 interface Props {
@@ -262,6 +263,9 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         costs: cfg.costs,
         tradeFromTime,
         mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
+        // Ask the backend for the per-bar inspector trace only while inspect mode
+        // is on (rule mode only — coded strategies have no rule groups to trace).
+        inspect: inspectModeSignal.value && !coded,
       };
 
       // Sweep mode (Task 10): the modal populated sweepAxesSignal and asked for

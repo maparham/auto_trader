@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from auto_trader.core.models import Candle, Fill, Side, Signal, Trade
+from auto_trader.core.models import BarTrace, Candle, Fill, Side, Signal, Trade
 from auto_trader.engine.risk import RiskConfig, is_trailing, stop_level, target_level
 from auto_trader.engine.scaling import ScalingConfig, spacing_ok
 from auto_trader.engine.schedule import RecurrenceMask, is_active
@@ -59,6 +59,8 @@ class BacktestResult:
     fills: list[Fill] = field(default_factory=list)
     trades: list[Trade] = field(default_factory=list)
     equity: list[EquityPoint] = field(default_factory=list)
+    # Per-bar inspector trace (empty unless the engine ran with inspect=True).
+    bar_traces: list[BarTrace] = field(default_factory=list)
 
     # summary stats
     net_pnl: float = 0.0
@@ -88,9 +90,11 @@ class BacktestEngine:
         long_scaling: ScalingConfig | None = None,
         short_scaling: ScalingConfig | None = None,
         mask: RecurrenceMask | None = None,
+        inspect: bool = False,
     ) -> None:
         self.strategy = strategy
         self.mask = mask
+        self.inspect = inspect
         self.starting_cash = starting_cash
         self.commission = commission_per_side
         self.slippage = slippage
@@ -112,6 +116,12 @@ class BacktestEngine:
         peak_equity = self.starting_cash
         last_long_open: float | None = None
         last_short_open: float | None = None
+
+        # Per-bar inspector snapshots (only when inspect is on). Each holds the bar's
+        # group evaluations plus position/window state; action/reason are resolved
+        # after the loop from the fills (cross-bar: a bar's signal fills at bar+1).
+        inspect = self.inspect and hasattr(self.strategy, "inspect_groups")
+        snapshots: list[dict] = []
 
         for i, bar in enumerate(candles):
             active = is_active(self.mask, bar.time)
@@ -209,8 +219,31 @@ class BacktestEngine:
             ctx.short_entry_price = shorts[0].entry if shorts else None
             ctx.long_entry_time = longs[0].open_time if longs else None
             ctx.short_entry_time = shorts[0].open_time if shorts else None
+            snap: dict | None = None
+            if inspect:
+                snap = {
+                    "i": i,
+                    "time": bar.time,
+                    "groups": self.strategy.inspect_groups(ctx, i),
+                    "in_long": ctx.position_long > 0,
+                    "in_short": ctx.position_short > 0,
+                    "window": active,
+                    "emitted_open": set(),  # opening legs the strategy actually emitted
+                }
+                snapshots.append(snap)
             if i < len(candles) - 1:  # last bar has no next-open to fill on
                 pending = list(self.strategy.on_bar(ctx))
+                if snap is not None:
+                    # Classify suppression from an actually-EMITTED opening signal,
+                    # not merely a passing group: a disabled side or the last bar
+                    # produces no signal, so a passing rule there is "none", not
+                    # "suppressed" (which would attach a bogus gate reason).
+                    snap["emitted_open"] = {
+                        sig.leg
+                        for sig in pending
+                        if (sig.leg == "long" and sig.side is Side.BUY)
+                        or (sig.leg == "short" and sig.side is Side.SELL)
+                    }
 
         # Book any still-open positions at the last close via the normal exit path
         # (reason "range end") so every position produces a Trade row rather than a
@@ -224,6 +257,8 @@ class BacktestEngine:
             realized = self._close_all(
                 shorts, "short", result, realized, Side.BUY, last_bar.close, last_bar.time, "range end"
             )
+        if inspect:
+            result.bar_traces = self._build_bar_traces(snapshots, result.fills, candles)
         result.net_pnl = realized
         result.n_trades = len(result.trades)
         round_trip_cost = 2 * self.commission
@@ -232,6 +267,68 @@ class BacktestEngine:
         return result
 
     # --- helpers ----------------------------------------------------------
+
+    def _build_bar_traces(
+        self, snapshots: list[dict], fills: list[Fill], candles: list[Candle]
+    ) -> list[BarTrace]:
+        """Resolve each per-bar snapshot into a BarTrace. A bar's entry signal fills
+        at the NEXT bar's open, so `action` is read from the fills (which carry the
+        signal bar's time); a passing entry with no opening fill was suppressed, and
+        the reason follows the engine's own gate precedence (mask, then position/cap)."""
+        opened_signal_times = {
+            f.signal_time
+            for f in fills
+            if f.signal_time is not None
+            and ((f.leg == "long" and f.side is Side.BUY)
+                 or (f.leg == "short" and f.side is Side.SELL))
+        }
+        n = len(candles)
+        out: list[BarTrace] = []
+        for s in snapshots:
+            i = s["i"]
+            groups = s["groups"]
+            emitted: set = s["emitted_open"]
+
+            if s["time"] in opened_signal_times:
+                action, reason, spacing_ok = "opened", None, None
+            elif emitted:
+                # A signal was emitted but nothing opened -> the engine gated it.
+                # Reason follows the engine's own precedence at the fill bar (i+1,
+                # which always exists here since a signal was emitted): mask, then
+                # already-in-position, then spacing/cap. Prefer the long leg's story
+                # when both sides emitted (rare).
+                action = "suppressed"
+                emit_long = "long" in emitted
+                next_active = is_active(self.mask, candles[i + 1].time)
+                if not next_active:
+                    reason, spacing_ok = "outside session window", None
+                elif (emit_long and s["in_long"]) or (not emit_long and s["in_short"]):
+                    reason, spacing_ok = "already in position", None
+                else:
+                    reason, spacing_ok = "spacing or position cap", False
+            else:
+                action, reason, spacing_ok = "none", None, None
+
+            # Warmed up when every operand of a relevant group (passing, or an entry
+            # group we always show) had a value at this bar — a None means cold.
+            relevant = [g for g in groups if g.passed or g.group in ("longEntry", "shortEntry")]
+            warmed = all(
+                t.left_val is not None and t.right_val is not None
+                for g in relevant for t in g.terms
+            )
+            out.append(BarTrace(
+                bar_index=i,
+                time=int(s["time"].timestamp()),
+                groups=tuple(groups),
+                action=action,
+                reason=reason,
+                in_position_long=s["in_long"],
+                in_position_short=s["in_short"],
+                window_active=s["window"],
+                warmed_up=warmed,
+                spacing_ok=spacing_ok,
+            ))
+        return out
 
     def _fill_price(self, open_price: float, side: Side) -> float:
         # Slippage pushes the price against us: pay more to buy, receive less to sell.

@@ -24,6 +24,8 @@ import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { RESOLUTION_SECONDS } from "./lib/feed";
 import { formatExpiryShort } from "./lib/alertUi";
+import BacktestInspectorPanel from "./BacktestInspectorPanel";
+import { inspectModeSignal, inspectTraceSignal } from "./lib/backtestInspect";
 
 // Module-singleton signal — the subscribe fn never changes, so memoize it (matches
 // Toolbar's useSyncExternalStore pattern) instead of resubscribing on every render.
@@ -34,7 +36,7 @@ const subscribeMessages = (cb: () => void) => backtestMessagesSignal.subscribe(c
 const subscribeSelectNotice = (cb: () => void) => backtestSelectNoticeSignal.subscribe(cb);
 const subscribeRunning = (cb: () => void) => backtestRunningSignal.subscribe(cb);
 
-type Tab = "overview" | "trades";
+type Tab = "overview" | "trades" | "inspect";
 type SortDir = "asc" | "desc";
 
 // Text columns read more naturally A→Z on first click; numeric/time columns
@@ -63,7 +65,20 @@ export default function BacktestPanel() {
     backtestPeriodsShownSignal.set(next);
     saveBacktestPeriodsShown(next);
   };
+  const inspectMode = useSyncExternalStore(
+    (cb) => inspectModeSignal.subscribe(cb),
+    () => inspectModeSignal.value,
+  );
+  const inspectTrace = useSyncExternalStore(
+    (cb) => inspectTraceSignal.subscribe(cb),
+    () => inspectTraceSignal.value,
+  );
   const [tab, setTab] = useState<Tab>("overview");
+  const toggleInspect = () => {
+    const next = !inspectModeSignal.value;
+    inspectModeSignal.set(next);
+    if (next) setTab("inspect");
+  };
   const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
 
   // Keep the highlighted row in view whether the highlight originated here (a
@@ -141,6 +156,23 @@ export default function BacktestPanel() {
         </svg>
         <span>Periods</span>
       </button>
+      <button
+        className={`bt-periods-toggle${inspectMode ? " on" : ""}`}
+        title={
+          inspectMode
+            ? "Inspect mode on — click a bar on the chart to see its rules"
+            : "Inspect a bar: click a bar to see every rule's value and why a trade did or didn't open"
+        }
+        aria-pressed={inspectMode}
+        onClick={toggleInspect}
+      >
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+          {/* magnifier */}
+          <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+        <span>Inspect</span>
+      </button>
       <button className="bt-clear" title="Clear backtest" onClick={requestBacktestClear}>
         ✕
       </button>
@@ -176,6 +208,14 @@ export default function BacktestPanel() {
           >
             Trades
           </button>
+          <button
+            className={tab === "inspect" ? "seg-on" : ""}
+            role="tab"
+            aria-selected={tab === "inspect"}
+            onClick={() => setTab("inspect")}
+          >
+            Inspect
+          </button>
         </div>
         <span className="bt-panel-count">
           {nTrades} {nTrades === 1 ? "trade" : "trades"}
@@ -183,7 +223,19 @@ export default function BacktestPanel() {
       </div>
 
       {(
-        tab === "overview" ? (
+        tab === "inspect" ? (
+          <div className="bt-panel-inspect">
+            {!inspectTrace ? (
+              <div className="bt-insp-empty">
+                {inspectMode
+                  ? "Run the backtest, then click a bar on the chart to inspect its rules."
+                  : "Turn on Inspect above, run the backtest, then click a bar to see every rule’s value and why a trade did or didn’t open."}
+              </div>
+            ) : (
+              <BacktestInspectorPanel />
+            )}
+          </div>
+        ) : tab === "overview" ? (
           <div className="bt-panel-overview">
             {metricGroups(result).map((g) => (
               <section className="bt-panel-group" key={g.title}>

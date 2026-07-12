@@ -25,6 +25,7 @@ import {
   type OverlayFigure,
 } from "klinecharts";
 import { runBacktest, type BacktestRequest, type Marker } from "../api";
+import { setInspectTraces, inspectSelectedBarSignal } from "./backtestInspect";
 import { applyVisibleRange, applyVisibleRangeKeepStart } from "./chartSync";
 import {
   backtestResultSignal,
@@ -919,6 +920,10 @@ export async function runAndRender(
   const t0 = performance.now();
   const result = await runBacktest(req);
   const t1 = performance.now();
+  // Session-only inspector trace: repopulate on an inspect run, clear otherwise
+  // (a normal run returns no bar_traces, so this resets any stale trace).
+  setInspectTraces(result.bar_traces);
+  inspectSelectedBarSignal.set(null);
   // Drops the previous run's markers/equity/highlight/selection zone AND
   // detaches its highlight/selection subscriptions + resets
   // highlightTradeSignal/selectedTradeSignal — so a stale trade index from the

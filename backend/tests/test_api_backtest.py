@@ -486,3 +486,52 @@ def test_markers_carry_signal_time_and_terms():
     range_end = next(m for m in result.markers if m.reason == "range end")
     assert range_end.signal_time is None
     assert range_end.terms == []
+
+
+def test_post_backtest_inspect_returns_bar_traces():
+    # Always-true entry -> opens once, then holds; inspect trace explains later bars.
+    candles = _candles([10, 11, 12, 13, 14])
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE",
+        "candles": candles,
+        "series": {},
+        **_groups(
+            long_entry={"combine": "AND", "rules": [
+                {"left": {"kind": "const", "value": 1}, "op": "gt", "right": {"kind": "const", "value": 0}}
+            ]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+        "inspect": True,
+    }
+    result = _run(body)
+    assert result.bar_traces is not None
+    assert len(result.bar_traces) == len(candles)
+    first = result.bar_traces[0]
+    assert len(first.groups) == 4
+    assert {g.group for g in first.groups} == {"longEntry", "shortEntry", "longExit", "shortExit"}
+    assert first.action == "opened"
+    # a later held bar is suppressed for being in a position
+    held = result.bar_traces[2]
+    assert held.action == "suppressed"
+    assert held.reason == "already in position"
+
+
+def test_post_backtest_no_inspect_omits_bar_traces():
+    candles = _candles([10, 11, 12])
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE",
+        "candles": candles,
+        "series": {},
+        **_groups(
+            long_entry={"combine": "AND", "rules": [
+                {"left": {"kind": "const", "value": 1}, "op": "gt", "right": {"kind": "const", "value": 0}}
+            ]},
+        ),
+        "costs": _costs(),
+        "tradeFromTime": candles[0]["time"],
+    }
+    result = _run(body)
+    assert result.bar_traces is None

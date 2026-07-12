@@ -77,6 +77,55 @@ class RuleTerm:
 
 
 @dataclass(frozen=True, slots=True)
+class InspectorTerm:
+    """One rule's comparison at an arbitrary bar, captured for the bar inspector.
+
+    Unlike RuleTerm (passing rules on fill bars only), this is recorded for EVERY
+    rule at the inspected bar, so `passed` carries the raw comparison result — the
+    inspector shows failing terms too. Labels/tf follow RuleTerm conventions."""
+
+    left_label: str
+    left_val: float | None
+    op: str
+    right_label: str
+    right_val: float | None
+    left_tf: str | None
+    right_tf: str | None
+    passed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BarGroupTrace:
+    """One rule group (longEntry/shortEntry/longExit/shortExit) evaluated at a bar:
+    every term with pass/fail, plus the group's AND/OR rollup."""
+
+    group: str            # "longEntry" | "shortEntry" | "longExit" | "shortExit"
+    combine: str          # "AND" | "OR"
+    terms: tuple[InspectorTerm, ...]
+    passed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BarTrace:
+    """The full inspector snapshot for one bar: the four rule groups plus the
+    engine's outcome for the signal that bar produced. `action` is "opened" when a
+    fill resulted, "suppressed" when a passing entry was blocked (see `reason`), or
+    "none" when no entry signal fired. Gate booleans expose why a suppression
+    happened. `time` is unix seconds (the bar's open time)."""
+
+    bar_index: int
+    time: int
+    groups: tuple[BarGroupTrace, ...]
+    action: str           # "opened" | "suppressed" | "none"
+    reason: str | None
+    in_position_long: bool
+    in_position_short: bool
+    window_active: bool
+    warmed_up: bool
+    spacing_ok: bool | None
+
+
+@dataclass(frozen=True, slots=True)
 class Signal:
     """A strategy's intent at a given bar. quantity in instrument units.
 

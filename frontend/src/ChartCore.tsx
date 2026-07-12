@@ -47,6 +47,7 @@ import {
   registerBacktestPager,
 } from "./lib/backtest";
 import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
+import { inspectModeSignal, inspectSelectedBarSignal } from "./lib/backtestInspect";
 import {
   alertEditRequest,
   requestConfirm,
@@ -1311,6 +1312,19 @@ export default function ChartCore({
         c.overrideIndicator({ name: anchoringId, calcParams: [pt.timestamp] });
         saveAvwapAnchor(scope, epicRef.current, anchoringId, pt.timestamp);
         avwapAnchorMode.set(null);
+        return;
+      }
+
+      // Backtest inspect mode: a candle-pane click selects that bar for the
+      // inspector (bar open time, seconds → matches the trace keys) instead of the
+      // normal indicator select/deselect. Only one backtest panel is open at a time.
+      if (inspectModeSignal.value) {
+        const pt = first(
+          c.convertFromPixel([{ x, y }], { paneId: "candle_pane", absolute: true }),
+        );
+        if (typeof pt.timestamp === "number") {
+          inspectSelectedBarSignal.set(Math.floor(pt.timestamp / 1000));
+        }
         return;
       }
 

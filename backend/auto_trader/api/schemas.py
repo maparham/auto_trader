@@ -105,6 +105,43 @@ class MarketDTO(BaseModel):
     pricePrecision: int | None = None
 
 
+class InspectorTermDTO(BaseModel):
+    """One rule's comparison at an inspected bar — like TermDTO but recorded for
+    EVERY rule (not just passing ones), so `passed` carries the raw result."""
+
+    left: str
+    lval: float | None
+    op: str
+    right: str
+    rval: float | None
+    leftTf: str | None
+    rightTf: str | None
+    passed: bool
+
+
+class BarGroupTraceDTO(BaseModel):
+    group: str            # "longEntry" | "shortEntry" | "longExit" | "shortExit"
+    combine: str
+    terms: list[InspectorTermDTO]
+    passed: bool
+
+
+class BarTraceDTO(BaseModel):
+    """The bar inspector's per-bar snapshot: all rule groups plus the engine's
+    outcome + gate flags. `action` is opened/suppressed/none; `reason` explains a
+    suppression (session window / already in position / spacing-or-cap)."""
+
+    time: int
+    groups: list[BarGroupTraceDTO]
+    action: str
+    reason: str | None
+    inPositionLong: bool
+    inPositionShort: bool
+    windowActive: bool
+    warmedUp: bool
+    spacingOk: bool | None
+
+
 class BacktestResponse(BaseModel):
     epic: str
     resolution: str
@@ -115,6 +152,10 @@ class BacktestResponse(BaseModel):
     summary: dict
     metrics: dict = {}
     fileBracketsOverridden: bool = False
+    # Per-bar inspector trace — present only when the request set inspect=True and
+    # the strategy is rule-based (None otherwise). Session-only; the frontend holds
+    # it in memory and never persists it.
+    bar_traces: list[BarTraceDTO] | None = None
 
 
 # --- rule-based backtest request (D1/D4/D6: frontend computes series, posts
@@ -330,6 +371,9 @@ class BacktestRequest(BaseModel):
     costs: CostsDTO
     tradeFromTime: int
     mask: RecurrenceMaskDTO | None = None
+    # Bar inspector opt-in: when True the (rule-based) engine emits a per-bar trace
+    # in `bar_traces`. Off by default so a normal run pays nothing.
+    inspect: bool = False
     # Coded strategy (a backend/strategies/*.py filename). When set, the rule
     # groups above are ignored and the file's on_bar drives the run; series stays
     # empty (Python computes indicators ad hoc — the frontend posts none).

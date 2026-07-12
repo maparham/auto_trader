@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from auto_trader.core.models import RuleTerm, Side, Signal
+from auto_trader.core.models import BarGroupTrace, InspectorTerm, RuleTerm, Side, Signal
 from auto_trader.strategy.base import Context, Strategy
 
 
@@ -382,6 +382,51 @@ class RuleStrategy(Strategy):
                     right_val=rnow,
                     left_tf=_operand_timeframe(r.left, self.base_timeframe),
                     right_tf=_operand_timeframe(r.right, self.base_timeframe),
+                )
+            )
+        return tuple(out)
+
+    def inspect_groups(self, ctx: Context, i: int) -> tuple[BarGroupTrace, ...]:
+        """Evaluate all four rule groups at bar `i` for the bar inspector, capturing
+        EVERY term with pass/fail (not just passing terms, unlike `_terms`). Order is
+        longEntry, shortEntry, longExit, shortExit. Uses the same evaluation path the
+        run used, so inspector values are identical to the engine's."""
+        specs = (
+            ("longEntry", self.long_entry, "long"),
+            ("shortEntry", self.short_entry, "short"),
+            ("longExit", self.long_exit, "long"),
+            ("shortExit", self.short_exit, "short"),
+        )
+        out: list[BarGroupTrace] = []
+        for name, group, side in specs:
+            passed, _ = self._eval_group(group, ctx, i, side, is_exit=name.endswith("Exit"))
+            out.append(
+                BarGroupTrace(
+                    group=name, combine=group.combine,
+                    terms=self._all_terms(group, ctx, i, side), passed=passed,
+                )
+            )
+        return tuple(out)
+
+    def _all_terms(
+        self, group: RuleGroup, ctx: Context, i: int, side: str
+    ) -> tuple[InspectorTerm, ...]:
+        """Like `_terms` but records EVERY rule with its raw (count-agnostic)
+        comparison result at bar `i` — the inspector shows failing terms too."""
+        out: list[InspectorTerm] = []
+        for r in group.rules:
+            lnow, _ = self._operand_values(r.left, ctx, i, side)
+            rnow, _ = self._operand_values(r.right, ctx, i, side)
+            out.append(
+                InspectorTerm(
+                    left_label=_term_label(r.left),
+                    left_val=lnow,
+                    op=r.op,
+                    right_label=_term_label(r.right),
+                    right_val=rnow,
+                    left_tf=_operand_timeframe(r.left, self.base_timeframe),
+                    right_tf=_operand_timeframe(r.right, self.base_timeframe),
+                    passed=self._base_true_at(r, ctx, i, side),
                 )
             )
         return tuple(out)
