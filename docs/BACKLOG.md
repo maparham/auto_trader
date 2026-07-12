@@ -5,6 +5,13 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Specced, ready to implement
 
+- **MT5 self-hosted HTTP broker** — replace the MetaApi cloud dependency with a
+  self-run MT5 terminal on a native Windows VPS fronted by our own HTTP bridge
+  (psyb0t-style). REST contract for quotes/orders/positions + a broker adapter
+  (`mt5-self`); Phase 1 read + dealing, later phases add live ticks and remove
+  MetaApi. Design-only so far — no plan file, no implementation yet.
+  [spec](superpowers/specs/2026-07-11-mt5-selfhosted-http-broker-design.md)
+
 - **Chart replay** — TradingView-style bar replay per cell: curtained or
   random-jump start, masked clock for blind sessions, step/play controls,
   manual paper trading with a session ledger + report card, progressive
