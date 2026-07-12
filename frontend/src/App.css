@@ -2205,7 +2205,7 @@
      doing work over candles. The glyphs themselves stay crisp (only a halo is added
      behind). Hover/selected rows get a solid --surface plate instead, so they drop
      the halo below. */
-  text-shadow: 0 0 2px var(--bg), 0 0 2px var(--bg);
+  text-shadow: 0 0 2px var(--chart-bg, var(--bg)), 0 0 2px var(--chart-bg, var(--bg));
 }
 /* The candle-pane legend rides ABOVE the trade pills (z 47–49) so open-position
    pills — anchored at the pane's left edge (x=106) — tuck BEHIND it instead of
@@ -2268,10 +2268,11 @@
   border: 1px solid transparent; border-radius: 3px;
   /* Opaque plate in the chart-background colour so a trade pill sitting behind the
      candle-pane legend (pills are z 47–49, legend z 50) is fully masked instead of
-     bleeding through. Over the empty chart this is invisible (same colour as --bg);
-     over candles it reads as a tight TradingView-style plate. Low specificity (one
+     bleeding through. Matches the chart-pane background (--chart-bg mood/override,
+     falling back to the theme --bg) so it's invisible over the empty chart; over
+     candles it reads as a tight TradingView-style plate. Low specificity (one
      class) so hover/selected rows still win with --surface (see .cl-ind:hover). */
-  background: var(--bg);
+  background: var(--chart-bg, var(--bg));
 }
 /* Sub-pane legend rows never sit behind a pill (pills live on the candle pane), so
    they don't need the mask — keep them transparent (halo only), as before. Placed
