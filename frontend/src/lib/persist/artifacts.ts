@@ -132,6 +132,20 @@ export function saveLegendCollapsed(scope: string, value: boolean): void {
   save(legendCollapsedKey(scope), value);
 }
 
+// --- candles hidden (per cell) ------------------------------------------------
+//
+// TradingView-style "hide main series": when true, the candlesticks (bars/wicks/
+// borders) render transparent so only indicators, drawings, and price marks show.
+// Toggled from the eye icon in the symbol legend row. Default false (candles shown).
+const candleHiddenKey = (scope: string) => ns(scope, "candleHidden");
+
+export function loadCandleHidden(scope: string): boolean {
+  return load<boolean>(candleHiddenKey(scope), false);
+}
+export function saveCandleHidden(scope: string, value: boolean): void {
+  save(candleHiddenKey(scope), value);
+}
+
 // --- favourite indicators (global preference) --------------------------------
 //
 // Which indicator TYPES the user has starred in the menu — a personal preference,

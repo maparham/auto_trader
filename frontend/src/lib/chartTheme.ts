@@ -43,6 +43,7 @@ export function klineStyles(
   theme: Theme,
   legendHovered = false,
   crosshair?: CrosshairStyle,
+  candleHidden = false,
 ): DeepPartial<Styles> {
   const c = chartColors[theme];
   // Crosshair line: solid vs dashed/dotted, color (empty = follow theme textDim),
@@ -67,16 +68,20 @@ export function klineStyles(
       vertical: { color: c.grid },
     },
     candle: {
+      // TradingView-style "hide main series": when candleHidden, every candle color
+      // (body/border/wick, up/down/no-change) is transparent so the bars vanish while
+      // indicators, drawings, and the last-price mark keep drawing. klinecharts has no
+      // per-series visibility flag, so painting transparent is how we hide them.
       bar: {
-        upColor: UP,
-        downColor: DOWN,
-        noChangeColor: c.text,
-        upBorderColor: UP,
-        downBorderColor: DOWN,
-        noChangeBorderColor: c.text,
-        upWickColor: UP,
-        downWickColor: DOWN,
-        noChangeWickColor: c.text,
+        upColor: candleHidden ? "transparent" : UP,
+        downColor: candleHidden ? "transparent" : DOWN,
+        noChangeColor: candleHidden ? "transparent" : c.text,
+        upBorderColor: candleHidden ? "transparent" : UP,
+        downBorderColor: candleHidden ? "transparent" : DOWN,
+        noChangeBorderColor: candleHidden ? "transparent" : c.text,
+        upWickColor: candleHidden ? "transparent" : UP,
+        downWickColor: candleHidden ? "transparent" : DOWN,
+        noChangeWickColor: candleHidden ? "transparent" : c.text,
       },
       // The candle-pane legend (symbol/OHLC row + candle-pane indicator rows) is
       // now rendered as crisp DOM by <ChartLegend> (TradingView layers DOM text

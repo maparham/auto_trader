@@ -95,6 +95,10 @@ export interface Props {
   // visible while collapsed (it's the only way back).
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  // TV-style "hide main series": when true the candlesticks are painted transparent
+  // (indicators/drawings/price marks stay). The eye toggle lives in the symbol row.
+  candleHidden: boolean;
+  onToggleCandle: () => void;
   // Sub-pane indicator legends (Volume/MACD/RSI…), one per pane below the chart.
   // Rendered here (not in ChartCore) so they share this component's figureValuesRef
   // and hover signal — their values fill on the same imperative crosshair/tick path.
@@ -176,6 +180,8 @@ export default function ChartLegend({
   rows,
   collapsed,
   onToggleCollapsed,
+  candleHidden,
+  onToggleCandle,
   subPanes,
   selectedName,
   highlightedName,
@@ -334,6 +340,19 @@ export default function ChartLegend({
               competes with the circular chart markers, and avoids the old "bullseye"
               (a ringed ⓘ glyph inside a ringed circle). */}
           <span aria-hidden="true">i</span>
+        </button>
+        {/* Hide/show the candlesticks only (indicators/drawings/price marks stay).
+            Always visible — when candles are hidden the user needs an obvious way
+            back — so it's not hover-gated like the indicator-row icons. */}
+        <button
+          className={`cl-icon cl-sym-eye${candleHidden ? " cl-hidden" : ""}`}
+          title={candleHidden ? "Show candles" : "Hide candles"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCandle();
+          }}
+        >
+          {candleHidden ? ICON_EYE_OFF : ICON_EYE}
         </button>
         <span className="cl-meta">
           · {ctx.period} · {ctx.broker}

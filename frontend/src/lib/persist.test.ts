@@ -53,6 +53,16 @@ describe("persist scoping", () => {
     P.saveLegendCollapsed("tab.A", false);
     expect(P.loadLegendCollapsed("tab.A")).toBe(false);
   });
+
+  it("candleHidden round-trips per scope, default false", () => {
+    expect(P.loadCandleHidden("tab.A")).toBe(false);
+    P.saveCandleHidden("tab.A", true);
+    expect(P.loadCandleHidden("tab.A")).toBe(true);
+    // Another cell is independent.
+    expect(P.loadCandleHidden("tab.B")).toBe(false);
+    P.saveCandleHidden("tab.A", false);
+    expect(P.loadCandleHidden("tab.A")).toBe(false);
+  });
 });
 
 // Overlay-less edits of a stored alert (the alerts panel's all-symbols rows act on

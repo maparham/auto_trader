@@ -2411,6 +2411,12 @@
   transition: background 0.12s ease, color 0.12s ease;
 }
 .cl-info:hover { background: var(--accent); color: #fff; }
+/* Hide/show-candles eye in the symbol row. Always visible (unlike the hover-gated
+   indicator-row icons); when candles are hidden it takes the accent color so the
+   toggled-on state reads at a glance. */
+.cl-sym-eye { margin-left: 4px; vertical-align: middle; }
+.cl-sym-eye.cl-hidden { color: var(--accent); }
+.cl-sym-eye.cl-hidden:hover { color: var(--accent); }
 .cl-meta { color: var(--text-dim); }
 .cl-ohlc-item { display: inline-flex; align-items: center; gap: 3px; }
 .cl-ohlc-label { color: var(--text-dim); }
