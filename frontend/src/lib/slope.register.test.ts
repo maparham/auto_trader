@@ -13,6 +13,7 @@ const { BASE_TEMPLATES } = await import("./customIndicators");
 describe("SLOPE registration", () => {
   it("SLOPE is a known base template", () => {
     expect(BASE_TEMPLATES.SLOPE).toBeDefined();
-    expect(BASE_TEMPLATES.SLOPE.figures?.[0]?.key).toBe("slope");
+    // Multi-line slope: one figure per MA length, keyed slope0..slopeN.
+    expect(BASE_TEMPLATES.SLOPE.figures?.[0]?.key).toBe("slope0");
   });
 });
