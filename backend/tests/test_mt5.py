@@ -490,7 +490,73 @@ def test_market_meta_reports_units_and_contract_size():
     assert meta["contractSize"] == 100
     assert meta["minVolume"] == pytest.approx(1.0)   # 0.01 lots × 100
     assert meta["volumeStep"] == pytest.approx(1.0)  # 0.01 lots × 100
-    assert meta["precision"] == 2
+    assert meta["pricePrecision"] == 2  # the key the /api/market route reads
+
+
+# tradeSessions-driven open/closed. brokerTime is wall clock; time is UTC — their
+# difference is the broker's UTC offset. Here they're equal (broker == UTC).
+_FX_SESSIONS = {
+    "MONDAY": [{"from": "00:00:00.000", "to": "24:00:00.000"}],
+    "FRIDAY": [{"from": "00:00:00.000", "to": "22:00:00.000"}],
+    "SUNDAY": [{"from": "22:00:00.000", "to": "24:00:00.000"}],
+}
+
+
+def _price_at(iso_utc: str) -> dict:
+    from datetime import datetime, timezone
+
+    t = datetime.fromisoformat(iso_utc).replace(tzinfo=timezone.utc)
+    return {
+        "bid": 1.0,
+        "ask": 1.0,
+        "time": t,
+        "brokerTime": t.strftime("%Y-%m-%d %H:%M:%S.000"),
+    }
+
+
+def test_market_meta_reports_open_from_trade_sessions():
+    spec = {**_SPEC_100, "tradeSessions": _FX_SESSIONS}
+    conn = _FakeTradeConn(spec=spec, price=_price_at("2026-07-06 12:00:00"))  # Mon
+    meta = asyncio.run(_data_with(conn).get_market_meta("EURUSD"))
+    assert meta["closed"] is False
+    assert meta["nextOpen"] is None
+    assert meta["status"] == "TRADEABLE"
+
+
+def test_market_meta_reports_closed_with_next_open():
+    spec = {**_SPEC_100, "tradeSessions": _FX_SESSIONS}
+    conn = _FakeTradeConn(spec=spec, price=_price_at("2026-07-11 12:00:00"))  # Sat
+    meta = asyncio.run(_data_with(conn).get_market_meta("EURUSD"))
+    assert meta["closed"] is True
+    assert meta["status"] == "CLOSED"
+    assert meta["nextOpen"] == "2026-07-12T22:00:00+00:00"  # Sun 22:00 UTC
+
+
+def test_market_meta_falls_back_to_quote_sessions():
+    # A symbol with no tradeSessions but populated quoteSessions still resolves —
+    # the SDK's health monitor keys off quoteSessions, so it's the reliable field.
+    spec = {**_SPEC_100, "quoteSessions": _FX_SESSIONS}
+    conn = _FakeTradeConn(spec=spec, price=_price_at("2026-07-11 12:00:00"))  # Sat
+    meta = asyncio.run(_data_with(conn).get_market_meta("EURUSD"))
+    assert meta["closed"] is True
+    assert meta["nextOpen"] == "2026-07-12T22:00:00+00:00"
+
+
+def test_market_meta_closed_unknown_without_sessions():
+    # No tradeSessions → state is unknown (None), never a false "closed".
+    conn = _FakeTradeConn(spec=_SPEC_100, price=_price_at("2026-07-11 12:00:00"))
+    meta = asyncio.run(_data_with(conn).get_market_meta("CrudeOil"))
+    assert meta["closed"] is None
+    assert meta["nextOpen"] is None
+    assert meta["status"] == "TRADEABLE"
+
+
+def test_market_meta_closed_unknown_without_quote():
+    # tradeSessions present but no live quote → can't tell server time → unknown.
+    spec = {**_SPEC_100, "tradeSessions": _FX_SESSIONS}
+    conn = _FakeTradeConn(spec=spec, price=None)
+    meta = asyncio.run(_data_with(conn).get_market_meta("EURUSD"))
+    assert meta["closed"] is None
 
 
 def test_market_detail_builds_sections_from_spec_and_quote():

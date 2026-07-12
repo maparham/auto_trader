@@ -35,6 +35,7 @@ from metaapi_cloud_sdk.clients.metaapi.trade_exception import TradeException
 from metaapi_cloud_sdk.clients.timeout_exception import TimeoutException
 from metaapi_cloud_sdk.logger import LoggerManager
 
+from auto_trader.brokers._mt5_hours import mt5_market_state
 from auto_trader.brokers._prices import pick_side
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.core.broker_health import BrokerReconnecting, BrokerTimeout
@@ -883,24 +884,68 @@ class MT5Broker(MarketDataBroker):
         return round(lots, 8)  # kill floating-point dust regardless of step
 
     async def get_market_meta(self, epic: str) -> dict | None:
-        """Display precision (decimal digits), order-sizing bounds, and contract
-        size for one symbol. minVolume/volumeStep are returned in instrument UNITS
-        (× contractSize) so the whole meta object is consistent with the rest of
-        the app, which works in units."""
+        """Display precision + open/closed status + order-sizing bounds for one
+        symbol. minVolume/volumeStep are returned in instrument UNITS (× contract
+        size) so the whole meta object is consistent with the rest of the app.
+
+        `closed`/`nextOpen` come from the spec's `tradeSessions` (a weekly broker-
+        time schedule) evaluated against the broker's current server time — taken
+        from a live quote, which carries both `brokerTime` (wall clock) and `time`
+        (UTC), whose difference is the broker's UTC offset. If tradeSessions is
+        absent or no quote is available, `closed` is left None (unknown → the
+        frontend treats it as open), never a false "closed"."""
         spec = await self._get_spec(epic)
         if not spec:
             return None
         cs = spec.get("contractSize") or 1.0
         min_vol = spec.get("minVolume")
         step = spec.get("volumeStep")
+        closed, next_open = await self._market_open_state(epic, spec)
         return {
             "epic": epic,
-            "precision": spec.get("digits"),
+            "pricePrecision": spec.get("digits"),
             "minVolume": (min_vol * cs) if min_vol is not None else None,
             "volumeStep": (step * cs) if step is not None else None,
             "contractSize": cs,
-            "status": "TRADEABLE",
+            "closed": closed,
+            "nextOpen": next_open,
+            # closed is True/False/None; only a definite True reads as CLOSED.
+            "status": "CLOSED" if closed else "TRADEABLE",
         }
+
+    async def _market_open_state(
+        self, epic: str, spec: dict
+    ) -> tuple[bool | None, str | None]:
+        """(closed, next_open_iso) from the symbol's trading sessions + a live quote
+        for the broker's server time. Returns (None, None) if the sessions or the
+        quote timestamps are unavailable, so an unknown state never badges closed.
+
+        Prefers `tradeSessions` (when you can actually trade) but falls back to
+        `quoteSessions` (when prices stream) if a symbol only carries the latter —
+        the SDK's own health monitor keys off quoteSessions, so it's the field more
+        reliably populated. Both share the same weekly shape."""
+        sessions = spec.get("tradeSessions") or spec.get("quoteSessions")
+        if not sessions:
+            return None, None
+        try:
+            price = await self.read(lambda c: c.get_symbol_price(epic)) or {}
+        except Exception:
+            log.debug("mt5: get_symbol_price failed for %s (market state)", epic, exc_info=True)
+            return None, None
+        broker_time = price.get("brokerTime")
+        utc_time = price.get("time")
+        if not broker_time or not isinstance(utc_time, datetime):
+            return None, None
+        try:
+            broker_now = datetime.strptime(broker_time, "%Y-%m-%d %H:%M:%S.%f")
+        except (ValueError, TypeError):
+            return None, None
+        # broker_now is wall-clock (naive); utc_time is UTC-aware. Offset =
+        # broker − UTC, so mt5_market_state can express next-open back in UTC.
+        # Normalize to UTC first in case MetaApi ever hands back a non-UTC aware dt.
+        utc_naive = utc_time.astimezone(timezone.utc).replace(tzinfo=None)
+        utc_offset = broker_now - utc_naive
+        return mt5_market_state(sessions, broker_now, utc_offset)
 
     async def _calc_margin(self, epic: str, volume_lots: float, price: float) -> float | None:
         """Margin (in ACCOUNT currency) required to open a 1-lot buy, via MetaApi's
