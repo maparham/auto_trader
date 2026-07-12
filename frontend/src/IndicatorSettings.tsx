@@ -18,7 +18,13 @@ import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
 import { resolveInputs, isMovingAverage, SMOOTHING_TYPES } from "./lib/indicatorMeta";
 import { applyPivotBandsTimeframe, applySlopeTimeframe } from "./lib/mtfCoordinator";
-import { slopeLengths, type SlopeExtend, type SlopeSmoothing, type SlopeUnit } from "./lib/indicators/slope";
+import {
+  slopeLengths,
+  type SlopeExtend,
+  type SlopeSmoothing,
+  type SlopeThreshold,
+  type SlopeUnit,
+} from "./lib/indicators/slope";
 import type { PriceSource } from "./lib/mtf";
 import type {
   MaExtend,
@@ -38,6 +44,8 @@ import type {
   SessionsExtend,
   TimeWindowDef,
   TimeHighlightExtend,
+  PivotAnalysisExtend,
+  PivotConnectorStyle,
 } from "./lib/customIndicators";
 import {
   AVWAP_DEFAULT_BANDS,
@@ -48,6 +56,8 @@ import {
   DEFAULT_TIME_WINDOWS,
   indTypeOf,
   curveLabelConfig,
+  PIVOT_CONNECTOR_DEFAULTS,
+  resolvePivotConnector,
 } from "./lib/customIndicators";
 import { PERIODS, RESOLUTION_SECONDS } from "./lib/feed";
 import {
@@ -147,6 +157,9 @@ export default function IndicatorSettings({
   // Slope also supports MTF (like EMA/MA/Pivot Bands) but lives on the generic
   // inputs path too (maLen/slopeN via calcParams, maType/units/source via extend).
   const isSlope = type === "SLOPE";
+  // Pivots High/Low: draw-only connector styling (color/width/dash/arrowheads) in
+  // the Style tab — no recompute, just an extendData override.
+  const isPivotAnalysis = type === "PIVOT_ANALYSIS";
   // Overlay indicators with a multi-line channel get per-line show/hide checkboxes
   // (+ opacity) in the Style tab, like TradingView's band toggles.
   const hasLineToggle = isAvwap || type === "LR" || type === "PREV_HL";
@@ -289,6 +302,16 @@ export default function IndicatorSettings({
   const [colorByDirection, setColorByDirection] = useState<boolean>(
     slopeExt0.colorByDirection ?? true,
   );
+  const [threshold, setThreshold] = useState<SlopeThreshold>(
+    slopeExt0.threshold ?? { on: false, level: 0.1, lineStyle: "dotted" },
+  );
+
+  // --- PIVOT_ANALYSIS: vertical connector style (draw-only, on extendData) ---
+  // Colors stay price-driven (up/down); width + line style + arrowheads are shared.
+  const pivotConnector0 = resolvePivotConnector(
+    ((ind?.extendData ?? {}) as PivotAnalysisExtend).connector,
+  );
+  const [connector, setConnector] = useState<Required<PivotConnectorStyle>>(pivotConnector0);
 
   // --- PREV_HL: per-instance timezone override + per-boundary length/agg (Inputs) ---
   // "chart" = follow the global chart axis zone; an IANA name buckets this
@@ -591,6 +614,14 @@ export default function IndicatorSettings({
       extendData.slopePeriod = slopePeriod;
       if (smoothing.type !== "none") extendData.smoothing = smoothing;
       extendData.colorByDirection = colorByDirection;
+      extendData.threshold = threshold;
+    }
+    if (isPivotAnalysis) {
+      // Connector style is draw-only; persist only when it differs from the fixed
+      // default so a plain instance carries no `connector` key.
+      if (JSON.stringify(connector) !== JSON.stringify(PIVOT_CONNECTOR_DEFAULTS)) {
+        extendData.connector = connector;
+      }
     }
     if (isAvwap) {
       avwapConfig(extendData, avwapSource, bandMode, bands);
@@ -661,7 +692,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
 
   // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
   // setParam's isMa branch below, so it stays a shell-local binding.
@@ -721,6 +752,7 @@ export default function IndicatorSettings({
       source: string;
       smoothing: SlopeSmoothing;
       colorByDirection: boolean;
+      threshold: SlopeThreshold;
       timeframe: string;
     }> = {},
   ): void {
@@ -728,6 +760,7 @@ export default function IndicatorSettings({
     const nextSlopeN = next.slopeN ?? slopePeriod;
     const nextSmoothing = next.smoothing ?? smoothing;
     const nextColorByDirection = next.colorByDirection ?? colorByDirection;
+    const nextThreshold = next.threshold ?? threshold;
     const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
     chart.overrideIndicator(
       {
@@ -737,6 +770,7 @@ export default function IndicatorSettings({
           slopePeriod: nextSlopeN,
           smoothing: nextSmoothing.type === "none" ? undefined : nextSmoothing,
           colorByDirection: nextColorByDirection,
+          threshold: nextThreshold,
         },
       },
       paneId,
@@ -756,6 +790,26 @@ export default function IndicatorSettings({
       },
       tf === "chart" ? null : tf,
       brokerId,
+    );
+  }
+
+  // Merge one field into the connector style, push state + live redraw together.
+  function patchConnector(p: Partial<Required<PivotConnectorStyle>>): void {
+    const next = { ...connector, ...p };
+    setConnector(next);
+    applyPivotAnalysis(next);
+  }
+
+  // Pivots High/Low connector: draw-only, so a plain extendData override (merged
+  // over the live indicator's) is the whole live-update path — no recompute.
+  function applyPivotAnalysis(next: Required<PivotConnectorStyle>): void {
+    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    chart.overrideIndicator(
+      {
+        name,
+        extendData: { ...((live?.extendData as object) ?? {}), connector: next },
+      },
+      paneId,
     );
   }
 
@@ -1352,6 +1406,69 @@ export default function IndicatorSettings({
                       />
                     )}
                   </span>
+                  <div className="ind-group">Threshold</div>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input
+                        type="checkbox"
+                        checked={threshold.on}
+                        onChange={(e) => {
+                          const next = { ...threshold, on: e.target.checked };
+                          setThreshold(next);
+                          applySlope({ threshold: next });
+                        }}
+                      />
+                      <span>Show threshold</span>
+                    </label>
+                    <InfoTip
+                      title="Threshold"
+                      text="A symmetric visual guide drawn at +level and −level. Drag either line on the chart to adjust, or set the exact level here. Reference only — it doesn't trigger anything."
+                    />
+                  </span>
+                  {threshold.on && (
+                    <>
+                      <div className="ind-row">
+                        <span className="ind-row-head">
+                          <label>Level (±)</label>
+                          <InfoTip
+                            title="Threshold level"
+                            text="The slope magnitude the two lines sit at, in the current slope units. The pane rescales so the lines stay visible."
+                          />
+                        </span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={threshold.level}
+                          onChange={(e) => {
+                            const next = { ...threshold, level: Number(e.target.value) };
+                            setThreshold(next);
+                            applySlope({ threshold: next });
+                          }}
+                        />
+                      </div>
+                      <div className="ind-row">
+                        <span className="ind-row-head">
+                          <label>Line</label>
+                        </span>
+                        <div className="ind-line-controls">
+                          <ColorLineStylePicker
+                            color={threshold.color ?? "#787B86"}
+                            onColor={(hex) => {
+                              const next = { ...threshold, color: hex };
+                              setThreshold(next);
+                              applySlope({ threshold: next });
+                            }}
+                            lineStyle={threshold.lineStyle ?? "dotted"}
+                            onLineStyle={(s) => {
+                              const next = { ...threshold, lineStyle: s };
+                              setThreshold(next);
+                              applySlope({ threshold: next });
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </>
               )}
               {type === "PREV_HL" && (
@@ -1535,6 +1652,57 @@ export default function IndicatorSettings({
                   </div>
                 );
               })}
+              {/* Pivots High/Low: the vertical connector between consecutive same-type
+                  pivots. Colors stay price-driven (up when the new pivot is higher,
+                  down when lower) via two swatches; width + line style are shared
+                  (edit either swatch), and arrowheads toggle on/off. */}
+              {isPivotAnalysis && (
+                <>
+                  <div className="ind-group">Connector</div>
+                  <div className="ind-row ind-style-row">
+                    <span className="ind-row-head">
+                      <label>Rising</label>
+                      <InfoTip
+                        title="Rising connector"
+                        text="Links a pivot to the previous same-type pivot when the new one is higher. Width and line style are shared with the falling connector."
+                      />
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={connector.upColor}
+                        onColor={(hex) => patchConnector({ upColor: hex })}
+                        size={connector.width}
+                        onSize={(s) => patchConnector({ width: s })}
+                        lineStyle={connector.lineStyle}
+                        onLineStyle={(s) => patchConnector({ lineStyle: s })}
+                      />
+                    </div>
+                  </div>
+                  <div className="ind-row ind-style-row">
+                    <span className="ind-row-head">
+                      <label>Falling</label>
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={connector.downColor}
+                        onColor={(hex) => patchConnector({ downColor: hex })}
+                        size={connector.width}
+                        onSize={(s) => patchConnector({ width: s })}
+                        lineStyle={connector.lineStyle}
+                        onLineStyle={(s) => patchConnector({ lineStyle: s })}
+                      />
+                    </div>
+                  </div>
+                  <label className="ind-check">
+                    <input
+                      type="checkbox"
+                      checked={connector.arrows}
+                      onChange={(e) => patchConnector({ arrows: e.target.checked })}
+                    />
+                    <span>Arrowheads</span>
+                  </label>
+                </>
+              )}
               {/* RSI Style — mirrors TradingView's RSI Style tab. Every row has a
                   visibility checkbox; line elements add a style (solid/dashed/dotted),
                   bands add an editable level. The RSI line is the klinecharts figure

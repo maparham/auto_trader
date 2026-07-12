@@ -279,6 +279,22 @@ export function saveIndicatorVisible(scope: string, id: string, visible: boolean
   save(indicatorCfgKey(scope), all);
   emitLayoutChanged(scope);
 }
+// Patch a single extendData key, preserving the rest of the snapshot. Used by
+// direct-manipulation edits that (unlike the settings modal) don't hold a full
+// config to write — e.g. dragging the Slope threshold line on the chart. A naive
+// saveIndicatorConfig here would drop the rest of extendData / styles.
+export function patchIndicatorExtend(
+  scope: string,
+  id: string,
+  patch: Record<string, unknown>,
+): void {
+  const all = loadIndicatorConfigs(scope);
+  const prev = all[id];
+  all[id] = { ...prev, extendData: { ...prev?.extendData, ...patch } };
+  save(indicatorCfgKey(scope), all);
+  emitLayoutChanged(scope);
+}
+
 // Drop a removed instance's config so it doesn't leak storage (instances are now
 // unbounded; the old one-per-name model never needed cleanup).
 export function deleteIndicatorConfig(scope: string, id: string): void {

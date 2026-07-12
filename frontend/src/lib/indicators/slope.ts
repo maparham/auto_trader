@@ -18,12 +18,23 @@ import { fullLine } from "./shared";
 
 export type SlopeUnit = "pctHr" | "pctBar" | "priceBar";
 
+/** A symmetric horizontal reference guide drawn at +level and −level. Visual
+ * only (no rule wiring). `level` is a magnitude; a negative stored value is
+ * treated as its absolute value so the two lines are always mirrored. */
+export interface SlopeThreshold {
+  on: boolean;
+  level: number;
+  color?: string;
+  lineStyle?: "solid" | "dashed" | "dotted";
+}
+
 export interface SlopeExtend extends MaExtend {
   maType?: "ema" | "sma";
   units?: SlopeUnit;
   slopePeriod?: number;
   smoothing?: SlopeSmoothing;
   colorByDirection?: boolean;
+  threshold?: SlopeThreshold;
   mtf?: MaExtend["mtf"] & { htfSeriesByLine?: Array<Array<number | undefined>> };
 }
 
@@ -122,12 +133,29 @@ export function slopeLineSeries(
 const SLOPE_UP = "#26A69A";
 const SLOPE_DOWN = "#EF5350";
 const ZERO_LINE = "#9598A1";
+const THRESHOLD_LINE = "#787B86";
 const SLOPE_PALETTE = ["#26A69A", "#42A5F5", "#FFB300", "#AB47BC", "#EF5350"];
+
+const DASH_BY_STYLE: Record<NonNullable<SlopeThreshold["lineStyle"]>, number[]> = {
+  solid: [],
+  dashed: [4, 3],
+  dotted: [1, 2],
+};
 
 /** MA lengths from calcParams (default [9]); empty/garbage → [9]. */
 export function slopeLengths(calcParams: unknown[] | undefined): number[] {
   const xs = (calcParams ?? []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v !== 0);
   return xs.length ? xs.slice(0, 5) : [9];
+}
+
+/** Active threshold magnitude (|level|) when the guide is on and the level is a
+ * usable non-zero number; otherwise null. A zero level would coincide with the
+ * zero line, so it's treated as off. */
+export function slopeThresholdLevel(ext: SlopeExtend): number | null {
+  const t = ext.threshold;
+  if (!t?.on) return null;
+  const m = Math.abs(Number(t.level));
+  return Number.isFinite(m) && m > 0 ? m : null;
 }
 
 function slopeShared(ext: SlopeExtend) {
@@ -144,6 +172,16 @@ function computeSlopeCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
   const ext = (ind.extendData ?? {}) as SlopeExtend;
   const lengths = slopeLengths(ind.calcParams);
   const { maType, n, units, source, smoothing } = slopeShared(ext);
+  // Constant threshold values, emitted as figure data so klinecharts' auto-scale
+  // grows the pane to keep the ±level lines on-screen (and thus grabbable).
+  const th = slopeThresholdLevel(ext);
+  const withThreshold = (p: SlopePoint): SlopePoint => {
+    if (th !== null) {
+      p.thHi = th;
+      p.thLo = -th;
+    }
+    return p;
+  };
   // MTF: the coordinator stashes per-line slope series computed on native HTF bars
   // (with HTF barHours) — align it to the chart bars, no lookahead. See
   // mtfCoordinator.applySlopeTimeframe.
@@ -157,7 +195,7 @@ function computeSlopeCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
     return candles.map((_, i) => {
       const p: SlopePoint = {};
       aligned.forEach((a, li) => (p[`slope${li}`] = a[i] ?? undefined));
-      return p;
+      return withThreshold(p);
     });
   }
   const barHours = inferBarHours(candles);
@@ -167,18 +205,24 @@ function computeSlopeCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
   return candles.map((_, i) => {
     const p: SlopePoint = {};
     lines.forEach((line, li) => (p[`slope${li}`] = line[i] ?? undefined));
-    return p;
+    return withThreshold(p);
   });
 }
 
 // Every figure gets a title (labelled by its MA length) so the DOM legend shows a
 // value for EVERY slope line — ChartLegend skips figures whose title is empty.
 function slopeFigures(calcParams: unknown[]): Array<{ key: string; title: string; type: "line" }> {
-  return slopeLengths(calcParams).map((len, i) => ({
+  const lines = slopeLengths(calcParams).map((len, i) => ({
     key: `slope${i}`,
     title: `Slope ${len}: `,
     type: "line" as const,
   }));
+  // Always-present, EMPTY-TITLE threshold figures. Titleless → the DOM legend
+  // skips them; drawn manually in drawSlope. Their sole job is to feed the pane's
+  // auto-scale — only when computeSlopeCalc emits thHi/thLo (threshold on) do
+  // they carry data and grow the axis; otherwise they're undefined gaps.
+  const threshold = ["thHi", "thLo"].map((key) => ({ key, title: "", type: "line" as const }));
+  return [...lines, ...threshold];
 }
 
 // Draws one line per configured MA length, each in its own color (per-line
@@ -203,6 +247,35 @@ function drawSlope(params: IndicatorDrawParams<SlopePoint>): boolean {
   ctx.lineTo(bounding.left + bounding.width, yZero);
   ctx.stroke();
   ctx.setLineDash([]);
+
+  // Symmetric threshold guide at ±level (visual only). The constant thHi/thLo
+  // figure values (emitted by computeSlopeCalc) already grew the pane's y-axis to
+  // include these, so both lines stay on-screen and grabbable at any level.
+  const th = slopeThresholdLevel(ext);
+  if (th !== null) {
+    const thColor = ext.threshold?.color ?? THRESHOLD_LINE;
+    const dash = DASH_BY_STYLE[ext.threshold?.lineStyle ?? "dotted"];
+    const left = bounding.left;
+    const right = bounding.left + bounding.width;
+    ctx.strokeStyle = thColor;
+    ctx.fillStyle = thColor;
+    ctx.lineWidth = 1;
+    ctx.font = "10px -apple-system, system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    for (const level of [th, -th]) {
+      const y = yAxis.convertToPixel(level);
+      ctx.setLineDash(dash);
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Right-edge value label (e.g. "0.1500" / "-0.1500"), so the exact level reads.
+      const label = level.toFixed(4);
+      const w = ctx.measureText(label).width;
+      ctx.fillText(label, right - w - 4, level >= 0 ? y - 6 : y + 6);
+    }
+  }
 
   const overrides = indicator.styles?.lines ?? [];
   const defaults = defaultStyles?.lines ?? [];

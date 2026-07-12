@@ -36,7 +36,9 @@ import {
   Signal,
   type TradeLineField,
 } from "../lib/signals";
-import { saveAvwapAnchor } from "../lib/persist";
+import { saveAvwapAnchor, patchIndicatorExtend } from "../lib/persist";
+import { indTypeOf } from "../lib/indicators/shared";
+import { slopeThresholdLevel, type SlopeExtend, type SlopeThreshold } from "../lib/indicators/slope";
 import { ALERT_SNAP_PX, selectedAvwapId } from "./chartGeometry";
 import { first } from "./chartPainters";
 import { clampLevelToPrice, getLivePrice } from "../lib/trading";
@@ -242,8 +244,12 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
         const c = chartRef.current;
         if (!active || !c) return;
         const r = el.getBoundingClientRect();
+        // Most lines live on the candle pane; a sub-pane line (e.g. the Slope
+        // threshold) carries its own paneId on the hit so pixel→value converts
+        // against ITS y-axis, not the price axis.
+        const convertPaneId = (active as { convertPaneId?: string }).convertPaneId ?? "candle_pane";
         const pt = first(
-          c.convertFromPixel([{ y: ev.clientY - r.top }], { paneId: "candle_pane", absolute: true }),
+          c.convertFromPixel([{ y: ev.clientY - r.top }], { paneId: convertPaneId, absolute: true }),
         );
         if (pt.value == null) return;
         if (!moved) {
@@ -422,6 +428,83 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
       },
     });
 
+    // Slope threshold lines. A Slope sub-pane can draw a symmetric ±level guide
+    // (extendData.threshold, drawn in slope.ts). Grabbing either line drags BOTH
+    // (the magnitude is symmetric): the cursor→value convert runs against the
+    // slope pane's y-axis (via the hit's convertPaneId), abs() is the new level,
+    // and the live indicator is re-overridden — its calc re-emits the thHi/thLo
+    // constants so the pane rescales to keep the lines on-screen. rAF-coalesced so
+    // a full slope recalc runs at most once per frame (mirrors the anchor drag).
+    type SlopeThHit = { paneId: string; name: string; convertPaneId: string; d: number };
+    const grabbableSlopeTh = (yPix: number): SlopeThHit | null => {
+      const c = chartRef.current;
+      if (!c) return null;
+      // No-arg getIndicatorByPaneId returns the full paneId → (name → Indicator) map.
+      const panes = c.getIndicatorByPaneId() as
+        | Map<string, Map<string, Indicator>>
+        | null
+        | undefined;
+      if (!panes) return null;
+      let best: SlopeThHit | null = null;
+      for (const [paneId, inds] of panes) {
+        if (paneId === "candle_pane") continue;
+        for (const ind of inds.values()) {
+          if (indTypeOf(ind) !== "SLOPE") continue;
+          const level = slopeThresholdLevel((ind.extendData ?? {}) as SlopeExtend);
+          if (level === null) continue;
+          for (const v of [level, -level]) {
+            const py = first(c.convertToPixel([{ value: v }], { paneId, absolute: true })).y;
+            if (py == null) continue;
+            const d = Math.abs(py - yPix);
+            if (d <= ALERT_SNAP_PX && (!best || d < best.d))
+              best = { paneId, name: ind.name, convertPaneId: paneId, d };
+          }
+        }
+      }
+      return best;
+    };
+    let slopeThRaf = 0;
+    // Write a new magnitude to the live indicator; its calc re-emits thHi/thLo so
+    // the pane rescales and both ±level lines redraw. Returns the threshold written
+    // (for the commit-time persist), or null if the indicator/threshold is gone.
+    const applySlopeLevel = (hit: SlopeThHit, level: number): SlopeThreshold | null => {
+      const c = chartRef.current;
+      if (!c) return null;
+      const ind = c.getIndicatorByPaneId(hit.paneId, hit.name) as Indicator | null;
+      const cur = ((ind?.extendData ?? {}) as SlopeExtend).threshold;
+      if (!cur) return null;
+      const next: SlopeThreshold = { ...cur, level };
+      c.overrideIndicator({ name: hit.name, extendData: { ...ind!.extendData, threshold: next } }, hit.paneId);
+      return next;
+    };
+    let slopeThPending: number | null = null;
+    const slopeThDrag = makeLineDrag<SlopeThHit>({
+      grab: grabbableSlopeTh,
+      onMove: (hit, value) => {
+        slopeThPending = Math.abs(value);
+        if (slopeThRaf) return; // coalesce a full slope recalc to one per frame
+        slopeThRaf = requestAnimationFrame(() => {
+          slopeThRaf = 0;
+          if (slopeThPending != null) applySlopeLevel(hit, slopeThPending);
+        });
+      },
+      onCommit: (hit, moved) => {
+        if (!moved) return false; // a press with no drag: let the normal click handling run
+        // Flush the final level synchronously — the last onMove's rAF may not have
+        // fired yet, so applying here (not just cancelling) is what makes the drop stick.
+        if (slopeThRaf) { cancelAnimationFrame(slopeThRaf); slopeThRaf = 0; }
+        const th =
+          slopeThPending != null ? applySlopeLevel(hit, slopeThPending) : null;
+        if (th) patchIndicatorExtend(scope, hit.name, { threshold: th });
+        slopeThPending = null;
+        return true; // swallow the trailing click (we handled the gesture)
+      },
+      onAbort: () => {
+        if (slopeThRaf) { cancelAnimationFrame(slopeThRaf); slopeThRaf = 0; }
+        slopeThPending = null;
+      },
+    });
+
     // Expose the in-flight state to the staying crosshair handlers (onMove reads
     // tradeDrag, onLeave reads alertDrag) — they can't see these hook-local closures.
     tradeDragActiveRef.current = () => tradeDrag.isActive();
@@ -431,7 +514,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
     // all kinds. Trade is listed first, so an equal-distance press grabs the trade (an
     // alert must be strictly closer to win) — preserving the prior precedence where the
     // trade handler ran first and only declined to a strictly-nearer alert.
-    const lineDrags: LineDrag[] = [tradeDrag, alertDrag];
+    const lineDrags: LineDrag[] = [tradeDrag, alertDrag, slopeThDrag];
     const onLineDown = (e: MouseEvent) => {
       if (e.button !== 0 || avwapAnchorMode.value || e.metaKey || e.ctrlKey) return;
       if (measureArmed.value || overlays.isMeasureDrawing()) return; // placing a measure anchor

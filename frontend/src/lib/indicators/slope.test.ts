@@ -87,10 +87,51 @@ describe("multi-line SLOPE", () => {
   });
   it("regenerateFigures emits one titled line figure per length", () => {
     const figs = SLOPE_TEMPLATE.regenerateFigures!([9, 21, 50]);
-    expect(figs.map((f) => f.key)).toEqual(["slope0", "slope1", "slope2"]);
+    const lineFigs = figs.filter((f) => f.title !== "");
+    expect(lineFigs.map((f) => f.key)).toEqual(["slope0", "slope1", "slope2"]);
     expect(figs.every((f) => f.type === "line")).toBe(true);
-    // every figure is titled (by its length) so the legend shows all slope values
-    expect(figs.map((f) => f.title)).toEqual(["Slope 9: ", "Slope 21: ", "Slope 50: "]);
+    // every slope figure is titled (by its length) so the legend shows all values
+    expect(lineFigs.map((f) => f.title)).toEqual(["Slope 9: ", "Slope 21: ", "Slope 50: "]);
+    // + empty-title threshold figures (legend-skipped, drive auto-scale only)
+    expect(figs.filter((f) => f.title === "").map((f) => f.key)).toEqual(["thHi", "thLo"]);
+  });
+});
+
+describe("threshold constants", () => {
+  const b = (t: number, c: number): KLineData =>
+    ({ timestamp: t, open: c, high: c, low: c, close: c, volume: 1 }) as KLineData;
+  const c = [10, 11, 12].map((v, i) => b(i * 60_000, v));
+  it("emits thHi/thLo = ±level on every point when threshold.on", () => {
+    const out = SLOPE_TEMPLATE.calc!(c, {
+      calcParams: [1],
+      extendData: {
+        maType: "sma",
+        units: "priceBar",
+        slopePeriod: 1,
+        threshold: { on: true, level: 0.5 },
+      },
+    } as never) as Array<Record<string, number | undefined>>;
+    expect(out.every((p) => p.thHi === 0.5 && p.thLo === -0.5)).toBe(true);
+  });
+  it("omits thHi/thLo when threshold is off or absent", () => {
+    const off = SLOPE_TEMPLATE.calc!(c, {
+      calcParams: [1],
+      extendData: { maType: "sma", units: "priceBar", slopePeriod: 1, threshold: { on: false, level: 0.5 } },
+    } as never) as Array<Record<string, number | undefined>>;
+    expect("thHi" in off[0] || "thLo" in off[0]).toBe(false);
+    const none = SLOPE_TEMPLATE.calc!(c, {
+      calcParams: [1],
+      extendData: { maType: "sma", units: "priceBar", slopePeriod: 1 },
+    } as never) as Array<Record<string, number | undefined>>;
+    expect("thHi" in none[0] || "thLo" in none[0]).toBe(false);
+  });
+  it("uses |level| so a negative stored level still yields symmetric lines", () => {
+    const out = SLOPE_TEMPLATE.calc!(c, {
+      calcParams: [1],
+      extendData: { maType: "sma", units: "priceBar", slopePeriod: 1, threshold: { on: true, level: -0.3 } },
+    } as never) as Array<Record<string, number | undefined>>;
+    expect(out[0].thHi).toBeCloseTo(0.3, 10);
+    expect(out[0].thLo).toBeCloseTo(-0.3, 10);
   });
 });
 
