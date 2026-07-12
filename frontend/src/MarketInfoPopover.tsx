@@ -76,6 +76,11 @@ function formatValue(key: string, v: unknown): string | null {
     if ("value" in o && !isEmpty(o.value)) {
       return isEmpty(o.unit) ? String(o.value) : `${o.value} ${o.unit}`;
     }
+    // quote/tradeSessions: { MONDAY: [{ from, to }, ...], ... }.
+    if (key.toLowerCase().includes("session")) {
+      const s = formatRawSessions(o);
+      if (s) return s;
+    }
     // openingHours: { mon: ["00:00 - 21:00", ...], ..., zone: "UTC" }.
     if (key.toLowerCase().includes("hours")) return formatRawOpeningHours(o);
     // Fallback: any other nested object -> compact "k: v" pairs.
@@ -105,6 +110,50 @@ function formatRawOpeningHours(o: Record<string, unknown>): string | null {
   });
   if (!lines.length) return null;
   return lines.join("\n") + (zone ? `\n(${zone})` : "");
+}
+
+// MT5 quote/trade sessions arrive as { MONDAY: [{ from, to }, ...], ... } with
+// second+millisecond precision ("22:01:00.000" / "20:58:59.999"). Render a
+// compact per-day block in HH:MM: `from` floored, `to` rounded up to the
+// effective minute so "…:59.999" reads as the round boundary (and 24:00 stays
+// 24:00 for the end of a day rather than collapsing to 00:00).
+const FULL_DAY_ORDER = [
+  "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY",
+] as const;
+const FULL_DAY_LABEL: Record<string, string> = {
+  MONDAY: "Mon", TUESDAY: "Tue", WEDNESDAY: "Wed", THURSDAY: "Thu",
+  FRIDAY: "Fri", SATURDAY: "Sat", SUNDAY: "Sun",
+};
+
+function sessionClock(s: string, roundUp: boolean): string | null {
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s.trim());
+  if (!m) return null;
+  let mins = Number(m[1]) * 60 + Number(m[2]);
+  if (roundUp && Number(m[3] ?? 0) > 0) mins += 1;
+  const h = Math.floor(mins / 60);
+  return `${String(h).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+}
+
+// Day-keyed session dict -> per-day multi-line block; null if it's not actually
+// day-keyed (so formatValue falls through to its generic object rendering).
+function formatRawSessions(o: Record<string, unknown>): string | null {
+  const lines: string[] = [];
+  for (const day of FULL_DAY_ORDER) {
+    const key = Object.keys(o).find((k) => k.toUpperCase() === day);
+    if (key === undefined) continue;
+    const wins = Array.isArray(o[key]) ? (o[key] as unknown[]) : [];
+    const parts = wins
+      .map((w) => {
+        if (w == null || typeof w !== "object") return null;
+        const ww = w as Record<string, unknown>;
+        const from = typeof ww.from === "string" ? sessionClock(ww.from, false) : null;
+        const to = typeof ww.to === "string" ? sessionClock(ww.to, true) : null;
+        return from && to ? `${from} – ${to}` : null;
+      })
+      .filter((x): x is string => x != null);
+    lines.push(`${FULL_DAY_LABEL[day]}  ${parts.length ? parts.join(", ") : "closed"}`);
+  }
+  return lines.length ? lines.join("\n") : null;
 }
 
 function rowsFor(section: Record<string, unknown>): Array<{ label: string; value: string }> {
@@ -248,7 +297,9 @@ export default function MarketInfoPopover({ epic, brokerId, title, anchor, onClo
       <div className="mi-head">
         <div className="mi-titles">
           <span className="mi-name">{title || epic}</span>
-          <span className="mi-epic">{epic}</span>
+          {/* Skip the epic sub-line when it just repeats the name (e.g. MT5,
+              where the friendly title falls back to the epic itself). */}
+          {title && title !== epic && <span className="mi-epic">{epic}</span>}
         </div>
         <CloseButton onClick={onClose} />
       </div>
@@ -265,6 +316,7 @@ export default function MarketInfoPopover({ epic, brokerId, title, anchor, onClo
               <div className="mi-section-title">Day range</div>
               <div className="mi-range">
                 <div className="mi-range-track">
+                  <div className="mi-range-fill" style={{ width: `${rangePct}%` }} />
                   <div className="mi-range-marker" style={{ left: `${rangePct}%` }} />
                   {/* clamp keeps the centered pill from poking past the card
                       when the price sits at the extremes of the range */}
@@ -342,7 +394,10 @@ export default function MarketInfoPopover({ epic, brokerId, title, anchor, onClo
                   <div className="instrument-section-title">{sectionTitle}</div>
                   <dl className="instrument-grid">
                     {rows.map((r) => (
-                      <div className="instrument-row" key={r.label}>
+                      <div
+                        className={`instrument-row${r.value.includes("\n") ? " mi-multiline" : ""}`}
+                        key={r.label}
+                      >
                         <dt>{r.label}</dt>
                         <dd>{r.value}</dd>
                       </div>
