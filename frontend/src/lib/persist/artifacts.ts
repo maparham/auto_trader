@@ -9,6 +9,7 @@ import type { BacktestResult } from "../../api";
 import type { BacktestPeriod } from "../backtestPeriods";
 import { PREFIX, ns, root, load, save, saveLocal, removeKeyEverywhere } from "./core";
 import { emitLayoutChanged } from "./layoutEvents";
+import { downsampleEquity, EQUITY_PERSIST_CAP } from "../equityDownsample";
 
 // --- drawings (overlays the user drew) ---------------------------------------
 
@@ -56,7 +57,17 @@ export type StoredBacktestResult = Omit<BacktestResult, "candles"> & {
 const backtestKey = (scope: string, epic: string) => ns(scope, `backtest.${epic}`);
 
 export function loadBacktestResult(scope: string, epic: string): StoredBacktestResult | null {
-  return load<StoredBacktestResult | null>(backtestKey(scope, epic), null);
+  const key = backtestKey(scope, epic);
+  const stored = load<StoredBacktestResult | null>(key, null);
+  // Self-heal entries saved before the equity cap existed: downsample in memory
+  // AND best-effort rewrite the slim copy, reclaiming the shared quota as each
+  // cell rehydrates (no separate migration pass).
+  if (stored && stored.equity && stored.equity.length > EQUITY_PERSIST_CAP) {
+    const slim: StoredBacktestResult = { ...stored, equity: downsampleEquity(stored.equity) };
+    save(key, slim); // best-effort; also re-mirrors the slimmed value
+    return slim;
+  }
+  return stored;
 }
 export function saveBacktestResult(
   scope: string,
@@ -64,13 +75,21 @@ export function saveBacktestResult(
   result: BacktestResult,
   period?: BacktestPeriod,
   showEquity?: boolean,
-): void {
-  // Strip the bulky candle array before persisting — redraw doesn't need it
-  // (markers/equity/periods attach to whatever bars are loaded by absolute
-  // timestamp).
-  const stored: StoredBacktestResult = { ...result, period, showEquity };
+): boolean {
+  // Strip the bulky candle array and bound the equity curve before persisting —
+  // redraw doesn't need candles (markers/equity/periods attach to whatever bars
+  // are loaded by absolute timestamp), and the full per-bar equity array is the
+  // one field unbounded by trade count, so it must be capped to fit the shared
+  // localStorage quota. Returns false when the write was dropped (quota) so the
+  // caller can warn the user it won't survive a switch/reload.
+  const stored: StoredBacktestResult = {
+    ...result,
+    equity: downsampleEquity(result.equity),
+    period,
+    showEquity,
+  };
   delete (stored as Partial<BacktestResult>).candles;
-  save(backtestKey(scope, epic), stored);
+  return save(backtestKey(scope, epic), stored);
 }
 export function clearBacktestResult(scope: string, epic: string): void {
   removeKeyEverywhere(backtestKey(scope, epic));
