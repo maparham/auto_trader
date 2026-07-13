@@ -248,3 +248,6 @@ backtest_runs.db-shm
 
 # Claude Code local config (custom commands, local settings)
 .claude/
+
+# Vitest on-disk cache (regenerated per run)
+node_modules/.vite/
