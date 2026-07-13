@@ -65,6 +65,27 @@ def _rows(trades: list[dict], key) -> list[dict]:
     return rows
 
 
+def _hour_stats(trades: list[dict]) -> list[dict]:
+    """Per-UTC-hour sufficient statistics for the time-of-day breakdown.
+
+    Emits additive counts (n, wins, sum_pnl) rather than finished rows because
+    the client regroups them into local-timezone-aligned buckets; win_rate and
+    expectancy are derived on the client from these. A win is pnl > 0, matching
+    _rows. Trades with no context or no hour_utc are skipped."""
+    groups: dict[int, list[float]] = {}
+    for t in trades:
+        h = (t.get("context") or {}).get("hour_utc")
+        if h is None:
+            continue
+        groups.setdefault(int(h), []).append(t["pnl"])
+    return [
+        {"hour": h, "n": len(pnls),
+         "wins": sum(1 for p in pnls if p > 0),
+         "sum_pnl": round(sum(pnls), 5)}
+        for h, pnls in sorted(groups.items())
+    ]
+
+
 def compute_analysis(trades: list[dict]) -> dict:
     winners = [t for t in trades if t["pnl"] > 0]
     losers = [t for t in trades if t["pnl"] < 0]
@@ -120,5 +141,6 @@ def compute_analysis(trades: list[dict]) -> dict:
         "exit_reasons": _rows(trades, lambda t: t.get("reason") or "unknown"),
         "r_hist": _hist(realized, R_EDGES),
         "context": {f: _ctx(f) for f in CONTEXT_FEATURES},
+        "hour_stats": _hour_stats(trades),
         "whatif": compute_whatif(trades),
     }

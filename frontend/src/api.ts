@@ -196,6 +196,7 @@ export interface BacktestAnalysis {
   exit_reasons: AnalysisRow[];
   r_hist: AnalysisHist;
   context: Record<string, AnalysisRow[]>;
+  hour_stats?: { hour: number; n: number; wins: number; sum_pnl: number }[];
   whatif?: BacktestWhatif;
 }
 

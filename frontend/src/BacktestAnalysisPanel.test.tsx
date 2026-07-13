@@ -11,7 +11,7 @@ installMemStorage();
 
 import type { BacktestAnalysis, BacktestWhatif } from "./api";
 import { saveBacktestAnalysisTab } from "./lib/persist";
-import BacktestAnalysisPanel from "./BacktestAnalysisPanel";
+import BacktestAnalysisPanel, { hourBucketRows } from "./BacktestAnalysisPanel";
 
 // vitest isn't run with jest-style globals, so RTL's automatic cleanup never
 // registers (see BacktestSettingsModal.test.tsx). Without this each render leaks.
@@ -322,5 +322,54 @@ describe("BacktestAnalysisPanel", () => {
     expect(screen.queryByText(/Move stop to breakeven/i)).toBeNull();
     // The tab is still visible because other scenarios remain.
     expect(screen.getByText(/What if/i)).toBeTruthy();
+  });
+});
+
+describe("hourBucketRows", () => {
+  it("buckets UTC-aligned at offset 0 with correct labels and derived stats", () => {
+    const rows = hourBucketRows(
+      [
+        { hour: 1, n: 4, wins: 2, sum_pnl: 10 },
+        { hour: 9, n: 6, wins: 3, sum_pnl: -12 },
+        { hour: 22, n: 3, wins: 1, sum_pnl: 5 },
+      ],
+      0,
+    );
+    const byBucket = Object.fromEntries(rows.map((r) => [r.bucket, r]));
+    // hour 1 -> bucket 0 (00:00-04:00); hour 9 -> bucket 2 (08:00-12:00);
+    // hour 22 -> bucket 5, the last bucket, whose end renders as 24:00.
+    expect(byBucket["00:00-04:00"]).toBeTruthy();
+    expect(byBucket["08:00-12:00"]).toBeTruthy();
+    expect(byBucket["20:00-24:00"]).toBeTruthy();
+    expect(byBucket["00:00-04:00"].n).toBe(4);
+    expect(byBucket["00:00-04:00"].win_rate).toBeCloseTo(0.5);
+    expect(byBucket["00:00-04:00"].expectancy).toBeCloseTo(2.5);
+    expect(byBucket["00:00-04:00"].net_pnl).toBeCloseTo(10);
+    expect(byBucket["00:00-04:00"].low_sample).toBe(true); // n=4 < 5
+    expect(byBucket["08:00-12:00"].low_sample).toBe(false); // n=6
+    expect(byBucket["08:00-12:00"].net_pnl).toBeCloseTo(-12);
+  });
+
+  it("shifts buckets by a positive local offset", () => {
+    // hour 1 + 2 = local 3 -> still bucket 0 (00:00-04:00);
+    // hour 9 + 2 = local 11 -> bucket 2 (08:00-12:00);
+    // hour 3 + 2 = local 5 -> bucket 1 (04:00-08:00)
+    const rows = hourBucketRows(
+      [
+        { hour: 1, n: 1, wins: 1, sum_pnl: 1 },
+        { hour: 3, n: 1, wins: 0, sum_pnl: -1 },
+        { hour: 9, n: 1, wins: 1, sum_pnl: 2 },
+      ],
+      2,
+    );
+    const labels = rows.map((r) => r.bucket);
+    expect(labels).toEqual(["00:00-04:00", "04:00-08:00", "08:00-12:00"]);
+  });
+
+  it("wraps hours near midnight and returns [] for empty input", () => {
+    // hour 23 + 2 = 25 -> local 1 -> bucket 0
+    const rows = hourBucketRows([{ hour: 23, n: 2, wins: 1, sum_pnl: 0 }], 2);
+    expect(rows.map((r) => r.bucket)).toEqual(["00:00-04:00"]);
+    expect(hourBucketRows([], 0)).toEqual([]);
   });
 });

@@ -37,6 +37,50 @@ const dayOfWeekRows = (rows: AnalysisRow[]): AnalysisRow[] =>
     .sort((a, b) => dayOrd(a.bucket) - dayOrd(b.bucket))
     .map((r) => ({ ...r, bucket: DAY_NAMES[parseInt(r.bucket, 10)] ?? r.bucket }));
 
+// Group per-UTC-hour stats into six local-timezone-aligned 4-hour buckets.
+// offsetHours defaults to the viewer's local offset; it is a parameter so the
+// bucketing is unit-testable without mocking Date. Bucketing is at hour
+// granularity: for a rare half-hour timezone a UTC hour that straddles a local
+// 4-hour boundary is assigned whole to one bucket by its start; whole-hour
+// offsets are exact.
+const HOUR_BUCKET_COUNT = 6;
+const HOUR_BUCKET_WIDTH = 4;
+const HOUR_LOW_SAMPLE_N = 5; // mirrors backend analysis.LOW_SAMPLE_N
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+export function hourBucketRows(
+  hourStats: { hour: number; n: number; wins: number; sum_pnl: number }[],
+  offsetHours = -new Date().getTimezoneOffset() / 60,
+): AnalysisRow[] {
+  const acc = Array.from({ length: HOUR_BUCKET_COUNT }, () => ({
+    n: 0,
+    wins: 0,
+    sum_pnl: 0,
+  }));
+  for (const s of hourStats) {
+    const localHour = (((s.hour + offsetHours) % 24) + 24) % 24;
+    const idx = Math.floor(localHour / HOUR_BUCKET_WIDTH) % HOUR_BUCKET_COUNT;
+    acc[idx].n += s.n;
+    acc[idx].wins += s.wins;
+    acc[idx].sum_pnl += s.sum_pnl;
+  }
+  const rows: AnalysisRow[] = [];
+  acc.forEach((b, idx) => {
+    if (b.n === 0) return;
+    const start = idx * HOUR_BUCKET_WIDTH;
+    const end = start + HOUR_BUCKET_WIDTH;
+    rows.push({
+      bucket: `${pad2(start)}:00-${pad2(end)}:00`,
+      n: b.n,
+      win_rate: b.wins / b.n,
+      expectancy: b.sum_pnl / b.n,
+      net_pnl: b.sum_pnl,
+      low_sample: b.n < HOUR_LOW_SAMPLE_N,
+    });
+  });
+  return rows;
+}
+
 function Chevron({ open }: { open: boolean }) {
   return (
     <span className="bt-analysis-chevron" aria-hidden="true">
@@ -515,6 +559,7 @@ export default function BacktestAnalysisPanel({
           ["trend", "Trend at entry", "ctx-trend"],
           ["vol_regime", "Volatility regime", "ctx-vol-regime"],
           ["session", "Session", "ctx-session"],
+          ["hour_bucket", "Time of day", "ctx-hour-bucket"],
           ["candle_pattern", "Entry-bar pattern", "ctx-candle-pattern"],
           ["day_of_week", "Day of week", "ctx-day-of-week"],
         ] as const
@@ -528,7 +573,9 @@ export default function BacktestAnalysisPanel({
               rows={
                 key === "day_of_week"
                   ? dayOfWeekRows(analysis.context[key] ?? [])
-                  : analysis.context[key] ?? []
+                  : key === "hour_bucket"
+                    ? hourBucketRows(analysis.hour_stats ?? [])
+                    : analysis.context[key] ?? []
               }
             />
           )}

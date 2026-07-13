@@ -93,3 +93,25 @@ def test_context_groupby_with_unknown():
     trend_rows = {r["bucket"]: r for r in a["context"]["trend"]}
     assert trend_rows["up"]["n"] == 1
     assert trend_rows["unknown"]["n"] == 1
+
+
+def test_hour_stats_groups_by_hour_utc():
+    trades = [
+        _t(5.0, context={"hour_utc": 9}),
+        _t(-2.0, context={"hour_utc": 9}),
+        _t(3.0, context={"hour_utc": 14}),
+        _t(-1.0, context=None),          # no context -> excluded
+        _t(4.0, context={"trend": "up"}),  # context present but no hour_utc -> excluded
+    ]
+    a = compute_analysis(trades)
+    rows = {r["hour"]: r for r in a["hour_stats"]}
+    assert set(rows) == {9, 14}
+    assert rows[9] == {"hour": 9, "n": 2, "wins": 1, "sum_pnl": 3.0}
+    assert rows[14] == {"hour": 14, "n": 1, "wins": 1, "sum_pnl": 3.0}
+
+
+def test_hour_stats_sorted_and_empty():
+    assert compute_analysis([])["hour_stats"] == []
+    trades = [_t(1.0, context={"hour_utc": 20}), _t(1.0, context={"hour_utc": 3})]
+    hours = [r["hour"] for r in compute_analysis(trades)["hour_stats"]]
+    assert hours == [3, 20]
