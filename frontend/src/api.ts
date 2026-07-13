@@ -92,7 +92,7 @@ interface Trade {
   target: number | null;
 }
 
-interface EquityPoint {
+export interface EquityPoint {
   time: number;
   value: number;
 }
