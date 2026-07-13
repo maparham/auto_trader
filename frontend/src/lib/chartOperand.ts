@@ -243,16 +243,21 @@ export function indicatorOutputs(indType: string, extendData: unknown, calcParam
     case "AVWAP":
       return [{ lineIndex: 0, label: "Value", base: true }];
     case "SLOPE": {
-      // Each configured length exposes TWO picker rows: its slope (lineIndex
-      // 0..K-1) and its raw underlying MA (lineIndex K..2K-1) — see the SLOPE
-      // `line` encoding in backtestSeries.ts's computeIndicatorRecipe.
+      // This indicator outputs rate/slope only — never the raw MA. Each configured
+      // length exposes its raw (unsmoothed) slope at lineIndex 0..K-1, and — only
+      // when smoothing is enabled — its smoothed slope at lineIndex K..2K-1. See the
+      // matching `line` encoding in backtestSeries.ts's computeIndicatorRecipe.
       const lengths = (Array.isArray(calcParams) ? calcParams : []).map(Number)
         .filter((v) => Number.isFinite(v) && v !== 0).slice(0, 5);
       const ls = lengths.length ? lengths : [9];
       const K = ls.length;
       const slopes = ls.map((len, i) => ({ lineIndex: i, label: `Slope MA ${len}`, ...(i === 0 ? { base: true } : {}) }));
-      const mas = ls.map((len, i) => ({ lineIndex: K + i, label: `MA ${len}` }));
-      return [...slopes, ...mas];
+      const sm = ext.smoothing as { type?: string; length?: number } | undefined;
+      const smOn = !!sm && sm.type !== "none" && (sm.length ?? 0) > 1;
+      const smoothed = smOn
+        ? ls.map((len, i) => ({ lineIndex: K + i, label: `Slope MA ${len} · ${String(sm!.type).toUpperCase()} ${sm!.length}` }))
+        : [];
+      return [...slopes, ...smoothed];
     }
     default:
       return [];

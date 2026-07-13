@@ -415,10 +415,12 @@ export function operandBaseLen(op: Operand): number {
       const n = Math.max(1, Number(r.calcParams[0]) || 50);
       return 2 * n;
     }
-    // Slope needs its underlying MA warmed up PLUS the slope lookback itself —
-    // except a line >= K (the raw-MA operand for that length), which only needs
-    // the MA warm-up. K is capped at 5 lengths (mirrors slopeLengths in
-    // indicators/slope.ts) so K agrees with the series the operand actually reads.
+    // Slope is rate-only (mirrors computeIndicatorRecipe/indicatorOutputs): each
+    // length exposes its RAW (unsmoothed) slope at line < K and — when smoothing is
+    // on — its SMOOTHED slope at line >= K. Both need the MA warmed up plus the slope
+    // lookback (n); the smoothed line ALSO needs the smoothing window. K is capped at
+    // 5 lengths (mirrors slopeLengths in indicators/slope.ts) so `line - K` indexes
+    // the same length the operand actually reads.
     if (r.indicatorType === "SLOPE") {
       const ext = (r.extend ?? {}) as { slopePeriod?: number; smoothing?: { type?: string; length?: number } };
       // Mirror slopeLengths() (indicators/slope.ts) inline rather than importing it —
@@ -429,11 +431,13 @@ export function operandBaseLen(op: Operand): number {
       const lengths = (raw.length ? raw.slice(0, 5) : [9]);
       const K = lengths.length;
       const line = r.line ?? 0;
-      if (line >= K) return lengths[line - K] ?? lengths[0]; // MA operand: just MA warm-up
-      const len = lengths[line] ?? lengths[0];
+      const smoothed = line >= K;
+      const len = lengths[smoothed ? line - K : line] ?? lengths[0];
       const n = Number(ext.slopePeriod) || 3;
-      const sm = ext.smoothing && ext.smoothing.type && ext.smoothing.type !== "none" ? (Number(ext.smoothing.length) || 0) : 0;
-      return len + n + sm;
+      // Only the smoothed line (line >= K) is built with smoothing; adding it to the
+      // raw line would over-warm a series that never smooths.
+      const smLen = ext.smoothing && ext.smoothing.type && ext.smoothing.type !== "none" ? (Number(ext.smoothing.length) || 0) : 0;
+      return len + n + (smoothed ? smLen : 0);
     }
     return base;
   }

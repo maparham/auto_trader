@@ -284,22 +284,22 @@ function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[], _barHo
       // Uses inferBarHours(candles) — NOT the threaded barHours param — so this
       // matches SLOPE_TEMPLATE.calc exactly (recipe/visual parity). The threaded
       // barHours instead drives the operand-level `~slope` transform in derive().
-      // Each configured length exposes TWO operands: line < K is that length's
-      // slope; line >= K is the raw underlying MA (no slope, no smoothing) — see
-      // the `line` encoding note above computeIndicatorRecipe.
+      // Rate-only outputs: line < K is that length's raw (unsmoothed) slope; line
+      // >= K is its smoothed slope — see the `line` encoding note above
+      // computeIndicatorRecipe.
       const sext = ext as SlopeExtend;
       const lengths = slopeLengths(r.calcParams);
       const K = lengths.length;
       const line = r.line ?? 0;
       const maType = sext.maType === "sma" ? "sma" : "ema";
-      if (line >= K) {
-        const len = lengths[line - K] ?? lengths[0];
-        return maSeries(candles, maType, len, { source: sext.source }).base;
-      }
-      const len = lengths[line] ?? lengths[0];
       const n = Number(sext.slopePeriod) || 3;
       const units: SlopeUnit = sext.units ?? "pctHr";
-      return slopeLineSeries(candles, maType, len, n, units, sext.source, sext.smoothing, inferBarHours(candles));
+      if (line >= K) {
+        const len = lengths[line - K] ?? lengths[0];
+        return slopeLineSeries(candles, maType, len, n, units, sext.source, sext.smoothing, inferBarHours(candles));
+      }
+      const len = lengths[line] ?? lengths[0];
+      return slopeLineSeries(candles, maType, len, n, units, sext.source, undefined, inferBarHours(candles));
     }
     default:
       return candles.map(() => undefined);

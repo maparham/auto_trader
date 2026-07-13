@@ -576,9 +576,9 @@ describe("series operand — SLOPE recipe parity", () => {
       kind: "indicator", paneId: "candle_pane", id: "SLOPE#x",
       indType: "SLOPE", calcParams: [3, 2], extendData: { maType: "sma", units: "pctBar" },
     });
-    // K=2 lengths → 2K=4 picker rows: slopes (lineIndex 0,1) then raw MAs (2,3).
-    expect(src.outputs.map((o) => o.label)).toEqual(["Slope MA 3", "Slope MA 2", "MA 3", "MA 2"]);
-    expect(src.outputs.map((o) => o.lineIndex)).toEqual([0, 1, 2, 3]);
+    // Rate-only: smoothing off → K=2 raw-slope rows (lineIndex 0,1), no MA rows.
+    expect(src.outputs.map((o) => o.label)).toEqual(["Slope MA 3", "Slope MA 2"]);
+    expect(src.outputs.map((o) => o.lineIndex)).toEqual([0, 1]);
     const out = src.outputs[0];
     // recipeLabel(SLOPE) is the fixed "MA Slope" base label (unchanged by this
     // task); line-0's base:true output carries it unsuffixed, per chartOperandSources.
@@ -593,6 +593,27 @@ describe("series operand — SLOPE recipe parity", () => {
       } as never) as Array<{ slope0?: number }>
     ).map((p) => p.slope0 ?? null);
     expect(got).toEqual(plotted);
+  });
+
+  it("smoothing on adds a smoothed-slope operand per length (named with the period)", async () => {
+    const { chartOperandSources } = await import("./chartOperand");
+    const src = chartOperandSources({
+      kind: "indicator", paneId: "candle_pane", id: "SLOPE#x",
+      indType: "SLOPE", calcParams: [3, 2],
+      extendData: { maType: "sma", units: "pctBar", slopePeriod: 3, smoothing: { type: "sma", length: 4 } },
+    });
+    // K=2 → 2 raw slopes (0,1) then 2 smoothed slopes (2,3) suffixed with the period.
+    expect(src.outputs.map((o) => o.label)).toEqual([
+      "Slope MA 3", "Slope MA 2", "Slope MA 3 · SMA 4", "Slope MA 2 · SMA 4",
+    ]);
+    expect(src.outputs.map((o) => o.lineIndex)).toEqual([0, 1, 2, 3]);
+    // The smoothed operand (line 2) must resolve to the SMA-4-smoothed slope of MA 3,
+    // NOT the raw slope (line 0).
+    const smoothed = src.outputs[2].operand as Extract<Operand, { kind: "series" }>;
+    const raw = src.outputs[0].operand as Extract<Operand, { kind: "series" }>;
+    const smSeries = await seriesFor(smoothed.recipe, bars);
+    const rawSeries = await seriesFor(raw.recipe, bars);
+    expect(smSeries).not.toEqual(rawSeries);
   });
 
   it("a truthy sub-1 length must NOT be clamped — matches the unclamped visual (all-null)", async () => {
@@ -613,10 +634,10 @@ describe("series operand — SLOPE recipe parity", () => {
     expect(got.every((v) => v === null)).toBe(true);
   });
 
-  // Two lengths (K=2): line 1 must resolve to lengths[1]'s slope (slope1 on the
-  // template), not fall back to line 0 — proves the recipe indexes by `line`
-  // into its own calcParams rather than always using calcParams[0].
-  it("recipe line 1 (of K=2) matches the plotted slope1, including smoothing", async () => {
+  // Two lengths (K=2): the SMOOTHED-slope operand (line K+1 = 3) must resolve to
+  // lengths[1]'s plotted slope1 (the plotted line IS the smoothed slope) — proves
+  // the recipe indexes by `line` into its own calcParams rather than using calcParams[0].
+  it("recipe line K+1 (smoothed) matches the plotted slope1, including smoothing", async () => {
     const ext = { maType: "sma" as const, units: "pctBar" as const, slopePeriod: 1, smoothing: { type: "sma" as const, length: 2 } };
     const plotted = (
       SLOPE_TEMPLATE.calc!(bars, {
@@ -625,30 +646,33 @@ describe("series operand — SLOPE recipe parity", () => {
       } as never) as Array<{ slope1?: number }>
     ).map((p) => p.slope1 ?? null);
     const got = await seriesFor(
-      { source: "indicator", indicatorType: "SLOPE", calcParams: [1, 2], line: 1, extend: ext },
+      { source: "indicator", indicatorType: "SLOPE", calcParams: [1, 2], line: 3 /* K=2, +1 */, extend: ext },
       bars,
     );
     expect(got).toEqual(plotted);
     expect(got.some((v) => v !== null)).toBe(true);
   });
 
-  // line >= K (K=2 here) exposes the RAW underlying MA for lengths[line-K] — no
-  // slope, no smoothing — via maSeries directly.
-  it("recipe line >= K returns the raw underlying MA (no slope, no smoothing)", async () => {
-    const ext = { maType: "sma" as const, units: "pctBar" as const, slopePeriod: 1 };
-    const maLen1 = await seriesFor(
+  // Rate-only: line < K is the RAW (unsmoothed) slope; line >= K is the SMOOTHED
+  // slope of lengths[line-K]. With smoothing on the two must differ.
+  it("recipe line < K is raw slope; line >= K is the smoothed slope", async () => {
+    const ext = { maType: "sma" as const, units: "pctBar" as const, slopePeriod: 1, smoothing: { type: "sma" as const, length: 2 } };
+    const raw = await seriesFor(
+      { source: "indicator", indicatorType: "SLOPE", calcParams: [1, 2], line: 0, extend: ext },
+      bars,
+    );
+    const smoothed = await seriesFor(
       { source: "indicator", indicatorType: "SLOPE", calcParams: [1, 2], line: 2 /* K=2, +0 */, extend: ext },
       bars,
     );
-    const maLen2 = await seriesFor(
-      { source: "indicator", indicatorType: "SLOPE", calcParams: [1, 2], line: 3 /* K=2, +1 */, extend: ext },
+    // raw slope = same recipe with smoothing stripped
+    const rawExpected = await seriesFor(
+      { source: "indicator", indicatorType: "SLOPE", calcParams: [1, 2], line: 0, extend: { ...ext, smoothing: undefined } },
       bars,
     );
-    const expected1 = nul(maSeries(bars, "sma", 1, {}).base);
-    const expected2 = nul(maSeries(bars, "sma", 2, {}).base);
-    expect(maLen1).toEqual(expected1);
-    expect(maLen2).toEqual(expected2);
-    expect(maLen1.some((v) => v !== null)).toBe(true);
+    expect(raw).toEqual(rawExpected);
+    expect(raw.some((v) => v !== null)).toBe(true);
+    expect(smoothed).not.toEqual(raw);
   });
 });
 

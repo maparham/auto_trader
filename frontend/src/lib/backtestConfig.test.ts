@@ -299,19 +299,45 @@ describe("longestIndicatorLength with slope", () => {
     expect(longestIndicatorLength(avwap)).toBe(1);
   });
 
+  it("operandBaseLen warms a raw (unsmoothed) SLOPE operand by MA length + slope lookback", () => {
+    // Rate-only encoding: line < K is the raw slope — the series is built with
+    // smoothing UNDEFINED (backtestSeries.ts), so its warm-up is len + n only. The
+    // configured smoothing must NOT be added here (that would over-warm the raw line).
+    const op = ser({
+      source: "indicator",
+      indicatorType: "SLOPE",
+      calcParams: [9, 21],
+      line: 0, // < K (=2): raw slope for lengths[0]=9
+      extend: { slopePeriod: 3, smoothing: { type: "sma", length: 5 } },
+    });
+    expect(operandBaseLen(op)).toBe(9 + 3); // len + n, smoothing excluded
+  });
+
+  it("operandBaseLen warms a smoothed SLOPE operand by MA length + slope lookback + smoothing window", () => {
+    // line >= K is the SMOOTHED slope — the series is built WITH smoothing, so its
+    // warm-up must also cover the smoothing window: len + n + smoothingLength.
+    const op = ser({
+      source: "indicator",
+      indicatorType: "SLOPE",
+      calcParams: [9, 21],
+      line: 2, // = K: smoothed slope for lengths[2-K]=lengths[0]=9
+      extend: { slopePeriod: 3, smoothing: { type: "sma", length: 5 } },
+    });
+    expect(operandBaseLen(op)).toBe(9 + 3 + 5); // len + n + smoothing
+  });
+
   it("operandBaseLen caps SLOPE's length list at 5, matching the series (K agreement)", () => {
     // 6 configured lengths; slopeLengths() caps to the first 5 → [9,21,50,100,200],
-    // so K=5. line 5 is the MA operand for the FIRST kept length (index 5-K=0),
-    // i.e. lengths[0]=9 -> just its MA warm-up (9). Without the cap, K would be 6
-    // and line 5 would fall into the SLOPE branch for lengths[5]=300, producing a
-    // much larger (and wrong) value.
+    // so K=5. line 5 = K indexes the smoothed slope for the FIRST kept length
+    // (5-K=0), lengths[0]=9. No smoothing configured, so it degenerates to len + n
+    // (9+3). Without the cap K would be 6 and line 5 would read lengths[5]=300.
     const op = ser({
       source: "indicator",
       indicatorType: "SLOPE",
       calcParams: [9, 21, 50, 100, 200, 300],
       line: 5,
     });
-    expect(operandBaseLen(op)).toBe(9);
+    expect(operandBaseLen(op)).toBe(9 + 3);
   });
 });
 
