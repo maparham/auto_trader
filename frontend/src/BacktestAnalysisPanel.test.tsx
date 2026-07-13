@@ -1,13 +1,26 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup, within } from "@testing-library/react";
+import { render, screen, cleanup, within, fireEvent } from "@testing-library/react";
+
+import { installMemStorage } from "./lib/testMemStorage";
+
+// jsdom's localStorage isn't wired up in this project's vitest config (see
+// BacktestSettingsModal.test.tsx); the sub-tab and collapsed-set persistence
+// needs a working stand-in before the persist module loads.
+installMemStorage();
 
 import type { BacktestAnalysis, BacktestWhatif } from "./api";
+import { saveBacktestAnalysisTab } from "./lib/persist";
 import BacktestAnalysisPanel from "./BacktestAnalysisPanel";
 
 // vitest isn't run with jest-style globals, so RTL's automatic cleanup never
 // registers (see BacktestSettingsModal.test.tsx). Without this each render leaks.
-afterEach(cleanup);
+// localStorage is cleared too: the sub-tab and collapsed-set persistence would
+// otherwise leak one test's UI state into the next.
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const analysis: BacktestAnalysis = {
   n_trades: 7,
@@ -61,17 +74,23 @@ const analysis: BacktestAnalysis = {
   },
 };
 
+// Click a sub-tab by its accessible name.
+const showTab = (name: "Placement" | "What-if" | "Context") =>
+  fireEvent.click(screen.getByRole("tab", { name }));
+
 describe("BacktestAnalysisPanel", () => {
-  it("renders SL/TP read-outs, exit reasons, and context tables", () => {
+  it("renders SL/TP read-outs on Placement, exit reasons and context tables on Context", () => {
     render(<BacktestAnalysisPanel analysis={analysis} />);
     expect(screen.getByText(/25% of winners drew down 80% of the way to the stop before recovering/i)).toBeTruthy();
     expect(screen.getByText(/1.1R/)).toBeTruthy(); // left on the table
+    showTab("Context");
     expect(screen.getByText("target")).toBeTruthy();
     expect(screen.getByText("up")).toBeTruthy();
   });
 
   it("shows day names in calendar order for day_of_week buckets", () => {
     render(<BacktestAnalysisPanel analysis={analysis} />);
+    showTab("Context");
     const mon = screen.getByText("Mon");
     const thu = screen.getByText("Thu"); // bucket "3", listed first by count
     expect(mon).toBeTruthy();
@@ -94,6 +113,7 @@ describe("BacktestAnalysisPanel", () => {
 
   it("renders the what-if section with bullets and both curve tables", () => {
     render(<BacktestAnalysisPanel analysis={analysis} />);
+    showTab("What-if");
     expect(screen.getByText(/What if/i)).toBeTruthy();
     expect(
       screen.getByText(/11 of 30 trades closed by "Sell to Close" would have gone on to hit the target/i),
@@ -101,8 +121,6 @@ describe("BacktestAnalysisPanel", () => {
     expect(screen.getByText(/target saved 9.1R net/i)).toBeTruthy();
     expect(screen.getByText(/fill delay costs 0.07R per trade/i)).toBeTruthy();
     expect(screen.getByText(/would have filled 62% of entries/i)).toBeTruthy();
-    // Scoped to the What-if section: "80%" also appears in the pre-existing
-    // Trend-at-entry table (win_rate 0.8), so an unscoped query is ambiguous.
     const whatIf = screen.getByText(/What if/i).closest("section")!;
     expect(within(whatIf).getByText("80%")).toBeTruthy(); // stop curve row
     expect(within(whatIf).getByText("2R")).toBeTruthy(); // target curve row
@@ -125,6 +143,7 @@ describe("BacktestAnalysisPanel", () => {
       },
     };
     render(<BacktestAnalysisPanel analysis={negFore} />);
+    showTab("What-if");
     expect(
       screen.getByText(/while dodging 1\.0R of losses on entries that never filled/i),
     ).toBeTruthy();
@@ -132,8 +151,9 @@ describe("BacktestAnalysisPanel", () => {
     expect(screen.getByText(/would have filled 99\.6% of entries/i)).toBeTruthy();
   });
 
-  it("skips what-if entirely when absent or all-None", () => {
+  it("hides the What-if tab entirely when whatif is absent or all-None", () => {
     render(<BacktestAnalysisPanel analysis={{ ...analysis, whatif: undefined }} />);
+    expect(screen.queryByRole("tab", { name: "What-if" })).toBeNull();
     expect(screen.queryByText(/What if/i)).toBeNull();
     cleanup();
     render(
@@ -145,6 +165,111 @@ describe("BacktestAnalysisPanel", () => {
         }}
       />,
     );
-    expect(screen.queryByText(/What if/i)).toBeNull();
+    expect(screen.queryByRole("tab", { name: "What-if" })).toBeNull();
+    // The other two tabs still work.
+    expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy();
+    showTab("Context");
+    expect(screen.getByText("target")).toBeTruthy();
+  });
+
+  describe("sub-tabs", () => {
+    it("defaults to Placement and shows only that page's content", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      const placement = screen.getByRole("tab", { name: "Placement" });
+      expect(placement.getAttribute("aria-selected")).toBe("true");
+      expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy();
+      // Context and What-if content is not mounted.
+      expect(screen.queryByText("target")).toBeNull();
+      expect(screen.queryByText(/fill delay/i)).toBeNull();
+    });
+
+    it("switching tabs swaps the content", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      showTab("Context");
+      expect(screen.getByText("target")).toBeTruthy();
+      expect(screen.queryByText(/25% of winners drew down/i)).toBeNull();
+      showTab("What-if");
+      expect(screen.getByText(/fill delay costs/i)).toBeTruthy();
+      expect(screen.queryByText("target")).toBeNull();
+      showTab("Placement");
+      expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy();
+    });
+
+    it("persists the active tab across remount", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      showTab("Context");
+      cleanup();
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      expect(
+        screen.getByRole("tab", { name: "Context" }).getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(screen.getByText("target")).toBeTruthy();
+    });
+
+    it("falls back to Placement when the persisted tab is the hidden What-if tab", () => {
+      saveBacktestAnalysisTab("whatif");
+      render(<BacktestAnalysisPanel analysis={{ ...analysis, whatif: undefined }} />);
+      expect(
+        screen.getByRole("tab", { name: "Placement" }).getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy();
+    });
+  });
+
+  describe("collapsible sections", () => {
+    it("collapsing a section hides its body; header remains", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      showTab("Context");
+      expect(screen.getByText("target")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /exit reasons/i }));
+      expect(screen.queryByText("target")).toBeNull(); // body hidden
+      expect(screen.getByRole("button", { name: /exit reasons/i })).toBeTruthy(); // header stays
+      // Re-expanding brings the body back.
+      fireEvent.click(screen.getByRole("button", { name: /exit reasons/i }));
+      expect(screen.getByText("target")).toBeTruthy();
+    });
+
+    it("persists the collapsed set across remount", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      showTab("Context");
+      fireEvent.click(screen.getByRole("button", { name: /exit reasons/i }));
+      cleanup();
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      showTab("Context");
+      expect(screen.queryByText("target")).toBeNull(); // still collapsed
+      expect(screen.getByText("up")).toBeTruthy(); // trend table unaffected
+    });
+
+    it("collapses an individual distribution block on Placement", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      // Exact name: the header's InfoTip is also a button, named "About Winners: ...".
+      fireEvent.click(
+        screen.getByRole("button", { name: "Winners: worst drawdown before profit" }),
+      );
+      // The winners histogram bullets disappear; the losers block is untouched.
+      expect(screen.queryByText(/2 trades reached ≤25% to stop/i)).toBeNull();
+      expect(screen.getByText(/2 trades reached 75–100% to stop/i)).toBeTruthy();
+    });
+
+    it("ignores unknown slugs in the stored array; unlisted sections stay expanded", () => {
+      localStorage.setItem(
+        "auto-trader.backtestAnalysisCollapsed",
+        JSON.stringify(["bogus-slug", "exit-reasons"]),
+      );
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy(); // expanded
+      showTab("Context");
+      expect(screen.queryByText("target")).toBeNull(); // exit-reasons collapsed
+      expect(screen.getByText("up")).toBeTruthy(); // trend expanded
+    });
+
+    it("keeps the header InfoTip from toggling the section", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      showTab("What-if");
+      expect(screen.getByText(/fill delay costs/i)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "About What if" }));
+      // Clicking the InfoTip must not collapse the section.
+      expect(screen.getByText(/fill delay costs/i)).toBeTruthy();
+    });
   });
 });

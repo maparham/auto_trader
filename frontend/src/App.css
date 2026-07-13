@@ -3814,6 +3814,18 @@
   text-transform: uppercase; color: var(--text-dim);
   display: flex; align-items: center; gap: 4px;
 }
+/* Analysis sub-tabs: same .seg pattern as the Overview/Trades row above, but
+   visually secondary (smaller buttons). */
+/* flex: 0 0 auto stops the scrollable flex column from squashing the row
+   (same guard as .bt-range-mode-row .seg). */
+.bt-analysis-seg { align-self: flex-start; flex: 0 0 auto; }
+.bt-analysis-seg button { padding: 3px 10px; font-size: 12px; }
+/* Collapsible section headers: the whole header row is the toggle. The chevron
+   is fixed-width so headers stay aligned when it flips. */
+.bt-analysis-htoggle { cursor: pointer; user-select: none; }
+.bt-analysis-chevron {
+  width: 10px; flex: 0 0 auto; font-size: 9px; color: var(--text-faint);
+}
 .bt-analysis-readouts { margin: 0; padding-left: 18px; list-style: disc; }
 .bt-analysis-readout { margin: 3px 0; font-size: 13px; color: var(--text); }
 .bt-analysis-empty { padding: 12px 4px; font-size: 13px; color: var(--text-faint); }

@@ -201,6 +201,31 @@ export function saveBacktestPeriodsShown(shown: boolean): void {
   saveLocal(BACKTEST_PERIODS_SHOWN_KEY, shown);
 }
 
+// Which Analysis sub-tab is active, and which analysis sections are collapsed.
+// Device-local view preferences (like the panel flags above): one preference for
+// the whole app, not per cell. Both flat keys are registered in
+// DEVICE_LOCAL_FLAT_KEYS in core.ts; without that, hydrateFromBackend prunes
+// them a beat after each load, so the SECOND reload would lose them.
+const BACKTEST_ANALYSIS_TAB_KEY = `${PREFIX}.backtestAnalysisTab`;
+export type BacktestAnalysisTab = "placement" | "whatif" | "context";
+export function loadBacktestAnalysisTab(): BacktestAnalysisTab {
+  return load<BacktestAnalysisTab>(BACKTEST_ANALYSIS_TAB_KEY, "placement");
+}
+export function saveBacktestAnalysisTab(tab: BacktestAnalysisTab): void {
+  saveLocal(BACKTEST_ANALYSIS_TAB_KEY, tab);
+}
+
+// Collapsed analysis sections, stored as an array of stable section slugs
+// (e.g. "exit-reasons"), not display labels. Unknown slugs are ignored on read;
+// sections not listed are expanded.
+const BACKTEST_ANALYSIS_COLLAPSED_KEY = `${PREFIX}.backtestAnalysisCollapsed`;
+export function loadBacktestAnalysisCollapsed(): string[] {
+  return load<string[]>(BACKTEST_ANALYSIS_COLLAPSED_KEY, []);
+}
+export function saveBacktestAnalysisCollapsed(slugs: string[]): void {
+  saveLocal(BACKTEST_ANALYSIS_COLLAPSED_KEY, slugs);
+}
+
 // --- per-symbol chart templates (global, keyed by epic) ----------------------
 //
 // A saved layout (indicators + drawings) tied to a SYMBOL, not a cell — so a

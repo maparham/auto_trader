@@ -1,5 +1,13 @@
+import { useState, type ReactNode } from "react";
 import type { AnalysisHist, AnalysisRow, BacktestAnalysis, BacktestWhatif } from "./api";
 import InfoTip from "./components/InfoTip";
+import {
+  loadBacktestAnalysisCollapsed,
+  loadBacktestAnalysisTab,
+  saveBacktestAnalysisCollapsed,
+  saveBacktestAnalysisTab,
+  type BacktestAnalysisTab,
+} from "./lib/persist";
 
 /** Analysis tab of the backtest dock: renders the backend-computed `analysis`
  * payload (SL/TP efficiency, exit reasons, R distribution, context breakdowns).
@@ -29,14 +37,55 @@ const dayOfWeekRows = (rows: AnalysisRow[]): AnalysisRow[] =>
     .sort((a, b) => dayOrd(a.bucket) - dayOrd(b.bucket))
     .map((r) => ({ ...r, bucket: DAY_NAMES[parseInt(r.bucket, 10)] ?? r.bucket }));
 
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <span className="bt-analysis-chevron" aria-hidden="true">
+      {open ? "▾" : "▸"}
+    </span>
+  );
+}
+
+// A section h4 that toggles its section body. InfoTips inside the header keep
+// working: InfoTip stops click propagation itself, so tapping the icon never
+// reaches this onClick.
+function SectionH4({
+  slug,
+  open,
+  onToggle,
+  children,
+}: {
+  slug: string;
+  open: boolean;
+  onToggle: (slug: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <h4
+      className="bt-analysis-htoggle"
+      role="button"
+      aria-expanded={open}
+      onClick={() => onToggle(slug)}
+    >
+      <Chevron open={open} />
+      {children}
+    </h4>
+  );
+}
+
 function Dist({
   hist,
   label,
+  slug,
+  collapsed,
+  onToggle,
   tip,
   pctOfStop,
 }: {
   hist: AnalysisHist;
   label: string;
+  slug: string;
+  collapsed: boolean;
+  onToggle: (slug: string) => void;
   tip?: string;
   pctOfStop?: boolean; // buckets are fractions of the stop distance: show "25% to stop"
 }) {
@@ -59,18 +108,26 @@ function Dist({
   if (!items.length) return null;
   return (
     <div className="bt-analysis-dist">
-      <div className="bt-analysis-dist-label">
+      <div
+        className="bt-analysis-dist-label bt-analysis-htoggle"
+        role="button"
+        aria-expanded={!collapsed}
+        onClick={() => onToggle(slug)}
+      >
+        <Chevron open={!collapsed} />
         {label}
         {tip && <InfoTip title={label} text={tip} />}
       </div>
-      <ul className="bt-analysis-dist-items">
-        {items.map(({ c, name }, i) => (
-          <li key={i} className="bt-analysis-dist-item">
-            {c} {c === 1 ? "trade" : "trades"} {pctOfStop ? "reached" : "closed at"}{" "}
-            {name}
-          </li>
-        ))}
-      </ul>
+      {!collapsed && (
+        <ul className="bt-analysis-dist-items">
+          {items.map(({ c, name }, i) => (
+            <li key={i} className="bt-analysis-dist-item">
+              {c} {c === 1 ? "trade" : "trades"} {pctOfStop ? "reached" : "closed at"}{" "}
+              {name}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -114,12 +171,26 @@ const CAVEAT =
   "(one position at a time means a longer hold could block the next entry). " +
   "Confirm promising findings with a rerun or sweep.";
 
-function WhatIfSection({ whatif }: { whatif: BacktestWhatif | null | undefined }) {
-  if (!whatif) return null;
+// True when the whatif payload has at least one populated section. Drives both
+// the What-if tab button visibility and the section render (old stored runs
+// carry no whatif, or one with every section null).
+function whatifHasContent(whatif: BacktestWhatif | null | undefined): boolean {
+  if (!whatif) return false;
   const { rule_exit, no_target, stop_curve, target_curve, fill_delay, limit_entry } = whatif;
-  if (!rule_exit && !no_target && !stop_curve && !target_curve && !fill_delay && !limit_entry) {
-    return null;
-  }
+  return Boolean(rule_exit || no_target || stop_curve || target_curve || fill_delay || limit_entry);
+}
+
+function WhatIfSection({
+  whatif,
+  collapsed,
+  onToggle,
+}: {
+  whatif: BacktestWhatif | null | undefined;
+  collapsed: boolean;
+  onToggle: (slug: string) => void;
+}) {
+  if (!whatifHasContent(whatif)) return null;
+  const { rule_exit, no_target, stop_curve, target_curve, fill_delay, limit_entry } = whatif!;
   const bullets: string[] = [];
   if (rule_exit) {
     for (const r of rule_exit.by_reason) {
@@ -155,18 +226,18 @@ function WhatIfSection({ whatif }: { whatif: BacktestWhatif | null | undefined }
   }
   return (
     <section className="bt-analysis-section">
-      <h4>
+      <SectionH4 slug="whatif" open={!collapsed} onToggle={onToggle}>
         What if
         <InfoTip title="What if" text={CAVEAT} />
-      </h4>
-      {bullets.length > 0 && (
+      </SectionH4>
+      {!collapsed && bullets.length > 0 && (
         <ul className="bt-analysis-readouts">
           {bullets.map((b, i) => (
             <li key={i} className="bt-analysis-readout">{b}</li>
           ))}
         </ul>
       )}
-      {(stop_curve || target_curve) && (
+      {!collapsed && (stop_curve || target_curve) && (
       <div className="bt-analysis-dists">
         {stop_curve && (
           <div className="bt-analysis-dist">
@@ -230,6 +301,19 @@ export default function BacktestAnalysisPanel({
 }: {
   analysis: BacktestAnalysis | null | undefined;
 }) {
+  const [tab, setTab] = useState<BacktestAnalysisTab>(loadBacktestAnalysisTab);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
+    () => new Set(loadBacktestAnalysisCollapsed()),
+  );
+  const toggleSection = (slug: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      saveBacktestAnalysisCollapsed([...next]);
+      return next;
+    });
+  };
   if (!analysis) {
     return <div className="bt-analysis-empty">Run a backtest to see the analysis.</div>;
   }
@@ -239,6 +323,15 @@ export default function BacktestAnalysisPanel({
   const { sl, tp } = analysis;
   const runAvg =
     analysis.exit_reasons.reduce((s, r) => s + r.net_pnl, 0) / analysis.n_trades;
+
+  const hasWhatif = whatifHasContent(analysis.whatif);
+  // A persisted "whatif" tab can point at a hidden tab (old stored runs have no
+  // whatif payload): fall back to Placement rather than an empty page.
+  const active: BacktestAnalysisTab = tab === "whatif" && !hasWhatif ? "placement" : tab;
+  const pick = (t: BacktestAnalysisTab) => {
+    setTab(t);
+    saveBacktestAnalysisTab(t);
+  };
 
   const readouts: string[] = [];
   if (sl.winners_near_stop_pct != null) {
@@ -262,64 +355,134 @@ export default function BacktestAnalysisPanel({
 
   return (
     <div className="bt-analysis">
+      <div className="seg bt-analysis-seg" role="tablist" aria-label="Analysis view">
+        <button
+          className={active === "placement" ? "seg-on" : ""}
+          role="tab"
+          aria-selected={active === "placement"}
+          onClick={() => pick("placement")}
+        >
+          Placement
+        </button>
+        {hasWhatif && (
+          <button
+            className={active === "whatif" ? "seg-on" : ""}
+            role="tab"
+            aria-selected={active === "whatif"}
+            onClick={() => pick("whatif")}
+          >
+            What-if
+          </button>
+        )}
+        <button
+          className={active === "context" ? "seg-on" : ""}
+          role="tab"
+          aria-selected={active === "context"}
+          onClick={() => pick("context")}
+        >
+          Context
+        </button>
+      </div>
+
+      {active === "placement" && (
       <section className="bt-analysis-section">
-        <h4>Stop &amp; target placement check</h4>
-        <ul className="bt-analysis-readouts">
-          {readouts.map((r, i) => (
-            <li key={i} className="bt-analysis-readout">
-              {r}
-            </li>
-          ))}
-        </ul>
+        <SectionH4
+          slug="placement-readouts"
+          open={!collapsed.has("placement-readouts")}
+          onToggle={toggleSection}
+        >
+          Stop &amp; target placement check
+        </SectionH4>
+        {!collapsed.has("placement-readouts") && (
+          <ul className="bt-analysis-readouts">
+            {readouts.map((r, i) => (
+              <li key={i} className="bt-analysis-readout">
+                {r}
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="bt-analysis-dists">
           <Dist
             hist={sl.winners_mae_hist}
             label="Winners: worst drawdown before profit"
+            slug="dist-winners-mae"
+            collapsed={collapsed.has("dist-winners-mae")}
+            onToggle={toggleSection}
             tip="How far each winning trade dropped before it closed in profit, as a percent of the stop distance. Winners in the 75 to 100% bucket nearly hit the stop before recovering; a crowd there means the stop is tighter than these trades need."
             pctOfStop
           />
           <Dist
             hist={sl.losers_mae_hist}
             label="Losers: worst drawdown"
+            slug="dist-losers-mae"
+            collapsed={collapsed.has("dist-losers-mae")}
+            onToggle={toggleSection}
             tip="How far each losing trade dropped at its worst, as a percent of the stop distance. Stop exits land past 100% because they traveled the full stop distance. Losers below 100% were closed by a rule or session end before reaching the stop; many there can mean the exit rules cut trades the stop would have survived."
             pctOfStop
           />
           <Dist
             hist={analysis.r_hist}
             label="Result distribution (R)"
+            slug="dist-result-r"
+            collapsed={collapsed.has("dist-result-r")}
+            onToggle={toggleSection}
             tip="Counts trades by realized result in R multiples. 1R is the distance from entry to the initial stop, so a +2R trade made twice the amount it risked and a trade in the -1R bucket lost about its full risk."
           />
         </div>
       </section>
+      )}
 
-      <WhatIfSection whatif={analysis.whatif} />
+      {active === "whatif" && (
+        <WhatIfSection
+          whatif={analysis.whatif}
+          collapsed={collapsed.has("whatif")}
+          onToggle={toggleSection}
+        />
+      )}
 
+      {active === "context" && (
+      <>
       <section className="bt-analysis-section">
-        <h4>Exit reasons</h4>
-        <RowsTable rows={analysis.exit_reasons} avg={runAvg} />
+        <SectionH4
+          slug="exit-reasons"
+          open={!collapsed.has("exit-reasons")}
+          onToggle={toggleSection}
+        >
+          Exit reasons
+        </SectionH4>
+        {!collapsed.has("exit-reasons") && (
+          <RowsTable rows={analysis.exit_reasons} avg={runAvg} />
+        )}
       </section>
 
       {(
         [
-          ["trend", "Trend at entry"],
-          ["vol_regime", "Volatility regime"],
-          ["session", "Session"],
-          ["candle_pattern", "Entry-bar pattern"],
-          ["day_of_week", "Day of week"],
+          ["trend", "Trend at entry", "ctx-trend"],
+          ["vol_regime", "Volatility regime", "ctx-vol-regime"],
+          ["session", "Session", "ctx-session"],
+          ["candle_pattern", "Entry-bar pattern", "ctx-candle-pattern"],
+          ["day_of_week", "Day of week", "ctx-day-of-week"],
         ] as const
-      ).map(([key, label]) => (
+      ).map(([key, label, slug]) => (
         <section key={key} className="bt-analysis-section">
-          <h4>{label}</h4>
-          <RowsTable
-            rows={
-              key === "day_of_week"
-                ? dayOfWeekRows(analysis.context[key] ?? [])
-                : analysis.context[key] ?? []
-            }
-            avg={runAvg}
-          />
+          <SectionH4 slug={slug} open={!collapsed.has(slug)} onToggle={toggleSection}>
+            {label}
+          </SectionH4>
+          {!collapsed.has(slug) && (
+            <RowsTable
+              rows={
+                key === "day_of_week"
+                  ? dayOfWeekRows(analysis.context[key] ?? [])
+                  : analysis.context[key] ?? []
+              }
+              avg={runAvg}
+            />
+          )}
         </section>
       ))}
+      </>
+      )}
     </div>
   );
 }
