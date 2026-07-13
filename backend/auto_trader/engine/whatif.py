@@ -26,6 +26,7 @@ REPLAY_HORIZON = 500      # max bars a replay walks; beyond -> undecided
 LIMIT_FILL_WINDOW = 3     # bars a v1 limit entry stays working
 STOP_CURVE_FRACS = [round(0.1 * k, 1) for k in range(1, 11)]      # 0.1 .. 1.0
 TARGET_CURVE_RS = [round(0.5 * k, 1) for k in range(1, 11)]       # 0.5 .. 5.0
+BE_TRIGGER_RS = [0.5, 1.0, 1.5, 2.0, 3.0]
 
 
 def replay_bracket(
@@ -143,6 +144,36 @@ def _limit_entry(trade: Trade, candles, entry_i: int, risk: float, actual_r: flo
     return {"filled": True, "delta_r": round(cf - actual_r, 4)}
 
 
+def _breakeven_stop(trade: Trade, candles, entry_i: int, exit_i: int,
+                    risk: float, leg: str) -> list[dict]:
+    """Per profit trigger, whether a breakeven-stop overlay would arm (price
+    first reaches entry +/- frac*risk within [entry_i, exit_i]) and then fire
+    (a LATER bar in that span retraces to the entry price). Bar high/low
+    touches; firing strictly after the arming bar avoids same-bar lookahead."""
+    entry = trade.entry_price
+    end = min(len(candles) - 1, exit_i)
+    rows = []
+    for frac in BE_TRIGGER_RS:
+        trigger = entry + frac * risk if leg == "long" else entry - frac * risk
+        arm_i = None
+        for i in range(max(entry_i, 0), end + 1):
+            bar = candles[i]
+            reached = bar.high >= trigger if leg == "long" else bar.low <= trigger
+            if reached:
+                arm_i = i
+                break
+        fired = False
+        if arm_i is not None:
+            for j in range(arm_i + 1, end + 1):
+                bar = candles[j]
+                back = bar.low <= entry if leg == "long" else bar.high >= entry
+                if back:
+                    fired = True
+                    break
+        rows.append({"frac": frac, "armed": arm_i is not None, "fired": fired})
+    return rows
+
+
 def enrich_trades_whatif(trades: list[Trade], candles: list[Candle]) -> None:
     """Stamp trade.whatif per the what-if spec. A trade missing what a scenario
     needs gets that key None; a trade with no locatable times or no stop_initial
@@ -157,7 +188,8 @@ def enrich_trades_whatif(trades: list[Trade], candles: list[Candle]) -> None:
                 if trade.stop_initial is not None else 0.0)
         if risk <= 0:
             trade.whatif = {"rule_exit": None, "no_target": None,
-                            "fill_delay_r": None, "limit_entry": None}
+                            "fill_delay_r": None, "limit_entry": None,
+                            "breakeven_stop": None}
             continue
         actual_r = _signed_r(trade.exit_price, trade.entry_price, risk, trade.leg)
         trade.whatif = {
@@ -169,6 +201,9 @@ def enrich_trades_whatif(trades: list[Trade], candles: list[Candle]) -> None:
                              if entry_i is not None else None),
             "limit_entry": (_limit_entry(trade, candles, entry_i, risk, actual_r)
                             if entry_i is not None else None),
+            "breakeven_stop": (
+                _breakeven_stop(trade, candles, entry_i, exit_i, risk, trade.leg)
+                if entry_i is not None and exit_i is not None else None),
         }
 
 
@@ -271,6 +306,26 @@ def compute_whatif(trades: list[dict]) -> dict:
             "net_verdict_r": _round4(filled_net - foregone),
         }
 
+    # G: breakeven-stop overlay curve from per-trade arm/fire stamps + realized R.
+    be_rows = [(t.get("whatif") or {}).get("breakeven_stop") for t in trades]
+    be_pairs = [(rows, _realized_r(t)) for t, rows in zip(trades, be_rows)
+                if rows is not None and _realized_r(t) is not None]
+    breakeven_curve = None
+    if be_pairs:
+        breakeven_curve = []
+        for k, frac in enumerate(BE_TRIGGER_RS):
+            armed = [(rows[k], r) for rows, r in be_pairs if rows[k]["armed"]]
+            fired = [(cell, r) for cell, r in armed if cell["fired"]]
+            breakeven_curve.append({
+                "frac": frac,
+                "n_armed": len(armed),
+                "n_fired": len(fired),
+                "losers_rescued": sum(1 for _, r in fired if r < 0),
+                "winners_cut": sum(1 for _, r in fired if r > 0),
+                "net_delta_r": _round4(sum(-r for _, r in fired)),
+            })
+
     return {"rule_exit": rule_exit, "no_target": no_target,
             "stop_curve": stop_curve, "target_curve": target_curve,
-            "fill_delay": fill_delay, "limit_entry": limit_entry}
+            "fill_delay": fill_delay, "limit_entry": limit_entry,
+            "breakeven_curve": breakeven_curve}

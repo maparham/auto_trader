@@ -17,7 +17,8 @@ def _t(pnl, *, entry=100.0, exit_=None, stop=95.0, leg="long", reason="rule",
 def test_all_none_when_nothing_enriched():
     out = compute_whatif([_t(1.0), _t(-1.0)])
     assert out == {"rule_exit": None, "no_target": None, "stop_curve": None,
-                   "target_curve": None, "fill_delay": None, "limit_entry": None}
+                   "target_curve": None, "fill_delay": None, "limit_entry": None,
+                   "breakeven_curve": None}
 
 
 def test_rule_exit_by_reason_and_totals():
@@ -92,3 +93,60 @@ def test_fill_delay_and_limit_entry():
     assert le == {"n": 3, "fill_rate": 2 / 3, "filled_net_delta_r": 0.4,
                   "undecided": 1, "unfilled_foregone_r": 1.6,
                   "unfilled_winners": 1, "net_verdict_r": -1.2}
+
+
+def _be(frac_flags):
+    # frac_flags: {frac: (armed, fired)} -> the stamp list for one trade.
+    return [{"frac": f, "armed": a, "fired": fi} for f, (a, fi) in frac_flags.items()]
+
+
+def test_breakeven_curve_none_when_no_stamps():
+    out = compute_whatif([_t(1.0), _t(-1.0)])
+    assert out["breakeven_curve"] is None
+
+
+def test_breakeven_curve_rescues_and_cuts():
+    # Loser: realized -1R, fires at 0.5 -> rescued, delta +1.
+    loser = _t(-5.0, stop=95.0, whatif={
+        "breakeven_stop": _be({0.5: (True, True), 1.0: (False, False),
+                               1.5: (False, False), 2.0: (False, False),
+                               3.0: (False, False)})})
+    # Winner: realized +2R (exit 110), armed+fired at 0.5 -> cut, delta -2.
+    winner = _t(10.0, exit_=110.0, stop=95.0, whatif={
+        "breakeven_stop": _be({0.5: (True, True), 1.0: (True, False),
+                               1.5: (True, False), 2.0: (True, False),
+                               3.0: (False, False)})})
+    curve = compute_whatif([loser, winner])["breakeven_curve"]
+    row = {r["frac"]: r for r in curve}
+    assert row[0.5]["n_armed"] == 2 and row[0.5]["n_fired"] == 2
+    assert row[0.5]["losers_rescued"] == 1 and row[0.5]["winners_cut"] == 1
+    # net = (+1) + (-2) = -1
+    assert row[0.5]["net_delta_r"] == -1.0
+    # At 1.0 only the winner armed, and it did not fire.
+    assert row[1.0]["n_armed"] == 1 and row[1.0]["n_fired"] == 0
+    assert row[1.0]["net_delta_r"] == 0.0
+
+
+def test_breakeven_curve_skips_ineligible_stamp():
+    # A trade with breakeven_stop None must not appear in any count.
+    good = _t(-5.0, stop=95.0, whatif={
+        "breakeven_stop": _be({0.5: (True, True), 1.0: (False, False),
+                               1.5: (False, False), 2.0: (False, False),
+                               3.0: (False, False)})})
+    bad = _t(-5.0, stop=95.0, whatif={"breakeven_stop": None})
+    row = {r["frac"]: r for r in compute_whatif([good, bad])["breakeven_curve"]}
+    assert row[0.5]["n_armed"] == 1 and row[0.5]["n_fired"] == 1
+
+
+def test_breakeven_curve_zero_realized_fired_lands_in_neither_bucket():
+    # A trade that exits exactly at entry (realized 0R) and fires counts as
+    # fired but belongs to neither rescued (< 0) nor cut (> 0), and adds 0
+    # to the net.
+    flat = _t(0.0, exit_=100.0, stop=95.0, whatif={
+        "breakeven_stop": _be({0.5: (True, True), 1.0: (False, False),
+                               1.5: (False, False), 2.0: (False, False),
+                               3.0: (False, False)})})
+    row = {r["frac"]: r for r in compute_whatif([flat])["breakeven_curve"]}
+    assert row[0.5]["n_armed"] == 1 and row[0.5]["n_fired"] == 1
+    assert row[0.5]["losers_rescued"] == 0 and row[0.5]["winners_cut"] == 0
+    assert row[0.5]["net_delta_r"] == 0.0

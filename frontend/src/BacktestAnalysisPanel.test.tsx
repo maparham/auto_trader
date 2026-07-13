@@ -71,6 +71,13 @@ const analysis: BacktestAnalysis = {
     fill_delay: { n: 37, avg_r: 0.07, total_r: 2.6 },
     limit_entry: { n: 37, fill_rate: 0.62, filled_net_delta_r: 3.4, undecided: 2,
       unfilled_foregone_r: 5.1, unfilled_winners: 4, net_verdict_r: -1.7 },
+    breakeven_curve: [
+      { frac: 0.5, n_armed: 40, n_fired: 12, losers_rescued: 9, winners_cut: 3, net_delta_r: 6.2 },
+      { frac: 1.0, n_armed: 30, n_fired: 8, losers_rescued: 6, winners_cut: 2, net_delta_r: 4.1 },
+      { frac: 1.5, n_armed: 20, n_fired: 4, losers_rescued: 3, winners_cut: 1, net_delta_r: 2.0 },
+      { frac: 2.0, n_armed: 10, n_fired: 2, losers_rescued: 1, winners_cut: 1, net_delta_r: 0.5 },
+      { frac: 3.0, n_armed: 4, n_fired: 1, losers_rescued: 1, winners_cut: 0, net_delta_r: 0.9 },
+    ],
   },
 };
 
@@ -161,7 +168,7 @@ describe("BacktestAnalysisPanel", () => {
         analysis={{
           ...analysis,
           whatif: { rule_exit: null, no_target: null, stop_curve: null,
-            target_curve: null, fill_delay: null, limit_entry: null },
+            target_curve: null, fill_delay: null, limit_entry: null, breakeven_curve: null },
         }}
       />,
     );
@@ -271,5 +278,49 @@ describe("BacktestAnalysisPanel", () => {
       // Clicking the InfoTip must not collapse the section.
       expect(screen.getByText(/fill delay costs/i)).toBeTruthy();
     });
+  });
+
+  it("renders the breakeven-stop table and a positive 1R readout bullet", () => {
+    render(<BacktestAnalysisPanel analysis={analysis} />);
+    showTab("What-if");
+    expect(screen.getByText(/Move stop to breakeven/i)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Moving the stop to breakeven once a trade was 1R in profit would have saved 4\.1R net across 8 trades/i,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("phrases a net-negative breakeven 1R row as a cost", () => {
+    const neg: BacktestAnalysis = {
+      ...analysis,
+      whatif: {
+        ...(analysis.whatif as BacktestWhatif),
+        breakeven_curve: [
+          { frac: 0.5, n_armed: 40, n_fired: 12, losers_rescued: 3, winners_cut: 9, net_delta_r: -6.2 },
+          { frac: 1.0, n_armed: 30, n_fired: 8, losers_rescued: 2, winners_cut: 6, net_delta_r: -4.1 },
+          { frac: 1.5, n_armed: 20, n_fired: 4, losers_rescued: 1, winners_cut: 3, net_delta_r: -2.0 },
+          { frac: 2.0, n_armed: 10, n_fired: 2, losers_rescued: 1, winners_cut: 1, net_delta_r: 0.0 },
+          { frac: 3.0, n_armed: 4, n_fired: 0, losers_rescued: 0, winners_cut: 0, net_delta_r: 0.0 },
+        ],
+      },
+    };
+    render(<BacktestAnalysisPanel analysis={neg} />);
+    showTab("What-if");
+    expect(
+      screen.getByText(/Moving the stop to breakeven once a trade was 1R in profit would have cost 4\.1R net/i),
+    ).toBeTruthy();
+  });
+
+  it("omits the breakeven section when the curve is absent (older runs)", () => {
+    const noBe: BacktestAnalysis = {
+      ...analysis,
+      whatif: { ...(analysis.whatif as BacktestWhatif), breakeven_curve: null },
+    };
+    render(<BacktestAnalysisPanel analysis={noBe} />);
+    showTab("What-if");
+    expect(screen.queryByText(/Move stop to breakeven/i)).toBeNull();
+    // The tab is still visible because other scenarios remain.
+    expect(screen.getByText(/What if/i)).toBeTruthy();
   });
 });

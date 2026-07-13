@@ -165,3 +165,112 @@ def test_empty_inputs_no_crash():
     t = _trade(0, 0)
     enrich_trades_whatif([t], [])
     assert t.whatif is None
+
+
+def test_breakeven_never_arms():
+    # Long from 100, risk 5 (stop 95). Price never reaches +0.5R (=102.5),
+    # so no level arms.
+    candles = _mk([
+        (100, 101, 99, 100),   # 0 signal
+        (100, 101, 99, 100),   # 1 entry at open 100
+        (100, 101, 99, 100),   # 2
+        (100, 101, 99, 100),   # 3 exit
+    ])
+    t = _trade(1, 3, exit_=100.0, stop_initial=95.0, target=110.0)
+    enrich_trades_whatif([t], candles)
+    be = {r["frac"]: r for r in t.whatif["breakeven_stop"]}
+    assert all(not r["armed"] and not r["fired"] for r in be.values())
+
+
+def test_breakeven_arms_then_returns_fires():
+    # Long from 100, risk 5. Bar2 runs to 108 (mfe +1.6R), bar3 drops back to
+    # entry 100 then exits at 99. Every trigger <= 1.5R arms; all armed levels
+    # fire because price returns to entry after the peak.
+    candles = _mk([
+        (100, 101, 99, 100),   # 0 signal
+        (100, 101, 99, 100),   # 1 entry at 100
+        (101, 108, 100, 107),  # 2 peak 108
+        (107, 107, 99, 99),    # 3 drops through entry 100, exits 99
+    ])
+    t = _trade(1, 3, exit_=99.0, stop_initial=95.0, target=110.0)
+    enrich_trades_whatif([t], candles)
+    be = {r["frac"]: r for r in t.whatif["breakeven_stop"]}
+    assert be[0.5]["armed"] and be[0.5]["fired"]
+    assert be[1.0]["armed"] and be[1.0]["fired"]
+    assert be[1.5]["armed"] and be[1.5]["fired"]
+    assert not be[2.0]["armed"]  # peak 108 = +1.6R, below +2R (=110)
+
+
+def test_breakeven_arms_and_runs_no_fire():
+    # Long from 100, risk 5. Monotonic climb to a 110 target, never revisits
+    # entry: armed levels do NOT fire.
+    candles = _mk([
+        (100, 101, 99, 100),   # 0 signal
+        (100, 103, 100, 102),  # 1 entry at 100
+        (102, 106, 102, 105),  # 2 +1R reached (105)
+        (105, 111, 105, 110),  # 3 target 110, low never back to 100
+    ])
+    t = _trade(1, 3, exit_=110.0, stop_initial=95.0, target=110.0)
+    enrich_trades_whatif([t], candles)
+    be = {r["frac"]: r for r in t.whatif["breakeven_stop"]}
+    assert be[0.5]["armed"] and not be[0.5]["fired"]
+    assert be[1.0]["armed"] and not be[1.0]["fired"]
+
+
+def test_breakeven_short_arms_then_returns_fires():
+    # Short from 100, risk 4 (stop 104). Bar2 drops to 94 (mfe +1.5R), bar3
+    # rallies back through entry 100 and exits 101.
+    candles = _mk([
+        (100, 101, 99, 100),   # 0 signal
+        (100, 101, 99, 100),   # 1 short entry at 100
+        (99, 100, 94, 95),     # 2 favorable to 94
+        (95, 101, 95, 101),    # 3 rallies through entry, exits 101
+    ])
+    t = _trade(1, 3, exit_=101.0, leg="short", stop_initial=104.0,
+               stop_final=104.0, target=90.0)
+    enrich_trades_whatif([t], candles)
+    be = {r["frac"]: r for r in t.whatif["breakeven_stop"]}
+    assert be[0.5]["armed"] and be[0.5]["fired"]
+    assert be[1.0]["armed"] and be[1.0]["fired"]
+    assert be[1.5]["armed"] and be[1.5]["fired"]
+
+
+def test_breakeven_per_trigger_divergence():
+    # Long from 100, risk 5. Early dip fires the 0.5 level; a later higher peak
+    # arms 1.5 AFTER the dip and never returns to entry, so 1.5 does not fire.
+    candles = _mk([
+        (100, 101, 99, 100),   # 0 signal
+        (100, 103, 100, 102),  # 1 entry 100; hits +0.5R (102.5)? high 103 -> arms 0.5
+        (102, 102, 100, 100),  # 2 back to entry 100 -> 0.5 fires here
+        (100, 109, 100, 108),  # 3 climbs to 108 -> arms 1.5 (>=107.5), low 100 not below entry
+        (108, 111, 107, 110),  # 4 exit at target 110, low 107 never back to 100
+    ])
+    t = _trade(1, 4, exit_=110.0, stop_initial=95.0, target=110.0)
+    enrich_trades_whatif([t], candles)
+    be = {r["frac"]: r for r in t.whatif["breakeven_stop"]}
+    assert be[0.5]["armed"] and be[0.5]["fired"]
+    assert be[1.5]["armed"] and not be[1.5]["fired"]
+
+
+def test_breakeven_ineligible_no_stop_initial():
+    candles = _mk([(100, 101, 99, 100), (100, 108, 99, 107)])
+    t = _trade(1, 1, exit_=107.0, stop_initial=None, stop_final=None)
+    enrich_trades_whatif([t], candles)
+    assert t.whatif["breakeven_stop"] is None
+
+
+def test_breakeven_no_fire_from_retrace_after_exit_bar():
+    # Long from 100, risk 5. Arms at 0.5R and runs to a 110 target at bar3
+    # without retracing. Bar4 exists AFTER the exit and drops back to entry;
+    # the fire scan must stop at exit_i (bar3), so 0.5 stays armed but not fired.
+    candles = _mk([
+        (100, 101, 99, 100),   # 0 signal
+        (100, 103, 100, 102),  # 1 entry 100, arms 0.5 (high 103 >= 102.5)
+        (102, 106, 102, 105),  # 2 climb, low never back to 100
+        (105, 111, 105, 110),  # 3 exit at target 110
+        (110, 110, 99, 100),   # 4 after exit: low 99 would fire if scanned
+    ])
+    t = _trade(1, 3, exit_=110.0, stop_initial=95.0, target=110.0)
+    enrich_trades_whatif([t], candles)
+    be = {r["frac"]: r for r in t.whatif["breakeven_stop"]}
+    assert be[0.5]["armed"] and not be[0.5]["fired"]

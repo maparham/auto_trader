@@ -110,7 +110,7 @@ def test_response_and_stored_run_carry_whatif(tmp_run_store):
     assert "whatif" in payload["analysis"]
     assert set(payload["analysis"]["whatif"].keys()) == {
         "rule_exit", "no_target", "stop_curve", "target_curve",
-        "fill_delay", "limit_entry",
+        "fill_delay", "limit_entry", "breakeven_curve",
     }
     assert payload["trades"], "expected at least one closed trade"
     for t in payload["trades"]:

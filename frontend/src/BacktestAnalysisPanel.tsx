@@ -189,8 +189,11 @@ const CAVEAT =
 // carry no whatif, or one with every section null).
 function whatifHasContent(whatif: BacktestWhatif | null | undefined): boolean {
   if (!whatif) return false;
-  const { rule_exit, no_target, stop_curve, target_curve, fill_delay, limit_entry } = whatif;
-  return Boolean(rule_exit || no_target || stop_curve || target_curve || fill_delay || limit_entry);
+  const { rule_exit, no_target, stop_curve, target_curve, fill_delay, limit_entry, breakeven_curve } =
+    whatif;
+  return Boolean(
+    rule_exit || no_target || stop_curve || target_curve || fill_delay || limit_entry || breakeven_curve,
+  );
 }
 
 function WhatIfSection({
@@ -203,7 +206,8 @@ function WhatIfSection({
   onToggle: (slug: string) => void;
 }) {
   if (!whatifHasContent(whatif)) return null;
-  const { rule_exit, no_target, stop_curve, target_curve, fill_delay, limit_entry } = whatif!;
+  const { rule_exit, no_target, stop_curve, target_curve, fill_delay, limit_entry, breakeven_curve } =
+    whatif!;
   const bullets: string[] = [];
   if (rule_exit) {
     for (const r of rule_exit.by_reason) {
@@ -237,6 +241,17 @@ function WhatIfSection({
     const netClause = `Net: ${limit_entry.net_verdict_r >= 0 ? "limit entries add" : "market entries keep"} ${fmtR(Math.abs(limit_entry.net_verdict_r))}.`;
     bullets.push(`${fillClause}, ${filledClause} ${unfilledClause}. ${netClause}`);
   }
+  if (breakeven_curve) {
+    const oneR = breakeven_curve.find((r) => r.frac === 1.0);
+    if (oneR && oneR.n_fired > 0) {
+      const verb = oneR.net_delta_r >= 0 ? "saved" : "cost";
+      bullets.push(
+        `Moving the stop to breakeven once a trade was 1R in profit would have ${verb} ${fmtR(
+          Math.abs(oneR.net_delta_r),
+        )} net across ${oneR.n_fired} trades that came back to entry.`,
+      );
+    }
+  }
   return (
     <section className="bt-analysis-section">
       <SectionH4 slug="whatif" open={!collapsed} onToggle={onToggle}>
@@ -250,7 +265,7 @@ function WhatIfSection({
           ))}
         </ul>
       )}
-      {!collapsed && (stop_curve || target_curve) && (
+      {!collapsed && (stop_curve || target_curve || breakeven_curve) && (
       <div className="bt-analysis-dists">
         {stop_curve && (
           <div className="bt-analysis-dist">
@@ -297,6 +312,33 @@ function WhatIfSection({
                     <td>{r.target_r}R</td>
                     <td>{r.n_reached}</td>
                     <td>{fmtPct(r.pct_reached)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {breakeven_curve && (
+          <div className="bt-analysis-dist">
+            <div className="bt-analysis-dist-label">
+              Move stop to breakeven
+              <InfoTip
+                title="Move stop to breakeven"
+                text="Outcome if the stop moved to entry once a trade reached each profit trigger: a trade that then retraced to entry exits flat, so a real loser is rescued and a real winner is cut to zero; trades that ran away untouched keep their result. R of the full position, live runs only."
+              />
+            </div>
+            <table className="bt-analysis-table">
+              <thead>
+                <tr><th>Trigger</th><th>Reached</th><th>Rescued</th><th>Cut</th><th>Net R</th></tr>
+              </thead>
+              <tbody>
+                {breakeven_curve.map((r) => (
+                  <tr key={r.frac}>
+                    <td>+{r.frac}R</td>
+                    <td>{r.n_armed}</td>
+                    <td>{r.losers_rescued}</td>
+                    <td>{r.winners_cut}</td>
+                    <td>{r.net_delta_r.toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>

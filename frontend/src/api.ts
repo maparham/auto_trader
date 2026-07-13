@@ -167,6 +167,16 @@ export interface BacktestWhatif {
     unfilled_winners: number;
     net_verdict_r: number;
   } | null;
+  breakeven_curve:
+    | {
+        frac: number;
+        n_armed: number;
+        n_fired: number;
+        losers_rescued: number;
+        winners_cut: number;
+        net_delta_r: number;
+      }[]
+    | null;
 }
 
 export interface BacktestAnalysis {
