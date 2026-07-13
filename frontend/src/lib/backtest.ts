@@ -26,6 +26,7 @@ import {
 } from "klinecharts";
 import { runBacktest, type BacktestRequest, type Marker } from "../api";
 import { setInspectTraces, inspectSelectedBarSignal } from "./backtestInspect";
+import { toast } from "./notify";
 import { applyVisibleRange, applyVisibleRangeKeepStart } from "./chartSync";
 import {
   backtestResultSignal,
@@ -964,11 +965,14 @@ export async function runAndRender(
   // prior result can never draw against this run's data. (Does NOT delete the
   // persisted store — the save() below overwrites it with the fresh run.)
   teardownArtifacts(chart);
-  // Persist so the markers/equity/trades survive a timeframe switch and a full
-  // reload (candles stripped — see saveBacktestResult). Attach the period so the
-  // shading persists + rehydrates like the markers, and the equity-curve choice
-  // so the reload honors it.
-  saveBacktestResult(scope, req.epic, result, period, showEquity);
+  // Persist so markers/equity/trades survive a timeframe switch and a full reload.
+  // If the write was dropped (localStorage quota exhausted — several large runs
+  // across cells share the ~5MB budget), the in-memory render below still works,
+  // but a later rehydrate would find nothing: warn the user rather than let the
+  // markers silently vanish on their next TF switch.
+  if (!saveBacktestResult(scope, req.epic, result, period, showEquity)) {
+    toast("Backtest too large to save — it won't persist across timeframe switches or reloads.");
+  }
   // Render for the CURRENTLY displayed timeframe, not blindly native: the run's
   // base TF (req.resolution) can differ from the chart's TF (the settings panel's
   // "base TF" dropdown lets you run e.g. 5m while viewing 1H), and running does
