@@ -86,7 +86,7 @@ export default function BacktestAnalysisPanel({
   const readouts: string[] = [];
   if (sl.winners_near_stop_pct != null) {
     readouts.push(
-      `${fmtPct(sl.winners_near_stop_pct)} of winners came within 0.8R of the stop before working out.`,
+      `${fmtPct(sl.winners_near_stop_pct)} of winners drew down 80% of the way to the stop before recovering.`,
     );
   }
   if (tp.avg_winner_mfe_r != null && tp.avg_winner_realized_r != null) {

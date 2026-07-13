@@ -86,6 +86,13 @@ def test_run_is_persisted_and_readable(tmp_run_store):
     assert full["strategy_kind"] == "rules"
     assert full["strategy_name"] is None
     assert full["analysis"]["n_trades"] == len(full["trades"])
+    # Re-derivable market data is stripped before the store write; the strategy
+    # config (rules/risk/epic/resolution) is kept.
+    assert "candles" not in full["request"]
+    assert "series" not in full["request"]
+    assert "sweep" not in full["request"]
+    assert full["request"]["epic"] == "EURUSD"
+    assert full["request"]["longEntry"]["rules"]
 
     with pytest.raises(HTTPException) as e:
         asyncio.run(bt_router.get_run("nope"))

@@ -342,24 +342,33 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     trade_dicts = [t.model_dump() for t in trades_dto]
     analysis = compute_analysis(trade_dicts)
 
-    run_id: str | None = uuid.uuid4().hex
-    try:
-        await RUN_STORE.insert({
-            "id": run_id,
-            "created_at": int(time.time()),
-            "epic": req.epic,
-            "timeframe": req.resolution,
-            "range_from": int(candles[0].time.timestamp()) if candles else 0,
-            "range_to": int(candles[-1].time.timestamp()) if candles else 0,
-            "strategy_kind": "coded" if req.codedStrategy is not None else "rules",
-            "strategy_name": req.codedStrategy,
-            "request": req.model_dump(),
-            "summary": {**summary, **metrics},
-            "trades": trade_dicts,
-        })
-    except Exception:
-        logger.warning("run-store write failed; continuing without run_id", exc_info=True)
-        run_id = None
+    # Re-derivable market data stays out of the store — epic/timeframe/range
+    # columns suffice to re-fetch it, and the raw candles + indicator series are
+    # bulky. A sweep-shaped request should never reach this single-run handler,
+    # but if one does, don't persist it as a normal run.
+    request_dump = req.model_dump()
+    for bulky in ("candles", "series", "sweep"):
+        request_dump.pop(bulky, None)
+
+    run_id: str | None = None if req.sweep is not None else uuid.uuid4().hex
+    if run_id is not None:
+        try:
+            await RUN_STORE.insert({
+                "id": run_id,
+                "created_at": int(time.time()),
+                "epic": req.epic,
+                "timeframe": req.resolution,
+                "range_from": int(candles[0].time.timestamp()),
+                "range_to": int(candles[-1].time.timestamp()),
+                "strategy_kind": "coded" if req.codedStrategy is not None else "rules",
+                "strategy_name": req.codedStrategy,
+                "request": request_dump,
+                "summary": {**summary, **metrics},
+                "trades": trade_dicts,
+            })
+        except Exception:
+            logger.warning("run-store write failed; continuing without run_id", exc_info=True)
+            run_id = None
 
     return BacktestResponse(
         epic=req.epic,

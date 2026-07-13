@@ -43,7 +43,7 @@ const analysis: BacktestAnalysis = {
 describe("BacktestAnalysisPanel", () => {
   it("renders SL/TP read-outs, exit reasons, and context tables", () => {
     render(<BacktestAnalysisPanel analysis={analysis} />);
-    expect(screen.getByText(/25% of winners came within 0.8R of the stop/i)).toBeTruthy();
+    expect(screen.getByText(/25% of winners drew down 80% of the way to the stop before recovering/i)).toBeTruthy();
     expect(screen.getByText(/1.1R/)).toBeTruthy(); // left on the table
     expect(screen.getByText("target")).toBeTruthy();
     expect(screen.getByText("up")).toBeTruthy();
