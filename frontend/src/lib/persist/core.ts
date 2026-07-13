@@ -240,16 +240,28 @@ export function load<T>(key: string, fallback: T): T {
   }
 }
 
-export function save<T>(key: string, value: T): void {
+// Returns true when the localStorage write committed, false when it was dropped
+// (quota exceeded or a non-serializable value). A dropped write is non-fatal to
+// the running session (the in-memory state still renders) but means the data
+// won't survive a reload/switch — callers that care (e.g. large backtest results)
+// check the return and surface it. Historically this swallowed the failure
+// silently, which hid backtest-too-large data loss behind a later rehydrate.
+export function save<T>(key: string, value: T): boolean {
   let serialized: string;
   try {
     serialized = JSON.stringify(value);
     localStorage.setItem(key, serialized);
-  } catch {
-    /* quota / serialization issues are non-fatal for persistence */
-    return;
+  } catch (err) {
+    console.warn(
+      `[persist] dropped write for "${key}" (${
+        typeof value === "object" ? "quota/serialization" : "serialization"
+      })`,
+      err,
+    );
+    return false;
   }
   mirrorSet(key, serialized); // best-effort backend mirror (fire-and-forget)
+  return true;
 }
 
 // App-level settings (theme/timezone/clock/dateFormat + alert defaults) live under
