@@ -67,4 +67,25 @@ describe("saveBacktestResult / loadBacktestResult", () => {
     loadBacktestResult("tab.A", "US100");
     expect(localStorage.getItem(KEY)).toBe(before);
   });
+
+  it("boundary: does not self-heal a just-capped entry (cap+1 points)", () => {
+    // A raw equity of 4000 points, when downsampled with step=ceil(4000/2000)=2,
+    // yields 2000 strided points + 1 appended final point = 2001 total.
+    // This tests the exact boundary: downsampleEquity always appends the final
+    // point, so a freshly-capped entry is at most cap+1. Only entries beyond
+    // that are genuinely legacy-oversized and worth re-downsampling.
+    saveBacktestResult("tab.A", "US100", bigResult(4000));
+    const beforeLoad = localStorage.getItem(KEY)!;
+    const beforeParsed = JSON.parse(beforeLoad);
+    expect(beforeParsed.equity.length).toBe(2001); // Just-capped at cap+1
+
+    // Load once: should NOT trigger self-heal rewrite (the entry is already slim).
+    const loaded = loadBacktestResult("tab.A", "US100")!;
+    const afterLoad = localStorage.getItem(KEY)!;
+
+    // Assert: localStorage unchanged (no spurious re-downsampling).
+    expect(afterLoad).toBe(beforeLoad);
+    // Assert: returned result still has 2001 points (not re-thinned).
+    expect(loaded.equity.length).toBe(2001);
+  });
 });

@@ -62,7 +62,11 @@ export function loadBacktestResult(scope: string, epic: string): StoredBacktestR
   // Self-heal entries saved before the equity cap existed: downsample in memory
   // AND best-effort rewrite the slim copy, reclaiming the shared quota as each
   // cell rehydrates (no separate migration pass).
-  if (stored && stored.equity && stored.equity.length > EQUITY_PERSIST_CAP) {
+  // Note: downsampleEquity always appends the final point, so a freshly-capped
+  // entry is at most EQUITY_PERSIST_CAP + 1 points; only entries beyond that
+  // are genuinely legacy-oversized and worth rewriting. Without the +1, a
+  // just-saved 2001-point entry would be spuriously re-thinned on its first reload.
+  if (stored && stored.equity && stored.equity.length > EQUITY_PERSIST_CAP + 1) {
     const slim: StoredBacktestResult = { ...stored, equity: downsampleEquity(stored.equity) };
     save(key, slim); // best-effort; also re-mirrors the slimmed value
     return slim;
