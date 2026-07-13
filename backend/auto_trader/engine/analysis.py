@@ -12,7 +12,10 @@ from __future__ import annotations
 from statistics import median
 
 MAE_EDGES = [0.25, 0.5, 0.75, 1.0]
-R_EDGES = [-3, -2, -1, 0, 1, 2, 3]
+# Edges sit on half-R lines so each bucket is centered on a whole R value: a
+# clean stop realizes exactly -1.0R and lands in the middle of the -1R bucket
+# rather than on a boundary. Buckets: <=-3R, -2R, -1R, 0R, +1R, +2R, >=+3R.
+R_EDGES = [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5]
 NEAR_STOP_R = 0.8
 LOW_SAMPLE_N = 5
 CONTEXT_FEATURES = ("trend", "vol_regime", "session", "candle_pattern", "day_of_week")

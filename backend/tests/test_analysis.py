@@ -78,8 +78,8 @@ def test_r_hist_and_short_sign():
     a = compute_analysis(trades)
     edges = a["r_hist"]["edges"]
     counts = a["r_hist"]["counts"]
-    assert edges == [-3, -2, -1, 0, 1, 2, 3]
-    # +2R -> bucket (1, 2] = index 5; -1R -> bucket (-2, -1] = index 2
+    assert edges == [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5]
+    # +2R -> bucket (1.5, 2.5] = index 5; -1R -> bucket (-1.5, -0.5] = index 2
     assert counts[5] == 1 and counts[2] == 1
 
 

@@ -80,6 +80,7 @@ function Dist({
   onToggle,
   tip,
   pctOfStop,
+  centeredR,
 }: {
   hist: AnalysisHist;
   label: string;
@@ -88,9 +89,21 @@ function Dist({
   onToggle: (slug: string) => void;
   tip?: string;
   pctOfStop?: boolean; // buckets are fractions of the stop distance: show "25% to stop"
+  centeredR?: boolean; // edges sit on half-R lines: label each bucket by its whole-R center
 }) {
   const last = hist.edges[hist.edges.length - 1];
-  const names = pctOfStop
+  // A clean stop realizes exactly -1R, so R buckets are centered on whole
+  // R values (edges on the .5 lines). Label each bucket by its center, e.g.
+  // "-1R", "breakeven", "+2R"; tails read "-3R or worse" / "+3R or better".
+  const rName = (center: number) =>
+    center === 0 ? "breakeven" : `${center > 0 ? "+" : ""}${center}R`;
+  const names = centeredR
+    ? [
+        `${rName(hist.edges[0] - 0.5)} or worse`,
+        ...hist.edges.slice(1).map((e, i) => rName((hist.edges[i] + e) / 2)),
+        `${rName(last + 0.5)} or better`,
+      ]
+    : pctOfStop
     ? [
         `≤${hist.edges[0] * 100}% to stop`,
         ...hist.edges.slice(1).map((e, i) => `${hist.edges[i] * 100}–${e * 100}% to stop`),
@@ -132,7 +145,7 @@ function Dist({
   );
 }
 
-function RowsTable({ rows, avg }: { rows: AnalysisRow[]; avg: number }) {
+function RowsTable({ rows }: { rows: AnalysisRow[] }) {
   if (!rows.length) return <div className="bt-analysis-empty">No data.</div>;
   return (
     <table className="bt-analysis-table">
@@ -151,7 +164,7 @@ function RowsTable({ rows, avg }: { rows: AnalysisRow[]; avg: number }) {
             key={r.bucket}
             className={
               (r.low_sample ? "bt-analysis-low " : "") +
-              (!r.low_sample && r.expectancy < avg ? "bt-analysis-under" : "")
+              (!r.low_sample && r.net_pnl < 0 ? "bt-analysis-under" : "")
             }
           >
             <td>{r.bucket}</td>
@@ -321,8 +334,6 @@ export default function BacktestAnalysisPanel({
     return <div className="bt-analysis-empty">No trades to analyse.</div>;
   }
   const { sl, tp } = analysis;
-  const runAvg =
-    analysis.exit_reasons.reduce((s, r) => s + r.net_pnl, 0) / analysis.n_trades;
 
   const hasWhatif = whatifHasContent(analysis.whatif);
   // A persisted "whatif" tab can point at a hidden tab (old stored runs have no
@@ -427,7 +438,8 @@ export default function BacktestAnalysisPanel({
             slug="dist-result-r"
             collapsed={collapsed.has("dist-result-r")}
             onToggle={toggleSection}
-            tip="Counts trades by realized result in R multiples. 1R is the distance from entry to the initial stop, so a +2R trade made twice the amount it risked and a trade in the -1R bucket lost about its full risk."
+            tip="Counts trades by realized result in R multiples. 1R is the distance from entry to the initial stop, so a +2R trade made twice the amount it risked and a trade in the -1R bucket was stopped out for about its full risk. Each bar is centered on a whole R: a clean stop reads as -1R."
+            centeredR
           />
         </div>
       </section>
@@ -452,7 +464,7 @@ export default function BacktestAnalysisPanel({
           Exit reasons
         </SectionH4>
         {!collapsed.has("exit-reasons") && (
-          <RowsTable rows={analysis.exit_reasons} avg={runAvg} />
+          <RowsTable rows={analysis.exit_reasons} />
         )}
       </section>
 
@@ -476,7 +488,6 @@ export default function BacktestAnalysisPanel({
                   ? dayOfWeekRows(analysis.context[key] ?? [])
                   : analysis.context[key] ?? []
               }
-              avg={runAvg}
             />
           )}
         </section>

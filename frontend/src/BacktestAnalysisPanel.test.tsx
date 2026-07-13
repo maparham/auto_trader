@@ -40,7 +40,7 @@ const analysis: BacktestAnalysis = {
     { bucket: "target", n: 4, win_rate: 1, expectancy: 5, net_pnl: 20, low_sample: true },
     { bucket: "stop", n: 3, win_rate: 0, expectancy: -2, net_pnl: -6, low_sample: true },
   ],
-  r_hist: { edges: [-3, -2, -1, 0, 1, 2, 3], counts: [0, 0, 3, 0, 0, 2, 2, 0] },
+  r_hist: { edges: [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5], counts: [0, 0, 3, 0, 2, 2, 0] },
   context: {
     trend: [
       { bucket: "up", n: 5, win_rate: 0.8, expectancy: 3, net_pnl: 15, low_sample: false },
