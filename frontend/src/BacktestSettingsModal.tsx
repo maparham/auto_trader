@@ -58,7 +58,8 @@ import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
 import { StrategyParams } from "./components/StrategyParams";
 import { SweepResults } from "./SweepResults";
-import { comboCount, ruleAxisTarget, SWEEP_MAX_COMBOS, type SweepAxis } from "./lib/sweep";
+import { comboCount, mirrorRiskAxes, ruleAxisTarget, SWEEP_MAX_COMBOS, type SweepAxis } from "./lib/sweep";
+import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { fetchStrategies, type StrategyInfo, type ParamSpec } from "./api";
 import {
   loadCodedCfg,
@@ -333,7 +334,10 @@ function defaultRule(): Rule {
 }
 
 export default function BacktestSettingsModal({ initial, epic, resolution, controller, onRun, onClose }: Props) {
-  const [cfg, setCfg] = useState<BacktestConfig>(initial);
+  // "Copy immediately" half of the SL/TP sync: a config arriving with sync on
+  // but the sides drifted apart (saved before the option existed, or edited
+  // while off) is normalized on load, the side being viewed winning.
+  const [cfg, setCfg] = useState<BacktestConfig>(() => applyRiskSync(initial, loadBacktestSide()));
   // True while "Pick Range" is armed on the chart (mirrors the controller signal),
   // so the button reflects the active state.
   const [pickingRange, setPickingRange] = useState(false);
@@ -412,11 +416,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // The per-strategy-file panel config (params + risk + exit groups), loaded
   // from the "backtest" coded set whenever the selected file changes. Every
   // edit writes straight through to storage via updateCoded.
+  // applyRiskSync: same copy-on-load normalization as `cfg` above; both side
+  // blocks are visible at once here, so long wins.
   const [codedCfg, setCodedCfg] = useState<CodedStrategyConfig>(() =>
-    cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg(),
+    applyRiskSync(cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg(), "long"),
   );
   useEffect(() => {
-    setCodedCfg(cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg());
+    setCodedCfg(applyRiskSync(cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg(), "long"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg.codedStrategy]);
   const updateCoded = (c: CodedStrategyConfig) => {
@@ -500,7 +506,20 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     if (sweepStateSignal.value?.running) return;
     let next = cfg;
     for (const [key, value] of Object.entries(combo)) {
-      if (!key.startsWith("rule:") || typeof value !== "number") continue;
+      if (typeof value !== "number") continue;
+      // SL/TP axes patch the per-side risk DTO, same shape as the coded branch.
+      // risk:<side>.<stop|target>.<value|mult>
+      if (key.startsWith("risk:")) {
+        const [, rside, field, prop] = key.split(/[:.]/);
+        const riskKey = rside === "long" ? "longRisk" : "shortRisk";
+        const risk = next[riskKey] ?? EMPTY_RISK;
+        next = {
+          ...next,
+          [riskKey]: { ...risk, [field]: { ...risk[field as "stop" | "target"], [prop]: value } },
+        };
+        continue;
+      }
+      if (!key.startsWith("rule:")) continue;
       // rule:<side>.<entry|exit>.<idx>.<left|right>.<length|value>
       // rule:<side>.<entry|exit>.<idx>.count
       const parts = key.slice("rule:".length).split(".");
@@ -529,6 +548,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       rules[idx] = patched;
       next = { ...next, [groupKey]: { ...ruleGroup, rules } };
     }
+    // Synced risk axes are canonicalized to long; copy the applied values across
+    // to short (no-op when unsynced or already equal).
+    next = applyRiskSync(next, "long");
     setCfg(next);
     setSweepAxes([]);
     sweepAxesSignal.set([]);
@@ -560,6 +582,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         };
       }
     }
+    // Synced-risk axes are canonicalized to the long side, so the combo only
+    // carried risk:long.* keys — copy the applied values across to short.
+    next = applyRiskSync(next, "long");
     updateCoded(next);
     setSweepAxes([]);
     sweepAxesSignal.set([]);
@@ -786,7 +811,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // separate from applySweepCombo's own run(), which explicitly clears the
   // signal to [] first for its single-combo follow-up run.
   function runFromFooter() {
-    sweepAxesSignal.set(sweepAxes);
+    // Synced SL/TP: stamp risk axes with their short-side mirror so the sweep
+    // moves both legs together (the axes themselves stay long-side only).
+    const synced = cfg.mode === "coded" ? riskSyncOn(codedCfg) : riskSyncOn(cfg);
+    sweepAxesSignal.set(synced ? mirrorRiskAxes(sweepAxes) : sweepAxes);
     run();
   }
 
@@ -799,7 +827,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   }
   function applyPreset(name: string) {
     const p = presets[name];
-    if (p) setCfg(p);
+    if (p) setCfg(applyRiskSync(p, side));
   }
   function removePreset(name: string) {
     deleteBacktestPreset(name);
@@ -1236,13 +1264,35 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                     />
                     <RiskSection
                       risk={(isLong ? codedCfg.longRisk : codedCfg.shortRisk) ?? EMPTY_RISK}
-                      onChange={(r) => updateCoded({ ...codedCfg, [isLong ? "longRisk" : "shortRisk"]: r })}
+                      onChange={(r) => updateCoded({ ...codedCfg, ...riskPatch(riskSyncOn(codedCfg), s, r) })}
                       sweep={{
                         axes: sweepAxes,
                         side: s,
                         onToggle: toggleRiskSweepAxis,
-                        onKindChange: (field) =>
-                          setSweepAxes((axes) => axes.filter((a) => !a.target.startsWith(`risk:${s}.${field}.`))),
+                        // Synced: the axis lives on the long side regardless of
+                        // which block's kind dropdown changed — drop both sides'.
+                        onKindChange: (field) => {
+                          const sides = riskSyncOn(codedCfg) ? (["long", "short"] as const) : ([s] as const);
+                          setSweepAxes((axes) =>
+                            axes.filter((a) => !sides.some((sd) => a.target.startsWith(`risk:${sd}.${field}.`))));
+                        },
+                      }}
+                      sync={{
+                        on: riskSyncOn(codedCfg),
+                        onToggle: () => {
+                          const on = !riskSyncOn(codedCfg);
+                          updateCoded(applyRiskSync({ ...codedCfg, riskSynced: on }, s));
+                          // Axes created per-side while unsynced move to the
+                          // canonical long side (deduped) so they keep sweeping
+                          // — and now mirror — after the switch.
+                          if (on) setSweepAxes((axes) => {
+                            const remapped = axes.map((a) =>
+                              a.target.startsWith("risk:short.")
+                                ? { ...a, target: a.target.replace(/^risk:short\./, "risk:long.") }
+                                : a);
+                            return remapped.filter((a, i) => remapped.findIndex((b) => b.target === a.target) === i);
+                          });
+                        },
                       }}
                     />
                     {sweepAxes
@@ -1293,13 +1343,25 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             groupClipboard={groupClipboard}
             onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
             openChartPicker={openChartPicker}
-            sweep={{ axes: sweepAxes, side, onToggle: toggleRuleSweepAxis }}
+            sweep={{
+              axes: sweepAxes,
+              side,
+              onToggle: toggleRuleSweepAxis,
+              onToggleRisk: toggleRiskSweepAxis,
+              // Dropping a stop/target kind drops its stale value/mult axis so a
+              // now-unread field can't sweep N identical rows (matches coded mode).
+              onKindChange: (field) => {
+                const sides = riskSyncOn(cfg) ? (["long", "short"] as const) : ([side] as const);
+                setSweepAxes((axes) =>
+                  axes.filter((a) => !sides.some((sd) => a.target.startsWith(`risk:${sd}.${field}.`))));
+              },
+            }}
           />
           {/* Rendered here (not inside SidePanel) so a swept field on the
               inactive side stays visible/editable even while its side tab isn't
               selected — rule mode shows one side at a time, but sweeps span both. */}
           {sweepAxes
-            .filter((a) => a.target.startsWith("rule:"))
+            .filter((a) => a.target.startsWith("rule:") || a.target.startsWith("risk:"))
             .map((a) => (
               <SweepAxisRow
                 key={a.target}
@@ -1557,11 +1619,11 @@ function SweepAxisRow({
     <div className="sp-row sweep-axis-row">
       <span className="sp-label">{axis.label} sweep</span>
       <span className="sweep-axis-fields">
-        <NumberField value={axis.from} onChange={(n) => onChange({ from: n })} className="bt-num" />
+        <NumberField value={axis.from} onChange={(n) => onChange({ from: n })} signed className="bt-num" />
         <span>to</span>
-        <NumberField value={axis.to} onChange={(n) => onChange({ to: n })} className="bt-num" />
+        <NumberField value={axis.to} onChange={(n) => onChange({ to: n })} signed className="bt-num" />
         <span>step</span>
-        <NumberField value={axis.step} onChange={(n) => onChange({ step: n })} className="bt-num" />
+        <NumberField value={axis.step} onChange={(n) => onChange({ step: n })} signed className="bt-num" />
       </span>
     </div>
   );
@@ -1576,6 +1638,7 @@ export function RiskSection({
   risk,
   onChange,
   sweep,
+  sync,
 }: {
   risk: RiskConfig;
   onChange: (r: RiskConfig) => void;
@@ -1587,6 +1650,10 @@ export function RiskSection({
     onToggle: (target: string, current: number) => void;
     onKindChange: (field: "stop" | "target") => void;
   };
+  // "Same for long & short" header toggle. The caller owns the mirroring —
+  // this component just renders the checkbox and reports clicks. Undefined
+  // hides the toggle (surfaces with no per-side risk concept).
+  sync?: { on: boolean; onToggle: () => void };
 }) {
   // Changing a kind drops any sweep axis on that field: the axis target
   // doesn't encode the kind, so a stale `stop.value` axis under an ATR stop
@@ -1627,15 +1694,19 @@ export function RiskSection({
   // Sweep toggle (equalizer glyph) next to a stop/target value or ATR mult — mirrors
   // StrategyParams' per-param toggle. Only rendered when the caller (coded
   // mode) passed a `sweep` prop; absent in rule mode / the Live panel.
+  // Synced SL/TP canonicalizes risk axes to the long side: both sides' toggle
+  // buttons light for that one axis, and its range row renders once (under the
+  // long block).
+  const sweepSide = sync?.on ? "long" : sweep?.side;
   const swept = (field: "stop" | "target", prop: "value" | "mult") =>
-    sweep?.axes.some((a) => a.target === `risk:${sweep.side}.${field}.${prop}`) ?? false;
+    sweep?.axes.some((a) => a.target === `risk:${sweepSide}.${field}.${prop}`) ?? false;
   const sweepBtn = (field: "stop" | "target", prop: "value" | "mult", current: number) =>
     sweep && (
       <Tooltip content="Sweep this field">
         <button
           type="button"
           className={`sp-sweep${swept(field, prop) ? " on" : ""}`}
-          onClick={() => sweep.onToggle(`risk:${sweep.side}.${field}.${prop}`, current)}
+          onClick={() => sweep.onToggle(`risk:${sweepSide}.${field}.${prop}`, current)}
         >
           <SweepGlyph />
         </button>
@@ -1644,7 +1715,17 @@ export function RiskSection({
 
   return (
     <div className="bt-risk">
-      <SectionTitle info="Price-level exits for this side. Whichever triggers first — stop, target, or a close rule — ends the trade.">
+      <SectionTitle
+        info={sync?.on
+          ? "Price-level exits. Whichever triggers first — stop, target, or a close rule — ends the trade. Synced: edits here apply to both long and short."
+          : "Price-level exits for this side. Whichever triggers first — stop, target, or a close rule — ends the trade."}
+        extra={sync && (
+          <label className="bt-risk-sync">
+            <input type="checkbox" checked={sync.on} onChange={sync.onToggle} />
+            Same for long &amp; short
+          </label>
+        )}
+      >
         Stop &amp; take profit
       </SectionTitle>
       <div className="bt-risk-row">
@@ -1780,7 +1861,16 @@ function SidePanel({
   openChartPicker?: (onPick: (op: Operand) => void) => void;
   // Task 9: optional per-operand-field sweep toggle for rule mode. Undefined
   // (coded mode's own RuleGroupSection use, the Live panel) renders as before.
-  sweep?: { axes: SweepAxis[]; side: "long" | "short"; onToggle: (target: string, current: number) => void };
+  // `onToggleRisk` / `onKindChange` carry the SL/TP sweep toggle for the risk
+  // block — separate from the rule-operand toggle (% step heuristic, drops
+  // stale axes on a stop/target kind change).
+  sweep?: {
+    axes: SweepAxis[];
+    side: "long" | "short";
+    onToggle: (target: string, current: number) => void;
+    onToggleRisk: (target: string, current: number) => void;
+    onKindChange: (field: "stop" | "target") => void;
+  };
 }) {
   const isLong = side === "long";
   const enabled = (isLong ? cfg.longEnabled : cfg.shortEnabled) !== false;
@@ -1848,7 +1938,19 @@ function SidePanel({
         />
         <RiskSection
           risk={(isLong ? cfg.longRisk : cfg.shortRisk) ?? EMPTY_RISK}
-          onChange={(r) => setCfg({ ...cfg, [isLong ? "longRisk" : "shortRisk"]: r })}
+          onChange={(r) => setCfg({ ...cfg, ...riskPatch(riskSyncOn(cfg), side, r) })}
+          sweep={sweep && {
+            axes: sweep.axes,
+            side: sweep.side,
+            onToggle: sweep.onToggleRisk,
+            onKindChange: sweep.onKindChange,
+          }}
+          sync={{
+            on: riskSyncOn(cfg),
+            // Turning sync ON copies the side being viewed across; OFF just
+            // stops mirroring, both sides keep their (identical) values.
+            onToggle: () => setCfg(applyRiskSync({ ...cfg, riskSynced: !riskSyncOn(cfg) }, side)),
+          }}
         />
         <ScalingSection
           scaling={(isLong ? cfg.longScaling : cfg.shortScaling) ?? DEFAULT_SCALING}
@@ -1862,11 +1964,12 @@ function SidePanel({
 // A section heading with an optional ⓘ that explains what the section does.
 // Shared by <Section> and the risk/scaling blocks so every heading tips the
 // same way.
-function SectionTitle({ info, children }: { info?: string | string[]; children: ReactNode }) {
+function SectionTitle({ info, extra, children }: { info?: string | string[]; extra?: ReactNode; children: ReactNode }) {
   return (
     <div className="instrument-section-title bt-section-title">
       <span>{children}</span>
       {info && <InfoTip text={info} />}
+      {extra}
     </div>
   );
 }
@@ -1886,7 +1989,7 @@ function loadCollapsedSections(): Record<string, boolean> {
 // A collapsible settings section. The chevron + title is a toggle button; the ⓘ
 // sits outside it (nesting InfoTip's own <button> inside would be invalid HTML)
 // and swallows its own click, so tapping it never collapses the section.
-function Section({ title, info, children }: { title: string; info?: string | string[]; children: ReactNode }) {
+function Section({ title, info, extra, children }: { title: string; info?: string | string[]; extra?: ReactNode; children: ReactNode }) {
   const [collapsed, setCollapsed] = useState<boolean>(() => loadCollapsedSections()[title] ?? false);
   const toggle = () => {
     setCollapsed((c) => {
@@ -1911,6 +2014,7 @@ function Section({ title, info, children }: { title: string; info?: string | str
           </span>
         </button>
         {info && <InfoTip text={info} />}
+        {extra}
       </div>
       {!collapsed && children}
     </div>
@@ -2256,23 +2360,23 @@ export function RuleGroupSection({
     if (clipboard) onChange({ ...group, rules: [...group.rules, cloneRule(clipboard)] });
   }
 
+  // The engine only receives enabled rules (activeGroup drops the rest before
+  // POST), so a sweep axis must target a rule by its position in that
+  // enabled-only list — not its raw UI index. Otherwise a disabled rule above
+  // the swept one shifts the backend indices and the sweep 422s ("index out of
+  // range"). Disabled rules can't be swept (their toggle is hidden below).
+  const activeRuleIndex = (i: number) =>
+    group.rules.slice(0, i).filter((r) => r.enabled !== false).length;
+
   return (
-    <Section title={title} info={info}>
-      {group.rules.length === 0 && (
-        <div className="al-note bt-empty-rules">{emptyHint}</div>
-      )}
-      {group.rules.length > 0 && (
-        <div className="bt-rule-groophead">
-          {group.rules.length > 1 && (
-            <div className="seg">
-              <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>
-                AND
-              </button>
-              <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>
-                OR
-              </button>
-            </div>
-          )}
+    <Section
+      title={title}
+      info={info}
+      // Group-wide actions (reverse / copy-all / clear-all) sit beside the
+      // section title. Keeping them off their own row means a single-rule group
+      // doesn't leave an empty band between the heading and its one rule.
+      extra={
+        group.rules.length > 0 ? (
           <div className="bt-groophead-actions">
             <button
               className="bt-rule-toggle bt-reverse-ops"
@@ -2299,23 +2403,43 @@ export function RuleGroupSection({
               <TrashIcon />
             </button>
           </div>
+        ) : undefined
+      }
+    >
+      {group.rules.length === 0 && (
+        <div className="al-note bt-empty-rules">{emptyHint}</div>
+      )}
+      {/* The AND/OR combiner only matters with 2+ rules; render its row only
+          then so single-rule groups stay compact. */}
+      {group.rules.length > 1 && (
+        <div className="bt-rule-groophead">
+          <div className="seg">
+            <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>
+              AND
+            </button>
+            <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>
+              OR
+            </button>
+          </div>
         </div>
       )}
       {group.rules.map((rule, i) => (
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`} key={i}>
-          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} openChartPicker={openChartPicker} sweep={sweep && { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, i, `left.${leaf}`) }} />
+          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `left.${leaf}`) } : undefined} />
           <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
-          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} openChartPicker={openChartPicker} sweep={sweep && { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, i, `right.${leaf}`) }} />
+          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `right.${leaf}`) } : undefined} />
           {isExit && (
             <CountField
               value={rule.count}
               onChange={(count) => setRule(i, { ...rule, count })}
               sweep={
-                sweep && {
-                  axes: sweep.axes,
-                  onToggle: sweep.onToggle,
-                  target: ruleAxisTarget(sweep.side, sweep.group, i, "count"),
-                }
+                sweep && rule.enabled !== false
+                  ? {
+                      axes: sweep.axes,
+                      onToggle: sweep.onToggle,
+                      target: ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), "count"),
+                    }
+                  : undefined
               }
             />
           )}

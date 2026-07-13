@@ -11,6 +11,7 @@ import {
   recipeKey,
   swapSides,
   ruleFromChartOperand,
+  activeGroup,
   OP_REVERSE,
   type BacktestConfig,
   type Operand,
@@ -77,6 +78,33 @@ describe("cloneRule", () => {
     const copy = cloneRule(rule);
     expect(copy).toEqual(rule);
     expect(copy.right).not.toBe(rule.right); // deep copy, not shared ref
+  });
+});
+
+describe("activeGroup", () => {
+  const rule = (count?: number, enabled?: boolean): Rule => ({
+    left: { kind: "price", field: "close" },
+    op: "gt",
+    right: { kind: "const", value: 0 },
+    ...(count !== undefined ? { count } : {}),
+    ...(enabled !== undefined ? { enabled } : {}),
+  });
+
+  it("drops disabled rules", () => {
+    const g = { combine: "AND" as const, rules: [rule(undefined, false), rule(3)] };
+    expect(activeGroup(g).rules).toEqual([rule(3)]);
+  });
+
+  it("omits an out-of-range count (0) the backend would 422 on", () => {
+    // The UI reads count 0/undefined/1 all as "fire on first", but the backend
+    // requires count >= 1 — a stale 0 must be sent as absent, not literal 0.
+    const [out] = activeGroup({ combine: "AND", rules: [rule(0)] }).rules;
+    expect(out.count).toBeUndefined();
+  });
+
+  it("keeps a real Nth-occurrence count", () => {
+    const [out] = activeGroup({ combine: "AND", rules: [rule(3)] }).rules;
+    expect(out.count).toBe(3);
   });
 });
 

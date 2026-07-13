@@ -1,4 +1,4 @@
-import type { BacktestResult } from "../api";
+import type { BacktestResult, LegMetrics } from "../api";
 
 export interface MetricRow {
   label: string;
@@ -202,6 +202,98 @@ export function metricGroups(res: BacktestResult): MetricGroup[] {
     title: g.title,
     rows: g.labels.map((label) => byLabel.get(label)).filter((r): r is MetricRow => r != null),
   }));
+}
+
+// --- Long/Short breakdown table --------------------------------------------
+
+export interface LegCell {
+  value: string;
+  tone: "pos" | "neg" | "";
+}
+
+export interface LegColumn {
+  label: string;
+  info: string;
+}
+
+export interface LegTableRow {
+  leg: string; // "ALL" | "LONG" | "SHORT"
+  cells: LegCell[]; // aligned to columns by index
+}
+
+export interface LegTable {
+  columns: LegColumn[];
+  rows: LegTableRow[];
+}
+
+const ZERO_LEG: LegMetrics = {
+  n_trades: 0, win_rate: 0, net_pnl: 0, profit_factor: null,
+  avg_win: 0, avg_loss: 0, avg_win_loss_ratio: null,
+  largest_win: 0, largest_loss: 0, max_consec_losses: 0, avg_duration_bars: 0,
+};
+
+// The ALL row reuses the run-wide summary/metrics the panel already receives,
+// reshaped into a LegMetrics so all three rows go through the identical
+// formatters below.
+function allLeg(res: BacktestResult): LegMetrics {
+  return {
+    n_trades: res.summary.n_trades,
+    win_rate: res.summary.win_rate,
+    net_pnl: res.summary.net_pnl,
+    profit_factor: res.metrics.profit_factor,
+    avg_win: res.metrics.avg_win,
+    avg_loss: res.metrics.avg_loss,
+    avg_win_loss_ratio: res.metrics.avg_win_loss_ratio,
+    largest_win: res.metrics.largest_win,
+    largest_loss: res.metrics.largest_loss,
+    max_consec_losses: res.metrics.max_consec_losses,
+    avg_duration_bars: res.metrics.avg_duration_bars,
+  };
+}
+
+// One column per metric: label, tooltip, and how to render a LegMetrics into a
+// cell. Only Net P&L carries sign tone — the per-trade magnitudes are sign-fixed
+// (a win is always ≥0, a loss ≤0), so colouring them is decoration, matching the
+// flat stat grid above.
+const LEG_COLUMNS: { label: string; info: string; cell: (m: LegMetrics) => LegCell }[] = [
+  { label: "Trades", info: "Number of closed trades.",
+    cell: (m) => ({ value: String(m.n_trades), tone: "" }) },
+  { label: "Win rate", info: "Share of trades that closed in profit.",
+    cell: (m) => ({ value: Math.round(m.win_rate * 100) + "%", tone: "" }) },
+  { label: "Net P&L", info: "Total profit after costs, across these trades.",
+    cell: (m) => ({ value: formatSignedMoney(m.net_pnl), tone: getTone(m.net_pnl) }) },
+  { label: "Profit factor", info: "Gross profit divided by gross loss; above 1 is profitable.",
+    cell: (m) => ({ value: m.profit_factor !== null ? m.profit_factor.toFixed(2) : "—", tone: "" }) },
+  { label: "Avg win", info: "Average size of a winning trade.",
+    cell: (m) => ({ value: m.avg_win.toFixed(2), tone: "" }) },
+  { label: "Avg loss", info: "Average size of a losing trade.",
+    cell: (m) => ({ value: m.avg_loss.toFixed(2), tone: "" }) },
+  { label: "Avg win/loss", info: "Average win divided by average loss.",
+    cell: (m) => ({ value: m.avg_win_loss_ratio !== null ? m.avg_win_loss_ratio.toFixed(2) : "—", tone: "" }) },
+  { label: "Largest win", info: "Biggest single winning trade.",
+    cell: (m) => ({ value: m.largest_win.toFixed(2), tone: "" }) },
+  { label: "Largest loss", info: "Biggest single losing trade.",
+    cell: (m) => ({ value: m.largest_loss.toFixed(2), tone: "" }) },
+  { label: "Loss streak", info: "Longest run of consecutive losing trades. LONG and SHORT count only their own side (ignoring the other side's trades in between), so one side's streak can exceed ALL.",
+    cell: (m) => ({ value: String(m.max_consec_losses), tone: "" }) },
+  { label: "Avg duration", info: "Average time a trade stayed open.",
+    cell: (m) => ({ value: m.avg_duration_bars.toFixed(1) + " bars", tone: "" }) },
+];
+
+// The TRADES panel table: ALL / LONG / SHORT rows sharing one set of metric
+// columns, so the reader can compare each direction's contribution down a
+// column. LONG/SHORT come from the backend's by_leg breakdown (zeroed if a run
+// has no trades on that side, or on older payloads without by_leg).
+export function legTable(res: BacktestResult): LegTable {
+  const legs: { leg: string; m: LegMetrics }[] = [
+    { leg: "ALL", m: allLeg(res) },
+    { leg: "LONG", m: res.by_leg?.long ?? ZERO_LEG },
+    { leg: "SHORT", m: res.by_leg?.short ?? ZERO_LEG },
+  ];
+  return {
+    columns: LEG_COLUMNS.map((c) => ({ label: c.label, info: c.info })),
+    rows: legs.map(({ leg, m }) => ({ leg, cells: LEG_COLUMNS.map((c) => c.cell(m)) })),
+  };
 }
 
 export function tradeRows(res: BacktestResult, resSeconds: number): TradeRow[] {

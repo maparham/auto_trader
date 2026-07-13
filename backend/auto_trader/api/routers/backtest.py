@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.engine.backtest import BacktestEngine, BacktestResult
-from auto_trader.engine.metrics import compute_metrics
+from auto_trader.engine.metrics import compute_metrics, leg_metrics
 from auto_trader.strategy import loader
 from auto_trader.strategy.coded import (
     CodedStrategy,
@@ -345,6 +345,14 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             result.trades, result.equity, result.net_pnl,
             req.costs.startingCash, resolution_seconds(req.resolution),
         ),
+        by_leg={
+            leg: leg_metrics(
+                [t for t in result.trades if t.leg == leg],
+                resolution_seconds(req.resolution),
+                2 * req.costs.commissionPerSide,
+            )
+            for leg in ("long", "short")
+        },
         fileBracketsOverridden=(
             strategy.file_brackets_overridden if req.codedStrategy is not None else False
         ),

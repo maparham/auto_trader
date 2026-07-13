@@ -9,25 +9,26 @@ describe("backtestRenderFlags", () => {
     });
   });
 
-  it("native mode (no equity) on a finer, evenly-dividing timeframe", () => {
+  it("native mode + equity on a finer, evenly-dividing timeframe", () => {
     // 5m backtest viewed on 1m: 300 % 60 === 0 → fills still land on bars.
+    // Equity re-anchors to a native-granularity step curve.
     expect(backtestRenderFlags("MINUTE", "MINUTE_5")).toEqual({
       markerMode: "native",
-      drawEquity: false,
+      drawEquity: true,
     });
   });
 
-  it("native mode on a finer timeframe that does NOT evenly divide (fills snap to nearest bar)", () => {
+  it("native mode + equity on a finer timeframe that does NOT evenly divide (fills snap to nearest bar)", () => {
     // 3m viewing a 5m run: 180 < 300 and 300 % 180 !== 0 → still per-fill arrows,
     // snapped to the nearest 3m bar rather than dropped.
     expect(backtestRenderFlags("MINUTE_3", "MINUTE_5")).toEqual({
       markerMode: "native",
-      drawEquity: false,
+      drawEquity: true,
     });
     // 45s native / 10s current: same story, no longer "none".
     expect(backtestRenderFlags("SECOND_10", "SECOND_45")).toEqual({
       markerMode: "native",
-      drawEquity: false,
+      drawEquity: true,
     });
   });
 
@@ -38,19 +39,20 @@ describe("backtestRenderFlags", () => {
     expect(backtestRenderFlags("MINUTE_3", "MINUTE_15").markerMode).toBe("native");
   });
 
-  it("aggregate mode on a coarser timeframe", () => {
-    // 5m backtest viewed on 1D: 86400 > 300 → aggregate per bar.
+  it("aggregate markers + equity on a coarser timeframe", () => {
+    // 5m backtest viewed on 1D: 86400 > 300 → aggregate per bar; equity
+    // downsamples to each day's closing value.
     expect(backtestRenderFlags("DAY", "MINUTE_5")).toEqual({
       markerMode: "aggregate",
-      drawEquity: false,
+      drawEquity: true,
     });
   });
 
-  it("aggregate mode on a modestly coarser timeframe", () => {
+  it("aggregate markers + equity on a modestly coarser timeframe", () => {
     // 5m backtest viewed on 15m: 900 > 300, and 15m does not divide 5m.
     expect(backtestRenderFlags("MINUTE_15", "MINUTE_5")).toEqual({
       markerMode: "aggregate",
-      drawEquity: false,
+      drawEquity: true,
     });
   });
 

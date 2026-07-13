@@ -185,6 +185,20 @@ describe("indicatorOutputs", () => {
     ).toEqual([value, ...divs]);
   });
 
+  it("SLOPE: one output per length, each with a fused chipLabel (no base line)", () => {
+    expect(indicatorOutputs("SLOPE", {}, [9, 21])).toEqual([
+      { lineIndex: 0, label: "Slope MA 9", chipLabel: "MA Slope 9" },
+      { lineIndex: 1, label: "Slope MA 21", chipLabel: "MA Slope 21" },
+    ]);
+  });
+
+  it("SLOPE: smoothing adds a second block of outputs with the smoothing suffix folded into both labels", () => {
+    expect(indicatorOutputs("SLOPE", { smoothing: { type: "sma", length: 4 } }, [9])).toEqual([
+      { lineIndex: 0, label: "Slope MA 9", chipLabel: "MA Slope 9" },
+      { lineIndex: 1, label: "Slope MA 9 · SMA 4", chipLabel: "MA Slope 9 · SMA 4" },
+    ]);
+  });
+
   it("unsupported types return []", () => {
     expect(indicatorOutputs("MACD", {}, [12, 26, 9])).toEqual([]);
     expect(indicatorOutputs("SESSIONS", {}, [])).toEqual([]);
@@ -248,6 +262,13 @@ describe("chartOperandSources", () => {
     expect(keyFor({ divergence: { on: true, rangeMax: 30 } }, 1)).not.toBe(baseline);
     // Different kind (line) → DIFFERENT key.
     expect(keyFor({ divergence: { on: true } }, 2)).not.toBe(baseline);
+  });
+
+  it("SLOPE: chip labels fuse the length (chipLabel overrides the parent:child composition)", () => {
+    const s = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "SLOPE#1", indType: "SLOPE", calcParams: [9, 21], extendData: {} });
+    expect(s.baseLabel).toBe("MA Slope");
+    expect(s.outputs.map((o) => o.operand.label)).toEqual(["MA Slope 9", "MA Slope 21"]);
+    expect(new Set(s.outputs.map((o) => o.operand.seriesKey)).size).toBe(2);
   });
 
   it("PREV_HL sub-item labels read 'Prev H/L: Day High' etc.", () => {

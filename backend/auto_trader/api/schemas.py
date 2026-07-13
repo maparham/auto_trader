@@ -151,6 +151,9 @@ class BacktestResponse(BaseModel):
     equity: list[EquityDTO]
     summary: dict
     metrics: dict = {}
+    # Per-direction trade-list breakdown: {"long": {...}, "short": {...}}, each a
+    # leg_metrics() dict. Powers the LONG/SHORT rows of the TRADES panel table.
+    by_leg: dict | None = None
     fileBracketsOverridden: bool = False
     # Per-bar inspector trace — present only when the request set inspect=True and
     # the strategy is rule-based (None otherwise). Session-only; the frontend holds

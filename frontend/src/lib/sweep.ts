@@ -12,6 +12,11 @@ export interface SweepAxis {
   // "rule:<side>.<entry|exit>.<idx>.<left|right>.value" |
   // "rule:<side>.<entry|exit>.<idx>.count"
   target: string;
+  // Synced-risk sweeps ("Same for long & short" on): the opposite side's
+  // target, written with the same value into every combo so both legs move
+  // together through the sweep. Attached by mirrorRiskAxes right before the
+  // run; never persisted with the axis while editing.
+  mirrorTarget?: string;
   label: string;
   from: number;
   to: number;
@@ -36,11 +41,27 @@ export function ruleAxisTarget(
   return `rule:${side}.${group}.${idx}.${leaf}`;
 }
 
+/** When the SL/TP sync is on, risk axes are canonicalized to the long side at
+ * toggle time (RiskSection) — this stamps each with the short-side mirror so
+ * enumerateCombos sweeps both legs in lockstep. Non-risk axes pass through. */
+export function mirrorRiskAxes(axes: SweepAxis[]): SweepAxis[] {
+  return axes.map((a) =>
+    a.target.startsWith("risk:long.")
+      ? { ...a, mirrorTarget: a.target.replace(/^risk:long\./, "risk:short.") }
+      : a);
+}
+
 function axisValues(a: SweepAxis): number[] {
-  if (!(a.step > 0) || a.to < a.from) return [];
+  // Endpoints and step may be negative (e.g. sweeping a slope threshold below
+  // zero). Walk from→to in whichever direction they point, using the step's
+  // magnitude, so a descending range (0 → -1) enumerates instead of returning [].
+  const step = Math.abs(a.step);
+  if (!(step > 0)) return [];
   const out: number[] = [];
-  // Epsilon guards float accumulation (1 + 0.1*n drift) at the inclusive end.
-  for (let v = a.from; v <= a.to + a.step * 1e-9; v += a.step) {
+  const dir = a.to >= a.from ? 1 : -1;
+  const eps = step * 1e-9;
+  // Epsilon guards float accumulation (from + step*n drift) at the inclusive end.
+  for (let v = a.from; dir > 0 ? v <= a.to + eps : v >= a.to - eps; v += dir * step) {
     out.push(Number(v.toPrecision(12)));
   }
   return out;
@@ -57,7 +78,8 @@ export function enumerateCombos(axes: SweepAxis[]): Array<Record<string, number>
   let combos: Array<Record<string, number>> = [{}];
   for (const a of axes) {
     combos = axisValues(a).flatMap((v) =>
-      combos.map((c) => ({ ...c, [a.target]: v })));
+      combos.map((c) =>
+        a.mirrorTarget ? { ...c, [a.target]: v, [a.mirrorTarget]: v } : { ...c, [a.target]: v }));
   }
   return axes.length ? combos : [];
 }

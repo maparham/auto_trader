@@ -11,6 +11,8 @@ export interface CodedStrategyConfig {
   params: ParamValues;
   longRisk?: RiskConfig;
   shortRisk?: RiskConfig;
+  // "Same for long & short" SL/TP sync — absent means ON (riskSync.ts).
+  riskSynced?: boolean;
   longExit: RuleGroup;
   shortExit: RuleGroup;
 }

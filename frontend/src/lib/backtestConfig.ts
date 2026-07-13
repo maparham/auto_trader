@@ -201,9 +201,19 @@ function cloneOperand(op: Operand): Operand {
 
 /** A rule group with its disabled rules dropped — what actually gets sent to the
  * engine. An all-disabled group becomes empty (that side simply never triggers,
- * same as no rules). */
+ * same as no rules).
+ *
+ * `count` is normalized to match the UI's own semantics (undefined / 1 both read
+ * as "fire on the first occurrence"): the backend requires `count >= 1`, so a
+ * stale `count: 0` — which the CountField displays as blank "1st" but never
+ * rewrites — must be omitted rather than sent, or the whole request 422s. */
 export function activeGroup(group: RuleGroup): RuleGroup {
-  return { combine: group.combine, rules: group.rules.filter((r) => r.enabled !== false) };
+  return {
+    combine: group.combine,
+    rules: group.rules
+      .filter((r) => r.enabled !== false)
+      .map((r) => (r.count != null && r.count >= 1 ? r : { ...r, count: undefined })),
+  };
 }
 
 export type RangeMode = "bars" | "lastDay" | "lastWeek" | "lastMonth" | "lastYear" | "custom";
@@ -272,6 +282,10 @@ export interface BacktestConfig {
   shortEnabled?: boolean;
   longRisk?: RiskConfig;
   shortRisk?: RiskConfig;
+  // "Same for long & short" SL/TP sync — absent means ON (read via
+  // riskSync.ts's riskSyncOn, same `!== false` convention as the switches
+  // above). Frontend-only: BacktestRequest never carries it.
+  riskSynced?: boolean;
   longScaling?: ScalingConfig;
   shortScaling?: ScalingConfig;
   costs: Costs;

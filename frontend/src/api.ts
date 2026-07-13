@@ -97,6 +97,22 @@ interface EquityPoint {
   value: number;
 }
 
+// Trade-list metrics for one direction (long or short). Mirrors the backend's
+// leg_metrics() dict; powers the LONG/SHORT rows of the TRADES panel table.
+export interface LegMetrics {
+  n_trades: number;
+  win_rate: number;
+  net_pnl: number;
+  profit_factor: number | null;
+  avg_win: number;
+  avg_loss: number;
+  avg_win_loss_ratio: number | null;
+  largest_win: number;
+  largest_loss: number;
+  max_consec_losses: number;
+  avg_duration_bars: number;
+}
+
 export interface BacktestResult {
   epic: string;
   resolution: string;
@@ -124,6 +140,9 @@ export interface BacktestResult {
     max_consec_wins: number;
     max_consec_losses: number;
   };
+  // Per-direction trade-list breakdown for the TRADES panel table. Absent on
+  // older cached payloads; the table zeroes the LONG/SHORT rows when missing.
+  by_leg?: { long: LegMetrics; short: LegMetrics };
   // True when a coded strategy's own ctx.stop/target calls overrode the panel's
   // longRisk/shortRisk bracket for this run (Strategy tab transparency).
   fileBracketsOverridden?: boolean;

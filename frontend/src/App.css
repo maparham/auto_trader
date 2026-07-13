@@ -931,7 +931,8 @@
 .bt-field-label .ind-info,
 .bt-tf-label .ind-info,
 .bt-mask-toggle .ind-info,
-.bt-panel-stat-label .ind-info {
+.bt-panel-stat-label .ind-info,
+.bt-leg-colhead .ind-info {
   display: inline-flex; align-items: center; padding: 0; border: none;
   background: none; cursor: help; color: var(--text-faint);
 }
@@ -940,15 +941,27 @@
 .bt-field-label .ind-info:hover,
 .bt-tf-label .ind-info:hover,
 .bt-mask-toggle .ind-info:hover,
-.bt-panel-stat-label .ind-info:hover { color: var(--text-dim); }
+.bt-panel-stat-label .ind-info:hover,
+.bt-leg-colhead .ind-info:hover { color: var(--text-dim); }
 .bt-section-title .ind-info svg,
 .bt-section-head .ind-info svg,
 .bt-field-label .ind-info svg,
 .bt-tf-label .ind-info svg,
 .bt-mask-toggle .ind-info svg,
-.bt-panel-stat-label .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.bt-panel-stat-label .ind-info svg,
+.bt-leg-colhead .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
 /* Field labels that carry a trailing ⓘ (costs, session, timezone). */
 .bt-field-label { display: inline-flex; align-items: center; gap: 4px; }
+/* "Same for long & short" SL/TP sync — a compact checkbox pushed to the right
+   edge of the Stop & take profit section title. Normal-case (the title itself
+   is uppercased) and slightly brighter than the faint title so it reads as a
+   control, not part of the heading. */
+.bt-risk-sync {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+  text-transform: none; letter-spacing: normal; font-size: 12px;
+  color: var(--text-dim); cursor: pointer; user-select: none;
+}
+.bt-risk-sync input { margin: 0; accent-color: var(--accent); cursor: pointer; }
 .instrument-grid { margin: 0; }
 .instrument-row {
   display: flex; justify-content: space-between; gap: 16px;
@@ -3782,6 +3795,39 @@
 }
 .bt-panel-stat-value.pos { color: var(--pos); }
 .bt-panel-stat-value.neg { color: var(--neg); }
+
+/* TRADES group: ALL / LONG / SHORT breakdown table. Metric names run across the
+   header once (with their ⓘ); each row is a direction so contributions compare
+   down a column. Horizontal scroll on the narrow side panel; row labels stay
+   put via a sticky first column. */
+.bt-leg-wrap { overflow-x: auto; }
+.bt-leg-table {
+  border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.bt-leg-table th, .bt-leg-table td { white-space: nowrap; }
+.bt-leg-col { text-align: right; padding: 0 0 6px 14px; vertical-align: bottom; }
+.bt-leg-colhead {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 9px; font-weight: 500; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.bt-leg-colname { overflow: hidden; text-overflow: ellipsis; }
+.bt-leg-colhead .ind-info { flex-shrink: 0; }
+.bt-leg-colhead .ind-info svg { width: 11px; height: 11px; }
+.bt-leg-rowhead {
+  position: sticky; left: 0; z-index: 1; background: var(--surface);
+  text-align: left; padding: 5px 10px 5px 0;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.bt-leg-cell {
+  padding: 5px 0 5px 14px; text-align: right;
+  font-family: var(--mono); font-weight: 600; color: var(--text);
+}
+.bt-leg-table tbody tr + tr .bt-leg-cell,
+.bt-leg-table tbody tr + tr .bt-leg-rowhead { border-top: 1px solid var(--border); }
+.bt-leg-cell.pos { color: var(--pos); }
+.bt-leg-cell.neg { color: var(--neg); }
 
 /* Trades: the scrollable table wrapper — this is the flex-scroll boundary. */
 .bt-panel-trades-wrap { flex: 1; overflow: auto; min-height: 0; }

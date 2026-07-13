@@ -19,7 +19,7 @@ import {
   requestBacktestClear,
 } from "./lib/signals";
 import { saveBacktestPeriodsShown } from "./lib/persist";
-import { metricGroups, METRIC_INFO, tradeRows, sortTradeRows, type TradeRow } from "./lib/backtestPanelData";
+import { metricGroups, METRIC_INFO, legTable, tradeRows, sortTradeRows, type TradeRow, type LegTable } from "./lib/backtestPanelData";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { RESOLUTION_SECONDS } from "./lib/feed";
@@ -240,17 +240,21 @@ export default function BacktestPanel() {
             {metricGroups(result).map((g) => (
               <section className="bt-panel-group" key={g.title}>
                 <h4 className="bt-panel-group-title">{g.title}</h4>
-                <div className="bt-panel-grid">
-                  {g.rows.map((m) => (
-                    <div className="bt-panel-stat" key={m.label}>
-                      <span className="bt-panel-stat-label">
-                        <span className="bt-panel-stat-name">{m.label}</span>
-                        {METRIC_INFO[m.label] && <InfoTip title={m.label} text={METRIC_INFO[m.label]} />}
-                      </span>
-                      <span className={`bt-panel-stat-value${m.tone ? ` ${m.tone}` : ""}`}>{m.value}</span>
-                    </div>
-                  ))}
-                </div>
+                {g.title === "Trades" ? (
+                  <LegBreakdownTable table={legTable(result)} />
+                ) : (
+                  <div className="bt-panel-grid">
+                    {g.rows.map((m) => (
+                      <div className="bt-panel-stat" key={m.label}>
+                        <span className="bt-panel-stat-label">
+                          <span className="bt-panel-stat-name">{m.label}</span>
+                          {METRIC_INFO[m.label] && <InfoTip title={m.label} text={METRIC_INFO[m.label]} />}
+                        </span>
+                        <span className={`bt-panel-stat-value${m.tone ? ` ${m.tone}` : ""}`}>{m.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
             ))}
           </div>
@@ -307,6 +311,43 @@ export default function BacktestPanel() {
 
 // Clickable column header: click to sort by this column, click again to flip
 // direction (mirrors PositionsPanel's SortHeader).
+// The TRADES section as an ALL / LONG / SHORT table: metric names (with their
+// info tips) run across the header once; each row is one direction so the reader
+// can compare long vs short contribution down a column.
+function LegBreakdownTable({ table }: { table: LegTable }) {
+  return (
+    <div className="bt-leg-wrap">
+      <table className="bt-leg-table">
+        <thead>
+          <tr>
+            <th className="bt-leg-rowhead" aria-hidden="true" />
+            {table.columns.map((c) => (
+              <th key={c.label} className="bt-leg-col">
+                <span className="bt-leg-colhead">
+                  <span className="bt-leg-colname">{c.label}</span>
+                  <InfoTip title={c.label} text={c.info} />
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((r) => (
+            <tr key={r.leg}>
+              <th className="bt-leg-rowhead" scope="row">{r.leg}</th>
+              {r.cells.map((cell, i) => (
+                <td key={table.columns[i].label} className={`bt-leg-cell${cell.tone ? ` ${cell.tone}` : ""}`}>
+                  {cell.value}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function SortHeader({
   label,
   col,

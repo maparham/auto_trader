@@ -888,6 +888,41 @@ function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade)
   scrollChartToTrade(chart, entryTs, exitTs);
 }
 
+/** Map a native-bar equity series onto whatever bars are currently loaded,
+ * using equity-at-bar-close semantics so the curve renders correctly on ANY
+ * timeframe — not just the native one it was run on.
+ *
+ * For each displayed bar we carry forward the equity value of the last native
+ * point that falls BEFORE the next bar's open — i.e. the equity as of this
+ * bar's close. Bars before the first point stay blank; bars after the last
+ * point stay blank (so a coarser view never draws a flat line extending to the
+ * live edge). On the native timeframe this reproduces the old exact per-bar
+ * match; on a coarser timeframe it downsamples to bar-close; on a finer one it
+ * steps at native granularity.
+ *
+ * `bars` and `points` are both ascending by time; `points` are
+ * `[timestampMs, value]`. Pure + exported for tests. */
+export function equityForBars(
+  bars: readonly { timestamp: number }[],
+  points: readonly (readonly [number, number])[],
+): ({ equity: number } | Record<string, never>)[] {
+  if (points.length === 0) return bars.map(() => ({}));
+  const lastTs = points[points.length - 1][0];
+  let pi = 0;
+  let carried: number | undefined;
+  return bars.map((bar, idx) => {
+    const nextTs = idx + 1 < bars.length ? bars[idx + 1].timestamp : Infinity;
+    // Consume every native point strictly inside this bar (up to the next bar's
+    // open); the last one is this bar's closing equity.
+    while (pi < points.length && points[pi][0] < nextTs) {
+      carried = points[pi][1];
+      pi++;
+    }
+    if (carried === undefined || bar.timestamp > lastTs) return {};
+    return { equity: carried };
+  });
+}
+
 export function registerBacktestIndicators(): void {
   registerIndicator<{ equity?: number }>({
     name: EQUITY_INDICATOR,
@@ -895,15 +930,14 @@ export function registerBacktestIndicators(): void {
     series: IndicatorSeries.Normal,
     precision: 2,
     figures: [{ key: "equity", title: "Equity: ", type: "line" }],
-    // Read THIS instance's equity map off its extendData — never a module global,
-    // so each cell's EQUITY pane plots its own backtest (see runAndRender).
+    // Read THIS instance's equity series off its extendData — never a module
+    // global, so each cell's EQUITY pane plots its own backtest (see
+    // runAndRender). equityForBars re-anchors the native-bar series onto the
+    // currently-loaded bars, so the curve is correct on any timeframe.
     calc: (dataList, indicator: Indicator) => {
-      const equity = indicator.extendData as Map<number, number> | undefined;
-      if (!equity) return dataList.map(() => ({}));
-      return dataList.map((k) => {
-        const v = equity.get(k.timestamp);
-        return v != null ? { equity: v } : {};
-      });
+      const points = indicator.extendData as Array<[number, number]> | undefined;
+      if (!points) return dataList.map(() => ({}));
+      return equityForBars(dataList, points);
     },
   });
 }
@@ -1166,8 +1200,8 @@ export function reanchorBacktestMarkers(chart: Chart): void {
  * artifacts first and for publishing `backtestResultSignal` with THIS exact
  * `result` object (the sync gating below is identity-based).
  *
- * `drawEquity` renders the equity curve (native timeframe only — a bar-indexed
- * equity series is misleading once bars aggregate). `markerMode` picks how
+ * `drawEquity` renders the equity curve (on any timeframe — equityForBars
+ * re-anchors the native-bar series to the loaded bars). `markerMode` picks how
  * trades are drawn:
  *   - "native"    — per-fill arrows (same-or-finer timeframe where each fill
  *                   timestamp still lands on a bar boundary).
@@ -1190,10 +1224,12 @@ export function renderArtifacts(
   // Equity curve -> own sub-pane. The series travels on the instance's
   // extendData so this chart's calc looks up its own values.
   if (drawEquity) {
-    const equityByTs = new Map(result.equity.map((p) => [p.time * 1000, p.value]));
+    // Ascending [timestampMs, value] pairs — equityForBars re-anchors them onto
+    // whatever bars are loaded (any timeframe), so no per-timeframe map.
+    const equityPoints: Array<[number, number]> = result.equity.map((p) => [p.time * 1000, p.value]);
     artifacts.equityPaneId =
       chart.createIndicator(
-        { name: EQUITY_INDICATOR, extendData: equityByTs },
+        { name: EQUITY_INDICATOR, extendData: equityPoints },
         false,
       ) ?? null;
   }
@@ -1343,8 +1379,9 @@ export function renderArtifacts(
  *                    since individual fills would collapse onto the same bar.
  *                    5m aggregates on 15m/1H/1D.
  *      "none"      — only when a resolution is unknown (no bar width to compare).
- *  - equity: native timeframe ONLY (a bar-indexed equity curve is misleading
- *    once bars aggregate, and sparse once they subdivide).
+ *  - equity: drawn on ANY known timeframe — equityForBars re-anchors the
+ *    native-bar series to the loaded bars (bar-close on coarser TFs, a native-
+ *    granularity step on finer ones). Only an unknown resolution disables it.
  * Pure + exported for tests. */
 export function backtestRenderFlags(
   current: string,
@@ -1354,7 +1391,7 @@ export function backtestRenderFlags(
   const nat = RESOLUTION_SECONDS[native] ?? 0;
   let markerMode: "native" | "aggregate" | "none" = "none";
   if (cur > 0 && nat > 0) markerMode = cur > nat ? "aggregate" : "native";
-  return { markerMode, drawEquity: current === native };
+  return { markerMode, drawEquity: cur > 0 && nat > 0 };
 }
 
 /** The trade index the user has selected on THIS chart's active backtest, or
@@ -1392,9 +1429,9 @@ export function restoreTradeSelection(chart: Chart, index: number): void {
  *
  * Markers render on the backtest's native timeframe AND any finer one where the
  * fill timestamps still align to bar boundaries (per-fill arrows), and on any
- * coarser timeframe as one aggregate pill per bar; the equity curve renders only
- * on the native timeframe. The result stays saved and the panel is repopulated
- * regardless, so it's always discoverable. */
+ * coarser timeframe as one aggregate pill per bar; the equity curve renders on
+ * any timeframe (re-anchored to bar-close). The result stays saved and the
+ * panel is repopulated regardless, so it's always discoverable. */
 export function rehydrateBacktest(
   chart: Chart,
   scope: string,

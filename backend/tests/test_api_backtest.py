@@ -355,6 +355,41 @@ def test_response_has_metrics_and_trade_reason():
     assert "reason" in data["trades"][0]  # e.g. "stop"
 
 
+def test_response_has_by_leg_breakdown_that_sums_to_the_aggregate():
+    # Both-sides config closes at least one long and one short leg; the per-leg
+    # breakdown must be present and reconcile with the aggregate summary/metrics.
+    result = _run(_both_sides_cross_body())
+    assert result.by_leg is not None
+    long, short = result.by_leg["long"], result.by_leg["short"]
+
+    # Counts and net P&L partition exactly across the two legs.
+    assert long["n_trades"] + short["n_trades"] == result.summary["n_trades"]
+    assert long["n_trades"] > 0 and short["n_trades"] > 0
+    assert long["net_pnl"] + short["net_pnl"] == pytest.approx(result.summary["net_pnl"])
+
+    # Per-leg win rate uses the same (commission-aware) rule as the aggregate, so
+    # the trade-weighted average of the leg rates equals the summary win rate.
+    weighted = long["n_trades"] * long["win_rate"] + short["n_trades"] * short["win_rate"]
+    assert weighted == pytest.approx(result.summary["n_trades"] * result.summary["win_rate"])
+
+
+def test_by_leg_serializes_over_the_wire():
+    body = _min_body()
+    body["longEntry"] = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "gt",
+         "right": {"kind": "const", "value": 0}}]}
+    body["longRisk"] = {"stop": {"kind": "pct", "value": 1}, "target": {"kind": "none"}}
+    body["candles"] = [
+        {"time": 0, "open": 100, "high": 100, "low": 100, "close": 100, "volume": 0},
+        {"time": 60, "open": 100, "high": 100, "low": 100, "close": 100, "volume": 0},
+        {"time": 120, "open": 100, "high": 100, "low": 98, "close": 98, "volume": 0},
+    ]
+    data = client.post("/api/backtest", json=body).json()
+    assert set(data["by_leg"]) == {"long", "short"}
+    assert "max_consec_losses" in data["by_leg"]["long"]
+    assert data["by_leg"]["short"]["n_trades"] == 0  # no short trades in this run
+
+
 def test_trade_dto_carries_stop_target_levels():
     body = _min_body()
     body["longEntry"] = {"combine": "AND", "rules": [

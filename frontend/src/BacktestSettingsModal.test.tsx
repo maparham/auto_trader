@@ -309,3 +309,54 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
     expect(loadCodedCfg("backtest", "ema_cross.py").params.ema_fast).toBe(12);
   });
 });
+
+describe("synced long/short SL/TP", () => {
+  // The one visible risk block (rule mode renders one side at a time).
+  const riskSec = () =>
+    screen.getByText("Stop & take profit").closest(".bt-risk") as HTMLElement;
+  const stopSelect = () => riskSec().querySelectorAll("select")[0] as HTMLSelectElement;
+  const syncBox = () => within(riskSec()).getByLabelText(/same for long & short/i) as HTMLInputElement;
+
+  it("defaults on and mirrors an edit to the other side", () => {
+    renderModal();
+    openStrategy();
+    expect(syncBox().checked).toBe(true);
+    fireEvent.change(stopSelect(), { target: { value: "pct" } });
+    fireEvent.click(screen.getByRole("button", { name: /Short/ }));
+    expect(stopSelect().value).toBe("pct");
+  });
+
+  it("stops mirroring once unchecked", () => {
+    renderModal();
+    openStrategy();
+    fireEvent.click(syncBox());
+    fireEvent.change(stopSelect(), { target: { value: "pct" } });
+    fireEvent.click(screen.getByRole("button", { name: /Short/ }));
+    expect(stopSelect().value).toBe("none");
+    expect(syncBox().checked).toBe(false);
+  });
+
+  it("copies the viewed side across on load when synced sides drifted apart", () => {
+    const cfg = defaultBacktestConfig();
+    cfg.longRisk = { stop: { kind: "pct", value: 1.5 }, target: { kind: "pct", value: 3 } };
+    cfg.shortRisk = { stop: { kind: "atr", mult: 2, length: 14 }, target: { kind: "none" } };
+    renderModal(cfg);   // riskSynced absent = on; long is the default viewed side
+    openStrategy();
+    fireEvent.click(screen.getByRole("button", { name: /Short/ }));
+    expect(stopSelect().value).toBe("pct");
+    expect((riskSec().querySelector("input.bt-num") as HTMLInputElement).value).toBe("1.5");
+  });
+
+  it("re-checking the box copies the side being viewed across", () => {
+    const cfg = defaultBacktestConfig();
+    cfg.riskSynced = false;
+    cfg.longRisk = { stop: { kind: "pct", value: 1 }, target: { kind: "pct", value: 2 } };
+    cfg.shortRisk = { stop: { kind: "atr", mult: 2, length: 14 }, target: { kind: "none" } };
+    renderModal(cfg);
+    openStrategy();
+    fireEvent.click(screen.getByRole("button", { name: /Short/ }));
+    fireEvent.click(syncBox());   // enable while looking at the short side
+    fireEvent.click(screen.getByRole("button", { name: /Long/ }));
+    expect(stopSelect().value).toBe("atr");
+  });
+});

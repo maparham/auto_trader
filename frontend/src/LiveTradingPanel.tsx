@@ -5,6 +5,7 @@ import { liveStateSignal, initLive, setDraft, setAccount, setQuantity, arm, disa
 import { goLiveRequest } from "./lib/signals";
 import { journalSignal, journalMetrics, clearJournal, type JournalTrade } from "./lib/liveJournal";
 import { cloneRule, type BacktestConfig, type RuleGroup, type Rule } from "./lib/backtestConfig";
+import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import type { BrokerAccount } from "./lib/trading";
 import type { LiveState } from "./lib/liveState";
 import { StrategyParams } from "./components/StrategyParams";
@@ -234,7 +235,11 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
                       />
                       <RiskSection
                         risk={(codedIsLong ? liveCoded.longRisk : liveCoded.shortRisk) ?? EMPTY_RISK}
-                        onChange={(r) => updateCoded({ ...liveCoded, [codedIsLong ? "longRisk" : "shortRisk"]: r })}
+                        onChange={(r) => updateCoded({ ...liveCoded, ...riskPatch(riskSyncOn(liveCoded), s, r) })}
+                        sync={{
+                          on: riskSyncOn(liveCoded),
+                          onToggle: () => updateCoded(applyRiskSync({ ...liveCoded, riskSynced: !riskSyncOn(liveCoded) }, s)),
+                        }}
                       />
                     </div>
                   );
@@ -281,7 +286,14 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
             />
             <RiskSection
               risk={risk}
-              onChange={(r) => patch({ [isLong ? "longRisk" : "shortRisk"]: r })}
+              onChange={(r) => patch(riskPatch(riskSyncOn(cfg), side, r))}
+              sync={{
+                on: riskSyncOn(cfg),
+                // Unlike the backtest modal there's no copy-on-load here — a
+                // silent rewrite would surface phantom "pending edits" against
+                // an armed strategy. Sync applies on edit and on toggle-on.
+                onToggle: () => setDraft(applyRiskSync({ ...cfg, riskSynced: !riskSyncOn(cfg) }, side)),
+              }}
             />
           </>
         )}

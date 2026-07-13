@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { comboCount, enumerateCombos, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_CHUNK_SIZE } from "./sweep";
+import { comboCount, enumerateCombos, mirrorRiskAxes, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_CHUNK_SIZE } from "./sweep";
 import * as api from "../api";
 
 const axis = (target: string, from: number, to: number, step: number) =>
@@ -19,9 +19,39 @@ describe("enumerateCombos", () => {
     expect(comboCount([axis("param:a", 1, 2, 1), axis("param:b", 10, 30, 10)])).toBe(6);
   });
 
+  it("walks negative and descending ranges", () => {
+    expect(enumerateCombos([axis("param:n", -1, 0, 0.5)])).toEqual([
+      { "param:n": -1 }, { "param:n": -0.5 }, { "param:n": 0 },
+    ]);
+    // Descending endpoints (0 → -1) enumerate downward instead of returning empty.
+    expect(enumerateCombos([axis("param:n", 0, -1, 0.5)])).toEqual([
+      { "param:n": 0 }, { "param:n": -0.5 }, { "param:n": -1 },
+    ]);
+    expect(comboCount([axis("param:n", 0, -1, 0.5)])).toBe(3);
+  });
+
   it("guards degenerate steps", () => {
     expect(comboCount([axis("param:a", 1, 10, 0)])).toBe(Infinity);   // Run stays disabled
     expect(enumerateCombos([axis("param:a", 5, 5, 1)])).toEqual([{ "param:a": 5 }]);
+  });
+
+  it("writes a mirrored target with the same value into every combo", () => {
+    const a = { ...axis("risk:long.stop.value", 1, 2, 1), mirrorTarget: "risk:short.stop.value" };
+    expect(enumerateCombos([a])).toEqual([
+      { "risk:long.stop.value": 1, "risk:short.stop.value": 1 },
+      { "risk:long.stop.value": 2, "risk:short.stop.value": 2 },
+    ]);
+    expect(comboCount([a])).toBe(2);                 // a mirror never multiplies combos
+  });
+});
+
+describe("mirrorRiskAxes", () => {
+  it("stamps long-side risk axes with their short mirror, passes others through", () => {
+    const risk = axis("risk:long.target.mult", 1, 3, 1);
+    const param = axis("param:n", 1, 2, 1);
+    const [m, p] = mirrorRiskAxes([risk, param]);
+    expect(m.mirrorTarget).toBe("risk:short.target.mult");
+    expect(p).toEqual(param);
   });
 });
 

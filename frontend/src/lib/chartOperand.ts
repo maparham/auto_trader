@@ -151,11 +151,15 @@ export function recipeLabel(recipe: SeriesRecipe): string {
 
 /** One selectable output line of an indicator instance. `base` marks the primary
  * line whose chip label carries NO output suffix (kept unsuffixed to avoid
- * doubling, e.g. "EMA(9)" rather than "EMA(9): Value"). */
+ * doubling, e.g. "EMA(9)" rather than "EMA(9): Value"). `chipLabel`, when set,
+ * is used verbatim as the operand chip label — opting out of the generic
+ * "parent: child" composition — for types whose parent name doesn't encode the
+ * distinguishing param (e.g. SLOPE: "MA Slope 9" rather than "MA Slope: Slope MA 9"). */
 export interface OutputChoice {
   lineIndex: number;
   label: string;
   base?: boolean;
+  chipLabel?: string;
 }
 
 // Picker labels for the RSI divergence outputs, by kind (composed as a base/suffix,
@@ -251,11 +255,16 @@ export function indicatorOutputs(indType: string, extendData: unknown, calcParam
         .filter((v) => Number.isFinite(v) && v !== 0).slice(0, 5);
       const ls = lengths.length ? lengths : [9];
       const K = ls.length;
-      const slopes = ls.map((len, i) => ({ lineIndex: i, label: `Slope MA ${len}`, ...(i === 0 ? { base: true } : {}) }));
+      // The parent label ("MA Slope") carries no length, so the chip fuses the
+      // length in ("MA Slope 9") rather than reading "MA Slope: Slope MA 9".
+      const slopes = ls.map((len, i) => ({ lineIndex: i, label: `Slope MA ${len}`, chipLabel: `MA Slope ${len}` }));
       const sm = ext.smoothing as { type?: string; length?: number } | undefined;
       const smOn = !!sm && sm.type !== "none" && (sm.length ?? 0) > 1;
       const smoothed = smOn
-        ? ls.map((len, i) => ({ lineIndex: K + i, label: `Slope MA ${len} · ${String(sm!.type).toUpperCase()} ${sm!.length}` }))
+        ? ls.map((len, i) => {
+            const suffix = `${String(sm!.type).toUpperCase()} ${sm!.length}`;
+            return { lineIndex: K + i, label: `Slope MA ${len} · ${suffix}`, chipLabel: `MA Slope ${len} · ${suffix}` };
+          })
         : [];
       return [...slopes, ...smoothed];
     }
@@ -325,7 +334,7 @@ export function chartOperandSources(raw: RawChartSource): ChartOperandSource {
   for (const o of outputs) {
     const built = indicatorToRecipe(raw.indType, raw.calcParams, raw.extendData, o.lineIndex);
     if (!built) continue;
-    const label = o.base ? baseLabel : `${baseLabel}: ${o.label}`;
+    const label = o.chipLabel ?? (o.base ? baseLabel : `${baseLabel}: ${o.label}`);
     const operand: Operand = {
       kind: "series", seriesKey: recipeKey(built.recipe), label, recipe: built.recipe,
       ...(built.timeframe ? { timeframe: built.timeframe } : {}),

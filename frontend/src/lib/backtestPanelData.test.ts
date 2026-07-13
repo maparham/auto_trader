@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { metricRows, tradeRows, sortTradeRows } from "./backtestPanelData";
-import type { BacktestResult } from "../api";
+import { metricRows, tradeRows, sortTradeRows, legTable, type LegTable } from "./backtestPanelData";
+import type { BacktestResult, LegMetrics } from "../api";
+
+function cell(t: LegTable, rowLeg: string, colLabel: string) {
+  const ci = t.columns.findIndex((c) => c.label === colLabel);
+  const row = t.rows.find((r) => r.leg === rowLeg)!;
+  return row.cells[ci];
+}
 
 function result(over: Partial<BacktestResult> = {}): BacktestResult {
   return {
@@ -24,6 +30,62 @@ describe("metricRows", () => {
     expect(byLabel["Net P&L"].tone).toBe("pos");
     expect(byLabel["Win rate"].value).toBe("50%");
     expect(byLabel["Profit factor"].value).toBe("—"); // null -> dash
+  });
+});
+
+describe("legTable", () => {
+  const longLeg: LegMetrics = {
+    n_trades: 3, win_rate: 2 / 3, net_pnl: 80, profit_factor: 3,
+    avg_win: 10, avg_loss: -4, avg_win_loss_ratio: 2.5,
+    largest_win: 12, largest_loss: -4, max_consec_losses: 1, avg_duration_bars: 3,
+  };
+  const shortLeg: LegMetrics = {
+    n_trades: 1, win_rate: 0, net_pnl: 20, profit_factor: null,
+    avg_win: 0, avg_loss: 0, avg_win_loss_ratio: null,
+    largest_win: 0, largest_loss: 0, max_consec_losses: 0, avg_duration_bars: 2,
+  };
+  const res = result({
+    summary: { net_pnl: 100, n_trades: 4, win_rate: 0.5, max_drawdown: 0 },
+    metrics: { ...result().metrics, profit_factor: 2, avg_win: 10, avg_loss: -5,
+      avg_win_loss_ratio: 2, largest_win: 12, largest_loss: -6,
+      max_consec_losses: 2, avg_duration_bars: 3 },
+    by_leg: { long: longLeg, short: shortLeg },
+  });
+
+  it("orders rows ALL, LONG, SHORT and leads with Trades", () => {
+    const t = legTable(res);
+    expect(t.rows.map((r) => r.leg)).toEqual(["ALL", "LONG", "SHORT"]);
+    expect(t.columns[0].label).toBe("Trades");
+    expect(t.columns.map((c) => c.label)).toContain("Avg duration");
+  });
+
+  it("builds the ALL row from summary + metrics", () => {
+    const t = legTable(res);
+    expect(cell(t, "ALL", "Trades").value).toBe("4");
+    expect(cell(t, "ALL", "Win rate").value).toBe("50%");
+    expect(cell(t, "ALL", "Net P&L").value).toBe("+100.00");
+    expect(cell(t, "ALL", "Net P&L").tone).toBe("pos");
+    expect(cell(t, "ALL", "Avg duration").value).toBe("3.0 bars");
+  });
+
+  it("builds LONG/SHORT rows from by_leg", () => {
+    const t = legTable(res);
+    expect(cell(t, "LONG", "Trades").value).toBe("3");
+    expect(cell(t, "LONG", "Net P&L").value).toBe("+80.00");
+    expect(cell(t, "LONG", "Avg win/loss").value).toBe("2.50");
+    expect(cell(t, "SHORT", "Net P&L").value).toBe("+20.00");
+  });
+
+  it("shows a dash for one-sided null ratios", () => {
+    const t = legTable(res);
+    expect(cell(t, "SHORT", "Profit factor").value).toBe("—");
+    expect(cell(t, "SHORT", "Avg win/loss").value).toBe("—");
+  });
+
+  it("zeroes LONG/SHORT when by_leg is absent", () => {
+    const t = legTable(result({ summary: { net_pnl: 0, n_trades: 0, win_rate: 0, max_drawdown: 0 } }));
+    expect(cell(t, "SHORT", "Trades").value).toBe("0");
+    expect(cell(t, "LONG", "Net P&L").value).toBe("+0.00");
   });
 });
 
