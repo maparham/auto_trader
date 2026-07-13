@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import time
+import uuid
 from datetime import datetime, timezone
 from types import ModuleType
 
@@ -10,7 +13,10 @@ from fastapi import APIRouter, HTTPException
 
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
+from auto_trader.core.run_store import RUN_STORE
+from auto_trader.engine.analysis import compute_analysis
 from auto_trader.engine.backtest import BacktestEngine, BacktestResult
+from auto_trader.engine.context_features import enrich_trades
 from auto_trader.engine.metrics import compute_metrics, leg_metrics
 from auto_trader.strategy import loader
 from auto_trader.strategy.coded import (
@@ -56,6 +62,8 @@ _MAX_TF_PASSES = 5
 # reasonable length; the align step still gates each HTF bar to its close (no
 # lookahead), so over-fetching older bars only helps warm-up, never leaks future.
 _HTF_WARMUP_BARS = 300
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -298,6 +306,61 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     # collection that isn't: the engine appends a point for every bar, including
     # warm-up, so it's the only result that still needs trimming here.
     window = [c for c in req.candles if c.time >= req.tradeFromTime]
+
+    # Post-run enrichment over the FULL candle list (not `window`): a trade's
+    # signal bar can sit in the warm-up span before tradeFromTime.
+    enrich_trades(result.trades, candles)
+
+    trades_dto = [
+        TradeDTO(
+            side=t.side.value,
+            quantity=t.quantity,
+            entry_time=_ts(t.entry_time),
+            entry_price=t.entry_price,
+            exit_time=_ts(t.exit_time),
+            exit_price=t.exit_price,
+            pnl=t.pnl,
+            leg=t.leg,
+            reason=t.reason_out,
+            stop_initial=t.stop_initial,
+            stop_final=t.stop_final,
+            target=t.target,
+            mae=t.mae, mfe=t.mfe, mae_r=t.mae_r, mfe_r=t.mfe_r, context=t.context,
+        )
+        for t in result.trades
+    ]
+    summary = result.summary()
+    metrics = compute_metrics(
+        result.trades, result.equity, result.net_pnl,
+        req.costs.startingCash, resolution_seconds(req.resolution),
+    )
+
+    # Aggregate analytics from the DTO dicts, computed BEFORE the store write so a
+    # store failure still returns analysis (with run_id=None). Sweep child runs are
+    # NOT persisted: the sweep drives the engine via _run_rule/_run_coded directly
+    # and never calls this handler, so this block only runs for normal runs.
+    trade_dicts = [t.model_dump() for t in trades_dto]
+    analysis = compute_analysis(trade_dicts)
+
+    run_id: str | None = uuid.uuid4().hex
+    try:
+        await RUN_STORE.insert({
+            "id": run_id,
+            "created_at": int(time.time()),
+            "epic": req.epic,
+            "timeframe": req.resolution,
+            "range_from": int(candles[0].time.timestamp()) if candles else 0,
+            "range_to": int(candles[-1].time.timestamp()) if candles else 0,
+            "strategy_kind": "coded" if req.codedStrategy is not None else "rules",
+            "strategy_name": req.codedStrategy,
+            "request": req.model_dump(),
+            "summary": {**summary, **metrics},
+            "trades": trade_dicts,
+        })
+    except Exception:
+        logger.warning("run-store write failed; continuing without run_id", exc_info=True)
+        run_id = None
+
     return BacktestResponse(
         epic=req.epic,
         resolution=req.resolution,
@@ -318,33 +381,14 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             )
             for f in result.fills
         ],
-        trades=[
-            TradeDTO(
-                side=t.side.value,
-                quantity=t.quantity,
-                entry_time=_ts(t.entry_time),
-                entry_price=t.entry_price,
-                exit_time=_ts(t.exit_time),
-                exit_price=t.exit_price,
-                pnl=t.pnl,
-                leg=t.leg,
-                reason=t.reason_out,
-                stop_initial=t.stop_initial,
-                stop_final=t.stop_final,
-                target=t.target,
-            )
-            for t in result.trades
-        ],
+        trades=trades_dto,
         equity=[
             EquityDTO(time=_ts(p.time), value=p.equity)
             for p in result.equity
             if _ts(p.time) >= req.tradeFromTime
         ],
-        summary=result.summary(),
-        metrics=compute_metrics(
-            result.trades, result.equity, result.net_pnl,
-            req.costs.startingCash, resolution_seconds(req.resolution),
-        ),
+        summary=summary,
+        metrics=metrics,
         by_leg={
             leg: leg_metrics(
                 [t for t in result.trades if t.leg == leg],
@@ -357,7 +401,37 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             strategy.file_brackets_overridden if req.codedStrategy is not None else False
         ),
         bar_traces=_bar_traces_dto(result, req.tradeFromTime) if req.inspect else None,
+        run_id=run_id,
+        analysis=analysis,
     )
+
+
+# --- runs read API: list/get/delete persisted runs (see run_store.py) --------
+# `GET /runs` is declared BEFORE `GET /runs/{run_id}` so the literal `/runs`
+# path can't be shadowed by the path-param route.
+
+
+@router.get("/api/backtest/runs")
+async def list_runs(limit: int = 50, epic: str | None = None) -> list[dict]:
+    """Recent persisted runs, newest first (summaries only — no trades)."""
+    return await RUN_STORE.list(limit=limit, epic=epic)
+
+
+@router.get("/api/backtest/runs/{run_id}")
+async def get_run(run_id: str) -> dict:
+    """One stored run: config + trades (incl. MAE/MFE + context) + recomputed analysis."""
+    rec = await RUN_STORE.get(run_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    rec["analysis"] = compute_analysis(rec["trades"])
+    return rec
+
+
+@router.delete("/api/backtest/runs/{run_id}")
+async def delete_run(run_id: str) -> dict:
+    """Remove one stored run (housekeeping)."""
+    await RUN_STORE.delete(run_id)
+    return {"ok": True}
 
 
 def _bar_traces_dto(result: BacktestResult, trade_from_time: int) -> list[BarTraceDTO] | None:

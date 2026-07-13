@@ -90,6 +90,13 @@ class TradeDTO(BaseModel):
     stop_initial: float | None = None
     stop_final: float | None = None
     target: float | None = None
+    # Excursion + entry context (see engine.context_features): mae/mfe are raw
+    # price distance from entry; *_r are R-multiples of the initial stop.
+    mae: float = 0.0
+    mfe: float = 0.0
+    mae_r: float | None = None
+    mfe_r: float | None = None
+    context: dict | None = None
 
 
 class EquityDTO(BaseModel):
@@ -159,6 +166,9 @@ class BacktestResponse(BaseModel):
     # the strategy is rule-based (None otherwise). Session-only; the frontend holds
     # it in memory and never persists it.
     bar_traces: list[BarTraceDTO] | None = None
+    # Persisted-run id (None if the store write failed) + aggregate analytics.
+    run_id: str | None = None
+    analysis: dict | None = None
 
 
 # --- rule-based backtest request (D1/D4/D6: frontend computes series, posts
