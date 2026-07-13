@@ -932,7 +932,7 @@
 .bt-tf-label .ind-info,
 .bt-mask-toggle .ind-info,
 .bt-panel-stat-label .ind-info,
-.bt-analysis-table .ind-info,
+.bt-analysis-dist-label .ind-info,
 .bt-leg-colhead .ind-info {
   display: inline-flex; align-items: center; padding: 0; border: none;
   background: none; cursor: help; color: var(--text-faint);
@@ -943,7 +943,7 @@
 .bt-tf-label .ind-info:hover,
 .bt-mask-toggle .ind-info:hover,
 .bt-panel-stat-label .ind-info:hover,
-.bt-analysis-table .ind-info:hover,
+.bt-analysis-dist-label .ind-info:hover,
 .bt-leg-colhead .ind-info:hover { color: var(--text-dim); }
 .bt-section-title .ind-info svg,
 .bt-section-head .ind-info svg,
@@ -951,7 +951,7 @@
 .bt-tf-label .ind-info svg,
 .bt-mask-toggle .ind-info svg,
 .bt-panel-stat-label .ind-info svg,
-.bt-analysis-table .ind-info svg,
+.bt-analysis-dist-label .ind-info svg,
 .bt-leg-colhead .ind-info svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
 /* Field labels that carry a trailing ⓘ (costs, session, timezone). */
 .bt-field-label { display: inline-flex; align-items: center; gap: 4px; }
@@ -3807,40 +3807,41 @@
   padding: 2px 0 4px; overflow-y: auto; min-height: 0;
 }
 .bt-analysis-section h4 {
-  margin: 0 0 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.09em;
+  margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.09em;
   text-transform: uppercase; color: var(--text-dim);
 }
-.bt-analysis-readout { margin: 2px 0; font-size: 12px; color: var(--text); }
-.bt-analysis-empty { padding: 12px 4px; font-size: 12px; color: var(--text-faint); }
-.bt-analysis-table { border-collapse: collapse; font-size: 12px; }
+.bt-analysis-readouts { margin: 0; padding-left: 18px; list-style: disc; }
+.bt-analysis-readout { margin: 3px 0; font-size: 13px; color: var(--text); }
+.bt-analysis-empty { padding: 12px 4px; font-size: 13px; color: var(--text-faint); }
+.bt-analysis-table { border-collapse: collapse; font-size: 13px; }
 .bt-analysis-table th, .bt-analysis-table td {
-  padding: 3px 12px 3px 0; text-align: left; white-space: nowrap;
+  padding: 4px 14px 4px 0; text-align: left; white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 .bt-analysis-table th {
   font-weight: 500; color: var(--text-faint);
-  font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
+  font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
 }
 .bt-analysis-table td:first-child { color: var(--text); }
-.bt-analysis-table .ind-info { margin-left: 4px; }
-.bt-analysis-table .ind-info svg { width: 11px; height: 11px; }
 .bt-analysis-low td { color: var(--text-faint); }
-.bt-analysis-under td:first-child {
-  border-left: 2px solid var(--neg, #f23645); padding-left: 6px;
+/* Bucket underperforming the run's per-trade average: whole row in red
+   (td:first-child repeated to out-rank the .bt-analysis-table override). */
+.bt-analysis-under td, .bt-analysis-under td:first-child { color: var(--neg, #f23645); }
+/* Compact bucket distributions (no bars): a faint label line, then one
+   "N trades reached <bucket>" bullet per populated bucket. */
+.bt-analysis-dists {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 10px;
 }
-.bt-analysis-hists { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 8px; }
-.bt-analysis-hist { font-size: 11px; min-width: 200px; }
-.bt-analysis-hist-label { margin-bottom: 4px; color: var(--text-faint); }
-.bt-analysis-hist-row { display: flex; align-items: center; gap: 6px; height: 14px; }
-.bt-analysis-hist-bucket {
-  width: 64px; flex-shrink: 0; text-align: right; color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
+.bt-analysis-dist { font-size: 13px; }
+.bt-analysis-dist-label {
+  display: flex; align-items: center; gap: 4px;
+  margin-bottom: 2px; color: var(--text-faint);
 }
-.bt-analysis-hist-bar {
-  display: inline-block; height: 8px; border-radius: 1px;
-  background: var(--accent, #2962ff);
+.bt-analysis-dist-label .ind-info svg { width: 12px; height: 12px; }
+.bt-analysis-dist-items { margin: 0; padding-left: 18px; list-style: disc; }
+.bt-analysis-dist-item {
+  margin: 2px 0; font-variant-numeric: tabular-nums; color: var(--text);
 }
-.bt-analysis-hist-count { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 
 /* TRADES group: ALL / LONG / SHORT breakdown table. Metric names run across the
    header once (with their ⓘ); each row is a direction so contributions compare

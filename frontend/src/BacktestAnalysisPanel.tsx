@@ -3,28 +3,66 @@ import InfoTip from "./components/InfoTip";
 
 /** Analysis tab of the backtest dock: renders the backend-computed `analysis`
  * payload (SL/TP efficiency, exit reasons, R distribution, context breakdowns).
- * Pure formatting — every number here was computed server-side. */
+ * Pure formatting: every number here was computed server-side. */
 
 const fmtPct = (v: number) => `${Math.round(v * 100)}%`;
 const fmtR = (v: number) => `${v.toFixed(1)}R`;
 
-function Hist({ hist, label }: { hist: AnalysisHist; label: string }) {
-  const max = Math.max(1, ...hist.counts);
-  const names = [
-    `≤${hist.edges[0]}`,
-    ...hist.edges.slice(1).map((e, i) => `${hist.edges[i]}–${e}`),
-    `>${hist.edges[hist.edges.length - 1]}`,
-  ];
+// Backend day_of_week buckets are Python weekday() ints as strings ("0" = Mon).
+// Show day names in calendar order (backend rows arrive sorted by trade count).
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const dayOrd = (bucket: string) => {
+  const n = parseInt(bucket, 10);
+  return Number.isNaN(n) ? 7 : n; // "unknown" sorts last
+};
+const dayOfWeekRows = (rows: AnalysisRow[]): AnalysisRow[] =>
+  rows
+    .slice()
+    .sort((a, b) => dayOrd(a.bucket) - dayOrd(b.bucket))
+    .map((r) => ({ ...r, bucket: DAY_NAMES[parseInt(r.bucket, 10)] ?? r.bucket }));
+
+function Dist({
+  hist,
+  label,
+  tip,
+  pctOfStop,
+}: {
+  hist: AnalysisHist;
+  label: string;
+  tip?: string;
+  pctOfStop?: boolean; // buckets are fractions of the stop distance: show "25% to stop"
+}) {
+  const last = hist.edges[hist.edges.length - 1];
+  const names = pctOfStop
+    ? [
+        `≤${hist.edges[0] * 100}% to stop`,
+        ...hist.edges.slice(1).map((e, i) => `${hist.edges[i] * 100}–${e * 100}% to stop`),
+        `>${last * 100}% to stop`,
+      ]
+    : [
+        `≤${hist.edges[0]}R`,
+        ...hist.edges.slice(1).map((e, i) => `${hist.edges[i]} to ${e}R`),
+        `>${last}R`,
+      ];
+  // Empty buckets carry no information; show only buckets with trades in them.
+  const items = hist.counts
+    .map((c, i) => ({ c, name: names[i] }))
+    .filter((r) => r.c > 0);
+  if (!items.length) return null;
   return (
-    <div className="bt-analysis-hist">
-      <div className="bt-analysis-hist-label">{label}</div>
-      {hist.counts.map((c, i) => (
-        <div key={i} className="bt-analysis-hist-row">
-          <span className="bt-analysis-hist-bucket">{names[i]}</span>
-          <span className="bt-analysis-hist-bar" style={{ width: `${(c / max) * 100}%` }} />
-          <span className="bt-analysis-hist-count">{c || ""}</span>
-        </div>
-      ))}
+    <div className="bt-analysis-dist">
+      <div className="bt-analysis-dist-label">
+        {label}
+        {tip && <InfoTip title={label} text={tip} />}
+      </div>
+      <ul className="bt-analysis-dist-items">
+        {items.map(({ c, name }, i) => (
+          <li key={i} className="bt-analysis-dist-item">
+            {c} {c === 1 ? "trade" : "trades"} {pctOfStop ? "reached" : "closed at"}{" "}
+            {name}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -51,12 +89,7 @@ function RowsTable({ rows, avg }: { rows: AnalysisRow[]; avg: number }) {
               (!r.low_sample && r.expectancy < avg ? "bt-analysis-under" : "")
             }
           >
-            <td>
-              {r.bucket}
-              {r.low_sample && (
-                <InfoTip title="Low sample" text="Fewer than 5 trades — treat with caution." />
-              )}
-            </td>
+            <td>{r.bucket}</td>
             <td>{r.n}</td>
             <td>{fmtPct(r.win_rate)}</td>
             <td>{r.expectancy.toFixed(2)}</td>
@@ -106,19 +139,32 @@ export default function BacktestAnalysisPanel({
   return (
     <div className="bt-analysis">
       <section className="bt-analysis-section">
-        <h4>Stops &amp; targets</h4>
-        {readouts.map((r, i) => (
-          <p key={i} className="bt-analysis-readout">
-            {r}
-          </p>
-        ))}
-        <div className="bt-analysis-hists">
-          <Hist
+        <h4>Stop &amp; target placement check</h4>
+        <ul className="bt-analysis-readouts">
+          {readouts.map((r, i) => (
+            <li key={i} className="bt-analysis-readout">
+              {r}
+            </li>
+          ))}
+        </ul>
+        <div className="bt-analysis-dists">
+          <Dist
             hist={sl.winners_mae_hist}
-            label="Winners — worst drawdown before profit (MAE, in R)"
+            label="Winners: worst drawdown before profit"
+            tip="How far each winning trade dropped before it closed in profit, as a percent of the stop distance. Winners in the 75 to 100% bucket nearly hit the stop before recovering; a crowd there means the stop is tighter than these trades need."
+            pctOfStop
           />
-          <Hist hist={sl.losers_mae_hist} label="Losers — MAE (in R)" />
-          <Hist hist={analysis.r_hist} label="Result distribution (R)" />
+          <Dist
+            hist={sl.losers_mae_hist}
+            label="Losers: worst drawdown"
+            tip="How far each losing trade dropped at its worst, as a percent of the stop distance. Stop exits land past 100% because they traveled the full stop distance. Losers below 100% were closed by a rule or session end before reaching the stop; many there can mean the exit rules cut trades the stop would have survived."
+            pctOfStop
+          />
+          <Dist
+            hist={analysis.r_hist}
+            label="Result distribution (R)"
+            tip="Counts trades by realized result in R multiples. 1R is the distance from entry to the initial stop, so a +2R trade made twice the amount it risked and a trade in the -1R bucket lost about its full risk."
+          />
         </div>
       </section>
 
@@ -138,7 +184,14 @@ export default function BacktestAnalysisPanel({
       ).map(([key, label]) => (
         <section key={key} className="bt-analysis-section">
           <h4>{label}</h4>
-          <RowsTable rows={analysis.context[key] ?? []} avg={runAvg} />
+          <RowsTable
+            rows={
+              key === "day_of_week"
+                ? dayOfWeekRows(analysis.context[key] ?? [])
+                : analysis.context[key] ?? []
+            }
+            avg={runAvg}
+          />
         </section>
       ))}
     </div>

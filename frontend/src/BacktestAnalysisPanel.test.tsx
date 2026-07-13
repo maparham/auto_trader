@@ -36,7 +36,10 @@ const analysis: BacktestAnalysis = {
     vol_regime: [],
     session: [],
     candle_pattern: [],
-    day_of_week: [],
+    day_of_week: [
+      { bucket: "3", n: 4, win_rate: 0.5, expectancy: 1, net_pnl: 4, low_sample: true },
+      { bucket: "0", n: 3, win_rate: 0.33, expectancy: -1, net_pnl: -3, low_sample: true },
+    ],
   },
 };
 
@@ -47,6 +50,18 @@ describe("BacktestAnalysisPanel", () => {
     expect(screen.getByText(/1.1R/)).toBeTruthy(); // left on the table
     expect(screen.getByText("target")).toBeTruthy();
     expect(screen.getByText("up")).toBeTruthy();
+  });
+
+  it("shows day names in calendar order for day_of_week buckets", () => {
+    render(<BacktestAnalysisPanel analysis={analysis} />);
+    const mon = screen.getByText("Mon");
+    const thu = screen.getByText("Thu"); // bucket "3", listed first by count
+    expect(mon).toBeTruthy();
+    expect(thu).toBeTruthy();
+    // Mon must render before Thu despite Thu having more trades.
+    expect(
+      mon.compareDocumentPosition(thu) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("shows the empty state when there are no trades", () => {
