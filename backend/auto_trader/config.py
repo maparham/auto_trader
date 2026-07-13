@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # frontend's localStorage. Set CAPITAL_STATE_DB_PATH to relocate.
     state_db_path: str = "app_state.db"
 
+    # Where backtest runs (config + trades + metrics) are persisted for the
+    # analysis loop. Capped at the most recent 200 runs. Set
+    # CAPITAL_RUNS_DB_PATH to relocate.
+    runs_db_path: str = "backtest_runs.db"
+
     # CAPITAL_STREAM_DEBUG=1 turns on a per-second latency summary for the live
     # candle streams (see capital_stream._StreamDebug): tick rate, tick->candle
     # yield ratio, and age_ms = now - tick_timestamp. Verifies that ticks reach
