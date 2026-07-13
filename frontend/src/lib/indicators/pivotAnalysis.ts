@@ -25,9 +25,24 @@ import {
 import { fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
 
+export type PivotConnectorLineStyle = "solid" | "dashed" | "dotted";
+
+/** Style of the vertical connector between consecutive same-type pivots. Colors
+ * stay price-driven (up when the new pivot is higher, down when lower); width /
+ * line style / arrowheads are shared across both directions. */
+export interface PivotConnectorStyle {
+  upColor?: string;
+  downColor?: string;
+  width?: number;
+  lineStyle?: PivotConnectorLineStyle;
+  arrows?: boolean;
+}
+
 export interface PivotAnalysisExtend {
   // Draw the forward-carried previous-high / previous-low level lines (default on).
   showLevels?: boolean;
+  // Vertical connector styling (default = today's blue-up / red-down solid arrows).
+  connector?: PivotConnectorStyle;
   // Legend toggle (settings modal): hide this indicator's value from the legend.
   hideLegendValue?: boolean;
 }
@@ -132,6 +147,32 @@ const ARROW_UP = "#2157f3"; // new pivot higher than the prior same-type one
 const ARROW_DOWN = "#ff1100"; // new pivot lower
 export const PIVOT_LABEL_COLOR = "#787b86"; // Δ%/Δt text (gray, matches the original)
 
+/** Connector defaults reproduce today's fixed look exactly. */
+export const PIVOT_CONNECTOR_DEFAULTS: Required<PivotConnectorStyle> = {
+  upColor: ARROW_UP,
+  downColor: ARROW_DOWN,
+  width: 1.5,
+  lineStyle: "solid",
+  arrows: true,
+};
+
+const CONNECTOR_DASH: Record<PivotConnectorLineStyle, number[]> = {
+  solid: [],
+  dashed: [4, 3],
+  dotted: [1, 2],
+};
+
+/** Fill every unset connector field with its default (used by draw + settings). */
+export function resolvePivotConnector(c?: PivotConnectorStyle): Required<PivotConnectorStyle> {
+  return {
+    upColor: c?.upColor ?? PIVOT_CONNECTOR_DEFAULTS.upColor,
+    downColor: c?.downColor ?? PIVOT_CONNECTOR_DEFAULTS.downColor,
+    width: c?.width ?? PIVOT_CONNECTOR_DEFAULTS.width,
+    lineStyle: c?.lineStyle ?? PIVOT_CONNECTOR_DEFAULTS.lineStyle,
+    arrows: c?.arrows ?? PIVOT_CONNECTOR_DEFAULTS.arrows,
+  };
+}
+
 /** Confirmed fractal pivots (strict, high off the high series / low off the low
  * series), the swing-bar events, and the forward-filled operand step-values. */
 export function computePivotAnalysis(dataList: KLineData[], length: number): PivotAnalysisPoint[] {
@@ -206,14 +247,26 @@ function arrowHead(ctx: CanvasRenderingContext2D, x: number, y: number, ang: num
   ctx.stroke();
 }
 
-/** A vertical line with an arrowhead at each end. */
-function drawDoubleArrow(ctx: CanvasRenderingContext2D, x: number, y1: number, y2: number): void {
+/** A vertical line (optionally dashed/dotted) with an arrowhead at each end.
+ * The dash applies only to the shaft; arrowheads always stroke solid. */
+function drawDoubleArrow(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y1: number,
+  y2: number,
+  dash: number[],
+  arrows: boolean,
+): void {
+  ctx.setLineDash(dash);
   ctx.beginPath();
   ctx.moveTo(x, y1);
   ctx.lineTo(x, y2);
   ctx.stroke();
-  arrowHead(ctx, x, y1, Math.atan2(y1 - y2, 0));
-  arrowHead(ctx, x, y2, Math.atan2(y2 - y1, 0));
+  ctx.setLineDash([]);
+  if (arrows) {
+    arrowHead(ctx, x, y1, Math.atan2(y1 - y2, 0));
+    arrowHead(ctx, x, y2, Math.atan2(y2 - y1, 0));
+  }
 }
 
 interface Axis {
@@ -229,6 +282,7 @@ function drawPivot(
   ev: PivotEvent,
   side: "high" | "low",
   color: string,
+  connector: Required<PivotConnectorStyle>,
 ): void {
   const x = xAxis.convertToPixel(i);
   const y = yAxis.convertToPixel(ev.price);
@@ -253,10 +307,11 @@ function drawPivot(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Vertical double-arrow between the two levels, blue up / red down.
-  ctx.strokeStyle = ev.price > ev.prevPrice ? ARROW_UP : ARROW_DOWN;
-  ctx.lineWidth = 1.5;
-  drawDoubleArrow(ctx, x, yPrev, y);
+  // Vertical connector between the two levels — color is price-driven (up when the
+  // new pivot is higher, down when lower); width/dash/arrowheads are configurable.
+  ctx.strokeStyle = ev.price > ev.prevPrice ? connector.upColor : connector.downColor;
+  ctx.lineWidth = connector.width;
+  drawDoubleArrow(ctx, x, yPrev, y, CONNECTOR_DASH[connector.lineStyle], connector.arrows);
 
   // The Δ%/Δt label is NOT drawn here: it's owned entirely by the chart overlay
   // (chartPainters.paintPivotDeltaLabels), which draws each pivot's label once —
@@ -298,6 +353,7 @@ function drawPivotAnalysis(params: IndicatorDrawParams<PivotAnalysisPoint>): boo
   const defaults = defaultStyles?.lines ?? [];
   const highColor = overrides[0]?.color ?? defaults[0]?.color ?? DEFAULT_HIGH;
   const lowColor = overrides[1]?.color ?? defaults[1]?.color ?? DEFAULT_LOW;
+  const connector = resolvePivotConnector(ext.connector);
   const { from, to } = visibleRange;
 
   ctx.save();
@@ -312,9 +368,9 @@ function drawPivotAnalysis(params: IndicatorDrawParams<PivotAnalysisPoint>): boo
   const hi = Math.min(result.length, to + 1);
   for (let i = lo; i < hi; i++) {
     const ph = result[i]?.phEvent;
-    if (ph) drawPivot(ctx, xAxis, yAxis, i, ph, "high", highColor);
+    if (ph) drawPivot(ctx, xAxis, yAxis, i, ph, "high", highColor, connector);
     const pl = result[i]?.plEvent;
-    if (pl) drawPivot(ctx, xAxis, yAxis, i, pl, "low", lowColor);
+    if (pl) drawPivot(ctx, xAxis, yAxis, i, pl, "low", lowColor, connector);
   }
   ctx.restore();
   return true; // suppress the default figure lines (we draw the levels ourselves)
