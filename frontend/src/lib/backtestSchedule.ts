@@ -55,6 +55,63 @@ function localParts(tMs: number, tz: string): { dow: number; month: number; day:
   };
 }
 
+// Milliseconds that `tz`'s wall clock is ahead of UTC at instant `atMs`
+// (negative when behind). DST-correct via Intl. One-pass; only inaccurate
+// within the ~1h of a DST transition, which never matters for a session label.
+function tzOffsetMs(tz: string, atMs: number): number {
+  const p = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).formatToParts(atMs);
+  const g = (t: string) => Number(p.find((x) => x.type === t)!.value);
+  let h = g("hour"); if (h === 24) h = 0;
+  return Date.UTC(g("year"), g("month") - 1, g("day"), h, g("minute"), g("second")) - atMs;
+}
+
+// The UTC instants of a window's open/close, treating its startMin/endMin as
+// wall-clock minutes-of-day in `tz` on the date of `nowMs` (DST-correct).
+function windowUtcMs(window: DayTimeWindow, tz: string, nowMs: number): { startMs: number; endMs: number } {
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(nowMs);
+  const g = (t: string) => Number(ymd.find((x) => x.type === t)!.value);
+  const Y = g("year"), M = g("month"), D = g("day");
+  const toUtc = (min: number) => {
+    const guess = Date.UTC(Y, M - 1, D, Math.floor(min / 60), min % 60);
+    return guess - tzOffsetMs(tz, guess);
+  };
+  return { startMs: toUtc(window.startMin), endMs: toUtc(window.endMin) };
+}
+
+/** A session window (minutes-of-day in its home tz) rendered in the viewer's
+ * local timezone for the date of `nowMs`, e.g. "14:30–21:00". DST-correct.
+ * Returns null for a 24/7 (null-window) session. */
+export function sessionLocalRange(window: DayTimeWindow | null, tz: string, nowMs: number): string | null {
+  if (!window) return null;
+  const { startMs, endMs } = windowUtcMs(window, tz, nowMs);
+  const fmt = (utcMs: number) =>
+    new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", hour12: false }).format(utcMs);
+  return `${fmt(startMs)}–${fmt(endMs)}`;
+}
+
+/** A session window (minutes-of-day in its home `sessionTz`) re-expressed as
+ * minutes-of-day in `targetTz` for the date of `nowMs`, DST-correct. This is
+ * how a session preset fills the From/To fields without changing the chosen
+ * timezone. Returns null for a 24/7 (null-window) session. */
+export function sessionWindowInTz(
+  window: DayTimeWindow | null,
+  sessionTz: string,
+  targetTz: string,
+  nowMs: number,
+): DayTimeWindow | null {
+  if (!window) return null;
+  const { startMs, endMs } = windowUtcMs(window, sessionTz, nowMs);
+  return {
+    startMin: localParts(startMs, targetTz).minute,
+    endMin: localParts(endMs, targetTz).minute,
+  };
+}
+
 function inWindow(minute: number, start: number, end: number): boolean {
   if (start === end) return true;
   if (start < end) return minute >= start && minute < end;

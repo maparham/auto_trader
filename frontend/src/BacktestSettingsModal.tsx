@@ -52,7 +52,7 @@ import {
   ruleFromChartOperand,
   OP_REVERSE,
 } from "./lib/backtestConfig";
-import { SESSION_PRESETS, buildRangeChips, coverage, isActive, resolveMask } from "./lib/backtestSchedule";
+import { SESSION_PRESETS, buildRangeChips, coverage, isActive, resolveMask, sessionLocalRange, sessionWindowInTz } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
@@ -1056,27 +1056,41 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   <label className="bt-range-field">
                     <span className="bt-field-label">
                       Session
-                      <InfoTip text="Preset market hours with the right timezone — e.g. NYSE 09:30–16:00 New York. Only meaningful on intraday timeframes." />
+                      <InfoTip text="Fills the From and To times from a market's hours, converted into your timezone, and sets Mon-Fri (Crypto clears both). Edit them afterward. Intraday timeframes only." />
                     </span>
                     <select
                       disabled={resSeconds >= 86400}
                       value={cfg.range.mask?.session ?? ""}
-                      onChange={(e) =>
-                        setMask({ session: (e.target.value || undefined) as SessionPreset | undefined })
-                      }
+                      onChange={(e) => {
+                        const key = e.target.value as SessionPreset | "";
+                        if (!key) return; // "Custom / none": leave the fields as they are
+                        const preset = SESSION_PRESETS[key];
+                        const tz = cfg.range.mask?.tz ?? "UTC";
+                        // Fill only the window + weekdays; leave the timezone the
+                        // user chose. Session is not persisted, so the dropdown
+                        // snaps back to "Custom / none" and the fields stay editable.
+                        setMask({
+                          timeOfDay: sessionWindowInTz(preset.window, preset.tz, tz, Date.now()) ?? undefined,
+                          daysOfWeek: preset.days ?? undefined,
+                          session: undefined,
+                        });
+                      }}
                     >
                       <option value="">Custom / none</option>
-                      {Object.entries(SESSION_PRESETS).map(([k, v]) => (
-                        <option key={k} value={k}>
-                          {v.label}
-                        </option>
-                      ))}
+                      {Object.entries(SESSION_PRESETS).map(([k, v]) => {
+                        const local = sessionLocalRange(v.window, v.tz, Date.now());
+                        return (
+                          <option key={k} value={k}>
+                            {local ? `${v.label} (${local} local)` : v.label}
+                          </option>
+                        );
+                      })}
                     </select>
                   </label>
                   <label className="bt-range-field">
                     <span className="bt-field-label">
                       Timezone
-                      <InfoTip text="Timezone used to evaluate the weekday, day-of-month and clock filters (and the calendar chips). A session sets this for you." />
+                      <InfoTip text="Timezone used to evaluate the weekday, day-of-month and clock filters (and the calendar chips). Picking a session fills From/To in this timezone; it does not change it." />
                     </span>
                     <input
                       type="text"

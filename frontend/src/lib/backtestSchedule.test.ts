@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SESSION_PRESETS, resolveMask, isActive } from "./backtestSchedule";
+import { SESSION_PRESETS, resolveMask, isActive, sessionLocalRange, sessionWindowInTz } from "./backtestSchedule";
 
 const utc = (y: number, mo: number, d: number, h = 0, mi = 0) =>
   Date.UTC(y, mo - 1, d, h, mi);
@@ -99,6 +99,44 @@ describe("coverage", () => {
     ];
     const c = coverage(bars, { enabled: true, daysOfWeek: [1], tz: "UTC" });
     expect(c).toEqual({ active: 2, total: 4 });
+  });
+});
+
+describe("sessionWindowInTz", () => {
+  const now = Date.UTC(2024, 5, 15, 12);
+  it("returns null for a 24/7 (null-window) session", () => {
+    expect(sessionWindowInTz(null, "UTC", "UTC", now)).toBeNull();
+  });
+  it("re-expresses Tokyo hours in UTC (Tokyo has no DST, so machine-independent)", () => {
+    // Tokyo 09:00-15:00 JST (UTC+9) -> 00:00-06:00 UTC.
+    const r = sessionWindowInTz({ startMin: 9 * 60, endMin: 15 * 60 }, "Asia/Tokyo", "UTC", now);
+    expect(r).toEqual({ startMin: 0, endMin: 6 * 60 });
+  });
+  it("is identity when session tz equals target tz", () => {
+    const win = { startMin: 9 * 60 + 30, endMin: 16 * 60 };
+    expect(sessionWindowInTz(win, "UTC", "UTC", now)).toEqual(win);
+  });
+});
+
+describe("sessionLocalRange", () => {
+  const now = Date.UTC(2024, 5, 15, 12); // fixed date (tz-independent assertions)
+  it("returns null for a 24/7 (null-window) session", () => {
+    expect(sessionLocalRange(SESSION_PRESETS.Crypto.window, SESSION_PRESETS.Crypto.tz, now)).toBeNull();
+  });
+  it("renders a HH:MM–HH:MM local window for an exchange session", () => {
+    const r = sessionLocalRange(SESSION_PRESETS.NYSE.window, SESSION_PRESETS.NYSE.tz, now);
+    expect(r).toMatch(/^\d{2}:\d{2}–\d{2}:\d{2}$/);
+  });
+  it("shows a session in its own timezone at its home wall-clock hours", () => {
+    // When the viewer's tz IS the session tz, the local range equals the
+    // preset's home hours regardless of where the test machine runs.
+    const winStart = 9 * 60 + 30, winEnd = 16 * 60;
+    const r = sessionLocalRange({ startMin: winStart, endMin: winEnd }, "UTC", now);
+    // Compute what UTC start/end look like in the machine's local tz.
+    const fmt = (min: number) =>
+      new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", hour12: false })
+        .format(Date.UTC(2024, 5, 15, Math.floor(min / 60), min % 60));
+    expect(r).toBe(`${fmt(winStart)}–${fmt(winEnd)}`);
   });
 });
 
