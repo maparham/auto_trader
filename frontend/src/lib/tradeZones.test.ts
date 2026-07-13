@@ -4,7 +4,8 @@ import type { BacktestResult } from "../api";
 type T = BacktestResult["trades"][number];
 const base: T = { side: "sell", quantity: 1, entry_time: 0, entry_price: 100,
   exit_time: 60, exit_price: 96, pnl: 4, leg: "short", reason: "target",
-  stop_initial: 102, stop_final: 102, target: 96 };
+  stop_initial: 102, stop_final: 102, target: 96,
+  mae: 0, mfe: 0, mae_r: null, mfe_r: null, context: null };
 
 describe("tradeZones", () => {
   it("computes risk %, reward %, R:R (magnitudes, side-agnostic)", () => {

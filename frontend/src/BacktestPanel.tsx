@@ -25,6 +25,7 @@ import Tooltip from "./components/Tooltip";
 import { RESOLUTION_SECONDS } from "./lib/feed";
 import { formatExpiryShort } from "./lib/alertUi";
 import BacktestInspectorPanel from "./BacktestInspectorPanel";
+import BacktestAnalysisPanel from "./BacktestAnalysisPanel";
 import { inspectModeSignal, inspectTraceSignal } from "./lib/backtestInspect";
 
 // Module-singleton signal — the subscribe fn never changes, so memoize it (matches
@@ -36,7 +37,7 @@ const subscribeMessages = (cb: () => void) => backtestMessagesSignal.subscribe(c
 const subscribeSelectNotice = (cb: () => void) => backtestSelectNoticeSignal.subscribe(cb);
 const subscribeRunning = (cb: () => void) => backtestRunningSignal.subscribe(cb);
 
-type Tab = "overview" | "trades" | "inspect";
+type Tab = "overview" | "trades" | "analysis" | "inspect";
 type SortDir = "asc" | "desc";
 
 // Text columns read more naturally A→Z on first click; numeric/time columns
@@ -209,6 +210,14 @@ export default function BacktestPanel() {
             Trades
           </button>
           <button
+            className={tab === "analysis" ? "seg-on" : ""}
+            role="tab"
+            aria-selected={tab === "analysis"}
+            onClick={() => setTab("analysis")}
+          >
+            Analysis
+          </button>
+          <button
             className={tab === "inspect" ? "seg-on" : ""}
             role="tab"
             aria-selected={tab === "inspect"}
@@ -235,6 +244,8 @@ export default function BacktestPanel() {
               <BacktestInspectorPanel />
             )}
           </div>
+        ) : tab === "analysis" ? (
+          <BacktestAnalysisPanel analysis={result?.analysis} />
         ) : tab === "overview" ? (
           <div className="bt-panel-overview">
             {metricGroups(result).map((g) => (

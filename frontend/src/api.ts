@@ -90,6 +90,11 @@ interface Trade {
   stop_initial: number | null;
   stop_final: number | null;
   target: number | null;
+  mae: number;
+  mfe: number;
+  mae_r: number | null;
+  mfe_r: number | null;
+  context: Record<string, string | number | null> | null;
 }
 
 export interface EquityPoint {
@@ -111,6 +116,39 @@ export interface LegMetrics {
   largest_loss: number;
   max_consec_losses: number;
   avg_duration_bars: number;
+}
+
+export interface AnalysisHist {
+  edges: number[];
+  counts: number[];
+}
+
+export interface AnalysisRow {
+  bucket: string;
+  n: number;
+  win_rate: number;
+  expectancy: number;
+  net_pnl: number;
+  low_sample: boolean;
+}
+
+export interface BacktestAnalysis {
+  n_trades: number;
+  sl: {
+    winners_mae_hist: AnalysisHist;
+    losers_mae_hist: AnalysisHist;
+    winners_near_stop_pct: number | null;
+    n_with_r: number;
+  };
+  tp: {
+    avg_winner_mfe_r: number | null;
+    avg_winner_realized_r: number | null;
+    median_left_on_table_r: number | null;
+    pct_nontarget_exits_reached_target: number | null;
+  };
+  exit_reasons: AnalysisRow[];
+  r_hist: AnalysisHist;
+  context: Record<string, AnalysisRow[]>;
 }
 
 export interface BacktestResult {
@@ -149,6 +187,10 @@ export interface BacktestResult {
   // Per-bar inspector trace — present only when the request set `inspect` and the
   // strategy is rule-based. Session-only: held in memory, never persisted.
   bar_traces?: BarTrace[] | null;
+  // Strategy-analysis payload (SL/TP efficiency, exit reasons, R distribution,
+  // context breakdowns), all computed server-side. Absent on older cached runs.
+  run_id?: string | null;
+  analysis?: BacktestAnalysis | null;
 }
 
 export interface BacktestRequest {
