@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, within } from "@testing-library/react";
 
-import type { BacktestAnalysis } from "./api";
+import type { BacktestAnalysis, BacktestWhatif } from "./api";
 import BacktestAnalysisPanel from "./BacktestAnalysisPanel";
 
 // vitest isn't run with jest-style globals, so RTL's automatic cleanup never
@@ -41,6 +41,24 @@ const analysis: BacktestAnalysis = {
       { bucket: "0", n: 3, win_rate: 0.33, expectancy: -1, net_pnl: -3, low_sample: true },
     ],
   },
+  whatif: {
+    rule_exit: {
+      by_reason: [
+        { reason: "Sell to Close", n: 30, would_have_won: 11, would_have_lost: 16,
+          undecided: 3, net_delta_r: -14.2 },
+      ],
+      totals: { n: 30, would_have_won: 11, would_have_lost: 16, undecided: 3,
+        net_delta_r: -14.2 },
+    },
+    no_target: { n: 22, would_have_stopped: 6, survived: 16, net_saved_r: 9.1 },
+    stop_curve: [
+      { frac: 0.8, winners_killed: 1, losers_cheapened: 26, net_delta_r: 4.1 },
+    ],
+    target_curve: [{ target_r: 2.0, n_reached: 11, pct_reached: 0.3 }],
+    fill_delay: { n: 37, avg_r: 0.07, total_r: 2.6 },
+    limit_entry: { n: 37, fill_rate: 0.62, filled_net_delta_r: 3.4, undecided: 2,
+      unfilled_foregone_r: 5.1, unfilled_winners: 4, net_verdict_r: -1.7 },
+  },
 };
 
 describe("BacktestAnalysisPanel", () => {
@@ -72,5 +90,61 @@ describe("BacktestAnalysisPanel", () => {
   it("renders nothing useful crash-free with no analysis (older stored runs)", () => {
     render(<BacktestAnalysisPanel analysis={null} />);
     expect(screen.getByText(/run a backtest/i)).toBeTruthy();
+  });
+
+  it("renders the what-if section with bullets and both curve tables", () => {
+    render(<BacktestAnalysisPanel analysis={analysis} />);
+    expect(screen.getByText(/What if/i)).toBeTruthy();
+    expect(
+      screen.getByText(/11 of 30 trades closed by "Sell to Close" would have gone on to hit the target/i),
+    ).toBeTruthy();
+    expect(screen.getByText(/target saved 9.1R net/i)).toBeTruthy();
+    expect(screen.getByText(/fill delay costs 0.07R per trade/i)).toBeTruthy();
+    expect(screen.getByText(/would have filled 62% of entries/i)).toBeTruthy();
+    // Scoped to the What-if section: "80%" also appears in the pre-existing
+    // Trend-at-entry table (win_rate 0.8), so an unscoped query is ambiguous.
+    const whatIf = screen.getByText(/What if/i).closest("section")!;
+    expect(within(whatIf).getByText("80%")).toBeTruthy(); // stop curve row
+    expect(within(whatIf).getByText("2R")).toBeTruthy(); // target curve row
+  });
+
+  it("renders the negative-foregone limit-entry case as dodging losses, with a non-100% fill rate", () => {
+    const negFore: BacktestAnalysis = {
+      ...analysis,
+      whatif: {
+        ...(analysis.whatif as BacktestWhatif),
+        limit_entry: {
+          n: 37,
+          fill_rate: 0.9968,
+          filled_net_delta_r: 3.4,
+          undecided: 2,
+          unfilled_foregone_r: -1.0,
+          unfilled_winners: 0,
+          net_verdict_r: 4.4,
+        },
+      },
+    };
+    render(<BacktestAnalysisPanel analysis={negFore} />);
+    expect(
+      screen.getByText(/while dodging 1\.0R of losses on entries that never filled/i),
+    ).toBeTruthy();
+    expect(screen.queryByText(/would have filled 100% of entries/i)).toBeNull();
+    expect(screen.getByText(/would have filled 99\.6% of entries/i)).toBeTruthy();
+  });
+
+  it("skips what-if entirely when absent or all-None", () => {
+    render(<BacktestAnalysisPanel analysis={{ ...analysis, whatif: undefined }} />);
+    expect(screen.queryByText(/What if/i)).toBeNull();
+    cleanup();
+    render(
+      <BacktestAnalysisPanel
+        analysis={{
+          ...analysis,
+          whatif: { rule_exit: null, no_target: null, stop_curve: null,
+            target_curve: null, fill_delay: null, limit_entry: null },
+        }}
+      />,
+    );
+    expect(screen.queryByText(/What if/i)).toBeNull();
   });
 });

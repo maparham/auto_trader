@@ -183,6 +183,9 @@ class Trade:
     # Entry-context features at the SIGNAL bar (trend/vol regime/session/...),
     # attached post-run by engine.context_features; None until enriched.
     context: dict | None = None
+    # Per-trade counterfactual results (see engine.whatif): exit-rule replay,
+    # target replay, fill-delay cost, limit-entry replay. None until enriched.
+    whatif: dict | None = None
 
 
 @dataclass(slots=True)

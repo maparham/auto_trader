@@ -108,6 +108,8 @@ def compute_analysis(trades: list[dict]) -> dict:
             else "unknown"
         ))
 
+    from auto_trader.engine.whatif import compute_whatif  # local: avoids cycle
+
     return {
         "n_trades": len(trades),
         "sl": sl,
@@ -115,4 +117,5 @@ def compute_analysis(trades: list[dict]) -> dict:
         "exit_reasons": _rows(trades, lambda t: t.get("reason") or "unknown"),
         "r_hist": _hist(realized, R_EDGES),
         "context": {f: _ctx(f) for f in CONTEXT_FEATURES},
+        "whatif": compute_whatif(trades),
     }

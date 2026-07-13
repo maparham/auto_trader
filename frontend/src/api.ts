@@ -95,6 +95,7 @@ interface Trade {
   mae_r: number | null;
   mfe_r: number | null;
   context: Record<string, string | number | null> | null;
+  whatif?: Record<string, unknown> | null;
 }
 
 export interface EquityPoint {
@@ -132,6 +133,42 @@ export interface AnalysisRow {
   low_sample: boolean;
 }
 
+export interface WhatifRuleExitRow {
+  reason: string;
+  n: number;
+  would_have_won: number;
+  would_have_lost: number;
+  undecided: number;
+  net_delta_r: number;
+}
+
+export interface BacktestWhatif {
+  rule_exit: {
+    by_reason: WhatifRuleExitRow[];
+    totals: Omit<WhatifRuleExitRow, "reason">;
+  } | null;
+  no_target: {
+    n: number;
+    would_have_stopped: number;
+    survived: number;
+    net_saved_r: number;
+  } | null;
+  stop_curve:
+    | { frac: number; winners_killed: number; losers_cheapened: number; net_delta_r: number }[]
+    | null;
+  target_curve: { target_r: number; n_reached: number; pct_reached: number }[] | null;
+  fill_delay: { n: number; avg_r: number; total_r: number } | null;
+  limit_entry: {
+    n: number;
+    fill_rate: number;
+    filled_net_delta_r: number;
+    undecided: number;
+    unfilled_foregone_r: number;
+    unfilled_winners: number;
+    net_verdict_r: number;
+  } | null;
+}
+
 export interface BacktestAnalysis {
   n_trades: number;
   sl: {
@@ -149,6 +186,7 @@ export interface BacktestAnalysis {
   exit_reasons: AnalysisRow[];
   r_hist: AnalysisHist;
   context: Record<string, AnalysisRow[]>;
+  whatif?: BacktestWhatif;
 }
 
 export interface BacktestResult {

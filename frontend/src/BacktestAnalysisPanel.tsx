@@ -1,4 +1,4 @@
-import type { AnalysisHist, AnalysisRow, BacktestAnalysis } from "./api";
+import type { AnalysisHist, AnalysisRow, BacktestAnalysis, BacktestWhatif } from "./api";
 import InfoTip from "./components/InfoTip";
 
 /** Analysis tab of the backtest dock: renders the backend-computed `analysis`
@@ -7,6 +7,14 @@ import InfoTip from "./components/InfoTip";
 
 const fmtPct = (v: number) => `${Math.round(v * 100)}%`;
 const fmtR = (v: number) => `${v.toFixed(1)}R`;
+// Like fmtPct, but a value below 1 never rounds up to display as "100%"
+// (e.g. a 0.9968 fill rate should read "99.7%", not "100%"). Floors instead
+// of rounding so values arbitrarily close to 1 (e.g. 0.9996) still show below
+// 100%.
+const fmtPctBelow100 = (v: number) =>
+  v < 1 && Math.round(v * 100) >= 100
+    ? `${(Math.floor(v * 1000) / 10).toFixed(1)}%`
+    : fmtPct(v);
 
 // Backend day_of_week buckets are Python weekday() ints as strings ("0" = Mon).
 // Show day names in calendar order (backend rows arrive sorted by trade count).
@@ -101,6 +109,122 @@ function RowsTable({ rows, avg }: { rows: AnalysisRow[]; avg: number }) {
   );
 }
 
+const CAVEAT =
+  "Per-trade attribution: replays ignore knock-on effects on later trades " +
+  "(one position at a time means a longer hold could block the next entry). " +
+  "Confirm promising findings with a rerun or sweep.";
+
+function WhatIfSection({ whatif }: { whatif: BacktestWhatif | null | undefined }) {
+  if (!whatif) return null;
+  const { rule_exit, no_target, stop_curve, target_curve, fill_delay, limit_entry } = whatif;
+  if (!rule_exit && !no_target && !stop_curve && !target_curve && !fill_delay && !limit_entry) {
+    return null;
+  }
+  const bullets: string[] = [];
+  if (rule_exit) {
+    for (const r of rule_exit.by_reason) {
+      bullets.push(
+        `${r.would_have_won} of ${r.n} trades closed by "${r.reason}" would have gone on to hit the target and ${r.would_have_lost} the stop` +
+          (r.undecided ? ` (${r.undecided} undecided)` : "") +
+          `. Holding them would have ${r.net_delta_r >= 0 ? "added" : "cost"} ${fmtR(Math.abs(r.net_delta_r))} net.`,
+      );
+    }
+  }
+  if (no_target) {
+    bullets.push(
+      `${no_target.would_have_stopped} of ${no_target.n} target exits would have later hit the stop. The target ${no_target.net_saved_r >= 0 ? "saved" : "cost"} ${fmtR(Math.abs(no_target.net_saved_r))} net.`,
+    );
+  }
+  if (fill_delay) {
+    // avg is small: keep 2 decimals so "0.07R" doesn't round to "0.1R".
+    bullets.push(
+      `The one-bar fill delay ${fill_delay.avg_r >= 0 ? "costs" : "earns"} ${Math.abs(fill_delay.avg_r).toFixed(2)}R per trade (${fmtR(Math.abs(fill_delay.total_r))} over this run).`,
+    );
+  }
+  if (limit_entry) {
+    const fillClause = `A limit order at the signal close (3-bar window) would have filled ${fmtPctBelow100(limit_entry.fill_rate)} of entries`;
+    const filledClause = `${limit_entry.filled_net_delta_r >= 0 ? "improving filled entries by" : "worsening filled entries by"} ${fmtR(Math.abs(limit_entry.filled_net_delta_r))}`;
+    // unfilled_foregone_r is a net sum: positive means the limit missed winners,
+    // negative means it net-dodged losers on the trades that never filled.
+    const unfilledClause =
+      limit_entry.unfilled_foregone_r >= 0
+        ? `while missing ${fmtR(limit_entry.unfilled_foregone_r)} on ${limit_entry.unfilled_winners} never-filled winners`
+        : `while dodging ${fmtR(Math.abs(limit_entry.unfilled_foregone_r))} of losses on entries that never filled`;
+    const netClause = `Net: ${limit_entry.net_verdict_r >= 0 ? "limit entries add" : "market entries keep"} ${fmtR(Math.abs(limit_entry.net_verdict_r))}.`;
+    bullets.push(`${fillClause}, ${filledClause} ${unfilledClause}. ${netClause}`);
+  }
+  return (
+    <section className="bt-analysis-section">
+      <h4>
+        What if
+        <InfoTip title="What if" text={CAVEAT} />
+      </h4>
+      {bullets.length > 0 && (
+        <ul className="bt-analysis-readouts">
+          {bullets.map((b, i) => (
+            <li key={i} className="bt-analysis-readout">{b}</li>
+          ))}
+        </ul>
+      )}
+      {(stop_curve || target_curve) && (
+      <div className="bt-analysis-dists">
+        {stop_curve && (
+          <div className="bt-analysis-dist">
+            <div className="bt-analysis-dist-label">
+              Tighter stop
+              <InfoTip
+                title="Tighter stop"
+                text="Outcome if the stop sat at a fraction of its current distance: a trade whose worst drawdown reached that fraction exits there for that loss; others keep their real result. Tightening only, widening needs data past the real stop."
+              />
+            </div>
+            <table className="bt-analysis-table">
+              <thead>
+                <tr><th>Stop at</th><th>Winners lost</th><th>Losers cheapened</th><th>Net R</th></tr>
+              </thead>
+              <tbody>
+                {stop_curve.map((r) => (
+                  <tr key={r.frac}>
+                    <td>{Math.round(r.frac * 100)}%</td>
+                    <td>{r.winners_killed}</td>
+                    <td>{r.losers_cheapened}</td>
+                    <td>{r.net_delta_r.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {target_curve && (
+          <div className="bt-analysis-dist">
+            <div className="bt-analysis-dist-label">
+              Target placement
+              <InfoTip
+                title="Target placement"
+                text="Share of trades whose best run-up reached each candidate target. Trades that exited at their real target are censored there; the target bullet above is the uncensored answer."
+              />
+            </div>
+            <table className="bt-analysis-table">
+              <thead>
+                <tr><th>Target</th><th>Reached</th><th>Share</th></tr>
+              </thead>
+              <tbody>
+                {target_curve.map((r) => (
+                  <tr key={r.target_r}>
+                    <td>{r.target_r}R</td>
+                    <td>{r.n_reached}</td>
+                    <td>{fmtPct(r.pct_reached)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      )}
+    </section>
+  );
+}
+
 export default function BacktestAnalysisPanel({
   analysis,
 }: {
@@ -167,6 +291,8 @@ export default function BacktestAnalysisPanel({
           />
         </div>
       </section>
+
+      <WhatIfSection whatif={analysis.whatif} />
 
       <section className="bt-analysis-section">
         <h4>Exit reasons</h4>

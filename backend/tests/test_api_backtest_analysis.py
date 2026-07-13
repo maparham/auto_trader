@@ -104,6 +104,24 @@ def test_run_is_persisted_and_readable(tmp_run_store):
     assert e2.value.status_code == 404
 
 
+def test_response_and_stored_run_carry_whatif(tmp_run_store):
+    result = _run(_trade_body())
+    payload = result.model_dump()
+    assert "whatif" in payload["analysis"]
+    assert set(payload["analysis"]["whatif"].keys()) == {
+        "rule_exit", "no_target", "stop_curve", "target_curve",
+        "fill_delay", "limit_entry",
+    }
+    assert payload["trades"], "expected at least one closed trade"
+    for t in payload["trades"]:
+        assert "whatif" in t
+
+    rec = asyncio.run(bt_router.get_run(payload["run_id"]))
+    assert "whatif" in rec["analysis"]
+    assert rec["trades"]
+    assert all("whatif" in t for t in rec["trades"])
+
+
 def test_store_failure_does_not_fail_backtest(tmp_run_store, monkeypatch):
     async def boom(rec):
         raise RuntimeError("disk full")

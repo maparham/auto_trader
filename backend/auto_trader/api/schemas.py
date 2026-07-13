@@ -97,6 +97,8 @@ class TradeDTO(BaseModel):
     mae_r: float | None = None
     mfe_r: float | None = None
     context: dict | None = None
+    # Per-trade counterfactuals (see engine.whatif); None when not computed.
+    whatif: dict | None = None
 
 
 class EquityDTO(BaseModel):

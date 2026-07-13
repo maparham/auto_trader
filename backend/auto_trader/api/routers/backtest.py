@@ -17,6 +17,7 @@ from auto_trader.core.run_store import RUN_STORE
 from auto_trader.engine.analysis import compute_analysis
 from auto_trader.engine.backtest import BacktestEngine, BacktestResult
 from auto_trader.engine.context_features import enrich_trades
+from auto_trader.engine.whatif import enrich_trades_whatif
 from auto_trader.engine.metrics import compute_metrics, leg_metrics
 from auto_trader.strategy import loader
 from auto_trader.strategy.coded import (
@@ -310,6 +311,11 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     # Post-run enrichment over the FULL candle list (not `window`): a trade's
     # signal bar can sit in the warm-up span before tradeFromTime.
     enrich_trades(result.trades, candles)
+    try:
+        enrich_trades_whatif(result.trades, candles)
+    except Exception:
+        logger.warning("what-if enrichment failed; continuing without it",
+                       exc_info=True)
 
     trades_dto = [
         TradeDTO(
@@ -326,6 +332,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             stop_final=t.stop_final,
             target=t.target,
             mae=t.mae, mfe=t.mfe, mae_r=t.mae_r, mfe_r=t.mfe_r, context=t.context,
+            whatif=t.whatif,
         )
         for t in result.trades
     ]
