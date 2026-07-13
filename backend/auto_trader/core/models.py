@@ -173,6 +173,16 @@ class Trade:
     stop_initial: float | None = None
     stop_final: float | None = None
     target: float | None = None
+    # Excursion while the trade was open: worst adverse / best favorable price
+    # move from entry (raw distance, always >= 0), plus the same as R-multiples
+    # of the initial stop distance (None when the trade had no initial stop).
+    mae: float = 0.0
+    mfe: float = 0.0
+    mae_r: float | None = None
+    mfe_r: float | None = None
+    # Entry-context features at the SIGNAL bar (trend/vol regime/session/...),
+    # attached post-run by engine.context_features; None until enriched.
+    context: dict | None = None
 
 
 @dataclass(slots=True)

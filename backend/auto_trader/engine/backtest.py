@@ -52,6 +52,11 @@ class Position:
     # a static level, never ratcheted, and always reports "stop" (not "trail")
     # even if the side-level RiskConfig happens to be trailing.
     bracket_from_signal: bool = False
+    # Excursion watermarks since entry (seeded at the fill price): the most
+    # adverse and most favorable prices seen while open. Separate from
+    # `extreme`, which only tracks the trailing-stop ratchet.
+    adv_extreme: float = 0.0
+    fav_extreme: float = 0.0
 
 
 @dataclass(slots=True)
@@ -187,7 +192,11 @@ class BacktestEngine:
                         last_short_open = None
             pending = []
 
-            # 1b) Intra-bar stop/target, then 1c) trailing ratchet — per side.
+            # 1b) Track excursion before intra-bar exits so the exit bar's range counts.
+            self._track_excursion(longs, "long", bar)
+            self._track_excursion(shorts, "short", bar)
+
+            # 1c) Intra-bar stop/target, then 1d) trailing ratchet — per side.
             realized = self._intrabar_exit(longs, "long", self.long_risk, result, realized, bar)
             realized = self._intrabar_exit(shorts, "short", self.short_risk, result, realized, bar)
             # An intrabar stop/target that empties a side clears its spacing
@@ -347,6 +356,8 @@ class BacktestEngine:
         side-level risk config for THIS position. (Pyramiding/merge is a later
         phase.)"""
         p = Position(qty=qty, entry=fill_price, open_time=bar_time, open_reason=reason)
+        p.adv_extreme = fill_price
+        p.fav_extreme = fill_price
         if stop is not None or target is not None:
             p.extreme = fill_price
             p.stop = stop
@@ -390,9 +401,16 @@ class BacktestEngine:
         if side == "long":
             pnl = closing * (fill_price - p.entry)
             trade_side = Side.BUY
+            mae = max(0.0, p.entry - min(p.adv_extreme, fill_price))
+            mfe = max(0.0, max(p.fav_extreme, fill_price) - p.entry)
         else:
             pnl = closing * (p.entry - fill_price)
             trade_side = Side.SELL
+            mae = max(0.0, max(p.adv_extreme, fill_price) - p.entry)
+            mfe = max(0.0, p.entry - min(p.fav_extreme, fill_price))
+        risk_dist = abs(p.entry - p.stop_initial) if p.stop_initial is not None else 0.0
+        mae_r = mae / risk_dist if risk_dist > 0 else None
+        mfe_r = mfe / risk_dist if risk_dist > 0 else None
         realized += pnl
         result.trades.append(
             Trade(
@@ -401,6 +419,7 @@ class BacktestEngine:
                 exit_time=bar_time, exit_price=fill_price, pnl=pnl,
                 leg=side, reason_in=p.open_reason, reason_out=reason,
                 stop_initial=p.stop_initial, stop_final=p.stop, target=p.target,
+                mae=mae, mfe=mfe, mae_r=mae_r, mfe_r=mfe_r,
             )
         )
         p.qty -= closing
@@ -450,6 +469,18 @@ class BacktestEngine:
             realized -= self.commission
             realized = self._reduce(positions, side, result, realized, px, bar.time, reason, p.qty)
         return realized
+
+    @staticmethod
+    def _track_excursion(positions, side, bar):
+        """Extend each open position's adverse/favorable watermarks with this
+        bar's range. Called before intra-bar exits so the exit bar counts."""
+        for p in positions:
+            if side == "long":
+                p.adv_extreme = min(p.adv_extreme, bar.low)
+                p.fav_extreme = max(p.fav_extreme, bar.high)
+            else:
+                p.adv_extreme = max(p.adv_extreme, bar.high)
+                p.fav_extreme = min(p.fav_extreme, bar.low)
 
     def _ratchet_trailing(self, positions, side, risk, bar, i):
         """Extend the trailing extreme with THIS bar's high/low and recompute the
