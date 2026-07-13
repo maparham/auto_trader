@@ -74,6 +74,49 @@ export function markerLabel(side: "buy" | "sell", leg: "long" | "short", reason?
   return `${letter}${opening ? "+" : "-"}`;
 }
 
+/** The trade direction to badge an ENTRY marker with, or null for an exit fill.
+ * A fill opens a position when its side matches its leg (buy⇒long, sell⇒short) —
+ * the same "opening" test markerLabel uses. Entries get a ▲long / ▼short arrow
+ * in the pill; exits (which close the opposite side) get none. */
+export function entryDirection(side: "buy" | "sell", leg: "long" | "short"): "long" | "short" | null {
+  const opening = (leg === "long" && side === "buy") || (leg === "short" && side === "sell");
+  return opening ? leg : null;
+}
+
+// The long/short direction glyphs, shared by the native pill (markerPillLabel)
+// and the coarser-timeframe aggregate pill (aggPillLabel) so the up/down cue
+// reads identically on every timeframe.
+export const LONG_GLYPH = "▲";
+export const SHORT_GLYPH = "▼";
+
+/** The native fill pill's text: `markerLabel` prefixed with the direction glyph
+ * on ENTRY fills (▲ B+ / ▼ S+) so long vs short reads at a glance. Exits
+ * (S-/B-/SL/TP) get no glyph — direction only tags the opening fill. */
+export function markerPillLabel(side: "buy" | "sell", leg: "long" | "short", reason?: string): string {
+  const base = markerLabel(side, leg, reason);
+  const dir = entryDirection(side, leg);
+  return dir ? `${dir === "long" ? LONG_GLYPH : SHORT_GLYPH} ${base}` : base;
+}
+
+/** The aggregate (grouped) pill's text for a bar's cluster of trades: the same
+ * direction glyphs as the native pill plus the count·net summary. A bar with
+ * both directions splits the count inline (▲2 ▼1 · +4); a single-direction bar
+ * shows one glyph (▲ 3 · +12, or ▲ +12 when it holds just one trade). Pure +
+ * exported for tests; consumed by BacktestAggMarkers. */
+export function aggPillLabel(longs: number, shorts: number, net: number): string {
+  // One decimal for a single-digit magnitude (small nets read too coarse as
+  // integers); drop to a whole number once |net| ≥ 10, where the decimal is just
+  // pill-widening noise.
+  const abs = Math.abs(net);
+  const netStr = `${net >= 0 ? "+" : "−"}${abs.toFixed(abs >= 10 ? 0 : 1)}`;
+  if (longs > 0 && shorts > 0) {
+    return `${LONG_GLYPH}${longs} ${SHORT_GLYPH}${shorts} · ${netStr}`;
+  }
+  const glyph = longs > 0 ? LONG_GLYPH : SHORT_GLYPH;
+  const count = longs + shorts;
+  return count >= 2 ? `${glyph} ${count} · ${netStr}` : `${glyph} ${netStr}`;
+}
+
 /** Which side of the candle a fill marker should hang from so it clears the
  * body. The arrow always pins to the exact fill price, so the pill has to be
  * offset AWAY from the body: if the fill sits in the lower half of the candle
@@ -347,6 +390,10 @@ const markerOverlay: OverlayTemplate = {
     // style (white text on a blue background). Override just the fill/border to
     // the win/loss color so a losing trade's marker reads red, a winner green.
     const pillColor = win == null ? undefined : win ? BUY_COLOR : SELL_COLOR;
+    // The long/short direction now rides INSIDE the label pill (markerPillLabel
+    // prefixes an entry with ▲/▼), so it reads on every timeframe — the coarser
+    // aggregate view has only the DOM pill, no stem/arrowhead. The stem arrowhead
+    // here is back to its plain original: it just points at the fill price.
     return [
       {
         type: "line",
@@ -1066,7 +1113,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
         points: [{ timestamp: snappedTs, value: m.price }],
         lock: true, // backtest artifacts: not user-editable
         extendData: {
-          label: markerLabel(m.side, m.leg, m.reason),
+          label: markerPillLabel(m.side, m.leg, m.reason),
           win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
           placement: bar ? markerPlacement(m.price, bar.high, bar.low) : "above",
         } satisfies MarkerExtra,

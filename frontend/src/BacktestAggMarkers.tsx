@@ -13,6 +13,7 @@
 
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { backtestClusterHoverSignal } from "./lib/signals";
+import { aggPillLabel } from "./lib/backtest";
 import type { StoredBacktestResult } from "./lib/persist";
 
 const BUY_COLOR = "#26a69a";
@@ -44,11 +45,9 @@ export interface BacktestAggMarkersHandle {
 // every tick/scroll (matches CurveLabels' guard).
 function pillsSig(pills: AggPill[]): string {
   return pills
-    .map((p) => `${p.key}@${Math.round(p.x)},${Math.round(p.y)}:${p.count}:${Math.round(p.net)}`)
+    .map((p) => `${p.key}@${Math.round(p.x)},${Math.round(p.y)}:${p.count}:${Math.round(p.net * 10)}`)
     .join("|");
 }
-
-const fmtNet = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(0)}`;
 
 export default function BacktestAggMarkers({
   handleRef,
@@ -99,9 +98,11 @@ export default function BacktestAggMarkers({
     <div style={{ position: "absolute", inset: 0, zIndex: 11, pointerEvents: "none" }}>
       {pills.map((p) => {
         const bg = p.net > 0 ? BUY_COLOR : p.net < 0 ? SELL_COLOR : FLAT_COLOR;
-        // A single-trade bar shows just its P&L (a "1" badge is noise); a
-        // multi-trade bar prefixes the count.
-        const text = p.count >= 2 ? `${p.count} · ${fmtNet(p.net)}` : fmtNet(p.net);
+        // Direction glyph(s) + count·net. Same ▲/▼ language as the native pill,
+        // so long/short reads on the coarse timeframes too (aggPillLabel: one
+        // glyph for a single-direction bar, ▲n ▼m split for a mixed one).
+        const longs = p.trades.reduce((n, t) => n + (t.leg === "long" ? 1 : 0), 0);
+        const text = aggPillLabel(longs, p.count - longs, p.net);
         return (
           <span
             key={p.key}
