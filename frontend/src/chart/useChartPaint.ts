@@ -112,6 +112,10 @@ export interface ChartPaintDeps {
   // original memo dep arrays stay correct).
   containerRef: React.RefObject<HTMLDivElement | null>;
   wrapRef: React.RefObject<HTMLDivElement | null>;
+  // Wrapper around the candle-pane DOM overlays (alert tags/pills, trade pills);
+  // redraw sizes its height to the candle pane so its overflow:hidden clips a
+  // level below the visible range off the pane edge, not into the sub-panes.
+  pillClipRef: React.RefObject<HTMLDivElement | null>;
   bracketCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   sepCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   selCanvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -162,6 +166,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     theme,
     containerRef,
     wrapRef,
+    pillClipRef,
     bracketCanvasRef,
     sepCanvasRef,
     selCanvasRef,
@@ -280,6 +285,17 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     bracketShownRef.current = true;
+    // Clip to the candle pane so a selected/hovered position whose SL/TP is priced
+    // below the visible range draws its spine/handles/badges off the pane edge
+    // rather than over the indicator sub-panes. Restored at the end of the draw.
+    // getSize can transiently report height 0 (pre-layout / mid-collapse); a 0-tall
+    // clip would erase the whole bracket, so fall back to the full canvas height.
+    const measuredPaneH = chart.getSize("candle_pane", DomPosition.Main)?.height;
+    const paneH = measuredPaneH && measuredPaneH > 0 ? measuredPaneH : h;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, paneH);
+    ctx.clip();
 
     const yOf = (v: number | null): number | null => {
       if (v == null) return null;
@@ -359,6 +375,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       ctx.fill();
       ctx.stroke();
     }
+    ctx.restore(); // release the candle-pane clip
   }, []);
   handle.paintBracketRef.current = paintBracket;
 
@@ -481,6 +498,17 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       setAlertTags([]);
       handle.paintSeparatorRef.current();
       return;
+    }
+    // Clip the candle-pane DOM overlays to the candle pane: sizing the wrapper to
+    // the pane height (overflow:hidden) keeps a tag/pill whose price is below the
+    // visible range from spilling over the indicator sub-panes. Falls back to the
+    // full wrap height (no clip) if the pane size isn't measurable yet.
+    const clip = pillClipRef.current;
+    if (clip) {
+      // getSize can transiently report height 0 (pre-layout / mid-collapse); a 0-tall
+      // clip would hide every pill/tag, so fall back to 100% (full height, no clip).
+      const paneH = chart.getSize("candle_pane", DomPosition.Main)?.height;
+      clip.style.height = paneH && paneH > 0 ? `${paneH}px` : "100%";
     }
     // Round the pixel y: these pills center with transform: translateY(-50%) over
     // an even height, so a fractional top would land their text on half-pixels

@@ -944,6 +944,11 @@ export default function ChartCore({
 
   // "+" axis affordance: positioned imperatively on mousemove (no per-move state).
   const wrapRef = useRef<HTMLDivElement>(null);
+  // Clips the candle-pane DOM overlays (alert tags + pills, trade pills) to the
+  // candle pane's height so a level priced below the visible range slides off the
+  // pane edge (TV-style) instead of bleeding into the indicator sub-panes below.
+  // Its height is set imperatively from the redraw loop (getSize candle_pane).
+  const pillClipRef = useRef<HTMLDivElement>(null);
   const plusBtnRef = useRef<HTMLDivElement>(null);
   const plusPriceLabelRef = useRef<HTMLSpanElement>(null);
   const plusPriceRef = useRef(0);
@@ -2748,6 +2753,7 @@ export default function ChartCore({
     theme,
     containerRef,
     wrapRef,
+    pillClipRef,
     bracketCanvasRef,
     sepCanvasRef,
     selCanvasRef,
@@ -3472,6 +3478,21 @@ export default function ChartCore({
         </div>
       )}
 
+      {/* Candle-pane overlay clip: alert tags/pills + trade pills anchor to a price
+          via the candle pane's absolute y, which extrapolates past the pane bottom
+          for a level below the visible range. This wrapper is sized to the candle
+          pane height (set imperatively in the redraw loop) with overflow:hidden, so
+          such a level's tag/pill slides off the pane edge instead of drawing over
+          the indicator sub-panes. pointer-events:none passes chart interaction
+          through; the interactive descendants (.alert-pill, .tp-btn) opt back in. */}
+      <div
+        ref={pillClipRef}
+        className="pane-clip"
+        // height starts at 100% (no clip) and is narrowed to the candle pane by the
+        // redraw loop; absolute-only children can't give it an auto height, so an
+        // explicit 100% avoids a pre-first-paint window where it collapses to 0.
+        style={{ position: "absolute", top: 0, left: 0, right: 0, height: "100%", overflow: "hidden", pointerEvents: "none" }}
+      >
       <AlertTags tags={alertTags} priceTag={priceTag} precision={precision} />
 
       {/* TV-style descriptive pill on the line itself — shown while the line is
@@ -3560,6 +3581,7 @@ export default function ChartCore({
         focusedPillKey={focusedPillKey}
         tradePillLeft={TRADE_PILL_LEFT}
       />
+      </div>
 
       {!isSynthetic(symbol.epic) && !snapView && (
       <div
