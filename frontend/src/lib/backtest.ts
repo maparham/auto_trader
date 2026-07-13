@@ -970,7 +970,8 @@ export async function runAndRender(
   // across cells share the ~5MB budget), the in-memory render below still works,
   // but a later rehydrate would find nothing: warn the user rather than let the
   // markers silently vanish on their next TF switch.
-  if (!saveBacktestResult(scope, req.epic, result, period, showEquity)) {
+  const saveOk = saveBacktestResult(scope, req.epic, result, period, showEquity);
+  if (!saveOk) {
     toast("Backtest too large to save — it won't persist across timeframe switches or reloads.");
   }
   // Render for the CURRENTLY displayed timeframe, not blindly native: the run's
@@ -979,9 +980,11 @@ export async function runAndRender(
   // NOT switch the chart. Hardcoding native+equity then piled every fine fill onto
   // the coarse bars (aggregate's whole reason to exist) and drew a gappy equity
   // pane. Same flags rehydrate uses, so a run and a switch-away-and-back now agree.
-  // Render the freshly-STORED object (which carries `period`) so the shading is
-  // present at render time.
-  const stored = loadBacktestResult(scope, req.epic) ?? result;
+  // On a successful save, render the freshly-STORED copy (downsampled equity +
+  // period shading). If the save was dropped (quota), read-back would return a
+  // STALE prior run — render the in-memory `result` instead so the chart matches
+  // what just ran (and the toast's promise).
+  const stored = (saveOk ? loadBacktestResult(scope, req.epic) : null) ?? result;
   const flags = backtestRenderFlags(displayResolution, req.resolution);
   const t2 = performance.now();
   renderArtifacts(chart, stored, { ...flags, drawEquity: flags.drawEquity && showEquity });

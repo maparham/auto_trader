@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { installMemStorage } from "../testMemStorage";
 
 installMemStorage();
@@ -18,9 +18,12 @@ describe("save()", () => {
     localStorage.setItem = () => {
       throw new DOMException("quota", "QuotaExceededError");
     };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       expect(save("auto-trader.big", { a: 1 })).toBe(false);
+      expect(warnSpy).toHaveBeenCalled();
     } finally {
+      warnSpy.mockRestore();
       localStorage.setItem = orig;
     }
   });
