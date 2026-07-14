@@ -5,7 +5,7 @@ from auto_trader.engine.analysis import compute_analysis
 
 
 def _t(pnl, *, entry=100.0, exit_=None, stop=95.0, target=None, leg="long",
-       reason="rule", mae_r=None, mfe_r=None, context=None):
+       reason="rule", mae_r=None, mfe_r=None, context=None, entry_time=None):
     if exit_ is None:
         exit_ = entry + pnl  # qty 1 price move == pnl for a long
     return {
@@ -13,6 +13,7 @@ def _t(pnl, *, entry=100.0, exit_=None, stop=95.0, target=None, leg="long",
         "stop_initial": stop, "target": target, "reason": reason,
         "mae": (mae_r or 0.0) * 5.0, "mfe": (mfe_r or 0.0) * 5.0,
         "mae_r": mae_r, "mfe_r": mfe_r, "context": context,
+        "entry_time": entry_time,
     }
 
 
@@ -115,3 +116,47 @@ def test_hour_stats_sorted_and_empty():
     trades = [_t(1.0, context={"hour_utc": 20}), _t(1.0, context={"hour_utc": 3})]
     hours = [r["hour"] for r in compute_analysis(trades)["hour_stats"]]
     assert hours == [3, 20]
+
+
+from datetime import datetime, timezone
+
+
+def _ts(year, month, day=15):
+    """Unix seconds at noon UTC on the given calendar day."""
+    return int(datetime(year, month, day, 12, tzinfo=timezone.utc).timestamp())
+
+
+def test_month_stats_groups_by_calendar_month():
+    trades = [
+        _t(10.0, entry_time=_ts(2026, 1)),
+        _t(-4.0, entry_time=_ts(2026, 1)),
+        _t(6.0, entry_time=_ts(2026, 2)),
+        _t(-2.0, entry_time=_ts(2026, 2)),
+        _t(3.0, entry_time=_ts(2026, 2)),
+    ]
+    rows = compute_analysis(trades)["month_stats"]
+    # Chronological order.
+    assert [r["bucket"] for r in rows] == ["2026-01", "2026-02"]
+    jan, feb = rows[0], rows[1]
+    assert jan["n"] == 2 and jan["net_pnl"] == 6.0
+    assert jan["win_rate"] == 0.5 and jan["expectancy"] == 3.0
+    assert feb["n"] == 3 and feb["net_pnl"] == 7.0
+
+
+def test_month_stats_empty_when_single_month():
+    trades = [_t(1.0, entry_time=_ts(2026, 3)), _t(-1.0, entry_time=_ts(2026, 3, 20))]
+    assert compute_analysis(trades)["month_stats"] == []
+
+
+def test_month_stats_skips_missing_entry_time_and_flags_low_sample():
+    # Two Jan trades (n=2 -> low_sample), five Feb trades (n=5 -> not low),
+    # one trade with no entry_time is skipped entirely.
+    trades = (
+        [_t(1.0, entry_time=_ts(2026, 1))] * 2
+        + [_t(1.0, entry_time=_ts(2026, 2))] * 5
+        + [_t(9.0)]  # entry_time None -> skipped
+    )
+    rows = {r["bucket"]: r for r in compute_analysis(trades)["month_stats"]}
+    assert set(rows) == {"2026-01", "2026-02"}
+    assert rows["2026-01"]["n"] == 2 and rows["2026-01"]["low_sample"] is True
+    assert rows["2026-02"]["n"] == 5 and rows["2026-02"]["low_sample"] is False

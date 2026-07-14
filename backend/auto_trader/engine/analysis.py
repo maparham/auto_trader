@@ -9,6 +9,7 @@ low_sample rather than hidden. Zero trades produce an empty-but-valid payload.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from statistics import median
 
 MAE_EDGES = [0.25, 0.5, 0.75, 1.0]
@@ -86,6 +87,38 @@ def _hour_stats(trades: list[dict]) -> list[dict]:
     ]
 
 
+def _month_stats(trades: list[dict]) -> list[dict]:
+    """Per-calendar-month rows (YYYY-MM, UTC) for the monthly breakdown.
+
+    Same row shape and win/expectancy/low_sample definitions as _rows, but
+    sorted chronologically rather than by count. Returns [] when trades span
+    fewer than two distinct months, so a single-month run shows no table.
+    Trades with no entry_time are skipped. Month is taken in UTC, matching how
+    day_of_week is derived; a trade within hours of a month boundary could fall
+    in an adjacent month under a distant timezone (accepted imprecision)."""
+    groups: dict[str, list[dict]] = {}
+    for t in trades:
+        ts = t.get("entry_time")
+        if ts is None:
+            continue
+        key = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m")
+        groups.setdefault(key, []).append(t)
+    if len(groups) < 2:
+        return []
+    rows = []
+    for month, ts_group in sorted(groups.items()):
+        pnls = [t["pnl"] for t in ts_group]
+        rows.append({
+            "bucket": month,
+            "n": len(ts_group),
+            "win_rate": sum(1 for p in pnls if p > 0) / len(ts_group),
+            "expectancy": sum(pnls) / len(ts_group),
+            "net_pnl": sum(pnls),
+            "low_sample": len(ts_group) < LOW_SAMPLE_N,
+        })
+    return rows
+
+
 def compute_analysis(trades: list[dict]) -> dict:
     winners = [t for t in trades if t["pnl"] > 0]
     losers = [t for t in trades if t["pnl"] < 0]
@@ -142,5 +175,6 @@ def compute_analysis(trades: list[dict]) -> dict:
         "r_hist": _hist(realized, R_EDGES),
         "context": {f: _ctx(f) for f in CONTEXT_FEATURES},
         "hour_stats": _hour_stats(trades),
+        "month_stats": _month_stats(trades),
         "whatif": compute_whatif(trades),
     }

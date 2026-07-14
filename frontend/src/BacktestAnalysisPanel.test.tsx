@@ -323,6 +323,38 @@ describe("BacktestAnalysisPanel", () => {
     // The tab is still visible because other scenarios remain.
     expect(screen.getByText(/What if/i)).toBeTruthy();
   });
+
+  describe("By month section", () => {
+    const monthRow = (bucket: string, net_pnl: number) => ({
+      bucket, n: 6, win_rate: 0.5, expectancy: net_pnl / 6, net_pnl, low_sample: false,
+    });
+
+    it("renders when two or more month rows are present", () => {
+      render(
+        <BacktestAnalysisPanel
+          analysis={{ ...analysis, month_stats: [monthRow("2026-01", 120), monthRow("2026-02", -40)] }}
+        />,
+      );
+      showTab("Context");
+      expect(screen.getByText("By month")).toBeTruthy();
+      expect(screen.getByText("2026-01")).toBeTruthy();
+      expect(screen.getByText("2026-02")).toBeTruthy();
+    });
+
+    it("is hidden with fewer than two month rows", () => {
+      render(
+        <BacktestAnalysisPanel analysis={{ ...analysis, month_stats: [monthRow("2026-01", 120)] }} />,
+      );
+      showTab("Context");
+      expect(screen.queryByText("By month")).toBeNull();
+    });
+
+    it("is hidden when month_stats is absent", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} />); // base literal has no month_stats
+      showTab("Context");
+      expect(screen.queryByText("By month")).toBeNull();
+    });
+  });
 });
 
 describe("hourBucketRows", () => {

@@ -560,27 +560,31 @@ export default function BacktestAnalysisPanel({
           ["vol_regime", "Volatility regime", "ctx-vol-regime"],
           ["session", "Session", "ctx-session"],
           ["hour_bucket", "Time of day", "ctx-hour-bucket"],
+          ["month", "By month", "ctx-month"],
           ["candle_pattern", "Entry-bar pattern", "ctx-candle-pattern"],
           ["day_of_week", "Day of week", "ctx-day-of-week"],
         ] as const
-      ).map(([key, label, slug]) => (
-        <section key={key} className="bt-analysis-section">
-          <SectionH4 slug={slug} open={!collapsed.has(slug)} onToggle={toggleSection}>
-            {label}
-          </SectionH4>
-          {!collapsed.has(slug) && (
-            <RowsTable
-              rows={
-                key === "day_of_week"
-                  ? dayOfWeekRows(analysis.context[key] ?? [])
-                  : key === "hour_bucket"
-                    ? hourBucketRows(analysis.hour_stats ?? [])
-                    : analysis.context[key] ?? []
-              }
-            />
-          )}
-        </section>
-      ))}
+      ).map(([key, label, slug]) => {
+        const rows =
+          key === "month"
+            ? analysis.month_stats ?? []
+            : key === "day_of_week"
+              ? dayOfWeekRows(analysis.context[key] ?? [])
+              : key === "hour_bucket"
+                ? hourBucketRows(analysis.hour_stats ?? [])
+                : analysis.context[key] ?? [];
+        // The monthly table only earns its place on multi-month runs; a
+        // single-month run would be a one-row table that says nothing.
+        if (key === "month" && rows.length < 2) return null;
+        return (
+          <section key={key} className="bt-analysis-section">
+            <SectionH4 slug={slug} open={!collapsed.has(slug)} onToggle={toggleSection}>
+              {label}
+            </SectionH4>
+            {!collapsed.has(slug) && <RowsTable rows={rows} />}
+          </section>
+        );
+      })}
       </>
       )}
     </div>
