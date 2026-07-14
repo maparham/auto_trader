@@ -91,6 +91,12 @@ class CandleCache:
             "oldest_ts INTEGER, newest_ts INTEGER,"
             "PRIMARY KEY (broker, epic, resolution, side))"
         )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS backfill_state ("
+            "broker TEXT, epic TEXT, resolution TEXT, side TEXT,"
+            "reached_floor INTEGER NOT NULL DEFAULT 0,"
+            "PRIMARY KEY (broker, epic, resolution, side))"
+        )
         conn.commit()
         return conn
 
@@ -197,6 +203,32 @@ class CandleCache:
                 "(broker, epic, resolution, side, oldest_ts, newest_ts) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (*key, lo, hi),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _backfill_reached_floor(self, key: CandleKey) -> bool:
+        """True once deep backfill has confirmed the broker has no bars below our
+        oldest cached bar for this series, so reopens don't re-page empty pre-history."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT reached_floor FROM backfill_state "
+                "WHERE broker=? AND epic=? AND resolution=? AND side=?",
+                key,
+            ).fetchone()
+        finally:
+            conn.close()
+        return bool(row and row[0])
+
+    def _set_backfill_floor(self, key: CandleKey) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO backfill_state "
+                "(broker, epic, resolution, side, reached_floor) VALUES (?, ?, ?, ?, 1)",
+                key,
             )
             conn.commit()
         finally:
@@ -390,6 +422,71 @@ class CandleCache:
         forming = [b for b in fetched if int(b.time.timestamp()) >= cutoff]
         closed = await asyncio.to_thread(self._read_back, key, count - len(forming), cutoff)
         return closed + forming
+
+    async def backfill_below(
+        self,
+        key: CandleKey,
+        res_seconds: int,
+        fetch_range: Callable[[datetime, datetime], Awaitable[list[Candle]]],
+        *,
+        target_oldest_ts: int,
+        max_bars_per_step: int = 1000,
+        max_empty_gap_seconds: int = 5 * 86_400,
+        now: float | None = None,
+    ) -> str:
+        """Walk coverage's `oldest` watermark down toward `target_oldest_ts` (or the
+        broker's retention floor), storing every closed bar found.
+
+        Coverage-safe by construction: `oldest` is lowered ONLY to a bar the broker
+        actually returned, never to a requested start, so a broker that truncates a
+        wide request (MT5 pages cap ~40k bars) can't create a silent hole. Empty steps
+        (proven-empty windows) advance an in-loop cursor but do NOT extend coverage, so
+        `coverage.oldest` always equals the deepest real bar (clean cache-stats). A
+        continuous empty run >= `max_empty_gap_seconds` is the broker floor (short
+        weekend/holiday gaps don't trip it) and sets a persistent marker so reopens skip.
+
+        Holds the per-key lock across the whole walk (serialized with window()/recent()).
+        A first-ever deep backfill can hold it for the run; live bars keep flowing over
+        the stream meanwhile, and recent() bridges any gap once the lock frees. Returns
+        "cold" (no coverage yet), "target", "floor", or "error" (a fetch raised)."""
+        if await asyncio.to_thread(self._backfill_reached_floor, key):
+            return "floor"
+        now_s = now if now is not None else time.time()
+        cutoff = _bucket_start(now_s, res_seconds)
+        async with self._key_lock(key):
+            cov = await asyncio.to_thread(self._coverage, key)
+            if cov is None:
+                return "cold"  # a forward load must establish a block to anchor below
+            oldest = cov[0]
+            empty_span = 0
+            while oldest > target_oldest_ts:
+                step_start = max(target_oldest_ts, oldest - max_bars_per_step * res_seconds)
+                start_dt = datetime.fromtimestamp(step_start, tz=timezone.utc)
+                end_dt = datetime.fromtimestamp(oldest - 1, tz=timezone.utc)
+                try:
+                    fetched = await fetch_range(start_dt, end_dt)
+                except Exception:
+                    log.warning("backfill fetch failed for %s; stopping (floor unset)", key)
+                    return "error"
+                closed = [b for b in fetched if int(b.time.timestamp()) < cutoff]
+                new_oldest = min((int(b.time.timestamp()) for b in closed), default=None)
+                if new_oldest is None:
+                    # Proven-empty window: advance the local cursor and accrue the gap.
+                    # Do NOT extend coverage, so coverage.oldest stays at the deepest
+                    # real bar. A long-enough continuous empty run is the broker floor.
+                    empty_span += oldest - step_start
+                    oldest = step_start
+                    if empty_span >= max_empty_gap_seconds:
+                        await asyncio.to_thread(self._set_backfill_floor, key)
+                        return "floor"
+                    continue
+                empty_span = 0
+                await asyncio.to_thread(self._store_closed, key, closed, cutoff, False)
+                # Lower oldest only to the deepest real bar. MIN keeps oldest; passing
+                # new_oldest as the hi arg leaves newest intact (new_oldest < newest).
+                await asyncio.to_thread(self._extend_coverage, key, new_oldest, new_oldest)
+                oldest = new_oldest
+            return "target"
 
 
 from auto_trader.config import settings  # noqa: E402  (singleton at module load, mirrors tick_store)

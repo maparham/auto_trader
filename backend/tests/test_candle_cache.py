@@ -396,3 +396,157 @@ def test_recent_warm_counts_as_hit(tmp_path):
     assert stats["hits"] == 1
     assert stats["misses"] == 0
     assert stats["last_fetch_ts"] == 340
+
+
+def test_backfill_floor_defaults_false(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    assert cache._backfill_reached_floor(KEY) is False
+
+
+def test_set_backfill_floor_persists_true(tmp_path):
+    path = str(tmp_path / "c.db")
+    cache = CandleCache(path)
+    cache._set_backfill_floor(KEY)
+    assert cache._backfill_reached_floor(KEY) is True
+    # Survives a fresh connection (new cache instance, same file).
+    assert CandleCache(path)._backfill_reached_floor(KEY) is True
+
+
+def test_backfill_floor_is_per_key(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._set_backfill_floor(KEY)
+    other = ("capital", "GBPUSD", "MINUTE", "mid")
+    assert cache._backfill_reached_floor(other) is False
+
+
+class _RangeSource:
+    """Fetcher returning only bars that actually exist in `_have` within [start,end].
+    Models a broker whose history has a hard floor and interior (weekend) gaps."""
+
+    def __init__(self, have_ts: list[int], close: float = 1.0, error: Exception | None = None):
+        self._have = sorted(have_ts)
+        self._close = close
+        self._error = error
+        self.range_calls: list[tuple[int, int]] = []
+
+    async def range(self, start, end):
+        s, e = int(start.timestamp()), int(end.timestamp())
+        self.range_calls.append((s, e))
+        if self._error:
+            raise self._error
+        return [_c(t, self._close) for t in self._have if s <= t <= e]
+
+
+class _OneThenError:
+    """Returns a fixed block on the first range call, raises on the second. Used to
+    freeze the walk after exactly one productive step so coverage can be inspected."""
+
+    def __init__(self, bars):
+        self._bars = bars
+        self.calls = 0
+
+    async def range(self, start, end):
+        self.calls += 1
+        if self.calls == 1:
+            return list(self._bars)
+        raise RuntimeError("stop after one step")
+
+
+def test_backfill_cold_returns_cold_no_fetch(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = _RangeSource(have_ts=[100, 160])
+    status = asyncio.run(
+        cache.backfill_below(KEY, 60, src.range, target_oldest_ts=0, now=10_000)
+    )
+    assert status == "cold"
+    assert src.range_calls == []  # no coverage to anchor below
+
+
+def test_backfill_reaches_floor_and_sets_marker(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    # Seed a forward block so coverage.oldest = 400.
+    cache._store_closed(KEY, [_c(400, 1.0), _c(460, 1.0)], cutoff_ts=10_000)
+    # Broker has bars 100..400 (step 60), nothing below 100.
+    src = _RangeSource(have_ts=list(range(100, 460, 60)))
+    status = asyncio.run(
+        cache.backfill_below(
+            KEY, 60, src.range,
+            target_oldest_ts=0, max_bars_per_step=2, max_empty_gap_seconds=100, now=10_000,
+        )
+    )
+    assert status == "floor"
+    assert cache._coverage(KEY)[0] == 100          # oldest stays at the deepest real bar
+    assert cache._backfill_reached_floor(KEY) is True
+
+
+def test_backfill_extends_only_to_returned_min_not_step_start(tmp_path):
+    # Regression for the MT5 page-cap silent-hole: a step whose returned bars have a
+    # min ABOVE the requested step_start must lower coverage only to that min, never
+    # to step_start. Freeze after one step to inspect.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(1000, 1.0)], cutoff_ts=100_000)  # oldest = 1000
+    src = _OneThenError([_c(880, 1.0), _c(940, 1.0)])  # min 880, step_start will be 400
+    status = asyncio.run(
+        cache.backfill_below(
+            KEY, 60, src.range,
+            target_oldest_ts=0, max_bars_per_step=10, now=100_000,
+        )
+    )
+    assert status == "error"                 # second step raised, ending the walk
+    assert cache._coverage(KEY)[0] == 880    # only the deepest returned bar, NOT 400
+
+
+def test_backfill_skips_interior_gap_without_false_floor(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(1200, 1.0)], cutoff_ts=100_000)  # oldest = 1200
+    # Top block 1000..1120, interior 120s empty gap, bottom block 700..820; floor 700.
+    have = [700, 760, 820, 1000, 1060, 1120]
+    src = _RangeSource(have_ts=have)
+    status = asyncio.run(
+        cache.backfill_below(
+            KEY, 60, src.range,
+            target_oldest_ts=0, max_bars_per_step=2,
+            max_empty_gap_seconds=600,  # > the 120s interior gap, < the empty run below 700
+            now=100_000,
+        )
+    )
+    assert status == "floor"
+    assert cache._coverage(KEY)[0] == 700  # crossed the interior gap, reached the real floor
+
+
+def test_backfill_stops_at_target_without_floor(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(1000, 1.0)], cutoff_ts=100_000)  # oldest = 1000
+    src = _RangeSource(have_ts=list(range(100, 1000, 60)))  # bars all the way down
+    status = asyncio.run(
+        cache.backfill_below(
+            KEY, 60, src.range,
+            target_oldest_ts=700, max_bars_per_step=2, now=100_000,
+        )
+    )
+    assert status == "target"
+    assert cache._coverage(KEY)[0] == 700
+    assert cache._backfill_reached_floor(KEY) is False  # target, not floor
+
+
+def test_backfill_noop_after_floor(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(400, 1.0)], cutoff_ts=10_000)
+    cache._set_backfill_floor(KEY)
+    src = _RangeSource(have_ts=[100, 160, 220])
+    status = asyncio.run(
+        cache.backfill_below(KEY, 60, src.range, target_oldest_ts=0, now=10_000)
+    )
+    assert status == "floor"
+    assert src.range_calls == []  # already at floor -> zero broker calls
+
+
+def test_backfill_error_does_not_set_floor(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(400, 1.0)], cutoff_ts=10_000)
+    src = _RangeSource(have_ts=[], error=RuntimeError("breaker open"))
+    status = asyncio.run(
+        cache.backfill_below(KEY, 60, src.range, target_oldest_ts=0, now=10_000)
+    )
+    assert status == "error"
+    assert cache._backfill_reached_floor(KEY) is False  # resumes next session

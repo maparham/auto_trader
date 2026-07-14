@@ -23,6 +23,7 @@ from auto_trader.core.candle_aggregate import (
     aggregate_candle_stream,
     is_derived,
 )
+from auto_trader.core.candle_accumulator import CANDLE_ACCUMULATOR
 from auto_trader.core.candle_cache import CANDLE_CACHE
 from auto_trader.core.models import Candle, Resolution
 
@@ -32,6 +33,27 @@ from .charts import _candle_dto
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _accum_params(
+    broker_id: str, epic: str, res_raw: str, price_side: str, *, is_ig: bool
+) -> tuple[tuple[str, str, str, str], int] | None:
+    """The (key, res_seconds) to accumulate for a viewed series, or None to skip.
+    Seconds resolutions are skipped (served from TICK_STORE). Derived timeframes
+    return their BASE series (the cache only stores base bars)."""
+    if res_raw in SECONDS_INTERVALS:
+        return None
+    if is_derived(res_raw):
+        rule = DERIVED.get(res_raw)
+        if rule is None:
+            return None
+        base = rule.base
+        return (broker_id, epic, base.value, price_side), base.seconds
+    try:
+        resolution = Resolution(res_raw)
+    except ValueError:
+        return None
+    return (broker_id, epic, resolution.value, price_side), resolution.seconds
 
 
 @router.websocket("/ws/candles")
@@ -189,6 +211,29 @@ async def ws_candles(websocket: WebSocket) -> None:
         except WebSocketDisconnect:
             return
 
+    accum = _accum_params(broker_id, epic, res_raw, price_side, is_ig=is_ig)
+    if accum is not None:
+        accum_key, accum_res_seconds = accum
+        accum_res = Resolution(accum_key[2])  # base resolution for derived, else native
+
+        async def _accum_range(start, end):
+            return await deps.guarded(
+                broker_id,
+                lambda: broker.get_candles(epic, accum_res, start, end, price_side),
+                "accumulate backfill",
+            )
+
+        async def _accum_recent(n):
+            return await deps.guarded(
+                broker_id,
+                lambda: broker.get_recent_candles(epic, accum_res, n, price_side),
+                "accumulate seed",
+            )
+
+        CANDLE_ACCUMULATOR.on_view_start(
+            accum_key, accum_res_seconds, _accum_range, _accum_recent, is_ig=is_ig
+        )
+
     forward_task = asyncio.create_task(forward())
     watch_task = asyncio.create_task(watch_disconnect())
     try:
@@ -204,3 +249,5 @@ async def ws_candles(websocket: WebSocket) -> None:
         forward_task.cancel()
         watch_task.cancel()
         await asyncio.gather(forward_task, watch_task, return_exceptions=True)
+        if accum is not None:
+            CANDLE_ACCUMULATOR.on_view_stop(accum_key)
