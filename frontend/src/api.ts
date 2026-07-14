@@ -179,6 +179,20 @@ export interface BacktestWhatif {
     | null;
 }
 
+export interface BarDynamicsMetrics {
+  bars_held: number | null;
+  bars_in_profit: number | null;
+  bars_in_loss: number | null;
+  body_through: number | null;
+  wick_from_profit: number | null;
+  wick_from_loss: number | null;
+  longest_profit_streak: number | null;
+  longest_loss_streak: number | null;
+  bars_to_mfe: number | null;
+  bars_to_mae: number | null;
+  entry_crossings: number | null;
+}
+
 export interface BacktestAnalysis {
   n_trades: number;
   sl: {
@@ -198,6 +212,22 @@ export interface BacktestAnalysis {
   context: Record<string, AnalysisRow[]>;
   hour_stats?: { hour: number; n: number; wins: number; sum_pnl: number }[];
   month_stats?: AnalysisRow[];
+  bar_dynamics?: {
+    n_winners: number;
+    n_losers: number;
+    n_total: number;
+    winners: BarDynamicsMetrics;
+    losers: BarDynamicsMetrics;
+    total: BarDynamicsMetrics;
+  };
+  // Winner/loser trade counts bucketed by hold duration. bar_width is the bars
+  // per bucket; bucket i spans held-bar counts [i*bar_width, (i+1)*bar_width).
+  // Null for runs without bar stats.
+  duration_hist?: {
+    bar_width: number;
+    winners: number[];
+    losers: number[];
+  } | null;
   whatif?: BacktestWhatif;
 }
 

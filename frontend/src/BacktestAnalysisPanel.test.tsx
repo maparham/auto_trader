@@ -82,7 +82,7 @@ const analysis: BacktestAnalysis = {
 };
 
 // Click a sub-tab by its accessible name.
-const showTab = (name: "Placement" | "What-if" | "Context") =>
+const showTab = (name: "Stops & targets" | "Bar dynamics" | "What-if" | "Breakdowns") =>
   fireEvent.click(screen.getByRole("tab", { name }));
 
 describe("BacktestAnalysisPanel", () => {
@@ -90,14 +90,14 @@ describe("BacktestAnalysisPanel", () => {
     render(<BacktestAnalysisPanel analysis={analysis} />);
     expect(screen.getByText(/25% of winners drew down 80% of the way to the stop before recovering/i)).toBeTruthy();
     expect(screen.getByText(/1.1R/)).toBeTruthy(); // left on the table
-    showTab("Context");
+    showTab("Breakdowns");
     expect(screen.getByText("target")).toBeTruthy();
     expect(screen.getByText("up")).toBeTruthy();
   });
 
   it("shows day names in calendar order for day_of_week buckets", () => {
     render(<BacktestAnalysisPanel analysis={analysis} />);
-    showTab("Context");
+    showTab("Breakdowns");
     const mon = screen.getByText("Mon");
     const thu = screen.getByText("Thu"); // bucket "3", listed first by count
     expect(mon).toBeTruthy();
@@ -175,14 +175,14 @@ describe("BacktestAnalysisPanel", () => {
     expect(screen.queryByRole("tab", { name: "What-if" })).toBeNull();
     // The other two tabs still work.
     expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy();
-    showTab("Context");
+    showTab("Breakdowns");
     expect(screen.getByText("target")).toBeTruthy();
   });
 
   describe("sub-tabs", () => {
     it("defaults to Placement and shows only that page's content", () => {
       render(<BacktestAnalysisPanel analysis={analysis} />);
-      const placement = screen.getByRole("tab", { name: "Placement" });
+      const placement = screen.getByRole("tab", { name: "Stops & targets" });
       expect(placement.getAttribute("aria-selected")).toBe("true");
       expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy();
       // Context and What-if content is not mounted.
@@ -192,23 +192,23 @@ describe("BacktestAnalysisPanel", () => {
 
     it("switching tabs swaps the content", () => {
       render(<BacktestAnalysisPanel analysis={analysis} />);
-      showTab("Context");
+      showTab("Breakdowns");
       expect(screen.getByText("target")).toBeTruthy();
       expect(screen.queryByText(/25% of winners drew down/i)).toBeNull();
       showTab("What-if");
       expect(screen.getByText(/fill delay costs/i)).toBeTruthy();
       expect(screen.queryByText("target")).toBeNull();
-      showTab("Placement");
+      showTab("Stops & targets");
       expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy();
     });
 
     it("persists the active tab across remount", () => {
       render(<BacktestAnalysisPanel analysis={analysis} />);
-      showTab("Context");
+      showTab("Breakdowns");
       cleanup();
       render(<BacktestAnalysisPanel analysis={analysis} />);
       expect(
-        screen.getByRole("tab", { name: "Context" }).getAttribute("aria-selected"),
+        screen.getByRole("tab", { name: "Breakdowns" }).getAttribute("aria-selected"),
       ).toBe("true");
       expect(screen.getByText("target")).toBeTruthy();
     });
@@ -217,7 +217,7 @@ describe("BacktestAnalysisPanel", () => {
       saveBacktestAnalysisTab("whatif");
       render(<BacktestAnalysisPanel analysis={{ ...analysis, whatif: undefined }} />);
       expect(
-        screen.getByRole("tab", { name: "Placement" }).getAttribute("aria-selected"),
+        screen.getByRole("tab", { name: "Stops & targets" }).getAttribute("aria-selected"),
       ).toBe("true");
       expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy();
     });
@@ -226,7 +226,7 @@ describe("BacktestAnalysisPanel", () => {
   describe("collapsible sections", () => {
     it("collapsing a section hides its body; header remains", () => {
       render(<BacktestAnalysisPanel analysis={analysis} />);
-      showTab("Context");
+      showTab("Breakdowns");
       expect(screen.getByText("target")).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: /exit reasons/i }));
       expect(screen.queryByText("target")).toBeNull(); // body hidden
@@ -238,11 +238,11 @@ describe("BacktestAnalysisPanel", () => {
 
     it("persists the collapsed set across remount", () => {
       render(<BacktestAnalysisPanel analysis={analysis} />);
-      showTab("Context");
+      showTab("Breakdowns");
       fireEvent.click(screen.getByRole("button", { name: /exit reasons/i }));
       cleanup();
       render(<BacktestAnalysisPanel analysis={analysis} />);
-      showTab("Context");
+      showTab("Breakdowns");
       expect(screen.queryByText("target")).toBeNull(); // still collapsed
       expect(screen.getByText("up")).toBeTruthy(); // trend table unaffected
     });
@@ -265,7 +265,7 @@ describe("BacktestAnalysisPanel", () => {
       );
       render(<BacktestAnalysisPanel analysis={analysis} />);
       expect(screen.getByText(/25% of winners drew down/i)).toBeTruthy(); // expanded
-      showTab("Context");
+      showTab("Breakdowns");
       expect(screen.queryByText("target")).toBeNull(); // exit-reasons collapsed
       expect(screen.getByText("up")).toBeTruthy(); // trend expanded
     });
@@ -335,7 +335,7 @@ describe("BacktestAnalysisPanel", () => {
           analysis={{ ...analysis, month_stats: [monthRow("2026-01", 120), monthRow("2026-02", -40)] }}
         />,
       );
-      showTab("Context");
+      showTab("Breakdowns");
       expect(screen.getByText("By month")).toBeTruthy();
       expect(screen.getByText("2026-01")).toBeTruthy();
       expect(screen.getByText("2026-02")).toBeTruthy();
@@ -345,14 +345,130 @@ describe("BacktestAnalysisPanel", () => {
       render(
         <BacktestAnalysisPanel analysis={{ ...analysis, month_stats: [monthRow("2026-01", 120)] }} />,
       );
-      showTab("Context");
+      showTab("Breakdowns");
       expect(screen.queryByText("By month")).toBeNull();
     });
 
     it("is hidden when month_stats is absent", () => {
       render(<BacktestAnalysisPanel analysis={analysis} />); // base literal has no month_stats
-      showTab("Context");
+      showTab("Breakdowns");
       expect(screen.queryByText("By month")).toBeNull();
+    });
+  });
+
+  describe("Bar dynamics tab", () => {
+    const metrics = (o: Partial<Record<string, number | null>> = {}) => ({
+      bars_held: 10, bars_in_profit: 6, bars_in_loss: 4, body_through: 1,
+      wick_from_profit: 2, wick_from_loss: 1, longest_profit_streak: 3,
+      longest_loss_streak: 2, bars_to_mfe: 5, bars_to_mae: 3,
+      entry_crossings: 2, ...o,
+    });
+
+    it("renders metric rows with a duration and share of bars held", () => {
+      const bd = {
+        n_winners: 3, n_losers: 2, n_total: 5,
+        winners: metrics(), losers: metrics(), total: metrics(),
+      };
+      render(<BacktestAnalysisPanel analysis={{ ...analysis, bar_dynamics: bd }} barSeconds={60} />);
+      showTab("Bar dynamics");
+      expect(screen.getByText(/Bars held/i)).toBeTruthy();
+      // Bars held: 10 bars at 60s/bar = 600s = 10m, and no percentage (it is the
+      // denominator). Bars in profit: 6/10 = 60% shown next to the duration, and
+      // the raw bar count is not shown.
+      expect(screen.getAllByText("10m").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("6m, 60%").length).toBeGreaterThan(0);
+    });
+
+    it("renders the duration histogram with winner and loser bars", () => {
+      const bd = {
+        n_winners: 3, n_losers: 2, n_total: 5,
+        winners: metrics(), losers: metrics(), total: metrics(),
+      };
+      // 3 buckets of width 1 bar at 60s/bar: bucket 1 covers "1m to 2m".
+      const duration_hist = { bar_width: 1, winners: [0, 2, 1], losers: [0, 1, 1] };
+      render(
+        <BacktestAnalysisPanel
+          analysis={{ ...analysis, bar_dynamics: bd, duration_hist }}
+          barSeconds={60}
+        />,
+      );
+      showTab("Bar dynamics");
+      expect(screen.getByText("Trades by hold duration")).toBeTruthy();
+      // Buckets 1 and 2 have trades; bucket 0 is empty and dropped. Their
+      // upper-edge x-axis labels (2m, 3m) show; the empty bucket's 1m does not.
+      expect(screen.getAllByText("2m").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("3m").length).toBeGreaterThan(0);
+      expect(screen.queryByText("1m")).toBeNull();
+    });
+
+    it("omits the histogram when duration_hist is null", () => {
+      const bd = {
+        n_winners: 1, n_losers: 0, n_total: 1,
+        winners: metrics(), losers: metrics(), total: metrics(),
+      };
+      render(
+        <BacktestAnalysisPanel
+          analysis={{ ...analysis, bar_dynamics: bd, duration_hist: null }}
+          barSeconds={60}
+        />,
+      );
+      showTab("Bar dynamics");
+      expect(screen.queryByText("Trades by hold duration")).toBeNull();
+    });
+
+    it("drops empty buckets, including interior ones", () => {
+      const bd = {
+        n_winners: 2, n_losers: 0, n_total: 2,
+        winners: metrics(), losers: metrics(), total: metrics(),
+      };
+      // Buckets 0 and 2 have trades; bucket 1 (the interior "2m" bucket) is
+      // empty and dropped, so no "2m" label appears but "1m" and "3m" do.
+      const duration_hist = { bar_width: 1, winners: [1, 0, 2], losers: [0, 0, 0] };
+      render(
+        <BacktestAnalysisPanel
+          analysis={{ ...analysis, bar_dynamics: bd, duration_hist }}
+          barSeconds={60}
+        />,
+      );
+      showTab("Bar dynamics");
+      expect(screen.getByText("Trades by hold duration")).toBeTruthy();
+      expect(screen.getAllByText("1m").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("3m").length).toBeGreaterThan(0);
+      expect(screen.queryByText("2m")).toBeNull();
+    });
+
+    it("omits the histogram when every bucket is empty (all break-even)", () => {
+      const bd = {
+        n_winners: 0, n_losers: 0, n_total: 2,
+        winners: metrics(), losers: metrics(), total: metrics(),
+      };
+      // Break-even trades are eligible but counted in neither series, so all
+      // buckets are zero: the whole block (heading included) is hidden.
+      const duration_hist = { bar_width: 1, winners: [0, 0], losers: [0, 0] };
+      render(
+        <BacktestAnalysisPanel
+          analysis={{ ...analysis, bar_dynamics: bd, duration_hist }}
+          barSeconds={60}
+        />,
+      );
+      showTab("Bar dynamics");
+      expect(screen.queryByText("Trades by hold duration")).toBeNull();
+    });
+
+    it("hides the Bar dynamics tab when no eligible trades", () => {
+      const allNull = () =>
+        metrics(Object.fromEntries(Object.keys(metrics()).map((k) => [k, null])));
+      const bd = {
+        n_winners: 0, n_losers: 0, n_total: 0,
+        winners: allNull(), losers: allNull(), total: allNull(),
+      };
+      render(<BacktestAnalysisPanel analysis={{ ...analysis, bar_dynamics: bd }} barSeconds={60} />);
+      expect(screen.queryByRole("tab", { name: "Bar dynamics" })).toBeNull();
+    });
+
+    it("hides the Bar dynamics tab when bar_dynamics is absent", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} barSeconds={60} />);
+      expect(screen.queryByRole("tab", { name: "Bar dynamics" })).toBeNull();
     });
   });
 });

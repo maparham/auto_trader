@@ -245,7 +245,7 @@ export default function BacktestPanel() {
             )}
           </div>
         ) : tab === "analysis" ? (
-          <BacktestAnalysisPanel analysis={result?.analysis} />
+          <BacktestAnalysisPanel analysis={result?.analysis} barSeconds={resSeconds} />
         ) : tab === "overview" ? (
           <div className="bt-panel-overview">
             {metricGroups(result).map((g) => (

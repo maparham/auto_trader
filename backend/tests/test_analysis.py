@@ -5,16 +5,19 @@ from auto_trader.engine.analysis import compute_analysis
 
 
 def _t(pnl, *, entry=100.0, exit_=None, stop=95.0, target=None, leg="long",
-       reason="rule", mae_r=None, mfe_r=None, context=None, entry_time=None):
+       reason="rule", mae_r=None, mfe_r=None, context=None, entry_time=None, bars=None):
     if exit_ is None:
         exit_ = entry + pnl  # qty 1 price move == pnl for a long
-    return {
+    d = {
         "pnl": pnl, "leg": leg, "entry_price": entry, "exit_price": exit_,
         "stop_initial": stop, "target": target, "reason": reason,
         "mae": (mae_r or 0.0) * 5.0, "mfe": (mfe_r or 0.0) * 5.0,
         "mae_r": mae_r, "mfe_r": mfe_r, "context": context,
         "entry_time": entry_time,
     }
+    if bars is not None:
+        d.update(bars)
+    return d
 
 
 def test_empty_run_is_valid():
@@ -160,3 +163,95 @@ def test_month_stats_skips_missing_entry_time_and_flags_low_sample():
     assert set(rows) == {"2026-01", "2026-02"}
     assert rows["2026-01"]["n"] == 2 and rows["2026-01"]["low_sample"] is True
     assert rows["2026-02"]["n"] == 5 and rows["2026-02"]["low_sample"] is False
+
+
+def _bars(held, profit, loss, **extra):
+    d = {"bars_held": held, "bars_in_profit": profit, "bars_in_loss": loss,
+         "body_through": 0, "wick_from_profit": 0, "wick_from_loss": 0,
+         "longest_profit_streak": 0, "longest_loss_streak": 0,
+         "bars_to_mfe": 0, "bars_to_mae": 0, "entry_crossings": 0}
+    d.update(extra)
+    return d
+
+
+def test_bar_dynamics_splits_winners_losers_and_averages():
+    trades = [
+        _t(5.0, bars=_bars(10, 8, 2, entry_crossings=1)),
+        _t(3.0, bars=_bars(6, 6, 0, entry_crossings=3)),
+        _t(-4.0, bars=_bars(8, 1, 7, entry_crossings=5)),
+    ]
+    bd = compute_analysis(trades)["bar_dynamics"]
+    assert bd["n_winners"] == 2 and bd["n_losers"] == 1 and bd["n_total"] == 3
+    # winners: bars_held mean (10+6)/2 = 8.0; entry_crossings (1+3)/2 = 2.0.
+    assert bd["winners"]["bars_held"] == 8.0
+    assert bd["winners"]["entry_crossings"] == 2.0
+    # winners bars_in_profit mean (8+6)/2 = 7.0; the client derives the share of
+    # bars held (7.0 / 8.0) for display, so no ratio is aggregated on the backend.
+    assert bd["winners"]["bars_in_profit"] == 7.0
+    assert "profit_time_pct" not in bd["winners"]
+    assert bd["losers"]["bars_held"] == 8.0
+    # total is the pooled average over all three trades, not winners plus losers:
+    # bars_held (10+6+8)/3 = 8.0; entry_crossings (1+3+5)/3 = 3.0.
+    assert bd["total"]["bars_held"] == 8.0
+    assert bd["total"]["entry_crossings"] == 3.0
+
+
+def test_bar_dynamics_excludes_trades_without_bar_stats():
+    # A trade with no bar-stat fields (older run) is not eligible.
+    trades = [_t(5.0, bars=_bars(10, 8, 2)), _t(2.0)]  # second has no bars
+    bd = compute_analysis(trades)["bar_dynamics"]
+    assert bd["n_winners"] == 1 and bd["n_losers"] == 0 and bd["n_total"] == 1
+    assert bd["winners"]["bars_held"] == 10.0
+    assert bd["total"]["bars_held"] == 10.0
+
+
+def test_bar_dynamics_empty_group_is_all_none():
+    bd = compute_analysis([])["bar_dynamics"]
+    assert bd["n_winners"] == 0 and bd["n_losers"] == 0 and bd["n_total"] == 0
+    assert bd["winners"]["bars_held"] is None
+    assert bd["winners"]["entry_crossings"] is None
+    assert bd["losers"]["bars_held"] is None
+    assert bd["total"]["bars_held"] is None
+
+
+def test_duration_hist_buckets_winners_and_losers():
+    # Longest hold is 5 bars, so with <=8 trades the bucket width is 1 bar and
+    # each distinct hold-length gets its own bucket (index == bars_held).
+    trades = [
+        _t(5.0, bars=_bars(1, 1, 0)),
+        _t(3.0, bars=_bars(1, 1, 0)),
+        _t(-2.0, bars=_bars(3, 0, 3)),
+        _t(4.0, bars=_bars(5, 4, 1)),
+        _t(-1.0, bars=_bars(5, 1, 4)),
+    ]
+    dh = compute_analysis(trades)["duration_hist"]
+    assert dh["bar_width"] == 1
+    # 6 buckets: hold lengths 0..5.
+    assert dh["winners"] == [0, 2, 0, 0, 0, 1]
+    assert dh["losers"] == [0, 0, 0, 1, 0, 1]
+
+
+def test_duration_hist_widens_bucket_for_long_holds():
+    # Longest hold is 40 bars over 8 target buckets -> raw 5 -> width 5.
+    trades = [_t(1.0, bars=_bars(h, 0, 0)) for h in (0, 4, 5, 9, 40)]
+    dh = compute_analysis(trades)["duration_hist"]
+    assert dh["bar_width"] == 5
+    assert len(dh["winners"]) == 9  # buckets 0..8 (40 // 5 + 1)
+    # holds 0 and 4 -> bucket 0; 5 and 9 -> bucket 1; 40 -> bucket 8.
+    assert dh["winners"][0] == 2 and dh["winners"][1] == 2 and dh["winners"][8] == 1
+
+
+def test_duration_hist_none_without_bar_stats():
+    assert compute_analysis([_t(1.0), _t(-1.0)])["duration_hist"] is None
+    assert compute_analysis([])["duration_hist"] is None
+
+
+def test_duration_hist_break_even_trades_counted_in_neither_series():
+    # pnl == 0 trades carry bar stats (eligible) but land in neither winners nor
+    # losers, so every bucket is zero. The dict is still returned (eligible
+    # trades exist); the client hides the chart when all buckets are empty.
+    trades = [_t(0.0, bars=_bars(1, 0, 0)), _t(0.0, bars=_bars(3, 0, 0))]
+    dh = compute_analysis(trades)["duration_hist"]
+    assert dh is not None
+    assert dh["winners"] == [0, 0, 0, 0]
+    assert dh["losers"] == [0, 0, 0, 0]

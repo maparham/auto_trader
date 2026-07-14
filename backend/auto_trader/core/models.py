@@ -157,6 +157,91 @@ class Signal:
 
 
 @dataclass(slots=True)
+class BarStats:
+    """Per-trade bar-count dynamics, accumulated one held bar at a time by
+    `update`. Classification is by the bar close vs the entry price; favorable
+    means up for a long and down for a short. The leading-underscore fields are
+    running state, not exported onto the Trade."""
+
+    bars_held: int = 0
+    bars_in_profit: int = 0
+    bars_in_loss: int = 0
+    body_through: int = 0
+    wick_from_profit: int = 0
+    wick_from_loss: int = 0
+    longest_profit_streak: int = 0
+    longest_loss_streak: int = 0
+    bars_to_mfe: int = 0
+    bars_to_mae: int = 0
+    entry_crossings: int = 0
+    _cur_profit: int = 0
+    _cur_loss: int = 0
+    _prev_zone: int = 0  # last non-flat zone: +1 profit, -1 loss, 0 unset
+    _fav: float = 0.0    # favorable extreme so far (seeded to entry)
+    _adv: float = 0.0    # adverse extreme so far (seeded to entry)
+    _seeded: bool = False
+
+    def update(self, entry: float, leg: str, bar: "Candle") -> None:
+        if not self._seeded:
+            self._fav = entry
+            self._adv = entry
+            self._seeded = True
+        self.bars_held += 1
+        long = leg == "long"
+        o, hi, lo, c = bar.open, bar.high, bar.low, bar.close
+        profit = c > entry if long else c < entry
+        loss = c < entry if long else c > entry
+
+        if profit:
+            self.bars_in_profit += 1
+            self._cur_profit += 1
+            self._cur_loss = 0
+            if self._cur_profit > self.longest_profit_streak:
+                self.longest_profit_streak = self._cur_profit
+        elif loss:
+            self.bars_in_loss += 1
+            self._cur_loss += 1
+            self._cur_profit = 0
+            if self._cur_loss > self.longest_loss_streak:
+                self.longest_loss_streak = self._cur_loss
+        else:  # flat: neither zone, resets both streaks
+            self._cur_profit = 0
+            self._cur_loss = 0
+
+        if min(o, c) < entry < max(o, c):
+            self.body_through += 1
+
+        if long:
+            if profit and lo <= entry and not (min(o, c) < entry < max(o, c)):
+                self.wick_from_profit += 1
+            if loss and hi >= entry and not (min(o, c) < entry < max(o, c)):
+                self.wick_from_loss += 1
+            if hi > self._fav:
+                self._fav = hi
+                self.bars_to_mfe = self.bars_held
+            if lo < self._adv:
+                self._adv = lo
+                self.bars_to_mae = self.bars_held
+        else:
+            if profit and hi >= entry and not (min(o, c) < entry < max(o, c)):
+                self.wick_from_profit += 1
+            if loss and lo <= entry and not (min(o, c) < entry < max(o, c)):
+                self.wick_from_loss += 1
+            if lo < self._fav:
+                self._fav = lo
+                self.bars_to_mfe = self.bars_held
+            if hi > self._adv:
+                self._adv = hi
+                self.bars_to_mae = self.bars_held
+
+        zone = 1 if profit else (-1 if loss else 0)
+        if zone != 0:
+            if self._prev_zone != 0 and zone != self._prev_zone:
+                self.entry_crossings += 1
+            self._prev_zone = zone
+
+
+@dataclass(slots=True)
 class Trade:
     """A completed round-trip (entry -> exit), produced by the engine."""
 
@@ -180,6 +265,19 @@ class Trade:
     mfe: float = 0.0
     mae_r: float | None = None
     mfe_r: float | None = None
+    # Per-trade bar-count dynamics (see engine BarStats): counts over the held
+    # bars (entry through exit). All default 0 for trades built without them.
+    bars_held: int = 0
+    bars_in_profit: int = 0
+    bars_in_loss: int = 0
+    body_through: int = 0
+    wick_from_profit: int = 0
+    wick_from_loss: int = 0
+    longest_profit_streak: int = 0
+    longest_loss_streak: int = 0
+    bars_to_mfe: int = 0
+    bars_to_mae: int = 0
+    entry_crossings: int = 0
     # Entry-context features at the SIGNAL bar (trend/vol regime/session/...),
     # attached post-run by engine.context_features; None until enriched.
     context: dict | None = None

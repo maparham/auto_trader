@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from auto_trader.core.models import BarTrace, Candle, Fill, Side, Signal, Trade
+from auto_trader.core.models import BarStats, BarTrace, Candle, Fill, Side, Signal, Trade
 from auto_trader.engine.risk import RiskConfig, is_trailing, stop_level, target_level
 from auto_trader.engine.scaling import ScalingConfig, spacing_ok
 from auto_trader.engine.schedule import RecurrenceMask, is_active
@@ -57,6 +57,8 @@ class Position:
     # `extreme`, which only tracks the trailing-stop ratchet.
     adv_extreme: float = 0.0
     fav_extreme: float = 0.0
+    # Per-bar dynamics accumulator, advanced once per held bar in _track_excursion.
+    bar_stats: BarStats = field(default_factory=BarStats)
 
 
 @dataclass(slots=True)
@@ -420,6 +422,17 @@ class BacktestEngine:
                 leg=side, reason_in=p.open_reason, reason_out=reason,
                 stop_initial=p.stop_initial, stop_final=p.stop, target=p.target,
                 mae=mae, mfe=mfe, mae_r=mae_r, mfe_r=mfe_r,
+                bars_held=p.bar_stats.bars_held,
+                bars_in_profit=p.bar_stats.bars_in_profit,
+                bars_in_loss=p.bar_stats.bars_in_loss,
+                body_through=p.bar_stats.body_through,
+                wick_from_profit=p.bar_stats.wick_from_profit,
+                wick_from_loss=p.bar_stats.wick_from_loss,
+                longest_profit_streak=p.bar_stats.longest_profit_streak,
+                longest_loss_streak=p.bar_stats.longest_loss_streak,
+                bars_to_mfe=p.bar_stats.bars_to_mfe,
+                bars_to_mae=p.bar_stats.bars_to_mae,
+                entry_crossings=p.bar_stats.entry_crossings,
             )
         )
         p.qty -= closing
@@ -473,8 +486,10 @@ class BacktestEngine:
     @staticmethod
     def _track_excursion(positions, side, bar):
         """Extend each open position's adverse/favorable watermarks with this
-        bar's range. Called before intra-bar exits so the exit bar counts."""
+        bar's range and advance its per-bar dynamics. Called before intra-bar
+        exits so the exit bar counts."""
         for p in positions:
+            p.bar_stats.update(p.entry, side, bar)
             if side == "long":
                 p.adv_extreme = min(p.adv_extreme, bar.low)
                 p.fav_extreme = max(p.fav_extreme, bar.high)

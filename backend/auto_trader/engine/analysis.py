@@ -119,6 +119,80 @@ def _month_stats(trades: list[dict]) -> list[dict]:
     return rows
 
 
+_BAR_METRICS = (
+    "bars_held", "bars_in_profit", "bars_in_loss", "body_through",
+    "wick_from_profit", "wick_from_loss", "longest_profit_streak",
+    "longest_loss_streak", "bars_to_mfe", "bars_to_mae", "entry_crossings",
+)
+
+
+def _avg_bar_metrics(group: list[dict]) -> dict:
+    """Mean of each bar metric over the group. All-None for an empty group. The
+    client derives each count's share of bars held for display, so no ratio is
+    aggregated here."""
+    if not group:
+        return {m: None for m in _BAR_METRICS}
+    return {m: sum(t[m] for t in group) / len(group) for m in _BAR_METRICS}
+
+
+def _bar_dynamics(trades: list[dict]) -> dict:
+    """Winners, losers, and all-trades averages of the per-trade bar-count
+    dynamics. A trade is eligible only if it carries bar stats (older runs
+    predate the fields and are skipped); when nothing is eligible every group is
+    all-None and the client hides the section. `total` is the pooled average
+    over all eligible trades, not the sum of the winner and loser averages."""
+    eligible = [t for t in trades if t.get("bars_held") is not None]
+    winners = [t for t in eligible if t["pnl"] > 0]
+    losers = [t for t in eligible if t["pnl"] < 0]
+    return {
+        "n_winners": len(winners),
+        "n_losers": len(losers),
+        "n_total": len(eligible),
+        "total": _avg_bar_metrics(eligible),
+        "winners": _avg_bar_metrics(winners),
+        "losers": _avg_bar_metrics(losers),
+    }
+
+
+def _nice_bucket_width(max_bars: int, target: int = 8) -> int:
+    """Round bar-count per duration bucket, chosen so the run spans roughly
+    `target` buckets. Widths follow a 1-2-5 progression so bucket edges land on
+    round bar counts (and therefore round duration multiples on the client)."""
+    if max_bars <= target:
+        return 1
+    raw = max_bars / target
+    for cand in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000):
+        if cand >= raw:
+            return cand
+    return 10000
+
+
+def _duration_hist(trades: list[dict]) -> dict | None:
+    """Winner/loser trade counts bucketed by how long each trade was held.
+
+    Buckets are equal spans of `bar_width` bars (bucket i covers held-bar counts
+    [i*bar_width, (i+1)*bar_width)); the client turns each span into a duration
+    range using the run resolution. Bucket width is chosen dynamically from the
+    longest hold. Returns None when no trade carries bar stats (older runs), so
+    the client hides the chart. Break-even trades (pnl == 0) are eligible but
+    counted in neither series, matching `_bar_dynamics`."""
+    eligible = [t for t in trades if t.get("bars_held") is not None]
+    if not eligible:
+        return None
+    max_bars = max(int(t["bars_held"]) for t in eligible)
+    width = _nice_bucket_width(max_bars)
+    n_buckets = max_bars // width + 1
+    winners = [0] * n_buckets
+    losers = [0] * n_buckets
+    for t in eligible:
+        i = int(t["bars_held"]) // width
+        if t["pnl"] > 0:
+            winners[i] += 1
+        elif t["pnl"] < 0:
+            losers[i] += 1
+    return {"bar_width": width, "winners": winners, "losers": losers}
+
+
 def compute_analysis(trades: list[dict]) -> dict:
     winners = [t for t in trades if t["pnl"] > 0]
     losers = [t for t in trades if t["pnl"] < 0]
@@ -176,5 +250,7 @@ def compute_analysis(trades: list[dict]) -> dict:
         "context": {f: _ctx(f) for f in CONTEXT_FEATURES},
         "hour_stats": _hour_stats(trades),
         "month_stats": _month_stats(trades),
+        "bar_dynamics": _bar_dynamics(trades),
+        "duration_hist": _duration_hist(trades),
         "whatif": compute_whatif(trades),
     }

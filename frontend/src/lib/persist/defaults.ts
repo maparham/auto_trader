@@ -207,7 +207,7 @@ export function saveBacktestPeriodsShown(shown: boolean): void {
 // DEVICE_LOCAL_FLAT_KEYS in core.ts; without that, hydrateFromBackend prunes
 // them a beat after each load, so the SECOND reload would lose them.
 const BACKTEST_ANALYSIS_TAB_KEY = `${PREFIX}.backtestAnalysisTab`;
-export type BacktestAnalysisTab = "placement" | "whatif" | "context";
+export type BacktestAnalysisTab = "placement" | "bardyn" | "whatif" | "context";
 export function loadBacktestAnalysisTab(): BacktestAnalysisTab {
   return load<BacktestAnalysisTab>(BACKTEST_ANALYSIS_TAB_KEY, "placement");
 }

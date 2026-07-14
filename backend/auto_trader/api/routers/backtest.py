@@ -332,6 +332,13 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             stop_final=t.stop_final,
             target=t.target,
             mae=t.mae, mfe=t.mfe, mae_r=t.mae_r, mfe_r=t.mfe_r, context=t.context,
+            bars_held=t.bars_held, bars_in_profit=t.bars_in_profit,
+            bars_in_loss=t.bars_in_loss, body_through=t.body_through,
+            wick_from_profit=t.wick_from_profit, wick_from_loss=t.wick_from_loss,
+            longest_profit_streak=t.longest_profit_streak,
+            longest_loss_streak=t.longest_loss_streak,
+            bars_to_mfe=t.bars_to_mfe, bars_to_mae=t.bars_to_mae,
+            entry_crossings=t.entry_crossings,
             whatif=t.whatif,
         )
         for t in result.trades

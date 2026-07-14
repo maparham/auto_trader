@@ -1,6 +1,13 @@
 import { useState, type ReactNode } from "react";
-import type { AnalysisHist, AnalysisRow, BacktestAnalysis, BacktestWhatif } from "./api";
+import type {
+  AnalysisHist,
+  AnalysisRow,
+  BacktestAnalysis,
+  BarDynamicsMetrics,
+  BacktestWhatif,
+} from "./api";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import {
   loadBacktestAnalysisCollapsed,
   loadBacktestAnalysisTab,
@@ -23,6 +30,20 @@ const fmtPctBelow100 = (v: number) =>
   v < 1 && Math.round(v * 100) >= 100
     ? `${(Math.floor(v * 1000) / 10).toFixed(1)}%`
     : fmtPct(v);
+
+// Compact wall-clock duration for a bar count at the run's bar interval.
+function fmtDuration(bars: number, barSeconds: number): string {
+  const s = Math.round(bars * barSeconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  if (h < 24) return rm ? `${h}h ${rm}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh ? `${d}d ${rh}h` : `${d}d`;
+}
 
 // Backend day_of_week buckets are Python weekday() ints as strings ("0" = Mon).
 // Show day names in calendar order (backend rows arrive sorted by trade count).
@@ -189,6 +210,174 @@ function Dist({
   );
 }
 
+type BarMetricKind = "duration" | "count";
+const BAR_DYNAMICS_METRICS: {
+  key: keyof BarDynamicsMetrics;
+  label: string;
+  kind: BarMetricKind;
+  tip: string;
+}[] = [
+  { key: "bars_held", label: "Bars held", kind: "duration",
+    tip: "Total bars the trade stayed open, entry through exit." },
+  { key: "bars_in_profit", label: "Bars in profit", kind: "duration",
+    tip: "Bars that closed on the winning side of entry." },
+  { key: "bars_in_loss", label: "Bars in loss", kind: "duration",
+    tip: "Bars that closed on the losing side of entry." },
+  { key: "longest_profit_streak", label: "Longest profit streak", kind: "duration",
+    tip: "Longest unbroken run of bars closing in profit." },
+  { key: "longest_loss_streak", label: "Longest loss streak", kind: "duration",
+    tip: "Longest unbroken run of bars closing in loss." },
+  { key: "bars_to_mfe", label: "Bars to peak (MFE)", kind: "duration",
+    tip: "Bars from entry to the best price the trade reached." },
+  { key: "bars_to_mae", label: "Bars to worst (MAE)", kind: "duration",
+    tip: "Bars from entry to the worst price the trade reached." },
+  { key: "body_through", label: "Body through entry", kind: "duration",
+    tip: "Bars whose open-to-close body crossed back through entry." },
+  { key: "wick_from_profit", label: "Wicked in from profit", kind: "duration",
+    tip: "Bars that closed in profit but whose wick dipped back to entry." },
+  { key: "wick_from_loss", label: "Wicked in from loss", kind: "duration",
+    tip: "Bars that closed in loss but whose wick poked up to entry." },
+  { key: "entry_crossings", label: "Entry crossings", kind: "count",
+    tip: "Times price flipped between the profit and loss side of entry." },
+];
+
+// A duration cell shows the wall-clock span of the average bar count and its
+// share of bars held. Bars held is the denominator, so it shows no percentage.
+function fmtBarMetric(
+  m: BarDynamicsMetrics,
+  key: keyof BarDynamicsMetrics,
+  kind: BarMetricKind,
+  barSeconds: number,
+): string {
+  const v = m[key];
+  if (v == null) return "n/a";
+  if (kind === "count") return v.toFixed(1);
+  const held = m.bars_held;
+  const pct =
+    key !== "bars_held" && held != null && held > 0 ? `, ${fmtPct(v / held)}` : "";
+  return `${fmtDuration(v, barSeconds)}${pct}`;
+}
+
+function BarDynamicsTable({
+  winners,
+  losers,
+  total,
+  barSeconds,
+}: {
+  winners: BarDynamicsMetrics;
+  losers: BarDynamicsMetrics;
+  total: BarDynamicsMetrics;
+  barSeconds: number;
+}) {
+  return (
+    <table className="bt-analysis-table bt-bardyn-table">
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>
+            <span className="bt-bardyn-colhead">
+              Winners
+              <InfoTip title="Winners" text="Averaged over trades that closed in profit." />
+            </span>
+          </th>
+          <th>
+            <span className="bt-bardyn-colhead">
+              Losers
+              <InfoTip title="Losers" text="Averaged over trades that closed at a loss." />
+            </span>
+          </th>
+          <th>
+            <span className="bt-bardyn-colhead">
+              Total
+              <InfoTip title="Total" text="Averaged over all trades, winners and losers together." />
+            </span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {BAR_DYNAMICS_METRICS.map(({ key, label, kind, tip }) => (
+          <tr key={key}>
+            <td>
+              <span className="bt-bardyn-metric">
+                {label}
+                <InfoTip title={label} text={tip} />
+              </span>
+            </td>
+            <td>{fmtBarMetric(winners, key, kind, barSeconds)}</td>
+            <td>{fmtBarMetric(losers, key, kind, barSeconds)}</td>
+            <td>{fmtBarMetric(total, key, kind, barSeconds)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// Tallest bar in the duration histogram, in pixels. Bar heights are absolute
+// (count / max * this) rather than percentages, which collapse to nothing when
+// a flex ancestor has no resolved height.
+const DUR_HIST_MAX_PX = 72;
+
+/** Grouped bar chart of winner/loser trade counts by hold duration. Bucket
+ * width (in bars) is chosen server-side; here each bucket becomes a duration
+ * range via barSeconds, with a green winner bar and a red loser bar side by
+ * side. Only buckets that hold at least one trade are drawn, so empty spans
+ * leave no gap. Green is winners, red is losers, matching the table below. */
+function DurationHistogram({
+  hist,
+  barSeconds,
+}: {
+  hist: { bar_width: number; winners: number[]; losers: number[] };
+  barSeconds: number;
+}) {
+  const { bar_width: width, winners, losers } = hist;
+  const buckets = winners
+    .map((w, i) => ({
+      i,
+      w,
+      l: losers[i],
+      label: `${fmtDuration(i * width, barSeconds)} to ${fmtDuration((i + 1) * width, barSeconds)}`,
+    }))
+    .filter((b) => b.w > 0 || b.l > 0);
+  // Nothing eligible (e.g. every trade broke even, counted in neither series):
+  // render nothing, heading included, so no orphaned title is left behind.
+  if (!buckets.length) return null;
+  const max = Math.max(1, ...buckets.map((b) => Math.max(b.w, b.l)));
+  const barPx = (c: number) => (c > 0 ? Math.max(2, (c / max) * DUR_HIST_MAX_PX) : 0);
+  return (
+    <div className="bt-dur-hist-block">
+      <div className="bt-dur-hist-title">
+        Trades by hold duration
+        <InfoTip
+          title="Trades by hold duration"
+          text="How many winning (green) and losing (red) trades were held for each span of time. Bucket width is set automatically from the longest hold."
+        />
+      </div>
+      <div className="bt-dur-hist-plot" style={{ height: DUR_HIST_MAX_PX + 18 }}>
+        {buckets.map(({ i, w, l, label }) => (
+          <div key={i} className="bt-dur-hist-col">
+            <div className="bt-dur-hist-pair">
+              <Tooltip content={`${label}: ${w} ${w === 1 ? "winner" : "winners"}`}>
+                <div className="bt-dur-bar-slot">
+                  {w > 0 && <span className="bt-dur-bar-count">{w}</span>}
+                  <div className="bt-dur-bar bt-dur-bar-win" style={{ height: barPx(w) }} />
+                </div>
+              </Tooltip>
+              <Tooltip content={`${label}: ${l} ${l === 1 ? "loser" : "losers"}`}>
+                <div className="bt-dur-bar-slot">
+                  {l > 0 && <span className="bt-dur-bar-count">{l}</span>}
+                  <div className="bt-dur-bar bt-dur-bar-loss" style={{ height: barPx(l) }} />
+                </div>
+              </Tooltip>
+            </div>
+            <div className="bt-dur-hist-xlabel">{fmtDuration((i + 1) * width, barSeconds)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RowsTable({ rows }: { rows: AnalysisRow[] }) {
   if (!rows.length) return <div className="bt-analysis-empty">No data.</div>;
   return (
@@ -208,7 +397,7 @@ function RowsTable({ rows }: { rows: AnalysisRow[] }) {
             key={r.bucket}
             className={
               (r.low_sample ? "bt-analysis-low " : "") +
-              (!r.low_sample && r.net_pnl < 0 ? "bt-analysis-under" : "")
+              (r.net_pnl < 0 ? "bt-analysis-under" : "")
             }
           >
             <td>{r.bucket}</td>
@@ -330,7 +519,7 @@ function WhatIfSection({
                     <td>{Math.round(r.frac * 100)}%</td>
                     <td>{r.winners_killed}</td>
                     <td>{r.losers_cheapened}</td>
-                    <td>{r.net_delta_r.toFixed(2)}</td>
+                    <td className={r.net_delta_r < 0 ? "bt-analysis-neg" : ""}>{r.net_delta_r.toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -382,7 +571,7 @@ function WhatIfSection({
                     <td>{r.n_armed}</td>
                     <td>{r.losers_rescued}</td>
                     <td>{r.winners_cut}</td>
-                    <td>{r.net_delta_r.toFixed(2)}</td>
+                    <td className={r.net_delta_r < 0 ? "bt-analysis-neg" : ""}>{r.net_delta_r.toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -397,8 +586,10 @@ function WhatIfSection({
 
 export default function BacktestAnalysisPanel({
   analysis,
+  barSeconds = 60,
 }: {
   analysis: BacktestAnalysis | null | undefined;
+  barSeconds?: number;
 }) {
   const [tab, setTab] = useState<BacktestAnalysisTab>(loadBacktestAnalysisTab);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
@@ -422,9 +613,14 @@ export default function BacktestAnalysisPanel({
   const { sl, tp } = analysis;
 
   const hasWhatif = whatifHasContent(analysis.whatif);
-  // A persisted "whatif" tab can point at a hidden tab (old stored runs have no
-  // whatif payload): fall back to Placement rather than an empty page.
-  const active: BacktestAnalysisTab = tab === "whatif" && !hasWhatif ? "placement" : tab;
+  const hasBarDynamics = !!analysis.bar_dynamics && analysis.bar_dynamics.n_total > 0;
+  // A persisted tab can point at a now-hidden tab (old stored runs lack the
+  // whatif payload or the bar-stat fields): fall back to Stops & targets rather
+  // than an empty page.
+  const active: BacktestAnalysisTab =
+    (tab === "whatif" && !hasWhatif) || (tab === "bardyn" && !hasBarDynamics)
+      ? "placement"
+      : tab;
   const pick = (t: BacktestAnalysisTab) => {
     setTab(t);
     saveBacktestAnalysisTab(t);
@@ -459,8 +655,18 @@ export default function BacktestAnalysisPanel({
           aria-selected={active === "placement"}
           onClick={() => pick("placement")}
         >
-          Placement
+          Stops &amp; targets
         </button>
+        {hasBarDynamics && (
+          <button
+            className={active === "bardyn" ? "seg-on" : ""}
+            role="tab"
+            aria-selected={active === "bardyn"}
+            onClick={() => pick("bardyn")}
+          >
+            Bar dynamics
+          </button>
+        )}
         {hasWhatif && (
           <button
             className={active === "whatif" ? "seg-on" : ""}
@@ -477,7 +683,7 @@ export default function BacktestAnalysisPanel({
           aria-selected={active === "context"}
           onClick={() => pick("context")}
         >
-          Context
+          Breakdowns
         </button>
       </div>
 
@@ -529,6 +735,31 @@ export default function BacktestAnalysisPanel({
           />
         </div>
       </section>
+      )}
+
+      {active === "bardyn" && analysis.bar_dynamics && (
+        <section className="bt-analysis-section">
+          <SectionH4
+            slug="bar-dynamics"
+            open={!collapsed.has("bar-dynamics")}
+            onToggle={toggleSection}
+          >
+            Bar dynamics
+          </SectionH4>
+          {!collapsed.has("bar-dynamics") && (
+            <>
+              {analysis.duration_hist && (
+                <DurationHistogram hist={analysis.duration_hist} barSeconds={barSeconds} />
+              )}
+              <BarDynamicsTable
+                winners={analysis.bar_dynamics.winners}
+                losers={analysis.bar_dynamics.losers}
+                total={analysis.bar_dynamics.total}
+                barSeconds={barSeconds}
+              />
+            </>
+          )}
+        </section>
       )}
 
       {active === "whatif" && (

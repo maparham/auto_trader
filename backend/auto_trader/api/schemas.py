@@ -96,6 +96,19 @@ class TradeDTO(BaseModel):
     mfe: float = 0.0
     mae_r: float | None = None
     mfe_r: float | None = None
+    # Per-trade bar-count dynamics (see engine BarStats). Default 0 so older
+    # stored runs and hand-built DTOs remain valid.
+    bars_held: int = 0
+    bars_in_profit: int = 0
+    bars_in_loss: int = 0
+    body_through: int = 0
+    wick_from_profit: int = 0
+    wick_from_loss: int = 0
+    longest_profit_streak: int = 0
+    longest_loss_streak: int = 0
+    bars_to_mfe: int = 0
+    bars_to_mae: int = 0
+    entry_crossings: int = 0
     context: dict | None = None
     # Per-trade counterfactuals (see engine.whatif); None when not computed.
     whatif: dict | None = None

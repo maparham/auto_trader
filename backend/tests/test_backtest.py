@@ -103,3 +103,31 @@ def test_signal_on_last_bar_is_dropped():
 
     res = BacktestEngine(BuyLast()).run(_series([1, 2, 3]))
     assert res.fills == []  # nothing to fill on; no future bar
+
+
+def test_trade_carries_bar_stats():
+    class Flip(Strategy):
+        def on_bar(self, ctx: Context) -> list[Signal]:
+            n = len(ctx.history)
+            if n == 1:
+                return [Signal(Side.BUY, 1.0, "in")]
+            if n == 5:
+                return [Signal(Side.SELL, 1.0, "out")]
+            return []
+
+    # BUY signals on bar index 0 (history length 1) -> fills at index 1's open
+    # = 100, so entry == 100. SELL signals on index 4 (history length 5) ->
+    # fills at index 5's open. A rule exit is booked at that bar's open BEFORE
+    # _track_excursion runs, so the exit bar (index 5) is NOT a held bar. Held
+    # bars are indices 1, 2, 3, 4 -> bars_held == 4. Their closes are
+    # 100, 101, 102, 103: the entry bar (index 1) closes exactly at entry, so it
+    # is flat (neither profit nor loss); indices 2, 3, 4 close above entry.
+    # -> bars_in_profit == 3, bars_in_loss == 0.
+    candles = _series([100, 100, 101, 102, 103, 104, 104])
+    res = BacktestEngine(Flip()).run(candles)
+    assert len(res.trades) == 1
+    t = res.trades[0]
+    assert t.entry_price == 100.0
+    assert t.bars_held == 4
+    assert t.bars_in_profit == 3
+    assert t.bars_in_loss == 0
