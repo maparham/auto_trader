@@ -1148,10 +1148,31 @@
   flex-shrink: 0;
   padding: 2px 0 8px;
 }
-/* Metrics are the left-aligned headline; the Periods toggle + clear ✕ cluster
-   together as one control group on the right (margin-left:auto eats the slack
-   so the pill doesn't float in the middle of the row). */
-.bt-results-summary .bt-periods-toggle { margin-left: auto; }
+/* Metrics are the left-aligned headline; the Display dropdown + Inspect toggle +
+   clear ✕ cluster together as one control group on the right (margin-left:auto on
+   the first right-cluster item eats the slack so the group hugs the right edge). */
+/* Daily trading-window label (e.g. a clock icon + "02:00 – 20:00"), sitting just
+   after the headline stats. Muted so it reads as context, not a metric. */
+.bt-results-summary .bt-period-label {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--text-dim); font-size: 11px; white-space: nowrap;
+}
+.bt-results-summary .bt-period-label svg { flex: 0 0 auto; opacity: 0.85; }
+.bt-results-summary .bt-display-menu { margin-left: auto; display: inline-flex; }
+/* The Display trigger is a .menu>button (which zeroes border/padding); give it the
+   same compact pill look as the Inspect toggle beside it. */
+.bt-results-summary .bt-display-btn {
+  gap: 5px; padding: 3px 9px;
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-dim); font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap;
+}
+.bt-results-summary .bt-display-btn .tb-caret { flex: 0 0 auto; color: var(--text-faint); transition: color 0.12s; }
+.bt-results-summary .bt-display-btn:hover .tb-caret,
+.bt-results-summary .bt-display-btn.on .tb-caret { color: var(--text); }
+/* Right-align the panel so it can't spill past the panel's right edge (the trigger
+   sits on the right of the row). Compact width — three short toggle rows. */
+.bt-display-dropdown { left: auto; right: 0; min-width: 164px; }
+.bt-display-dropdown li.on { color: var(--text); }
 .bt-results-messages { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 0 0 8px; }
 .bt-body { flex: 1; min-width: 0; min-height: 0; padding: 4px 16px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; scroll-behavior: smooth; }
 /* Each tab's content is now a stacked section in one continuous scroll pane; the
@@ -1642,6 +1663,14 @@
 }
 .modal-foot .ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
 .bt-cfg-foot { flex-shrink: 0; }
+/* Inspect toggle sits at the far-left of the footer; margin-right:auto eats the
+   slack so Close / Go live / Run backtest stay clustered on the right. */
+.bt-cfg-foot .bt-inspect-foot { margin-right: auto; display: inline-flex; align-items: center; gap: 5px; }
+.bt-cfg-foot .bt-inspect-foot.on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: var(--accent);
+}
 /* Confirmation dialog (deletes etc.): narrower than the form modals, not draggable,
    with a destructive primary button. */
 .confirm-modal { width: 360px; }

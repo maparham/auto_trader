@@ -274,8 +274,7 @@
       "commissionPerSide": 0,
       "slippage": 0,
       "startingCash": 10000
-    },
-    "showEquity": false
+    }
   },
   "series": {
     "EMA_3": [

@@ -115,6 +115,19 @@ export const backtestResultSignal = new Signal<StoredBacktestResult | null>(null
 // this to gate drawing and subscribes to redraw each chart's bands on change.
 export const backtestPeriodsShownSignal = new Signal<boolean>(true);
 
+// Whether the on-chart trade markers (per-fill arrows + signal carets + aggregate
+// pills) are drawn (global display preference, seeded from device-local storage at
+// startup, default on). backtest.ts gates drawMarkers on this and subscribes to
+// clear/redraw markers on change. Off leaves the equity curve, period shading, and
+// trade-selection overlays untouched.
+export const backtestMarkersShownSignal = new Signal<boolean>(true);
+
+// Whether the equity curve sub-pane is drawn (global display preference, seeded
+// from device-local storage at startup, default off). backtest.ts gates the
+// equity pane on this (AND a known-timeframe flag) and subscribes to add/remove
+// the pane on change.
+export const backtestEquityShownSignal = new Signal<boolean>(false);
+
 // The backtest trade index (row.i) currently highlighted, or null. Set by the
 // trades panel row hover/click AND (Phase C Task 2) the chart's trade markers —
 // whichever side the cursor is on drives the other side's highlight.

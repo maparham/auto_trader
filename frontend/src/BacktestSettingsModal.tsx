@@ -52,7 +52,7 @@ import {
   ruleFromChartOperand,
   OP_REVERSE,
 } from "./lib/backtestConfig";
-import { SESSION_PRESETS, buildRangeChips, coverage, isActive, resolveMask, sessionLocalRange, sessionWindowInTz } from "./lib/backtestSchedule";
+import { SESSION_PRESETS, buildRangeChips, coverage, isActive, minToTime, resolveMask, sessionLocalRange, sessionWindowInTz } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
@@ -60,6 +60,8 @@ import { StrategyParams } from "./components/StrategyParams";
 import { SweepResults } from "./SweepResults";
 import { comboCount, mirrorRiskAxes, ruleAxisTarget, SWEEP_MAX_COMBOS, type SweepAxis } from "./lib/sweep";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
+import { inspectModeSignal } from "./lib/backtestInspect";
+import { formatPeriodRange } from "./lib/backtestPeriods";
 import { fetchStrategies, type StrategyInfo, type ParamSpec } from "./api";
 import {
   loadCodedCfg,
@@ -132,10 +134,6 @@ function toggle(list: number[] | undefined, v: number): number[] {
   if (s.has(v)) s.delete(v);
   else s.add(v);
   return [...s].sort((a, b) => a - b);
-}
-function minToTime(min: number | undefined): string {
-  if (min == null) return "";
-  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 }
 function timeToMin(s: string): number {
   const [h, m] = s.split(":").map(Number);
@@ -255,18 +253,6 @@ function clampPosOnBlur(el: HTMLInputElement, floor: number, commit: (n: number)
   if (!(Number(el.value) > 0)) commit(floor);
 }
 
-const DATE_OPTS: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" };
-const TIME_OPTS: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
-
-function formatDateRange(fromMs: number, toMs: number): string {
-  const from = new Date(fromMs);
-  const to = new Date(toMs);
-  const sameYear = from.getFullYear() === to.getFullYear();
-  const fromLabel = from.toLocaleString([], { ...(sameYear ? { day: "numeric", month: "short" } : DATE_OPTS), ...TIME_OPTS });
-  const toLabel = to.toLocaleString([], { ...DATE_OPTS, ...TIME_OPTS });
-  return `${fromLabel} – ${toLabel}`;
-}
-
 // The actual calendar span implied by the current range choice, so "Month" etc.
 // aren't left abstract — shown relative to now for the fixed presets ("Bars"
 // depends on the resolution too, since a bar count only maps to a duration once
@@ -278,7 +264,7 @@ function rangeDateLabel(cfg: BacktestConfig, resSeconds: number): string {
   }
   // resolveWindow already applies a chip's absolute fromMs/toMs anchor.
   const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
-  return formatDateRange(fromMs, toMs);
+  return formatPeriodRange(fromMs, toMs);
 }
 
 function estimateWindowBars(cfg: BacktestConfig, resSeconds: number): number {
@@ -610,6 +596,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // already a no-op mid-run, but the button looked active.
   const [runInFlight, setRunInFlight] = useState(backtestRunningSignal.value);
   useEffect(() => backtestRunningSignal.subscribe(setRunInFlight), []);
+  // Inspect mode toggle (moved out of the Results panel into the footer). Session-
+  // only; clicking a bar on the chart while on shows that bar's rule evaluation.
+  const [inspectMode, setInspectMode] = useState(inspectModeSignal.value);
+  useEffect(() => inspectModeSignal.subscribe(setInspectMode), []);
 
   // Settings (top) / results (bottom) vertical split. resultsHeight 0 means
   // "unset" — the CSS default flex-basis governs until the user drags. Persisted
@@ -1460,15 +1450,6 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 />
               </label>
             </div>
-            <label className="al-row bt-mask-toggle">
-              <input
-                type="checkbox"
-                checked={cfg.showEquity ?? false}
-                onChange={(e) => setCfg({ ...cfg, showEquity: e.target.checked })}
-              />
-              <span>Show equity curve</span>
-              <InfoTip text="Draw the account balance over time in its own sub-pane after a run. Off by default; shown only on the backtest's own timeframe." />
-            </label>
           </Section>
             </section>
 
@@ -1560,6 +1541,23 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         </div>
 
         <div className="modal-foot bt-cfg-foot">
+          <button
+            className={`ghost bt-inspect-foot${inspectMode ? " on" : ""}`}
+            title={
+              inspectMode
+                ? "Inspect mode on — click a bar on the chart to see its rules"
+                : "Inspect a bar: click a bar to see every rule's value and why a trade did or didn't open"
+            }
+            aria-pressed={inspectMode}
+            onClick={() => inspectModeSignal.set(!inspectModeSignal.value)}
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+              {/* magnifier */}
+              <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+              <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+            <span>Inspect</span>
+          </button>
           <button className="ghost" onClick={onClose}>
             Close
           </button>

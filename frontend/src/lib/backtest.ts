@@ -35,6 +35,8 @@ import {
   backtestClusterHoverSignal,
   backtestSignalHoverSignal,
   backtestPeriodsShownSignal,
+  backtestMarkersShownSignal,
+  backtestEquityShownSignal,
   backtestSelectNoticeSignal,
 } from "./signals";
 import { buildSignalGlyphs, isEntryFill } from "./signalGlyphs";
@@ -996,7 +998,6 @@ export async function runAndRender(
   scope: string,
   displayResolution: string,
   period?: BacktestPeriod,
-  showEquity = false,
 ): Promise<StoredBacktestResult> {
   // Temporary phase timing (perf investigation).
   const t0 = performance.now();
@@ -1017,7 +1018,7 @@ export async function runAndRender(
   // across cells share the ~5MB budget), the in-memory render below still works,
   // but a later rehydrate would find nothing: warn the user rather than let the
   // markers silently vanish on their next TF switch.
-  const saveOk = saveBacktestResult(scope, req.epic, result, period, showEquity);
+  const saveOk = saveBacktestResult(scope, req.epic, result, period);
   if (!saveOk) {
     toast("Backtest too large to save — it won't persist across timeframe switches or reloads.");
   }
@@ -1034,7 +1035,7 @@ export async function runAndRender(
   const stored = (saveOk ? loadBacktestResult(scope, req.epic) : null) ?? result;
   const flags = backtestRenderFlags(displayResolution, req.resolution);
   const t2 = performance.now();
-  renderArtifacts(chart, stored, { ...flags, drawEquity: flags.drawEquity && showEquity });
+  renderArtifacts(chart, stored, { markerMode: flags.markerMode, canEquity: flags.drawEquity });
   const t3 = performance.now();
   console.info(
     `[backtest perf] runAndRender: backend total ${(t1 - t0).toFixed(0)}ms, ` +
@@ -1242,7 +1243,9 @@ export function reanchorBacktestMarkers(chart: Chart): void {
   for (const id of artifacts.markerIds) chart.removeOverlay(id);
   artifacts.markerIds = [];
   artifacts.aggClusters = [];
-  drawMarkers(chart, artifacts.result, artifacts);
+  // Respect the "Show Markers" toggle — a history page-back must not resurrect
+  // markers the user has hidden (the period bands below still redraw).
+  if (backtestMarkersShownSignal.value) drawMarkers(chart, artifacts.result, artifacts);
   clearPeriodBands(chart, artifacts);
   drawPeriodBands(chart, artifacts, artifacts.result);
 }
@@ -1271,22 +1274,33 @@ export function reanchorBacktestMarkers(chart: Chart): void {
 export function renderArtifacts(
   chart: Chart,
   result: StoredBacktestResult,
-  { markerMode, drawEquity }: { markerMode: "native" | "aggregate" | "none"; drawEquity: boolean },
+  { markerMode, canEquity }: { markerMode: "native" | "aggregate" | "none"; canEquity: boolean },
 ): void {
   const artifacts = artifactsFor(chart);
 
-  // Equity curve -> own sub-pane. The series travels on the instance's
-  // extendData so this chart's calc looks up its own values.
-  if (drawEquity) {
+  // Equity curve -> own sub-pane, gated by the "Equity" toggle AND the
+  // timeframe-known flag (canEquity). A live add/remove so flipping the toggle in
+  // the Results row shows/hides the pane without re-running. The series travels on
+  // the instance's extendData so this chart's calc looks up its own values.
+  const addEquity = () => {
+    if (artifacts.equityPaneId) return; // already drawn
     // Ascending [timestampMs, value] pairs — equityForBars re-anchors them onto
     // whatever bars are loaded (any timeframe), so no per-timeframe map.
     const equityPoints: Array<[number, number]> = result.equity.map((p) => [p.time * 1000, p.value]);
     artifacts.equityPaneId =
-      chart.createIndicator(
-        { name: EQUITY_INDICATOR, extendData: equityPoints },
-        false,
-      ) ?? null;
-  }
+      chart.createIndicator({ name: EQUITY_INDICATOR, extendData: equityPoints }, false) ?? null;
+  };
+  const removeEquity = () => {
+    if (artifacts.equityPaneId) {
+      chart.removeIndicator(artifacts.equityPaneId, EQUITY_INDICATOR);
+      artifacts.equityPaneId = null;
+    }
+  };
+  if (canEquity && backtestEquityShownSignal.value) addEquity();
+  const unsubEquity = backtestEquityShownSignal.subscribe(() => {
+    if (canEquity && backtestEquityShownSignal.value) addEquity();
+    else removeEquity();
+  });
 
   // Always record the result + trades so teardownArtifacts' ownership check and
   // any installed subscriptions read a coherent state, even when nothing is
@@ -1307,15 +1321,27 @@ export function renderArtifacts(
   });
 
   if (markerMode === "none") {
-    artifacts.unsub = unsubPeriods;
+    artifacts.unsub = () => {
+      unsubPeriods();
+      unsubEquity();
+    };
     return;
   }
 
-  // Draw the trade markers for the currently-loaded bars. Split out so the
-  // history-coverage page-back can redraw JUST the markers later (see
-  // reanchorBacktestMarkers) without re-creating the equity pane or re-installing
-  // the subscriptions below.
-  drawMarkers(chart, result, artifacts);
+  // Draw the trade markers for the currently-loaded bars, gated by the "Show
+  // Markers" toggle. Split out so the history-coverage page-back can redraw JUST
+  // the markers later (see reanchorBacktestMarkers) without re-creating the equity
+  // pane or re-installing the subscriptions below. The toggle subscription clears/
+  // redraws ONLY the markers on a flip, leaving the equity pane, period bands, and
+  // the selection/highlight subs below (installed regardless of the toggle, so
+  // selecting a trade still draws its zone with markers off) untouched.
+  if (backtestMarkersShownSignal.value) drawMarkers(chart, result, artifacts);
+  const unsubMarkers = backtestMarkersShownSignal.subscribe(() => {
+    for (const id of artifacts.markerIds) chart.removeOverlay(id);
+    artifacts.markerIds = [];
+    artifacts.aggClusters = [];
+    if (backtestMarkersShownSignal.value) drawMarkers(chart, result, artifacts);
+  });
 
   // Row -> chart: draw ONE transient locked line spanning entry -> exit,
   // colored win/loss, while a row (or a marker, above) is highlighted; null
@@ -1418,6 +1444,8 @@ export function renderArtifacts(
     unsubHighlight();
     unsubSelection();
     unsubPeriods();
+    unsubEquity();
+    unsubMarkers();
   };
 }
 
@@ -1509,7 +1537,7 @@ export function rehydrateBacktest(
     return;
   }
   const flags = backtestRenderFlags(resolution, saved.resolution);
-  renderArtifacts(chart, saved, { ...flags, drawEquity: flags.drawEquity && (saved.showEquity ?? false) });
+  renderArtifacts(chart, saved, { markerMode: flags.markerMode, canEquity: flags.drawEquity });
   // Publish with THIS exact object so renderArtifacts' identity-gated sync binds
   // to it, and the trades panel / summary chip repopulate.
   backtestResultSignal.set(saved);

@@ -289,10 +289,6 @@ export interface BacktestConfig {
   longScaling?: ScalingConfig;
   shortScaling?: ScalingConfig;
   costs: Costs;
-  // Whether the equity curve is drawn in its own sub-pane after a run. Off by
-  // default — the curve is a heavy overlay most runs don't need. Optional so a
-  // preset saved before this existed loads with it absent (treated as hidden).
-  showEquity?: boolean;
   // Strategy source: point-and-click rules (default) or a coded backend/strategies
   // .py file. `codedStrategy` is that file's name; only read when mode === "coded".
   mode?: "rules" | "coded";
@@ -478,6 +474,5 @@ export function defaultBacktestConfig(): BacktestConfig {
     longEnabled: true,
     shortEnabled: true,
     costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
-    showEquity: false,
   };
 }

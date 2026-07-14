@@ -15,10 +15,12 @@ import {
   backtestMessagesSignal,
   backtestSelectNoticeSignal,
   backtestPeriodsShownSignal,
+  backtestMarkersShownSignal,
+  backtestEquityShownSignal,
   backtestRunningSignal,
   requestBacktestClear,
 } from "./lib/signals";
-import { saveBacktestPeriodsShown } from "./lib/persist";
+import { saveBacktestPeriodsShown, saveBacktestMarkersShown, saveBacktestEquityShown } from "./lib/persist";
 import { metricGroups, METRIC_INFO, legTable, tradeRows, sortTradeRows, type TradeRow, type LegTable } from "./lib/backtestPanelData";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
@@ -27,6 +29,8 @@ import { formatExpiryShort } from "./lib/alertUi";
 import BacktestInspectorPanel from "./BacktestInspectorPanel";
 import BacktestAnalysisPanel from "./BacktestAnalysisPanel";
 import { inspectModeSignal, inspectTraceSignal } from "./lib/backtestInspect";
+import { formatDayWindow } from "./lib/backtestSchedule";
+import { formatPeriodDateRange } from "./lib/backtestPeriods";
 
 // Module-singleton signal — the subscribe fn never changes, so memoize it (matches
 // Toolbar's useSyncExternalStore pattern) instead of resubscribing on every render.
@@ -66,6 +70,45 @@ export default function BacktestPanel() {
     backtestPeriodsShownSignal.set(next);
     saveBacktestPeriodsShown(next);
   };
+  const markersShown = useSyncExternalStore(
+    (cb) => backtestMarkersShownSignal.subscribe(cb),
+    () => backtestMarkersShownSignal.value,
+  );
+  const toggleBacktestMarkers = () => {
+    const next = !backtestMarkersShownSignal.value;
+    backtestMarkersShownSignal.set(next);
+    saveBacktestMarkersShown(next);
+  };
+  const equityShown = useSyncExternalStore(
+    (cb) => backtestEquityShownSignal.subscribe(cb),
+    () => backtestEquityShownSignal.value,
+  );
+  const toggleBacktestEquity = () => {
+    const next = !backtestEquityShownSignal.value;
+    backtestEquityShownSignal.set(next);
+    saveBacktestEquityShown(next);
+  };
+  // The three chart-display toggles above live in one compact "Display" dropdown
+  // so the Results row doesn't spend its width on three labeled pills. Own open
+  // state + outside-click/Esc close, following the shared .menu/.dropdown idiom.
+  const [displayOpen, setDisplayOpen] = useState(false);
+  const displayMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!displayOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (displayMenuRef.current && !displayMenuRef.current.contains(t)) setDisplayOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDisplayOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [displayOpen]);
   const inspectMode = useSyncExternalStore(
     (cb) => inspectModeSignal.subscribe(cb),
     () => inspectModeSignal.value,
@@ -75,11 +118,12 @@ export default function BacktestPanel() {
     () => inspectTraceSignal.value,
   );
   const [tab, setTab] = useState<Tab>("overview");
-  const toggleInspect = () => {
-    const next = !inspectModeSignal.value;
-    inspectModeSignal.set(next);
-    if (next) setTab("inspect");
-  };
+  // The Inspect toggle now lives in the modal footer (next to Run backtest). Turning
+  // it on there should still jump this panel to the Inspect tab, so react to the
+  // shared signal here rather than switching the tab inside the button's handler.
+  useEffect(() => {
+    if (inspectMode) setTab("inspect");
+  }, [inspectMode]);
   const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
 
   // Keep the highlighted row in view whether the highlight originated here (a
@@ -143,37 +187,83 @@ export default function BacktestPanel() {
           </Tooltip>
         )}
       </span>
-      <button
-        className={`bt-periods-toggle${periodsShown ? " on" : ""}`}
-        title={periodsShown ? "Hide the trading periods shaded on the chart" : "Show the trading periods shaded on the chart"}
-        aria-pressed={periodsShown}
-        onClick={toggleBacktestPeriods}
-      >
-        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-          {/* shaded period bands standing on the time axis */}
-          <rect x="1.5" y="3.5" width="3" height="8" rx="1" fill="currentColor" />
-          <rect x="6.5" y="3.5" width="3" height="8" rx="1" fill="currentColor" opacity="0.55" />
-          <rect x="11.5" y="3.5" width="3" height="8" rx="1" fill="currentColor" />
-        </svg>
-        <span>Periods</span>
-      </button>
-      <button
-        className={`bt-periods-toggle${inspectMode ? " on" : ""}`}
-        title={
-          inspectMode
-            ? "Inspect mode on — click a bar on the chart to see its rules"
-            : "Inspect a bar: click a bar to see every rule's value and why a trade did or didn't open"
-        }
-        aria-pressed={inspectMode}
-        onClick={toggleInspect}
-      >
-        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-          {/* magnifier */}
-          <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-          <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-        <span>Inspect</span>
-      </button>
+      {result.period && (
+        <span className="bt-period-label" title="The date span this backtest traded over">
+          <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+            {/* calendar */}
+            <rect x="2" y="3" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+            <line x1="2" y1="6.5" x2="14" y2="6.5" stroke="currentColor" strokeWidth="1.3" />
+            <line x1="5" y1="1.5" x2="5" y2="4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            <line x1="11" y1="1.5" x2="11" y2="4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+          {formatPeriodDateRange(result.period.fromMs, result.period.toMs)}
+        </span>
+      )}
+      {result.period?.mask?.timeOfDay && (
+        <span
+          className="bt-period-label"
+          title={`Daily trading window${result.period.mask.tz ? ` (${result.period.mask.tz})` : ""}`}
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+            {/* clock */}
+            <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M8 4.5 L8 8 L10.5 9.5" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {formatDayWindow(result.period.mask.timeOfDay)}
+        </span>
+      )}
+      <div className="menu bt-display-menu" ref={displayMenuRef}>
+        <button
+          className={`bt-display-btn${displayOpen ? " on" : ""}`}
+          title="Choose what the backtest draws on the chart"
+          aria-haspopup="menu"
+          aria-expanded={displayOpen}
+          onClick={() => setDisplayOpen((v) => !v)}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+            {/* stacked layers glyph */}
+            <path d="M8 1.5 L14.5 5 L8 8.5 L1.5 5 Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+            <path d="M2 8 L8 11 L14 8 M2 11 L8 14 L14 11" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" />
+          </svg>
+          <span>Display</span>
+          <svg className="tb-caret" width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 6 L8 10 L12 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {displayOpen && (
+          <div className="dropdown bt-display-dropdown" role="menu">
+            <ul>
+              <li
+                className={markersShown ? "on" : ""}
+                role="menuitemcheckbox"
+                aria-checked={markersShown}
+                onClick={toggleBacktestMarkers}
+              >
+                <span className="check">{markersShown ? "✓" : ""}</span>
+                <span>Trade markers</span>
+              </li>
+              <li
+                className={periodsShown ? "on" : ""}
+                role="menuitemcheckbox"
+                aria-checked={periodsShown}
+                onClick={toggleBacktestPeriods}
+              >
+                <span className="check">{periodsShown ? "✓" : ""}</span>
+                <span>Trading periods</span>
+              </li>
+              <li
+                className={equityShown ? "on" : ""}
+                role="menuitemcheckbox"
+                aria-checked={equityShown}
+                onClick={toggleBacktestEquity}
+              >
+                <span className="check">{equityShown ? "✓" : ""}</span>
+                <span>Equity curve</span>
+              </li>
+            </ul>
+          </div>
+        )}
+      </div>
       <button className="bt-clear" title="Clear backtest" onClick={requestBacktestClear}>
         ✕
       </button>

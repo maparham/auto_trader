@@ -201,6 +201,29 @@ export function saveBacktestPeriodsShown(shown: boolean): void {
   saveLocal(BACKTEST_PERIODS_SHOWN_KEY, shown);
 }
 
+// Whether the trade markers (per-fill arrows + signal carets + aggregate pills)
+// are drawn on the chart. Device-local view preference, default on. Off skips the
+// bulk of on-chart render cost for rapid backtesting; the equity curve, period
+// shading, and trade-selection overlays are unaffected.
+const BACKTEST_MARKERS_SHOWN_KEY = `${PREFIX}.backtestMarkersShown`;
+export function loadBacktestMarkersShown(): boolean {
+  return load<boolean>(BACKTEST_MARKERS_SHOWN_KEY, true);
+}
+export function saveBacktestMarkersShown(shown: boolean): void {
+  saveLocal(BACKTEST_MARKERS_SHOWN_KEY, shown);
+}
+
+// Whether the equity curve is drawn in its own sub-pane. Device-local view
+// preference (like periods above), default off. A live toggle in the Results
+// row — flipping it adds/removes the pane; it's no longer a per-run config value.
+const BACKTEST_EQUITY_SHOWN_KEY = `${PREFIX}.backtestEquityShown`;
+export function loadBacktestEquityShown(): boolean {
+  return load<boolean>(BACKTEST_EQUITY_SHOWN_KEY, false);
+}
+export function saveBacktestEquityShown(shown: boolean): void {
+  saveLocal(BACKTEST_EQUITY_SHOWN_KEY, shown);
+}
+
 // Which Analysis sub-tab is active, and which analysis sections are collapsed.
 // Device-local view preferences (like the panel flags above): one preference for
 // the whole app, not per cell. Both flat keys are registered in

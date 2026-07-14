@@ -58,7 +58,6 @@ describe("rule series parity golden", () => {
       shortEnabled: true,
       longRisk: { stop: { kind: "atr", mult: 2, length: 3 }, target: { kind: "none" } },
       costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
-      showEquity: false,
     };
 
     const fetchTimeframe: FetchTimeframe = async (tf) =>

@@ -25,6 +25,32 @@ export interface PeriodBand {
   toMs: number;
 }
 
+const DATE_OPTS: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" };
+const TIME_OPTS: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
+
+/** A human "1 May, 02:00 – 1 Jun 2026, 02:00" label for a traded window. Drops the
+ * from-side year when both ends share it. Shared by the settings modal's range
+ * preview and the Results status line. */
+export function formatPeriodRange(fromMs: number, toMs: number): string {
+  const from = new Date(fromMs);
+  const to = new Date(toMs);
+  const sameYear = from.getFullYear() === to.getFullYear();
+  const fromLabel = from.toLocaleString([], { ...(sameYear ? { day: "numeric", month: "short" } : DATE_OPTS), ...TIME_OPTS });
+  const toLabel = to.toLocaleString([], { ...DATE_OPTS, ...TIME_OPTS });
+  return `${fromLabel} – ${toLabel}`;
+}
+
+/** Date-only variant of formatPeriodRange, e.g. "1 Jul – 14 Jul 2026" — for the
+ * Results status line, where the daily-hours label carries the times separately. */
+export function formatPeriodDateRange(fromMs: number, toMs: number): string {
+  const from = new Date(fromMs);
+  const to = new Date(toMs);
+  const sameYear = from.getFullYear() === to.getFullYear();
+  const fromLabel = from.toLocaleString([], sameYear ? { day: "numeric", month: "short" } : DATE_OPTS);
+  const toLabel = to.toLocaleString([], DATE_OPTS);
+  return `${fromLabel} – ${toLabel}`;
+}
+
 /** Bands to shade for `period` given the ascending loaded-bar timestamps
  * (`barTimes`, ms). No mask → one band, the window clamped to the loaded range.
  * Mask → maximal contiguous runs of active bars inside the window. Empty when

@@ -48,10 +48,6 @@ export function saveDrawings(scope: string, epic: string, list: SavedOverlay[]):
 // frontend-derived field (not returned by the backend), attached at save time.
 export type StoredBacktestResult = Omit<BacktestResult, "candles"> & {
   period?: BacktestPeriod;
-  // Whether the equity curve should be drawn for this result. Travels with the
-  // saved run (like `period`) so a reload / timeframe-switch rehydrate honors the
-  // choice the run was made with. Absent (old results) → hidden.
-  showEquity?: boolean;
 };
 
 const backtestKey = (scope: string, epic: string) => ns(scope, `backtest.${epic}`);
@@ -78,7 +74,6 @@ export function saveBacktestResult(
   epic: string,
   result: BacktestResult,
   period?: BacktestPeriod,
-  showEquity?: boolean,
 ): boolean {
   // Strip the bulky candle array and bound the equity curve before persisting —
   // redraw doesn't need candles (markers/equity/periods attach to whatever bars
@@ -90,7 +85,6 @@ export function saveBacktestResult(
     ...result,
     equity: downsampleEquity(result.equity),
     period,
-    showEquity,
   };
   delete (stored as Partial<BacktestResult>).candles;
   return save(backtestKey(scope, epic), stored);

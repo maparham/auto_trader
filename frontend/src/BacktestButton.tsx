@@ -27,7 +27,13 @@ import {
   requiredWarmupBars,
   warmupBarCount,
 } from "./lib/backtestWindow";
-import { loadBacktestLastUsed, saveBacktestLastUsed, loadBacktestPeriodsShown } from "./lib/persist";
+import {
+  loadBacktestLastUsed,
+  saveBacktestLastUsed,
+  loadBacktestPeriodsShown,
+  loadBacktestMarkersShown,
+  loadBacktestEquityShown,
+} from "./lib/persist";
 import {
   openBacktestSettings,
   backtestRunRequest,
@@ -35,6 +41,8 @@ import {
   backtestResultSignal,
   backtestMessagesSignal,
   backtestPeriodsShownSignal,
+  backtestMarkersShownSignal,
+  backtestEquityShownSignal,
   backtestRunningSignal,
   sweepAxesSignal,
   sweepStateSignal,
@@ -92,10 +100,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   // button only opens the panel — running lives with the config.
   useEffect(() => backtestRunRequest.subscribe(() => void run()));
 
-  // Seed the period-shading toggle from device-local storage once at startup
+  // Seed the on-chart display toggles from device-local storage once at startup
   // (the component is mounted for the whole app session).
   useEffect(() => {
     backtestPeriodsShownSignal.set(loadBacktestPeriodsShown());
+    backtestMarkersShownSignal.set(loadBacktestMarkersShown());
+    backtestEquityShownSignal.set(loadBacktestEquityShown());
   }, []);
 
   async function run() {
@@ -318,7 +328,6 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           toMs: windowToMs,
           mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
         },
-        cfg.showEquity ?? false,
       );
       // The summary chip is driven by the signal subscription above, so just
       // publish the result (rehydrate uses the same publish path).

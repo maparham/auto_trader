@@ -21,6 +21,19 @@ export const SESSION_PRESETS: Record<
   Crypto: { label: "Crypto (24/7)", window: null, tz: "UTC", days: null },
 };
 
+/** Minutes-from-midnight → "HH:MM" (empty string for null/undefined). */
+export function minToTime(min: number | undefined): string {
+  if (min == null) return "";
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+}
+
+/** A daily trading-window's "HH:MM – HH:MM" label, or "" when there's no
+ * time-of-day restriction (the backtest traded around the clock). */
+export function formatDayWindow(w: DayTimeWindow | undefined): string {
+  if (!w) return "";
+  return `${minToTime(w.startMin)} – ${minToTime(w.endMin)}`;
+}
+
 /** Inline a session preset into timeOfDay+tz+daysOfWeek; drop `session`.
  * The preset's trading days fill in only when the user hasn't set explicit
  * weekday chips, so exchange sessions skip weekends without extra clicks while
