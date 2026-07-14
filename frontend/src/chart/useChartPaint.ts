@@ -22,6 +22,7 @@ import {
   paintSelectionDots,
   paintCrossingDots,
   buildCurveLabelPills,
+  buildSlopeMaPills,
   paintAnchorHandle,
   paintPivotDeltaLabels,
   fmtCountdown,
@@ -36,6 +37,8 @@ import {
   pivotDeltaLabelAt,
 } from "./chartGeometry";
 import { buildLegendRows, buildSubPaneLegends, type LegendRow, type SubPaneLegendData, type ChartLegendHandle } from "../ChartLegend";
+import { slopeMaLines } from "../lib/indicators/slope";
+import { indTypeOf } from "../lib/customIndicators";
 import { getBacktestAggregate } from "../lib/backtest";
 import { type AggPill } from "../BacktestAggMarkers";
 import { type ExitPill } from "../TradeExitAggMarkers";
@@ -119,6 +122,7 @@ export interface ChartPaintDeps {
   bracketCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   sepCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   selCanvasRef: React.RefObject<HTMLCanvasElement | null>;
+  maCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   bracketShownRef: React.MutableRefObject<boolean>;
   draggingTradeRef: React.MutableRefObject<string | null>;
   hoveredFieldRef: React.MutableRefObject<TradeLineField | null>;
@@ -170,6 +174,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     bracketCanvasRef,
     sepCanvasRef,
     selCanvasRef,
+    maCanvasRef,
     bracketShownRef,
     draggingTradeRef,
     hoveredFieldRef,
@@ -378,6 +383,79 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     ctx.restore(); // release the candle-pane clip
   }, []);
   handle.paintBracketRef.current = paintBracket;
+
+  // Slope "Show MAs on chart": draw each SLOPE indicator's underlying MA lines on
+  // the candle pane (our own canvas, above klinecharts' candles). Reads the live
+  // Slope config every frame via slopeMaLines, so the curves match the slope lines
+  // (same lengths / maSeries / colors) and update on any slope edit. Not participating
+  // in the candle pane's y-scale is accepted: a far MA can clip on tight zoom.
+  const paintSlopeMa = useCallback(() => {
+    const chart = chartRef.current;
+    const canvas = maCanvasRef.current;
+    const wrap = wrapRef.current;
+    if (!chart || !canvas || !wrap) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    // Collect every SLOPE indicator across all panes (SLOPE lives in a sub-pane;
+    // its MAs draw on the candle pane).
+    const panes = chart.getIndicatorByPaneId() as
+      | Map<string, Map<string, { calcParams?: unknown[]; extendData?: unknown; visible?: boolean; styles?: { lines?: Array<{ color?: string }> } }>>
+      | null
+      | undefined;
+    if (!panes) return;
+    const dl = chart.getDataList();
+    const vr = chart.getVisibleRange();
+    if (!dl.length) return;
+
+    // Clip to the candle pane so curves priced off-screen don't paint over sub-panes.
+    const measuredPaneH = chart.getSize("candle_pane", DomPosition.Main)?.height;
+    const paneH = measuredPaneH && measuredPaneH > 0 ? measuredPaneH : h;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, paneH);
+    ctx.clip();
+
+    for (const inds of panes.values()) {
+      for (const ind of inds.values()) {
+        if (indTypeOf(ind as never) !== "SLOPE") continue;
+        const lines = slopeMaLines(ind, dl);
+        for (const line of lines) {
+          // Pixel-resolve the visible run of defined points, then stroke a polyline.
+          const pts: Array<{ timestamp: number; value: number }> = [];
+          for (let i = vr.from; i < vr.to; i++) {
+            const v = line.values[i];
+            const k = dl[i];
+            if (k && typeof v === "number" && Number.isFinite(v)) {
+              pts.push({ timestamp: k.timestamp, value: v });
+            }
+          }
+          if (pts.length < 2) continue;
+          const px = chart.convertToPixel(pts, { paneId: "candle_pane", absolute: true }) as Array<{
+            x: number;
+            y: number;
+          }>;
+          ctx.strokeStyle = line.color;
+          ctx.lineWidth = line.width;
+          ctx.beginPath();
+          px.forEach((c, k) => (k === 0 ? ctx.moveTo(c.x, c.y) : ctx.lineTo(c.x, c.y)));
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+  }, []);
 
   // Recompute the axis overlays (live price+countdown pill, alert label pills)
   // from the chart's current geometry. Stable (reads refs), so it can be wired to
@@ -897,13 +975,11 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // Always rebuild — pills can show with no selection at all (an "always"
         // indicator) or for the selected/hovered targets. buildCurveLabelPills
         // returns [] when nothing qualifies, clearing the overlay.
-        curveLabelsRef.current?.setPills(
-          buildCurveLabelPills(
-            lineCacheRef.current,
-            labelTargets,
-            chart.getSize("candle_pane", DomPosition.Main)?.width ?? w,
-          ),
-        );
+        const maxX = chart.getSize("candle_pane", DomPosition.Main)?.width ?? w;
+        curveLabelsRef.current?.setPills([
+          ...buildCurveLabelPills(lineCacheRef.current, labelTargets, maxX),
+          ...buildSlopeMaPills(chart, labelTargets, maxX),
+        ]);
         // Draw every Pivots-High/Low Δ%/Δt label here (the indicator no longer draws
         // them itself), each small at rest, enlarging in place the one the cursor is
         // genuinely over — a real pixel hit-test, so it works at any zoom. Re-hit-tested
@@ -999,9 +1075,10 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // Keep the position bracket glued to its lines as geometry shifts (scroll/zoom/
     // tick/drag) — the cursor needn't move for the lines to.
     paintBracket();
+    paintSlopeMa();
     // Period-start separator follows the same geometry (via ref so it isn't a dep).
     handle.paintSeparatorRef.current();
-  }, [paintBracket]);
+  }, [paintBracket, paintSlopeMa]);
   handle.redrawRef.current = redraw;
 
   return { paintBracket, paintSeparator, fmtSeparatorLabel, redraw };

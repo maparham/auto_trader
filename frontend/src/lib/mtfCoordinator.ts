@@ -20,6 +20,7 @@ import {
 } from "./indicators/pivotBands";
 import {
   slopeLineSeries,
+  smoothSeries,
   inferBarHours,
   slopeLengths,
   type SlopeUnit,
@@ -439,10 +440,21 @@ export async function applySlopeTimeframe(
   const byLine = config.lengths.map((len) =>
     slopeLineSeries(htf, config.maType, len, config.slopeN, config.units, config.options.source, config.smoothing, barHours),
   );
+  // Same lengths/source HTF MA base for the on-chart MA curves, smoothed on the
+  // HTF bars (before alignment, so smoothing never leaks across chart bars) to
+  // follow the Slope's smoothing, stashed transiently alongside the slope
+  // series, aligned in slopeMaLines. See SlopeExtend.mtf.htfMaBaseByLine.
+  const maBaseByLine = config.lengths.map((len) =>
+    smoothSeries(
+      maSeries(htf, config.maType, len, { source: config.options.source }).base,
+      config.smoothing,
+    ),
+  );
   ext.mtf = {
     timeframe,
     htfStarts: htf.map((b) => b.timestamp),
     htfSeriesByLine: byLine,
+    htfMaBaseByLine: maBaseByLine,
     htfMs,
   };
   chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);

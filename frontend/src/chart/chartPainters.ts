@@ -3,8 +3,10 @@
 // no React, no shared state. They consume the pixel-resolved LineCache and the
 // selection-marker constants from chartGeometry.
 import { minPositiveGap } from "../lib/barInterval";
-import { curveLabel, curveLabelConfig, curveLabelPosFor } from "../lib/customIndicators";
+import { curveLabel, curveLabelConfig, curveLabelPosFor, indTypeOf } from "../lib/customIndicators";
+import { slopeMaLines, slopeLengths, type SlopeMaSource } from "../lib/indicators/slope";
 import { type CurveLabelPill } from "../CurveLabels";
+import type { Chart, Indicator } from "klinecharts";
 import { type LineCache, type PivotDeltaLabel, DOT_RADIUS, ANCHOR_HANDLE_R } from "./chartGeometry";
 import { PIVOT_DELTA_PLATE, PIVOT_LABEL_COLOR } from "../lib/indicators/pivotAnalysis";
 import { type CrossingDot } from "./curveCrossings";
@@ -146,6 +148,85 @@ export function buildCurveLabelPills(
       align: pos.align,
       maxX,
     });
+  }
+  return pills;
+}
+
+// Curve-end pills for a Slope's ON-CHART MA curves (self-drawn, so not in the figure
+// LineCache that buildCurveLabelPills reads). One pill per MA line, text = MA type + length
+// ("EMA 21"), colored to match the curve, placed at the chosen visible end. Gated by the same
+// generic curve-label config (curveLabelConfig) as every other indicator, plus the on-chart
+// MA being shown. `targets` are the selected/hovered indicators; a Slope is "active" when its
+// instance name is among them (its selection lives in its own sub-pane, so match by name).
+export function buildSlopeMaPills(
+  chart: Chart,
+  targets: Array<{ paneId: string; name: string }>,
+  maxX: number,
+): CurveLabelPill[] {
+  const panes = chart.getIndicatorByPaneId() as
+    | Map<string, Map<string, Indicator>>
+    | null
+    | undefined;
+  if (!panes) return [];
+  const dl = chart.getDataList();
+  const vr = chart.getVisibleRange();
+  const to = Math.min(vr.to, dl.length);
+  const active = (name: string) => targets.some((t) => t.name === name);
+  const pills: CurveLabelPill[] = [];
+  for (const inds of panes.values()) {
+    for (const ind of inds.values()) {
+      if (indTypeOf(ind) !== "SLOPE") continue;
+      const ext = (ind.extendData ?? {}) as { showMa?: boolean; maType?: string };
+      if (!ext.showMa || ind.visible === false) continue;
+      const cfg = curveLabelConfig(ext);
+      if (!cfg.enabled) continue;
+      if (!cfg.always && !active(ind.name)) continue;
+      const lines = slopeMaLines(ind as SlopeMaSource, dl);
+      if (!lines.length) continue;
+      const lengths = slopeLengths(ind.calcParams);
+      const maType = ext.maType === "sma" ? "SMA" : "EMA";
+      const pos = cfg.high; // single position slot (no High/Low split for the MA curves)
+      lines.forEach((line, li) => {
+        // The chosen visible END: right -> last defined visible point, left -> first.
+        let idx = -1;
+        if (pos.side === "right") {
+          for (let i = to - 1; i >= Math.max(vr.from, 0); i--) {
+            const v = line.values[i];
+            if (typeof v === "number" && Number.isFinite(v)) {
+              idx = i;
+              break;
+            }
+          }
+        } else {
+          for (let i = Math.max(vr.from, 0); i < to; i++) {
+            const v = line.values[i];
+            if (typeof v === "number" && Number.isFinite(v)) {
+              idx = i;
+              break;
+            }
+          }
+        }
+        if (idx < 0) return;
+        const k = dl[idx];
+        const px = first(
+          chart.convertToPixel([{ timestamp: k.timestamp, value: line.values[idx] as number }], {
+            paneId: "candle_pane",
+            absolute: true,
+          }),
+        ) as { x: number; y: number };
+        if (px.x == null || px.y == null) return;
+        pills.push({
+          key: `${ind.name}:ma${li}`,
+          text: `${maType} ${lengths[li]}`,
+          x: px.x,
+          y: px.y,
+          color: line.color,
+          side: pos.side,
+          align: pos.align,
+          maxX,
+        });
+      });
+    }
   }
   return pills;
 }

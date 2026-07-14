@@ -9,7 +9,7 @@ vi.mock("klinecharts", () => ({
   registerIndicator: () => {},
 }));
 
-const { inferBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries } =
+const { inferBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines } =
   await import("./slope");
 
 const bar = (t: number, c: number): KLineData =>
@@ -148,6 +148,97 @@ describe("smoothSeries", () => {
   it("passes undefined gaps through (leading warm-up preserved)", () => {
     const out = smoothSeries([undefined, 10, 20], { type: "sma", length: 2 });
     expect(out[0]).toBeUndefined();
+  });
+});
+
+describe("slopeMaLines", () => {
+  const candles = [bar(0, 100), bar(60_000, 101), bar(120_000, 102), bar(180_000, 103), bar(240_000, 104)];
+
+  it("returns [] when showMa is off", () => {
+    expect(slopeMaLines({ calcParams: [2], extendData: {} }, candles)).toEqual([]);
+    expect(slopeMaLines({ calcParams: [2], extendData: { showMa: false } }, candles)).toEqual([]);
+  });
+
+  it("returns [] when the indicator is hidden", () => {
+    expect(
+      slopeMaLines({ calcParams: [2], extendData: { showMa: true }, visible: false }, candles),
+    ).toEqual([]);
+  });
+
+  it("returns one line per length equal to maSeries base (SMA parity)", () => {
+    const lines = slopeMaLines(
+      { calcParams: [2, 3], extendData: { showMa: true, maType: "sma" } },
+      candles,
+    );
+    expect(lines.length).toBe(2);
+    // SMA(2) of closes 100,101,102,103,104 -> undefined,100.5,101.5,102.5,103.5
+    expect(lines[0].values[0]).toBeUndefined();
+    expect(lines[0].values[1]).toBeCloseTo(100.5, 10);
+    expect(lines[0].values[4]).toBeCloseTo(103.5, 10);
+    // SMA(3) -> undefined,undefined,101,102,103
+    expect(lines[1].values[2]).toBeCloseTo(101, 10);
+  });
+
+  it("applies slope smoothing to the on-chart MA (chart TF)", () => {
+    const candles = [bar(0, 100), bar(60_000, 102), bar(120_000, 101), bar(180_000, 105), bar(240_000, 103)];
+    const raw = slopeMaLines(
+      { calcParams: [2], extendData: { showMa: true, maType: "sma" } },
+      candles,
+    )[0].values;
+    const smoothed = slopeMaLines(
+      { calcParams: [2], extendData: { showMa: true, maType: "sma", smoothing: { type: "sma", length: 2 } } },
+      candles,
+    )[0].values;
+    // Smoothing changes the line: the smoothed series must differ from the raw MA where
+    // both are defined, and must equal smoothSeries(raw, {sma,2}).
+    const expected = smoothSeries(raw, { type: "sma", length: 2 });
+    expect(smoothed).toEqual(expected);
+    // Sanity: it actually differs from raw at some defined index.
+    expect(smoothed.some((v, i) => v !== undefined && raw[i] !== undefined && v !== raw[i])).toBe(true);
+  });
+
+  it("resolves color from styles override then palette fallback", () => {
+    const lines = slopeMaLines(
+      { calcParams: [2, 3], extendData: { showMa: true }, styles: { lines: [{ color: "#123456" }] } },
+      candles,
+    );
+    expect(lines[0].color).toBe("#123456"); // override
+    expect(lines[1].color).toBe("#42A5F5"); // SLOPE_PALETTE[1] fallback
+  });
+
+  it("matches the slope line's width (override, else 1.5 fallback)", () => {
+    const lines = slopeMaLines(
+      { calcParams: [2, 3], extendData: { showMa: true }, styles: { lines: [{ size: 3 }] } },
+      candles,
+    );
+    expect(lines[0].width).toBe(3); // override carried to the MA
+    expect(lines[1].width).toBe(1.5); // fallback when no per-line size
+  });
+
+  it("MTF: aligns the stashed HTF MA base to chart bars (no recompute)", () => {
+    // Two HTF bars starting at t=0 and t=120_000 (htfMs=120_000), base values 10 and 20.
+    // All chart closes are 1, so a naive maSeries recompute would land near 1.
+    // seeing 10/20 instead proves the stashed base is being used, not recomputed.
+    const chart = [bar(0, 1), bar(60_000, 1), bar(120_000, 1), bar(180_000, 1), bar(240_000, 1)];
+    const lines = slopeMaLines(
+      {
+        calcParams: [2],
+        extendData: {
+          showMa: true,
+          mtf: {
+            timeframe: "1h",
+            htfStarts: [0, 120_000],
+            htfMaBaseByLine: [[10, 20]],
+            htfMs: 120_000,
+          },
+        },
+      },
+      chart,
+    );
+    // No lookahead: an HTF bar's base is only usable once it CLOSES (open + htfMs).
+    // HTF bar 0 (open 0) closes at 120_000 -> first appears there; HTF bar 1
+    // (open 120_000) closes at 240_000 -> first appears there.
+    expect(lines[0].values).toEqual([undefined, undefined, 10, 10, 20]);
   });
 });
 

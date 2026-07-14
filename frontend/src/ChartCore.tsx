@@ -70,6 +70,7 @@ import {
   tradeMarkerHoverSignal,
   highlightTradeSignal,
   snapshotViewChanged,
+  indicatorOverlayRepaint,
   type PendingEdit,
   type TradeLineField,
   type DraftOrder,
@@ -553,6 +554,11 @@ export default function ChartCore({
   // badges to ITS LEFT. `bracketShownRef` clears it exactly once on the active→idle
   // transition so the common nothing-active move costs ~nothing.
   const bracketCanvasRef = useRef<HTMLCanvasElement>(null);
+  // Slope "Show MAs on chart": the SLOPE indicator's underlying MA curves drawn on
+  // the candle pane (its own overlay canvas, under the separator/bracket/selection
+  // layers but over the candles). Repainted in the redraw cycle so it tracks
+  // scroll/zoom, and on any slope edit via indicatorOverlayRepaint.
+  const maCanvasRef = useRef<HTMLCanvasElement>(null);
   const bracketShownRef = useRef(false);
   const paintBracketRef = useRef<() => void>(() => {});
   // The hovered LINE's field (price/stop/tp), captured by the hover hit-test so the
@@ -725,6 +731,10 @@ export default function ChartCore({
   // Hovering an indicator's legend row also shows its curve in "selected mode"
   // (the hollow handles), TradingView-style — repaint the overlay on hover change.
   useEffect(() => legendHoverName.subscribe(() => redrawRef.current()), [legendHoverName]);
+  useEffect(
+    () => indicatorOverlayRepaint.subscribe(() => redrawRef.current()),
+    [],
+  );
   // The inverse: hovering an indicator's CURVE highlights its legend card AND paints
   // its curve in selected mode. Mirror the name into state (the DOM legend's card
   // highlight) and repaint the overlay (the curve handles) on every hover change.
@@ -1277,12 +1287,16 @@ export default function ChartCore({
           const next = !(ind?.visible ?? true);
           c.overrideIndicator({ name, visible: next }, paneId);
           saveIndicatorVisible(scope, name, next);
+          // Redraw our overlay so a hidden Slope drops its on-chart MA at once.
+          handle.redrawRef.current();
         } else if (iconId === "remove") {
           c.removeIndicator(paneId, name);
           const next = controller.indicators.value.filter((i) => i.id !== name);
           controller.indicators.set(next);
           saveIndicators(scope, next);
           indicatorRemoved.set(name);
+          // Redraw our overlay so a removed Slope's on-chart MA clears at once.
+          handle.redrawRef.current();
         }
       },
     );
@@ -2763,6 +2777,7 @@ export default function ChartCore({
     wrapRef,
     pillClipRef,
     bracketCanvasRef,
+    maCanvasRef,
     sepCanvasRef,
     selCanvasRef,
     bracketShownRef,
@@ -3220,6 +3235,21 @@ export default function ChartCore({
           selection overlay (z-index 9) so it's above klinecharts' lines but the
           indicator-selection handles still draw on top. pointer-events:none — purely
           decorative; the draggable lines underneath stay the interactive surface. */}
+      {/* Slope "Show MAs on chart": the SLOPE indicator's underlying MA curves.
+          z-index 7: above klinecharts' candles (z2) but below the separator (z8),
+          bracket (z9) and selection (z10) overlays. pointer-events:none. */}
+      <canvas
+        ref={maCanvasRef}
+        data-testid="slope-ma-overlay"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 7,
+          pointerEvents: "none",
+        }}
+      />
       {/* Period-start separator (dashed line + date pill). z-index 8: above
           klinecharts' candles (z2) but below the bracket (z9) and selection (z10)
           overlays. pointer-events:none — purely a marker. */}

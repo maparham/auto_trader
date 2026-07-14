@@ -496,3 +496,12 @@ export const indicatorSettingsRequest = new Signal<{
 // double-click on the drawing. The modal (in App, routed to the focused cell's
 // OverlayManager) reads/writes the live overlay. null = closed.
 export const drawingSettingsRequest = new Signal<{ id: string } | null>(null);
+
+// Bumped when an indicator's own-canvas overlay (e.g. the Slope's on-chart MA
+// curves, drawn outside klinecharts) needs an immediate repaint after a settings
+// change. ChartCore subscribes and re-runs its redraw loop. Without this the
+// overlay only refreshes on the 1s tick / next scroll.
+export const indicatorOverlayRepaint = new Signal<number>(0);
+export function requestIndicatorOverlayRepaint(): void {
+  indicatorOverlayRepaint.set(indicatorOverlayRepaint.value + 1);
+}

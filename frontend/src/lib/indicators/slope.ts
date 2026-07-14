@@ -34,8 +34,12 @@ export interface SlopeExtend extends MaExtend {
   slopePeriod?: number;
   smoothing?: SlopeSmoothing;
   colorByDirection?: boolean;
+  showMa?: boolean;
   threshold?: SlopeThreshold;
-  mtf?: MaExtend["mtf"] & { htfSeriesByLine?: Array<Array<number | undefined>> };
+  mtf?: MaExtend["mtf"] & {
+    htfSeriesByLine?: Array<Array<number | undefined>>;
+    htfMaBaseByLine?: Array<Array<number | undefined>>;
+  };
 }
 
 export type SlopePoint = Record<string, number | undefined>;
@@ -301,6 +305,63 @@ function drawSlope(params: IndicatorDrawParams<SlopePoint>): boolean {
   }
   ctx.restore();
   return true; // suppress default figure lines
+}
+
+/** One on-chart MA curve derived from a Slope line: its resolved color + width
+ * (matching the slope line's own style) + per-bar MA base values (undefined
+ * during warm-up). */
+export interface SlopeMaLine {
+  color: string;
+  width: number;
+  values: Array<number | undefined>;
+}
+
+/** The subset of a live SLOPE indicator the on-chart MA painter reads. */
+export interface SlopeMaSource {
+  calcParams?: unknown[];
+  extendData?: unknown;
+  visible?: boolean;
+  styles?: { lines?: Array<{ color?: string; size?: number }> };
+}
+
+/** Per-line MA curves to draw on the candle pane for a Slope with "Show MAs on
+ * chart" enabled. Empty when showMa is off or the Slope is hidden. Each line is
+ * the MA base (maSeries) of that length run through the Slope's smoothing (raw
+ * when smoothing is off, smoothed with the same SMA/EMA window when on),
+ * colored to match the slope line (override -> SLOPE_PALETTE). Uses the SAME
+ * slopeLengths + maSeries the Slope uses, so the curves match by construction.
+ * On a higher timeframe, uses the coordinator-stashed HTF MA base (already
+ * smoothed on the HTF bars) aligned to the chart bars instead (see the mtf
+ * branch below). */
+export function slopeMaLines(ind: SlopeMaSource, candles: KLineData[]): SlopeMaLine[] {
+  const ext = (ind.extendData ?? {}) as SlopeExtend;
+  if (!ext.showMa || ind.visible === false) return [];
+  const lengths = slopeLengths(ind.calcParams);
+  const { maType, source, smoothing } = slopeShared(ext);
+  const colorAt = (li: number): string =>
+    ind.styles?.lines?.[li]?.color ?? SLOPE_PALETTE[li % SLOPE_PALETTE.length];
+  // Match the slope line's own width (drawSlope resolves it the same way, then
+  // falls back to 1.5). So a width override on the slope line carries to its MA.
+  const widthAt = (li: number): number => ind.styles?.lines?.[li]?.size ?? 1.5;
+  // MTF: the coordinator stashes the per-line HTF MA base (native HTF bars,
+  // same lengths/source as the chart-TF path) alongside the slope series.
+  // Align it to the chart bars, no lookahead, instead of recomputing on the
+  // chart-TF candles. See mtfCoordinator.applySlopeTimeframe.
+  const mtf = ext.mtf;
+  if (mtf?.timeframe && mtf.htfMaBaseByLine && mtf.htfStarts && mtf.htfMs) {
+    const ts = candles.map((k) => k.timestamp);
+    const starts = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
+    return lengths.map((_len, li) => ({
+      color: colorAt(li),
+      width: widthAt(li),
+      values: alignHtfToChart(ts, starts, mtf.htfMaBaseByLine![li] ?? [], mtf.htfMs!, true),
+    }));
+  }
+  return lengths.map((len, li) => ({
+    color: colorAt(li),
+    width: widthAt(li),
+    values: smoothSeries(maSeries(candles, maType, len, { source }).base, smoothing),
+  }));
 }
 
 export const SLOPE_TEMPLATE: Omit<IndicatorTemplate, "name"> = {

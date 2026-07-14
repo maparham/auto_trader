@@ -66,6 +66,7 @@ import {
   type SavedIndicatorConfig,
 } from "./lib/persist";
 import InfoTip from "./components/InfoTip";
+import { requestIndicatorOverlayRepaint } from "./lib/signals";
 import ColorLineStylePicker from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
 import { cloneStyles } from "./lib/overlays";
@@ -305,6 +306,7 @@ export default function IndicatorSettings({
   const [threshold, setThreshold] = useState<SlopeThreshold>(
     slopeExt0.threshold ?? { on: false, level: 0.1, lineStyle: "dotted" },
   );
+  const [showMa, setShowMa] = useState<boolean>(slopeExt0.showMa ?? false);
 
   // --- PIVOT_ANALYSIS: vertical connector style (draw-only, on extendData) ---
   // Colors stay price-driven (up/down); width + line style + arrowheads are shared.
@@ -418,6 +420,7 @@ export default function IndicatorSettings({
     if (curveLabelIsDefault(next)) delete ext.curveLabels;
     else ext.curveLabels = curveLabelObj(next);
     chart.overrideIndicator({ name, extendData: ext }, paneId);
+    if (isSlope) requestIndicatorOverlayRepaint();
   }
   // The current state as the applyCurveLabels/curveLabelObj argument shape.
   const curveLabelState = () => ({
@@ -615,6 +618,7 @@ export default function IndicatorSettings({
       if (smoothing.type !== "none") extendData.smoothing = smoothing;
       extendData.colorByDirection = colorByDirection;
       extendData.threshold = threshold;
+      extendData.showMa = showMa;
     }
     if (isPivotAnalysis) {
       // Connector style is draw-only; persist only when it differs from the fixed
@@ -692,7 +696,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
 
   // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
   // setParam's isMa branch below, so it stays a shell-local binding.
@@ -753,6 +757,7 @@ export default function IndicatorSettings({
       smoothing: SlopeSmoothing;
       colorByDirection: boolean;
       threshold: SlopeThreshold;
+      showMa: boolean;
       timeframe: string;
     }> = {},
   ): void {
@@ -761,6 +766,7 @@ export default function IndicatorSettings({
     const nextSmoothing = next.smoothing ?? smoothing;
     const nextColorByDirection = next.colorByDirection ?? colorByDirection;
     const nextThreshold = next.threshold ?? threshold;
+    const nextShowMa = next.showMa ?? showMa;
     const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
     chart.overrideIndicator(
       {
@@ -771,6 +777,7 @@ export default function IndicatorSettings({
           smoothing: nextSmoothing.type === "none" ? undefined : nextSmoothing,
           colorByDirection: nextColorByDirection,
           threshold: nextThreshold,
+          showMa: nextShowMa,
         },
       },
       paneId,
@@ -791,6 +798,7 @@ export default function IndicatorSettings({
       tf === "chart" ? null : tf,
       brokerId,
     );
+    requestIndicatorOverlayRepaint();
   }
 
   // Merge one field into the connector style, push state + live redraw together.
@@ -835,6 +843,9 @@ export default function IndicatorSettings({
       },
       paneId,
     );
+    // Slope color/width edits route setLine -> apply; bump the overlay repaint so
+    // the on-chart MA follows immediately instead of waiting for the 1s tick.
+    if (isSlope) requestIndicatorOverlayRepaint();
   }
 
   function setParam(index: number, value: number) {
@@ -1405,6 +1416,23 @@ export default function IndicatorSettings({
                         text="Green when the slope is rising, red when falling. Available only with a single line."
                       />
                     )}
+                  </span>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input
+                        type="checkbox"
+                        checked={showMa}
+                        onChange={(e) => {
+                          setShowMa(e.target.checked);
+                          applySlope({ showMa: e.target.checked });
+                        }}
+                      />
+                      <span>Show MAs on chart</span>
+                    </label>
+                    <InfoTip
+                      title="Show MAs on chart"
+                      text="Plot each length's moving average on the price chart, colored to match its slope line."
+                    />
                   </span>
                   <div className="ind-group">Threshold</div>
                   <span className="ind-row-head">

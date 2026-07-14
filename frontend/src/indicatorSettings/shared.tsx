@@ -24,6 +24,7 @@ export const CURVE_LABEL_TYPES = new Set([
   "BOLL",
   "PIVOT_BANDS",
   "PIVOT_ANALYSIS",
+  "SLOPE",
 ]);
 
 // Line-style options for the RSI band / MA selectors (canvas-drawn elements).
