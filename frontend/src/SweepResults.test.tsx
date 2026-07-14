@@ -15,8 +15,8 @@ const rows = [
   { combo: { "param:n": 5, "risk:long.stop.value": 2 }, metrics: null, error: "boom" },
 ];
 const axes = [
-  { target: "param:n", label: "n", from: 5, to: 10, step: 5 },
-  { target: "risk:long.stop.value", label: "Stop %", from: 1, to: 2, step: 1 },
+  { kind: "range" as const, target: "param:n", label: "n", from: 5, to: 10, step: 5 },
+  { kind: "range" as const, target: "risk:long.stop.value", label: "Stop %", from: 1, to: 2, step: 1 },
 ];
 
 describe("SweepResults", () => {
@@ -39,5 +39,38 @@ describe("SweepResults", () => {
   it("renders a 2-axis heatmap grid colored by metric", () => {
     render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
     expect(document.querySelectorAll(".sweep-cell").length).toBeGreaterThan(0);
+  });
+});
+
+const opRows = [
+  { combo: { "op:long.entry.0": "gt", "param:n": 5 },
+    metrics: { net_pnl: 10, n_trades: 1, win_rate: 1, max_drawdown: 0,
+               profit_factor: null, return_pct: 0.1 }, error: null },
+  { combo: { "op:long.entry.0": "lt", "param:n": 5 },
+    metrics: { net_pnl: -10, n_trades: 1, win_rate: 0, max_drawdown: 10,
+               profit_factor: null, return_pct: -0.1 }, error: null },
+];
+const opAxes = [
+  { kind: "list" as const, target: "op:long.entry.0", label: "long entry 1 op", options: [
+    { label: "greater than", patch: { "op:long.entry.0": "gt" } },
+    { label: "less than", patch: { "op:long.entry.0": "lt" } },
+  ] },
+  { kind: "range" as const, target: "param:n", label: "n", from: 5, to: 5, step: 1 },
+];
+
+describe("SweepResults list axes", () => {
+  it("labels combos with the matched option label", () => {
+    render(<SweepResults rows={opRows} axes={opAxes} onApply={() => {}} />);
+    expect(screen.getAllByText(/greater than/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/less than/).length).toBeGreaterThan(0);
+  });
+
+  it("renders heatmap ticks from option labels and applies the cell's combo", () => {
+    const onApply = vi.fn();
+    render(<SweepResults rows={opRows} axes={opAxes} onApply={onApply} />);
+    const cells = document.querySelectorAll(".sweep-cell");
+    expect(cells.length).toBe(2);            // 2 op options x 1 n value
+    fireEvent.click(cells[0]);
+    expect(onApply).toHaveBeenCalledWith(opRows[0].combo);
   });
 });

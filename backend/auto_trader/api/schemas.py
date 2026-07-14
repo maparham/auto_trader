@@ -421,9 +421,14 @@ class BacktestRequest(BaseModel):
 class SweepDTO(BaseModel):
     """Explicit combo list — the frontend enumerates the grid and chunks it.
     Keys: "param:<name>" (codedParams override),
-    "risk:<long|short>.<stop|target>.<value|mult>", or
+    "risk:<long|short>.<stop|target>.<value|mult>",
+    "op:<long|short>.<entry|exit>.<idx>" (operator patch, one of the 7 Rule ops), or
     "rule:<long|short>.<entry|exit>.<idx>.<left|right>.<length|value>" /
-    "rule:<long|short>.<entry|exit>.<idx>.count" (rule-tree operand/count patch)."""
+    "rule:<long|short>.<entry|exit>.<idx>.count" (rule-tree operand/count patch),
+    "period:from" + "period:to" (unix-second walk-forward window: entries gate
+    at from, candles truncate at to),
+    "timeWindow:startMin" + "timeWindow:endMin" + "timeWindow:tz" (intraday
+    mask window patch; a mask is synthesized when the request has none)."""
     combos: list[dict[str, float | int | bool | str]]
 
 

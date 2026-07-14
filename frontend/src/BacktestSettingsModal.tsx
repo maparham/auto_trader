@@ -3,7 +3,7 @@
 // (useDraggable/useCloseOnEscape/CloseButton, .modal-backdrop/.modal/.modal-head/
 // .modal-foot) — no shared wrapper, no portal.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CloseButton from "./CloseButton";
 import ChartOperandPicker from "./ChartOperandPicker";
@@ -58,7 +58,7 @@ import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
 import { StrategyParams } from "./components/StrategyParams";
 import { SweepResults } from "./SweepResults";
-import { comboCount, mirrorRiskAxes, ruleAxisTarget, SWEEP_MAX_COMBOS, type SweepAxis } from "./lib/sweep";
+import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_MAX_COMBOS, type RangeAxis, type SweepAxis, type SweepOption } from "./lib/sweep";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { inspectModeSignal } from "./lib/backtestInspect";
 import { formatPeriodRange } from "./lib/backtestPeriods";
@@ -420,18 +420,26 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // Max 2; toggling a third un-toggles the oldest (a plain array shift). Written
   // to sweepAxesSignal right before a run so BacktestButton can branch on it.
   const [sweepAxes, setSweepAxes] = useState<SweepAxis[]>([]);
+  // The axes that actually ran, materialized (period → concrete windows) at run
+  // time — SweepResults labels against these, not the still-editable sweepAxes.
+  const [ranAxes, setRanAxes] = useState<SweepAxis[]>([]);
+  // Appending past the 2-axis cap drops the oldest (shared by every toggle).
+  const addAxis = (axes: SweepAxis[], next: SweepAxis) => {
+    const appended = [...axes, next];
+    return appended.length > 2 ? appended.slice(appended.length - 2) : appended;
+  };
   const toggleSweepAxis = (target: string, spec: ParamSpec) => {
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
       const next: SweepAxis = {
+        kind: "range",
         target,
         label: spec.label,
         from: spec.min ?? (spec.default as number),
         to: spec.max ?? (spec.default as number) * 2,
         step: spec.step ?? 1,
       };
-      const appended = [...axes, next];
-      return appended.length > 2 ? appended.slice(appended.length - 2) : appended;
+      return addAxis(axes, next);
     });
   };
   // Risk numeric fields have no declared min/max/step — pick sensible defaults
@@ -442,14 +450,14 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
       const base = current || 1;
       const next: SweepAxis = {
+        kind: "range",
         target,
         label: target.split(".").slice(1).join(" "),
         from: base,
         to: base * 2,
         step: Math.max(base / 10, 0.1),
       };
-      const appended = [...axes, next];
-      return appended.length > 2 ? appended.slice(appended.length - 2) : appended;
+      return addAxis(axes, next);
     });
   };
   // Rule-operand numeric fields (indicator length, const value, exit count) —
@@ -460,16 +468,98 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
       const base = current || 1;
       const next: SweepAxis = {
+        kind: "range",
         target,
         label: target.replace(/^rule:/, ""),
         from: base,
         to: base * 2,
         step: Math.max(base / 10, 1),
       };
-      const appended = [...axes, next];
-      return appended.length > 2 ? appended.slice(appended.length - 2) : appended;
+      return addAxis(axes, next);
     });
   };
+  const opOption = (target: string, op: Operator): SweepOption => ({
+    label: OPERATORS.find((o) => o.value === op)?.label ?? op,
+    patch: { [target]: op },
+  });
+  // Operator axis: a discrete list seeded with the rule's current operator.
+  const toggleOpSweepAxis = (target: string, current: Operator) => {
+    setSweepAxes((axes) =>
+      axes.some((a) => a.target === target)
+        ? axes.filter((a) => a.target !== target)
+        : addAxis(axes, {
+            kind: "list", target,
+            label: `${target.replace(/^op:/, "").replace(/\./g, " ")} op`,
+            options: [opOption(target, current)],
+          }));
+  };
+  // Tick/untick one operator in the axis's option list; unticking the last
+  // option removes the axis (nothing left to sweep). Options keep OPERATORS
+  // order so results enumerate in dropdown order.
+  const tickOpOption = (target: string, op: Operator) => {
+    setSweepAxes((axes) =>
+      axes
+        .map((a) => {
+          if (a.target !== target || a.kind !== "list") return a;
+          const has = a.options.some((o) => o.patch[target] === op);
+          const options = has
+            ? a.options.filter((o) => o.patch[target] !== op)
+            : OPERATORS.filter((o) =>
+                o.value === op || a.options.some((x) => x.patch[target] === o.value),
+              ).map((o) => opOption(target, o.value));
+          return { ...a, options };
+        })
+        .filter((a) => !(a.target === target && a.kind === "list" && a.options.length === 0)));
+  };
+  const timeWindowAxis = sweepAxes.find((a) => a.target === "timeWindow");
+  const twOption = (startMin: number, endMin: number, tz: string, label?: string): SweepOption => ({
+    label: label ?? `${minToTime(startMin)}-${minToTime(endMin)} ${tz}`,
+    patch: { "timeWindow:startMin": startMin, "timeWindow:endMin": endMin, "timeWindow:tz": tz },
+  });
+  // Time-window axis: a discrete list of intraday windows, seeded with the
+  // mask's current window when one is set.
+  const toggleTimeWindowSweepAxis = () => {
+    setSweepAxes((axes) => {
+      if (axes.some((a) => a.target === "timeWindow")) return axes.filter((a) => a.target !== "timeWindow");
+      const t = cfg.range.mask?.timeOfDay;
+      const tz = cfg.range.mask?.tz ?? "UTC";
+      return addAxis(axes, {
+        kind: "list", target: "timeWindow", label: "Window",
+        options: t ? [twOption(t.startMin, t.endMin, tz)] : [],
+      });
+    });
+  };
+  const addTimeWindowOption = (o: SweepOption) =>
+    setSweepAxes((axes) => axes.map((a) =>
+      a.target === "timeWindow" && a.kind === "list" && !a.options.some((x) => x.label === o.label)
+        ? { ...a, options: [...a.options, o] }
+        : a));
+  // Session presets resolve to an explicit window + the preset's OWN tz, so
+  // the tz travels with each option (no conversion into the mask tz needed).
+  const addSessionWindowOption = (key: SessionPreset | "") => {
+    if (!key) return;
+    const p = SESSION_PRESETS[key];
+    if (!p.window) return; // Crypto: 24h, no window to sweep
+    addTimeWindowOption(twOption(p.window.startMin, p.window.endMin, p.tz, p.label));
+  };
+  const removeTimeWindowOption = (i: number) =>
+    setSweepAxes((axes) => axes.map((a) =>
+      a.target === "timeWindow" && a.kind === "list"
+        ? { ...a, options: a.options.filter((_, j) => j !== i) }
+        : a));
+  const periodAxis = sweepAxes.find((a) => a.target === "period");
+  // Period axis: walk-forward, the range split into n equal windows. Stored as
+  // just n while editing; materialized into concrete windows at run time so it
+  // always reflects the range as currently configured.
+  const togglePeriodSweepAxis = () => {
+    setSweepAxes((axes) =>
+      axes.some((a) => a.target === "period")
+        ? axes.filter((a) => a.target !== "period")
+        : addAxis(axes, { kind: "period", target: "period", label: "Period", n: 4 }));
+  };
+  const setPeriodN = (n: number) =>
+    setSweepAxes((axes) => axes.map((a) =>
+      a.kind === "period" ? { ...a, n: Math.max(2, Math.min(50, Math.round(n) || 2)) } : a));
   const sweepCombos = comboCount(sweepAxes);
   const sweepOverCap = !isFinite(sweepCombos) || sweepCombos > SWEEP_MAX_COMBOS;
   const [sweepState, setSweepState] = useState(sweepStateSignal.value);
@@ -491,7 +581,46 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   function applyRuleSweepCombo(combo: Record<string, number | boolean | string>) {
     if (sweepStateSignal.value?.running) return;
     let next = cfg;
+    // timeWindow combo: patch the applied window onto the mask.
+    const twS = combo["timeWindow:startMin"];
+    const twE = combo["timeWindow:endMin"];
+    if (typeof twS === "number" && typeof twE === "number") {
+      const tz = typeof combo["timeWindow:tz"] === "string" ? combo["timeWindow:tz"] : next.range.mask?.tz ?? "UTC";
+      next = {
+        ...next,
+        range: {
+          ...next.range,
+          mask: {
+            ...(next.range.mask ?? { enabled: true }),
+            enabled: true,
+            timeOfDay: { startMin: twS, endMin: twE },
+            tz,
+            session: undefined,
+          },
+        },
+      };
+    }
+    // period combo: apply the window as a custom range.
+    const pFrom = combo["period:from"];
+    const pTo = combo["period:to"];
+    if (typeof pFrom === "number" && typeof pTo === "number") {
+      next = { ...next, range: { ...next.range, mode: "custom", fromMs: pFrom * 1000, toMs: pTo * 1000 } };
+    }
     for (const [key, value] of Object.entries(combo)) {
+      // op:<side>.<entry|exit>.<idx> carries a string operator.
+      if (key.startsWith("op:") && typeof value === "string") {
+        const [oside, ogroup, oidxStr] = key.slice("op:".length).split(".");
+        const groupKey = `${oside}${ogroup === "entry" ? "Entry" : "Exit"}` as
+          "longEntry" | "longExit" | "shortEntry" | "shortExit";
+        const ruleGroup = next[groupKey];
+        const idx = rawRuleIndex(ruleGroup.rules, Number(oidxStr));
+        const rule = ruleGroup.rules[idx];
+        if (!rule) continue;
+        const rules = ruleGroup.rules.slice();
+        rules[idx] = { ...rule, op: value as Operator };
+        next = { ...next, [groupKey]: { ...ruleGroup, rules } };
+        continue;
+      }
       if (typeof value !== "number") continue;
       // SL/TP axes patch the per-side risk DTO, same shape as the coded branch.
       // risk:<side>.<stop|target>.<value|mult>
@@ -510,10 +639,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       // rule:<side>.<entry|exit>.<idx>.count
       const parts = key.slice("rule:".length).split(".");
       const [side, group, idxStr, ...rest] = parts;
-      const idx = Number(idxStr);
       const groupKey = `${side}${group === "entry" ? "Entry" : "Exit"}` as
         "longEntry" | "longExit" | "shortEntry" | "shortExit";
       const ruleGroup = next[groupKey];
+      const idx = rawRuleIndex(ruleGroup.rules, Number(idxStr));
       const rule = ruleGroup.rules[idx];
       if (!rule) continue;
       let patched: Rule;
@@ -554,6 +683,32 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     // this is the belt-and-braces guard against a stale click still landing.
     if (sweepStateSignal.value?.running) return;
     let next = codedCfg;
+    // period/timeWindow combos live on cfg (range/mask), not codedCfg.
+    let cfgNext = cfg;
+    const twS = combo["timeWindow:startMin"];
+    const twE = combo["timeWindow:endMin"];
+    if (typeof twS === "number" && typeof twE === "number") {
+      const tz = typeof combo["timeWindow:tz"] === "string" ? combo["timeWindow:tz"] : cfgNext.range.mask?.tz ?? "UTC";
+      cfgNext = {
+        ...cfgNext,
+        range: {
+          ...cfgNext.range,
+          mask: {
+            ...(cfgNext.range.mask ?? { enabled: true }),
+            enabled: true,
+            timeOfDay: { startMin: twS, endMin: twE },
+            tz,
+            session: undefined,
+          },
+        },
+      };
+    }
+    // period combo: apply the window as a custom range.
+    const pFrom = combo["period:from"];
+    const pTo = combo["period:to"];
+    if (typeof pFrom === "number" && typeof pTo === "number") {
+      cfgNext = { ...cfgNext, range: { ...cfgNext.range, mode: "custom", fromMs: pFrom * 1000, toMs: pTo * 1000 } };
+    }
     for (const [key, value] of Object.entries(combo)) {
       if (key.startsWith("param:")) {
         const name = key.slice("param:".length);
@@ -572,10 +727,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     // carried risk:long.* keys — copy the applied values across to short.
     next = applyRiskSync(next, "long");
     updateCoded(next);
+    if (cfgNext !== cfg) setCfg(cfgNext);
     setSweepAxes([]);
     sweepAxesSignal.set([]);
     sweepStateSignal.set(null);
-    run();
+    run(cfgNext !== cfg ? cfgNext : undefined);
   }
 
   // A run's 422 can name a declared param (a stale schema mid-edit) — surfaced
@@ -804,7 +960,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     // Synced SL/TP: stamp risk axes with their short-side mirror so the sweep
     // moves both legs together (the axes themselves stay long-side only).
     const synced = cfg.mode === "coded" ? riskSyncOn(codedCfg) : riskSyncOn(cfg);
-    sweepAxesSignal.set(synced ? mirrorRiskAxes(sweepAxes) : sweepAxes);
+    const mirrored = synced ? mirrorRiskAxes(sweepAxes) : sweepAxes;
+    // Period axes materialize against the range as configured RIGHT NOW, so an
+    // edit between toggle and run can never sweep stale windows.
+    const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
+    const finalAxes = materializePeriodAxes(mirrored, fromMs, toMs);
+    setRanAxes(finalAxes);
+    sweepAxesSignal.set(finalAxes);
     run();
   }
 
@@ -892,6 +1054,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 })}
               </select>
               </label>
+              <Tooltip content="Sweep the trading period: split the range into N equal windows and run each">
+                <button
+                  type="button"
+                  className={`sp-sweep bt-period-sweep-toggle${periodAxis ? " on" : ""}`}
+                  onClick={togglePeriodSweepAxis}
+                >
+                  <SweepGlyph />
+                </button>
+              </Tooltip>
             </div>
             {CHIP_UNIT[cfg.range.mode] && (
               <div className="bt-chip-row">
@@ -910,6 +1081,22 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               </div>
             )}
             <div className="al-note bt-range-subtitle">{rangeDateLabel(cfg, resSeconds)}</div>
+            {periodAxis?.kind === "period" && (
+              <div className="sp-row sweep-axis-row bt-period-sweep">
+                <span className="sp-label">Period sweep</span>
+                <span className="sweep-axis-fields">
+                  <span>windows</span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={50}
+                    step={1}
+                    value={periodAxis.n}
+                    onChange={(e) => setPeriodN(Number(e.target.value))}
+                  />
+                </span>
+              </div>
+            )}
             {cfg.range.mode === "bars" && (
               <label className="al-row">
                 <span>Bars</span>
@@ -1124,6 +1311,57 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                         onChange={(e) => setMask({ timeOfDay: withEnd(cfg.range.mask?.timeOfDay, timeToMin(e.target.value)) })}
                       />
                     </label>
+                    <Tooltip content="Sweep the time window: run each of several intraday windows">
+                      <button
+                        type="button"
+                        className={`sp-sweep bt-tw-sweep-toggle${timeWindowAxis ? " on" : ""}`}
+                        disabled={resSeconds >= 86400}
+                        onClick={toggleTimeWindowSweepAxis}
+                      >
+                        <SweepGlyph />
+                      </button>
+                    </Tooltip>
+                  </div>
+                )}
+
+                {timeWindowAxis?.kind === "list" && (
+                  <div className="sp-row sweep-axis-row bt-tw-sweep">
+                    <span className="sp-label">Window sweep</span>
+                    <span className="bt-tw-options">
+                      {timeWindowAxis.options.map((o, i) => (
+                        <span key={o.label} className="bt-chip seg-on bt-tw-option">
+                          {o.label}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${o.label}`}
+                            onClick={() => removeTimeWindowOption(i)}
+                          >
+                            x
+                          </button>
+                        </span>
+                      ))}
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={!cfg.range.mask?.timeOfDay}
+                        onClick={() => {
+                          const t = cfg.range.mask?.timeOfDay;
+                          if (t) addTimeWindowOption(twOption(t.startMin, t.endMin, cfg.range.mask?.tz ?? "UTC"));
+                        }}
+                      >
+                        + current window
+                      </button>
+                      <select
+                        aria-label="Add session window"
+                        value=""
+                        onChange={(e) => addSessionWindowOption(e.target.value as SessionPreset | "")}
+                      >
+                        <option value="">+ session</option>
+                        {Object.entries(SESSION_PRESETS).map(([k, v]) => (
+                          <option key={k} value={k}>{v.label}</option>
+                        ))}
+                      </select>
+                    </span>
                   </div>
                 )}
 
@@ -1236,7 +1474,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 sweep={{ axes: sweepAxes, onToggle: toggleSweepAxis }}
               />
               {sweepAxes
-                .filter((a) => a.target.startsWith("param:"))
+                .filter((a): a is RangeAxis => a.kind === "range" && a.target.startsWith("param:"))
                 .map((a) => (
                   <SweepAxisRow
                     key={a.target}
@@ -1300,7 +1538,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                       }}
                     />
                     {sweepAxes
-                      .filter((a) => a.target.startsWith(`risk:${s}.`))
+                      .filter((a): a is RangeAxis => a.kind === "range" && a.target.startsWith(`risk:${s}.`))
                       .map((a) => (
                         <SweepAxisRow
                           key={a.target}
@@ -1351,6 +1589,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               axes: sweepAxes,
               side,
               onToggle: toggleRuleSweepAxis,
+              onToggleOp: toggleOpSweepAxis,
+              onTickOp: tickOpOption,
               onToggleRisk: toggleRiskSweepAxis,
               // Dropping a stop/target kind drops its stale value/mult axis so a
               // now-unread field can't sweep N identical rows (matches coded mode).
@@ -1365,7 +1605,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               inactive side stays visible/editable even while its side tab isn't
               selected — rule mode shows one side at a time, but sweeps span both. */}
           {sweepAxes
-            .filter((a) => a.target.startsWith("rule:") || a.target.startsWith("risk:"))
+            .filter((a): a is RangeAxis =>
+              a.kind === "range" && (a.target.startsWith("rule:") || a.target.startsWith("risk:")))
             .map((a) => (
               <SweepAxisRow
                 key={a.target}
@@ -1528,7 +1769,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 ) : null}
                 <SweepResults
                   rows={sweepState.rows}
-                  axes={sweepAxes}
+                  axes={ranAxes.length ? ranAxes : sweepAxes}
                   onApply={applySweepCombo}
                   progress={sweepState.running ? { done: sweepState.done, total: sweepState.total } : null}
                 />
@@ -1624,8 +1865,8 @@ function SweepAxisRow({
   axis,
   onChange,
 }: {
-  axis: SweepAxis;
-  onChange: (patch: Partial<Pick<SweepAxis, "from" | "to" | "step">>) => void;
+  axis: RangeAxis;
+  onChange: (patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
 }) {
   return (
     <div className="sp-row sweep-axis-row">
@@ -1882,6 +2123,8 @@ function SidePanel({
     onToggle: (target: string, current: number) => void;
     onToggleRisk: (target: string, current: number) => void;
     onKindChange: (field: "stop" | "target") => void;
+    onToggleOp: (target: string, current: Operator) => void;
+    onTickOp: (target: string, op: Operator) => void;
   };
 }) {
   const isLong = side === "long";
@@ -2046,7 +2289,12 @@ function isCrossOp(op: Operator): boolean {
 // upper-bound estimate for keeping it on-screen before it has rendered.
 const OP_DROPDOWN_WIDTH = 150;
 
-function OperatorPicker({ value, onChange }: { value: Operator; onChange: (op: Operator) => void }) {
+function OperatorPicker({ value, onChange, sweep }: {
+  value: Operator;
+  onChange: (op: Operator) => void;
+  // Optional operator-sweep toggle (the equalizer glyph beside the button).
+  sweep?: { swept: boolean; onToggle: () => void };
+}) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -2097,6 +2345,17 @@ function OperatorPicker({ value, onChange }: { value: Operator; onChange: (op: O
       >
         <OpGlyph op={value} />
       </button>
+      {sweep && (
+        <Tooltip content="Sweep this operator">
+          <button
+            type="button"
+            className={`sp-sweep bt-op-sweep-toggle${sweep.swept ? " on" : ""}`}
+            onClick={sweep.onToggle}
+          >
+            <SweepGlyph />
+          </button>
+        </Tooltip>
+      )}
       {open &&
         pos &&
         createPortal(
@@ -2313,7 +2572,14 @@ export function RuleGroupSection({
   // it, coded mode's exit-rule use leaves it undefined). `group` here is this
   // section's entry/exit half of the `rule:` target path, distinct from the
   // `RuleGroup` prop above.
-  sweep?: { axes: SweepAxis[]; side: "long" | "short"; group: "entry" | "exit"; onToggle: (target: string, current: number) => void };
+  sweep?: {
+    axes: SweepAxis[];
+    side: "long" | "short";
+    group: "entry" | "exit";
+    onToggle: (target: string, current: number) => void;
+    onToggleOp: (target: string, current: Operator) => void;
+    onTickOp: (target: string, op: Operator) => void;
+  };
 }) {
   function setCombine(combine: Combine) {
     onChange({ ...group, combine });
@@ -2436,9 +2702,17 @@ export function RuleGroupSection({
         </div>
       )}
       {group.rules.map((rule, i) => (
-        <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`} key={i}>
+        <Fragment key={i}>
+        <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`}>
           <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `left.${leaf}`) } : undefined} />
-          <OperatorPicker value={rule.op} onChange={(op) => setRule(i, { ...rule, op })} />
+          <OperatorPicker
+            value={rule.op}
+            onChange={(op) => setRule(i, { ...rule, op })}
+            sweep={sweep && rule.enabled !== false ? {
+              swept: sweep.axes.some((a) => a.target === opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i))),
+              onToggle: () => sweep.onToggleOp(opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i)), rule.op),
+            } : undefined}
+          />
           <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `right.${leaf}`) } : undefined} />
           {isExit && (
             <CountField
@@ -2492,6 +2766,32 @@ export function RuleGroupSection({
             />
           </div>
         </div>
+        {sweep && rule.enabled !== false && (() => {
+          const target = opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i));
+          const axis = sweep.axes.find((a) => a.target === target);
+          if (axis?.kind !== "list") return null;
+          return (
+            <div className="sp-row sweep-axis-row bt-op-sweep-row">
+              <span className="sp-label">operators</span>
+              <span className="bt-chip-row">
+                {OPERATORS.map((o) => {
+                  const on = axis.options.some((opt) => opt.patch[target] === o.value);
+                  return (
+                    <button
+                      key={o.value}
+                      type="button"
+                      className={on ? "seg-on bt-chip" : "bt-chip"}
+                      onClick={() => sweep.onTickOp(target, o.value)}
+                    >
+                      {o.label}
+                    </button>
+                  );
+                })}
+              </span>
+            </div>
+          );
+        })()}
+        </Fragment>
       ))}
       <div className="bt-rule-foot">
         <button className="ghost" onClick={addRule}>
@@ -2524,6 +2824,17 @@ export function RuleGroupSection({
       </div>
     </Section>
   );
+}
+
+// A sweep target's rule index counts ENABLED rules only (activeGroup drops
+// disabled ones before POST); map it back to the raw UI index for apply.
+function rawRuleIndex(rules: Rule[], activeIdx: number): number {
+  let seen = -1;
+  for (let i = 0; i < rules.length; i++) {
+    if (rules[i].enabled !== false) seen++;
+    if (seen === activeIdx) return i;
+  }
+  return -1;
 }
 
 // Compact ordinal suffix for the count chip: 1st, 2nd, 3rd, 4th…

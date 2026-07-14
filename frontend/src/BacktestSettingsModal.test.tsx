@@ -182,6 +182,67 @@ describe("chart-operand entry points", () => {
   });
 });
 
+describe("operator sweep", () => {
+  it("toggles an operator sweep axis and shows the 7-operator chip editor inline", () => {
+    renderModal();
+    openStrategy();
+    // Default config seeds one long-entry rule; add another so the group has rows.
+    fireEvent.click(screen.getAllByRole("button", { name: "+ Add rule" })[0]);
+    // The operator sweep glyph sits beside the operator button.
+    const glyphs = document.querySelectorAll(".bt-op-menu + .sp-sweep, .bt-op-sweep-toggle");
+    expect(glyphs.length).toBeGreaterThan(0);
+    fireEvent.click(glyphs[0]);
+    // Inline chip editor lists all 7 operators; the rule's current op is ticked.
+    const editor = document.querySelector(".bt-op-sweep-row")!;
+    expect(editor).toBeTruthy();
+    expect(editor.querySelectorAll(".bt-chip").length).toBe(7);
+    expect(editor.querySelectorAll(".seg-on").length).toBe(1);
+    // Ticking a second operator marks it selected (chip 3 is "greater than",
+    // which differs from the seeded "crosses above").
+    fireEvent.click(editor.querySelectorAll(".bt-chip")[3]);
+    expect(editor.querySelectorAll(".seg-on").length).toBe(2);
+  });
+});
+
+describe("time-window sweep", () => {
+  it("toggles a time-window sweep axis and lists candidate windows inline", () => {
+    const initial = defaultBacktestConfig();
+    initial.range.mask = { enabled: true, timeOfDay: { startMin: 480, endMin: 720 }, tz: "UTC" };
+    renderModal(initial);
+    // with an enabled mask whose timeOfDay is 08:00-12:00 UTC
+    const glyph = document.querySelector(".bt-tw-sweep-toggle")!;
+    expect(glyph).toBeTruthy();
+    fireEvent.click(glyph);
+    const editor = document.querySelector(".bt-tw-sweep")!;
+    expect(editor).toBeTruthy();
+    // seeded with the current window
+    expect(editor.textContent).toContain("08:00-12:00 UTC");
+    // a session preset can be added as another option
+    fireEvent.change(editor.querySelector("select")!, { target: { value: "London" } });
+    expect(editor.querySelectorAll(".bt-tw-option").length).toBe(2);
+    // removing an option works
+    fireEvent.click(editor.querySelectorAll(".bt-tw-option button")[0]);
+    expect(editor.querySelectorAll(".bt-tw-option").length).toBe(1);
+  });
+});
+
+describe("period sweep", () => {
+  it("toggles a period sweep axis with an inline windows stepper", () => {
+    renderModal();
+    const glyph = document.querySelector(".bt-period-sweep-toggle")!;
+    expect(glyph).toBeTruthy();
+    fireEvent.click(glyph);
+    const editor = document.querySelector(".bt-period-sweep")!;
+    expect(editor).toBeTruthy();
+    const input = editor.querySelector("input")! as HTMLInputElement;
+    expect(input.value).toBe("4");                      // default N
+    fireEvent.change(input, { target: { value: "6" } });
+    expect((editor.querySelector("input") as HTMLInputElement).value).toBe("6");
+    fireEvent.click(glyph);                              // toggles off
+    expect(document.querySelector(".bt-period-sweep")).toBeNull();
+  });
+});
+
 describe("parked side", () => {
   it("makes the whole side inert when its trade toggle is off (switch stays live)", () => {
     renderModal();

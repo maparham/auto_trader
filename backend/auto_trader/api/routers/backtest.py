@@ -8,6 +8,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from types import ModuleType
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
 
@@ -39,9 +40,11 @@ from ..schemas import (
     BarGroupTraceDTO,
     BarTraceDTO,
     CandleDTO,
+    DayTimeWindowDTO,
     EquityDTO,
     InspectorTermDTO,
     MarkerDTO,
+    RecurrenceMaskDTO,
     RiskConfigDTO,
     RuleGroupDTO,
     SweepResponse,
@@ -510,6 +513,10 @@ _RISK_TARGET = re.compile(r"^risk:(long|short)\.(stop|target)\.(value|mult)$")
 _RULE_TARGET = re.compile(
     r"^rule:(long|short)\.(entry|exit)\.(\d+)\.(?:(left|right)\.(length|value)|(count))$"
 )
+_OP_TARGET = re.compile(r"^op:(long|short)\.(entry|exit)\.(\d+)$")
+# RuleDTO.op's Literal set. model_copy(update=...) skips pydantic validation,
+# so membership is checked explicitly before the patch.
+_OPERATORS = {"crossesAbove", "crossesBelow", "crosses", "gt", "lt", "gte", "lte"}
 
 
 def _apply_combo(
@@ -542,8 +549,8 @@ def _apply_combo(
 
 def _apply_rule_combo(req: BacktestRequest, combo: dict) -> BacktestRequest:
     """Return a copy of `req` with each combo target patched into the rule tree /
-    risk DTO. Reuses `_apply_combo` for `risk:` keys. 422s a malformed or
-    out-of-range path so a stale axis can't silently no-op."""
+    risk DTO. Reuses `_apply_combo` for `risk:` keys. Handles `op:` operator patches.
+    422s a malformed or out-of-range path so a stale axis can't silently no-op."""
     groups = {
         ("long", "entry"): [r.model_copy(deep=True) for r in req.longEntry.rules],
         ("long", "exit"): [r.model_copy(deep=True) for r in req.longExit.rules],
@@ -554,6 +561,18 @@ def _apply_rule_combo(req: BacktestRequest, combo: dict) -> BacktestRequest:
     for target, value in combo.items():
         if target.startswith("risk:"):
             risk_combo[target] = value
+            continue
+        m = _OP_TARGET.match(target)
+        if m:
+            side, grp, idx_s = m.groups()
+            rules = groups[(side, grp)]
+            idx = int(idx_s)
+            if idx >= len(rules):
+                raise HTTPException(422, f"sweep target '{target}' index out of range")
+            if value not in _OPERATORS:
+                raise HTTPException(
+                    422, f"sweep target '{target}' needs one of {sorted(_OPERATORS)}")
+            rules[idx] = rules[idx].model_copy(update={"op": value})
             continue
         m = _RULE_TARGET.match(target)
         if not m:
@@ -578,6 +597,71 @@ def _apply_rule_combo(req: BacktestRequest, combo: dict) -> BacktestRequest:
         "shortExit": req.shortExit.model_copy(update={"rules": groups[("short", "exit")]}),
         "longRisk": long_risk, "shortRisk": short_risk,
     })
+
+
+# Environment combo keys: they change the RUN's candle window / session mask
+# rather than a strategy knob, so they're split off and applied to the request
+# + candle list before the per-combo strategy patch (_apply_rule_combo /
+# _apply_combo) runs. Shared by the rule and coded sweep branches.
+_ENV_PREFIXES = ("period:", "timeWindow:")
+_ENV_KEYS = {"period:from", "period:to",
+             "timeWindow:startMin", "timeWindow:endMin", "timeWindow:tz"}
+
+
+def _split_env_combo(combo: dict) -> tuple[dict, dict]:
+    env = {k: v for k, v in combo.items() if k.startswith(_ENV_PREFIXES)}
+    rest = {k: v for k, v in combo.items() if not k.startswith(_ENV_PREFIXES)}
+    return env, rest
+
+
+def _apply_env_combo(
+    req: BacktestRequest, candles: list[Candle], env: dict,
+) -> tuple[BacktestRequest, list[Candle]]:
+    """Apply period/timeWindow keys. period: gates entries at period:from
+    (tradeFromTime) and truncates candles to time <= period:to. Truncation
+    only cuts the END, so the result is a PREFIX of the posted candles: the
+    warm-up head survives, native series recompute correctly, and the
+    browser-supplied chart-operand series (full-length, positional) stay
+    index-aligned without slicing (the engine never reads past the candle
+    count). timeWindow: patches the mask's timeOfDay + tz, synthesizing an
+    enabled all-days mask when the request has none. Malformed keys 422 (a
+    request-shaped problem fails the whole chunk)."""
+    if not env:
+        return req, candles
+    unknown = set(env) - _ENV_KEYS
+    if unknown:
+        raise HTTPException(422, f"bad sweep target '{sorted(unknown)[0]}'")
+    updates: dict = {}
+    if any(k.startswith("timeWindow:") for k in env):
+        try:
+            start = int(env["timeWindow:startMin"])
+            end = int(env["timeWindow:endMin"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(422, "timeWindow sweep needs integer startMin and endMin")
+        base = req.mask or RecurrenceMaskDTO(enabled=True)
+        tz = env.get("timeWindow:tz", base.tz)
+        try:
+            ZoneInfo(str(tz))
+        except Exception:
+            raise HTTPException(422, f"unknown timezone '{tz}'")
+        # model_copy skips validators, so tz was checked explicitly above.
+        updates["mask"] = base.model_copy(update={
+            "enabled": True,
+            "timeOfDay": DayTimeWindowDTO(startMin=start, endMin=end),
+            "tz": str(tz),
+        })
+    if any(k.startswith("period:") for k in env):
+        try:
+            from_s = int(env["period:from"])
+            to_s = int(env["period:to"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(422, "period sweep needs integer from and to")
+        if to_s <= from_s:
+            raise HTTPException(422, "period sweep 'to' must be after 'from'")
+        updates["tradeFromTime"] = from_s
+        # Candle.time is a tz-aware datetime (period:to arrives as unix seconds).
+        candles = [c for c in candles if c.time.timestamp() <= to_s]
+    return (req.model_copy(update=updates) if updates else req), candles
 
 
 @router.post("/api/backtest/sweep", response_model=SweepResponse)
@@ -615,8 +699,10 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
         rows: list[SweepRowDTO] = []
         for combo in req.sweep.combos:
             try:
-                patched = _apply_rule_combo(req, combo)
-                result = await _run_rule(patched, candles, htf_candles=rule_htf_candles)
+                env, rest = _split_env_combo(combo)
+                patched, combo_candles = _apply_env_combo(req, candles, env)
+                patched = _apply_rule_combo(patched, rest)
+                result = await _run_rule(patched, combo_candles, htf_candles=rule_htf_candles)
             except HTTPException:
                 raise                              # request-shaped problems fail the chunk
             except Exception as e:                 # noqa: BLE001 — one combo must not kill the rest
@@ -654,11 +740,13 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
     htf_candles: dict[str, list[Candle]] = {}     # shared across every combo
     rows: list[SweepRowDTO] = []
     for combo in req.sweep.combos:
-        params_sent, long_risk, short_risk = _apply_combo(req, combo)
+        env, rest = _split_env_combo(combo)
+        patched_req, combo_candles = _apply_env_combo(req, candles, env)
+        params_sent, long_risk, short_risk = _apply_combo(patched_req, rest)
         try:
             resolved = resolve_params(module, params_sent)
             result, _ = await _run_coded(
-                req, candles, module, resolved, long_risk, short_risk, htf_candles,
+                patched_req, combo_candles, module, resolved, long_risk, short_risk, htf_candles,
             )
         except HTTPException:
             raise                                  # request-shaped problems fail the chunk

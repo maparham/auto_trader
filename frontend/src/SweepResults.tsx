@@ -7,7 +7,7 @@
 
 import { Fragment, useState } from "react";
 import type { SweepRow } from "./api";
-import type { SweepAxis } from "./lib/sweep";
+import { comboAxisText, type SweepAxis } from "./lib/sweep";
 import Tooltip from "./components/Tooltip";
 
 type MetricKey =
@@ -48,7 +48,7 @@ function fmtMetric(key: MetricKey, v: number | null): string {
 }
 
 function comboLabel(combo: SweepRow["combo"], axes: SweepAxis[]): string {
-  return axes.map((a) => `${a.label} ${combo[a.target]}`).join(", ");
+  return axes.map((a) => `${a.label} ${comboAxisText(a, combo as Record<string, number | string>)}`).join(", ");
 }
 
 // Diverging background: neutral at 0, green ramping positive, red ramping
@@ -219,6 +219,9 @@ function SweepSortHeader({
 // 2-axis grid (x = axis 0 values, y = axis 1 values) or 1-axis single-row
 // strip. Cell background is the diverging scale; click applies that cell's
 // combo the same as a table row click.
+
+type HeatTick = { key: string; label: string; match: Record<string, number | string> };
+
 function SweepHeatmap({
   rows,
   axes,
@@ -236,22 +239,25 @@ function SweepHeatmap({
   onApply: (combo: Record<string, number | boolean | string>) => void;
   disabled?: boolean;
 }) {
-  const find = (match: Record<string, number>) =>
+  const find = (match: Record<string, number | string>) =>
     rows.find((r) => Object.entries(match).every(([k, v]) => r.combo[k] === v));
 
-  const axisVals = (a: SweepAxis): number[] => {
+  const axisTicks = (a: SweepAxis): HeatTick[] => {
+    if (a.kind === "list") {
+      return a.options.map((o, i) => ({ key: `o${i}`, label: o.label, match: o.patch }));
+    }
     const set = new Set<number>();
     for (const r of rows) {
       const v = r.combo[a.target];
       if (typeof v === "number") set.add(v);
     }
-    return [...set].sort((x, y) => x - y);
+    return [...set].sort((x, y) => x - y).map((v) => ({ key: String(v), label: String(v), match: { [a.target]: v } }));
   };
 
   const xAxis = axes[0];
   const yAxis = axes[1];
-  const xVals = axisVals(xAxis);
-  const yVals = yAxis ? axisVals(yAxis) : [null];
+  const xTicks = axisTicks(xAxis);
+  const yTicks: (HeatTick | null)[] = yAxis ? axisTicks(yAxis) : [null];
 
   // Hovered cell's full metric breakdown, surfaced inline in the header row
   // beside the color-metric dropdown (the grid cells themselves only show the
@@ -289,24 +295,23 @@ function SweepHeatmap({
       </div>
       <div
         className="sweep-heat-grid"
-        style={{ gridTemplateColumns: `auto repeat(${xVals.length}, 1fr)` }}
+        style={{ gridTemplateColumns: `auto repeat(${xTicks.length}, 1fr)` }}
       >
         <div className="sweep-heat-corner" />
-        {xVals.map((xv) => (
-          <div key={`hx-${xv}`} className="sweep-heat-xlabel">{xv}</div>
+        {xTicks.map((xt) => (
+          <div key={`hx-${xt.key}`} className="sweep-heat-xlabel">{xt.label}</div>
         ))}
-        {yVals.map((yv) => (
-          <Fragment key={`hy-${yv}`}>
-            <div className="sweep-heat-ylabel">{yAxis ? yv : ""}</div>
-            {xVals.map((xv) => {
-              const match: Record<string, number> = { [xAxis.target]: xv };
-              if (yAxis && yv !== null) match[yAxis.target] = yv;
+        {yTicks.map((yt) => (
+          <Fragment key={`hy-${yt?.key ?? ""}`}>
+            <div className="sweep-heat-ylabel">{yt?.label ?? ""}</div>
+            {xTicks.map((xt) => {
+              const match = { ...xt.match, ...(yt ? yt.match : {}) };
               const row = find(match);
               const v = row ? metricValue(row, metric) : null;
               const failed = row && row.metrics === null;
               return (
                 <div
-                  key={`hc-${xv}-${yv}`}
+                  key={`hc-${xt.key}-${yt?.key ?? ""}`}
                   className={`sweep-cell${failed ? " sweep-error" : ""}${disabled ? " sweep-cell-disabled" : ""}`}
                   style={{ background: divergingBg(v, maxAbs) }}
                   onClick={() => row && !disabled && onApply(row.combo)}

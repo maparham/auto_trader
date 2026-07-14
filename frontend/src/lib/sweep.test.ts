@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { comboCount, enumerateCombos, mirrorRiskAxes, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_CHUNK_SIZE } from "./sweep";
+import { axisOptionFor, comboAxisText, comboCount, enumerateCombos, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, runSweep, sweepCatchState } from "./sweep";
 import * as api from "../api";
 
 const axis = (target: string, from: number, to: number, step: number) =>
-  ({ target, label: target, from, to, step });
+  ({ kind: "range" as const, target, label: target, from, to, step });
+
+const listAxis = (target: string, options: { label: string; patch: Record<string, number | string> }[]) =>
+  ({ kind: "list" as const, target, label: target, options });
 
 describe("enumerateCombos", () => {
   it("walks one axis inclusively", () => {
@@ -50,6 +53,7 @@ describe("mirrorRiskAxes", () => {
     const risk = axis("risk:long.target.mult", 1, 3, 1);
     const param = axis("param:n", 1, 2, 1);
     const [m, p] = mirrorRiskAxes([risk, param]);
+    if (m.kind !== "range") throw new Error("expected range axis");
     expect(m.mirrorTarget).toBe("risk:short.target.mult");
     expect(p).toEqual(param);
   });
@@ -138,5 +142,72 @@ describe("sweepCatchState", () => {
   it("falls back to a generic message for a non-Error rejection", () => {
     const next = sweepCatchState(null, false, "oops");
     expect(next).toEqual({ rows: [], done: 0, total: 0, running: false, error: "sweep failed" });
+  });
+});
+
+describe("list axes", () => {
+  const op = listAxis("op:long.entry.0", [
+    { label: "greater than", patch: { "op:long.entry.0": "gt" } },
+    { label: "less than", patch: { "op:long.entry.0": "lt" } },
+  ]);
+
+  it("enumerates each option's patch and counts options", () => {
+    expect(enumerateCombos([op])).toEqual([
+      { "op:long.entry.0": "gt" }, { "op:long.entry.0": "lt" },
+    ]);
+    expect(comboCount([op])).toBe(2);
+    expect(comboCount([listAxis("timeWindow", [])])).toBe(Infinity); // empty list blocks Run
+  });
+
+  it("spreads multi-key patches and crosses with a range axis", () => {
+    const tw = listAxis("timeWindow", [
+      { label: "morning", patch: { "timeWindow:startMin": 480, "timeWindow:endMin": 720, "timeWindow:tz": "UTC" } },
+    ]);
+    const combos = enumerateCombos([tw, axis("param:n", 1, 2, 1)]);
+    expect(combos).toHaveLength(2);
+    expect(combos[0]).toEqual({
+      "timeWindow:startMin": 480, "timeWindow:endMin": 720, "timeWindow:tz": "UTC", "param:n": 1,
+    });
+  });
+
+  it("resolves a row's option by patch-subset match", () => {
+    expect(axisOptionFor(op, { "op:long.entry.0": "lt", "param:n": 3 })?.label).toBe("less than");
+    expect(axisOptionFor(op, { "op:long.entry.0": "gte" })).toBeNull();
+    expect(comboAxisText(op, { "op:long.entry.0": "gt" })).toBe("greater than");
+    expect(comboAxisText(axis("param:n", 1, 2, 1), { "param:n": 1.5 })).toBe("1.5");
+  });
+});
+
+describe("period axes", () => {
+  const period = { kind: "period" as const, target: "period", label: "Period", n: 2 };
+
+  it("counts n and refuses to enumerate unmaterialized", () => {
+    expect(comboCount([period])).toBe(2);
+    expect(() => enumerateCombos([period])).toThrow(/materialized/);
+  });
+
+  it("materializes into n contiguous equal windows in unix seconds", () => {
+    const fromMs = 1_700_000_000_000;
+    const toMs = fromMs + 2 * 86_400_000;
+    const [m] = materializePeriodAxes([period], fromMs, toMs);
+    if (m.kind !== "list") throw new Error("expected list axis");
+    expect(m.options).toHaveLength(2);
+    expect(m.options[0].patch).toEqual({
+      "period:from": 1_700_000_000, "period:to": 1_700_086_400,
+    });
+    expect(m.options[1].patch).toEqual({
+      "period:from": 1_700_086_400, "period:to": 1_700_172_800,
+    });
+    expect(m.options[0].label).toMatch(/^W1/);
+    // Non-period axes pass through untouched.
+    const passthrough = axis("param:n", 1, 2, 1);
+    expect(materializePeriodAxes([passthrough], fromMs, toMs)).toEqual([passthrough]);
+  });
+});
+
+describe("opAxisTarget", () => {
+  it("builds the op target path", () => {
+    expect(opAxisTarget("long", "entry", 0)).toBe("op:long.entry.0");
+    expect(opAxisTarget("short", "exit", 2)).toBe("op:short.exit.2");
   });
 });
