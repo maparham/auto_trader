@@ -95,6 +95,66 @@ describe("BacktestAnalysisPanel", () => {
     expect(screen.getByText("up")).toBeTruthy();
   });
 
+  it("renders long and short sub-rows for exit reasons when by_leg is present", () => {
+    const withLegs: BacktestAnalysis = {
+      ...analysis,
+      by_leg: {
+        long: {
+          ...analysis,
+          exit_reasons: [
+            { bucket: "target", n: 2, win_rate: 1, expectancy: 4, net_pnl: 8, low_sample: false },
+            { bucket: "stop", n: 1, win_rate: 0, expectancy: -2, net_pnl: -2, low_sample: true },
+          ],
+        },
+        short: {
+          ...analysis,
+          exit_reasons: [
+            { bucket: "target", n: 2, win_rate: 1, expectancy: 6, net_pnl: 12, low_sample: false },
+            { bucket: "stop", n: 2, win_rate: 0, expectancy: -2, net_pnl: -4, low_sample: true },
+          ],
+        },
+      },
+    };
+    render(<BacktestAnalysisPanel analysis={withLegs} />);
+    showTab("Breakdowns");
+    // Long/Short labels appear under every bucket across many tables.
+    expect(screen.getAllByText("Long").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Short").length).toBeGreaterThan(0);
+  });
+
+  it("shows long/short split on R distribution lines", () => {
+    const withLegs = {
+      ...analysis,
+      r_hist: { edges: [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5], counts: [0, 0, 1, 0, 2, 0, 0] },
+      by_leg: {
+        long: {
+          ...analysis,
+          r_hist: { edges: [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5], counts: [0, 0, 1, 0, 1, 0, 0] },
+        },
+        short: {
+          ...analysis,
+          r_hist: { edges: [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5], counts: [0, 0, 0, 0, 1, 0, 0] },
+        },
+      },
+    } as BacktestAnalysis;
+    render(<BacktestAnalysisPanel analysis={withLegs} />);
+    // The +2R bucket (index 4) holds 2 trades, one long and one short. The count
+    // pieces live in separate spans, so match on the split wrapper's text.
+    const splits = screen.getAllByText(
+      (_content, el) =>
+        el?.classList.contains("bt-analysis-dist-split") === true &&
+        el?.textContent?.includes("1 long, 1 short") === true,
+    );
+    expect(splits.length).toBeGreaterThan(0);
+  });
+
+  it("renders no Long/Short sub-rows when by_leg is absent", () => {
+    render(<BacktestAnalysisPanel analysis={analysis} />);
+    showTab("Breakdowns");
+    expect(screen.queryByText("Long")).toBeNull();
+    expect(screen.queryByText("Short")).toBeNull();
+  });
+
   it("shows day names in calendar order for day_of_week buckets", () => {
     render(<BacktestAnalysisPanel analysis={analysis} />);
     showTab("Breakdowns");
@@ -312,6 +372,35 @@ describe("BacktestAnalysisPanel", () => {
     ).toBeTruthy();
   });
 
+  it("splits the tighter-stop curve by leg", () => {
+    const withLegs: BacktestAnalysis = {
+      ...analysis,
+      by_leg: {
+        long: {
+          ...analysis,
+          whatif: {
+            ...(analysis.whatif as BacktestWhatif),
+            stop_curve: [{ frac: 0.8, winners_killed: 1, losers_cheapened: 1, net_delta_r: 0.3 }],
+          },
+        },
+        short: {
+          ...analysis,
+          whatif: {
+            ...(analysis.whatif as BacktestWhatif),
+            stop_curve: [{ frac: 0.8, winners_killed: 0, losers_cheapened: 1, net_delta_r: 0.2 }],
+          },
+        },
+      },
+    };
+    render(<BacktestAnalysisPanel analysis={withLegs} />);
+    showTab("What-if");
+    expect(screen.getAllByText("Long").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Short").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/The curve tables below split each row into long and short/i),
+    ).toBeTruthy();
+  });
+
   it("omits the breakeven section when the curve is absent (older runs)", () => {
     const noBe: BacktestAnalysis = {
       ...analysis,
@@ -399,6 +488,47 @@ describe("BacktestAnalysisPanel", () => {
       expect(screen.getAllByText("2m").length).toBeGreaterThan(0);
       expect(screen.getAllByText("3m").length).toBeGreaterThan(0);
       expect(screen.queryByText("1m")).toBeNull();
+    });
+
+    it("labels long and short groups in the duration histogram", () => {
+      const bd = {
+        n_winners: 1, n_losers: 1, n_total: 2,
+        winners: metrics(), losers: metrics(), total: metrics(),
+      };
+      const duration_hist = { bar_width: 1, winners: [1, 0], losers: [0, 1] };
+      const withLegs = {
+        ...analysis,
+        bar_dynamics: bd,
+        duration_hist,
+        by_leg: {
+          long: { ...analysis, duration_hist: { bar_width: 1, winners: [1, 0], losers: [0, 0] } },
+          short: { ...analysis, duration_hist: { bar_width: 1, winners: [0, 0], losers: [0, 1] } },
+        },
+      } as BacktestAnalysis;
+      render(<BacktestAnalysisPanel analysis={withLegs} barSeconds={60} />);
+      showTab("Bar dynamics");
+      expect(screen.getAllByText("L").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("S").length).toBeGreaterThan(0);
+    });
+
+    it("renders long/short sub-rows in bar dynamics", () => {
+      const bd = {
+        n_winners: 1, n_losers: 1, n_total: 2,
+        winners: metrics(), losers: metrics(), total: metrics(),
+      };
+      const withLegs = {
+        ...analysis,
+        bar_dynamics: bd,
+        duration_hist: null,
+        by_leg: {
+          long: { ...analysis, bar_dynamics: { ...bd, winners: metrics({ bars_held: 8 }) } },
+          short: { ...analysis, bar_dynamics: { ...bd, winners: metrics({ bars_held: 4 }) } },
+        },
+      } as BacktestAnalysis;
+      render(<BacktestAnalysisPanel analysis={withLegs} barSeconds={60} />);
+      showTab("Bar dynamics");
+      expect(screen.getAllByText("Long").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Short").length).toBeGreaterThan(0);
     });
 
     it("omits the histogram when duration_hist is null", () => {

@@ -120,3 +120,32 @@ def test_leg_metrics_win_rate_matches_engine_aggregate():
     trades = [_trade(10, 0), _trade(-4, 1), _trade(6, 2), _trade(-2, 3)]
     m = leg_metrics(trades, res_seconds=300, round_trip_cost=0.0)
     assert m["win_rate"] == 0.5            # 2 of 4 with pnl>0
+
+
+def test_leg_metrics_has_expectancy_and_consec_wins():
+    # 3 trades: +10, +20, -5 -> expectancy = 25/3, max wins = 2
+    trades = [_trade(10, 0), _trade(20, 1), _trade(-5, 2)]
+    m = leg_metrics(trades, res_seconds=60, round_trip_cost=0.0)
+    assert m["expectancy"] == (10.0 + 20.0 - 5.0) / 3
+    assert m["max_consec_wins"] == 2
+
+
+def test_leg_metrics_from_dicts_matches_keys():
+    from auto_trader.engine.metrics import leg_metrics, leg_metrics_from_dicts
+    dicts = [
+        {"pnl": 5.0, "leg": "long", "entry_time": 0, "exit_time": 60},
+        {"pnl": -2.0, "leg": "long", "entry_time": 0, "exit_time": 120},
+    ]
+    d = leg_metrics_from_dicts(dicts, res_seconds=60, round_trip_cost=0.0)
+    # Same key set as the object-based helper.
+    class T:
+        def __init__(s, pnl, e, x):
+            s.pnl, s.entry_time, s.exit_time = pnl, e, x
+    from datetime import datetime, timedelta
+    b = datetime(2024, 1, 1)
+    o = leg_metrics([T(5.0, b, b + timedelta(minutes=1)),
+                     T(-2.0, b, b + timedelta(minutes=2))],
+                    res_seconds=60, round_trip_cost=0.0)
+    assert set(d.keys()) == set(o.keys())
+    assert d["n_trades"] == 2 and d["net_pnl"] == 3.0
+    assert d["avg_duration_bars"] == 1.5  # (60/60 + 120/60) / 2

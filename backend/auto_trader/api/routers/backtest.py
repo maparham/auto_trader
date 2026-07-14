@@ -18,7 +18,7 @@ from auto_trader.engine.analysis import compute_analysis
 from auto_trader.engine.backtest import BacktestEngine, BacktestResult
 from auto_trader.engine.context_features import enrich_trades
 from auto_trader.engine.whatif import enrich_trades_whatif
-from auto_trader.engine.metrics import compute_metrics, leg_metrics
+from auto_trader.engine.metrics import compute_metrics, leg_metrics, leg_metrics_from_dicts
 from auto_trader.strategy import loader
 from auto_trader.strategy.coded import (
     CodedStrategy,
@@ -447,6 +447,15 @@ async def get_run(run_id: str) -> dict:
     if rec is None:
         raise HTTPException(status_code=404, detail="run not found")
     rec["analysis"] = compute_analysis(rec["trades"])
+    res_seconds = resolution_seconds(rec["timeframe"])
+    commission = (rec.get("request") or {}).get("costs", {}).get("commissionPerSide", 0.0)
+    rec["by_leg"] = {
+        leg: leg_metrics_from_dicts(
+            [t for t in rec["trades"] if (t.get("leg") or "long") == leg],
+            res_seconds, 2 * commission,
+        )
+        for leg in ("long", "short")
+    }
     return rec
 
 

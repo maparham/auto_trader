@@ -255,3 +255,73 @@ def test_duration_hist_break_even_trades_counted_in_neither_series():
     assert dh is not None
     assert dh["winners"] == [0, 0, 0, 0]
     assert dh["losers"] == [0, 0, 0, 0]
+
+
+def test_per_leg_duration_hist_shares_all_trades_width():
+    # Long trades hold up to 40 bars (own width 5); short trades hold up to 9
+    # bars (own width 2). ALL's max is 40 -> width 5. The client renders the
+    # x-axis from ALL's width and indexes the per-leg arrays positionally, so
+    # each leg must be bucketed on ALL's width or its bars land under the wrong
+    # labels. Here short's shorter holds are the ones that would be mislabeled.
+    trades = (
+        [_t(1.0, leg="long", bars=_bars(h, 0, 0)) for h in (0, 5, 40)]
+        + [_t(1.0, leg="short", bars=_bars(h, 0, 0)) for h in (0, 4, 9)]
+    )
+    a = compute_analysis(trades)
+    assert a["duration_hist"]["bar_width"] == 5
+    assert a["by_leg"]["long"]["duration_hist"]["bar_width"] == a["duration_hist"]["bar_width"]
+    assert a["by_leg"]["short"]["duration_hist"]["bar_width"] == a["duration_hist"]["bar_width"]
+
+
+def test_per_leg_duration_hist_empty_leg_renders_zero_split():
+    # Only long trades carry bar stats. ALL has a duration_hist (from the longs),
+    # so the empty short leg must still render as a zero split at ALL's width
+    # rather than collapsing to None and hiding the whole chart.
+    trades = [_t(1.0, leg="long", bars=_bars(h, 0, 0)) for h in (0, 5, 40)]
+    a = compute_analysis(trades)
+    assert a["duration_hist"]["bar_width"] == 5
+    short_dh = a["by_leg"]["short"]["duration_hist"]
+    assert short_dh is not None
+    assert short_dh["bar_width"] == 5
+    assert short_dh["winners"] == [] and short_dh["losers"] == []
+
+
+def test_compute_analysis_splits_by_leg():
+    from auto_trader.engine.analysis import compute_analysis
+
+    def trade(pnl, leg, reason):
+        return {
+            "pnl": pnl, "leg": leg, "reason": reason,
+            "entry_price": 100.0, "exit_price": 100.0 + pnl,
+            "stop_initial": 99.0, "target": None,
+            "mae_r": None, "mfe_r": None, "mae": None, "mfe": None,
+            "context": {}, "entry_time": None, "exit_time": None,
+            "bars_held": None,
+        }
+
+    trades = [
+        trade(5.0, "long", "target"),
+        trade(-3.0, "long", "stop"),
+        trade(7.0, "short", "target"),
+    ]
+    a = compute_analysis(trades)
+    # Top-level unchanged: all trades.
+    assert a["n_trades"] == 3
+    # Split present and partitions correctly.
+    assert a["by_leg"]["long"]["n_trades"] == 2
+    assert a["by_leg"]["short"]["n_trades"] == 1
+    # Nested payloads do not recurse.
+    assert "by_leg" not in a["by_leg"]["long"]
+
+
+def test_compute_analysis_missing_leg_defaults_long():
+    from auto_trader.engine.analysis import compute_analysis
+    t = {
+        "pnl": 1.0, "reason": "target",
+        "entry_price": 100.0, "exit_price": 101.0, "stop_initial": 99.0,
+        "target": None, "mae_r": None, "mfe_r": None, "mae": None, "mfe": None,
+        "context": {}, "entry_time": None, "exit_time": None, "bars_held": None,
+    }  # no "leg" key
+    a = compute_analysis([t])
+    assert a["by_leg"]["long"]["n_trades"] == 1
+    assert a["by_leg"]["short"]["n_trades"] == 0

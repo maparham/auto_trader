@@ -167,7 +167,7 @@ def _nice_bucket_width(max_bars: int, target: int = 8) -> int:
     return 10000
 
 
-def _duration_hist(trades: list[dict]) -> dict | None:
+def _duration_hist(trades: list[dict], width: int | None = None) -> dict | None:
     """Winner/loser trade counts bucketed by how long each trade was held.
 
     Buckets are equal spans of `bar_width` bars (bucket i covers held-bar counts
@@ -175,12 +175,23 @@ def _duration_hist(trades: list[dict]) -> dict | None:
     range using the run resolution. Bucket width is chosen dynamically from the
     longest hold. Returns None when no trade carries bar stats (older runs), so
     the client hides the chart. Break-even trades (pnl == 0) are eligible but
-    counted in neither series, matching `_bar_dynamics`."""
+    counted in neither series, matching `_bar_dynamics`.
+
+    When `width` is forced (not None), that width is used instead of one derived
+    from this subset. This keeps per-leg histograms aligned with the all-trades
+    width, since the client renders one x-axis (from ALL) and indexes the per-leg
+    arrays positionally. A forced-width call with no eligible trades returns an
+    empty split ({"bar_width": width, "winners": [], "losers": []}) rather than
+    None, so an empty leg renders as a zero split instead of collapsing the whole
+    chart to no-split."""
     eligible = [t for t in trades if t.get("bars_held") is not None]
     if not eligible:
+        if width is not None:
+            return {"bar_width": width, "winners": [], "losers": []}
         return None
     max_bars = max(int(t["bars_held"]) for t in eligible)
-    width = _nice_bucket_width(max_bars)
+    if width is None:
+        width = _nice_bucket_width(max_bars)
     n_buckets = max_bars // width + 1
     winners = [0] * n_buckets
     losers = [0] * n_buckets
@@ -193,7 +204,7 @@ def _duration_hist(trades: list[dict]) -> dict | None:
     return {"bar_width": width, "winners": winners, "losers": losers}
 
 
-def compute_analysis(trades: list[dict]) -> dict:
+def _analysis_for(trades: list[dict]) -> dict:
     winners = [t for t in trades if t["pnl"] > 0]
     losers = [t for t in trades if t["pnl"] < 0]
 
@@ -254,3 +265,32 @@ def compute_analysis(trades: list[dict]) -> dict:
         "duration_hist": _duration_hist(trades),
         "whatif": compute_whatif(trades),
     }
+
+
+def _partition_by_leg(trades: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split trades on `leg`; a missing or empty leg counts as long, matching
+    the engine default (Signal.leg)."""
+    longs = [t for t in trades if (t.get("leg") or "long") == "long"]
+    shorts = [t for t in trades if (t.get("leg") or "long") == "short"]
+    return longs, shorts
+
+
+def compute_analysis(trades: list[dict]) -> dict:
+    """All-trades analysis payload plus a per-direction split. `by_leg.long` and
+    `by_leg.short` are full analysis payloads (whatif included) over that side's
+    trades only; they do not nest a further by_leg. Sequence-derived numbers
+    (streaks, consecutive counts) are per-leg subsequences by construction."""
+    longs, shorts = _partition_by_leg(trades)
+    payload = _analysis_for(trades)
+    long_payload = _analysis_for(longs)
+    short_payload = _analysis_for(shorts)
+    # Force each leg's duration histogram onto ALL's bucket width so the client,
+    # which renders the x-axis from ALL and indexes the per-leg arrays
+    # positionally, lines each leg's bars up under the correct duration labels.
+    all_dh = payload.get("duration_hist")
+    if all_dh is not None:
+        w = all_dh["bar_width"]
+        long_payload["duration_hist"] = _duration_hist(longs, width=w)
+        short_payload["duration_hist"] = _duration_hist(shorts, width=w)
+    payload["by_leg"] = {"long": long_payload, "short": short_payload}
+    return payload

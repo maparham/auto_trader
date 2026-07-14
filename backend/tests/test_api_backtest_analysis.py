@@ -131,3 +131,17 @@ def test_store_failure_does_not_fail_backtest(tmp_run_store, monkeypatch):
     assert result.run_id is None
     assert result.analysis is not None  # analysis is computed before the store write
     assert result.analysis["n_trades"] == len(result.trades)
+
+
+def test_reloaded_run_recomputes_leg_table(tmp_run_store):
+    result = _run(_trade_body())
+    run_id = result.run_id
+
+    body = asyncio.run(bt_router.get_run(run_id))
+    assert "by_leg" in body
+    assert set(body["by_leg"]) == {"long", "short"}
+    assert "by_leg" in body["analysis"]
+    # Long + short trade counts reconcile to the all-trades analysis.
+    total = body["analysis"]["n_trades"]
+    assert (body["analysis"]["by_leg"]["long"]["n_trades"]
+            + body["analysis"]["by_leg"]["short"]["n_trades"]) == total

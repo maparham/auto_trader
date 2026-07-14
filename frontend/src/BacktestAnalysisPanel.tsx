@@ -1,10 +1,11 @@
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import type {
   AnalysisHist,
   AnalysisRow,
   BacktestAnalysis,
   BarDynamicsMetrics,
   BacktestWhatif,
+  LegAnalysis,
 } from "./api";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
@@ -139,6 +140,8 @@ function SectionH4({
 
 function Dist({
   hist,
+  longHist,
+  shortHist,
   label,
   slug,
   collapsed,
@@ -148,6 +151,8 @@ function Dist({
   centeredR,
 }: {
   hist: AnalysisHist;
+  longHist?: AnalysisHist;
+  shortHist?: AnalysisHist;
   label: string;
   slug: string;
   collapsed: boolean;
@@ -181,9 +186,10 @@ function Dist({
       ];
   // Empty buckets carry no information; show only buckets with trades in them.
   const items = hist.counts
-    .map((c, i) => ({ c, name: names[i] }))
+    .map((c, i) => ({ c, i, name: names[i] }))
     .filter((r) => r.c > 0);
   if (!items.length) return null;
+  const split = longHist != null && shortHist != null;
   return (
     <div className="bt-analysis-dist">
       <div
@@ -198,10 +204,16 @@ function Dist({
       </div>
       {!collapsed && (
         <ul className="bt-analysis-dist-items">
-          {items.map(({ c, name }, i) => (
+          {items.map(({ c, i, name }) => (
             <li key={i} className="bt-analysis-dist-item">
               {c} {c === 1 ? "trade" : "trades"} {pctOfStop ? "reached" : "closed at"}{" "}
               {name}
+              {split && (
+                <span className="bt-analysis-dist-split">
+                  {" "}(<span className="bt-leg-long">{longHist!.counts[i]} long</span>,{" "}
+                  <span className="bt-leg-short">{shortHist!.counts[i]} short</span>)
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -262,13 +274,18 @@ function BarDynamicsTable({
   winners,
   losers,
   total,
+  long,
+  short,
   barSeconds,
 }: {
   winners: BarDynamicsMetrics;
   losers: BarDynamicsMetrics;
   total: BarDynamicsMetrics;
+  long?: { winners: BarDynamicsMetrics; losers: BarDynamicsMetrics; total: BarDynamicsMetrics };
+  short?: { winners: BarDynamicsMetrics; losers: BarDynamicsMetrics; total: BarDynamicsMetrics };
   barSeconds: number;
 }) {
+  const split = long != null && short != null;
   return (
     <table className="bt-analysis-table bt-bardyn-table">
       <thead>
@@ -296,17 +313,35 @@ function BarDynamicsTable({
       </thead>
       <tbody>
         {BAR_DYNAMICS_METRICS.map(({ key, label, kind, tip }) => (
-          <tr key={key}>
-            <td>
-              <span className="bt-bardyn-metric">
-                {label}
-                <InfoTip title={label} text={tip} />
-              </span>
-            </td>
-            <td>{fmtBarMetric(winners, key, kind, barSeconds)}</td>
-            <td>{fmtBarMetric(losers, key, kind, barSeconds)}</td>
-            <td>{fmtBarMetric(total, key, kind, barSeconds)}</td>
-          </tr>
+          <Fragment key={key}>
+            <tr>
+              <td>
+                <span className="bt-bardyn-metric">
+                  {label}
+                  <InfoTip title={label} text={tip} />
+                </span>
+              </td>
+              <td>{fmtBarMetric(winners, key, kind, barSeconds)}</td>
+              <td>{fmtBarMetric(losers, key, kind, barSeconds)}</td>
+              <td>{fmtBarMetric(total, key, kind, barSeconds)}</td>
+            </tr>
+            {split && (
+              <tr className="bt-analysis-subrow bt-leg-long">
+                <td className="bt-analysis-subrow-label">Long</td>
+                <td>{fmtBarMetric(long!.winners, key, kind, barSeconds)}</td>
+                <td>{fmtBarMetric(long!.losers, key, kind, barSeconds)}</td>
+                <td>{fmtBarMetric(long!.total, key, kind, barSeconds)}</td>
+              </tr>
+            )}
+            {split && (
+              <tr className="bt-analysis-subrow bt-leg-short">
+                <td className="bt-analysis-subrow-label">Short</td>
+                <td>{fmtBarMetric(short!.winners, key, kind, barSeconds)}</td>
+                <td>{fmtBarMetric(short!.losers, key, kind, barSeconds)}</td>
+                <td>{fmtBarMetric(short!.total, key, kind, barSeconds)}</td>
+              </tr>
+            )}
+          </Fragment>
         ))}
       </tbody>
     </table>
@@ -325,12 +360,18 @@ const DUR_HIST_MAX_PX = 72;
  * leave no gap. Green is winners, red is losers, matching the table below. */
 function DurationHistogram({
   hist,
+  longHist,
+  shortHist,
   barSeconds,
 }: {
   hist: { bar_width: number; winners: number[]; losers: number[] };
+  longHist?: { bar_width: number; winners: number[]; losers: number[] } | null;
+  shortHist?: { bar_width: number; winners: number[]; losers: number[] } | null;
   barSeconds: number;
 }) {
   const { bar_width: width, winners, losers } = hist;
+  const split = longHist != null && shortHist != null;
+  const at = (arr: number[] | undefined, i: number) => arr?.[i] ?? 0;
   const buckets = winners
     .map((w, i) => ({
       i,
@@ -344,32 +385,48 @@ function DurationHistogram({
   if (!buckets.length) return null;
   const max = Math.max(1, ...buckets.map((b) => Math.max(b.w, b.l)));
   const barPx = (c: number) => (c > 0 ? Math.max(2, (c / max) * DUR_HIST_MAX_PX) : 0);
+  const pair = (w: number, l: number, label: string) => (
+    <div className="bt-dur-hist-pair">
+      <Tooltip content={`${label}: ${w} ${w === 1 ? "winner" : "winners"}`}>
+        <div className="bt-dur-bar-slot">
+          {w > 0 && <span className="bt-dur-bar-count">{w}</span>}
+          <div className="bt-dur-bar bt-dur-bar-win" style={{ height: barPx(w) }} />
+        </div>
+      </Tooltip>
+      <Tooltip content={`${label}: ${l} ${l === 1 ? "loser" : "losers"}`}>
+        <div className="bt-dur-bar-slot">
+          {l > 0 && <span className="bt-dur-bar-count">{l}</span>}
+          <div className="bt-dur-bar bt-dur-bar-loss" style={{ height: barPx(l) }} />
+        </div>
+      </Tooltip>
+    </div>
+  );
   return (
     <div className="bt-dur-hist-block">
       <div className="bt-dur-hist-title">
         Trades by hold duration
         <InfoTip
           title="Trades by hold duration"
-          text="How many winning (green) and losing (red) trades were held for each span of time. Bucket width is set automatically from the longest hold."
+          text="How many winning (green) and losing (red) trades were held for each span of time. When both directions traded, each span shows a long (L) and short (S) group. Bucket width is set automatically from the longest hold."
         />
       </div>
       <div className="bt-dur-hist-plot" style={{ height: DUR_HIST_MAX_PX + 18 }}>
         {buckets.map(({ i, w, l, label }) => (
           <div key={i} className="bt-dur-hist-col">
-            <div className="bt-dur-hist-pair">
-              <Tooltip content={`${label}: ${w} ${w === 1 ? "winner" : "winners"}`}>
-                <div className="bt-dur-bar-slot">
-                  {w > 0 && <span className="bt-dur-bar-count">{w}</span>}
-                  <div className="bt-dur-bar bt-dur-bar-win" style={{ height: barPx(w) }} />
+            {split ? (
+              <div className="bt-dur-hist-legs">
+                <div className="bt-dur-hist-leggroup">
+                  {pair(at(longHist!.winners, i), at(longHist!.losers, i), `${label} long`)}
+                  <div className="bt-dur-hist-leglabel bt-leg-long">L</div>
                 </div>
-              </Tooltip>
-              <Tooltip content={`${label}: ${l} ${l === 1 ? "loser" : "losers"}`}>
-                <div className="bt-dur-bar-slot">
-                  {l > 0 && <span className="bt-dur-bar-count">{l}</span>}
-                  <div className="bt-dur-bar bt-dur-bar-loss" style={{ height: barPx(l) }} />
+                <div className="bt-dur-hist-leggroup">
+                  {pair(at(shortHist!.winners, i), at(shortHist!.losers, i), `${label} short`)}
+                  <div className="bt-dur-hist-leglabel bt-leg-short">S</div>
                 </div>
-              </Tooltip>
-            </div>
+              </div>
+            ) : (
+              pair(w, l, label)
+            )}
             <div className="bt-dur-hist-xlabel">{fmtDuration((i + 1) * width, barSeconds)}</div>
           </div>
         ))}
@@ -378,8 +435,39 @@ function DurationHistogram({
   );
 }
 
-function RowsTable({ rows }: { rows: AnalysisRow[] }) {
+// Find the row for a bucket in a per-leg row list, or zeros if that leg never
+// traded this bucket. Keeps sub-rows aligned to the ALL row's bucket order.
+function legRow(rows: AnalysisRow[] | undefined, bucket: string): AnalysisRow {
+  return (
+    rows?.find((r) => r.bucket === bucket) ?? {
+      bucket, n: 0, win_rate: 0, expectancy: 0, net_pnl: 0, low_sample: false,
+    }
+  );
+}
+
+function LegSubRow({ label, r }: { label: "Long" | "Short"; r: AnalysisRow }) {
+  return (
+    <tr className={`bt-analysis-subrow bt-leg-${label.toLowerCase()}`}>
+      <td className="bt-analysis-subrow-label">{label}</td>
+      <td>{r.n}</td>
+      <td>{fmtPct(r.win_rate)}</td>
+      <td>{r.expectancy.toFixed(2)}</td>
+      <td>{r.net_pnl.toFixed(2)}</td>
+    </tr>
+  );
+}
+
+function RowsTable({
+  rows,
+  longRows,
+  shortRows,
+}: {
+  rows: AnalysisRow[];
+  longRows?: AnalysisRow[];
+  shortRows?: AnalysisRow[];
+}) {
   if (!rows.length) return <div className="bt-analysis-empty">No data.</div>;
+  const split = longRows != null && shortRows != null;
   return (
     <table className="bt-analysis-table">
       <thead>
@@ -393,19 +481,22 @@ function RowsTable({ rows }: { rows: AnalysisRow[] }) {
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr
-            key={r.bucket}
-            className={
-              (r.low_sample ? "bt-analysis-low " : "") +
-              (r.net_pnl < 0 ? "bt-analysis-under" : "")
-            }
-          >
-            <td>{r.bucket}</td>
-            <td>{r.n}</td>
-            <td>{fmtPct(r.win_rate)}</td>
-            <td>{r.expectancy.toFixed(2)}</td>
-            <td>{r.net_pnl.toFixed(2)}</td>
-          </tr>
+          <Fragment key={r.bucket}>
+            <tr
+              className={
+                (r.low_sample ? "bt-analysis-low " : "") +
+                (r.net_pnl < 0 ? "bt-analysis-under" : "")
+              }
+            >
+              <td>{r.bucket}</td>
+              <td>{r.n}</td>
+              <td>{fmtPct(r.win_rate)}</td>
+              <td>{r.expectancy.toFixed(2)}</td>
+              <td>{r.net_pnl.toFixed(2)}</td>
+            </tr>
+            {split && <LegSubRow label="Long" r={legRow(longRows, r.bucket)} />}
+            {split && <LegSubRow label="Short" r={legRow(shortRows, r.bucket)} />}
+          </Fragment>
         ))}
       </tbody>
     </table>
@@ -429,12 +520,49 @@ function whatifHasContent(whatif: BacktestWhatif | null | undefined): boolean {
   );
 }
 
+// Two color-coded sub-rows (long, short) for a curve table, aligned to the ALL
+// row by a key field (frac or target_r). Cells is a render fn over the matched
+// per-leg row (or null when that leg has no entry for this key).
+function CurveLegRows<T extends Record<string, number>>({
+  keyField,
+  keyVal,
+  longRows,
+  shortRows,
+  cells,
+}: {
+  keyField: keyof T;
+  keyVal: number;
+  longRows: T[] | null | undefined;
+  shortRows: T[] | null | undefined;
+  cells: (r: T | null) => ReactNode;
+  cols: number;
+}) {
+  if (longRows == null || shortRows == null) return null;
+  const find = (rows: T[]) => rows.find((r) => r[keyField] === keyVal) ?? null;
+  return (
+    <>
+      <tr className="bt-analysis-subrow bt-leg-long">
+        <td className="bt-analysis-subrow-label">Long</td>
+        {cells(find(longRows))}
+      </tr>
+      <tr className="bt-analysis-subrow bt-leg-short">
+        <td className="bt-analysis-subrow-label">Short</td>
+        {cells(find(shortRows))}
+      </tr>
+    </>
+  );
+}
+
 function WhatIfSection({
   whatif,
+  longWhatif,
+  shortWhatif,
   collapsed,
   onToggle,
 }: {
   whatif: BacktestWhatif | null | undefined;
+  longWhatif?: BacktestWhatif | null;
+  shortWhatif?: BacktestWhatif | null;
   collapsed: boolean;
   onToggle: (slug: string) => void;
 }) {
@@ -498,6 +626,9 @@ function WhatIfSection({
           ))}
         </ul>
       )}
+      {!collapsed && (longWhatif || shortWhatif) && (
+        <p className="bt-analysis-note">The curve tables below split each row into long and short.</p>
+      )}
       {!collapsed && (stop_curve || target_curve || breakeven_curve) && (
       <div className="bt-analysis-dists">
         {stop_curve && (
@@ -515,12 +646,28 @@ function WhatIfSection({
               </thead>
               <tbody>
                 {stop_curve.map((r) => (
-                  <tr key={r.frac}>
-                    <td>{Math.round(r.frac * 100)}%</td>
-                    <td>{r.winners_killed}</td>
-                    <td>{r.losers_cheapened}</td>
-                    <td className={r.net_delta_r < 0 ? "bt-analysis-neg" : ""}>{r.net_delta_r.toFixed(2)}</td>
-                  </tr>
+                  <Fragment key={r.frac}>
+                    <tr>
+                      <td>{Math.round(r.frac * 100)}%</td>
+                      <td>{r.winners_killed}</td>
+                      <td>{r.losers_cheapened}</td>
+                      <td className={r.net_delta_r < 0 ? "bt-analysis-neg" : ""}>{r.net_delta_r.toFixed(2)}</td>
+                    </tr>
+                    <CurveLegRows
+                      keyField="frac"
+                      keyVal={r.frac}
+                      longRows={longWhatif?.stop_curve}
+                      shortRows={shortWhatif?.stop_curve}
+                      cols={3}
+                      cells={(lr) => (
+                        <>
+                          <td>{lr ? lr.winners_killed : 0}</td>
+                          <td>{lr ? lr.losers_cheapened : 0}</td>
+                          <td>{lr ? lr.net_delta_r.toFixed(2) : "0.00"}</td>
+                        </>
+                      )}
+                    />
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -541,11 +688,26 @@ function WhatIfSection({
               </thead>
               <tbody>
                 {target_curve.map((r) => (
-                  <tr key={r.target_r}>
-                    <td>{r.target_r}R</td>
-                    <td>{r.n_reached}</td>
-                    <td>{fmtPct(r.pct_reached)}</td>
-                  </tr>
+                  <Fragment key={r.target_r}>
+                    <tr>
+                      <td>{r.target_r}R</td>
+                      <td>{r.n_reached}</td>
+                      <td>{fmtPct(r.pct_reached)}</td>
+                    </tr>
+                    <CurveLegRows
+                      keyField="target_r"
+                      keyVal={r.target_r}
+                      longRows={longWhatif?.target_curve}
+                      shortRows={shortWhatif?.target_curve}
+                      cols={2}
+                      cells={(lr) => (
+                        <>
+                          <td>{lr ? lr.n_reached : 0}</td>
+                          <td>{lr ? fmtPct(lr.pct_reached) : fmtPct(0)}</td>
+                        </>
+                      )}
+                    />
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -566,13 +728,30 @@ function WhatIfSection({
               </thead>
               <tbody>
                 {breakeven_curve.map((r) => (
-                  <tr key={r.frac}>
-                    <td>+{r.frac}R</td>
-                    <td>{r.n_armed}</td>
-                    <td>{r.losers_rescued}</td>
-                    <td>{r.winners_cut}</td>
-                    <td className={r.net_delta_r < 0 ? "bt-analysis-neg" : ""}>{r.net_delta_r.toFixed(2)}</td>
-                  </tr>
+                  <Fragment key={r.frac}>
+                    <tr>
+                      <td>+{r.frac}R</td>
+                      <td>{r.n_armed}</td>
+                      <td>{r.losers_rescued}</td>
+                      <td>{r.winners_cut}</td>
+                      <td className={r.net_delta_r < 0 ? "bt-analysis-neg" : ""}>{r.net_delta_r.toFixed(2)}</td>
+                    </tr>
+                    <CurveLegRows
+                      keyField="frac"
+                      keyVal={r.frac}
+                      longRows={longWhatif?.breakeven_curve}
+                      shortRows={shortWhatif?.breakeven_curve}
+                      cols={4}
+                      cells={(lr) => (
+                        <>
+                          <td>{lr ? lr.n_armed : 0}</td>
+                          <td>{lr ? lr.losers_rescued : 0}</td>
+                          <td>{lr ? lr.winners_cut : 0}</td>
+                          <td>{lr ? lr.net_delta_r.toFixed(2) : "0.00"}</td>
+                        </>
+                      )}
+                    />
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -708,6 +887,8 @@ export default function BacktestAnalysisPanel({
         <div className="bt-analysis-dists">
           <Dist
             hist={sl.winners_mae_hist}
+            longHist={analysis.by_leg?.long.sl.winners_mae_hist}
+            shortHist={analysis.by_leg?.short.sl.winners_mae_hist}
             label="Winners: worst drawdown before profit"
             slug="dist-winners-mae"
             collapsed={collapsed.has("dist-winners-mae")}
@@ -717,6 +898,8 @@ export default function BacktestAnalysisPanel({
           />
           <Dist
             hist={sl.losers_mae_hist}
+            longHist={analysis.by_leg?.long.sl.losers_mae_hist}
+            shortHist={analysis.by_leg?.short.sl.losers_mae_hist}
             label="Losers: worst drawdown"
             slug="dist-losers-mae"
             collapsed={collapsed.has("dist-losers-mae")}
@@ -726,6 +909,8 @@ export default function BacktestAnalysisPanel({
           />
           <Dist
             hist={analysis.r_hist}
+            longHist={analysis.by_leg?.long.r_hist}
+            shortHist={analysis.by_leg?.short.r_hist}
             label="Result distribution (R)"
             slug="dist-result-r"
             collapsed={collapsed.has("dist-result-r")}
@@ -749,12 +934,19 @@ export default function BacktestAnalysisPanel({
           {!collapsed.has("bar-dynamics") && (
             <>
               {analysis.duration_hist && (
-                <DurationHistogram hist={analysis.duration_hist} barSeconds={barSeconds} />
+                <DurationHistogram
+                  hist={analysis.duration_hist}
+                  longHist={analysis.by_leg?.long.duration_hist}
+                  shortHist={analysis.by_leg?.short.duration_hist}
+                  barSeconds={barSeconds}
+                />
               )}
               <BarDynamicsTable
                 winners={analysis.bar_dynamics.winners}
                 losers={analysis.bar_dynamics.losers}
                 total={analysis.bar_dynamics.total}
+                long={analysis.by_leg?.long.bar_dynamics}
+                short={analysis.by_leg?.short.bar_dynamics}
                 barSeconds={barSeconds}
               />
             </>
@@ -765,6 +957,8 @@ export default function BacktestAnalysisPanel({
       {active === "whatif" && (
         <WhatIfSection
           whatif={analysis.whatif}
+          longWhatif={analysis.by_leg?.long.whatif}
+          shortWhatif={analysis.by_leg?.short.whatif}
           collapsed={collapsed.has("whatif")}
           onToggle={toggleSection}
         />
@@ -781,7 +975,11 @@ export default function BacktestAnalysisPanel({
           Exit reasons
         </SectionH4>
         {!collapsed.has("exit-reasons") && (
-          <RowsTable rows={analysis.exit_reasons} />
+          <RowsTable
+            rows={analysis.exit_reasons}
+            longRows={analysis.by_leg?.long.exit_reasons}
+            shortRows={analysis.by_leg?.short.exit_reasons}
+          />
         )}
       </section>
 
@@ -796,14 +994,17 @@ export default function BacktestAnalysisPanel({
           ["day_of_week", "Day of week", "ctx-day-of-week"],
         ] as const
       ).map(([key, label, slug]) => {
-        const rows =
-          key === "month"
-            ? analysis.month_stats ?? []
+        const pickRows = (a: LegAnalysis | undefined): AnalysisRow[] => {
+          if (!a) return [];
+          return key === "month"
+            ? a.month_stats ?? []
             : key === "day_of_week"
-              ? dayOfWeekRows(analysis.context[key] ?? [])
+              ? dayOfWeekRows(a.context[key] ?? [])
               : key === "hour_bucket"
-                ? hourBucketRows(analysis.hour_stats ?? [])
-                : analysis.context[key] ?? [];
+                ? hourBucketRows(a.hour_stats ?? [])
+                : a.context[key] ?? [];
+        };
+        const rows = pickRows(analysis);
         // The monthly table only earns its place on multi-month runs; a
         // single-month run would be a one-row table that says nothing.
         if (key === "month" && rows.length < 2) return null;
@@ -812,7 +1013,13 @@ export default function BacktestAnalysisPanel({
             <SectionH4 slug={slug} open={!collapsed.has(slug)} onToggle={toggleSection}>
               {label}
             </SectionH4>
-            {!collapsed.has(slug) && <RowsTable rows={rows} />}
+            {!collapsed.has(slug) && (
+              <RowsTable
+                rows={rows}
+                longRows={analysis.by_leg && pickRows(analysis.by_leg.long)}
+                shortRows={analysis.by_leg && pickRows(analysis.by_leg.short)}
+              />
+            )}
           </section>
         );
       })}

@@ -3929,6 +3929,30 @@
   margin: 2px 0; font-variant-numeric: tabular-nums; color: var(--text);
 }
 
+/* Long/Short breakdown sub-rows in the backtest analysis tables. Both
+   directions are always visible: sub-rows sit indented under their ALL row,
+   tinted with the app's long/short colors. */
+.bt-analysis-subrow > td {
+  font-size: 0.92em;
+  opacity: 0.9;
+}
+.bt-analysis-subrow-label {
+  padding-left: 1.25em;
+  font-variant: small-caps;
+}
+.bt-leg-long .bt-analysis-subrow-label,
+.bt-leg-long.bt-analysis-dist-split,
+span.bt-leg-long { color: var(--pos); }
+.bt-leg-short .bt-analysis-subrow-label,
+.bt-leg-short.bt-analysis-dist-split,
+span.bt-leg-short { color: var(--neg); }
+.bt-dur-hist-legs { display: flex; gap: 6px; align-items: flex-end; }
+.bt-dur-hist-leggroup { display: flex; flex-direction: column; align-items: center; }
+.bt-dur-hist-leglabel { font-size: 0.7em; font-weight: 600; }
+.bt-leg-long.bt-dur-hist-leglabel { color: var(--pos); }
+.bt-leg-short.bt-dur-hist-leglabel { color: var(--neg); }
+.bt-analysis-note { margin: 2px 0 6px; font-size: 0.9em; opacity: 0.75; }
+
 /* TRADES group: ALL / LONG / SHORT breakdown table. Metric names run across the
    header once (with their ⓘ); each row is a direction so contributions compare
    down a column. Horizontal scroll on the narrow side panel; row labels stay

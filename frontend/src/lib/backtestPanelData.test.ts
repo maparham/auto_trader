@@ -16,7 +16,7 @@ function result(over: Partial<BacktestResult> = {}): BacktestResult {
       avg_win_loss_ratio: null, largest_win: 0, largest_loss: 0, max_drawdown_pct: 0,
       avg_duration_bars: 0, max_consec_wins: 0, max_consec_losses: 0 },
     ...over,
-  };
+  } as BacktestResult;
 }
 
 describe("metricRows", () => {
@@ -35,20 +35,20 @@ describe("metricRows", () => {
 
 describe("legTable", () => {
   const longLeg: LegMetrics = {
-    n_trades: 3, win_rate: 2 / 3, net_pnl: 80, profit_factor: 3,
+    n_trades: 3, win_rate: 2 / 3, net_pnl: 80, expectancy: 2, profit_factor: 3,
     avg_win: 10, avg_loss: -4, avg_win_loss_ratio: 2.5,
-    largest_win: 12, largest_loss: -4, max_consec_losses: 1, avg_duration_bars: 3,
+    largest_win: 12, largest_loss: -4, max_consec_losses: 1, max_consec_wins: 2, avg_duration_bars: 3,
   };
   const shortLeg: LegMetrics = {
-    n_trades: 1, win_rate: 0, net_pnl: 20, profit_factor: null,
+    n_trades: 1, win_rate: 0, net_pnl: 20, expectancy: 1, profit_factor: null,
     avg_win: 0, avg_loss: 0, avg_win_loss_ratio: null,
-    largest_win: 0, largest_loss: 0, max_consec_losses: 0, avg_duration_bars: 2,
+    largest_win: 0, largest_loss: 0, max_consec_losses: 0, max_consec_wins: 1, avg_duration_bars: 2,
   };
   const res = result({
     summary: { net_pnl: 100, n_trades: 4, win_rate: 0.5, max_drawdown: 0 },
-    metrics: { ...result().metrics, profit_factor: 2, avg_win: 10, avg_loss: -5,
+    metrics: { ...result().metrics, profit_factor: 2, expectancy: 2, avg_win: 10, avg_loss: -5,
       avg_win_loss_ratio: 2, largest_win: 12, largest_loss: -6,
-      max_consec_losses: 2, avg_duration_bars: 3 },
+      max_consec_losses: 2, max_consec_wins: 2, avg_duration_bars: 3 },
     by_leg: { long: longLeg, short: shortLeg },
   });
 
@@ -86,6 +86,48 @@ describe("legTable", () => {
     const t = legTable(result({ summary: { net_pnl: 0, n_trades: 0, win_rate: 0, max_drawdown: 0 } }));
     expect(cell(t, "SHORT", "Trades").value).toBe("0");
     expect(cell(t, "LONG", "Net P&L").value).toBe("+0.00");
+  });
+
+  it("backfills zeros for a leg cached before a metric was added (partial by_leg)", () => {
+    // A result persisted before expectancy/win-streak existed carries a leg
+    // object without those keys. legTable must render them as zeros, not crash.
+    const partialLong = {
+      n_trades: 3, win_rate: 0.5, net_pnl: 30, profit_factor: 1,
+      avg_win: 5, avg_loss: -2, avg_win_loss_ratio: 2.5,
+      largest_win: 5, largest_loss: -2, max_consec_losses: 1, avg_duration_bars: 1,
+      // expectancy and max_consec_wins intentionally absent
+    } as unknown as LegMetrics;
+    const stale = result({ by_leg: { long: partialLong, short: partialLong } });
+    expect(() => legTable(stale)).not.toThrow();
+    const t = legTable(stale);
+    expect(cell(t, "LONG", "Expectancy").value).toBe("0.00");
+    expect(cell(t, "LONG", "Win streak").value).toBe("0");
+    // Present keys still render from the leg, not from ZERO_LEG.
+    expect(cell(t, "LONG", "Net P&L").value).toBe("+30.00");
+  });
+
+  it("includes Expectancy and Max consec wins columns", () => {
+    const fakeResult = result({
+      summary: { net_pnl: 10, n_trades: 3, win_rate: 0.66, max_drawdown: 0 },
+      metrics: {
+        return_pct: 1, profit_factor: 2, expectancy: 3.33, avg_win: 6, avg_loss: -2,
+        avg_win_loss_ratio: 3, largest_win: 7, largest_loss: -3, max_drawdown_pct: 0,
+        avg_duration_bars: 1, max_consec_wins: 2, max_consec_losses: 1,
+      },
+      by_leg: {
+        long: { n_trades: 2, win_rate: 0.5, net_pnl: 3, expectancy: 1.5, profit_factor: 1,
+          avg_win: 5, avg_loss: -2, avg_win_loss_ratio: 2.5, largest_win: 5, largest_loss: -2,
+          max_consec_losses: 1, max_consec_wins: 1, avg_duration_bars: 1 },
+        short: { n_trades: 1, win_rate: 1, net_pnl: 7, expectancy: 7, profit_factor: null,
+          avg_win: 7, avg_loss: 0, avg_win_loss_ratio: null, largest_win: 7, largest_loss: 0,
+          max_consec_losses: 0, max_consec_wins: 1, avg_duration_bars: 1 },
+      },
+    });
+    const t = legTable(fakeResult);
+    const labels = t.columns.map((c) => c.label);
+    expect(labels).toContain("Expectancy");
+    expect(labels).toContain("Win streak");
+    expect(t.rows.map((r) => r.leg)).toEqual(["ALL", "LONG", "SHORT"]);
   });
 });
 

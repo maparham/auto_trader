@@ -116,6 +116,8 @@ export interface LegMetrics {
   largest_win: number;
   largest_loss: number;
   max_consec_losses: number;
+  expectancy: number;
+  max_consec_wins: number;
   avg_duration_bars: number;
 }
 
@@ -193,7 +195,7 @@ export interface BarDynamicsMetrics {
   entry_crossings: number | null;
 }
 
-export interface BacktestAnalysis {
+export interface LegAnalysis {
   n_trades: number;
   sl: {
     winners_mae_hist: AnalysisHist;
@@ -229,6 +231,10 @@ export interface BacktestAnalysis {
     losers: number[];
   } | null;
   whatif?: BacktestWhatif;
+}
+
+export interface BacktestAnalysis extends LegAnalysis {
+  by_leg?: { long: LegAnalysis; short: LegAnalysis };
 }
 
 export interface BacktestResult {

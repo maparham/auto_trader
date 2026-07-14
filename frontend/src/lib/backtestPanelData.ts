@@ -227,9 +227,10 @@ export interface LegTable {
 }
 
 const ZERO_LEG: LegMetrics = {
-  n_trades: 0, win_rate: 0, net_pnl: 0, profit_factor: null,
+  n_trades: 0, win_rate: 0, net_pnl: 0, expectancy: 0, profit_factor: null,
   avg_win: 0, avg_loss: 0, avg_win_loss_ratio: null,
-  largest_win: 0, largest_loss: 0, max_consec_losses: 0, avg_duration_bars: 0,
+  largest_win: 0, largest_loss: 0, max_consec_losses: 0, max_consec_wins: 0,
+  avg_duration_bars: 0,
 };
 
 // The ALL row reuses the run-wide summary/metrics the panel already receives,
@@ -240,6 +241,7 @@ function allLeg(res: BacktestResult): LegMetrics {
     n_trades: res.summary.n_trades,
     win_rate: res.summary.win_rate,
     net_pnl: res.summary.net_pnl,
+    expectancy: res.metrics.expectancy,
     profit_factor: res.metrics.profit_factor,
     avg_win: res.metrics.avg_win,
     avg_loss: res.metrics.avg_loss,
@@ -247,6 +249,7 @@ function allLeg(res: BacktestResult): LegMetrics {
     largest_win: res.metrics.largest_win,
     largest_loss: res.metrics.largest_loss,
     max_consec_losses: res.metrics.max_consec_losses,
+    max_consec_wins: res.metrics.max_consec_wins,
     avg_duration_bars: res.metrics.avg_duration_bars,
   };
 }
@@ -262,6 +265,8 @@ const LEG_COLUMNS: { label: string; info: string; cell: (m: LegMetrics) => LegCe
     cell: (m) => ({ value: Math.round(m.win_rate * 100) + "%", tone: "" }) },
   { label: "Net P&L", info: "Total profit after costs, across these trades.",
     cell: (m) => ({ value: formatSignedMoney(m.net_pnl), tone: getTone(m.net_pnl) }) },
+  { label: "Expectancy", info: "Average profit per trade, winners and losers together.",
+    cell: (m) => ({ value: m.expectancy.toFixed(2), tone: getTone(m.expectancy) }) },
   { label: "Profit factor", info: "Gross profit divided by gross loss; above 1 is profitable.",
     cell: (m) => ({ value: m.profit_factor !== null ? m.profit_factor.toFixed(2) : "—", tone: "" }) },
   { label: "Avg win", info: "Average size of a winning trade.",
@@ -274,6 +279,8 @@ const LEG_COLUMNS: { label: string; info: string; cell: (m: LegMetrics) => LegCe
     cell: (m) => ({ value: m.largest_win.toFixed(2), tone: "" }) },
   { label: "Largest loss", info: "Biggest single losing trade.",
     cell: (m) => ({ value: m.largest_loss.toFixed(2), tone: "" }) },
+  { label: "Win streak", info: "Longest run of consecutive winning trades. LONG and SHORT count only their own side, so one side's streak can exceed ALL.",
+    cell: (m) => ({ value: String(m.max_consec_wins), tone: "" }) },
   { label: "Loss streak", info: "Longest run of consecutive losing trades. LONG and SHORT count only their own side (ignoring the other side's trades in between), so one side's streak can exceed ALL.",
     cell: (m) => ({ value: String(m.max_consec_losses), tone: "" }) },
   { label: "Avg duration", info: "Average time a trade stayed open.",
@@ -285,10 +292,14 @@ const LEG_COLUMNS: { label: string; info: string; cell: (m: LegMetrics) => LegCe
 // column. LONG/SHORT come from the backend's by_leg breakdown (zeroed if a run
 // has no trades on that side, or on older payloads without by_leg).
 export function legTable(res: BacktestResult): LegTable {
+  // Spread over ZERO_LEG so any key missing from a leg is backfilled. A run with
+  // no trades on a side has no by_leg entry at all; and a result cached before a
+  // metric was added (e.g. expectancy, win streak) carries a partial leg object.
+  // Both cases must render as zeros, not crash on a missing field.
   const legs: { leg: string; m: LegMetrics }[] = [
     { leg: "ALL", m: allLeg(res) },
-    { leg: "LONG", m: res.by_leg?.long ?? ZERO_LEG },
-    { leg: "SHORT", m: res.by_leg?.short ?? ZERO_LEG },
+    { leg: "LONG", m: { ...ZERO_LEG, ...res.by_leg?.long } },
+    { leg: "SHORT", m: { ...ZERO_LEG, ...res.by_leg?.short } },
   ];
   return {
     columns: LEG_COLUMNS.map((c) => ({ label: c.label, info: c.info })),
