@@ -74,6 +74,7 @@ import {
   setTradesAccount,
   DEFAULT_ACCOUNT,
   brokerOf,
+  isDataOnlyBroker,
   isRealMoneyAccount,
   fetchAccountSummary,
   loadLastAccountByBroker,
@@ -460,6 +461,11 @@ export default function App() {
   // positions/orders dock follows the selection.
   useEffect(() => {
     localStorage.setItem("activeAccount", activeAccount);
+    // Always point the trades feed at the current account, INCLUDING a data-only
+    // source: setTradesAccount clears the prior broker's trades synchronously, so
+    // switching to Dukascopy can't leave a stale (and interactable) position lingering
+    // on the chart. Its positions/orders fetch for dukascopy:data 404/422s and is
+    // caught, leaving the feed empty (the dock shows a "history only" note).
     setTradesAccount(activeAccount);
     // Remember this as the broker's last-used account (read when the tab-bar selector
     // switches back to this broker).
@@ -1724,7 +1730,7 @@ export default function App() {
         {/* Order ticket (paper): compose a new order for the focused symbol. The
             open book lives in the bottom dock, not here. Toggled by the toolbar's
             trade button. */}
-        {tradeOpen && symbol && !isSynthetic(symbol.epic) && (
+        {tradeOpen && symbol && !isSynthetic(symbol.epic) && !isDataOnlyBroker(brokerId) && (
           <aside className="trade-sidebar">
             <OrderTicket
               epic={symbol.epic}
@@ -1754,7 +1760,7 @@ export default function App() {
         )}
         {/* Live trading: a separate docked surface from the backtest, so trading
             real money is never confused with testing. */}
-        {showLive && symbol && period && (
+        {showLive && symbol && period && !isDataOnlyBroker(brokerId) && (
           <LiveTradingPanel
             epic={symbol.epic}
             resolution={period.resolution}

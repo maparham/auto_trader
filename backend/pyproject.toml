@@ -14,6 +14,7 @@ dependencies = [
     "lightstreamer-client-lib>=2.2.2",
     "metaapi-cloud-sdk>=29.1.1",
     "numpy>=2.0",
+    "dukascopy-python>=4.0.1",
 ]
 
 [project.optional-dependencies]
@@ -30,3 +31,6 @@ packages = ["auto_trader"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the backend root on sys.path so `scripts.*` (CLI helpers, not part of the
+# wheel) import under pytest the same way `python -m scripts.X` runs them.
+pythonpath = ["."]

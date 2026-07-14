@@ -71,6 +71,9 @@ describe("capital feed labels + isCapital", () => {
     expect(brokerLabel("capital")).toBe("Capital.com (demo)");
     expect(brokerLabel("capital-live")).toBe("Capital.com (live)");
   });
+  it("labels the dukascopy history source", () => {
+    expect(brokerLabel("dukascopy")).toBe("Dukascopy (history)");
+  });
   it("isCapital matches both feeds, not others", () => {
     expect(isCapital("capital")).toBe(true);
     expect(isCapital("capital-live")).toBe(true);

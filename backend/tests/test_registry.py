@@ -33,7 +33,9 @@ def _no_ig(monkeypatch):
 
 def test_build_registry_ships_capital_and_paper() -> None:
     described = build_registry().describe()
-    assert described["data"] == ["capital"]
+    # dukascopy is an always-on read-only history source; capital is the only
+    # live feed here (no live creds), so the pair is capital + dukascopy.
+    assert described["data"] == ["capital", "dukascopy"]
     keys = {e["key"]: e for e in described["exec"]}
     assert keys["capital:paper"] == {
         "key": "capital:paper",
@@ -47,6 +49,17 @@ def test_build_registry_ships_capital_and_paper() -> None:
         "env": "demo",
         "isRealMoney": False,
     }
+    # A data-only broker (dukascopy: no executor) gets a synthetic pseudo-account
+    # so the account-keyed frontend can select it, flagged dataOnly so the dock
+    # suppresses trading. Real accounts carry no dataOnly key (absent == False).
+    assert keys["dukascopy:data"] == {
+        "key": "dukascopy:data",
+        "broker": "dukascopy",
+        "env": "data",
+        "isRealMoney": False,
+        "dataOnly": True,
+    }
+    assert "dataOnly" not in keys["capital:paper"]
 
 
 def test_capital_demo_and_live_feeds(monkeypatch):
@@ -76,7 +89,8 @@ def test_no_live_creds_registers_only_demo_feed(monkeypatch):
     monkeypatch.setattr(settings, "live_password", "", raising=False)
 
     reg = build_registry()
-    assert set(reg.data) == {"capital"}
+    # dukascopy (read-only history) always registers; capital is the only feed.
+    assert set(reg.data) == {"capital", "dukascopy"}
     assert "capital:paper" in reg.exec
     assert "capital:demo" in reg.exec
     assert "capital-live:live" not in reg.exec

@@ -74,6 +74,20 @@ class BrokerRegistry:
                     "isRealMoney": broker.is_real_money,
                 }
                 for key, broker in self.exec.items()
+            ]
+            # Data-only brokers (a read-only history source like dukascopy, with no
+            # executor) get a synthetic pseudo-account so the account-keyed frontend
+            # can select them. Flagged dataOnly so the dock suppresses all trading.
+            + [
+                {
+                    "key": f"{broker_id}:data",
+                    "broker": broker_id,
+                    "env": "data",
+                    "isRealMoney": False,
+                    "dataOnly": True,
+                }
+                for broker_id in sorted(self.data)
+                if not any(key.split(":", 1)[0] == broker_id for key in self.exec)
             ],
         }
 
@@ -90,12 +104,16 @@ class BrokerRegistry:
 def build_registry() -> BrokerRegistry:
     """Wire every broker the app ships with. Adding a broker is one block here:
     register its data broker, then register the executors that price off it."""
-    from auto_trader.brokers import capital, ig, mt5
+    from auto_trader.brokers import capital, dukascopy, ig, mt5
     from auto_trader.config import ig_settings, mt5_settings
 
     from auto_trader.config import settings
 
     registry = BrokerRegistry()
+    # Dukascopy: read-only deep-history source (FX/metals/indices). No credentials,
+    # always available. Data-only, so no executor: a chart/backtest source, not a
+    # tradeable account.
+    dukascopy.register(registry)
     capital.register(registry)  # demo feed: capital data + capital:paper + capital:demo
     # Live feed: capital-live data + capital-live:paper + capital-live:live. Only when
     # the live credentials are present, so a half-configured account never shows a

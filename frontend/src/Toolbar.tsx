@@ -56,7 +56,7 @@ import {
 import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
 import BrokerSelector from "./BrokerSelector";
-import type { BrokerAccount } from "./lib/trading";
+import { isDataOnlyBroker, type BrokerAccount } from "./lib/trading";
 import { isSynthetic } from "./lib/syntheticRegistry";
 
 interface DrawMenu {
@@ -623,7 +623,7 @@ export default function Toolbar({
         priceSide={priceSide}
       />
 
-      <PanelToggles />
+      <PanelToggles dataOnly={isDataOnlyBroker(brokerId)} />
       <MaximizeToggle maximized={maximized} onToggleMaximize={onToggleMaximize} />
 
       {symModalOpen && (

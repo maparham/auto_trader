@@ -25,6 +25,7 @@ import {
   tradeLabel,
   brokerLabel,
   brokerOf,
+  isDataOnlyBroker,
   isRealMoneyAccount,
   isCapital,
   type TradeView,
@@ -184,6 +185,7 @@ export default function PositionsPanel({
   // Account tabs for the active broker. Always render at least the active account
   // (so a single-account broker still shows its tab) even before /api/brokers loads.
   const activeBroker = brokerOf(account);
+  const dataOnly = isDataOnlyBroker(activeBroker);
   const brokerAccounts =
     accounts.filter((a) => a.broker === activeBroker);
   const acctTabs: BrokerAccount[] =
@@ -460,6 +462,22 @@ export default function PositionsPanel({
     v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
   const pnlClass = (v: number | null) => (v == null ? "" : v >= 0 ? "pp-pos" : "pp-neg");
   const entryLabel = tab === "positions" ? "Avg fill" : "Limit";
+
+  // A data-only source (Dukascopy history) has no account, positions or orders. Show
+  // a plain "history only" note instead of a misleading paper account strip + book.
+  // Deliberately NOT collapsible: the toolbar trade-toggle that would re-open the dock
+  // is hidden for a data-only source, so a Close button here would strand it shut.
+  if (dataOnly) {
+    return (
+      <section className="pp">
+        <nav className="pp-tabs">
+          <span className="pp-dataonly-note">
+            {brokerLabel(activeBroker)}: read-only data source, no trading.
+          </span>
+        </nav>
+      </section>
+    );
+  }
 
   return (
     <section className={`pp${collapsed ? " pp-collapsed" : ""}`}>

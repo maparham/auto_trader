@@ -289,7 +289,7 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
 
 // The app-level panel toggles (live trading / alerts / trading dock) — global
 // panels beside the chart, safe in every toolbar variant.
-export function PanelToggles() {
+export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
   const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
@@ -300,7 +300,9 @@ export function PanelToggles() {
   return (
     <>
       {/* Live trading panel toggle — arm rule strategies against a demo/live
-          broker account. */}
+          broker account. Hidden for a data-only source (Dukascopy history): there
+          is no account to trade or arm against. */}
+      {!dataOnly && (
       <button
         className={`anchor-btn live-toggle${liveOpen ? " on" : ""}`}
         title="Show live trading panel"
@@ -312,6 +314,7 @@ export function PanelToggles() {
           <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m10.14 0-2.83-2.83M9.76 9.76 6.93 6.93" />
         </svg>
       </button>
+      )}
 
       {/* Alerts panel toggle (bell). */}
       <button
@@ -322,7 +325,9 @@ export function PanelToggles() {
         <BellIcon size={16} />
       </button>
 
-      {/* Trading panel toggle (order ticket + positions). */}
+      {/* Trading panel toggle (order ticket + positions). Hidden for a data-only
+          source: nothing to trade. */}
+      {!dataOnly && (
       <button
         className={`anchor-btn trade-toggle${tradeOpen ? " on" : ""}`}
         title="Show trading panel"
@@ -334,6 +339,7 @@ export function PanelToggles() {
           <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
         </svg>
       </button>
+      )}
     </>
   );
 }

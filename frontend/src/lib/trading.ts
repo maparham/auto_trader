@@ -96,6 +96,8 @@ const BROKER_LABELS: Record<string, string> = {
   "capital-live": "Capital.com (live)",
   "ig-demo": "IG (demo)",
   "ig-live": "IG (live)",
+  // Read-only deep-history source (Dukascopy). Charts/backtests only, no dealing.
+  dukascopy: "Dukascopy (history)",
 };
 // Broker-reported display names from /api/brokers (e.g. mt5 → "Ava Trade Ltd
 // (demo)", read from MetaApi account information). They win over the static map
@@ -104,6 +106,20 @@ const BROKER_LABELS: Record<string, string> = {
 let backendLabels: Record<string, string> = {};
 export function noteBrokerLabels(labels: Record<string, string> | undefined): void {
   if (labels) backendLabels = labels;
+}
+
+// Data-only brokers (read-only history sources like Dukascopy: no trading account,
+// no quote, no positions). The backend flags their synthetic pseudo-account with
+// dataOnly; we remember the broker ids so any component holding only a brokerId can
+// suppress trading UI. Fed by fetchBrokers / cachedBrokers, mirroring backendLabels.
+let dataOnlyBrokers: Set<string> = new Set();
+export function noteDataOnlyBrokers(exec: BrokerAccount[] | undefined): void {
+  if (!exec) return;
+  dataOnlyBrokers = new Set(exec.filter((a) => a.dataOnly).map((a) => a.broker));
+}
+/** True for a read-only history source (no trading). Trading UI must gate on this. */
+export function isDataOnlyBroker(brokerId: string): boolean {
+  return dataOnlyBrokers.has(brokerId);
 }
 export function brokerLabel(brokerId: string): string {
   return (
@@ -141,8 +157,11 @@ export interface OrderRequest {
 export interface BrokerAccount {
   key: TradeAccount; // "capital:paper"
   broker: string; // "capital"
-  env: string; // "paper" | "demo" | "live"
+  env: string; // "paper" | "demo" | "live" | "data"
   isRealMoney: boolean;
+  // True for a data-only source's synthetic account (Dukascopy history): selectable
+  // for charts/backtests, but not tradeable. Absent on real trading accounts.
+  dataOnly?: boolean;
 }
 export interface BrokerInfo {
   data: string[];
@@ -166,12 +185,22 @@ export function cachedBrokers(): BrokerInfo | null {
   try {
     const raw = localStorage.getItem(BROKERS_CACHE_KEY);
     const info = raw ? (JSON.parse(raw) as BrokerInfo) : null;
-    if (info) noteBrokerLabels(info.labels);
+    if (info) {
+      noteBrokerLabels(info.labels);
+      noteDataOnlyBrokers(info.exec);
+    }
     return info;
   } catch {
     return null;
   }
 }
+
+// Warm the data-only broker set (and labels) from the cached list at module load,
+// so isDataOnlyBroker is correct on the VERY FIRST render, before fetchBrokers
+// resolves. Without this, reloading with a data-only source (Dukascopy) selected
+// would briefly render trading UI and point the trades feed at its pseudo-account.
+// A first-ever visit (no cache) can only have a real broker active, so nothing to warm.
+cachedBrokers();
 
 /** The selector list: which brokers/accounts the backend has registered. Bounded
  * by a timeout and cached on success (see cachedBrokers). */
@@ -183,6 +212,7 @@ export async function fetchBrokers(): Promise<BrokerInfo> {
     if (!res.ok) throw new Error(`brokers failed (${res.status})`);
     const info = (await res.json()) as BrokerInfo;
     noteBrokerLabels(info.labels);
+    noteDataOnlyBrokers(info.exec);
     try {
       localStorage.setItem(BROKERS_CACHE_KEY, JSON.stringify(info));
     } catch {
