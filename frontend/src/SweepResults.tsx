@@ -10,15 +10,25 @@ import type { SweepRow } from "./api";
 import type { SweepAxis } from "./lib/sweep";
 import Tooltip from "./components/Tooltip";
 
-type MetricKey = "net_pnl" | "return_pct" | "n_trades" | "win_rate" | "max_drawdown" | "profit_factor";
+type MetricKey =
+  | "net_pnl"
+  | "return_pct"
+  | "n_trades"
+  | "win_rate"
+  | "avg_win_loss_ratio"
+  | "max_drawdown"
+  | "profit_factor";
 
-const METRIC_COLS: { key: MetricKey; label: string }[] = [
-  { key: "net_pnl", label: "Net P/L" },
-  { key: "return_pct", label: "Return %" },
-  { key: "n_trades", label: "Trades" },
-  { key: "win_rate", label: "Win rate" },
-  { key: "max_drawdown", label: "Drawdown" },
-  { key: "profit_factor", label: "Profit factor" },
+// `label`: the table header / dropdown text. `abbr`: the compact form used in
+// the single-line hovered-cell detail row where space is tight.
+const METRIC_COLS: { key: MetricKey; label: string; abbr: string }[] = [
+  { key: "net_pnl", label: "Net P/L", abbr: "P/L" },
+  { key: "return_pct", label: "Return %", abbr: "Ret" },
+  { key: "n_trades", label: "Trades", abbr: "N" },
+  { key: "win_rate", label: "Win rate", abbr: "Win" },
+  { key: "avg_win_loss_ratio", label: "RR", abbr: "RR" },
+  { key: "max_drawdown", label: "Drawdown", abbr: "DD" },
+  { key: "profit_factor", label: "Profit factor", abbr: "PF" },
 ];
 
 type SortDir = "asc" | "desc";
@@ -243,18 +253,40 @@ function SweepHeatmap({
   const xVals = axisVals(xAxis);
   const yVals = yAxis ? axisVals(yAxis) : [null];
 
+  // Hovered cell's full metric breakdown, surfaced inline in the header row
+  // beside the color-metric dropdown (the grid cells themselves only show the
+  // one selected metric).
+  const [hovered, setHovered] = useState<SweepRow | null>(null);
+
   return (
     <div className="sweep-heatmap">
-      <label className="sweep-heat-metric">
-        <span>Color</span>
-        <select value={metric} onChange={(e) => onMetric(e.target.value as MetricKey)}>
+      <div className="sweep-heat-metric">
+        <select
+          aria-label="Heatmap color metric"
+          value={metric}
+          onChange={(e) => onMetric(e.target.value as MetricKey)}
+        >
           {METRIC_COLS.map((c) => (
-            // Prefixed so the option text never collides with the table's own
-            // sort-header label text (e.g. bare "Net P/L") in the DOM.
-            <option key={c.key} value={c.key}>Color: {c.label}</option>
+            <option key={c.key} value={c.key}>{c.label}</option>
           ))}
         </select>
-      </label>
+        <div className="sweep-heat-detail" aria-live="polite">
+          {hovered && (
+            <>
+              {hovered.metrics === null ? (
+                <span className="sweep-heat-detail-err">{hovered.error ?? "failed"}</span>
+              ) : (
+                METRIC_COLS.map((c) => (
+                  <span key={c.key} className="sweep-heat-detail-stat">
+                    <span className="sweep-heat-detail-lbl">{c.abbr}</span>
+                    <span className="sweep-heat-detail-val">{fmtMetric(c.key, metricValue(hovered, c.key))}</span>
+                  </span>
+                ))
+              )}
+            </>
+          )}
+        </div>
+      </div>
       <div
         className="sweep-heat-grid"
         style={{ gridTemplateColumns: `auto repeat(${xVals.length}, 1fr)` }}
@@ -278,6 +310,8 @@ function SweepHeatmap({
                   className={`sweep-cell${failed ? " sweep-error" : ""}${disabled ? " sweep-cell-disabled" : ""}`}
                   style={{ background: divergingBg(v, maxAbs) }}
                   onClick={() => row && !disabled && onApply(row.combo)}
+                  onMouseEnter={() => setHovered(row ?? null)}
+                  onMouseLeave={() => setHovered((h) => (h === row ? null : h))}
                 >
                   {failed ? (
                     <Tooltip content={row!.error ?? "failed"}>

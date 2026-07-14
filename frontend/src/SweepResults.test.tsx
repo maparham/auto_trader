@@ -24,7 +24,7 @@ describe("SweepResults", () => {
     render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
     expect(screen.getAllByRole("row")).toHaveLength(4);   // header + 3
     expect(document.querySelector(".sweep-error")).toBeTruthy();
-    fireEvent.click(screen.getByText("Net P/L"));         // sort desc
+    fireEvent.click(screen.getByRole("button", { name: /Net P\/L/ })); // sort desc
     const first = screen.getAllByRole("row")[1];
     expect(first.textContent).toContain("100");
   });

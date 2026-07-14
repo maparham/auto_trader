@@ -621,6 +621,7 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
                 "win_rate": round(result.win_rate, 4),
                 "max_drawdown": round(result.max_drawdown, 5),
                 "profit_factor": metrics.get("profit_factor"),
+                "avg_win_loss_ratio": metrics.get("avg_win_loss_ratio"),
                 "return_pct": metrics.get("return_pct"),
             }))
         return SweepResponse(rows=rows)
@@ -663,6 +664,7 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
             "win_rate": round(result.win_rate, 4),
             "max_drawdown": round(result.max_drawdown, 5),
             "profit_factor": metrics.get("profit_factor"),
+            "avg_win_loss_ratio": metrics.get("avg_win_loss_ratio"),
             "return_pct": metrics.get("return_pct"),
         }))
     return SweepResponse(rows=rows)

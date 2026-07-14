@@ -4192,7 +4192,16 @@
 .sweep-sort-caret { font-size: 7px; line-height: 1; }
 
 .sweep-heatmap { display: flex; flex-direction: column; gap: 6px; }
-.sweep-heat-metric { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.sweep-heat-metric { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; font-size: 12px; color: var(--text-dim); height: 24px; }
+/* Hovered-cell breakdown, inline beside the color-metric dropdown. Single line:
+   never wraps (which would grow the header and shove the table down); clips on
+   overflow instead. */
+.sweep-heat-detail { display: flex; align-items: baseline; flex-wrap: nowrap; white-space: nowrap; overflow: hidden; gap: 10px; min-width: 0; font-variant-numeric: tabular-nums; }
+.sweep-heat-detail-combo { font-weight: 600; color: var(--text); font-family: var(--mono); }
+.sweep-heat-detail-stat { display: inline-flex; align-items: baseline; gap: 4px; }
+.sweep-heat-detail-lbl { color: var(--text-faint); }
+.sweep-heat-detail-val { color: var(--text); font-family: var(--mono); }
+.sweep-heat-detail-err { color: var(--text-faint); font-style: italic; }
 .sweep-heat-grid { display: grid; gap: 2px; font-size: 11px; }
 .sweep-heat-corner { }
 .sweep-heat-xlabel, .sweep-heat-ylabel {

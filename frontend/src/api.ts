@@ -381,6 +381,7 @@ export interface SweepRow {
     win_rate: number;
     max_drawdown: number;
     profit_factor: number | null;
+    avg_win_loss_ratio: number | null;
     return_pct: number;
   } | null;
   error: string | null;
