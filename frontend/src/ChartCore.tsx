@@ -436,9 +436,17 @@ export default function ChartCore({
         pageBars: PAGE_BARS,
         // Bounded safety cap only: the walk breaks as soon as coverage reaches
         // fromTs. Sized to reach a several-months-old trade on a fine timeframe
-        // (500 bars × 80 ≈ 40k bars ≈ ~14 months of near-24h 15m bars).
+        // (500 bars × 80 ≈ 40k bars ≈ ~14 months of near-24h 15m bars; ~28 days
+        // at 1m).
         maxPages: 80,
-        maxEmpty: 4,
+        // No empty-exhaustion here (unlike scroll-back): fromTs is a KNOWN trade
+        // timestamp, so real bars provably exist there and any empty windows en
+        // route are interior gaps the instrument is closed for (a weekend is
+        // ~49h — far past the 4×8.3h≈33h scroll-back budget), never the true
+        // history edge. Letting maxEmpty trip made a trade one weekend back read
+        // as "older than history available" even though the backtest fetched its
+        // 1m bars from the same endpoint. maxPages is the sole bound.
+        maxEmpty: Infinity,
         isStale,
         getData: () => chartRef.current?.getDataList(),
         fetchOlder: (fromSec, toSec) => fetchRange(epic, resolution, fromSec, toSec, side, broker),

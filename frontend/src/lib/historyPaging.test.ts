@@ -14,6 +14,7 @@ function harness(opts: {
   server: number[]; // older bar timestamps (ms) the broker can return, any order
   initial?: number[]; // bars already loaded (ms), ascending
   stale?: () => boolean;
+  maxEmpty?: number; // override the default consecutive-empty budget
 }) {
   const data = (opts.initial ?? []).map((t) => bar(t));
   const exhausted = { value: false };
@@ -24,7 +25,7 @@ function harness(opts: {
     resSec: 60,
     pageBars: 5,
     maxPages: 20,
-    maxEmpty: 3,
+    maxEmpty: opts.maxEmpty ?? 3,
     isStale: opts.stale ?? (() => false),
     getData: () => data,
     fetchOlder: vi.fn(async (fromSec: number, toSec: number) => {
@@ -87,6 +88,44 @@ describe("pageHistoryBack", () => {
     const res = await pageHistoryBack(h.args);
     expect(res).toBe("exhausted");
     expect(h.exhausted.value).toBe(true);
+  });
+
+  // The "jump to a backtest trade" pager (coverBacktestTradeTo) walks 1m history
+  // back to a KNOWN trade timestamp, so real data provably exists at fromTs and
+  // any empty windows en route are interior gaps (a weekend the instrument is
+  // closed), never end-of-history. A window is pageBars*resSec = 5min wide here;
+  // maxEmpty=3 means a 15min+ gap trips false exhaustion. The weekend gap on a
+  // real 1m chart (~49h) dwarfs maxEmpty*window (~33h), so empty-exhaustion quits
+  // at the weekend and never reaches a trade just on the far side of it.
+  it("with the default empty budget, an interior gap wider than maxEmpty falsely exhausts", async () => {
+    // Loaded [100]. Target 70 has real data. Gap at 74..99 (26min > 15min budget).
+    const server = [70, 71, 72, 73].map((m) => m * MIN);
+    const h = harness({
+      fromTs: 70 * MIN,
+      toTs: 100 * MIN,
+      server,
+      initial: [100 * MIN],
+    });
+    const res = await pageHistoryBack(h.args);
+    // Quits at the gap before reaching the (real, present) target — the bug.
+    expect(res).toBe("exhausted");
+    expect(h.data[0].timestamp).toBeGreaterThan(70 * MIN);
+  });
+
+  it("crosses an interior gap to reach a known target when empty-exhaustion is disabled", async () => {
+    const server = [70, 71, 72, 73].map((m) => m * MIN);
+    const h = harness({
+      fromTs: 70 * MIN,
+      toTs: 100 * MIN,
+      server,
+      initial: [100 * MIN],
+      maxEmpty: Infinity, // cover-trade policy: let maxPages be the sole bound
+    });
+    const res = await pageHistoryBack(h.args);
+    expect(res).toBe("reached");
+    // The cursor marched through the empty gap (line 80) and picked up the far bars.
+    expect(h.data[0].timestamp).toBeLessThanOrEqual(70 * MIN);
+    expect(h.exhausted.value).toBe(false);
   });
 
   it("aborts without applying when isStale() flips true mid-walk", async () => {
