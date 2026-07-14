@@ -57,7 +57,7 @@ export interface PeriodAxis {
 export type SweepAxis = RangeAxis | ListAxis | PeriodAxis;
 export type SweepCombo = Record<string, number | string>;
 
-export const SWEEP_MAX_COMBOS = 200;
+export const SWEEP_MAX_COMBOS = 1000;
 export const SWEEP_CHUNK_SIZE = 20;
 
 /** Builds a `rule:` sweep-axis target path for a rule operand's numeric field
@@ -177,14 +177,17 @@ export async function runSweep(
   for (let i = 0; i < combos.length; i += SWEEP_CHUNK_SIZE) {
     if (opts.signal?.aborted) throw new Error("sweep aborted");
     const chunk = combos.slice(i, i + SWEEP_CHUNK_SIZE);
+    // `i` combos are already done when this chunk starts; the backend logs the
+    // chunk's position as `i+1..i+len of total`.
+    const progress = { done: i, total: combos.length };
     let rows: SweepRow[];
     try {
-      rows = await runSweepChunk(baseReq, chunk);
+      rows = await runSweepChunk(baseReq, chunk, progress);
     } catch {
       // A cancel that lands while the chunk is in flight must not burn a
       // retry's worth of backend compute.
       if (opts.signal?.aborted) throw new Error("sweep aborted");
-      rows = await runSweepChunk(baseReq, chunk);   // one retry, then throw
+      rows = await runSweepChunk(baseReq, chunk, progress);   // one retry, then throw
     }
     if (opts.signal?.aborted) throw new Error("sweep aborted");
     all.push(...rows);

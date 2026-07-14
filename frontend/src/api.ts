@@ -396,11 +396,14 @@ export interface SweepRow {
 export async function runSweepChunk(
   req: BacktestRequest,
   combos: Array<Record<string, number | boolean | string>>,
+  // Position of this chunk in the whole sweep, for the backend log only
+  // (advisory: the backend never validates or acts on them).
+  progress?: { done: number; total: number },
 ): Promise<SweepRow[]> {
   const res = await fetch(`${BASE}/api/backtest/sweep`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...req, sweep: { combos } }),
+    body: JSON.stringify({ ...req, sweep: { combos, ...progress } }),
   });
   if (!res.ok) throw new Error(await errorDetail(res, `sweep failed (${res.status})`));
   const json = await res.json();

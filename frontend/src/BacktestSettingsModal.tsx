@@ -57,8 +57,10 @@ import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
 import { StrategyParams } from "./components/StrategyParams";
+import { SweepAxisRow } from "./components/SweepAxisRow";
 import { SweepResults } from "./SweepResults";
 import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_MAX_COMBOS, type RangeAxis, type SweepAxis, type SweepOption } from "./lib/sweep";
+import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLabels";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { inspectModeSignal } from "./lib/backtestInspect";
 import { formatPeriodRange } from "./lib/backtestPeriods";
@@ -416,18 +418,16 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     if (cfg.codedStrategy) saveCodedCfg("backtest", cfg.codedStrategy, c);
   };
 
-  // Sweep axes (Task 10): session-only, never persisted — cleared on close/apply.
-  // Max 2; toggling a third un-toggles the oldest (a plain array shift). Written
-  // to sweepAxesSignal right before a run so BacktestButton can branch on it.
+  // Sweep axes (Task 10): session-only, never persisted, cleared on close/apply.
+  // Any number of axes; SWEEP_MAX_COMBOS alone bounds run size (footer count +
+  // disabled Run enforce it). Written to sweepAxesSignal right before a run so
+  // BacktestButton can branch on it.
   const [sweepAxes, setSweepAxes] = useState<SweepAxis[]>([]);
   // The axes that actually ran, materialized (period → concrete windows) at run
   // time — SweepResults labels against these, not the still-editable sweepAxes.
   const [ranAxes, setRanAxes] = useState<SweepAxis[]>([]);
-  // Appending past the 2-axis cap drops the oldest (shared by every toggle).
-  const addAxis = (axes: SweepAxis[], next: SweepAxis) => {
-    const appended = [...axes, next];
-    return appended.length > 2 ? appended.slice(appended.length - 2) : appended;
-  };
+  // Appends the toggled-on axis (shared by every sweep toggle).
+  const addAxis = (axes: SweepAxis[], next: SweepAxis) => [...axes, next];
   const toggleSweepAxis = (target: string, spec: ParamSpec) => {
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
@@ -442,6 +442,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       return addAxis(axes, next);
     });
   };
+  // The config a rule/risk axis label resolves against: rules mode reads the
+  // rule config, coded mode reads the per-file coded config (exit rules + risk).
+  const labelCfg = (): LabelConfig => (cfg.mode === "coded" ? codedCfg : cfg);
+  // Shared inline-editor patch: SweepAxisRow edits flow back through here.
+  const patchAxis = (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) =>
+    setSweepAxes((axes) => axes.map((a) => (a.target === target && a.kind === "range" ? { ...a, ...patch } : a)));
   // Risk numeric fields have no declared min/max/step — pick sensible defaults
   // from the field's current value (from = current, to = 2x, step = a coarse
   // fraction so a first sweep is immediately useful without hand-tuning).
@@ -452,7 +458,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       const next: SweepAxis = {
         kind: "range",
         target,
-        label: target.split(".").slice(1).join(" "),
+        label: sweepAxisLabel(target, labelCfg()) ?? target.split(".").slice(1).join(" "),
         from: base,
         to: base * 2,
         step: Math.max(base / 10, 0.1),
@@ -470,7 +476,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       const next: SweepAxis = {
         kind: "range",
         target,
-        label: target.replace(/^rule:/, ""),
+        label: sweepAxisLabel(target, labelCfg()) ?? target.replace(/^rule:/, ""),
         from: base,
         to: base * 2,
         step: Math.max(base / 10, 1),
@@ -489,7 +495,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         ? axes.filter((a) => a.target !== target)
         : addAxis(axes, {
             kind: "list", target,
-            label: `${target.replace(/^op:/, "").replace(/\./g, " ")} op`,
+            label: sweepAxisLabel(target, labelCfg()) ?? `${target.replace(/^op:/, "").replace(/\./g, " ")} op`,
             options: [opOption(target, current)],
           }));
   };
@@ -542,11 +548,16 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     if (!p.window) return; // Crypto: 24h, no window to sweep
     addTimeWindowOption(twOption(p.window.startMin, p.window.endMin, p.tz, p.label));
   };
+  // Removing the last option empties the axis; drop it entirely (mirrors the
+  // operator path in tickOpOption) so an empty kind:"list" axis can't strand a
+  // slot or make comboCount return Infinity.
   const removeTimeWindowOption = (i: number) =>
-    setSweepAxes((axes) => axes.map((a) =>
-      a.target === "timeWindow" && a.kind === "list"
-        ? { ...a, options: a.options.filter((_, j) => j !== i) }
-        : a));
+    setSweepAxes((axes) => axes
+      .map((a) =>
+        a.target === "timeWindow" && a.kind === "list"
+          ? { ...a, options: a.options.filter((_, j) => j !== i) }
+          : a)
+      .filter((a) => !(a.target === "timeWindow" && a.kind === "list" && a.options.length === 0)));
   const periodAxis = sweepAxes.find((a) => a.target === "period");
   // Period axis: walk-forward, the range split into n equal windows. Stored as
   // just n while editing; materialized into concrete windows at run time so it
@@ -964,7 +975,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     // Period axes materialize against the range as configured RIGHT NOW, so an
     // edit between toggle and run can never sweep stale windows.
     const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
-    const finalAxes = materializePeriodAxes(mirrored, fromMs, toMs);
+    // Re-label against the config as it runs (collision-aware across all axes),
+    // so results name each axis by what it swept even if a rule is edited after.
+    const finalAxes = withSweepLabels(materializePeriodAxes(mirrored, fromMs, toMs), labelCfg());
     setRanAxes(finalAxes);
     sweepAxesSignal.set(finalAxes);
     run();
@@ -1324,7 +1337,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   </div>
                 )}
 
-                {timeWindowAxis?.kind === "list" && (
+                {timeWindowAxis?.kind === "list" && !cfg.range.mask?.session && (
                   <div className="sp-row sweep-axis-row bt-tw-sweep">
                     <span className="sp-label">Window sweep</span>
                     <span className="bt-tw-options">
@@ -1471,19 +1484,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 specs={selectedStrategy?.params ?? []}
                 values={resolveParamValues(selectedStrategy?.params ?? [], codedCfg.params)}
                 onChange={(params) => updateCoded({ ...codedCfg, params })}
-                sweep={{ axes: sweepAxes, onToggle: toggleSweepAxis }}
+                sweep={{ axes: sweepAxes, onToggle: toggleSweepAxis, onAxisChange: patchAxis }}
               />
-              {sweepAxes
-                .filter((a): a is RangeAxis => a.kind === "range" && a.target.startsWith("param:"))
-                .map((a) => (
-                  <SweepAxisRow
-                    key={a.target}
-                    axis={a}
-                    onChange={(patch) =>
-                      setSweepAxes((axes) => axes.map((x) => (x.target === a.target ? { ...x, ...patch } : x)))
-                    }
-                  />
-                ))}
               {paramError && <div className="al-note bt-param-error">{paramError}</div>}
               {(["long", "short"] as const).map((s) => {
                 const isLong = s === "long";
@@ -1518,6 +1520,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                           setSweepAxes((axes) =>
                             axes.filter((a) => !sides.some((sd) => a.target.startsWith(`risk:${sd}.${field}.`))));
                         },
+                        onAxisChange: patchAxis,
                       }}
                       sync={{
                         on: riskSyncOn(codedCfg),
@@ -1537,17 +1540,6 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                         },
                       }}
                     />
-                    {sweepAxes
-                      .filter((a): a is RangeAxis => a.kind === "range" && a.target.startsWith(`risk:${s}.`))
-                      .map((a) => (
-                        <SweepAxisRow
-                          key={a.target}
-                          axis={a}
-                          onChange={(patch) =>
-                            setSweepAxes((axes) => axes.map((x) => (x.target === a.target ? { ...x, ...patch } : x)))
-                          }
-                        />
-                      ))}
                   </div>
                 );
               })}
@@ -1599,23 +1591,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 setSweepAxes((axes) =>
                   axes.filter((a) => !sides.some((sd) => a.target.startsWith(`risk:${sd}.${field}.`))));
               },
+              onAxisChange: patchAxis,
             }}
           />
-          {/* Rendered here (not inside SidePanel) so a swept field on the
-              inactive side stays visible/editable even while its side tab isn't
-              selected — rule mode shows one side at a time, but sweeps span both. */}
-          {sweepAxes
-            .filter((a): a is RangeAxis =>
-              a.kind === "range" && (a.target.startsWith("rule:") || a.target.startsWith("risk:")))
-            .map((a) => (
-              <SweepAxisRow
-                key={a.target}
-                axis={a}
-                onChange={(patch) =>
-                  setSweepAxes((axes) => axes.map((x) => (x.target === a.target ? { ...x, ...patch } : x)))
-                }
-              />
-            ))}
 
           {usesVolume && (
             <div className="al-note">
@@ -1859,29 +1837,6 @@ function SweepGlyph() {
   );
 }
 
-// One swept axis's from/to/step controls — replaces the param's/risk field's
-// single NumberField while it's toggled on (Task 10).
-function SweepAxisRow({
-  axis,
-  onChange,
-}: {
-  axis: RangeAxis;
-  onChange: (patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
-}) {
-  return (
-    <div className="sp-row sweep-axis-row">
-      <span className="sp-label">{axis.label} sweep</span>
-      <span className="sweep-axis-fields">
-        <NumberField value={axis.from} onChange={(n) => onChange({ from: n })} signed className="bt-num" />
-        <span>to</span>
-        <NumberField value={axis.to} onChange={(n) => onChange({ to: n })} signed className="bt-num" />
-        <span>step</span>
-        <NumberField value={axis.step} onChange={(n) => onChange({ step: n })} signed className="bt-num" />
-      </span>
-    </div>
-  );
-}
-
 // The stop/target block for one side. A stop is one dropdown (fixed %/price/ATR
 // or trailing %/ATR); a target is the same minus the trailing kinds. Off by
 // default (kind "none") so existing presets are untouched. ATR kinds expose a
@@ -1902,6 +1857,11 @@ export function RiskSection({
     side: "long" | "short";
     onToggle: (target: string, current: number) => void;
     onKindChange: (field: "stop" | "target") => void;
+    onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
+    // Rules mode shows one side at a time, so a synced (long-canonical) axis
+    // must render its editor under whichever side is visible. Coded mode
+    // (both sides stacked) leaves this off and renders it under long only.
+    mirrorEditor?: boolean;
   };
   // "Same for long & short" header toggle. The caller owns the mirroring —
   // this component just renders the checkbox and reports clicks. Undefined
@@ -1948,8 +1908,8 @@ export function RiskSection({
   // StrategyParams' per-param toggle. Only rendered when the caller (coded
   // mode) passed a `sweep` prop; absent in rule mode / the Live panel.
   // Synced SL/TP canonicalizes risk axes to the long side: both sides' toggle
-  // buttons light for that one axis, and its range row renders once (under the
-  // long block).
+  // buttons light for that one axis, and its editor renders under the long
+  // block (coded) or the visible side (rules mode, mirrorEditor).
   const sweepSide = sync?.on ? "long" : sweep?.side;
   const swept = (field: "stop" | "target", prop: "value" | "mult") =>
     sweep?.axes.some((a) => a.target === `risk:${sweepSide}.${field}.${prop}`) ?? false;
@@ -1965,6 +1925,18 @@ export function RiskSection({
         </button>
       </Tooltip>
     );
+
+  // Inline from/to/step editor for a swept risk field, rendered beneath its
+  // bt-risk-row. Synced axes are canonical on long: render under the long
+  // block, or under this block too when the caller opted into mirroring.
+  const axisRow = (field: "stop" | "target", prop: "value" | "mult") => {
+    if (!sweep) return null;
+    const axis = sweep.axes.find(
+      (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.${field}.${prop}`);
+    if (!axis) return null;
+    if (sync?.on && sweep.side !== "long" && !sweep.mirrorEditor) return null;
+    return <SweepAxisRow axis={axis} onChange={(p) => sweep.onAxisChange(axis.target, p)} />;
+  };
 
   return (
     <div className="bt-risk">
@@ -2004,6 +1976,8 @@ export function RiskSection({
         {risk.stop.kind === "price" &&
           num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }))}
       </div>
+      {axisRow("stop", "value")}
+      {axisRow("stop", "mult")}
       <div className="bt-risk-row">
         <span className="bt-risk-label">Take profit</span>
         <select value={risk.target.kind} onChange={(e) => setTargetKind(e.target.value as TargetKind)}>
@@ -2027,6 +2001,8 @@ export function RiskSection({
         {risk.target.kind === "price" &&
           num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }))}
       </div>
+      {axisRow("target", "value")}
+      {axisRow("target", "mult")}
     </div>
   );
 }
@@ -2123,6 +2099,7 @@ function SidePanel({
     onToggle: (target: string, current: number) => void;
     onToggleRisk: (target: string, current: number) => void;
     onKindChange: (field: "stop" | "target") => void;
+    onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
     onToggleOp: (target: string, current: Operator) => void;
     onTickOp: (target: string, op: Operator) => void;
   };
@@ -2199,6 +2176,8 @@ function SidePanel({
             side: sweep.side,
             onToggle: sweep.onToggleRisk,
             onKindChange: sweep.onKindChange,
+            onAxisChange: sweep.onAxisChange,
+            mirrorEditor: true,
           }}
           sync={{
             on: riskSyncOn(cfg),
@@ -2579,6 +2558,7 @@ export function RuleGroupSection({
     onToggle: (target: string, current: number) => void;
     onToggleOp: (target: string, current: Operator) => void;
     onTickOp: (target: string, op: Operator) => void;
+    onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
   };
 }) {
   function setCombine(combine: Combine) {
@@ -2791,6 +2771,13 @@ export function RuleGroupSection({
             </div>
           );
         })()}
+        {sweep && rule.enabled !== false && sweep.axes
+          .filter((a): a is RangeAxis =>
+            a.kind === "range" &&
+            a.target.startsWith(`rule:${sweep.side}.${sweep.group}.${activeRuleIndex(i)}.`))
+          .map((a) => (
+            <SweepAxisRow key={a.target} axis={a} onChange={(p) => sweep.onAxisChange(a.target, p)} />
+          ))}
         </Fragment>
       ))}
       <div className="bt-rule-foot">

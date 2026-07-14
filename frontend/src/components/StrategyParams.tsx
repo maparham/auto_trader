@@ -3,18 +3,25 @@
 // switch idiom (bool, matches OrderTicket's ExitRow), or a select (choice),
 // with the default shown subtly and changed values tinted.
 
+import { Fragment } from "react";
+
 import type { ParamSpec, ParamValues } from "../api";
-import type { SweepAxis } from "../lib/sweep";
+import type { RangeAxis, SweepAxis } from "../lib/sweep";
 import InfoTip from "./InfoTip";
 import NumberField from "./NumberField";
+import { SweepAxisRow } from "./SweepAxisRow";
 import Tooltip from "./Tooltip";
 
 interface Props {
   specs: ParamSpec[];
   values: ParamValues;
   onChange: (values: ParamValues) => void;
-  // Task 10 wires this; undefined = no sweep toggles shown.
-  sweep?: { axes: SweepAxis[]; onToggle: (target: string, spec: ParamSpec) => void };
+  // Undefined = no sweep toggles shown (Live panel).
+  sweep?: {
+    axes: SweepAxis[];
+    onToggle: (target: string, spec: ParamSpec) => void;
+    onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
+  };
 }
 
 export function StrategyParams({ specs, values, onChange, sweep }: Props) {
@@ -38,10 +45,13 @@ export function StrategyParams({ specs, values, onChange, sweep }: Props) {
       {specs.map((s) => {
         const v = values[s.name] ?? s.default;
         const changed = v !== s.default;
-        const swept = sweep?.axes.some((a) => a.target === `param:${s.name}`) ?? false;
+        const axis = sweep?.axes.find(
+          (a): a is RangeAxis => a.kind === "range" && a.target === `param:${s.name}`);
+        const swept = !!axis;
 
         return (
-          <div key={s.name} className={`sp-row${changed ? " sp-changed" : ""}`}>
+          <Fragment key={s.name}>
+            <div className={`sp-row${changed ? " sp-changed" : ""}`}>
             <span className="sp-label">
               {s.label}
               {s.help && <InfoTip text={s.help} />}
@@ -84,7 +94,11 @@ export function StrategyParams({ specs, values, onChange, sweep }: Props) {
               </Tooltip>
             )}
             <span className="sp-default">default {String(s.default)}</span>
-          </div>
+            </div>
+            {axis && sweep && (
+              <SweepAxisRow axis={axis} onChange={(p) => sweep.onAxisChange(axis.target, p)} />
+            )}
+          </Fragment>
         );
       })}
     </div>

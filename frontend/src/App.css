@@ -4249,6 +4249,7 @@ span.bt-leg-short { color: var(--neg); }
 
 .sweep-heatmap { display: flex; flex-direction: column; gap: 6px; }
 .sweep-heat-metric { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; font-size: 12px; color: var(--text-dim); height: 24px; }
+.sweep-heat-axes { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 /* Hovered-cell breakdown, inline beside the color-metric dropdown. Single line:
    never wraps (which would grow the header and shove the table down); clips on
    overflow instead. */

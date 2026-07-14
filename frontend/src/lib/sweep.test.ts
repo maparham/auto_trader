@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { axisOptionFor, comboAxisText, comboCount, enumerateCombos, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, runSweep, sweepCatchState } from "./sweep";
+import { axisOptionFor, comboAxisText, comboCount, enumerateCombos, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_MAX_COMBOS } from "./sweep";
 import * as api from "../api";
 
 const axis = (target: string, from: number, to: number, step: number) =>
@@ -46,6 +46,19 @@ describe("enumerateCombos", () => {
     ]);
     expect(comboCount([a])).toBe(2);                 // a mirror never multiplies combos
   });
+
+  it("crosses three axes: first axis varies fastest, count multiplies", () => {
+    const axes = [axis("param:a", 1, 2, 1), axis("param:b", 10, 20, 10), axis("param:c", 0, 1, 1)];
+    const combos = enumerateCombos(axes);
+    expect(combos).toHaveLength(8);
+    expect(combos[0]).toEqual({ "param:a": 1, "param:b": 10, "param:c": 0 });
+    expect(combos[7]).toEqual({ "param:a": 2, "param:b": 20, "param:c": 1 });
+    expect(comboCount(axes)).toBe(8);
+  });
+
+  it("SWEEP_MAX_COMBOS is 1000", () => {
+    expect(SWEEP_MAX_COMBOS).toBe(1000);
+  });
 });
 
 describe("mirrorRiskAxes", () => {
@@ -76,6 +89,21 @@ describe("runSweep", () => {
     expect(rows).toHaveLength(45);
     expect(calls).toEqual([20, 20, 20, 5]);          // second chunk retried
     expect(progress).toEqual([20, 40, 45]);
+  });
+
+  it("sends each chunk's done/total position for the backend log", async () => {
+    const progressArgs: Array<{ done: number; total: number } | undefined> = [];
+    vi.spyOn(api, "runSweepChunk").mockImplementation(async (_req, combos, progress) => {
+      progressArgs.push(progress);
+      return combos.map((c) => ({ combo: c, metrics: null, error: null }));
+    });
+    await runSweep({} as never, [axis("param:n", 1, 45, 1)], { onRows: () => {} });
+    // 45 combos over 20-combo chunks: 0/45, 20/45, 40/45.
+    expect(progressArgs).toEqual([
+      { done: 0, total: 45 },
+      { done: 20, total: 45 },
+      { done: 40, total: 45 },
+    ]);
   });
 
   it("aborts between chunks", async () => {

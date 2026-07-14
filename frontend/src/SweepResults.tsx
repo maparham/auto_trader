@@ -1,8 +1,10 @@
 // Parameter-sweep results: a sortable metrics table (best value per column
 // subtly highlighted, failed combos greyed with the error on hover) plus a
-// heatmap for exactly 2 axes (a DOM grid, diverging color scale around 0 on a
-// selectable metric) or a single-row strip for 1 axis. Clicking any row/cell
-// applies that combo via onApply. Session-state only — never persisted.
+// heatmap whenever axes exist: a DOM grid (diverging color scale around 0 on a
+// selectable metric) or a single-row strip for 1 axis. With 3+ axes, X/Y
+// dropdowns pick the grid axes and each cell shows the BEST matching row by
+// the color metric over the collapsed axes (min for drawdown). Clicking any
+// row/cell applies that combo via onApply. Session-state only, never persisted.
 // (Spec: docs/superpowers/specs/2026-07-09-strategy-panel-params-design.md)
 
 import { Fragment, useState } from "react";
@@ -129,7 +131,7 @@ export function SweepResults(props: {
         </div>
       )}
 
-      {axes.length > 0 && axes.length <= 2 && (
+      {axes.length > 0 && (
         <SweepHeatmap
           rows={rows}
           axes={axes}
@@ -216,9 +218,10 @@ function SweepSortHeader({
   );
 }
 
-// 2-axis grid (x = axis 0 values, y = axis 1 values) or 1-axis single-row
-// strip. Cell background is the diverging scale; click applies that cell's
-// combo the same as a table row click.
+// Grid over two picked axes (defaults: first two) or 1-axis single-row strip.
+// With 3+ axes the unpicked axes collapse: each cell shows the best matching
+// row by the color metric (min for drawdown), and clicking applies that best
+// row's full combo. Cell background is the diverging scale.
 
 type HeatTick = { key: string; label: string; match: Record<string, number | string> };
 
@@ -239,8 +242,34 @@ function SweepHeatmap({
   onApply: (combo: Record<string, number | boolean | string>) => void;
   disabled?: boolean;
 }) {
-  const find = (match: Record<string, number | string>) =>
-    rows.find((r) => Object.entries(match).every(([k, v]) => r.combo[k] === v));
+  // Direction-aware "which row is better" on the selected color metric:
+  // higher wins except drawdown (lower wins); a successful row always beats
+  // a failed one; among two failures the first seen is kept.
+  const better = (a: SweepRow, b: SweepRow): SweepRow => {
+    // Success vs failure is decided on `metrics === null` BEFORE any metric
+    // comparison: a nullable metric (profit_factor, avg_win_loss_ratio) can be
+    // null on a successful row too, so comparing values first would let a
+    // failed row tie and win. Failure only wins over another failure.
+    if (a.metrics === null) return b.metrics === null ? a : b;
+    if (b.metrics === null) return a;
+    const av = metricValue(a, metric);
+    const bv = metricValue(b, metric);
+    if (bv === null) return a;   // null metric value on a success loses
+    if (av === null) return b;
+    if (metric === "max_drawdown") return bv < av ? b : a;
+    return bv > av ? b : a;
+  };
+  // A cell's row: the best row (per `better`) among all rows matching the
+  // cell's x+y values. With <= 2 axes each cell matches at most one row, so
+  // this degenerates to today's exact lookup.
+  const find = (match: Record<string, number | string>) => {
+    let best: SweepRow | undefined;
+    for (const r of rows) {
+      if (!Object.entries(match).every(([k, v]) => r.combo[k] === v)) continue;
+      best = best ? better(best, r) : r;
+    }
+    return best;
+  };
 
   const axisTicks = (a: SweepAxis): HeatTick[] => {
     if (a.kind === "list") {
@@ -254,8 +283,19 @@ function SweepHeatmap({
     return [...set].sort((x, y) => x - y).map((v) => ({ key: String(v), label: String(v), match: { [a.target]: v } }));
   };
 
-  const xAxis = axes[0];
-  const yAxis = axes[1];
+  // Picked grid axes, stored by TARGET (stable across streaming re-renders);
+  // a stale target (new sweep, different axes) falls back to the defaults:
+  // X = first axis, Y = second, never the axis the other picker holds.
+  const [xSel, setXSel] = useState<string | null>(null);
+  const [ySel, setYSel] = useState<string | null>(null);
+  const xAxis = axes.find((a) => a.target === xSel) ?? axes[0];
+  const yAxis = axes.find((a) => a.target === ySel && a.target !== xAxis.target)
+    ?? axes.find((a) => a.target !== xAxis.target);
+  const collapsed = axes.filter((a) => a !== xAxis && a !== yAxis);
+  // Picking in one dropdown the axis the other holds swaps them: X and Y can
+  // never be the same axis.
+  const pickX = (t: string) => { if (t === yAxis?.target) setYSel(xAxis.target); setXSel(t); };
+  const pickY = (t: string) => { if (t === xAxis.target) setXSel(yAxis?.target ?? null); setYSel(t); };
   const xTicks = axisTicks(xAxis);
   const yTicks: (HeatTick | null)[] = yAxis ? axisTicks(yAxis) : [null];
 
@@ -276,18 +316,36 @@ function SweepHeatmap({
             <option key={c.key} value={c.key}>{c.label}</option>
           ))}
         </select>
+        {axes.length > 2 && (
+          <span className="sweep-heat-axes">
+            <select aria-label="Heatmap X axis" value={xAxis.target} onChange={(e) => pickX(e.target.value)}>
+              {axes.map((a) => <option key={a.target} value={a.target}>{a.label}</option>)}
+            </select>
+            <span>by</span>
+            <select aria-label="Heatmap Y axis" value={yAxis!.target} onChange={(e) => pickY(e.target.value)}>
+              {axes.map((a) => <option key={a.target} value={a.target}>{a.label}</option>)}
+            </select>
+          </span>
+        )}
         <div className="sweep-heat-detail" aria-live="polite">
           {hovered && (
             <>
               {hovered.metrics === null ? (
                 <span className="sweep-heat-detail-err">{hovered.error ?? "failed"}</span>
               ) : (
-                METRIC_COLS.map((c) => (
-                  <span key={c.key} className="sweep-heat-detail-stat">
-                    <span className="sweep-heat-detail-lbl">{c.abbr}</span>
-                    <span className="sweep-heat-detail-val">{fmtMetric(c.key, metricValue(hovered, c.key))}</span>
-                  </span>
-                ))
+                <>
+                  {collapsed.length > 0 && (
+                    <span className="sweep-heat-detail-combo">
+                      @ {collapsed.map((a) => `${a.label} ${comboAxisText(a, hovered.combo as Record<string, number | string>)}`).join(", ")}
+                    </span>
+                  )}
+                  {METRIC_COLS.map((c) => (
+                    <span key={c.key} className="sweep-heat-detail-stat">
+                      <span className="sweep-heat-detail-lbl">{c.abbr}</span>
+                      <span className="sweep-heat-detail-val">{fmtMetric(c.key, metricValue(hovered, c.key))}</span>
+                    </span>
+                  ))}
+                </>
               )}
             </>
           )}

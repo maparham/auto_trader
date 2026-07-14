@@ -28,8 +28,9 @@ vi.mock("./api", async () => {
 });
 
 import BacktestSettingsModal from "./BacktestSettingsModal";
-import { defaultBacktestConfig } from "./lib/backtestConfig";
+import { defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig";
 import { loadCodedCfg } from "./lib/codedConfig";
+import { saveBacktestPreset } from "./lib/persist/defaults";
 import { sweepStateSignal, sweepAxesSignal } from "./lib/signals";
 import type { SweepRow } from "./api";
 
@@ -202,6 +203,41 @@ describe("operator sweep", () => {
     fireEvent.click(editor.querySelectorAll(".bt-chip")[3]);
     expect(editor.querySelectorAll(".seg-on").length).toBe(2);
   });
+
+  it("a swept indicator length renders its editor inline inside the rule group", () => {
+    renderModal();
+    openStrategy();
+
+    const section = groupSection("Buy to open");
+    // The left operand's length glyph is the first .sp-sweep inside the rule row.
+    const row = ruleRows(section)[0];
+    fireEvent.click(row.querySelector(".sp-sweep")!);
+
+    // The from/to/step editor renders inside this group section, after the row,
+    // and nowhere else in the document.
+    expect(section.querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(document.querySelectorAll(".sweep-axis-row")).toHaveLength(1);
+
+    // Toggle off: gone.
+    fireEvent.click(row.querySelector(".sp-sweep")!);
+    expect(section.querySelector(".sweep-axis-row")).toBeNull();
+  });
+
+  it("a swept exit count renders its editor inline inside its rule group", () => {
+    renderModal();
+    openStrategy();
+
+    // Exit groups carry the count field; its glyph is the LAST .sp-sweep in
+    // the row (after both operands' length/value glyphs). Tooltip wraps each
+    // glyph in its own span, so sibling selectors on .bt-rule-count won't hit it.
+    const section = groupSection("Sell to close");
+    const row = ruleRows(section)[0];
+    const glyphs = row.querySelectorAll(".sp-sweep");
+    fireEvent.click(glyphs[glyphs.length - 1]);
+
+    expect(section.querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(document.querySelectorAll(".sweep-axis-row")).toHaveLength(1);
+  });
 });
 
 describe("time-window sweep", () => {
@@ -223,6 +259,59 @@ describe("time-window sweep", () => {
     // removing an option works
     fireEvent.click(editor.querySelectorAll(".bt-tw-option button")[0]);
     expect(editor.querySelectorAll(".bt-tw-option").length).toBe(1);
+  });
+
+  // Fix 1: removing the LAST window option must drop the axis entirely (like the
+  // operator path), not leave a kind:"list" axis with options:[] that makes
+  // comboCount return Infinity and strands an axis slot.
+  it("removing the last window option drops the axis instead of leaving it empty", () => {
+    const initial = defaultBacktestConfig();
+    initial.range.mask = { enabled: true, timeOfDay: { startMin: 480, endMin: 720 }, tz: "UTC" };
+    renderModal(initial);
+    fireEvent.click(document.querySelector(".bt-tw-sweep-toggle")!);
+    const editor = document.querySelector(".bt-tw-sweep")!;
+    // seeded with exactly one option (the current window)
+    expect(editor.querySelectorAll(".bt-tw-option").length).toBe(1);
+    // remove that last option
+    fireEvent.click(editor.querySelectorAll(".bt-tw-option button")[0]);
+    // the whole editor is gone (axis removed) and the glyph is no longer "on"
+    expect(document.querySelector(".bt-tw-sweep")).toBeNull();
+    expect(document.querySelector(".bt-tw-sweep-toggle.on")).toBeNull();
+  });
+
+  // Fix 2: the window-sweep editor is gated by the SAME !session condition as the
+  // toggle glyph. Activating a session preset while a timeWindow axis exists must
+  // hide the editor (the axis is kept, not removed: the glyph/editor reappear when
+  // the preset is cleared).
+  it("hides the window-sweep editor while a session preset is active", () => {
+    // A saved preset whose config carries an active session, loadable via the UI.
+    const sessionCfg: BacktestConfig = {
+      ...defaultBacktestConfig(),
+      range: { mode: "bars", bars: 500, history: "full", mask: { enabled: true, session: "NYSE" } },
+    };
+    saveBacktestPreset("session-preset", sessionCfg);
+
+    const initial = defaultBacktestConfig();
+    initial.range.mask = { enabled: true, timeOfDay: { startMin: 480, endMin: 720 }, tz: "UTC" };
+    renderModal(initial);
+
+    // Create the time-window axis: both the glyph and the editor are present
+    // (they share the !session gate).
+    fireEvent.click(document.querySelector(".bt-tw-sweep-toggle")!);
+    expect(document.querySelector(".bt-tw-sweep-toggle")).toBeTruthy();
+    expect(document.querySelector(".bt-tw-sweep")).toBeTruthy();
+
+    // Load the session preset: cfg.range.mask.session becomes truthy.
+    const presetSelect = [...document.querySelectorAll("select")].find((s) =>
+      [...s.options].some((o) => o.value === "session-preset"),
+    ) as HTMLSelectElement;
+    fireEvent.change(presetSelect, { target: { value: "session-preset" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+
+    // Glyph gone (proves the session took effect, independent of the fix) AND the
+    // editor gone (the fix under test). The axis itself is still present.
+    expect(document.querySelector(".bt-tw-sweep-toggle")).toBeNull();
+    expect(document.querySelector(".bt-tw-sweep")).toBeNull();
   });
 });
 
@@ -266,6 +355,7 @@ describe("coded mode: params, risk, and exit-rule sections", () => {
       error: null,
       params: [
         { name: "ema_fast", label: "Fast EMA", type: "int" as const, default: 9, min: 2, max: 50, step: 1, options: null, help: null },
+        { name: "ema_slow", label: "Slow EMA", type: "int" as const, default: 21, min: 5, max: 100, step: 1, options: null, help: null },
       ],
     },
   ];
@@ -302,6 +392,53 @@ describe("coded mode: params, risk, and exit-rule sections", () => {
     openStrategy();
     expect(screen.queryByText("Parameters")).toBeNull();
     expect(screen.getByText("Buy to open")).toBeTruthy();
+  });
+
+  it("param sweep editor renders inline inside the params block", async () => {
+    mockStrategies.mockResolvedValue(strategies);
+    const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
+    renderModal(initial);
+    openStrategy();
+    expect(await screen.findByText("Fast EMA")).toBeTruthy();
+
+    const params = document.querySelector(".strategy-params") as HTMLElement;
+    expect(params.querySelector(".sweep-axis-row")).toBeNull();
+
+    // Toggle the param's sweep glyph on: the from/to/step row appears INSIDE
+    // the params block (inline), not as a sibling after it.
+    fireEvent.click(params.querySelector(".sp-sweep")!);
+    expect(params.querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(document.querySelectorAll(".sweep-axis-row")).toHaveLength(1);
+
+    // Editing "to" patches the axis: footer combo count grows past 1 run.
+    const nums = [...params.querySelectorAll(".sweep-axis-fields input")] as HTMLInputElement[];
+    fireEvent.change(nums[1], { target: { value: "15" } });
+    fireEvent.blur(nums[1]);
+    expect(screen.getByText(/runs$/).textContent).not.toContain("1 = 1");
+
+    // Toggle off: row gone.
+    fireEvent.click(params.querySelector(".sp-sweep")!);
+    expect(params.querySelector(".sweep-axis-row")).toBeNull();
+  });
+
+  it("keeps three sweep axes active at once (no oldest-axis drop)", async () => {
+    mockStrategies.mockResolvedValue(strategies);
+    const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
+    renderModal(initial);
+    openStrategy();
+    expect(await screen.findByText("Fast EMA")).toBeTruthy();
+
+    const params = document.querySelector(".strategy-params") as HTMLElement;
+    const glyphs = params.querySelectorAll(".sp-sweep");
+    fireEvent.click(glyphs[0]);   // Fast EMA axis
+    fireEvent.click(glyphs[1]);   // Slow EMA axis
+    fireEvent.click(document.querySelector(".bt-period-sweep-toggle")!);   // Period axis
+
+    // All three stay on: both param glyphs and the period toggle.
+    expect(params.querySelectorAll(".sp-sweep.on")).toHaveLength(2);
+    expect(document.querySelector(".bt-period-sweep-toggle")!.className).toContain("on");
+    // Footer multiplies three factors: two multiplication signs.
+    expect(screen.getByText(/runs$/).textContent?.match(/×/g)).toHaveLength(2);
   });
 });
 
@@ -371,6 +508,76 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
   });
 });
 
+describe("rules-mode combo apply", () => {
+  // Rules-mode cfg is not persisted to localStorage (unlike coded mode's
+  // loadCodedCfg), so applyRuleSweepCombo's result is observed via the cfg it
+  // hands to run() -> onRun(next). Capturing that argument inspects the resulting
+  // config object itself, not mock-call semantics.
+  function renderRules(initial: BacktestConfig) {
+    const onRun = vi.fn();
+    render(
+      <BacktestSettingsModal
+        initial={initial} epic="TEST" resolution="MINUTE" controller={null}
+        onRun={onRun} onClose={vi.fn()}
+      />,
+    );
+    return onRun;
+  }
+  function applyCombo(onRun: ReturnType<typeof vi.fn>, combo: SweepRow["combo"]) {
+    const rows: SweepRow[] = [
+      { combo, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, error: null },
+    ];
+    act(() => sweepStateSignal.set({ rows, done: 1, total: 1, running: false }));
+    fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
+    expect(onRun).toHaveBeenCalledTimes(1);
+    return onRun.mock.calls[0][0] as BacktestConfig;
+  }
+
+  afterEach(() => {
+    sweepStateSignal.set(null);
+    sweepAxesSignal.set([]);
+  });
+
+  it("op combo patches the first ENABLED long entry rule (skips a disabled rule at raw index 0)", () => {
+    const initial = defaultBacktestConfig();
+    // Raw index 0 is disabled; raw index 1 is the first ENABLED rule. The op axis
+    // counts enabled rules only, so "op:long.entry.0" must patch raw index 1.
+    initial.longEntry = {
+      combine: "AND",
+      rules: [
+        { left: { kind: "indicator", indicator: "EMA", length: 9 }, op: "lt", right: { kind: "indicator", indicator: "EMA", length: 21 }, enabled: false },
+        { left: { kind: "indicator", indicator: "EMA", length: 9 }, op: "crossesAbove", right: { kind: "indicator", indicator: "EMA", length: 21 } },
+      ],
+    };
+    const onRun = renderRules(initial);
+    const next = applyCombo(onRun, { "op:long.entry.0": "gt" });
+    expect(next.longEntry.rules[1].op).toBe("gt");      // enabled rule patched
+    expect(next.longEntry.rules[0].op).toBe("lt");      // disabled rule untouched
+    expect(next.longEntry.rules[0].enabled).toBe(false);
+  });
+
+  it("period combo switches the range to a custom window (unix seconds -> ms)", () => {
+    const onRun = renderRules(defaultBacktestConfig());
+    const next = applyCombo(onRun, { "period:from": 1751155200, "period:to": 1751587200 });
+    expect(next.range.mode).toBe("custom");
+    expect(next.range.fromMs).toBe(1751155200000);
+    expect(next.range.toMs).toBe(1751587200000);
+  });
+
+  it("timeWindow combo patches the mask window, tz, and clears any session", () => {
+    const initial = defaultBacktestConfig();
+    initial.range.mask = { enabled: true, session: "NYSE" };
+    const onRun = renderRules(initial);
+    const next = applyCombo(onRun, {
+      "timeWindow:startMin": 540, "timeWindow:endMin": 1050, "timeWindow:tz": "Europe/London",
+    });
+    expect(next.range.mask?.enabled).toBe(true);
+    expect(next.range.mask?.timeOfDay).toEqual({ startMin: 540, endMin: 1050 });
+    expect(next.range.mask?.tz).toBe("Europe/London");
+    expect(next.range.mask?.session).toBeUndefined();
+  });
+});
+
 describe("synced long/short SL/TP", () => {
   // The one visible risk block (rule mode renders one side at a time).
   const riskSec = () =>
@@ -419,5 +626,53 @@ describe("synced long/short SL/TP", () => {
     fireEvent.click(syncBox());   // enable while looking at the short side
     fireEvent.click(screen.getByRole("button", { name: /Long/ }));
     expect(stopSelect().value).toBe("atr");
+  });
+});
+
+describe("inline risk sweep editors", () => {
+  const strategies = [
+    {
+      filename: "ema_cross.py", name: "EMA Cross", description: "", hedged: false, error: null,
+      params: [
+        { name: "ema_fast", label: "Fast EMA", type: "int" as const, default: 9, min: 2, max: 50, step: 1, options: null, help: null },
+      ],
+    },
+  ];
+
+  it("coded mode: a swept stop % renders its editor inline inside the risk block (long only when synced)", async () => {
+    mockStrategies.mockResolvedValue(strategies);
+    const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
+    renderModal(initial);
+    openStrategy();
+    expect(await screen.findByText("Fast EMA")).toBeTruthy();
+
+    // Set the LONG stop kind to % so the value field and its glyph render.
+    const riskBlocks = [...document.querySelectorAll(".bt-risk")] as HTMLElement[];
+    expect(riskBlocks.length).toBe(2);
+    const stopKind = riskBlocks[0].querySelectorAll("select")[0];
+    fireEvent.change(stopKind, { target: { value: "pct" } });
+
+    // Toggle the stop-value sweep glyph on (sync defaults ON, axis canonical on long).
+    fireEvent.click(riskBlocks[0].querySelector(".sp-sweep")!);
+
+    // Editor renders inline inside the LONG risk block, exactly once app-wide.
+    expect(riskBlocks[0].querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(document.querySelectorAll(".sweep-axis-row")).toHaveLength(1);
+  });
+
+  it("rules mode: with sync on, the short tab shows the synced axis's editor too", () => {
+    renderModal();
+    openStrategy();
+
+    // Long tab: set stop kind to %, toggle its sweep glyph.
+    const longRisk = document.querySelector(".bt-risk") as HTMLElement;
+    fireEvent.change(longRisk.querySelectorAll("select")[0], { target: { value: "pct" } });
+    fireEvent.click(longRisk.querySelector(".sp-sweep")!);
+    expect(longRisk.querySelector(".sweep-axis-row")).toBeTruthy();
+
+    // Switch to the short tab: the same canonical axis's editor is visible there.
+    fireEvent.click(screen.getByRole("button", { name: /Short/ }));
+    const shortRisk = document.querySelector(".bt-risk") as HTMLElement;
+    expect(shortRisk.querySelector(".sweep-axis-row")).toBeTruthy();
   });
 });

@@ -430,6 +430,11 @@ class SweepDTO(BaseModel):
     "timeWindow:startMin" + "timeWindow:endMin" + "timeWindow:tz" (intraday
     mask window patch; a mask is synthesized when the request has none)."""
     combos: list[dict[str, float | int | bool | str]]
+    # This chunk's position in the whole sweep: combos already done before it,
+    # and the total combo count. Advisory, for the server log only; absent from
+    # a manual/curl request, which then logs chunk-local counts instead.
+    done: int | None = None
+    total: int | None = None
 
 
 class SweepRowDTO(BaseModel):

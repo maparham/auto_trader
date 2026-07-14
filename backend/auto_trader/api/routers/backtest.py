@@ -664,6 +664,31 @@ def _apply_env_combo(
     return (req.model_copy(update=updates) if updates else req), candles
 
 
+def _log_sweep_start(req: BacktestRequest, mode: str) -> float:
+    """Log this chunk's position in the whole sweep and return a monotonic
+    start time for the matching done line. Uses the request's advisory
+    done/total when present, else the chunk-local count."""
+    n = len(req.sweep.combos)
+    done, total = req.sweep.done, req.sweep.total
+    where = req.epic or "?"
+    tf = req.resolution or "?"
+    if done is not None and total is not None:
+        logger.info("sweep %s %s: combos %d-%d of %d (%s mode)",
+                    where, tf, done + 1, done + n, total, mode)
+    else:
+        logger.info("sweep %s %s: %d combos (%s mode)", where, tf, n, mode)
+    return time.monotonic()
+
+
+def _log_sweep_done(req: BacktestRequest, rows: list[SweepRowDTO], t0: float) -> None:
+    n = len(rows)
+    failed = sum(1 for r in rows if r.error is not None)
+    elapsed = time.monotonic() - t0
+    done, total = req.sweep.done, req.sweep.total
+    tail = f" ({done + n}/{total})" if done is not None and total is not None else ""
+    logger.info("sweep chunk done in %.1fs: %d ok, %d failed%s", elapsed, n - failed, failed, tail)
+
+
 @router.post("/api/backtest/sweep", response_model=SweepResponse)
 async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
     if req.sweep is None or not req.sweep.combos:
@@ -696,8 +721,11 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
             if not fetched:
                 raise HTTPException(422, f"no candles for timeframe '{tf}'")
             rule_htf_candles[tf] = fetched
+        t0 = _log_sweep_start(req, "rule")
+        base_idx = req.sweep.done or 0
         rows: list[SweepRowDTO] = []
-        for combo in req.sweep.combos:
+        for idx, combo in enumerate(req.sweep.combos):
+            c0 = time.monotonic()
             try:
                 env, rest = _split_env_combo(combo)
                 patched, combo_candles = _apply_env_combo(req, candles, env)
@@ -708,6 +736,8 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
             except Exception as e:                 # noqa: BLE001 — one combo must not kill the rest
                 rows.append(SweepRowDTO(combo=combo, error=str(e)))
                 continue
+            finally:
+                logger.debug("sweep combo %d %s in %.2fs", base_idx + idx, combo, time.monotonic() - c0)
             metrics = compute_metrics(result.trades, result.equity, result.net_pnl,
                                       req.costs.startingCash, resolution_seconds(req.resolution))
             rows.append(SweepRowDTO(combo=combo, metrics={
@@ -719,6 +749,7 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
                 "avg_win_loss_ratio": metrics.get("avg_win_loss_ratio"),
                 "return_pct": metrics.get("return_pct"),
             }))
+        _log_sweep_done(req, rows, t0)
         return SweepResponse(rows=rows)
 
     _validate_coded_exit_series(req)
@@ -738,8 +769,11 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
                 raise HTTPException(
                     422, f"sweep target '{target}' names a param the strategy does not declare")
     htf_candles: dict[str, list[Candle]] = {}     # shared across every combo
+    t0 = _log_sweep_start(req, "coded")
+    base_idx = req.sweep.done or 0
     rows: list[SweepRowDTO] = []
-    for combo in req.sweep.combos:
+    for idx, combo in enumerate(req.sweep.combos):
+        c0 = time.monotonic()
         env, rest = _split_env_combo(combo)
         patched_req, combo_candles = _apply_env_combo(req, candles, env)
         params_sent, long_risk, short_risk = _apply_combo(patched_req, rest)
@@ -753,6 +787,8 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
         except Exception as e:                     # noqa: BLE001 — one combo must not kill the rest
             rows.append(SweepRowDTO(combo=combo, error=str(e)))
             continue
+        finally:
+            logger.debug("sweep combo %d %s in %.2fs", base_idx + idx, combo, time.monotonic() - c0)
         metrics = compute_metrics(result.trades, result.equity, result.net_pnl,
                                   req.costs.startingCash, resolution_seconds(req.resolution))
         rows.append(SweepRowDTO(combo=combo, metrics={
@@ -764,4 +800,5 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
             "avg_win_loss_ratio": metrics.get("avg_win_loss_ratio"),
             "return_pct": metrics.get("return_pct"),
         }))
+    _log_sweep_done(req, rows, t0)
     return SweepResponse(rows=rows)

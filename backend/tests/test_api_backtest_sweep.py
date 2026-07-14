@@ -1,6 +1,7 @@
 """POST /api/backtest/sweep: one coded-engine run per combo, chunk-isolated
 errors, shared HTF fetch cache across combos in a chunk."""
 
+import logging
 import pytest
 from fastapi.testclient import TestClient
 
@@ -58,6 +59,40 @@ def test_sweep_risk_target_patches_risk(strategies):
     rows = client.post("/api/backtest/sweep", json=req).json()["rows"]
     # A 0.1% stop churns out more (stopped) trades than a 10% stop.
     assert rows[0]["metrics"]["n_trades"] > rows[1]["metrics"]["n_trades"]
+
+
+_LOG = "auto_trader.api.routers.backtest"
+
+
+def test_sweep_logs_position_with_done_total(strategies, caplog):
+    candles = make_candles(20)
+    req = sweep_request(candles, [{"param:n": 3}, {"param:n": 5}])
+    req["sweep"]["done"] = 20
+    req["sweep"]["total"] = 48
+    with caplog.at_level(logging.INFO, logger=_LOG):
+        client.post("/api/backtest/sweep", json=req)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("combos 21-22 of 48 (coded mode)" in m for m in msgs)
+    assert any("2 ok, 0 failed (22/48)" in m for m in msgs)
+
+
+def test_sweep_logs_chunk_local_without_progress(strategies, caplog):
+    candles = make_candles(20)
+    with caplog.at_level(logging.INFO, logger=_LOG):
+        client.post("/api/backtest/sweep", json=sweep_request(candles, [{"param:n": 3}]))
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("1 combos (coded mode)" in m for m in msgs)
+    # No (done/total) tail when the request omits position.
+    assert any(m.endswith("1 ok, 0 failed") for m in msgs)
+
+
+def test_sweep_log_counts_failed_rows(strategies, caplog):
+    candles = make_candles(20)
+    with caplog.at_level(logging.INFO, logger=_LOG):
+        client.post("/api/backtest/sweep", json=sweep_request(
+            candles, [{"param:n": 13}, {"param:n": 3}]))
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("1 ok, 1 failed" in m for m in msgs)
 
 
 def test_sweep_error_isolated_per_combo(strategies):
