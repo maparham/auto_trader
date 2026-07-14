@@ -82,14 +82,18 @@ export function formatRemaining(ms: number): string {
 }
 
 // Short resolved-time label for an expiry dropdown row, e.g. "Jun 24, 23:59".
+// Formatter is cached: toLocaleString builds a fresh Intl.DateTimeFormat per
+// call, which is far too slow for bulk callers (the backtest trades table
+// formats two timestamps per row).
+const expiryShortFmt = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 export function formatExpiryShort(ms: number): string {
-  return new Date(ms).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return expiryShortFmt.format(ms);
 }
 
 // Long resolved-time label for the closed dropdown button, e.g.

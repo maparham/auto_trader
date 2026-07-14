@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { metricRows, tradeRows, sortTradeRows, legTable, type LegTable } from "./backtestPanelData";
+import { metricRows, tradeRows, sortTradeRows, legTable, rowWindow, type LegTable } from "./backtestPanelData";
 import type { BacktestResult, LegMetrics } from "../api";
 
 function cell(t: LegTable, rowLeg: string, colLabel: string) {
@@ -150,5 +150,39 @@ describe("tradeRows + sort", () => {
   it("sorts by pnl descending, stably", () => {
     const rows = sortTradeRows(tradeRows(res, 60), "pnl", "desc");
     expect(rows.map(r => r.pnl)).toEqual([20, -5]);
+  });
+});
+
+describe("rowWindow", () => {
+  it("renders everything when the list is small or row height unknown", () => {
+    expect(rowWindow(0, 400, 27, 5)).toEqual({ start: 0, end: 5, padTop: 0, padBottom: 0 });
+    expect(rowWindow(500, 400, 0, 1000)).toEqual({ start: 0, end: 1000, padTop: 0, padBottom: 0 });
+  });
+  it("windows a long list to the visible slice plus overscan", () => {
+    // 27px rows, scrolled to row 100, 405px viewport shows 15 rows.
+    const w = rowWindow(2700, 405, 27, 11605, 10);
+    expect(w.start).toBe(90); // 100 - overscan
+    expect(w.end).toBe(126); // 100 + 15 + 1 + overscan
+    expect(w.padTop).toBe(90 * 27);
+    expect(w.padBottom).toBe((11605 - 126) * 27);
+  });
+  it("clamps at the top and bottom of the list", () => {
+    const top = rowWindow(0, 405, 27, 1000, 10);
+    expect(top.start).toBe(0);
+    expect(top.padTop).toBe(0);
+    const bottom = rowWindow(27 * 990, 405, 27, 1000, 10);
+    expect(bottom.end).toBe(1000);
+    expect(bottom.padBottom).toBe(0);
+  });
+  it("still lands on real rows when a stale scrollTop points past a now-shorter list", () => {
+    // Was scrolled deep into an 11.6k-trade run, then re-ran with only 50
+    // trades: scrollTop is far beyond the new content. The window must show the
+    // last page (non-empty slice), not an all-spacer, no-rows dead zone.
+    const w = rowWindow(11605 * 27, 405, 27, 50, 10);
+    expect(w.end).toBe(50);
+    expect(w.start).toBeLessThan(w.end); // slice is non-empty
+    expect(w.padBottom).toBe(0);
+    // padTop never exceeds the real content span.
+    expect(w.padTop).toBeLessThanOrEqual(50 * 27);
   });
 });

@@ -333,6 +333,36 @@ export function tradeRows(res: BacktestResult, resSeconds: number): TradeRow[] {
   });
 }
 
+// Windowed-rendering maths for the trades table: which slice of rows to put in
+// the DOM for the current scroll position, plus spacer heights that keep the
+// scrollbar sized for the full list. rowH <= 0 means "not measured yet" and
+// disables windowing rather than rendering a wrong slice.
+export interface RowWindow {
+  start: number;
+  end: number; // exclusive
+  padTop: number;
+  padBottom: number;
+}
+
+export function rowWindow(
+  scrollTop: number,
+  viewportH: number,
+  rowH: number,
+  total: number,
+  overscan = 10,
+): RowWindow {
+  if (rowH <= 0 || total <= 0) return { start: 0, end: Math.max(0, total), padTop: 0, padBottom: 0 };
+  // Clamp to the real content range: a stale scrollTop left over from a longer
+  // list (e.g. a re-run with far fewer trades) would otherwise point past the
+  // end and produce an all-spacer window with no rows in it.
+  const maxScroll = Math.max(0, total * rowH - viewportH);
+  const first = Math.floor(Math.min(Math.max(0, scrollTop), maxScroll) / rowH);
+  const visible = Math.ceil(viewportH / rowH) + 1;
+  const start = Math.max(0, first - overscan);
+  const end = Math.min(total, first + visible + overscan);
+  return { start, end, padTop: start * rowH, padBottom: (total - end) * rowH };
+}
+
 export function sortTradeRows(
   rows: TradeRow[],
   key: keyof TradeRow,

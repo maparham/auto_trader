@@ -7,7 +7,7 @@
 // (tradeRows()/sortTradeRows()). Each row carries data-trade-index — a hook
 // Phase C uses to highlight the matching chart marker on hover/click.
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   backtestResultSignal,
   highlightTradeSignal,
@@ -21,7 +21,7 @@ import {
   requestBacktestClear,
 } from "./lib/signals";
 import { saveBacktestPeriodsShown, saveBacktestMarkersShown, saveBacktestEquityShown } from "./lib/persist";
-import { metricGroups, METRIC_INFO, legTable, tradeRows, sortTradeRows, type TradeRow, type LegTable } from "./lib/backtestPanelData";
+import { metricGroups, METRIC_INFO, legTable, tradeRows, sortTradeRows, rowWindow, type TradeRow, type LegTable } from "./lib/backtestPanelData";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { RESOLUTION_SECONDS } from "./lib/feed";
@@ -126,13 +126,12 @@ export default function BacktestPanel() {
   }, [inspectMode]);
   const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
 
-  // Keep the highlighted row in view whether the highlight originated here (a
-  // hover in this same list — scrollIntoView is a no-op when already visible)
-  // or from outside (Phase C Task 2: a chart marker hover/click).
-  const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
-  useEffect(() => {
-    highlightedRowRef.current?.scrollIntoView({ block: "nearest" });
-  }, [highlighted]);
+  // Row building and sorting are memoized so panel re-renders (row hover sets
+  // highlightTradeSignal on every mouseenter) don't rebuild and re-sort the
+  // whole list — with tens of thousands of trades that made hovering laggy.
+  const resSeconds = result ? RESOLUTION_SECONDS[result.resolution] ?? 60 : 60;
+  const baseRows = useMemo(() => (result ? tradeRows(result, resSeconds) : []), [result, resSeconds]);
+  const rows = useMemo(() => sortTradeRows(baseRows, sort.key, sort.dir), [baseRows, sort.key, sort.dir]);
 
   // Transient run messages (fetch error / short warm-up) — shown whether or not
   // a result exists, since an errored run leaves no result to render.
@@ -273,8 +272,6 @@ export default function BacktestPanel() {
   const toggleSort = (key: keyof TradeRow) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: defaultDir(key) }));
 
-  const resSeconds = RESOLUTION_SECONDS[result.resolution] ?? 60;
-  const rows = sortTradeRows(tradeRows(result, resSeconds), sort.key, sort.dir);
   const nTrades = result.trades.length;
 
   return (
@@ -360,52 +357,136 @@ export default function BacktestPanel() {
             ))}
           </div>
         ) : (
-          <div className="bt-panel-trades-wrap">
-            <table className="bt-panel-table">
-              <thead>
-                <tr>
-                  <th><SortHeader label="#" col="i" sort={sort} onSort={toggleSort} /></th>
-                  <th><SortHeader label="Side" col="leg" sort={sort} onSort={toggleSort} /></th>
-                  <th><SortHeader label="Entry time" col="entryTime" sort={sort} onSort={toggleSort} /></th>
-                  <th className="bt-panel-c-num"><SortHeader label="Entry" col="entryPrice" sort={sort} onSort={toggleSort} /></th>
-                  <th><SortHeader label="Exit time" col="exitTime" sort={sort} onSort={toggleSort} /></th>
-                  <th className="bt-panel-c-num"><SortHeader label="Exit" col="exitPrice" sort={sort} onSort={toggleSort} /></th>
-                  <th className="bt-panel-c-num"><SortHeader label="P&L" col="pnl" sort={sort} onSort={toggleSort} /></th>
-                  <th className="bt-panel-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={toggleSort} /></th>
-                  <th><SortHeader label="Reason" col="reason" sort={sort} onSort={toggleSort} /></th>
-                  <th className="bt-panel-c-num"><SortHeader label="Duration" col="durationBars" sort={sort} onSort={toggleSort} /></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr
-                    key={row.i}
-                    data-trade-index={row.i}
-                    ref={row.i === highlighted ? highlightedRowRef : undefined}
-                    className={`bt-trade-row${row.i === highlighted ? " highlighted" : ""}${row.i === selected ? " selected" : ""}`}
-                    onMouseEnter={() => highlightTradeSignal.set(row.i)}
-                    onMouseLeave={() => highlightTradeSignal.set(null)}
-                    onClick={() => selectedTradeSignal.set(selected === row.i ? null : row.i)}
-                  >
-                    <td>{row.i + 1}</td>
-                    <td className={row.leg === "long" ? "bt-panel-side-long" : "bt-panel-side-short"}>
-                      {row.leg === "long" ? "Long" : "Short"}
-                    </td>
-                    <td className="bt-panel-c-time">{formatExpiryShort(row.entryTime * 1000)}</td>
-                    <td className="bt-panel-c-num">{fmtPrice(row.entryPrice)}</td>
-                    <td className="bt-panel-c-time">{formatExpiryShort(row.exitTime * 1000)}</td>
-                    <td className="bt-panel-c-num">{fmtPrice(row.exitPrice)}</td>
-                    <td className={`bt-panel-c-num ${toneOf(row.pnl)}`}>{fmtPnl(row.pnl)}</td>
-                    <td className={`bt-panel-c-num ${toneOf(row.pnlPct)}`}>{fmtPct(row.pnlPct)}</td>
-                    <td>{row.reason}</td>
-                    <td className="bt-panel-c-num">{row.durationBars.toFixed(1)} bars</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <TradesTable rows={rows} sort={sort} onSort={toggleSort} highlighted={highlighted} selected={selected} />
         )
       )}
+    </div>
+  );
+}
+
+// Sortable trade list with windowed rendering: only the rows near the current
+// scroll position exist in the DOM (spacer rows above/below keep the scrollbar
+// sized for the full list), so a run with tens of thousands of trades opens
+// instantly instead of mounting 10 cells per trade at once.
+const OVERSCAN = 10;
+// Estimate until the first real row is measured; only the first paint uses it.
+const ROW_H_ESTIMATE = 27;
+
+function TradesTable({
+  rows,
+  sort,
+  onSort,
+  highlighted,
+  selected,
+}: {
+  rows: TradeRow[];
+  sort: { key: keyof TradeRow; dir: SortDir };
+  onSort: (key: keyof TradeRow) => void;
+  highlighted: number | null;
+  selected: number | null;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
+  const [rowH, setRowH] = useState(ROW_H_ESTIMATE);
+
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const measure = () => setViewportH(wrap.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, []);
+
+  // Replace the estimate with the real rendered row height (theme/zoom can
+  // shift it); window maths and spacer heights must use the same value or the
+  // slice drifts away from the scroll position over thousands of rows.
+  useLayoutEffect(() => {
+    const el = wrapRef.current?.querySelector<HTMLTableRowElement>("tr.bt-trade-row");
+    const h = el?.getBoundingClientRect().height ?? 0;
+    if (h > 0 && Math.abs(h - rowH) > 0.5) setRowH(h);
+  }, [rows.length, rowH]);
+
+  const { start, end, padTop, padBottom } = rowWindow(scrollTop, viewportH, rowH, rows.length, OVERSCAN);
+
+  // Keep the highlighted row in view. When the highlight comes from this list's
+  // own hover the row is already rendered and visible, so this is a no-op; when
+  // it comes from a chart marker the row may not even be in the DOM — scroll
+  // the container to its computed offset and let the window catch up.
+  const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
+  useEffect(() => {
+    if (highlighted == null) return;
+    if (highlightedRowRef.current) {
+      highlightedRowRef.current.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    const wrap = wrapRef.current;
+    const idx = rows.findIndex((r) => r.i === highlighted);
+    if (!wrap || idx < 0 || rowH <= 0) return;
+    wrap.scrollTop = Math.max(0, idx * rowH - wrap.clientHeight / 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlighted]);
+
+  return (
+    <div
+      className="bt-panel-trades-wrap"
+      ref={wrapRef}
+      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+    >
+      <table className="bt-panel-table">
+        <thead>
+          <tr>
+            <th><SortHeader label="#" col="i" sort={sort} onSort={onSort} /></th>
+            <th><SortHeader label="Side" col="leg" sort={sort} onSort={onSort} /></th>
+            <th><SortHeader label="Entry time" col="entryTime" sort={sort} onSort={onSort} /></th>
+            <th className="bt-panel-c-num"><SortHeader label="Entry" col="entryPrice" sort={sort} onSort={onSort} /></th>
+            <th><SortHeader label="Exit time" col="exitTime" sort={sort} onSort={onSort} /></th>
+            <th className="bt-panel-c-num"><SortHeader label="Exit" col="exitPrice" sort={sort} onSort={onSort} /></th>
+            <th className="bt-panel-c-num"><SortHeader label="P&L" col="pnl" sort={sort} onSort={onSort} /></th>
+            <th className="bt-panel-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={onSort} /></th>
+            <th><SortHeader label="Reason" col="reason" sort={sort} onSort={onSort} /></th>
+            <th className="bt-panel-c-num"><SortHeader label="Duration" col="durationBars" sort={sort} onSort={onSort} /></th>
+          </tr>
+        </thead>
+        <tbody>
+          {padTop > 0 && (
+            <tr aria-hidden="true">
+              <td colSpan={10} style={{ height: padTop, padding: 0, border: 0 }} />
+            </tr>
+          )}
+          {rows.slice(start, end).map((row) => (
+            <tr
+              key={row.i}
+              data-trade-index={row.i}
+              ref={row.i === highlighted ? highlightedRowRef : undefined}
+              className={`bt-trade-row${row.i === highlighted ? " highlighted" : ""}${row.i === selected ? " selected" : ""}`}
+              onMouseEnter={() => highlightTradeSignal.set(row.i)}
+              onMouseLeave={() => highlightTradeSignal.set(null)}
+              onClick={() => selectedTradeSignal.set(selected === row.i ? null : row.i)}
+            >
+              <td>{row.i + 1}</td>
+              <td className={row.leg === "long" ? "bt-panel-side-long" : "bt-panel-side-short"}>
+                {row.leg === "long" ? "Long" : "Short"}
+              </td>
+              <td className="bt-panel-c-time">{formatExpiryShort(row.entryTime * 1000)}</td>
+              <td className="bt-panel-c-num">{fmtPrice(row.entryPrice)}</td>
+              <td className="bt-panel-c-time">{formatExpiryShort(row.exitTime * 1000)}</td>
+              <td className="bt-panel-c-num">{fmtPrice(row.exitPrice)}</td>
+              <td className={`bt-panel-c-num ${toneOf(row.pnl)}`}>{fmtPnl(row.pnl)}</td>
+              <td className={`bt-panel-c-num ${toneOf(row.pnlPct)}`}>{fmtPct(row.pnlPct)}</td>
+              <td>{row.reason}</td>
+              <td className="bt-panel-c-num">{row.durationBars.toFixed(1)} bars</td>
+            </tr>
+          ))}
+          {padBottom > 0 && (
+            <tr aria-hidden="true">
+              <td colSpan={10} style={{ height: padBottom, padding: 0, border: 0 }} />
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
