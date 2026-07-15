@@ -61,6 +61,10 @@ import { SweepAxisRow } from "./components/SweepAxisRow";
 import { SweepResults } from "./SweepResults";
 import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_MAX_COMBOS, type RangeAxis, type SweepAxis, type SweepOption } from "./lib/sweep";
 import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLabels";
+import {
+  sweepContext, recallSweepRange, recordSweepRanges,
+  loadSweepAxes, saveSweepAxes, pruneSweepAxes,
+} from "./lib/sweepMemory";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { inspectModeSignal } from "./lib/backtestInspect";
 import { formatPeriodRange } from "./lib/backtestPeriods";
@@ -410,34 +414,53 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     applyRiskSync(cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg(), "long"),
   );
   useEffect(() => {
-    setCodedCfg(applyRiskSync(cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg(), "long"));
+    const nextCoded = applyRiskSync(
+      cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg(),
+      "long",
+    );
+    setCodedCfg(nextCoded);
+    // Coded axes are per-file: switching files swaps in that file's saved set.
+    if (cfg.mode === "coded") {
+      setSweepAxes(pruneSweepAxes(loadSweepAxes(sweepContext("coded", cfg.codedStrategy)), nextCoded));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg.codedStrategy]);
   const updateCoded = (c: CodedStrategyConfig) => {
     setCodedCfg(c);
     if (cfg.codedStrategy) saveCodedCfg("backtest", cfg.codedStrategy, c);
   };
-
-  // Sweep axes (Task 10): session-only, never persisted, cleared on close/apply.
+  // Sweep axes: persisted per context (rules / coded file) so the setup
+  // survives close, apply, reload, and mode switches. Restored axes are pruned
+  // against the current config so a deleted rule cannot leave a phantom axis.
+  // labelCfg() is declared below (TDZ), so the initializer inlines the ternary.
   // Any number of axes; SWEEP_MAX_COMBOS alone bounds run size (footer count +
   // disabled Run enforce it). Written to sweepAxesSignal right before a run so
   // BacktestButton can branch on it.
-  const [sweepAxes, setSweepAxes] = useState<SweepAxis[]>([]);
+  const [sweepAxes, setSweepAxes] = useState<SweepAxis[]>(() =>
+    pruneSweepAxes(
+      loadSweepAxes(sweepContext(cfg.mode, cfg.codedStrategy)),
+      cfg.mode === "coded" ? codedCfg : cfg,
+    ),
+  );
   // The axes that actually ran, materialized (period → concrete windows) at run
   // time — SweepResults labels against these, not the still-editable sweepAxes.
   const [ranAxes, setRanAxes] = useState<SweepAxis[]>([]);
   // Appends the toggled-on axis (shared by every sweep toggle).
   const addAxis = (axes: SweepAxis[], next: SweepAxis) => [...axes, next];
+  // The storage context sweep memory/axes are keyed by: "rules", or the coded
+  // strategy file, so param:n on two different .py files never collide.
+  const sweepCtx = () => sweepContext(cfg.mode, cfg.codedStrategy);
   const toggleSweepAxis = (target: string, spec: ParamSpec) => {
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
+      const mem = recallSweepRange(sweepCtx(), target);
       const next: SweepAxis = {
         kind: "range",
         target,
         label: spec.label,
-        from: spec.min ?? (spec.default as number),
-        to: spec.max ?? (spec.default as number) * 2,
-        step: spec.step ?? 1,
+        from: mem?.from ?? spec.min ?? (spec.default as number),
+        to: mem?.to ?? spec.max ?? (spec.default as number) * 2,
+        step: mem?.step ?? spec.step ?? 1,
       };
       return addAxis(axes, next);
     });
@@ -448,6 +471,29 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // Shared inline-editor patch: SweepAxisRow edits flow back through here.
   const patchAxis = (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) =>
     setSweepAxes((axes) => axes.map((a) => (a.target === target && a.kind === "range" ? { ...a, ...patch } : a)));
+  // Write-through: every axes change lands in the current context's key. Deps
+  // are [sweepAxes] ON PURPOSE: on a mode/file switch the axes swap in the
+  // same update (or a later effect) as cfg, so this never writes one
+  // context's axes under another context's key.
+  useEffect(() => {
+    saveSweepAxes(sweepCtx(), sweepAxes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sweepAxes]);
+  // param: axes can only be validated once the strategy schema loads; drop any
+  // axis naming a param the selected file no longer declares. Keyed on cfg.mode
+  // too so entering coded mode (mode-switch restore passes all param: axes
+  // through) re-runs the prune, not just a strategy-file change.
+  useEffect(() => {
+    if (cfg.mode !== "coded" || !selectedStrategy) return;
+    const names = new Set(selectedStrategy.params.map((p) => p.name));
+    setSweepAxes((axes) => {
+      const kept = axes.filter(
+        (a) => !a.target.startsWith("param:") || names.has(a.target.slice("param:".length)),
+      );
+      return kept.length === axes.length ? axes : kept;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStrategy, cfg.mode]);
   // Risk numeric fields have no declared min/max/step — pick sensible defaults
   // from the field's current value (from = current, to = 2x, step = a coarse
   // fraction so a first sweep is immediately useful without hand-tuning).
@@ -455,13 +501,14 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
       const base = current || 1;
+      const mem = recallSweepRange(sweepCtx(), target);
       const next: SweepAxis = {
         kind: "range",
         target,
         label: sweepAxisLabel(target, labelCfg()) ?? target.split(".").slice(1).join(" "),
-        from: base,
-        to: base * 2,
-        step: Math.max(base / 10, 0.1),
+        from: mem?.from ?? base,
+        to: mem?.to ?? base * 2,
+        step: mem?.step ?? Math.max(base / 10, 0.1),
       };
       return addAxis(axes, next);
     });
@@ -473,13 +520,14 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
       const base = current || 1;
+      const mem = recallSweepRange(sweepCtx(), target);
       const next: SweepAxis = {
         kind: "range",
         target,
         label: sweepAxisLabel(target, labelCfg()) ?? target.replace(/^rule:/, ""),
-        from: base,
-        to: base * 2,
-        step: Math.max(base / 10, 1),
+        from: mem?.from ?? base,
+        to: mem?.to ?? base * 2,
+        step: mem?.step ?? Math.max(base / 10, 1),
       };
       return addAxis(axes, next);
     });
@@ -678,7 +726,6 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     // to short (no-op when unsynced or already equal).
     next = applyRiskSync(next, "long");
     setCfg(next);
-    setSweepAxes([]);
     sweepAxesSignal.set([]);
     sweepStateSignal.set(null);
     run(next);
@@ -739,7 +786,6 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     next = applyRiskSync(next, "long");
     updateCoded(next);
     if (cfgNext !== cfg) setCfg(cfgNext);
-    setSweepAxes([]);
     sweepAxesSignal.set([]);
     sweepStateSignal.set(null);
     run(cfgNext !== cfg ? cfgNext : undefined);
@@ -978,6 +1024,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     // Re-label against the config as it runs (collision-aware across all axes),
     // so results name each axis by what it swept even if a rule is edited after.
     const finalAxes = withSweepLabels(materializePeriodAxes(mirrored, fromMs, toMs), labelCfg());
+    // "Last used" range memory: recorded at run time, keyed per context.
+    recordSweepRanges(sweepCtx(), sweepAxes);
     setRanAxes(finalAxes);
     sweepAxesSignal.set(finalAxes);
     run();
@@ -1450,12 +1498,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               className={(cfg.mode ?? "rules") === "rules" ? "seg-on" : ""}
               onClick={() => {
                 // Sweep axes are mode-scoped (`param:`/`risk:` in coded, `rule:`
-                // in rules); left set across a mode switch, applySweepCombo would
-                // silently ignore the other mode's axes (correct but confusing) or
-                // — for a stale `rule:` axis surviving into coded mode — get
-                // filtered out yet still count toward the sweep, sending a
-                // combo the backend rejects. Clear on every mode switch.
-                setSweepAxes([]);
+                // in rules) and persisted per context, so each mode switch swaps
+                // to the target mode's own persisted set (restored on switch-back).
+                // This keeps the other mode's axes out of applySweepCombo, which
+                // would silently ignore them or send the backend a rejected combo.
+                setSweepAxes(pruneSweepAxes(loadSweepAxes(sweepContext("rules", null)), cfg));
                 setCfg({ ...cfg, mode: "rules" });
               }}
             >
@@ -1464,7 +1511,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             <button
               className={cfg.mode === "coded" ? "seg-on" : ""}
               onClick={() => {
-                setSweepAxes([]);
+                setSweepAxes(pruneSweepAxes(loadSweepAxes(sweepContext("coded", cfg.codedStrategy)), codedCfg));
                 setCfg({ ...cfg, mode: "coded" });
               }}
             >
@@ -1735,9 +1782,19 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           {!split.collapsed && (
             sweepState ? (
               <div className="sweep-panel">
-                {sweepState.running && (
+                {sweepState.running ? (
                   <button className="ghost sweep-cancel" onClick={requestSweepCancel}>
                     Cancel sweep
+                  </button>
+                ) : (
+                  <button
+                    className="ghost sweep-cancel"
+                    onClick={() => {
+                      sweepStateSignal.set(null);
+                      setRanAxes([]);
+                    }}
+                  >
+                    Clear results
                   </button>
                 )}
                 {sweepState.cancelled ? (
