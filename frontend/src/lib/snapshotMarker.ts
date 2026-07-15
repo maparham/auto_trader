@@ -83,6 +83,12 @@ export function renderSnapshotMarker(
       onDismiss();
       return false;
     },
+    // v10 deletes an overlay on right-click unless the handler calls
+    // e.preventDefault() — keep the chip; dismissing is the onClick's job.
+    onRightClick: (e) => {
+      e.preventDefault?.();
+      return false;
+    },
   });
   return typeof id === "string" ? id : null;
 }

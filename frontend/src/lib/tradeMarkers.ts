@@ -284,6 +284,13 @@ export class TradeMarkers {
           if (tid && !this.ignoreClicks()) selectTradeLine(tid, "price", false);
           return false;
         },
+        // v10 deletes an overlay on right-click unless the handler calls
+        // e.preventDefault() — without this a right-click on a marker silently
+        // removed it until the next reconcile.
+        onRightClick: (e) => {
+          e.preventDefault?.();
+          return false;
+        },
       });
       if (typeof id === "string") {
         drawn.overlayId = id;

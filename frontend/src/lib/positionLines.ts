@@ -508,7 +508,13 @@ export class PositionLines {
         needDefaultPointFigure: spec.draggable,
         extendData,
         styles: { line: { color: spec.color } },
-        onRightClick: () => true, // suppress klinecharts' default delete menu
+        // Suppress klinecharts' default delete-on-right-click. v10 only honors
+        // e.preventDefault() — the return value lost that meaning (a bare
+        // `() => true` let a right-click silently remove a draggable trade line).
+        onRightClick: (e) => {
+          e.preventDefault?.();
+          return true;
+        },
         onPressedMoveEnd: this.onMoveEnd,
         // ns-resize cursor while hovering a grabbable line.
         onMouseEnter: (e) => {

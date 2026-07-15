@@ -290,6 +290,13 @@ export class OverlayManager {
   // NEW epic's (now GLOBAL, shared, mirrored) alert key. null until first rehydrate.
   private hydratedEpic: string | null = null;
   private rightClick: ((e: OverlayEvent<unknown>) => void) | null = null;
+  // When an overlay's onRightClick last fired (0 = never). klinecharts delivers it on
+  // the right-MOUSEDOWN, which precedes the DOM contextmenu event of the same gesture,
+  // so ChartCore's contextmenu handler can ask "did an overlay already claim this
+  // right-click?" and yield instead of opening the chart menu on top of the overlay's.
+  // A timestamp (not a boolean) so a claim whose contextmenu never arrived (e.g. the
+  // press was dragged off the chart) can't swallow a later empty-space right-click.
+  private rightClickClaimedAt = 0;
   // Unsubscribe from the global magnet signals (toggle + hold-invert modifier), set
   // up in attach() and torn down in detach() so this cell's drawings track both (see
   // applyMagnet).
@@ -334,6 +341,7 @@ export class OverlayManager {
     this.draggingAlertId = null;
     this.drawingInProgress = false;
     this.hydratedEpic = null;
+    this.rightClickClaimedAt = 0;
   }
   setEpic(epic: string): void {
     this.epic = epic;
@@ -384,6 +392,15 @@ export class OverlayManager {
   }
   setRightClickHandler(fn: ((e: OverlayEvent<unknown>) => void) | null): void {
     this.rightClick = fn;
+  }
+  // True iff an overlay's onRightClick claimed the CURRENT right-click gesture (its
+  // mousedown precedes the caller's contextmenu event; the window below only needs to
+  // outlive that same-gesture gap, and keeps a stale claim from swallowing a later
+  // empty-space right-click). Consuming clears the claim.
+  consumeOverlayRightClick(): boolean {
+    const claimed = this.rightClickClaimedAt !== 0 && Date.now() - this.rightClickClaimedAt < 500;
+    this.rightClickClaimedAt = 0;
+    return claimed;
   }
   // ChartCore subscribes to redraw its TV-style alert labels when alerts are
   // added, dragged, or removed.
@@ -842,7 +859,16 @@ export class OverlayManager {
       points: this.materializePoints(points) as Overlay["points"],
       styles: styles ?? undefined,
       lock,
-      visible: extra?.visible,
+      // Default to visible when no explicit intent is given. klinecharts' OverlayImp
+      // defaults `visible` to true, but its config `merge` writes any own key over that
+      // default, so passing `visible: undefined` (as an interactive addDrawing does: it
+      // sends no visible) clobbers it to undefined. v10's OverlayView.drawImp gates the
+      // IN-PROGRESS (progress) overlay's draw on a truthy `visible`, so that made the
+      // rubber-band preview invisible while drawing (the completed overlay only renders
+      // because onDrawEnd runs applyDisplay, which sets visible:true). Coalescing to true
+      // here keeps the preview drawn; a rehydrated/hidden drawing still passes an explicit
+      // false, which is preserved.
+      visible: extra?.visible ?? true,
       zLevel: extra?.zLevel,
       extendData: extra?.extendData,
       // TV-style Magnet: only user DRAWINGS snap to OHLC — never alert lines or the
@@ -856,9 +882,19 @@ export class OverlayManager {
       // drawings the price tag is on by default but user-toggleable (Visibility
       // tab) — honor extendData.priceLabels when present so rehydrate restores it.
       needDefaultYAxisFigure: isAlert || isMeasure || isRangeBand || isSlope ? false : asDrawingExtra(extra?.extendData).priceLabels ?? true,
-      // Returning true marks the right-click handled, suppressing klinecharts'
-      // default "delete on right-click" so our context menu can take over.
+      // v10 changed the right-click contract: the return value no longer suppresses
+      // klinecharts' default "delete the overlay on right-click" — only calling
+      // e.preventDefault() does (OverlayView._figureMouseRightClickEvent removes the
+      // overlay whenever the handler didn't prevent). Without it, every right-click on
+      // a drawing/alert DELETED it (and the removal cleared hoveredDrawingId before
+      // the DOM contextmenu event, which is what stacked the chart menu on top of the
+      // overlay menu). Keep returning true for the separate consumed/repaint path.
       onRightClick: (e) => {
+        // Claim this right-click gesture BEFORE the DOM contextmenu event fires (this
+        // callback runs on the mousedown), so ChartCore's contextmenu handler yields
+        // to the overlay menu the handler below opens (see consumeOverlayRightClick).
+        this.rightClickClaimedAt = Date.now();
+        e.preventDefault?.();
         this.rightClick?.(e);
         return true;
       },

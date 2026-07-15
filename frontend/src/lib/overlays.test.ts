@@ -192,6 +192,71 @@ function setup() {
 
 beforeEach(() => localStorage.clear());
 
+describe("OverlayManager interactive-draw preview visibility (v10 regression)", () => {
+  // v10's OverlayView.drawImp gates the IN-PROGRESS (progress) overlay's paint on a
+  // truthy `visible`. klinecharts' OverlayImp defaults `visible` to true, but its config
+  // `merge` writes any own key over that default, so an interactive addDrawing (which
+  // sends no `visible`) created the overlay with `visible: undefined`, and the rubber-band
+  // preview stayed invisible until onDrawEnd ran applyDisplay to flip it true. create()
+  // now coalesces to true, so the preview draws while the second point is being placed.
+  it("an interactive draw (no points yet) is born visible", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment")!; // interactive: klinecharts collects the clicks
+    expect(id).toBeTruthy();
+    expect(ovById(chart, id)!.visible).toBe(true);
+  });
+});
+
+describe("OverlayManager right-click claim (chart menu yields to the overlay menu)", () => {
+  // klinecharts delivers an overlay's onRightClick on the right-MOUSEDOWN, which
+  // always precedes the DOM contextmenu event of the same gesture. ChartCore's
+  // contextmenu handler must yield (not open the "Paste indicator" chart menu) when
+  // the overlay menu already opened. Gating that on hoveredDrawingId was flaky:
+  // onMouseEnter doesn't always fire before the press (and never sets it for alert
+  // lines), so BOTH menus opened stacked. The claim below is set by the same
+  // callback that opens the overlay menu, so the two can't disagree.
+  it("an overlay right-click claims the gesture; the claim consumes once", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    expect(m.consumeOverlayRightClick()).toBe(false); // nothing claimed yet
+    const ov = ovById(chart, id)!;
+    const cb = ov.onRightClick as (e: { overlay: unknown; preventDefault: () => void }) => boolean;
+    // v10 deletes the overlay unless the handler calls e.preventDefault() (the return
+    // value lost that meaning) — right-clicking a drawing must NOT delete it.
+    const prevent = vi.fn();
+    cb({ overlay: ov, preventDefault: prevent });
+    expect(prevent).toHaveBeenCalled();
+    // ChartCore's contextmenu handler (same gesture, fires right after mousedown)
+    // sees the claim and yields...
+    expect(m.consumeOverlayRightClick()).toBe(true);
+    // ...and consuming clears it: the NEXT empty-space right-click isn't swallowed.
+    expect(m.consumeOverlayRightClick()).toBe(false);
+  });
+
+  it("alert-line right-clicks claim too (hover never set hoveredDrawingId for them)", () => {
+    const { chart, m } = setup();
+    const id = m.addAlert(50, { condition: "crossing", trigger: "once", message: "" })!;
+    const ov = ovById(chart, id)!;
+    (ov.onRightClick as (e: { overlay: unknown }) => boolean)({ overlay: ov });
+    expect(m.consumeOverlayRightClick()).toBe(true);
+  });
+
+  it("a stale claim (contextmenu never followed the mousedown) expires", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const ov = ovById(chart, id)!;
+    const now = Date.now();
+    const spy = vi.spyOn(Date, "now").mockReturnValue(now);
+    (ov.onRightClick as (e: { overlay: unknown }) => boolean)({ overlay: ov });
+    spy.mockReturnValue(now + 1000); // a later, unrelated right-click gesture
+    expect(m.consumeOverlayRightClick()).toBe(false);
+    spy.mockRestore();
+  });
+});
+
 describe("OverlayManager per-interval visibility (data-corruption guards)", () => {
   it("visible intent survives an interval where the drawing is filtered out (rendered as a ghost, not hidden)", () => {
     const { chart, m } = setup();

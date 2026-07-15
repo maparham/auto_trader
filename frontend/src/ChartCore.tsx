@@ -1580,13 +1580,18 @@ export default function ChartCore({
     const onContextMenu = (e: MouseEvent) => {
       const c = chartRef.current;
       if (!c) return;
-      // If the right-click landed on a drawing, klinecharts has already fired the
-      // overlay's own onRightClick (→ the Toolbar's Lock/Settings/Delete menu).
-      // Yield: don't ALSO open the empty-space "Paste indicator" menu, which would
-      // clobber it. (This was the bug that made drawings feel non-editable: the
-      // Paste menu always won.) hoveredDrawingId is set by the overlay's
-      // onMouseEnter, so it's reliably current here — no event-ordering race.
-      if (overlays.getHoveredDrawingId()) return;
+      // If the right-click landed on an overlay (drawing OR alert line), klinecharts
+      // has already fired its onRightClick on this gesture's mousedown (→ the
+      // Toolbar's Lock/Settings/Delete menu). Yield: don't ALSO open the chart menu
+      // stacked on top of it. Gating this on hoveredDrawingId was flaky — klinecharts'
+      // onMouseEnter doesn't always precede the press, and never covers alert lines —
+      // so both menus opened together; the claim is set by the SAME callback that
+      // opens the overlay menu, so the two can't disagree. preventDefault so the
+      // native browser menu doesn't stack on the overlay menu either.
+      if (overlays.consumeOverlayRightClick()) {
+        e.preventDefault();
+        return;
+      }
       const rect = el.getBoundingClientRect();
       // overPriceAxis (defined below, initialized before this listener ever fires)
       // is the shared "is the cursor in the right-hand y-axis column" test — reused

@@ -1147,6 +1147,14 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
           placement: bar ? markerPlacement(m.price, bar.high, bar.low) : "above",
         } satisfies MarkerExtra,
         styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: 'solid' } },
+        // v10 deletes an overlay on right-click unless the handler calls
+        // e.preventDefault() (lock:true does NOT protect it) — without this a
+        // right-click on a fill marker silently removed it until the next reconcile.
+        // Top-level (not inside the idx spread) so idx-less markers are safe too.
+        onRightClick: (e) => {
+          e.preventDefault?.();
+          return false;
+        },
         ...(idx !== undefined
           ? {
               onMouseEnter: () => {
@@ -1194,6 +1202,12 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
           points: [{ timestamp: sigSnapped, value: anchorPrice }],
           lock: true,
           extendData: { placement: glyph.placement } satisfies SignalMarkerExtra,
+          // v10 deletes an overlay on right-click unless the handler calls
+          // e.preventDefault() (lock:true does NOT protect it) — keep the signal glyph.
+          onRightClick: (e) => {
+            e.preventDefault?.();
+            return false;
+          },
           onMouseEnter: (e) => {
             if (backtestResultSignal.value === result) {
               backtestSignalHoverSignal.set({ glyph, x: e.pageX ?? 0, y: e.pageY ?? 0 });
@@ -1395,6 +1409,12 @@ export function renderArtifacts(
       lock: true,
       needDefaultPointFigure: false,
       styles: { line: { color: t.pnl >= 0 ? BUY_COLOR : SELL_COLOR, style: 'solid' } },
+      // v10 deletes an overlay on right-click unless the handler calls
+      // e.preventDefault() — keep this transient highlight from vanishing on right-click.
+      onRightClick: (e) => {
+        e.preventDefault?.();
+        return false;
+      },
     });
     artifacts.highlightOverlayId = typeof id === "string" ? id : null;
   });
