@@ -20,6 +20,7 @@ export default function NumberField({
   step,
   signed = false,
   className,
+  disabled = false,
 }: {
   value: number | undefined;
   onChange: (n: number) => void;
@@ -34,6 +35,9 @@ export default function NumberField({
    *  can be entered. Off by default — magnitude/quantity fields stay unsigned. */
   signed?: boolean;
   className?: string;
+  /** Render greyed-out and non-editable (e.g. while a sweep axis owns the
+   *  field's value). */
+  disabled?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const shown = draft ?? String(value ?? 0);
@@ -88,6 +92,7 @@ export default function NumberField({
       inputMode="decimal"
       className={className}
       value={shown}
+      disabled={disabled}
       onChange={handleChange}
       onBlur={handleBlur}
     />

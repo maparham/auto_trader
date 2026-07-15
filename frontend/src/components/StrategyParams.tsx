@@ -74,12 +74,15 @@ export function StrategyParams({ specs, values, onChange, sweep }: Props) {
                   </option>
                 ))}
               </select>
-            ) : swept ? null : (
+            ) : (
+              // Stays visible while swept (disabled: the sweep axis owns the
+              // value), matching the rule-operand and risk fields.
               <NumberField
                 value={v as number}
                 step={s.step ?? undefined}
                 onChange={(n) => set(s.name, clamp(s, n))}
                 className="sp-num"
+                disabled={swept}
               />
             )}
             {(s.type === "int" || s.type === "float") && sweep && (

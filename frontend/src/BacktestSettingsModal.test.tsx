@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup, within, act } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within, act, waitFor } from "@testing-library/react";
 import { installMemStorage } from "./lib/testMemStorage";
 
 // jsdom's localStorage isn't wired up in this project's vitest config (see
@@ -753,7 +753,7 @@ describe("persistent sweep setup", () => {
     expect(document.querySelector(".sweep-axis-row")).toBeNull();
   });
 
-  it("keeps the axes after applying a combo, but the follow-up run is not a sweep", () => {
+  it("keeps the axes and the results table after applying a combo, but the follow-up run is not a sweep", () => {
     const onRun = vi.fn();
     render(
       <BacktestSettingsModal
@@ -774,6 +774,45 @@ describe("persistent sweep setup", () => {
     expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
     // But the run that just fired was a plain backtest, not a sweep.
     expect(sweepAxesSignal.value).toEqual([]);
+    // The results table survives the apply so other rows can be compared;
+    // only "Clear results" dismisses it.
+    expect(sweepStateSignal.value).not.toBeNull();
+    expect(document.querySelector(".sweep-panel")).toBeTruthy();
+    // A second row click (same single row here) still applies and re-runs.
+    fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
+    expect(onRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a swept field's input visible but disabled", () => {
+    renderModal();
+    openStrategy();
+    const row = ruleRows(groupSection("Buy to open"))[0];
+    const before = row.querySelectorAll("input.bt-operand-length").length;
+    fireEvent.click(row.querySelector(".sp-sweep")!);
+    const inputs = row.querySelectorAll("input.bt-operand-length");
+    expect(inputs.length).toBe(before);            // nothing hidden
+    expect((inputs[0] as HTMLInputElement).disabled).toBe(true);
+    // Toggling the sweep back off re-enables the field.
+    fireEvent.click(row.querySelector(".sp-sweep")!);
+    expect((row.querySelectorAll("input.bt-operand-length")[0] as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("Sweep off clears every axis, returns the footer to a plain run, and persists the cleared set", () => {
+    renderModal();
+    openStrategy();
+    const row = ruleRows(groupSection("Buy to open"))[0];
+    fireEvent.click(row.querySelector(".sp-sweep")!);
+    expect(screen.getByRole("button", { name: "Run sweep" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Sweep off" }));
+    expect(document.querySelector(".sweep-axis-row")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Sweep off" })).toBeNull();
+    // The empty set is what persists: a remount must not resurrect the axes.
+    cleanup();
+    renderModal();
+    openStrategy();
+    expect(document.querySelector(".sweep-axis-row")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy();
   });
 
   it("mode switch round-trip restores each mode's own axes", () => {
@@ -813,9 +852,12 @@ describe("persistent sweep setup", () => {
       .find((b) => !b.closest(".bt-htabs"))!;
     fireEvent.click(segStrategy);
     // Let the strategy schema land so the param prune can validate against it.
+    // The prune runs in a passive effect after that render, so wait for its
+    // outcome instead of asserting synchronously.
     await screen.findByText("Fast EMA");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy());
     expect(document.querySelector(".sweep-axis-row")).toBeNull();
-    expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy();
   });
 });
 

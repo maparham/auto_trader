@@ -726,8 +726,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     // to short (no-op when unsynced or already equal).
     next = applyRiskSync(next, "long");
     setCfg(next);
+    // Clear the axes so the follow-up run is a plain backtest, but keep
+    // sweepStateSignal: the results table stays up so other rows can still be
+    // inspected and applied. "Clear results" dismisses it.
     sweepAxesSignal.set([]);
-    sweepStateSignal.set(null);
     run(next);
   }
 
@@ -786,8 +788,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     next = applyRiskSync(next, "long");
     updateCoded(next);
     if (cfgNext !== cfg) setCfg(cfgNext);
+    // Axes cleared so the run is a plain backtest; sweepStateSignal kept so
+    // the results table survives the apply (see applyRuleSweepCombo).
     sweepAxesSignal.set([]);
-    sweepStateSignal.set(null);
     run(cfgNext !== cfg ? cfgNext : undefined);
   }
 
@@ -1888,6 +1891,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               {isFinite(sweepCombos) ? sweepCombos : "∞"} runs
             </span>
           )}
+          {sweepAxes.length > 0 && (
+            <Tooltip content="Turn all sweep fields off and go back to a plain backtest. Toggling a field back on recalls the range it last swept with.">
+              <button className="ghost sweep-axes-off" onClick={() => setSweepAxes([])}>
+                Sweep off
+              </button>
+            </Tooltip>
+          )}
           <button onClick={runFromFooter} disabled={runInFlight || (sweepAxes.length > 0 && sweepOverCap)}>
             {runInFlight ? "Running…" : sweepAxes.length > 0 ? "Run sweep" : "Run backtest"}
           </button>
@@ -1972,15 +1982,15 @@ export function RiskSection({
   };
   // `floor` opts a field into positive-only: block negatives and snap ≤0 up to
   // the floor on blur. Left off for price levels / ATR multiples, which are free.
-  const num = (v: number | undefined, set: (n: number) => void, step = "any", floor?: number) =>
+  const num = (v: number | undefined, set: (n: number) => void, step = "any", floor?: number, disabled = false) =>
     // Decimal fields go through NumberField so the dot is always the decimal
     // separator regardless of locale (native number inputs follow the locale and
     // reject "." on comma-decimal machines). Integer fields ("1" step) have no
     // separator to worry about, so keep the native input and its spinner.
     step === "any" ? (
-      <NumberField value={v} onChange={set} floor={floor} className="bt-num" />
+      <NumberField value={v} onChange={set} floor={floor} className="bt-num" disabled={disabled} />
     ) : (
-      <input type="number" step={step} value={v ?? 0} className="bt-num" min={floor}
+      <input type="number" step={step} value={v ?? 0} className="bt-num" min={floor} disabled={disabled}
         onKeyDown={floor != null ? blockNegKeys : undefined}
         onChange={(e) => set(Number(cleanNumInput(e.currentTarget)))}
         onBlur={floor != null ? (e) => clampPosOnBlur(e.currentTarget, floor, set) : undefined} />
@@ -2042,14 +2052,14 @@ export function RiskSection({
         </select>
         {(risk.stop.kind === "pct" || risk.stop.kind === "trailPct") && (
           <>
-            {swept("stop", "value") ? null : num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }), "any", 0.01)}
+            {num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }), "any", 0.01, swept("stop", "value"))}
             <span>%</span>
             {sweepBtn("stop", "value", risk.stop.value ?? 2)}
           </>
         )}
         {(risk.stop.kind === "atr" || risk.stop.kind === "trailAtr") && (
           <>
-            {swept("stop", "mult") ? null : num(risk.stop.mult, (n) => onChange({ ...risk, stop: { ...risk.stop, mult: n } }))}
+            {num(risk.stop.mult, (n) => onChange({ ...risk, stop: { ...risk.stop, mult: n } }), "any", undefined, swept("stop", "mult"))}
             <span>× ATR</span>
             {num(risk.stop.length, (n) => onChange({ ...risk, stop: { ...risk.stop, length: Math.max(1, Math.round(n)) } }), "1")}
             {sweepBtn("stop", "mult", risk.stop.mult ?? 2)}
@@ -2067,14 +2077,14 @@ export function RiskSection({
         </select>
         {risk.target.kind === "pct" && (
           <>
-            {swept("target", "value") ? null : num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }), "any", 0.01)}
+            {num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }), "any", 0.01, swept("target", "value"))}
             <span>%</span>
             {sweepBtn("target", "value", risk.target.value ?? 4)}
           </>
         )}
         {risk.target.kind === "atr" && (
           <>
-            {swept("target", "mult") ? null : num(risk.target.mult, (n) => onChange({ ...risk, target: { ...risk.target, mult: n } }))}
+            {num(risk.target.mult, (n) => onChange({ ...risk, target: { ...risk.target, mult: n } }), "any", undefined, swept("target", "mult"))}
             <span>× ATR</span>
             {num(risk.target.length, (n) => onChange({ ...risk, target: { ...risk.target, length: Math.max(1, Math.round(n)) } }), "1")}
             {sweepBtn("target", "mult", risk.target.mult ?? 3)}
@@ -2947,9 +2957,11 @@ function CountField({
         ]}
       >
         <label className={`bt-rule-count${n ? " on" : ""}`}>
-          {!swept && (
-            <input
+          {/* Same visible-but-disabled treatment as the operand fields while
+              the Nth-count sweep axis owns the value. */}
+          <input
               type="number"
+              disabled={swept}
               // Floor at 2: 1 is the default and reads as blank, so letting the
               // native spinner step to 1 would make the up-arrow appear dead.
               min={2}
@@ -2969,7 +2981,6 @@ function CountField({
               // value the model dropped.
               onBlur={() => setText(n ? String(n) : "")}
             />
-          )}
           <span className="bt-rule-count-suffix" aria-hidden="true">{n ? ordinal(n) : ""}</span>
         </label>
       </Tooltip>
@@ -3141,17 +3152,18 @@ function OperandPicker({
           )}
           {!NO_LENGTH.includes(value.indicator) && (
             <>
-              {!isSwept("length") && (
-                <input
-                  type="number"
-                  min={1}
-                  className="bt-operand-length"
-                  value={value.length ?? 9}
-                  onKeyDown={blockNegKeys}
-                  onChange={(e) => onChange({ ...value, length: Number(cleanNumInput(e.currentTarget)) })}
-                  onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => onChange({ ...value, length: n }))}
-                />
-              )}
+              {/* Stays visible while swept (disabled: the sweep axis owns the
+                  value) so the rule row keeps reading as a complete rule. */}
+              <input
+                type="number"
+                min={1}
+                className="bt-operand-length"
+                value={value.length ?? 9}
+                disabled={isSwept("length")}
+                onKeyDown={blockNegKeys}
+                onChange={(e) => onChange({ ...value, length: Number(cleanNumInput(e.currentTarget)) })}
+                onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => onChange({ ...value, length: n }))}
+              />
               {sweepToggle("length", value.length ?? 9)}
             </>
           )}
@@ -3181,14 +3193,13 @@ function OperandPicker({
       )}
       {value.kind === "const" && (
         <>
-          {!isSwept("value") && (
-            <NumberField
-              signed
-              value={value.value}
-              onChange={(n) => onChange({ kind: "const", value: n })}
-              className="bt-operand-length"
-            />
-          )}
+          <NumberField
+            signed
+            value={value.value}
+            onChange={(n) => onChange({ kind: "const", value: n })}
+            className="bt-operand-length"
+            disabled={isSwept("value")}
+          />
           {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
           {sweepToggle("value", value.value)}
         </>

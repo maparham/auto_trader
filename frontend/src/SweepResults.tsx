@@ -9,7 +9,7 @@
 
 import { Fragment, useState } from "react";
 import type { SweepRow } from "./api";
-import { comboAxisText, type SweepAxis } from "./lib/sweep";
+import { axisColumnLabel, comboAxisLabel, comboAxisText, type SweepAxis } from "./lib/sweep";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import Tooltip from "./components/Tooltip";
 
@@ -94,8 +94,10 @@ function WindowStrip({ windows }: { windows: NonNullable<SweepRow["windows"]> })
   );
 }
 
-function comboLabel(combo: SweepRow["combo"], axes: SweepAxis[]): string {
-  return axes.map((a) => `${a.label} ${comboAxisText(a, combo as Record<string, number | string>)}`).join(", ");
+// Short column tag for the Nth sweep axis: A, B, ... Z, then #27, #28, ... so
+// it never runs out (axis counts this high are already off the useful end).
+function axisTag(i: number): string {
+  return i < 26 ? String.fromCharCode(65 + i) : `#${i + 1}`;
 }
 
 // Diverging background: neutral at 0, green ramping positive, red ramping
@@ -124,6 +126,11 @@ export function SweepResults(props: {
   // stay aligned either way.
   const baseCols = METRIC_COLS.filter((c) => !c.robust);
   const robustCols = robustOpen ? METRIC_COLS.filter((c) => c.robust) : [];
+
+  // Each sweep axis gets one short tag column (A, B, C, ...) so the table stays
+  // narrow; a legend above the table maps every tag to its full operand name.
+  // `fullHeaders` is that full name (also the per-tag hover text).
+  const fullHeaders = axes.map(axisColumnLabel);
 
   const toggleSort = (key: MetricKey) =>
     setSort((s) => (s?.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
@@ -195,11 +202,32 @@ export function SweepResults(props: {
         />
       )}
 
+      {axes.length > 0 && (
+        <div className="sweep-axis-legend">
+          {axes.map((a, ai) => (
+            <span key={a.target} className="sweep-axis-legend-item">
+              <span className="sweep-axis-tag">{axisTag(ai)}</span>
+              {fullHeaders[ai]}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="sweep-table-wrap">
         <table className="sweep-table">
           <thead>
             <tr>
-              <th>Combo</th>
+              {axes.length > 0 ? (
+                axes.map((a, ai) => (
+                  <th key={a.target} className="sweep-c-axis">
+                    <Tooltip content={fullHeaders[ai]}>
+                      <span className="sweep-axis-tag">{axisTag(ai)}</span>
+                    </Tooltip>
+                  </th>
+                ))
+              ) : (
+                <th>Combo</th>
+              )}
               {baseCols.map((c) => (
                 <th key={c.key} className="sweep-c-num">
                   <SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} />
@@ -230,10 +258,7 @@ export function SweepResults(props: {
           <tbody>
             {sortedRows.map((row, i) => {
               const failed = row.metrics === null;
-              // The error tooltip wraps the combo CELL's content, not the <tr>:
-              // Tooltip renders a wrapper <span>, and a span between <tbody> and
-              // <tr> is invalid DOM the browser hoists out of the table.
-              const combo = comboLabel(row.combo, axes);
+              const combo = row.combo as Record<string, number | string>;
               return (
                 <tr
                   key={i}
@@ -241,9 +266,27 @@ export function SweepResults(props: {
                   aria-disabled={applyDisabled}
                   onClick={() => applyOrNoop(row.combo)}
                 >
-                  <td>
-                    {failed ? <Tooltip content={row.error ?? "failed"}>{combo}</Tooltip> : combo}
-                  </td>
+                  {/* One cell per axis (the swept value); the header carries the
+                      operand name. A failed row's error tooltip wraps the first
+                      axis cell's content — not the <tr>: Tooltip renders a
+                      wrapper <span>, and a span between <tbody> and <tr> is
+                      invalid DOM the browser hoists out of the table. */}
+                  {axes.length > 0 ? (
+                    axes.map((a, ai) => {
+                      const val = comboAxisText(a, combo);
+                      return (
+                        <td key={a.target} className="sweep-c-axis">
+                          {failed && ai === 0 ? (
+                            <Tooltip content={row.error ?? "failed"}>{val}</Tooltip>
+                          ) : (
+                            val
+                          )}
+                        </td>
+                      );
+                    })
+                  ) : (
+                    <td>{failed ? <Tooltip content={row.error ?? "failed"}>—</Tooltip> : "—"}</td>
+                  )}
                   {baseCols.map((c) => {
                     const v = metricValue(row, c.key);
                     const isBest = v !== null && bestByCol[c.key] === v;
@@ -436,7 +479,7 @@ function SweepHeatmap({
                 <>
                   {collapsed.length > 0 && (
                     <span className="sweep-heat-detail-combo">
-                      @ {collapsed.map((a) => `${a.label} ${comboAxisText(a, hovered.combo as Record<string, number | string>)}`).join(", ")}
+                      @ {collapsed.map((a) => comboAxisLabel(a, hovered.combo as Record<string, number | string>)).join(", ")}
                     </span>
                   )}
                   {METRIC_COLS.map((c) => (

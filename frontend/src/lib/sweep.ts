@@ -186,6 +186,31 @@ export function comboAxisText(axis: SweepAxis, combo: SweepCombo): string {
   return String(combo[axis.target] ?? "?");
 }
 
+/** Label + value for one axis of a combo, for results rows. A rule VALUE
+ * axis's label carries an "x" placeholder for the swept slot ("EMA 9 > x",
+ * from sweepLabels); with the row's value known, substitute it ("EMA 9 > 0")
+ * instead of appending ("EMA 9 > x 0"). Every other axis appends. */
+export function comboAxisLabel(axis: SweepAxis, combo: SweepCombo): string {
+  const text = comboAxisText(axis, combo);
+  if (/^rule:.+\.(left|right)\.value$/.test(axis.target)) {
+    const substituted = axis.label.replace(/\bx\b/, text);
+    if (substituted !== axis.label) return substituted;
+  }
+  return `${axis.label} ${text}`;
+}
+
+/** Column header for a per-axis results column: the axis label with the swept-
+ * value placeholder removed. A rule VALUE axis's label carries an "x" slot for
+ * the swept number ("EMA 9 > x"); in a per-axis column that number lives in the
+ * cell, so the header drops the "x" ("EMA 9 >"). Every other axis kind keeps its
+ * label verbatim (the value simply reads under it). */
+export function axisColumnLabel(axis: SweepAxis): string {
+  if (/^rule:.+\.(left|right)\.value$/.test(axis.target)) {
+    return axis.label.replace(/\s*\bx\b\s*/, " ").trim() || axis.label;
+  }
+  return axis.label;
+}
+
 export async function runSweep(
   baseReq: BacktestRequest,
   axes: SweepAxis[],

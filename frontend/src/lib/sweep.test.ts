@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { axisOptionFor, comboAxisText, comboCount, enumerateCombos, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, robustWindowBounds, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_MAX_COMBOS } from "./sweep";
+import { axisColumnLabel, axisOptionFor, comboAxisLabel, comboAxisText, comboCount, enumerateCombos, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, robustWindowBounds, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_MAX_COMBOS } from "./sweep";
 import * as api from "../api";
 
 const axis = (target: string, from: number, to: number, step: number) =>
@@ -243,6 +243,35 @@ describe("list axes", () => {
     expect(axisOptionFor(op, { "op:long.entry.0": "gte" })).toBeNull();
     expect(comboAxisText(op, { "op:long.entry.0": "gt" })).toBe("greater than");
     expect(comboAxisText(axis("param:n", 1, 2, 1), { "param:n": 1.5 })).toBe("1.5");
+  });
+
+  it("substitutes a rule value axis's x placeholder with the row's value", () => {
+    const right = { ...axis("rule:long.entry.0.right.value", 0, 1, 0.5), label: "MA Slope 100 · SMA 9 > x" };
+    expect(comboAxisLabel(right, { "rule:long.entry.0.right.value": 0 })).toBe("MA Slope 100 · SMA 9 > 0");
+    expect(comboAxisLabel(right, { "rule:long.entry.0.right.value": -1 })).toBe("MA Slope 100 · SMA 9 > -1");
+    // Collision-qualified suffix after the placeholder still substitutes.
+    const qualified = { ...right, label: "Long 1 · SMA 9 > x (right)" };
+    expect(comboAxisLabel(qualified, { "rule:long.entry.0.right.value": 0.5 })).toBe("Long 1 · SMA 9 > 0.5 (right)");
+    const left = { ...axis("rule:long.entry.0.left.value", 0, 1, 0.5), label: "x < EMA 21" };
+    expect(comboAxisLabel(left, { "rule:long.entry.0.left.value": 1 })).toBe("1 < EMA 21");
+  });
+
+  it("appends the value for axes without a placeholder", () => {
+    expect(comboAxisLabel({ ...axis("param:n", 1, 2, 1), label: "Fast EMA" }, { "param:n": 2 })).toBe("Fast EMA 2");
+    expect(comboAxisLabel({ ...axis("rule:long.entry.0.left.length", 5, 10, 5), label: "EMA 9 length" }, { "rule:long.entry.0.left.length": 5 })).toBe("EMA 9 length 5");
+    // A value axis whose stored label lost its placeholder falls back to appending.
+    expect(comboAxisLabel({ ...axis("rule:long.entry.0.right.value", 0, 1, 1), label: "threshold" }, { "rule:long.entry.0.right.value": 1 })).toBe("threshold 1");
+    expect(comboAxisLabel(op, { "op:long.entry.0": "gt" })).toBe(`${op.label} greater than`);
+  });
+
+  it("strips the value placeholder for a per-axis column header", () => {
+    const right = { ...axis("rule:long.entry.0.right.value", 0, 1, 0.5), label: "MA Slope 100 · SMA 9 > x" };
+    expect(axisColumnLabel(right)).toBe("MA Slope 100 · SMA 9 >");
+    const left = { ...axis("rule:long.entry.0.left.value", 0, 1, 0.5), label: "x < EMA 21" };
+    expect(axisColumnLabel(left)).toBe("< EMA 21");
+    // Non-value axes keep their label verbatim; the value reads under it.
+    expect(axisColumnLabel({ ...axis("param:n", 1, 2, 1), label: "Fast EMA" })).toBe("Fast EMA");
+    expect(axisColumnLabel({ ...axis("rule:long.entry.0.left.length", 5, 10, 5), label: "EMA 9 length" })).toBe("EMA 9 length");
   });
 });
 

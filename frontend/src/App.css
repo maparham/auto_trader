@@ -1248,6 +1248,9 @@
 .bt-operand { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .bt-operand select { flex: 0 1 auto; width: auto; min-width: 0; }
 .bt-operand-length { flex: 0 0 62px; min-width: 0; text-align: left; }
+/* Swept fields stay visible but read-only: the sweep axis owns the value. */
+.bt-operand-length:disabled, .bt-rule-count-input:disabled,
+.bt-num:disabled, .sp-num:disabled { opacity: 0.55; cursor: default; }
 /* The optional "Nth time" chip on an exit rule: a tiny number + ordinal suffix.
    Dim until set (blank ⇒ 1st ⇒ default), accented once it holds a count. */
 .bt-rule-count { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
@@ -4259,6 +4262,23 @@ span.bt-leg-short { color: var(--neg); }
 }
 .sweep-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .sweep-c-num { text-align: right; font-family: var(--mono); }
+/* Per-axis columns: the swept value reads under an operand-name header. Headers
+   clamp to a sane width with an ellipsis (full name on hover); values are mono
+   so they line up across rows. */
+.sweep-c-axis { font-family: var(--mono); }
+.sweep-table td.sweep-c-axis { color: var(--text); font-style: normal; }
+.sweep-row.sweep-error td.sweep-c-axis { color: var(--text-faint); font-style: italic; }
+/* Short A/B/C column tag; the legend above the table spells each one out. */
+.sweep-axis-tag {
+  display: inline-block; min-width: 15px; text-align: center;
+  font-family: var(--mono); font-weight: 600; color: var(--text);
+}
+.sweep-axis-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 16px;
+  font-size: 11px; color: var(--text-faint); padding: 2px 2px 8px;
+}
+.sweep-axis-legend-item { display: inline-flex; align-items: baseline; gap: 5px; }
+.sweep-axis-legend-item .sweep-axis-tag { min-width: 0; }
 .sweep-row { cursor: pointer; }
 .sweep-row:hover { background: var(--hover); }
 .sweep-row.sweep-error { color: var(--text-faint); font-style: italic; }
