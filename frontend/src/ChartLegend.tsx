@@ -24,8 +24,8 @@ import {
 // Sub-pane indicators that are app-internal (not user-added) and so get NO legend
 // card — the user must not be able to remove/edit them via a card. Shared with the
 // reorder engine so the legend's card index and the engine's reorderable order stay
-// in lockstep (see INTERNAL_INDICATORS in ./lib/indicators).
-import { INTERNAL_INDICATORS } from "./lib/indicators";
+// in lockstep (see isInternalIndicator in ./lib/indicators).
+import { isInternalIndicator } from "./lib/indicators";
 import { periodByResolution } from "./lib/feed";
 
 const UP = "#26a69a";
@@ -821,7 +821,7 @@ export function buildSubPaneLegends(chart: Chart): {
   for (const [paneId, inds] of all ?? []) {
     if (paneId === "candle_pane") continue;
     const rows = rowsForPane(inds, lineStyles, legendTextColor).filter(
-      (r) => !INTERNAL_INDICATORS.has(r.name),
+      (r) => !isInternalIndicator(r.name),
     );
     // No card for a pane holding only internal indicators (e.g. the backtest equity
     // curve) — it would otherwise get a removable/editable card it shouldn't have,

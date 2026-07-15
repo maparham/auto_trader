@@ -11,12 +11,12 @@ vi.mock("klinecharts", () => ({
   registerIndicator: () => {},
 }));
 
-const { buildSeries, buildChartOperandSeries } = await import("./backtestSeries");
+const { buildSeries, buildChartOperandSeries, computeIndicatorRecipe } = await import("./backtestSeries");
 const { maSeries, sma } = await import("./mtf");
 const { computeRsi, computeLr, computePrevHl, vwapFrom, detectDivergences, RSI_DIVERGENCE_DEFAULTS } = await import("./customIndicators");
 const { computePivotBands } = await import("./indicators/pivotBands");
 const { computePivotAnalysis } = await import("./indicators/pivotAnalysis");
-const { SLOPE_TEMPLATE } = await import("./indicators/slope");
+const { SLOPE_TEMPLATE, slopeLineSeries, accelLineSeries, inferBarHours } = await import("./indicators/slope");
 const { recipeKey, seriesName, operandBaseLen } = await import("./backtestConfig");
 
 // The base run is on 1-minute bars (candles() stamps every 60_000ms); no rule
@@ -673,6 +673,45 @@ describe("series operand — SLOPE recipe parity", () => {
     expect(raw).toEqual(rawExpected);
     expect(raw.some((v) => v !== null)).toBe(true);
     expect(smoothed).not.toEqual(raw);
+  });
+
+  it("SLOPE block 2 resolves acceleration, block 3 the smoothed acceleration", () => {
+    // `candles(closes)` is the existing helper at the top of this file (line 27).
+    const bars = candles(Array.from({ length: 60 }, (_, i) => 100 + i));
+    const extend = { slopePeriod: 2, accelPeriod: 2, units: "pctBar", maType: "ema",
+                     accelSmoothing: { type: "sma", length: 3 } };
+    const recipe = (line: number) => ({
+      source: "indicator" as const, indicatorType: "SLOPE" as const,
+      calcParams: [5, 10], line, extend,
+    });
+    const K = 2;
+    const bh = inferBarHours(bars);
+    // Block 2: accel of lengths[0], no accel smoothing.
+    expect(computeIndicatorRecipe(recipe(2 * K + 0), bars, bh)).toEqual(
+      accelLineSeries(bars, "ema", 5, 2, 2, "pctBar", undefined, undefined, undefined, bh),
+    );
+    // Block 3: accel of lengths[1], accel-smoothed.
+    expect(computeIndicatorRecipe(recipe(3 * K + 1), bars, bh)).toEqual(
+      accelLineSeries(bars, "ema", 10, 2, 2, "pctBar", undefined, undefined,
+                      { type: "sma", length: 3 }, bh),
+    );
+  });
+
+  it("SLOPE blocks 0 and 1 keep their existing meaning", () => {
+    const bars = candles(Array.from({ length: 60 }, (_, i) => 100 + i));
+    const extend = { slopePeriod: 2, units: "pctBar", maType: "ema",
+                     smoothing: { type: "sma", length: 3 } };
+    const bh = inferBarHours(bars);
+    const recipe = (line: number) => ({
+      source: "indicator" as const, indicatorType: "SLOPE" as const,
+      calcParams: [5, 10], line, extend,
+    });
+    expect(computeIndicatorRecipe(recipe(0), bars, bh)).toEqual(
+      slopeLineSeries(bars, "ema", 5, 2, "pctBar", undefined, undefined, bh),
+    );
+    expect(computeIndicatorRecipe(recipe(2), bars, bh)).toEqual(
+      slopeLineSeries(bars, "ema", 5, 2, "pctBar", undefined, { type: "sma", length: 3 }, bh),
+    );
   });
 });
 

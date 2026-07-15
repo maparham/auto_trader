@@ -67,6 +67,7 @@ import {
 } from "./lib/persist";
 import InfoTip from "./components/InfoTip";
 import { requestIndicatorOverlayRepaint } from "./lib/signals";
+import { mirrorAccelCompanion, syncAccelCompanion } from "./lib/indicators";
 import ColorLineStylePicker from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
 import { cloneStyles } from "./lib/overlays";
@@ -307,6 +308,17 @@ export default function IndicatorSettings({
     slopeExt0.threshold ?? { on: false, level: 0.1, lineStyle: "dotted" },
   );
   const [showMa, setShowMa] = useState<boolean>(slopeExt0.showMa ?? false);
+  const [showAccel, setShowAccel] = useState<boolean>(slopeExt0.showAccel ?? false);
+  const [accelPeriod, setAccelPeriod] = useState<number>(slopeExt0.accelPeriod ?? 3);
+  const [accelSmoothing, setAccelSmoothing] = useState<SlopeSmoothing>(
+    slopeExt0.accelSmoothing ?? { type: "none", length: 3 },
+  );
+  // Acceleration is a second derivative, so its magnitudes are much smaller than
+  // the slope's — default the guide level well below the slope threshold's 0.1.
+  const [accelThreshold, setAccelThreshold] = useState<SlopeThreshold>(
+    slopeExt0.accelThreshold ?? { on: false, level: 0.01, lineStyle: "dotted" },
+  );
+  const [accelAbsolute, setAccelAbsolute] = useState<boolean>(slopeExt0.accelAbsolute ?? false);
 
   // --- PIVOT_ANALYSIS: vertical connector style (draw-only, on extendData) ---
   // Colors stay price-driven (up/down); width + line style + arrowheads are shared.
@@ -619,6 +631,11 @@ export default function IndicatorSettings({
       extendData.colorByDirection = colorByDirection;
       extendData.threshold = threshold;
       extendData.showMa = showMa;
+      extendData.showAccel = showAccel;
+      extendData.accelPeriod = accelPeriod;
+      if (accelSmoothing.type !== "none") extendData.accelSmoothing = accelSmoothing;
+      extendData.accelThreshold = accelThreshold;
+      extendData.accelAbsolute = accelAbsolute;
     }
     if (isPivotAnalysis) {
       // Connector style is draw-only; persist only when it differs from the fixed
@@ -696,7 +713,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
 
   // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
   // setParam's isMa branch below, so it stays a shell-local binding.
@@ -758,6 +775,11 @@ export default function IndicatorSettings({
       colorByDirection: boolean;
       threshold: SlopeThreshold;
       showMa: boolean;
+      showAccel: boolean;
+      accelPeriod: number;
+      accelSmoothing: SlopeSmoothing;
+      accelThreshold: SlopeThreshold;
+      accelAbsolute: boolean;
       timeframe: string;
     }> = {},
   ): void {
@@ -767,6 +789,11 @@ export default function IndicatorSettings({
     const nextColorByDirection = next.colorByDirection ?? colorByDirection;
     const nextThreshold = next.threshold ?? threshold;
     const nextShowMa = next.showMa ?? showMa;
+    const nextShowAccel = next.showAccel ?? showAccel;
+    const nextAccelPeriod = next.accelPeriod ?? accelPeriod;
+    const nextAccelSmoothing = next.accelSmoothing ?? accelSmoothing;
+    const nextAccelThreshold = next.accelThreshold ?? accelThreshold;
+    const nextAccelAbsolute = next.accelAbsolute ?? accelAbsolute;
     const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
     chart.overrideIndicator(
       {
@@ -778,6 +805,12 @@ export default function IndicatorSettings({
           colorByDirection: nextColorByDirection,
           threshold: nextThreshold,
           showMa: nextShowMa,
+          showAccel: nextShowAccel,
+          accelPeriod: nextAccelPeriod,
+          accelSmoothing:
+            nextAccelSmoothing.type === "none" ? undefined : nextAccelSmoothing,
+          accelThreshold: nextAccelThreshold,
+          accelAbsolute: nextAccelAbsolute,
         },
       },
       paneId,
@@ -798,6 +831,10 @@ export default function IndicatorSettings({
       tf === "chart" ? null : tf,
       brokerId,
     );
+    // applySlopeTimeframe re-syncs the companion too, but only after its awaited
+    // fetches: this synchronous call makes the pane appear/disappear instantly on
+    // toggle rather than after a network round-trip.
+    syncAccelCompanion(chart, name);
     requestIndicatorOverlayRepaint();
   }
 
@@ -877,6 +914,9 @@ export default function IndicatorSettings({
     const next = lines.map((l) => (l.key === key ? { ...l, ...patch } : l));
     setLines(next);
     apply({ lines: next });
+    // A Slope line's color/width also styles the matching accel line — push the
+    // parent's freshly-overridden styles onto the companion in place.
+    if (isSlope) syncAccelCompanion(chart, name);
   }
 
   // Toggle a line's VISIBILITY (Style tab checkbox). Visibility lives in
@@ -914,10 +954,9 @@ export default function IndicatorSettings({
     setVisible(v);
     const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}), userVisible: v, visibility: vis };
-    chart.overrideIndicator(
-      { name, extendData: ext, visible: v && isVisibleOnResolution(vis, chartResolution) },
-      paneId,
-    );
+    const effVisible = v && isVisibleOnResolution(vis, chartResolution);
+    chart.overrideIndicator({ name, extendData: ext, visible: effVisible }, paneId);
+    if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
   }
 
   // Per-timeframe visibility grid (VisibilityTab onChange): persists the model AND
@@ -927,10 +966,9 @@ export default function IndicatorSettings({
     setVis(next);
     const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}), userVisible: visible, visibility: next };
-    chart.overrideIndicator(
-      { name, extendData: ext, visible: visible && isVisibleOnResolution(next, chartResolution) },
-      paneId,
-    );
+    const effVisible = visible && isVisibleOnResolution(next, chartResolution);
+    chart.overrideIndicator({ name, extendData: ext, visible: effVisible }, paneId);
+    if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
   }
 
   // Show/hide this indicator's value in the legend. Stored on extendData
@@ -956,6 +994,10 @@ export default function IndicatorSettings({
       },
       paneId,
     );
+    // The restore rewrites the parent's extendData wholesale (incl. showAccel and
+    // accel params), so re-sync the companion: toggle-accel-then-Cancel must not
+    // leave an orphaned pane (or a missing one).
+    if (isSlope) syncAccelCompanion(chart, name);
     // Revert the persisted snapshot too (the effect saved edits eagerly).
     if (originalCfg.current) saveIndicatorConfig(scope, name, originalCfg.current);
     onClose();
@@ -1495,6 +1537,186 @@ export default function IndicatorSettings({
                           />
                         </div>
                       </div>
+                    </>
+                  )}
+                  <div className="ind-group">Acceleration</div>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input
+                        type="checkbox"
+                        checked={showAccel}
+                        onChange={(e) => {
+                          setShowAccel(e.target.checked);
+                          applySlope({ showAccel: e.target.checked });
+                        }}
+                      />
+                      <span>Show acceleration pane</span>
+                    </label>
+                    <InfoTip
+                      title="Show acceleration pane"
+                      text={[
+                        "Adds a second pane below showing how fast each MA's slope is changing.",
+                        "Positive means the slope is steepening. Negative means it is flattening.",
+                      ]}
+                    />
+                  </span>
+                  {showAccel && (
+                    <>
+                      <span className="ind-row-head">
+                        <label className="ind-check">
+                          <input
+                            type="checkbox"
+                            checked={accelAbsolute}
+                            onChange={(e) => {
+                              setAccelAbsolute(e.target.checked);
+                              applySlope({ accelAbsolute: e.target.checked });
+                            }}
+                          />
+                          <span>Plot absolute value</span>
+                        </label>
+                        <InfoTip
+                          title="Plot absolute value"
+                          text={[
+                            "Plots the magnitude of the acceleration, |accel|, so the line stays at or above zero.",
+                            "Use it to see how hard the slope is changing without caring whether it is steepening or flattening.",
+                          ]}
+                        />
+                      </span>
+                      <div className="ind-row">
+                        <span className="ind-row-head">
+                          <label>Acceleration Period</label>
+                          <InfoTip
+                            title="Acceleration period"
+                            text={[
+                              "How many bars the slope change is measured over.",
+                              "A larger period gives a smaller, smoother reading.",
+                              "Units follow the slope's units: a %/hr slope gives %/hr per hour, and %/bar or price/bar gives per bar.",
+                            ]}
+                          />
+                        </span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={accelPeriod}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            setAccelPeriod(v);
+                            applySlope({ accelPeriod: v });
+                          }}
+                        />
+                      </div>
+                      <div className="ind-row">
+                        <span className="ind-row-head">
+                          <label>Smoothing</label>
+                          <InfoTip
+                            title="Acceleration smoothing"
+                            text="Averages the acceleration line to cut noise. Acceleration is a second derivative, so it is noisier than slope."
+                          />
+                        </span>
+                        <select
+                          value={accelSmoothing.type}
+                          onChange={(e) => {
+                            const next: SlopeSmoothing = {
+                              type: e.target.value as SlopeSmoothing["type"],
+                              length: accelSmoothing.length,
+                            };
+                            setAccelSmoothing(next);
+                            applySlope({ accelSmoothing: next });
+                          }}
+                        >
+                          {SMOOTHING_TYPES.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {accelSmoothing.type !== "none" && (
+                        <div className="ind-row">
+                          <span className="ind-row-head">
+                            <label>Length</label>
+                            <InfoTip
+                              title="Smoothing Length"
+                              text="The number of bars in the smoothing average. Longer is smoother but adds more lag."
+                            />
+                          </span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={accelSmoothing.length}
+                            onChange={(e) => {
+                              const next: SlopeSmoothing = {
+                                type: accelSmoothing.type,
+                                length: Number(e.target.value),
+                              };
+                              setAccelSmoothing(next);
+                              applySlope({ accelSmoothing: next });
+                            }}
+                          />
+                        </div>
+                      )}
+                      <span className="ind-row-head">
+                        <label className="ind-check">
+                          <input
+                            type="checkbox"
+                            checked={accelThreshold.on}
+                            onChange={(e) => {
+                              const next = { ...accelThreshold, on: e.target.checked };
+                              setAccelThreshold(next);
+                              applySlope({ accelThreshold: next });
+                            }}
+                          />
+                          <span>Show threshold</span>
+                        </label>
+                        <InfoTip
+                          title="Acceleration threshold"
+                          text="A symmetric visual guide drawn at +level and −level on the acceleration pane. Drag either line on the chart to adjust, or set the exact level here. Reference only — it doesn't trigger anything."
+                        />
+                      </span>
+                      {accelThreshold.on && (
+                        <>
+                          <div className="ind-row">
+                            <span className="ind-row-head">
+                              <label>Level (±)</label>
+                              <InfoTip
+                                title="Acceleration threshold level"
+                                text="The acceleration magnitude the two lines sit at, in the current acceleration units. The pane rescales so the lines stay visible."
+                              />
+                            </span>
+                            <input
+                              type="number"
+                              step="any"
+                              value={accelThreshold.level}
+                              onChange={(e) => {
+                                const next = { ...accelThreshold, level: Number(e.target.value) };
+                                setAccelThreshold(next);
+                                applySlope({ accelThreshold: next });
+                              }}
+                            />
+                          </div>
+                          <div className="ind-row">
+                            <span className="ind-row-head">
+                              <label>Line</label>
+                            </span>
+                            <div className="ind-line-controls">
+                              <ColorLineStylePicker
+                                color={accelThreshold.color ?? "#787B86"}
+                                onColor={(hex) => {
+                                  const next = { ...accelThreshold, color: hex };
+                                  setAccelThreshold(next);
+                                  applySlope({ accelThreshold: next });
+                                }}
+                                lineStyle={accelThreshold.lineStyle ?? "dotted"}
+                                onLineStyle={(s) => {
+                                  const next = { ...accelThreshold, lineStyle: s };
+                                  setAccelThreshold(next);
+                                  applySlope({ accelThreshold: next });
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </>
                   )}
                 </>

@@ -199,6 +199,22 @@ describe("indicatorOutputs", () => {
     ]);
   });
 
+  it("offers accel outputs only when showAccel is on", () => {
+    const cp = [9, 21];
+    expect(indicatorOutputs("SLOPE", { slopePeriod: 3 }, cp).map((o) => o.lineIndex))
+      .toEqual([0, 1]);
+    const withAccel = indicatorOutputs("SLOPE", { slopePeriod: 3, showAccel: true }, cp);
+    expect(withAccel.map((o) => o.lineIndex)).toEqual([0, 1, 4, 5]);
+    expect(withAccel[2].label).toBe("Accel MA 9");
+    // Block 3 only when accel smoothing is active.
+    const smoothed = indicatorOutputs(
+      "SLOPE",
+      { slopePeriod: 3, showAccel: true, accelSmoothing: { type: "ema", length: 4 } },
+      cp,
+    );
+    expect(smoothed.map((o) => o.lineIndex)).toEqual([0, 1, 4, 5, 6, 7]);
+  });
+
   it("unsupported types return []", () => {
     expect(indicatorOutputs("MACD", {}, [12, 26, 9])).toEqual([]);
     expect(indicatorOutputs("SESSIONS", {}, [])).toEqual([]);

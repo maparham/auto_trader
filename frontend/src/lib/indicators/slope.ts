@@ -36,9 +36,19 @@ export interface SlopeExtend extends MaExtend {
   colorByDirection?: boolean;
   showMa?: boolean;
   threshold?: SlopeThreshold;
+  showAccel?: boolean;
+  accelPeriod?: number;
+  accelSmoothing?: SlopeSmoothing;
+  accelThreshold?: SlopeThreshold;
+  // Plot |acceleration| instead of signed acceleration on the companion pane. A
+  // display transform applied when computeAccelCalc builds the pane values (after
+  // any smoothing/MTF align), so magnitude reads regardless of steepening vs
+  // flattening. Does not touch the signed accel rule operand.
+  accelAbsolute?: boolean;
   mtf?: MaExtend["mtf"] & {
     htfSeriesByLine?: Array<Array<number | undefined>>;
     htfMaBaseByLine?: Array<Array<number | undefined>>;
+    htfAccelByLine?: Array<Array<number | undefined>>;
   };
 }
 
@@ -113,6 +123,55 @@ export function smoothSeries(
     }
     return sum / s.length;
   });
+}
+
+/** Rate of change of a slope series over `n2` bars: the MA's acceleration.
+ * Uses an ABSOLUTE difference, NOT the percentage renormalization slopeWithUnits
+ * applies. The slope crosses zero, so dividing by |prev slope| would blow up at
+ * the crossing. Units are therefore "slope units per hour" (perHour) or "slope
+ * units per bar". undefined for the first n2 bars and wherever either endpoint
+ * is undefined. */
+export function accelSeries(
+  slope: Array<number | undefined>,
+  n2: number,
+  barHours: number,
+  perHour: boolean,
+): Array<number | undefined> {
+  // A non-positive period would make `slope[i - n2]` read a FUTURE index, a silent
+  // lookahead that reaches backtest rules (the settings input min=1 doesn't stop a
+  // typed negative). Refuse: emit an all-undefined series instead.
+  if (!(n2 >= 1)) return slope.map(() => undefined);
+  return slope.map((v, i) => {
+    const prev = slope[i - n2];
+    if (i < n2 || v === undefined || prev === undefined) return undefined;
+    const denom = n2 * (perHour ? barHours : 1);
+    if (denom === 0) return undefined;
+    return (v - prev) / denom;
+  });
+}
+
+/** ONE MA-acceleration line: the slope line (already unit-converted and
+ * slope-smoothed) differentiated again, then optionally smoothed on its own.
+ * Pipeline: MA -> slope -> (slope smoothing) -> accel -> (accel smoothing).
+ * Shared by the pane, the rule recipe, and MTF so all three agree by construction. */
+export function accelLineSeries(
+  candles: KLineData[],
+  maType: "ema" | "sma",
+  length: number,
+  n: number,
+  n2: number,
+  units: SlopeUnit,
+  source: MaExtend["source"],
+  smoothing: SlopeSmoothing | undefined,
+  accelSmoothing: SlopeSmoothing | undefined,
+  barHours: number,
+): Array<number | undefined> {
+  const slope = slopeLineSeries(candles, maType, length, n, units, source, smoothing, barHours);
+  // Time base follows the slope's units: a %/hr slope accelerates per hour;
+  // %/bar and price/bar accelerate per bar. That is why there is no separate
+  // accel units control.
+  const accel = accelSeries(slope, n2, barHours, units === "pctHr");
+  return smoothSeries(accel, accelSmoothing);
 }
 
 /** ONE MA-slope line: MA (via maSeries, matches the real EMA/SMA) → slope (units)
@@ -266,7 +325,16 @@ function drawSlope(params: IndicatorDrawParams<SlopePoint>): boolean {
     ctx.lineWidth = 1;
     ctx.font = "10px -apple-system, system-ui, sans-serif";
     ctx.textBaseline = "middle";
-    for (const level of [th, -th]) {
+    // In the accel COMPANION's absolute mode the values are all ≥ 0, so only the
+    // +level guide applies (computeAccelCalc likewise emits only thHi). Gate on the
+    // companion's indType, NOT accelAbsolute alone: applySlope relays accelAbsolute
+    // through the PARENT Slope's extendData too, and the parent reuses drawSlope but
+    // always plots signed slope (computeSlopeCalc emits both thHi/thLo) — so it must
+    // keep the symmetric ±level pair.
+    const absOnly =
+      (ext as { indType?: string }).indType === "SLOPE_ACCEL" && ext.accelAbsolute === true;
+    const levels = absOnly ? [th] : [th, -th];
+    for (const level of levels) {
       const y = yAxis.convertToPixel(level);
       ctx.setLineDash(dash);
       ctx.beginPath();
@@ -374,5 +442,120 @@ export const SLOPE_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     slopeFigures(calcParams)) as IndicatorTemplate["regenerateFigures"],
   styles: { lines: SLOPE_PALETTE.map((c) => fullLine(c, LineType.Solid)) },
   calc: (dataList: KLineData[], ind: Indicator) => computeSlopeCalc(dataList, ind),
+  draw: (params) => drawSlope(params as IndicatorDrawParams<SlopePoint>),
+};
+
+// Same shape as slopeFigures (including the title-less thHi/thLo auto-scale
+// figures) but labelled Accel, so the companion pane's native canvas legend
+// reads correctly. Keys stay slope<i> so drawSlope is reused verbatim.
+function accelFigures(calcParams: unknown[]): Array<{ key: string; title: string; type: "line" }> {
+  const lines = slopeLengths(calcParams).map((len, i) => ({
+    key: `slope${i}`,
+    title: `Accel ${len}: `,
+    type: "line" as const,
+  }));
+  const threshold = ["thHi", "thLo"].map((key) => ({ key, title: "", type: "line" as const }));
+  return [...lines, ...threshold];
+}
+
+// The companion pane's calc. Mirrors computeSlopeCalc exactly (same keys, same
+// threshold auto-scale trick, same MTF align-don't-recompute rule) but the values
+// are acceleration. On a higher timeframe it aligns the coordinator-stashed
+// htfAccelByLine, which was computed on NATIVE HTF bars: differentiating the
+// already-aligned slope would read zero inside a bucket and spike at boundaries.
+function computeAccelCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
+  const ext = (ind.extendData ?? {}) as SlopeExtend;
+  const lengths = slopeLengths(ind.calcParams);
+  const { maType, n, units, source, smoothing } = slopeShared(ext);
+  const n2 = Number(ext.accelPeriod) || 3;
+  // Plot |accel| when requested: a display transform on the final pane values
+  // (undefined stays undefined). With magnitudes always ≥ 0 the pane reads as a
+  // "how hard is it accelerating" line regardless of steepening vs flattening.
+  const absolute = ext.accelAbsolute === true;
+  const plot = (v: number | undefined): number | undefined =>
+    v === undefined ? undefined : absolute ? Math.abs(v) : v;
+  const th = slopeThresholdLevel(ext);
+  const withThreshold = (p: SlopePoint): SlopePoint => {
+    if (th !== null) {
+      // In absolute mode the values never go below zero, so only the +level guide
+      // is meaningful — emit just thHi (the pane floors at 0, no wasted space below).
+      p.thHi = th;
+      if (!absolute) p.thLo = -th;
+    }
+    return p;
+  };
+  const mtf = ext.mtf;
+  if (mtf?.timeframe && mtf.htfAccelByLine && mtf.htfStarts && mtf.htfMs) {
+    const ts = candles.map((k) => k.timestamp);
+    const starts = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
+    const aligned = mtf.htfAccelByLine.map((series) =>
+      alignHtfToChart(ts, starts, series, mtf.htfMs!, true),
+    );
+    return candles.map((_, i) => {
+      const p: SlopePoint = {};
+      aligned.forEach((a, li) => (p[`slope${li}`] = plot(a[i] ?? undefined)));
+      return withThreshold(p);
+    });
+  }
+  const barHours = inferBarHours(candles);
+  const lines = lengths.map((len) =>
+    accelLineSeries(candles, maType, len, n, n2, units, source, smoothing, ext.accelSmoothing, barHours),
+  );
+  return candles.map((_, i) => {
+    const p: SlopePoint = {};
+    lines.forEach((line, li) => (p[`slope${li}`] = plot(line[i] ?? undefined)));
+    return withThreshold(p);
+  });
+}
+
+/** The acceleration companion pane. An INTERNAL template: it is never in the
+ * indicator menu and never a rule operand (operands live on the parent Slope).
+ * Reuses drawSlope, so the zero line, threshold guide, color-by-direction and
+ * palette all behave exactly like the Slope pane. */
+/** Native canvas legend for the companion pane (internal panes get no DOM
+ * legend card). klinecharts' default source renders EVERY figure, including
+ * the title-less thHi/thLo auto-scale figures, which read as bare "n/a"
+ * entries; rebuild the row with the titled Accel lines only, colored like
+ * drawSlope (per-line override, palette fallback, direction green/red for a
+ * lone line). */
+function accelTooltipSource(params: {
+  indicator: Indicator;
+  crosshair: { dataIndex?: number };
+}): { name: string; calcParamsText: string; icons: never[]; values: Array<{ title: { text: string; color: string }; value: { text: string; color: string } }> } {
+  const ind = params.indicator;
+  const result = (ind.result ?? []) as SlopePoint[];
+  const i = params.crosshair.dataIndex ?? result.length - 1;
+  const p = result[i] ?? {};
+  const lengths = slopeLengths(ind.calcParams);
+  const ext = (ind.extendData ?? {}) as SlopeExtend;
+  const overrides = (ind.styles?.lines ?? []) as Array<{ color?: string }>;
+  const directionMode = ext.colorByDirection !== false && lengths.length === 1;
+  const precision = ind.precision ?? 4;
+  const values = lengths.map((len, li) => {
+    const v = p[`slope${li}`];
+    const color = directionMode
+      ? (v ?? 0) >= 0
+        ? SLOPE_UP
+        : SLOPE_DOWN
+      : overrides[li]?.color ?? SLOPE_PALETTE[li % SLOPE_PALETTE.length];
+    return {
+      title: { text: `Accel ${len}: `, color },
+      value: { text: v === undefined ? "n/a" : v.toFixed(precision), color },
+    };
+  });
+  return { name: "Accel", calcParamsText: "", icons: [], values };
+}
+
+export const SLOPE_ACCEL_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
+  shortName: "Accel",
+  series: IndicatorSeries.Normal,
+  precision: 4,
+  calcParams: [9],
+  figures: accelFigures([9]),
+  regenerateFigures: ((calcParams: unknown[]) =>
+    accelFigures(calcParams)) as IndicatorTemplate["regenerateFigures"],
+  styles: { lines: SLOPE_PALETTE.map((c) => fullLine(c, LineType.Solid)) },
+  calc: (dataList: KLineData[], ind: Indicator) => computeAccelCalc(dataList, ind),
+  createTooltipDataSource: accelTooltipSource as IndicatorTemplate["createTooltipDataSource"],
   draw: (params) => drawSlope(params as IndicatorDrawParams<SlopePoint>),
 };

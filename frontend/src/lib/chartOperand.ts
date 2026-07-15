@@ -247,26 +247,36 @@ export function indicatorOutputs(indType: string, extendData: unknown, calcParam
     case "AVWAP":
       return [{ lineIndex: 0, label: "Value", base: true }];
     case "SLOPE": {
-      // This indicator outputs rate/slope only — never the raw MA. Each configured
-      // length exposes its raw (unsmoothed) slope at lineIndex 0..K-1, and — only
-      // when smoothing is enabled — its smoothed slope at lineIndex K..2K-1. See the
-      // matching `line` encoding in backtestSeries.ts's computeIndicatorRecipe.
+      // Rate-only outputs in four fixed blocks relative to K. See the matching
+      // `line` encoding in backtestSeries.ts's computeIndicatorRecipe and the
+      // warm-up in backtestConfig.ts's operandBaseLen: all three must agree.
       const lengths = (Array.isArray(calcParams) ? calcParams : []).map(Number)
         .filter((v) => Number.isFinite(v) && v !== 0).slice(0, 5);
       const ls = lengths.length ? lengths : [9];
       const K = ls.length;
+      const sm = ext.smoothing as { type?: string; length?: number } | undefined;
+      const smOn = !!sm && sm.type !== "none" && (sm.length ?? 0) > 1;
+      const aSm = ext.accelSmoothing as { type?: string; length?: number } | undefined;
+      const aSmOn = !!aSm && aSm.type !== "none" && (aSm.length ?? 0) > 1;
       // The parent label ("MA Slope") carries no length, so the chip fuses the
       // length in ("MA Slope 9") rather than reading "MA Slope: Slope MA 9".
       const slopes = ls.map((len, i) => ({ lineIndex: i, label: `Slope MA ${len}`, chipLabel: `MA Slope ${len}` }));
-      const sm = ext.smoothing as { type?: string; length?: number } | undefined;
-      const smOn = !!sm && sm.type !== "none" && (sm.length ?? 0) > 1;
       const smoothed = smOn
         ? ls.map((len, i) => {
             const suffix = `${String(sm!.type).toUpperCase()} ${sm!.length}`;
             return { lineIndex: K + i, label: `Slope MA ${len} · ${suffix}`, chipLabel: `MA Slope ${len} · ${suffix}` };
           })
         : [];
-      return [...slopes, ...smoothed];
+      const accel = ext.showAccel
+        ? ls.map((len, i) => ({ lineIndex: 2 * K + i, label: `Accel MA ${len}`, chipLabel: `MA Accel ${len}` }))
+        : [];
+      const accelSmoothed = ext.showAccel && aSmOn
+        ? ls.map((len, i) => {
+            const suffix = `${String(aSm!.type).toUpperCase()} ${aSm!.length}`;
+            return { lineIndex: 3 * K + i, label: `Accel MA ${len} · ${suffix}`, chipLabel: `MA Accel ${len} · ${suffix}` };
+          })
+        : [];
+      return [...slopes, ...smoothed, ...accel, ...accelSmoothed];
     }
     default:
       return [];

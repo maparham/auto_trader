@@ -20,6 +20,7 @@ import {
 } from "./indicators/pivotBands";
 import {
   slopeLineSeries,
+  accelLineSeries,
   smoothSeries,
   inferBarHours,
   slopeLengths,
@@ -27,6 +28,7 @@ import {
   type SlopeExtend,
   type SlopeSmoothing,
 } from "./indicators/slope";
+import { syncAccelCompanion } from "./indicators";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
 // so a wide loaded span needs several pages walked back — kept under the cap.
@@ -407,17 +409,21 @@ export async function applySlopeTimeframe(
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
     chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
+    // The companion mirrors the parent's extendData (here: the cleared MTF stash).
+    syncAccelCompanion(chart, name);
     return;
   }
 
-  // Reach back the longest MA length + slope period (+ smoothing) so the HTF
-  // left edge is populated for every line.
+  // Reach back the longest MA length + slope period + accel period (+ both
+  // smoothing windows) so the HTF left edge is populated for every line.
   const smLen = config.smoothing && config.smoothing.type !== "none" ? Number(config.smoothing.length) || 0 : 0;
+  const aSmLen = ext.accelSmoothing && ext.accelSmoothing.type !== "none" ? Number(ext.accelSmoothing.length) || 0 : 0;
+  const n2 = Number(ext.accelPeriod) || 3;
   const { htf, htfMs, failed } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
-    Math.max(...config.lengths) + config.slopeN + smLen,
+    Math.max(...config.lengths) + config.slopeN + smLen + (ext.showAccel ? n2 + aSmLen : 0),
     brokerId,
     oldestChartMs,
   );
@@ -440,6 +446,26 @@ export async function applySlopeTimeframe(
   const byLine = config.lengths.map((len) =>
     slopeLineSeries(htf, config.maType, len, config.slopeN, config.units, config.options.source, config.smoothing, barHours),
   );
+  // Acceleration computed on NATIVE HTF bars too (same barHours), then aligned by
+  // computeAccelCalc. Differentiating the ALIGNED slope would read zero inside each
+  // HTF bucket and spike at the boundaries, and would diverge from the rule value.
+  // Gated on showAccel, so it is undefined when the companion pane is off.
+  const accelByLine = ext.showAccel
+    ? config.lengths.map((len) =>
+        accelLineSeries(
+          htf,
+          config.maType,
+          len,
+          config.slopeN,
+          n2,
+          config.units,
+          config.options.source,
+          config.smoothing,
+          ext.accelSmoothing,
+          barHours,
+        ),
+      )
+    : undefined;
   // Same lengths/source HTF MA base for the on-chart MA curves, smoothed on the
   // HTF bars (before alignment, so smoothing never leaks across chart bars) to
   // follow the Slope's smoothing, stashed transiently alongside the slope
@@ -455,9 +481,12 @@ export async function applySlopeTimeframe(
     htfStarts: htf.map((b) => b.timestamp),
     htfSeriesByLine: byLine,
     htfMaBaseByLine: maBaseByLine,
+    htfAccelByLine: accelByLine,
     htfMs,
   };
   chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
+  // The companion mirrors the parent's extendData (including the MTF stash).
+  syncAccelCompanion(chart, name);
 }
 
 /**
@@ -547,7 +576,15 @@ export async function refreshMtfIndicators(
         const lengths = slopeLengths(ind.calcParams);
         const slopeN = Number(ext.slopePeriod) || 3;
         const smLen = ext.smoothing && ext.smoothing.type !== "none" ? Number(ext.smoothing.length) || 0 : 0;
-        if (covered(Math.max(...lengths) + slopeN + smLen)) return;
+        // Match applySlopeTimeframe's reach-back: when the accel companion is on,
+        // the HTF series must warm the extra accel period + accel smoothing too, or
+        // a scroll-back page can leave the accel line's left edge blank.
+        const aSmLen =
+          ext.accelSmoothing && ext.accelSmoothing.type !== "none"
+            ? Number(ext.accelSmoothing.length) || 0
+            : 0;
+        const accelWarm = ext.showAccel ? (Number(ext.accelPeriod) || 3) + aSmLen : 0;
+        if (covered(Math.max(...lengths) + slopeN + smLen + accelWarm)) return;
         jobs.push(
           applySlopeTimeframe(
             chart,

@@ -20,6 +20,7 @@ import {
   isSubPaneIndicator,
   reorderSubPanes,
   subPaneOrder,
+  mirrorAccelCompanion,
 } from "../lib/indicators";
 import { indTypeOf } from "../lib/customIndicators";
 import { saveIndicators, saveIndicatorVisible, type SavedIndicatorConfig } from "../lib/persist";
@@ -87,6 +88,13 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // Visibility persists by scope+name (pane-agnostic) and is re-applied on hydrate,
     // so sub-pane indicators now keep their hidden state across reloads too.
     saveIndicatorVisible(scope, name, next);
+    // A Slope's accel companion follows its parent's visibility. Mirror the flag
+    // directly rather than re-running syncAccelCompanion: a pane teardown and
+    // recreate on every eye click would flicker.
+    mirrorAccelCompanion(c, name, {
+      extendData: ext,
+      visible: next && isVisibleOnResolution(vis, period.resolution),
+    });
     handle.redrawRef.current();
   }, [paneIdOf, period.resolution]);
   const onLegendOpenSettings = useCallback((name: string) => {
@@ -291,6 +299,8 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     const ind = c.getIndicatorByPaneId(paneId, name) as { visible?: boolean } | null;
     const next = !(ind?.visible ?? true);
     c.overrideIndicator({ name, visible: next }, paneId);
+    // A Slope's accel companion follows its parent's visibility. No-ops if absent.
+    mirrorAccelCompanion(c, name, { visible: next });
     if (paneId === "candle_pane") saveIndicatorVisible(scope, name, next);
     handle.redrawRef.current();
   }, []);

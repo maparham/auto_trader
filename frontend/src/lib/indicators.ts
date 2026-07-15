@@ -30,6 +30,7 @@ import {
   type CustomIndicatorType,
 } from "./customIndicators";
 import { EQUITY_INDICATOR } from "./backtest";
+import type { SlopeExtend } from "./indicators/slope";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
 import {
   type VisibilityModel,
@@ -166,9 +167,21 @@ function isFixedCompact(type: string): boolean {
 
 // Panes the reorder feature must never touch: the candle pane is handled by paneId,
 // and the backtest equity curve is app-owned. Exported so ChartLegend filters on the
-// SAME set — the legend's card index and this engine's reorderable order both exclude
-// these, and they must agree or arrow/menu moves go off-by-one. One definition, no drift.
+// SAME predicate: the legend's card index and this engine's reorderable order both
+// exclude these, and they must agree or arrow/menu moves go off-by-one. One
+// definition, no drift.
 export const INTERNAL_INDICATORS = new Set<string>([EQUITY_INDICATOR]);
+
+/** The Slope indicator's acceleration companion pane is parent-owned and derived:
+ * its id is minted from the parent's, so it cannot be a fixed set member. */
+export const ACCEL_SUFFIX = "__accel";
+export const accelCompanionId = (parentId: string): string => `${parentId}${ACCEL_SUFFIX}`;
+
+/** Internal for REORDER and LEGEND purposes: app-owned panes plus accel companions.
+ * NOTE deliberately NOT used by applyIndicatorVisibility: see the comment there.
+ * The equity pane has no user visibility intent; the accel pane follows its parent. */
+export const isInternalIndicator = (name: string): boolean =>
+  INTERNAL_INDICATORS.has(name) || name.endsWith(ACCEL_SUFFIX);
 
 // A reorderable sub-pane captured before teardown: its id, current height, and the
 // ordered indicator instances it holds (usually one; a multi-indicator pane moves whole).
@@ -190,7 +203,7 @@ function reorderablePanes(chart: Chart): PaneSnapshot[] {
     if (paneId === "candle_pane") continue;
     const insts: IndicatorInstance[] = [];
     for (const ind of inds.values()) {
-      if (!ind?.name || INTERNAL_INDICATORS.has(ind.name)) continue;
+      if (!ind?.name || isInternalIndicator(ind.name)) continue;
       insts.push({ id: ind.name, type: indTypeOf(ind) });
     }
     if (!insts.length) continue; // internal-only pane (e.g. equity) — not reorderable
@@ -454,7 +467,147 @@ export function applyIndicator(
       { name: id, styles: cfg.styles as unknown as Partial<IndicatorStyle> },
       paneId,
     );
+  // The parent Slope owns its acceleration companion. applyIndicator is the ONE
+  // creation choke point (hydrate, reorder, fresh add, paste, templates,
+  // snapshots all route here), so every recreate path re-derives the companion.
+  if (type === "SLOPE") syncAccelCompanion(chart, id);
   return paneId;
+}
+
+// Spawn/tear down a Slope's acceleration companion pane. The companion is DERIVED
+// state: the parent owns showAccel + the accel params, and nothing about the
+// companion is persisted, so there is exactly one source of truth. Remove-then-
+// create is what keeps the companion directly below its parent: reorder recreates
+// parents in order (each pane appended at the bottom) and this runs inside the
+// parent's applyIndicator, so panes land as [P1, A1, P2, A2, ...].
+export function syncAccelCompanion(chart: Chart, parentId: string): void {
+  const companionId = accelCompanionId(parentId);
+  const panes = chart.getIndicatorByPaneId() as
+    | Map<string, Map<string, Indicator>>
+    | null
+    | undefined;
+  // Pane insertion order top-to-bottom (candle_pane first, then sub-panes) — used
+  // to tell whether the companion already sits directly below its parent.
+  const order = [...(panes?.keys() ?? [])];
+  let parent: Indicator | null = null;
+  let parentPaneId: string | null = null;
+  let companionPaneId: string | null = null;
+  for (const [paneId, inds] of panes ?? []) {
+    const p = inds.get(parentId);
+    if (p) {
+      parent = p as Indicator;
+      parentPaneId = paneId;
+    }
+    if (inds.has(companionId)) companionPaneId = paneId;
+  }
+  const ext = (parent?.extendData ?? {}) as SlopeExtend & {
+    userVisible?: boolean;
+    visibility?: VisibilityModel;
+  };
+  // No parent, or accel turned off: drop any stray companion and stop.
+  if (!parent || !ext.showAccel) {
+    if (companionPaneId) chart.removeIndicator(companionPaneId, companionId);
+    return;
+  }
+  // The companion's config: accelThreshold lands on its `threshold` field so the
+  // reused drawSlope + its auto-scale trick work with no branching. The mtf stash
+  // is copied wholesale (computeAccelCalc reads htfAccelByLine).
+  const nextExt = { ...ext, indType: "SLOPE_ACCEL", threshold: ext.accelThreshold };
+
+  // In-place update when the companion already sits directly below the parent:
+  // override it where it is (no remove-then-create) so a param/style/Cancel edit
+  // can't hop the pane to the bottom of the stack. Carries calcParams (figures
+  // regenerate), extendData, styles and visibility through in one write.
+  const parentIdx = parentPaneId ? order.indexOf(parentPaneId) : -1;
+  const companionIdx = companionPaneId ? order.indexOf(companionPaneId) : -1;
+  if (companionPaneId && parentIdx >= 0 && companionIdx === parentIdx + 1) {
+    chart.overrideIndicator(
+      {
+        name: companionId,
+        calcParams: parent.calcParams,
+        extendData: nextExt,
+        visible: parent.visible !== false,
+        ...(parent.styles
+          ? { styles: parent.styles as unknown as Partial<IndicatorStyle> }
+          : {}),
+      },
+      companionPaneId,
+    );
+    return;
+  }
+
+  // Otherwise (first spawn, or a reorder moved the parent so the companion is no
+  // longer directly below it): drop any existing companion and recreate it. Each
+  // createIndicator appends a fresh pane at the bottom; because reorder recreates
+  // parents top-to-bottom, panes land as [P1, A1, P2, A2, ...].
+  if (companionPaneId) chart.removeIndicator(companionPaneId, companionId);
+  registerInstanceTemplate(chart, "SLOPE_ACCEL", companionId);
+  // NO legendTooltipSource here, unlike applyIndicator: that hook blanks the
+  // canvas legend so the DOM <SubPaneLegend> can replace it, but internal panes
+  // get no DOM card. The companion keeps klinecharts' native canvas legend
+  // (named by the template's shortName "Accel"), same as the EQUITY pane.
+  const newPaneId = chart.createIndicator(
+    {
+      name: companionId,
+      calcParams: parent.calcParams,
+      extendData: nextExt,
+      ...(parent.visible === false ? { visible: false } : {}),
+    },
+    false,
+    { height: SUBPANE_HEIGHT, gap: { top: 0.08, bottom: 0.08 } },
+  );
+  // Match the parent's per-line style overrides so line N is the same color in
+  // both panes. Styles must be applied by overrideIndicator against the pane
+  // createIndicator just returned.
+  if (newPaneId && parent.styles)
+    chart.overrideIndicator(
+      { name: companionId, styles: parent.styles as unknown as Partial<IndicatorStyle> },
+      newPaneId,
+    );
+}
+
+// Mirror a visibility/extendData write from a Slope parent onto its accel
+// companion, if one exists. Unlike syncAccelCompanion (which tears down and
+// recreates the pane), this only overrides the existing companion in place, so
+// there is no pane flicker. No-ops when the companion is absent. The accel
+// threshold remap (the companion's `threshold` guide is the parent's
+// accelThreshold, NOT the parent's slope threshold) lives here as the single
+// copy shared by the eye toggle, the "Show on chart" checkbox, the per-timeframe
+// visibility grid, and the curve right-click hide.
+export function mirrorAccelCompanion(
+  chart: Chart,
+  parentId: string,
+  patch: { extendData?: object; visible?: boolean },
+): void {
+  const companionId = accelCompanionId(parentId);
+  const panes = chart.getIndicatorByPaneId() as
+    | Map<string, Map<string, Indicator>>
+    | null
+    | undefined;
+  let companionPaneId: string | null = null;
+  for (const [paneId, inds] of panes ?? []) {
+    if (inds.has(companionId)) {
+      companionPaneId = paneId;
+      break;
+    }
+  }
+  if (companionPaneId === null) return;
+  chart.overrideIndicator(
+    {
+      name: companionId,
+      ...(patch.visible !== undefined ? { visible: patch.visible } : {}),
+      ...(patch.extendData
+        ? {
+            extendData: {
+              ...patch.extendData,
+              indType: "SLOPE_ACCEL",
+              threshold: (patch.extendData as { accelThreshold?: unknown }).accelThreshold,
+            },
+          }
+        : {}),
+    },
+    companionPaneId,
+  );
 }
 
 // Re-derive every indicator's effective on-chart visibility: user intent
@@ -476,6 +629,11 @@ export function applyIndicatorVisibility(chart: Chart, resolution: string, allHi
     | undefined;
   for (const [paneId, inds] of panes ?? []) {
     for (const ind of inds.values()) {
+      // NOT isInternalIndicator: the accel companion DOES have user visibility
+      // intent and must follow its parent (syncAccelCompanion copies the parent's
+      // userVisible + visibility model onto it, so this sweep computes the same
+      // answer for both). Skipping it here would leave a stray accel pane on
+      // screen when its Slope is hidden. Only EQUITY is app-owned.
       if (!ind?.name || INTERNAL_INDICATORS.has(ind.name)) continue;
       const ext = (ind.extendData ?? {}) as { userVisible?: boolean; visibility?: VisibilityModel };
       const intent = ext.userVisible ?? ind.visible ?? true;
@@ -572,6 +730,14 @@ export function removeIndicatorById(chart: Chart, scope: string, id: string): vo
   for (const [paneId, inds] of panes ?? []) {
     if (inds.has(id)) {
       chart.removeIndicator(paneId, id);
+      break;
+    }
+  }
+  // A Slope owns its accel companion: remove it alongside, or it is orphaned.
+  const companionId = accelCompanionId(id);
+  for (const [paneId, inds] of panes ?? []) {
+    if (inds.has(companionId)) {
+      chart.removeIndicator(paneId, companionId);
       break;
     }
   }

@@ -9,7 +9,7 @@ vi.mock("klinecharts", () => ({
   registerIndicator: () => {},
 }));
 
-const { inferBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines } =
+const { inferBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines, accelSeries, SLOPE_ACCEL_TEMPLATE, accelLineSeries } =
   await import("./slope");
 
 const bar = (t: number, c: number): KLineData =>
@@ -252,5 +252,82 @@ describe("slopeLineSeries", () => {
     const sm = slopeLineSeries(c, "sma", 1, 1, "priceBar", "close", { type: "sma", length: 2 }, 1);
     expect(sm[4]).toBeCloseTo(2, 10);
     expect(sm[1]).toBeUndefined(); // slope bar1 exists(2) but sma-2 needs 2 → undefined
+  });
+});
+
+describe("accelSeries", () => {
+  it("is undefined for the first n2 bars", () => {
+    const out = accelSeries([1, 2, 3, 4], 2, 1, false);
+    expect(out[0]).toBeUndefined();
+    expect(out[1]).toBeUndefined();
+    expect(out[2]).toBe(1); // (3-1)/2
+    expect(out[3]).toBe(1); // (4-2)/2
+  });
+
+  it("uses an absolute difference, so a zero-crossing slope stays finite", () => {
+    // A percentage-style (v-prev)/|prev| would divide by 0 here and blow up.
+    const out = accelSeries([-1, 0, 1], 1, 1, false);
+    expect(out[1]).toBe(1);
+    expect(out[2]).toBe(1);
+    expect(Number.isFinite(out[2]!)).toBe(true);
+  });
+
+  it("divides by barHours when perHour is true", () => {
+    // slope goes 0 -> 4 over n2=2 bars of 2h each = 4 hours -> 1 per hour
+    const out = accelSeries([0, 2, 4], 2, 2, true);
+    expect(out[2]).toBe(1);
+  });
+
+  it("does not divide by barHours when perHour is false", () => {
+    const out = accelSeries([0, 2, 4], 2, 2, false);
+    expect(out[2]).toBe(2); // (4-0)/2 bars
+  });
+
+  it("propagates undefined gaps", () => {
+    const out = accelSeries([1, undefined, 3, 4], 1, 1, false);
+    expect(out[1]).toBeUndefined();
+    expect(out[2]).toBeUndefined(); // prev is undefined
+    expect(out[3]).toBe(1);
+  });
+
+  it("returns all-undefined for a non-positive period instead of reading the future", () => {
+    expect(accelSeries([1, 2, 3], -2, 1, false)).toEqual([undefined, undefined, undefined]);
+    expect(accelSeries([1, 2, 3], 0, 1, false)).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+describe("SLOPE_ACCEL_TEMPLATE", () => {
+  it("labels figures as Accel per configured length", () => {
+    const figs = SLOPE_ACCEL_TEMPLATE.regenerateFigures!([9, 21]) as Array<{ key: string; title: string }>;
+    expect(figs[0]).toMatchObject({ key: "slope0", title: "Accel 9: " });
+    expect(figs[1]).toMatchObject({ key: "slope1", title: "Accel 21: " });
+    // Threshold auto-scale figures are appended, title-less.
+    expect(figs.slice(2).map((f) => f.key)).toEqual(["thHi", "thLo"]);
+  });
+
+  it("computes acceleration, not slope", () => {
+    const candles = Array.from({ length: 40 }, (_, i) => ({
+      timestamp: i * 3_600_000,
+      open: 100 + i, high: 100 + i, low: 100 + i, close: 100 + i, volume: 1,
+    }));
+    const ind = { calcParams: [5], extendData: { slopePeriod: 2, accelPeriod: 2, units: "pctBar" } };
+    const out = SLOPE_ACCEL_TEMPLATE.calc(candles as never, ind as never) as Array<Record<string, number | undefined>>;
+    const expected = accelLineSeries(candles as never, "ema", 5, 2, 2, "pctBar", undefined, undefined, undefined, 1);
+    expect(out.map((p) => p.slope0)).toEqual(expected);
+  });
+});
+
+describe("accel on native HTF bars", () => {
+  it("accel on native HTF bars differs from diffing the aligned slope", () => {
+    // Alignment forward-fills, so diffing AFTER aligning reads 0 inside a bucket.
+    const nativeSlope = [1, 2, 3, 4];
+    const nativeAccel = accelSeries(nativeSlope, 1, 1, false);
+    expect(nativeAccel).toEqual([undefined, 1, 1, 1]);
+    // The same series aligned onto 2 chart bars per HTF bar, then diffed.
+    const aligned = [1, 1, 2, 2, 3, 3, 4, 4];
+    const wrong = accelSeries(aligned, 1, 1, false);
+    expect(wrong).toEqual([undefined, 0, 1, 0, 1, 0, 1, 0]);
+    // The zeros are the bug this stash exists to avoid.
+    expect(wrong).not.toEqual([undefined, 1, 1, 1, 1, 1, 1, 1]);
   });
 });

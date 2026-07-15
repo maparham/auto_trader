@@ -23,7 +23,7 @@ import {
 import { atrSeries } from "./atr";
 import { computePivotBands, type PivotBandsExtend } from "./indicators/pivotBands";
 import { computePivotAnalysis } from "./indicators/pivotAnalysis";
-import { slopeLineSeries, inferBarHours, slopeLengths, type SlopeUnit, type SlopeExtend } from "./indicators/slope";
+import { slopeLineSeries, accelLineSeries, inferBarHours, slopeLengths, type SlopeUnit, type SlopeExtend } from "./indicators/slope";
 import { RESOLUTION_SECONDS } from "./feed";
 
 function toNullable(arr: Array<number | undefined>): Array<number | null> {
@@ -219,7 +219,7 @@ function pickLine(points: Array<Record<string, unknown>>, keys: readonly string[
 // deliberately ignores it in favor of inferBarHours(candles) for visual parity
 // (see the SLOPE case). Threaded through only so the signature stays uniform
 // with computeSeriesRecipe/computeRaw.
-function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[], _barHours: number): Array<number | undefined> {
+export function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[], _barHours: number): Array<number | undefined> {
   const ext = (r.extend ?? {}) as Record<string, unknown>;
   const line = r.line ?? 0;
   switch (r.indicatorType) {
@@ -284,22 +284,31 @@ function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[], _barHo
       // Uses inferBarHours(candles) — NOT the threaded barHours param — so this
       // matches SLOPE_TEMPLATE.calc exactly (recipe/visual parity). The threaded
       // barHours instead drives the operand-level `~slope` transform in derive().
-      // Rate-only outputs: line < K is that length's raw (unsmoothed) slope; line
-      // >= K is its smoothed slope — see the `line` encoding note above
-      // computeIndicatorRecipe.
+      // Four fixed blocks, relative to K = number of configured lengths:
+      //   block 0 (line < K)      raw slope of lengths[j]
+      //   block 1 (K..2K-1)       smoothed slope of lengths[j]
+      //   block 2 (2K..3K-1)      acceleration of lengths[j]
+      //   block 3 (3K..4K-1)      accel-smoothed acceleration of lengths[j]
+      // Every block always resolves to a real value: a block whose toggle is off
+      // degenerates (smoothing none is identity) rather than returning undefined,
+      // because a dead operand would silently stop a rule.
       const sext = ext as SlopeExtend;
       const lengths = slopeLengths(r.calcParams);
       const K = lengths.length;
       const line = r.line ?? 0;
+      const block = Math.floor(line / K);
+      const len = lengths[line % K] ?? lengths[0];
       const maType = sext.maType === "sma" ? "sma" : "ema";
       const n = Number(sext.slopePeriod) || 3;
+      const n2 = Number(sext.accelPeriod) || 3;
       const units: SlopeUnit = sext.units ?? "pctHr";
-      if (line >= K) {
-        const len = lengths[line - K] ?? lengths[0];
-        return slopeLineSeries(candles, maType, len, n, units, sext.source, sext.smoothing, inferBarHours(candles));
+      const bh = inferBarHours(candles);
+      if (block >= 2) {
+        return accelLineSeries(candles, maType, len, n, n2, units, sext.source,
+          sext.smoothing, block === 3 ? sext.accelSmoothing : undefined, bh);
       }
-      const len = lengths[line] ?? lengths[0];
-      return slopeLineSeries(candles, maType, len, n, units, sext.source, undefined, inferBarHours(candles));
+      return slopeLineSeries(candles, maType, len, n, units, sext.source,
+        block === 1 ? sext.smoothing : undefined, bh);
     }
     default:
       return candles.map(() => undefined);

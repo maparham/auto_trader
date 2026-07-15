@@ -13,8 +13,15 @@ vi.mock("klinecharts", () => ({
   DomPosition: { Main: "main" },
 }));
 
-const { applyIndicatorVisibility, collapseSubPanes, expandSubPanes, INTERNAL_INDICATORS, addIndicatorInstance } =
-  await import("./indicators");
+const {
+  applyIndicatorVisibility,
+  collapseSubPanes,
+  expandSubPanes,
+  INTERNAL_INDICATORS,
+  isInternalIndicator,
+  accelCompanionId,
+  addIndicatorInstance,
+} = await import("./indicators");
 
 // In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
 // tests below can read what addIndicatorInstance wrote. Mirrors templates.test.ts.
@@ -218,5 +225,25 @@ describe("addIndicatorInstance persists an explicit config (Paste)", () => {
     const inst = addIndicatorInstance(pasteChart(), scope, "US100", "SLOPE");
     expect(inst).not.toBeNull();
     expect(persist.loadIndicatorConfigs(scope)[inst!.id]).toBeUndefined();
+  });
+});
+
+describe("isInternalIndicator", () => {
+  it("matches the fixed equity pane", () => {
+    expect(isInternalIndicator("EQUITY")).toBe(true);
+  });
+  it("matches any accel companion, whose id is dynamic", () => {
+    expect(isInternalIndicator("SLOPE__accel")).toBe(true);
+    expect(isInternalIndicator("SLOPE#a1b2c3__accel")).toBe(true);
+  });
+  it("does not match a normal indicator", () => {
+    expect(isInternalIndicator("SLOPE")).toBe(false);
+    expect(isInternalIndicator("RSI#a1b2c3")).toBe(false);
+  });
+});
+
+describe("accelCompanionId", () => {
+  it("derives a deterministic id from the parent", () => {
+    expect(accelCompanionId("SLOPE#a1b2c3")).toBe("SLOPE#a1b2c3__accel");
   });
 });

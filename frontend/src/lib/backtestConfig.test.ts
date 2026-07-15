@@ -367,6 +367,28 @@ describe("longestIndicatorLength with slope", () => {
     });
     expect(operandBaseLen(op)).toBe(9 + 3);
   });
+
+  it("SLOPE accel warm-up reaches back far enough per block", () => {
+    const op = (line: number, extend: object) =>
+      ser({ source: "indicator" as const, indicatorType: "SLOPE" as const,
+            calcParams: [9, 21], line, extend } as SeriesRecipe);
+    const base = { slopePeriod: 3, accelPeriod: 4 };
+    const K = 2;
+    // Block 0: len + n
+    expect(operandBaseLen(op(0, base))).toBe(9 + 3);
+    // Block 1: len + n + smoothing window
+    expect(operandBaseLen(op(K + 0, { ...base, smoothing: { type: "sma", length: 5 } })))
+      .toBe(9 + 3 + 5);
+    // Block 2: len + n + n2
+    expect(operandBaseLen(op(2 * K + 0, base))).toBe(9 + 3 + 4);
+    // Block 2 with slope smoothing on: accel differentiates the SMOOTHED slope,
+    // so the smoothing window counts too.
+    expect(operandBaseLen(op(2 * K + 0, { ...base, smoothing: { type: "sma", length: 5 } })))
+      .toBe(9 + 3 + 4 + 5);
+    // Block 3: block 2 + accel smoothing window
+    expect(operandBaseLen(op(3 * K + 1, { ...base, accelSmoothing: { type: "sma", length: 2 } })))
+      .toBe(21 + 3 + 4 + 2);
+  });
 });
 
 describe("defaultBacktestConfig", () => {

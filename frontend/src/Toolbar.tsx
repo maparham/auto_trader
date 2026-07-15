@@ -33,7 +33,7 @@ import {
 } from "./lib/persist";
 import { saveSnapshotOfChart } from "./lib/snapshotSave";
 import Snackbar from "./Snackbar";
-import { addIndicatorInstance, isSubPaneIndicator } from "./lib/indicators";
+import { addIndicatorInstance, isSubPaneIndicator, isInternalIndicator } from "./lib/indicators";
 import {
   applySymbolTemplate,
   captureDefaultTemplate,
@@ -183,9 +183,12 @@ export default function Toolbar({
   // per-instance template names (e.g. "EMA#a1b2") also appear in
   // getSupportedIndicators() and must NOT leak into the menu. A type leaks in iff
   // it has no "#": instance ids carry one.
+  // Internal names are excluded: EQUITY (driven by the Backtest button), the
+  // SLOPE_ACCEL base type and its "<parent>__accel" companion instances (driven
+  // by the Slope's "Show acceleration pane" toggle, never added directly).
   const allIndicators = getSupportedIndicators()
     .filter((n) => !n.includes("#"))
-    .filter((n) => n !== EQUITY_INDICATOR); // driven by the Backtest button
+    .filter((n) => n !== EQUITY_INDICATOR && n !== "SLOPE_ACCEL" && !isInternalIndicator(n));
   const matches = (n: string) => {
     const q = indFilter.toLowerCase();
     if (!q) return true;
