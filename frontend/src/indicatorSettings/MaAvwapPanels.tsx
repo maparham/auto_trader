@@ -12,7 +12,7 @@ import { PRICE_SOURCES, SMOOTHING_TYPES } from "../lib/indicatorMeta";
 import { applyMaTimeframe } from "../lib/mtfCoordinator";
 import type { MaExtend, AvwapExtend, BandMode, BandSetting } from "../lib/customIndicators";
 import { normalizeMaKind, type MaKind } from "../lib/mtf";
-import { maFigures, maLegendLabel } from "../lib/indicators/ma";
+import { maFigures, maLegendLabel, templateMaKind } from "../lib/indicators/ma";
 
 // --- MA/EMA -------------------------------------------------------------------
 
@@ -55,7 +55,7 @@ export function makeApplyMa(
     const st = next.smoothType ?? state.smoothType;
     const sl = next.smoothLen ?? state.smoothLen;
     const tf = next.timeframe ?? state.timeframe;
-    const templateKind: MaKind = type === "EMA" ? "ema" : "sma";
+    const templateKind: MaKind = templateMaKind(type);
     const kind = normalizeMaKind(next.maType ?? state.maType, templateKind);
     const envelope = next.envelope ?? state.envelope;
     const options: MaExtend = {
@@ -69,12 +69,26 @@ export function makeApplyMa(
     // the kind label only appears when the chosen kind differs from the
     // template's own kind.
     const label = maLegendLabel(kind, templateKind);
+    // The MTF path carries the base line only (computeMa never emits bandHi/
+    // bandLo there), so band figures must stay title-less on a higher
+    // timeframe or the DOM legend shows two permanent "n/a" rows.
+    const figures = maFigures(label, envelope && tf === "chart");
     // Legend follows the chosen kind: retitle the figures and the row name.
-    // (klinecharts' override applies figures/shortName per instance.)
-    chart.overrideIndicator(
-      { name, shortName: label, figures: maFigures(label, envelope) },
-      paneId,
-    );
+    // (klinecharts' override applies figures/shortName per instance.) Skipped
+    // when nothing changed: a fresh figures array sets klinecharts' calc flag,
+    // so an unconditional override would recompute the whole series twice per
+    // Length/Source/Offset tweak.
+    const live = chart.getIndicatorByPaneId(paneId, name) as {
+      shortName?: string;
+      figures?: Array<{ title?: string }>;
+    } | null;
+    const sameLabels =
+      live?.shortName === label &&
+      (live?.figures ?? []).length === figures.length &&
+      figures.every((f, i) => live?.figures?.[i]?.title === f.title);
+    if (!sameLabels) {
+      chart.overrideIndicator({ name, shortName: label, figures }, paneId);
+    }
     void applyMaTimeframe(
       chart,
       epic,
@@ -280,6 +294,7 @@ export function MaInputsPanel({
 // currentConfig() MA delegate: source/offset/smoothing/mtf timeframe.
 export function maConfig(
   extendData: Record<string, unknown>,
+  type: string,
   source: string,
   offset: number,
   smoothType: string,
@@ -292,8 +307,17 @@ export function maConfig(
   extendData.offset = offset;
   if (smoothType !== "none") extendData.smoothing = { type: smoothType, length: smoothLen };
   if (timeframe !== "chart") extendData.mtf = { timeframe };
-  extendData.maType = maType;
+  // Persist maType only when actually flipped. Writing the template's own kind
+  // would mutate every instance whose settings were merely OPENED (the persist
+  // effect fires on mount) and split its operands' recipe hashes from ones
+  // picked before the modal existed. Delete covers a stale default inherited
+  // from the live extendData.
+  const tk = templateMaKind(type);
+  const kind = normalizeMaKind(maType, tk);
+  if (kind !== tk) extendData.maType = kind;
+  else delete extendData.maType;
   if (envelope) extendData.envelope = true;
+  else delete extendData.envelope;
 }
 
 // --- AVWAP ---------------------------------------------------------------------

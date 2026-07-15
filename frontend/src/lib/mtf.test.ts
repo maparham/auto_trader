@@ -98,17 +98,9 @@ describe("htfCoverageStartMs", () => {
 });
 
 // Bars with per-bar volume (the flat-price bars() helper above pins volume to 0,
-// which is exactly the degenerate case for the volume-weighted kinds).
-function vbars(closes: number[], volumes: number[]): KLineData[] {
-  return closes.map((c, i) => ({
-    timestamp: i * 60_000,
-    open: c,
-    high: c + 1,
-    low: c - 1,
-    close: c,
-    volume: volumes[i] ?? 0,
-  }));
-}
+// which is exactly the degenerate case for the volume-weighted kinds). Shared
+// with ma.test.ts so the bar shape cannot drift between the two suites.
+import { vbars } from "./testBars";
 
 describe("maSeries vwma", () => {
   it("is the volume-weighted mean over the window", () => {
@@ -126,6 +118,17 @@ describe("maSeries vwma", () => {
   it("is all-undefined on a volumeless instrument", () => {
     const { base } = maSeries(vbars([10, 20, 30], [0, 0, 0]), "vwma", 2);
     expect(base).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+describe("maSeries vwma float residue", () => {
+  it("gaps on an all-zero window even after fractional volumes slid out", () => {
+    // 0.1 + 0.2 leaves a nonzero float residue when subtracted back out; the
+    // exact-count guard must still treat the [0, 0] window as empty.
+    const { base } = maSeries(vbars([10, 20, 30, 40], [0.1, 0.2, 0, 0]), "vwma", 2);
+    expect(base[1]).toBeDefined();
+    expect(base[2]).toBeDefined(); // window [0.2, 0] still carries volume
+    expect(base[3]).toBeUndefined(); // window [0, 0]: gap, not pv-residue garbage
   });
 });
 
@@ -154,6 +157,14 @@ describe("maSeries evwma", () => {
     // vbars sets high = close + 1, so an evwma over "high" tracks price + 1.
     const { base } = maSeries(vbars([10, 20, 30], [1, 2, 3]), "evwma", 2, { source: "high" });
     expect(base[1]).toBeCloseTo(21, 10);
+  });
+});
+
+describe("maSeries evwma float residue", () => {
+  it("does not re-seed off a residue window after fractional volumes slid out", () => {
+    const { base } = maSeries(vbars([10, 20, 30, 40], [0.1, 0.2, 0, 0]), "evwma", 2);
+    expect(base[2]).toBeDefined(); // window [0.2, 0] holds the prior value
+    expect(base[3]).toBeUndefined(); // window [0, 0]: undefined, recursion reset
   });
 });
 

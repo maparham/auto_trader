@@ -115,16 +115,23 @@ function vwma(
   if (length < 1) return out;
   let pv = 0;
   let v = 0;
+  // Count of volume-carrying bars in the window. The subtractive rolling sums
+  // accumulate float residue, so after fractional volumes slide out `v` can be
+  // a tiny nonzero number instead of exactly 0 and `pv / v` would plot garbage;
+  // the integer count is exact, so it is the emptiness test, not `v`.
+  let nz = 0;
   for (let i = 0; i < prices.length; i++) {
     const vol = bars[i].volume ?? 0;
     pv += prices[i] * vol;
     v += vol;
+    if (vol > 0) nz++;
     if (i >= length) {
       const oldVol = bars[i - length].volume ?? 0;
       pv -= prices[i - length] * oldVol;
       v -= oldVol;
+      if (oldVol > 0) nz--;
     }
-    if (i >= length - 1 && v > 0) out[i] = pv / v;
+    if (i >= length - 1 && nz > 0) out[i] = pv / v;
   }
   return out;
 }
@@ -144,13 +151,22 @@ function evwma(
   const out: Array<number | undefined> = new Array(prices.length).fill(undefined);
   if (length < 1) return out;
   let nbfs = 0;
+  // Exact emptiness test for the window, same reason as vwma: the subtractive
+  // rolling `nbfs` keeps float residue after fractional volumes slide out, and
+  // a residue "window" must not seed or hold the recursion.
+  let nz = 0;
   let prev: number | undefined;
   for (let i = 0; i < prices.length; i++) {
     const vol = bars[i].volume ?? 0;
     nbfs += vol;
-    if (i >= length) nbfs -= bars[i - length].volume ?? 0;
+    if (vol > 0) nz++;
+    if (i >= length) {
+      const oldVol = bars[i - length].volume ?? 0;
+      nbfs -= oldVol;
+      if (oldVol > 0) nz--;
+    }
     if (i < length - 1) continue;
-    if (nbfs <= 0) {
+    if (nz <= 0) {
       prev = undefined;
       continue;
     }

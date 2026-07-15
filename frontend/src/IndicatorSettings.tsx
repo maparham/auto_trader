@@ -55,6 +55,9 @@ import {
   DEFAULT_SESSIONS,
   DEFAULT_TIME_WINDOWS,
   indTypeOf,
+  templateMaKind,
+  maLegendLabel,
+  maFigures,
   curveLabelConfig,
   PIVOT_CONNECTOR_DEFAULTS,
   resolvePivotConnector,
@@ -282,7 +285,7 @@ export default function IndicatorSettings({
   const [smoothType, setSmoothType] = useState<string>(ext0.smoothing?.type ?? "none");
   const [smoothLen, setSmoothLen] = useState<number>(ext0.smoothing?.length ?? 9);
   const [timeframe, setTimeframe] = useState<string>(ext0.mtf?.timeframe ?? "chart");
-  const [maType, setMaType] = useState<string>(ext0.maType ?? (type === "EMA" ? "ema" : "sma"));
+  const [maType, setMaType] = useState<string>(ext0.maType ?? templateMaKind(type));
   const [envelope, setEnvelope] = useState<boolean>(ext0.envelope === true);
 
   // --- AVWAP inputs (source + bands), sourced from extendData (AvwapExtend) ---
@@ -617,7 +620,7 @@ export default function IndicatorSettings({
   function currentConfig(): SavedIndicatorConfig {
     const extendData: Record<string, unknown> = {};
     if (isMa) {
-      maConfig(extendData, source, offset, smoothType, smoothLen, timeframe, maType, envelope);
+      maConfig(extendData, type, source, offset, smoothType, smoothLen, timeframe, maType, envelope);
     }
     // Pivot Bands persists only the chosen timeframe (never the bulky HTF series);
     // refreshMtfIndicators refetches it on reload, like EMA/MA.
@@ -1002,6 +1005,22 @@ export default function IndicatorSettings({
     // accel params), so re-sync the companion: toggle-accel-then-Cancel must not
     // leave an orphaned pane (or a missing one).
     if (isSlope) syncAccelCompanion(chart, name);
+    // The Type/Envelope live preview retitles shortName/figures, which the
+    // snapshot restore above does not carry: revert them from the original
+    // extendData or a cancelled VWMA preview keeps its label while the curve
+    // computes as an EMA again.
+    if (isMa) {
+      const oext = (original.current.extendData ?? {}) as MaExtend;
+      const label = maLegendLabel(oext.maType, templateMaKind(type));
+      chart.overrideIndicator(
+        {
+          name,
+          shortName: label,
+          figures: maFigures(label, oext.envelope === true && !oext.mtf?.timeframe),
+        },
+        paneId,
+      );
+    }
     // Revert the persisted snapshot too (the effect saved edits eagerly).
     if (originalCfg.current) saveIndicatorConfig(scope, name, originalCfg.current);
     onClose();
@@ -1015,7 +1034,16 @@ export default function IndicatorSettings({
   const AVWAP_STYLE_ORDER = ["vwap", "dn1", "up1", "dn2", "up2", "dn3", "up3"];
   const styleRows = isAvwap
     ? (AVWAP_STYLE_ORDER.map((k) => lines.find((l) => l.key === k)).filter(Boolean) as LineDraft[])
-    : lines;
+    : isMa
+      ? // Envelope bands are real style rows only while the envelope draws
+        // (on the chart timeframe): otherwise they'd surface as dead
+        // "bandHi"/"bandLo" controls that edit an always-empty line. Display
+        // filter only: `lines` stays complete, so lineOverrides' positional
+        // mapping onto styles.lines is untouched.
+        lines.filter(
+          (l) => (envelope && timeframe === "chart") || (l.key !== "bandHi" && l.key !== "bandLo"),
+        )
+      : lines;
 
   // One curve (High or Low) position row: side + align selects. The two curves
   // differ only in their state cell and which curveLabelState key they patch, so

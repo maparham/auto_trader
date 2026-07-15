@@ -130,6 +130,28 @@ describe("recipeLabel maType", () => {
     });
     expect(label).toBe("EMA(9)");
   });
+  it("keeps the never-flipped template label when maType is the template's own kind", () => {
+    // The settings modal persists a default maType just from being opened; the
+    // chip must keep reading "MA(20)" (like the chart legend), never "SMA(20)".
+    const label = recipeLabel({
+      source: "indicator", indicatorType: "MA", calcParams: [20], line: 0,
+      extend: { maType: "sma" },
+    });
+    expect(label).toBe("MA(20)");
+  });
+});
+
+describe("indicatorToRecipe maType canonicalization", () => {
+  it("strips a default maType so the recipe matches a never-opened instance", () => {
+    const untouched = indicatorToRecipe("MA", [20], {});
+    const opened = indicatorToRecipe("MA", [20], { maType: "sma" });
+    expect(opened!.recipe.extend).toBeUndefined();
+    expect(opened!.recipe).toEqual(untouched!.recipe);
+  });
+  it("keeps a flipped maType", () => {
+    const built = indicatorToRecipe("EMA", [9], { maType: "vwma" });
+    expect(built!.recipe.extend).toEqual({ maType: "vwma" });
+  });
 });
 
 describe("indicatorOutputs", () => {

@@ -11,7 +11,7 @@
 import type { KLineData } from "klinecharts";
 import { recipeKey, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe, type SeriesIndicatorType, type DrawingKind, type Operand } from "./backtestConfig";
 import { LINE_KEYS } from "./backtestSeries";
-import { MA_KIND_LABEL } from "./indicators/ma";
+import { maLegendLabel, templateMaKind } from "./indicators/ma";
 import { normalizeMaKind } from "./mtf";
 import { PREV_HL_PERIODS } from "./indicators/prevHl";
 import { DIVERGENCE_KINDS, RSI_DIVERGENCE_DEFAULTS, type DivergenceKind, type RsiExtend } from "./customIndicators";
@@ -87,7 +87,16 @@ export function indicatorToRecipe(
     };
   } else {
     const extend = sanitizeExtend(extendData);
-    if (extend) recipe.extend = extend;
+    // Canonicalize a default maType away: the settings modal persists the
+    // template's own kind onto untouched EMA/MA instances, and leaving it in
+    // the snapshot would hash the SAME curve to a different seriesKey than an
+    // operand picked before the modal was ever opened.
+    if (extend && (indType === "EMA" || indType === "MA")) {
+      const tk = templateMaKind(indType);
+      if (normalizeMaKind(extend.maType, tk) === tk) delete extend.maType;
+    }
+    // Canonicalization can empty the snapshot; absent beats {} for the hash.
+    if (extend && Object.keys(extend).length > 0) recipe.extend = extend;
   }
   const mtf = (extendData as { mtf?: { timeframe?: string | null } } | undefined)?.mtf;
   const timeframe = mtf?.timeframe ?? undefined;
@@ -149,15 +158,12 @@ export function recipeLabel(recipe: SeriesRecipe): string {
   if (t === "VWAP" || t === "AVWAP" || t === "PREV_HL") return t === "PREV_HL" ? "Prev H/L" : t;
   const params = recipe.calcParams.filter((n) => Number.isFinite(n));
   // EMA/MA instances can be flipped to a volume-weighted kind in settings; the
-  // chip should say what actually computes.
+  // chip should say what actually computes. maLegendLabel keeps the never-
+  // flipped rule: a plain MA(20) chip reads "MA(20)", not "SMA(20)", matching
+  // the chart legend for the same instance.
   const base =
     t === "EMA" || t === "MA"
-      ? MA_KIND_LABEL[
-          normalizeMaKind(
-            (recipe.extend as { maType?: unknown } | undefined)?.maType,
-            t === "EMA" ? "ema" : "sma",
-          )
-        ]
+      ? maLegendLabel((recipe.extend as { maType?: unknown } | undefined)?.maType, templateMaKind(t))
       : t;
   return params.length ? `${base}(${params.join(", ")})` : base;
 }

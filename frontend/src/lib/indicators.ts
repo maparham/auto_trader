@@ -31,7 +31,7 @@ import {
 } from "./customIndicators";
 import { EQUITY_INDICATOR } from "./backtest";
 import type { SlopeExtend } from "./indicators/slope";
-import { maFigures, maLegendLabel } from "./indicators/ma";
+import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
 import {
   type VisibilityModel,
@@ -441,13 +441,17 @@ export function applyIndicator(
   if (type === "EMA" || type === "MA") {
     const mext = extendData as { maType?: string; envelope?: boolean };
     if (mext.maType || mext.envelope) {
-      const templateKind = type === "EMA" ? "ema" : "sma";
+      const templateKind = templateMaKind(type);
       // Same rule as makeApplyMa: a never-flipped instance keeps its template
       // label even if a default maType got persisted by opening the modal.
       const label = maLegendLabel(mext.maType, templateKind);
+      // Bands stay title-less on a higher timeframe: the MTF path carries the
+      // base line only, so titled band figures would read as permanent "n/a"
+      // legend rows.
+      const mtfTf = (mext as MaExtend).mtf?.timeframe;
       Object.assign(value, {
         shortName: label,
-        figures: maFigures(label, mext.envelope === true),
+        figures: maFigures(label, mext.envelope === true && !mtfTf),
       });
     }
   }

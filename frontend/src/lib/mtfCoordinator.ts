@@ -11,7 +11,7 @@ import type { Chart, KLineData } from "klinecharts";
 import { fetchRangeStrict, RESOLUTION_SECONDS } from "./feed";
 import { maSeries, htfCoverageStartMs, normalizeMaKind, type MaKind, type MtfSeriesBase } from "./mtf";
 import { pageHistoryBack } from "./historyPaging";
-import { indTypeOf, type MaExtend } from "./customIndicators";
+import { indTypeOf, templateMaKind, type MaExtend } from "./customIndicators";
 import {
   computePivotBands,
   type PivotBandsExtend,
@@ -544,7 +544,7 @@ export async function refreshMtfIndicators(
             id,
             paneId,
             {
-              kind: normalizeMaKind(ext.maType, type === "EMA" ? "ema" : "sma"),
+              kind: normalizeMaKind(ext.maType, templateMaKind(type)),
               length,
               options: {
                 source: ext.source,

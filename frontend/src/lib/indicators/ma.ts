@@ -55,6 +55,13 @@ export const MA_KIND_LABEL: Record<MaKind, string> = {
   evwma: "EVWMA",
 };
 
+/** The MA kind an EMA/MA menu type computes when extendData.maType is unset.
+ * The ONE mapping from indicator type to default kind; every site that used to
+ * inline `type === "EMA" ? "ema" : "sma"` goes through here. */
+export function templateMaKind(type: string): MaKind {
+  return type === "EMA" ? "ema" : "sma";
+}
+
 /** Legend/pill label for an EMA/MA instance. A never-flipped instance (kind
  * equals its template's own kind) keeps the template label ("EMA"/"MA", not
  * "SMA"), so untouched charts never relabel; the kind label appears only when

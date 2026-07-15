@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-import type { KLineData } from "klinecharts";
 
 // The templates read LineType/IndicatorSeries at module load; stub klinecharts'
 // runtime surface like the other indicator tests do.
@@ -12,16 +11,9 @@ vi.mock("klinecharts", () => ({
 const { computeMa, maFigures, MA_KIND_LABEL, maLegendLabel } = await import("./ma");
 const { maSeries } = await import("../mtf");
 
-function vbars(closes: number[], volumes: number[]): KLineData[] {
-  return closes.map((c, i) => ({
-    timestamp: i * 60_000,
-    open: c,
-    high: c + 1,
-    low: c - 1,
-    close: c,
-    volume: volumes[i] ?? 0,
-  })) as KLineData[];
-}
+// Shared with mtf.test.ts (lib/testBars.ts) so the bar shape cannot drift
+// between the kernel tests and the template tests.
+import { vbars } from "../testBars";
 
 describe("computeMa maType", () => {
   const candles = vbars([10, 20, 30], [1, 2, 3]);

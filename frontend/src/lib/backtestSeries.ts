@@ -12,7 +12,7 @@
 import type { KLineData } from "klinecharts";
 import { maSeries, sma, alignHtfToChart, normalizeMaKind, type MaOptions } from "./mtf";
 import {
-  vwapFrom, computeRsi, computeLr, computePrevHl,
+  vwapFrom, computeRsi, computeLr, computePrevHl, templateMaKind,
   DIVERGENCE_KINDS, cfgForKind, divergenceEventSeries,
   type AvwapExtend, type RsiExtend, type LrExtend, type PrevHlExtend,
 } from "./customIndicators";
@@ -160,7 +160,7 @@ function computeRaw(op: Operand, candles: KLineData[], barHours: number): Array<
   switch (op.indicator) {
     case "EMA":
     case "SMA":
-      return maSeries(candles, op.indicator === "EMA" ? "ema" : "sma", op.length ?? 0, {}).base;
+      return maSeries(candles, templateMaKind(op.indicator), op.length ?? 0, {}).base;
     case "VOLMA":
       return sma(candles.map((k) => k.volume ?? 0), op.length ?? 0);
     case "VOL":
@@ -229,7 +229,7 @@ export function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[],
       // or a flipped instance's rule would silently compute the template kind.
       const kind = normalizeMaKind(
         (ext as { maType?: unknown }).maType,
-        r.indicatorType === "EMA" ? "ema" : "sma",
+        templateMaKind(r.indicatorType),
       );
       const ma = maSeries(candles, kind, r.calcParams[0] ?? 0, ext as MaOptions);
       return line === 1 && ma.smoothing ? ma.smoothing : ma.base;

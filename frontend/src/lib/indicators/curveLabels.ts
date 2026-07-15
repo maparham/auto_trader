@@ -14,7 +14,7 @@ import {
   type PrevHlRollingUnit,
 } from "./prevHl";
 import { AVWAP_DEFAULT_BANDS, type AvwapExtend } from "./vwap";
-import { maLegendLabel } from "./ma";
+import { maLegendLabel, templateMaKind } from "./ma";
 
 export type CurveLabelSide = "right" | "left";
 export type CurveLabelAlign = "above" | "center" | "below";
@@ -162,7 +162,7 @@ function maCurveLabel(
   extendData: unknown,
   calcParams?: unknown[],
 ): string | null {
-  const templateKind = type === "EMA" ? "ema" : "sma";
+  const templateKind = templateMaKind(type);
   const maType = (extendData as { maType?: unknown } | undefined)?.maType;
   const label = maLegendLabel(maType, templateKind);
   const base = `${label} ${maLen(calcParams, type === "EMA" ? 9 : 20)}`;
