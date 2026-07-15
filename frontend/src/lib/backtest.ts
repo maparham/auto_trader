@@ -248,9 +248,17 @@ function scrollChartToTrade(chart: Chart, entryTs: number, exitTs: number): void
   // a sliver, price axis goes haywire). If the span doesn't overlap the loaded
   // window at all, don't scroll — the trade can't be shown here (its markers are
   // culled too), so leave the view put rather than wreck it.
-  const from = Math.max(Math.min(entryTs, exitTs), firstTs);
-  const to = Math.min(Math.max(entryTs, exitTs), lastTs);
-  if (!(to > from)) return;
+  const lo = Math.min(entryTs, exitTs);
+  const hi = Math.max(entryTs, exitTs);
+  // Bail only if the span doesn't overlap the loaded window at all (the trade
+  // can't be shown here). A same-bar trade (entry===exit, e.g. an intrabar
+  // stop-out on the entry bar) has a zero-width span but IS showable: don't
+  // conflate "zero width" with "no overlap".
+  if (hi < firstTs || lo > lastTs) return;
+  const from = Math.max(lo, firstTs);
+  // Floor the span at one bar so a same-bar trade still yields a non-zero
+  // window to scroll to (mirrors drawSelectionZone's one-bar overlay floor).
+  const to = Math.max(Math.min(hi, lastTs), from + barMs);
   const pad = Math.max((to - from) * 0.25, barMs * 3);
   // Keep the padded window inside the loaded data so applyVisibleRange never
   // extrapolates past either edge.
