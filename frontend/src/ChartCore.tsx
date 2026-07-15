@@ -2884,11 +2884,20 @@ export default function ChartCore({
   // rAF-throttles crosshair changes, and we only touch textContent (no re-render).
   useEffect(() => {
     const chart = chartRef.current;
-    // v10 ActionCallback is (data?: unknown) => void; the crosshair change payload
-    // carries an optional dataIndex, narrowed here.
+    // v10 ActionCallback is (data?: unknown) => void. Unlike v9, the crosshair
+    // change payload is the RAW crosshair ({ x, y, paneId }) — klinecharts builds
+    // the enriched { dataIndex, timestamp, kLineData } into its internal _crosshair
+    // but fires the action with the raw object (setCrosshair in index.esm.js). So
+    // dataIndex is absent on hover; derive it from the pixel x, else the legend
+    // would freeze on the last bar instead of tracking the cursor.
     const onCrosshair = (data?: unknown) => {
-      const dataIndex = (data as { dataIndex?: number } | undefined)?.dataIndex;
-      const idx = typeof dataIndex === "number" ? dataIndex : null;
+      const d = data as { dataIndex?: number; x?: number } | undefined;
+      let idx = typeof d?.dataIndex === "number" ? d.dataIndex : null;
+      if (idx == null && typeof d?.x === "number" && chart) {
+        const p = chart.convertFromPixel([{ x: d.x, y: 0 }], { paneId: "candle_pane" });
+        const di = (Array.isArray(p) ? p[0]?.dataIndex : p?.dataIndex);
+        if (typeof di === "number") idx = di;
+      }
       crosshairIdxRef.current = idx;
       // (The Pivots-High/Low Δ-label hover-enlarge is now driven by a real pixel
       // hit-test off the cursor position in usePointerCrosshair's onMove, not this
