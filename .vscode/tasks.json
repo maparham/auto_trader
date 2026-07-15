@@ -10,7 +10,6 @@
       },
       "isBackground": true,
       "presentation": {
-        "group": "servers",
         "panel": "dedicated"
       },
       "problemMatcher": []
@@ -24,7 +23,6 @@
       },
       "isBackground": true,
       "presentation": {
-        "group": "servers",
         "panel": "dedicated"
       },
       "problemMatcher": []
