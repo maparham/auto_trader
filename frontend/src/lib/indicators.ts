@@ -39,6 +39,7 @@ import {
 import {
   loadIndicators,
   loadIndicatorConfigs,
+  saveIndicatorConfig,
   loadIndicatorDefault,
   loadAvwapAnchor,
   deleteIndicatorConfig,
@@ -552,6 +553,12 @@ export function addIndicatorInstance(
   const inst: IndicatorInstance = { id: mintInstanceId(chart, type), type };
   if (!applyIndicator(chart, scope, epic, inst, { config: opts?.config, forceHidden: opts?.forceHidden }))
     return null;
+  // Paste (and any caller injecting a snapshot) applies the config LIVE but it must
+  // also be persisted under the freshly-minted id. Otherwise a later teardown +
+  // recreate (pane reorder, or a plain reload) rehydrates with no saved config and
+  // falls back to the bare template, silently resetting the pasted settings. Mirrors
+  // the save-after-apply the template/snapshot paths do (templates.ts, snapshots.ts).
+  if (opts?.config) saveIndicatorConfig(scope, inst.id, opts.config);
   return inst;
 }
 

@@ -13,8 +13,35 @@ vi.mock("klinecharts", () => ({
   DomPosition: { Main: "main" },
 }));
 
-const { applyIndicatorVisibility, collapseSubPanes, expandSubPanes, INTERNAL_INDICATORS } =
+const { applyIndicatorVisibility, collapseSubPanes, expandSubPanes, INTERNAL_INDICATORS, addIndicatorInstance } =
   await import("./indicators");
+
+// In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
+// tests below can read what addIndicatorInstance wrote. Mirrors templates.test.ts.
+class MemStorage {
+  private m = new Map<string, string>();
+  get length(): number {
+    return this.m.size;
+  }
+  key(i: number): string | null {
+    return [...this.m.keys()][i] ?? null;
+  }
+  getItem(k: string): string | null {
+    return this.m.has(k) ? this.m.get(k)! : null;
+  }
+  setItem(k: string, v: string): void {
+    this.m.set(k, v);
+  }
+  removeItem(k: string): void {
+    this.m.delete(k);
+  }
+  clear(): void {
+    this.m.clear();
+  }
+}
+(globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
+
+const persist = await import("./persist");
 
 // Reads as the sidebar eye-menu gesture it exercises (the double-click "hide sub-panes"
 // gesture is height-collapse, not a visibility mask — it's manipulation of pane layout,
@@ -154,5 +181,42 @@ describe("collapse / expand sub-panes (double-click hide bottom sub-panes)", () 
     const { chart, opts } = fakeChart({ pane_new: 999 }, ["pane_new"]);
     expandSubPanes(chart, new Map());
     expect(opts[0].height).toBe(120); // SUBPANE_HEIGHT, not the live 999
+  });
+});
+
+describe("addIndicatorInstance persists an explicit config (Paste)", () => {
+  // A fresh instance created FROM a config snapshot (Paste) must write that
+  // snapshot to per-instance storage under its new id. Otherwise a later
+  // teardown+recreate (pane reorder, or a plain reload) rehydrates with no
+  // saved config and falls back to the bare template, resetting the settings.
+  function pasteChart() {
+    let seq = 0;
+    const chart = {
+      getIndicatorByPaneId: () => new Map(), // no existing instances → clean minted id
+      createIndicator: () => `pane_${++seq}`,
+      overrideIndicator: () => {},
+    } as unknown as Chart;
+    return chart;
+  }
+
+  it("saves the pasted SLOPE config so it survives a recreate", () => {
+    localStorage.clear();
+    const scope = "tab.paste";
+    const config = { calcParams: [30], extendData: { units: "deg", indType: "SLOPE" } };
+
+    const inst = addIndicatorInstance(pasteChart(), scope, "US100", "SLOPE", { config });
+    expect(inst).not.toBeNull();
+
+    // The crux: the config is now retrievable under the new instance id, so the
+    // rehydrate path (loadIndicatorConfigs(scope)[id]) finds it on reorder/reload.
+    expect(persist.loadIndicatorConfigs(scope)[inst!.id]).toEqual(config);
+  });
+
+  it("does not write a config for a plain add (no snapshot): toolbar add is unaffected", () => {
+    localStorage.clear();
+    const scope = "tab.add";
+    const inst = addIndicatorInstance(pasteChart(), scope, "US100", "SLOPE");
+    expect(inst).not.toBeNull();
+    expect(persist.loadIndicatorConfigs(scope)[inst!.id]).toBeUndefined();
   });
 });
