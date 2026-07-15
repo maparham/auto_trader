@@ -865,6 +865,10 @@ export default function ChartCore({
   // whole trade), so its hover-lift shadow is scoped to that one pill. Hover-only: a
   // selected-but-unhovered pill gets no shadow. String-encoded so React dedupes.
   const [hoveredPillKey, setHoveredPillKey] = useState<string | null>(null);
+  // The pill whose RECT the cursor is literally inside (not merely its line's band),
+  // keyed "tradeId:field" — gates the details popover so it opens on the pill only, not
+  // on a bare line-hover. Distinct from hoveredPillKey, which also lifts on line hover.
+  const [hoveredPillRectKey, setHoveredPillRectKey] = useState<string | null>(null);
   // The focused pill, keyed "tradeId:field" — the selected line wins, else the hovered
   // one. Drives z-order so an overlapped pill in focus rises above its neighbours. Encoded
   // as a string so React dedupes: staying on the same line doesn't re-render.
@@ -2469,6 +2473,7 @@ export default function ChartCore({
     setOnAxis,
     setTradeHovered,
     setHoveredPillKey,
+    setHoveredPillRectKey,
     setFocusedPillKey,
     tradeLinePixelsRef,
     alertHitTestRef,
@@ -3616,6 +3621,7 @@ export default function ChartCore({
         pendingRef={pendingRef}
         tradePillNodesRef={tradePillNodesRef}
         hoveredPillKey={hoveredPillKey}
+        hoveredPillRectKey={hoveredPillRectKey}
         focusedPillKey={focusedPillKey}
         tradePillLeft={TRADE_PILL_LEFT}
       />

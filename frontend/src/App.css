@@ -2161,6 +2161,13 @@
 /* Price — the hero readout: tabular mono in the theme's ink so it's crisp on any frame. */
 .trade-pill .tp-price { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--text); }
 .trade-pill .tp-at { color: var(--text-faint); font-weight: 400; margin-right: 1px; }
+/* Resting order's expiry, shown in place of the price on its entry pill: a hairline
+   clock turns the raw timestamp into an unmistakable "expires at" readout, kept muted
+   so the role tag stays the one bold thing. */
+.trade-pill .tp-expiry { display: inline-flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--text-dim); }
+.trade-pill .tp-exp-ico { width: 11px; height: 11px; opacity: .75; flex: none; }
+/* Open-ended order: a status word, not a time — set as a quiet uppercase tag. */
+.trade-pill .tp-gtc { font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); }
 /* P/L — a signed accent in mono: the entry's live uPnL by sign (--pnl), an exit's
    "P/L if hit" muted (.tp-plhint). */
 .trade-pill .tp-pnl { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--pnl, var(--pill, #2962ff)); }
@@ -2805,6 +2812,18 @@
 .tooltip-title { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
 .tooltip-desc  { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
 .tooltip-desc + .tooltip-desc { margin-top: 6px; }
+
+/* Trade-pill details popover: label/value rows on the shared .tooltip frame. Wider
+   than a text tip so the datetime + P/L values never wrap; the label column stays
+   muted, the value column reads in the theme's ink (mono for the numbers). */
+.tooltip.pill-tip { max-width: 300px; }
+.pill-tip .tooltip-title { margin-bottom: 6px; }
+.pill-tip-grid { display: grid; grid-template-columns: auto 1fr; column-gap: 18px; row-gap: 3px; margin: 0; }
+.pill-tip-row { display: contents; }
+.pill-tip-row dt { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.pill-tip-row dd { margin: 0; font-size: 11px; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+.pill-tip-row dd.pill-tip-pos { color: #089981; }
+.pill-tip-row dd.pill-tip-neg { color: #f23645; }
 
 /* the invisible inline wrapper around a trigger — must have a box so its
    getBoundingClientRect() anchors the bubble; adds no visual footprint. */

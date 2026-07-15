@@ -80,6 +80,7 @@ export interface PointerCrosshairDeps {
   setOnAxis: (v: boolean) => void;
   setTradeHovered: typeof setTradeHovered;
   setHoveredPillKey: (v: string | null) => void;
+  setHoveredPillRectKey: (v: string | null) => void;
   setFocusedPillKey: (v: string | null) => void;
   // In-direction bridges to init-effect-local functions the crosshair calls.
   tradeLinePixelsRef: React.MutableRefObject<() => TradeLinePx[]>;
@@ -120,6 +121,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     setOnAxis,
     setTradeHovered,
     setHoveredPillKey,
+    setHoveredPillRectKey,
     setFocusedPillKey,
     tradeLinePixelsRef,
     alertHitTestRef,
@@ -288,6 +290,9 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       setTradeHovered(hoverTradeId);
       // Hover-lift shadow is scoped to the single line under the cursor, not the trade.
       setHoveredPillKey(hoverTradeId ? `${hoverTradeId}:${hoverField}` : null);
+      // Details popover gate: the cursor must be INSIDE the pill's rect, not just its
+      // line's ±6px band — so hovering the bare line never pops the card.
+      setHoveredPillRectKey(pillHit ? `${pillHit.id}:${pillHit.field}` : null);
       // Focus for z-order: a selected line wins, else the hovered line. Set here (not only
       // via the signal) so moving between fields of the SAME hovered trade — which doesn't
       // change the signal — still re-tops the pill under the cursor.
@@ -470,6 +475,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // it's heading for a dock row, that row's onMouseEnter re-sets it (mouseleave
       // here fires before the row's mouseenter), so the highlight lands correctly.
       setTradeHovered(null);
+      setHoveredPillRectKey(null); // close the details popover as the cursor leaves
       // Clear a hover-only bracket now that the hover is gone (a SELECTED trade's bracket
       // stays). Runs after setTradeHovered so paintBracket sees the cleared hover.
       handle.paintBracketRef.current();

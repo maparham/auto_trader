@@ -739,7 +739,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         const dir = t.side === "buy" ? 1 : -1;
         // P/L a level would realise if price reached it (from the fixed open level).
         const plAt = (lvl: number) => dir * t.quantity * (lvl - t.priceLevel);
-        const common = { tradeId: t.id, kind: t.kind, side: t.side, qty: t.quantity };
+        const common = { tradeId: t.id, kind: t.kind, side: t.side, qty: t.quantity, expiresAt: t.expiresAt };
         const yP = yOf(priceLvl);
         // Entry pill carries live uPnL for an open position; a resting order has none.
         // `changed` also lights up when a breakeven-staged SL/TP is pending (drag path):

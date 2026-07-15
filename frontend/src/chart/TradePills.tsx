@@ -1,7 +1,10 @@
-import type { MutableRefObject } from "react";
+import { useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
+import { createPortal } from "react-dom";
+import { formatExpiryLong, formatExpiryShort } from "../lib/alertUi";
 import { toast } from "../lib/notify";
 import { requestConfirm, setTradeSelected, discardPendingEdit, discardPendingField, type PendingEdit, type TradeLineField } from "../lib/signals";
 import { tradeLabel, mergeTradeLevels, applyEditedLevels, closePosition, cancelWorkingOrder, refreshTrades, getTradesAccount, type TradeView, type OrderSide } from "../lib/trading";
+import { computePlacement, type Placed } from "../components/tooltipPosition";
 
 export interface TradePillItem {
   tradeId: string;
@@ -11,6 +14,7 @@ export interface TradePillItem {
   side: OrderSide;
   qty: number;
   level: number;
+  expiresAt: number | null; // resting order: good-till-date epoch ms; null = GTC
   pl: number | null; // entry: uPnL; SL/TP: P/L if that level is hit
   changed: boolean; // this line has an un-applied drag → show Apply/Discard
   // entry pill only: which level merged into the entry at breakeven (SL or TP sits
@@ -25,8 +29,93 @@ interface TradePillsProps {
   pendingRef: MutableRefObject<Record<string, PendingEdit>>;
   tradePillNodesRef: MutableRefObject<Map<string, HTMLDivElement>>;
   hoveredPillKey: string | null;
+  hoveredPillRectKey: string | null;
   focusedPillKey: string | null;
   tradePillLeft: number;
+}
+
+const cash = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+const signed = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
+const fmtDateTime = (ms: number) => new Date(ms).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+
+interface DetailRow {
+  label: string;
+  value: string;
+  tone?: "pos" | "neg";
+}
+
+// Every detail of the position / order behind a pill, in the reading order the dock
+// uses. Conditioned by kind: uPnL is a position's alone, the expiry an order's; the
+// price the order pill dropped from its face resurfaces here in full.
+function tradeDetailRows(t: TradeView, prec: number): DetailRow[] {
+  const px = (n: number) => n.toFixed(prec);
+  const rows: DetailRow[] = [];
+  rows.push({ label: "Quantity", value: String(t.quantity) });
+  rows.push({ label: t.kind === "order" ? "Limit" : "Avg fill", value: px(t.priceLevel) });
+  if (t.stop != null) rows.push({ label: "Stop loss", value: px(t.stop) });
+  if (t.takeProfit != null) rows.push({ label: "Take profit", value: px(t.takeProfit) });
+  if (t.kind === "position" && t.upnl != null)
+    rows.push({ label: "Unrealised P/L", value: signed(t.upnl), tone: t.upnl >= 0 ? "pos" : "neg" });
+  if (t.leverage != null) rows.push({ label: "Leverage", value: `${t.leverage}:1` });
+  if (t.margin != null) rows.push({ label: "Margin", value: cash(t.margin) });
+  if (t.openedAt != null)
+    rows.push({ label: t.kind === "order" ? "Placed" : "Opened", value: fmtDateTime(t.openedAt) });
+  if (t.kind === "order")
+    rows.push({ label: "Expires", value: t.expiresAt != null ? fmtDateTime(t.expiresAt) : "GTC" });
+  if (t.source === "strategy") rows.push({ label: "Source", value: "Strategy" });
+  return rows;
+}
+
+/**
+ * Full-details popover for the pill under the cursor. Anchored to the pill's DOM node
+ * and placed with the shared `computePlacement`; styled with the shared `.tooltip`
+ * classes so it reads as one system with every other tooltip. It's `pointer-events:
+ * none` (inherited from `.tooltip`) so it never blocks a line grab beneath it. Keyed by
+ * the hovered pill in the parent, so switching pills remounts it and re-runs the
+ * measure-then-reveal that keeps the enter animation crisp.
+ */
+function PillDetailsPopover({ anchor, trade, prec }: { anchor: HTMLElement; trade: TradeView; prec: number }) {
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const [placed, setPlaced] = useState<Placed | null>(null);
+  const [shown, setShown] = useState(false);
+
+  useLayoutEffect(() => {
+    const b = bubbleRef.current;
+    if (!b) return;
+    const tr = anchor.getBoundingClientRect();
+    setPlaced(
+      computePlacement(
+        { left: tr.left, top: tr.top, width: tr.width, height: tr.height },
+        { width: b.offsetWidth, height: b.offsetHeight },
+        "top",
+        { width: window.innerWidth, height: window.innerHeight },
+      ),
+    );
+    const raf = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(raf);
+  }, [anchor, trade]);
+
+  const rows = tradeDetailRows(trade, prec);
+  return createPortal(
+    <div
+      ref={bubbleRef}
+      role="tooltip"
+      className={`tooltip pill-tip${shown ? " show" : ""}`}
+      data-side={placed?.side ?? "top"}
+      style={{ left: placed?.left ?? 0, top: placed?.top ?? 0 }}
+    >
+      <div className="tooltip-title">{tradeLabel(trade.kind, trade.side)} · {trade.epic}</div>
+      <dl className="pill-tip-grid">
+        {rows.map((r) => (
+          <div className="pill-tip-row" key={r.label}>
+            <dt>{r.label}</dt>
+            <dd className={r.tone ? `pill-tip-${r.tone}` : undefined}>{r.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>,
+    document.body,
+  );
 }
 
 /**
@@ -43,9 +132,17 @@ export default function TradePills({
   pendingRef,
   tradePillNodesRef,
   hoveredPillKey,
+  hoveredPillRectKey,
   focusedPillKey,
   tradePillLeft,
 }: TradePillsProps) {
+  // Details popover opens only when the cursor is over the pill's rect (hoveredPillRectKey),
+  // not on a bare line-hover. Suppressed while that pill has a staged drag (it's showing
+  // Apply/Discard then — a details card on top would be noise).
+  const hoveredPill = hoveredPillRectKey ? pills.find((p) => `${p.tradeId}:${p.field}` === hoveredPillRectKey) : null;
+  const anchorNode = hoveredPillRectKey ? tradePillNodesRef.current.get(hoveredPillRectKey) ?? null : null;
+  const hoveredTrade = hoveredPill ? tradesRef.current.find((t) => t.id === hoveredPill.tradeId) ?? null : null;
+  const showDetails = hoveredPill != null && !hoveredPill.changed;
   return (
     <>
       {pills.map((p) => {
@@ -69,7 +166,13 @@ export default function TradePills({
         // Eyebrow tag: the side word on the entry (Long / Short / Sell limit…), SL/TP on
         // the exits. Quantity rides alongside the entry tag; the price is the hero readout.
         const labelText = isEntry ? tradeLabel(p.kind, p.side) : p.field === "stop" ? "SL" : "TP";
+        // A resting order's entry pill shows WHEN it expires in place of the price — the
+        // price already reads off the line it's anchored to. A dated order gets a clock +
+        // short time; an open-ended one gets a plain "GTC" status word (no deadline to
+        // point a clock at). Positions and the SL/TP pills keep their level readout.
+        const isOrderEntry = isEntry && p.kind === "order";
         const priceText = p.level.toFixed(prec);
+        const expiryText = p.expiresAt != null ? formatExpiryShort(p.expiresAt) : "";
         const bodyPnl = isEntry && p.pl != null ? sign(p.pl) : null;
         // Remove this SL/TP line: commit the level cleared right away (an explicit
         // action, like delete), then focus the entry pill since this line is gone.
@@ -107,9 +210,23 @@ export default function TradePills({
           >
             <span className="tp-label">{labelText}</span>
             {isEntry && <span className="tp-qty">{p.qty}</span>}
-            <span className="tp-price">
-              {isEntry && <span className="tp-at">@</span>}{priceText}
-            </span>
+            {isOrderEntry ? (
+              p.expiresAt != null ? (
+                <span className="tp-expiry" title={`Order expires ${formatExpiryLong(p.expiresAt)}`}>
+                  <svg className="tp-exp-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <polyline points="12 7 12 12 15 14" />
+                  </svg>
+                  {expiryText}
+                </span>
+              ) : (
+                <span className="tp-gtc" title="Good till cancelled">GTC</span>
+              )
+            ) : (
+              <span className="tp-price">
+                {isEntry && <span className="tp-at">@</span>}{priceText}
+              </span>
+            )}
             {p.breakevenField && (
               <span
                 className="tp-be"
@@ -229,6 +346,14 @@ export default function TradePills({
           </div>
         );
       })}
+      {showDetails && anchorNode && hoveredTrade && (
+        <PillDetailsPopover
+          key={hoveredPillRectKey}
+          anchor={anchorNode}
+          trade={hoveredTrade}
+          prec={precisionRef.current}
+        />
+      )}
     </>
   );
 }
