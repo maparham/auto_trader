@@ -151,6 +151,21 @@ describe("tradeRows + sort", () => {
     const rows = sortTradeRows(tradeRows(res, 60), "pnl", "desc");
     expect(rows.map(r => r.pnl)).toEqual([20, -5]);
   });
+
+  it("tradeRows exitTime prefers exit_time_exact when present", () => {
+    const res = {
+      trades: [
+        { side: "buy", leg: "long", entry_time: 1000, entry_price: 100, exit_time: 1000,
+          exit_price: 99, pnl: -1, reason: "stop", exit_time_exact: 3000 },
+        { side: "buy", leg: "long", entry_time: 2000, entry_price: 100, exit_time: 5000,
+          exit_price: 101, pnl: 1, reason: "range end", exit_time_exact: null },
+      ],
+    } as unknown as Parameters<typeof tradeRows>[0];
+
+    const rows = tradeRows(res, 3600);
+    expect(rows[0].exitTime).toBe(3000); // exact wins
+    expect(rows[1].exitTime).toBe(5000); // falls back to raw
+  });
 });
 
 describe("rowWindow", () => {

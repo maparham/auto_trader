@@ -570,3 +570,57 @@ def test_post_backtest_no_inspect_omits_bar_traces():
     }
     result = _run(body)
     assert result.bar_traces is None
+
+
+def test_trade_dto_has_exit_time_exact_null_for_non_intrabar():
+    # A plain no-risk run books its trades via range-end, never an intra-bar stop,
+    # so exit_time_exact is null on every trade but the key is always present.
+    body = _min_body()
+    body["longEntry"] = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "gt",
+         "right": {"kind": "const", "value": 0}}]}
+    r = client.post("/api/backtest", json=body)
+    assert r.status_code == 200
+    trades = r.json()["trades"]
+    assert trades, "expected at least one trade"
+    assert all(t["exit_time_exact"] is None for t in trades)
+
+
+from auto_trader.api import deps as _deps
+from auto_trader.core.models import Candle as _Candle
+from datetime import datetime as _dt, timezone as _tz
+
+
+def test_intrabar_stop_gets_exact_exit_time(monkeypatch):
+    # 5-minute run; entry fills at the 2nd bar's open (300s), whose low pierces
+    # the 1% stop same bar, so the exit is intra-bar and stamped at t=300.
+    body = _min_body()
+    body["resolution"] = "MINUTE_5"
+    body["longEntry"] = {"combine": "AND", "rules": [
+        {"left": {"kind": "price", "field": "close"}, "op": "gt",
+         "right": {"kind": "const", "value": 0}}]}
+    body["longRisk"] = {"stop": {"kind": "pct", "value": 1}, "target": {"kind": "none"}}
+    body["candles"] = [
+        {"time": 0,   "open": 100, "high": 100, "low": 100, "close": 100, "volume": 0},
+        {"time": 300, "open": 100, "high": 100, "low": 98,  "close": 98,  "volume": 0},
+        {"time": 600, "open": 98,  "high": 98,  "low": 98,  "close": 98,  "volume": 0},
+    ]
+
+    async def fake_fetch(broker, epic, resolution, bars, from_ts, to_ts, price_side):
+        # 5 one-minute candles for the exit bar [300, 600). The third (t=420) is
+        # the first whose low reaches the 99 stop.
+        lows = [100, 100, 98, 98, 98]
+        return [
+            _Candle(time=_dt.fromtimestamp(300 + i * 60, tz=_tz.utc),
+                    open=100, high=100, low=lows[i], close=lows[i])
+            for i in range(5)
+        ]
+
+    monkeypatch.setattr(_deps, "_fetch_symbol_candles", fake_fetch)
+    r = client.post("/api/backtest", json=body)
+    assert r.status_code == 200
+    trades = r.json()["trades"]
+    stop_trades = [t for t in trades if t["reason"] == "stop"]
+    assert stop_trades, "expected an intra-bar stop"
+    assert stop_trades[0]["exit_time"] == 300
+    assert stop_trades[0]["exit_time_exact"] == 420

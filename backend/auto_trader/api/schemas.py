@@ -90,6 +90,7 @@ class TradeDTO(BaseModel):
     stop_initial: float | None = None
     stop_final: float | None = None
     target: float | None = None
+    exit_time_exact: int | None = None
     # Excursion + entry context (see engine.context_features): mae/mfe are raw
     # price distance from entry; *_r are R-multiples of the initial stop.
     mae: float = 0.0

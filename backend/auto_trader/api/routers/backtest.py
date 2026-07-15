@@ -18,6 +18,7 @@ from auto_trader.core.run_store import RUN_STORE
 from auto_trader.engine.analysis import compute_analysis
 from auto_trader.engine.backtest import BacktestEngine, BacktestResult
 from auto_trader.engine.context_features import enrich_trades
+from auto_trader.engine.exit_time import attach_exit_times
 from auto_trader.engine.whatif import enrich_trades_whatif
 from auto_trader.engine.metrics import compute_metrics, leg_metrics, leg_metrics_from_dicts
 from auto_trader.strategy import loader
@@ -314,6 +315,22 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     # Post-run enrichment over the FULL candle list (not `window`): a trade's
     # signal bar can sit in the warm-up span before tradeFromTime.
     enrich_trades(result.trades, candles)
+
+    # Resolve the sub-bar exit time of intra-bar stop/target exits from the run's
+    # own 1-minute candles. Display only; best-effort (a fetch failure or missing
+    # minute data just leaves exit_time_exact None).
+    run_s = resolution_seconds(req.resolution)
+
+    async def _load_minutes(from_s: int, to_s: int) -> list[Candle]:
+        return await deps._fetch_symbol_candles(
+            req.broker, req.epic, "MINUTE", run_s // 60 + 2, from_s, to_s, req.priceSide,
+        )
+
+    try:
+        await attach_exit_times(result.trades, run_tf_seconds=run_s, load_minutes=_load_minutes)
+    except Exception:
+        logger.warning("exit-time resolution failed; continuing without it", exc_info=True)
+
     try:
         enrich_trades_whatif(result.trades, candles)
     except Exception:
@@ -327,6 +344,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             entry_time=_ts(t.entry_time),
             entry_price=t.entry_price,
             exit_time=_ts(t.exit_time),
+            exit_time_exact=_ts(t.exit_time_exact) if t.exit_time_exact is not None else None,
             exit_price=t.exit_price,
             pnl=t.pnl,
             leg=t.leg,

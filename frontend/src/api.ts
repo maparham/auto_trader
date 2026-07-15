@@ -90,6 +90,9 @@ interface Trade {
   stop_initial: number | null;
   stop_final: number | null;
   target: number | null;
+  // Canonical sub-bar exit time (epoch seconds) for an intra-bar stop/target,
+  // resolved server-side. Null/absent -> use exit_time. Display only.
+  exit_time_exact?: number | null;
   mae: number;
   mfe: number;
   mae_r: number | null;

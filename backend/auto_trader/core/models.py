@@ -255,6 +255,11 @@ class Trade:
     leg: str = "long"
     reason_in: str = ""
     reason_out: str = ""
+    # Canonical sub-bar exit time for an intra-bar stop/target (see
+    # engine.exit_time), resolved from 1-minute candles post-run. None when the
+    # exit was not intra-bar or no finer data was available; consumers fall back
+    # to exit_time. Display only: never affects pnl or exit_price.
+    exit_time_exact: datetime | None = None
     stop_initial: float | None = None
     stop_final: float | None = None
     target: float | None = None

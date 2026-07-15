@@ -642,6 +642,27 @@ export function fillWithinLoadedWindow(ms: number, barTimes: number[]): boolean 
   return ms >= barTimes[0] && ms <= barTimes[n - 1];
 }
 
+/** Right edge for a trade overlay whose exit happened at `exitExactMs`, rounded
+ * UP to the close of the display candle that contains it, so the overlay covers
+ * at least the trade's real duration. Floors at one display bar so a first-bar
+ * exit still shows. `bars` are the currently loaded candles (ascending). */
+export function overlayEndTs(
+  exitExactMs: number,
+  bars: readonly { timestamp: number }[],
+  barMs: number,
+  entryTs: number,
+): number {
+  const floor = entryTs + barMs;
+  if (bars.length === 0) return Math.max(floor, exitExactMs);
+  // The display candle containing exitExactMs is the last bar whose open <= it.
+  let containing = bars[0].timestamp;
+  for (const b of bars) {
+    if (b.timestamp <= exitExactMs) containing = b.timestamp;
+    else break;
+  }
+  return Math.max(floor, containing + barMs); // round up to that candle's close
+}
+
 /** The current higher-timeframe aggregate pills for a chart, plus the result
  * they belong to (for the drill-in resolution). null when the chart isn't in
  * aggregate mode (native/none, or no backtest). Read by ChartCore's redraw loop
@@ -892,6 +913,8 @@ function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade)
   const z = tradeZones(t);
   const entryTs = t.entry_time * 1000;
   const exitTs = t.exit_time * 1000;
+  const hasExact = t.exit_time_exact != null;
+  const exitPointTs = hasExact ? (t.exit_time_exact as number) * 1000 : exitTs;
   const data = chart.getDataList();
   // Robust bar interval, NOT the last-two-bars gap: that trailing gap can straddle
   // a session/overnight/weekend break (or the seam between loaded history and a
@@ -915,7 +938,9 @@ function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade)
   // tight to the position's actual duration (a trailing pad made the box span
   // longer than the trade). Floor at one bar so a same-bar trade (entry≈exit)
   // still has a visible, non-zero width.
-  const windowEnd = Math.max(Math.max(entryTs, exitTs), entryTs + barMs);
+  const windowEnd = hasExact
+    ? overlayEndTs(exitPointTs, data ?? [], barMs, entryTs)
+    : Math.max(Math.max(entryTs, exitTs), entryTs + barMs);
   const id = chart.createOverlay({
     name: ZONE_OVERLAY,
     lock: true,
@@ -925,7 +950,7 @@ function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade)
       { timestamp: entryTs, value: z.hasReward ? (t.target as number) : t.entry_price },
       { timestamp: entryTs, value: z.hasRisk ? (t.stop_initial as number) : t.entry_price },
       { timestamp: entryTs, value: z.stopMoved ? (t.stop_final as number) : t.entry_price },
-      { timestamp: exitTs, value: t.exit_price },
+      { timestamp: exitPointTs, value: t.exit_price },
     ],
     extendData: {
       hasReward: z.hasReward,
@@ -938,7 +963,7 @@ function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade)
     } satisfies ZoneExtra,
   });
   if (typeof id === "string") artifacts.selectionOverlayIds.push(id);
-  scrollChartToTrade(chart, entryTs, exitTs);
+  scrollChartToTrade(chart, entryTs, exitPointTs);
 }
 
 /** Map a native-bar equity series onto whatever bars are currently loaded,
@@ -1365,7 +1390,7 @@ export function renderArtifacts(
       name: "segment",
       points: [
         { timestamp: t.entry_time * 1000, value: t.entry_price },
-        { timestamp: t.exit_time * 1000, value: t.exit_price },
+        { timestamp: (t.exit_time_exact ?? t.exit_time) * 1000, value: t.exit_price },
       ],
       lock: true,
       needDefaultPointFigure: false,

@@ -328,7 +328,7 @@ export function tradeRows(res: PanelResult, resSeconds: number): TradeRow[] {
       leg: trade.leg,
       entryTime: trade.entry_time,
       entryPrice: trade.entry_price,
-      exitTime: trade.exit_time,
+      exitTime: trade.exit_time_exact ?? trade.exit_time,
       exitPrice: trade.exit_price,
       pnl: trade.pnl,
       pnlPct,
