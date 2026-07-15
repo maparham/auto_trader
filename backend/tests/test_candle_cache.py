@@ -210,6 +210,158 @@ def test_recent_serves_cache_when_fetch_errors(tmp_path):
     assert [int(c.time.timestamp()) for c in out] == [100, 160, 220]  # cache served
 
 
+def test_recent_serves_cache_when_fetch_is_slow_then_absorbs(tmp_path):
+    """A tail fetch that blows the budget must not block the response: serve the
+    cached bars immediately, then absorb the late result into the cache when it
+    lands (coverage advances)."""
+    cache = CandleCache(str(tmp_path / "c.db"), tail_fetch_budget=0.05)
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    asyncio.run(cache.recent(KEY, 60, 4, FakeFetcher(src).recent, tail=3, now=340))
+    release = asyncio.Event()
+
+    async def slow_recent(n: int) -> list[Candle]:
+        await release.wait()
+        return [_c(340, 340.0)]
+
+    async def run():
+        out = await cache.recent(KEY, 60, 3, slow_recent, tail=3, now=400)
+        # Budget expired -> cached bars served, not the in-flight fetch.
+        assert [int(c.time.timestamp()) for c in out] == [160, 220, 280]
+        # Serving from cache is a hit; the stats endpoint must not show a
+        # persistently slow series as having zero activity.
+        assert cache.stats(KEY)["hits"] == 1
+        release.set()
+        for _ in range(200):  # background absorb is async; poll briefly
+            if (cache._coverage(KEY) or (0, 0))[1] >= 340:
+                break
+            await asyncio.sleep(0.01)
+        assert cache._coverage(KEY) == (100, 340)
+
+    asyncio.run(run())
+
+
+def test_absorb_late_stores_bars_closed_after_request_cutoff(tmp_path):
+    """A late tail fetch can land after the bar that was forming at request time
+    has closed. The absorb must evaluate closed-ness at ABSORB time, not with the
+    request's cutoff, or those bars are dropped as 'forming' and coverage never
+    advances (the series would never converge)."""
+    cache = CandleCache(str(tmp_path / "c.db"), tail_fetch_budget=0.05)
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    asyncio.run(cache.recent(KEY, 60, 4, FakeFetcher(src).recent, tail=3, now=340))
+    release = asyncio.Event()
+
+    async def slow_recent(n: int) -> list[Candle]:
+        await release.wait()
+        # 400 closed after the request's cutoff (360) but before the absorb runs.
+        return [_c(340, 340.0), _c(400, 400.0)]
+
+    async def run():
+        out = await cache.recent(KEY, 60, 3, slow_recent, tail=3, now=400)
+        assert [int(c.time.timestamp()) for c in out] == [160, 220, 280]
+        release.set()
+        for _ in range(200):
+            if (cache._coverage(KEY) or (0, 0))[1] >= 400:
+                break
+            await asyncio.sleep(0.01)
+        assert cache._coverage(KEY) == (100, 400)
+
+    asyncio.run(run())
+
+
+def test_recent_fetch_own_timeout_error_takes_error_path(tmp_path, caplog):
+    """A fetch that FAILS with a TimeoutError (broker read timeout) is not a
+    budget expiry: it must take the fetch-error path (serve cache, no background
+    absorb of the already-failed task)."""
+    import logging
+
+    cache = CandleCache(str(tmp_path / "c.db"), tail_fetch_budget=5.0)
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    asyncio.run(cache.recent(KEY, 60, 4, FakeFetcher(src).recent, tail=3, now=340))
+    boom = FakeFetcher(error=TimeoutError("broker read timeout"))
+
+    async def run():
+        out = await cache.recent(KEY, 60, 3, boom.recent, tail=3, now=400)
+        assert [int(c.time.timestamp()) for c in out] == [160, 220, 280]
+        await asyncio.sleep(0.02)  # let a (wrongly) spawned absorb task run
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(run())
+    assert "late tail fetch" not in caplog.text
+
+
+def test_recent_skips_refetch_while_absorb_in_flight(tmp_path):
+    """While a late absorb for the key is still running, new recent() calls must
+    not launch further broker fetches for the same data (thundering herd): serve
+    the cache directly until the absorb lands."""
+    cache = CandleCache(str(tmp_path / "c.db"), tail_fetch_budget=0.05)
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    asyncio.run(cache.recent(KEY, 60, 4, FakeFetcher(src).recent, tail=3, now=340))
+    release = asyncio.Event()
+    calls = 0
+
+    async def slow_recent(n: int) -> list[Candle]:
+        nonlocal calls
+        calls += 1
+        await release.wait()
+        return [_c(340, 340.0)]
+
+    async def run():
+        await cache.recent(KEY, 60, 3, slow_recent, tail=3, now=400)
+        assert calls == 1
+        out = await cache.recent(KEY, 60, 3, slow_recent, tail=3, now=400)
+        assert calls == 1  # no second fetch while the first absorb is in flight
+        assert [int(c.time.timestamp()) for c in out] == [160, 220, 280]
+        release.set()
+        for _ in range(200):
+            if (cache._coverage(KEY) or (0, 0))[1] >= 340:
+                break
+            await asyncio.sleep(0.01)
+
+    asyncio.run(run())
+
+
+def test_recent_waits_out_slow_fetch_when_cache_empty(tmp_path):
+    """No cached bars to fall back on -> keep waiting for the slow fetch instead
+    of failing at the budget."""
+    cache = CandleCache(str(tmp_path / "c.db"), tail_fetch_budget=0.05)
+
+    async def slow_recent(n: int) -> list[Candle]:
+        await asyncio.sleep(0.15)  # well past the budget
+        return [_c(100, 1.0), _c(160, 2.0)]
+
+    out = asyncio.run(cache.recent(KEY, 60, 2, slow_recent, tail=3, now=220))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160]
+
+
+def test_recent_cancelled_request_still_absorbs_fetch(tmp_path):
+    """Client gave up (request task cancelled) while a slow cold fetch was in
+    flight: the fetch must still land in the cache, or a series that always
+    fetches slower than the client timeout can never converge (endless retry)."""
+    cache = CandleCache(str(tmp_path / "c.db"), tail_fetch_budget=0.05)
+    release = asyncio.Event()
+
+    async def slow_recent(n: int) -> list[Candle]:
+        await release.wait()
+        return [_c(100, 1.0), _c(160, 2.0)]
+
+    async def run():
+        req = asyncio.create_task(cache.recent(KEY, 60, 2, slow_recent, tail=3, now=220))
+        await asyncio.sleep(0.1)  # past the budget, in the empty-cache wait
+        req.cancel()
+        try:
+            await req
+        except asyncio.CancelledError:
+            pass
+        release.set()
+        for _ in range(200):
+            if cache._coverage(KEY) is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert cache._coverage(KEY) == (100, 160)
+
+    asyncio.run(run())
+
+
 def test_recent_reraises_when_cache_empty_and_fetch_errors(tmp_path):
     cache = CandleCache(str(tmp_path / "c.db"))
     boom = FakeFetcher(error=RuntimeError("offline"))

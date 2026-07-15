@@ -176,6 +176,14 @@ class DukascopyBroker(MarketDataBroker):
         bid_a, ask_a = bid.align(ask, join="inner", axis=0)
         return _df_to_candles((bid_a + ask_a) / 2.0)
 
+    # Slack added below the count-sized span on each widening pass of
+    # get_recent_candles: publish lag (Dukascopy consolidates with a few hours'
+    # delay), then a weekend/holiday gap, then the full 7-day slab as the last
+    # resort (the pre-expansion behavior). Every download is a synchronous bi5
+    # walk over the whole window, so a warm-cache tail fetch (count=3) must stay
+    # hours-sized or chart loads time out.
+    _RECENT_SLACKS_S = (6 * 3600, 4 * 86_400, 7 * 86_400)
+
     async def get_recent_candles(
         self,
         epic: str,
@@ -183,16 +191,27 @@ class DukascopyBroker(MarketDataBroker):
         count: int,
         price_side: str = "mid",
     ) -> list[Candle]:
-        """Most-recent `count` bars. Dukascopy has no 'recent N' primitive, so pull
-        a window sized to `count` bars back from now (with slack for weekend/holiday
-        gaps) and tail it."""
+        """Most-recent `count` bars. Dukascopy has no 'recent N' primitive, so page
+        backward from now in expanding windows until `count` bars land, fetching
+        only the extension below the previous window each pass."""
+        if count <= 0:
+            return []
         now = datetime.now(timezone.utc)
-        span_seconds = resolution.seconds * max(count, 1)
-        start = now - timedelta(seconds=span_seconds * 3 + 7 * 86_400)
-        bars = await self.get_candles(epic, resolution, start, now, price_side)
-        # `bars[-count:]` would return the WHOLE list when count == 0 (since -0 == 0),
-        # so guard it explicitly.
-        return bars[-count:] if count > 0 else []
+        span = timedelta(seconds=resolution.seconds * count * 3)
+        bars: list[Candle] = []
+        end = now
+        for slack_s in self._RECENT_SLACKS_S:
+            start = now - span - timedelta(seconds=slack_s)
+            chunk = await self.get_candles(epic, resolution, start, end, price_side)
+            # A bar exactly on the window seam could come back in both chunks
+            # (upstream end-inclusivity is unspecified); drop seam duplicates so
+            # the cold-cache path can't hand the chart a doubled timestamp.
+            seen = {int(b.time.timestamp()) for b in bars}
+            bars = [b for b in chunk if int(b.time.timestamp()) not in seen] + bars
+            if len(bars) >= count:
+                break
+            end = start
+        return bars[-count:]
 
     async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
         """Historical-only source: no live quote. Paper trading cannot price off

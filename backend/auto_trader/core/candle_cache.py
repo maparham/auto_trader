@@ -47,8 +47,17 @@ class CandleCache:
     sidesteps the one-connection-per-thread rule; public async methods run the sync
     helpers via asyncio.to_thread)."""
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, tail_fetch_budget: float = 3.0) -> None:
         self._db_path = db_path
+        # How long recent() waits on the live tail fetch before serving cached
+        # bars instead (the fetch finishes in the background and is absorbed).
+        # Must stay well under the frontend's 10s history timeout.
+        self._tail_budget = tail_fetch_budget
+        # Late-absorb tasks (see _absorb_late); referenced so they aren't GC'd mid-run.
+        self._bg_tasks: set[asyncio.Task] = set()
+        # Keys with a late absorb still in flight: recent() serves straight from
+        # cache for these instead of launching yet another slow fetch per call.
+        self._absorbing: set[CandleKey] = set()
         self._locks: dict[CandleKey, asyncio.Lock] = {}
         # In-memory only (reset on restart) — debug/introspection counters for the
         # candle-cache-stats UI, not durable telemetry.
@@ -377,9 +386,17 @@ class CandleCache:
     ) -> list[Candle]:
         """Most-recent `count` bars. Cold/short cache -> one full fetch. Warm cache
         -> a small `tail` fetch to anchor 'now' + carry the forming bar, with the
-        rest served from cache. The forming bar (ts >= cutoff) is always passed
-        through so the chart shows current price immediately, as before."""
+        rest served from cache. The forming bar (ts >= cutoff) is passed through
+        so the chart shows current price immediately, EXCEPT on the stale-serve
+        paths (slow or failing fetch), which can only return closed cached bars."""
         cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
+        # A late absorb for this key is still in flight: don't pile another slow
+        # fetch on top (thundering herd); serve the cache until the absorb lands.
+        if key in self._absorbing:
+            cached = await asyncio.to_thread(self._read_back, key, count, cutoff + res_seconds)
+            if cached:
+                self._record_hit(key)
+                return cached
         cov = await asyncio.to_thread(self._coverage, key)
         cached_n = await asyncio.to_thread(self._cached_count, key)
         newest = cov[1] if cov is not None else None
@@ -394,8 +411,39 @@ class CandleCache:
         else:
             bridge = (cutoff - newest) // res_seconds + 1  # bars between newest and now
             fetch_n = min(count, max(tail, bridge))
+        fetch_task = asyncio.ensure_future(fetch_recent(fetch_n))
         try:
-            fetched = await fetch_recent(fetch_n)
+            try:
+                fetched = await asyncio.wait_for(
+                    asyncio.shield(fetch_task), timeout=self._tail_budget
+                )
+            except TimeoutError:
+                # Same builtin type as a TimeoutError raised BY the fetch (broker
+                # read timeout): a done task means it was the fetch's own error
+                # (or a photo-finish success), not our budget expiring.
+                if fetch_task.done():
+                    fetched = fetch_task.result()  # re-raises into the error path
+                else:
+                    # Tail fetch blew the budget (e.g. a broker that emulates
+                    # recent-N with a bulk history download). Serve the cached
+                    # bars now (stale beats a client-side timeout) and absorb the
+                    # late result when it lands so the next call's bridge is short.
+                    cached = await asyncio.to_thread(
+                        self._read_back, key, count, cutoff + res_seconds
+                    )
+                    if cached:
+                        self._record_hit(key)
+                        self._absorb_late(key, res_seconds, fetch_task)
+                        return cached
+                    # Nothing cached to serve: wait it out (shielded, see below).
+                    fetched = await asyncio.shield(fetch_task)
+        except asyncio.CancelledError:
+            # Client gave up (request task cancelled) but the broker fetch keeps
+            # running under the shield; absorb its result so a series that always
+            # fetches slower than the client timeout still converges instead of
+            # restarting from scratch on every retry.
+            self._absorb_late(key, res_seconds, fetch_task)
+            raise
         except Exception:
             cached = await asyncio.to_thread(self._read_back, key, count, cutoff + res_seconds)
             if cached:
@@ -406,10 +454,26 @@ class CandleCache:
             self._record_miss(key)
         else:
             self._record_hit(key)
-        # Store without auto-extending coverage, then set it ourselves: a block that
-        # connects to the existing coverage (its oldest is within one bar of newest)
-        # unions; a block that lands disjoint (the gap was bigger than we could bridge)
-        # RESETS coverage to just the fresh block, so the unfetched gap is never claimed.
+        await self._store_recent(key, res_seconds, fetched, cutoff, newest)
+        if cold:
+            return fetched[-count:]
+        forming = [b for b in fetched if int(b.time.timestamp()) >= cutoff]
+        closed = await asyncio.to_thread(self._read_back, key, count - len(forming), cutoff)
+        return closed + forming
+
+    async def _store_recent(
+        self,
+        key: CandleKey,
+        res_seconds: int,
+        fetched: list[Candle],
+        cutoff: int,
+        newest: int | None,
+    ) -> None:
+        """Store a recent-fetch block without auto-extending coverage, then set it
+        ourselves: a block that connects to the existing coverage (its oldest is
+        within one bar of `newest`) unions; a block that lands disjoint (the gap was
+        bigger than we could bridge) RESETS coverage to just the fresh block, so the
+        unfetched gap is never claimed."""
         span = await asyncio.to_thread(self._store_closed, key, fetched, cutoff, False)
         if span is not None:
             lo, hi = span
@@ -417,11 +481,39 @@ class CandleCache:
                 await asyncio.to_thread(self._extend_coverage, key, lo, hi)
             else:
                 await asyncio.to_thread(self._set_coverage, key, lo, hi)
-        if cold:
-            return fetched[-count:]
-        forming = [b for b in fetched if int(b.time.timestamp()) >= cutoff]
-        closed = await asyncio.to_thread(self._read_back, key, count - len(forming), cutoff)
-        return closed + forming
+
+    def _absorb_late(self, key: CandleKey, res_seconds: int, task: asyncio.Task) -> None:
+        """Finish a budget-blown tail fetch in the background: when it lands, take
+        the key lock (the caller's is long released by then), re-read the newest
+        watermark (it may have moved), and store/cover exactly like the foreground
+        path. The closed-bar cutoff is re-derived at absorb time: bars that closed
+        while the fetch was still running must be stored, or coverage would stall
+        one bucket behind forever and the series would never converge. Failures
+        are logged and dropped; the response was already served. While the absorb
+        is in flight the key is marked so recent() serves cache instead of piling
+        on more fetches."""
+        self._absorbing.add(key)
+
+        async def absorb() -> None:
+            try:
+                fetched = await task
+            except Exception:
+                log.warning("late tail fetch failed for %s", key, exc_info=True)
+                return
+            async with self._key_lock(key):
+                cutoff = _bucket_start(time.time(), res_seconds)
+                cov = await asyncio.to_thread(self._coverage, key)
+                newest = cov[1] if cov is not None else None
+                await self._store_recent(key, res_seconds, fetched, cutoff, newest)
+
+        t = asyncio.create_task(absorb())
+        self._bg_tasks.add(t)
+
+        def _done(task_: asyncio.Task) -> None:
+            self._bg_tasks.discard(task_)
+            self._absorbing.discard(key)
+
+        t.add_done_callback(_done)
 
     async def backfill_below(
         self,

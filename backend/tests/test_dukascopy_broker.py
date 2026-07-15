@@ -159,6 +159,62 @@ def test_get_recent_candles_tails_count(broker, monkeypatch):
     assert [c.close for c in out] == [7, 8, 9]  # last 3, ascending
 
 
+def _patch_fetch_windowed(monkeypatch, rows_by_side):
+    """Like _patch_fetch, but honours the requested [start, end) window the way the
+    real library does, needed to exercise the expanding-window recent fetch."""
+    calls = []
+
+    def fake_fetch(instrument, interval, offer_side, start, end):
+        calls.append((instrument, interval, offer_side, start, end))
+        rows = [
+            r
+            for r in rows_by_side[offer_side]
+            if start.timestamp() <= r[0] < end.timestamp()
+        ]
+        return _fake_df(rows)
+
+    monkeypatch.setattr("dukascopy_python.fetch", fake_fetch)
+    return calls
+
+
+def test_get_recent_candles_small_count_uses_small_window(broker, monkeypatch):
+    """A tail fetch (count=3) must NOT download a 7-day window when the bars sit
+    right behind `now`; that cost is what times out warm-cache chart loads."""
+    import asyncio
+
+    now_s = int(datetime.now(timezone.utc).timestamp())
+    rows = [(now_s - 60 * i, float(i), float(i), float(i), float(i), 1.0) for i in range(1, 11)]
+    calls = _patch_fetch_windowed(monkeypatch, {dukascopy_python.OFFER_SIDE_BID: rows})
+
+    out = asyncio.run(broker.get_recent_candles("EURUSD", Resolution.MINUTE, 3, "bid"))
+
+    assert len(out) == 3
+    assert len(calls) == 1  # first (small) window sufficed
+    _, _, _, start, end = calls[0]
+    window_s = (end - start).total_seconds()
+    assert window_s < 86_400  # hours, not the old 7-day slab
+
+
+def test_get_recent_candles_expands_window_until_enough(broker, monkeypatch):
+    """Bars 3 days back (weekend/publish-lag gap): the first small window comes up
+    empty, so the fetch must widen backward (without re-downloading the span it
+    already covered) and still return `count` bars."""
+    import asyncio
+
+    now_s = int(datetime.now(timezone.utc).timestamp())
+    old = now_s - 3 * 86_400
+    rows = [(old - 60 * i, float(i), float(i), float(i), float(i), 1.0) for i in range(1, 11)]
+    calls = _patch_fetch_windowed(monkeypatch, {dukascopy_python.OFFER_SIDE_BID: rows})
+
+    out = asyncio.run(broker.get_recent_candles("EURUSD", Resolution.MINUTE, 3, "bid"))
+
+    assert len(out) == 3
+    assert len(calls) >= 2  # widened at least once
+    # Each widening fetches only the extension below the previous start.
+    for prev, nxt in zip(calls, calls[1:]):
+        assert nxt[4] <= prev[3]  # next end <= previous start (no overlap)
+
+
 def test_get_quote_is_none(broker):
     import asyncio
 
