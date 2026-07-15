@@ -48,7 +48,7 @@ import {
   sweepStateSignal,
   sweepCancelRequest,
 } from "./lib/signals";
-import { runSweep, sweepCatchState } from "./lib/sweep";
+import { robustWindowBounds, runSweep, sweepCatchState } from "./lib/sweep";
 import { inspectModeSignal } from "./lib/backtestInspect";
 import type { BacktestRequest, SweepRow } from "./api";
 
@@ -288,10 +288,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         const ctl = new AbortController();
         const unsubCancel = sweepCancelRequest.subscribe(() => ctl.abort());
         sweepStateSignal.set({ rows: [], done: 0, total: 0, running: true });
+        const windows = robustWindowBounds(windowFromMs, windowToMs, cfg.robustWindows);
         try {
           const landed: SweepRow[] = [];
           const rows = await runSweep(baseReq, sweepAxes, {
             signal: ctl.signal,
+            windows,
             onRows: (chunkRows, done, total) => {
               // After an abort (modal closed / Cancel) the state may already be
               // cleared — a late chunk must not resurrect a ghost sweep.

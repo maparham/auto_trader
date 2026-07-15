@@ -183,3 +183,55 @@ def test_sweep_atr_risk_missing_series_422(strategies):
     resp = client.post("/api/backtest/sweep", json=req)
     assert resp.status_code == 422
     assert "ATR_14" in resp.json()["detail"]
+
+
+# --- sub-window robustness metrics -------------------------------------------
+
+_AGG_KEYS = {"worst_window_pnl", "median_window_pnl",
+             "pct_windows_profitable", "mean_window_pnl_minus_std"}
+
+
+def test_sweep_windows_attach_per_window_rows_and_aggregates(strategies):
+    candles = make_candles(20)
+    req = sweep_request(candles, [{"param:n": 3}])
+    t0 = candles[0]["time"]
+    t_end = candles[-1]["time"]
+    mid = (t0 + t_end) // 2
+    req["sweep"]["windows"] = [t0, mid, t_end + 1]
+    rows = client.post("/api/backtest/sweep", json=req).json()["rows"]
+    row = rows[0]
+    assert row["error"] is None
+    assert len(row["windows"]) == 2
+    assert {"from", "to", "pnl", "trades"} <= set(row["windows"][0])
+    assert _AGG_KEYS <= set(row["metrics"])
+    # Window trade counts sum to the run's total.
+    assert sum(w["trades"] for w in row["windows"]) == row["metrics"]["n_trades"]
+
+
+def test_sweep_without_windows_unchanged(strategies):
+    candles = make_candles(20)
+    rows = client.post("/api/backtest/sweep", json=sweep_request(
+        candles, [{"param:n": 3}],
+    )).json()["rows"]
+    assert rows[0]["windows"] is None
+    assert _AGG_KEYS.isdisjoint(rows[0]["metrics"])
+
+
+def test_sweep_period_combo_skips_window_metrics(strategies):
+    candles = make_candles(20)
+    t0, t_end = candles[0]["time"], candles[-1]["time"]
+    combo = {"param:n": 3, "period:from": t0, "period:to": t_end}
+    req = sweep_request(candles, [combo])
+    req["sweep"]["windows"] = [t0, (t0 + t_end) // 2, t_end + 1]
+    rows = client.post("/api/backtest/sweep", json=req).json()["rows"]
+    assert rows[0]["error"] is None
+    assert rows[0]["windows"] is None
+    assert _AGG_KEYS.isdisjoint(rows[0]["metrics"])
+
+
+def test_sweep_bad_windows_422(strategies):
+    candles = make_candles(20)
+    for bad in ([123], [200, 100]):
+        req = sweep_request(candles, [{"param:n": 3}])
+        req["sweep"]["windows"] = bad
+        assert client.post("/api/backtest/sweep", json=req).status_code == 422

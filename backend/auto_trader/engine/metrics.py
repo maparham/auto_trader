@@ -8,6 +8,7 @@ leaves win rate to the engine."""
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Sequence
 
 
@@ -109,3 +110,37 @@ def compute_metrics(trades, equity, net_pnl, starting_cash, res_seconds) -> dict
         "max_consec_wins": _max_consec(pnls, positive=True),
         "max_consec_losses": leg["max_consec_losses"],
     }
+
+
+def window_metrics(trades, bounds: Sequence[int]) -> tuple[list[dict], dict]:
+    """Slice one continuous run's trades into the given sub-windows and score
+    how evenly the P&L was earned. `bounds` is an ascending list of epoch
+    seconds (N+1 boundaries for N windows). A trade belongs to the window its
+    ENTRY falls in ([from, to), last window closed on the right); entries
+    outside the bounds clamp into the nearest edge window. Aggregates are all
+    higher-is-better; a zero-trade window has pnl 0 and counts as not
+    profitable. std is the population std over window pnls (k = 1 penalty)."""
+    n = len(bounds) - 1
+    pnls = [0.0] * n
+    counts = [0] * n
+    for t in trades:
+        ts = t.entry_time.timestamp()
+        idx = min(max(bisect_right(bounds, ts) - 1, 0), n - 1)
+        pnls[idx] += t.pnl
+        counts[idx] += 1
+    windows = [
+        {"from": bounds[i], "to": bounds[i + 1], "pnl": round(pnls[i], 5), "trades": counts[i]}
+        for i in range(n)
+    ]
+    mean = sum(pnls) / n
+    std = (sum((p - mean) ** 2 for p in pnls) / n) ** 0.5
+    ordered = sorted(pnls)
+    mid = n // 2
+    median = ordered[mid] if n % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+    agg = {
+        "worst_window_pnl": round(min(pnls), 5),
+        "median_window_pnl": round(median, 5),
+        "pct_windows_profitable": round(sum(1 for p in pnls if p > 0) / n, 4),
+        "mean_window_pnl_minus_std": round(mean - std, 5),
+    }
+    return windows, agg

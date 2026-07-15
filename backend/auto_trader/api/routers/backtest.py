@@ -20,7 +20,9 @@ from auto_trader.engine.backtest import BacktestEngine, BacktestResult
 from auto_trader.engine.context_features import enrich_trades
 from auto_trader.engine.exit_time import attach_exit_times
 from auto_trader.engine.whatif import enrich_trades_whatif
-from auto_trader.engine.metrics import compute_metrics, leg_metrics, leg_metrics_from_dicts
+from auto_trader.engine.metrics import (
+    compute_metrics, leg_metrics, leg_metrics_from_dicts, window_metrics,
+)
 from auto_trader.strategy import loader
 from auto_trader.strategy.coded import (
     CodedStrategy,
@@ -707,12 +709,40 @@ def _log_sweep_done(req: BacktestRequest, rows: list[SweepRowDTO], t0: float) ->
     logger.info("sweep chunk done in %.1fs: %d ok, %d failed%s", elapsed, n - failed, failed, tail)
 
 
+def _sweep_row(req: BacktestRequest, combo: dict, result) -> SweepRowDTO:
+    """Success row for one combo: the standard sweep metrics, plus per-window
+    robustness slices when the request carries sweep.windows. A combo that
+    patches its own period runs over a different range than the sweep's
+    windows, so it gets none (windows stay None, no aggregate keys)."""
+    metrics = compute_metrics(result.trades, result.equity, result.net_pnl,
+                              req.costs.startingCash, resolution_seconds(req.resolution))
+    row_metrics = {
+        "net_pnl": round(result.net_pnl, 5),
+        "n_trades": result.n_trades,
+        "win_rate": round(result.win_rate, 4),
+        "max_drawdown": round(result.max_drawdown, 5),
+        "profit_factor": metrics.get("profit_factor"),
+        "avg_win_loss_ratio": metrics.get("avg_win_loss_ratio"),
+        "return_pct": metrics.get("return_pct"),
+    }
+    windows = None
+    if req.sweep.windows is not None and "period:from" not in combo:
+        windows, agg = window_metrics(result.trades, req.sweep.windows)
+        row_metrics.update(agg)
+    return SweepRowDTO(combo=combo, metrics=row_metrics, windows=windows)
+
+
 @router.post("/api/backtest/sweep", response_model=SweepResponse)
 async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
     if req.sweep is None or not req.sweep.combos:
         raise HTTPException(422, "sweep.combos is required")
     if len(req.sweep.combos) > _SWEEP_MAX_COMBOS:
         raise HTTPException(422, f"too many combos in one request (max {_SWEEP_MAX_COMBOS})")
+    bounds = req.sweep.windows
+    if bounds is not None and (
+        len(bounds) < 2 or any(b <= a for a, b in zip(bounds, bounds[1:]))
+    ):
+        raise HTTPException(422, "sweep.windows must be >= 2 ascending epoch seconds")
 
     candles = [_candle_from_dto(c) for c in req.candles]
 
@@ -756,17 +786,7 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
                 continue
             finally:
                 logger.debug("sweep combo %d %s in %.2fs", base_idx + idx, combo, time.monotonic() - c0)
-            metrics = compute_metrics(result.trades, result.equity, result.net_pnl,
-                                      req.costs.startingCash, resolution_seconds(req.resolution))
-            rows.append(SweepRowDTO(combo=combo, metrics={
-                "net_pnl": round(result.net_pnl, 5),
-                "n_trades": result.n_trades,
-                "win_rate": round(result.win_rate, 4),
-                "max_drawdown": round(result.max_drawdown, 5),
-                "profit_factor": metrics.get("profit_factor"),
-                "avg_win_loss_ratio": metrics.get("avg_win_loss_ratio"),
-                "return_pct": metrics.get("return_pct"),
-            }))
+            rows.append(_sweep_row(req, combo, result))
         _log_sweep_done(req, rows, t0)
         return SweepResponse(rows=rows)
 
@@ -807,16 +827,6 @@ async def backtest_sweep(req: BacktestRequest) -> SweepResponse:
             continue
         finally:
             logger.debug("sweep combo %d %s in %.2fs", base_idx + idx, combo, time.monotonic() - c0)
-        metrics = compute_metrics(result.trades, result.equity, result.net_pnl,
-                                  req.costs.startingCash, resolution_seconds(req.resolution))
-        rows.append(SweepRowDTO(combo=combo, metrics={
-            "net_pnl": round(result.net_pnl, 5),
-            "n_trades": result.n_trades,
-            "win_rate": round(result.win_rate, 4),
-            "max_drawdown": round(result.max_drawdown, 5),
-            "profit_factor": metrics.get("profit_factor"),
-            "avg_win_loss_ratio": metrics.get("avg_win_loss_ratio"),
-            "return_pct": metrics.get("return_pct"),
-        }))
+        rows.append(_sweep_row(req, combo, result))
     _log_sweep_done(req, rows, t0)
     return SweepResponse(rows=rows)

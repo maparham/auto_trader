@@ -98,6 +98,23 @@ describe("BacktestSettingsModal period scheduling", () => {
     fireEvent.click(sub);
     expect(sub.checked).toBe(true);
   });
+
+  it("keeps the raw windows value while typing and clamps to 2..50 on blur", () => {
+    renderModal();
+    const input = screen.getByPlaceholderText("auto") as HTMLInputElement;
+    // Two-digit values like 15 must survive typing (no per-keystroke clamp up to 2).
+    fireEvent.change(input, { target: { value: "15" } });
+    expect(input.value).toBe("15");
+    // Below-range on blur clamps up to the minimum.
+    fireEvent.change(input, { target: { value: "1" } });
+    expect(input.value).toBe("1");
+    fireEvent.blur(input);
+    expect(input.value).toBe("2");
+    // Above-range on blur clamps down to the maximum.
+    fireEvent.change(input, { target: { value: "99" } });
+    fireEvent.blur(input);
+    expect(input.value).toBe("50");
+  });
 });
 
 // The rule builder now lives under the "Strategy" vertical tab, so tests must
@@ -454,7 +471,7 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
     },
   ];
   const rows: SweepRow[] = [
-    { combo: { "param:ema_fast": 12 }, metrics: { net_pnl: 10, n_trades: 3, win_rate: 0.5, max_drawdown: 1, profit_factor: 1.2, avg_win_loss_ratio: null, return_pct: 1 }, error: null },
+    { combo: { "param:ema_fast": 12 }, metrics: { net_pnl: 10, n_trades: 3, win_rate: 0.5, max_drawdown: 1, profit_factor: 1.2, avg_win_loss_ratio: null, return_pct: 1 }, error: null, windows: null },
   ];
 
   afterEach(() => {
@@ -527,7 +544,7 @@ describe("rules-mode combo apply", () => {
   }
   function applyCombo(onRun: ReturnType<typeof vi.fn>, combo: SweepRow["combo"]) {
     const rows: SweepRow[] = [
-      { combo, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, error: null },
+      { combo, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, error: null, windows: null },
     ];
     act(() => sweepStateSignal.set({ rows, done: 1, total: 1, running: false }));
     fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
@@ -748,7 +765,7 @@ describe("persistent sweep setup", () => {
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
     const rows: SweepRow[] = [
-      { combo: { "rule:long.entry.0.left.length": 30 }, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, error: null },
+      { combo: { "rule:long.entry.0.left.length": 30 }, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, windows: null, error: null },
     ];
     act(() => sweepStateSignal.set({ rows, done: 1, total: 1, running: false }));
     fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
@@ -809,7 +826,7 @@ describe("clear sweep results", () => {
   });
 
   const rows: SweepRow[] = [
-    { combo: { "rule:long.entry.0.left.length": 30 }, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, error: null },
+    { combo: { "rule:long.entry.0.left.length": 30 }, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, windows: null, error: null },
   ];
 
   it("shows Clear results only when a sweep is finished, and clicking it clears the table", () => {

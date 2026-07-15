@@ -1,18 +1,20 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, cleanup } from "@testing-library/react";
+import { fireEvent, render, screen, cleanup, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SweepResults } from "./SweepResults";
+import type { SweepRow } from "./api";
+import type { SweepAxis } from "./lib/sweep";
 
 afterEach(cleanup);
 
 const rows = [
   { combo: { "param:n": 5, "risk:long.stop.value": 1 },
     metrics: { net_pnl: 100, n_trades: 4, win_rate: 0.5, max_drawdown: 20,
-               profit_factor: 2, avg_win_loss_ratio: null, return_pct: 1 }, error: null },
+               profit_factor: 2, avg_win_loss_ratio: null, return_pct: 1 }, error: null, windows: null },
   { combo: { "param:n": 10, "risk:long.stop.value": 1 },
     metrics: { net_pnl: -50, n_trades: 2, win_rate: 0, max_drawdown: 60,
-               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.5 }, error: null },
-  { combo: { "param:n": 5, "risk:long.stop.value": 2 }, metrics: null, error: "boom" },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.5 }, error: null, windows: null },
+  { combo: { "param:n": 5, "risk:long.stop.value": 2 }, metrics: null, error: "boom", windows: null },
 ];
 const axes = [
   { kind: "range" as const, target: "param:n", label: "n", from: 5, to: 10, step: 5 },
@@ -45,10 +47,10 @@ describe("SweepResults", () => {
 const opRows = [
   { combo: { "op:long.entry.0": "gt", "param:n": 5 },
     metrics: { net_pnl: 10, n_trades: 1, win_rate: 1, max_drawdown: 0,
-               profit_factor: null, avg_win_loss_ratio: null, return_pct: 0.1 }, error: null },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: 0.1 }, error: null, windows: null },
   { combo: { "op:long.entry.0": "lt", "param:n": 5 },
     metrics: { net_pnl: -10, n_trades: 1, win_rate: 0, max_drawdown: 10,
-               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.1 }, error: null },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.1 }, error: null, windows: null },
 ];
 const opAxes = [
   { kind: "list" as const, target: "op:long.entry.0", label: "long entry 1 op", options: [
@@ -82,14 +84,14 @@ describe("SweepResults list axes", () => {
 const rows3 = [
   { combo: { "param:a": 1, "param:b": 10, "param:c": 100 },
     metrics: { net_pnl: 50, n_trades: 1, win_rate: 1, max_drawdown: 30,
-               profit_factor: 2, avg_win_loss_ratio: null, return_pct: 0.5 }, error: null },
+               profit_factor: 2, avg_win_loss_ratio: null, return_pct: 0.5 }, error: null, windows: null },
   { combo: { "param:a": 1, "param:b": 10, "param:c": 200 },
     metrics: { net_pnl: 80, n_trades: 2, win_rate: 1, max_drawdown: 90,
-               profit_factor: 3, avg_win_loss_ratio: null, return_pct: 0.8 }, error: null },
+               profit_factor: 3, avg_win_loss_ratio: null, return_pct: 0.8 }, error: null, windows: null },
   { combo: { "param:a": 2, "param:b": 10, "param:c": 100 },
     metrics: { net_pnl: -20, n_trades: 1, win_rate: 0, max_drawdown: 40,
-               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.2 }, error: null },
-  { combo: { "param:a": 2, "param:b": 10, "param:c": 200 }, metrics: null, error: "boom" },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.2 }, error: null, windows: null },
+  { combo: { "param:a": 2, "param:b": 10, "param:c": 200 }, metrics: null, error: "boom", windows: null },
 ];
 const axes3 = [
   { kind: "range" as const, target: "param:a", label: "A", from: 1, to: 2, step: 1 },
@@ -100,24 +102,24 @@ const axes3 = [
 // 3-axis fixture where cell (A=1) collapses two failures (all failed) and cell
 // (A=2) collapses one success and one failure (mixed).
 const rowsMixedFail = [
-  { combo: { "param:a": 1, "param:b": 10, "param:c": 100 }, metrics: null, error: "boom" },
-  { combo: { "param:a": 1, "param:b": 10, "param:c": 200 }, metrics: null, error: "boom" },
+  { combo: { "param:a": 1, "param:b": 10, "param:c": 100 }, metrics: null, error: "boom", windows: null },
+  { combo: { "param:a": 1, "param:b": 10, "param:c": 200 }, metrics: null, error: "boom", windows: null },
   { combo: { "param:a": 2, "param:b": 10, "param:c": 100 },
     metrics: { net_pnl: -20, n_trades: 1, win_rate: 0, max_drawdown: 40,
-               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.2 }, error: null },
-  { combo: { "param:a": 2, "param:b": 10, "param:c": 200 }, metrics: null, error: "boom" },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.2 }, error: null, windows: null },
+  { combo: { "param:a": 2, "param:b": 10, "param:c": 200 }, metrics: null, error: "boom", windows: null },
 ];
 
 // 3-axis fixture where cell (A=1) has the FAILED row ordered first, then a
 // success whose profit_factor is null: success must still win.
 const rowsNullFirst = [
-  { combo: { "param:a": 1, "param:b": 10, "param:c": 100 }, metrics: null, error: "boom" },
+  { combo: { "param:a": 1, "param:b": 10, "param:c": 100 }, metrics: null, error: "boom", windows: null },
   { combo: { "param:a": 1, "param:b": 10, "param:c": 200 },
     metrics: { net_pnl: 40, n_trades: 1, win_rate: 1, max_drawdown: 10,
-               profit_factor: null, avg_win_loss_ratio: null, return_pct: 0.4 }, error: null },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: 0.4 }, error: null, windows: null },
   { combo: { "param:a": 2, "param:b": 10, "param:c": 100 },
     metrics: { net_pnl: 20, n_trades: 1, win_rate: 1, max_drawdown: 5,
-               profit_factor: 1.5, avg_win_loss_ratio: null, return_pct: 0.2 }, error: null },
+               profit_factor: 1.5, avg_win_loss_ratio: null, return_pct: 0.2 }, error: null, windows: null },
 ];
 
 describe("SweepResults 3+ axes", () => {
@@ -194,5 +196,83 @@ describe("SweepResults 3+ axes", () => {
     const best = [...document.querySelectorAll(".sweep-cell")].find((c) => c.textContent === "+80.00")!;
     fireEvent.mouseEnter(best);
     expect(document.querySelector(".sweep-heat-detail")!.textContent).toContain("C 200");
+  });
+});
+
+describe("SweepResults robustness columns", () => {
+  const axes: SweepAxis[] = [
+    { kind: "range", target: "param:n", label: "n", from: 1, to: 2, step: 1 },
+  ];
+  const robustRow = (n: number, m: Partial<NonNullable<SweepRow["metrics"]>>, wins: SweepRow["windows"]): SweepRow => ({
+    combo: { "param:n": n },
+    metrics: {
+      net_pnl: 0, n_trades: 1, win_rate: 0.5, max_drawdown: 1,
+      profit_factor: null, avg_win_loss_ratio: null, return_pct: 0, ...m,
+    },
+    windows: wins,
+    error: null,
+  });
+
+  it("renders robustness columns with k/N windows-profitable and sorts nulls last", () => {
+    const rows = [
+      robustRow(1, { worst_window_pnl: -5, median_window_pnl: 2, pct_windows_profitable: 0.75, mean_window_pnl_minus_std: 1 },
+        [{ from: 0, to: 1, pnl: 3, trades: 2 }, { from: 1, to: 2, pnl: -5, trades: 1 },
+         { from: 2, to: 3, pnl: 2, trades: 1 }, { from: 3, to: 4, pnl: 4, trades: 1 }]),
+      robustRow(2, {}, null),  // no window metrics: sorts below on robust columns
+    ];
+    render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
+    expect(screen.getByText("Worst wnd")).toBeTruthy();
+    expect(screen.getByText("3/4")).toBeTruthy();
+    fireEvent.click(screen.getByText("Worst wnd"));
+    const cells = screen.getAllByRole("row").slice(1).map((r) => r.textContent);
+    expect(cells[0]).toContain("-5");     // row with metrics first even on desc
+  });
+
+  it("offers robustness metrics in the heatmap dropdown when two axes exist", () => {
+    const axes2: SweepAxis[] = [
+      { kind: "range", target: "param:n", label: "n", from: 1, to: 2, step: 1 },
+      { kind: "range", target: "param:m", label: "m", from: 1, to: 2, step: 1 },
+    ];
+    const rows = [robustRow(1, { worst_window_pnl: 1 }, [])];
+    render(<SweepResults rows={rows} axes={axes2} onApply={() => {}} />);
+    const dropdown = screen.getByLabelText("Heatmap color metric");
+    expect(within(dropdown).getByText("Worst window")).toBeTruthy();
+  });
+
+  it("renders a per-window strip with pnl and trade counts", () => {
+    const rows = [
+      robustRow(1, { worst_window_pnl: -5, median_window_pnl: 2, pct_windows_profitable: 0.5, mean_window_pnl_minus_std: 0 },
+        [{ from: 1740787200, to: 1741392000, pnl: 8.2, trades: 9 },
+         { from: 1741392000, to: 1741996800, pnl: -2.9, trades: 8 }]),
+    ];
+    const { container } = render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
+    // Robust cells carry a tooltip trigger (the strip is portaled on hover), never
+    // a native title attribute, and neither do the headers.
+    expect(container.querySelectorAll(".tooltip-trigger").length).toBeGreaterThan(0);
+    expect(container.querySelector("th[title]")).toBeNull();
+    expect(container.querySelector("[title]")).toBeNull();
+  });
+
+  it("shows the window breakdown on robustness-cell hover", async () => {
+    const rows = [
+      robustRow(1, { pct_windows_profitable: 0.5 },
+        [{ from: 1740787200, to: 1741392000, pnl: 8.2, trades: 9 },
+         { from: 1741392000, to: 1741996800, pnl: -2.9, trades: 8 }]),
+    ];
+    render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
+    // The k/N cell is wrapped in a delay=0 Tooltip; mouseenter does not bubble,
+    // so fire it on the trigger span (the cell content's parent).
+    fireEvent.mouseEnter(screen.getByText("1/2").parentElement!);
+    expect(await screen.findByText("9 tr")).toBeTruthy();
+    expect(await screen.findByText("8 tr")).toBeTruthy();
+    expect(await screen.findByText("+8.20")).toBeTruthy();
+  });
+
+  it("wraps robustness headers in a tooltip carrying the info copy", () => {
+    const rows = [robustRow(1, { worst_window_pnl: -5 }, [])];
+    render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
+    // Focus shows the shared Tooltip instantly (no delay on keyboard focus).
+    fireEvent.focus(screen.getByText("Worst wnd").closest(".tooltip-trigger")!);
+    expect(screen.getByRole("tooltip").textContent).toContain("The most this combo lost");
   });
 });

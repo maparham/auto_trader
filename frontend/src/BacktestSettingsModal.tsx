@@ -1124,6 +1124,31 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   <SweepGlyph />
                 </button>
               </Tooltip>
+              <label className="bt-tf-inline bt-robust-windows">
+                <span className="bt-tf-label">
+                  Windows
+                  <InfoTip text="The backtest range is split into equal windows to score consistency. Auto picks daily, weekly or monthly windows from the range length; set a number to override." />
+                </span>
+                <input
+                  type="number"
+                  min={2}
+                  max={50}
+                  placeholder="auto"
+                  value={cfg.robustWindows ?? ""}
+                  onChange={(e) => {
+                    // Store the raw value while typing so intermediate numbers like
+                    // "1" on the way to "15" aren't clamped up to 2 mid-keystroke.
+                    // Empty means auto (undefined); blur clamps to 2..50.
+                    const v = e.target.value === "" ? undefined : Math.round(Number(e.target.value));
+                    setCfg({ ...cfg, robustWindows: v !== undefined && Number.isFinite(v) ? v : undefined });
+                  }}
+                  onBlur={() => {
+                    if (cfg.robustWindows !== undefined) {
+                      setCfg({ ...cfg, robustWindows: Math.max(2, Math.min(50, cfg.robustWindows)) });
+                    }
+                  }}
+                />
+              </label>
             </div>
             {CHIP_UNIT[cfg.range.mode] && (
               <div className="bt-chip-row">

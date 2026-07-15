@@ -298,6 +298,9 @@ export interface BacktestConfig {
   // .py file. `codedStrategy` is that file's name; only read when mode === "coded".
   mode?: "rules" | "coded";
   codedStrategy?: string;
+  // Sub-window robustness override for sweeps: split the range into this many
+  // equal windows when scoring consistency. Undefined = auto (from range length).
+  robustWindows?: number;
 }
 
 /** The payload key an operand's series lives under, or null if it has no

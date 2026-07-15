@@ -150,6 +150,28 @@ export function materializePeriodAxes(axes: SweepAxis[], fromMs: number, toMs: n
   });
 }
 
+/** Sub-window robustness bounds over the resolved range: ascending epoch
+ * SECONDS, N+1 boundaries for N equal contiguous windows. Auto N picks the
+ * largest calendar-ish unit (month/week/day) that yields at least 3 windows,
+ * clamped to 3..30; an explicit override is clamped to 2..50. Sent with every
+ * sweep chunk so the backend slices each combo's run identically. */
+export function robustWindowBounds(fromMs: number, toMs: number, overrideN?: number): number[] {
+  const DAY = 86_400_000;
+  const rangeDays = (toMs - fromMs) / DAY;
+  let n: number;
+  if (overrideN !== undefined && Number.isFinite(overrideN)) {
+    n = Math.max(2, Math.min(50, Math.round(overrideN)));
+  } else {
+    const unitDays = [30, 7, 1].find((u) => rangeDays / u >= 3) ?? 1;
+    n = Math.max(3, Math.min(30, Math.round(rangeDays / unitDays)));
+  }
+  const bounds: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    bounds.push(Math.round((fromMs + ((toMs - fromMs) * i) / n) / 1000));
+  }
+  return bounds;
+}
+
 /** The list-axis option a result row's combo came from: the option whose every
  * patch entry matches the combo. Null for range/period axes or no match. */
 export function axisOptionFor(axis: SweepAxis, combo: SweepCombo): SweepOption | null {
@@ -170,6 +192,9 @@ export async function runSweep(
   opts: {
     onRows: (rows: SweepRow[], done: number, total: number) => void;
     signal?: AbortSignal;
+    // Sub-window robustness bounds (epoch seconds, ascending); forwarded
+    // unchanged to every chunk so all rows slice the same windows.
+    windows?: number[];
   },
 ): Promise<SweepRow[]> {
   const combos: SweepCombo[] = enumerateCombos(axes);
@@ -182,12 +207,12 @@ export async function runSweep(
     const progress = { done: i, total: combos.length };
     let rows: SweepRow[];
     try {
-      rows = await runSweepChunk(baseReq, chunk, progress);
+      rows = await runSweepChunk(baseReq, chunk, progress, opts.windows);
     } catch {
       // A cancel that lands while the chunk is in flight must not burn a
       // retry's worth of backend compute.
       if (opts.signal?.aborted) throw new Error("sweep aborted");
-      rows = await runSweepChunk(baseReq, chunk, progress);   // one retry, then throw
+      rows = await runSweepChunk(baseReq, chunk, progress, opts.windows);   // one retry, then throw
     }
     if (opts.signal?.aborted) throw new Error("sweep aborted");
     all.push(...rows);

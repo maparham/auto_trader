@@ -1300,6 +1300,12 @@
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-faint);
 }
+.bt-robust-windows { margin-left: 0; }
+.bt-robust-windows input {
+  width: 56px;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
+}
 .bt-range-mode-row select.bt-tf-select {
   flex: 0 0 auto; width: auto; min-width: 0;
   background: var(--input-bg); color: var(--text);
@@ -4268,8 +4274,17 @@ span.bt-leg-short { color: var(--neg); }
 .sweep-sort:hover { color: var(--text-dim); }
 .sweep-sort.on { color: var(--text); }
 .sweep-sort-caret { font-size: 7px; line-height: 1; }
+.sweep-robust-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: var(--muted, #666);
+  padding: 0 4px;
+  white-space: nowrap;
+}
 
-.sweep-heatmap { display: flex; flex-direction: column; gap: 6px; }
+.sweep-heatmap { display: flex; flex-direction: column; gap: 6px; position: relative; }
 .sweep-heat-metric { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; font-size: 12px; color: var(--text-dim); height: 24px; }
 .sweep-heat-axes { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 /* Hovered-cell breakdown, inline beside the color-metric dropdown. Single line:
@@ -4281,6 +4296,41 @@ span.bt-leg-short { color: var(--neg); }
 .sweep-heat-detail-lbl { color: var(--text-faint); }
 .sweep-heat-detail-val { color: var(--text); font-family: var(--mono); }
 .sweep-heat-detail-err { color: var(--text-faint); font-style: italic; }
+.sweep-wstrip {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.sweep-wstrip-col { text-align: center; font-size: 11px; }
+.sweep-wstrip-barbox {
+  height: 36px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.sweep-wstrip-bar { width: 14px; border-radius: 2px 2px 0 0; }
+.sweep-wstrip-bar.pos { background: rgba(38, 166, 91, 0.8); }
+.sweep-wstrip-bar.neg { background: rgba(220, 62, 66, 0.8); }
+.sweep-wstrip-pnl.pos { color: #26a65b; }
+.sweep-wstrip-pnl.neg { color: #dc3e42; }
+.sweep-wstrip-range { color: var(--muted, #888); white-space: nowrap; }
+.sweep-wstrip-trades { color: var(--muted, #888); }
+/* Overlays the top of the grid instead of participating in layout: inserting
+   it inline would shift the grid under a stationary cursor, firing mouseleave
+   on the hovered cell and unmounting itself (hover flicker). pointer-events
+   none so it never steals the hover that keeps it open. */
+.sweep-heat-detail-wstrip {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e0e3eb);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.sweep-heat-detail-wstrip .sweep-wstrip-barbox { height: 20px; }
 .sweep-heat-grid { display: grid; gap: 2px; font-size: 11px; }
 .sweep-heat-corner { }
 .sweep-heat-xlabel, .sweep-heat-ylabel {

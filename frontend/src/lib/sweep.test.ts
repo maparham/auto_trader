@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { axisOptionFor, comboAxisText, comboCount, enumerateCombos, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_MAX_COMBOS } from "./sweep";
+import { axisOptionFor, comboAxisText, comboCount, enumerateCombos, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, robustWindowBounds, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_MAX_COMBOS } from "./sweep";
 import * as api from "../api";
 
 const axis = (target: string, from: number, to: number, step: number) =>
@@ -80,7 +80,7 @@ describe("runSweep", () => {
     vi.spyOn(api, "runSweepChunk").mockImplementation(async (_req, combos) => {
       calls.push(combos.length);
       if (calls.length === 2 && !failedOnce) { failedOnce = true; throw new Error("net"); }
-      return combos.map((c) => ({ combo: c, metrics: null, error: null }));
+      return combos.map((c) => ({ combo: c, metrics: null, error: null, windows: null }));
     });
     const progress: number[] = [];
     const rows = await runSweep({} as never, combos45, {
@@ -95,7 +95,7 @@ describe("runSweep", () => {
     const progressArgs: Array<{ done: number; total: number } | undefined> = [];
     vi.spyOn(api, "runSweepChunk").mockImplementation(async (_req, combos, progress) => {
       progressArgs.push(progress);
-      return combos.map((c) => ({ combo: c, metrics: null, error: null }));
+      return combos.map((c) => ({ combo: c, metrics: null, error: null, windows: null }));
     });
     await runSweep({} as never, [axis("param:n", 1, 45, 1)], { onRows: () => {} });
     // 45 combos over 20-combo chunks: 0/45, 20/45, 40/45.
@@ -128,6 +128,46 @@ describe("runSweep", () => {
     expect(spy).toHaveBeenCalledTimes(1);            // no post-cancel retry
     expect(onRows).not.toHaveBeenCalled();
   });
+
+  it("forwards opts.windows to every chunk", async () => {
+    const spy = vi.spyOn(api, "runSweepChunk").mockResolvedValue([]);
+    spy.mockClear();               // spy history persists across tests in this file
+    await runSweep({} as never, [axis("param:n", 1, 2, 1)], { onRows: () => {}, windows: [1, 2, 3] });
+    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), [1, 2, 3]);
+  });
+});
+
+describe("robustWindowBounds", () => {
+  const DAY = 86_400_000;
+
+  it("splits a month into weekly windows", () => {
+    const from = Date.UTC(2026, 2, 1);
+    const to = from + 28 * DAY;
+    const bounds = robustWindowBounds(from, to);
+    expect(bounds).toHaveLength(5); // 4 windows
+    expect(bounds[0]).toBe(Math.round(from / 1000));
+    expect(bounds[4]).toBe(Math.round(to / 1000));
+    for (let i = 1; i < bounds.length; i++) expect(bounds[i]).toBeGreaterThan(bounds[i - 1]);
+  });
+
+  it("splits a year into monthly windows and a week into daily windows", () => {
+    const from = Date.UTC(2026, 0, 1);
+    expect(robustWindowBounds(from, from + 365 * DAY)).toHaveLength(13);
+    expect(robustWindowBounds(from, from + 7 * DAY)).toHaveLength(8);
+  });
+
+  it("clamps auto N to at least 3 and at most 30", () => {
+    const from = Date.UTC(2026, 0, 1);
+    expect(robustWindowBounds(from, from + 1 * DAY)).toHaveLength(4);      // min 3
+    expect(robustWindowBounds(from, from + 3650 * DAY)).toHaveLength(31);  // max 30
+  });
+
+  it("uses the override count when given, clamped to 2..50", () => {
+    const from = Date.UTC(2026, 0, 1);
+    expect(robustWindowBounds(from, from + 28 * DAY, 6)).toHaveLength(7);
+    expect(robustWindowBounds(from, from + 28 * DAY, 1)).toHaveLength(3);
+    expect(robustWindowBounds(from, from + 28 * DAY, 99)).toHaveLength(51);
+  });
 });
 
 describe("ruleAxisTarget", () => {
@@ -145,7 +185,7 @@ describe("ruleAxisTarget", () => {
 });
 
 describe("sweepCatchState", () => {
-  const prev = { rows: [{ combo: { "param:n": 1 }, metrics: null, error: null }], done: 20, total: 45, running: true };
+  const prev = { rows: [{ combo: { "param:n": 1 }, metrics: null, error: null, windows: null }], done: 20, total: 45, running: true };
 
   it("marks a user cancel neutrally, keeping landed rows and no error", () => {
     const next = sweepCatchState(prev, true, new Error("sweep aborted"));

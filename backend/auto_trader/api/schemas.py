@@ -436,11 +436,21 @@ class SweepDTO(BaseModel):
     # a manual/curl request, which then logs chunk-local counts instead.
     done: int | None = None
     total: int | None = None
+    # Sub-window robustness bounds: ascending epoch-second boundaries (N+1 for
+    # N windows). When set, each row gets per-window pnl/trades plus aggregate
+    # robustness metrics sliced from its ONE continuous run (no extra engine
+    # runs). Combos that patch their own period: are skipped (their effective
+    # range differs from these bounds).
+    windows: list[int] | None = None
 
 
 class SweepRowDTO(BaseModel):
     combo: dict[str, float | int | bool | str]
     metrics: dict | None = None
+    # Per-window slice of this combo's run (sweep.windows bounds): pnl and
+    # trade count per window, entry-time attribution. None when no windows
+    # were requested or the combo patches its own period.
+    windows: list[dict] | None = None
     error: str | None = None
 
 

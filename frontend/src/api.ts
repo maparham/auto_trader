@@ -392,7 +392,16 @@ export interface SweepRow {
     profit_factor: number | null;
     avg_win_loss_ratio: number | null;
     return_pct: number;
+    // Sub-window robustness aggregates: present only when the sweep ran with
+    // windows and the combo does not patch its own period.
+    worst_window_pnl?: number;
+    median_window_pnl?: number;
+    pct_windows_profitable?: number;
+    mean_window_pnl_minus_std?: number;
   } | null;
+  // Per-window slice of this combo's run (entry-time attribution); null when
+  // windows were not requested or the combo patches its own period.
+  windows: { from: number; to: number; pnl: number; trades: number }[] | null;
   error: string | null;
 }
 
@@ -402,11 +411,14 @@ export async function runSweepChunk(
   // Position of this chunk in the whole sweep, for the backend log only
   // (advisory: the backend never validates or acts on them).
   progress?: { done: number; total: number },
+  // Sub-window robustness bounds (epoch seconds, ascending); identical for
+  // every chunk of one sweep so all rows slice the same windows.
+  windows?: number[],
 ): Promise<SweepRow[]> {
   const res = await fetch(`${BASE}/api/backtest/sweep`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...req, sweep: { combos, ...progress } }),
+    body: JSON.stringify({ ...req, sweep: { combos, windows, ...progress } }),
   });
   if (!res.ok) throw new Error(await errorDetail(res, `sweep failed (${res.status})`));
   const json = await res.json();

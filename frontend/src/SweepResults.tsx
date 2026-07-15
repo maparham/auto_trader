@@ -10,6 +10,7 @@
 import { Fragment, useState } from "react";
 import type { SweepRow } from "./api";
 import { comboAxisText, type SweepAxis } from "./lib/sweep";
+import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import Tooltip from "./components/Tooltip";
 
 type MetricKey =
@@ -19,11 +20,17 @@ type MetricKey =
   | "win_rate"
   | "avg_win_loss_ratio"
   | "max_drawdown"
-  | "profit_factor";
+  | "profit_factor"
+  | "worst_window_pnl"
+  | "median_window_pnl"
+  | "pct_windows_profitable"
+  | "mean_window_pnl_minus_std";
 
 // `label`: the table header / dropdown text. `abbr`: the compact form used in
-// the single-line hovered-cell detail row where space is tight.
-const METRIC_COLS: { key: MetricKey; label: string; abbr: string }[] = [
+// the single-line hovered-cell detail row where space is tight. `robust` flags
+// the window-robustness aggregates that live in the collapsible group. `info`
+// is the tooltip copy Task 5 surfaces on those columns.
+const METRIC_COLS: { key: MetricKey; label: string; abbr: string; robust?: boolean; info?: string }[] = [
   { key: "net_pnl", label: "Net P/L", abbr: "P/L" },
   { key: "return_pct", label: "Return %", abbr: "Ret" },
   { key: "n_trades", label: "Trades", abbr: "N" },
@@ -31,6 +38,14 @@ const METRIC_COLS: { key: MetricKey; label: string; abbr: string }[] = [
   { key: "avg_win_loss_ratio", label: "RR", abbr: "RR" },
   { key: "max_drawdown", label: "Drawdown", abbr: "DD" },
   { key: "profit_factor", label: "Profit factor", abbr: "PF" },
+  { key: "worst_window_pnl", label: "Worst wnd", abbr: "Wst", robust: true,
+    info: "Worst window P&L. The most this combo lost (or least it made) in any single window. High values mean no disaster period." },
+  { key: "median_window_pnl", label: "Med wnd", abbr: "Med", robust: true,
+    info: "Median window P&L. The typical window's result, immune to one outlier week." },
+  { key: "pct_windows_profitable", label: "Wnd+", abbr: "W+", robust: true,
+    info: "Windows profitable. How many of the N windows ended positive. 4/4 means every period made money." },
+  { key: "mean_window_pnl_minus_std", label: "Mean-σ", abbr: "Mσ", robust: true,
+    info: "Mean window P&L minus one standard deviation. Rewards steady combos, punishes ones that swing between big wins and big losses." },
 ];
 
 type SortDir = "asc" | "desc";
@@ -46,7 +61,37 @@ function fmtMetric(key: MetricKey, v: number | null): string {
   if (key === "net_pnl") return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
   if (key === "max_drawdown") return v.toFixed(2);
   if (key === "n_trades") return String(v);
+  if (key === "pct_windows_profitable") return `${(v * 100).toFixed(0)}%`;
+  if (key === "worst_window_pnl" || key === "median_window_pnl" || key === "mean_window_pnl_minus_std")
+    return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
   return v.toFixed(2);
+}
+
+// Per-window P&L breakdown: one green/red bar per window scaled by |pnl|,
+// with the window's dates, pnl and trade count beneath. Answers "one lucky
+// week or spread across the range?" at a glance. Window times are epoch
+// SECONDS, the formatter takes ms.
+function WindowStrip({ windows }: { windows: NonNullable<SweepRow["windows"]> }) {
+  const maxAbs = Math.max(...windows.map((w) => Math.abs(w.pnl)), 1e-9);
+  return (
+    <div className="sweep-wstrip">
+      {windows.map((w, i) => (
+        <div key={i} className="sweep-wstrip-col">
+          <div className="sweep-wstrip-barbox">
+            <div
+              className={`sweep-wstrip-bar ${w.pnl >= 0 ? "pos" : "neg"}`}
+              style={{ height: `${Math.max(8, (Math.abs(w.pnl) / maxAbs) * 100)}%` }}
+            />
+          </div>
+          <div className="sweep-wstrip-range">{formatPeriodDateRange(w.from * 1000, w.to * 1000)}</div>
+          <div className={`sweep-wstrip-pnl ${w.pnl >= 0 ? "pos" : "neg"}`}>
+            {w.pnl >= 0 ? "+" : ""}{w.pnl.toFixed(2)}
+          </div>
+          <div className="sweep-wstrip-trades">{w.trades} tr</div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function comboLabel(combo: SweepRow["combo"], axes: SweepAxis[]): string {
@@ -72,6 +117,13 @@ export function SweepResults(props: {
   const { rows, axes, onApply, progress } = props;
   const [sort, setSort] = useState<{ key: MetricKey; dir: SortDir } | null>(null);
   const [heatMetric, setHeatMetric] = useState<MetricKey>("net_pnl");
+  const [robustOpen, setRobustOpen] = useState(true);
+
+  // The robust aggregates share one collapsible group. When collapsed they drop
+  // out of the header AND body loops; the toggle keeps its own column so widths
+  // stay aligned either way.
+  const baseCols = METRIC_COLS.filter((c) => !c.robust);
+  const robustCols = robustOpen ? METRIC_COLS.filter((c) => c.robust) : [];
 
   const toggleSort = (key: MetricKey) =>
     setSort((s) => (s?.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
@@ -148,9 +200,29 @@ export function SweepResults(props: {
           <thead>
             <tr>
               <th>Combo</th>
-              {METRIC_COLS.map((c) => (
+              {baseCols.map((c) => (
                 <th key={c.key} className="sweep-c-num">
                   <SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} />
+                </th>
+              ))}
+              <th className="sweep-robust-toggle-th">
+                <Tooltip content="These score how evenly the P&L was earned across sub-windows of the range. A combo that wins on Net P&L but fails here likely got lucky in one period.">
+                  <button type="button" className="sweep-robust-toggle"
+                          onClick={() => setRobustOpen((o) => !o)}
+                          aria-expanded={robustOpen}>
+                    {robustOpen ? "Robustness ▾" : "Robustness ▸"}
+                  </button>
+                </Tooltip>
+              </th>
+              {robustCols.map((c) => (
+                <th key={c.key} className="sweep-c-num">
+                  {c.info ? (
+                    <Tooltip content={c.info}>
+                      <span><SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} /></span>
+                    </Tooltip>
+                  ) : (
+                    <SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} />
+                  )}
                 </th>
               ))}
             </tr>
@@ -172,12 +244,32 @@ export function SweepResults(props: {
                   <td>
                     {failed ? <Tooltip content={row.error ?? "failed"}>{combo}</Tooltip> : combo}
                   </td>
-                  {METRIC_COLS.map((c) => {
+                  {baseCols.map((c) => {
                     const v = metricValue(row, c.key);
                     const isBest = v !== null && bestByCol[c.key] === v;
                     return (
                       <td key={c.key} className={`sweep-c-num${isBest ? " sweep-best" : ""}`}>
                         {fmtMetric(c.key, v)}
+                      </td>
+                    );
+                  })}
+                  <td className="sweep-robust-toggle-td" />
+                  {robustCols.map((c) => {
+                    const v = metricValue(row, c.key);
+                    const isBest = v !== null && bestByCol[c.key] === v;
+                    const cellContent =
+                      c.key === "pct_windows_profitable" && row.windows
+                        ? `${row.windows.filter((w) => w.pnl > 0).length}/${row.windows.length}`
+                        : fmtMetric(c.key, v);
+                    return (
+                      <td key={c.key} className={`sweep-c-num${isBest ? " sweep-best" : ""}`}>
+                        {row.windows && row.windows.length > 0 ? (
+                          <Tooltip content={<WindowStrip windows={row.windows} />} delay={0}>
+                            <span>{cellContent}</span>
+                          </Tooltip>
+                        ) : (
+                          cellContent
+                        )}
                       </td>
                     );
                   })}
@@ -304,6 +396,14 @@ function SweepHeatmap({
   // one selected metric).
   const [hovered, setHovered] = useState<SweepRow | null>(null);
 
+  // Robustness columns share short table labels; the dropdown spells them out.
+  const heatLabel = (c: (typeof METRIC_COLS)[number]) =>
+    c.key === "worst_window_pnl" ? "Worst window"
+    : c.key === "median_window_pnl" ? "Median window"
+    : c.key === "pct_windows_profitable" ? "Windows profitable"
+    : c.key === "mean_window_pnl_minus_std" ? "Mean-σ window"
+    : c.label;
+
   return (
     <div className="sweep-heatmap">
       <div className="sweep-heat-metric">
@@ -313,7 +413,7 @@ function SweepHeatmap({
           onChange={(e) => onMetric(e.target.value as MetricKey)}
         >
           {METRIC_COLS.map((c) => (
-            <option key={c.key} value={c.key}>{c.label}</option>
+            <option key={c.key} value={c.key}>{heatLabel(c)}</option>
           ))}
         </select>
         {axes.length > 2 && (
@@ -351,6 +451,9 @@ function SweepHeatmap({
           )}
         </div>
       </div>
+      {hovered && hovered.windows && hovered.windows.length > 0 && (
+        <div className="sweep-heat-detail-wstrip"><WindowStrip windows={hovered.windows} /></div>
+      )}
       <div
         className="sweep-heat-grid"
         style={{ gridTemplateColumns: `auto repeat(${xTicks.length}, 1fr)` }}
