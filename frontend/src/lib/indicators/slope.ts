@@ -12,7 +12,7 @@ import {
   type IndicatorDrawParams,
   type KLineData,
 } from "klinecharts";
-import { maSeries, alignHtfToChart, emaGappy } from "../mtf";
+import { maSeries, alignHtfToChart, emaGappy, normalizeMaKind, type MaKind } from "../mtf";
 import type { MaExtend } from "./ma";
 import { fullLine } from "./shared";
 
@@ -29,7 +29,7 @@ export interface SlopeThreshold {
 }
 
 export interface SlopeExtend extends MaExtend {
-  maType?: "ema" | "sma";
+  maType?: MaKind;
   units?: SlopeUnit;
   slopePeriod?: number;
   smoothing?: SlopeSmoothing;
@@ -90,7 +90,7 @@ export function slopeWithUnits(
 /** MA (via the shared maSeries, so it matches the real EMA/SMA) then its slope. */
 export function computeSlope(
   candles: KLineData[],
-  maType: "ema" | "sma",
+  maType: MaKind,
   maLen: number,
   n: number,
   units: SlopeUnit,
@@ -156,7 +156,7 @@ export function accelSeries(
  * Shared by the pane, the rule recipe, and MTF so all three agree by construction. */
 export function accelLineSeries(
   candles: KLineData[],
-  maType: "ema" | "sma",
+  maType: MaKind,
   length: number,
   n: number,
   n2: number,
@@ -179,7 +179,7 @@ export function accelLineSeries(
  * three agree by construction. */
 export function slopeLineSeries(
   candles: KLineData[],
-  maType: "ema" | "sma",
+  maType: MaKind,
   length: number,
   n: number,
   units: SlopeUnit,
@@ -223,7 +223,7 @@ export function slopeThresholdLevel(ext: SlopeExtend): number | null {
 
 function slopeShared(ext: SlopeExtend) {
   return {
-    maType: (ext.maType === "sma" ? "sma" : "ema") as "ema" | "sma",
+    maType: normalizeMaKind(ext.maType),
     n: Number(ext.slopePeriod) || 3,
     units: (ext.units ?? "pctHr") as SlopeUnit,
     source: ext.source,

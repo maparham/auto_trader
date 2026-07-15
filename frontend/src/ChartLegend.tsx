@@ -777,9 +777,9 @@ function rowsSig(rows: LegendRow[]): string {
   return rows
     .map(
       (r) =>
-        `${r.name}${r.calcParamsText}:${r.visible ? 1 : 0}:${r.hideValue ? 1 : 0}:${
+        `${r.name}:${r.shortName}${r.calcParamsText}:${r.visible ? 1 : 0}:${r.hideValue ? 1 : 0}:${
           r.warn ?? ""
-        }:${r.summary ?? ""}:${r.figures.map((f) => f.key + f.color).join(",")}`,
+        }:${r.summary ?? ""}:${r.figures.map((f) => f.key + f.title + f.color).join(",")}`,
     )
     .join("|");
 }

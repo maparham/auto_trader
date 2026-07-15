@@ -283,10 +283,12 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       {
         key: "maType", label: "MA Type", type: "select",
         source: "extend", field: "maType", default: "ema",
-        tip: "EMA reacts faster to recent price; SMA weights every bar equally.",
+        tip: "EMA reacts faster to recent price; SMA weights every bar equally. VWMA and EVWMA weight bars by traded volume (EVWMA is LazyBear's elastic version).",
         options: [
           { value: "ema", label: "EMA" },
           { value: "sma", label: "SMA" },
+          { value: "vwma", label: "VWMA" },
+          { value: "evwma", label: "EVWMA" },
         ],
       },
       {

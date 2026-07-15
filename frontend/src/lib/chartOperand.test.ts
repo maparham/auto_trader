@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import type { KLineData } from "klinecharts";
+import type { Operand } from "./backtestConfig";
+
+// chartOperandSources always builds series operands; narrow the Operand union
+// to that variant so tests can read .label / .recipe / .seriesKey.
+type SeriesOperand = Extract<Operand, { kind: "series" }>;
+const asSeries = (op: Operand) => op as SeriesOperand;
 
 // indicatorOutputs (below) now pulls in backtestSeries -> customIndicators, which
 // reads LineType at module load (AVWAP line style table); stub klinecharts' runtime
@@ -107,6 +113,22 @@ describe("recipeLabel", () => {
     expect(recipeLabel({ source: "indicator", indicatorType: "PREV_HL", calcParams: [], line: 0 })).toBe("Prev H/L");
     expect(recipeLabel({ source: "drawing", drawingKind: "segment", anchors: [] })).toBe("Trendline");
     expect(recipeLabel({ source: "drawing", drawingKind: "priceLine", anchors: [] })).toBe("Horizontal line");
+  });
+});
+
+describe("recipeLabel maType", () => {
+  it("names a volume-weighted MA by its kind", () => {
+    const label = recipeLabel({
+      source: "indicator", indicatorType: "MA", calcParams: [20], line: 0,
+      extend: { maType: "evwma" },
+    });
+    expect(label).toBe("EVWMA(20)");
+  });
+  it("keeps the plain type name when maType is absent", () => {
+    const label = recipeLabel({
+      source: "indicator", indicatorType: "EMA", calcParams: [9], line: 0,
+    });
+    expect(label).toBe("EMA(9)");
   });
 });
 
@@ -228,32 +250,32 @@ describe("chartOperandSources", () => {
     expect(s.disabled).toBeFalsy();
     expect(s.outputs).toHaveLength(1);
     expect(s.outputs[0].operand).toMatchObject({ kind: "series", label: "EMA(200)" });
-    expect(s.outputs[0].operand.recipe).toMatchObject({ source: "indicator", indicatorType: "EMA", line: 0 });
+    expect(asSeries(s.outputs[0].operand).recipe).toMatchObject({ source: "indicator", indicatorType: "EMA", line: 0 });
   });
 
   it("multi-output indicator: base unsuffixed, siblings suffixed; distinct recipe.line + seriesKey", () => {
     const s = chartOperandSources({
       kind: "indicator", paneId: "candle_pane", id: "LR#1", indType: "LR", calcParams: [100, 2], extendData: {},
     });
-    expect(s.outputs.map((o) => o.operand.label)).toEqual(["LR(100, 2)", "LR(100, 2): Upper", "LR(100, 2): Lower"]);
-    expect(s.outputs.map((o) => o.operand.recipe.source === "indicator" && o.operand.recipe.line)).toEqual([0, 1, 2]);
-    const keys = s.outputs.map((o) => o.operand.seriesKey);
+    expect(s.outputs.map((o) => asSeries(o.operand).label)).toEqual(["LR(100, 2)", "LR(100, 2): Upper", "LR(100, 2): Lower"]);
+    expect(s.outputs.map((o) => { const r = asSeries(o.operand).recipe; return r.source === "indicator" && r.line; })).toEqual([0, 1, 2]);
+    const keys = s.outputs.map((o) => asSeries(o.operand).seriesKey);
     expect(new Set(keys).size).toBe(3); // distinct outputs => distinct series
   });
 
   it("RSI: 5 outputs (Value + 4 divergences) with base/suffixed labels and distinct seriesKeys", () => {
     const s = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "RSI#1", indType: "RSI", calcParams: [14], extendData: {} });
-    expect(s.outputs.map((o) => o.operand.label)).toEqual([
+    expect(s.outputs.map((o) => asSeries(o.operand).label)).toEqual([
       "RSI(14)",
       "RSI(14): Bullish divergence",
       "RSI(14): Bearish divergence",
       "RSI(14): Hidden bullish divergence",
       "RSI(14): Hidden bearish divergence",
     ]);
-    expect(s.outputs.map((o) => o.operand.recipe.source === "indicator" && o.operand.recipe.line)).toEqual([0, 1, 2, 3, 4]);
-    expect(new Set(s.outputs.map((o) => o.operand.seriesKey)).size).toBe(5);
+    expect(s.outputs.map((o) => { const r = asSeries(o.operand).recipe; return r.source === "indicator" && r.line; })).toEqual([0, 1, 2, 3, 4]);
+    expect(new Set(s.outputs.map((o) => asSeries(o.operand).seriesKey)).size).toBe(5);
     // A divergence recipe snapshots the pivot/range params and omits per-kind flags.
-    const bull = s.outputs[1].operand.recipe;
+    const bull = asSeries(s.outputs[1].operand).recipe;
     expect(bull.source === "indicator" && bull.extend).toMatchObject({
       divergence: { lookbackLeft: 5, lookbackRight: 5, rangeMin: 5, rangeMax: 60 },
     });
@@ -265,7 +287,7 @@ describe("chartOperandSources", () => {
   it("RSI divergence seriesKey dedups across per-kind-flag/style/smoothing differences, but varies with source & pivot params", () => {
     const keyFor = (extendData: unknown, line: number) => {
       const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "R", indType: "RSI", calcParams: [14], extendData });
-      return src.outputs[line].operand.seriesKey;
+      return asSeries(src.outputs[line].operand).seriesKey;
     };
     const baseline = keyFor({ divergence: { on: true, bullish: true, bearish: false } }, 1);
     // Same pivots, different toggled kinds / style / smoothing → SAME key (dedup).
@@ -283,13 +305,13 @@ describe("chartOperandSources", () => {
   it("SLOPE: chip labels fuse the length (chipLabel overrides the parent:child composition)", () => {
     const s = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "SLOPE#1", indType: "SLOPE", calcParams: [9, 21], extendData: {} });
     expect(s.baseLabel).toBe("MA Slope");
-    expect(s.outputs.map((o) => o.operand.label)).toEqual(["MA Slope 9", "MA Slope 21"]);
-    expect(new Set(s.outputs.map((o) => o.operand.seriesKey)).size).toBe(2);
+    expect(s.outputs.map((o) => asSeries(o.operand).label)).toEqual(["MA Slope 9", "MA Slope 21"]);
+    expect(new Set(s.outputs.map((o) => asSeries(o.operand).seriesKey)).size).toBe(2);
   });
 
   it("PREV_HL sub-item labels read 'Prev H/L: Day High' etc.", () => {
     const s = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "PH#1", indType: "PREV_HL", calcParams: [], extendData: {} });
-    expect(s.outputs.map((o) => o.operand.label)).toContain("Prev H/L: Day High");
+    expect(s.outputs.map((o) => asSeries(o.operand).label)).toContain("Prev H/L: Day High");
   });
 
   it("carries the instance MTF timeframe onto the operand", () => {
@@ -312,7 +334,7 @@ describe("chartOperandSources", () => {
     });
     expect(s.baseLabel).toBe("Trendline");
     expect(s.outputs).toHaveLength(1);
-    expect(s.outputs[0].operand.recipe).toMatchObject({ source: "drawing", drawingKind: "segment" });
+    expect(asSeries(s.outputs[0].operand).recipe).toMatchObject({ source: "drawing", drawingKind: "segment" });
   });
 
   it("drawing: custom text + color disambiguate same-type drawings (label + operand + swatch)", () => {
@@ -324,7 +346,7 @@ describe("chartOperandSources", () => {
     });
     expect(s.baseLabel).toBe("Trendline 'daily uptrend'");
     expect(s.color).toBe("#ff0000");
-    expect(s.outputs[0].operand.label).toBe("Trendline 'daily uptrend'");
+    expect(asSeries(s.outputs[0].operand).label).toBe("Trendline 'daily uptrend'");
   });
 
   it("unsupported drawing: disabled + reason, still carries text + color", () => {

@@ -11,6 +11,8 @@ import InfoTip from "../components/InfoTip";
 import { PRICE_SOURCES, SMOOTHING_TYPES } from "../lib/indicatorMeta";
 import { applyMaTimeframe } from "../lib/mtfCoordinator";
 import type { MaExtend, AvwapExtend, BandMode, BandSetting } from "../lib/customIndicators";
+import { normalizeMaKind, type MaKind } from "../lib/mtf";
+import { maFigures, maLegendLabel } from "../lib/indicators/ma";
 
 // --- MA/EMA -------------------------------------------------------------------
 
@@ -31,6 +33,8 @@ export function makeApplyMa(
     smoothType: string;
     smoothLen: number;
     timeframe: string;
+    maType: string;
+    envelope: boolean;
   },
 ) {
   return function applyMa(
@@ -41,6 +45,8 @@ export function makeApplyMa(
       smoothType: string;
       smoothLen: number;
       timeframe: string;
+      maType: string;
+      envelope: boolean;
     }> = {},
   ) {
     const length = next.length ?? state.maLength;
@@ -49,17 +55,32 @@ export function makeApplyMa(
     const st = next.smoothType ?? state.smoothType;
     const sl = next.smoothLen ?? state.smoothLen;
     const tf = next.timeframe ?? state.timeframe;
+    const templateKind: MaKind = type === "EMA" ? "ema" : "sma";
+    const kind = normalizeMaKind(next.maType ?? state.maType, templateKind);
+    const envelope = next.envelope ?? state.envelope;
     const options: MaExtend = {
       source: src,
       offset: off,
       smoothing: st === "none" ? undefined : { type: st as "sma" | "ema", length: sl },
+      maType: kind,
+      envelope,
     };
+    // A never-flipped instance keeps its template label ("MA", not "SMA"):
+    // the kind label only appears when the chosen kind differs from the
+    // template's own kind.
+    const label = maLegendLabel(kind, templateKind);
+    // Legend follows the chosen kind: retitle the figures and the row name.
+    // (klinecharts' override applies figures/shortName per instance.)
+    chart.overrideIndicator(
+      { name, shortName: label, figures: maFigures(label, envelope) },
+      paneId,
+    );
     void applyMaTimeframe(
       chart,
       epic,
       name,
       paneId,
-      { kind: type === "EMA" ? "ema" : "sma", length, options },
+      { kind, length, options },
       tf === "chart" ? null : tf,
       brokerId,
     );
@@ -80,6 +101,10 @@ export function MaInputsPanel({
   timeframe,
   setTimeframe,
   higherTimeframes,
+  maType,
+  setMaType,
+  envelope,
+  setEnvelope,
   applyMa,
 }: {
   maLength: number;
@@ -95,6 +120,10 @@ export function MaInputsPanel({
   timeframe: string;
   setTimeframe: (tf: string) => void;
   higherTimeframes: { resolution: string; label: string }[];
+  maType: string;
+  setMaType: (s: string) => void;
+  envelope: boolean;
+  setEnvelope: (b: boolean) => void;
   applyMa: (next: Partial<{
     length: number;
     source: string;
@@ -102,10 +131,27 @@ export function MaInputsPanel({
     smoothType: string;
     smoothLen: number;
     timeframe: string;
+    maType: string;
+    envelope: boolean;
   }>) => void;
 }) {
   return (
     <>
+      <div className="ind-row">
+        <label>Type</label>
+        <select
+          value={maType}
+          onChange={(e) => {
+            setMaType(e.target.value);
+            applyMa({ maType: e.target.value });
+          }}
+        >
+          <option value="ema">EMA</option>
+          <option value="sma">SMA</option>
+          <option value="vwma">VWMA</option>
+          <option value="evwma">EVWMA</option>
+        </select>
+      </div>
       <div className="ind-row">
         <label>Length</label>
         <input
@@ -148,6 +194,23 @@ export function MaInputsPanel({
           }}
         />
       </div>
+      <span className="ind-row-head">
+        <label className="ind-check">
+          <input
+            type="checkbox"
+            checked={envelope}
+            onChange={(e) => {
+              setEnvelope(e.target.checked);
+              applyMa({ envelope: e.target.checked });
+            }}
+          />
+          <span>Envelope</span>
+        </label>
+        <InfoTip
+          title="Envelope"
+          text="Adds upper and lower bands: the same moving average taken over each bar's high and low."
+        />
+      </span>
 
       <div className="ind-group">Smoothing</div>
       <div className="ind-row">
@@ -222,11 +285,15 @@ export function maConfig(
   smoothType: string,
   smoothLen: number,
   timeframe: string,
+  maType: string,
+  envelope: boolean,
 ) {
   extendData.source = source;
   extendData.offset = offset;
   if (smoothType !== "none") extendData.smoothing = { type: smoothType, length: smoothLen };
   if (timeframe !== "chart") extendData.mtf = { timeframe };
+  extendData.maType = maType;
+  if (envelope) extendData.envelope = true;
 }
 
 // --- AVWAP ---------------------------------------------------------------------

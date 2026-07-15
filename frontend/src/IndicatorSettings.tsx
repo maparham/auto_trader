@@ -25,7 +25,7 @@ import {
   type SlopeThreshold,
   type SlopeUnit,
 } from "./lib/indicators/slope";
-import type { PriceSource } from "./lib/mtf";
+import { normalizeMaKind, type PriceSource } from "./lib/mtf";
 import type {
   MaExtend,
   PivotBandsMode,
@@ -282,6 +282,8 @@ export default function IndicatorSettings({
   const [smoothType, setSmoothType] = useState<string>(ext0.smoothing?.type ?? "none");
   const [smoothLen, setSmoothLen] = useState<number>(ext0.smoothing?.length ?? 9);
   const [timeframe, setTimeframe] = useState<string>(ext0.mtf?.timeframe ?? "chart");
+  const [maType, setMaType] = useState<string>(ext0.maType ?? (type === "EMA" ? "ema" : "sma"));
+  const [envelope, setEnvelope] = useState<boolean>(ext0.envelope === true);
 
   // --- AVWAP inputs (source + bands), sourced from extendData (AvwapExtend) ---
   const avwapExt0 = (ind?.extendData ?? {}) as AvwapExtend;
@@ -615,7 +617,7 @@ export default function IndicatorSettings({
   function currentConfig(): SavedIndicatorConfig {
     const extendData: Record<string, unknown> = {};
     if (isMa) {
-      maConfig(extendData, source, offset, smoothType, smoothLen, timeframe);
+      maConfig(extendData, source, offset, smoothType, smoothLen, timeframe, maType, envelope);
     }
     // Pivot Bands persists only the chosen timeframe (never the bulky HTF series);
     // refreshMtfIndicators refetches it on reload, like EMA/MA.
@@ -713,7 +715,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
 
   // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
   // setParam's isMa branch below, so it stays a shell-local binding.
@@ -724,6 +726,8 @@ export default function IndicatorSettings({
     smoothType,
     smoothLen,
     timeframe,
+    maType,
+    envelope,
   });
 
   // Push a Pivot Bands config (chart-TF or MTF) through the coordinator, which
@@ -821,7 +825,7 @@ export default function IndicatorSettings({
       name,
       paneId,
       {
-        maType: (next.maType ?? (genExtend.maType === "sma" ? "sma" : "ema")) as "ema" | "sma",
+        maType: normalizeMaKind(next.maType ?? genExtend.maType),
         lengths: next.lengths ?? slopeLengths(calcParams),
         slopeN: nextSlopeN,
         units: (next.units ?? (genExtend.units as SlopeUnit) ?? "pctHr") as SlopeUnit,
@@ -1185,6 +1189,10 @@ export default function IndicatorSettings({
               timeframe={timeframe}
               setTimeframe={setTimeframe}
               higherTimeframes={higherTimeframes}
+              maType={maType}
+              setMaType={setMaType}
+              envelope={envelope}
+              setEnvelope={setEnvelope}
               applyMa={applyMa}
             />
           )}

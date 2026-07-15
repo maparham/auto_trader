@@ -5,6 +5,8 @@
 import { minPositiveGap } from "../lib/barInterval";
 import { curveLabel, curveLabelConfig, curveLabelPosFor, indTypeOf } from "../lib/customIndicators";
 import { slopeMaLines, slopeLengths, type SlopeMaSource } from "../lib/indicators/slope";
+import { MA_KIND_LABEL } from "../lib/indicators/ma";
+import { normalizeMaKind } from "../lib/mtf";
 import { type CurveLabelPill } from "../CurveLabels";
 import type { Chart, Indicator } from "klinecharts";
 import { type LineCache, type PivotDeltaLabel, DOT_RADIUS, ANCHOR_HANDLE_R } from "./chartGeometry";
@@ -184,7 +186,7 @@ export function buildSlopeMaPills(
       const lines = slopeMaLines(ind as SlopeMaSource, dl);
       if (!lines.length) continue;
       const lengths = slopeLengths(ind.calcParams);
-      const maType = ext.maType === "sma" ? "SMA" : "EMA";
+      const maType = MA_KIND_LABEL[normalizeMaKind(ext.maType)];
       const pos = cfg.high; // single position slot (no High/Low split for the MA curves)
       lines.forEach((line, li) => {
         // The chosen visible END: right -> last defined visible point, left -> first.

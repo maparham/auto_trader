@@ -11,6 +11,8 @@
 import type { KLineData } from "klinecharts";
 import { recipeKey, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe, type SeriesIndicatorType, type DrawingKind, type Operand } from "./backtestConfig";
 import { LINE_KEYS } from "./backtestSeries";
+import { MA_KIND_LABEL } from "./indicators/ma";
+import { normalizeMaKind } from "./mtf";
 import { PREV_HL_PERIODS } from "./indicators/prevHl";
 import { DIVERGENCE_KINDS, RSI_DIVERGENCE_DEFAULTS, type DivergenceKind, type RsiExtend } from "./customIndicators";
 
@@ -25,7 +27,7 @@ const SUPPORTED_DRAWINGS = new Set<string>([
  * from the recipe snapshot so the hash is stable and the copied line always computes
  * (e.g. lineHidden would blank a style-hidden line's output). */
 const NON_COMPUTE_EXTEND_KEYS = new Set<string>([
-  "indType", "userVisible", "visibility", "mtf", "hideLegendValue", "lineHidden",
+  "indType", "userVisible", "visibility", "mtf", "hideLegendValue", "lineHidden", "envelope",
 ]);
 
 export function isSupportedIndicatorType(indType: string): boolean {
@@ -146,7 +148,18 @@ export function recipeLabel(recipe: SeriesRecipe): string {
   if (t === "SLOPE") return "MA Slope";
   if (t === "VWAP" || t === "AVWAP" || t === "PREV_HL") return t === "PREV_HL" ? "Prev H/L" : t;
   const params = recipe.calcParams.filter((n) => Number.isFinite(n));
-  return params.length ? `${t}(${params.join(", ")})` : t;
+  // EMA/MA instances can be flipped to a volume-weighted kind in settings; the
+  // chip should say what actually computes.
+  const base =
+    t === "EMA" || t === "MA"
+      ? MA_KIND_LABEL[
+          normalizeMaKind(
+            (recipe.extend as { maType?: unknown } | undefined)?.maType,
+            t === "EMA" ? "ema" : "sma",
+          )
+        ]
+      : t;
+  return params.length ? `${base}(${params.join(", ")})` : base;
 }
 
 /** One selectable output line of an indicator instance. `base` marks the primary

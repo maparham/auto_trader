@@ -14,6 +14,7 @@ import {
   type PrevHlRollingUnit,
 } from "./prevHl";
 import { AVWAP_DEFAULT_BANDS, type AvwapExtend } from "./vwap";
+import { maLegendLabel } from "./ma";
 
 export type CurveLabelSide = "right" | "left";
 export type CurveLabelAlign = "above" | "center" | "below";
@@ -97,9 +98,9 @@ export function curveLabel(
     case "PREV_HL":
       return prevHlCurveLabel(figKey, extendData as PrevHlExtend);
     case "EMA":
-      return maCurveLabel("EMA", figKey, calcParams);
+      return maCurveLabel("EMA", figKey, extendData, calcParams);
     case "MA":
-      return maCurveLabel("MA", figKey, calcParams);
+      return maCurveLabel("MA", figKey, extendData, calcParams);
     case "LR":
       return lrCurveLabel(figKey, calcParams);
     case "VWAP":
@@ -152,9 +153,19 @@ function maLen(calcParams: unknown[] | undefined, def: number, i = 0): number {
 
 // EMA/MA: base line gets "EMA 20"; the separate smoothing MA gets "EMA 20 MA".
 // (The smoothing line only produces coords when smoothing is on, so a "none"
-// smoothing never reaches here.)
-function maCurveLabel(label: "EMA" | "MA", figKey: string, calcParams?: unknown[]): string | null {
-  const base = `${label} ${maLen(calcParams, label === "EMA" ? 9 : 20)}`;
+// smoothing never reaches here.) The pill follows the legend rule: a flipped
+// instance (Type set to VWMA/EVWMA/…) shows that kind's label, an untouched one
+// keeps its template label ("EMA"/"MA"). Default length is the template's own.
+function maCurveLabel(
+  type: "EMA" | "MA",
+  figKey: string,
+  extendData: unknown,
+  calcParams?: unknown[],
+): string | null {
+  const templateKind = type === "EMA" ? "ema" : "sma";
+  const maType = (extendData as { maType?: unknown } | undefined)?.maType;
+  const label = maLegendLabel(maType, templateKind);
+  const base = `${label} ${maLen(calcParams, type === "EMA" ? 9 : 20)}`;
   if (figKey === "ma") return base;
   if (figKey === "smoothingMa") return `${base} MA`;
   return null;

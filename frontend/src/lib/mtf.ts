@@ -90,6 +90,76 @@ export function sma(values: number[], length: number): Array<number | undefined>
   return out;
 }
 
+/** The moving-average kinds every MA consumer shares: classic EMA/SMA plus the
+ * volume-weighted pair. vwma is the rolling volume-weighted mean; evwma is
+ * LazyBear's elastic volume-weighted MA (TradingView "EVWMA_LB"). */
+export type MaKind = "ema" | "sma" | "vwma" | "evwma";
+
+const MA_KINDS = new Set<MaKind>(["ema", "sma", "vwma", "evwma"]);
+
+/** Coerce a stored/unknown maType to a valid kind. Centralized so no call site
+ * silently drops the volume-weighted kinds with a binary sma/ema ternary. */
+export function normalizeMaKind(v: unknown, fallback: MaKind = "ema"): MaKind {
+  return MA_KINDS.has(v as MaKind) ? (v as MaKind) : fallback;
+}
+
+/** Rolling volume-weighted mean: sum(price*vol, n) / sum(vol, n). Undefined
+ * during warm-up and wherever the window's volume sum is 0 (volumeless
+ * instruments report 0 on every bar: emit no line rather than garbage). */
+function vwma(
+  bars: KLineData[],
+  prices: number[],
+  length: number,
+): Array<number | undefined> {
+  const out: Array<number | undefined> = new Array(prices.length).fill(undefined);
+  if (length < 1) return out;
+  let pv = 0;
+  let v = 0;
+  for (let i = 0; i < prices.length; i++) {
+    const vol = bars[i].volume ?? 0;
+    pv += prices[i] * vol;
+    v += vol;
+    if (i >= length) {
+      const oldVol = bars[i - length].volume ?? 0;
+      pv -= prices[i - length] * oldVol;
+      v -= oldVol;
+    }
+    if (i >= length - 1 && v > 0) out[i] = pv / v;
+  }
+  return out;
+}
+
+/** LazyBear's elastic volume-weighted MA. With nbfs = sum(volume, length):
+ *   v[i] = (v[i-1] * (nbfs - vol[i]) + vol[i] * price[i]) / nbfs
+ * Undefined until the volume window is full. The recursion seeds from the
+ * source PRICE at the first usable bar, not Pine's nz -> 0 (which draws a
+ * near-zero ramp at the left edge of history). A zero-volume bar naturally
+ * holds the prior value; a zero-volume WINDOW is undefined and the recursion
+ * re-seeds at the next usable bar. */
+function evwma(
+  bars: KLineData[],
+  prices: number[],
+  length: number,
+): Array<number | undefined> {
+  const out: Array<number | undefined> = new Array(prices.length).fill(undefined);
+  if (length < 1) return out;
+  let nbfs = 0;
+  let prev: number | undefined;
+  for (let i = 0; i < prices.length; i++) {
+    const vol = bars[i].volume ?? 0;
+    nbfs += vol;
+    if (i >= length) nbfs -= bars[i - length].volume ?? 0;
+    if (i < length - 1) continue;
+    if (nbfs <= 0) {
+      prev = undefined;
+      continue;
+    }
+    prev = prev === undefined ? prices[i] : (prev * (nbfs - vol) + vol * prices[i]) / nbfs;
+    out[i] = prev;
+  }
+  return out;
+}
+
 export interface MaOptions {
   source?: PriceSource;
   offset?: number;
@@ -118,12 +188,16 @@ export interface MaSeries {
  */
 export function maSeries(
   bars: KLineData[],
-  kind: "ema" | "sma",
+  kind: MaKind,
   length: number,
   opt: MaOptions = {},
 ): MaSeries {
   const prices = bars.map((k) => priceOf(k, opt.source ?? "close"));
-  const base = kind === "ema" ? ema(prices, length) : sma(prices, length);
+  const base =
+    kind === "ema" ? ema(prices, length)
+    : kind === "sma" ? sma(prices, length)
+    : kind === "vwma" ? vwma(bars, prices, length)
+    : evwma(bars, prices, length);
 
   let smoothing: Array<number | undefined> | undefined;
   const sm = opt.smoothing;

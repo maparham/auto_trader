@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { KLineData } from "klinecharts";
-import { maSeries, htfCoverageStartMs, HTF_WARMUP_BARS } from "./mtf";
+import { maSeries, normalizeMaKind, htfCoverageStartMs, HTF_WARMUP_BARS } from "./mtf";
 
 // Minimal flat bars (open=high=low=close) one step apart.
 function bars(closes: number[]): KLineData[] {
@@ -94,5 +94,75 @@ describe("htfCoverageStartMs", () => {
 
   it("returns the oldest bar unchanged when htfMs is not positive", () => {
     expect(htfCoverageStartMs(oldest, 0, 9)).toBe(oldest);
+  });
+});
+
+// Bars with per-bar volume (the flat-price bars() helper above pins volume to 0,
+// which is exactly the degenerate case for the volume-weighted kinds).
+function vbars(closes: number[], volumes: number[]): KLineData[] {
+  return closes.map((c, i) => ({
+    timestamp: i * 60_000,
+    open: c,
+    high: c + 1,
+    low: c - 1,
+    close: c,
+    volume: volumes[i] ?? 0,
+  }));
+}
+
+describe("maSeries vwma", () => {
+  it("is the volume-weighted mean over the window", () => {
+    const { base } = maSeries(vbars([10, 20, 30, 40], [1, 2, 3, 4]), "vwma", 2);
+    expect(base[0]).toBeUndefined(); // warm-up: window not full
+    expect(base[1]).toBeCloseTo(50 / 3, 10); // (10*1 + 20*2) / 3
+    expect(base[2]).toBeCloseTo(26, 10); // (20*2 + 30*3) / 5
+    expect(base[3]).toBeCloseTo(250 / 7, 10); // (30*3 + 40*4) / 7
+  });
+  it("is undefined wherever the window's volume sum is 0", () => {
+    const { base } = maSeries(vbars([10, 20, 30], [1, 0, 0]), "vwma", 2);
+    expect(base[1]).toBeCloseTo(10, 10); // (10*1 + 20*0) / 1
+    expect(base[2]).toBeUndefined(); // window volume 0
+  });
+  it("is all-undefined on a volumeless instrument", () => {
+    const { base } = maSeries(vbars([10, 20, 30], [0, 0, 0]), "vwma", 2);
+    expect(base).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+describe("maSeries evwma", () => {
+  it("seeds from the source price at the first full window, then recurses", () => {
+    const { base } = maSeries(vbars([10, 20, 30], [1, 2, 3]), "evwma", 2);
+    expect(base[0]).toBeUndefined(); // warm-up
+    expect(base[1]).toBeCloseTo(20, 10); // seed = price at first full window
+    // nbfs = 2+3 = 5: (20*(5-3) + 3*30) / 5
+    expect(base[2]).toBeCloseTo(26, 10);
+  });
+  it("holds the prior value across a zero-volume bar", () => {
+    const { base } = maSeries(vbars([10, 20, 30], [1, 1, 0]), "evwma", 2);
+    expect(base[1]).toBeCloseTo(20, 10);
+    // nbfs = 1+0 = 1, vol = 0: (20*(1-0) + 0) / 1 = 20
+    expect(base[2]).toBeCloseTo(20, 10);
+  });
+  it("goes undefined on a zero-volume window and re-seeds at the next usable bar", () => {
+    const { base } = maSeries(vbars([10, 20, 30, 40, 50], [1, 1, 0, 0, 2]), "evwma", 2);
+    expect(base[1]).toBeCloseTo(20, 10);
+    expect(base[2]).toBeCloseTo(20, 10); // nbfs = 1: holds
+    expect(base[3]).toBeUndefined(); // nbfs = 0
+    expect(base[4]).toBeCloseTo(50, 10); // re-seeded from price
+  });
+  it("respects the source option", () => {
+    // vbars sets high = close + 1, so an evwma over "high" tracks price + 1.
+    const { base } = maSeries(vbars([10, 20, 30], [1, 2, 3]), "evwma", 2, { source: "high" });
+    expect(base[1]).toBeCloseTo(21, 10);
+  });
+});
+
+describe("normalizeMaKind", () => {
+  it("passes valid kinds through and falls back otherwise", () => {
+    expect(normalizeMaKind("vwma")).toBe("vwma");
+    expect(normalizeMaKind("evwma")).toBe("evwma");
+    expect(normalizeMaKind("sma")).toBe("sma");
+    expect(normalizeMaKind(undefined)).toBe("ema");
+    expect(normalizeMaKind("garbage", "sma")).toBe("sma");
   });
 });

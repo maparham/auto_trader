@@ -10,7 +10,7 @@
 // needs no knowledge that a timeframe was involved.
 
 import type { KLineData } from "klinecharts";
-import { maSeries, sma, alignHtfToChart, type MaOptions } from "./mtf";
+import { maSeries, sma, alignHtfToChart, normalizeMaKind, type MaOptions } from "./mtf";
 import {
   vwapFrom, computeRsi, computeLr, computePrevHl,
   DIVERGENCE_KINDS, cfgForKind, divergenceEventSeries,
@@ -225,7 +225,13 @@ export function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[],
   switch (r.indicatorType) {
     case "EMA":
     case "MA": {
-      const ma = maSeries(candles, r.indicatorType === "EMA" ? "ema" : "sma", r.calcParams[0] ?? 0, ext as MaOptions);
+      // The Type dropdown rides on extendData.maType; the recipe must honor it
+      // or a flipped instance's rule would silently compute the template kind.
+      const kind = normalizeMaKind(
+        (ext as { maType?: unknown }).maType,
+        r.indicatorType === "EMA" ? "ema" : "sma",
+      );
+      const ma = maSeries(candles, kind, r.calcParams[0] ?? 0, ext as MaOptions);
       return line === 1 && ma.smoothing ? ma.smoothing : ma.base;
     }
     case "LR": {
@@ -298,7 +304,7 @@ export function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[],
       const line = r.line ?? 0;
       const block = Math.floor(line / K);
       const len = lengths[line % K] ?? lengths[0];
-      const maType = sext.maType === "sma" ? "sma" : "ema";
+      const maType = normalizeMaKind(sext.maType);
       const n = Number(sext.slopePeriod) || 3;
       const n2 = Number(sext.accelPeriod) || 3;
       const units: SlopeUnit = sext.units ?? "pctHr";

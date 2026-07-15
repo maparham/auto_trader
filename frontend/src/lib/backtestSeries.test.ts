@@ -12,7 +12,7 @@ vi.mock("klinecharts", () => ({
 }));
 
 const { buildSeries, buildChartOperandSeries, computeIndicatorRecipe } = await import("./backtestSeries");
-const { maSeries, sma } = await import("./mtf");
+const { maSeries } = await import("./mtf");
 const { computeRsi, computeLr, computePrevHl, vwapFrom, detectDivergences, RSI_DIVERGENCE_DEFAULTS } = await import("./customIndicators");
 const { computePivotBands } = await import("./indicators/pivotBands");
 const { computePivotAnalysis } = await import("./indicators/pivotAnalysis");
@@ -407,7 +407,7 @@ describe("series operand — indicator recipes match the chart template", () => 
     const { chartOperandSources } = await import("./chartOperand");
     const bars = candles([1, 3, 2, 4, 6, 5, 7, 9, 8, 10]);
     const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "LR#x", indType: "LR", calcParams: [5, 2], extendData: {} });
-    const upper = src.outputs.find((o) => o.operand.label.endsWith("Upper"))!;
+    const upper = src.outputs.find((o) => (o.operand as Extract<Operand, { kind: "series" }>).label.endsWith("Upper"))!;
     const recipe = (upper.operand as Extract<Operand, { kind: "series" }>).recipe;
     const got = await seriesFor(recipe, bars);
     expect(got).toEqual(nul(computeLr(bars, 5, 2, {}).map((p) => (p as Record<string, number | undefined>).up)));
@@ -449,7 +449,7 @@ describe("series operand — Pivot Bands recipe", () => {
   it("a picker-built 'Pivot Low' operand resolves end-to-end", async () => {
     const { chartOperandSources } = await import("./chartOperand");
     const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "PIVOT_BANDS#x", indType: "PIVOT_BANDS", calcParams: [1, 1], extendData: {} });
-    const low = src.outputs.find((o) => o.operand.label.endsWith("Pivot Low"))!;
+    const low = src.outputs.find((o) => (o.operand as Extract<Operand, { kind: "series" }>).label.endsWith("Pivot Low"))!;
     const recipe = (low.operand as Extract<Operand, { kind: "series" }>).recipe;
     const got = await seriesFor(recipe, ZIG);
     const ref = computePivotBands(ZIG, 1, 1, {}) as unknown as Array<Record<string, number | undefined>>;
@@ -507,7 +507,7 @@ describe("series operand — Pivots High/Low Analysis recipe", () => {
   it("a picker-built 'Δ% (last pivot)' operand resolves end-to-end", async () => {
     const { chartOperandSources } = await import("./chartOperand");
     const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "PIVOT_ANALYSIS#x", indType: "PIVOT_ANALYSIS", calcParams: [1], extendData: {} });
-    const delta = src.outputs.find((o) => o.operand.label.includes("Δ%"))!;
+    const delta = src.outputs.find((o) => (o.operand as Extract<Operand, { kind: "series" }>).label.includes("Δ%"))!;
     const recipe = (delta.operand as Extract<Operand, { kind: "series" }>).recipe;
     const got = await seriesFor(recipe, ZIG);
     expect(got).toEqual(nul(computePivotAnalysis(ZIG, 1).map((p) => p.deltaPct)));
@@ -580,9 +580,10 @@ describe("series operand — SLOPE recipe parity", () => {
     expect(src.outputs.map((o) => o.label)).toEqual(["Slope MA 3", "Slope MA 2"]);
     expect(src.outputs.map((o) => o.lineIndex)).toEqual([0, 1]);
     const out = src.outputs[0];
-    // recipeLabel(SLOPE) is the fixed "MA Slope" base label (unchanged by this
-    // task); line-0's base:true output carries it unsuffixed, per chartOperandSources.
-    expect(out.operand.label).toBe("MA Slope");
+    // recipeLabel(SLOPE) is the fixed "MA Slope" base label, but each slope output
+    // fuses its length into the chip (chipLabel "MA Slope 3") so multiple slope
+    // lengths don't collide on one chip — see chartOperandSources / OutputChoice.
+    expect((out.operand as Extract<Operand, { kind: "series" }>).label).toBe("MA Slope 3");
     const recipe = (out.operand as Extract<Operand, { kind: "series" }>).recipe;
     expect(recipe).toMatchObject({ extend: { maType: "sma", units: "pctBar" } });
     const got = await seriesFor(recipe, bars);
@@ -944,5 +945,27 @@ describe("buildChartOperandSeries", () => {
     const name = seriesName(op)!;
     expect(Object.keys(out)).toEqual([name]);
     expect(out[name]).toEqual(nul(maSeries(bars, "ema", 3, {}).base));
+  });
+});
+
+describe("computeIndicatorRecipe maType", () => {
+  const vwmaCandles = candles([10, 20, 30, 40], [1, 2, 3, 4]);
+  it("reproduces the on-chart VWMA when the recipe carries maType", () => {
+    const out = computeIndicatorRecipe(
+      { source: "indicator", indicatorType: "MA", calcParams: [2], line: 0, extend: { maType: "vwma" } },
+      vwmaCandles,
+      1,
+    );
+    const { base } = maSeries(vwmaCandles, "vwma", 2);
+    expect(out).toEqual(base.map((v) => v ?? undefined));
+  });
+  it("keeps the template kind when maType is absent (existing recipes)", () => {
+    const out = computeIndicatorRecipe(
+      { source: "indicator", indicatorType: "EMA", calcParams: [2], line: 0, extend: {} },
+      vwmaCandles,
+      1,
+    );
+    const { base } = maSeries(vwmaCandles, "ema", 2);
+    expect(out).toEqual(base.map((v) => v ?? undefined));
   });
 });

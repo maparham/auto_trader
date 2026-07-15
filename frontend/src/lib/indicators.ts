@@ -31,6 +31,7 @@ import {
 } from "./customIndicators";
 import { EQUITY_INDICATOR } from "./backtest";
 import type { SlopeExtend } from "./indicators/slope";
+import { maFigures, maLegendLabel } from "./indicators/ma";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
 import {
   type VisibilityModel,
@@ -435,6 +436,21 @@ export function applyIndicator(
           : {}),
     ...(opts?.forceHidden || cfg?.visible === false ? { visible: false } : {}),
   };
+  // A saved maType/envelope must retitle the legend on rehydrate too, not just
+  // when the settings modal touches the instance.
+  if (type === "EMA" || type === "MA") {
+    const mext = extendData as { maType?: string; envelope?: boolean };
+    if (mext.maType || mext.envelope) {
+      const templateKind = type === "EMA" ? "ema" : "sma";
+      // Same rule as makeApplyMa: a never-flipped instance keeps its template
+      // label even if a default maType got persisted by opening the modal.
+      const label = maLegendLabel(mext.maType, templateKind);
+      Object.assign(value, {
+        shortName: label,
+        figures: maFigures(label, mext.envelope === true),
+      });
+    }
+  }
   // Overlays stack on the candle pane; sub-pane indicators (RSI/MACD/…) get their own
   // pane with a taller default than klinecharts' cramped ~50px, so oscillators read
   // like TradingView's (unless a preserved height is passed in via opts.height). The

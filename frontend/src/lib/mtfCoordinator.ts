@@ -9,7 +9,7 @@
 
 import type { Chart, KLineData } from "klinecharts";
 import { fetchRangeStrict, RESOLUTION_SECONDS } from "./feed";
-import { maSeries, htfCoverageStartMs, type MtfSeriesBase } from "./mtf";
+import { maSeries, htfCoverageStartMs, normalizeMaKind, type MaKind, type MtfSeriesBase } from "./mtf";
 import { pageHistoryBack } from "./historyPaging";
 import { indTypeOf, type MaExtend } from "./customIndicators";
 import {
@@ -156,7 +156,7 @@ function mtfFetchTail(
 }
 
 interface MaConfig {
-  kind: "ema" | "sma";
+  kind: MaKind;
   length: number;
   options: MaExtend; // source / offset / smoothing
 }
@@ -368,7 +368,7 @@ export async function applyPivotBandsTimeframe(
 }
 
 interface SlopeConfig {
-  maType: "ema" | "sma";
+  maType: MaKind;
   lengths: number[]; // calcParams — one MA length per line
   slopeN: number;
   units: SlopeUnit;
@@ -544,9 +544,15 @@ export async function refreshMtfIndicators(
             id,
             paneId,
             {
-              kind: type === "EMA" ? "ema" : "sma",
+              kind: normalizeMaKind(ext.maType, type === "EMA" ? "ema" : "sma"),
               length,
-              options: { source: ext.source, offset: ext.offset, smoothing: ext.smoothing },
+              options: {
+                source: ext.source,
+                offset: ext.offset,
+                smoothing: ext.smoothing,
+                maType: ext.maType,
+                envelope: ext.envelope,
+              },
             },
             tf,
             brokerId,
@@ -592,7 +598,7 @@ export async function refreshMtfIndicators(
             id,
             paneId,
             {
-              maType: ext.maType === "sma" ? "sma" : "ema",
+              maType: normalizeMaKind(ext.maType),
               lengths,
               slopeN,
               units: ext.units ?? "pctHr",

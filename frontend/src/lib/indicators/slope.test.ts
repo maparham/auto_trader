@@ -331,3 +331,17 @@ describe("accel on native HTF bars", () => {
     expect(wrong).not.toEqual([undefined, 1, 1, 1, 1, 1, 1, 1]);
   });
 });
+
+describe("slopeLineSeries maType", () => {
+  const vb = (t: number, c: number, v: number): KLineData =>
+    ({ timestamp: t * 60_000, open: c, high: c, low: c, close: c, volume: v }) as KLineData;
+  const candles = [vb(0, 10, 1), vb(1, 20, 2), vb(2, 30, 3), vb(3, 40, 4), vb(4, 50, 5)];
+  it("computes the slope of an EVWMA base when maType is evwma", async () => {
+    const { maSeries } = await import("../mtf");
+    const base = maSeries(candles, "evwma", 2).base;
+    const line = slopeLineSeries(candles, "evwma", 2, 1, "priceBar", undefined, undefined, 1);
+    // priceBar slope over 1 bar is just the base's first difference.
+    expect(line[3]).toBeCloseTo((base[3] as number) - (base[2] as number), 10);
+    expect(line[1]).toBeUndefined(); // base[0] is undefined during warm-up
+  });
+});
