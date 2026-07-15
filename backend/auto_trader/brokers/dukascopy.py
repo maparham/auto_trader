@@ -13,7 +13,16 @@ price feeds never blend under one coverage watermark.
 The underlying dukascopy_python.fetch() is synchronous and does the bi5 download,
 LZMA decompression, tick-to-bar aggregation and per-instrument price scaling
 internally, so get_candles just maps our epic/resolution/side to its constants
-and runs it in a thread. Volume is TICK-COUNT volume, not traded size.
+and runs it in a thread.
+
+NOTE ON VOLUME: Dukascopy is a retail FX/CFD source with no centralized
+exchange volume. Its per-tick "volume" is the liquidity available at the best
+bid + best ask, expressed in MILLIONS of base units, summed per bar. So it is
+not real traded volume and not a plain tick count, and it comes out fractional
+(e.g. US100 ~0.4/bar) with an instrument-specific scale (EURUSD ~hundreds/bar,
+index CFDs <1/bar). Treat it as meaningless as tradeable volume. We pass it
+through verbatim; on the default mid side it's the average of the bid- and
+ask-side figures, not a sum.
 """
 
 from __future__ import annotations
