@@ -8,10 +8,10 @@ afterEach(cleanup);
 const rows = [
   { combo: { "param:n": 5, "risk:long.stop.value": 1 },
     metrics: { net_pnl: 100, n_trades: 4, win_rate: 0.5, max_drawdown: 20,
-               profit_factor: 2, return_pct: 1 }, error: null },
+               profit_factor: 2, avg_win_loss_ratio: null, return_pct: 1 }, error: null },
   { combo: { "param:n": 10, "risk:long.stop.value": 1 },
     metrics: { net_pnl: -50, n_trades: 2, win_rate: 0, max_drawdown: 60,
-               profit_factor: null, return_pct: -0.5 }, error: null },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.5 }, error: null },
   { combo: { "param:n": 5, "risk:long.stop.value": 2 }, metrics: null, error: "boom" },
 ];
 const axes = [
@@ -45,10 +45,10 @@ describe("SweepResults", () => {
 const opRows = [
   { combo: { "op:long.entry.0": "gt", "param:n": 5 },
     metrics: { net_pnl: 10, n_trades: 1, win_rate: 1, max_drawdown: 0,
-               profit_factor: null, return_pct: 0.1 }, error: null },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: 0.1 }, error: null },
   { combo: { "op:long.entry.0": "lt", "param:n": 5 },
     metrics: { net_pnl: -10, n_trades: 1, win_rate: 0, max_drawdown: 10,
-               profit_factor: null, return_pct: -0.1 }, error: null },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.1 }, error: null },
 ];
 const opAxes = [
   { kind: "list" as const, target: "op:long.entry.0", label: "long entry 1 op", options: [
@@ -82,13 +82,13 @@ describe("SweepResults list axes", () => {
 const rows3 = [
   { combo: { "param:a": 1, "param:b": 10, "param:c": 100 },
     metrics: { net_pnl: 50, n_trades: 1, win_rate: 1, max_drawdown: 30,
-               profit_factor: 2, return_pct: 0.5 }, error: null },
+               profit_factor: 2, avg_win_loss_ratio: null, return_pct: 0.5 }, error: null },
   { combo: { "param:a": 1, "param:b": 10, "param:c": 200 },
     metrics: { net_pnl: 80, n_trades: 2, win_rate: 1, max_drawdown: 90,
-               profit_factor: 3, return_pct: 0.8 }, error: null },
+               profit_factor: 3, avg_win_loss_ratio: null, return_pct: 0.8 }, error: null },
   { combo: { "param:a": 2, "param:b": 10, "param:c": 100 },
     metrics: { net_pnl: -20, n_trades: 1, win_rate: 0, max_drawdown: 40,
-               profit_factor: null, return_pct: -0.2 }, error: null },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.2 }, error: null },
   { combo: { "param:a": 2, "param:b": 10, "param:c": 200 }, metrics: null, error: "boom" },
 ];
 const axes3 = [
@@ -104,7 +104,7 @@ const rowsMixedFail = [
   { combo: { "param:a": 1, "param:b": 10, "param:c": 200 }, metrics: null, error: "boom" },
   { combo: { "param:a": 2, "param:b": 10, "param:c": 100 },
     metrics: { net_pnl: -20, n_trades: 1, win_rate: 0, max_drawdown: 40,
-               profit_factor: null, return_pct: -0.2 }, error: null },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: -0.2 }, error: null },
   { combo: { "param:a": 2, "param:b": 10, "param:c": 200 }, metrics: null, error: "boom" },
 ];
 
@@ -114,10 +114,10 @@ const rowsNullFirst = [
   { combo: { "param:a": 1, "param:b": 10, "param:c": 100 }, metrics: null, error: "boom" },
   { combo: { "param:a": 1, "param:b": 10, "param:c": 200 },
     metrics: { net_pnl: 40, n_trades: 1, win_rate: 1, max_drawdown: 10,
-               profit_factor: null, return_pct: 0.4 }, error: null },
+               profit_factor: null, avg_win_loss_ratio: null, return_pct: 0.4 }, error: null },
   { combo: { "param:a": 2, "param:b": 10, "param:c": 100 },
     metrics: { net_pnl: 20, n_trades: 1, win_rate: 1, max_drawdown: 5,
-               profit_factor: 1.5, return_pct: 0.2 }, error: null },
+               profit_factor: 1.5, avg_win_loss_ratio: null, return_pct: 0.2 }, error: null },
 ];
 
 describe("SweepResults 3+ axes", () => {

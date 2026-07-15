@@ -110,6 +110,11 @@ export type Operand =
   // above). Always keys a series (the frontend computes it and posts it).
   | { kind: "series"; seriesKey: string; label: string; recipe: SeriesRecipe; timeframe?: string; slope?: SlopeSpec };
 
+/** The `series` variant of {@link Operand} (chart indicator/drawing copied into a
+ * rule). Always carries `seriesKey`/`label`/`recipe`; used where an operand is known
+ * to be series-kind so callers can read those fields without narrowing the union. */
+export type SeriesOperand = Extract<Operand, { kind: "series" }>;
+
 /** The slope lookback for an operand, or null if it isn't sloped. */
 export function slopeLen(op: Operand): number | null {
   return (op.kind === "indicator" || op.kind === "price" || op.kind === "series") && op.slope

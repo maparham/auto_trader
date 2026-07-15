@@ -28,7 +28,7 @@ import {
   type SlopeExtend,
   type SlopeSmoothing,
 } from "./indicators/slope";
-import { syncAccelCompanion } from "./indicators";
+import { syncAccelCompanion, getIndicator, getIndicatorsByPane } from "./indicators";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
 // so a wide loaded span needs several pages walked back — kept under the cap.
@@ -106,7 +106,7 @@ function scheduleMtfRetry(
       // Covers removal, chart disposal, AND removed-then-re-added: a fresh
       // first instance re-mints the same bare name but has no mtf set, and the
       // stale closure must not convert it back to the old configuration.
-      const ind = chart.getIndicatorByPaneId(paneId, name) as {
+      const ind = getIndicator(chart, paneId, name) as {
         extendData?: { mtf?: { timeframe?: string | null } };
       } | null;
       if (ind?.extendData?.mtf?.timeframe !== timeframe) {
@@ -151,7 +151,7 @@ function mtfFetchTail(
   if (hasBars) return true;
   const mtf =
     prev?.timeframe === timeframe && prev.htfStarts?.length ? prev : { timeframe };
-  chart.overrideIndicator({ name, calcParams, extendData: { ...ext, mtf } }, paneId);
+  chart.overrideIndicator({ paneId, name, calcParams, extendData: { ...ext, mtf } });
   return false;
 }
 
@@ -246,13 +246,13 @@ export async function applyMaTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = chart.getIndicatorByPaneId(paneId, name) as { extendData?: MaExtend } | null;
+  const ind = getIndicator(chart, paneId, name) as { extendData?: MaExtend } | null;
   const ext: MaExtend = { ...(ind?.extendData ?? {}), ...config.options };
 
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ name, calcParams: [config.length], extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, calcParams: [config.length], extendData: ext });
     return;
   }
 
@@ -286,7 +286,7 @@ export async function applyMaTimeframe(
     htfSeries: base,
     htfMs,
   };
-  chart.overrideIndicator({ name, calcParams: [config.length], extendData: ext }, paneId);
+  chart.overrideIndicator({ paneId, name, calcParams: [config.length], extendData: ext });
 }
 
 interface PivotBandsConfig {
@@ -321,14 +321,14 @@ export async function applyPivotBandsTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = chart.getIndicatorByPaneId(paneId, name) as { extendData?: PivotBandsExtend } | null;
+  const ind = getIndicator(chart, paneId, name) as { extendData?: PivotBandsExtend } | null;
   const ext: PivotBandsExtend = { ...(ind?.extendData ?? {}), mode: config.mode, source: config.source };
   const calcParams = [config.n, config.k];
 
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
     return;
   }
 
@@ -364,7 +364,7 @@ export async function applyPivotBandsTimeframe(
     htfLow: pts.map((p) => p.pivotLow),
     htfMs,
   };
-  chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
+  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
 }
 
 interface SlopeConfig {
@@ -396,7 +396,7 @@ export async function applySlopeTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = chart.getIndicatorByPaneId(paneId, name) as { extendData?: SlopeExtend } | null;
+  const ind = getIndicator(chart, paneId, name) as { extendData?: SlopeExtend } | null;
   const ext: SlopeExtend = {
     ...(ind?.extendData ?? {}),
     ...config.options,
@@ -408,7 +408,7 @@ export async function applySlopeTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
     // The companion mirrors the parent's extendData (here: the cleared MTF stash).
     syncAccelCompanion(chart, name);
     return;
@@ -484,7 +484,7 @@ export async function applySlopeTimeframe(
     htfAccelByLine: accelByLine,
     htfMs,
   };
-  chart.overrideIndicator({ name, calcParams, extendData: ext }, paneId);
+  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
   // The companion mirrors the parent's extendData (including the MTF stash).
   syncAccelCompanion(chart, name);
 }
@@ -508,7 +508,7 @@ export async function refreshMtfIndicators(
   brokerId?: string,
   oldestChartMs?: number,
 ): Promise<void> {
-  const byPane = chart.getIndicatorByPaneId() as Map<string, Map<string, unknown>> | null;
+  const byPane = getIndicatorsByPane(chart);
   if (!byPane) return;
   const jobs: Promise<void>[] = [];
   byPane.forEach((nameMap, paneId) => {

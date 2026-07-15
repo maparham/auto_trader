@@ -7,6 +7,7 @@
 // type without importing ChartCore itself. ChartCore annotates its handle
 // useMemo with `ChartHandle`, so TS verifies the object matches this shape.
 import type { Chart } from "klinecharts";
+import type { ChartDataFacade } from "./chartDataFacade";
 import type { ChartController } from "../lib/chartController";
 import type { OverlayManager } from "../lib/overlays";
 import type { PositionLines } from "../lib/positionLines";
@@ -33,6 +34,7 @@ export interface ChartHandle {
   controller: ChartController;
   overlays: OverlayManager;
   chartRef: React.MutableRefObject<Chart | null>;
+  dataFacadeRef: React.MutableRefObject<ChartDataFacade | null>;
   redrawRef: React.MutableRefObject<() => void>;
   posDrawRef: React.MutableRefObject<() => void>;
   posLinesRef: React.MutableRefObject<PositionLines | null>;

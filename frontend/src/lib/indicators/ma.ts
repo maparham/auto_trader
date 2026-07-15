@@ -4,8 +4,6 @@
 // (MaExtend). When mtf.timeframe is set, the higher-timeframe series is aligned
 // onto the live chart bars inside calc (no lookahead).
 import {
-  IndicatorSeries,
-  LineType,
   type Indicator,
   type IndicatorTemplate,
   type KLineData,
@@ -91,10 +89,10 @@ export function maFigures(
 // Base keeps klinecharts' first default color (orange) so existing charts are
 // unchanged; the smoothing MA is TV's yellow so it reads as a distinct overlay.
 const MA_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
-  fullLine("#FF9600", LineType.Solid), // ma (base)
-  fullLine("#FFB300", LineType.Dashed), // smoothingMa
-  fullLine("#F23645", LineType.Solid), // bandHi (envelope upper)
-  fullLine("#089981", LineType.Solid), // bandLo (envelope lower)
+  fullLine("#FF9600", 'solid'), // ma (base)
+  fullLine("#FFB300", 'dashed'), // smoothingMa
+  fullLine("#F23645", 'solid'), // bandHi (envelope upper)
+  fullLine("#089981", 'solid'), // bandLo (envelope lower)
 ];
 
 export function computeMa(
@@ -141,7 +139,7 @@ export function computeMa(
 // Length in calcParams[0]; rest on extendData (MaExtend).
 export const EMA_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "EMA",
-  series: IndicatorSeries.Price,
+  series: 'price',
   precision: 2,
   calcParams: [9],
   figures: maFigures("EMA", false),
@@ -152,7 +150,7 @@ export const EMA_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
 
 export const MA_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "MA",
-  series: IndicatorSeries.Price,
+  series: 'price',
   precision: 2,
   calcParams: [20],
   figures: maFigures("MA", false),

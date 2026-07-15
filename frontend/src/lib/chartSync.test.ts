@@ -4,7 +4,12 @@ import type { Chart } from "klinecharts";
 // klinecharts ships a browser-only UMD bundle whose runtime exports are empty under
 // node, so dereferencing the DomPosition enum (chartSync's mainWidth) would blow up.
 // Type-only imports still come from the real package.
-vi.mock("klinecharts", () => ({ DomPosition: { Root: "root", Main: "main", YAxis: "yAxis" } }));
+vi.mock("klinecharts", () => ({
+  registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
+}));
 
 const { applyVisibleRange, readVisibleRange } = await import("./chartSync");
 
@@ -49,7 +54,8 @@ class FakeChart {
     return { width: this.w };
   }
   getBarSpace() {
-    return this.barSpace;
+    // v10 returns a BarSpace object (was a bare number in v9); chartSync reads `.bar`.
+    return { bar: this.barSpace, halfBar: this.barSpace / 2, gapBar: 0, halfGapBar: 0 };
   }
   setBarSpace(s: number) {
     if (s >= 1 && s <= 50) this.barSpace = s;

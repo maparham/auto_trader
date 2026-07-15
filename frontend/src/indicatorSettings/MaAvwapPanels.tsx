@@ -7,6 +7,7 @@
 // it's built here as a factory the shell assigns to a local `applyMa` it can
 // call from both the panel props and setParam.
 import type { Chart } from "klinecharts";
+import { getIndicator } from "../lib/indicators";
 import InfoTip from "../components/InfoTip";
 import { PRICE_SOURCES, SMOOTHING_TYPES } from "../lib/indicatorMeta";
 import { applyMaTimeframe } from "../lib/mtfCoordinator";
@@ -78,7 +79,7 @@ export function makeApplyMa(
     // when nothing changed: a fresh figures array sets klinecharts' calc flag,
     // so an unconditional override would recompute the whole series twice per
     // Length/Source/Offset tweak.
-    const live = chart.getIndicatorByPaneId(paneId, name) as {
+    const live = getIndicator(chart, paneId, name) as {
       shortName?: string;
       figures?: Array<{ title?: string }>;
     } | null;
@@ -87,7 +88,7 @@ export function makeApplyMa(
       (live?.figures ?? []).length === figures.length &&
       figures.every((f, i) => live?.figures?.[i]?.title === f.title);
     if (!sameLabels) {
-      chart.overrideIndicator({ name, shortName: label, figures }, paneId);
+      chart.overrideIndicator({ paneId, name, shortName: label, figures });
     }
     void applyMaTimeframe(
       chart,
@@ -344,7 +345,7 @@ export function makeApplyAvwap(
       lineHidden: Record<string, boolean>;
     }> = {},
   ) {
-    const live = chart.getIndicatorByPaneId(paneId, name) as import("klinecharts").Indicator | null;
+    const live = getIndicator(chart, paneId, name) as import("klinecharts").Indicator | null;
     const ext: AvwapExtend = {
       ...((live?.extendData as AvwapExtend) ?? {}),
       source: (next.source ?? state.avwapSource) as AvwapExtend["source"],
@@ -352,7 +353,7 @@ export function makeApplyAvwap(
       bands: next.bands ?? state.bands,
       ...(next.lineHidden ? { lineHidden: next.lineHidden } : {}),
     };
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext });
   };
 }
 

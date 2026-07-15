@@ -11,7 +11,7 @@
 // in sync with that shared list on the alerts signal, which is what makes the
 // shared list safe (each cell renders, and persists, the complete set).
 
-import { LineType } from "klinecharts";
+import type { LineType } from "klinecharts";
 import type { PolygonType } from "klinecharts";
 import type { Chart, KLineData, Overlay, OverlayEvent, DeepPartial, OverlayStyle, OverlayMode } from "klinecharts";
 import { effectiveMagnetMode, magnetSignal, magnetInvertSignal, MAGNET_SENSITIVITY } from "./magnet";
@@ -42,6 +42,7 @@ import {
   barsSpanned,
 } from "./visibility";
 import { RESOLUTION_SECONDS } from "./feed";
+import type { ChartDataFacade } from "../chart/chartDataFacade";
 import { type FibConfig, asFibConfig } from "./fibConfig";
 
 type Kind = "drawing" | "alert" | "measure" | "rangeBand" | "slope";
@@ -153,7 +154,7 @@ const HIDDEN_TEXT = {
   size: 0,
 };
 const ALERT_LINE_STYLE: DeepPartial<OverlayStyle> = {
-  line: { color: ALERT_LINE_COLOR, style: LineType.Dashed, dashedValue: [4, 4], size: ALERT_LINE_SIZE },
+  line: { color: ALERT_LINE_COLOR, style: 'dashed', dashedValue: [4, 4], size: ALERT_LINE_SIZE },
   text: HIDDEN_TEXT,
 };
 
@@ -166,6 +167,9 @@ const RECT_DEFAULT_STYLE: DeepPartial<OverlayStyle> = {
 
 export class OverlayManager {
   private chart: Chart | null = null;
+  // v10 data-pipeline facade (set alongside chart in attach). applyOlderBars
+  // prepends history through it (was chart.applyNewData).
+  private dataFacade: ChartDataFacade | null = null;
   private epic = "";
   // Opaque per-cell storage prefix (see persist.ns). Set once by the owning
   // ChartController before rehydrate so every load/save addresses this cell's keys.
@@ -260,7 +264,8 @@ export class OverlayManager {
   // change and once after rehydrate.
   private resolution = "";
   // Instrument price precision (decimals). Set by ChartCore in lockstep with the
-  // chart's setPriceVolumePrecision, and used to quantize alert levels so a stored
+  // chart's symbol precision (the facade's setSymbol), and used to quantize alert
+  // levels so a stored
   // level matches what every `.toFixed(precision)` label renders (no raw float from
   // a cursor-pixel conversion or a line drag). null until known → we skip rounding
   // rather than risk mangling a high-precision instrument with the wrong default.
@@ -284,7 +289,7 @@ export class OverlayManager {
   // a stray overlay edit in that window can't write the OLD epic's alerts under the
   // NEW epic's (now GLOBAL, shared, mirrored) alert key. null until first rehydrate.
   private hydratedEpic: string | null = null;
-  private rightClick: ((e: OverlayEvent) => void) | null = null;
+  private rightClick: ((e: OverlayEvent<unknown>) => void) | null = null;
   // Unsubscribe from the global magnet signals (toggle + hold-invert modifier), set
   // up in attach() and torn down in detach() so this cell's drawings track both (see
   // applyMagnet).
@@ -294,8 +299,12 @@ export class OverlayManager {
   // focus targets, repaint), independent of the alert listener.
   private drawingListener: (() => void) | null = null;
 
-  attach(chart: Chart): void {
+  // dataFacade is optional only so unit tests can construct a manager without the
+  // v10 data pipeline; production (ChartCore) always passes it, and applyOlderBars
+  // no-ops without it.
+  attach(chart: Chart, dataFacade?: ChartDataFacade): void {
     this.chart = chart;
+    this.dataFacade = dataFacade ?? null;
     // Keep this cell's drawings' snap mode in lockstep with the global magnet toggle
     // AND the hold-invert modifier. New drawings pick it up at create() time; these
     // catch changes AFTER a drawing exists (so dragging an old line then snaps, and a
@@ -309,6 +318,7 @@ export class OverlayManager {
     this.magnetUnsub.forEach((u) => u());
     this.magnetUnsub = [];
     this.chart = null;
+    this.dataFacade = null;
     this.entries.clear();
     this.alertCfg.clear();
     this.alertIds.clear();
@@ -360,8 +370,9 @@ export class OverlayManager {
   setBroker(broker: string): void {
     this.broker = broker;
   }
-  // Keep in lockstep with the chart's setPriceVolumePrecision (ChartCore's
-  // effPrecision effect) so alert-level rounding uses the same decimals the axis does.
+  // Keep in lockstep with the chart's symbol precision (the facade's setSymbol,
+  // ChartCore's effPrecision effect) so alert-level rounding uses the same decimals
+  // the axis does.
   setPricePrecision(precision: number): void {
     this.pricePrecision = precision;
   }
@@ -371,7 +382,7 @@ export class OverlayManager {
   private roundLevel(level: number): number {
     return this.pricePrecision == null ? level : Number(level.toFixed(this.pricePrecision));
   }
-  setRightClickHandler(fn: ((e: OverlayEvent) => void) | null): void {
+  setRightClickHandler(fn: ((e: OverlayEvent<unknown>) => void) | null): void {
     this.rightClick = fn;
   }
   // ChartCore subscribes to redraw its TV-style alert labels when alerts are
@@ -467,7 +478,7 @@ export class OverlayManager {
     // dropped level is written by the by-id update intent — NOT persist() (now
     // drawings-only), or the level wouldn't stick and the ensuing reconcile would
     // snap the line back to its pre-drag price.
-    const raw = this.chart?.getOverlayById(id)?.points?.[0]?.value;
+    const raw = this.byId(id)?.points?.[0]?.value;
     if (raw != null) {
       const rounded = this.roundLevel(raw);
       if (rounded !== raw) this.chart?.overrideOverlay({ id, points: [{ value: rounded }] });
@@ -505,9 +516,9 @@ export class OverlayManager {
   // this single rule keeps the two states from fighting — un-hovering a selected
   // line must not thin it, and deselecting a hovered line must not either.
   private applyAlertLineWeight(id: string | null): void {
-    if (!id || !this.chart?.getOverlayById(id)) return;
+    if (!id || !this.byId(id)) return;
     const emphasized = id === this.selectedAlertId || id === this.hoveredAlertId;
-    this.chart.overrideOverlay({
+    this.chart?.overrideOverlay({
       id,
       styles: { line: { size: emphasized ? ALERT_LINE_SELECTED_SIZE : ALERT_LINE_SIZE } },
     });
@@ -564,10 +575,11 @@ export class OverlayManager {
   // a master switch — see CrosshairLineView._drawLine and the label view, both of which
   // require horizontal.show first). So we must NOT toggle horizontal.show (that hides
   // the label too); keep it true and toggle the child flags `line.show` / `text.show`.
-  // Applied WITHOUT chart.setStyles(), which would run adjustPaneViewport(…, forceY=
-  // true) and jolt the whole view; merging straight into the store skips that and the
-  // crosshair repaints on the next mousemove. Falls back to setStyles if the private
-  // store shape ever changes (klinecharts ^9.8).
+  // Applied via plain chart.setStyles(): v10's setStyles no longer forces a price-scale
+  // re-fit to data (the old v9 hover-jolt): it routes through the store and a layout
+  // that only rebuilds y-axis ticks for the unchanged range, so a crosshair-only style
+  // patch repaints without moving the view. (The v9 code reached _chartStore directly to
+  // dodge that re-fit; v10 removed the need, so the private escape is gone.)
   // Called by ChartCore when cursor enters/leaves the snap band (within ALERT_SNAP_PX).
   // Hides the klinecharts native horizontal line so ChartCore's own drawn line can
   // replace it at the snapped y without two lines appearing.
@@ -584,10 +596,7 @@ export class OverlayManager {
         horizontal: { show: true, line: { show: !overAlert }, text: { show: !overAlert } },
       },
     };
-    const store = (this.chart as unknown as { _chartStore?: { setOptions?: (o: unknown) => void } })
-      ?._chartStore;
-    if (store?.setOptions) store.setOptions({ styles });
-    else this.chart?.setStyles(styles);
+    this.chart?.setStyles(styles);
   }
 
   // --- drawing selection / hover ---------------------------------------------
@@ -623,7 +632,7 @@ export class OverlayManager {
   }
   private emphasizeDrawing(id: string): void {
     if (this.entries.get(id) !== "drawing") return;
-    const ov = this.chart?.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov) return;
     // Capture the TRUE base style. `emphasizedDrawingId` is still null here, so
     // canonicalStyles reports the real style — arm the shield only AFTER we have a
@@ -642,7 +651,7 @@ export class OverlayManager {
     const base = this.emphasisBase;
     this.emphasisBase = undefined;
     this.emphasizedDrawingId = null;
-    const ov = this.chart?.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov) return;
     // Write the concrete base line back (never omit — same reason as unfade).
     this.chart?.overrideOverlay({
@@ -664,7 +673,7 @@ export class OverlayManager {
     zLevel: number;
     extendData: unknown;
   } | null {
-    const ov = this.chart?.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov || this.entries.get(id) !== "drawing") return null;
     return {
       name: ov.name,
@@ -694,7 +703,7 @@ export class OverlayManager {
     if (!this.chart) return out;
     for (const [id, kind] of this.entries) {
       if (kind !== "drawing") continue;
-      const ov = this.chart.getOverlayById(id);
+      const ov = this.byId(id);
       if (!ov) continue;
       const text = asDrawingExtra(ov.extendData).text?.trim() || undefined;
       const color = this.drawingLineColor(id, ov);
@@ -735,7 +744,7 @@ export class OverlayManager {
     }> = [];
     for (const [id, kind] of this.entries) {
       if (kind !== "alert") continue;
-      const level = this.chart.getOverlayById(id)?.points?.[0]?.value;
+      const level = this.byId(id)?.points?.[0]?.value;
       if (level == null) continue;
       const cfg = this.alertCfg.get(id);
       const hovered = id === this.hoveredAlertId;
@@ -801,9 +810,16 @@ export class OverlayManager {
     if (!cfg) return;
     const next: AlertConfig = { ...cfg, trigger: cfg.trigger === "once" ? "every" : "once" };
     this.alertCfg.set(id, next);
-    const level = this.chart.getOverlayById(id)?.points?.[0]?.value;
+    const level = this.byId(id)?.points?.[0]?.value;
     if (level != null) this.writeAlertUpdate(id, level, next); // by-id intent, not persist()
     this.notifyAlerts();
+  }
+
+  // The single funnel for overlay-by-id lookups. v10 dropped chart.getOverlayById in
+  // favour of the filter-based getOverlays({ id }) (OverlayFilter), so every read that
+  // used to call getOverlayById routes through here and returns the first match or null.
+  private byId(id: string): Overlay | null {
+    return this.chart?.getOverlays({ id })[0] ?? null;
   }
 
   // Shared create path: standard event wiring for every overlay we own.
@@ -868,8 +884,8 @@ export class OverlayManager {
         // alone doesn't run applyDisplay). Harmless when none is seeded — empty
         // visibility ⇒ show on all intervals. `id` is closed over and assigned by the
         // time onDrawEnd fires.
-        if (isDrawing) {
-          const ov = this.chart?.getOverlayById(id);
+        if (isDrawing && typeof id === "string") {
+          const ov = this.byId(id);
           if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
         }
         if (isAlert) this.notifyAlerts();
@@ -1049,7 +1065,7 @@ export class OverlayManager {
 
   // Draw path: klinecharts already placed points[last]. If Shift is held, snap it
   // about the anchor (points[0]) and overwrite in place.
-  private maybeSnapDrawing(e: OverlayEvent): void {
+  private maybeSnapDrawing(e: OverlayEvent<unknown>): void {
     if (!isShiftHeld()) return;
     const overlay = e.overlay;
     const snap = this.snapFnFor(overlay.name);
@@ -1064,14 +1080,18 @@ export class OverlayManager {
   // Edit path: the dragged endpoint/corner is points[figureIndex]; snap it about the
   // OTHER point using the cursor's pixel position. Returns true when it took over
   // (caller returns true to skip klinecharts' native point update).
-  private maybeSnapPressed(e: OverlayEvent): boolean {
+  private maybeSnapPressed(e: OverlayEvent<unknown>): boolean {
     const overlay = e.overlay;
     const snap = this.snapFnFor(overlay.name);
     // Only an anchor-handle drag (figureKey "overlay_figure_point_N") — never a
     // whole-overlay body translate.
     if (!snap || overlay.points.length !== 2) return false;
-    if (!e.figureKey?.startsWith("overlay_figure_point_")) return false;
-    const idx = e.figureIndex;
+    // v10 no longer surfaces figureKey/figureIndex on the OverlayEvent; the pressed
+    // point handle arrives as `e.figure`, whose key is `overlay_figure_point_<index>`
+    // (OVERLAY_FIGURE_KEY_PREFIX + "point_" + index), so derive both from it.
+    const key = e.figure?.key;
+    if (!key?.startsWith("overlay_figure_point_")) return false;
+    const idx = Number(key.slice("overlay_figure_point_".length));
     if (idx !== 0 && idx !== 1) return false;
     if (typeof e.x !== "number" || typeof e.y !== "number") return false;
     const fixed = this.toPx(overlay, overlay.points[idx === 0 ? 1 : 0]);
@@ -1103,7 +1123,7 @@ export class OverlayManager {
 
   // Discard the measurement (cancel mid-draw, next interaction, Esc, symbol change).
   clearMeasure(): void {
-    if (this.measureId) this.chart?.removeOverlay(this.measureId); // onRemoved nulls the fields
+    if (this.measureId) this.chart?.removeOverlay({ id: this.measureId }); // onRemoved nulls the fields
     this.measureId = null;
     this.measureDrawing = false;
   }
@@ -1143,7 +1163,7 @@ export class OverlayManager {
 
   // Discard the slope line (Esc, arming a new one, symbol/interval change).
   clearSlope(): void {
-    if (this.slopeId) this.chart?.removeOverlay(this.slopeId); // onRemoved nulls the fields
+    if (this.slopeId) this.chart?.removeOverlay({ id: this.slopeId }); // onRemoved nulls the fields
     this.slopeId = null;
     this.slopeDrawing = false;
   }
@@ -1160,7 +1180,7 @@ export class OverlayManager {
   // there's no live line. ChartCore reads these to hit-test the handles in pixel space.
   getSlopePoints(): Array<{ timestamp?: number; value?: number; dataIndex?: number }> | null {
     if (!this.slopeId) return null;
-    const ov = this.chart?.getOverlayById(this.slopeId);
+    const ov = this.byId(this.slopeId);
     return ov?.points ? (ov.points as Array<{ timestamp?: number; value?: number; dataIndex?: number }>) : null;
   }
 
@@ -1215,7 +1235,7 @@ export class OverlayManager {
 
   // Discard the band (disarm, Esc, symbol change, or a click with no drag).
   clearRangePick(): void {
-    if (this.rangeBandId) this.chart?.removeOverlay(this.rangeBandId); // onRemoved nulls the fields
+    if (this.rangeBandId) this.chart?.removeOverlay({ id: this.rangeBandId }); // onRemoved nulls the fields
     this.rangeBandId = null;
     this.rangeStartTs = null;
     this.rangeEndTs = null;
@@ -1258,7 +1278,7 @@ export class OverlayManager {
       // mirroring the interactive path's Step 3b. Harmless when nothing is seeded
       // (empty extra ⇒ visible). persist() ran first, so it captured the canonical
       // (unfaded) style, never a ghost rgba.
-      const ov = this.chart?.getOverlayById(id);
+      const ov = this.byId(id);
       if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
     } else if (id && !points) this.pendingDrawId = id; // remember it for cancelDrawing()
     else if (!id) {
@@ -1298,7 +1318,7 @@ export class OverlayManager {
   // Returns true if there was something to cancel (caller preventDefaults).
   cancelDrawing(): boolean {
     if (!this.drawingInProgress || !this.pendingDrawId) return false;
-    this.chart?.removeOverlay(this.pendingDrawId);
+    this.chart?.removeOverlay({ id: this.pendingDrawId });
     // Belt-and-braces: don't rely solely on onRemoved firing (it does today, but a
     // future klinecharts version silently not doing so for a never-finalized overlay
     // must not leave the tool stuck "armed").
@@ -1487,7 +1507,7 @@ export class OverlayManager {
 
   setVisible(id: string, visible: boolean): void {
     if (this.entries.get(id) !== "drawing") return;
-    const ov = this.chart?.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov) return;
     const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), userVisible: visible };
     this.applyDisplay(id, ov, extra);
@@ -1497,7 +1517,7 @@ export class OverlayManager {
   // The per-timeframe visibility model for a drawing (TV Visibility tab).
   setVisibilityModel(id: string, model: VisibilityModel): void {
     if (this.entries.get(id) !== "drawing") return;
-    const ov = this.chart?.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov) return;
     const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), visibility: model };
     this.applyDisplay(id, ov, extra);
@@ -1510,7 +1530,7 @@ export class OverlayManager {
   // restore it (the flag itself is not in SavedOverlay).
   setPriceLabels(id: string, on: boolean): void {
     if (this.entries.get(id) !== "drawing") return;
-    const ov = this.chart?.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov) return;
     const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), priceLabels: on };
     this.chart?.overrideOverlay({ id, extendData: extra, needDefaultYAxisFigure: on });
@@ -1522,7 +1542,7 @@ export class OverlayManager {
   // re-invokes createPointFigures (verified), so this repaints live.
   setText(id: string, text: string): void {
     if (this.entries.get(id) !== "drawing") return;
-    const ov = this.chart?.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov) return;
     const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), text };
     this.chart?.overrideOverlay({ id, extendData: extra });
@@ -1532,7 +1552,7 @@ export class OverlayManager {
   // Toggle the midpoint marker (custom-overlay feature). Same extendData path.
   setShowMiddle(id: string, on: boolean): void {
     if (this.entries.get(id) !== "drawing") return;
-    const ov = this.chart?.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov) return;
     const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), showMiddle: on };
     this.chart?.overrideOverlay({ id, extendData: extra });
@@ -1543,7 +1563,7 @@ export class OverlayManager {
   // extendData path as setText — overrideOverlay re-invokes createPointFigures.
   setFibConfig(id: string, fib: FibConfig): void {
     if (this.entries.get(id) !== "drawing") return;
-    const ov = this.chart?.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov) return;
     const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), fib };
     this.chart?.overrideOverlay({ id, extendData: extra });
@@ -1572,7 +1592,7 @@ export class OverlayManager {
     if (!this.chart) return;
     for (const [id, kind] of this.entries) {
       if (kind !== "drawing") continue;
-      const ov = this.chart.getOverlayById(id);
+      const ov = this.byId(id);
       if (!ov) continue;
       this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
     }
@@ -1622,7 +1642,7 @@ export class OverlayManager {
       line: {
         color: this.resolveLineColor(live.styles),
         size: line.size ?? 1,
-        style: line.style ?? LineType.Solid,
+        style: line.style ?? 'solid',
       },
       ...(live.name === "fibonacciLine" ? { fib: asFibConfig(extra.fib) } : {}),
       showMiddle: extra.showMiddle,
@@ -1658,7 +1678,7 @@ export class OverlayManager {
     let max = 0;
     for (const [oid, kind] of this.entries) {
       if (kind !== "drawing") continue;
-      max = Math.max(max, this.chart.getOverlayById(oid)?.zLevel ?? 0);
+      max = Math.max(max, this.byId(oid)?.zLevel ?? 0);
     }
     this.chart.overrideOverlay({ id, zLevel: max + 1 });
     this.persist();
@@ -1668,7 +1688,7 @@ export class OverlayManager {
     let min = 0;
     for (const [oid, kind] of this.entries) {
       if (kind !== "drawing") continue;
-      min = Math.min(min, this.chart.getOverlayById(oid)?.zLevel ?? 0);
+      min = Math.min(min, this.byId(oid)?.zLevel ?? 0);
     }
     this.chart.overrideOverlay({ id, zLevel: min - 1 });
     this.persist();
@@ -1682,7 +1702,7 @@ export class OverlayManager {
   // returns the SAME id (no-op) for any other overlay.
   setExtend(id: string, mode: "none" | "ray" | "both"): string | null {
     if (!this.chart || this.entries.get(id) !== "drawing") return id;
-    const ov = this.chart.getOverlayById(id);
+    const ov = this.byId(id);
     if (!ov) return id;
     const TREND = new Set(["segment", "rayLine", "straightLine"]);
     if (!TREND.has(ov.name)) return id; // not a convertible trend line
@@ -1702,7 +1722,7 @@ export class OverlayManager {
     // Remove + recreate under the hydrating guard so the transient remove doesn't
     // persist an empty intermediate state; persist once after.
     const newId = this.guarded(() => {
-      this.chart!.removeOverlay(id); // onRemoved drops entries + any stashed fadedStyles
+      this.chart!.removeOverlay({ id }); // onRemoved drops entries + any stashed fadedStyles
       this.entries.delete(id);
       return this.create("drawing", spec.name, spec.points, spec.styles, spec.lock, {
         zLevel: spec.zLevel,
@@ -1713,7 +1733,7 @@ export class OverlayManager {
       // Re-derive visible/faded for the new id from the current resolution (rather
       // than carrying over the OLD overlay's live `visible`/style verbatim) so a
       // ghosted drawing extends as a ghost, not a solid one.
-      const newOv = this.chart.getOverlayById(newId);
+      const newOv = this.byId(newId);
       if (newOv) this.applyDisplay(newId, newOv, asDrawingExtra(newOv.extendData));
       this.selectedDrawingId = newId;
       this.persist();
@@ -1755,7 +1775,7 @@ export class OverlayManager {
   // Live config for one alert (level + cfg), for prefilling the edit modal.
   getAlert(id: string): { level: number; cfg: AlertConfig } | null {
     if (!this.chart || this.entries.get(id) !== "alert") return null;
-    const raw = this.chart.getOverlayById(id)?.points?.[0]?.value;
+    const raw = this.byId(id)?.points?.[0]?.value;
     if (raw == null) return null;
     // Round on read too, so the edit modal shows a clean number even for legacy
     // alerts stored at full precision before levels were quantized on write.
@@ -1770,7 +1790,7 @@ export class OverlayManager {
 
   remove(id: string): void {
     if (this.readOnly) return; // snapshot view: nothing gets deleted
-    this.chart?.removeOverlay(id); // onRemoved unregisters + persists
+    this.chart?.removeOverlay({ id }); // onRemoved unregisters + persists
   }
 
   // Full resync of this cell's alert lines to storage, matched by STABLE id (not by
@@ -1829,7 +1849,7 @@ export class OverlayManager {
           if (kind !== "alert") continue;
           const aid = this.alertIds.get(id);
           if (aid == null || !savedById.has(aid)) {
-            this.chart!.removeOverlay(id); // onRemoved cleans the id maps + entries
+            this.chart!.removeOverlay({ id }); // onRemoved cleans the id maps + entries
             changed = true;
           }
         }
@@ -1842,7 +1862,7 @@ export class OverlayManager {
             continue;
           }
           // Already present — pull the level/config forward if it drifted elsewhere.
-          const ov = this.chart!.getOverlayById(ovId);
+          const ov = this.byId(ovId);
           if (ov && ov.points?.[0]?.value !== a.level) {
             this.chart!.overrideOverlay({ id: ovId, points: [{ value: a.level }] });
             changed = true;
@@ -1863,7 +1883,7 @@ export class OverlayManager {
 
   clearDrawings(): void {
     for (const [id, kind] of this.entries) {
-      if (kind === "drawing") this.chart?.removeOverlay(id);
+      if (kind === "drawing") this.chart?.removeOverlay({ id });
     }
   }
 
@@ -1874,7 +1894,7 @@ export class OverlayManager {
     this.drawingsHidden = hidden;
     for (const [id, kind] of this.entries) {
       if (kind !== "drawing") continue;
-      const ov = this.chart?.getOverlayById(id);
+      const ov = this.byId(id);
       if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
     }
   }
@@ -1893,7 +1913,7 @@ export class OverlayManager {
   // must never silently lock (and persist) everything the user left unlocked.
   anyDrawingsLocked(): boolean {
     for (const [id, kind] of this.entries) {
-      if (kind === "drawing" && this.chart?.getOverlayById(id)?.lock) return true;
+      if (kind === "drawing" && this.byId(id)?.lock) return true;
     }
     return false;
   }
@@ -1916,7 +1936,7 @@ export class OverlayManager {
   setStyle(id: string, styles: DeepPartial<OverlayStyle>): void {
     if (this.fadedStyles.has(id)) {
       this.fadedStyles.set(id, mergeStyles(this.fadedStyles.get(id), styles));
-      const ov = this.chart?.getOverlayById(id);
+      const ov = this.byId(id);
       if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
     } else {
       this.chart?.overrideOverlay({ id, styles });
@@ -1965,7 +1985,7 @@ export class OverlayManager {
     return id;
   }
 
-  // --- rehydration (called by ChartCore after applyNewData) ------------------
+  // --- rehydration (called by ChartCore after the facade's setBars) ----------
 
   // Rebuild this epic's overlays. Must run AFTER data is loaded so timestamped
   // points map onto the timescale. Guarded so the rebuild doesn't re-persist.
@@ -1989,7 +2009,7 @@ export class OverlayManager {
       this.selectedAlertId != null ? this.alertIds.get(this.selectedAlertId) ?? null : null;
     this.hydrating++;
     try {
-      for (const id of [...this.entries.keys()]) this.chart.removeOverlay(id);
+      for (const id of [...this.entries.keys()]) this.chart.removeOverlay({ id });
       this.entries.clear();
       this.alertCfg.clear();
       this.alertIds.clear();
@@ -2100,7 +2120,7 @@ export class OverlayManager {
   // THE one way to prepend older bars outside klinecharts' own Forward loader.
   // Prepending renumbers every bar's dataIndex. Timestamped points re-resolve at
   // paint time, but a beyond-data point is dataIndex-ONLY (materializePoints
-  // strips the timestamp) — and applyNewData is an INIT-type change, where
+  // strips the timestamp), and a full setBars is an INIT-type change, where
   // klinecharts' updatePointPosition skips the Forward shift but still BACK-FILLS
   // point.timestamp from whatever bar now sits at the stale index, permanently
   // pinning a future anchor onto a historical bar. So the shift MUST run before
@@ -2110,9 +2130,9 @@ export class OverlayManager {
   // klinecharts' native Forward loads (the scroll-back callback) already shift
   // dataIndex-only points internally and must NOT come through here.
   applyOlderBars(merged: KLineData[]): void {
-    if (!this.chart) return;
+    if (!this.chart || !this.dataFacade) return;
     this.shiftIndexAnchoredPoints(merged.length - this.chart.getDataList().length);
-    this.chart.applyNewData(merged, true);
+    this.dataFacade.setBars(merged, { backward: true });
   }
 
   // Prepending older bars renumbers every bar's dataIndex; dataIndex-only points
@@ -2124,7 +2144,7 @@ export class OverlayManager {
     // skips them naturally) and the transient measure ruler CAN have a beyond-data
     // endpoint — it must shift too or a prepend pins it onto a historical bar.
     for (const id of this.entries.keys()) {
-      const ov = this.chart.getOverlayById(id);
+      const ov = this.byId(id);
       const pts = ov?.points;
       if (!pts?.some((p) => p.timestamp == null && p.dataIndex != null)) continue;
       this.chart.overrideOverlay({
@@ -2176,7 +2196,7 @@ export class OverlayManager {
       // Alerts don't persist here (by-id intents own their writes); transient
       // overlays never persist at all.
       if (kind === "alert" || kind === "measure" || kind === "rangeBand" || kind === "slope") continue;
-      const ov = this.chart.getOverlayById(id);
+      const ov = this.byId(id);
       if (!ov) continue;
       drawings.push({
         name: ov.name,

@@ -1,5 +1,10 @@
 import type { BacktestResult, LegMetrics } from "../api";
 
+// The panel reads trades/metrics/equity only, never the candle array, so it
+// accepts the slimmed persisted result (StoredBacktestResult = BacktestResult
+// without `candles`) as well as a fresh full result.
+type PanelResult = Omit<BacktestResult, "candles">;
+
 export interface MetricRow {
   label: string;
   value: string;
@@ -37,7 +42,7 @@ function getTone(value: number | null): "pos" | "neg" | "" {
   return "";
 }
 
-export function metricRows(res: BacktestResult): MetricRow[] {
+export function metricRows(res: PanelResult): MetricRow[] {
   const rows: MetricRow[] = [];
 
   // Net P&L
@@ -196,7 +201,7 @@ export const METRIC_INFO: Record<string, string> = {
   "Loss streak": "Longest run of losses in a row.",
 };
 
-export function metricGroups(res: BacktestResult): MetricGroup[] {
+export function metricGroups(res: PanelResult): MetricGroup[] {
   const byLabel = new Map(metricRows(res).map((r) => [r.label, r]));
   return METRIC_GROUPS.map((g) => ({
     title: g.title,
@@ -236,7 +241,7 @@ const ZERO_LEG: LegMetrics = {
 // The ALL row reuses the run-wide summary/metrics the panel already receives,
 // reshaped into a LegMetrics so all three rows go through the identical
 // formatters below.
-function allLeg(res: BacktestResult): LegMetrics {
+function allLeg(res: PanelResult): LegMetrics {
   return {
     n_trades: res.summary.n_trades,
     win_rate: res.summary.win_rate,
@@ -291,7 +296,7 @@ const LEG_COLUMNS: { label: string; info: string; cell: (m: LegMetrics) => LegCe
 // columns, so the reader can compare each direction's contribution down a
 // column. LONG/SHORT come from the backend's by_leg breakdown (zeroed if a run
 // has no trades on that side, or on older payloads without by_leg).
-export function legTable(res: BacktestResult): LegTable {
+export function legTable(res: PanelResult): LegTable {
   // Spread over ZERO_LEG so any key missing from a leg is backfilled. A run with
   // no trades on a side has no by_leg entry at all; and a result cached before a
   // metric was added (e.g. expectancy, win streak) carries a partial leg object.
@@ -307,7 +312,7 @@ export function legTable(res: BacktestResult): LegTable {
   };
 }
 
-export function tradeRows(res: BacktestResult, resSeconds: number): TradeRow[] {
+export function tradeRows(res: PanelResult, resSeconds: number): TradeRow[] {
   return res.trades.map((trade, i) => {
     const pnlPct = trade.entry_price * trade.quantity === 0
       ? 0

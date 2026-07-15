@@ -14,8 +14,6 @@
 //     (calcParams[1]); before K pivots exist, average over however many do.
 // calcParams = [N (strength), K (avg window)].
 import {
-  IndicatorSeries,
-  LineType,
   type Indicator,
   type IndicatorTemplate,
   type KLineData,
@@ -65,8 +63,8 @@ const PIVOT_BANDS_FIGURES = [
 
 // Pivot-high line red-ish (resistance), pivot-low line green-ish (support).
 const PIVOT_BANDS_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
-  fullLine("#EF5350", LineType.Solid), // pivotHigh
-  fullLine("#26A69A", LineType.Solid), // pivotLow
+  fullLine("#EF5350", 'solid'), // pivotHigh
+  fullLine("#26A69A", 'solid'), // pivotLow
 ];
 
 // Held value for one side given the confirmed pivot prices SO FAR (most recent
@@ -138,7 +136,7 @@ export function computePivotBands(
 // average window K in calcParams[1]; Mode on extendData.
 export const PIVOT_BANDS_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Pivot Bands",
-  series: IndicatorSeries.Price,
+  series: 'price',
   precision: 2,
   calcParams: [5, 3],
   figures: PIVOT_BANDS_FIGURES,

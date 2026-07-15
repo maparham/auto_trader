@@ -6,12 +6,10 @@ import type { KLineData } from "klinecharts";
 // enums). Stub that surface like the indicator tests do, then top-level `await
 // import` so the mock is in place before evaluation.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  PolygonType: { Fill: "fill", Stroke: "stroke", StrokeFill: "stroke_fill" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
-  TooltipShowRule: { Always: "always", FollowCross: "follow_cross", None: "none" },
   registerIndicator: () => {},
   registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const { buildSlopeMaPills } = await import("./chartPainters");
@@ -44,7 +42,10 @@ function fakeChart(slope: {
   };
   const panes = new Map([["pane_1", new Map([["SLOPE", ind]])]]);
   return {
-    getIndicatorByPaneId: () => panes,
+    getIndicators: () =>
+      [...panes].flatMap(([paneId, inner]) =>
+        [...inner.values()].map((i) => ({ ...i, paneId })),
+      ),
     getDataList: () => DATA,
     getVisibleRange: () => ({ from: 0, to: DATA.length }),
     convertToPixel: (pts: Array<unknown>) => pts.map(() => ({ x: 100, y: 200 })),

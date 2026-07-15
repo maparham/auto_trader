@@ -7,7 +7,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import ChartCore from "./ChartCore";
 import ContextMenu from "./ContextMenu";
-import { DomPosition } from "klinecharts";
 import type { Chart } from "klinecharts";
 import type { ChartController } from "./lib/chartController";
 import type { ChartCell, LayoutKind } from "./lib/persist";
@@ -138,7 +137,7 @@ export default function ChartGrid({
   const [axisW, setAxisW] = useState<Record<string, number>>({});
   const lastMeasure = useRef(0);
   const measureAxis = (cellId: string) => {
-    const w = chartsRef.current.get(cellId)?.getSize("candle_pane", DomPosition.YAxis)?.width;
+    const w = chartsRef.current.get(cellId)?.getSize("candle_pane", 'yAxis')?.width;
     if (w && w !== axisW[cellId]) setAxisW((m) => ({ ...m, [cellId]: w }));
   };
   // Drop measurements/chart handles for cells no longer in this tab (detach /

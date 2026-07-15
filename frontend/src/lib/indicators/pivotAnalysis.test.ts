@@ -4,9 +4,10 @@ import type { KLineData } from "klinecharts";
 // The template reads LineType/IndicatorSeries at module load; stub klinecharts'
 // runtime surface like the other indicator tests do.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed", Dotted: "dotted" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const { computePivotAnalysis, pivotDeltaLabelLines, pivotDeltaLabelRect, pivotDeltaHit } = await import(

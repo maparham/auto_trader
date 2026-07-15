@@ -13,9 +13,10 @@ installMemStorage();
 // line style table); stub klinecharts' runtime surface like backtestSeries.test.ts /
 // overlays.test.ts / chartOperand.test.ts do.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 // Coded-mode tests stub the strategy list so the modal doesn't hit the network.
@@ -452,7 +453,7 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
     },
   ];
   const rows: SweepRow[] = [
-    { combo: { "param:ema_fast": 12 }, metrics: { net_pnl: 10, n_trades: 3, win_rate: 0.5, max_drawdown: 1, profit_factor: 1.2, return_pct: 1 }, error: null },
+    { combo: { "param:ema_fast": 12 }, metrics: { net_pnl: 10, n_trades: 3, win_rate: 0.5, max_drawdown: 1, profit_factor: 1.2, avg_win_loss_ratio: null, return_pct: 1 }, error: null },
   ];
 
   afterEach(() => {

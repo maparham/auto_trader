@@ -1,6 +1,6 @@
 // TradingView-style per-indicator settings modal, opened from the indicator
 // legend's gear icon (ChartCore's OnTooltipIconClick -> indicatorSettingsRequest
-// -> App mounts this). Reads the live indicator via getIndicatorByPaneId and
+// -> App mounts this). Reads the live indicator via getIndicator and
 // writes changes back with overrideIndicator. Three tabs mirror TV:
 //   Inputs     — for our TV-style EMA/MA: Length, Source, Offset, Smoothing and
 //                the Calculation group (Timeframe = multi-timeframe). For every
@@ -70,7 +70,7 @@ import {
 } from "./lib/persist";
 import InfoTip from "./components/InfoTip";
 import { requestIndicatorOverlayRepaint } from "./lib/signals";
-import { mirrorAccelCompanion, syncAccelCompanion } from "./lib/indicators";
+import { mirrorAccelCompanion, syncAccelCompanion, getIndicator } from "./lib/indicators";
 import ColorLineStylePicker from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
 import { cloneStyles } from "./lib/overlays";
@@ -148,7 +148,7 @@ export default function IndicatorSettings({
   onClose,
 }: Props) {
   const ind = useMemo(
-    () => chart.getIndicatorByPaneId(paneId, name) as Indicator | null,
+    () => getIndicator(chart, paneId, name) as Indicator | null,
     [chart, paneId, name],
   );
   // `name` is the instance id (klinecharts name, e.g. "EMA#a1b2"); the real TYPE
@@ -175,7 +175,7 @@ export default function IndicatorSettings({
     visible: ind?.visible ?? true,
     // klinecharts mutates an indicator's `.styles` object IN PLACE on
     // overrideIndicator (verified empirically — see overlays.ts's cloneStyles), and
-    // getIndicatorByPaneId returns that SAME live object. A later Style-tab edit
+    // getIndicator returns that SAME live object. A later Style-tab edit
     // (apply()/setLine()) would otherwise mutate this "original" snapshot too,
     // making Cancel just re-apply the already-edited value instead of reverting it.
     styles: cloneStyles(ind?.styles ?? null),
@@ -225,11 +225,8 @@ export default function IndicatorSettings({
   function setRsiDivergence(patch: Partial<RsiDivergenceConfig>) {
     const next = { ...rsiDiv, ...patch };
     setRsiDiv(next);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      { name, extendData: { ...((live?.extendData as object) ?? {}), divergence: next } },
-      paneId,
-    );
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), divergence: next } });
   }
 
   // --- RSI source (price the RSI is computed on) + smoothing MA (extendData) ---
@@ -243,11 +240,11 @@ export default function IndicatorSettings({
   function setRsiExtend(patch: { source?: string; smoothing?: RsiSmoothing }) {
     if (patch.source !== undefined) setRsiSource(patch.source);
     if (patch.smoothing !== undefined) setRsiSmooth(patch.smoothing);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}) } as RsiExtend;
     if (patch.source !== undefined) ext.source = patch.source as RsiExtend["source"];
     if (patch.smoothing !== undefined) ext.smoothing = patch.smoothing;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext });
   }
 
   // --- RSI Style-tab colours/levels (extendData.style), resolved over defaults ---
@@ -270,11 +267,8 @@ export default function IndicatorSettings({
       lower: { ...rsiStyle.lower, ...patch.lower },
     };
     setRsiStyle(next);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      { name, extendData: { ...((live?.extendData as object) ?? {}), style: next } },
-      paneId,
-    );
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), style: next } });
   }
 
   // --- Moving-average (EMA/MA) inputs, sourced from calcParams + extendData ---
@@ -432,11 +426,11 @@ export default function IndicatorSettings({
   // effect. The whole key is dropped when fully default; otherwise legacy flat side/
   // align are removed and the high/low form is written.
   function applyCurveLabels(next: Parameters<typeof curveLabelObj>[0]) {
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}) } as { curveLabels?: unknown };
     if (curveLabelIsDefault(next)) delete ext.curveLabels;
     else ext.curveLabels = curveLabelObj(next);
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext });
     if (isSlope) requestIndicatorOverlayRepaint();
   }
   // The current state as the applyCurveLabels/curveLabelObj argument shape.
@@ -481,11 +475,8 @@ export default function IndicatorSettings({
       applySlope({ [field]: value as string });
       return;
     }
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      { name, extendData: { ...((live?.extendData as object) ?? {}), ...next } },
-      paneId,
-    );
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), ...next } });
   }
 
   // --- SESSIONS: editable per-session list (extendData.sessions) ---
@@ -801,9 +792,8 @@ export default function IndicatorSettings({
     const nextAccelSmoothing = next.accelSmoothing ?? accelSmoothing;
     const nextAccelThreshold = next.accelThreshold ?? accelThreshold;
     const nextAccelAbsolute = next.accelAbsolute ?? accelAbsolute;
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      {
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({ paneId,
         name,
         extendData: {
           ...((live?.extendData as object) ?? {}),
@@ -819,9 +809,7 @@ export default function IndicatorSettings({
           accelThreshold: nextAccelThreshold,
           accelAbsolute: nextAccelAbsolute,
         },
-      },
-      paneId,
-    );
+      });
     void applySlopeTimeframe(
       chart,
       epic,
@@ -855,14 +843,11 @@ export default function IndicatorSettings({
   // Pivots High/Low connector: draw-only, so a plain extendData override (merged
   // over the live indicator's) is the whole live-update path — no recompute.
   function applyPivotAnalysis(next: Required<PivotConnectorStyle>): void {
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      {
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({ paneId,
         name,
         extendData: { ...((live?.extendData as object) ?? {}), connector: next },
-      },
-      paneId,
-    );
+      });
   }
 
   // AVWAP source/bands apply (moved to MaAvwapPanels.tsx). Also called from
@@ -878,15 +863,12 @@ export default function IndicatorSettings({
     // "Hours" auto-hide on this timeframe) can't pop it back visible as a
     // side effect — only the intent (`visible` state) is meant to change here.
     const eff = (next.visible ?? visible) && isVisibleOnResolution(vis, chartResolution);
-    chart.overrideIndicator(
-      {
+    chart.overrideIndicator({ paneId,
         name,
         calcParams: cp,
         visible: eff,
         styles: { lines: lineOverrides(ls) },
-      },
-      paneId,
-    );
+      });
     // Slope color/width edits route setLine -> apply; bump the overlay repaint so
     // the on-chart MA follows immediately instead of waiting for the 1s tick.
     if (isSlope) requestIndicatorOverlayRepaint();
@@ -939,11 +921,8 @@ export default function IndicatorSettings({
     } else {
       // Generic: write lineHidden onto extendData and let calc re-run (it omits
       // a hidden figure's key so klinecharts draws nothing). Merge live extend.
-      const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-      chart.overrideIndicator(
-        { name, extendData: { ...((live?.extendData as object) ?? {}), lineHidden } },
-        paneId,
-      );
+      const live = getIndicator(chart, paneId, name) as Indicator | null;
+      chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), lineHidden } });
     }
   }
 
@@ -959,10 +938,10 @@ export default function IndicatorSettings({
   // indicator isn't accidentally forced visible by this checkbox alone.
   function toggleVisible(v: boolean) {
     setVisible(v);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}), userVisible: v, visibility: vis };
     const effVisible = v && isVisibleOnResolution(vis, chartResolution);
-    chart.overrideIndicator({ name, extendData: ext, visible: effVisible }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext, visible: effVisible });
     if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
   }
 
@@ -971,10 +950,10 @@ export default function IndicatorSettings({
   // read of intent never falls back to the interval-filtered effective `visible`.
   function applyVisibility(next: VisibilityModel) {
     setVis(next);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}), userVisible: visible, visibility: next };
     const effVisible = visible && isVisibleOnResolution(next, chartResolution);
-    chart.overrideIndicator({ name, extendData: ext, visible: effVisible }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext, visible: effVisible });
     if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
   }
 
@@ -984,23 +963,20 @@ export default function IndicatorSettings({
   // Persistence is handled by the snapshot effect (keyed on showValue).
   function toggleShowValue(show: boolean) {
     setShowValue(show);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}), hideLegendValue: !show };
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext });
   }
 
   function cancel() {
     // Restore the original snapshot (incl. extendData for MA/MTF), then close.
-    chart.overrideIndicator(
-      {
+    chart.overrideIndicator({ paneId,
         name,
         calcParams: original.current.calcParams,
         visible: original.current.visible,
         styles: original.current.styles ?? { lines: [] },
         extendData: original.current.extendData ?? {},
-      },
-      paneId,
-    );
+      });
     // The restore rewrites the parent's extendData wholesale (incl. showAccel and
     // accel params), so re-sync the companion: toggle-accel-then-Cancel must not
     // leave an orphaned pane (or a missing one).
@@ -1012,14 +988,12 @@ export default function IndicatorSettings({
     if (isMa) {
       const oext = (original.current.extendData ?? {}) as MaExtend;
       const label = maLegendLabel(oext.maType, templateMaKind(type));
-      chart.overrideIndicator(
-        {
-          name,
-          shortName: label,
-          figures: maFigures(label, oext.envelope === true && !oext.mtf?.timeframe),
-        },
+      chart.overrideIndicator({
         paneId,
-      );
+        name,
+        shortName: label,
+        figures: maFigures(label, oext.envelope === true && !oext.mtf?.timeframe),
+      });
     }
     // Revert the persisted snapshot too (the effect saved edits eagerly).
     if (originalCfg.current) saveIndicatorConfig(scope, name, originalCfg.current);

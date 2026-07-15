@@ -15,6 +15,7 @@ import {
   OP_REVERSE,
   type BacktestConfig,
   type Operand,
+  type SeriesOperand,
   type Rule,
   type SeriesRecipe,
 } from "./backtestConfig";
@@ -187,8 +188,8 @@ const TREND_RECIPE: SeriesRecipe = {
   anchors: [{ timestamp: 1000, value: 10 }, { timestamp: 2000, value: 20 }],
 };
 
-function ser(recipe: SeriesRecipe, extra: Partial<Operand> = {}): Operand {
-  return { kind: "series", seriesKey: recipeKey(recipe), label: "chip", recipe, ...extra } as Operand;
+function ser(recipe: SeriesRecipe, extra: Partial<Operand> = {}): SeriesOperand {
+  return { kind: "series", seriesKey: recipeKey(recipe), label: "chip", recipe, ...extra } as SeriesOperand;
 }
 
 function cfgWith(...rules: { left: Operand; op: "gt"; right: Operand }[]): BacktestConfig {

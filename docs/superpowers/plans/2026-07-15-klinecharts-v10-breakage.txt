@@ -1,0 +1,604 @@
+src/BacktestPanel.tsx(133,54): error TS2345: Argument of type 'StoredBacktestResult' is not assignable to parameter of type 'BacktestResult'.
+  Property 'candles' is missing in type 'StoredBacktestResult' but required in type 'BacktestResult'.
+src/BacktestPanel.tsx(338,27): error TS2345: Argument of type 'StoredBacktestResult' is not assignable to parameter of type 'BacktestResult'.
+  Property 'candles' is missing in type 'StoredBacktestResult' but required in type 'BacktestResult'.
+src/BacktestPanel.tsx(342,54): error TS2345: Argument of type 'StoredBacktestResult' is not assignable to parameter of type 'BacktestResult'.
+  Property 'candles' is missing in type 'StoredBacktestResult' but required in type 'BacktestResult'.
+src/BacktestSettingsModal.test.tsx(455,40): error TS2741: Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/chart/chartGeometry.ts(67,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/chartGeometry.ts(147,21): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/chartGeometry.ts(180,21): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/chartGeometry.ts(216,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/chartGeometry.ts(231,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/chartPainters.ts(166,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useChartPaint.ts(19,1): error TS6133: 'DomPosition' is declared but its value is never read.
+src/chart/useChartPaint.ts(19,10): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/chart/useChartPaint.ts(298,56): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(413,25): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useChartPaint.ts(423,56): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(512,32): error TS18048: 'x' is possibly 'undefined'.
+src/chart/useChartPaint.ts(512,41): error TS18048: 'x' is possibly 'undefined'.
+src/chart/useChartPaint.ts(516,48): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(588,50): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(626,52): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(643,50): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(794,56): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(839,59): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(855,36): error TS2345: Argument of type 'number | number[]' is not assignable to parameter of type 'number'.
+  Type 'number[]' is not assignable to type 'number'.
+src/chart/useChartPaint.ts(881,54): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(916,13): error TS2345: Argument of type 'BarSpace' is not assignable to parameter of type 'number'.
+src/chart/useChartPaint.ts(938,13): error TS2345: Argument of type 'BarSpace' is not assignable to parameter of type 'number'.
+src/chart/useChartPaint.ts(952,13): error TS2345: Argument of type 'BarSpace' is not assignable to parameter of type 'number'.
+src/chart/useChartPaint.ts(978,51): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(1020,50): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useChartPaint.ts(1052,50): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useIndicatorCommands.ts(16,10): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/chart/useIndicatorCommands.ts(16,10): error TS6133: 'DomPosition' is declared but its value is never read.
+src/chart/useIndicatorCommands.ts(55,20): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useIndicatorCommands.ts(72,19): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useIndicatorCommands.ts(86,7): error TS2554: Expected 1 arguments, but got 2.
+src/chart/useIndicatorCommands.ts(132,19): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useIndicatorCommands.ts(299,19): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useIndicatorCommands.ts(301,50): error TS2554: Expected 1 arguments, but got 2.
+src/chart/useIndicatorCommands.ts(363,34): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useIndicatorCommands.ts(410,37): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useLineDrag.ts(28,22): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/chart/useLineDrag.ts(28,22): error TS6133: 'DomPosition' is declared but its value is never read.
+src/chart/useLineDrag.ts(162,15): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useLineDrag.ts(443,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useLineDrag.ts(473,21): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useLineDrag.ts(477,59): error TS2698: Spread types may only be created from object types.
+src/chart/useLineDrag.ts(477,100): error TS2554: Expected 1 arguments, but got 2.
+src/chart/useLineDrag.ts(527,46): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/useLiveMarketData.ts(102,11): error TS2339: Property 'setPriceVolumePrecision' does not exist on type 'Chart'.
+src/chart/useLiveMarketData.ts(194,31): error TS2339: Property 'applyNewData' does not exist on type 'Chart'.
+src/chart/useLiveMarketData.ts(233,47): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/chart/useLiveMarketData.ts(285,50): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/chart/useLiveMarketData.ts(433,17): error TS2339: Property 'updateData' does not exist on type 'Chart'.
+src/chart/usePointerCrosshair.ts(29,1): error TS6133: 'DomPosition' is declared but its value is never read.
+src/chart/usePointerCrosshair.ts(29,10): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/chart/usePointerCrosshair.ts(249,46): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/chart/usePointerCrosshair.ts(423,43): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(10,3): error TS2305: Module '"klinecharts"' has no exported member 'LoadDataType'.
+src/ChartCore.tsx(11,3): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/ChartCore.tsx(11,3): error TS6133: 'DomPosition' is declared but its value is never read.
+src/ChartCore.tsx(12,3): error TS1484: 'ActionType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/ChartCore.tsx(12,3): error TS6133: 'ActionType' is declared but its value is never read.
+src/ChartCore.tsx(335,27): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/ChartCore.tsx(915,45): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1034,50): error TS2353: Object literal may only specify known properties, and 'reverse' does not exist in type 'DeepPartial<AxisStyle>'.
+src/ChartCore.tsx(1055,49): error TS2353: Object literal may only specify known properties, and 'type' does not exist in type 'DeepPartial<AxisStyle>'.
+src/ChartCore.tsx(1055,75): error TS2339: Property 'type' does not exist on type 'AxisStyle'.
+src/ChartCore.tsx(1260,11): error TS2339: Property 'setCustomApi' does not exist on type 'Chart'.
+src/ChartCore.tsx(1275,7): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1276,7): error TS2345: Argument of type '(data?: { paneId: string; indicatorName: string; iconId: string; }) => void' is not assignable to parameter of type 'ActionCallback'.
+  Types of parameters 'data' and 'data' are incompatible.
+    Type 'unknown' is not assignable to type '{ paneId: string; indicatorName: string; iconId: string; } | undefined'.
+src/ChartCore.tsx(1284,25): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/ChartCore.tsx(1288,56): error TS2554: Expected 1 arguments, but got 2.
+src/ChartCore.tsx(1293,37): error TS2554: Expected 0-1 arguments, but got 2.
+src/ChartCore.tsx(1422,46): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1497,46): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1598,50): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1615,43): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1671,47): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1877,47): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1911,47): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1927,56): error TS2339: Property 'type' does not exist on type 'AxisStyle'.
+src/ChartCore.tsx(1928,46): error TS2353: Object literal may only specify known properties, and 'type' does not exist in type 'DeepPartial<AxisStyle>'.
+src/ChartCore.tsx(1935,48): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1954,47): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(1956,46): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/ChartCore.tsx(1956,51): error TS2345: Argument of type '{ x: number; }' is not assignable to parameter of type 'Coordinate'.
+  Property 'y' is missing in type '{ x: number; }' but required in type 'Coordinate'.
+src/ChartCore.tsx(2060,13): error TS2339: Property 'setLoadDataCallback' does not exist on type 'Chart'.
+src/ChartCore.tsx(2060,34): error TS7006: Parameter 'params' implicitly has an 'any' type.
+src/ChartCore.tsx(2574,23): error TS2339: Property 'setPriceVolumePrecision' does not exist on type 'Chart'.
+src/ChartCore.tsx(2590,26): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/ChartCore.tsx(2607,7): error TS2339: Property 'setCustomApi' does not exist on type 'Chart'.
+src/ChartCore.tsx(2837,28): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(2838,28): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(2839,28): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(2866,32): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(2867,32): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(2868,32): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(2925,28): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(2925,58): error TS2345: Argument of type '(data?: { dataIndex?: number; }) => void' is not assignable to parameter of type 'ActionCallback'.
+  Types of parameters 'data' and 'data' are incompatible.
+    Type 'unknown' is not assignable to type '{ dataIndex?: number | undefined; } | undefined'.
+src/ChartCore.tsx(2926,43): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(2926,73): error TS2345: Argument of type '(data?: { dataIndex?: number; }) => void' is not assignable to parameter of type 'ActionCallback'.
+  Types of parameters 'data' and 'data' are incompatible.
+    Type 'unknown' is not assignable to type '{ dataIndex?: number | undefined; } | undefined'.
+src/ChartCore.tsx(3009,27): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(3010,27): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(3015,31): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(3016,31): error TS2693: 'ActionType' only refers to a type, but is being used as a value here.
+src/ChartCore.tsx(3613,9): error TS2322: Type '{ tradeId: string; field: TradeLineField; y: number; kind: "position" | "order"; side: OrderSide; qty: number; level: number; pl: number | null; changed: boolean; breakevenField?: "stop" | ... 1 more ... | undefined; }[]' is not assignable to type 'TradePillItem[]'.
+  Property 'expiresAt' is missing in type '{ tradeId: string; field: TradeLineField; y: number; kind: "position" | "order"; side: OrderSide; qty: number; level: number; pl: number | null; changed: boolean; breakevenField?: "stop" | ... 1 more ... | undefined; }' but required in type 'TradePillItem'.
+src/ChartGrid.tsx(10,1): error TS6133: 'DomPosition' is declared but its value is never read.
+src/ChartGrid.tsx(10,10): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/ChartGrid.tsx(141,69): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/ChartLegend.tsx(15,10): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/ChartLegend.tsx(15,10): error TS6133: 'DomPosition' is declared but its value is never read.
+src/ChartLegend.tsx(252,28): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/ChartLegend.tsx(790,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/ChartLegend.tsx(795,63): error TS2339: Property 'text' does not exist on type 'IndicatorTooltipStyle'.
+src/ChartLegend.tsx(814,21): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/ChartLegend.tsx(819,63): error TS2339: Property 'text' does not exist on type 'IndicatorTooltipStyle'.
+src/ChartLegend.tsx(833,40): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/DrawingSettings.tsx(16,10): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/DrawingSettings.tsx(93,62): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/DrawingSettings.tsx(452,46): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/DrawingSettings.tsx(454,64): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/DrawingSettings.tsx(454,82): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/DrawingSettings.tsx(523,60): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/DrawingSettings.tsx(573,44): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/DrawingSettings.tsx(575,62): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/DrawingSettings.tsx(575,80): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/IndicatorSettings.tsx(148,17): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(225,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(228,7): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(243,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(247,56): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(270,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(273,7): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(424,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(428,56): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(473,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(476,7): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(786,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(804,7): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(839,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(845,7): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(869,7): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(920,26): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(923,9): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(940,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(943,77): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(952,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(955,77): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(965,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/IndicatorSettings.tsx(967,56): error TS2554: Expected 1 arguments, but got 2.
+src/IndicatorSettings.tsx(980,7): error TS2554: Expected 1 arguments, but got 2.
+src/indicatorSettings/MaAvwapPanels.tsx(256,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/indicatorSettings/MaAvwapPanels.tsx(264,56): error TS2554: Expected 1 arguments, but got 2.
+src/indicatorSettings/PrevHlPanels.tsx(37,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/indicatorSettings/PrevHlPanels.tsx(41,56): error TS2554: Expected 1 arguments, but got 2.
+src/indicatorSettings/PrevHlPanels.tsx(59,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/indicatorSettings/PrevHlPanels.tsx(69,56): error TS2554: Expected 1 arguments, but got 2.
+src/indicatorSettings/PrevHlPanels.tsx(86,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/indicatorSettings/PrevHlPanels.tsx(96,56): error TS2554: Expected 1 arguments, but got 2.
+src/indicatorSettings/PrevHlPanels.tsx(117,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/indicatorSettings/PrevHlPanels.tsx(126,56): error TS2554: Expected 1 arguments, but got 2.
+src/indicatorSettings/PrevHlPanels.tsx(142,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/indicatorSettings/PrevHlPanels.tsx(146,56): error TS2554: Expected 1 arguments, but got 2.
+src/indicatorSettings/PrevHlPanels.tsx(167,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/indicatorSettings/PrevHlPanels.tsx(170,7): error TS2554: Expected 1 arguments, but got 2.
+src/indicatorSettings/SessionsPanels.tsx(17,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/indicatorSettings/SessionsPanels.tsx(20,7): error TS2554: Expected 1 arguments, but got 2.
+src/indicatorSettings/TimeHighlightPanels.tsx(20,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/indicatorSettings/TimeHighlightPanels.tsx(23,7): error TS2554: Expected 1 arguments, but got 2.
+src/lib/backtest.ts(17,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/backtest.ts(17,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/backtest.ts(18,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/backtest.ts(18,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/backtest.ts(19,3): error TS1484: 'PolygonType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/backtest.ts(19,3): error TS6133: 'PolygonType' is declared but its value is never read.
+src/lib/backtest.ts(21,3): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/backtest.ts(21,3): error TS6133: 'DomPosition' is declared but its value is never read.
+src/lib/backtest.ts(230,71): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/backtest.ts(371,28): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(382,28): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(479,26): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(490,26): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(510,43): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(741,26): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(749,26): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(757,26): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(765,24): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(772,24): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(776,88): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(777,88): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(822,26): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(835,26): error TS2693: 'PolygonType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(851,65): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/backtest.ts(963,3): error TS2322: Type '({ equity?: undefined; } | { equity: number; })[]' is not assignable to type '({ equity: number; } | Record<string, never>)[]'.
+  Type '{ equity?: undefined; } | { equity: number; }' is not assignable to type '{ equity: number; } | Record<string, never>'.
+    Type '{ equity?: undefined; }' is not assignable to type '{ equity: number; } | Record<string, never>'.
+      Type '{ equity?: undefined; }' is not assignable to type 'Record<string, never>'.
+        Property 'equity' is incompatible with index signature.
+          Type 'undefined' is not assignable to type 'never'.
+src/lib/backtest.ts(980,13): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(987,5): error TS2322: Type '(dataList: KLineData[], indicator: Indicator<unknown, unknown, unknown>) => {}[]' is not assignable to type 'IndicatorCalcCallback<{ equity?: number | undefined; }, unknown, unknown>'.
+  Types of parameters 'indicator' and 'indicator' are incompatible.
+    Type 'Indicator<{ equity?: number | undefined; }, unknown, unknown>' is not assignable to type 'Indicator<unknown, unknown, unknown>'.
+      Types of property 'figures' are incompatible.
+        Type 'IndicatorFigure<{ equity?: number | undefined; }>[]' is not assignable to type 'IndicatorFigure<unknown>[]'.
+          Type 'IndicatorFigure<{ equity?: number | undefined; }>' is not assignable to type 'IndicatorFigure<unknown>'.
+            Types of property 'attrs' are incompatible.
+              Type 'IndicatorFigureAttrsCallback<{ equity?: number | undefined; }> | undefined' is not assignable to type 'IndicatorFigureAttrsCallback<unknown> | undefined'.
+                Type 'IndicatorFigureAttrsCallback<{ equity?: number | undefined; }>' is not assignable to type 'IndicatorFigureAttrsCallback<unknown>'.
+                  Types of parameters 'params' and 'params' are incompatible.
+                    Type 'IndicatorFigureAttrsCallbackParams<unknown>' is not assignable to type 'IndicatorFigureAttrsCallbackParams<{ equity?: number | undefined; }>'.
+                      Types of property 'data' are incompatible.
+                        Type 'NeighborData<unknown>' is not assignable to type 'NeighborData<Nullable<{ equity?: number | undefined; }>>'.
+                          Type 'unknown' is not assignable to type 'Nullable<{ equity?: number | undefined; }>'.
+src/lib/backtest.ts(1121,84): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(1243,61): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/backtest.ts(1295,53): error TS2554: Expected 0-1 arguments, but got 2.
+src/lib/backtest.ts(1340,63): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/backtest.ts(1355,27): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/backtest.ts(1369,76): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/backtest.ts(1557,61): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/backtest.ts(1563,51): error TS2554: Expected 0-1 arguments, but got 2.
+src/lib/backtest.ts(1567,25): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/backtestConfig.test.ts(229,36): error TS2339: Property 'seriesKey' does not exist on type 'Operand'.
+  Property 'seriesKey' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/backtestSeries.test.ts(15,19): error TS6133: 'sma' is declared but its value is never read.
+src/lib/backtestSeries.test.ts(410,53): error TS2339: Property 'label' does not exist on type 'Operand'.
+  Property 'label' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/backtestSeries.test.ts(452,51): error TS2339: Property 'label' does not exist on type 'Operand'.
+  Property 'label' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/backtestSeries.test.ts(510,53): error TS2339: Property 'label' does not exist on type 'Operand'.
+  Property 'label' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/backtestSeries.test.ts(585,24): error TS2339: Property 'label' does not exist on type 'Operand'.
+  Property 'label' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(231,33): error TS2339: Property 'recipe' does not exist on type 'Operand'.
+  Property 'recipe' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(238,43): error TS2339: Property 'label' does not exist on type 'Operand'.
+  Property 'label' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(239,43): error TS2339: Property 'recipe' does not exist on type 'Operand'.
+  Property 'recipe' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(239,86): error TS2339: Property 'recipe' does not exist on type 'Operand'.
+  Property 'recipe' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(240,49): error TS2339: Property 'seriesKey' does not exist on type 'Operand'.
+  Property 'seriesKey' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(246,43): error TS2339: Property 'label' does not exist on type 'Operand'.
+  Property 'label' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(253,43): error TS2339: Property 'recipe' does not exist on type 'Operand'.
+  Property 'recipe' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(253,86): error TS2339: Property 'recipe' does not exist on type 'Operand'.
+  Property 'recipe' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(254,51): error TS2339: Property 'seriesKey' does not exist on type 'Operand'.
+  Property 'seriesKey' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(256,39): error TS2339: Property 'recipe' does not exist on type 'Operand'.
+  Property 'recipe' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(268,40): error TS2339: Property 'seriesKey' does not exist on type 'Operand'.
+  Property 'seriesKey' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(286,43): error TS2339: Property 'label' does not exist on type 'Operand'.
+  Property 'label' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(287,51): error TS2339: Property 'seriesKey' does not exist on type 'Operand'.
+  Property 'seriesKey' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(292,43): error TS2339: Property 'label' does not exist on type 'Operand'.
+  Property 'label' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(315,33): error TS2339: Property 'recipe' does not exist on type 'Operand'.
+  Property 'recipe' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperand.test.ts(327,33): error TS2339: Property 'label' does not exist on type 'Operand'.
+  Property 'label' does not exist on type '{ kind: "indicator"; indicator: IndicatorKind; length?: number | undefined; anchor?: number | undefined; timeframe?: string | undefined; slope?: SlopeSpec | undefined; }'.
+src/lib/chartOperandEnumerate.ts(12,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/chartSync.ts(12,10): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/chartSync.ts(12,10): error TS6133: 'DomPosition' is declared but its value is never read.
+src/lib/chartSync.ts(109,39): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/lib/chartSync.ts(197,9): error TS2365: Operator '>' cannot be applied to types 'BarSpace' and 'number'.
+src/lib/chartSync.ts(200,66): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/lib/chartSync.ts(203,70): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/lib/chartSync.ts(272,12): error TS2322: Type 'BarSpace' is not assignable to type 'number'.
+src/lib/chartSync.ts(340,37): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/lib/chartSync.ts(380,16): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/lib/chartTheme.ts(6,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/chartTheme.ts(6,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/chartTheme.ts(7,3): error TS1484: 'TooltipShowRule' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/chartTheme.ts(7,3): error TS6133: 'TooltipShowRule' is declared but its value is never read.
+src/lib/chartTheme.ts(55,21): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/chartTheme.ts(55,39): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/chartTheme.ts(91,28): error TS2693: 'TooltipShowRule' only refers to a type, but is being used as a value here.
+src/lib/chartTheme.ts(99,26): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/chartTheme.ts(110,9): error TS2353: Object literal may only specify known properties, and 'text' does not exist in type 'DeepPartial<IndicatorTooltipStyle>'.
+src/lib/customOverlays.ts(74,30): error TS2314: Generic type 'OverlayCreateFiguresCallbackParams<E>' requires 1 type argument(s).
+src/lib/customOverlays.ts(235,45): error TS2339: Property 'precision' does not exist on type 'OverlayCreateFiguresCallbackParams<unknown>'.
+src/lib/customOverlays.ts(370,35): error TS2339: Property 'precision' does not exist on type 'OverlayCreateFiguresCallbackParams<unknown>'.
+src/lib/customOverlays.ts(485,35): error TS2339: Property 'precision' does not exist on type 'OverlayCreateFiguresCallbackParams<unknown>'.
+src/lib/feed.test.ts(156,17): error TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.
+src/lib/feed.ts(515,15): error TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.
+src/lib/historyPaging.test.ts(39,40): error TS2339: Property 'timestamp' does not exist on type 'never'.
+src/lib/historyPaging.test.ts(62,22): error TS2339: Property 'timestamp' does not exist on type 'never'.
+src/lib/historyPaging.test.ts(74,44): error TS2339: Property 'timestamp' does not exist on type 'never'.
+src/lib/historyPaging.test.ts(112,22): error TS2339: Property 'timestamp' does not exist on type 'never'.
+src/lib/historyPaging.test.ts(127,22): error TS2339: Property 'timestamp' does not exist on type 'never'.
+src/lib/indicatorParityGolden.test.ts(10,42): error TS2591: Cannot find name 'node:fs'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+src/lib/indicatorParityGolden.test.ts(11,31): error TS2591: Cannot find name 'node:url'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+src/lib/indicatorParityGolden.test.ts(12,34): error TS2591: Cannot find name 'node:path'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+src/lib/indicators.ts(23,53): error TS1484: 'DomPosition' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators.ts(23,53): error TS6133: 'DomPosition' is declared but its value is never read.
+src/lib/indicators.ts(197,21): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/indicators.ts(210,53): error TS2693: 'DomPosition' only refers to a type, but is being used as a value here.
+src/lib/indicators.ts(245,65): error TS2554: Expected 0-1 arguments, but got 2.
+src/lib/indicators.ts(276,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/indicators.ts(300,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/indicators.ts(461,54): error TS2554: Expected 1-2 arguments, but got 3.
+src/lib/indicators.ts(468,7): error TS2554: Expected 1 arguments, but got 2.
+src/lib/indicators.ts(485,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/indicators.ts(497,37): error TS2554: Expected 0-1 arguments, but got 2.
+src/lib/indicators.ts(527,5): error TS2554: Expected 1-2 arguments, but got 3.
+src/lib/indicators.ts(535,7): error TS2554: Expected 1 arguments, but got 2.
+src/lib/indicators.ts(553,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/indicators.ts(579,5): error TS2554: Expected 1 arguments, but got 2.
+src/lib/indicators.ts(596,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/indicators.ts(621,69): error TS2554: Expected 1 arguments, but got 2.
+src/lib/indicators.ts(696,23): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/indicators.ts(702,37): error TS2554: Expected 0-1 arguments, but got 2.
+src/lib/indicators.ts(710,37): error TS2554: Expected 0-1 arguments, but got 2.
+src/lib/indicators/lr.ts(7,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/lr.ts(7,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/lr.ts(8,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/lr.ts(8,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/indicators/lr.ts(35,18): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/lr.ts(36,26): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/lr.ts(37,26): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/lr.ts(93,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/ma.ts(7,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/ma.ts(7,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/ma.ts(8,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/ma.ts(8,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/indicators/ma.ts(52,23): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/ma.ts(53,23): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/ma.ts(89,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/ma.ts(100,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/pivotAnalysis.ts(17,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/pivotAnalysis.ts(17,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/pivotAnalysis.ts(18,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/pivotAnalysis.ts(18,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/indicators/pivotAnalysis.ts(283,3): error TS6133: 'side' is declared but its value is never read.
+src/lib/indicators/pivotAnalysis.ts(347,36): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/pivotAnalysis.ts(385,26): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/pivotAnalysis.ts(386,25): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/pivotAnalysis.ts(393,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/pivotAnalysis.ts(400,49): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/pivotBands.ts(17,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/pivotBands.ts(17,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/pivotBands.ts(18,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/pivotBands.ts(18,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/indicators/pivotBands.ts(68,23): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/pivotBands.ts(69,23): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/pivotBands.ts(141,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/prevHl.ts(10,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/prevHl.ts(10,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/prevHl.ts(11,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/prevHl.ts(11,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/indicators/prevHl.ts(539,31): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/prevHl.ts(540,31): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/prevHl.ts(541,27): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/prevHl.ts(542,27): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/prevHl.ts(543,28): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/prevHl.ts(544,28): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/prevHl.ts(545,30): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/prevHl.ts(546,30): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/prevHl.ts(556,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/rsi.ts(11,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/rsi.ts(11,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/rsi.ts(12,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/rsi.ts(12,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/indicators/rsi.ts(519,30): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/rsi.ts(553,11): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/rsi.ts(561,35): error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/lib/indicators/rsi.ts(598,11): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/rsi.ts(630,35): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/rsi.ts(633,30): error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/lib/indicators/rsi.ts(636,20): error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/lib/indicators/rsi.ts(650,37): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/rsi.ts(701,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/rsi.ts(706,41): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/rsi.ts(709,50): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/sessions.ts(9,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/sessions.ts(9,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/sessions.ts(183,31): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/sessions.ts(231,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/sessions.ts(238,44): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/shared.ts(5,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/shared.ts(32,10): error TS2352: Conversion of type '{ name: string; calcParamsText: string; values: never[]; icons: never[]; }' to type 'IndicatorTooltipData' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type '{ name: string; calcParamsText: string; values: never[]; icons: never[]; }' is missing the following properties from type 'IndicatorTooltipData': features, legends
+src/lib/indicators/slope.ts(8,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/slope.ts(8,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/slope.ts(9,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/slope.ts(9,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/indicators/slope.ts(291,28): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/slope.ts(423,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/slope.ts(429,57): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/slope.ts(431,41): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/slope.ts(529,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/slope.ts(535,57): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/slope.ts(537,28): error TS2352: Conversion of type '(params: { indicator: Indicator<unknown, unknown, unknown>; crosshair: { dataIndex?: number | undefined; }; }) => { name: string; calcParamsText: string; icons: never[]; values: { title: { text: string; color: string; }; value: { ...; }; }[]; }' to type 'IndicatorCreateTooltipDataSourceCallback<unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type '{ name: string; calcParamsText: string; icons: never[]; values: { title: { text: string; color: string; }; value: { text: string; color: string; }; }[]; }' is missing the following properties from type 'IndicatorTooltipData': features, legends
+src/lib/indicators/slope.ts(538,41): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/timeHighlight.ts(10,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/timeHighlight.ts(10,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/timeHighlight.ts(116,36): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/timeHighlight.ts(178,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/timeHighlight.ts(183,49): error TS2314: Generic type 'IndicatorDrawParams<D, C, E>' requires 3 type argument(s).
+src/lib/indicators/vwap.ts(7,3): error TS1484: 'IndicatorSeries' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/vwap.ts(7,3): error TS6133: 'IndicatorSeries' is declared but its value is never read.
+src/lib/indicators/vwap.ts(8,3): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/indicators/vwap.ts(8,3): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/indicators/vwap.ts(64,23): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/vwap.ts(65,21): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/vwap.ts(66,21): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/vwap.ts(67,21): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/vwap.ts(68,21): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/vwap.ts(69,21): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/vwap.ts(70,21): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/indicators/vwap.ts(140,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/indicators/vwap.ts(148,11): error TS2693: 'IndicatorSeries' only refers to a type, but is being used as a value here.
+src/lib/lineStyle.ts(8,10): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/lineStyle.ts(24,23): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/lineStyle.ts(26,23): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/lineStyle.ts(28,23): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/lineStyle.ts(112,17): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/liveEngine.ts(179,7): error TS2322: Type 'LiveState' is not assignable to type '{ lastEvalSec: number; status: LiveStatus; snapshot: ArmedSnapshot | null; draft: BacktestConfig; account: string; quantity: number; pendingEdits: boolean; positionVintage: ArmedSnapshot | null; log: LiveLogEntry[]; }'.
+  Types of property 'lastEvalSec' are incompatible.
+    Type 'number | null' is not assignable to type 'number'.
+      Type 'null' is not assignable to type 'number'.
+src/lib/liveEngine.ts(184,7): error TS2322: Type 'LiveState' is not assignable to type '{ lastEvalSec: number; status: LiveStatus; snapshot: ArmedSnapshot | null; draft: BacktestConfig; account: string; quantity: number; pendingEdits: boolean; positionVintage: ArmedSnapshot | null; log: LiveLogEntry[]; }'.
+  Types of property 'lastEvalSec' are incompatible.
+    Type 'number | null' is not assignable to type 'number'.
+      Type 'null' is not assignable to type 'number'.
+src/lib/liveEngine.ts(195,7): error TS2322: Type 'LiveState' is not assignable to type '{ lastEvalSec: number; status: LiveStatus; snapshot: ArmedSnapshot | null; draft: BacktestConfig; account: string; quantity: number; pendingEdits: boolean; positionVintage: ArmedSnapshot | null; log: LiveLogEntry[]; }'.
+  Types of property 'lastEvalSec' are incompatible.
+    Type 'number | null' is not assignable to type 'number'.
+      Type 'null' is not assignable to type 'number'.
+src/lib/liveEngine.ts(197,5): error TS2322: Type 'LiveState' is not assignable to type '{ lastEvalSec: number; status: LiveStatus; snapshot: ArmedSnapshot | null; draft: BacktestConfig; account: string; quantity: number; pendingEdits: boolean; positionVintage: ArmedSnapshot | null; log: LiveLogEntry[]; }'.
+  Types of property 'lastEvalSec' are incompatible.
+    Type 'number | null' is not assignable to type 'number'.
+      Type 'null' is not assignable to type 'number'.
+src/lib/mtfCoordinator.ts(109,25): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/mtfCoordinator.ts(154,78): error TS2554: Expected 1 arguments, but got 2.
+src/lib/mtfCoordinator.ts(249,21): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/mtfCoordinator.ts(255,85): error TS2554: Expected 1 arguments, but got 2.
+src/lib/mtfCoordinator.ts(289,83): error TS2554: Expected 1 arguments, but got 2.
+src/lib/mtfCoordinator.ts(324,21): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/mtfCoordinator.ts(331,68): error TS2554: Expected 1 arguments, but got 2.
+src/lib/mtfCoordinator.ts(367,66): error TS2554: Expected 1 arguments, but got 2.
+src/lib/mtfCoordinator.ts(399,21): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/mtfCoordinator.ts(411,68): error TS2554: Expected 1 arguments, but got 2.
+src/lib/mtfCoordinator.ts(487,66): error TS2554: Expected 1 arguments, but got 2.
+src/lib/mtfCoordinator.ts(511,24): error TS2339: Property 'getIndicatorByPaneId' does not exist on type 'Chart'.
+src/lib/overlays.test.ts(405,14): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'Chart'.
+src/lib/overlays.test.ts(405,42): error TS2749: 'OverlayManager' refers to a value, but is being used as a type here. Did you mean 'typeof OverlayManager'?
+src/lib/overlays.test.ts(411,14): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'Chart'.
+src/lib/overlays.test.ts(411,42): error TS2749: 'OverlayManager' refers to a value, but is being used as a type here. Did you mean 'typeof OverlayManager'?
+src/lib/overlays.test.ts(467,12): error TS18048: 'at100.notify' is possibly 'undefined'.
+src/lib/overlays.test.ts(532,36): error TS7031: Binding element 'k' implicitly has an 'any' type.
+src/lib/overlays.ts(14,10): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/overlays.ts(156,43): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/overlays.ts(287,28): error TS2314: Generic type 'OverlayEvent<E>' requires 1 type argument(s).
+src/lib/overlays.ts(374,33): error TS2314: Generic type 'OverlayEvent<E>' requires 1 type argument(s).
+src/lib/overlays.ts(470,29): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(508,29): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(626,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(645,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(667,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(675,38): error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/lib/overlays.ts(697,29): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(738,32): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(804,30): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(872,34): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(873,37): error TS2345: Argument of type 'Nullable<string> | Nullable<string>[]' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'.
+src/lib/overlays.ts(1052,31): error TS2314: Generic type 'OverlayEvent<E>' requires 1 type argument(s).
+src/lib/overlays.ts(1067,31): error TS2314: Generic type 'OverlayEvent<E>' requires 1 type argument(s).
+src/lib/overlays.ts(1106,51): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/overlays.ts(1146,49): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/overlays.ts(1163,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1218,53): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/overlays.ts(1261,30): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1301,31): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/overlays.ts(1490,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1500,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1513,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1525,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1535,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1546,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1575,29): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1625,30): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/overlays.ts(1661,38): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1671,38): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1685,27): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1693,38): error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/lib/overlays.ts(1705,33): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/overlays.ts(1716,32): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1758,28): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1773,31): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/overlays.ts(1832,39): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/overlays.ts(1845,34): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1866,57): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/overlays.ts(1877,30): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1896,45): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1919,30): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(1992,75): error TS2559: Type 'string' has no properties in common with type 'Partial<Pick<Overlay<unknown>, "id" | "groupId" | "paneId" | "name">>'.
+src/lib/overlays.ts(2115,16): error TS2339: Property 'applyNewData' does not exist on type 'Chart'.
+src/lib/overlays.ts(2127,29): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/overlays.ts(2129,23): error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/lib/overlays.ts(2132,26): error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/lib/overlays.ts(2179,29): error TS2551: Property 'getOverlayById' does not exist on type 'Chart'. Did you mean 'getOverlays'?
+src/lib/persist.test.ts(544,15): error TS2503: Cannot find namespace 'P'.
+src/lib/persist.test.ts(591,22): error TS2503: Cannot find namespace 'P'.
+src/lib/persist.test.ts(643,45): error TS2503: Cannot find namespace 'P'.
+src/lib/positionLines.test.ts(41,3): error TS2322: Type '{ kind: "position" | "order"; id: string; epic: string; side: OrderSide; quantity: number; priceLevel: number; stop: number | null; takeProfit: number | null; ... 5 more ...; source?: "manual" | "strategy" | undefined; }' is not assignable to type 'TradeView'.
+  Types of property 'leverage' are incompatible.
+    Type 'number | null | undefined' is not assignable to type 'number | null'.
+      Type 'undefined' is not assignable to type 'number | null'.
+src/lib/positionLines.ts(438,27): error TS2314: Generic type 'OverlayEvent<E>' requires 1 type argument(s).
+src/lib/ruleSeriesParityGolden.test.ts(6,31): error TS2591: Cannot find name 'node:fs'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+src/lib/snapshotMarker.ts(8,27): error TS1484: 'LineType' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/snapshotMarker.ts(8,27): error TS6133: 'LineType' is declared but its value is never read.
+src/lib/snapshotMarker.ts(34,18): error TS2693: 'LineType' only refers to a type, but is being used as a value here.
+src/lib/tradeMarkers.test.ts(112,21): error TS2339: Property 'epic' does not exist on type 'TradeMarkerSpec'.
+src/MarketInfoPopover.tsx(390,36): error TS2345: Argument of type 'number | Record<string, unknown> | undefined' is not assignable to parameter of type 'Record<string, unknown>'.
+  Type 'undefined' is not assignable to type 'Record<string, unknown>'.
+src/SweepResults.test.tsx(24,26): error TS2322: Type '({ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; })[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; }' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(34,26): error TS2322: Type '({ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; })[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; }' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(40,26): error TS2322: Type '({ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; })[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; }' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(63,26): error TS2322: Type '{ combo: { "op:long.entry.0": string; "param:n": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: null; }[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "op:long.entry.0": string; "param:n": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+    Types of property 'metrics' are incompatible.
+      Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(70,26): error TS2322: Type '{ combo: { "op:long.entry.0": string; "param:n": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: null; }[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "op:long.entry.0": string; "param:n": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+    Types of property 'metrics' are incompatible.
+      Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(125,46): error TS2322: Type '({ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; })[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; }' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(129,26): error TS2322: Type '({ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; })[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; }' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:n": number; "risk:long.stop.value": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(135,26): error TS2322: Type '({ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; })[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; }' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(145,26): error TS2322: Type '({ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: null; error: string; } | { combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: nul...' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: null; error: string; } | { combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: null...' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(159,26): error TS2322: Type '({ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: null; error: string; } | { combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: nul...' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: null; error: string; } | { combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: null...' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: null; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(172,26): error TS2322: Type '({ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; })[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; }' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(182,26): error TS2322: Type '({ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; })[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; }' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/SweepResults.test.tsx(193,26): error TS2322: Type '({ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; })[]' is not assignable to type 'SweepRow[]'.
+  Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; } | { ...; } | { ...; }' is not assignable to type 'SweepRow'.
+    Type '{ combo: { "param:a": number; "param:b": number; "param:c": number; }; metrics: { net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }; error: null; }' is not assignable to type 'SweepRow'.
+      Types of property 'metrics' are incompatible.
+        Property 'avg_win_loss_ratio' is missing in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number; return_pct: number; }' but required in type '{ net_pnl: number; n_trades: number; win_rate: number; max_drawdown: number; profit_factor: number | null; avg_win_loss_ratio: number | null; return_pct: number; }'.
+src/ToolbarControls.tsx(7,10): error TS2305: Module '"klinecharts"' has no exported member 'YAxisType'.
+src/ToolbarControls.tsx(250,33): error TS2353: Object literal may only specify known properties, and 'type' does not exist in type 'DeepPartial<AxisStyle>'.
+src/ToolbarControls.tsx(257,33): error TS2353: Object literal may only specify known properties, and 'type' does not exist in type 'DeepPartial<AxisStyle>'.

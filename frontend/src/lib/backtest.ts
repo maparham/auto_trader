@@ -14,13 +14,8 @@
 
 import {
   registerIndicator,
-  IndicatorSeries,
-  LineType,
-  PolygonType,
   registerOverlay,
-  DomPosition,
   type Chart,
-  type Indicator,
   type OverlayTemplate,
   type OverlayFigure,
 } from "klinecharts";
@@ -227,7 +222,7 @@ function artifactsFor(chart: Chart): BacktestArtifacts {
  * reset the bookkeeping — shared by the reset-at-top-of-run, clearBacktest,
  * and the selectedTradeSignal subscription's own "replace" step. */
 function removeSelectionOverlays(chart: Chart, artifacts: BacktestArtifacts): void {
-  for (const id of artifacts.selectionOverlayIds) chart.removeOverlay(id);
+  for (const id of artifacts.selectionOverlayIds) chart.removeOverlay({ id });
   artifacts.selectionOverlayIds = [];
 }
 
@@ -368,7 +363,7 @@ const markerOverlay: OverlayTemplate = {
         {
           type: "circle",
           attrs: { x: startX, y: tip + dir * 4, r: 9 },
-          styles: { style: PolygonType.Fill, color: "rgba(0,0,0,0)" },
+          styles: { style: 'fill', color: "rgba(0,0,0,0)" },
         },
         {
           type: "polygon",
@@ -379,7 +374,7 @@ const markerOverlay: OverlayTemplate = {
               { x: startX + 4, y: base },
             ],
           },
-          styles: { style: PolygonType.Fill, color: glyphColor },
+          styles: { style: 'fill', color: glyphColor },
         },
       ];
     }
@@ -476,7 +471,7 @@ const signalGlyphOverlay: OverlayTemplate = {
       {
         type: "circle",
         attrs: { x, y: anchorY + dir * 7, r: 9 },
-        styles: { style: PolygonType.Fill, color: "rgba(0,0,0,0)" },
+        styles: { style: 'fill', color: "rgba(0,0,0,0)" },
       },
       {
         type: "polygon",
@@ -487,7 +482,7 @@ const signalGlyphOverlay: OverlayTemplate = {
             { x: x + 5, y: base },
           ],
         },
-        styles: { style: PolygonType.Fill, color: SIGNAL_COLOR },
+        styles: { style: 'fill', color: SIGNAL_COLOR },
       },
     ];
   },
@@ -507,7 +502,7 @@ function ensureSignalGlyphOverlayRegistered(): void {
 // the element carrying the cursor style (setting the root container wouldn't
 // override the child pane's own cursor).
 export function setMarkerHoverCursor(chart: Chart, hovering: boolean): void {
-  const dom = chart.getDom("candle_pane", DomPosition.Main);
+  const dom = chart.getDom("candle_pane", 'main');
   if (dom) dom.style.cursor = hovering ? "pointer" : "crosshair";
 }
 
@@ -738,7 +733,7 @@ const tradeZoneOverlay: OverlayTemplate = {
       figures.push({
         type: "rect",
         attrs: { x: c0.x, y: Math.min(c0.y, c2.y), width: c1.x - c0.x, height: Math.abs(c0.y - c2.y) },
-        styles: { style: PolygonType.Fill, color: `${BUY_COLOR}26` },
+        styles: { style: 'fill', color: `${BUY_COLOR}26` },
         ignoreEvent: true,
       });
     }
@@ -746,7 +741,7 @@ const tradeZoneOverlay: OverlayTemplate = {
       figures.push({
         type: "rect",
         attrs: { x: c0.x, y: Math.min(c0.y, c3.y), width: c1.x - c0.x, height: Math.abs(c0.y - c3.y) },
-        styles: { style: PolygonType.Fill, color: `${SELL_COLOR}26` },
+        styles: { style: 'fill', color: `${SELL_COLOR}26` },
         ignoreEvent: true,
       });
     }
@@ -754,7 +749,7 @@ const tradeZoneOverlay: OverlayTemplate = {
       figures.push({
         type: "line",
         attrs: { coordinates: [{ x: c0.x, y: c4.y }, { x: c1.x, y: c4.y }] },
-        styles: { style: LineType.Dashed, dashedValue: [4, 4], color: `${SELL_COLOR}80`, size: 1 },
+        styles: { style: 'dashed', dashedValue: [4, 4], color: `${SELL_COLOR}80`, size: 1 },
         ignoreEvent: true,
       });
     }
@@ -762,19 +757,19 @@ const tradeZoneOverlay: OverlayTemplate = {
     figures.push({
       type: "line",
       attrs: { coordinates: [{ x: c0.x, y: c0.y }, { x: c5.x, y: c5.y }] },
-      styles: { style: LineType.Solid, color: z.win ? BUY_COLOR : SELL_COLOR, size: 1 },
+      styles: { style: 'solid', color: z.win ? BUY_COLOR : SELL_COLOR, size: 1 },
       ignoreEvent: true,
     });
     // entry line (accent), spanning the window.
     figures.push({
       type: "line",
       attrs: { coordinates: [{ x: c0.x, y: c0.y }, { x: c1.x, y: c0.y }] },
-      styles: { style: LineType.Solid, color: ACCENT_COLOR, size: 1.5 },
+      styles: { style: 'solid', color: ACCENT_COLOR, size: 1.5 },
       ignoreEvent: true,
     });
     // entry / exit dots.
-    figures.push({ type: "circle", attrs: { x: c0.x, y: c0.y, r: 3 }, styles: { style: PolygonType.Fill, color: ACCENT_COLOR }, ignoreEvent: true });
-    figures.push({ type: "circle", attrs: { x: c5.x, y: c5.y, r: 3 }, styles: { style: PolygonType.Fill, color: z.win ? BUY_COLOR : SELL_COLOR }, ignoreEvent: true });
+    figures.push({ type: "circle", attrs: { x: c0.x, y: c0.y, r: 3 }, styles: { style: 'fill', color: ACCENT_COLOR }, ignoreEvent: true });
+    figures.push({ type: "circle", attrs: { x: c5.x, y: c5.y, r: 3 }, styles: { style: 'fill', color: z.win ? BUY_COLOR : SELL_COLOR }, ignoreEvent: true });
     // Labels: R:R centered above the entry line; +reward%/-risk% at the TP/SL edges.
     if (z.rr != null) {
       figures.push(pillFigure((c0.x + c1.x) / 2, rrY, `R:R 1:${z.rr.toFixed(2)}`, ACCENT_COLOR, "center"));
@@ -819,7 +814,7 @@ const periodOverlay: OverlayTemplate = {
       {
         type: "rect",
         attrs: { x: x0, y: 0, width: w, height: bounding.height },
-        styles: { style: PolygonType.Fill, color: `${PERIOD_COLOR}0f` }, // ~6%
+        styles: { style: 'fill', color: `${PERIOD_COLOR}0f` }, // ~6%
         ignoreEvent: true,
       },
     ];
@@ -832,7 +827,7 @@ const periodOverlay: OverlayTemplate = {
       {
         type: "rect",
         attrs: { x: x0, y: 0, width: x1 - x0, height: bounding.height },
-        styles: { style: PolygonType.Fill, color: `${PERIOD_COLOR}33` }, // ~20%
+        styles: { style: 'fill', color: `${PERIOD_COLOR}33` }, // ~20%
         ignoreEvent: true,
       },
     ];
@@ -848,7 +843,7 @@ function ensurePeriodOverlayRegistered(): void {
 
 /** Remove this chart's period-band overlays and reset the bookkeeping. */
 function clearPeriodBands(chart: Chart, artifacts: BacktestArtifacts): void {
-  for (const id of artifacts.periodBandIds) chart.removeOverlay(id);
+  for (const id of artifacts.periodBandIds) chart.removeOverlay({ id });
   artifacts.periodBandIds = [];
 }
 
@@ -955,7 +950,7 @@ function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade)
 export function equityForBars(
   bars: readonly { timestamp: number }[],
   points: readonly (readonly [number, number])[],
-): ({ equity: number } | Record<string, never>)[] {
+): { equity?: number }[] {
   if (points.length === 0) return bars.map(() => ({}));
   const lastTs = points[points.length - 1][0];
   let pi = 0;
@@ -977,16 +972,16 @@ export function registerBacktestIndicators(): void {
   registerIndicator<{ equity?: number }>({
     name: EQUITY_INDICATOR,
     shortName: "Equity",
-    series: IndicatorSeries.Normal,
+    series: 'normal',
     precision: 2,
     figures: [{ key: "equity", title: "Equity: ", type: "line" }],
     // Read THIS instance's equity series off its extendData — never a module
     // global, so each cell's EQUITY pane plots its own backtest (see
     // runAndRender). equityForBars re-anchors the native-bar series onto the
     // currently-loaded bars, so the curve is correct on any timeframe.
-    calc: (dataList, indicator: Indicator) => {
+    calc: (dataList, indicator) => {
       const points = indicator.extendData as Array<[number, number]> | undefined;
-      if (!points) return dataList.map(() => ({}));
+      if (!points) return dataList.map<{ equity?: number }>(() => ({}));
       return equityForBars(dataList, points);
     },
   });
@@ -1118,7 +1113,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
           win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
           placement: bar ? markerPlacement(m.price, bar.high, bar.low) : "above",
         } satisfies MarkerExtra,
-        styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
+        styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: 'solid' } },
         ...(idx !== undefined
           ? {
               onMouseEnter: () => {
@@ -1240,7 +1235,7 @@ export function getBacktestCoverageFromTs(chart: Chart): number | null {
 export function reanchorBacktestMarkers(chart: Chart): void {
   const artifacts = artifactsByChart.get(chart);
   if (!artifacts || !artifacts.result || artifacts.markerMode === "none") return;
-  for (const id of artifacts.markerIds) chart.removeOverlay(id);
+  for (const id of artifacts.markerIds) chart.removeOverlay({ id });
   artifacts.markerIds = [];
   artifacts.aggClusters = [];
   // Respect the "Show Markers" toggle — a history page-back must not resurrect
@@ -1292,7 +1287,7 @@ export function renderArtifacts(
   };
   const removeEquity = () => {
     if (artifacts.equityPaneId) {
-      chart.removeIndicator(artifacts.equityPaneId, EQUITY_INDICATOR);
+      chart.removeIndicator({ paneId: artifacts.equityPaneId, name: EQUITY_INDICATOR });
       artifacts.equityPaneId = null;
     }
   };
@@ -1337,7 +1332,7 @@ export function renderArtifacts(
   // selecting a trade still draws its zone with markers off) untouched.
   if (backtestMarkersShownSignal.value) drawMarkers(chart, result, artifacts);
   const unsubMarkers = backtestMarkersShownSignal.subscribe(() => {
-    for (const id of artifacts.markerIds) chart.removeOverlay(id);
+    for (const id of artifacts.markerIds) chart.removeOverlay({ id });
     artifacts.markerIds = [];
     artifacts.aggClusters = [];
     if (backtestMarkersShownSignal.value) drawMarkers(chart, result, artifacts);
@@ -1352,7 +1347,7 @@ export function renderArtifacts(
     // result — can't strand a stale line), but only the panel's currently
     // active backtest draws a new one (see note above).
     if (artifacts.highlightOverlayId) {
-      chart.removeOverlay(artifacts.highlightOverlayId);
+      chart.removeOverlay({ id: artifacts.highlightOverlayId });
       artifacts.highlightOverlayId = null;
     }
     if (i == null || backtestResultSignal.value !== result) return;
@@ -1366,7 +1361,7 @@ export function renderArtifacts(
       ],
       lock: true,
       needDefaultPointFigure: false,
-      styles: { line: { color: t.pnl >= 0 ? BUY_COLOR : SELL_COLOR, style: LineType.Solid } },
+      styles: { line: { color: t.pnl >= 0 ? BUY_COLOR : SELL_COLOR, style: 'solid' } },
     });
     artifacts.highlightOverlayId = typeof id === "string" ? id : null;
   });
@@ -1554,17 +1549,17 @@ export function rehydrateBacktest(
 export function teardownArtifacts(chart: Chart): void {
   const artifacts = artifactsByChart.get(chart);
   if (!artifacts) return;
-  for (const id of artifacts.markerIds) chart.removeOverlay(id);
+  for (const id of artifacts.markerIds) chart.removeOverlay({ id });
   artifacts.markerIds = [];
   artifacts.aggClusters = [];
   artifacts.markerMode = "none";
   clearPeriodBands(chart, artifacts);
   if (artifacts.equityPaneId) {
-    chart.removeIndicator(artifacts.equityPaneId, EQUITY_INDICATOR);
+    chart.removeIndicator({ paneId: artifacts.equityPaneId, name: EQUITY_INDICATOR });
     artifacts.equityPaneId = null;
   }
   if (artifacts.highlightOverlayId) {
-    chart.removeOverlay(artifacts.highlightOverlayId);
+    chart.removeOverlay({ id: artifacts.highlightOverlayId });
     artifacts.highlightOverlayId = null;
   }
   removeSelectionOverlays(chart, artifacts);

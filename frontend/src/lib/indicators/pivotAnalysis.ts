@@ -14,8 +14,6 @@
 // deltaPct, deltaT) therefore step at the CONFIRMATION bar i+N — never at the swing
 // bar. The swing-bar events (phEvent/plEvent) are for drawing only.
 import {
-  IndicatorSeries,
-  LineType,
   type Indicator,
   type IndicatorTemplate,
   type IndicatorDrawParams,
@@ -280,7 +278,7 @@ function drawPivot(
   yAxis: Axis,
   i: number,
   ev: PivotEvent,
-  side: "high" | "low",
+  _side: "high" | "low",
   color: string,
   connector: Required<PivotConnectorStyle>,
 ): void {
@@ -344,8 +342,10 @@ function drawLevel(
   }
 }
 
-function drawPivotAnalysis(params: IndicatorDrawParams<PivotAnalysisPoint>): boolean {
-  const { ctx, visibleRange, indicator, xAxis, yAxis, defaultStyles } = params;
+function drawPivotAnalysis(params: IndicatorDrawParams<PivotAnalysisPoint, unknown, unknown>): boolean {
+  const { ctx, chart, indicator, xAxis, yAxis } = params;
+  const visibleRange = chart.getVisibleRange();
+  const defaultStyles = chart.getStyles().indicator;
   const result = (indicator.result ?? []) as PivotAnalysisPoint[];
   const ext = (indicator.extendData ?? {}) as PivotAnalysisExtend;
   const showLevels = ext.showLevels !== false;
@@ -382,20 +382,20 @@ const PIVOT_ANALYSIS_FIGURES = [
 ];
 
 const PIVOT_ANALYSIS_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
-  fullLine(DEFAULT_HIGH, LineType.Solid), // pivotHigh
-  fullLine(DEFAULT_LOW, LineType.Solid), // pivotLow
+  fullLine(DEFAULT_HIGH, 'solid'), // pivotHigh
+  fullLine(DEFAULT_LOW, 'solid'), // pivotLow
 ];
 
 // Pivots High/Low Analysis: swing markers + Δ connectors + forward-carried levels.
 // Strength in calcParams[0]; showLevels toggle on extendData.
 export const PIVOT_ANALYSIS_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Pivots High/Low [LuxAlgo]",
-  series: IndicatorSeries.Price,
+  series: 'price',
   precision: 2,
   calcParams: [50],
   figures: PIVOT_ANALYSIS_FIGURES,
   styles: { lines: PIVOT_ANALYSIS_DEFAULT_LINE_STYLES },
   calc: (dataList: KLineData[], ind: Indicator) =>
     computePivotAnalysis(dataList, Math.max(1, Number(ind.calcParams?.[0]) || 50)),
-  draw: (params) => drawPivotAnalysis(params as IndicatorDrawParams<PivotAnalysisPoint>),
+  draw: (params) => drawPivotAnalysis(params as IndicatorDrawParams<PivotAnalysisPoint, unknown, unknown>),
 };

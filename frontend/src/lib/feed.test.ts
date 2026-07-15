@@ -153,7 +153,9 @@ describe("openLive reconnect backoff", () => {
     onmessage: ((ev: { data: string }) => void) | null = null;
     onclose: (() => void) | null = null;
     onerror: (() => void) | null = null;
-    constructor(public url: string) {
+    url: string;
+    constructor(url: string) {
+      this.url = url;
       FakeWS.instances.push(this);
     }
     close() {

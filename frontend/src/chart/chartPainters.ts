@@ -5,10 +5,11 @@
 import { minPositiveGap } from "../lib/barInterval";
 import { curveLabel, curveLabelConfig, curveLabelPosFor, indTypeOf } from "../lib/customIndicators";
 import { slopeMaLines, slopeLengths, type SlopeMaSource } from "../lib/indicators/slope";
+import { getIndicatorsByPane } from "../lib/indicators";
 import { MA_KIND_LABEL } from "../lib/indicators/ma";
 import { normalizeMaKind } from "../lib/mtf";
 import { type CurveLabelPill } from "../CurveLabels";
-import type { Chart, Indicator } from "klinecharts";
+import type { Chart } from "klinecharts";
 import { type LineCache, type PivotDeltaLabel, DOT_RADIUS, ANCHOR_HANDLE_R } from "./chartGeometry";
 import { PIVOT_DELTA_PLATE, PIVOT_LABEL_COLOR } from "../lib/indicators/pivotAnalysis";
 import { type CrossingDot } from "./curveCrossings";
@@ -165,10 +166,7 @@ export function buildSlopeMaPills(
   targets: Array<{ paneId: string; name: string }>,
   maxX: number,
 ): CurveLabelPill[] {
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
+  const panes = getIndicatorsByPane(chart);
   if (!panes) return [];
   const dl = chart.getDataList();
   const vr = chart.getVisibleRange();

@@ -13,7 +13,7 @@
 // Returns the callbacks the JSX + <ChartLegend> and the (still-in-ChartCore)
 // onKeyDown handler consume.
 import { useCallback, useEffect, useRef } from "react";
-import { DomPosition, type Indicator } from "klinecharts";
+import { type Indicator } from "klinecharts";
 import {
   removeIndicatorById,
   addIndicatorInstance,
@@ -21,6 +21,8 @@ import {
   reorderSubPanes,
   subPaneOrder,
   mirrorAccelCompanion,
+  getIndicator,
+  getIndicatorsByPane,
 } from "../lib/indicators";
 import { indTypeOf } from "../lib/customIndicators";
 import { saveIndicators, saveIndicatorVisible, type SavedIndicatorConfig } from "../lib/persist";
@@ -52,10 +54,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
 
   const paneIdOf = useCallback((name: string): string => {
     const c = chartRef.current;
-    const all = c?.getIndicatorByPaneId() as
-      | Map<string, Map<string, unknown>>
-      | null
-      | undefined;
+    const all = c ? getIndicatorsByPane(c) : undefined;
     for (const [paneId, inds] of all ?? []) if (inds.has(name)) return paneId;
     return "candle_pane";
   }, []);
@@ -69,7 +68,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     const c = chartRef.current;
     if (!c || snapViewRef.current) return; // read-only snapshot view
     const paneId = paneIdOf(name);
-    const ind = c.getIndicatorByPaneId(paneId, name) as
+    const ind = getIndicator(c, paneId, name) as
       | { visible?: boolean; extendData?: unknown }
       | null;
     const next = !(ind?.visible ?? true);
@@ -81,10 +80,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // next timeframe switch, since the stale userVisible would win again.
     const ext = { ...((ind?.extendData as object) ?? {}), userVisible: next };
     const vis = (ext as { visibility?: VisibilityModel }).visibility ?? defaultVisibility();
-    c.overrideIndicator(
-      { name, extendData: ext, visible: next && isVisibleOnResolution(vis, period.resolution) },
-      paneId,
-    );
+    c.overrideIndicator({ paneId, name, extendData: ext, visible: next && isVisibleOnResolution(vis, period.resolution) });
     // Visibility persists by scope+name (pane-agnostic) and is re-applied on hydrate,
     // so sub-pane indicators now keep their hidden state across reloads too.
     saveIndicatorVisible(scope, name, next);
@@ -129,7 +125,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   const copyIndicator = useCallback((paneId: string, name: string) => {
     const c = chartRef.current;
     if (!c) return;
-    const ind = c.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const ind = getIndicator(c, paneId, name) as Indicator | null;
     if (!ind) return;
     const payload = {
       __autoTraderIndicator: 1 as const,
@@ -296,9 +292,9 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   const toggleVisibleOn = useCallback((paneId: string, name: string) => {
     const c = chartRef.current;
     if (!c) return;
-    const ind = c.getIndicatorByPaneId(paneId, name) as { visible?: boolean } | null;
+    const ind = getIndicator(c, paneId, name) as { visible?: boolean } | null;
     const next = !(ind?.visible ?? true);
-    c.overrideIndicator({ name, visible: next }, paneId);
+    c.overrideIndicator({ paneId, name, visible: next });
     // A Slope's accel companion follows its parent's visibility. No-ops if absent.
     mirrorAccelCompanion(c, name, { visible: next });
     if (paneId === "candle_pane") saveIndicatorVisible(scope, name, next);
@@ -360,7 +356,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       if (order.length < 2 || order.indexOf(paneId) < 0) return;
       const rootTop = wrap.getBoundingClientRect().top;
       const bounds = order.map((pid) => {
-        const s = c.getSize(pid, DomPosition.Main);
+        const s = c.getSize(pid, 'main');
         const top = s?.top ?? 0;
         return { top, bottom: top + (s?.height ?? 0) };
       });
@@ -407,9 +403,8 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   // The shared TradingView-style menu, used by both triggers (legend row + curve).
   const indicatorMenuItems = useCallback(
     (paneId: string, name: string): MenuItem[] => {
-      const ind = chartRef.current?.getIndicatorByPaneId(paneId, name) as
-        | { visible?: boolean }
-        | null;
+      const c = chartRef.current;
+      const ind = c ? (getIndicator(c, paneId, name) as { visible?: boolean } | null) : null;
       const visible = ind?.visible ?? true;
       const order = paneId === "candle_pane" ? [] : subPaneOrder(chartRef.current!);
       const idx = order.indexOf(paneId);

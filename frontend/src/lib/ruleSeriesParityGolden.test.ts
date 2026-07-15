@@ -3,6 +3,7 @@
 // buildSeries. The backend's test_rule_series_parity.py asserts its assembler
 // reproduces `series` key-for-key. Regenerate with:
 //   npx vitest run src/lib/ruleSeriesParityGolden.test.ts
+/// <reference types="node" />
 import { writeFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import type { KLineData } from "klinecharts";
@@ -12,9 +13,10 @@ import type { BacktestConfig } from "./backtestConfig";
 // customIndicators.ts reads LineType at module load (AVWAP line style table);
 // stub klinecharts' runtime surface like backtestSeries.test.ts does.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const { buildSeries } = await import("./backtestSeries");

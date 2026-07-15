@@ -25,7 +25,7 @@
 // is the in-direction bridge to the init-effect-local `tradeLinePixels()` that
 // three staying readers share.
 import { useEffect } from "react";
-import { type Chart, DomPosition, type Indicator } from "klinecharts";
+import { type Chart, type Indicator } from "klinecharts";
 import { DRAFT_ID } from "../lib/positionLines";
 import {
   draggingLineSignal,
@@ -38,6 +38,7 @@ import {
 } from "../lib/signals";
 import { saveAvwapAnchor, patchIndicatorExtend } from "../lib/persist";
 import { indTypeOf } from "../lib/indicators/shared";
+import { getIndicator, getIndicatorsByPane } from "../lib/indicators";
 import { slopeThresholdLevel, type SlopeExtend, type SlopeThreshold } from "../lib/indicators/slope";
 import { ALERT_SNAP_PX, selectedAvwapId } from "./chartGeometry";
 import { first } from "./chartPainters";
@@ -158,9 +159,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
       window.removeEventListener("mouseup", onAnchorUp, true);
       const c = chartRef.current;
       const id = c ? selectedAvwapId(c, selectedIndicator.value) : null;
-      const ind = id
-        ? (c?.getIndicatorByPaneId("candle_pane", id) as Indicator | null | undefined)
-        : null;
+      const ind = id && c ? getIndicator(c, "candle_pane", id) : null;
       const ts = Number(ind?.calcParams?.[0]) || 0;
       if (id && ts > 0) saveAvwapAnchor(scope, epicRef.current, id, ts);
       // A real drag must not also fire the click→deselect that follows mouseup.
@@ -439,11 +438,8 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
     const grabbableSlopeTh = (yPix: number): SlopeThHit | null => {
       const c = chartRef.current;
       if (!c) return null;
-      // No-arg getIndicatorByPaneId returns the full paneId → (name → Indicator) map.
-      const panes = c.getIndicatorByPaneId() as
-        | Map<string, Map<string, Indicator>>
-        | null
-        | undefined;
+      // getIndicatorsByPane rebuilds the full paneId → (name → Indicator) map.
+      const panes = getIndicatorsByPane(c);
       if (!panes) return null;
       let best: SlopeThHit | null = null;
       for (const [paneId, inds] of panes) {
@@ -470,11 +466,11 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
     const applySlopeLevel = (hit: SlopeThHit, level: number): SlopeThreshold | null => {
       const c = chartRef.current;
       if (!c) return null;
-      const ind = c.getIndicatorByPaneId(hit.paneId, hit.name) as Indicator | null;
+      const ind = getIndicator(c, hit.paneId, hit.name) as Indicator | null;
       const cur = ((ind?.extendData ?? {}) as SlopeExtend).threshold;
       if (!cur) return null;
       const next: SlopeThreshold = { ...cur, level };
-      c.overrideIndicator({ name: hit.name, extendData: { ...ind!.extendData, threshold: next } }, hit.paneId);
+      c.overrideIndicator({ paneId: hit.paneId, name: hit.name, extendData: { ...(ind!.extendData as object), threshold: next } });
       return next;
     };
     let slopeThPending: number | null = null;
@@ -524,7 +520,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
       const r = el.getBoundingClientRect();
       const x = e.clientX - r.left;
       const y = e.clientY - r.top;
-      const mainW = c.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      const mainW = c.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (x > mainW) return; // the y-axis strip is a scale gesture, not a line grab
       let winner: LineGrab | null = null;
       for (const drag of lineDrags) {

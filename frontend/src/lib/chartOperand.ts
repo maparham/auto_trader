@@ -9,7 +9,7 @@
 // and the copy action is greyed out with a reason.
 
 import type { KLineData } from "klinecharts";
-import { recipeKey, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe, type SeriesIndicatorType, type DrawingKind, type Operand } from "./backtestConfig";
+import { recipeKey, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe, type SeriesIndicatorType, type DrawingKind, type SeriesOperand } from "./backtestConfig";
 import { LINE_KEYS } from "./backtestSeries";
 import { maLegendLabel, templateMaKind } from "./indicators/ma";
 import { normalizeMaKind } from "./mtf";
@@ -315,7 +315,7 @@ export type EmphasisTarget =
   | { kind: "drawing"; id: string }
   | { kind: "indicator"; paneId: string; name: string };
 
-export interface PickerOutput extends OutputChoice { operand: Operand }
+export interface PickerOutput extends OutputChoice { operand: SeriesOperand }
 export interface ChartOperandSource {
   id: string;
   baseLabel: string;
@@ -348,7 +348,7 @@ export function chartOperandSources(raw: RawChartSource): ChartOperandSource {
       return { id: raw.id, baseLabel: drawingLabel(raw.name, raw.text), color: raw.color, emphasis, disabled: true, disabledReason: "This drawing has no anchors yet", outputs: [] };
     }
     const label = drawingLabel(recipeLabel(recipe), raw.text);
-    const operand: Operand = { kind: "series", seriesKey: recipeKey(recipe), label, recipe };
+    const operand: SeriesOperand = { kind: "series", seriesKey: recipeKey(recipe), label, recipe };
     return { id: raw.id, baseLabel: label, color: raw.color, emphasis, outputs: [{ lineIndex: 0, label, base: true, operand }] };
   }
   const emphasis: EmphasisTarget = { kind: "indicator", paneId: raw.paneId, name: raw.id };
@@ -364,7 +364,7 @@ export function chartOperandSources(raw: RawChartSource): ChartOperandSource {
     const built = indicatorToRecipe(raw.indType, raw.calcParams, raw.extendData, o.lineIndex);
     if (!built) continue;
     const label = o.chipLabel ?? (o.base ? baseLabel : `${baseLabel}: ${o.label}`);
-    const operand: Operand = {
+    const operand: SeriesOperand = {
       kind: "series", seriesKey: recipeKey(built.recipe), label, recipe: built.recipe,
       ...(built.timeframe ? { timeframe: built.timeframe } : {}),
     };

@@ -6,9 +6,10 @@ installMemStorage();
 // liveController pulls in liveEngine -> backtestSeries -> customIndicators,
 // which reads LineType at module load (same stub other lib tests use).
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const fetchStrategiesMock = vi.fn();

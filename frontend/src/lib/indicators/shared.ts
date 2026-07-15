@@ -2,7 +2,7 @@
 // tooltip source, the indicator-type resolver, and the FULL SmoothLineStyle helper
 // their default styles are built from.
 import {
-  LineType,
+  type LineType,
   type Indicator,
   type IndicatorTooltipData,
   type SmoothLineStyle,
@@ -29,7 +29,7 @@ export function indTypeOf(
 // of them. Returning empty name + values makes klinecharts skip the whole tooltip
 // row (IndicatorTooltipView.drawIndicatorTooltip), avoiding a blurry duplicate.
 export function legendTooltipSource(): IndicatorTooltipData {
-  return { name: "", calcParamsText: "", values: [], icons: [] } as IndicatorTooltipData;
+  return { name: "", calcParamsText: "", legends: [], features: [] };
 }
 
 // FULL SmoothLineStyle entries — klinecharts' line drawer reads style/smooth/

@@ -4,8 +4,10 @@ import type { KLineData } from "klinecharts";
 // sessions.ts reads IndicatorSeries + registerYAxis at module load; stub
 // klinecharts' runtime surface like rsiDivergence.test.ts / overlays.test.ts do.
 vi.mock("klinecharts", () => ({
-  IndicatorSeries: { Normal: "normal", Price: "price" },
+  registerIndicator: () => {},
+  registerOverlay: () => {},
   registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 import {

@@ -6,6 +6,7 @@
 // doesn't depend on. TIME_HIGHLIGHT has no Style/curves tab beyond its own
 // colour rows (no lines/LineDraft model — the whole config is the window list).
 import type { Chart, Indicator } from "klinecharts";
+import { getIndicator } from "../lib/indicators";
 import ColorLineStylePicker from "../ColorLineStylePicker";
 import {
   DEFAULT_TIME_WINDOWS,
@@ -17,11 +18,8 @@ import {
 export function makeWriteWindows(chart: Chart, paneId: string, name: string, setWindows: (next: TimeWindowDef[]) => void) {
   return function writeWindows(next: TimeWindowDef[]) {
     setWindows(next);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      { name, extendData: { ...((live?.extendData as object) ?? {}), windows: next } },
-      paneId,
-    );
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), windows: next } });
   };
 }
 

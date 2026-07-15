@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { tradeMarkerSpecs, journalKey, aggregateExitsByBar, exitsCollide } from "./tradeMarkers";
 import type { TradeView } from "./trading";
@@ -109,7 +110,7 @@ describe("tradeMarkerSpecs — exit markers", () => {
       journal: [journal(), journal({ epic: "GOLD" })],
     });
     expect(specs).toHaveLength(1);
-    expect(specs[0].epic).toBeUndefined(); // sanity: spec carries no epic
+    expect((specs[0] as { epic?: unknown }).epic).toBeUndefined(); // sanity: spec carries no epic
   });
 });
 

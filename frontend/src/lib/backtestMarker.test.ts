@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { markerLabel, markerPlacement, entryDirection, markerPillLabel, aggPillLabel } from "./backtest";
 

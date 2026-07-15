@@ -435,7 +435,7 @@ export class PositionLines {
     return `${s.level}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.restKind}|${s.emphasized ?? false}|${anchorTs ?? ""}`;
   }
 
-  private onMoveEnd = (e: OverlayEvent): boolean => {
+  private onMoveEnd = (e: OverlayEvent<unknown>): boolean => {
     // Find the line by overlay id, quantize the dropped level, report it. We snap
     // the overlay back to the server/spec level on the next render (the caller's
     // pending state drives where it actually sits), so dragging never silently

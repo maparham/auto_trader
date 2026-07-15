@@ -12,7 +12,7 @@
 // updateValues(dataIndex|null); null = no crosshair → fall back to the last bar.
 
 import { useEffect, useImperativeHandle, useRef, type Ref, type RefObject } from "react";
-import { DomPosition, type Chart, type Indicator, type KLineData } from "klinecharts";
+import { type Chart, type Indicator, type KLineData } from "klinecharts";
 import type { ChartController } from "./lib/chartController";
 import InfoTip from "./components/InfoTip";
 import {
@@ -25,7 +25,7 @@ import {
 // card — the user must not be able to remove/edit them via a card. Shared with the
 // reorder engine so the legend's card index and the engine's reorderable order stay
 // in lockstep (see isInternalIndicator in ./lib/indicators).
-import { isInternalIndicator } from "./lib/indicators";
+import { isInternalIndicator, getIndicatorsByPane } from "./lib/indicators";
 import { periodByResolution } from "./lib/feed";
 
 const UP = "#26a69a";
@@ -249,10 +249,7 @@ export default function ChartLegend({
     // EVERY pane (candle + sub-panes like Volume/MACD/RSI): the value spans are
     // keyed by the indicator's unique instance name, which never collides across
     // panes, so one flat loop over all panes fills both legends' values.
-    const allPanes = chart.getIndicatorByPaneId() as
-      | Map<string, Map<string, Indicator>>
-      | null
-      | undefined;
+    const allPanes = getIndicatorsByPane(chart);
     for (const inds of allPanes?.values() ?? []) {
       for (const [name, ind] of inds) {
         const result = ind.result as Array<Record<string, number | undefined>> | undefined;
@@ -787,12 +784,9 @@ function rowsSig(rows: LegendRow[]): string {
 // Build the candle-pane LegendRow list + its signature. ChartCore calls this on the
 // 1s tick / indicatorRemoved and only setState's when the signature changes.
 export function buildLegendRows(chart: Chart, tfLabel?: string): { rows: LegendRow[]; sig: string } {
-  const panes = chart.getIndicatorByPaneId("candle_pane") as
-    | Map<string, Indicator>
-    | null
-    | undefined;
+  const panes = getIndicatorsByPane(chart).get("candle_pane");
   const lineStyles = chart.getStyles().indicator.lines;
-  const legendTextColor = chart.getStyles().indicator.tooltip.text.color;
+  const legendTextColor = chart.getStyles().indicator.tooltip.legend.color;
   const rows = rowsForPane(panes, lineStyles, legendTextColor, chart.getDataList(), tfLabel);
   return { rows, sig: rowsSig(rows) };
 }
@@ -811,12 +805,9 @@ export function buildSubPaneLegends(chart: Chart): {
   subPanes: SubPaneLegendData[];
   sig: string;
 } {
-  const all = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
+  const all = getIndicatorsByPane(chart);
   const lineStyles = chart.getStyles().indicator.lines;
-  const legendTextColor = chart.getStyles().indicator.tooltip.text.color;
+  const legendTextColor = chart.getStyles().indicator.tooltip.legend.color;
   const subPanes: SubPaneLegendData[] = [];
   for (const [paneId, inds] of all ?? []) {
     if (paneId === "candle_pane") continue;
@@ -830,7 +821,7 @@ export function buildSubPaneLegends(chart: Chart): {
     // getSize(paneId, "main").top is the pane's main-area y relative to the chart
     // root — exactly where klinecharts drew its canvas legend. Round to whole pixels
     // so the card text lands on the pixel grid (crisp, no half-pixel blur).
-    const size = chart.getSize(paneId, DomPosition.Main);
+    const size = chart.getSize(paneId, 'main');
     // No card for a pane the double-click gesture collapsed to ~1px (its indicators
     // still exist, but the pane is a sliver) — the card would otherwise render over the
     // reclaimed candle area. A real sub-pane is ≥30px (klinecharts' min height), so any

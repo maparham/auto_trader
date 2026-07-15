@@ -6,6 +6,7 @@
 // backend/tests/fixtures/indicator_golden.json. The Python side
 // (backend/tests/test_indicator_parity.py) must reproduce every value exactly.
 // Re-run this test to regenerate the fixture after changing TS indicator math.
+/// <reference types="node" />
 import { describe, it, expect, vi } from "vitest";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -13,9 +14,10 @@ import { dirname, resolve } from "node:path";
 
 // Mock klinecharts for the node test environment (indicator modules read LineType/IndicatorSeries).
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 import type { KLineData } from "klinecharts";

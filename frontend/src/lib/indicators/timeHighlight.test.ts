@@ -4,8 +4,10 @@ import type { KLineData } from "klinecharts";
 // timeHighlight.ts (via sessions.ts) reads IndicatorSeries at module load; stub
 // klinecharts' runtime surface like sessions.test.ts does.
 vi.mock("klinecharts", () => ({
-  IndicatorSeries: { Normal: "normal", Price: "price" },
+  registerIndicator: () => {},
+  registerOverlay: () => {},
   registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 import {

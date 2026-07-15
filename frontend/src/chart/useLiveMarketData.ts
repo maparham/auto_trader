@@ -6,7 +6,7 @@
 // effect — every value the original read from ChartCore's closure is supplied
 // here via `handle.*`, a module import, or an explicit `deps` field.
 import { useEffect, useRef } from "react";
-import { type Indicator, type KLineData } from "klinecharts";
+import { type KLineData } from "klinecharts";
 import {
   fetchRecent,
   openLive,
@@ -15,6 +15,7 @@ import {
 } from "../lib/feed";
 import type { PriceSide } from "../theme";
 import { synthPrecision } from "./chartPainters";
+import { periodFromTf } from "./chartDataFacade";
 import {
   teardownArtifacts,
   rehydrateBacktest,
@@ -25,7 +26,7 @@ import { toast } from "../lib/notify";
 import { loadAvwapAnchor } from "../lib/persist";
 import { loadSnapshotMeta, saveSnapshotMeta, type SnapshotMeta } from "../lib/persist";
 import { renderSnapshotMarker } from "../lib/snapshotMarker";
-import { applyIndicatorVisibility, forceCollapseSubPanes } from "../lib/indicators";
+import { applyIndicatorVisibility, forceCollapseSubPanes, getIndicatorsByPane } from "../lib/indicators";
 import { maybeAutoApplyTemplate } from "../lib/templates";
 import { indTypeOf } from "../lib/customIndicators";
 import { applyVisibleRange } from "../lib/chartSync";
@@ -96,10 +97,16 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
   useEffect(() => {
     const chart = handle.chartRef.current;
-    if (!chart) return;
+    const dataFacade = handle.dataFacadeRef.current;
+    if (!chart || !dataFacade) return;
     let cancelled = false;
 
-    chart.setPriceVolumePrecision(effPrecision, 0);
+    // Declare the instrument (carries precision) + timeframe to v10. Both must be
+    // set before the async setBars below, since v10 fires getBars(init) once
+    // symbol+period+loader are all present; the facade serves stored bars, so the
+    // extra init fire before setBars is harmless (empty until setBars runs).
+    dataFacade.setSymbol(symbol.epic, effPrecision, 0);
+    dataFacade.setPeriod(periodFromTf(period.label));
     overlays.setPricePrecision(effPrecision); // keep alert-level rounding in lockstep
     overlays.setEpic(symbol.epic);
     // Alerts are stored per broker; address them with THIS cell's broker (not the
@@ -187,11 +194,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       handle.cursorSecRef.current = bars.length
         ? Math.floor(bars[0].timestamp / 1000)
         : Math.floor(Date.now() / 1000);
-      // more=true enables klinecharts to request older history (Forward) when the
-      // user scrolls to the left edge; setLoadDataCallback above answers it.
+      // backward=true enables klinecharts to request older history (Forward) when
+      // the user scrolls to the left edge; the facade's onLoadRequest answers it.
       // Live-only (seconds) intervals have no history, so disable scroll-back to
       // avoid firing empty fetchRange windows that walk back for nothing.
-      handle.chartRef.current.applyNewData(bars, !period.liveOnly);
+      dataFacade.setBars(bars, { backward: !period.liveOnly, forward: false });
       if (isSynthetic(symbol.epic) && bars.length > 0) {
         const p = synthPrecision(bars[bars.length - 1].close);
         setFetchedPrecision(p);
@@ -230,7 +237,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // matches the freshly loaded series. Clicking the chip = Unlock (same flow
       // as the banner button).
       if (handle.snapMarkerIdRef.current) {
-        handle.chartRef.current.removeOverlay(handle.snapMarkerIdRef.current);
+        handle.chartRef.current.removeOverlay({ id: handle.snapMarkerIdRef.current });
         handle.snapMarkerIdRef.current = null;
       }
       if (markerMeta) {
@@ -282,10 +289,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           : null;
       // Re-apply each AVWAP instance's anchor for this epic (anchors are per-epic,
       // per-instance; no-op if no AVWAP is active).
-      const candlePane = handle.chartRef.current.getIndicatorByPaneId("candle_pane") as
-        | Map<string, Indicator>
-        | null
-        | undefined;
+      const candlePane = getIndicatorsByPane(handle.chartRef.current).get("candle_pane");
       for (const [id, ind] of candlePane ?? []) {
         if (indTypeOf(ind) !== "AVWAP") continue;
         handle.chartRef.current.overrideIndicator({
@@ -328,8 +332,8 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       const snapshotWalk = pendingRange ? coverBacktestTradeTo(pendingRange.from) : null;
       // Position the window on the saved snapshot range and clear pendingRange
       // (one-shot — a later reload of this same tab must not re-scroll). Called
-      // only once the walk(s) ahead of it have fully settled: paging via
-      // applyNewData resets the view to realtime on every page it applies, so
+      // only once the walk(s) ahead of it have fully settled: paging via the
+      // facade's setBars resets the view to realtime on every page it applies, so
       // positioning any earlier risks being clobbered by a later page (e.g. a
       // drawing anchor older than the snapshot's own saved range).
       const positionSnapshotRange = (reached: boolean) => {
@@ -389,7 +393,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         }
         // Re-select the trade the user was studying before the switch — only NOW,
         // once the switch-time coverage walks have settled. The walks prepend
-        // pages via applyNewData, which resets the view to realtime each page; a
+        // pages via the facade's setBars, which resets the view to realtime each page; a
         // re-center issued while one is still running lands on the trade and then
         // snaps back to the live edge. Re-emitting the selection fires the
         // subscription renderArtifacts installed: redraw the R/R zone, page the
@@ -419,7 +423,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           // Latest raw spread sides for the bid/ask lines (redraw reads the refs).
           handle.bidRef.current = bid;
           handle.askRef.current = ask;
-          // updateData updates the last bar (==ts) or appends (>ts); an older ts
+          // pushBar updates the last bar (==ts) or appends (>ts); an older ts
           // is silently ignored by klinecharts. Log regressions so a frozen chart
           // is diagnosable rather than mysterious.
           const list = chart.getDataList();
@@ -430,7 +434,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
             );
             return;
           }
-          chart.updateData(k);
+          handle.dataFacadeRef.current?.pushBar(k);
           setHasData(true); // a flowing stream clears the no-data banner (React no-ops if unchanged)
           setLastPrice(k.close);
           // Publish the price so the positions dock can mark P&L to market without

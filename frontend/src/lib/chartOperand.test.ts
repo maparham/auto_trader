@@ -11,9 +11,10 @@ const asSeries = (op: Operand) => op as SeriesOperand;
 // reads LineType at module load (AVWAP line style table); stub klinecharts' runtime
 // surface like backtestSeries.test.ts / overlays.test.ts do.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 import {

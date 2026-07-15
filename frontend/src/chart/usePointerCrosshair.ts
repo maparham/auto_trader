@@ -26,7 +26,6 @@
 // (read by onMove) / `deps.alertDragActiveRef` (read by onLeave) are assigned by
 // useLineDrag's effect and let the crosshair observe an in-flight line drag.
 import { useEffect } from "react";
-import { DomPosition } from "klinecharts";
 import { DRAFT_ID } from "../lib/positionLines";
 import { Signal, setTradeHovered, type TradeLineField } from "../lib/signals";
 import {
@@ -248,7 +247,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       cursorXRef.current = x;
       // Over the price-axis column the pill is hidden entirely (gated in render), so
       // skip repositioning it there; otherwise keep non-selected pills at the cursor.
-      const mainW = c.getSize("candle_pane", DomPosition.Main)?.width ?? rect.width;
+      const mainW = c.getSize("candle_pane", 'main')?.width ?? rect.width;
       const nextOnAxis = x > mainW;
       if (nextOnAxis !== onAxisRef.current) {
         onAxisRef.current = nextOnAxis;
@@ -425,7 +424,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // the separator never flashes a stale price.
       // klinecharts only populates a pane bounding's `top`/`height` (never `bottom`,
       // which stays 0), so derive the candle pane's bottom edge as top + height.
-      const cb = c.getSize("candle_pane", DomPosition.Root);
+      const cb = c.getSize("candle_pane", 'root');
       const candleBottom = cb ? cb.top + cb.height : null;
       if (x > mainW || (candleBottom != null && y > candleBottom)) {
         btn.style.display = "none";

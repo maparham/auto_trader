@@ -155,7 +155,7 @@ export async function runOneCycle(
     const msg = e instanceof Error ? e.message : String(e);
     return { state: appendLog(reconciled, barTsSec, `evaluate failed: ${msg}`) };
   }
-  let next = { ...reconciled, lastEvalSec: barTsSec };
+  let next: LiveState = { ...reconciled, lastEvalSec: barTsSec };
   if (actions.length === 0) {
     return { state: appendLog(next, barTsSec, "no signal") };
   }

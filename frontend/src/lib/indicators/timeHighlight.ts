@@ -7,7 +7,6 @@
 // (returning true so klinecharts skips its default figure loop). Membership
 // math reuses sessions.ts's DST-safe `localTimeToUtc`.
 import {
-  IndicatorSeries,
   type Indicator,
   type IndicatorTemplate,
   type IndicatorDrawParams,
@@ -113,8 +112,10 @@ const BAND_ALPHA = 0.12;
 // bar's wick + body opaque in the window color, on top of the original candle.
 // Both does band first, then candles. Pure pixel space; returns true (isCover)
 // so klinecharts draws no default figures.
-function drawTimeHighlight(params: IndicatorDrawParams<TimeHighlightPoint>): boolean {
-  const { ctx, indicator, xAxis, yAxis, bounding, barSpace, kLineDataList } = params;
+function drawTimeHighlight(params: IndicatorDrawParams<TimeHighlightPoint, unknown, unknown>): boolean {
+  const { ctx, chart, indicator, xAxis, yAxis, bounding } = params;
+  const barSpace = chart.getBarSpace();
+  const kLineDataList = chart.getDataList();
   const ext = (indicator.extendData ?? {}) as TimeHighlightExtend;
   const windows = ext.windows ?? DEFAULT_TIME_WINDOWS;
   const points = indicator.result ?? [];
@@ -169,16 +170,16 @@ function drawTimeHighlight(params: IndicatorDrawParams<TimeHighlightPoint>): boo
   return true;
 }
 
-// Figure-less candle-pane overlay. IndicatorSeries.Price so it shares the candle
+// Figure-less candle-pane overlay. 'price' so it shares the candle
 // price axis (yAxis.convertToPixel maps price→pixel in candles mode); no
 // figures and no numeric result values, so it never perturbs the price
 // auto-range. calc stores per-bar membership; draw paints the highlights.
 export const TIME_HIGHLIGHT_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Time Highlight",
-  series: IndicatorSeries.Price,
+  series: 'price',
   precision: 0,
   figures: [],
   calc: (dataList: KLineData[], ind: Indicator) =>
     computeTimeHighlight(dataList, (ind.extendData ?? {}) as TimeHighlightExtend, deviceTimeZone()),
-  draw: (params) => drawTimeHighlight(params as IndicatorDrawParams<TimeHighlightPoint>),
+  draw: (params) => drawTimeHighlight(params as IndicatorDrawParams<TimeHighlightPoint, unknown, unknown>),
 };

@@ -3,9 +3,10 @@ import { describe, it, expect, vi } from "vitest";
 // customIndicators reads LineType/IndicatorSeries at module load; stub klinecharts'
 // runtime surface like the other indicator tests do.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const { BASE_TEMPLATES } = await import("./customIndicators");

@@ -20,7 +20,7 @@ import type {
   IndicatorStyle,
   IndicatorTemplate,
 } from "klinecharts";
-import { registerIndicator, getSupportedIndicators, DomPosition } from "klinecharts";
+import { registerIndicator, getSupportedIndicators } from "klinecharts";
 import {
   OVERLAY_INDICATORS,
   BASE_TEMPLATES,
@@ -48,6 +48,31 @@ import {
   type IndicatorInstance,
   type SavedIndicatorConfig,
 } from "./persist";
+
+// v10 replaced v9's chart.getIndicatorByPaneId(paneId, name) with a flat
+// filter-based getIndicators({ paneId, name }). This helper restores the single
+// (paneId, name) → indicator lookup every call site used.
+export function getIndicator(chart: Chart, paneId: string, name: string): Indicator | null {
+  return chart.getIndicators({ paneId, name })[0] ?? null;
+}
+
+// v9's chart.getIndicatorByPaneId() with NO args returned every pane's indicator
+// map (Map<paneId, Map<name, Indicator>>). v10 has no such API, so we rebuild that
+// exact nested shape from the flat getIndicators() array. Keying the inner map by
+// `name` matches v9 (our instance ids ARE the klinecharts indicator names), so
+// every downstream .values()/.keys()/.get()/.has() loop keeps working unchanged.
+export function getIndicatorsByPane(chart: Chart): Map<string, Map<string, Indicator>> {
+  const out = new Map<string, Map<string, Indicator>>();
+  for (const ind of chart.getIndicators()) {
+    let inner = out.get(ind.paneId);
+    if (!inner) {
+      inner = new Map();
+      out.set(ind.paneId, inner);
+    }
+    inner.set(ind.name, ind);
+  }
+  return out;
+}
 
 // True if adding this indicator TYPE opens its own bottom sub-pane (Volume/MACD/RSI…)
 // rather than overlaying the candle pane (EMA/…). Used to auto-expand collapsed
@@ -195,10 +220,7 @@ interface PaneSnapshot {
 // Enumerate the reorderable bottom panes top-to-bottom (skip candle_pane and panes
 // holding only internal indicators), capturing each pane's height + instances.
 function reorderablePanes(chart: Chart): PaneSnapshot[] {
-  const all = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
+  const all = getIndicatorsByPane(chart);
   const out: PaneSnapshot[] = [];
   for (const [paneId, inds] of all ?? []) {
     if (paneId === "candle_pane") continue;
@@ -208,7 +230,7 @@ function reorderablePanes(chart: Chart): PaneSnapshot[] {
       insts.push({ id: ind.name, type: indTypeOf(ind) });
     }
     if (!insts.length) continue; // internal-only pane (e.g. equity) — not reorderable
-    const height = Math.round(chart.getSize(paneId, DomPosition.Main)?.height ?? SUBPANE_HEIGHT);
+    const height = Math.round(chart.getSize(paneId, 'main')?.height ?? SUBPANE_HEIGHT);
     out.push({ paneId, height, insts });
   }
   return out;
@@ -243,7 +265,7 @@ export function reorderSubPanes(
 
   // Tear down every reorderable pane from the divergence point down (current order).
   for (const p of panes.slice(divIndex))
-    for (const inst of p.insts) chart.removeIndicator(p.paneId, inst.id);
+    for (const inst of p.insts) chart.removeIndicator({ paneId: p.paneId, name: inst.id });
 
   // Recreate them in desired order; each opens a fresh pane appended at the bottom.
   // A multi-indicator pane is regrouped here (2nd+ instance stacks via opts.paneId),
@@ -274,10 +296,7 @@ export function reorderSubPanes(
 // a "#<rand>" suffix. The id must be a valid, unique klinecharts indicator name.
 export function mintInstanceId(chart: Chart, type: string): string {
   const taken = new Set<string>();
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
+  const panes = getIndicatorsByPane(chart);
   for (const inds of panes?.values() ?? []) for (const n of inds.keys()) taken.add(n);
   if (!taken.has(type)) return type; // first instance keeps the clean name
   let id: string;
@@ -298,10 +317,7 @@ function cloneTemplateFromLive(
   chart: Chart,
   type: string,
 ): Omit<IndicatorCreate, "name"> | null {
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
+  const panes = getIndicatorsByPane(chart);
   for (const inds of panes?.values() ?? []) {
     for (const ind of inds.values()) {
       if (indTypeOf(ind) !== type) continue;
@@ -463,30 +479,53 @@ export function applyIndicator(
   // of floating with dead space top/bottom. `opts.paneId` stacks this instance into an
   // already-recreated pane (2nd+ indicator of a moved multi-indicator pane).
   const stack = isOverlay || !!opts?.paneId;
-  const paneOptions = opts?.paneId
-    ? { id: opts.paneId } // stack into the just-recreated pane of a moved group
-    : isOverlay
-      ? { id: "candle_pane" }
-      : isFixedCompact(type)
-        ? {
-            // Fixed compact strip: short, no numeric y-axis, drag disabled. minHeight
-            // is explicit so the sub-30px height isn't clamped by PANE_MIN_HEIGHT.
-            height: opts?.height ?? SESSIONS_PANE_HEIGHT,
-            minHeight: 20,
-            dragEnabled: false,
-            gap: { top: 0, bottom: 0 },
-            axisOptions: { name: SESSIONS_AXIS_NAME },
-          }
-        : { height: opts?.height ?? SUBPANE_HEIGHT, gap: { top: 0.08, bottom: 0.08 } };
-  const paneId = chart.createIndicator(value, stack, paneOptions);
+  // v10: paneId is folded into the create value (v9 passed it as paneOptions.id).
+  // Sizing (height/minHeight/dragEnabled) moves to a follow-up setPaneOptions keyed by
+  // the returned pane id; gap and the sessions blank-axis name are axis wiring, applied
+  // via overrideYAxis(paneId) once the pane's y-axis exists (see below).
+  const initialPaneId = opts?.paneId ?? (isOverlay ? "candle_pane" : undefined);
+  const paneId = chart.createIndicator(
+    initialPaneId ? { ...value, paneId: initialPaneId } : value,
+    stack,
+  );
   if (!paneId) return null;
+  // Only fresh sub-panes (not overlays, not a stack-into-existing) get pane sizing.
+  if (!opts?.paneId && !isOverlay) {
+    if (isFixedCompact(type)) {
+      // Fixed compact strip: short, no numeric y-axis, drag disabled. minHeight is
+      // explicit so the sub-30px height isn't clamped by PANE_MIN_HEIGHT.
+      chart.setPaneOptions({
+        id: paneId,
+        height: opts?.height ?? SESSIONS_PANE_HEIGHT,
+        minHeight: 20,
+        dragEnabled: false,
+      });
+      // v10: gap and the blank-axis name moved off paneOptions onto the y-axis
+      // itself. The name swaps in the registered "sessions" template (createTicks
+      // returns [], so no numeric ticks); gap trims the empty top/bottom margins.
+      chart.overrideYAxis({
+        paneId,
+        name: SESSIONS_AXIS_NAME,
+        gap: { top: 0, bottom: 0 },
+      });
+    } else {
+      chart.setPaneOptions({
+        id: paneId,
+        height: opts?.height ?? SUBPANE_HEIGHT,
+      });
+      // v10: gap moved off paneOptions onto the y-axis. Trims klinecharts' default
+      // {top:0.2, bottom:0.1} margins so the curve fills the pane (TV-style).
+      chart.overrideYAxis({ paneId, gap: { top: 0.08, bottom: 0.08 } });
+    }
+  }
   // Saved line entries are partial ({color,size}); override merges them onto the
   // full default line style (DeepPartial — klinecharts fills style/dashedValue).
   if (cfg?.styles)
-    chart.overrideIndicator(
-      { name: id, styles: cfg.styles as unknown as Partial<IndicatorStyle> },
+    chart.overrideIndicator({
       paneId,
-    );
+      name: id,
+      styles: cfg.styles as unknown as Partial<IndicatorStyle>,
+    });
   // The parent Slope owns its acceleration companion. applyIndicator is the ONE
   // creation choke point (hydrate, reorder, fresh add, paste, templates,
   // snapshots all route here), so every recreate path re-derives the companion.
@@ -502,11 +541,8 @@ export function applyIndicator(
 // parent's applyIndicator, so panes land as [P1, A1, P2, A2, ...].
 export function syncAccelCompanion(chart: Chart, parentId: string): void {
   const companionId = accelCompanionId(parentId);
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
-  // Pane insertion order top-to-bottom (candle_pane first, then sub-panes) — used
+  const panes = getIndicatorsByPane(chart);
+  // Pane insertion order top-to-bottom (candle_pane first, then sub-panes): used
   // to tell whether the companion already sits directly below its parent.
   const order = [...(panes?.keys() ?? [])];
   let parent: Indicator | null = null;
@@ -526,7 +562,7 @@ export function syncAccelCompanion(chart: Chart, parentId: string): void {
   };
   // No parent, or accel turned off: drop any stray companion and stop.
   if (!parent || !ext.showAccel) {
-    if (companionPaneId) chart.removeIndicator(companionPaneId, companionId);
+    if (companionPaneId) chart.removeIndicator({ paneId: companionPaneId, name: companionId });
     return;
   }
   // The companion's config: accelThreshold lands on its `threshold` field so the
@@ -541,18 +577,16 @@ export function syncAccelCompanion(chart: Chart, parentId: string): void {
   const parentIdx = parentPaneId ? order.indexOf(parentPaneId) : -1;
   const companionIdx = companionPaneId ? order.indexOf(companionPaneId) : -1;
   if (companionPaneId && parentIdx >= 0 && companionIdx === parentIdx + 1) {
-    chart.overrideIndicator(
-      {
-        name: companionId,
-        calcParams: parent.calcParams,
-        extendData: nextExt,
-        visible: parent.visible !== false,
-        ...(parent.styles
-          ? { styles: parent.styles as unknown as Partial<IndicatorStyle> }
-          : {}),
-      },
-      companionPaneId,
-    );
+    chart.overrideIndicator({
+      paneId: companionPaneId,
+      name: companionId,
+      calcParams: parent.calcParams,
+      extendData: nextExt,
+      visible: parent.visible !== false,
+      ...(parent.styles
+        ? { styles: parent.styles as unknown as Partial<IndicatorStyle> }
+        : {}),
+    });
     return;
   }
 
@@ -560,7 +594,7 @@ export function syncAccelCompanion(chart: Chart, parentId: string): void {
   // longer directly below it): drop any existing companion and recreate it. Each
   // createIndicator appends a fresh pane at the bottom; because reorder recreates
   // parents top-to-bottom, panes land as [P1, A1, P2, A2, ...].
-  if (companionPaneId) chart.removeIndicator(companionPaneId, companionId);
+  if (companionPaneId) chart.removeIndicator({ paneId: companionPaneId, name: companionId });
   registerInstanceTemplate(chart, "SLOPE_ACCEL", companionId);
   // NO legendTooltipSource here, unlike applyIndicator: that hook blanks the
   // canvas legend so the DOM <SubPaneLegend> can replace it, but internal panes
@@ -574,16 +608,21 @@ export function syncAccelCompanion(chart: Chart, parentId: string): void {
       ...(parent.visible === false ? { visible: false } : {}),
     },
     false,
-    { height: SUBPANE_HEIGHT, gap: { top: 0.08, bottom: 0.08 } },
   );
+  if (newPaneId) {
+    chart.setPaneOptions({ id: newPaneId, height: SUBPANE_HEIGHT });
+    // v10: gap moved off paneOptions onto the y-axis (see applyIndicator).
+    chart.overrideYAxis({ paneId: newPaneId, gap: { top: 0.08, bottom: 0.08 } });
+  }
   // Match the parent's per-line style overrides so line N is the same color in
   // both panes. Styles must be applied by overrideIndicator against the pane
   // createIndicator just returned.
   if (newPaneId && parent.styles)
-    chart.overrideIndicator(
-      { name: companionId, styles: parent.styles as unknown as Partial<IndicatorStyle> },
-      newPaneId,
-    );
+    chart.overrideIndicator({
+      paneId: newPaneId,
+      name: companionId,
+      styles: parent.styles as unknown as Partial<IndicatorStyle>,
+    });
 }
 
 // Mirror a visibility/extendData write from a Slope parent onto its accel
@@ -600,10 +639,7 @@ export function mirrorAccelCompanion(
   patch: { extendData?: object; visible?: boolean },
 ): void {
   const companionId = accelCompanionId(parentId);
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
+  const panes = getIndicatorsByPane(chart);
   let companionPaneId: string | null = null;
   for (const [paneId, inds] of panes ?? []) {
     if (inds.has(companionId)) {
@@ -614,6 +650,7 @@ export function mirrorAccelCompanion(
   if (companionPaneId === null) return;
   chart.overrideIndicator(
     {
+      paneId: companionPaneId,
       name: companionId,
       ...(patch.visible !== undefined ? { visible: patch.visible } : {}),
       ...(patch.extendData
@@ -626,7 +663,6 @@ export function mirrorAccelCompanion(
           }
         : {}),
     },
-    companionPaneId,
   );
 }
 
@@ -635,7 +671,7 @@ export function mirrorAccelCompanion(
 // resolution AND the sidebar eye menu's "Hide indicators" master switch isn't masking
 // it. The internal EQUITY backtest pane is not a user indicator — left untouched.
 // Mirrors OverlayManager.applyIntervalVisibility for drawings. Iterates ALL panes via
-// chart.getIndicatorByPaneId() with no args (every pane's indicator map; klinecharts
+// getIndicatorsByPane (every pane's indicator map, rebuilt from getIndicators(); klinecharts
 // has no getPanes()/no-name-per-pane API). A VIEW reaction, not a user edit: it never
 // persists (intent already lives in extendData, written by the settings modal).
 //
@@ -643,10 +679,7 @@ export function mirrorAccelCompanion(
 // The double-click "hide bottom sub-panes" gesture is a DIFFERENT operation that frees
 // the pane's HEIGHT: see collapseSubPanes/expandSubPanes below.
 export function applyIndicatorVisibility(chart: Chart, resolution: string, allHidden: boolean): void {
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
+  const panes = getIndicatorsByPane(chart);
   for (const [paneId, inds] of panes ?? []) {
     for (const ind of inds.values()) {
       // NOT isInternalIndicator: the accel companion DOES have user visibility
@@ -668,7 +701,7 @@ export function applyIndicatorVisibility(chart: Chart, resolution: string, allHi
         allHidden && ext.userVisible === undefined
           ? { extendData: { ...ext, userVisible: ind.visible ?? true } }
           : {};
-      chart.overrideIndicator({ name: ind.name, visible, ...seed }, paneId);
+      chart.overrideIndicator({ paneId, name: ind.name, visible, ...seed });
     }
   }
 }
@@ -743,13 +776,10 @@ export function addIndicatorInstance(
 // Remove an instance by its id across whichever pane holds it (the candle pane for
 // overlays, a dedicated pane for RSI/MACD/etc.). Also drops its saved config.
 export function removeIndicatorById(chart: Chart, scope: string, id: string): void {
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
+  const panes = getIndicatorsByPane(chart);
   for (const [paneId, inds] of panes ?? []) {
     if (inds.has(id)) {
-      chart.removeIndicator(paneId, id);
+      chart.removeIndicator({ paneId, name: id });
       break;
     }
   }
@@ -757,7 +787,7 @@ export function removeIndicatorById(chart: Chart, scope: string, id: string): vo
   const companionId = accelCompanionId(id);
   for (const [paneId, inds] of panes ?? []) {
     if (inds.has(companionId)) {
-      chart.removeIndicator(paneId, companionId);
+      chart.removeIndicator({ paneId, name: companionId });
       break;
     }
   }

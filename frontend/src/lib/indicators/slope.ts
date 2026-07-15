@@ -5,8 +5,6 @@
 // are identical by construction. Units live on extendData so they're part of the
 // recipe hash (a %/bar and a %/hr slope on the same MA don't dedup).
 import {
-  IndicatorSeries,
-  LineType,
   type Indicator,
   type IndicatorTemplate,
   type IndicatorDrawParams,
@@ -293,8 +291,10 @@ function slopeFigures(calcParams: unknown[]): Array<{ key: string; title: string
 // reference line. A lone line defaults to color-by-direction (green rising /
 // red falling) unless colorByDirection is explicitly set to false. Returns
 // true to SUPPRESS the default single-color figure lines (we draw here).
-function drawSlope(params: IndicatorDrawParams<SlopePoint>): boolean {
-  const { ctx, visibleRange, indicator, xAxis, yAxis, bounding, defaultStyles } = params;
+function drawSlope(params: IndicatorDrawParams<SlopePoint, unknown, unknown>): boolean {
+  const { ctx, chart, indicator, xAxis, yAxis, bounding } = params;
+  const visibleRange = chart.getVisibleRange();
+  const defaultStyles = chart.getStyles().indicator;
   const result = (indicator.result ?? []) as SlopePoint[];
   const ext = (indicator.extendData ?? {}) as SlopeExtend;
   const lengths = slopeLengths(indicator.calcParams);
@@ -434,15 +434,15 @@ export function slopeMaLines(ind: SlopeMaSource, candles: KLineData[]): SlopeMaL
 
 export const SLOPE_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Slope",
-  series: IndicatorSeries.Normal,
+  series: 'normal',
   precision: 4,
   calcParams: [9],
   figures: slopeFigures([9]),
   regenerateFigures: ((calcParams: unknown[]) =>
     slopeFigures(calcParams)) as IndicatorTemplate["regenerateFigures"],
-  styles: { lines: SLOPE_PALETTE.map((c) => fullLine(c, LineType.Solid)) },
+  styles: { lines: SLOPE_PALETTE.map((c) => fullLine(c, 'solid')) },
   calc: (dataList: KLineData[], ind: Indicator) => computeSlopeCalc(dataList, ind),
-  draw: (params) => drawSlope(params as IndicatorDrawParams<SlopePoint>),
+  draw: (params) => drawSlope(params as IndicatorDrawParams<SlopePoint, unknown, unknown>),
 };
 
 // Same shape as slopeFigures (including the title-less thHi/thLo auto-scale
@@ -521,7 +521,7 @@ function computeAccelCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
 function accelTooltipSource(params: {
   indicator: Indicator;
   crosshair: { dataIndex?: number };
-}): { name: string; calcParamsText: string; icons: never[]; values: Array<{ title: { text: string; color: string }; value: { text: string; color: string } }> } {
+}): { name: string; calcParamsText: string; features: never[]; legends: Array<{ title: { text: string; color: string }; value: { text: string; color: string } }> } {
   const ind = params.indicator;
   const result = (ind.result ?? []) as SlopePoint[];
   const i = params.crosshair.dataIndex ?? result.length - 1;
@@ -531,7 +531,7 @@ function accelTooltipSource(params: {
   const overrides = (ind.styles?.lines ?? []) as Array<{ color?: string }>;
   const directionMode = ext.colorByDirection !== false && lengths.length === 1;
   const precision = ind.precision ?? 4;
-  const values = lengths.map((len, li) => {
+  const legends = lengths.map((len, li) => {
     const v = p[`slope${li}`];
     const color = directionMode
       ? (v ?? 0) >= 0
@@ -543,19 +543,19 @@ function accelTooltipSource(params: {
       value: { text: v === undefined ? "n/a" : v.toFixed(precision), color },
     };
   });
-  return { name: "Accel", calcParamsText: "", icons: [], values };
+  return { name: "Accel", calcParamsText: "", features: [], legends };
 }
 
 export const SLOPE_ACCEL_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Accel",
-  series: IndicatorSeries.Normal,
+  series: 'normal',
   precision: 4,
   calcParams: [9],
   figures: accelFigures([9]),
   regenerateFigures: ((calcParams: unknown[]) =>
     accelFigures(calcParams)) as IndicatorTemplate["regenerateFigures"],
-  styles: { lines: SLOPE_PALETTE.map((c) => fullLine(c, LineType.Solid)) },
+  styles: { lines: SLOPE_PALETTE.map((c) => fullLine(c, 'solid')) },
   calc: (dataList: KLineData[], ind: Indicator) => computeAccelCalc(dataList, ind),
   createTooltipDataSource: accelTooltipSource as IndicatorTemplate["createTooltipDataSource"],
-  draw: (params) => drawSlope(params as IndicatorDrawParams<SlopePoint>),
+  draw: (params) => drawSlope(params as IndicatorDrawParams<SlopePoint, unknown, unknown>),
 };

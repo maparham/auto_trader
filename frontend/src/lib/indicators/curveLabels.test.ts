@@ -3,9 +3,10 @@ import { describe, it, expect, vi } from "vitest";
 // curveLabels pulls in prevHl/vwap which read klinecharts enums at load; stub the
 // runtime surface like the other indicator tests do.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed", Dotted: "dotted" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const { curveLabel } = await import("./curveLabels");

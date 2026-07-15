@@ -6,11 +6,10 @@ import type { Chart } from "klinecharts";
 // at module load (AVWAP line style table); stub klinecharts' runtime surface like
 // overlays.test.ts / backtestSeries.test.ts do.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
   getSupportedIndicators: () => [],
-  DomPosition: { Main: "main" },
 }));
 
 const {
@@ -69,16 +68,21 @@ describe("indicator interval visibility decision", () => {
 
 describe("setAllIndicatorsHidden (sidebar eye menu master switch)", () => {
   // A minimal fake chart exposing just what setAllIndicatorsHidden touches:
-  // getIndicatorByPaneId() (no-arg, all-panes form) and overrideIndicator().
+  // v10 getIndicators() (flat, all-panes form; the helper getIndicatorsByPane
+  // rebuilds the per-pane map from ind.paneId) and overrideIndicator() (paneId
+  // folded into the patch object).
   function fakeChart(panes: Map<string, Map<string, { name: string; extendData?: unknown; visible?: boolean }>>) {
     const overrides: { name: string; visible: boolean; paneId: string; extendData?: unknown }[] = [];
     const chart = {
-      getIndicatorByPaneId: () => panes,
-      overrideIndicator: (opts: { name: string; visible?: boolean; extendData?: unknown }, paneId: string) => {
+      getIndicators: () =>
+        [...panes].flatMap(([paneId, inner]) =>
+          [...inner.values()].map((ind) => ({ ...ind, paneId })),
+        ),
+      overrideIndicator: (opts: { name: string; paneId: string; visible?: boolean; extendData?: unknown }) => {
         overrides.push({
           name: opts.name,
           visible: !!opts.visible,
-          paneId,
+          paneId: opts.paneId,
           ...(opts.extendData !== undefined ? { extendData: opts.extendData } : {}),
         });
       },
@@ -146,8 +150,9 @@ describe("setAllIndicatorsHidden (sidebar eye menu master switch)", () => {
 });
 
 describe("collapse / expand sub-panes (double-click hide bottom sub-panes)", () => {
-  // Minimal fake exposing what collapse/expand touch: getIndicatorByPaneId() (to
-  // enumerate reorderable sub-panes), getSize() (their heights), setPaneOptions().
+  // Minimal fake exposing what collapse/expand touch: v10 getIndicators() (flat;
+  // getIndicatorsByPane rebuilds the per-pane map to enumerate reorderable
+  // sub-panes), getSize() (their heights), setPaneOptions().
   function fakeChart(heights: Record<string, number>, subPanes: string[]) {
     const opts: { id: string; height?: number; minHeight?: number; dragEnabled?: boolean }[] = [];
     const map = new Map<string, Map<string, { name: string }>>(
@@ -155,7 +160,10 @@ describe("collapse / expand sub-panes (double-click hide bottom sub-panes)", () 
     );
     map.set("candle_pane", new Map([["MA_1", { name: "MA_1" }]])); // never collapsed
     const chart = {
-      getIndicatorByPaneId: () => map,
+      getIndicators: () =>
+        [...map].flatMap(([paneId, inner]) =>
+          [...inner.values()].map((ind) => ({ ...ind, paneId })),
+        ),
       getSize: (paneId: string) => ({ height: heights[paneId] ?? 0, top: 0 }),
       setPaneOptions: (o: (typeof opts)[number]) => opts.push(o),
     } as unknown as Chart;
@@ -199,9 +207,11 @@ describe("addIndicatorInstance persists an explicit config (Paste)", () => {
   function pasteChart() {
     let seq = 0;
     const chart = {
-      getIndicatorByPaneId: () => new Map(), // no existing instances → clean minted id
+      getIndicators: () => [], // no existing instances → clean minted id
       createIndicator: () => `pane_${++seq}`,
       overrideIndicator: () => {},
+      setPaneOptions: () => {},
+      overrideYAxis: () => {},
     } as unknown as Chart;
     return chart;
   }

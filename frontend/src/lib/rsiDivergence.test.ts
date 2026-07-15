@@ -4,9 +4,10 @@ import type { KLineData } from "klinecharts";
 // customIndicators.ts reads LineType at module load (AVWAP line style table);
 // stub klinecharts' runtime surface like overlays.test.ts / backtestSeries.test.ts do.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const { detectDivergences, RSI_DIVERGENCE_DEFAULTS, divVisual } = await import("./customIndicators");

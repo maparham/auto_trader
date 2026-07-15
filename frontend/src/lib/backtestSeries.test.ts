@@ -6,9 +6,10 @@ import type { FetchTimeframe } from "./backtestSeries";
 // customIndicators.ts reads LineType at module load (AVWAP line style table);
 // stub klinecharts' runtime surface like overlays.test.ts does.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const { buildSeries, buildChartOperandSeries, computeIndicatorRecipe } = await import("./backtestSeries");
@@ -582,7 +583,7 @@ describe("series operand — SLOPE recipe parity", () => {
     const out = src.outputs[0];
     // recipeLabel(SLOPE) is the fixed "MA Slope" base label, but each slope output
     // fuses its length into the chip (chipLabel "MA Slope 3") so multiple slope
-    // lengths don't collide on one chip — see chartOperandSources / OutputChoice.
+    // lengths don't collide on one chip: see chartOperandSources / OutputChoice.
     expect((out.operand as Extract<Operand, { kind: "series" }>).label).toBe("MA Slope 3");
     const recipe = (out.operand as Extract<Operand, { kind: "series" }>).recipe;
     expect(recipe).toMatchObject({ extend: { maType: "sma", units: "pctBar" } });

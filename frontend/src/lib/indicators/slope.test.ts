@@ -4,9 +4,10 @@ import type { KLineData } from "klinecharts";
 // SLOPE_TEMPLATE reads LineType/IndicatorSeries at module load; stub klinecharts'
 // runtime surface like the other indicator tests do.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const { inferBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines, accelSeries, SLOPE_ACCEL_TEMPLATE, accelLineSeries } =

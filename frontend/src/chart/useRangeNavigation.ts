@@ -73,7 +73,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
   // back in PAGE_BARS windows (mirroring the scroll-back driver, gaps and all).
   // `token` is the pendingRangeRef object; we abort if a newer pick replaces it.
   //
-  // DESIGN DEBT: this and the setLoadDataCallback scroll-back loader are TWO paging
+  // DESIGN DEBT: this and the facade onLoadRequest scroll-back loader are TWO paging
   // paths coordinating through loose shared refs (cursorSecRef/exhaustedRef/
   // loadingRef/emptyStreakRef). We close the races here with the loadingRef mutex +
   // wait-out + identity guard, but a third consumer (chart replay) should collapse
@@ -110,7 +110,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
       handle.priceSideRef.current !== token.side ||
       handle.resRef.current !== token.resolution;
     // Take the scroll-back loader's mutex so klinecharts' own Forward-load (which
-    // our applyNewData(more=true) keeps arming) can't page concurrently and race us
+    // our setBars(backward=true) keeps arming) can't page concurrently and race us
     // over cursorSecRef/exhaustedRef. If a scroll-back page is ALREADY in flight,
     // wait it out first — otherwise its .finally would flip loadingRef false partway
     // through our walk and reopen the gate. (Bounded so active scrolling can't wedge
@@ -173,7 +173,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
   // Without this, EVERY later trigger (each backtest run, template apply, range
   // pick) re-walks a full 16-page budget toward the same unreachable anchor,
   // prepending ~8k more bars each time — and each prepend is a full-array
-  // applyNewData re-init, so back-to-back runs slow down quadratically (measured
+  // setBars re-init, so back-to-back runs slow down quadratically (measured
   // 1.9s → 6.9s → 31.4s walks). Retry only when the oldest anchor got NEWER
   // (e.g. the old drawing was deleted) or something else loaded history deeper
   // than the failed walk reached (the remaining gap shrank).

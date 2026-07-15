@@ -13,7 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
-import { LineType } from "klinecharts";
+import type { LineType } from "klinecharts";
 import type { DeepPartial, OverlayStyle } from "klinecharts";
 import { type OverlayManager, asDrawingExtra } from "./lib/overlays";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
@@ -90,7 +90,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const [tab, setTab] = useState<Tab>("style");
   const [color, setColor] = useState(line.color ?? "#2962ff");
   const [size, setSize] = useState<number>(line.size ?? 1);
-  const [style, setStyle] = useState<LineType>(line.style ?? LineType.Solid);
+  const [style, setStyle] = useState<LineType>(line.style ?? 'solid');
   // Rectangle fill (hex + opacity) and border (hex + width) — separate from `line`.
   const [fillHex, setFillHex] = useState(fill0.hex);
   const [fillAlpha, setFillAlpha] = useState(fill0.alpha);
@@ -449,9 +449,9 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                         }}
                         size={size}
                         onSize={(s) => applyStyle({ size: s })}
-                        lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
+                        lineStyle={style === 'dashed' ? "dashed" : "solid"}
                         onLineStyle={(s) =>
-                          applyStyle({ style: s === "dashed" ? LineType.Dashed : LineType.Solid })
+                          applyStyle({ style: s === "dashed" ? 'dashed' : 'solid' })
                         }
                         lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
                       />
@@ -520,7 +520,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                               levels: fib.levels.map((x, j) => (j === i ? { ...x, size: s } : x)),
                             })
                           }
-                          lineStyle={l.style ?? (style === LineType.Dashed ? "dashed" : "solid")}
+                          lineStyle={l.style ?? (style === 'dashed' ? "dashed" : "solid")}
                           onLineStyle={(s) =>
                             applyFib({
                               ...fib,
@@ -570,9 +570,9 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                       onColor={(hex) => applyStyle({ color: hex })}
                       size={size}
                       onSize={(s) => applyStyle({ size: s })}
-                      lineStyle={style === LineType.Dashed ? "dashed" : "solid"}
+                      lineStyle={style === 'dashed' ? "dashed" : "solid"}
                       onLineStyle={(s) =>
-                        applyStyle({ style: s === "dashed" ? LineType.Dashed : LineType.Solid })
+                        applyStyle({ style: s === "dashed" ? 'dashed' : 'solid' })
                       }
                       lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
                     />

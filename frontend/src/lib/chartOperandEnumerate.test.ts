@@ -4,9 +4,10 @@ import { describe, it, expect, vi } from "vitest";
 // klinecharts value exports (LineType.Solid) at module load; stub them so the
 // import chain resolves under jsdom (mirrors chartOperand.test.ts / backtestSeries.test.ts).
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 import { enumerateChartOperands } from "./chartOperandEnumerate";
@@ -19,7 +20,10 @@ function fakeController(indicators: Array<[string, string, { calcParams?: number
   paneMap.set("pane_1", inds);
   return {
     chart: {
-      getIndicatorByPaneId: () => paneMap,
+      getIndicators: () =>
+        [...paneMap].flatMap(([paneId, inner]) =>
+          [...inner.values()].map((i) => ({ ...(i as object), paneId })),
+        ),
       getDataList: () => [{ timestamp: 0, open: 1, high: 1, low: 1, close: 1, volume: 0 }],
     },
     overlays: { listDrawings: () => drawings },

@@ -3,13 +3,14 @@
 // and separate from the pure builder so the picker/tests never touch klinecharts.
 import type { ChartController } from "./chartController";
 import { indTypeOf } from "./indicators/shared";
+import { getIndicatorsByPane } from "./indicators";
 import { chartOperandSources, type ChartOperandSource } from "./chartOperand";
 
 export function enumerateChartOperands(controller: ChartController | null): ChartOperandSource[] {
   const chart = controller?.chart;
   if (!controller || !chart) return [];
   const out: ChartOperandSource[] = [];
-  const panes = chart.getIndicatorByPaneId() as Map<string, Map<string, { name: string; calcParams?: unknown[]; extendData?: unknown }>> | null | undefined;
+  const panes = getIndicatorsByPane(chart);
   if (panes) {
     for (const [paneId, inds] of panes) {
       for (const [name, ind] of inds) {

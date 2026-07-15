@@ -6,6 +6,7 @@
 // writers (setPrevHlTimezone/setPrevHlLength/setPrevHlAgg/setPrevHlRolling/
 // setPrevHlAnchorInput/setBoundaryVisible/boundaryActive) plus the JSX.
 import type { Chart, Indicator } from "klinecharts";
+import { getIndicator } from "../lib/indicators";
 import InfoTip from "../components/InfoTip";
 import ColorLineStylePicker from "../ColorLineStylePicker";
 import { TIMEZONES, offsetLabel } from "../lib/timezones";
@@ -34,11 +35,11 @@ export function makeSetPrevHlTimezone(
 ) {
   return function setPrevHlTimezone(tz: string) {
     setPrevHlTz(tz);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}) } as { tz?: string };
     if (tz === "chart") delete ext.tz;
     else ext.tz = tz;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext });
   };
 }
 
@@ -56,7 +57,7 @@ export function makeSetPrevHlLength(
     const v = Math.max(1, Math.floor(value || 1));
     const nextLengths = { ...prevHlLengths, [kind]: v };
     setPrevHlLengths(nextLengths);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}) } as {
       lengths?: Partial<Record<PrevHlKind, number>>;
     };
@@ -66,7 +67,7 @@ export function makeSetPrevHlLength(
     }
     if (Object.keys(lengths).length) ext.lengths = lengths;
     else delete ext.lengths;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext });
   };
 }
 
@@ -83,7 +84,7 @@ export function makeSetPrevHlAgg(
   return function setPrevHlAgg(kind: PrevHlKind, fn: PrevHlAgg) {
     const nextAggs = { ...prevHlAggs, [kind]: fn };
     setPrevHlAggs(nextAggs);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}) } as {
       aggs?: Partial<Record<PrevHlKind, PrevHlAgg>>;
     };
@@ -93,7 +94,7 @@ export function makeSetPrevHlAgg(
     }
     if (Object.keys(aggs).length) ext.aggs = aggs;
     else delete ext.aggs;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext });
   };
 }
 
@@ -114,7 +115,7 @@ export function makeSetPrevHlRolling(
     const gap = next.gap ?? prevHlGapMode;
     if (next.unit) setPrevHlRollingUnit(next.unit);
     if (next.gap) setPrevHlGapMode(next.gap);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}) } as {
       rollingUnit?: string;
       gapMode?: "trading" | "wallclock";
@@ -123,7 +124,7 @@ export function makeSetPrevHlRolling(
     else delete ext.rollingUnit;
     if (gap !== "trading") ext.gapMode = gap;
     else delete ext.gapMode;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext });
   };
 }
 
@@ -139,11 +140,11 @@ export function makeSetPrevHlAnchorInput(
   return function setPrevHlAnchorInput(input: string) {
     const ts = prevHlInputToAnchor(input, prevHlTz === "chart" ? undefined : prevHlTz);
     setPrevHlAnchorTs(ts);
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
     const ext = { ...((live?.extendData as object) ?? {}) } as { anchorTs?: number };
     if (ts > 0) ext.anchorTs = ts;
     else delete ext.anchorTs;
-    chart.overrideIndicator({ name, extendData: ext }, paneId);
+    chart.overrideIndicator({ paneId, name, extendData: ext });
   };
 }
 
@@ -164,11 +165,8 @@ export function makeSetBoundaryVisible(
     setLines(next);
     const lineHidden: Record<string, boolean> = {};
     for (const l of next) if (!l.visible) lineHidden[l.key] = true;
-    const live = chart.getIndicatorByPaneId(paneId, name) as Indicator | null;
-    chart.overrideIndicator(
-      { name, extendData: { ...((live?.extendData as object) ?? {}), lineHidden } },
-      paneId,
-    );
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), lineHidden } });
   };
 }
 

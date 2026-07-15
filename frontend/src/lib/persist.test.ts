@@ -6,6 +6,11 @@ import { installMemStorage } from "./testMemStorage";
 installMemStorage();
 
 const P = await import("./persist");
+// Type-only aliases: the runtime `P` above is a value binding (dynamic import so the
+// in-memory localStorage is installed first), so it cannot be used in type position.
+// These `import(...)` types are erased at build time.
+type Workspace = import("./persist").Workspace;
+type ChartTab = import("./persist").ChartTab;
 
 const SYMBOL = { epic: "US100", name: "US Tech 100", status: null, pricePrecision: 2 };
 const PERIOD = { resolution: "HOUR", label: "1H" } as unknown as import("./feed").Period;
@@ -541,7 +546,7 @@ describe("pickActiveTabId (per-instance active tab)", () => {
 describe("cell sizes + detach support", () => {
   it("cloneWorkspace preserves the tab's sizes fractions", () => {
     let n = 0;
-    const ws: P.Workspace = {
+    const ws: Workspace = {
       tabs: [
         {
           id: "t1",
@@ -588,7 +593,7 @@ describe("named-layout library is shared across a broker family", () => {
         },
       ],
       activeTabId: tabId,
-    }) as unknown as P.Workspace;
+    }) as unknown as Workspace;
 
   it("capital-live sees the same layouts saved under capital, and vice versa", () => {
     P.setPersistBroker("capital");
@@ -640,7 +645,7 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
     // shape real tabs have.
     scope: n === 0 ? P.primaryCellScope(tabId) : P.cellScope(tabId, `${tabId}-c${n}`),
   });
-  const tab = (id: string, nCells: number): P.ChartTab => ({
+  const tab = (id: string, nCells: number): ChartTab => ({
     id,
     layout: (["1", "2h", "3", "4"] as const)[nCells - 1],
     cells: Array.from({ length: nCells }, (_, i) => cell(id, i)),

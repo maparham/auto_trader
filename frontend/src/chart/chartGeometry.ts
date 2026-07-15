@@ -3,6 +3,7 @@
 // hit-test and the selection painters can share the same pixel-resolved line cache
 // without either re-running convertToPixel.
 import { type Chart, type Indicator } from "klinecharts";
+import { getIndicator, getIndicatorsByPane } from "../lib/indicators";
 import { indTypeOf } from "../lib/customIndicators";
 import {
   PIVOT_DELTA_PLATE,
@@ -64,10 +65,7 @@ export function distToSegment(px: number, py: number, ax: number, ay: number, bx
 // (convertToPixel absolute:true adds each pane's top offset), so a single
 // full-height overlay canvas aligns sub-pane dots (RSI/MACD) too.
 export function buildLineCache(chart: Chart): LineCache[] {
-  const panes = chart.getIndicatorByPaneId() as
-    | Map<string, Map<string, Indicator>>
-    | null
-    | undefined;
+  const panes = getIndicatorsByPane(chart);
   if (!panes) return [];
   const dl = chart.getDataList();
   const vr = chart.getVisibleRange();
@@ -144,7 +142,7 @@ export function avwapAnchorPixel(
   chart: Chart,
   id: string, // the AVWAP INSTANCE id (its klinecharts name)
 ): { x: number; y: number; ts: number; color: string } | null {
-  const ind = chart.getIndicatorByPaneId("candle_pane", id) as Indicator | null | undefined;
+  const ind = getIndicator(chart, "candle_pane", id) as Indicator | null | undefined;
   if (!ind || ind.visible === false) return null;
   const anchorTs = Number(ind.calcParams?.[0]) || 0;
   if (anchorTs <= 0) return null; // unplaced
@@ -177,7 +175,7 @@ export function selectedAvwapId(
   sel: { paneId: string; name: string } | null,
 ): string | null {
   if (!sel) return null;
-  const ind = chart.getIndicatorByPaneId(sel.paneId, sel.name) as Indicator | null | undefined;
+  const ind = getIndicator(chart, sel.paneId, sel.name) as Indicator | null | undefined;
   return ind && indTypeOf(ind) === "AVWAP" ? sel.name : null;
 }
 
@@ -213,9 +211,7 @@ function measurePlateTextWidth(lines: [string, string]): number {
 // Gates the extra crosshair-driven redraw (for the hover-enlarge) so charts
 // without the indicator keep the cheap textContent-only crosshair path.
 export function hasPivotAnalysisIndicator(chart: Chart): boolean {
-  const inds = (chart.getIndicatorByPaneId() as Map<string, Map<string, Indicator>> | null | undefined)?.get(
-    "candle_pane",
-  );
+  const inds = getIndicatorsByPane(chart).get("candle_pane");
   if (!inds) return false;
   for (const [, ind] of inds) {
     if (ind.visible !== false && indTypeOf(ind) === "PIVOT_ANALYSIS") return true;
@@ -228,7 +224,7 @@ export function hasPivotAnalysisIndicator(chart: Chart): boolean {
 // indicator no longer draws the labels itself) — so each pivot's label renders
 // exactly once, and the hovered one can be enlarged in place with no doubling.
 export function buildPivotDeltaLabels(chart: Chart): PivotDeltaLabel[] {
-  const panes = chart.getIndicatorByPaneId() as Map<string, Map<string, Indicator>> | null | undefined;
+  const panes = getIndicatorsByPane(chart);
   if (!panes) return [];
   const inds = panes.get("candle_pane");
   if (!inds) return [];

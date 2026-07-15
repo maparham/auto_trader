@@ -5,7 +5,7 @@
 // Dashed line with a short on/long off dashedValue. So the round-trip reads the pair
 // {style, dashedValue} to recover which of the three the user picked.
 
-import { LineType } from "klinecharts";
+import type { LineType } from "klinecharts";
 import type { LineStyleOpt } from "../ColorLineStylePicker";
 
 // Dash patterns (pixels: [on, off]) per style. Solid ignores the pattern.
@@ -21,11 +21,11 @@ export interface KLineStyleFields {
 export function toKLineStyle(opt: LineStyleOpt): KLineStyleFields {
   switch (opt) {
     case "solid":
-      return { style: LineType.Solid, dashedValue: DASH_DASHED };
+      return { style: 'solid', dashedValue: DASH_DASHED };
     case "dashed":
-      return { style: LineType.Dashed, dashedValue: DASH_DASHED };
+      return { style: 'dashed', dashedValue: DASH_DASHED };
     case "dotted":
-      return { style: LineType.Dashed, dashedValue: DASH_DOTTED };
+      return { style: 'dashed', dashedValue: DASH_DOTTED };
   }
 }
 
@@ -109,7 +109,7 @@ export function fromKLineStyle(
   style: LineType | string | undefined,
   dashedValue: number[] | undefined,
 ): LineStyleOpt {
-  if (style !== LineType.Dashed) return "solid";
+  if (style !== 'dashed') return "solid";
   const on = dashedValue?.[0] ?? DASH_DASHED[0];
   return on <= 2 ? "dotted" : "dashed";
 }

@@ -4,9 +4,8 @@ import type { Chart, KLineData } from "klinecharts";
 // The indicator templates pulled in via customIndicators read klinecharts
 // enums at module load; stub the runtime surface like the other tests do.
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
   registerYAxis: () => {},
   getSupportedIndicators: () => [],
 }));
@@ -33,7 +32,7 @@ const htfPage = (fromSec: number, toSec: number): KLineData[] => {
 };
 
 interface Override {
-  patch: { name: string; extendData?: { mtf?: Record<string, unknown> } };
+  patch: { name: string; paneId?: string; extendData?: { mtf?: Record<string, unknown> } };
   paneId: string;
 }
 
@@ -42,9 +41,11 @@ function fakeChart(extendData: object = {}) {
   let indicator: { extendData: object } | null = { extendData };
   const chart = {
     getDataList: () => [bar(10_000_000_000), bar(10_000_300_000)],
-    getIndicatorByPaneId: () => indicator,
-    overrideIndicator: (patch: Override["patch"], paneId: string) => {
-      overrides.push({ patch, paneId });
+    // v10: getIndicators({ paneId, name }) returns a flat array; the migration
+    // helper getIndicator picks [0]. The mock ignores the filter (one instance).
+    getIndicators: () => (indicator ? [indicator] : []),
+    overrideIndicator: (patch: Override["patch"]) => {
+      overrides.push({ patch, paneId: patch.paneId ?? "" });
       if (indicator) indicator = { extendData: patch.extendData ?? {} };
     },
   } as unknown as Chart;

@@ -1,7 +1,7 @@
 // Time-axis timestamp formatting for the chart.
 //
 // klinecharts has no `styles.xAxis` date-format field; the only lever is
-// `chart.setCustomApi({ formatDate })`. The library calls formatDate with a
+// `chart.setFormatter({ formatDate })`. The library calls formatDate with a
 // small set of canonical format strings depending on zoom granularity:
 //   XAxis:     'HH:mm' | 'MM-DD' | 'YYYY-MM' | 'YYYY' | 'YYYY-MM-DD HH:mm'
 //   Crosshair: 'YYYY-MM-DD HH:mm'   (the label riding the time axis on hover)
@@ -12,8 +12,10 @@
 // The library's tick-granularity boundary detection compares formatDate()
 // outputs for equality (e.g. does this tick's year differ from the previous
 // tick's), so this stays correct as long as output is a pure function of
-// (timestamp, format) — which it is. The default preset (24h + Y-M-D) is
+// (timestamp, template) which it is. The default preset (24h + Y-M-D) is
 // byte-for-byte identical to klinecharts' built-in formatter.
+
+import type { FormatDateParams } from "klinecharts";
 
 export type Clock = "24h" | "12h";
 // ymd/dmy/mdy = numeric orders; med = textual "Jul 10 '26". An optional weekday
@@ -112,11 +114,14 @@ function renderTime(p: Parts, fmt: string, clock: Clock): string {
 }
 
 // Builds a klinecharts FormatDate function for the chosen clock + date format.
+// v10 hands the callback one params object; the old v9 positional args
+// (dateTimeFormat, timestamp, template) are now named fields, and the format
+// string field was renamed `format` -> `template`.
 export function makeFormatDate(clock: Clock, format: DateFormat, showWeekday = false) {
-  return (dtf: Intl.DateTimeFormat, ts: number, fmt: string): string => {
-    const p = extract(dtf, ts);
-    const date = renderDate(p, fmt, format, showWeekday);
-    const time = renderTime(p, fmt, clock);
+  return ({ dateTimeFormat, timestamp, template }: FormatDateParams): string => {
+    const p = extract(dateTimeFormat, timestamp);
+    const date = renderDate(p, template, format, showWeekday);
+    const time = renderTime(p, template, clock);
     return date && time ? `${date} ${time}` : date || time;
   };
 }

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // PositionLines reconcile + tradeLineSpecs (pending-merge, labels, draggability).
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -50,6 +51,8 @@ function trade(over: Partial<TradeView> = {}): TradeView {
     upnl: null,
     openedAt: null,
     expiresAt: null,
+    leverage: null,
+    margin: null,
     ...over,
   };
 }

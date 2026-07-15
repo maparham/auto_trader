@@ -6,7 +6,6 @@
 // Sessions are DST-aware (each carries its own IANA timezone) and fully editable
 // via extendData.sessions (indicator settings modal).
 import {
-  IndicatorSeries,
   registerYAxis,
   type Indicator,
   type IndicatorTemplate,
@@ -162,10 +161,10 @@ export function buildSegments(points: SessionPoint[]): SessionSegment[] {
   return segs;
 }
 
-// A registered y-axis that draws NO ticks — assigned to the Sessions pane via
-// paneOptions.axisOptions.name so the pane shows no numeric scale (the bands carry
-// no meaningful value). klinecharts styles are global, so a named custom axis is the
-// only per-pane way to suppress the ticks.
+// A registered y-axis that draws NO ticks, assigned to the Sessions pane via
+// overrideYAxis({ paneId, name }) so the pane shows no numeric scale (the bands
+// carry no meaningful value). klinecharts styles are global, so a named custom
+// axis is the only per-pane way to suppress the ticks.
 export const SESSIONS_AXIS_NAME = "sessions";
 export function registerSessionsAxis(): void {
   registerYAxis({ name: SESSIONS_AXIS_NAME, createTicks: () => [] });
@@ -180,7 +179,7 @@ function halfBarPx(xAxis: { convertToPixel: (v: number) => number }): number {
 // color + centered name; overlap spans split the height evenly into one stripe per
 // active session (no label). Pure pixel space (bounding), so the pane's y-range is
 // irrelevant. Returns true (isCover) so klinecharts draws no default figures.
-function drawSessions(params: IndicatorDrawParams<SessionPoint>): boolean {
+function drawSessions(params: IndicatorDrawParams<SessionPoint, unknown, unknown>): boolean {
   const { ctx, indicator, xAxis, bounding } = params;
   const ext = (indicator.extendData ?? {}) as SessionsExtend;
   const sessions = ext.sessions ?? DEFAULT_SESSIONS;
@@ -228,12 +227,12 @@ function drawSessions(params: IndicatorDrawParams<SessionPoint>): boolean {
 // dummy 0..1 range so the (hidden) y-axis never auto-ranges to NaN.
 export const SESSIONS_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Sessions",
-  series: IndicatorSeries.Normal,
+  series: 'normal',
   precision: 0,
   minValue: 0,
   maxValue: 1,
   figures: [],
   calc: (dataList: KLineData[], ind: Indicator) =>
     computeSessions(dataList, (ind.extendData ?? {}) as SessionsExtend),
-  draw: (params) => drawSessions(params as IndicatorDrawParams<SessionPoint>),
+  draw: (params) => drawSessions(params as IndicatorDrawParams<SessionPoint, unknown, unknown>),
 };

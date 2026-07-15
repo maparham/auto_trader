@@ -6,9 +6,10 @@ import type { CodedStrategyConfig } from "./codedConfig";
 // liveEngine → backtestSeries → customIndicators reads LineType at module load;
 // stub klinecharts' runtime surface (same as backtestSeries.test.ts).
 vi.mock("klinecharts", () => ({
-  LineType: { Solid: "solid", Dashed: "dashed" },
-  IndicatorSeries: { Normal: "normal", Price: "price" },
   registerIndicator: () => {},
+  registerOverlay: () => {},
+  registerYAxis: () => {},
+  getSupportedIndicators: () => [],
 }));
 
 const { runOneCycle } = await import("./liveEngine");

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { pageHistoryBack, type PageHistoryBackArgs } from "./historyPaging";
 
 // Minimal bar factory — pageHistoryBack only reads `.timestamp`.
-const bar = (timestamp: number) => ({ timestamp }) as never;
+const bar = (timestamp: number): { timestamp: number } => ({ timestamp });
 const SEC = 1000;
 const MIN = 60 * SEC;
 

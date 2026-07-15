@@ -9,7 +9,7 @@
 // subscription callbacks, it doesn't draw), so each sibling draws the line itself
 // using the same overlay canvas it already uses for the "+" affordance crosshair.
 
-import { DomPosition, type Chart } from "klinecharts";
+import { type Chart } from "klinecharts";
 
 export interface CrosshairMsg {
   sourceCellId: string;
@@ -106,7 +106,7 @@ function xAtTs(chart: Chart, timestamp: number): number | null {
   return typeof p?.x === "number" ? p.x : null;
 }
 function mainWidth(chart: Chart): number {
-  return chart.getSize("candle_pane", DomPosition.Main)?.width ?? 0;
+  return chart.getSize("candle_pane", 'main')?.width ?? 0;
 }
 // Typical bar spacing (ms) as the median positive timestamp delta — robust to
 // session gaps (mirrors customIndicators' estimateBarMs, which can't be imported
@@ -193,7 +193,7 @@ function tsAtXVirtual(
   const ts = tsAtX(chart, x);
   if (ts != null) return ts;
   if (!(barMs > 0)) return null;
-  const space = chart.getBarSpace();
+  const space = chart.getBarSpace().bar;
   if (!(space > 0)) return null;
   const lastTs = data[data.length - 1].timestamp;
   const xLast = xAtTs(chart, lastTs);
@@ -269,7 +269,7 @@ export function readExactAnchor(
   }
   const anchorX = xAtTs(chart, anchorTs);
   if (anchorX == null) return null;
-  return { barSpace: chart.getBarSpace(), anchorTs, anchorX };
+  return { barSpace: chart.getBarSpace().bar, anchorTs, anchorX };
 }
 
 // Pan/zoom `chart` so its left edge ≈ fromTs and right edge ≈ toTs, mapping the
@@ -337,7 +337,7 @@ export function applyVisibleRangeKeepStart(
   const data = chart.getDataList();
   if (w <= 1 || !data || data.length < 2) return;
   const barTs = data[nearestIdx(data, startTs)].timestamp;
-  const leftPad = Math.min(Math.max(chart.getBarSpace() * 4, 16), w * 0.15);
+  const leftPad = Math.min(Math.max(chart.getBarSpace().bar * 4, 16), w * 0.15);
   const x = xAtTs(chart, barTs);
   // Already visible with at least the left margin — the span fit, leave it.
   if (x == null || x >= leftPad - 0.5) return;
@@ -377,7 +377,7 @@ export function applyVisibleRangeExact(
   // Already aligned (same zoom AND anchor bar already on the target pixel)? Skip — the
   // anchor follows the cursor, so this fires on every hovered-bar change; without this
   // a sibling that's already in place would needlessly re-scroll each time.
-  if (Math.abs(chart.getBarSpace() - target) < 0.01) {
+  if (Math.abs(chart.getBarSpace().bar - target) < 0.01) {
     const cur = xAtTs(chart, nearTs);
     if (cur != null && Math.abs(cur - anchorX) < 0.5) return;
   }

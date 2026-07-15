@@ -7,8 +7,6 @@
 // aggregates over the previous N periods via a selectable function (max/min by
 // default, or avg/median).
 import {
-  IndicatorSeries,
-  LineType,
   type Indicator,
   type IndicatorTemplate,
   type KLineData,
@@ -536,14 +534,14 @@ const PREV_HL_C_DAY = "#2962ff"; // blue
 const PREV_HL_C_WEEK = "#FF9600"; // orange
 const PREV_HL_C_ANCHOR = "#E11D74"; // pink
 const PREV_HL_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
-  fullLine(PREV_HL_C_ROLLING, LineType.Dashed), // rollingHigh
-  fullLine(PREV_HL_C_ROLLING, LineType.Dashed), // rollingLow
-  fullLine(PREV_HL_C_DAY, LineType.Dashed), // dayHigh
-  fullLine(PREV_HL_C_DAY, LineType.Dashed), // dayLow
-  fullLine(PREV_HL_C_WEEK, LineType.Dashed), // weekHigh
-  fullLine(PREV_HL_C_WEEK, LineType.Dashed), // weekLow
-  fullLine(PREV_HL_C_ANCHOR, LineType.Solid), // anchorHigh (solid: a fixed reference)
-  fullLine(PREV_HL_C_ANCHOR, LineType.Solid), // anchorLow
+  fullLine(PREV_HL_C_ROLLING, 'dashed'), // rollingHigh
+  fullLine(PREV_HL_C_ROLLING, 'dashed'), // rollingLow
+  fullLine(PREV_HL_C_DAY, 'dashed'), // dayHigh
+  fullLine(PREV_HL_C_DAY, 'dashed'), // dayLow
+  fullLine(PREV_HL_C_WEEK, 'dashed'), // weekHigh
+  fullLine(PREV_HL_C_WEEK, 'dashed'), // weekLow
+  fullLine(PREV_HL_C_ANCHOR, 'solid'), // anchorHigh (solid: a fixed reference)
+  fullLine(PREV_HL_C_ANCHOR, 'solid'), // anchorLow
 ];
 
 // Previous Minute/Hour/Day/Week/Interval High/Low: ten stepped horizontal lines.
@@ -553,7 +551,7 @@ const PREV_HL_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
 // dedicated map (PREV_HL_LINE_LABELS in IndicatorSettings).
 export const PREV_HL_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Prev HL",
-  series: IndicatorSeries.Price,
+  series: 'price',
   precision: 2,
   figures: [
     { key: "rollingHigh", type: "line" },

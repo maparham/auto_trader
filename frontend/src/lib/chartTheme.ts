@@ -3,9 +3,8 @@
 // line/text/candle colors klinecharts draws on the canvas.
 
 import {
-  LineType,
-  TooltipShowRule,
   type DeepPartial,
+  type LineType,
   type Styles,
 } from "klinecharts";
 import { chartColors, type CrosshairStyle, type Theme } from "../theme";
@@ -52,7 +51,7 @@ export function klineStyles(
   const xhColor = hexToRgba(crosshair?.color || c.textDim, crosshair?.opacity ?? 1);
   const xhLine = {
     color: xhColor,
-    style: xhDash ? LineType.Dashed : LineType.Solid,
+    style: (xhDash ? "dashed" : "solid") as LineType,
     dashedValue: xhDash ?? [4, 6],
   };
   const axis = {
@@ -88,7 +87,7 @@ export function klineStyles(
       // over its canvas; klinecharts' canvas text was blurry). showRule None turns
       // off klinecharts' own candle-pane legend entirely. indicator.tooltip below
       // stays on, so sub-pane indicators (RSI/MACD) keep their in-pane legends.
-      tooltip: { showRule: TooltipShowRule.None },
+      tooltip: { showRule: 'none' },
       priceMark: {
         high: { color: c.text },
         low: { color: c.text },
@@ -96,7 +95,7 @@ export function klineStyles(
         // pattern). Hide the built-in axis text box — ChartCore renders its own
         // TV-style price + countdown pill instead.
         last: {
-          line: { style: LineType.Dashed, dashedValue: [2, 2], size: 2 },
+          line: { style: 'dashed', dashedValue: [2, 2], size: 2 },
           text: { show: false },
         },
       },
@@ -107,10 +106,11 @@ export function klineStyles(
         // symbol (this value is what separate indicator panes use; on the candle
         // pane klinecharts reuses the candle tooltip's offsetLeft regardless).
         offsetLeft: LEGEND_OFFSET_LEFT,
-        text: { color: c.text },
-        // Icons are driven per-indicator by legendTooltipSource (hover-gated, with
-        // the hidden-indicator eye exception), so the global set stays empty.
-        icons: [],
+        legend: { color: c.text },
+        // Features (was icons) are driven per-indicator by legendTooltipSource
+        // (hover-gated, with the hidden-indicator eye exception), so the global
+        // set stays empty.
+        features: [],
       },
     },
     xAxis: axis,

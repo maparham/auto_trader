@@ -3,11 +3,11 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import ChartOperandPicker from "./ChartOperandPicker";
 import type { ChartOperandSource } from "./lib/chartOperand";
-import type { Operand } from "./lib/backtestConfig";
+import type { SeriesOperand } from "./lib/backtestConfig";
 
 afterEach(cleanup);
 
-const op = (label: string): Operand => ({ kind: "series", seriesKey: label, label, recipe: { source: "indicator", indicatorType: "EMA", calcParams: [9], line: 0 } });
+const op = (label: string): SeriesOperand => ({ kind: "series", seriesKey: label, label, recipe: { source: "indicator", indicatorType: "EMA", calcParams: [9], line: 0 } });
 
 const SOURCES: ChartOperandSource[] = [
   { id: "EMA#1", baseLabel: "EMA(9)", emphasis: { kind: "indicator", paneId: "candle_pane", name: "EMA#1" }, outputs: [{ lineIndex: 0, label: "EMA(9)", base: true, operand: op("EMA(9)") }] },

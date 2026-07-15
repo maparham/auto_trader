@@ -71,7 +71,7 @@ const TEXT_COLOR = "#2962ff";
 
 // Build the optional text + midpoint figures from extendData. Shared across every
 // line geometry — both are anchored to the segment's two endpoints.
-function decorations(params: OverlayCreateFiguresCallbackParams): OverlayFigure[] {
+function decorations(params: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] {
   const { overlay, coordinates } = params;
   if (coordinates.length < 2) return [];
   const extra = asDrawingExtra(overlay.extendData);
@@ -232,7 +232,8 @@ const fibonacciLine: OverlayTemplate = {
   needDefaultXAxisFigure: true,
   needDefaultYAxisFigure: true,
   createPointFigures: (params) => {
-    const { overlay, coordinates, bounding, precision } = params;
+    const { overlay, coordinates, bounding, chart } = params;
+    const pricePrecision = chart.getSymbol()?.pricePrecision ?? 2;
     if (coordinates.length < 2) return [];
     const cfg = asFibConfig((overlay.extendData as { fib?: unknown } | undefined)?.fib);
     const p0 = overlay.points?.[0]?.value;
@@ -243,7 +244,7 @@ const fibonacciLine: OverlayTemplate = {
       coordinates,
       values: [p0, p1],
       boundingWidth: bounding.width,
-      precision: precision.price,
+      precision: pricePrecision,
     });
     const line = (overlay.styles?.line ?? {}) as {
       size?: number;
@@ -367,7 +368,8 @@ const measure: OverlayTemplate = {
   needDefaultXAxisFigure: false,
   needDefaultYAxisFigure: false,
   createPointFigures: (params) => {
-    const { overlay, coordinates, precision, bounding } = params;
+    const { overlay, coordinates, bounding, chart } = params;
+    const pricePrecision = chart.getSymbol()?.pricePrecision ?? 2;
     if (coordinates.length < 2) return [];
     const [c0, c1] = coordinates;
     const p0 = overlay.points?.[0] ?? {};
@@ -410,7 +412,7 @@ const measure: OverlayTemplate = {
       index1: p1.dataIndex ?? 0,
       time0: p0.timestamp ?? 0,
       time1: p1.timestamp ?? 0,
-      precision: precision.price,
+      precision: pricePrecision,
     });
     // Snug the pill to whichever line is actually wider (primary is bigger type but
     // the bars·time line can run longer), measured at each line's own font.
@@ -482,7 +484,8 @@ const slope: OverlayTemplate = {
   needDefaultXAxisFigure: false,
   needDefaultYAxisFigure: false,
   createPointFigures: (params) => {
-    const { overlay, coordinates, precision, bounding } = params;
+    const { overlay, coordinates, bounding, chart } = params;
+    const pricePrecision = chart.getSymbol()?.pricePrecision ?? 2;
     if (coordinates.length < 2) return [];
     const [c0, c1] = coordinates;
     const p0 = overlay.points?.[0] ?? {};
@@ -495,7 +498,7 @@ const slope: OverlayTemplate = {
       index1: p1.dataIndex ?? 0,
       time0: p0.timestamp ?? 0,
       time1: p1.timestamp ?? 0,
-      precision: precision.price,
+      precision: pricePrecision,
       baseIntervalMinutes: ext?.baseIntervalMinutes,
     });
     const palette = m.up ? MEASURE_UP : MEASURE_DOWN;

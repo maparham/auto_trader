@@ -387,7 +387,13 @@ export default function MarketInfoPopover({ epic, brokerId, title, anchor, onClo
           </button>
           {showRaw &&
             RAW_SECTIONS.map(({ key, title: sectionTitle }) => {
-              const rows = rowsFor(detail[key]);
+              // RAW_SECTIONS only names object-valued sections, but `keyof MarketDetail`
+              // also spans scalar fields (e.g. accountLeverage), so narrow before rowsFor.
+              const section = detail[key];
+              const rows =
+                section != null && typeof section === "object"
+                  ? rowsFor(section as Record<string, unknown>)
+                  : [];
               if (!rows.length) return null;
               return (
                 <div className="instrument-section" key={key}>

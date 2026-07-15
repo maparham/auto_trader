@@ -4,8 +4,6 @@
 // over one fixed window (the most recent `length` bars), so every bar BEFORE the
 // window is blank. Recomputes as new bars arrive / on scroll-back.
 import {
-  IndicatorSeries,
-  LineType,
   type Indicator,
   type IndicatorTemplate,
   type KLineData,
@@ -32,9 +30,9 @@ export interface LrExtend {
 const LR_C = "#FF9600";
 const LR_BAND = "rgba(255, 150, 0, 0.6)";
 const LR_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
-  fullLine(LR_C, LineType.Solid), // lr
-  { ...fullLine(LR_BAND, LineType.Solid), dashedValue: [0, 0] }, // up (solid, faint)
-  { ...fullLine(LR_BAND, LineType.Solid), dashedValue: [0, 0] }, // dn
+  fullLine(LR_C, 'solid'), // lr
+  { ...fullLine(LR_BAND, 'solid'), dashedValue: [0, 0] }, // up (solid, faint)
+  { ...fullLine(LR_BAND, 'solid'), dashedValue: [0, 0] }, // dn
 ];
 
 export function computeLr(
@@ -90,7 +88,7 @@ export function computeLr(
 // (LrExtend). Bands share the line's hue (LR_DEFAULT_LINE_STYLES).
 export const LR_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "LR",
-  series: IndicatorSeries.Price,
+  series: 'price',
   precision: 2,
   calcParams: [100, 2],
   figures: [

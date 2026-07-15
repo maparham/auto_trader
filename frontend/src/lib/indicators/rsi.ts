@@ -8,8 +8,6 @@
 // curve matches TV rather than klinecharts' built-in. Length in calcParams[0];
 // divergence config on extendData (RsiExtend).
 import {
-  IndicatorSeries,
-  LineType,
   type Indicator,
   type IndicatorTemplate,
   type IndicatorDrawParams,
@@ -496,7 +494,7 @@ export const RSI_STYLE_DEFAULTS: RsiStyle = {
 };
 
 // Resolve an instance's RSI style over the defaults (deep-merging the band objects).
-function rsiStyleOf(ind: Indicator): RsiStyle {
+function rsiStyleOf(ind: Indicator<RsiPoint, unknown, unknown>): RsiStyle {
   const s = ((ind.extendData as RsiExtend)?.style ?? {}) as Partial<RsiStyle>;
   return {
     ...RSI_STYLE_DEFAULTS,
@@ -516,7 +514,7 @@ function dashFor(style: RsiLineStyle): number[] {
 // TradingView's RSI pane background: a faint purple region between the upper/lower
 // levels, solid boundary lines at each band level, and a faint midline. Pane-local
 // coords (see the convertToPixel note in the divergence draw); clamped to the pane.
-function drawRsiBand(params: IndicatorDrawParams<RsiPoint>, style: RsiStyle): void {
+function drawRsiBand(params: IndicatorDrawParams<RsiPoint, unknown, unknown>, style: RsiStyle): void {
   const { ctx, yAxis, bounding } = params;
   const left = 0;
   const right = bounding.width;
@@ -550,7 +548,7 @@ function drawRsiBand(params: IndicatorDrawParams<RsiPoint>, style: RsiStyle): vo
 // level, clipped to the beyond-threshold side, with a vertical gradient from solid at
 // the extreme to transparent at the threshold.
 function drawRsiZoneFill(
-  params: IndicatorDrawParams<RsiPoint>,
+  params: IndicatorDrawParams<RsiPoint, unknown, unknown>,
   inner: number,
   outer: number,
   hex: string,
@@ -595,7 +593,7 @@ function drawRsiZoneFill(
 // edge), skipping undefined gaps. Pane-local coords (xAxis/yAxis.convertToPixel),
 // same space as the RSI line figure.
 function drawRsiSeries(
-  params: IndicatorDrawParams<RsiPoint>,
+  params: IndicatorDrawParams<RsiPoint, unknown, unknown>,
   pick: (p: RsiPoint) => number | undefined,
   color: string,
   width: number,
@@ -627,7 +625,7 @@ function drawRsiSeries(
 
 // Draw the optional RSI smoothing MA + Bollinger Bands (when present in the result).
 // The MA uses the styled colour; the Bollinger Bands echo it at lower opacity.
-function drawRsiSmoothing(params: IndicatorDrawParams<RsiPoint>, style: RsiStyle): void {
+function drawRsiSmoothing(params: IndicatorDrawParams<RsiPoint, unknown, unknown>, style: RsiStyle): void {
   if (style.hidden.ma) return;
   const result = params.indicator.result ?? [];
   const hasMa = result.some((p) => p?.ma !== undefined);
@@ -647,7 +645,7 @@ function drawRsiSmoothing(params: IndicatorDrawParams<RsiPoint>, style: RsiStyle
 // confirmed (right) pivot. All colours/levels come from the resolved RsiStyle. Reads
 // data stashed in calc on indicator.result; converts (dataIndex, rsi) → pixels via the
 // pane's own axes. Returns false so klinecharts still draws the RSI line itself.
-function drawRsiDivergences(params: IndicatorDrawParams<RsiPoint>): boolean {
+function drawRsiDivergences(params: IndicatorDrawParams<RsiPoint, unknown, unknown>): boolean {
   const style = rsiStyleOf(params.indicator);
   drawRsiBand(params, style);
   if (!style.hidden.ob) drawRsiZoneFill(params, style.upper.level, 100, style.obFill, true);
@@ -698,13 +696,13 @@ function drawRsiDivergences(params: IndicatorDrawParams<RsiPoint>): boolean {
 // callback. Length in calcParams[0]; divergence config on extendData (RsiExtend).
 export const RSI_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "RSI",
-  series: IndicatorSeries.Normal, // sub-pane (NOT a price overlay)
+  series: 'normal', // sub-pane (NOT a price overlay)
   precision: 2,
   calcParams: [14],
   figures: [{ key: "rsi", title: "RSI: ", type: "line" }],
   // TradingView's RSI line colour (purple), so a fresh RSI matches TV by default.
-  styles: { lines: [fullLine("#7E57C2", LineType.Solid)] },
+  styles: { lines: [fullLine("#7E57C2", 'solid')] },
   calc: (dataList: KLineData[], ind: Indicator) =>
     computeRsi(dataList, Number(ind.calcParams?.[0]) || 14, (ind.extendData ?? {}) as RsiExtend),
-  draw: (params) => drawRsiDivergences(params as IndicatorDrawParams<RsiPoint>),
+  draw: (params) => drawRsiDivergences(params as IndicatorDrawParams<RsiPoint, unknown, unknown>),
 };

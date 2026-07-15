@@ -1,6 +1,7 @@
 // Data layer for the klinecharts-core chart: history fetch, live stream, and
 // instrument search, wired to our FastAPI backend. We own the chart instance,
-// so these just return data the caller pushes via applyNewData / updateData.
+// so these just return data the caller pushes through the chart data facade
+// (setBars for a full load, pushBar for a realtime tick).
 
 import type { KLineData } from "klinecharts";
 import type { PriceSide } from "../theme";
@@ -512,8 +513,10 @@ async function fetchWithTimeout(
  * reconnecting). fetchRange flattens exactly this to an empty page; genuine
  * network errors (refused / DNS / offline) propagate from both variants. */
 export class CandlesFetchError extends Error {
-  constructor(public status: number) {
+  status: number;
+  constructor(status: number) {
     super(`candles fetch failed: ${status}`);
+    this.status = status;
   }
 }
 

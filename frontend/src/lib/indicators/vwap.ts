@@ -4,8 +4,6 @@
 // AVWAP = same, but accumulation starts at an ANCHOR timestamp (calcParams[0]).
 //         Default anchor 0 → first bar (≡ VWAP) until the user sets one.
 import {
-  IndicatorSeries,
-  LineType,
   type Indicator,
   type IndicatorTemplate,
   type KLineData,
@@ -61,13 +59,13 @@ const BAND_C1 = "rgba(255, 150, 0, 0.9)";
 const BAND_C2 = "rgba(255, 150, 0, 0.6)";
 const BAND_C3 = "rgba(255, 150, 0, 0.4)";
 const AVWAP_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
-  fullLine("#FF9600", LineType.Solid), // vwap
-  fullLine(BAND_C1, LineType.Dashed), // up1
-  fullLine(BAND_C1, LineType.Dashed), // dn1
-  fullLine(BAND_C2, LineType.Dashed), // up2
-  fullLine(BAND_C2, LineType.Dashed), // dn2
-  fullLine(BAND_C3, LineType.Dashed), // up3
-  fullLine(BAND_C3, LineType.Dashed), // dn3
+  fullLine("#FF9600", 'solid'), // vwap
+  fullLine(BAND_C1, 'dashed'), // up1
+  fullLine(BAND_C1, 'dashed'), // dn1
+  fullLine(BAND_C2, 'dashed'), // up2
+  fullLine(BAND_C2, 'dashed'), // dn2
+  fullLine(BAND_C3, 'dashed'), // up3
+  fullLine(BAND_C3, 'dashed'), // dn3
 ];
 
 // Volume-weighted VWAP + standard-deviation/percentage bands, accumulated from
@@ -137,7 +135,7 @@ export function vwapFrom(
 
 export const VWAP_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "VWAP",
-  series: IndicatorSeries.Price,
+  series: 'price',
   precision: 2,
   figures: [{ key: "vwap", title: "VWAP: ", type: "line" }],
   calc: (dataList: KLineData[]) => vwapFrom(dataList, 0, {}),
@@ -145,7 +143,7 @@ export const VWAP_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
 
 export const AVWAP_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "AVWAP",
-  series: IndicatorSeries.Price,
+  series: 'price',
   precision: 2,
   // calcParams[0] = anchor timestamp (ms). <= 0 means "unplaced": render no line
   // until the user anchors it by clicking a bar (TradingView-style).

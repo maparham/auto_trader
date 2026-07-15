@@ -5,7 +5,7 @@
 // lib/backtest.ts:757-796. Unlike periodOverlay this one DOES want a click
 // target: the axis chip is the dismiss control, so only the pane line figure
 // is ignoreEvent.
-import { registerOverlay, LineType, type Chart, type OverlayTemplate } from "klinecharts";
+import { registerOverlay, type Chart, type OverlayTemplate } from "klinecharts";
 import type { SnapshotMeta } from "./persist";
 
 const MARKER_OVERLAY = "snapshotMarker";
@@ -31,7 +31,7 @@ export function ensureSnapshotMarkerRegistered(): void {
           ],
         },
         styles: {
-          style: LineType.Dashed,
+          style: 'dashed',
           color: MARKER_COLOR,
           size: 1,
           dashedValue: [4, 4],

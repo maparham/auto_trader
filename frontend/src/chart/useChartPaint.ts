@@ -16,7 +16,6 @@
 // `handle.paintBracketRef.current = paintBracket`, `handle.paintSeparatorRef`,
 // `handle.redrawRef` — the same staleness-proof ref-bridge as the other hooks.
 import { useCallback } from "react";
-import { DomPosition } from "klinecharts";
 import {
   first,
   paintSelectionDots,
@@ -38,6 +37,7 @@ import {
 } from "./chartGeometry";
 import { buildLegendRows, buildSubPaneLegends, type LegendRow, type SubPaneLegendData, type ChartLegendHandle } from "../ChartLegend";
 import { slopeMaLines } from "../lib/indicators/slope";
+import { getIndicatorsByPane } from "../lib/indicators";
 import { indTypeOf } from "../lib/customIndicators";
 import { getBacktestAggregate } from "../lib/backtest";
 import { type AggPill } from "../BacktestAggMarkers";
@@ -87,6 +87,7 @@ type TradePill = {
   level: number;
   pl: number | null;
   changed: boolean;
+  expiresAt: number | null; // resting order good-till-date epoch ms; null = GTC/position
   breakevenField?: "stop" | "takeProfit";
 };
 
@@ -295,7 +296,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // rather than over the indicator sub-panes. Restored at the end of the draw.
     // getSize can transiently report height 0 (pre-layout / mid-collapse); a 0-tall
     // clip would erase the whole bracket, so fall back to the full canvas height.
-    const measuredPaneH = chart.getSize("candle_pane", DomPosition.Main)?.height;
+    const measuredPaneH = chart.getSize("candle_pane", 'main')?.height;
     const paneH = measuredPaneH && measuredPaneH > 0 ? measuredPaneH : h;
     ctx.save();
     ctx.beginPath();
@@ -410,17 +411,17 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
 
     // Collect every SLOPE indicator across all panes (SLOPE lives in a sub-pane;
     // its MAs draw on the candle pane).
-    const panes = chart.getIndicatorByPaneId() as
-      | Map<string, Map<string, { calcParams?: unknown[]; extendData?: unknown; visible?: boolean; styles?: { lines?: Array<{ color?: string }> } }>>
-      | null
-      | undefined;
+    const panes = getIndicatorsByPane(chart) as unknown as Map<
+      string,
+      Map<string, { calcParams?: unknown[]; extendData?: unknown; visible?: boolean; styles?: { lines?: Array<{ color?: string }> } }>
+    >;
     if (!panes) return;
     const dl = chart.getDataList();
     const vr = chart.getVisibleRange();
     if (!dl.length) return;
 
     // Clip to the candle pane so curves priced off-screen don't paint over sub-panes.
-    const measuredPaneH = chart.getSize("candle_pane", DomPosition.Main)?.height;
+    const measuredPaneH = chart.getSize("candle_pane", 'main')?.height;
     const paneH = measuredPaneH && measuredPaneH > 0 ? measuredPaneH : h;
     ctx.save();
     ctx.beginPath();
@@ -509,11 +510,11 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     const x = first(
       chart.convertToPixel([{ timestamp: ts }], { paneId: "candle_pane", absolute: true }),
     )?.x;
-    if (!Number.isFinite(x) || x < 0 || x > w) return; // off-screen / unmappable
+    if (x == null || !Number.isFinite(x) || x < 0 || x > w) return; // off-screen / unmappable
     const xr = Math.round(x as number) + 0.5;
     // Stop the line at the bottom of the candle pane (above the time axis), so the
     // pill sits in the axis gutter like a TradingView session marker.
-    const mainH = chart.getSize("candle_pane", DomPosition.Main)?.height ?? h;
+    const mainH = chart.getSize("candle_pane", 'main')?.height ?? h;
 
     // Label + accent are derived from (ts, tz, theme) only — cache so a live-ticking
     // chart doesn't rebuild an Intl formatter / flush style on every frame.
@@ -585,7 +586,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     if (clip) {
       // getSize can transiently report height 0 (pre-layout / mid-collapse); a 0-tall
       // clip would hide every pill/tag, so fall back to 100% (full height, no clip).
-      const paneH = chart.getSize("candle_pane", DomPosition.Main)?.height;
+      const paneH = chart.getSize("candle_pane", 'main')?.height;
       clip.style.height = paneH && paneH > 0 ? `${paneH}px` : "100%";
     }
     // Round the pixel y: these pills center with transform: translateY(-50%) over
@@ -623,7 +624,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         }
         // Width of the price-axis column, so the pill fills it exactly (its left
         // edge lands on the column border) instead of spilling into the chart.
-        const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? 0;
+        const mainW = chart.getSize("candle_pane", 'main')?.width ?? 0;
         const totalW = containerRef.current?.clientWidth ?? mainW;
         const dir = last.close >= last.open ? "up" : "down";
         setPriceTag({ y, price: last.close, countdown, w: Math.max(0, totalW - mainW), dir });
@@ -640,7 +641,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     const bidV = bidRef.current;
     const askV = askRef.current;
     if (showBidAsk && (bidV != null || askV != null)) {
-      const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? 0;
+      const mainW = chart.getSize("candle_pane", 'main')?.width ?? 0;
       const totalW = containerRef.current?.clientWidth ?? mainW;
       const w = Math.max(0, totalW - mainW);
       let by = bidV != null ? yOf(bidV) : undefined;
@@ -791,7 +792,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
           const cs = chart.getStyles().crosshair;
           const hl = cs.horizontal.line;
           if (cs.show !== false && cs.horizontal.show !== false) {
-            const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? w;
+            const mainW = chart.getSize("candle_pane", 'main')?.width ?? w;
             ctx.save();
             ctx.strokeStyle = hl.color;
             ctx.lineWidth = hl.size || 1;
@@ -836,7 +837,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
               // x-axis is the bottom strip; its height comes from its own pane.
               const txt = cs.vertical.text;
               const label = txt.show !== false ? crosshairLabelFmtRef.current(syncTs) : "";
-              const xAxisH = chart.getSize("x_axis_pane", DomPosition.Root)?.height ?? 0;
+              const xAxisH = chart.getSize("x_axis_pane", 'root')?.height ?? 0;
               if (label && xAxisH > 1) {
                 ctx.save();
                 ctx.font = `${txt.weight} ${txt.size}px ${txt.family}`;
@@ -852,7 +853,12 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
                 const cy = h - xAxisH / 2; // vertically centered in the x-axis strip
                 const left = cx - boxW / 2;
                 const top = cy - boxH / 2;
-                const r = Math.min(txt.borderRadius, boxH / 2);
+                // v10 widened borderRadius to number | number[] (per-corner); our
+                // axis label uses a single radius, so collapse an array to its first.
+                const borderRadius = Array.isArray(txt.borderRadius)
+                  ? (txt.borderRadius[0] ?? 0)
+                  : txt.borderRadius;
+                const r = Math.min(borderRadius, boxH / 2);
                 ctx.beginPath();
                 ctx.moveTo(left + r, top);
                 ctx.arcTo(left + boxW, top, left + boxW, top + boxH, r);
@@ -878,7 +884,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // main pane at the live bid (blue) and ask (red). Labels are DOM pills; this
         // draws only the lines, and only in "lines" mode while the feed is live.
         if (bidAskRef.current === "lines" && statusRef.current === "live") {
-          const mainW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? w;
+          const mainW = chart.getSize("candle_pane", 'main')?.width ?? w;
           const st = bidAskStyleRef.current;
           // opacity + dash apply to the lines (the labels stay opaque). hexToRgba
           // folds the opacity into the stroke since canvas has no line-alpha field.
@@ -913,7 +919,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
             lineCacheRef.current,
             sel,
             chartColors[themeRef.current].bg,
-            chart.getBarSpace(),
+            chart.getBarSpace().bar,
           );
           // Crossing dots: where the selected curve crosses every other
           // candle-pane curve, painted after the handles so they sit on top.
@@ -935,7 +941,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
             lineCacheRef.current,
             { paneId: "candle_pane", name: hovName },
             chartColors[themeRef.current].bg,
-            chart.getBarSpace(),
+            chart.getBarSpace().bar,
           );
         }
         // Hovering an indicator's CURVE (any pane) shows it in selected mode too —
@@ -949,7 +955,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
             lineCacheRef.current,
             curveHov,
             chartColors[themeRef.current].bg,
-            chart.getBarSpace(),
+            chart.getBarSpace().bar,
           );
         }
         // AVWAP anchor grab handle — only while AVWAP is selected and its anchor
@@ -975,7 +981,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // Always rebuild — pills can show with no selection at all (an "always"
         // indicator) or for the selected/hovered targets. buildCurveLabelPills
         // returns [] when nothing qualifies, clearing the overlay.
-        const maxX = chart.getSize("candle_pane", DomPosition.Main)?.width ?? w;
+        const maxX = chart.getSize("candle_pane", 'main')?.width ?? w;
         curveLabelsRef.current?.setPills([
           ...buildCurveLabelPills(lineCacheRef.current, labelTargets, maxX),
           ...buildSlopeMaPills(chart, labelTargets, maxX),
@@ -1017,7 +1023,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // shows just inside the top.
     const agg = getBacktestAggregate(chart);
     if (agg) {
-      const paneW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      const paneW = chart.getSize("candle_pane", 'main')?.width ?? Infinity;
       const pills: AggPill[] = [];
       for (const cl of agg.clusters) {
         const px = first(
@@ -1049,7 +1055,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // collide on the current (coarser) timeframe (see drawTradeMarkers).
     const exitClusters = exitClustersRef.current;
     if (exitClusters.length > 0) {
-      const paneW = chart.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      const paneW = chart.getSize("candle_pane", 'main')?.width ?? Infinity;
       const exitPills: ExitPill[] = [];
       for (const cl of exitClusters) {
         const px = first(

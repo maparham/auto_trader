@@ -7,11 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   init,
   dispose,
-  LoadDataType,
-  DomPosition,
-  ActionType,
   type Chart,
-  type Indicator,
   type KLineData,
 } from "klinecharts";
 import {
@@ -78,8 +74,6 @@ import {
 } from "./lib/signals";
 import {
   saveAvwapAnchor,
-  saveIndicatorVisible,
-  saveIndicators,
   saveScalePriceOnly,
   loadLegendCollapsed,
   saveLegendCollapsed,
@@ -97,6 +91,7 @@ import {
   collapseSubPanes,
   expandSubPanes,
   hydrateIndicators,
+  getIndicatorsByPane,
 } from "./lib/indicators";
 import { onLayoutChanged } from "./lib/persist/layoutEvents";
 import { scheduleAutoSave, cancelAutoSave } from "./lib/templateAutosave";
@@ -143,6 +138,8 @@ import { makeFormatDate } from "./lib/timeFormat";
 import { formatRemaining, resolveExpiry } from "./lib/alertUi";
 import { isSynthetic } from "./lib/syntheticRegistry";
 import type { ChartHandle, RangeReq } from "./chart/chartHandle";
+import { createChartDataFacade, type ChartDataFacade } from "./chart/chartDataFacade";
+import { applyScalePriceOnly } from "./chart/priceOnlyRange";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
 import { useRangeNavigation } from "./chart/useRangeNavigation";
 import { useChartPaint } from "./chart/useChartPaint";
@@ -255,6 +252,7 @@ export default function ChartCore({
     autoScale,
     invertScale,
     scalePriceOnly,
+    logScale,
     measureArmed,
     slopeArmed,
     rangePickArmed,
@@ -268,6 +266,7 @@ export default function ChartCore({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<Chart | null>(null);
+  const dataFacadeRef = useRef<ChartDataFacade | null>(null);
   const wsRef = useRef<LiveHandle | null>(null);
   const inited = useRef(false);
   // Prior sub-pane heights captured when the double-click "hide bottom sub-panes"
@@ -332,7 +331,7 @@ export default function ChartCore({
         setSnapView(null);
         const c = chartRef.current;
         if (c && snapMarkerIdRef.current) {
-          c.removeOverlay(snapMarkerIdRef.current);
+          c.removeOverlay({ id: snapMarkerIdRef.current });
           snapMarkerIdRef.current = null;
         }
         overlays.setReadOnly(false);
@@ -832,6 +831,7 @@ export default function ChartCore({
       level: number;
       pl: number | null; // entry: uPnL; SL/TP: P/L if that level is hit
       changed: boolean; // this line has an un-applied drag → show Apply/Discard
+      expiresAt: number | null; // resting order good-till-date epoch ms; null = GTC/position
       // entry pill only: which level merged into the entry at breakeven (SL or TP sits
       // at entry) → show a "BE" chip; the field says which pending edit Discard clears.
       breakevenField?: "stop" | "takeProfit";
@@ -916,7 +916,7 @@ export default function ChartCore({
   const positionPill = useCallback((node: HTMLDivElement) => {
     const c = chartRef.current;
     const cont = containerRef.current;
-    const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width ?? cont?.clientWidth ?? 0;
+    const mainW = c?.getSize("candle_pane", 'main')?.width ?? cont?.clientWidth ?? 0;
     const gap = 14;
     const w = node.offsetWidth;
     let left = cursorXRef.current + gap;
@@ -1029,35 +1029,52 @@ export default function ChartCore({
   useEffect(
     () =>
       invertScale.subscribe((reverse) => {
-        // setStyles triggers a synchronous repaint that can throw from deep in
-        // klinecharts (x-axis tick formatting on a NaN scroll offset — a latent
-        // bug unrelated to inversion) AFTER the style is already committed.
+        // overrideYAxis triggers a synchronous repaint that can throw from deep in
+        // klinecharts (x-axis tick formatting on a NaN scroll offset, a latent
+        // bug unrelated to inversion) AFTER the override is already committed.
         // Signal.set stops notifying on a throw, so contain it here or the
         // toolbar "I" button (a later subscriber) would miss the flip.
         try {
-          chartRef.current?.setStyles({ yAxis: { reverse } });
+          // v10 moved `reverse` off styles.yAxis onto the axis itself.
+          chartRef.current?.overrideYAxis({ paneId: "candle_pane", reverse });
         } catch (e) {
           console.error("invert-scale repaint", e);
         }
       }),
     [invertScale],
   );
-  // Flip "scale price chart only": persist it, push it onto the live chart, and
-  // re-apply the current y-axis type to force calcRange to rerun (same recompute
-  // path the auto-fit double-click uses).
+  // Re-assert the scale-price-only createRange after a log/normal toggle. The
+  // log toggle passes a new axis `name`, which recreates the candle pane's y-axis
+  // from its template and drops our createRange override. The override itself is
+  // axis-type-aware (delegates the log10 transform to the live axis), so simply
+  // re-installing it restores candles-only fitting on whichever axis kind is now
+  // active. (autoFit re-applies the SAME name, which merges and preserves the
+  // override, so no re-assert is needed there.)
+  useEffect(
+    () =>
+      logScale.subscribe(() => {
+        const c = chartRef.current;
+        if (c) applyScalePriceOnly(c, scalePriceOnly.value);
+      }),
+    [logScale, scalePriceOnly],
+  );
+  // Flip "scale price chart only": persist it and swap the candle pane's
+  // createRange override (candles-only vs the framework's default full-pane fit).
+  // v10 replaced v9's cheap private scale-price-only flag with a supported createRange
+  // override, and overrideYAxis is the only way to change it: that call resets
+  // the axis auto-calc flag and re-fits (the same recompute the auto-fit
+  // double-click triggers). So unlike v9 we can no longer stage the setting
+  // without re-fitting, and the v9 "skip re-fit while manually zoomed" guard is
+  // gone: toggling always re-fits the candle pane. Any manual zoom is discarded,
+  // which is preferable to silently applying a stale setting on the next fit.
   const toggleScalePriceOnly = useCallback(() => {
     const next = !scalePriceOnly.value;
     scalePriceOnly.set(next);
     saveScalePriceOnly(scope, next);
     const c = chartRef.current;
     if (!c) return;
-    (c as unknown as { _scalePriceOnly?: boolean })._scalePriceOnly = next;
-    // Only re-fit while in auto-scale mode. If the user manually scaled the axis
-    // (autoScale off), calcRange is bypassed so the flag has no effect yet — and
-    // re-applying the y-axis type would discard their manual zoom AND leave the
-    // toolbar "A" falsely off. The flag then takes effect the next time they re-fit.
-    if (autoScale.value) c.setStyles({ yAxis: { type: c.getStyles().yAxis.type } });
-  }, [scalePriceOnly, scope, autoScale]);
+    applyScalePriceOnly(c, next);
+  }, [scalePriceOnly, scope]);
   // status read inside the once-mounted countdown interval without re-subscribing.
   const statusRef = useRef<LiveStatus>(status);
   statusRef.current = status;
@@ -1184,6 +1201,7 @@ export default function ChartCore({
       controller,
       overlays,
       chartRef,
+      dataFacadeRef,
       redrawRef,
       posDrawRef,
       posLinesRef,
@@ -1253,15 +1271,20 @@ export default function ChartCore({
     const chart = init(el);
     if (!chart) return;
     chartRef.current = chart;
-    // Seed the "scale price chart only" flag onto the live chart before any render
-    // or indicator add, so the patched YAxisImp.calcRange fits candles-only from the
-    // first frame (see chartController.scalePriceOnly). Read via a cast — it's an
-    // app-owned property on the klinecharts instance, not part of its public type.
-    (chart as unknown as { _scalePriceOnly?: boolean })._scalePriceOnly =
-      scalePriceOnly.value;
+    // v10 data pipeline: the facade owns setDataLoader and replays our
+    // push-based data (setBars/pushBar) as pull-based getBars/subscribeBar.
+    const dataFacade = createChartDataFacade();
+    dataFacade.attach(chart);
+    dataFacadeRef.current = dataFacade;
+    // Seed the "scale price chart only" createRange override onto the live chart
+    // before any render or indicator add, so the candle pane fits candles-only
+    // from the first frame (see chart/priceOnlyRange.ts). The override persists on
+    // the axis across auto-fits (same-name overrideYAxis merges); only a log-scale
+    // toggle recreates the axis and drops it, so we re-apply on logScale change.
+    applyScalePriceOnly(chart, scalePriceOnly.value);
     setChartReady(true);
     chart.setTimezone(timezone || browserTimezone());
-    chart.setCustomApi({ formatDate: makeFormatDate(clock, dateFormat, showWeekday) });
+    chart.setFormatter({ formatDate: makeFormatDate(clock, dateFormat, showWeekday) });
 
     // Preload the Material Symbols subset the legend icons are drawn from, then
     // nudge a redraw — otherwise the first hover can paint before the canvas font
@@ -1271,39 +1294,13 @@ export default function ChartCore({
       .then(() => chartRef.current?.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current, candleHiddenRef.current)))
       .catch(() => {});
 
-    // Indicator legend action icons (TradingView-style, configured in chartTheme):
-    // gear opens the per-indicator settings modal, eye toggles visibility, ✕
-    // removes. Removal is announced via indicatorRemoved so the Toolbar keeps its
-    // active-set / paneByName / persisted list in sync (the legend bypasses it).
-    chart.subscribeAction(
-      ActionType.OnTooltipIconClick,
-      (data?: { paneId: string; indicatorName: string; iconId: string }) => {
-        const c = chartRef.current;
-        if (!c || !data) return;
-        if (snapViewRef.current) return; // read-only snapshot view
-        const { paneId, indicatorName: name, iconId } = data;
-        if (iconId === "setting") {
-          indicatorSettingsRequest.set({ paneId, name });
-        } else if (iconId === "visible_toggle") {
-          const ind = c.getIndicatorByPaneId(paneId, name) as
-            | { visible?: boolean }
-            | null;
-          const next = !(ind?.visible ?? true);
-          c.overrideIndicator({ name, visible: next }, paneId);
-          saveIndicatorVisible(scope, name, next);
-          // Redraw our overlay so a hidden Slope drops its on-chart MA at once.
-          handle.redrawRef.current();
-        } else if (iconId === "remove") {
-          c.removeIndicator(paneId, name);
-          const next = controller.indicators.value.filter((i) => i.id !== name);
-          controller.indicators.set(next);
-          saveIndicators(scope, next);
-          indicatorRemoved.set(name);
-          // Redraw our overlay so a removed Slope's on-chart MA clears at once.
-          handle.redrawRef.current();
-        }
-      },
-    );
+    // Indicator legend action icons (gear/eye/remove) are driven entirely by our own
+    // DOM legend (ChartLegend + useIndicatorCommands' onLegend* handlers), not by
+    // klinecharts' canvas tooltip: our indicator tooltip source emits `features: []`
+    // (lib/indicators/shared.ts legendTooltipSource), so klinecharts never draws a
+    // feature icon and its v10 'onIndicatorTooltipFeatureClick' action can never fire.
+    // The v9 OnTooltipIconClick subscription here was therefore dead; removed rather
+    // than ported (no-legacy-code rule). See task-6-report.md for the evidence.
 
     // Repaint the selection overlay. Our dots live on our OWN canvas (not
     // klinecharts'), so we just re-run the component's redraw (wired via ref once
@@ -1423,7 +1420,7 @@ export default function ChartCore({
     const alertHitTest = (x: number, y: number): string | null => {
       const c = chartRef.current;
       if (!c) return null;
-      const mainW = c.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      const mainW = c.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (x > mainW) return null;
       for (const a of overlays.getAlerts()) {
         const ay = first(
@@ -1498,7 +1495,7 @@ export default function ChartCore({
     ): { id: string; field: TradeLineField } | null => {
       const c = chartRef.current;
       if (!c) return null;
-      const mainW = c.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      const mainW = c.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (x > mainW) return null;
       const bars = c.getDataList() ?? [];
       const oldestTs = bars.length ? bars[0].timestamp : null;
@@ -1599,7 +1596,7 @@ export default function ChartCore({
         // only affects the candle pane. Restrict the toggle to the candle pane's own
         // axis strip (the topmost pane); a right-click on a sub-pane (RSI/MACD/Volume)
         // axis falls through to native behavior, since the toggle can't scale it.
-        const candleH = c.getSize("candle_pane", DomPosition.Main)?.height ?? 0;
+        const candleH = c.getSize("candle_pane", 'main')?.height ?? 0;
         if (candleH && e.clientY - rect.top <= candleH) {
           e.preventDefault();
           setAxisMenu({ x: e.clientX, y: e.clientY });
@@ -1616,7 +1613,7 @@ export default function ChartCore({
       // convertFromPixel still returns an EXTRAPOLATED number, not null — so guard on
       // the candle pane's own bounds (mirroring onMove's candleBottom check) and leave
       // price null there, so the menu shows only Paste/Settings.
-      const cb = c.getSize("candle_pane", DomPosition.Root);
+      const cb = c.getSize("candle_pane", 'root');
       const inCandle =
         cb != null && menuY >= cb.top && menuY <= cb.top + cb.height;
       const pt = inCandle
@@ -1672,7 +1669,7 @@ export default function ChartCore({
       if (measureArmed.value || overlays.isMeasureDrawing()) return;
       // The price-axis strip is a scale gesture, not a measurement.
       const c = chartRef.current;
-      const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      const mainW = c?.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (e.clientX - el.getBoundingClientRect().left > mainW) return;
       measureArmed.set(true); // → startMeasureDraw() synchronously; THIS click sets the start
     };
@@ -1878,7 +1875,7 @@ export default function ChartCore({
     const onRangePickDown = (e: MouseEvent) => {
       if (!rangePickArmed.value || e.button !== 0) return;
       const c = chartRef.current;
-      const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width ?? Infinity;
+      const mainW = c?.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (e.clientX - el.getBoundingClientRect().left > mainW) return; // price-axis strip
       // Second click of a click-move-click ends the selection here.
       if (rangePickPhase === "track") {
@@ -1912,7 +1909,7 @@ export default function ChartCore({
     // (re-enter auto) handlers below.
     const overPriceAxis = (e: MouseEvent): boolean => {
       const c = chartRef.current;
-      const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width ?? 0;
+      const mainW = c?.getSize("candle_pane", 'main')?.width ?? 0;
       if (!mainW) return false;
       return e.clientX - el.getBoundingClientRect().left > mainW;
     };
@@ -1926,17 +1923,19 @@ export default function ChartCore({
     // re-fit the price axis and re-highlight the toolbar "A".
     const onAxisDblClick = (e: MouseEvent) => {
       if (e.button !== 0 || !overPriceAxis(e)) return;
-      // Re-applying the current y-axis type recomputes the fit, clearing any
-      // manual zoom (matches Toolbar.autoFit).
-      const type = chartRef.current?.getStyles().yAxis.type;
-      chartRef.current?.setStyles({ yAxis: { type } });
+      // Re-applying the current y-axis kind recomputes the fit, clearing any
+      // manual zoom (matches Toolbar.autoFit). v10: overrideYAxis resets the
+      // axis auto-calc flag; the kind is the y-axis `name`.
+      const c = chartRef.current;
+      const name = c?.getYAxes({ paneId: "candle_pane" })[0]?.name ?? "normal";
+      c?.overrideYAxis({ paneId: "candle_pane", name });
       autoScale.set(true);
     };
     // True when the pointer y is within the time-axis strip (below the candle
     // pane's main area). Mirrors overPriceAxis but for the bottom edge.
     const overTimeAxis = (e: MouseEvent): boolean => {
       const c = chartRef.current;
-      const xAxisH = c?.getSize("x_axis_pane", DomPosition.Root)?.height ?? 0;
+      const xAxisH = c?.getSize("x_axis_pane", 'root')?.height ?? 0;
       if (!xAxisH) return false;
       const rect = el.getBoundingClientRect();
       return e.clientY - rect.top > rect.height - xAxisH;
@@ -1947,17 +1946,17 @@ export default function ChartCore({
     // the pane's right edge (matching plain setBarSpace's natural anchor, which
     // holds the right-offset fixed) via zoomAtCoordinate rather than
     // chart.setBarSpace directly: setBarSpace never fires klinecharts'
-    // ActionType.OnZoom, so the lock-charts date-range sync below (subscribed
+    // 'onZoom', so the lock-charts date-range sync below (subscribed
     // to OnZoom/OnScroll) would silently fail to mirror this reset to sibling
     // cells. zoomAtCoordinate goes through the same zoom() path a wheel-zoom
     // gesture does, so it fires OnZoom like any other zoom.
     const onTimeAxisDblClick = (e: MouseEvent) => {
       if (e.button !== 0 || !overTimeAxis(e)) return;
       const c = chartRef.current;
-      const cur = c?.getBarSpace();
-      const mainW = c?.getSize("candle_pane", DomPosition.Main)?.width;
+      const cur = c?.getBarSpace().bar;
+      const mainW = c?.getSize("candle_pane", 'main')?.width;
       if (!c || !cur || !mainW) return;
-      c.zoomAtCoordinate(DEFAULT_BAR_SPACE / cur, { x: mainW });
+      c.zoomAtCoordinate(DEFAULT_BAR_SPACE / cur, { x: mainW, y: 0 });
     };
 
     // A removed indicator (legend trash icon) must drop its selection, or a
@@ -2061,13 +2060,14 @@ export default function ChartCore({
       // NOTE: shares cursorSecRef/exhaustedRef/loadingRef with the quick-range walk
       // (ensureCoverageAndFit) — see its "DESIGN DEBT" comment before adding a third
       // paging consumer.
-      chart.setLoadDataCallback((params) => {
-        if (params.type !== LoadDataType.Forward) {
-          params.callback([], params.type === LoadDataType.Backward ? false : true);
+      dataFacade.onLoadRequest = (type, timestamp, done) => {
+        if (type !== 'forward') {
+          // Backward (newer) loads have no source here: v9 returned more=false.
+          done([], false);
           return;
         }
-        if (exhaustedRef.current || loadingRef.current || !params.data) {
-          params.callback([], !exhaustedRef.current);
+        if (exhaustedRef.current || loadingRef.current || timestamp == null) {
+          done([], !exhaustedRef.current);
           return;
         }
         loadingRef.current = true;
@@ -2081,7 +2081,7 @@ export default function ChartCore({
         // cursor follows fromSec exactly. ~6yr keeps the base fetch to a few pages.
         const MAX_PAGE_SPAN_SEC = 6 * 365 * 86400;
         const fromSec = toSec - Math.min(PAGE_BARS * resSec, MAX_PAGE_SPAN_SEC);
-        const boundary = params.data.timestamp;
+        const boundary = timestamp;
         const epic = epicRef.current;
         const resolution = resRef.current;
         const broker = brokerIdRef.current;
@@ -2093,7 +2093,7 @@ export default function ChartCore({
               resolution !== resRef.current ||
               broker !== brokerIdRef.current
             ) {
-              params.callback([], true);
+              done([], true);
               return;
             }
             cursorSecRef.current = fromSec; // advance back even across gaps
@@ -2102,16 +2102,16 @@ export default function ChartCore({
               emptyStreakRef.current += 1;
               if (emptyStreakRef.current >= MAX_EMPTY_WINDOWS) {
                 exhaustedRef.current = true;
-                params.callback([], false);
+                done([], false);
               } else {
-                params.callback([], true); // keep walking back past the gap
+                done([], true); // keep walking back past the gap
               }
             } else {
               emptyStreakRef.current = 0;
               // A Forward load: klinecharts' own updatePointPosition shifts
               // dataIndex-only overlay points by the prepend size here — do NOT
               // shift them again (see applyOlderBars for the INIT-type path).
-              params.callback(fresh, true);
+              done(fresh, true);
               // Extend any HTF EMA/MA overlay back over the newly-loaded range so
               // the MTF curve doesn't stop where the older bars begin. `fresh[0]`
               // is the new global oldest (explicit — klinecharts may not have merged
@@ -2119,12 +2119,12 @@ export default function ChartCore({
               extendMtfCoverage(fresh[0].timestamp);
             }
           })
-          .catch(() => params.callback([], true))
+          .catch(() => done([], true))
           .finally(() => {
             loadingRef.current = false;
           });
-      });
-      overlays.attach(chart);
+      };
+      overlays.attach(chart, dataFacade);
       // On-chart trade lines for this cell. Subscribes to the shared trades poll
       // AND pending drags, and redraws (filtered to THIS cell's epic, pending
       // merged over server levels) on every update. Bound to this chart instance,
@@ -2574,9 +2574,11 @@ export default function ChartCore({
   }, [marketClosed]);
 
   // Apply precision to the chart whenever it resolves (the async fetch lands after
-  // the symbol/period effect's initial setPriceVolumePrecision).
+  // the symbol/period effect declares the symbol at its initial precision). v10
+  // carries precision on the symbol, so re-declare it; the facade serves stored
+  // bars, so the getBars(init) this triggers just re-paints at the new decimals.
   useEffect(() => {
-    chartRef.current?.setPriceVolumePrecision(effPrecision, 0);
+    dataFacadeRef.current?.setSymbol(epicRef.current, effPrecision, 0);
     overlays.setPricePrecision(effPrecision); // keep alert-level rounding in lockstep
     handle.redrawRef.current(); // re-place the price/bid/ask pills at the new decimals
     tradeMarkersDrawRef.current(); // entry labels carry the price at this precision
@@ -2592,24 +2594,21 @@ export default function ChartCore({
     const resolved = timezone || browserTimezone();
     c.setTimezone(resolved);
     if (!setIndicatorTimezone(resolved)) return; // zone unchanged → nothing to redo
-    const candlePane = c.getIndicatorByPaneId("candle_pane") as
-      | Map<string, Indicator>
-      | null
-      | undefined;
+    const candlePane = getIndicatorsByPane(c).get("candle_pane");
     for (const [id, ind] of candlePane ?? []) {
       if (indTypeOf(ind) !== "PREV_HL") continue;
       c.overrideIndicator({ name: id, extendData: { ...(ind.extendData as object) } });
     }
   }, [timezone]);
 
-  // Time-axis format changes -> re-register the formatter. setCustomApi doesn't
+  // Time-axis format changes -> re-register the formatter. setFormatter doesn't
   // force a repaint on its own, so nudge one via setStyles (same trick the
   // font-load path uses) to reformat the axis ticks + crosshair label at once.
   useEffect(() => {
     const c = chartRef.current;
     if (!c) return;
     const fmt = makeFormatDate(clock, dateFormat, showWeekday);
-    c.setCustomApi({ formatDate: fmt });
+    c.setFormatter({ formatDate: fmt });
     c.setStyles(klineStyles(themeRef.current, legendHovered.value, crosshairRef.current, candleHiddenRef.current));
     // The full base-style re-apply un-hides the last-price line; if an alert is
     // selected it must stay hidden, so re-assert (see the theme effect's rationale).
@@ -2634,7 +2633,10 @@ export default function ChartCore({
     } catch {
       dtf = null;
     }
-    crosshairLabelFmtRef.current = dtf ? (ts: number) => fmt(dtf!, ts, "YYYY-MM-DD HH:mm") : () => "";
+    crosshairLabelFmtRef.current = dtf
+      ? (ts: number) =>
+          fmt({ dateTimeFormat: dtf!, timestamp: ts, template: "YYYY-MM-DD HH:mm", type: "crosshair" })
+      : () => "";
   }, [clock, dateFormat, showWeekday, timezone]);
 
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
@@ -2839,9 +2841,9 @@ export default function ChartCore({
   useEffect(() => {
     overlays.setAlertsListener(redraw);
     const chart = chartRef.current;
-    chart?.subscribeAction(ActionType.OnScroll, redraw);
-    chart?.subscribeAction(ActionType.OnZoom, redraw);
-    chart?.subscribeAction(ActionType.OnPaneDrag, redraw);
+    chart?.subscribeAction('onScroll', redraw);
+    chart?.subscribeAction('onZoom', redraw);
+    chart?.subscribeAction('onPaneDrag', redraw);
     // OnPaneDrag keeps the cards moving DURING the drag; the final mouseup frame can
     // settle the pane geometry without another action, so re-read after layout on
     // pointerup (rAF = post-layout). A ResizeObserver on the container catches the
@@ -2868,9 +2870,9 @@ export default function ChartCore({
       unsubAlerts();
       ro.disconnect();
       window.removeEventListener("pointerup", onPointerUp);
-      chart?.unsubscribeAction(ActionType.OnScroll, redraw);
-      chart?.unsubscribeAction(ActionType.OnZoom, redraw);
-      chart?.unsubscribeAction(ActionType.OnPaneDrag, redraw);
+      chart?.unsubscribeAction('onScroll', redraw);
+      chart?.unsubscribeAction('onZoom', redraw);
+      chart?.unsubscribeAction('onPaneDrag', redraw);
     };
   }, [redraw]);
 
@@ -2882,8 +2884,11 @@ export default function ChartCore({
   // rAF-throttles crosshair changes, and we only touch textContent (no re-render).
   useEffect(() => {
     const chart = chartRef.current;
-    const onCrosshair = (data?: { dataIndex?: number }) => {
-      const idx = typeof data?.dataIndex === "number" ? data.dataIndex : null;
+    // v10 ActionCallback is (data?: unknown) => void; the crosshair change payload
+    // carries an optional dataIndex, narrowed here.
+    const onCrosshair = (data?: unknown) => {
+      const dataIndex = (data as { dataIndex?: number } | undefined)?.dataIndex;
+      const idx = typeof dataIndex === "number" ? dataIndex : null;
       crosshairIdxRef.current = idx;
       // (The Pivots-High/Low Δ-label hover-enlarge is now driven by a real pixel
       // hit-test off the cursor position in usePointerCrosshair's onMove, not this
@@ -2927,8 +2932,8 @@ export default function ChartCore({
         }
       }
     };
-    chart?.subscribeAction(ActionType.OnCrosshairChange, onCrosshair);
-    return () => chart?.unsubscribeAction(ActionType.OnCrosshairChange, onCrosshair);
+    chart?.subscribeAction('onCrosshairChange', onCrosshair);
+    return () => chart?.unsubscribeAction('onCrosshairChange', onCrosshair);
   }, [cellId]);
 
   // Receive sibling cells' crosshair broadcasts for this tab and paint a vertical
@@ -3011,14 +3016,14 @@ export default function ChartCore({
     // claims on real user input — preserving the user-vs-programmatic distinction
     // that keeps the A→B→A echo loop closed.
     container.addEventListener("wheel", claim, { capture: true, passive: true });
-    chart.subscribeAction(ActionType.OnScroll, onRange);
-    chart.subscribeAction(ActionType.OnZoom, onRange);
+    chart.subscribeAction('onScroll', onRange);
+    chart.subscribeAction('onZoom', onRange);
     return () => {
       container.removeEventListener("pointerenter", claim);
       container.removeEventListener("pointerdown", claim);
       container.removeEventListener("wheel", claim, { capture: true });
-      chart.unsubscribeAction(ActionType.OnScroll, onRange);
-      chart.unsubscribeAction(ActionType.OnZoom, onRange);
+      chart.unsubscribeAction('onScroll', onRange);
+      chart.unsubscribeAction('onZoom', onRange);
       // Drop ownership if this (unmounting) cell held it, so the global never points
       // at a dead cell and a freshly-mounted cell's first scroll isn't suppressed.
       releaseGestureCell(cellId);

@@ -85,8 +85,9 @@ export class ChartController {
   // TradingView-style "Scale price chart only": when true, the candle-pane price
   // axis auto-fits to the candle OHLC only — overlay indicators no longer expand it,
   // so adding an overlay never shrinks the candles. Persisted per cell (default on),
-  // hydrated in the constructor. Applied to the live chart via chart._scalePriceOnly
-  // (read by the patched YAxisImp.calcRange). The right-click price-axis menu toggles it.
+  // hydrated in the constructor. Applied to the live chart via a supported v10
+  // createRange override on the candle pane (see chart/priceOnlyRange.ts); v9's
+  // patched YAxisImp.calcRange is retired. The right-click price-axis menu toggles it.
   readonly scalePriceOnly = new Signal<boolean>(true);
   // The selected indicator (drives the hollow selection handles on its curve).
   readonly selectedIndicator = new Signal<SelectedIndicator | null>(null);

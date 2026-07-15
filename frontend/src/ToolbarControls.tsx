@@ -4,7 +4,6 @@
 // toolbars compose the exact same DOM for the controls they have in common.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { YAxisType } from "klinecharts";
 import {
   PERIOD_GROUPS,
   quickBarPeriods,
@@ -246,15 +245,18 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
     () => controller?.invertScale.value ?? false,
   );
 
-  function setScale(type: YAxisType) {
-    chart?.setStyles({ yAxis: { type } });
-    controller?.logScale.set(type === YAxisType.Log);
+  // v10: the y-axis kind (normal/logarithm/percentage) is a registered axis named
+  // via overrideYAxis, not a style enum. Swapping the name re-fits the range.
+  function setScale(name: "normal" | "logarithm") {
+    chart?.overrideYAxis({ paneId: "candle_pane", name });
+    controller?.logScale.set(name === "logarithm");
   }
 
   function autoFit() {
-    // klinecharts auto-fits the price axis to visible bars; re-applying the
-    // axis style recomputes the range, clearing any manual zoom ("fit to data").
-    chart?.setStyles({ yAxis: { type: log ? YAxisType.Log : YAxisType.Normal } });
+    // klinecharts auto-fits the price axis to visible bars; re-applying the axis
+    // (overrideYAxis resets the auto-calc flag) recomputes the range, clearing any
+    // manual zoom ("fit to data"). Re-assert the current kind while doing so.
+    chart?.overrideYAxis({ paneId: "candle_pane", name: log ? "logarithm" : "normal" });
     // Re-enter auto mode (TV-style): stays highlighted until the user manually
     // scales the price axis again (ChartCore flips it back off).
     controller?.autoScale.set(true);
@@ -272,7 +274,7 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
       <button
         title="Logarithmic scale"
         className={log ? "on" : ""}
-        onClick={() => setScale(log ? YAxisType.Normal : YAxisType.Log)}
+        onClick={() => setScale(log ? "normal" : "logarithm")}
       >
         L
       </button>
