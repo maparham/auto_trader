@@ -277,6 +277,9 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // Ask the backend for the per-bar inspector trace only while inspect mode
         // is on (rule mode only — coded strategies have no rule groups to trace).
         inspect: inspectModeSignal.value && !coded,
+        // Always-on for single runs: the handler skips it when a sweep is set,
+        // so the sweep path below pays nothing.
+        costSensitivity: true,
       };
 
       // Sweep mode (Task 10): the modal populated sweepAxesSignal and asked for

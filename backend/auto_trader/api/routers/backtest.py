@@ -18,6 +18,7 @@ from auto_trader.core.run_store import RUN_STORE
 from auto_trader.engine.analysis import compute_analysis
 from auto_trader.engine.backtest import BacktestEngine, BacktestResult
 from auto_trader.engine.context_features import enrich_trades
+from auto_trader.engine.cost_sense import breakeven_multiple
 from auto_trader.engine.exit_time import attach_exit_times
 from auto_trader.engine.whatif import enrich_trades_whatif
 from auto_trader.engine.metrics import (
@@ -339,6 +340,41 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         logger.warning("what-if enrichment failed; continuing without it",
                        exc_info=True)
 
+    # Cost sensitivity (single runs only): re-run the engine at 0x/2x/3x costs.
+    # The 1x point is the run we already have. Slippage and per-side commission
+    # scale together; breakeven_multiple interpolates the zero crossing.
+    cost_sensitivity = None
+    if req.costSensitivity and req.sweep is None:
+        multiples = [0.0, 1.0, 2.0, 3.0]
+        # Nothing to scale (zero assumed costs) or no trades: every multiple
+        # lands on the same net, so skip the re-runs entirely.
+        if (req.costs.slippage == 0 and req.costs.commissionPerSide == 0) or result.n_trades == 0:
+            nets: list[float] = [result.net_pnl] * 4
+        else:
+            nets = []
+            for m in multiples:
+                if m == 1.0:
+                    nets.append(result.net_pnl)
+                    continue
+                scaled = req.model_copy(update={
+                    "inspect": False,
+                    "costs": req.costs.model_copy(update={
+                        "slippage": req.costs.slippage * m,
+                        "commissionPerSide": req.costs.commissionPerSide * m,
+                    }),
+                })
+                if req.codedStrategy is not None:
+                    r, _ = await _run_coded(scaled, candles, module, resolved_params,
+                                            req.longRisk, req.shortRisk, dict(htf_candles))
+                else:
+                    r = await _run_rule(scaled, candles)
+                nets.append(r.net_pnl)
+        cost_sensitivity = {
+            "multiples": multiples,
+            "net_pnl": [round(n, 5) for n in nets],
+            "breakeven_multiple": breakeven_multiple(multiples, nets),
+        }
+
     trades_dto = [
         TradeDTO(
             side=t.side.value,
@@ -449,6 +485,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         bar_traces=_bar_traces_dto(result, req.tradeFromTime) if req.inspect else None,
         run_id=run_id,
         analysis=analysis,
+        cost_sensitivity=cost_sensitivity,
     )
 
 
@@ -724,6 +761,8 @@ def _sweep_row(req: BacktestRequest, combo: dict, result) -> SweepRowDTO:
         "profit_factor": metrics.get("profit_factor"),
         "avg_win_loss_ratio": metrics.get("avg_win_loss_ratio"),
         "return_pct": metrics.get("return_pct"),
+        "sharpe": metrics.get("sharpe"),
+        "sqn": metrics.get("sqn"),
     }
     windows = None
     if req.sweep.windows is not None and "period:from" not in combo:

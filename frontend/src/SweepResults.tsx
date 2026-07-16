@@ -7,9 +7,10 @@
 // row/cell applies that combo via onApply. Session-state only, never persisted.
 // (Spec: docs/superpowers/specs/2026-07-09-strategy-panel-params-design.md)
 
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import type { SweepRow } from "./api";
 import { axisColumnLabel, comboAxisLabel, comboAxisText, type SweepAxis } from "./lib/sweep";
+import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import Tooltip from "./components/Tooltip";
 
@@ -21,6 +22,9 @@ type MetricKey =
   | "avg_win_loss_ratio"
   | "max_drawdown"
   | "profit_factor"
+  | "sharpe"
+  | "sqn"
+  | "plateau_score"
   | "worst_window_pnl"
   | "median_window_pnl"
   | "pct_windows_profitable"
@@ -38,6 +42,12 @@ const METRIC_COLS: { key: MetricKey; label: string; abbr: string; robust?: boole
   { key: "avg_win_loss_ratio", label: "RR", abbr: "RR" },
   { key: "max_drawdown", label: "Drawdown", abbr: "DD" },
   { key: "profit_factor", label: "Profit factor", abbr: "PF" },
+  { key: "sharpe", label: "Sharpe", abbr: "Sh",
+    info: "Annualized Sharpe ratio from daily equity returns. Treat with caution under 30 trades." },
+  { key: "sqn", label: "SQN", abbr: "SQN",
+    info: "System Quality Number: sqrt(trades) times expectancy over trade P&L deviation. Van Tharp's scale calls 2 good and 3 excellent." },
+  { key: "plateau_score", label: "Plateau", abbr: "Plt",
+    info: "Median Net P&L of this cell and its grid neighbors (one step on each numeric axis), capped at the cell's own result. A high plateau beats a high lone peak: neighbors confirm the edge is not one lucky cell." },
   { key: "worst_window_pnl", label: "Worst wnd", abbr: "Wst", robust: true,
     info: "Worst window P&L. The most this combo lost (or least it made) in any single window. High values mean no disaster period." },
   { key: "median_window_pnl", label: "Med wnd", abbr: "Med", robust: true,
@@ -117,6 +127,19 @@ export function SweepResults(props: {
   progress?: { done: number; total: number } | null;
 }) {
   const { rows, axes, onApply, progress } = props;
+
+  // Plateau scoring over the loaded rows: new row objects whose metrics gain
+  // `plateau_score`, so the existing sort / best-per-column / heatmap paths
+  // pick it up as just another metric. `spikes` is aligned to the ORIGINAL
+  // row order while the table renders sorted rows, so carry the flag as a
+  // Set membership by object identity (withPlateau returns fresh objects,
+  // and [...].sort keeps identities).
+  // rows is mutated in place during a streaming sweep (BacktestButton re-sets
+  // the same `landed` array each chunk), so length is the change signal.
+  const { rows: scoredRows, spikes } = useMemo(() => withPlateau(rows, axes), [rows, rows.length, axes]);
+  const spikeSet = new Set(scoredRows.filter((_, i) => spikes[i]));
+  const center = useMemo(() => plateauCenter(scoredRows), [scoredRows]);
+
   const [sort, setSort] = useState<{ key: MetricKey; dir: SortDir } | null>(null);
   const [heatMetric, setHeatMetric] = useState<MetricKey>("net_pnl");
   const [robustOpen, setRobustOpen] = useState(true);
@@ -138,7 +161,7 @@ export function SweepResults(props: {
   // Failed (metrics === null) rows always sort to the bottom, independent of
   // direction — an error isn't "worse" or "better", it's just not comparable.
   const sortedRows = sort
-    ? [...rows].sort((a, b) => {
+    ? [...scoredRows].sort((a, b) => {
         const av = metricValue(a, sort.key);
         const bv = metricValue(b, sort.key);
         if (av === null && bv === null) return 0;
@@ -146,18 +169,18 @@ export function SweepResults(props: {
         if (bv === null) return -1;
         return sort.dir === "asc" ? av - bv : bv - av;
       })
-    : rows;
+    : scoredRows;
 
   // Best value per column (highest wins, except drawdown where smaller-magnitude
   // is better) — only among successful rows.
   const bestByCol: Partial<Record<MetricKey, number>> = {};
   for (const { key } of METRIC_COLS) {
-    const vals = rows.map((r) => metricValue(r, key)).filter((v): v is number => v !== null);
+    const vals = scoredRows.map((r) => metricValue(r, key)).filter((v): v is number => v !== null);
     if (!vals.length) continue;
     bestByCol[key] = key === "max_drawdown" ? Math.min(...vals) : Math.max(...vals);
   }
 
-  const heatVals = rows.map((r) => metricValue(r, heatMetric)).filter((v): v is number => v !== null);
+  const heatVals = scoredRows.map((r) => metricValue(r, heatMetric)).filter((v): v is number => v !== null);
   const maxAbs = heatVals.length ? Math.max(...heatVals.map((v) => Math.abs(v))) : 0;
 
   // While a sweep is still streaming, clicking a row/cell can't apply: the
@@ -169,6 +192,17 @@ export function SweepResults(props: {
   const applyOrNoop = (combo: Record<string, number | boolean | string>) => {
     if (!applyDisabled) onApply(combo);
   };
+
+  // One-click jump to the most robust neighborhood: the row with the highest
+  // plateau_score (ties broken by net P&L). Hidden when nothing is scored
+  // (no numeric range axes, or no successful rows yet).
+  const plateauAction = center && (
+    <button type="button" className="sweep-plateau-apply"
+            disabled={applyDisabled}
+            onClick={() => applyOrNoop(center.combo)}>
+      Apply plateau center
+    </button>
+  );
 
   return (
     <div className="sweep-results">
@@ -192,13 +226,14 @@ export function SweepResults(props: {
 
       {axes.length > 0 && (
         <SweepHeatmap
-          rows={rows}
+          rows={scoredRows}
           axes={axes}
           metric={heatMetric}
           onMetric={setHeatMetric}
           maxAbs={maxAbs}
           onApply={applyOrNoop}
           disabled={applyDisabled}
+          plateauAction={plateauAction}
         />
       )}
 
@@ -230,7 +265,13 @@ export function SweepResults(props: {
               )}
               {baseCols.map((c) => (
                 <th key={c.key} className="sweep-c-num">
-                  <SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} />
+                  {c.info ? (
+                    <Tooltip content={c.info}>
+                      <span><SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} /></span>
+                    </Tooltip>
+                  ) : (
+                    <SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} />
+                  )}
                 </th>
               ))}
               <th className="sweep-robust-toggle-th">
@@ -292,7 +333,11 @@ export function SweepResults(props: {
                     const isBest = v !== null && bestByCol[c.key] === v;
                     return (
                       <td key={c.key} className={`sweep-c-num${isBest ? " sweep-best" : ""}`}>
-                        {fmtMetric(c.key, v)}
+                        {c.key === "plateau_score" && spikeSet.has(row) ? (
+                          <span className="sweep-spike" aria-label="isolated peak">▲ {fmtMetric(c.key, v)}</span>
+                        ) : (
+                          fmtMetric(c.key, v)
+                        )}
                       </td>
                     );
                   })}
@@ -368,6 +413,7 @@ function SweepHeatmap({
   maxAbs,
   onApply,
   disabled,
+  plateauAction,
 }: {
   rows: SweepRow[];
   axes: SweepAxis[];
@@ -376,6 +422,9 @@ function SweepHeatmap({
   maxAbs: number;
   onApply: (combo: Record<string, number | boolean | string>) => void;
   disabled?: boolean;
+  // "Apply plateau center" button, rendered beside the color-metric dropdown
+  // (built by the parent, which owns the scored rows and apply gating).
+  plateauAction?: ReactNode;
 }) {
   // Direction-aware "which row is better" on the selected color metric:
   // higher wins except drawdown (lower wins); a successful row always beats
@@ -459,6 +508,7 @@ function SweepHeatmap({
             <option key={c.key} value={c.key}>{heatLabel(c)}</option>
           ))}
         </select>
+        {plateauAction}
         {axes.length > 2 && (
           <span className="sweep-heat-axes">
             <select aria-label="Heatmap X axis" value={xAxis.target} onChange={(e) => pickX(e.target.value)}>

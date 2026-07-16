@@ -185,6 +185,9 @@ class BacktestResponse(BaseModel):
     # Persisted-run id (None if the store write failed) + aggregate analytics.
     run_id: str | None = None
     analysis: dict | None = None
+    # Cost-sensitivity summary (single runs that opted in). Shaped
+    # {"multiples": [0, 1, 2, 3], "net_pnl": [...], "breakeven_multiple": float | None}.
+    cost_sensitivity: dict | None = None
 
 
 # --- rule-based backtest request (D1/D4/D6: frontend computes series, posts
@@ -403,6 +406,10 @@ class BacktestRequest(BaseModel):
     # Bar inspector opt-in: when True the (rule-based) engine emits a per-bar trace
     # in `bar_traces`. Off by default so a normal run pays nothing.
     inspect: bool = False
+    # Cost-sensitivity opt-in: when True (single runs only) the handler re-runs
+    # the engine at 0x/2x/3x costs and returns the per-multiple net P&L plus the
+    # breakeven cost multiple in `cost_sensitivity`.
+    costSensitivity: bool = False
     # Coded strategy (a backend/strategies/*.py filename). When set, the rule
     # groups above are ignored and the file's on_bar drives the run; series stays
     # empty (Python computes indicators ad hoc — the frontend posts none).

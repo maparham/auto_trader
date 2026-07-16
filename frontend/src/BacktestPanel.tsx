@@ -363,6 +363,15 @@ export default function BacktestPanel() {
                 )}
               </section>
             ))}
+            {result.cost_sensitivity && (
+              <div className="bt-cost-sense">
+                {result.cost_sensitivity.breakeven_multiple === null
+                  ? "Costs: still profitable at 3x assumed costs"
+                  : result.cost_sensitivity.breakeven_multiple === 0
+                    ? "Costs: unprofitable even with zero costs"
+                    : `Costs: breakeven at ${result.cost_sensitivity.breakeven_multiple}x assumed costs`}
+              </div>
+            )}
           </div>
         ) : (
           <TradesTable rows={rows} sort={sort} onSort={toggleSort} highlighted={highlighted} selected={selected} />
