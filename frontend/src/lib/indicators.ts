@@ -219,21 +219,35 @@ interface PaneSnapshot {
 
 // Enumerate the reorderable bottom panes top-to-bottom (skip candle_pane and panes
 // holding only internal indicators), capturing each pane's height + instances.
-function reorderablePanes(chart: Chart): PaneSnapshot[] {
+// `internal` decides which indicators don't count as pane content: reorder/legend
+// exclude accel companions too (isInternalIndicator), while the double-click
+// collapse must include them (collapsiblePanes below): an accel pane is a real
+// on-screen band the user expects to disappear with the rest.
+function bottomPanes(chart: Chart, internal: (name: string) => boolean): PaneSnapshot[] {
   const all = getIndicatorsByPane(chart);
   const out: PaneSnapshot[] = [];
   for (const [paneId, inds] of all ?? []) {
     if (paneId === "candle_pane") continue;
     const insts: IndicatorInstance[] = [];
     for (const ind of inds.values()) {
-      if (!ind?.name || isInternalIndicator(ind.name)) continue;
+      if (!ind?.name || internal(ind.name)) continue;
       insts.push({ id: ind.name, type: indTypeOf(ind) });
     }
-    if (!insts.length) continue; // internal-only pane (e.g. equity) — not reorderable
+    if (!insts.length) continue; // internal-only pane (e.g. equity)
     const height = Math.round(chart.getSize(paneId, 'main')?.height ?? SUBPANE_HEIGHT);
     out.push({ paneId, height, insts });
   }
   return out;
+}
+
+function reorderablePanes(chart: Chart): PaneSnapshot[] {
+  return bottomPanes(chart, isInternalIndicator);
+}
+
+// Panes the double-click collapse gesture owns: every bottom sub-pane except the
+// app-owned EQUITY pane, accel companions included.
+function collapsiblePanes(chart: Chart): PaneSnapshot[] {
+  return bottomPanes(chart, (name) => INTERNAL_INDICATORS.has(name));
 }
 
 // The reorderable sub-pane ids, top-to-bottom. Used by the UI to compute a pane's
@@ -717,13 +731,13 @@ export const COLLAPSED_PANE_HEIGHT = 3;
 // visibility-hiding leaves the empty pane band, which the user explicitly didn't want.
 // klinecharts ignores height:0 (it requires >0), so we use 1px + minHeight:0 and
 // disable the divider drag. Returns the captured prior heights keyed by paneId for
-// expandSubPanes to restore. The internal EQUITY pane is left alone (reorderablePanes
+// expandSubPanes to restore. The internal EQUITY pane is left alone (collapsiblePanes
 // skips it). MUST be called from a fully-expanded state so it captures real heights;
 // a pane already at ~1px is recorded as SUBPANE_HEIGHT so a stray re-capture can't
 // freeze it collapsed forever.
 export function collapseSubPanes(chart: Chart): Map<string, number> {
   const heights = new Map<string, number>();
-  for (const p of reorderablePanes(chart)) {
+  for (const p of collapsiblePanes(chart)) {
     heights.set(p.paneId, p.height > COLLAPSED_PANE_HEIGHT ? p.height : SUBPANE_HEIGHT);
     chart.setPaneOptions({ id: p.paneId, height: 1, minHeight: 0, dragEnabled: false });
   }
@@ -735,7 +749,7 @@ export function collapseSubPanes(chart: Chart): Map<string, number> {
 // freshly recreated at the default height (a symbol switch). Either way the caller's
 // saved height map is the source of truth for restore, so we must not overwrite it.
 export function forceCollapseSubPanes(chart: Chart): void {
-  for (const p of reorderablePanes(chart))
+  for (const p of collapsiblePanes(chart))
     chart.setPaneOptions({ id: p.paneId, height: 1, minHeight: 0, dragEnabled: false });
 }
 
@@ -743,7 +757,7 @@ export function forceCollapseSubPanes(chart: Chart): void {
 // created/recreated while collapsed, whose id isn't in the map), re-enabling the
 // divider drag and the normal min height.
 export function expandSubPanes(chart: Chart, heights: Map<string, number>): void {
-  for (const p of reorderablePanes(chart))
+  for (const p of collapsiblePanes(chart))
     chart.setPaneOptions({
       id: p.paneId,
       height: heights.get(p.paneId) ?? SUBPANE_HEIGHT,
