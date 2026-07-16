@@ -132,6 +132,7 @@ import {
 import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
 import { loadSettings, saveSettings, chartColors, type Settings } from "./theme";
+import { browserTimezone } from "./chart/chartPainters";
 import TabBar from "./TabBar";
 import Tooltip from "./components/Tooltip";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
@@ -1779,6 +1780,7 @@ export default function App() {
             epic={symbol.epic}
             resolution={period.resolution}
             controller={focusedController}
+            chartTimezone={settings.timezone || browserTimezone()}
             onRun={(cfg) => {
               saveBacktestLastUsed(cfg);
               requestBacktestRun();

@@ -329,11 +329,19 @@ export default function BacktestPanel() {
       {(
         tab === "inspect" ? (
           <div className="bt-panel-inspect">
+            <label className={`bt-inspect-check${inspectMode ? " on" : ""}`}>
+              <input
+                type="checkbox"
+                checked={inspectMode}
+                onChange={() => inspectModeSignal.set(!inspectModeSignal.value)}
+              />
+              <span>Trace every rule at every bar on the next run</span>
+            </label>
             {!inspectTrace ? (
               <div className="bt-insp-empty">
                 {inspectMode
                   ? "Run the backtest, then click a bar on the chart to inspect its rules."
-                  : "Turn on Inspect above, run the backtest, then click a bar to see every rule’s value and why a trade did or didn’t open."}
+                  : "Tick the box above, run the backtest, then click a bar to see every rule’s value and why a trade did or didn’t open."}
               </div>
             ) : (
               <BacktestInspectorPanel />

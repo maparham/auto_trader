@@ -93,6 +93,26 @@ export function clearBacktestResult(scope: string, epic: string): void {
   removeKeyEverywhere(backtestKey(scope, epic));
 }
 
+// --- sweep result pointer (per cell, per epic) -------------------------------
+//
+// A sweep's rows live server-side (the reopenable archive, keyed by epic). To
+// make the DISPLAYED sweep belong to one tab+cell — instead of every cell on the
+// same epic auto-showing the newest archive — each cell persists just the archive
+// ID of ITS current sweep. Keyed like the backtest result (scope + epic), mirrored
+// so it survives a reload. On mount the cell reopens this exact archive; a cell
+// with no pointer shows no sweep. The bulky rows are NEVER duplicated here.
+const sweepPointerKey = (scope: string, epic: string) => ns(scope, `sweep.${epic}`);
+
+export function loadSweepResultId(scope: string, epic: string): string | null {
+  return load<string | null>(sweepPointerKey(scope, epic), null);
+}
+export function saveSweepResultId(scope: string, epic: string, id: string): void {
+  save(sweepPointerKey(scope, epic), id);
+}
+export function clearSweepResultId(scope: string, epic: string): void {
+  removeKeyEverywhere(sweepPointerKey(scope, epic));
+}
+
 // --- active indicators (per cell) --------------------------------------------
 
 // One active indicator INSTANCE. `id` is the unique klinecharts name (e.g.

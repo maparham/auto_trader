@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { installMemStorage } from "../testMemStorage";
 
 installMemStorage();
-const { saveBacktestResult, loadBacktestResult } = await import("./artifacts");
+const { saveBacktestResult, loadBacktestResult, loadSweepResultId, saveSweepResultId, clearSweepResultId } =
+  await import("./artifacts");
 const { save } = await import("./core");
 const { EQUITY_PERSIST_CAP } = await import("../equityDownsample");
 
@@ -87,5 +88,29 @@ describe("saveBacktestResult / loadBacktestResult", () => {
     expect(afterLoad).toBe(beforeLoad);
     // Assert: returned result still has 2001 points (not re-thinned).
     expect(loaded.equity.length).toBe(2001);
+  });
+});
+
+describe("sweep result pointer (per scope + epic)", () => {
+  it("round-trips an archive id and isolates scope + epic", () => {
+    expect(loadSweepResultId("tab.A", "US100")).toBeNull();
+
+    saveSweepResultId("tab.A", "US100", "sw-1");
+    expect(loadSweepResultId("tab.A", "US100")).toBe("sw-1");
+
+    // A different cell (scope) on the same epic has its own binding.
+    expect(loadSweepResultId("tab.A.cell.b", "US100")).toBeNull();
+    // The same cell on a different epic is independent.
+    expect(loadSweepResultId("tab.A", "US500")).toBeNull();
+
+    saveSweepResultId("tab.A.cell.b", "US100", "sw-2");
+    expect(loadSweepResultId("tab.A", "US100")).toBe("sw-1");
+    expect(loadSweepResultId("tab.A.cell.b", "US100")).toBe("sw-2");
+  });
+
+  it("clears the pointer", () => {
+    saveSweepResultId("tab.A", "US100", "sw-1");
+    clearSweepResultId("tab.A", "US100");
+    expect(loadSweepResultId("tab.A", "US100")).toBeNull();
   });
 });

@@ -73,6 +73,7 @@ function renderModal(initial = defaultBacktestConfig()) {
       epic="TEST"
       resolution="MINUTE"
       controller={null}
+      chartTimezone="UTC"
       onRun={vi.fn()}
       onClose={vi.fn()}
     />,
@@ -549,7 +550,7 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
     const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     render(
       <BacktestSettingsModal
-        initial={initial} epic="TEST" resolution="MINUTE" controller={null}
+        initial={initial} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
         onRun={onRun} onClose={vi.fn()}
       />,
     );
@@ -576,7 +577,7 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
     const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     render(
       <BacktestSettingsModal
-        initial={initial} epic="TEST" resolution="MINUTE" controller={null}
+        initial={initial} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
         onRun={onRun} onClose={vi.fn()}
       />,
     );
@@ -602,7 +603,7 @@ describe("rules-mode combo apply", () => {
     const onRun = vi.fn();
     render(
       <BacktestSettingsModal
-        initial={initial} epic="TEST" resolution="MINUTE" controller={null}
+        initial={initial} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
         onRun={onRun} onClose={vi.fn()}
       />,
     );
@@ -650,16 +651,18 @@ describe("rules-mode combo apply", () => {
     expect(next.range.toMs).toBe(1751587200000);
   });
 
-  it("timeWindow combo patches the mask window, tz, and clears any session", () => {
+  it("timeWindow combo patches the mask window, reads it in the chart tz, and clears any session", () => {
     const initial = defaultBacktestConfig();
     initial.range.mask = { enabled: true, session: "NYSE" };
     const onRun = renderRules(initial);
+    // The combo carries a tz, but the run always stamps the chart timezone
+    // (chartTimezone="UTC" here) onto the mask, so the combo tz is ignored.
     const next = applyCombo(onRun, {
       "timeWindow:startMin": 540, "timeWindow:endMin": 1050, "timeWindow:tz": "Europe/London",
     });
     expect(next.range.mask?.enabled).toBe(true);
     expect(next.range.mask?.timeOfDay).toEqual({ startMin: 540, endMin: 1050 });
-    expect(next.range.mask?.tz).toBe("Europe/London");
+    expect(next.range.mask?.tz).toBe("UTC");
     expect(next.range.mask?.session).toBeUndefined();
   });
 });
@@ -834,7 +837,7 @@ describe("persistent sweep setup", () => {
     const onRun = vi.fn();
     render(
       <BacktestSettingsModal
-        initial={defaultBacktestConfig()} epic="TEST" resolution="MINUTE" controller={null}
+        initial={defaultBacktestConfig()} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
         onRun={onRun} onClose={vi.fn()}
       />,
     );
@@ -1047,7 +1050,7 @@ describe("backtest | sweep mode switch", () => {
     const onRun = vi.fn();
     render(
       <BacktestSettingsModal
-        initial={defaultBacktestConfig()} epic="TEST" resolution="MINUTE" controller={null}
+        initial={defaultBacktestConfig()} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
         onRun={onRun} onClose={vi.fn()}
       />,
     );

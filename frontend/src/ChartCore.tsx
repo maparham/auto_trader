@@ -41,6 +41,7 @@ import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
 import {
   teardownArtifacts,
+  releaseBacktestPanel,
   reanchorBacktestMarkers,
   extendBacktestArtifacts,
   registerBacktestPager,
@@ -2405,6 +2406,10 @@ export default function ChartCore({
       // strongly capture this chart + its BacktestResult — release them on unmount
       // so a detached/closed cell can be GC'd (no-op if none ran). Teardown only:
       // the persisted result must survive so a reopened cell can rehydrate it.
+      // Blank the SHARED trades panel first if this cell owns it (owner check
+      // must read artifacts BEFORE teardown nulls them) — otherwise a tab switch
+      // leaves this cell's result stranded for the next tab's cells to inherit.
+      releaseBacktestPanel(chart);
       teardownArtifacts(chart);
       el.removeEventListener("click", onClick);
       el.removeEventListener("dblclick", onDblClick);

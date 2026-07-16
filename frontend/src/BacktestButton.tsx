@@ -34,6 +34,7 @@ import {
   loadBacktestPeriodsShown,
   loadBacktestMarkersShown,
   loadBacktestEquityShown,
+  saveSweepResultId,
 } from "./lib/persist";
 import {
   openBacktestSettings,
@@ -378,7 +379,13 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
               rows,
               windows: windows ?? null,
             })
-              .then(() => sweepArchivedSignal.set(sweepArchivedSignal.value + 1))
+              .then(({ id }) => {
+                // Bind this freshly-archived sweep to the running cell so it is
+                // THIS tab+cell's result on the next mount/reload — not inherited
+                // by any other cell showing the same epic.
+                if (controller) saveSweepResultId(controller.scope, baseReq.epic, id);
+                sweepArchivedSignal.set(sweepArchivedSignal.value + 1);
+              })
               .catch((e) => console.warn("sweep archive failed", e));
           }
         } catch (e) {

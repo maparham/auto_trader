@@ -1687,6 +1687,18 @@ export function teardownArtifacts(chart: Chart): void {
   artifacts.result = null;
 }
 
+/** Release the SHARED trades panel when THIS chart owns the currently-active
+ * backtest — called on cell UNMOUNT (tab switch away / close) so the panel goes
+ * blank instead of stranding this cell's result for the next tab's cells to
+ * inherit. Owner-gated so unmounting a split-layout sibling never wipes another
+ * cell's shown result. Deliberately NOT part of teardownArtifacts (which also
+ * runs mid-run in runAndRender): calling it there would blink the panel empty on
+ * every re-run. The persisted store is untouched — a reopened cell rehydrates. */
+export function releaseBacktestPanel(chart: Chart): void {
+  const a = artifactsByChart.get(chart);
+  if (a && backtestResultSignal.value === a.result) backtestResultSignal.set(null);
+}
+
 /** User-initiated clear (toolbar ✕): drop the live artifacts AND delete the
  * persisted store so it does NOT come back on the next timeframe switch or
  * reload. */

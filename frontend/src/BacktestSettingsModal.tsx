@@ -31,6 +31,7 @@ import { resumeSweep } from "./lib/sweepResume";
 import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
 import type { EmphasisTarget } from "./lib/chartOperand";
 import { resolveWindow } from "./lib/backtestWindow";
+import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
   longestIndicatorLength,
@@ -59,7 +60,7 @@ import {
   ruleFromChartOperand,
   OP_REVERSE,
 } from "./lib/backtestConfig";
-import { SESSION_PRESETS, buildRangeChips, coverage, isActive, minToTime, resolveMask, sessionLocalRange, sessionWindowInTz } from "./lib/backtestSchedule";
+import { SESSION_PRESETS, buildRangeChips, coverage, formatDayWindow, isActive, minToTime, resolveMask } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
@@ -76,7 +77,6 @@ import {
 } from "./lib/sweepMemory";
 import { loadHoldout, saveHoldoutPct, recordPeek, splitHoldout } from "./lib/holdout";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
-import { inspectModeSignal } from "./lib/backtestInspect";
 import { formatPeriodRange } from "./lib/backtestPeriods";
 import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, type StrategyInfo, type ParamSpec, type SweepArchiveSummary } from "./api";
 import {
@@ -101,6 +101,9 @@ import {
   loadBacktestMode,
   saveBacktestMode,
   type BacktestRunMode,
+  loadSweepResultId,
+  saveSweepResultId,
+  clearSweepResultId,
 } from "./lib/persist";
 
 interface Props {
@@ -110,6 +113,11 @@ interface Props {
   // The focused chart cell, so "Pick Range" can arm a drag-select on it. Null when
   // no cell is focused — the button is then disabled.
   controller: ChartController | null;
+  // The chart's display timezone (already resolved to a concrete IANA zone —
+  // never ""). The schedule mask, calendar chips and clock filters are all
+  // evaluated in this one zone: there is no separate backtest timezone. To gate
+  // on a market's real hours, set the chart to that market's zone.
+  chartTimezone: string;
   onRun: (cfg: BacktestConfig) => void;
   onClose: () => void;
 }
@@ -142,13 +150,21 @@ const CHIP_UNIT: Partial<Record<RangeMode, "day" | "week" | "month" | "year">> =
 const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// The timezone the mask/chips are evaluated in. A chosen session carries its own
-// tz (resolveMask inlines it), so honour that here too; else the explicit tz;
-// else UTC (wiring the instrument's exchange tz is a deferred follow-up).
-function maskTz(cfg: BacktestConfig): string {
+// The schedule mask is always evaluated in the chart's display timezone. Stamp
+// it onto the mask right before a run so the backend gate and the frontend
+// preview agree, regardless of whatever tz an older saved config carried.
+// Friendly label for a resolved IANA zone, e.g. "Tokyo (UTC+09:00)". Falls back
+// to the raw id when it's not in the curated list (an arbitrary browser zone).
+function tzDisplay(tz: string): string {
+  const city = TIMEZONES.find((t) => t.value === tz)?.label ?? tz;
+  const off = offsetLabel(tz);
+  return off ? `${city} ${off}` : city;
+}
+
+function withChartTz(cfg: BacktestConfig, tz: string): BacktestConfig {
   const m = cfg.range.mask;
-  if (m?.session) return SESSION_PRESETS[m.session].tz;
-  return m?.tz ?? "UTC";
+  if (!m) return cfg; // no mask, no gate — tz is irrelevant
+  return { ...cfg, range: { ...cfg.range, mask: { ...m, tz } } };
 }
 
 function toggle(list: number[] | undefined, v: number): number[] {
@@ -341,7 +357,7 @@ function defaultRule(): Rule {
   return { left: defaultOperand(), op: "gt", right: { kind: "const", value: 0 } };
 }
 
-export default function BacktestSettingsModal({ initial, epic, resolution, controller, onRun, onClose }: Props) {
+export default function BacktestSettingsModal({ initial, epic, resolution, controller, chartTimezone, onRun, onClose }: Props) {
   // "Copy immediately" half of the SL/TP sync: a config arriving with sync on
   // but the sides drifted apart (saved before the option existed, or edited
   // while off) is normalized on load, the side being viewed winning.
@@ -479,6 +495,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // Past sweeps archived server-side for this epic, for the reopen picker.
   const [pastSweeps, setPastSweeps] = useState<SweepArchiveSummary[]>([]);
   const [pickedSweep, setPickedSweep] = useState("");
+  // The reopen picker stays a SHARED per-epic library (a past-sweeps history any
+  // cell can pull from). It no longer auto-reopens the newest sweep — which
+  // result is SHOWN is now bound per tab+cell via the sweep pointer (see the
+  // restore effect below), so two cells on the same epic don't inherit each
+  // other's sweep.
   const refreshPastSweeps = () => {
     listSweepArchives(epic)
       .then(setPastSweeps)
@@ -490,7 +511,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // rows (wrong ranAxes for streaming rows, defeating applySweepCombo's running
   // guard). The picker controls are disabled while running too; this is the
   // belt-and-braces guard.
-  const reopenSweep = (id: string) => {
+  const reopenSweep = (id: string, bind = false) => {
     if (sweepStateSignal.value?.running) return;
     getSweepArchive(id)
       .then((a) => {
@@ -498,13 +519,33 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         sweepStateSignal.set({
           rows: a.rows, done: a.rows.length, total: a.rows.length, running: false,
         });
+        // A user reopen (bind) makes this archive THIS cell's bound result, so it
+        // restores here — not the previous one — on the next switch/reload. The
+        // silent restore path (bind=false) must NOT rewrite the pointer.
+        if (bind && controller) saveSweepResultId(controller.scope, epic, id);
       })
       .catch((e) => console.warn("reopen sweep failed", e));
   };
   const removePastSweep = (id: string) => {
     deleteSweepArchive(id)
-      .then(() => { setPickedSweep(""); refreshPastSweeps(); })
+      .then(() => {
+        setPickedSweep("");
+        // If this cell was bound to the deleted sweep, drop the dangling pointer.
+        if (controller && loadSweepResultId(controller.scope, epic) === id) {
+          clearSweepResultId(controller.scope, epic);
+        }
+        refreshPastSweeps();
+      })
       .catch((e) => console.warn("delete sweep failed", e));
+  };
+  // Drop the on-screen sweep results (the footer "Clear results" action). Resets
+  // the picker so the same archive can be reopened right after.
+  const clearSweepResults = () => {
+    sweepStateSignal.set(null);
+    setRanAxes([]);
+    setPickedSweep("");
+    // Explicit clear also unbinds this cell — nothing to restore on next switch.
+    if (controller) clearSweepResultId(controller.scope, epic);
   };
   // Search strategy for a sweep: "grid" enumerates every combo; "random" draws
   // N combos uniformly from the same ranges (seed fixed at 1 for reproducibility).
@@ -671,7 +712,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === "timeWindow")) return axes.filter((a) => a.target !== "timeWindow");
       const t = cfg.range.mask?.timeOfDay;
-      const tz = cfg.range.mask?.tz ?? "UTC";
+      const tz = chartTimezone;
       return addAxis(axes, {
         kind: "list", target: "timeWindow", label: "Window",
         options: t ? [twOption(t.startMin, t.endMin, tz)] : [],
@@ -683,13 +724,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       a.target === "timeWindow" && a.kind === "list" && !a.options.some((x) => x.label === o.label)
         ? { ...a, options: [...a.options, o] }
         : a));
-  // Session presets resolve to an explicit window + the preset's OWN tz, so
-  // the tz travels with each option (no conversion into the mask tz needed).
+  // A session preset just fills its standard hours as raw clock numbers; like
+  // every other window they are read in the chart timezone (no per-preset tz).
   const addSessionWindowOption = (key: SessionPreset | "") => {
     if (!key) return;
     const p = SESSION_PRESETS[key];
     if (!p.window) return; // Crypto: 24h, no window to sweep
-    addTimeWindowOption(twOption(p.window.startMin, p.window.endMin, p.tz, p.label));
+    addTimeWindowOption(twOption(p.window.startMin, p.window.endMin, chartTimezone, p.label));
   };
   // Removing the last option empties the axis; drop it entirely (mirrors the
   // operator path in tickOpOption) so an empty kind:"list" axis can't strand a
@@ -776,7 +817,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     const twS = combo["timeWindow:startMin"];
     const twE = combo["timeWindow:endMin"];
     if (typeof twS === "number" && typeof twE === "number") {
-      const tz = typeof combo["timeWindow:tz"] === "string" ? combo["timeWindow:tz"] : next.range.mask?.tz ?? "UTC";
+      const tz = typeof combo["timeWindow:tz"] === "string" ? combo["timeWindow:tz"] : chartTimezone;
       next = {
         ...next,
         range: {
@@ -882,7 +923,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     const twS = combo["timeWindow:startMin"];
     const twE = combo["timeWindow:endMin"];
     if (typeof twS === "number" && typeof twE === "number") {
-      const tz = typeof combo["timeWindow:tz"] === "string" ? combo["timeWindow:tz"] : cfgNext.range.mask?.tz ?? "UTC";
+      const tz = typeof combo["timeWindow:tz"] === "string" ? combo["timeWindow:tz"] : chartTimezone;
       cfgNext = {
         ...cfgNext,
         range: {
@@ -948,11 +989,6 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // already a no-op mid-run, but the button looked active.
   const [runInFlight, setRunInFlight] = useState(backtestRunningSignal.value);
   useEffect(() => backtestRunningSignal.subscribe(setRunInFlight), []);
-  // Inspect mode toggle (moved out of the Results panel into the footer). Session-
-  // only; clicking a bar on the chart while on shows that bar's rule evaluation.
-  const [inspectMode, setInspectMode] = useState(inspectModeSignal.value);
-  useEffect(() => inspectModeSignal.subscribe(setInspectMode), []);
-
   // Settings (top) / results (bottom) vertical split. resultsHeight 0 means
   // "unset" — the CSS default flex-basis governs until the user drags. Persisted
   // device-local so the layout survives re-opens and reloads.
@@ -964,19 +1000,57 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   }, [split]);
   const toggleResults = () => setSplit((s) => ({ ...s, collapsed: !s.collapsed }));
 
-  // Load the archived sweeps for the reopen picker whenever the sweep results
-  // section becomes visible (or the epic changes).
+  // Refresh the shared per-epic reopen picker whenever the sweep results section
+  // becomes visible, the epic changes, or a sweep lands server-side (archivedTick
+  // re-fires so a just-finished sweep appears without a reopen). No auto-reopen —
+  // which result is SHOWN is bound per tab+cell by the restore effect below.
   const sweepSectionOpen = btMode === "sweep" && !split.collapsed;
   useEffect(() => {
     if (!sweepSectionOpen) return;
-    // Reset the picker: an epic switch invalidates the prior selection (its
-    // option is gone), and a fresh open should start unselected.
-    setPickedSweep("");
     refreshPastSweeps();
-    // archivedTick re-fires this when a sweep lands server-side while the section
-    // is open, so the just-finished sweep appears in the picker without a reopen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sweepSectionOpen, epic, archivedTick]);
+
+  // Bind the DISPLAYED sweep to this tab+cell: on a cell/epic switch (or when the
+  // section first opens), restore THIS cell's own sweep from its persisted pointer
+  // — or blank the view when it has none — so switching tabs never leaves another
+  // cell's sweep on screen. Skipped while a sweep is running (never disturb a live
+  // run); the running run writes its own pointer on completion. `scope` is keyed
+  // so switching between two cells on the SAME epic still rebinds.
+  const scope = controller?.scope ?? null;
+  useEffect(() => {
+    if (!sweepSectionOpen || !scope) return;
+    if (sweepStateSignal.value?.running) return;
+    const boundId = loadSweepResultId(scope, epic);
+    if (!boundId) {
+      // This cell has no sweep — blank the view (don't inherit another cell's).
+      setPickedSweep("");
+      sweepStateSignal.set(null);
+      return;
+    }
+    let cancelled = false;
+    setPickedSweep(boundId);
+    getSweepArchive(boundId)
+      .then((a) => {
+        if (cancelled) return;
+        setRanAxes(a.axes);
+        sweepStateSignal.set({
+          rows: a.rows, done: a.rows.length, total: a.rows.length, running: false,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Pointer dangles (archive deleted elsewhere or evicted past the server
+        // cap): unbind and blank so a previous cell's sweep can't linger.
+        clearSweepResultId(scope, epic);
+        setPickedSweep("");
+        sweepStateSignal.set(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, epic, sweepSectionOpen]);
   // Clearing the results (the pane's ✕, via backtestClearRequest) collapses the
   // now-empty results section — the mirror of run() expanding it. Subscribing here
   // keeps the split state (owned by this modal) in sync with the clear the panel
@@ -1175,10 +1249,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     const stepMs = Math.max(resSeconds, 3600) * 1000;
     const grid: number[] = [];
     for (let t = fromMs; t < toMs && grid.length < 2000; t += stepMs) grid.push(t);
-    const resolved = resolveMask(m);
+    const resolved = { ...resolveMask(m), tz: chartTimezone };
     return { grid, resolved, cov: coverage(grid, resolved) };
-     
-  }, [cfg, resSeconds]);
+
+  }, [cfg, resSeconds, chartTimezone]);
   // The reserved holdout window ("from → to" of the locked-away tail), for the
   // footer/badge copy. Recomputed with the range so it tracks edits live.
   const holdoutReserved = useMemo(() => {
@@ -1203,7 +1277,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // (a setState, not synchronous) run against that value immediately instead
   // of the stale `cfg` still in this closure — see applyRuleSweepCombo.
   function run(override?: BacktestConfig) {
-    onRun(override ?? cfg);
+    onRun(withChartTz(override ?? cfg, chartTimezone));
     setSplit((s) => (s.collapsed ? { ...s, collapsed: false } : s));
   }
   // Footer "Run backtest": publish the CURRENT sweep axes right before firing —
@@ -1393,10 +1467,29 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   }}
                 />
               </label>
+              <label className="bt-tf-inline bt-holdout-inline">
+                <span className="bt-tf-label">
+                  Holdout
+                  <InfoTip text="Reserve the last part of the range as an out-of-sample lockbox. Normal runs and sweeps stop at the training cutoff; use Evaluate on holdout to test the reserved tail. Every look is counted, because a holdout you check often stops being out-of-sample." />
+                </span>
+                <select
+                  className="bt-tf-select"
+                  value={holdout?.pct ?? 0}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    changeHoldoutPct(v === 0 ? null : v);
+                  }}
+                >
+                  <option value={0}>None</option>
+                  <option value={10}>10%</option>
+                  <option value={20}>20%</option>
+                  <option value={30}>30%</option>
+                </select>
+              </label>
             </div>
-            {CHIP_UNIT[cfg.range.mode] && (
-              <div className="bt-chip-row">
-                {buildRangeChips(CHIP_UNIT[cfg.range.mode]!, Date.now(), maskTz(cfg)).map((chip) => {
+            {CHIP_UNIT[cfg.range.mode] ? (
+              <div className="bt-chip-row bt-range-chip-row">
+                {buildRangeChips(CHIP_UNIT[cfg.range.mode]!, Date.now(), chartTimezone).map((chip) => {
                   const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
                   return (
                     <button
@@ -1408,9 +1501,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                     </button>
                   );
                 })}
+                <span className="al-note bt-range-subtitle bt-range-inline">{rangeDateLabel(cfg, resSeconds)}</span>
               </div>
+            ) : (
+              <div className="al-note bt-range-subtitle">{rangeDateLabel(cfg, resSeconds)}</div>
             )}
-            <div className="al-note bt-range-subtitle">{rangeDateLabel(cfg, resSeconds)}</div>
             {periodAxis?.kind === "period" && (
               <div className="sp-row sweep-axis-row bt-period-sweep">
                 <span className="sp-label">Period sweep</span>
@@ -1495,26 +1590,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 </Tooltip>
               </div>
             )}
-            {/* Holdout ("lockbox"): reserve the last part of the range as an
-                out-of-sample tail. Runs and sweeps clamp to the training span;
-                the reserved tail is only touched by Evaluate on holdout, and
-                every look is counted. Keyed per strategy, like sweep memory. */}
-            <label className="al-row">
-              <span>Holdout</span>
-              <select
-                value={holdout?.pct ?? 0}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  changeHoldoutPct(v === 0 ? null : v);
-                }}
-              >
-                <option value={0}>None</option>
-                <option value={10}>10%</option>
-                <option value={20}>20%</option>
-                <option value={30}>30%</option>
-              </select>
-              <InfoTip text="Reserve the last part of the range as an out-of-sample lockbox. Normal runs and sweeps stop at the training cutoff; use Evaluate on holdout to test the reserved tail. Every look is counted, because a holdout you check often stops being out-of-sample." />
-            </label>
+            {/* Holdout ("lockbox") reserves the last part of the range as an
+                out-of-sample tail. The picker itself lives up in the Time range
+                header (next to Timeframe/Windows); here we only surface the
+                reserved-tail note + Evaluate button once a holdout is set. Runs
+                and sweeps clamp to the training span; the reserved tail is only
+                touched by Evaluate on holdout, and every look is counted. */}
             {holdout && (
               <>
                 <div className="al-note">
@@ -1543,19 +1624,19 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             title="Repeat / active windows"
             info="Limit trading to recurring windows: weekdays, months, days of the month, or a market session. Outside them, no new positions open."
           >
-            <label className="al-row bt-mask-toggle">
-              <input
-                type="checkbox"
-                checked={cfg.range.mask?.enabled ?? false}
-                onChange={(e) => setMask({ enabled: e.target.checked })}
-              />
-              <span>Only trade during selected windows</span>
-              <InfoTip text="When on, positions only open inside the windows below. Already-open positions keep running unless you also close them at session close." />
-            </label>
+            <div className="bt-mask-toggles">
+              <label className="al-row bt-mask-toggle">
+                <input
+                  type="checkbox"
+                  checked={cfg.range.mask?.enabled ?? false}
+                  onChange={(e) => setMask({ enabled: e.target.checked })}
+                />
+                <span>Only trade during selected windows</span>
+                <InfoTip text="When on, positions only open inside the windows below. Already-open positions keep running unless you also close them at session close." />
+              </label>
 
-            {cfg.range.mask?.enabled && (
-              <>
-                <label className="al-row bt-mask-toggle bt-mask-subtoggle">
+              {cfg.range.mask?.enabled && (
+                <label className="al-row bt-mask-toggle">
                   <input
                     type="checkbox"
                     checked={cfg.range.mask?.flattenAtClose ?? false}
@@ -1569,8 +1650,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                     ]}
                   />
                 </label>
+              )}
+            </div>
 
-                <div className="bt-chip-row">
+            {cfg.range.mask?.enabled && (
+              <>
+                <div className="bt-chip-row bt-dow-row">
                   {DOW_LABELS.map((d, i) => {
                     const on = cfg.range.mask?.daysOfWeek?.includes(i) ?? false;
                     return (
@@ -1583,89 +1668,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                       </button>
                     );
                   })}
-                </div>
-
-                <div className="bt-chip-row">
-                  {MONTH_LABELS.map((mo, idx) => {
-                    const m = idx + 1;
-                    const on = cfg.range.mask?.monthsOfYear?.includes(m) ?? false;
-                    return (
-                      <button
-                        key={mo}
-                        className={on ? "seg-on bt-chip" : "bt-chip"}
-                        onClick={() => setMask({ monthsOfYear: toggle(cfg.range.mask?.monthsOfYear, m) })}
-                      >
-                        {mo}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="al-row bt-range-row">
-                  <label className="bt-range-field">
-                    <span className="bt-field-label">
-                      Session
-                      <InfoTip text="Fills From/To from a market's hours in your timezone and sets weekdays (Crypto clears both). Editable after. Intraday timeframes only." />
-                    </span>
-                    <select
-                      disabled={resSeconds >= 86400}
-                      value={cfg.range.mask?.session ?? ""}
-                      onChange={(e) => {
-                        const key = e.target.value as SessionPreset | "";
-                        if (!key) return; // "Custom / none": leave the fields as they are
-                        const preset = SESSION_PRESETS[key];
-                        const tz = cfg.range.mask?.tz ?? "UTC";
-                        // Fill only the window + weekdays; leave the timezone the
-                        // user chose. Session is not persisted, so the dropdown
-                        // snaps back to "Custom / none" and the fields stay editable.
-                        setMask({
-                          timeOfDay: sessionWindowInTz(preset.window, preset.tz, tz, Date.now()) ?? undefined,
-                          daysOfWeek: preset.days ?? undefined,
-                          session: undefined,
-                        });
-                      }}
-                    >
-                      <option value="">Custom / none</option>
-                      {Object.entries(SESSION_PRESETS).map(([k, v]) => {
-                        const local = sessionLocalRange(v.window, v.tz, Date.now());
-                        return (
-                          <option key={k} value={k}>
-                            {local ? `${v.label} (${local} local)` : v.label}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </label>
-                  <label className="bt-range-field">
-                    <span className="bt-field-label">
-                      Timezone
-                      <InfoTip text="Timezone for the weekday, day-of-month, and clock filters (and calendar chips). Picking a session fills From/To in this timezone but doesn't change it." />
-                    </span>
-                    <input
-                      type="text"
-                      disabled={!!cfg.range.mask?.session}
-                      value={
-                        cfg.range.mask?.session
-                          ? SESSION_PRESETS[cfg.range.mask.session].tz
-                          : cfg.range.mask?.tz ?? "UTC"
-                      }
-                      onChange={(e) => setMask({ tz: e.target.value })}
-                    />
-                  </label>
-                </div>
-
-                {cfg.range.mask?.session &&
-                  !cfg.range.mask?.daysOfWeek?.length &&
-                  SESSION_PRESETS[cfg.range.mask.session].days && (
-                    <div className="al-note">
-                      {SESSION_PRESETS[cfg.range.mask.session].label} trades weekdays; weekends are
-                      excluded automatically. Pick weekday chips above to override.
-                    </div>
-                  )}
-
-                {!cfg.range.mask?.session && (
-                  <div className="al-row bt-range-row">
-                    <label className="bt-range-field">
+                  {/* Session filler + From/To ride the right end of the weekday row
+                      so the whole window config sits on one line. */}
+                  <div className="bt-dow-extras">
+                    <label className="bt-range-field bt-time-field">
                       <span>From</span>
                       <input
                         type="time"
@@ -1674,7 +1680,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                         onChange={(e) => setMask({ timeOfDay: withStart(cfg.range.mask?.timeOfDay, timeToMin(e.target.value)) })}
                       />
                     </label>
-                    <label className="bt-range-field">
+                    <label className="bt-range-field bt-time-field">
                       <span>To</span>
                       <input
                         type="time"
@@ -1693,10 +1699,50 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                         <SweepGlyph />
                       </button>
                     </Tooltip>
+                    <span className="bt-range-field bt-session-field">
+                      {/* Not persisted: picking a session fills the fields once and
+                          leaves them all editable — an action menu, not a stateful
+                          selector that would show a stale "selected" value. */}
+                      <SessionFillMenu
+                        disabled={resSeconds >= 86400}
+                        onPick={(key) => {
+                          // Fill From/To (raw clock numbers) + weekdays from the
+                          // preset. The tz is NOT set: the window is read in the
+                          // chart timezone like every other clock filter.
+                          // resolveMask keeps existing weekday chips if the user set
+                          // any (non-destructive), else fills the preset's weekdays.
+                          const r = resolveMask({ ...cfg.range.mask, session: key });
+                          setMask({ session: undefined, timeOfDay: r.timeOfDay, daysOfWeek: r.daysOfWeek });
+                        }}
+                      />
+                      <InfoTip text="Fills From/To (and weekdays, if none are set yet) from a market's hours. Everything stays editable after. Intraday timeframes only." />
+                    </span>
                   </div>
-                )}
+                </div>
 
-                {timeWindowAxis?.kind === "list" && !cfg.range.mask?.session && (
+                <div className="bt-chip-row">
+                  {MONTH_LABELS.map((mo, idx) => {
+                    const m = idx + 1;
+                    const on = cfg.range.mask?.monthsOfYear?.includes(m) ?? false;
+                    return (
+                      <button
+                        key={mo}
+                        className={on ? "seg-on bt-chip" : "bt-chip"}
+                        onClick={() => setMask({ monthsOfYear: toggle(cfg.range.mask?.monthsOfYear, m) })}
+                      >
+                        {mo}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="al-note bt-tz-note">
+                  Weekday, day-of-month and clock filters are read in the chart's
+                  timezone: {tzDisplay(chartTimezone)}. Change it in chart Settings to
+                  gate on another market's hours.
+                </div>
+
+                {timeWindowAxis?.kind === "list" && (
                   <div className="sp-row sweep-axis-row bt-tw-sweep">
                     <span className="sp-label">Window sweep</span>
                     <span className="bt-tw-options">
@@ -1718,7 +1764,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                         disabled={!cfg.range.mask?.timeOfDay}
                         onClick={() => {
                           const t = cfg.range.mask?.timeOfDay;
-                          if (t) addTimeWindowOption(twOption(t.startMin, t.endMin, cfg.range.mask?.tz ?? "UTC"));
+                          if (t) addTimeWindowOption(twOption(t.startMin, t.endMin, chartTimezone));
                         }}
                       >
                         + current window
@@ -2128,7 +2174,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   disabled={sweepState?.running}
                   onChange={(e) => {
                     setPickedSweep(e.target.value);
-                    if (e.target.value) reopenSweep(e.target.value);
+                    if (e.target.value) reopenSweep(e.target.value, true);
                   }}
                 >
                   <option value="">Reopen a sweep…</option>
@@ -2149,22 +2195,6 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             )}
             {sweepState ? (
               <div className="sweep-panel">
-                {sweepState.running ? (
-                  <button className="ghost sweep-cancel" onClick={() => requestSweepCancel(true)}>
-                    Cancel sweep
-                  </button>
-                ) : (
-                  <button
-                    className="ghost sweep-cancel"
-                    onClick={() => {
-                      sweepStateSignal.set(null);
-                      setRanAxes([]);
-                      setPickedSweep(""); // let the same archive be re-selected
-                    }}
-                  >
-                    Clear results
-                  </button>
-                )}
                 {sweepState.cancelled ? (
                   <div className="al-note">Cancelled, kept {sweepState.done} of {sweepState.total}</div>
                 ) : sweepState.error ? (
@@ -2293,8 +2323,17 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 </span>
               )}
             </>}
-            inspectOn={inspectMode}
-            onToggleInspect={() => inspectModeSignal.set(!inspectModeSignal.value)}
+            runClusterLead={btMode === "sweep" && sweepState ? (
+              sweepState.running ? (
+                <button className="ghost" onClick={() => requestSweepCancel(true)}>
+                  Cancel sweep
+                </button>
+              ) : (
+                <button className="ghost" onClick={clearSweepResults}>
+                  Clear results
+                </button>
+              )
+            ) : null}
             onGoLive={() => requestGoLive(cfg)}
             runLabel={runInFlight ? "Running…" : btMode === "sweep" ? "Run sweep" : "Run backtest"}
             runDisabled={runInFlight || (btMode === "sweep" && sweepAxes.length === 0)}
@@ -2872,6 +2911,99 @@ function OperatorPicker({ value, onChange, sweep }: {
                 <InfoTip title={o.label} text={o.tip} />
               </li>
             ))}
+          </ul>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+// "Fill from session" menu — a button, not a <select>. Picking a preset is a
+// one-shot action (it fills From/To + tz + weekdays, then everything stays
+// editable), so a stateful selector would lie about the current mask. A menu
+// button reads as an action and never shows a stale "selected" value. Portaled
+// to <body> like OperatorPicker so it escapes the modal's scroll clip.
+const SESSION_MENU_WIDTH = 240;
+
+function SessionFillMenu({ disabled, onPick }: {
+  disabled: boolean;
+  onPick: (key: SessionPreset) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const close = () => setOpen(false);
+    document.addEventListener("mousedown", onDown, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [open]);
+
+  function toggle() {
+    if (disabled) return;
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - SESSION_MENU_WIDTH - 8));
+      setPos({ top: r.bottom + 4, left });
+    }
+    setOpen((v) => !v);
+  }
+
+  return (
+    <div className="bt-session-menu">
+      <button
+        ref={btnRef}
+        type="button"
+        className={`bt-session-btn${open ? " open" : ""}`}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Fill from a market session"
+        onClick={toggle}
+      >
+        <span>presets</span>
+        <span className="bt-session-caret" aria-hidden="true">▾</span>
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <ul
+            ref={popRef}
+            className="dropdown bt-session-dropdown"
+            role="listbox"
+            style={{ position: "fixed", top: pos.top, left: pos.left }}
+          >
+            {Object.entries(SESSION_PRESETS).map(([k, v]) => {
+              // Show the preset's native clock hours — they fill From/To as raw
+              // numbers, read in the chart timezone (no conversion).
+              const hrs = formatDayWindow(v.window ?? undefined);
+              return (
+                <li
+                  key={k}
+                  role="option"
+                  aria-selected={false}
+                  onClick={() => {
+                    onPick(k as SessionPreset);
+                    setOpen(false);
+                  }}
+                >
+                  {hrs ? `${v.label} (${hrs})` : v.label}
+                </li>
+              );
+            })}
           </ul>,
           document.body,
         )}

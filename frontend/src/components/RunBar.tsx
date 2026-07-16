@@ -1,10 +1,13 @@
 // The backtest modal footer: the mode switch (Backtest | Sweep) on the left, a
 // flexible sweep-info slot in the middle, and a right-pinned run cluster
-// (Inspect, Go live, Run). Extracted from BacktestSettingsModal so the footer
-// layout lives in one place. Mode logic stays in the modal (`onSelectMode`);
-// the four sweep-info pieces are passed in as `sweepInfo` because they read
-// modal-local state. There is no Close button here — the header × is the only
-// close control.
+// (Go live, Run). Extracted from BacktestSettingsModal so the footer layout
+// lives in one place. Mode logic stays in the modal (`onSelectMode`); the four
+// sweep-info pieces are passed in as `sweepInfo` because they read modal-local
+// state. The per-bar Inspect toggle lives in the results panel's Inspect tab
+// (it only applies to a single backtest), not here. `runClusterLead` is an
+// optional slot at the head of the right-pinned run cluster — the sweep view
+// puts its Cancel/Clear-results button there so it reads as a footer action.
+// There is no Close button here — the header × is the only close control.
 
 import type { JSX, ReactNode } from "react";
 import Tooltip from "./Tooltip";
@@ -16,8 +19,7 @@ export function RunBar(props: {
   onSelectMode: (m: RunMode) => void;
   modeBadge: ReactNode;
   sweepInfo: ReactNode;
-  inspectOn: boolean;
-  onToggleInspect: () => void;
+  runClusterLead?: ReactNode;
   onGoLive: () => void;
   runLabel: string;
   runDisabled: boolean;
@@ -28,8 +30,7 @@ export function RunBar(props: {
     onSelectMode,
     modeBadge,
     sweepInfo,
-    inspectOn,
-    onToggleInspect,
+    runClusterLead,
     onGoLive,
     runLabel,
     runDisabled,
@@ -69,26 +70,7 @@ export function RunBar(props: {
           axes come and go. */}
       <span className="bt-sweep-foot-info">{sweepInfo}</span>
       <div className="bt-run-cluster">
-        <Tooltip
-          content={
-            inspectOn
-              ? "Inspect mode on: click a bar on the chart to see its rules"
-              : "Inspect a bar: click a bar to see every rule's value and why a trade did or didn't open"
-          }
-        >
-          <button
-            className={`ghost bt-inspect-foot${inspectOn ? " on" : ""}`}
-            aria-pressed={inspectOn}
-            onClick={onToggleInspect}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-              {/* magnifier */}
-              <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-              <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-            <span>Inspect</span>
-          </button>
-        </Tooltip>
+        {runClusterLead}
         <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
           <button className="ghost bt-golive" onClick={onGoLive}>
             Go live →
