@@ -7,7 +7,8 @@
 // row/cell applies that combo via onApply. Session-state only, never persisted.
 // (Spec: docs/superpowers/specs/2026-07-09-strategy-panel-params-design.md)
 
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { SweepRow } from "./api";
 import { axisColumnLabel, comboAxisLabel, comboAxisText, type SweepAxis } from "./lib/sweep";
 import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
@@ -101,6 +102,37 @@ function WindowStrip({ windows }: { windows: NonNullable<SweepRow["windows"]> })
         </div>
       ))}
     </div>
+  );
+}
+
+// Cursor-anchored breakdown strip, portaled to <body> so it floats above the
+// grid rather than pinning over the top-left cells. It must stay an OVERLAY
+// (not an inline block): rendering it inline would shift the grid under a
+// stationary cursor, firing mouseleave on the hovered cell and unmounting
+// itself (hover flicker). pointer-events:none so it never steals the hover
+// that keeps it open. Placed near the cursor with a small offset, flipped to
+// the other side of the pointer when it would spill off screen.
+function WindowStripOverlay({ windows, cursor }: {
+  windows: NonNullable<SweepRow["windows"]>;
+  cursor: { x: number; y: number };
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number }>({ left: cursor.x + 14, top: cursor.y + 16 });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const { width: w, height: h } = el.getBoundingClientRect();
+    let left = cursor.x + 14;
+    let top = cursor.y + 16;
+    if (left + w > window.innerWidth - 8) left = cursor.x - 14 - w;
+    if (top + h > window.innerHeight - 8) top = cursor.y - 16 - h;
+    setPos({ left: Math.max(8, left), top: Math.max(8, top) });
+  }, [cursor.x, cursor.y, windows]);
+  return createPortal(
+    <div ref={ref} className="sweep-heat-detail-wstrip" style={{ left: pos.left, top: pos.top }}>
+      <WindowStrip windows={windows} />
+    </div>,
+    document.body,
   );
 }
 
@@ -487,6 +519,10 @@ function SweepHeatmap({
   // beside the color-metric dropdown (the grid cells themselves only show the
   // one selected metric).
   const [hovered, setHovered] = useState<SweepRow | null>(null);
+  // Cursor position (viewport coords) so the per-window breakdown strip can
+  // follow the pointer instead of pinning over the top-left cells. Null until
+  // the first mouse event, which guards against a flash at (0,0).
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
 
   // Robustness columns share short table labels; the dropdown spells them out.
   const heatLabel = (c: (typeof METRIC_COLS)[number]) =>
@@ -544,8 +580,8 @@ function SweepHeatmap({
           )}
         </div>
       </div>
-      {hovered && hovered.windows && hovered.windows.length > 0 && (
-        <div className="sweep-heat-detail-wstrip"><WindowStrip windows={hovered.windows} /></div>
+      {hovered && hovered.windows && hovered.windows.length > 0 && cursor && (
+        <WindowStripOverlay windows={hovered.windows} cursor={cursor} />
       )}
       <div
         className="sweep-heat-grid"
@@ -569,7 +605,8 @@ function SweepHeatmap({
                   className={`sweep-cell${failed ? " sweep-error" : ""}${disabled ? " sweep-cell-disabled" : ""}`}
                   style={{ background: divergingBg(v, maxAbs) }}
                   onClick={() => row && !disabled && onApply(row.combo)}
-                  onMouseEnter={() => setHovered(row ?? null)}
+                  onMouseEnter={(e) => { setHovered(row ?? null); setCursor({ x: e.clientX, y: e.clientY }); }}
+                  onMouseMove={(e) => setCursor({ x: e.clientX, y: e.clientY })}
                   onMouseLeave={() => setHovered((h) => (h === row ? null : h))}
                 >
                   {failed ? (

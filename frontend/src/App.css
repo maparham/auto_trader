@@ -4439,15 +4439,15 @@ span.bt-leg-short { color: var(--neg); }
 .sweep-wstrip-pnl.neg { color: var(--neg); }
 .sweep-wstrip-range { color: var(--text-faint); white-space: nowrap; }
 .sweep-wstrip-trades { color: var(--text-faint); }
-/* Overlays the top of the grid instead of participating in layout: inserting
-   it inline would shift the grid under a stationary cursor, firing mouseleave
-   on the hovered cell and unmounting itself (hover flicker). pointer-events
-   none so it never steals the hover that keeps it open. */
+/* Cursor-anchored overlay portaled to <body>: follows the pointer (left/top
+   set inline from React) instead of pinning over the top-left cells. It stays
+   an OVERLAY rather than an inline block on purpose — inserting it inline would
+   shift the grid under a stationary cursor, firing mouseleave on the hovered
+   cell and unmounting itself (hover flicker). pointer-events none so it never
+   steals the hover that keeps it open. */
 .sweep-heat-detail-wstrip {
-  position: absolute;
-  top: 30px;
-  left: 0;
-  z-index: 5;
+  position: fixed;
+  z-index: 50;
   pointer-events: none;
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e0e3eb);
