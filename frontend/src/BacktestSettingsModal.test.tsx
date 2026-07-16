@@ -79,6 +79,18 @@ function renderModal(initial = defaultBacktestConfig()) {
   );
 }
 
+// The footer's Backtest | Sweep mode switch. Sweep setup/results only render in
+// Sweep mode, so the sweep tests flip it via the real control after rendering.
+function modeSeg(): HTMLElement {
+  return document.querySelector(".bt-mode-seg") as HTMLElement;
+}
+function enterSweepMode() {
+  fireEvent.click(within(modeSeg()).getByRole("button", { name: /Sweep/ }));
+}
+function enterBacktestMode() {
+  fireEvent.click(within(modeSeg()).getByRole("button", { name: "Backtest" }));
+}
+
 describe("BacktestSettingsModal period scheduling", () => {
   it("shows month suggestion chips when the Month tab is active", () => {
     renderModal();
@@ -214,6 +226,7 @@ describe("chart-operand entry points", () => {
 describe("operator sweep", () => {
   it("toggles an operator sweep axis and shows the 7-operator chip editor inline", () => {
     renderModal();
+    enterSweepMode();
     openStrategy();
     // Default config seeds one long-entry rule; add another so the group has rows.
     fireEvent.click(screen.getAllByRole("button", { name: "+ Add rule" })[0]);
@@ -234,6 +247,7 @@ describe("operator sweep", () => {
 
   it("a swept indicator length renders its editor inline inside the rule group", () => {
     renderModal();
+    enterSweepMode();
     openStrategy();
 
     const section = groupSection("Buy to open");
@@ -253,6 +267,7 @@ describe("operator sweep", () => {
 
   it("a swept exit count renders its editor inline inside its rule group", () => {
     renderModal();
+    enterSweepMode();
     openStrategy();
 
     // Exit groups carry the count field; its glyph is the LAST .sp-sweep in
@@ -273,6 +288,7 @@ describe("time-window sweep", () => {
     const initial = defaultBacktestConfig();
     initial.range.mask = { enabled: true, timeOfDay: { startMin: 480, endMin: 720 }, tz: "UTC" };
     renderModal(initial);
+    enterSweepMode();
     // with an enabled mask whose timeOfDay is 08:00-12:00 UTC
     const glyph = document.querySelector(".bt-tw-sweep-toggle")!;
     expect(glyph).toBeTruthy();
@@ -296,6 +312,7 @@ describe("time-window sweep", () => {
     const initial = defaultBacktestConfig();
     initial.range.mask = { enabled: true, timeOfDay: { startMin: 480, endMin: 720 }, tz: "UTC" };
     renderModal(initial);
+    enterSweepMode();
     fireEvent.click(document.querySelector(".bt-tw-sweep-toggle")!);
     const editor = document.querySelector(".bt-tw-sweep")!;
     // seeded with exactly one option (the current window)
@@ -322,6 +339,7 @@ describe("time-window sweep", () => {
     const initial = defaultBacktestConfig();
     initial.range.mask = { enabled: true, timeOfDay: { startMin: 480, endMin: 720 }, tz: "UTC" };
     renderModal(initial);
+    enterSweepMode();
 
     // Create the time-window axis: both the glyph and the editor are present
     // (they share the !session gate).
@@ -346,6 +364,7 @@ describe("time-window sweep", () => {
 describe("period sweep", () => {
   it("toggles a period sweep axis with an inline windows stepper", () => {
     renderModal();
+    enterSweepMode();
     const glyph = document.querySelector(".bt-period-sweep-toggle")!;
     expect(glyph).toBeTruthy();
     fireEvent.click(glyph);
@@ -426,6 +445,7 @@ describe("coded mode: params, risk, and exit-rule sections", () => {
     mockStrategies.mockResolvedValue(strategies);
     const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     renderModal(initial);
+    enterSweepMode();
     openStrategy();
     expect(await screen.findByText("Fast EMA")).toBeTruthy();
 
@@ -453,6 +473,7 @@ describe("coded mode: params, risk, and exit-rule sections", () => {
     mockStrategies.mockResolvedValue(strategies);
     const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     renderModal(initial);
+    enterSweepMode();
     openStrategy();
     expect(await screen.findByText("Fast EMA")).toBeTruthy();
 
@@ -498,6 +519,7 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
         onRun={onRun} onClose={vi.fn()}
       />,
     );
+    enterSweepMode();
     openStrategy();
     await screen.findByText("Fast EMA");
     act(() => sweepStateSignal.set({ rows, done: 1, total: 2, running: true }));
@@ -524,6 +546,7 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
         onRun={onRun} onClose={vi.fn()}
       />,
     );
+    enterSweepMode();
     openStrategy();
     await screen.findByText("Fast EMA");
     act(() => sweepStateSignal.set({ rows, done: 2, total: 2, running: false }));
@@ -549,6 +572,7 @@ describe("rules-mode combo apply", () => {
         onRun={onRun} onClose={vi.fn()}
       />,
     );
+    enterSweepMode();
     return onRun;
   }
   function applyCombo(onRun: ReturnType<typeof vi.fn>, combo: SweepRow["combo"]) {
@@ -671,6 +695,7 @@ describe("inline risk sweep editors", () => {
     mockStrategies.mockResolvedValue(strategies);
     const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     renderModal(initial);
+    enterSweepMode();
     openStrategy();
     expect(await screen.findByText("Fast EMA")).toBeTruthy();
 
@@ -690,6 +715,7 @@ describe("inline risk sweep editors", () => {
 
   it("rules mode: with sync on, the short tab shows the synced axis's editor too", () => {
     renderModal();
+    enterSweepMode();
     openStrategy();
 
     // Long tab: set stop kind to %, toggle its sweep glyph.
@@ -712,6 +738,7 @@ describe("sweep range memory", () => {
       { kind: "range", target: "rule:long.entry.0.left.length", label: "len", from: 30, to: 60, step: 3 },
     ]);
     renderModal();
+    enterSweepMode();
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
@@ -721,6 +748,7 @@ describe("sweep range memory", () => {
 
   it("running a sweep records each range axis's from/to/step", () => {
     renderModal();
+    enterSweepMode();
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
@@ -740,11 +768,13 @@ describe("persistent sweep setup", () => {
 
   it("restores the axis set after unmount/remount", () => {
     renderModal();
+    enterSweepMode();
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
     expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
     cleanup();
+    // Sweep mode is device-local persisted too, so the remount restores it.
     renderModal();
     openStrategy();
     expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
@@ -756,13 +786,15 @@ describe("persistent sweep setup", () => {
       { kind: "range", target: "rule:long.entry.5.left.length", label: "stale", from: 1, to: 2, step: 1 },
     ]);
     renderModal();
+    enterSweepMode();
     openStrategy();
-    // The stale axis must not survive restore: footer stays in plain-run mode.
-    expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy();
+    // The stale axis must not survive restore: no editor, and Run sweep stays
+    // unavailable because no axis is configured.
     expect(document.querySelector(".sweep-axis-row")).toBeNull();
+    expect((screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("keeps the axes and the results table after applying a combo, but the follow-up run is not a sweep", () => {
+  it("applying a combo flips to Backtest mode but keeps the axes and the results table one flip away", () => {
     const onRun = vi.fn();
     render(
       <BacktestSettingsModal
@@ -770,6 +802,7 @@ describe("persistent sweep setup", () => {
         onRun={onRun} onClose={vi.fn()}
       />,
     );
+    enterSweepMode();
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
@@ -779,14 +812,16 @@ describe("persistent sweep setup", () => {
     act(() => sweepStateSignal.set({ rows, done: 1, total: 1, running: false }));
     fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
     expect(onRun).toHaveBeenCalledTimes(1);
-    // The field is still in sweep mode for round two.
-    expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
-    // But the run that just fired was a plain backtest, not a sweep.
+    // The run that just fired was a plain backtest, not a sweep.
     expect(sweepAxesSignal.value).toEqual([]);
-    // The results table survives the apply so other rows can be compared;
-    // only "Clear results" dismisses it.
+    // Apply lands you in Backtest mode so the follow-up run's result shows.
+    expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy();
+    expect(document.querySelector(".sweep-panel")).toBeNull();
+    // The sweep table AND the configured axes survive one flip away.
     expect(sweepStateSignal.value).not.toBeNull();
+    enterSweepMode();
     expect(document.querySelector(".sweep-panel")).toBeTruthy();
+    expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
     // A second row click (same single row here) still applies and re-runs.
     fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
     expect(onRun).toHaveBeenCalledTimes(2);
@@ -794,6 +829,7 @@ describe("persistent sweep setup", () => {
 
   it("keeps a swept field's input visible but disabled", () => {
     renderModal();
+    enterSweepMode();
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     const before = row.querySelectorAll("input.bt-operand-length").length;
@@ -806,26 +842,28 @@ describe("persistent sweep setup", () => {
     expect((row.querySelectorAll("input.bt-operand-length")[0] as HTMLInputElement).disabled).toBe(false);
   });
 
-  it("Sweep off clears every axis, returns the footer to a plain run, and persists the cleared set", () => {
+  it("toggling the last axis off disables Run sweep and persists the cleared set", () => {
     renderModal();
+    enterSweepMode();
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
-    expect(screen.getByRole("button", { name: "Run sweep" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Sweep off" }));
+    const runBtn = () => screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement;
+    expect(runBtn().disabled).toBe(false);
+    fireEvent.click(row.querySelector(".sp-sweep")!);   // off again
     expect(document.querySelector(".sweep-axis-row")).toBeNull();
-    expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Sweep off" })).toBeNull();
+    expect(runBtn().disabled).toBe(true);
     // The empty set is what persists: a remount must not resurrect the axes.
     cleanup();
     renderModal();
     openStrategy();
     expect(document.querySelector(".sweep-axis-row")).toBeNull();
-    expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy();
+    expect(runBtn().disabled).toBe(true);
   });
 
   it("mode switch round-trip restores each mode's own axes", () => {
     renderModal();
+    enterSweepMode();
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
@@ -855,6 +893,7 @@ describe("persistent sweep setup", () => {
     ];
     mockStrategies.mockResolvedValue(strategies);
     renderModal({ ...defaultBacktestConfig(), codedStrategy: "ema_cross.py" });
+    enterSweepMode();
     openStrategy();
     const segStrategy = screen
       .getAllByRole("button", { name: "Strategy" })
@@ -865,7 +904,7 @@ describe("persistent sweep setup", () => {
     // outcome instead of asserting synchronously.
     await screen.findByText("Fast EMA");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy());
+      expect((screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement).disabled).toBe(true));
     expect(document.querySelector(".sweep-axis-row")).toBeNull();
   });
 });
@@ -887,6 +926,7 @@ describe("sweep footer estimate + compute toggle", () => {
   it("marks the estimate amber past 1000 combos but keeps Run sweep enabled", () => {
     bigAxis();
     renderModal();
+    enterSweepMode();
     const est = document.querySelector(".bt-sweep-estimate") as HTMLElement;
     expect(est).toBeTruthy();
     expect(est.className).toContain("bt-sweep-warn");
@@ -901,6 +941,7 @@ describe("sweep footer estimate + compute toggle", () => {
     recordSweepPace("TEST", "MINUTE", "local", 200);
     bigAxis();
     renderModal();
+    enterSweepMode();
     const est = document.querySelector(".bt-sweep-estimate") as HTMLElement;
     expect(est.textContent).toBe("2001 combos, about 7m on this run target");
   });
@@ -909,6 +950,7 @@ describe("sweep footer estimate + compute toggle", () => {
     mockComputeStatus.mockResolvedValue({ remoteConfigured: false });
     bigAxis();
     renderModal();
+    enterSweepMode();
     // Let the mount fetch resolve; the toggle must stay absent.
     await waitFor(() => expect(mockComputeStatus).toHaveBeenCalled());
     expect(document.querySelector(".bt-compute-toggle")).toBeNull();
@@ -918,6 +960,7 @@ describe("sweep footer estimate + compute toggle", () => {
     mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
     bigAxis();
     renderModal();
+    enterSweepMode();
     await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
     const toggle = document.querySelector(".bt-compute-toggle") as HTMLElement;
     expect(within(toggle).getByRole("button", { name: "Local" })).toBeTruthy();
@@ -928,11 +971,70 @@ describe("sweep footer estimate + compute toggle", () => {
     mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
     bigAxis();
     renderModal();
+    enterSweepMode();
     await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
     const toggle = document.querySelector(".bt-compute-toggle") as HTMLElement;
     fireEvent.click(within(toggle).getByRole("button", { name: "Remote" }));
     expect(sweepTargetSignal.value).toBe("remote");
     expect(localStorage.getItem("auto-trader.sweepTarget")).toBe(JSON.stringify("remote"));
+  });
+});
+
+describe("backtest | sweep mode switch", () => {
+  afterEach(() => {
+    sweepStateSignal.set(null);
+    sweepAxesSignal.set([]);
+  });
+
+  const rows: SweepRow[] = [
+    { combo: { "rule:long.entry.0.left.length": 30 }, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, windows: null, error: null },
+  ];
+
+  it("flipping the mode flips the results view without clearing either result set", () => {
+    renderModal();
+    enterSweepMode();
+    act(() => sweepStateSignal.set({ rows, done: 1, total: 1, running: false }));
+    expect(document.querySelector(".sweep-panel")).toBeTruthy();
+    enterBacktestMode();
+    // Backtest view shows; the sweep state survives untouched behind it.
+    expect(document.querySelector(".sweep-panel")).toBeNull();
+    expect(sweepStateSignal.value).not.toBeNull();
+    enterSweepMode();
+    expect(document.querySelector(".sweep-panel")).toBeTruthy();
+  });
+
+  it("Run in Backtest mode publishes no axes even when axes are configured", () => {
+    const onRun = vi.fn();
+    render(
+      <BacktestSettingsModal
+        initial={defaultBacktestConfig()} epic="TEST" resolution="MINUTE" controller={null}
+        onRun={onRun} onClose={vi.fn()}
+      />,
+    );
+    enterSweepMode();
+    openStrategy();
+    const row = ruleRows(groupSection("Buy to open"))[0];
+    fireEvent.click(row.querySelector(".sp-sweep")!);
+    enterBacktestMode();
+    fireEvent.click(screen.getByRole("button", { name: "Run backtest" }));
+    expect(onRun).toHaveBeenCalledTimes(1);
+    // The mode gates the run: BacktestButton must see an empty axis set.
+    expect(sweepAxesSignal.value).toEqual([]);
+  });
+
+  it("sweep toggles are inert in Backtest mode", () => {
+    renderModal();
+    openStrategy();
+    const row = ruleRows(groupSection("Buy to open"))[0];
+    fireEvent.click(row.querySelector(".sp-sweep")!);   // no-op in Backtest mode
+    enterSweepMode();
+    expect(document.querySelector(".sweep-axis-row")).toBeNull();
+  });
+
+  it("shows sweep progress on the Sweep segment while in Backtest mode", () => {
+    renderModal();
+    act(() => sweepStateSignal.set({ rows, done: 1, total: 4, running: true }));
+    expect(modeSeg().querySelector(".bt-mode-badge")?.textContent).toBe("1/4");
   });
 });
 
@@ -948,6 +1050,7 @@ describe("clear sweep results", () => {
 
   it("shows Clear results only when a sweep is finished, and clicking it clears the table", () => {
     renderModal();
+    enterSweepMode();
     act(() => sweepStateSignal.set({ rows, done: 1, total: 2, running: true }));
     // While running: Cancel, no Clear.
     expect(screen.getByRole("button", { name: "Cancel sweep" })).toBeTruthy();

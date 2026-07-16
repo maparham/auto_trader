@@ -155,6 +155,18 @@ export function saveBacktestSide(side: "long" | "short"): void {
   saveLocal(BACKTEST_SIDE_KEY, side);
 }
 
+// Whether the backtest panel runs a single backtest or a parameter sweep. The
+// mode gates what Run does and which results the region shows. Device-local
+// view preference like the side above.
+const BACKTEST_MODE_KEY = `${PREFIX}.backtestMode`;
+export type BacktestRunMode = "backtest" | "sweep";
+export function loadBacktestMode(): BacktestRunMode {
+  return load<BacktestRunMode>(BACKTEST_MODE_KEY, "backtest") === "sweep" ? "sweep" : "backtest";
+}
+export function saveBacktestMode(mode: BacktestRunMode): void {
+  saveLocal(BACKTEST_MODE_KEY, mode);
+}
+
 // The settings/results vertical split in the backtest panel: the results-region
 // height (px) and whether it's collapsed. Device-local view preference, like the
 // side above — persists the layout you dragged to across re-opens and reloads.

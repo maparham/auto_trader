@@ -1672,9 +1672,22 @@
 }
 .modal-foot .ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
 .bt-cfg-foot { flex-shrink: 0; }
-/* Inspect toggle sits at the far-left of the footer; margin-right:auto eats the
-   slack so Close / Go live / Run backtest stay clustered on the right. */
-.bt-cfg-foot .bt-inspect-foot { margin-right: auto; display: inline-flex; align-items: center; gap: 5px; }
+/* Inspect + the mode switch sit at the far-left of the footer; the slack is
+   eaten by .bt-sweep-foot-info (the flexible sweep-info slot), so Close /
+   Go live / Run stay pinned on the right whatever the mode shows. */
+.bt-cfg-foot .bt-inspect-foot { display: inline-flex; align-items: center; gap: 5px; }
+.bt-cfg-foot .bt-sweep-foot-info {
+  flex: 1; min-width: 0;
+  display: inline-flex; align-items: center; justify-content: flex-end; gap: 10px;
+  overflow: hidden;
+}
+/* When the slot runs out of room, the per-axis counter gives way with an
+   ellipsis so the total estimate stays whole. */
+.bt-sweep-foot-info .sweep-counter { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.bt-sweep-foot-info .bt-sweep-estimate { flex: 0 0 auto; }
+/* Wide enough for the longest label ("Run backtest"), so swapping labels or
+   entering the Running state never reflows the buttons beside it. */
+.bt-cfg-foot .bt-run-btn { min-width: 112px; }
 .bt-cfg-foot .bt-inspect-foot.on {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--accent) 38%, transparent);
@@ -4242,6 +4255,10 @@ span.bt-leg-short { color: var(--neg); }
 .sp-sweep:hover { background: var(--hover); color: var(--text); }
 .sp-sweep.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .sp-sweep.on:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* Backtest mode: sweep toggles stay visible for discoverability but read as
+   inert (the modal no-ops their clicks; the footer mode switch is the way in). */
+.bt-mode-backtest .sp-sweep { opacity: 0.35; cursor: default; }
+.bt-mode-backtest .sp-sweep:hover { background: none; color: var(--text-dim); }
 .bt-sweep-icon { display: block; }
 
 /* Sweep axis from/to/step row — replaces the swept param's single NumberField */
@@ -4259,6 +4276,15 @@ span.bt-leg-short { color: var(--neg); }
    #f5a623) once the run gets large, but the Run button is never disabled by it. */
 .bt-sweep-estimate { font-size: 12px; color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bt-sweep-estimate.bt-sweep-warn { color: #f5a623; }
+/* Footer Backtest | Sweep mode switch. The badge on the Sweep segment shows a
+   background sweep's progress (or, from Backtest mode, the configured combo count). */
+.bt-mode-seg { flex: 0 0 auto; }
+.bt-mode-seg button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; font-size: 12px; }
+.bt-mode-badge {
+  font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 8px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  font-variant-numeric: tabular-nums;
+}
 /* Local | Remote compute-target toggle beside the estimate. */
 .bt-compute-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .bt-compute-label { font-size: 12px; color: var(--text-dim); }

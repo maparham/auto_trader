@@ -122,12 +122,18 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     backtestRunningSignal.set(true);
     setError(null);
     setWarning(null);
-    // Drop the previous run's results from the pane right away: when two runs
-    // produce identical numbers, a pane that never visibly changes reads as "the
-    // click did nothing". Emptying it (the pane shows its running state) makes
-    // every run observable. Chart artifacts are torn down later by runAndRender,
-    // once the fresh result is in hand.
-    backtestResultSignal.set(null);
+    // Captured once up front: the modal publishes the axes (empty in Backtest
+    // mode) right before bumping the run request, and nothing may change them
+    // mid-run (run() no-ops while running).
+    const sweepAxes = sweepAxesSignal.value;
+    // Single run: drop the previous result from the pane right away — when two
+    // runs produce identical numbers, a pane that never visibly changes reads
+    // as "the click did nothing". Emptying it (the pane shows its running
+    // state) makes every run observable. Chart artifacts are torn down later
+    // by runAndRender, once the fresh result is in hand. A sweep leaves the
+    // last single-run result alone: it streams into sweepStateSignal, and the
+    // modal's mode switch flips between the two coexisting result sets.
+    if (sweepAxes.length === 0) backtestResultSignal.set(null);
     try {
       const cfg = loadBacktestLastUsed() ?? defaultBacktestConfig();
       const coded = cfg.mode === "coded";
@@ -291,7 +297,6 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // Nothing renders on the chart; results stream into sweepStateSignal for
       // the modal's <SweepResults> to show. Clicking a result applies it, which
       // clears the axes and re-enters this function on the normal path.
-      const sweepAxes = sweepAxesSignal.value;
       if (sweepAxes.length > 0) {
         const ctl = new AbortController();
         const unsubCancel = sweepCancelRequest.subscribe(() => ctl.abort());

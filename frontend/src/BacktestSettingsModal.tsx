@@ -89,6 +89,9 @@ import {
   saveBacktestSide,
   loadBacktestSplit,
   saveBacktestSplit,
+  loadBacktestMode,
+  saveBacktestMode,
+  type BacktestRunMode,
 } from "./lib/persist";
 
 interface Props {
@@ -344,6 +347,18 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // re-opening the modal returns to the side you were working on.
   const [side, setSide] = useState<"long" | "short">(loadBacktestSide);
   const [tab, setTab] = useState<BacktestTab>("period");
+  // Backtest vs Sweep mode. The mode gates what Run does and which results the
+  // bottom region shows — NOT whether results exist: both result sets stay
+  // populated, so flipping the switch flips the view with nothing cleared.
+  // Device-local, restored on open; a sweep still running when the modal opens
+  // (re-attach below) forces "sweep" so its progress is immediately visible.
+  const [btMode, setBtMode] = useState<BacktestRunMode>(() =>
+    sweepStateSignal.value ? "sweep" : loadBacktestMode(),
+  );
+  const selectMode = (m: BacktestRunMode) => {
+    setBtMode(m);
+    saveBacktestMode(m);
+  };
   // Auto-persist the config on every edit, so changes like deleting a rule stick
   // even if the modal is closed without running. Previously the last-used config
   // was saved ONLY on Run, so an edit made and then abandoned reappeared on the
@@ -454,7 +469,17 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // The storage context sweep memory/axes are keyed by: "rules", or the coded
   // strategy file, so param:n on two different .py files never collide.
   const sweepCtx = () => sweepContext(cfg.mode, cfg.codedStrategy);
+  // In Backtest mode every sweep control is inert: the glyphs render dimmed
+  // (CSS off the bt-mode-backtest root class) and the toggles below no-op, so
+  // the configured axes can't change invisibly while their editors are hidden.
+  const sweepEditable = btMode === "sweep";
+  // What the config sections render against: in Backtest mode the axes read as
+  // absent, so swept fields show their plain inputs again (the value a single
+  // run actually uses) and the inline from/to/step editors hide. The real
+  // sweepAxes survive untouched for the next flip back to Sweep mode.
+  const displayAxes = sweepEditable ? sweepAxes : [];
   const toggleSweepAxis = (target: string, spec: ParamSpec) => {
+    if (!sweepEditable) return;
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
       const mem = recallSweepRange(sweepCtx(), target);
@@ -502,6 +527,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // from the field's current value (from = current, to = 2x, step = a coarse
   // fraction so a first sweep is immediately useful without hand-tuning).
   const toggleRiskSweepAxis = (target: string, current: number) => {
+    if (!sweepEditable) return;
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
       const base = current || 1;
@@ -521,6 +547,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // same heuristic as toggleRiskSweepAxis (no declared min/max/step to draw
   // from), keyed on the `rule:` path built by ruleAxisTarget at the call site.
   const toggleRuleSweepAxis = (target: string, current: number) => {
+    if (!sweepEditable) return;
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
       const base = current || 1;
@@ -542,6 +569,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   });
   // Operator axis: a discrete list seeded with the rule's current operator.
   const toggleOpSweepAxis = (target: string, current: Operator) => {
+    if (!sweepEditable) return;
     setSweepAxes((axes) =>
       axes.some((a) => a.target === target)
         ? axes.filter((a) => a.target !== target)
@@ -569,7 +597,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         })
         .filter((a) => !(a.target === target && a.kind === "list" && a.options.length === 0)));
   };
-  const timeWindowAxis = sweepAxes.find((a) => a.target === "timeWindow");
+  const timeWindowAxis = displayAxes.find((a) => a.target === "timeWindow");
   const twOption = (startMin: number, endMin: number, tz: string, label?: string): SweepOption => ({
     label: label ?? `${minToTime(startMin)}-${minToTime(endMin)} ${tz}`,
     patch: { "timeWindow:startMin": startMin, "timeWindow:endMin": endMin, "timeWindow:tz": tz },
@@ -577,6 +605,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // Time-window axis: a discrete list of intraday windows, seeded with the
   // mask's current window when one is set.
   const toggleTimeWindowSweepAxis = () => {
+    if (!sweepEditable) return;
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === "timeWindow")) return axes.filter((a) => a.target !== "timeWindow");
       const t = cfg.range.mask?.timeOfDay;
@@ -610,11 +639,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           ? { ...a, options: a.options.filter((_, j) => j !== i) }
           : a)
       .filter((a) => !(a.target === "timeWindow" && a.kind === "list" && a.options.length === 0)));
-  const periodAxis = sweepAxes.find((a) => a.target === "period");
+  const periodAxis = displayAxes.find((a) => a.target === "period");
   // Period axis: walk-forward, the range split into n equal windows. Stored as
   // just n while editing; materialized into concrete windows at run time so it
   // always reflects the range as currently configured.
   const togglePeriodSweepAxis = () => {
+    if (!sweepEditable) return;
     setSweepAxes((axes) =>
       axes.some((a) => a.target === "period")
         ? axes.filter((a) => a.target !== "period")
@@ -645,7 +675,13 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // panel/tab closed: the server job keeps running). Only when no run already
   // owns the state, so we never double-publish into a live in-session sweep.
   useEffect(() => {
-    if (sweepStateSignal.value === null) void resumeSweep();
+    if (sweepStateSignal.value === null)
+      // A re-attached job flips the view to Sweep so the landed/streaming rows
+      // are visible; setBtMode (not selectMode) so an automatic flip doesn't
+      // overwrite the user's saved mode preference.
+      void resumeSweep().then((attached) => {
+        if (attached) setBtMode("sweep");
+      });
   }, []);
   // Clear any leftover sweep run/axes when the modal unmounts/closes, so a
   // stale in-flight state (or un-applied axes) from a previous session can't
@@ -751,10 +787,12 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     // to short (no-op when unsynced or already equal).
     next = applyRiskSync(next, "long");
     setCfg(next);
-    // Clear the axes so the follow-up run is a plain backtest, but keep
-    // sweepStateSignal: the results table stays up so other rows can still be
-    // inspected and applied. "Clear results" dismisses it.
+    // Clear the published axes so the follow-up run is a plain backtest, and
+    // flip to Backtest mode so its result is what lands on screen. The sweep
+    // table survives untouched one flip away: sweepStateSignal is kept so
+    // other rows can still be inspected and applied.
     sweepAxesSignal.set([]);
+    selectMode("backtest");
     run(next);
   }
 
@@ -813,9 +851,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     next = applyRiskSync(next, "long");
     updateCoded(next);
     if (cfgNext !== cfg) setCfg(cfgNext);
-    // Axes cleared so the run is a plain backtest; sweepStateSignal kept so
-    // the results table survives the apply (see applyRuleSweepCombo).
+    // Published axes cleared + mode flipped so the run is a plain backtest
+    // whose result lands on screen; sweepStateSignal kept so the results
+    // table survives the apply one flip away (see applyRuleSweepCombo).
     sweepAxesSignal.set([]);
+    selectMode("backtest");
     run(cfgNext !== cfg ? cfgNext : undefined);
   }
 
@@ -1042,6 +1082,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // separate from applySweepCombo's own run(), which explicitly clears the
   // signal to [] first for its single-combo follow-up run.
   function runFromFooter() {
+    if (btMode !== "sweep") {
+      // Backtest mode: always a single run. Publish an empty axis set even
+      // when axes are configured — the mode gates the run, so BacktestButton
+      // must take its single-run path.
+      sweepAxesSignal.set([]);
+      run();
+      return;
+    }
+    if (sweepAxes.length === 0) return; // button is disabled; belt and braces
     // Synced SL/TP: stamp risk axes with their short-side mirror so the sweep
     // moves both legs together (the axes themselves stay long-side only).
     const synced = cfg.mode === "coded" ? riskSyncOn(codedCfg) : riskSyncOn(cfg);
@@ -1078,7 +1127,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
 
   return (
     <>
-    <aside className="bt-cfg-panel">
+    <aside className={`bt-cfg-panel bt-mode-${btMode}`}>
         <div className="bt-cfg-head">
           <span className="bt-cfg-title">
             Backtest — <strong>{epic}</strong> <span className="bt-cfg-res">{effectiveRes}</span>
@@ -1589,7 +1638,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 specs={selectedStrategy?.params ?? []}
                 values={resolveParamValues(selectedStrategy?.params ?? [], codedCfg.params)}
                 onChange={(params) => updateCoded({ ...codedCfg, params })}
-                sweep={{ axes: sweepAxes, onToggle: toggleSweepAxis, onAxisChange: patchAxis }}
+                sweep={{ axes: displayAxes, onToggle: toggleSweepAxis, onAxisChange: patchAxis }}
               />
               {paramError && <div className="al-note bt-param-error">{paramError}</div>}
               {(["long", "short"] as const).map((s) => {
@@ -1615,7 +1664,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                       risk={(isLong ? codedCfg.longRisk : codedCfg.shortRisk) ?? EMPTY_RISK}
                       onChange={(r) => updateCoded({ ...codedCfg, ...riskPatch(riskSyncOn(codedCfg), s, r) })}
                       sweep={{
-                        axes: sweepAxes,
+                        axes: displayAxes,
                         side: s,
                         onToggle: toggleRiskSweepAxis,
                         // Synced: the axis lives on the long side regardless of
@@ -1683,7 +1732,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
             openChartPicker={openChartPicker}
             sweep={{
-              axes: sweepAxes,
+              axes: displayAxes,
               side,
               onToggle: toggleRuleSweepAxis,
               onToggleOp: toggleOpSweepAxis,
@@ -1837,7 +1886,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             </span>
             Results
           </button>
-          {!split.collapsed && (
+          {/* The results view follows the mode, never "which results exist":
+              both signals stay populated, so flipping the switch flips the
+              view with nothing cleared. */}
+          {!split.collapsed && btMode === "backtest" && <BacktestPanel />}
+          {!split.collapsed && btMode === "sweep" && (
             sweepState ? (
               <div className="sweep-panel">
                 {sweepState.running ? (
@@ -1868,7 +1921,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 />
               </div>
             ) : (
-              <BacktestPanel />
+              <div className="bt-results-empty">
+                No sweep results yet. Turn on the sweep toggle next to the fields you want to
+                vary, then press Run sweep.
+              </div>
             )
           )}
         </div>
@@ -1895,18 +1951,46 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               <span>Inspect</span>
             </button>
           </Tooltip>
-          <button className="ghost" onClick={onClose}>
-            Close
-          </button>
-          <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
-            <button
-              className="ghost bt-golive"
-              onClick={() => requestGoLive(cfg)}
-            >
-              Go live →
-            </button>
-          </Tooltip>
-          {sweepAxes.length > 0 && (
+          <span className="seg bt-mode-seg" role="group" aria-label="Run mode">
+            <Tooltip content="Run a single backtest. Sweep setup stays configured but inert.">
+              <button
+                type="button"
+                className={btMode === "backtest" ? "seg-on" : ""}
+                aria-pressed={btMode === "backtest"}
+                onClick={() => selectMode("backtest")}
+              >
+                Backtest
+              </button>
+            </Tooltip>
+            <Tooltip content="Sweep the toggled fields across their ranges, one run per combination.">
+              <button
+                type="button"
+                className={btMode === "sweep" ? "seg-on" : ""}
+                aria-pressed={btMode === "sweep"}
+                onClick={() => selectMode("sweep")}
+              >
+                Sweep
+                {/* A sweep stays visible from Backtest mode: progress while one
+                    runs in the background, else the configured combo count
+                    (redundant with the counter when Sweep mode is on). */}
+                {sweepState?.running ? (
+                  <span className="bt-mode-badge">
+                    {sweepState.done}/{sweepState.total}
+                  </span>
+                ) : btMode === "backtest" && sweepAxes.length > 0 && isFinite(sweepCombos) ? (
+                  <span className="bt-mode-badge">{sweepCombos}</span>
+                ) : null}
+              </button>
+            </Tooltip>
+          </span>
+          {/* Variable sweep info lives in this always-present flex slot, so the
+              pinned controls on either side never move when the mode flips or
+              axes come and go. */}
+          <span className="bt-sweep-foot-info">
+          {btMode === "sweep" && sweepAxes.length === 0 && (
+            <span className="sweep-counter">Turn on a field's sweep toggle to run</span>
+          )}
+          {btMode === "sweep" && sweepAxes.length > 0 && (
             <span className="sweep-counter">
               {/* Per-axis counts via the SAME comboCount the runner uses. A
                   single axis's own combo count is exactly its step count (or
@@ -1925,14 +2009,14 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               {isFinite(sweepCombos) ? sweepCombos : "∞"} runs
             </span>
           )}
-          {sweepAxes.length > 0 && (
+          {btMode === "sweep" && sweepAxes.length > 0 && (
             <span className={`bt-sweep-estimate${sweepWarn ? " bt-sweep-warn" : ""}`}>
               {isFinite(sweepCombos)
                 ? estimateSweepText(sweepCombos, recallSweepPace(epic, effectiveRes, sweepTarget))
                 : "∞ combos"}
             </span>
           )}
-          {sweepAxes.length > 0 && remoteCompute && (
+          {btMode === "sweep" && sweepAxes.length > 0 && remoteCompute && (
             <span className="bt-compute-toggle">
               <span className="bt-compute-label">Compute:</span>
               <span className="seg" role="group" aria-label="Compute target">
@@ -1950,15 +2034,24 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               </span>
             </span>
           )}
-          {sweepAxes.length > 0 && (
-            <Tooltip content="Turn all sweep fields off and go back to a plain backtest. Toggling a field back on recalls the range it last swept with.">
-              <button className="ghost sweep-axes-off" onClick={() => setSweepAxes([])}>
-                Sweep off
-              </button>
-            </Tooltip>
-          )}
-          <button onClick={runFromFooter} disabled={runInFlight}>
-            {runInFlight ? "Running…" : sweepAxes.length > 0 ? "Run sweep" : "Run backtest"}
+          </span>
+          <button className="ghost" onClick={onClose}>
+            Close
+          </button>
+          <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
+            <button
+              className="ghost bt-golive"
+              onClick={() => requestGoLive(cfg)}
+            >
+              Go live →
+            </button>
+          </Tooltip>
+          <button
+            className="bt-run-btn"
+            onClick={runFromFooter}
+            disabled={runInFlight || (btMode === "sweep" && sweepAxes.length === 0)}
+          >
+            {runInFlight ? "Running…" : btMode === "sweep" ? "Run sweep" : "Run backtest"}
           </button>
         </div>
     </aside>
