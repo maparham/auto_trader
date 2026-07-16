@@ -9,7 +9,7 @@ import CloseButton from "./CloseButton";
 import ChartOperandPicker from "./ChartOperandPicker";
 import InfoTip from "./components/InfoTip";
 import NumberField from "./components/NumberField";
-import RunBar from "./components/RunBar";
+import RunBar, { ModeSeg } from "./components/RunBar";
 import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
 import {
@@ -104,6 +104,11 @@ import {
   loadSweepResultId,
   saveSweepResultId,
   clearSweepResultId,
+  loadBacktestResultsSideBySide,
+  saveBacktestResultsSideBySide,
+  loadBacktestResultsColWidth,
+  saveBacktestResultsColWidth,
+  BACKTEST_RESULTS_COL_DEFAULT_WIDTH,
 } from "./lib/persist";
 
 interface Props {
@@ -1111,6 +1116,41 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     el.addEventListener("pointercancel", onUp);
   };
 
+  // Results layout: stacked (default) vs a docked column beside the panel.
+  const [sideBySide, setSideBySide] = useState<boolean>(loadBacktestResultsSideBySide);
+  const setResultsSideBySide = (on: boolean) => {
+    setSideBySide(on);
+    saveBacktestResultsSideBySide(on);
+  };
+  // Keep the chart at least ~200px even with the config panel + this column both docked.
+  const clampColWidth = (w: number) =>
+    Math.max(360, Math.min(w, Math.max(360, window.innerWidth - panelWidth - 200)));
+  const [resultsColWidth, setResultsColWidth] = useState<number>(() =>
+    clampColWidth(loadBacktestResultsColWidth()),
+  );
+  const onResultsColResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = resultsColWidth;
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    let w = startW;
+    const onMove = (ev: PointerEvent) => {
+      // Left edge: dragging left (negative dx) grows the column.
+      w = clampColWidth(startW + (startX - ev.clientX));
+      setResultsColWidth(w);
+    };
+    const onUp = () => {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      saveBacktestResultsColWidth(w);
+    };
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+  };
+
   // Inline height for the results region: unset/collapsed use CSS defaults.
   const resultsStyle: CSSProperties =
     split.collapsed || split.resultsHeight <= 0
@@ -1355,8 +1395,114 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     if (loadName === name) setLoadName("");
   }
 
+  // One results instance, rendered either in the stacked region or the docked
+  // column. Follows the active Backtest|Sweep mode; nothing is duplicated.
+  const resultsBody = (
+    <>
+      {btMode === "backtest" && <BacktestPanel />}
+      {btMode === "sweep" && (
+        <>
+          {pastSweeps.length > 0 && (
+            <div className="al-row bt-past-sweeps">
+              <span>Past sweeps</span>
+              <select
+                value={pickedSweep}
+                disabled={sweepState?.running}
+                onChange={(e) => {
+                  setPickedSweep(e.target.value);
+                  if (e.target.value) reopenSweep(e.target.value, true);
+                }}
+              >
+                <option value="">Reopen a sweep…</option>
+                {pastSweeps.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {new Date(s.created_at * 1000).toLocaleDateString()} · {s.name || `${s.n_rows} combos`} · best {s.best_net_pnl == null ? "n/a" : s.best_net_pnl.toFixed(0)}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="ghost"
+                disabled={!pickedSweep || sweepState?.running}
+                onClick={() => removePastSweep(pickedSweep)}
+              >
+                Delete
+              </button>
+            </div>
+          )}
+          {sweepState ? (
+            <div className="sweep-panel">
+              {sweepState.cancelled ? (
+                <div className="al-note">Cancelled, kept {sweepState.done} of {sweepState.total}</div>
+              ) : sweepState.error ? (
+                <div className="al-note bt-param-error">{sweepState.error}</div>
+              ) : null}
+              <SweepResults
+                rows={sweepState.rows}
+                axes={ranAxes.length ? ranAxes : sweepAxes}
+                onApply={applySweepCombo}
+                onRefine={(combo) => setSweepAxes((axes) => refineAxesAround(axes, combo as SweepCombo))}
+                progress={sweepState.running ? { done: sweepState.done, total: sweepState.total } : null}
+              />
+            </div>
+          ) : (
+            <div className="bt-results-empty">
+              No sweep results yet. Turn on the sweep toggle next to the fields you want to
+              vary, then press Run sweep.
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+
+  // The Backtest | Sweep switch lives in the Results header (docked row or
+  // side column head) rather than the footer, so it sits with the view it
+  // flips. Built once here because both layouts render it.
+  const modeSeg = (
+    <ModeSeg
+      mode={btMode}
+      onSelectMode={selectMode}
+      modeBadge={sweepState?.running ? (
+        <span className="bt-mode-badge">{sweepState.done}/{sweepState.total}</span>
+      ) : btMode === "backtest" && sweepAxes.length > 0 && isFinite(sweepCombos) ? (
+        <span className="bt-mode-badge">{sweepCombos}</span>
+      ) : null}
+    />
+  );
+
   return (
     <>
+    {sideBySide && (
+      <aside className={`bt-results-col bt-mode-${btMode}`} style={{ width: resultsColWidth }}>
+        <div
+          className="bt-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize results column"
+          onPointerDown={onResultsColResizeStart}
+          onDoubleClick={() => {
+            setResultsColWidth(clampColWidth(BACKTEST_RESULTS_COL_DEFAULT_WIDTH));
+            saveBacktestResultsColWidth(BACKTEST_RESULTS_COL_DEFAULT_WIDTH);
+          }}
+        />
+        <div className="bt-cfg-head">
+          <span className="bt-cfg-title">Results</span>
+          <span className="bt-results-head-actions">
+            {modeSeg}
+            <Tooltip content="Dock results back into the panel">
+              <button
+                className="bt-results-layout-btn"
+                aria-label="Dock results back into the panel"
+                onClick={() => setResultsSideBySide(false)}
+              >
+                ⇤
+              </button>
+            </Tooltip>
+          </span>
+        </div>
+        <div className="bt-results-col-body">{resultsBody}</div>
+      </aside>
+    )}
     <aside className={`bt-cfg-panel bt-mode-${btMode}`} style={{ width: panelWidth }}>
         <div
           className="bt-resize-handle"
@@ -2153,81 +2299,35 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           </div>
         )}
 
-        <div className={`bt-results-region${split.collapsed ? " collapsed" : ""}`} style={resultsStyle}>
-          <button className="bt-results-toggle" onClick={toggleResults} aria-expanded={!split.collapsed}>
-            <span className={`bt-results-chevron${split.collapsed ? " collapsed" : ""}`} aria-hidden="true">
-              ▾
-            </span>
-            Results
-          </button>
-          {/* The results view follows the mode, never "which results exist":
-              both signals stay populated, so flipping the switch flips the
-              view with nothing cleared. */}
-          {!split.collapsed && btMode === "backtest" && <BacktestPanel />}
-          {!split.collapsed && btMode === "sweep" && (
-            <>
-            {pastSweeps.length > 0 && (
-              <div className="al-row bt-past-sweeps">
-                <span>Past sweeps</span>
-                <select
-                  value={pickedSweep}
-                  disabled={sweepState?.running}
-                  onChange={(e) => {
-                    setPickedSweep(e.target.value);
-                    if (e.target.value) reopenSweep(e.target.value, true);
-                  }}
-                >
-                  <option value="">Reopen a sweep…</option>
-                  {pastSweeps.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {new Date(s.created_at * 1000).toLocaleDateString()} · {s.name || `${s.n_rows} combos`} · best {s.best_net_pnl == null ? "n/a" : s.best_net_pnl.toFixed(0)}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="ghost"
-                  disabled={!pickedSweep || sweepState?.running}
-                  onClick={() => removePastSweep(pickedSweep)}
-                >
-                  Delete
-                </button>
-              </div>
-            )}
-            {sweepState ? (
-              <div className="sweep-panel">
-                {sweepState.cancelled ? (
-                  <div className="al-note">Cancelled, kept {sweepState.done} of {sweepState.total}</div>
-                ) : sweepState.error ? (
-                  <div className="al-note bt-param-error">{sweepState.error}</div>
-                ) : null}
-                <SweepResults
-                  rows={sweepState.rows}
-                  axes={ranAxes.length ? ranAxes : sweepAxes}
-                  onApply={applySweepCombo}
-                  onRefine={(combo) => setSweepAxes((axes) => refineAxesAround(axes, combo as SweepCombo))}
-                  progress={sweepState.running ? { done: sweepState.done, total: sweepState.total } : null}
-                />
-              </div>
-            ) : (
-              <div className="bt-results-empty">
-                No sweep results yet. Turn on the sweep toggle next to the fields you want to
-                vary, then press Run sweep.
-              </div>
-            )}
-            </>
-          )}
-        </div>
+        {!sideBySide && (
+          <div className={`bt-results-region${split.collapsed ? " collapsed" : ""}`} style={resultsStyle}>
+            <div className="bt-results-head-row">
+              <button className="bt-results-toggle" onClick={toggleResults} aria-expanded={!split.collapsed}>
+                <span className={`bt-results-chevron${split.collapsed ? " collapsed" : ""}`} aria-hidden="true">
+                  ▾
+                </span>
+                Results
+              </button>
+              <span className="bt-results-head-actions">
+                {modeSeg}
+                <Tooltip content="Show results in a side column">
+                  <button
+                    className="bt-results-layout-btn"
+                    aria-label="Show results in a side column"
+                    onClick={() => setResultsSideBySide(true)}
+                  >
+                    ⇥
+                  </button>
+                </Tooltip>
+              </span>
+            </div>
+            {!split.collapsed && resultsBody}
+          </div>
+        )}
         </div>
 
         <div className="modal-foot bt-cfg-foot">
           <RunBar
-            mode={btMode}
-            onSelectMode={selectMode}
-            modeBadge={sweepState?.running ? (
-              <span className="bt-mode-badge">{sweepState.done}/{sweepState.total}</span>
-            ) : btMode === "backtest" && sweepAxes.length > 0 && isFinite(sweepCombos) ? (
-              <span className="bt-mode-badge">{sweepCombos}</span>
-            ) : null}
             sweepInfo={<>
               {holdout && (
                 <span className="sweep-counter bt-holdout-badge">

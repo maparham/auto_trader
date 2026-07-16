@@ -913,3 +913,18 @@ describe("per-browser-tab active layout (session-first with device seed)", () =>
     expect(P.loadActiveLayoutId()).toBe("cap-layout");
   });
 });
+
+describe("backtest results side-by-side prefs", () => {
+  it("defaults to stacked (off) and the default column width", () => {
+    expect(P.loadBacktestResultsSideBySide()).toBe(false);
+    expect(P.loadBacktestResultsColWidth()).toBe(P.BACKTEST_RESULTS_COL_DEFAULT_WIDTH);
+  });
+  it("round-trips the flag and clamps an absurd width up to the floor", () => {
+    P.saveBacktestResultsSideBySide(true);
+    expect(P.loadBacktestResultsSideBySide()).toBe(true);
+    P.saveBacktestResultsColWidth(50);
+    expect(P.loadBacktestResultsColWidth()).toBe(P.BACKTEST_RESULTS_COL_DEFAULT_WIDTH);
+    P.saveBacktestResultsColWidth(600);
+    expect(P.loadBacktestResultsColWidth()).toBe(600);
+  });
+});

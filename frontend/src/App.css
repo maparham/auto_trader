@@ -1033,6 +1033,34 @@
   background: var(--surface);
   border-left: 1px solid var(--border);
 }
+/* Results column: a second docked surface, left of the config panel, shown when
+   the side-by-side toggle is on. Mirrors bt-cfg-panel's docking so the chart
+   shrinks beside it. */
+.bt-results-col {
+  position: relative;
+  flex-shrink: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.bt-results-col-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+/* Header row that carries the stacked-region "move to column" button beside the
+   collapse toggle. */
+.bt-results-head-row { display: flex; align-items: center; justify-content: space-between; }
+/* Right-pinned cluster in the results header: the Backtest | Sweep mode switch
+   plus the dock/undock layout button. */
+.bt-results-head-actions { display: inline-flex; align-items: center; gap: 8px; }
+.bt-results-layout-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; margin-right: 8px;
+  border: none; background: transparent; color: var(--text-dim);
+  font-size: 15px; line-height: 1; cursor: pointer; border-radius: 4px;
+}
+.bt-results-layout-btn:hover { background: var(--hover); color: var(--text); }
 /* Left-edge drag handle: grab to resize the panel, double-click to reset. */
 .bt-resize-handle {
   position: absolute;

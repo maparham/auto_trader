@@ -194,6 +194,28 @@ export function saveBacktestPanelWidth(w: number): void {
   saveLocal(BACKTEST_PANEL_WIDTH_KEY, w);
 }
 
+// Backtest results layout: when on, results move out of the stacked config
+// panel into their own docked column beside it. Device-local view preference
+// like the panel width above.
+const BACKTEST_RESULTS_SIDE_BY_SIDE_KEY = `${PREFIX}.backtestResultsSideBySide`;
+export function loadBacktestResultsSideBySide(): boolean {
+  return load<boolean>(BACKTEST_RESULTS_SIDE_BY_SIDE_KEY, false);
+}
+export function saveBacktestResultsSideBySide(on: boolean): void {
+  saveLocal(BACKTEST_RESULTS_SIDE_BY_SIDE_KEY, on);
+}
+
+// Width (px) of that results column, dragged via its left-edge handle.
+const BACKTEST_RESULTS_COL_WIDTH_KEY = `${PREFIX}.backtestResultsColWidth`;
+export const BACKTEST_RESULTS_COL_DEFAULT_WIDTH = 560;
+export function loadBacktestResultsColWidth(): number {
+  const w = load<number>(BACKTEST_RESULTS_COL_WIDTH_KEY, BACKTEST_RESULTS_COL_DEFAULT_WIDTH);
+  return Number.isFinite(w) && w >= 360 ? w : BACKTEST_RESULTS_COL_DEFAULT_WIDTH;
+}
+export function saveBacktestResultsColWidth(w: number): void {
+  saveLocal(BACKTEST_RESULTS_COL_WIDTH_KEY, w);
+}
+
 // Whether the docked backtest config panel was open. Device-local view
 // preference (like side & split) so the panel reopens after a reload if it was
 // open — showing the already-persisted config/results, without re-running.

@@ -224,6 +224,28 @@ describe("chart-operand entry points", () => {
   });
 });
 
+describe("BacktestSettingsModal results side-by-side column", () => {
+  it("moves results into a docked column and back", () => {
+    renderModal();
+    // Default: results are stacked inside the config panel, no column.
+    expect(document.querySelector(".bt-results-region")).toBeTruthy();
+    expect(document.querySelector(".bt-results-col")).toBeNull();
+
+    // Turn on side-by-side.
+    fireEvent.click(screen.getByLabelText("Show results in a side column"));
+    const col = document.querySelector(".bt-results-col");
+    expect(col).toBeTruthy();
+    // The results content lives in the column now, not the stacked region.
+    expect(document.querySelector(".bt-results-region")).toBeNull();
+    expect(within(col as HTMLElement).getByText(/Run a backtest to see results/)).toBeTruthy();
+
+    // Dock back.
+    fireEvent.click(screen.getByLabelText("Dock results back into the panel"));
+    expect(document.querySelector(".bt-results-col")).toBeNull();
+    expect(document.querySelector(".bt-results-region")).toBeTruthy();
+  });
+});
+
 describe("operator sweep", () => {
   it("toggles an operator sweep axis and shows the 7-operator chip editor inline", () => {
     renderModal();

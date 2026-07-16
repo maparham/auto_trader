@@ -1,7 +1,8 @@
-// The backtest modal footer: the mode switch (Backtest | Sweep) on the left, a
-// flexible sweep-info slot in the middle, and a right-pinned run cluster
-// (Go live, Run). Extracted from BacktestSettingsModal so the footer layout
-// lives in one place. Mode logic stays in the modal (`onSelectMode`); the four
+// The backtest modal footer: a flexible sweep-info slot on the left and a
+// right-pinned run cluster (Go live, Run). Extracted from BacktestSettingsModal
+// so the footer layout lives in one place. The Backtest | Sweep mode switch
+// (`ModeSeg`) renders in the Results header row instead, but is exported from
+// here so mode UI stays alongside the rest of the run controls. The four
 // sweep-info pieces are passed in as `sweepInfo` because they read modal-local
 // state. The per-bar Inspect toggle lives in the results panel's Inspect tab
 // (it only applies to a single backtest), not here. `runClusterLead` is an
@@ -14,10 +15,43 @@ import Tooltip from "./Tooltip";
 
 type RunMode = "backtest" | "sweep";
 
-export function RunBar(props: {
+export function ModeSeg(props: {
   mode: RunMode;
   onSelectMode: (m: RunMode) => void;
   modeBadge: ReactNode;
+}): JSX.Element {
+  const { mode, onSelectMode, modeBadge } = props;
+  return (
+    <span className="seg bt-mode-seg" role="group" aria-label="Run mode">
+      <Tooltip content="Run a single backtest. Sweep setup stays configured but inert.">
+        <button
+          type="button"
+          className={mode === "backtest" ? "seg-on" : ""}
+          aria-pressed={mode === "backtest"}
+          onClick={() => onSelectMode("backtest")}
+        >
+          Backtest
+        </button>
+      </Tooltip>
+      <Tooltip content="Sweep the toggled fields across their ranges, one run per combination.">
+        <button
+          type="button"
+          className={mode === "sweep" ? "seg-on" : ""}
+          aria-pressed={mode === "sweep"}
+          onClick={() => onSelectMode("sweep")}
+        >
+          Sweep
+          {/* A sweep stays visible from Backtest mode: progress while one
+              runs in the background, else the configured combo count
+              (redundant with the counter when Sweep mode is on). */}
+          {modeBadge}
+        </button>
+      </Tooltip>
+    </span>
+  );
+}
+
+export function RunBar(props: {
   sweepInfo: ReactNode;
   runClusterLead?: ReactNode;
   onGoLive: () => void;
@@ -26,9 +60,6 @@ export function RunBar(props: {
   onRun: () => void;
 }): JSX.Element {
   const {
-    mode,
-    onSelectMode,
-    modeBadge,
     sweepInfo,
     runClusterLead,
     onGoLive,
@@ -39,32 +70,6 @@ export function RunBar(props: {
 
   return (
     <>
-      <span className="seg bt-mode-seg" role="group" aria-label="Run mode">
-        <Tooltip content="Run a single backtest. Sweep setup stays configured but inert.">
-          <button
-            type="button"
-            className={mode === "backtest" ? "seg-on" : ""}
-            aria-pressed={mode === "backtest"}
-            onClick={() => onSelectMode("backtest")}
-          >
-            Backtest
-          </button>
-        </Tooltip>
-        <Tooltip content="Sweep the toggled fields across their ranges, one run per combination.">
-          <button
-            type="button"
-            className={mode === "sweep" ? "seg-on" : ""}
-            aria-pressed={mode === "sweep"}
-            onClick={() => onSelectMode("sweep")}
-          >
-            Sweep
-            {/* A sweep stays visible from Backtest mode: progress while one
-                runs in the background, else the configured combo count
-                (redundant with the counter when Sweep mode is on). */}
-            {modeBadge}
-          </button>
-        </Tooltip>
-      </span>
       {/* Variable sweep info lives in this always-present flex slot, so the
           pinned controls on either side never move when the mode flips or
           axes come and go. */}
