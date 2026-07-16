@@ -227,14 +227,15 @@ export default function DrawSidebar({ controller }: Props) {
                     <li key={t.name} className="ds-row" onClick={() => arm(t.name)}>
                       <span className="ds-glyph"><DrawGlyph name={t.name} /></span>
                       <span className="ds-label">{t.label}</span>
-                      <button
-                        className={"ind-star" + (favs.includes(t.name) ? " on" : "")}
-                        title={favs.includes(t.name) ? "Remove from favorites" : "Add to favorites"}
-                        aria-pressed={favs.includes(t.name)}
-                        onClick={(e) => { e.stopPropagation(); toggleFav(t.name); }}
-                      >
-                        <Star on={favs.includes(t.name)} />
-                      </button>
+                      <Tooltip content={favs.includes(t.name) ? "Remove from favorites" : "Add to favorites"}>
+                        <button
+                          className={"ind-star" + (favs.includes(t.name) ? " on" : "")}
+                          aria-pressed={favs.includes(t.name)}
+                          onClick={(e) => { e.stopPropagation(); toggleFav(t.name); }}
+                        >
+                          <Star on={favs.includes(t.name)} />
+                        </button>
+                      </Tooltip>
                     </li>
                   ))}
                 </ul>
@@ -248,44 +249,49 @@ export default function DrawSidebar({ controller }: Props) {
           button (star order) behind a slim collapse toggle, sliding out so
           they read as coming from its flyout. */}
       {favShown.length > 0 && (
-        <button
-          className={"ds-fav-toggle" + (favsOpen ? " open" : "")}
-          title={favsOpen ? "Hide favorite tools" : "Show favorite tools"}
-          aria-expanded={favsOpen}
-          onClick={() => setFavsOpen((v) => !v)}
-        >
-          <svg viewBox="0 0 24 24" width="9" height="9" fill="none"
-            stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </button>
+        <Tooltip content={favsOpen ? "Hide favorite tools" : "Show favorite tools"} placement="right">
+          <button
+            className={"ds-fav-toggle" + (favsOpen ? " open" : "")}
+            aria-expanded={favsOpen}
+            onClick={() => setFavsOpen((v) => !v)}
+          >
+            <svg viewBox="0 0 24 24" width="9" height="9" fill="none"
+              stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+        </Tooltip>
       )}
       {favsOpen && favShown.map((name) => (
-        <button
-          key={name}
-          className="ds-btn ds-fav"
-          title={toolLabel(name)}
-          onClick={() => arm(name)}
-        >
-          <DrawGlyph name={name} />
-          {/* Star badge: ties the button back to the flyout star that made it. */}
-          <svg className="ds-fav-star" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
-          </svg>
-        </button>
+        <Tooltip key={name} content={toolLabel(name)} placement="right">
+          <button
+            className="ds-btn ds-fav"
+            onClick={() => arm(name)}
+          >
+            <DrawGlyph name={name} />
+            {/* Star badge: ties the button back to the flyout star that made it. */}
+            <svg className="ds-fav-star" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
+            </svg>
+          </button>
+        </Tooltip>
       ))}
 
       <span className="ds-div" aria-hidden="true" />
 
       {/* Measure ruler (moved from the toolbar; same signal contract). */}
-      <button
-        className={"ds-btn measure-toggle" + (measuring ? " on" : "")}
-        title="Measure. Click start, then click end. Shift-drag also works."
-        disabled={!controller?.measureArmed}
-        onClick={() => controller?.measureArmed?.set(!controller.measureArmed.value)}
+      <Tooltip
+        placement="right"
+        content={["Measure. Click a start point, then an end point.", "Shift-drag also works."]}
       >
-        <RulerIcon />
-      </button>
+        <button
+          className={"ds-btn measure-toggle" + (measuring ? " on" : "")}
+          disabled={!controller?.measureArmed}
+          onClick={() => controller?.measureArmed?.set(!controller.measureArmed.value)}
+        >
+          <RulerIcon />
+        </button>
+      </Tooltip>
 
       {/* Slope tool: click start, click end, then it stays live (drag ends / middle /
           rotate knob). The tooltip spells out what the angle number means, since it's a
@@ -394,21 +400,25 @@ export default function DrawSidebar({ controller }: Props) {
           </div>
         )}
       </div>
-      <button className="ds-btn" title="Lock / unlock all drawings"
-        disabled={!overlays} onClick={toggleLockAll}>
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-          strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-          <rect x="5" y="11" width="14" height="9" rx="1.5" />
-          <path d="M8 11V7.5a4 4 0 0 1 8 0V11" />
-        </svg>
-      </button>
-      <button className="ds-btn ds-trash" title="Delete all drawings"
-        disabled={!overlays} onClick={deleteAll}>
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-          strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-          <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l1 13h9l1-13M10 11v6M14 11v6" />
-        </svg>
-      </button>
+      <Tooltip content="Lock or unlock all drawings" placement="right">
+        <button className="ds-btn"
+          disabled={!overlays} onClick={toggleLockAll}>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+            strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+            <rect x="5" y="11" width="14" height="9" rx="1.5" />
+            <path d="M8 11V7.5a4 4 0 0 1 8 0V11" />
+          </svg>
+        </button>
+      </Tooltip>
+      <Tooltip content="Delete all drawings" placement="right">
+        <button className="ds-btn ds-trash"
+          disabled={!overlays} onClick={deleteAll}>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+            strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+            <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l1 13h9l1-13M10 11v6M14 11v6" />
+          </svg>
+        </button>
+      </Tooltip>
     </aside>
   );
 }

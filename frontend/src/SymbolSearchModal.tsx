@@ -15,6 +15,7 @@ import {
   type Instrument,
 } from "./lib/feed";
 import CloseButton from "./CloseButton";
+import Tooltip from "./components/Tooltip";
 import SymbolIcon from "./SymbolIcon";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { loadRecentSymbols, pushRecentSymbol } from "./lib/persist";
@@ -319,38 +320,41 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
             }}
           />
           {query && (
-            <button className="symsearch-clear" title="Clear" onClick={() => setQuery("")}>
-              ✕
-            </button>
+            <Tooltip content="Clear">
+              <button className="symsearch-clear" onClick={() => setQuery("")}>
+                ✕
+              </button>
+            </Tooltip>
           )}
           {showOps && (
             <div className="symsearch-ops">
               {SPREAD_OPS.map((o) => (
-                <button
-                  key={o.token}
-                  type="button"
-                  aria-label={o.name}
-                  title={o.name}
-                  onClick={() => insertOp(o.token)}
-                >
-                  {o.label}
-                </button>
+                <Tooltip key={o.token} content={o.name}>
+                  <button
+                    type="button"
+                    aria-label={o.name}
+                    onClick={() => insertOp(o.token)}
+                  >
+                    {o.label}
+                  </button>
+                </Tooltip>
               ))}
             </div>
           )}
-          <button
-            className={"symsearch-ops-toggle" + (showOps ? " on" : "")}
-            title={showOps ? "Hide spread operators" : "Show spread operators"}
-            aria-label={showOps ? "Hide spread operators" : "Show spread operators"}
-            aria-pressed={showOps}
-            onClick={() => setShowOps((v) => !v)}
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-              strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <path d="M8 9h.01M12 9h.01M16 9h.01M8 13h.01M16 13h.01M8 17h8" />
-            </svg>
-          </button>
+          <Tooltip content={showOps ? "Hide spread operators" : "Show spread operators"}>
+            <button
+              className={"symsearch-ops-toggle" + (showOps ? " on" : "")}
+              aria-label={showOps ? "Hide spread operators" : "Show spread operators"}
+              aria-pressed={showOps}
+              onClick={() => setShowOps((v) => !v)}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M8 9h.01M12 9h.01M16 9h.01M8 13h.01M16 13h.01M8 17h8" />
+              </svg>
+            </button>
+          </Tooltip>
         </div>
 
         <div className="symsearch-cats">
@@ -398,20 +402,21 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
               <span className="ss-badge" aria-hidden="true">
                 {brokerId.charAt(0).toUpperCase()}
               </span>
-              <button
-                className={"ss-star" + (favEpics.has(m.epic) ? " on" : "")}
-                title={favEpics.has(m.epic) ? "Remove from favorites" : "Add to favorites"}
-                aria-label={favEpics.has(m.epic) ? "Remove from favorites" : "Add to favorites"}
-                aria-pressed={favEpics.has(m.epic)}
-                onClick={(e) => {
-                  e.stopPropagation(); // don't select + close the modal
-                  void toggleFavorite(m);
-                }}
-              >
-                <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
-                  <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
-                </svg>
-              </button>
+              <Tooltip content={favEpics.has(m.epic) ? "Remove from favorites" : "Add to favorites"}>
+                <button
+                  className={"ss-star" + (favEpics.has(m.epic) ? " on" : "")}
+                  aria-label={favEpics.has(m.epic) ? "Remove from favorites" : "Add to favorites"}
+                  aria-pressed={favEpics.has(m.epic)}
+                  onClick={(e) => {
+                    e.stopPropagation(); // don't select + close the modal
+                    void toggleFavorite(m);
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+                    <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
+                  </svg>
+                </button>
+              </Tooltip>
             </li>
           ))}
           {isSyntheticExpr(query) && activeSymbolFragment(query) === "" ? (

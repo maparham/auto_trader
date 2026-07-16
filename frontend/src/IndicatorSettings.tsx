@@ -69,6 +69,7 @@ import {
   type SavedIndicatorConfig,
 } from "./lib/persist";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import { requestIndicatorOverlayRepaint } from "./lib/signals";
 import { mirrorAccelCompanion, syncAccelCompanion, getIndicator } from "./lib/indicators";
 import ColorLineStylePicker from "./ColorLineStylePicker";
@@ -1292,20 +1293,21 @@ export default function IndicatorSettings({
                       </button>
                     </span>
                   ))}
-                  <button
-                    type="button"
-                    className="slope-length-add"
-                    aria-label="Add MA length"
-                    title="Add another MA length"
-                    disabled={calcParams.length >= 5}
-                    onClick={() => {
-                      const nextCp = [...calcParams, 9];
-                      setCalcParams(nextCp);
-                      applySlope({ lengths: slopeLengths(nextCp) });
-                    }}
-                  >
-                    +
-                  </button>
+                  <Tooltip content="Add another MA length">
+                    <button
+                      type="button"
+                      className="slope-length-add"
+                      aria-label="Add MA length"
+                      disabled={calcParams.length >= 5}
+                      onClick={() => {
+                        const nextCp = [...calcParams, 9];
+                        setCalcParams(nextCp);
+                        applySlope({ lengths: slopeLengths(nextCp) });
+                      }}
+                    >
+                      +
+                    </button>
+                  </Tooltip>
                 </div>
               )}
               {inputs.map((inp) => {
@@ -1502,7 +1504,7 @@ export default function IndicatorSettings({
                     </label>
                     <InfoTip
                       title="Threshold"
-                      text="A symmetric visual guide drawn at +level and −level. Drag either line on the chart to adjust, or set the exact level here. Reference only — it doesn't trigger anything."
+                      text="A symmetric visual guide drawn at +level and −level. Drag either line on the chart to adjust, or set the exact level here. Reference only: it doesn't trigger anything."
                     />
                   </span>
                   {threshold.on && (
@@ -1680,7 +1682,7 @@ export default function IndicatorSettings({
                         </label>
                         <InfoTip
                           title="Acceleration threshold"
-                          text="A symmetric visual guide drawn at +level and −level on the acceleration pane. Drag either line on the chart to adjust, or set the exact level here. Reference only — it doesn't trigger anything."
+                          text="A symmetric visual guide drawn at +level and −level on the acceleration pane. Drag either line on the chart to adjust, or set the exact level here. Reference only: it doesn't trigger anything."
                         />
                       </span>
                       {accelThreshold.on && (

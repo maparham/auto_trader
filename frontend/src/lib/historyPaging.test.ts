@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { pageHistoryBack, type PageHistoryBackArgs } from "./historyPaging";
+import {
+  pageHistoryBack,
+  scrollbackLoadOlder,
+  type PageHistoryBackArgs,
+  type ScrollbackLoadArgs,
+} from "./historyPaging";
 
 // Minimal bar factory — pageHistoryBack only reads `.timestamp`.
 const bar = (timestamp: number): { timestamp: number } => ({ timestamp });
@@ -161,5 +166,121 @@ describe("pageHistoryBack", () => {
     const res = await pageHistoryBack(h.args);
     expect(res).toBe("aborted");
     expect(h.args.fetchOlder).not.toHaveBeenCalled();
+  });
+});
+
+// Harness for the interactive scroll-back loader (klinecharts DataLoader answer).
+// Boundary = oldest loaded bar (100 min); the cursor starts there.
+function sbHarness(opts: {
+  server: number[]; // older bar timestamps (ms) the broker can return
+  maxEmpty?: number;
+  stale?: () => boolean;
+  fetchOlder?: ScrollbackLoadArgs<{ timestamp: number }>["fetchOlder"];
+}) {
+  const doneCalls: Array<{ bars: number[]; more: boolean; loadingAtDone: boolean }> = [];
+  const loading = { current: false };
+  const args: ScrollbackLoadArgs<ReturnType<typeof bar>> = {
+    boundary: 100 * MIN,
+    resSec: 60,
+    pageBars: 5, // page window = 5 min
+    maxPageSpanSec: 10_000_000,
+    maxEmpty: opts.maxEmpty ?? 3,
+    cursorSec: { current: (100 * MIN) / SEC },
+    emptyStreak: { current: 0 },
+    exhausted: { current: false },
+    loading,
+    isStale: opts.stale ?? (() => false),
+    fetchOlder:
+      opts.fetchOlder ??
+      (async (fromSec, toSec) =>
+        opts.server.filter((t) => t >= fromSec * SEC && t <= toSec * SEC).map((t) => bar(t))),
+    done: (bars, more) =>
+      doneCalls.push({ bars: bars.map((b) => b.timestamp), more, loadingAtDone: loading.current }),
+  };
+  return { args, doneCalls };
+}
+
+describe("scrollbackLoadOlder", () => {
+  it("answers one page of fresh older bars with more=true", async () => {
+    const h = sbHarness({ server: [96, 97, 98, 99].map((m) => m * MIN) });
+    await scrollbackLoadOlder(h.args);
+    expect(h.doneCalls).toHaveLength(1);
+    expect(h.doneCalls[0].bars).toEqual([96, 97, 98, 99].map((m) => m * MIN));
+    expect(h.doneCalls[0].more).toBe(true);
+  });
+
+  it("frees the loading mutex BEFORE done() so klinecharts' synchronous re-ask can start the next page", async () => {
+    // done() re-enters the loader synchronously in production (adjustVisibleRange
+    // fires the next forward load from inside the callback). If the mutex is
+    // still held there, the chain dies after one page per user gesture.
+    const h = sbHarness({ server: [99 * MIN] });
+    await scrollbackLoadOlder(h.args);
+    expect(h.doneCalls[0].loadingAtDone).toBe(false);
+  });
+
+  it("crosses interior empty gap windows inside ONE load instead of answering empty", async () => {
+    // Gap: nothing in [90,100). Bars exist at 85..89 min, two page windows back.
+    // An empty done() would stall the fill until the next user gesture, so the
+    // walk must continue internally and answer with the far-side bars.
+    const h = sbHarness({ server: [85, 86, 87, 88, 89].map((m) => m * MIN) });
+    await scrollbackLoadOlder(h.args);
+    expect(h.doneCalls).toHaveLength(1);
+    expect(h.doneCalls[0].bars.length).toBeGreaterThan(0);
+    expect(h.doneCalls[0].more).toBe(true);
+    expect(h.args.cursorSec.current).toBeLessThan((90 * MIN) / SEC);
+  });
+
+  it("latches exhaustion (done([], false)) after maxEmpty consecutive empty windows", async () => {
+    const h = sbHarness({ server: [], maxEmpty: 3 });
+    await scrollbackLoadOlder(h.args);
+    expect(h.doneCalls).toHaveLength(1);
+    expect(h.doneCalls[0]).toMatchObject({ bars: [], more: false });
+    expect(h.args.exhausted.current).toBe(true);
+    expect(h.args.loading.current).toBe(false);
+  });
+
+  it("a transient fetch failure answers more=true WITHOUT advancing the cursor or the empty streak", async () => {
+    const h = sbHarness({
+      server: [],
+      fetchOlder: async () => {
+        throw new Error("503");
+      },
+    });
+    const cursorBefore = h.args.cursorSec.current;
+    await scrollbackLoadOlder(h.args);
+    expect(h.doneCalls).toHaveLength(1);
+    expect(h.doneCalls[0]).toMatchObject({ bars: [], more: true });
+    expect(h.args.cursorSec.current).toBe(cursorBefore);
+    expect(h.args.emptyStreak.current).toBe(0);
+    expect(h.args.exhausted.current).toBe(false);
+    expect(h.args.loading.current).toBe(false);
+  });
+
+  it("contains a throwing done() (disposed chart): promise resolves, mutex stays free", async () => {
+    const h = sbHarness({ server: [99 * MIN] });
+    h.args.done = () => {
+      throw new Error("chart disposed");
+    };
+    // Must not reject (a floating rejection would surface as a console error)
+    // and must not touch the mutex after freeing it (a catch-side reset would
+    // stomp a re-entrant page's ownership in production).
+    await expect(scrollbackLoadOlder(h.args)).resolves.toBeUndefined();
+    expect(h.args.loading.current).toBe(false);
+  });
+
+  it("bails with more=true when the series goes stale mid-flight, applying nothing", async () => {
+    let stale = false;
+    const h = sbHarness({
+      server: [99 * MIN],
+      stale: () => stale,
+      fetchOlder: async (fromSec, toSec) => {
+        stale = true;
+        return [99 * MIN].filter((t) => t >= fromSec * SEC && t <= toSec * SEC).map((t) => bar(t));
+      },
+    });
+    await scrollbackLoadOlder(h.args);
+    expect(h.doneCalls).toHaveLength(1);
+    expect(h.doneCalls[0]).toMatchObject({ bars: [], more: true });
+    expect(h.args.loading.current).toBe(false);
   });
 });

@@ -270,7 +270,10 @@ export function PrevHlInputsPanel({
         <span>Rolling range</span>
         <InfoTip
           title="Rolling range"
-          text="One sliding window that follows price. Pick the size and the unit. 1 hour = 60 minutes = 4 bars on a 15m chart, all the same line."
+          text={[
+            "Sliding window that follows price. Pick its size and unit.",
+            "1 hour = 60 min = 4 bars on a 15m chart, all one line.",
+          ]}
         />
       </div>
       {PREV_HL_LENGTH_FIELDS.filter((f) => f.kind === "rolling").map(renderRow)}
@@ -286,7 +289,10 @@ export function PrevHlInputsPanel({
         <span>Anchored</span>
         <InfoTip
           title="Anchored"
-          text="Highest high and lowest low since a date you pick. The lines run from that point to now. Nothing shows before it. The date uses the Timezone below."
+          text={[
+            "Highest high and lowest low since a date you pick.",
+            "Lines run from that date to now; nothing shows before it. Date uses the Timezone below.",
+          ]}
         />
       </div>
       <div className={`ind-row${on ? "" : " is-off"}`}>

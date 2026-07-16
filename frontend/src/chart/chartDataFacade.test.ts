@@ -13,17 +13,19 @@ function fakeChart() {
 }
 
 describe("chartDataFacade", () => {
-  it("serves stored bars to getBars(init) and forwards more-flags", () => {
+  it("serves stored bars to getBars(init) and translates canLoadOlder to v10 more-flags", () => {
     const f = createChartDataFacade();
     const chart = fakeChart();
     f.attach(chart);
     const bars = [{ timestamp: 1, open: 1, high: 1, low: 1, close: 1 }];
     const cb = vi.fn();
-    f.setBars(bars, { backward: true, forward: false });
+    f.setBars(bars, true);
     expect(chart.resetData).toHaveBeenCalled(); // setBars asks the chart to re-pull
-    // the chart re-pull arrives as getBars(init); the facade must serve the stored bars
+    // The chart re-pull arrives as getBars(init); the facade must serve the stored
+    // bars and map canLoadOlder onto v10's inverted flag naming (more.forward arms
+    // LEFT-edge/older loads; backward stays off, newer bars arrive via pushBar).
     chart._loader().getBars({ type: "init", timestamp: null, symbol: {} as any, period: {} as any, callback: cb });
-    expect(cb).toHaveBeenCalledWith(bars, { backward: true, forward: false });
+    expect(cb).toHaveBeenCalledWith(bars, { forward: true, backward: false });
   });
 
   it("routes edge loads to onLoadRequest", () => {

@@ -238,6 +238,9 @@ export interface LegAnalysis {
 
 export interface BacktestAnalysis extends LegAnalysis {
   by_leg?: { long: LegAnalysis; short: LegAnalysis };
+  // Rolling per-trade expectancy over an adaptive window, ordered by entry
+  // time. Null when the run has too few trades to be meaningful.
+  rolling?: { window: number; points: { t: number; expectancy: number }[] } | null;
 }
 
 export interface BacktestResult {
@@ -266,6 +269,12 @@ export interface BacktestResult {
     avg_duration_bars: number;
     max_consec_wins: number;
     max_consec_losses: number;
+    sharpe?: number | null;
+    sortino?: number | null;
+    calmar?: number | null;
+    cagr_pct?: number | null;
+    sqn?: number | null;
+    exposure_pct?: number | null;
   };
   // Per-direction trade-list breakdown for the TRADES panel table. Absent on
   // older cached payloads; the table zeroes the LONG/SHORT rows when missing.
@@ -280,6 +289,14 @@ export interface BacktestResult {
   // context breakdowns), all computed server-side. Absent on older cached runs.
   run_id?: string | null;
   analysis?: BacktestAnalysis | null;
+  // Cost-sensitivity summary (single runs that opted in). net_pnl is the run's
+  // net P&L at each cost multiple; breakeven_multiple is the interpolated
+  // multiple where net crosses zero (null when still profitable at 3x).
+  cost_sensitivity?: {
+    multiples: number[];
+    net_pnl: number[];
+    breakeven_multiple: number | null;
+  } | null;
 }
 
 export interface BacktestRequest {
@@ -306,6 +323,7 @@ export interface BacktestRequest {
   priceSide?: string;
   codedParams?: ParamValues; // panel-tuned ctx.param() overrides for `codedStrategy`
   inspect?: boolean; // opt into the per-bar inspector trace (bar_traces on the result)
+  costSensitivity?: boolean; // opt into the 0x/2x/3x cost re-runs (cost_sensitivity on the result)
 }
 
 export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {
@@ -392,6 +410,11 @@ export interface SweepRow {
     profit_factor: number | null;
     avg_win_loss_ratio: number | null;
     return_pct: number;
+    sharpe?: number | null;
+    sqn?: number | null;
+    // Injected client-side by withPlateau (lib/sweepPlateau.ts); never sent by
+    // the backend. Null when the sweep has no numeric range axes.
+    plateau_score?: number | null;
     // Sub-window robustness aggregates: present only when the sweep ran with
     // windows and the combo does not patch its own period.
     worst_window_pnl?: number;

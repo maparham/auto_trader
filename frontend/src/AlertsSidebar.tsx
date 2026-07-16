@@ -10,6 +10,7 @@
 // overlays bumps on add/delete/drag and ChartCore bumps on a firing.
 
 import { useEffect, useRef, useState } from "react";
+import Tooltip from "./components/Tooltip";
 import type { ChartController } from "./lib/chartController";
 import type { ChartTab, AlertCondition } from "./lib/persist";
 import type { OverlayManager } from "./lib/overlays";
@@ -354,9 +355,9 @@ export default function AlertsSidebar({
             <>
               {/* Filter: icon button that opens scope dropdown */}
               <div className="ap-menu-wrap" ref={menuRef}>
+                <Tooltip content={showAll ? "Showing all symbols" : `Showing ${epic} only`}>
                 <button
                   className={`ap-icon-btn${showAll ? " on" : ""}${menuOpen ? " open" : ""}`}
-                  title={showAll ? "Showing all symbols" : `Showing ${epic} only`}
                   onClick={() => { setMenuOpen((v) => !v); setSortOpen(false); }}
                 >
                   {/* funnel / filter icon */}
@@ -365,6 +366,7 @@ export default function AlertsSidebar({
                   </svg>
                   {showAll && <span className="ap-icon-dot" />}
                 </button>
+                </Tooltip>
                 {menuOpen && (
                   <div className="ap-menu">
                     <button
@@ -384,9 +386,9 @@ export default function AlertsSidebar({
               </div>
               {/* Sort: icon button that opens sort dropdown */}
               <div className="ap-menu-wrap" ref={sortRef}>
+                <Tooltip content="Sort alerts">
                 <button
                   className={`ap-icon-btn${sortKey !== "created-desc" ? " on" : ""}${sortOpen ? " open" : ""}`}
-                  title="Sort alerts"
                   onClick={() => { setSortOpen((v) => !v); setMenuOpen(false); }}
                 >
                   {/* A-Z alphabetical sort icon with directional arrow */}
@@ -399,6 +401,7 @@ export default function AlertsSidebar({
                   </svg>
                   {sortKey !== "created-desc" && <span className="ap-icon-dot" />}
                 </button>
+                </Tooltip>
                 {sortOpen && (
                   <div className="ap-menu">
                     {SORT_OPTIONS.map((opt) => (
@@ -421,13 +424,14 @@ export default function AlertsSidebar({
               </div>
             </>
           )}
+          <Tooltip content="Close panel">
           <button
             className="ap-close"
-            title="Close panel"
             onClick={() => alertsPanelOpen.set(false)}
           >
             ✕
           </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -467,9 +471,9 @@ export default function AlertsSidebar({
                           {a.trigger === "once" ? "Once" : "Every time"}
                         </span>
                         <div className="ap-row-actions">
+                          <Tooltip content="Go to chart">
                           <button
                             className="ap-icon-btn"
-                            title="Go to chart"
                             onClick={(e) => {
                               e.stopPropagation();
                               onOpenAlert(g.epic, target, g.precision);
@@ -477,9 +481,10 @@ export default function AlertsSidebar({
                           >
                             <GoToIcon />
                           </button>
+                          </Tooltip>
+                          <Tooltip content="Edit alert">
                           <button
                             className="ap-icon-btn"
-                            title="Edit alert"
                             onClick={(e) => {
                               e.stopPropagation();
                               alertGlobalEditRequest.set({
@@ -491,9 +496,10 @@ export default function AlertsSidebar({
                           >
                             <EditIcon />
                           </button>
+                          </Tooltip>
+                          <Tooltip content="Delete alert">
                           <button
                             className="ap-icon-btn"
-                            title="Delete alert"
                             onClick={(e) => {
                               e.stopPropagation();
                               requestConfirm({
@@ -509,6 +515,7 @@ export default function AlertsSidebar({
                           >
                             <TrashIcon />
                           </button>
+                          </Tooltip>
                         </div>
                       </div>
                     </div>
@@ -549,9 +556,9 @@ export default function AlertsSidebar({
                       {a.trigger === "once" ? "Once" : "Every time"}
                     </span>
                     <div className="ap-row-actions">
+                      <Tooltip content="Go to chart">
                       <button
                         className="ap-icon-btn"
-                        title="Go to chart"
                         onClick={(e) => {
                           e.stopPropagation();
                           // Already the focused, on-screen chart — a.id is the live
@@ -561,9 +568,10 @@ export default function AlertsSidebar({
                       >
                         <GoToIcon />
                       </button>
+                      </Tooltip>
+                      <Tooltip content="Edit alert">
                       <button
                         className="ap-icon-btn"
-                        title="Edit alert"
                         onClick={(e) => {
                           e.stopPropagation();
                           alertEditRequest.set({ id: a.id });
@@ -571,9 +579,10 @@ export default function AlertsSidebar({
                       >
                         <EditIcon />
                       </button>
+                      </Tooltip>
+                      <Tooltip content="Delete alert">
                       <button
                         className="ap-icon-btn"
-                        title="Delete alert"
                         onClick={(e) => {
                           e.stopPropagation();
                           requestConfirm({
@@ -584,6 +593,7 @@ export default function AlertsSidebar({
                       >
                         <TrashIcon />
                       </button>
+                      </Tooltip>
                     </div>
                   </div>
                 </div>
@@ -634,9 +644,9 @@ export default function AlertsSidebar({
                   {t.message && <div className="ap-msg">{t.message}</div>}
                   <div className="ap-row-meta ap-row-meta-end">
                     <div className="ap-row-actions">
+                      <Tooltip content="Go to chart">
                       <button
                         className="ap-icon-btn"
-                        title="Go to chart"
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpenAlert(t.epic, target, hp);
@@ -644,6 +654,7 @@ export default function AlertsSidebar({
                       >
                         <GoToIcon />
                       </button>
+                      </Tooltip>
                     </div>
                   </div>
                 </div>

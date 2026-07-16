@@ -489,21 +489,23 @@ export default function PositionsPanel({
             <TabButton label="Positions" count={positions.length} on={tab === "positions"} onClick={() => setTab("positions")} />
             <TabButton label="Orders" count={orders.length} on={tab === "orders"} onClick={() => setTab("orders")} />
             <div className="pp-winctl">
-              <button
-                className="pp-iconbtn"
-                onClick={clickMaximize}
-                aria-pressed={maximized}
-                title={maximized ? "Restore dock" : "Maximize dock"}
-              >
-                {maximized ? <RestoreIcon /> : <MaximizeIcon />}
-              </button>
-              <button
-                className="pp-iconbtn"
-                onClick={() => applyCollapsed(true)}
-                title="Close book"
-              >
-                <CloseIcon />
-              </button>
+              <Tooltip content={maximized ? "Restore dock" : "Maximize dock"}>
+                <button
+                  className="pp-iconbtn"
+                  onClick={clickMaximize}
+                  aria-pressed={maximized}
+                >
+                  {maximized ? <RestoreIcon /> : <MaximizeIcon />}
+                </button>
+              </Tooltip>
+              <Tooltip content="Close book">
+                <button
+                  className="pp-iconbtn"
+                  onClick={() => applyCollapsed(true)}
+                >
+                  <CloseIcon />
+                </button>
+              </Tooltip>
             </div>
           </nav>
 
@@ -523,17 +525,17 @@ export default function PositionsPanel({
                 <thead>
                   <tr>
                     <th className="pp-c-sym"><SortHeader label="Symbol" col="epic" sort={sort} onSort={toggleSort} title="Instrument" /></th>
-                    <th className="pp-c-side"><SortHeader label="Side" col="side" sort={sort} onSort={toggleSort} title="Direction — long (buy) profits when price rises, short (sell) when it falls" /></th>
+                    <th className="pp-c-side"><SortHeader label="Side" col="side" sort={sort} onSort={toggleSort} title="Direction: long (buy) profits when price rises, short (sell) when it falls" /></th>
                     <th className="pp-c-num"><SortHeader label="Qty" col="quantity" sort={sort} onSort={toggleSort} title="Position size (number of contracts / shares)" /></th>
                     <th className="pp-c-num"><SortHeader label={entryLabel} col="priceLevel" sort={sort} onSort={toggleSort} title={tab === "positions" ? "Average price you opened the position at" : "Limit price the resting order will fill at"} /></th>
-                    <th className="pp-c-num"><SortHeader label="TP" col="takeProfit" sort={sort} onSort={toggleSort} title="Take-profit — auto-closes the position in profit at this price" /></th>
-                    <th className="pp-c-num"><SortHeader label="SL" col="stop" sort={sort} onSort={toggleSort} title="Stop-loss — auto-closes the position to cap the loss at this price" /></th>
+                    <th className="pp-c-num"><SortHeader label="TP" col="takeProfit" sort={sort} onSort={toggleSort} title="Take-profit: auto-closes the position in profit at this price" /></th>
+                    <th className="pp-c-num"><SortHeader label="SL" col="stop" sort={sort} onSort={toggleSort} title="Stop-loss: auto-closes the position to cap the loss at this price" /></th>
                     <th className="pp-c-num"><SortHeader label="Last" col="last" sort={sort} onSort={toggleSort} title="Latest market price" /></th>
                     <th className="pp-c-num"><SortHeader label="P&L" col="upnl" sort={sort} onSort={toggleSort} title="Unrealized profit / loss in the account currency (broker-reported for live accounts)" /></th>
                     <th className="pp-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={toggleSort} title="Unrealized P&L as a percentage of the price move from entry" /></th>
                     <th className="pp-c-num"><SortHeader label="Trade val" col="tradeValue" sort={sort} onSort={toggleSort} title="Notional at entry = entry price × quantity (instrument currency)" /></th>
                     <th className="pp-c-num"><SortHeader label="Mkt val" col="marketValue" sort={sort} onSort={toggleSort} title="Current notional = last price × quantity (instrument currency)" /></th>
-                    <th className="pp-c-num"><SortHeader label="Lev" col="leverage" sort={sort} onSort={toggleSort} title="Leverage on this position — from the broker for live accounts (Capital varies it by instrument, e.g. 5:1 on US shares)" /></th>
+                    <th className="pp-c-num"><SortHeader label="Lev" col="leverage" sort={sort} onSort={toggleSort} title="Leverage on this position, from the broker for live accounts (Capital varies it by instrument, e.g. 5:1 on US shares)" /></th>
                     <th className="pp-c-num"><SortHeader label="Margin" col="margin" sort={sort} onSort={toggleSort} title="Deposit required to hold this position, in the account currency = current notional ÷ leverage (broker figure for live accounts)" /></th>
                     <th className="pp-c-time"><SortHeader label="Time" col="openedAt" sort={sort} onSort={toggleSort} title={tab === "positions" ? "When the position was opened" : "When the order was placed"} /></th>
                     <th className="pp-c-act" />
@@ -571,7 +573,9 @@ export default function PositionsPanel({
                         <td className="pp-c-sym">
                           {t.epic}
                           {t.source === "strategy" && (
-                            <span className="pp-strat-tag" title="Opened by the live trading engine">strat</span>
+                            <Tooltip content="Opened by the live trading engine">
+                              <span className="pp-strat-tag">strat</span>
+                            </Tooltip>
                           )}
                         </td>
                         <td className={`pp-c-side ${long ? "pp-side-long" : "pp-side-short"}`}>
@@ -616,38 +620,41 @@ export default function PositionsPanel({
                         </td>
                         <td className="pp-c-act">
                           <div className="pp-actions">
-                            <button
-                              className={`pp-iconbtn${linesHidden ? " off" : ""}`}
-                              title={linesHidden ? "Show lines on chart" : "Hide lines on chart"}
-                              aria-pressed={linesHidden}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleTradeHidden(t.id);
-                              }}
-                            >
-                              <EyeIcon hidden={linesHidden} />
-                            </button>
-                            <button
-                              className="pp-iconbtn"
-                              title="Edit levels"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                edit(t);
-                              }}
-                            >
-                              <PencilIcon />
-                            </button>
-                            <button
-                              className="pp-iconbtn pp-iconbtn-x"
-                              title={isOrder ? "Cancel order" : "Close position"}
-                              disabled={busy === t.id}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                act(t);
-                              }}
-                            >
-                              <CloseIcon />
-                            </button>
+                            <Tooltip content={linesHidden ? "Show lines on chart" : "Hide lines on chart"}>
+                              <button
+                                className={`pp-iconbtn${linesHidden ? " off" : ""}`}
+                                aria-pressed={linesHidden}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleTradeHidden(t.id);
+                                }}
+                              >
+                                <EyeIcon hidden={linesHidden} />
+                              </button>
+                            </Tooltip>
+                            <Tooltip content="Edit levels">
+                              <button
+                                className="pp-iconbtn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  edit(t);
+                                }}
+                              >
+                                <PencilIcon />
+                              </button>
+                            </Tooltip>
+                            <Tooltip content={isOrder ? "Cancel order" : "Close position"}>
+                              <button
+                                className="pp-iconbtn pp-iconbtn-x"
+                                disabled={busy === t.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  act(t);
+                                }}
+                              >
+                                <CloseIcon />
+                              </button>
+                            </Tooltip>
                           </div>
                         </td>
                       </tr>
@@ -682,19 +689,9 @@ export default function PositionsPanel({
             // shows the "up" (open) affordance.
             const bookVisible = isActive && !collapsed;
             return (
-              <button
+              <Tooltip
                 key={a.key}
-                className={`pp-acct-tab ${t}${isActive ? " active" : ""}`}
-                role="tab"
-                aria-selected={isActive}
-                aria-expanded={bookVisible}
-                // The whole tab toggles its book: the active tab opens/closes the
-                // dock, an inactive tab switches to that account and opens it.
-                onClick={() => {
-                  if (!isActive) onAccountChange?.(a.key);
-                  applyCollapsed(isActive ? !collapsed : false);
-                }}
-                title={
+                content={
                   bookVisible
                     ? `Collapse ${brokerLabel(a.broker)} · ${envLabel(a.env)} book`
                     : isActive
@@ -702,12 +699,25 @@ export default function PositionsPanel({
                       : `Show ${brokerLabel(a.broker)} · ${envLabel(a.env)} book`
                 }
               >
-                <span className={`env-dot ${t}`} aria-hidden="true" />
-                {envLabel(a.env)}
-                <span className={`pp-chevron${bookVisible ? "" : " open"}`}>
-                  <ChevronIcon />
-                </span>
-              </button>
+                <button
+                  className={`pp-acct-tab ${t}${isActive ? " active" : ""}`}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-expanded={bookVisible}
+                  // The whole tab toggles its book: the active tab opens/closes the
+                  // dock, an inactive tab switches to that account and opens it.
+                  onClick={() => {
+                    if (!isActive) onAccountChange?.(a.key);
+                    applyCollapsed(isActive ? !collapsed : false);
+                  }}
+                >
+                  <span className={`env-dot ${t}`} aria-hidden="true" />
+                  {envLabel(a.env)}
+                  <span className={`pp-chevron${bookVisible ? "" : " open"}`}>
+                    <ChevronIcon />
+                  </span>
+                </button>
+              </Tooltip>
             );
           })}
         </div>
@@ -727,16 +737,15 @@ export default function PositionsPanel({
           </div>
         ) : (
           <div className="pp-acct">
-            <div
-              className="pp-stat"
-              title="Open profit / loss across all positions, marked to live prices (broker-reported for live accounts)"
-            >
-              <span className="pp-stat-label">Unrealized P&amp;L</span>
-              <span className={`pp-stat-val num ${pnlTone}`}>
-                {pnl >= 0 ? "" : "−"}
-                {cash(Math.abs(pnl))} {cur}
-              </span>
-            </div>
+            <Tooltip content="Open profit / loss across all positions, marked to live prices (broker-reported for live accounts)">
+              <div className="pp-stat">
+                <span className="pp-stat-label">Unrealized P&amp;L</span>
+                <span className={`pp-stat-val num ${pnlTone}`}>
+                  {pnl >= 0 ? "" : "−"}
+                  {cash(Math.abs(pnl))} {cur}
+                </span>
+              </div>
+            </Tooltip>
             <Stat
               label="Balance"
               value={money(balance)}
@@ -754,7 +763,7 @@ export default function PositionsPanel({
             <Stat
               label="Account margin"
               value={money(accountMargin)}
-              title="Total deposit currently tied up by open positions — the sum of each position's MARGIN (broker figures for live accounts)"
+              title="Total deposit currently tied up by open positions: the sum of each position's MARGIN (broker figures for live accounts)"
             />
             <Stat
               label="Available"
@@ -774,7 +783,7 @@ export default function PositionsPanel({
             <Stat
               label="Margin level"
               value={pct(marginLevel)}
-              title={`Equity as a share of margin in use (equity ÷ account margin) — Capital's 'CFD Margin %'. Falls toward 100% as risk rises.${marginCallNote}`}
+              title={`Equity as a share of margin in use (equity ÷ account margin): Capital's 'CFD Margin %'. Falls toward 100% as risk rises.${marginCallNote}`}
             />
           </div>
         )}

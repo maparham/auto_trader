@@ -485,6 +485,7 @@ function RowsTable({
             <tr
               className={
                 (r.low_sample ? "bt-analysis-low " : "") +
+                (r.n < 20 ? "bt-analysis-lowsample " : "") +
                 (r.net_pnl < 0 ? "bt-analysis-under" : "")
               }
             >
@@ -500,6 +501,29 @@ function RowsTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+function ExpectancySparkline({ points }: { points: { t: number; expectancy: number }[] }) {
+  const w = 280, h = 48;
+  const vals = points.map((p) => p.expectancy);
+  const min = Math.min(...vals, 0), max = Math.max(...vals, 0);
+  const x = (i: number) => (i / Math.max(1, points.length - 1)) * w;
+  const y = (v: number) => h - ((v - min) / Math.max(1e-9, max - min)) * h;
+  const d = points
+    .map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.expectancy).toFixed(1)}`)
+    .join(" ");
+  return (
+    <svg
+      width={w}
+      height={h}
+      className="bt-analysis-sparkline"
+      role="img"
+      aria-label="Rolling expectancy over the run"
+    >
+      <line x1={0} x2={w} y1={y(0)} y2={y(0)} className="bt-analysis-sparkline-zero" />
+      <path d={d} fill="none" className="bt-analysis-sparkline-line" />
+    </svg>
   );
 }
 
@@ -966,6 +990,28 @@ export default function BacktestAnalysisPanel({
 
       {active === "context" && (
       <>
+      {analysis.rolling && (
+      <section className="bt-analysis-section">
+        <SectionH4
+          slug="edge-over-time"
+          open={!collapsed.has("edge-over-time")}
+          onToggle={toggleSection}
+        >
+          Edge over time
+        </SectionH4>
+        {!collapsed.has("edge-over-time") && (
+          <div className="bt-analysis-edge">
+            <ExpectancySparkline points={analysis.rolling.points} />
+            <p className="bt-analysis-edge-caption">
+              Rolling expectancy over the last {analysis.rolling.window} trades. A
+              steady line means a stable edge; a decaying line means the edge is
+              fading within this period.
+            </p>
+          </div>
+        )}
+      </section>
+      )}
+
       <section className="bt-analysis-section">
         <SectionH4
           slug="exit-reasons"

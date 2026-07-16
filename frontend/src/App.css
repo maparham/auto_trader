@@ -3880,6 +3880,10 @@
   margin: 0 0 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.09em;
   text-transform: uppercase; color: var(--text-dim);
 }
+.bt-cost-sense {
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--text-dim);
+}
 .bt-panel-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
   gap: 12px 16px;
@@ -3939,6 +3943,15 @@
 }
 .bt-analysis-table td:first-child { color: var(--text); }
 .bt-analysis-low td { color: var(--text-faint); }
+/* Small-sample bucket (fewer than 20 trades): dim the whole row so a noisy
+   slice reads as low-confidence at a glance. Orthogonal to the color rules. */
+.bt-analysis-lowsample { opacity: 0.55; }
+/* Rolling-expectancy sparkline in the "Edge over time" section. */
+.bt-analysis-edge { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.bt-analysis-edge-caption { margin: 0; font-size: 12px; color: var(--text-faint); }
+.bt-analysis-sparkline { display: block; overflow: visible; }
+.bt-analysis-sparkline-zero { stroke: var(--border, #ccc); stroke-width: 1; }
+.bt-analysis-sparkline-line { stroke: var(--accent, #2962ff); stroke-width: 1.5; }
 /* Bucket underperforming the run's per-trade average: whole row in red
    (td:first-child repeated to out-rank the .bt-analysis-table override). */
 .bt-analysis-under td, .bt-analysis-under td:first-child { color: var(--neg, #f23645); }
@@ -4312,6 +4325,18 @@ span.bt-leg-short { color: var(--neg); }
   padding: 0 4px;
   white-space: nowrap;
 }
+
+/* Isolated-peak flag on the Plateau column: this cell's own P&L is positive
+   but its neighborhood median is not (one lucky cell, not an edge). */
+.sweep-spike { color: #c98a00; }
+/* "Apply plateau center" beside the heatmap color-metric dropdown. */
+.sweep-plateau-apply {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; font: inherit; color: var(--text-dim);
+  padding: 2px 8px; white-space: nowrap; flex: none;
+}
+.sweep-plateau-apply:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.sweep-plateau-apply:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .sweep-heatmap { display: flex; flex-direction: column; gap: 6px; position: relative; }
 .sweep-heat-metric { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; font-size: 12px; color: var(--text-dim); height: 24px; }

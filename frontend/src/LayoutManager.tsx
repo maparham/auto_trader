@@ -9,6 +9,7 @@
 // All persistence lives in persist.ts; App owns applying a switch (remounts the grid).
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Tooltip from "./components/Tooltip";
 import {
   loadLayouts,
   loadDefaultLayoutId,
@@ -110,7 +111,7 @@ export default function LayoutManager({
       <button
         className={`layout-mgr-name-btn${open ? " on" : ""}${isDirty ? " dirty" : ""}`}
         onClick={() => setOpen((o) => !o)}
-        title={isDirty ? `${label} — unsaved changes` : "Workspace layouts"}
+        title={isDirty ? `${label}: unsaved changes` : "Workspace layouts"}
       >
         <span className="layout-mgr-label">{label}</span>
         {active && active.id === defaultId && (
@@ -173,7 +174,7 @@ export default function LayoutManager({
                 }}
                 title={
                   active.id === defaultId
-                    ? "This layout opens on launch — click to clear"
+                    ? "This layout opens on launch. Click to clear."
                     : "Open this layout on launch instead of blank"
                 }
               >
@@ -267,37 +268,42 @@ export default function LayoutManager({
                       className="layout-mgr-row-actions"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <button
-                        className={`act act-star${l.id === defaultId ? " on" : ""}`}
-                        title={
+                      <Tooltip
+                        content={
                           l.id === defaultId
-                            ? "Default layout — opens on launch"
+                            ? "Default layout, opens on launch"
                             : "Set as default (opens on launch)"
                         }
-                        onClick={() => setDefault(l.id === defaultId ? null : l.id)}
                       >
-                        {l.id === defaultId ? "★" : "☆"}
-                      </button>
-                      <button
-                        className="act"
-                        title="Rename"
-                        onClick={() => {
-                          setEditing(l.id);
-                          setDraft(l.name);
-                        }}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        className="act"
-                        title="Delete"
-                        onClick={() => {
-                          onDelete(l.id);
-                          setLocalRev((n) => n + 1);
-                        }}
-                      >
-                        🗑
-                      </button>
+                        <button
+                          className={`act act-star${l.id === defaultId ? " on" : ""}`}
+                          onClick={() => setDefault(l.id === defaultId ? null : l.id)}
+                        >
+                          {l.id === defaultId ? "★" : "☆"}
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Rename">
+                        <button
+                          className="act"
+                          onClick={() => {
+                            setEditing(l.id);
+                            setDraft(l.name);
+                          }}
+                        >
+                          ✎
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Delete">
+                        <button
+                          className="act"
+                          onClick={() => {
+                            onDelete(l.id);
+                            setLocalRev((n) => n + 1);
+                          }}
+                        >
+                          🗑
+                        </button>
+                      </Tooltip>
                     </span>
                   </li>
                 ))}

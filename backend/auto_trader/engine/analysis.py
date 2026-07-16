@@ -275,6 +275,27 @@ def _partition_by_leg(trades: list[dict]) -> tuple[list[dict], list[dict]]:
     return longs, shorts
 
 
+def rolling_expectancy(trades: list[dict], min_trades: int = 12) -> dict | None:
+    """Rolling mean P&L per trade over an adaptive window (max(10, n//5)),
+    ordered by entry time. The first point lands once a full window exists, so
+    the series answers "was the edge stable, seasonal, or fading" without the
+    noisy warm-up prefix. None below min_trades."""
+    seq = sorted((t for t in trades if t.get("entry_time") is not None),
+                 key=lambda t: t["entry_time"])
+    n = len(seq)
+    if n < min_trades:
+        return None
+    window = max(10, n // 5)
+    points = []
+    for i in range(window - 1, n):
+        chunk = seq[i - window + 1 : i + 1]
+        points.append({
+            "t": seq[i]["entry_time"],
+            "expectancy": round(sum(t["pnl"] for t in chunk) / window, 5),
+        })
+    return {"window": window, "points": points}
+
+
 def compute_analysis(trades: list[dict]) -> dict:
     """All-trades analysis payload plus a per-direction split. `by_leg.long` and
     `by_leg.short` are full analysis payloads (whatif included) over that side's
@@ -293,4 +314,5 @@ def compute_analysis(trades: list[dict]) -> dict:
         long_payload["duration_hist"] = _duration_hist(longs, width=w)
         short_payload["duration_hist"] = _duration_hist(shorts, width=w)
     payload["by_leg"] = {"long": long_payload, "short": short_payload}
+    payload["rolling"] = rolling_expectancy(trades)
     return payload

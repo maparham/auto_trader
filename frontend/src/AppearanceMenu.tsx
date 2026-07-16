@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Settings, Theme } from "./theme";
 import ColorLineStylePicker from "./ColorLineStylePicker";
+import Tooltip from "./components/Tooltip";
 import {
   BG_MOOD_DEFS,
   moodColor,
@@ -54,9 +55,9 @@ export default function AppearanceMenu({ settings, onChange }: Props) {
 
   return (
     <div className="menu appearance-menu" ref={menuRef}>
+      <Tooltip content="Appearance">
       <button
         className={`tabbar-action icon-only appearance-toggle${open ? " on" : ""}`}
-        title="Appearance"
         onClick={() => setOpen((v) => !v)}
       >
         {settings.theme === "dark" ? (
@@ -72,6 +73,7 @@ export default function AppearanceMenu({ settings, onChange }: Props) {
           </svg>
         )}
       </button>
+      </Tooltip>
 
       {open && (
         <div className="dropdown appearance-dropdown">

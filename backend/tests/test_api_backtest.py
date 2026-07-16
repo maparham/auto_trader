@@ -77,6 +77,62 @@ def test_post_backtest_returns_markers_for_a_simple_cross():
     assert len(result.candles) == len(candles)
 
 
+def test_cost_sensitivity_block():
+    # Same one-cross scenario, but opt into cost sensitivity with nonzero costs
+    # so the 0x/1x/2x/3x re-runs actually diverge (higher multiple = more cost
+    # withheld = smaller net). A closed-out (range-end) long pays commission on
+    # both sides, so the multiple bites.
+    candles = _candles([10, 10, 10, 10, 11, 12, 13, 14, 15, 16])
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        "series": {},
+        **_groups(
+            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
+        ),
+        "costs": {"quantity": 1.0, "commissionPerSide": 2.0, "slippage": 0.5, "startingCash": 10_000.0},
+        "tradeFromTime": candles[0]["time"],
+        "costSensitivity": True,
+    }
+    result = _run(body)
+    cs = result.cost_sensitivity
+    assert cs["multiples"] == [0.0, 1.0, 2.0, 3.0]
+    assert len(cs["net_pnl"]) == 4
+    assert cs["net_pnl"][0] >= cs["net_pnl"][3]   # zero costs never nets less than 3x costs
+    # Teeth: with nonzero costs the multiples must actually diverge.
+    assert cs["net_pnl"][0] > cs["net_pnl"][3]
+
+
+def test_cost_sensitivity_zero_cost_short_circuit():
+    # With zero assumed costs there is nothing to scale, so every multiple lands
+    # on the same net as the base run — the handler must skip the re-runs and
+    # return four equal net_pnl values. Equal positive nets have no zero
+    # crossing, so breakeven_multiple is None (still profitable at any cost).
+    candles = _candles([10, 10, 10, 10, 11, 12, 13, 14, 15, 16])
+    body = {
+        "epic": "EURUSD",
+        "resolution": "MINUTE_5",
+        "candles": candles,
+        "series": {},
+        **_groups(
+            long_entry={"combine": "AND", "rules": [{"left": _ind("EMA", 5), "op": "crossesAbove", "right": _ind("EMA", 9)}]},
+        ),
+        "costs": _costs(),  # slippage=0, commissionPerSide=0
+        "tradeFromTime": candles[0]["time"],
+        "costSensitivity": True,
+    }
+    result = _run(body)
+    cs = result.cost_sensitivity
+    assert cs["multiples"] == [0.0, 1.0, 2.0, 3.0]
+    assert len(cs["net_pnl"]) == 4
+    # All four nets are identical (no re-runs, no divergence at any multiple).
+    assert cs["net_pnl"] == [cs["net_pnl"][0]] * 4
+    # Equal positive nets never cross zero -> None per breakeven semantics.
+    assert cs["net_pnl"][0] > 0
+    assert cs["breakeven_multiple"] is None
+
+
 def test_post_backtest_avwap_recomputed_when_series_absent():
     # AVWAP is a native indicator, so an empty `series` no longer 422s — the
     # backend recomputes it from candles. With rising closes above the anchored

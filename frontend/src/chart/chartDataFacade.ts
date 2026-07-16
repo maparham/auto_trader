@@ -14,8 +14,15 @@ export interface ChartDataFacade {
   setSymbol(ticker: string, pricePrecision: number, volumePrecision: number): void;
   /** Declare the timeframe. Calls chart.setPeriod. Triggers getBars(init). */
   setPeriod(period: Period): void;
-  /** Full dataset replacement (was applyNewData). Stores bars and calls chart.resetData(). */
-  setBars(bars: KLineData[], more: DataLoadMore): void;
+  /**
+   * Full dataset replacement (was applyNewData). Stores bars and calls
+   * chart.resetData(). `canLoadOlder` arms left-edge scroll-back paging; the
+   * facade owns the translation to v10's DataLoadMore flags because their
+   * naming inverts intuition: `more.forward` arms LEFT-edge (older-history)
+   * loads and `more.backward` arms right-edge (newer) loads. Newer bars always
+   * arrive via pushBar, never a backward load, so backward is permanently off.
+   */
+  setBars(bars: KLineData[], canLoadOlder: boolean): void;
   /** Realtime bar tick (was chart.updateData). Forwards to the captured subscribeBar callback. */
   pushBar(bar: KLineData): void;
   /** Handler invoked when the chart hits the left/right edge (was setLoadDataCallback). */
@@ -72,9 +79,9 @@ export function createChartDataFacade(): ChartDataFacade {
       lastPeriod = period;
       chart.setPeriod(period);
     },
-    setBars(next, nextMore) {
+    setBars(next, canLoadOlder) {
       bars = next;
-      more = nextMore;
+      more = { forward: canLoadOlder, backward: false };
       chart?.resetData();
     },
     pushBar(bar) {

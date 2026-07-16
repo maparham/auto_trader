@@ -194,11 +194,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       handle.cursorSecRef.current = bars.length
         ? Math.floor(bars[0].timestamp / 1000)
         : Math.floor(Date.now() / 1000);
-      // backward=true enables klinecharts to request older history (Forward) when
-      // the user scrolls to the left edge; the facade's onLoadRequest answers it.
-      // Live-only (seconds) intervals have no history, so disable scroll-back to
-      // avoid firing empty fetchRange windows that walk back for nothing.
-      dataFacade.setBars(bars, { backward: !period.liveOnly, forward: false });
+      // canLoadOlder arms left-edge scroll-back paging (the facade owns the v10
+      // flag translation; onLoadRequest answers the loads). Live-only (seconds)
+      // intervals have no history, so disable scroll-back there to avoid firing
+      // empty fetchRange windows that walk back for nothing.
+      dataFacade.setBars(bars, !period.liveOnly);
       if (isSynthetic(symbol.epic) && bars.length > 0) {
         const p = synthPrecision(bars[bars.length - 1].close);
         setFetchedPrecision(p);

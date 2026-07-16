@@ -23,6 +23,7 @@ import {
 import type { ChartController } from "./lib/chartController";
 import { BellIcon } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
+import Tooltip from "./components/Tooltip";
 import { isSynthetic } from "./lib/syntheticRegistry";
 
 // Shared dropdown caret — the same SVG chevron the symbol chip uses, so every
@@ -56,17 +57,19 @@ export function SymbolChip({
   onClick?: () => void;
 }) {
   return (
-    <button className="sym" title={title} disabled={disabled} onClick={onClick}>
-      <SymbolIcon epic={symbol.epic} type={symbol.type} className="sym-logo" />
-      <span className="sym-epic">
-        {isSynthetic(symbol.epic) ? (symbol.name ?? symbol.epic) : symbol.epic}
-      </span>
-      <svg className="sym-caret" viewBox="0 0 24 24" width="12" height="12" fill="none"
-        stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
-        aria-hidden="true">
-        <path d="m6 9 6 6 6-6" />
-      </svg>
-    </button>
+    <Tooltip content={title}>
+      <button className="sym" disabled={disabled} onClick={onClick}>
+        <SymbolIcon epic={symbol.epic} type={symbol.type} className="sym-logo" />
+        <span className="sym-epic">
+          {isSynthetic(symbol.epic) ? (symbol.name ?? symbol.epic) : symbol.epic}
+        </span>
+        <svg className="sym-caret" viewBox="0 0 24 24" width="12" height="12" fill="none"
+          stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+          aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+    </Tooltip>
   );
 }
 
@@ -119,35 +122,37 @@ export function IntervalControls({
   return (
     <div className="periods">
       {quickBar.map((p) => (
-        <button
-          key={p.resolution}
-          className={p.resolution === period.resolution ? "on" : ""}
-          title={`${p.label} interval`}
-          onClick={() => onPeriod(p)}
-        >
-          {p.label}
-        </button>
+        <Tooltip key={p.resolution} content={`${p.label} interval`}>
+          <button
+            className={p.resolution === period.resolution ? "on" : ""}
+            onClick={() => onPeriod(p)}
+          >
+            {p.label}
+          </button>
+        </Tooltip>
       ))}
       {/* When the active interval isn't on the quick-bar (e.g. a seconds TF),
           surface it as a highlighted chip just left of the dropdown toggle. */}
       {quickBar.every((p) => p.resolution !== period.resolution) && (
-        <button
-          className="on extra-period"
-          title={`${period.label} interval`}
-          onClick={() => setIntervalOpen((v) => !v)}
-        >
-          {period.label}
-        </button>
+        <Tooltip content={`${period.label} interval`}>
+          <button
+            className="on extra-period"
+            onClick={() => setIntervalOpen((v) => !v)}
+          >
+            {period.label}
+          </button>
+        </Tooltip>
       )}
       {/* TV-style grouped interval menu (adds the live-only seconds group). */}
       <div className="menu interval-menu" ref={intervalMenuRef}>
-        <button
-          className="interval-toggle"
-          title="Chart interval"
-          onClick={() => setIntervalOpen((v) => !v)}
-        >
-          <Caret />
-        </button>
+        <Tooltip content="Chart interval">
+          <button
+            className="interval-toggle"
+            onClick={() => setIntervalOpen((v) => !v)}
+          >
+            <Caret />
+          </button>
+        </Tooltip>
         {intervalOpen && (
           <div className="dropdown interval-dropdown">
             {PERIOD_GROUPS.map((g) => (
@@ -171,31 +176,34 @@ export function IntervalControls({
                           other intervals get a favourite toggle. The star is
                           always visible (not hover-revealed) for discoverability. */}
                       {!DEFAULT_RESOLUTIONS.has(p.resolution) && (
-                        <button
-                          className={
-                            "ind-star tf-star" +
-                            (favResolutions.includes(p.resolution) ? " on" : "")
-                          }
-                          title={
+                        <Tooltip
+                          content={
                             favResolutions.includes(p.resolution)
                               ? "Remove from quick bar"
                               : "Add to quick bar"
                           }
-                          aria-label={
-                            favResolutions.includes(p.resolution)
-                              ? "Remove from quick bar"
-                              : "Add to quick bar"
-                          }
-                          aria-pressed={favResolutions.includes(p.resolution)}
-                          onClick={(e) => {
-                            e.stopPropagation(); // toggle only; don't switch interval
-                            toggleFavResolution(p.resolution);
-                          }}
                         >
-                          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                            <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
-                          </svg>
-                        </button>
+                          <button
+                            className={
+                              "ind-star tf-star" +
+                              (favResolutions.includes(p.resolution) ? " on" : "")
+                            }
+                            aria-label={
+                              favResolutions.includes(p.resolution)
+                                ? "Remove from quick bar"
+                                : "Add to quick bar"
+                            }
+                            aria-pressed={favResolutions.includes(p.resolution)}
+                            onClick={(e) => {
+                              e.stopPropagation(); // toggle only; don't switch interval
+                              toggleFavResolution(p.resolution);
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                              <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
+                            </svg>
+                          </button>
+                        </Tooltip>
                       )}
                     </li>
                   ))}
@@ -264,27 +272,30 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
 
   return (
     <div className="scale">
-      <button
-        title="Auto (fits data to screen)"
-        className={auto ? "on" : ""}
-        onClick={autoFit}
-      >
-        A
-      </button>
-      <button
-        title="Logarithmic scale"
-        className={log ? "on" : ""}
-        onClick={() => setScale(log ? "normal" : "logarithm")}
-      >
-        L
-      </button>
-      <button
-        title="Invert scale (Option+I)"
-        className={inverted ? "on" : ""}
-        onClick={() => controller?.invertScale.set(!controller.invertScale.value)}
-      >
-        I
-      </button>
+      <Tooltip content="Auto (fits data to screen)">
+        <button
+          className={auto ? "on" : ""}
+          onClick={autoFit}
+        >
+          A
+        </button>
+      </Tooltip>
+      <Tooltip content="Logarithmic scale">
+        <button
+          className={log ? "on" : ""}
+          onClick={() => setScale(log ? "normal" : "logarithm")}
+        >
+          L
+        </button>
+      </Tooltip>
+      <Tooltip content="Invert scale (Option+I)">
+        <button
+          className={inverted ? "on" : ""}
+          onClick={() => controller?.invertScale.set(!controller.invertScale.value)}
+        >
+          I
+        </button>
+      </Tooltip>
     </div>
   );
 }
@@ -305,42 +316,45 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
           broker account. Hidden for a data-only source (Dukascopy history): there
           is no account to trade or arm against. */}
       {!dataOnly && (
-      <button
-        className={`anchor-btn live-toggle${liveOpen ? " on" : ""}`}
-        title="Show live trading panel"
-        onClick={() => livePanelOpen.set(!livePanelOpen.value)}
-      >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true">
-          <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m10.14 0-2.83-2.83M9.76 9.76 6.93 6.93" />
-        </svg>
-      </button>
+      <Tooltip content="Show live trading panel">
+        <button
+          className={`anchor-btn live-toggle${liveOpen ? " on" : ""}`}
+          onClick={() => livePanelOpen.set(!livePanelOpen.value)}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true">
+            <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m10.14 0-2.83-2.83M9.76 9.76 6.93 6.93" />
+          </svg>
+        </button>
+      </Tooltip>
       )}
 
       {/* Alerts panel toggle (bell). */}
-      <button
-        className={`anchor-btn alerts-toggle${panelOpen ? " on" : ""}`}
-        title="Show alerts panel"
-        onClick={() => alertsPanelOpen.set(!alertsPanelOpen.value)}
-      >
-        <BellIcon size={16} />
-      </button>
+      <Tooltip content="Show alerts panel">
+        <button
+          className={`anchor-btn alerts-toggle${panelOpen ? " on" : ""}`}
+          onClick={() => alertsPanelOpen.set(!alertsPanelOpen.value)}
+        >
+          <BellIcon size={16} />
+        </button>
+      </Tooltip>
 
       {/* Trading panel toggle (order ticket + positions). Hidden for a data-only
           source: nothing to trade. */}
       {!dataOnly && (
-      <button
-        className={`anchor-btn trade-toggle${tradeOpen ? " on" : ""}`}
-        title="Show trading panel"
-        onClick={() => tradePanelOpen.set(!tradePanelOpen.value)}
-      >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true">
-          <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
-        </svg>
-      </button>
+      <Tooltip content="Show trading panel">
+        <button
+          className={`anchor-btn trade-toggle${tradeOpen ? " on" : ""}`}
+          onClick={() => tradePanelOpen.set(!tradePanelOpen.value)}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true">
+            <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
+          </svg>
+        </button>
+      </Tooltip>
       )}
     </>
   );
@@ -356,9 +370,9 @@ export function MaximizeToggle({
   onToggleMaximize: () => void;
 }) {
   return (
+    <Tooltip content={maximized ? "Exit maximized view (Esc)" : "Maximize view"}>
     <button
       className={`anchor-btn maximize-toggle${maximized ? " on" : ""}`}
-      title={maximized ? "Exit maximized view (Esc)" : "Maximize view"}
       onClick={onToggleMaximize}
     >
       {maximized ? (
@@ -375,5 +389,6 @@ export function MaximizeToggle({
         </svg>
       )}
     </button>
+    </Tooltip>
   );
 }

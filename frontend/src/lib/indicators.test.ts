@@ -197,6 +197,37 @@ describe("collapse / expand sub-panes (double-click hide bottom sub-panes)", () 
     expandSubPanes(chart, new Map());
     expect(opts[0].height).toBe(120); // SUBPANE_HEIGHT, not the live 999
   });
+
+  it("collapses the accel companion pane (parent-owned, but a user pane) yet leaves EQUITY alone", () => {
+    // The accel companion counts as internal for reorder/legend purposes, but its
+    // pane must still collapse on the double-click gesture: only the app-owned
+    // EQUITY pane is exempt.
+    const [equityName] = INTERNAL_INDICATORS;
+    const accelName = accelCompanionId("SLOPE_1");
+    const opts: { id: string; height?: number }[] = [];
+    const map = new Map<string, Map<string, { name: string }>>([
+      ["candle_pane", new Map([["MA_1", { name: "MA_1" }]])],
+      ["pane_slope", new Map([["SLOPE_1", { name: "SLOPE_1" }]])],
+      ["pane_accel", new Map([[accelName, { name: accelName }]])],
+      ["pane_equity", new Map([[equityName, { name: equityName }]])],
+    ]);
+    const chart = {
+      getIndicators: () =>
+        [...map].flatMap(([paneId, inner]) =>
+          [...inner.values()].map((ind) => ({ ...ind, paneId })),
+        ),
+      getSize: () => ({ height: 100, top: 0 }),
+      setPaneOptions: (o: (typeof opts)[number]) => opts.push(o),
+    } as unknown as Chart;
+
+    const heights = collapseSubPanes(chart);
+    expect(opts.map((o) => o.id).sort()).toEqual(["pane_accel", "pane_slope"]);
+    expect(heights.get("pane_accel")).toBe(100);
+
+    opts.length = 0;
+    expandSubPanes(chart, heights);
+    expect(opts.map((o) => o.id).sort()).toEqual(["pane_accel", "pane_slope"]);
+  });
 });
 
 describe("addIndicatorInstance persists an explicit config (Paste)", () => {

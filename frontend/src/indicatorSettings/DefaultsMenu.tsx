@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Chart } from "klinecharts";
 import InfoTip from "../components/InfoTip";
+import Tooltip from "../components/Tooltip";
 import {
   saveIndicatorConfig,
   loadIndicatorDefault,
@@ -132,9 +133,9 @@ export default function DefaultsMenu({
             <li className="sep" />
             {Object.keys(loadIndicatorPresets(type)).map((nm) => (
               <li key={nm} className="ind-def-preset">
-                <span onClick={() => applyPreset(nm)} title={`Apply "${nm}"`}>
-                  {nm}
-                </span>
+                <Tooltip content={`Apply "${nm}"`}>
+                  <span onClick={() => applyPreset(nm)}>{nm}</span>
+                </Tooltip>
                 <button
                   className="ind-def-del"
                   title={`Delete "${nm}"`}

@@ -165,6 +165,40 @@ export function metricRows(res: PanelResult): MetricRow[] {
     tone: "",
   });
 
+  // Risk-adjusted quality ratios: magnitude/quality reads, left plain like
+  // profit factor. A missing value ("-") means the run lacked the daily-equity
+  // or trade-count basis needed to compute it.
+  rows.push({
+    label: "Sharpe",
+    value: res.metrics.sharpe == null ? "-" : res.metrics.sharpe.toFixed(2),
+    tone: "",
+  });
+  rows.push({
+    label: "Sortino",
+    value: res.metrics.sortino == null ? "-" : res.metrics.sortino.toFixed(2),
+    tone: "",
+  });
+  rows.push({
+    label: "Calmar",
+    value: res.metrics.calmar == null ? "-" : res.metrics.calmar.toFixed(2),
+    tone: "",
+  });
+  rows.push({
+    label: "CAGR %",
+    value: res.metrics.cagr_pct == null ? "-" : res.metrics.cagr_pct.toFixed(2) + "%",
+    tone: "",
+  });
+  rows.push({
+    label: "SQN",
+    value: res.metrics.sqn == null ? "-" : res.metrics.sqn.toFixed(2),
+    tone: "",
+  });
+  rows.push({
+    label: "Exposure %",
+    value: res.metrics.exposure_pct == null ? "-" : res.metrics.exposure_pct.toFixed(2) + "%",
+    tone: "",
+  });
+
   return rows;
 }
 
@@ -174,9 +208,9 @@ export function metricRows(res: PanelResult): MetricRow[] {
 // (Risk & extremes). Grouping is the hierarchy the flat grid was missing; order
 // within each group leads with the metric you'd read first.
 const METRIC_GROUPS: { title: string; labels: string[] }[] = [
-  { title: "Performance", labels: ["Net P&L", "Return %", "Profit factor", "Expectancy"] },
+  { title: "Performance", labels: ["Net P&L", "Return %", "CAGR %", "Profit factor", "Expectancy", "Sharpe", "Sortino", "Calmar", "SQN"] },
   { title: "Trades", labels: ["Trades", "Win rate", "Avg win", "Avg loss", "Avg win/loss", "Avg duration"] },
-  { title: "Risk & extremes", labels: ["Drawdown", "Drawdown %", "Largest win", "Largest loss", "Win streak", "Loss streak"] },
+  { title: "Risk & extremes", labels: ["Drawdown", "Drawdown %", "Exposure %", "Largest win", "Largest loss", "Win streak", "Loss streak"] },
 ];
 
 // One brief line per metric — plain language, keyed by the metric's label.
@@ -199,6 +233,12 @@ export const METRIC_INFO: Record<string, string> = {
   "Largest loss": "Biggest single losing trade.",
   "Win streak": "Longest run of wins in a row.",
   "Loss streak": "Longest run of losses in a row.",
+  "Sharpe": "Annualized Sharpe ratio from daily equity returns. Treat with caution under 30 trades.",
+  "Sortino": "Like Sharpe but only penalizes downside volatility.",
+  "Calmar": "CAGR divided by max drawdown; return earned per unit of worst-case loss.",
+  "CAGR %": "Compound annual growth rate of the equity curve.",
+  "SQN": "System Quality Number: sqrt(trades) times expectancy over trade P&L deviation. Van Tharp's scale calls 2 good and 3 excellent.",
+  "Exposure %": "Share of the backtest period spent holding a position.",
 };
 
 export function metricGroups(res: PanelResult): MetricGroup[] {

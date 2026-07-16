@@ -2168,7 +2168,10 @@ export class OverlayManager {
   applyOlderBars(merged: KLineData[]): void {
     if (!this.chart || !this.dataFacade) return;
     this.shiftIndexAnchoredPoints(merged.length - this.chart.getDataList().length);
-    this.dataFacade.setBars(merged, { backward: true });
+    // This re-serve is an INIT that overwrites klinecharts' load-more flags, so
+    // canLoadOlder must stay true or native scroll-back paging is disarmed for
+    // the session (the facade owns the v10 flag translation).
+    this.dataFacade.setBars(merged, true);
   }
 
   // Prepending older bars renumbers every bar's dataIndex; dataIndex-only points

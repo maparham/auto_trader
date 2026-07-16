@@ -1395,6 +1395,26 @@ describe("future-anchored drawing points survive persist/rehydrate", () => {
     expect(p.timestamp).toBeUndefined(); // index 33 is beyond the 30 bars → no back-fill
   });
 
+  // A prepend re-serves the dataset as an INIT, which overwrites klinecharts'
+  // load-more flags, so it must pass canLoadOlder=true or native scroll-back
+  // paging dies the moment any coverage walk runs (the "hard wall at the walk
+  // budget" bug: zero /api/candles requests while panning).
+  it("applyOlderBars keeps older-history loads armed (canLoadOlder=true)", () => {
+    const chart = new FakeChart();
+    const m = new OverlayManager();
+    const facade = fakeFacade(chart);
+    const setBars = vi.spyOn(facade, "setBars");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    m.attach(chart as any, facade);
+    m.setScope("tab.A");
+    m.setEpic("US100");
+    m.rehydrate();
+    chart.data = bars(10);
+    const older = Array.from({ length: 20 }, (_, i) => ({ timestamp: T0 - (20 - i) * HOUR }));
+    m.applyOlderBars([...older, ...chart.data] as never);
+    expect(setBars).toHaveBeenCalledWith(expect.anything(), true);
+  });
+
   // The transient measure ruler can also have a beyond-data endpoint — it must
   // shift with the drawings or a prepend pins its box into history.
   it("shiftIndexAnchoredPoints moves a measure's beyond-data endpoint too", () => {
