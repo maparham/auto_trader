@@ -12,6 +12,7 @@ import {
 } from "klinecharts";
 import {
   fetchRange,
+  fetchRangeStrict,
   fetchMarketMeta,
   fetchCandleCacheStats,
   RESOLUTION_SECONDS,
@@ -2090,7 +2091,14 @@ export default function ChartCore({
         const epic = epicRef.current;
         const resolution = resRef.current;
         const broker = brokerIdRef.current;
-        fetchRange(epic, resolution, fromSec, toSec, priceSideRef.current, broker)
+        // fetchRangeStrict (not fetchRange): a non-2xx (503/504 from an open broker
+        // breaker or a slow source) THROWS here and lands in .catch as a transient
+        // "retry on next scroll", instead of being flattened to an empty page that
+        // would count toward MAX_EMPTY_WINDOWS and permanently latch exhaustedRef —
+        // walling scroll-back for the whole session over a momentary broker hiccup.
+        // A genuine empty 200 (real gap / end of history) still returns [] and does
+        // count toward exhaustion below.
+        fetchRangeStrict(epic, resolution, fromSec, toSec, priceSideRef.current, broker)
           .then((older) => {
             // Defend against the symbol/broker changing mid-flight.
             if (
@@ -2124,6 +2132,11 @@ export default function ChartCore({
               extendMtfCoverage(fresh[0].timestamp);
             }
           })
+          // Transient fetch failure (broker breaker open / slow source / network):
+          // report more=true WITHOUT advancing cursorSecRef or touching
+          // emptyStreakRef, so the same window retries on the next scroll rather than
+          // latching exhaustedRef. The backend already caches whatever it fetched
+          // before failing, so the retry resumes from deeper history.
           .catch(() => done([], true))
           .finally(() => {
             loadingRef.current = false;

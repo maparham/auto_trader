@@ -42,6 +42,15 @@ def _bucket_start(now_s: float, res_seconds: int) -> int:
     return (int(now_s) // res_seconds) * res_seconds
 
 
+# Bars per backfill broker call. A below-oldest miss can span months (e.g. a chart
+# panned back years past the recent cache), and some data sources (Dukascopy) are
+# erratically slow — one giant fetch would blow the broker breaker's per-call
+# timeout and cache NOTHING, permanently walling scroll-back. So window() walks the
+# gap in bounded top-down chunks, persisting each as it lands; a slow/failed chunk
+# stops the walk with coverage still contiguous, and the next request resumes.
+_BACKFILL_CHUNK_BARS = 3000
+
+
 class CandleCache:
     """Sqlite-backed closed-bar cache. Fresh connection per op (cheap for sqlite,
     sidesteps the one-connection-per-thread rule; public async methods run the sync
@@ -304,10 +313,13 @@ class CandleCache:
         fetch_range: Callable[[datetime, datetime], Awaitable[list[Candle]]],
         *,
         now: float | None = None,
+        chunk_bars: int = _BACKFILL_CHUNK_BARS,
     ) -> list[Candle]:
         """Candles in [start, end]. Serializes per-key with recent() (see _key_lock)."""
         async with self._key_lock(key):
-            return await self._window(key, res_seconds, start, end, fetch_range, now=now)
+            return await self._window(
+                key, res_seconds, start, end, fetch_range, now=now, chunk_bars=chunk_bars
+            )
 
     async def _window(
         self,
@@ -318,6 +330,7 @@ class CandleCache:
         fetch_range: Callable[[datetime, datetime], Awaitable[list[Candle]]],
         *,
         now: float | None = None,
+        chunk_bars: int = _BACKFILL_CHUNK_BARS,
     ) -> list[Candle]:
         """Candles in [start, end]. Cache hit when the window is fully covered.
         Otherwise contiguous-backfill: fetch the gap below oldest down to `start`
@@ -334,30 +347,55 @@ class CandleCache:
         # Backfill from `start` up to the current oldest (gap-free), or the whole
         # window when cold. End the fetch at oldest so we don't re-pull covered bars.
         fetch_end = datetime.fromtimestamp(cov[0], tz=timezone.utc) if cov else end
-        try:
-            # Skip a degenerate/inverted call when the miss is purely above newest
-            # (start >= oldest): there is nothing below oldest to backfill.
-            fetched = await fetch_range(start, fetch_end) if start < fetch_end else []
-        except Exception:
+        cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
+        # Cap the NEWEST watermark. A cold fill pulled every closed bar up to `cutoff`,
+        # but the forming bar (>= cutoff) was filtered out by _store_closed and must
+        # stay re-fetchable; a warm fill only backfilled below oldest, so newest stays
+        # cov[1]. Reused for every chunk's coverage write below so the segment stays
+        # anchored to the same top edge (contiguous, no hole).
+        hi = cov[1] if cov is not None else min(to_ts, cutoff)
+        # Walk [start, fetch_end] in bounded top-down chunks so no single broker call
+        # spans the whole gap (see _BACKFILL_CHUNK_BARS). Each chunk is stored + marked
+        # covered as it lands — even an empty one (closed market), so we don't re-fetch
+        # the hole. A chunk that raises (slow/failed source) stops the walk: coverage
+        # stays contiguous down to the last success and the next request resumes there.
+        chunk_secs = res_seconds * max(1, chunk_bars)
+        fetched_any = False
+        err: Exception | None = None
+        cursor = fetch_end
+        while start < cursor:
+            chunk_from_ts = max(from_ts, int(cursor.timestamp()) - chunk_secs)
+            chunk_from = datetime.fromtimestamp(chunk_from_ts, tz=timezone.utc)
+            try:
+                chunk = await fetch_range(chunk_from, cursor)
+            except Exception as e:  # noqa: BLE001 — a slow/failed broker call stops the walk
+                err = e
+                break
+            fetched_any = True
+            await asyncio.to_thread(self._store_closed, key, chunk, cutoff)
+            # Skip the write when there's no valid closed span (an entirely-future
+            # window), which would otherwise record an inverted oldest>newest row.
+            if hi >= chunk_from_ts:
+                await asyncio.to_thread(self._extend_coverage, key, chunk_from_ts, hi)
+            cursor = chunk_from
+        if fetched_any:
+            self._record_miss(key)
+            self._record_last_fetch(key, now if now is not None else time.time())
+        # The backfill errored partway. If the chunks that DID land already cover the
+        # requested window, serve that partial data (real bars — the caller's cursor
+        # advance is legitimate). Otherwise the window is still unreached: surface the
+        # error rather than an empty 200. This matters because scroll-back requests a
+        # window at the BOTTOM of the gap while chunks fill top-down — a mid-gap failure
+        # leaves read_window empty even though top chunks succeeded. Returning [] here
+        # would be indistinguishable from genuine end-of-history and would trip the
+        # frontend's empty-streak latch (the very thing this guards against); a 5xx is
+        # treated as "retry the same window on next scroll". Progress persists: the
+        # landed chunks are already stored + covered, so the retry resumes deeper.
+        if err is not None:
             cached = await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
             if cached:
                 return cached
-            raise
-        if start < fetch_end:
-            self._record_miss(key)
-            self._record_last_fetch(key, now if now is not None else time.time())
-        cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
-        await asyncio.to_thread(self._store_closed, key, fetched, cutoff)
-        # Mark the requested span covered even on an empty fetch (closed market) so we
-        # don't re-fetch the hole forever. Cap the NEWEST watermark: a cold fetch pulled
-        # the whole window so we have every closed bar up to `cutoff`, but the forming
-        # bar (>= cutoff) was filtered out by _store_closed and must stay re-fetchable;
-        # a warm fetch only backfilled below oldest, so newest stays cov[1]. Skip the
-        # write entirely if there's no valid closed span (an entirely-future window),
-        # which would otherwise record an inverted oldest>newest row.
-        hi = cov[1] if cov is not None else min(to_ts, cutoff)
-        if hi >= from_ts:
-            await asyncio.to_thread(self._extend_coverage, key, from_ts, hi)
+            raise err
         return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
 
     async def recent(

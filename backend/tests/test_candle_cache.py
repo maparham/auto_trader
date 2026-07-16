@@ -177,6 +177,102 @@ def test_window_reraises_when_cache_empty_and_fetch_errors(tmp_path):
         assert str(e) == "breaker open"
 
 
+class ChunkRecordingFetcher:
+    """Serves canned bars, but fails after `fail_after` successful range calls.
+    Records every requested span so a test can assert per-call sizes."""
+
+    def __init__(self, bars: list[Candle], fail_after: int | None = None):
+        self._bars = bars
+        self._fail_after = fail_after
+        self.range_calls: list[tuple[int, int]] = []
+
+    async def range(self, start: datetime, end: datetime) -> list[Candle]:
+        s, e = int(start.timestamp()), int(end.timestamp())
+        self.range_calls.append((s, e))
+        if self._fail_after is not None and len(self.range_calls) > self._fail_after:
+            raise RuntimeError("dukascopy timed out")
+        return [b for b in self._bars if s <= int(b.time.timestamp()) <= e]
+
+
+def test_window_chunks_large_backfill_no_call_exceeds_cap(tmp_path):
+    """A months-long backfill must be split into bounded broker calls so an
+    erratically-slow source can't blow the breaker's per-call timeout on one giant
+    fetch. Every call stays within the chunk cap, and the final result + coverage
+    are identical to the single-fetch behavior."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    # res=100s, chunk cap = 3 bars -> 300s per call. Gap [1000, 3000] = 2000s needs
+    # multiple chunks (2000 / 300 ~= 7 calls).
+    src = [_c(t, float(t)) for t in range(1000, 3100, 100)]  # bars 1000..3000
+    f = ChunkRecordingFetcher(src)
+    out = asyncio.run(
+        cache.window(KEY, 100, _dt(1000), _dt(3000), f.range, now=10_000, chunk_bars=3)
+    )
+    assert [int(c.time.timestamp()) for c in out] == list(range(1000, 3001, 100))
+    assert len(f.range_calls) > 1, "large gap should be chunked, not one fetch"
+    assert all((e - s) <= 3 * 100 for s, e in f.range_calls), f.range_calls
+    # Contiguous single segment covering the whole requested span.
+    assert cache._coverage(KEY) == (1000, 3000)
+
+
+def test_window_chunk_failure_keeps_coverage_contiguous_no_hole(tmp_path):
+    """If a chunk fails mid-gap, coverage must extend only down to the last
+    successful (contiguous-with-oldest) chunk, never leaving a hole marked
+    covered. A re-request then resumes from there and closes the gap."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(1000, 3100, 100)]  # bars 1000..3000
+    # Warm coverage to [2500, 3000] so backfill walks DOWN from oldest=2500.
+    warm = ChunkRecordingFetcher(src)
+    asyncio.run(cache.window(KEY, 100, _dt(2500), _dt(3000), warm.range, now=10_000))
+    assert cache._coverage(KEY) == (2500, 3000)
+
+    # Succeed on the first 2 chunks (top of the gap), then fail. chunk cap 3 bars.
+    f = ChunkRecordingFetcher(src, fail_after=2)
+    asyncio.run(
+        cache.window(KEY, 100, _dt(1000), _dt(2500), f.range, now=10_000, chunk_bars=3)
+    )
+    cov = cache._coverage(KEY)
+    # Top stays 3000; oldest moved DOWN but only as far as the successful chunks
+    # reached (not to 1000), and it is still one contiguous segment (no hole).
+    assert cov is not None and cov[1] == 3000
+    assert 1000 < cov[0] < 2500, cov
+    reached = cov[0]
+    # Every bar from the new oldest up to 3000 is actually present (contiguous).
+    got = cache._read_window(KEY, reached, 3000)
+    assert [int(c.time.timestamp()) for c in got] == list(range(reached, 3001, 100))
+
+    # Retry with a healthy fetcher: it resumes from `reached` and closes the gap.
+    ok = ChunkRecordingFetcher(src)
+    asyncio.run(
+        cache.window(KEY, 100, _dt(1000), _dt(2500), ok.range, now=10_000, chunk_bars=3)
+    )
+    assert cache._coverage(KEY) == (1000, 3000)
+    assert all(s >= 1000 and e <= reached for s, e in ok.range_calls), ok.range_calls
+
+
+def test_window_raises_when_partial_backfill_does_not_reach_window(tmp_path):
+    """Scroll-back requests a window at the BOTTOM of the gap while chunks fill
+    top-down. If the backfill errors before reaching that window, the call must
+    RAISE (5xx) — not return an empty 200 that the frontend can't tell apart from
+    end-of-history and would latch on. Progress (the landed top chunks) still
+    persists so the retry resumes deeper."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(1000, 3100, 100)]
+    # Warm coverage to [2500, 3000]; backfill walks DOWN from oldest=2500.
+    asyncio.run(cache.window(KEY, 100, _dt(2500), _dt(3000), ChunkRecordingFetcher(src).range, now=10_000))
+    # Request a window far below coverage; only the first (top) chunk succeeds.
+    f = ChunkRecordingFetcher(src, fail_after=1)
+    try:
+        asyncio.run(
+            cache.window(KEY, 100, _dt(1000), _dt(1300), f.range, now=10_000, chunk_bars=3)
+        )
+        assert False, "expected the unreached-window error to propagate, not an empty 200"
+    except RuntimeError as e:
+        assert str(e) == "dukascopy timed out"
+    # The one chunk that landed is persisted + covered (progress survives for retry).
+    cov = cache._coverage(KEY)
+    assert cov is not None and 1300 < cov[0] < 2500 and cov[1] == 3000, cov
+
+
 def test_recent_cold_fetches_full_and_returns_with_forming(tmp_path):
     cache = CandleCache(str(tmp_path / "c.db"))
     # ts 280 is the forming bar (>= cutoff 240); 100/160/220 are closed.

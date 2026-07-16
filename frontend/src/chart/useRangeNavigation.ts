@@ -11,7 +11,7 @@
 // staleness-proof ref-bridge pattern as redrawRef. Both read only refs/imports,
 // so the latest-render closure is equivalent to any captured one.
 import { type KLineData } from "klinecharts";
-import { fetchRange, RESOLUTION_SECONDS, PERIODS, type Period } from "../lib/feed";
+import { fetchRangeStrict, RESOLUTION_SECONDS, PERIODS, type Period } from "../lib/feed";
 import { rangeWindow, goToDateTs, type RangeKey } from "../lib/rangeWindow";
 import { pageHistoryBack as pageHistoryBackImpl } from "../lib/historyPaging";
 import { loadDrawings } from "../lib/persist";
@@ -130,8 +130,12 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
         maxEmpty: 4,
         isStale,
         getData: () => handle.chartRef.current?.getDataList(),
+        // fetchRangeStrict: a transient 5xx (broker breaker / slow source) throws,
+        // which pageHistoryBack treats as "stop the walk, fit what we have" rather
+        // than an empty page that trips maxEmpty and latches exhaustedRef for the
+        // session. A genuine empty 200 still returns [] and counts toward exhaustion.
         fetchOlder: (fromSec, toSec) =>
-          fetchRange(token.epic, resolution, fromSec, toSec, token.side, token.broker),
+          fetchRangeStrict(token.epic, resolution, fromSec, toSec, token.side, token.broker),
         // Prepend through the overlay manager so beyond-data (dataIndex-only)
         // anchors shift BEFORE the data lands (see OverlayManager.applyOlderBars).
         applyData: (merged) => overlays.applyOlderBars(merged),
@@ -242,7 +246,9 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
         maxEmpty: 4,
         isStale,
         getData: () => handle.chartRef.current?.getDataList(),
-        fetchOlder: (fromSec, toSec) => fetchRange(epic, resolution, fromSec, toSec, side, broker),
+        // fetchRangeStrict: see ensureCoverageAndFit — a transient 5xx stops the
+        // walk without latching exhaustedRef; only a real empty 200 counts as a gap.
+        fetchOlder: (fromSec, toSec) => fetchRangeStrict(epic, resolution, fromSec, toSec, side, broker),
         applyData: (merged) => overlays.applyOlderBars(merged),
         onCursor: (sec) => {
           handle.cursorSecRef.current = sec;
