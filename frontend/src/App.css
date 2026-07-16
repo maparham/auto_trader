@@ -1457,10 +1457,10 @@
 /* Side row: the side tabs and the arm switch (trading/parked) share one line.
    The switch reads on/off at a glance (accent when armed), with a right-aligned
    state word. Parking a side keeps its rules — the groups below just dim. */
-.bt-side-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
-/* The arm switch and its state word read as one control, pushed to the far
-   right of the row while the side tabs stay left. */
-.bt-arm-group { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.bt-side-row { position: relative; display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 6px; }
+/* The arm switch and its state word read as one control, pinned to the far
+   right of the row while the side tabs sit centered in the middle. */
+.bt-arm-group { position: absolute; right: 0; display: inline-flex; align-items: center; gap: 8px; }
 .bt-switch {
   flex: 0 0 auto; width: 34px; height: 20px; border-radius: 999px; padding: 0;
   background: var(--border); border: none; cursor: pointer; position: relative;
@@ -2802,19 +2802,27 @@
 
 .menu { position: relative; }
 /* TradingView-style: borderless, transparent; subtle gray rounded highlight on
-   hover and while the dropdown is open (.on). */
-.menu > button {
+   hover and while the dropdown is open (.on). The extra `.tooltip-trigger`
+   variant matters: wrapping a menu button in <Tooltip> inserts a span between
+   .menu and the button, which silently un-matches the child selector and lets
+   the `.toolbar button` accent fill bleed through. */
+.menu > button,
+.menu > .tooltip-trigger > button {
   display: inline-flex; align-items: center; gap: 4px;
   background: transparent; color: var(--text); border: none;
   border-radius: 6px; padding: 5px 10px; cursor: pointer; transition: background 0.12s;
 }
-.menu > button:hover { background: var(--hover); }
-.menu > button.on { background: var(--hover-strong); }
+.menu > button:hover,
+.menu > .tooltip-trigger > button:hover { background: var(--hover); }
+.menu > button.on,
+.menu > .tooltip-trigger > button.on { background: var(--hover-strong); }
 /* Dropdown caret (shared SVG chevron). Dimmed at rest like the symbol chip's,
    brightening when the menu is hovered or open. */
 .toolbar .tb-caret { flex: 0 0 auto; color: var(--text-dim); transition: color 0.12s; }
 .menu > button:hover .tb-caret,
-.menu > button.on .tb-caret { color: var(--text); }
+.menu > .tooltip-trigger > button:hover .tb-caret,
+.menu > button.on .tb-caret,
+.menu > .tooltip-trigger > button.on .tb-caret { color: var(--text); }
 .dropdown {
   position: absolute; top: 115%; left: 0; z-index: 100; min-width: 220px; padding: 6px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
