@@ -24,6 +24,7 @@ function harness(opts: {
   const data = (opts.initial ?? []).map((t) => bar(t));
   const exhausted = { value: false };
   const applied: number[][] = [];
+  const cursors: number[] = [];
   const args: PageHistoryBackArgs<ReturnType<typeof bar>> = {
     fromTs: opts.fromTs,
     toTs: opts.toTs,
@@ -43,11 +44,14 @@ function harness(opts: {
       data.push(...merged);
       applied.push(merged.map((b) => b.timestamp));
     },
+    onCursor: (sec) => {
+      cursors.push(sec);
+    },
     onExhausted: () => {
       exhausted.value = true;
     },
   };
-  return { args, data, exhausted, applied };
+  return { args, data, exhausted, applied, cursors };
 }
 
 describe("pageHistoryBack", () => {
@@ -153,6 +157,109 @@ describe("pageHistoryBack", () => {
     expect(res).toBe("aborted");
     // The post-fetch staleness check fires before applyData, so nothing landed.
     expect(h.applied.length).toBe(0);
+  });
+
+  // The walk applies ONCE, when it settles. Every apply is a full chart re-init
+  // (setBars -> resetData) that snaps the view to the live edge — per-page
+  // applies turned a deep walk into N pages of visible thrashing plus a
+  // quadratic re-serve of the growing array. Accumulating keeps the chart
+  // untouched until the walk finishes, so the follow-up scroll is one jump.
+  it("applies exactly once, with the fully merged data, after a multi-page walk", async () => {
+    // Two page windows' worth of history (page = 5 min here).
+    const server = [88, 89, 90, 91, 92, 93, 94, 95].map((m) => m * MIN);
+    const h = harness({
+      fromTs: 88 * MIN,
+      toTs: 100 * MIN,
+      server,
+      initial: [96, 97, 98, 99, 100].map((m) => m * MIN),
+    });
+    const res = await pageHistoryBack(h.args);
+    expect(res).toBe("reached");
+    expect(h.applied).toHaveLength(1);
+    const timestamps = h.applied[0];
+    expect(timestamps[0]).toBeLessThanOrEqual(88 * MIN);
+    expect(timestamps).toEqual([...new Set(timestamps)].sort((a, b) => a - b));
+  });
+
+  it("applies what it accumulated before declaring exhaustion", async () => {
+    // One real page (95 min), then nothing older — the walk exhausts, but the
+    // page it DID fetch must still land (partial coverage beats none).
+    const h = harness({
+      fromTs: 0,
+      toTs: 100 * MIN,
+      server: [95 * MIN],
+      initial: [96, 100].map((m) => m * MIN),
+    });
+    const res = await pageHistoryBack(h.args);
+    expect(res).toBe("exhausted");
+    expect(h.applied).toHaveLength(1);
+    expect(h.applied[0]).toContain(95 * MIN);
+  });
+
+  it("applies nothing and fires no onCursor when the walk aborts", async () => {
+    let stale = false;
+    const h = harness({
+      fromTs: 0,
+      toTs: 100 * MIN,
+      server: [80, 85, 90, 95].map((m) => m * MIN),
+      initial: [100 * MIN],
+      stale: () => stale,
+    });
+    const realFetch = h.args.fetchOlder;
+    h.args.fetchOlder = vi.fn(async (a: number, b: number) => {
+      const r = await realFetch(a, b);
+      stale = true;
+      return r;
+    });
+    const res = await pageHistoryBack(h.args);
+    expect(res).toBe("aborted");
+    expect(h.applied).toHaveLength(0);
+    // An aborted walk must not advance the shared scroll-back cursor either:
+    // data it fetched was discarded, so a cursor pointing past it would make
+    // the next native scroll-back page fetch beyond a never-applied span and
+    // prepend bars with a permanent hole behind them.
+    expect(h.cursors).toHaveLength(0);
+  });
+
+  it("settles with the oldest APPLIED bar as the cursor", async () => {
+    const server = [88, 89, 90, 91, 92, 93, 94, 95].map((m) => m * MIN);
+    const h = harness({
+      fromTs: 88 * MIN,
+      toTs: 100 * MIN,
+      server,
+      initial: [96, 97, 98, 99, 100].map((m) => m * MIN),
+    });
+    await pageHistoryBack(h.args);
+    expect(h.cursors).toEqual([(88 * MIN) / SEC]);
+  });
+
+  // The walk takes real wall time (sequential fetches); on a live market the
+  // stream keeps appending newer bars to the chart meanwhile. The settle-time
+  // apply must merge against the CURRENT data, not a walk-start snapshot —
+  // otherwise the full re-init silently deletes every bar appended mid-walk.
+  it("keeps bars appended to the dataset during the walk", async () => {
+    const h = harness({
+      fromTs: 90 * MIN,
+      toTs: 100 * MIN,
+      server: [90, 91, 92, 93, 94, 95].map((m) => m * MIN),
+      initial: [96, 97, 98, 99, 100].map((m) => m * MIN),
+    });
+    // Simulate a live tick landing while a page fetch is in flight.
+    const realFetch = h.args.fetchOlder;
+    let appended = false;
+    h.args.fetchOlder = vi.fn(async (a: number, b: number) => {
+      const r = await realFetch(a, b);
+      if (!appended) {
+        appended = true;
+        h.data.push(bar(101 * MIN));
+      }
+      return r;
+    });
+    const res = await pageHistoryBack(h.args);
+    expect(res).toBe("reached");
+    const timestamps = h.data.map((b) => b.timestamp);
+    expect(timestamps).toContain(101 * MIN); // the live append survived
+    expect(timestamps).toEqual([...new Set(timestamps)].sort((a, b) => a - b));
   });
 
   it("returns 'aborted' immediately when stale before the first fetch", async () => {

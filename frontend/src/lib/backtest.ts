@@ -1261,16 +1261,22 @@ export function oldestBacktestAnchorMs(markers: Marker[]): number | null {
 }
 
 /** The oldest bar timestamp (ms) this chart needs loaded to draw its backtest
- * markers, or null when nothing is drawn (markerMode "none" / no result).
- * ChartCore folds this into the history-coverage page-back so a finer-timeframe
- * view — whose initial load starts well after the run — pages back far enough to
- * cover the run, then calls reanchorBacktestMarkers. Reads the already-rendered
- * artifacts (rehydrate ran first), so it honors the current timeframe's
- * markerMode decision. */
+ * artifacts, or null when nothing is drawn (no result, or a markerMode-"none"
+ * run with no period). The min over the marker anchors (skipped when markerMode
+ * is "none" — nothing to draw) AND the traded period's start: bands render on
+ * every timeframe and a run's period can begin before its first fill, so
+ * covering only the fills would leave the band truncated. ChartCore and the
+ * anchor-coverage walk fold this into their history page-backs, then call
+ * reanchorBacktestMarkers; extendBacktestArtifacts uses it as its skip guard —
+ * one definition of "what the run needs loaded" for every path. */
 export function getBacktestCoverageFromTs(chart: Chart): number | null {
   const a = artifactsByChart.get(chart);
-  if (!a || !a.result || a.markerMode === "none") return null;
-  return oldestBacktestAnchorMs(a.result.markers);
+  if (!a || !a.result) return null;
+  const needed = Math.min(
+    a.markerMode !== "none" ? (oldestBacktestAnchorMs(a.result.markers) ?? Infinity) : Infinity,
+    a.result.period?.fromMs ?? Infinity,
+  );
+  return Number.isFinite(needed) ? needed : null;
 }
 
 /** Redraw a chart's backtest markers against the CURRENT loaded bars — call
@@ -1279,21 +1285,57 @@ export function getBacktestCoverageFromTs(chart: Chart): number | null {
  * well after the backtest's own range, so renderArtifacts culled every fill as
  * out-of-window (clamping them would pile them at the left edge). Once the
  * covering bars page in, this recreates the native overlays / recomputes the
- * aggregate clusters so the markers land on their real candles. Markers ONLY —
- * the equity pane and the highlight/selection subscriptions renderArtifacts
- * installed stay in place (re-running the full render would double-install them).
- * No-op if this chart has no rendered result or draws nothing (markerMode none). */
+ * aggregate clusters so the markers land on their real candles. Markers and
+ * period bands ONLY — the equity pane and the highlight/selection subscriptions
+ * renderArtifacts installed stay in place (re-running the full render would
+ * double-install them). No-op if this chart has no rendered result. Bands
+ * redraw even when markerMode is "none": renderArtifacts draws them on every
+ * timeframe (they're pure time spans), so gating them on markerMode would
+ * leave a band-only chart truncated forever. */
 export function reanchorBacktestMarkers(chart: Chart): void {
   const artifacts = artifactsByChart.get(chart);
-  if (!artifacts || !artifacts.result || artifacts.markerMode === "none") return;
-  for (const id of artifacts.markerIds) chart.removeOverlay({ id });
-  artifacts.markerIds = [];
-  artifacts.aggClusters = [];
-  // Respect the "Show Markers" toggle — a history page-back must not resurrect
-  // markers the user has hidden (the period bands below still redraw).
-  if (backtestMarkersShownSignal.value) drawMarkers(chart, artifacts.result, artifacts);
+  if (!artifacts || !artifacts.result) return;
+  if (artifacts.markerMode !== "none") {
+    for (const id of artifacts.markerIds) chart.removeOverlay({ id });
+    artifacts.markerIds = [];
+    artifacts.aggClusters = [];
+    // Respect the "Show Markers" toggle — a history page-back must not resurrect
+    // markers the user has hidden (the period bands below still redraw).
+    if (backtestMarkersShownSignal.value) drawMarkers(chart, artifacts.result, artifacts);
+  }
   clearPeriodBands(chart, artifacts);
   drawPeriodBands(chart, artifacts, artifacts.result);
+}
+
+/** Redraw a chart's backtest artifacts after older history streamed in via the
+ * NATIVE scroll-back loader (the user dragging left), which the coverage-walk
+ * pagers don't own — without this, markers the recent-only load culled and
+ * period bands computed (and clamped) against the then-loaded window stay
+ * missing/truncated forever once the covering bars actually arrive. Worst on 1m,
+ * whose initial load rarely overlaps the traded span at all.
+ *
+ * The redraw is skipped when it's provably a no-op, so a long drag doesn't pay
+ * a full overlay teardown/rebuild per prepended page: `prevOldestMs` (oldest
+ * loaded bar BEFORE the prepend) already past the run's coverage need means
+ * everything was drawn; `newOldestMs` (the prepend's first bar) still NEWER
+ * than the run's newest drawable time means the window hasn't reached the run
+ * yet and nothing new can anchor. Only pages that actually move the window
+ * across the run's span redraw. */
+export function extendBacktestArtifacts(
+  chart: Chart,
+  prevOldestMs: number,
+  newOldestMs: number,
+): void {
+  const artifacts = artifactsByChart.get(chart);
+  if (!artifacts || !artifacts.result) return;
+  const needed = getBacktestCoverageFromTs(chart);
+  if (needed == null || needed >= prevOldestMs) return; // already fully covered
+  let newestNeeded = artifacts.result.period?.toMs ?? -Infinity;
+  for (const m of artifacts.result.markers) {
+    newestNeeded = Math.max(newestNeeded, m.time * 1000);
+  }
+  if (newestNeeded < newOldestMs) return; // window hasn't reached the run yet
+  reanchorBacktestMarkers(chart);
 }
 
 /** Draw a backtest result's on-chart artifacts (equity sub-pane + trade

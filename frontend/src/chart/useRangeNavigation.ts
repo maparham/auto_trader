@@ -237,7 +237,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
     if (isStale()) return;
     handle.loadingRef.current = true;
     try {
-      await pageHistoryBack<KLineData>({
+      const walk = await pageHistoryBack<KLineData>({
         fromTs,
         toTs: first.timestamp,
         resSec: RESOLUTION_SECONDS[resolution] ?? 60,
@@ -276,7 +276,11 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
       // Bounded walk: a very old anchor on a very fine interval can exceed the page
       // budget — the drawing/marker then still clamps. Say so instead of failing
       // silently, and remember the failure so later triggers don't re-walk a full
-      // budget toward the same unreachable anchor (see cappedAnchorRef).
+      // budget toward the same unreachable anchor (see cappedAnchorRef). An
+      // ABORTED walk spent no budget and applied nothing (a range pick or series
+      // switch preempted it) — latching "hopeless" off it would permanently
+      // filter an anchor a full walk might well reach, so skip the bookkeeping.
+      if (walk === "aborted") return;
       const oldest = handle.chartRef.current?.getDataList()[0];
       if (oldest && oldest.timestamp > fromTs) {
         // Failed even the filtered (newest hopeless) target — record IT, so the

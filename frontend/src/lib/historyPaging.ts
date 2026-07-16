@@ -1,9 +1,9 @@
 // Bounded walk-back over older candle history. Pages older bars in fixed windows
 // (the backend caps a single fetch, so a calendar window may need several pages),
-// prepends each fresh page, and stops when coverage reaches `fromTs`, the broker
-// runs out of history, or the caller signals the request is stale (a newer pick,
-// an epic/broker switch, or a torn-down chart). Pure and dependency-injected so
-// the paging correctness — filter-by-oldest dedup, empty-window exhaustion, and
+// accumulates the fetched pages, and stops when coverage reaches `fromTs`, the
+// broker runs out of history, or the caller signals the request is stale (a newer
+// pick, an epic/broker switch, or a torn-down chart). Pure and dependency-injected
+// so the paging correctness — filter-by-oldest dedup, empty-window exhaustion, and
 // abort-without-applying — is unit-testable without klinecharts or the network.
 //
 // This is the shared primitive the quick-range "cover + fit" uses; the caller
@@ -30,9 +30,21 @@ export interface PageHistoryBackArgs<T extends BarLike> {
   isStale: () => boolean;
   getData: () => T[] | null | undefined; // current loaded bars, ascending
   fetchOlder: (fromSec: number, toSec: number) => Promise<T[]>; // older page in [from,to]
-  applyData: (merged: T[]) => void; // prepend fresh + current
-  onCursor?: (sec: number) => void; // advanced-to boundary (unix sec) after a fresh page
-  onProgress?: () => void; // a fresh page landed (e.g. clear an exhausted flag)
+  // Called ONCE, when the walk settles (reached / exhausted / transient-fetch
+  // break), with the fetched pages prepended to getData() as re-read at that
+  // moment — never per page, and never on an aborted walk. Chart consumers apply
+  // via a full setBars -> resetData re-init that snaps the view to the live edge
+  // and re-serves the whole array, so per-page applies turned a deep walk
+  // (jump-to-trade on 1m) into seconds of visible thrashing with quadratic cost.
+  // Re-reading getData() at settle time keeps bars the live stream appended
+  // during the walk (the walk only ever adds strictly-older bars, so the two
+  // halves can't overlap).
+  applyData: (merged: T[]) => void;
+  // Both fire at most once, at settle, and only when fresh pages actually landed
+  // — never on an aborted walk, so shared cursor/exhaustion refs stay in
+  // lockstep with the data that was really applied.
+  onCursor?: (sec: number) => void; // oldest applied bar (unix sec)
+  onProgress?: () => void; // fresh history landed (e.g. clear an exhausted flag)
   onExhausted?: () => void; // the broker bottomed out (set an exhausted flag)
 }
 
@@ -57,6 +69,11 @@ export async function pageHistoryBack<T extends BarLike>(
 
   let cursorSec = Math.floor((getData()?.[0]?.timestamp ?? toTs) / 1000);
   let empties = 0;
+  // Fetched pages, in walk order (each page ascending, each strictly older than
+  // the one before it). Kept as a list — one settle-time concat — instead of a
+  // re-spread accumulator, which copied the whole growing array every page.
+  const pages: T[][] = [];
+  let result: PageResult = "reached";
 
   for (let page = 0; page < maxPages; page++) {
     if (isStale()) return "aborted";
@@ -73,25 +90,38 @@ export async function pageHistoryBack<T extends BarLike>(
     try {
       older = await fetchOlder(fromSec, toSec);
     } catch {
-      break; // transient fetch failure — fit what we already have
+      break; // transient fetch failure — settle with what we already have
     }
     if (isStale()) return "aborted";
 
     cursorSec = fromSec; // advance back even across gaps
-    const cur = getData() ?? [];
-    const oldestMs = cur[0]?.timestamp ?? Infinity;
+    const oldestMs = pages.length
+      ? pages[pages.length - 1][0].timestamp
+      : (getData()?.[0]?.timestamp ?? Infinity);
     const fresh = older.filter((b) => b.timestamp < oldestMs);
     if (fresh.length) {
       empties = 0;
-      applyData([...fresh, ...cur]);
-      onCursor?.(Math.floor(fresh[0].timestamp / 1000));
-      onProgress?.();
+      pages.push(fresh);
     } else if (++empties >= maxEmpty) {
-      onExhausted?.();
-      return "exhausted";
+      result = "exhausted";
+      break;
     }
   }
-  return "reached";
+  // Settle: one apply for the whole walk. getData() is re-read HERE, not from a
+  // walk-time snapshot, so bars the live stream appended while the pages were
+  // fetching survive the re-init (all pages are strictly older than the
+  // pre-walk oldest bar, so the halves can't overlap). The cursor/progress
+  // callbacks fire with the apply — an aborted walk (returns above) fires
+  // neither, keeping the shared scroll-back cursor in lockstep with what
+  // actually landed.
+  if (pages.length) {
+    const oldestAppliedMs = pages[pages.length - 1][0].timestamp;
+    applyData([...pages.reverse().flat(), ...(getData() ?? [])]);
+    onCursor?.(Math.floor(oldestAppliedMs / 1000));
+    onProgress?.();
+  }
+  if (result === "exhausted") onExhausted?.();
+  return result;
 }
 
 // The interactive scroll-back loader: answers ONE klinecharts forward ('older')

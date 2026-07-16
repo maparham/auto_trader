@@ -42,6 +42,7 @@ import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
 import {
   teardownArtifacts,
   reanchorBacktestMarkers,
+  extendBacktestArtifacts,
   registerBacktestPager,
 } from "./lib/backtest";
 import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
@@ -2138,7 +2139,22 @@ export default function ChartCore({
           // the MTF curve doesn't stop where the older bars begin. `fresh[0]`
           // is the new global oldest (explicit, because klinecharts may not have
           // merged the prepend into getDataList yet).
-          onFresh: (fresh) => extendMtfCoverage(fresh[0].timestamp),
+          onFresh: (fresh) => {
+            extendMtfCoverage(fresh[0].timestamp);
+            // Backtest markers/period bands were drawn against the pre-prepend
+            // window — redraw them over the newly-loaded bars (skipped while
+            // provably a no-op: run already covered, or not yet reached).
+            // Deferred a task because the redraw samples getDataList, which
+            // klinecharts may not have merged the prepend into yet (same reason
+            // extendMtfCoverage gets fresh[0] explicitly). `timestamp` is the
+            // pre-prepend oldest bar; `fresh[0]` the new oldest.
+            const prevOldestMs = timestamp;
+            const newOldestMs = fresh[0].timestamp;
+            setTimeout(() => {
+              const c = chartRef.current;
+              if (c) extendBacktestArtifacts(c, prevOldestMs, newOldestMs);
+            }, 0);
+          },
         });
       };
       overlays.attach(chart, dataFacade);
