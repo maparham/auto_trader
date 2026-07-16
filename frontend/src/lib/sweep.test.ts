@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { axisColumnLabel, axisOptionFor, comboAxisLabel, comboAxisText, comboCount, enumerateCombos, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, robustWindowBounds, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_MAX_COMBOS } from "./sweep";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { axisColumnLabel, axisOptionFor, comboAxisLabel, comboAxisText, comboCount, enumerateCombos, getLastSweepJob, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, robustWindowBounds, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_WARN_COMBOS } from "./sweep";
 import * as api from "../api";
 
 const axis = (target: string, from: number, to: number, step: number) =>
@@ -56,8 +56,15 @@ describe("enumerateCombos", () => {
     expect(comboCount(axes)).toBe(8);
   });
 
-  it("SWEEP_MAX_COMBOS is 1000", () => {
-    expect(SWEEP_MAX_COMBOS).toBe(1000);
+  it("SWEEP_WARN_COMBOS is 1000", () => {
+    expect(SWEEP_WARN_COMBOS).toBe(1000);
+  });
+
+  it("enumerates past 1000 combos without throwing (warn, not cap)", () => {
+    // 40 * 40 = 1600 combos > SWEEP_WARN_COMBOS: still enumerates.
+    const big = enumerateCombos([axis("param:a", 1, 40, 1), axis("param:b", 1, 40, 1)]);
+    expect(big).toHaveLength(1600);
+    expect(comboCount([axis("param:a", 1, 40, 1), axis("param:b", 1, 40, 1)])).toBe(1600);
   });
 });
 
@@ -73,67 +80,144 @@ describe("mirrorRiskAxes", () => {
 });
 
 describe("runSweep", () => {
-  it("chunks sequentially, reports progress, retries a failed chunk once", async () => {
-    const combos45 = [axis("param:n", 1, 45, 1)];
-    const calls: number[] = [];
-    let failedOnce = false;
-    vi.spyOn(api, "runSweepChunk").mockImplementation(async (_req, combos) => {
-      calls.push(combos.length);
-      if (calls.length === 2 && !failedOnce) { failedOnce = true; throw new Error("net"); }
-      return combos.map((c) => ({ combo: c, metrics: null, error: null, windows: null }));
-    });
-    const progress: number[] = [];
-    const rows = await runSweep({} as never, combos45, {
-      onRows: (_r, done) => progress.push(done),
-    });
-    expect(rows).toHaveLength(45);
-    expect(calls).toEqual([20, 20, 20, 5]);          // second chunk retried
-    expect(progress).toEqual([20, 40, 45]);
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
-  it("sends each chunk's done/total position for the backend log", async () => {
-    const progressArgs: Array<{ done: number; total: number } | undefined> = [];
-    vi.spyOn(api, "runSweepChunk").mockImplementation(async (_req, combos, progress) => {
-      progressArgs.push(progress);
-      return combos.map((c) => ({ combo: c, metrics: null, error: null, windows: null }));
+  const row = (n: number): api.SweepRow =>
+    ({ combo: { "param:n": n }, metrics: null, error: null, windows: null });
+
+  // Stubs submit + poll to replay `rowBatches` one batch per poll (respecting
+  // the caller's cursor), then returns the cancelSweepJob spy for assertions.
+  function mockJob(rowBatches: api.SweepRow[][], opts: { cancelled?: boolean; error?: string } = {}) {
+    vi.spyOn(api, "submitSweepJob").mockResolvedValue({ jobId: "j1", total: rowBatches.flat().length });
+    let call = 0;
+    vi.spyOn(api, "pollSweepJob").mockImplementation(async (_id, cursor) => {
+      const all = rowBatches.slice(0, ++call).flat();
+      const running = call < rowBatches.length && !opts.cancelled && !opts.error;
+      return {
+        rows: all.slice(cursor), done: all.length, total: rowBatches.flat().length,
+        running, cancelled: !!opts.cancelled && !running, error: opts.error ?? null, etaSeconds: null,
+      };
     });
-    await runSweep({} as never, [axis("param:n", 1, 45, 1)], { onRows: () => {} });
-    // 45 combos over 20-combo chunks: 0/45, 20/45, 40/45.
-    expect(progressArgs).toEqual([
-      { done: 0, total: 45 },
-      { done: 20, total: 45 },
-      { done: 40, total: 45 },
+    return vi.spyOn(api, "cancelSweepJob").mockResolvedValue(undefined);
+  }
+
+  it("streams rows through onRows incrementally and resolves the full set", async () => {
+    mockJob([[row(1), row(2)], [row(3)], [row(4), row(5)]]);
+    const seen: Array<{ rows: number; done: number; total: number }> = [];
+    const p = runSweep({} as never, [axis("param:n", 1, 5, 1)], {
+      onRows: (rows, done, total) => seen.push({ rows: rows.length, done, total }),
+    });
+    await vi.advanceTimersByTimeAsync(700 * 3);
+    const rows = await p;
+    expect(rows).toHaveLength(5);
+    expect(rows.map((r) => r.combo["param:n"])).toEqual([1, 2, 3, 4, 5]);
+    // Each poll's NEW rows only; done is the cumulative count after appending.
+    expect(seen).toEqual([
+      { rows: 2, done: 2, total: 5 },
+      { rows: 1, done: 3, total: 5 },
+      { rows: 2, done: 5, total: 5 },
     ]);
   });
 
-  it("aborts between chunks", async () => {
-    vi.spyOn(api, "runSweepChunk").mockResolvedValue([]);
+  it("does not submit when the signal is already aborted", async () => {
+    const submit = vi.spyOn(api, "submitSweepJob").mockResolvedValue({ jobId: "j1", total: 0 });
     const ctl = new AbortController();
-    const p = runSweep({} as never, [axis("param:n", 1, 45, 1)], {
+    ctl.abort();
+    await expect(
+      runSweep({} as never, [axis("param:n", 1, 2, 1)], { onRows: () => {}, signal: ctl.signal }),
+    ).rejects.toThrow(/aborted/i);
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("aborts mid-poll: cancels the job and rejects", async () => {
+    const cancel = mockJob([[row(1)], [row(2)], [row(3)]]);
+    const ctl = new AbortController();
+    const p = runSweep({} as never, [axis("param:n", 1, 3, 1)], {
       onRows: () => ctl.abort(), signal: ctl.signal,
     });
-    await expect(p).rejects.toThrow(/aborted/i);
+    const assertion = expect(p).rejects.toThrow(/aborted/i);
+    await vi.advanceTimersByTimeAsync(700 * 3);
+    await assertion;
+    expect(cancel).toHaveBeenCalledWith("j1", "local");
   });
 
-  it("a cancel landing while a chunk is failing suppresses the retry", async () => {
+  it("does not cancel the server job on a detach abort (shouldCancelServer false)", async () => {
+    const cancel = mockJob([[row(1)], [row(2)], [row(3)]]);
     const ctl = new AbortController();
-    const spy = vi.spyOn(api, "runSweepChunk").mockImplementation(async () => {
-      ctl.abort();                 // user cancels while the request is in flight...
-      throw new Error("net");      // ...and that request then fails
+    const p = runSweep({} as never, [axis("param:n", 1, 3, 1)], {
+      onRows: () => ctl.abort(), signal: ctl.signal, shouldCancelServer: () => false,
     });
-    spy.mockClear();               // spy history persists across tests in this file
-    const onRows = vi.fn();
-    const p = runSweep({} as never, [axis("param:n", 1, 45, 1)], { onRows, signal: ctl.signal });
-    await expect(p).rejects.toThrow(/aborted/i);
-    expect(spy).toHaveBeenCalledTimes(1);            // no post-cancel retry
-    expect(onRows).not.toHaveBeenCalled();
+    const assertion = expect(p).rejects.toThrow(/aborted/i);
+    await vi.advanceTimersByTimeAsync(700 * 3);
+    await assertion;
+    expect(cancel).not.toHaveBeenCalled();
   });
 
-  it("forwards opts.windows to every chunk", async () => {
-    const spy = vi.spyOn(api, "runSweepChunk").mockResolvedValue([]);
-    spy.mockClear();               // spy history persists across tests in this file
-    await runSweep({} as never, [axis("param:n", 1, 2, 1)], { onRows: () => {}, windows: [1, 2, 3] });
-    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), [1, 2, 3]);
+  it("rejects with 'sweep aborted' when the backend reports cancelled", async () => {
+    mockJob([[row(1)], [row(2)]], { cancelled: true });
+    const p = runSweep({} as never, [axis("param:n", 1, 2, 1)], { onRows: () => {} });
+    const assertion = expect(p).rejects.toThrow(/aborted/i);
+    await vi.advanceTimersByTimeAsync(700 * 2);
+    await assertion;
+  });
+
+  it("rejects with the backend error message", async () => {
+    mockJob([[row(1)]], { error: "boom on the backend" });
+    const p = runSweep({} as never, [axis("param:n", 1, 1, 1)], { onRows: () => {} });
+    const assertion = expect(p).rejects.toThrow("boom on the backend");
+    await vi.advanceTimersByTimeAsync(700);
+    await assertion;
+  });
+
+  it("retries a transient poll rejection and completes without cancelling", async () => {
+    // A proxy 502 twice, then the real terminal poll: the run must recover and
+    // resolve, never surfacing the transient failure or killing the job.
+    vi.spyOn(api, "submitSweepJob").mockResolvedValue({ jobId: "j1", total: 1 });
+    const cancel = vi.spyOn(api, "cancelSweepJob").mockResolvedValue(undefined);
+    let calls = 0;
+    vi.spyOn(api, "pollSweepJob").mockImplementation(async () => {
+      calls++;
+      if (calls <= 2) throw new Error("proxy 502");
+      return { rows: [row(1)], done: 1, total: 1, running: false, cancelled: false, error: null, etaSeconds: null };
+    });
+    const p = runSweep({} as never, [axis("param:n", 1, 1, 1)], { onRows: () => {} });
+    // 3 poll attempts (2 failing + 1 terminal), each preceded by a 700ms sleep.
+    await vi.advanceTimersByTimeAsync(700 * 3);
+    const rows = await p;
+    expect(rows.map((r) => r.combo["param:n"])).toEqual([1]);
+    expect(calls).toBe(3);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("propagates the error after 5 consecutive poll failures", async () => {
+    vi.spyOn(api, "submitSweepJob").mockResolvedValue({ jobId: "j1", total: 1 });
+    vi.spyOn(api, "cancelSweepJob").mockResolvedValue(undefined);
+    let calls = 0;
+    vi.spyOn(api, "pollSweepJob").mockImplementation(async () => {
+      calls++;
+      throw new Error("proxy 502");
+    });
+    const p = runSweep({} as never, [axis("param:n", 1, 1, 1)], { onRows: () => {} });
+    const assertion = expect(p).rejects.toThrow("proxy 502");
+    await vi.advanceTimersByTimeAsync(700 * 5);
+    await assertion;
+    expect(calls).toBe(5); // exactly 5 consecutive attempts, then it gives up
+  });
+
+  it("appends target=remote query and records the last job", async () => {
+    mockJob([[row(1)]]);
+    const submit = vi.spyOn(api, "submitSweepJob");
+    const p = runSweep({} as never, [axis("param:n", 1, 1, 1)], {
+      onRows: () => {}, windows: [1, 2, 3], target: "remote",
+    });
+    await vi.advanceTimersByTimeAsync(700);
+    await p;
+    expect(submit).toHaveBeenCalledWith(expect.anything(), expect.anything(), [1, 2, 3], "remote");
+    expect(getLastSweepJob()).toEqual({ jobId: "j1", target: "remote" });
   });
 });
 

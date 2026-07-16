@@ -28,7 +28,8 @@ from auto_trader.brokers.registry import build_registry
 from auto_trader.core.tick_store import TICK_STORE
 
 from . import deps
-from .routers import backtest, charts, markets, state, strategy, stream, trading, strategies
+from .guard import install_guards
+from .routers import backtest, charts, compute, markets, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +95,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for _module in (markets, trading, state, charts, backtest, strategy, stream, strategies):
+# Remote-deployment guards (bearer-token gate + compute-only dealing block). No-op
+# unless the corresponding env flags are set, which happens only on the remote host.
+install_guards(app)
+
+for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies):
     app.include_router(_module.router)
 
 

@@ -428,6 +428,8 @@ export const backtestMessagesSignal = new Signal<{ error: string | null; warning
 // state) for the same reason the other backtest signals are: the modal and
 // the button are siblings under App, not parent/child.
 import type { SweepAxis } from "./sweep";
+import type { SweepTarget } from "../api";
+import { PREFIX, load, saveLocal } from "./persist/core";
 export const sweepAxesSignal = new Signal<SweepAxis[]>([]);
 
 // Live sweep progress + landed rows, published by BacktestButton as chunks
@@ -445,12 +447,33 @@ export interface SweepRunState {
 }
 export const sweepStateSignal = new Signal<SweepRunState | null>(null);
 
-// Bumped by the modal's Cancel button; BacktestButton holds the AbortController
-// for the in-flight sweep and aborts it on the next tick after this changes.
+// Bumped by the modal's Cancel button AND its unmount cleanup; BacktestButton
+// holds the AbortController for the in-flight sweep and aborts it on the next
+// tick after this changes.
 export const sweepCancelRequest = new Signal<number>(0);
-export function requestSweepCancel(): void {
+// Whether the pending abort should ALSO kill the server-side job. A closed modal
+// (detach) sets this false so the job keeps running and a reload can re-attach;
+// the explicit "Cancel sweep" button sets it true to stop the job outright.
+// Read by runSweep via BacktestButton's shouldCancelServer callback, so it must
+// be set BEFORE the counter bump that triggers the abort. A plain holder (not a
+// Signal) because nothing subscribes to it: it's read at abort time.
+export const sweepCancelServer = { value: true };
+export function requestSweepCancel(server: boolean = true): void {
+  sweepCancelServer.value = server;
   sweepCancelRequest.set(sweepCancelRequest.value + 1);
 }
+
+// Where a sweep runs (local backend vs remote compute). Global preference,
+// device-local (never mirrored), seeded from storage at startup and defaulting
+// to "local". The compute-target dropdown writes it via saveSweepTarget; the
+// sweep runner reads sweepTargetSignal.value at submit time.
+function loadSweepTarget(): SweepTarget {
+  return load<SweepTarget>(`${PREFIX}.sweepTarget`, "local") === "remote" ? "remote" : "local";
+}
+export function saveSweepTarget(t: SweepTarget): void {
+  saveLocal(`${PREFIX}.sweepTarget`, t);
+}
+export const sweepTargetSignal = new Signal<SweepTarget>(loadSweepTarget());
 
 // Transient notice shown when selecting a trade row can't navigate the chart to
 // it — the trade predates the history reachable at the current timeframe (a fine

@@ -23,18 +23,26 @@ vi.mock("klinecharts", () => ({
 // Defaults to an empty list so rules-mode tests (which never touch it) don't
 // have to care.
 const mockStrategies = vi.fn().mockResolvedValue([]);
+// computeStatus gates the Compute: Local|Remote toggle. Default "not configured"
+// so the toggle stays hidden for the tests that don't care; the toggle tests
+// override it per case.
+const mockComputeStatus = vi.fn().mockResolvedValue({ remoteConfigured: false });
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
-  return { ...actual, fetchStrategies: (...args: unknown[]) => mockStrategies(...args) };
+  return {
+    ...actual,
+    fetchStrategies: (...args: unknown[]) => mockStrategies(...args),
+    computeStatus: (...args: unknown[]) => mockComputeStatus(...args),
+  };
 });
 
 import BacktestSettingsModal from "./BacktestSettingsModal";
 import { defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig";
 import { loadCodedCfg } from "./lib/codedConfig";
 import { saveBacktestPreset } from "./lib/persist/defaults";
-import { sweepStateSignal, sweepAxesSignal } from "./lib/signals";
+import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal } from "./lib/signals";
 import type { SweepRow } from "./api";
-import { recordSweepRanges, recallSweepRange, saveSweepAxes } from "./lib/sweepMemory";
+import { recordSweepRanges, recallSweepRange, saveSweepAxes, recordSweepPace } from "./lib/sweepMemory";
 
 // See VisibilityTab.test.tsx: vitest isn't run with jest-style globals, so RTL's
 // automatic cleanup never registers. Without this each render leaks into the next.
@@ -42,6 +50,7 @@ afterEach(cleanup);
 beforeEach(() => {
   localStorage.clear();
   mockStrategies.mockReset().mockResolvedValue([]);
+  mockComputeStatus.mockReset().mockResolvedValue({ remoteConfigured: false });
 });
 
 // The rule group whose <div class="bt-section"> heading matches `title`. Each
@@ -858,6 +867,72 @@ describe("persistent sweep setup", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy());
     expect(document.querySelector(".sweep-axis-row")).toBeNull();
+  });
+});
+
+describe("sweep footer estimate + compute toggle", () => {
+  afterEach(() => {
+    sweepStateSignal.set(null);
+    sweepAxesSignal.set([]);
+    sweepTargetSignal.set("local");
+  });
+
+  // A range axis resolving against the default long-entry rule, big enough to
+  // exceed SWEEP_WARN_COMBOS (1000): 1..2001 step 1 enumerates 2001 combos.
+  const bigAxis = () =>
+    saveSweepAxes("rules", [
+      { kind: "range", target: "rule:long.entry.0.left.length", label: "len", from: 1, to: 2001, step: 1 },
+    ]);
+
+  it("marks the estimate amber past 1000 combos but keeps Run sweep enabled", () => {
+    bigAxis();
+    renderModal();
+    const est = document.querySelector(".bt-sweep-estimate") as HTMLElement;
+    expect(est).toBeTruthy();
+    expect(est.className).toContain("bt-sweep-warn");
+    expect(est.textContent).toContain("2001 combos");
+    // The combo count must never gate the Run button.
+    const run = screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement;
+    expect(run.disabled).toBe(false);
+  });
+
+  it("shows a runtime estimate when a pace has been recorded for this epic/tf/target", () => {
+    // 2001 combos * 200ms = 400200ms -> about 7m.
+    recordSweepPace("TEST", "MINUTE", "local", 200);
+    bigAxis();
+    renderModal();
+    const est = document.querySelector(".bt-sweep-estimate") as HTMLElement;
+    expect(est.textContent).toBe("2001 combos, about 7m on this run target");
+  });
+
+  it("hides the Compute toggle when remote compute is not configured", async () => {
+    mockComputeStatus.mockResolvedValue({ remoteConfigured: false });
+    bigAxis();
+    renderModal();
+    // Let the mount fetch resolve; the toggle must stay absent.
+    await waitFor(() => expect(mockComputeStatus).toHaveBeenCalled());
+    expect(document.querySelector(".bt-compute-toggle")).toBeNull();
+  });
+
+  it("shows the Compute toggle once remote compute is configured", async () => {
+    mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
+    bigAxis();
+    renderModal();
+    await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
+    const toggle = document.querySelector(".bt-compute-toggle") as HTMLElement;
+    expect(within(toggle).getByRole("button", { name: "Local" })).toBeTruthy();
+    expect(within(toggle).getByRole("button", { name: "Remote" })).toBeTruthy();
+  });
+
+  it("clicking Remote writes the sweep-target signal and persists it", async () => {
+    mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
+    bigAxis();
+    renderModal();
+    await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
+    const toggle = document.querySelector(".bt-compute-toggle") as HTMLElement;
+    fireEvent.click(within(toggle).getByRole("button", { name: "Remote" }));
+    expect(sweepTargetSignal.value).toBe("remote");
+    expect(localStorage.getItem("auto-trader.sweepTarget")).toBe(JSON.stringify("remote"));
   });
 });
 

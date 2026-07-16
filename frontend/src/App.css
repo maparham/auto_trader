@@ -4240,7 +4240,16 @@ span.bt-leg-short { color: var(--neg); }
 
 /* Footer combo counter next to "Run backtest" / "Run sweep" */
 .sweep-counter { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.sweep-counter.sweep-over-cap { color: var(--neg); }
+
+/* Footer runtime estimate: combo count + a rough time drawn from the per-epic
+   pace memory. Amber (the app's caution tone, mirroring the alert identity
+   #f5a623) once the run gets large, but the Run button is never disabled by it. */
+.bt-sweep-estimate { font-size: 12px; color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bt-sweep-estimate.bt-sweep-warn { color: #f5a623; }
+/* Local | Remote compute-target toggle beside the estimate. */
+.bt-compute-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.bt-compute-label { font-size: 12px; color: var(--text-dim); }
+.bt-compute-toggle .seg button { padding: 4px 10px; font-size: 12px; }
 
 /* Sweep results — table + heatmap, shown in the modal's results region in
    place of BacktestPanel while a sweep is active. */

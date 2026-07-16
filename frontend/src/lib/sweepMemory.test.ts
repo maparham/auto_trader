@@ -9,6 +9,9 @@ import {
   loadSweepAxes,
   saveSweepAxes,
   pruneSweepAxes,
+  recordSweepPace,
+  recallSweepPace,
+  estimateSweepText,
 } from "./sweepMemory";
 import type { RangeAxis, ListAxis, SweepAxis } from "./sweep";
 import { defaultBacktestConfig } from "./backtestConfig";
@@ -85,6 +88,79 @@ describe("axis-set persistence", () => {
     expect(loadSweepAxes("rules")).toEqual([]);
     localStorage.setItem("auto-trader.sweepAxes.rules", JSON.stringify({ nope: 1 }));
     expect(loadSweepAxes("rules")).toEqual([]);
+  });
+});
+
+describe("pace memory", () => {
+  it("recalls nothing before any record", () => {
+    expect(recallSweepPace("CS.D.EURUSD", "MINUTE", "local")).toBeNull();
+  });
+
+  it("records a per-combo pace and recalls it by epic|tf|target", () => {
+    recordSweepPace("CS.D.EURUSD", "MINUTE", "local", 250);
+    expect(recallSweepPace("CS.D.EURUSD", "MINUTE", "local")).toBe(250);
+  });
+
+  it("falls back to the most recent pace when the exact key misses", () => {
+    recordSweepPace("CS.D.EURUSD", "MINUTE", "local", 250);
+    recordSweepPace("CS.D.GBPUSD", "HOUR", "remote", 900);
+    // Exact hits still win over the fallback.
+    expect(recallSweepPace("CS.D.EURUSD", "MINUTE", "local")).toBe(250);
+    // A miss (different target / tf / epic) returns the most recently recorded
+    // pace across all keys (900), for a rough first-time estimate.
+    expect(recallSweepPace("CS.D.EURUSD", "MINUTE", "remote")).toBe(900);
+    expect(recallSweepPace("CS.D.EURUSD", "HOUR", "local")).toBe(900);
+    expect(recallSweepPace("brand-new", "DAY", "local")).toBe(900);
+  });
+
+  it("re-recording a key updates it in place", () => {
+    recordSweepPace("CS.D.EURUSD", "MINUTE", "local", 100);
+    recordSweepPace("CS.D.EURUSD", "MINUTE", "local", 400);
+    expect(recallSweepPace("CS.D.EURUSD", "MINUTE", "local")).toBe(400);
+  });
+
+  it("evicts the oldest entry past the 100-entry cap", () => {
+    recordSweepPace("epic-first", "MINUTE", "local", 10);
+    for (let i = 0; i < 100; i++) recordSweepPace(`epic-${i}`, "MINUTE", "local", i + 1);
+    // epic-first was evicted: its exact recall no longer returns its own 10 (it
+    // falls back to the most recent surviving entry instead).
+    expect(recallSweepPace("epic-first", "MINUTE", "local")).not.toBe(10);
+    expect(recallSweepPace("epic-99", "MINUTE", "local")).toBe(100);
+  });
+
+  it("survives corrupt storage", () => {
+    localStorage.setItem("auto-trader.sweepPace", "not json");
+    expect(recallSweepPace("CS.D.EURUSD", "MINUTE", "local")).toBeNull();
+    recordSweepPace("CS.D.EURUSD", "MINUTE", "local", 42);
+    expect(recallSweepPace("CS.D.EURUSD", "MINUTE", "local")).toBe(42);
+  });
+});
+
+describe("estimateSweepText", () => {
+  it("shows just the combo count when there is no pace", () => {
+    expect(estimateSweepText(250, null)).toBe("250 combos");
+    expect(estimateSweepText(1, null)).toBe("1 combo");
+  });
+
+  it("uses the singular 'combo' when there is exactly one", () => {
+    expect(estimateSweepText(1, 100)).toBe("1 combo, under a minute on this run target");
+    expect(estimateSweepText(1, 120_000)).toBe("1 combo, about 2m on this run target");
+  });
+
+  it("says 'under a minute' when the total is below one minute", () => {
+    // 250 combos * 100ms = 25s.
+    expect(estimateSweepText(250, 100)).toBe("250 combos, under a minute on this run target");
+  });
+
+  it("rounds minutes up for longer runs", () => {
+    // 60 combos * 3000ms = 180000ms = exactly 3m.
+    expect(estimateSweepText(60, 3000)).toBe("60 combos, about 3m on this run target");
+    // 61 combos * 3000ms = 183000ms -> ceil to 4m.
+    expect(estimateSweepText(61, 3000)).toBe("61 combos, about 4m on this run target");
+  });
+
+  it("treats exactly one minute as 'about 1m' (ceil), not 'under a minute'", () => {
+    expect(estimateSweepText(60, 1000)).toBe("60 combos, about 1m on this run target");
   });
 });
 

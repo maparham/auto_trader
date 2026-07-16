@@ -1,4 +1,4 @@
-"""POST /api/backtest/sweep: the operator / period / timeWindow sweep
+"""POST /api/backtest/sweep/jobs: the operator / period / timeWindow sweep
 dimensions (spec 2026-07-14). Rule-mode requests are hand-built (price vs
 const rules need no posted series: the backend recomputes natives)."""
 
@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 
 import auto_trader.strategy.loader as loader
 from auto_trader.api.app import app
+
+from test_api_backtest_sweep import run_sweep_via_jobs
 
 client = TestClient(app)
 
@@ -51,9 +53,7 @@ def rule_request(candles, combos, entry_op="gt", entry_value=100.0, exit_rules=N
 
 
 def post_rows(req):
-    res = client.post("/api/backtest/sweep", json=req)
-    assert res.status_code == 200, res.text
-    return res.json()["rows"]
+    return run_sweep_via_jobs(client, req)
 
 
 def test_op_sweep_patches_operator():
@@ -75,14 +75,14 @@ def test_op_sweep_crosses_above_fires():
 
 
 def test_op_sweep_invalid_operator_422():
-    res = client.post("/api/backtest/sweep", json=rule_request(
+    res = client.post("/api/backtest/sweep/jobs", json=rule_request(
         make_step_candles(), [{"op:long.entry.0": "banana"}]))
     assert res.status_code == 422
     assert "op:long.entry.0" in res.json()["detail"]
 
 
 def test_op_sweep_index_out_of_range_422():
-    res = client.post("/api/backtest/sweep", json=rule_request(
+    res = client.post("/api/backtest/sweep/jobs", json=rule_request(
         make_step_candles(), [{"op:long.entry.5": "gt"}]))
     assert res.status_code == 422
 
@@ -114,7 +114,7 @@ def test_period_sweep_bad_pair_422():
     for combos in ([{"period:from": T0 + 3600, "period:to": T0}],   # to <= from
                    [{"period:from": T0}],                            # missing to
                    [{"period:banana": 1}]):                          # unknown subkey
-        res = client.post("/api/backtest/sweep",
+        res = client.post("/api/backtest/sweep/jobs",
                           json=rule_request(candles, combos, entry_value=ALWAYS_TRUE))
         assert res.status_code == 422, combos
 
@@ -135,7 +135,7 @@ def test_timewindow_sweep_restricts_entries():
 
 
 def test_timewindow_sweep_bad_tz_422():
-    res = client.post("/api/backtest/sweep", json=rule_request(
+    res = client.post("/api/backtest/sweep/jobs", json=rule_request(
         make_ramp_candles(),
         [{"timeWindow:startMin": 0, "timeWindow:endMin": 60, "timeWindow:tz": "Not/AZone"}],
         entry_value=ALWAYS_TRUE))
@@ -180,6 +180,6 @@ def test_period_sweep_coded_mode(coded_strategies):
 
 
 def test_op_target_in_coded_mode_422(coded_strategies):
-    res = client.post("/api/backtest/sweep", json=coded_request(
+    res = client.post("/api/backtest/sweep/jobs", json=coded_request(
         make_ramp_candles(), [{"op:long.entry.0": "gt"}]))
     assert res.status_code == 422

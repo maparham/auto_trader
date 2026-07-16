@@ -1,0 +1,26 @@
+# Build context is the repo root, so keep everything the compute image does not
+# need out of the upload. Do NOT ignore anything under backend/ that the
+# Dockerfile COPYs (auto_trader, strategies, pyproject.toml, uv.lock).
+.git
+.claude
+.superpowers
+.vscode
+frontend
+docs
+README.md
+CLAUDE.md
+
+# Python build/runtime cruft
+**/__pycache__
+**/*.pyc
+.pytest_cache
+**/.venv
+backend/tests
+
+# Local sqlite databases (the volume provides these at runtime)
+**/*.db
+**/*.db-wal
+**/*.db-shm
+
+# Never bake local secrets into the image
+**/.env

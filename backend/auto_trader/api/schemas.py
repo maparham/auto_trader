@@ -413,14 +413,15 @@ class BacktestRequest(BaseModel):
     # Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
     broker: str = "capital"
     priceSide: str = "mid"
-    # Parameter/risk sweep: when set, POST /api/backtest/sweep runs one combo
-    # per entry instead of the single codedParams/longRisk/shortRisk on this
-    # request. Ignored by POST /api/backtest.
+    # Parameter/risk sweep: when set, POST /api/backtest/sweep/jobs runs one
+    # combo per entry instead of the single codedParams/longRisk/shortRisk on
+    # this request. Ignored by POST /api/backtest.
     sweep: SweepDTO | None = None
 
 
 class SweepDTO(BaseModel):
-    """Explicit combo list — the frontend enumerates the grid and chunks it.
+    """Explicit combo list: the frontend enumerates the grid and submits it
+    whole as one job (POST /api/backtest/sweep/jobs).
     Keys: "param:<name>" (codedParams override),
     "risk:<long|short>.<stop|target>.<value|mult>",
     "op:<long|short>.<entry|exit>.<idx>" (operator patch, one of the 7 Rule ops), or
@@ -431,11 +432,6 @@ class SweepDTO(BaseModel):
     "timeWindow:startMin" + "timeWindow:endMin" + "timeWindow:tz" (intraday
     mask window patch; a mask is synthesized when the request has none)."""
     combos: list[dict[str, float | int | bool | str]]
-    # This chunk's position in the whole sweep: combos already done before it,
-    # and the total combo count. Advisory, for the server log only; absent from
-    # a manual/curl request, which then logs chunk-local counts instead.
-    done: int | None = None
-    total: int | None = None
     # Sub-window robustness bounds: ascending epoch-second boundaries (N+1 for
     # N windows). When set, each row gets per-window pnl/trades plus aggregate
     # robustness metrics sliced from its ONE continuous run (no extra engine
@@ -454,8 +450,34 @@ class SweepRowDTO(BaseModel):
     error: str | None = None
 
 
-class SweepResponse(BaseModel):
+class SweepJobSubmitResponse(BaseModel):
+    """POST /api/backtest/sweep/jobs: the job handle the frontend polls."""
+    jobId: str
+    total: int
+
+
+class SweepJobStatusResponse(BaseModel):
+    """GET /api/backtest/sweep/jobs/{job_id}?cursor=N: rows are the job's
+    completion-order rows from `cursor` on (the poller passes how many it
+    already has), plus live progress/ETA and terminal flags."""
     rows: list[SweepRowDTO]
+    done: int
+    total: int
+    running: bool
+    cancelled: bool
+    error: str | None = None
+    etaSeconds: float | None = None
+
+
+class SweepJobInfoDTO(BaseModel):
+    """GET /api/backtest/sweep/jobs: one job's summary line."""
+    jobId: str
+    epic: str
+    timeframe: str
+    done: int
+    total: int
+    running: bool
+    createdAt: float
 
 
 # --- order execution (paper now; demo/live later) ----------------------------

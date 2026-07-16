@@ -1,0 +1,33 @@
+# Fly.io compute host: a headless, dealing-disabled copy of the backend that runs
+# backtests and sweeps off-machine. REQUIRE_API_TOKEN gates every request and
+# COMPUTE_ONLY blocks dealing endpoints (see auto_trader/api/guard.py). The local
+# backend proxies to it via COMPUTE_HOST_URL / COMPUTE_HOST_TOKEN.
+#
+# Build context is this directory (repo root); build.dockerfile is resolved
+# relative to it, and the Dockerfile's COPY sources are prefixed with backend/.
+app = "auto-trader-compute"
+primary_region = "fra"
+
+[build]
+  dockerfile = "backend/Dockerfile"
+
+[env]
+  REQUIRE_API_TOKEN = "1"
+  COMPUTE_ONLY = "1"
+
+# API_TOKEN and broker credentials are secrets, set via `fly secrets set`
+# (see docs/deploy-compute.md), never committed here.
+
+[[mounts]]
+  source = "candle_cache"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "performance-8x"

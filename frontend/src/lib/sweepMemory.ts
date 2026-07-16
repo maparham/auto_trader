@@ -54,6 +54,50 @@ export function recordSweepRanges(ctx: string, axes: SweepAxis[]): void {
   save(RANGES_KEY, entries.slice(-RANGES_CAP));
 }
 
+// Per-epic sweep pace memory: how long one combo took last time, keyed by
+// epic|timeframe|run-target, so the footer can turn a combo count into a rough
+// runtime estimate. Same capped entry-list eviction pattern as the ranges above.
+const PACE_KEY = `${PREFIX}.sweepPace`;
+const PACE_CAP = 100;
+type PaceEntries = Array<[string, number]>;
+const paceKey = (epic: string, tf: string, target: string) => `${epic}|${tf}|${target}`;
+
+function loadPace(): PaceEntries {
+  const raw = load<PaceEntries>(PACE_KEY, []);
+  return Array.isArray(raw) ? raw : [];
+}
+
+/** Record the observed ms-per-combo for the epic/timeframe/target a sweep just
+ * ran on. Called by BacktestButton on a successful sweep with produced rows. */
+export function recordSweepPace(epic: string, tf: string, target: string, msPerCombo: number): void {
+  const key = paceKey(epic, tf, target);
+  const entries = loadPace().filter(([k]) => k !== key);
+  entries.push([key, msPerCombo]);
+  save(PACE_KEY, entries.slice(-PACE_CAP));
+}
+
+export function recallSweepPace(epic: string, tf: string, target: string): number | null {
+  const key = paceKey(epic, tf, target);
+  const entries = loadPace();
+  const hit = entries.find(([k]) => k === key);
+  if (hit) return hit[1];
+  // No pace for this exact epic/tf/target yet: fall back to the most recently
+  // recorded pace across ALL keys so a first-time run still gets a rough
+  // estimate. The entry list is oldest-first, so the last entry is newest.
+  return entries.length ? entries[entries.length - 1][1] : null;
+}
+
+/** Footer estimate copy. Without a pace we only know the combo count; with one
+ * we add a rough runtime, rounded UP to whole minutes (sub-minute reads "under a
+ * minute"). No em dashes in the copy. */
+export function estimateSweepText(combos: number, msPerCombo: number | null): string {
+  const noun = combos === 1 ? "combo" : "combos";
+  if (msPerCombo == null) return `${combos} ${noun}`;
+  const total = combos * msPerCombo;
+  if (total < 60000) return `${combos} ${noun}, under a minute on this run target`;
+  return `${combos} ${noun}, about ${Math.ceil(total / 60000)}m on this run target`;
+}
+
 export function loadSweepAxes(ctx: string): SweepAxis[] {
   const raw = load<SweepAxis[]>(axesKey(ctx), []);
   return Array.isArray(raw) ? raw : [];

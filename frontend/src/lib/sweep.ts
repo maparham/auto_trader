@@ -1,10 +1,19 @@
-// Sweep grid enumeration + chunked execution. One request per ~20 combos so
-// no single call can hit a client/gateway timeout; progress and partial
-// results come per chunk, cancel works between chunks, a failed chunk gets
-// one retry. (Spec: docs/superpowers/specs/2026-07-09-strategy-panel-params-design.md)
+// Sweep grid enumeration + job-driven execution. The whole grid is submitted as
+// one backend job; runSweep then polls for completed rows every 700ms, streams
+// them out as they land, and cancels the job on abort.
+// (Spec: docs/superpowers/specs/2026-07-09-strategy-panel-params-design.md)
 
-import { runSweepChunk, type BacktestRequest, type SweepRow } from "../api";
+import {
+  cancelSweepJob,
+  pollSweepJob,
+  submitSweepJob,
+  type BacktestRequest,
+  type SweepJobStatus,
+  type SweepRow,
+  type SweepTarget,
+} from "../api";
 import { formatPeriodDateRange } from "./backtestPeriods";
+import { clearSweepJob, rememberSweepJob } from "./sweepResume";
 import type { SweepRunState } from "./signals";
 
 // One sweep option of a discrete-list axis: `patch` is spread verbatim into
@@ -57,8 +66,9 @@ export interface PeriodAxis {
 export type SweepAxis = RangeAxis | ListAxis | PeriodAxis;
 export type SweepCombo = Record<string, number | string>;
 
-export const SWEEP_MAX_COMBOS = 1000;
-export const SWEEP_CHUNK_SIZE = 20;
+// Above this combo count we warn (a big grid is slow, not forbidden). Not a cap:
+// the runner enumerates and submits any size the user confirms past the warning.
+export const SWEEP_WARN_COMBOS = 1000;
 
 /** Builds a `rule:` sweep-axis target path for a rule operand's numeric field
  * (`length` on an indicator, `value` on a const) — `ruleAxisTarget("long",
@@ -211,39 +221,142 @@ export function axisColumnLabel(axis: SweepAxis): string {
   return axis.label;
 }
 
+// The most recently submitted sweep job (id + where it runs), so a later
+// re-attach hook (Task 7) can reconnect to a run in flight. Set right after
+// submit; null before the first sweep of the session.
+let lastJob: { jobId: string; target: SweepTarget } | null = null;
+export function getLastSweepJob(): { jobId: string; target: SweepTarget } | null {
+  return lastJob;
+}
+
+// How often runSweep polls the job for newly completed rows.
+const SWEEP_POLL_MS = 700;
+
+/** A cancellable sleep: resolves after `ms`, or immediately if `signal` aborts
+ * (clearing the timer so no pending timeout leaks on the abort path). */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+// Poll a submitted job every SWEEP_POLL_MS, streaming newly-completed rows out
+// through onRows and resolving the full set when the job ends. Shared by runSweep
+// (right after submit) and resumeSweep (re-attach on reload). On abort it always
+// stops polling and throws "sweep aborted"; it kills the SERVER job only when
+// shouldCancelServer() is true: a detached modal-close leaves the job running so
+// a later reload can re-attach (default true preserves the plain-cancel behavior).
+export async function pollToCompletion(
+  jobId: string,
+  target: SweepTarget,
+  opts: {
+    onRows: (rows: SweepRow[], done: number, total: number) => void;
+    signal?: AbortSignal;
+    shouldCancelServer?: () => boolean;
+  },
+): Promise<SweepRow[]> {
+  const shouldCancelServer = opts.shouldCancelServer ?? (() => true);
+  const all: SweepRow[] = [];
+  // A single transient poll rejection (e.g. a proxy 502 during a Fly hiccup)
+  // must NOT tear the run down: the server job keeps running. Tolerate up to 5
+  // CONSECUTIVE failures, sleeping the normal interval between attempts and
+  // resetting the counter on any success; only a sustained outage propagates.
+  let consecutiveFailures = 0;
+  for (;;) {
+    await sleep(SWEEP_POLL_MS, opts.signal);
+    if (opts.signal?.aborted) {
+      if (shouldCancelServer()) cancelSweepJob(jobId, target).catch(() => {});
+      throw new Error("sweep aborted");
+    }
+    let status: SweepJobStatus;
+    try {
+      status = await pollSweepJob(jobId, all.length, target);
+    } catch (e) {
+      // Abort during a retry gap behaves exactly like abort during polling:
+      // the top-of-loop sleep resolves instantly on an aborted signal, and the
+      // abort check above then throws "sweep aborted" on the next iteration.
+      if (++consecutiveFailures >= 5) throw e;
+      continue;
+    }
+    consecutiveFailures = 0;
+    all.push(...status.rows);
+    if (status.rows.length) opts.onRows(status.rows, all.length, status.total);
+    if (!status.running) {
+      if (status.cancelled) throw new Error("sweep aborted");
+      if (status.error) {
+        // Tag a backend-reported failure so the callers' catch paths can tell it
+        // apart from a transport-exhausted rejection: the former is terminal (the
+        // server job failed), the latter leaves the job running for a re-attach.
+        const e = new Error(status.error);
+        (e as Error & { backendReported?: boolean }).backendReported = true;
+        throw e;
+      }
+      return all;
+    }
+  }
+}
+
 export async function runSweep(
   baseReq: BacktestRequest,
   axes: SweepAxis[],
   opts: {
     onRows: (rows: SweepRow[], done: number, total: number) => void;
     signal?: AbortSignal;
-    // Sub-window robustness bounds (epoch seconds, ascending); forwarded
-    // unchanged to every chunk so all rows slice the same windows.
+    // Sub-window robustness bounds (epoch seconds, ascending); forwarded to the
+    // job so every combo's run slices the same windows.
     windows?: number[];
+    // Where the sweep runs; defaults to the local backend.
+    target?: SweepTarget;
+    // Whether an abort should kill the server job (Cancel) or leave it running
+    // for a reload to re-attach (modal close / detach). Defaults to true.
+    shouldCancelServer?: () => boolean;
   },
 ): Promise<SweepRow[]> {
+  const target: SweepTarget = opts.target ?? "local";
+  if (opts.signal?.aborted) throw new Error("sweep aborted");
+
   const combos: SweepCombo[] = enumerateCombos(axes);
-  const all: SweepRow[] = [];
-  for (let i = 0; i < combos.length; i += SWEEP_CHUNK_SIZE) {
-    if (opts.signal?.aborted) throw new Error("sweep aborted");
-    const chunk = combos.slice(i, i + SWEEP_CHUNK_SIZE);
-    // `i` combos are already done when this chunk starts; the backend logs the
-    // chunk's position as `i+1..i+len of total`.
-    const progress = { done: i, total: combos.length };
-    let rows: SweepRow[];
-    try {
-      rows = await runSweepChunk(baseReq, chunk, progress, opts.windows);
-    } catch {
-      // A cancel that lands while the chunk is in flight must not burn a
-      // retry's worth of backend compute.
-      if (opts.signal?.aborted) throw new Error("sweep aborted");
-      rows = await runSweepChunk(baseReq, chunk, progress, opts.windows);   // one retry, then throw
-    }
-    if (opts.signal?.aborted) throw new Error("sweep aborted");
-    all.push(...rows);
-    opts.onRows(rows, all.length, combos.length);
+  const { jobId } = await submitSweepJob(baseReq, combos, opts.windows, target);
+  lastJob = { jobId, target };
+  const shouldCancelServer = opts.shouldCancelServer ?? (() => true);
+  // Remember the job so a reload can re-attach to it (see sweepResume).
+  rememberSweepJob(jobId, target);
+
+  try {
+    const rows = await pollToCompletion(jobId, target, {
+      onRows: opts.onRows,
+      signal: opts.signal,
+      shouldCancelServer,
+    });
+    clearSweepJob();
+    return rows;
+  } catch (e) {
+    // Keep the re-attach memo only when the job could still be picked up by a
+    // reload; clear it on every terminal end.
+    //  - detach abort (modal closed, shouldCancelServer false): job keeps
+    //    running server-side -> KEEP.
+    //  - transport-exhausted rejection (5 consecutive poll failures, NOT an
+    //    abort and NOT backend-reported): job likely still running with no
+    //    consumer -> KEEP so a reload re-attaches.
+    //  - clean finish (returned above), explicit/backend cancel ("sweep
+    //    aborted"), backend-reported error -> CLEAR.
+    const aborted = e instanceof Error && e.message === "sweep aborted";
+    const detached = aborted && !!opts.signal?.aborted && !shouldCancelServer();
+    const backendReported =
+      e instanceof Error && (e as Error & { backendReported?: boolean }).backendReported === true;
+    const transportExhausted = !aborted && !backendReported;
+    if (!detached && !transportExhausted) clearSweepJob();
+    throw e;
   }
-  return all;
 }
 
 // Maps a caught runSweep rejection + the AbortController's signal back onto the

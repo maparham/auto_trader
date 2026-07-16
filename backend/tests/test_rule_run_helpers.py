@@ -1,7 +1,6 @@
-"""Direct unit tests for the router helpers that recompute rule series
-server-side (`_assemble_rule_series`) and run a rule backtest from them
-(`_run_rule`). These do NOT hit the /api/backtest route — that migration is
-deliberately deferred (see task-5-brief.md); the route's existing inline rule
+"""Direct unit tests for the helpers that recompute rule series server-side
+(`assemble_rule_series_sync`) and run a rule backtest from them (`_run_rule`).
+These do NOT hit the /api/backtest route: the route's existing inline rule
 branch and validation are untouched.
 """
 
@@ -12,7 +11,8 @@ import asyncio
 import pytest
 
 from auto_trader.api import deps
-from auto_trader.api.routers.backtest import _assemble_rule_series, _candle_from_dto, _run_rule
+from auto_trader.api.routers.backtest import _run_rule
+from auto_trader.api.sweep_apply import assemble_rule_series_sync, candle_from_dto
 from auto_trader.api.schemas import BacktestRequest
 from auto_trader.engine.backtest import BacktestResult
 from auto_trader.indicators.core import ema_series
@@ -81,9 +81,9 @@ def test_assemble_recomputes_native_ema():
             },
         ),
     )
-    candles = [_candle_from_dto(c) for c in req.candles]
+    candles = [candle_from_dto(c) for c in req.candles]
 
-    out = asyncio.run(_assemble_rule_series(req, candles))
+    out = assemble_rule_series_sync(req, candles, {})
 
     assert "EMA_3" in out
     assert out["EMA_3"] == ema_series([c.close for c in candles], 3)
@@ -107,9 +107,9 @@ def test_assemble_keeps_chart_operand_series():
             },
         ),
     )
-    candles = [_candle_from_dto(c) for c in req.candles]
+    candles = [candle_from_dto(c) for c in req.candles]
 
-    out = asyncio.run(_assemble_rule_series(req, candles))
+    out = assemble_rule_series_sync(req, candles, {})
 
     assert out["CHART_x"] == shipped
 
@@ -131,7 +131,7 @@ def test_run_rule_returns_result_from_recomputed_series():
             },
         ),
     )
-    candles = [_candle_from_dto(c) for c in req.candles]
+    candles = [candle_from_dto(c) for c in req.candles]
 
     result = asyncio.run(_run_rule(req, candles))
 

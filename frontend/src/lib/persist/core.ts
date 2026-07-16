@@ -124,6 +124,7 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   `${PREFIX}.backtestEquityShown`,
   `${PREFIX}.backtestAnalysisTab`,
   `${PREFIX}.backtestAnalysisCollapsed`,
+  `${PREFIX}.sweepTarget`,
   `${PREFIX}.lastDrawTools`,
 ]);
 function isDeviceLocalKey(k: string): boolean {

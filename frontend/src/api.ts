@@ -405,22 +405,80 @@ export interface SweepRow {
   error: string | null;
 }
 
-export async function runSweepChunk(
+// Where the sweep runs: "local" is the backend process serving the UI;
+// "remote" tags the request so the backend forwards it to remote compute.
+export type SweepTarget = "local" | "remote";
+
+// One poll of a running sweep job. `rows` are the SweepRow-shaped results the
+// backend has produced past the requested cursor (completion order); `done` is
+// the cumulative count so far, `total` the combo count. `running` false means
+// the job finished: check `cancelled`/`error` for how.
+export interface SweepJobStatus {
+  rows: SweepRow[];
+  done: number;
+  total: number;
+  running: boolean;
+  cancelled: boolean;
+  error: string | null;
+  etaSeconds: number | null;
+}
+
+const sweepJobsBase = (target: SweepTarget) =>
+  `${BASE}/api/backtest/sweep/jobs${target === "remote" ? "?target=remote" : ""}`;
+
+// Submit a whole sweep as one job; returns its id and combo total. The backend
+// runs it asynchronously: poll with pollSweepJob.
+export async function submitSweepJob(
   req: BacktestRequest,
   combos: Array<Record<string, number | boolean | string>>,
-  // Position of this chunk in the whole sweep, for the backend log only
-  // (advisory: the backend never validates or acts on them).
-  progress?: { done: number; total: number },
-  // Sub-window robustness bounds (epoch seconds, ascending); identical for
-  // every chunk of one sweep so all rows slice the same windows.
-  windows?: number[],
-): Promise<SweepRow[]> {
-  const res = await fetch(`${BASE}/api/backtest/sweep`, {
+  // Sub-window robustness bounds (epoch seconds, ascending) or undefined.
+  windows: number[] | undefined,
+  target: SweepTarget,
+): Promise<{ jobId: string; total: number }> {
+  const res = await fetch(sweepJobsBase(target), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...req, sweep: { combos, windows, ...progress } }),
+    body: JSON.stringify({ ...req, sweep: { combos, windows } }),
   });
-  if (!res.ok) throw new Error(await errorDetail(res, `sweep failed (${res.status})`));
-  const json = await res.json();
-  return json.rows as SweepRow[];
+  if (!res.ok) throw new Error(await errorDetail(res, `sweep submit failed (${res.status})`));
+  return res.json();
+}
+
+// Fetch a job's progress since `cursor` (the count of rows already consumed).
+export async function pollSweepJob(
+  jobId: string,
+  cursor: number,
+  target: SweepTarget,
+): Promise<SweepJobStatus> {
+  const res = await fetch(
+    `${BASE}/api/backtest/sweep/jobs/${jobId}?cursor=${cursor}${target === "remote" ? "&target=remote" : ""}`,
+  );
+  if (!res.ok) throw new Error(await errorDetail(res, `sweep poll failed (${res.status})`));
+  return res.json();
+}
+
+// Ask the backend to stop a running job (best effort).
+export async function cancelSweepJob(jobId: string, target: SweepTarget): Promise<void> {
+  const res = await fetch(
+    `${BASE}/api/backtest/sweep/jobs/${jobId}/cancel${target === "remote" ? "?target=remote" : ""}`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(await errorDetail(res, `sweep cancel failed (${res.status})`));
+}
+
+// Whether remote compute is configured server-side. The endpoint may not exist
+// yet; any fetch error or non-ok response reads as "not configured", which is
+// the safe default the UI falls back to.
+export interface ComputeStatus {
+  remoteConfigured: boolean;
+}
+
+export async function computeStatus(): Promise<ComputeStatus> {
+  try {
+    const res = await fetch(`${BASE}/api/compute/status`);
+    if (!res.ok) return { remoteConfigured: false };
+    return await res.json();
+  } catch {
+    return { remoteConfigured: false };
+  }
 }

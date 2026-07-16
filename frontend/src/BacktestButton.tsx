@@ -47,8 +47,12 @@ import {
   sweepAxesSignal,
   sweepStateSignal,
   sweepCancelRequest,
+  sweepCancelServer,
+  sweepTargetSignal,
 } from "./lib/signals";
 import { robustWindowBounds, runSweep, sweepCatchState } from "./lib/sweep";
+import { recordSweepPace } from "./lib/sweepMemory";
+import { stopResumedSweep } from "./lib/sweepResume";
 import { inspectModeSignal } from "./lib/backtestInspect";
 import type { BacktestRequest, SweepRow } from "./api";
 
@@ -287,13 +291,23 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       if (sweepAxes.length > 0) {
         const ctl = new AbortController();
         const unsubCancel = sweepCancelRequest.subscribe(() => ctl.abort());
+        // Take over from any live re-attached (resumed) poll first, so this fresh
+        // submission owns the sweep state cleanly instead of racing a resumed one.
+        stopResumedSweep();
         sweepStateSignal.set({ rows: [], done: 0, total: 0, running: true });
         const windows = robustWindowBounds(windowFromMs, windowToMs, cfg.robustWindows);
+        const sweepTarget = sweepTargetSignal.value;
+        const startedAt = Date.now();
         try {
           const landed: SweepRow[] = [];
           const rows = await runSweep(baseReq, sweepAxes, {
             signal: ctl.signal,
             windows,
+            target: sweepTarget,
+            // A modal-close abort (requestSweepCancel(false)) leaves the server
+            // job running for a reload to re-attach; the Cancel button
+            // (requestSweepCancel(true)) kills it. Read at abort time.
+            shouldCancelServer: () => sweepCancelServer.value,
             onRows: (chunkRows, done, total) => {
               // After an abort (modal closed / Cancel) the state may already be
               // cleared — a late chunk must not resurrect a ghost sweep.
@@ -303,6 +317,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
             },
           });
           sweepStateSignal.set({ rows, done: rows.length, total: rows.length, running: false });
+          // Remember how long a combo took on this epic/timeframe/target so the
+          // modal footer can turn a combo count into a runtime estimate next time.
+          // Only on a real completion with produced rows (never on cancel/empty).
+          if (rows.length > 0) {
+            recordSweepPace(baseReq.epic, baseReq.resolution, sweepTarget, (Date.now() - startedAt) / rows.length);
+          }
         } catch (e) {
           // A user Cancel and a real chunk failure both reject the same
           // promise — check the controller's own signal (not the error's

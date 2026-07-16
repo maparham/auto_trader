@@ -9,14 +9,16 @@ export default defineConfig({
   // port (e.g. e2e running its own instance on :5199) can reach it without hitting
   // the backend's CORS allowlist (which only permits the default :5173 origin).
   // Same-origin from the browser's POV; vite forwards server-to-server.
+  // BACKEND_PORT lets a second instance (e2e, worktree verification) point the
+  // proxy at its own backend without editing this file.
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: `http://localhost:${process.env.BACKEND_PORT ?? 8000}`,
         changeOrigin: true,
       },
       "/ws": {
-        target: "ws://localhost:8000",
+        target: `ws://localhost:${process.env.BACKEND_PORT ?? 8000}`,
         ws: true,
       },
     },

@@ -20,7 +20,10 @@ import {
   sweepAxesSignal,
   sweepStateSignal,
   requestSweepCancel,
+  sweepTargetSignal,
+  saveSweepTarget,
 } from "./lib/signals";
+import { resumeSweep } from "./lib/sweepResume";
 import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
 import type { EmphasisTarget } from "./lib/chartOperand";
 import { resolveWindow } from "./lib/backtestWindow";
@@ -59,16 +62,17 @@ import StrategyPicker from "./StrategyPicker";
 import { StrategyParams } from "./components/StrategyParams";
 import { SweepAxisRow } from "./components/SweepAxisRow";
 import { SweepResults } from "./SweepResults";
-import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_MAX_COMBOS, type RangeAxis, type SweepAxis, type SweepOption } from "./lib/sweep";
+import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepOption } from "./lib/sweep";
 import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLabels";
 import {
   sweepContext, recallSweepRange, recordSweepRanges,
   loadSweepAxes, saveSweepAxes, pruneSweepAxes,
+  recallSweepPace, estimateSweepText,
 } from "./lib/sweepMemory";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { inspectModeSignal } from "./lib/backtestInspect";
 import { formatPeriodRange } from "./lib/backtestPeriods";
-import { fetchStrategies, type StrategyInfo, type ParamSpec } from "./api";
+import { fetchStrategies, computeStatus, type StrategyInfo, type ParamSpec } from "./api";
 import {
   loadCodedCfg,
   saveCodedCfg,
@@ -433,8 +437,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // survives close, apply, reload, and mode switches. Restored axes are pruned
   // against the current config so a deleted rule cannot leave a phantom axis.
   // labelCfg() is declared below (TDZ), so the initializer inlines the ternary.
-  // Any number of axes; SWEEP_MAX_COMBOS alone bounds run size (footer count +
-  // disabled Run enforce it). Written to sweepAxesSignal right before a run so
+  // Any number of axes; SWEEP_WARN_COMBOS is only a soft warning on run size
+  // (the footer count highlights it). Written to sweepAxesSignal right before a run so
   // BacktestButton can branch on it.
   const [sweepAxes, setSweepAxes] = useState<SweepAxis[]>(() =>
     pruneSweepAxes(
@@ -620,16 +624,37 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     setSweepAxes((axes) => axes.map((a) =>
       a.kind === "period" ? { ...a, n: Math.max(2, Math.min(50, Math.round(n) || 2)) } : a));
   const sweepCombos = comboCount(sweepAxes);
-  const sweepOverCap = !isFinite(sweepCombos) || sweepCombos > SWEEP_MAX_COMBOS;
+  const sweepWarn = !isFinite(sweepCombos) || sweepCombos > SWEEP_WARN_COMBOS;
   const [sweepState, setSweepState] = useState(sweepStateSignal.value);
   useEffect(() => sweepStateSignal.subscribe(setSweepState), []);
+  // Where the sweep runs (local vs remote). Mirror the signal into state so the
+  // footer estimate + toggle re-render when the target changes; the runner reads
+  // sweepTargetSignal.value at submit time regardless.
+  const [sweepTarget, setSweepTarget] = useState(sweepTargetSignal.value);
+  useEffect(() => sweepTargetSignal.subscribe(setSweepTarget), []);
+  // Whether remote compute is configured server-side (fetched once on open). The
+  // Compute toggle is hidden until this resolves true, so a plain single-backend
+  // install never sees a control it can't use.
+  const [remoteCompute, setRemoteCompute] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void computeStatus().then((s) => { if (alive) setRemoteCompute(s.remoteConfigured); });
+    return () => { alive = false; };
+  }, []);
+  // On open, re-attach to a sweep job that survived a reload (submitted then the
+  // panel/tab closed: the server job keeps running). Only when no run already
+  // owns the state, so we never double-publish into a live in-session sweep.
+  useEffect(() => {
+    if (sweepStateSignal.value === null) void resumeSweep();
+  }, []);
   // Clear any leftover sweep run/axes when the modal unmounts/closes, so a
   // stale in-flight state (or un-applied axes) from a previous session can't
-  // bleed into a fresh open. Also cancel a still-running sweep — without it,
-  // the loop in BacktestButton keeps chunking and would re-publish the state
-  // this cleanup just tore down (a ghost sweep with no axes on reopen).
+  // bleed into a fresh open. Detach (server=false) rather than cancel: this
+  // aborts BacktestButton's local poll loop but leaves the server job running,
+  // so a reload can re-attach to it. The abort also stops that loop re-publishing
+  // the state this cleanup just tore down (a ghost sweep with no axes on reopen).
   useEffect(() => () => {
-    requestSweepCancel();
+    requestSweepCancel(false);
     sweepStateSignal.set(null);
     sweepAxesSignal.set([]);
   }, []);
@@ -1816,7 +1841,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             sweepState ? (
               <div className="sweep-panel">
                 {sweepState.running ? (
-                  <button className="ghost sweep-cancel" onClick={requestSweepCancel}>
+                  <button className="ghost sweep-cancel" onClick={() => requestSweepCancel(true)}>
                     Cancel sweep
                   </button>
                 ) : (
@@ -1878,8 +1903,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             Go live →
           </button>
           {sweepAxes.length > 0 && (
-            <span className={`sweep-counter${sweepOverCap ? " sweep-over-cap" : ""}`}>
-              {/* Per-axis counts via the SAME comboCount the runner/cap use — a
+            <span className="sweep-counter">
+              {/* Per-axis counts via the SAME comboCount the runner uses. A
                   single axis's own combo count is exactly its step count (or
                   Infinity for a degenerate step), so this can never drift from
                   the total it multiplies to below. */}
@@ -1897,13 +1922,38 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             </span>
           )}
           {sweepAxes.length > 0 && (
+            <span className={`bt-sweep-estimate${sweepWarn ? " bt-sweep-warn" : ""}`}>
+              {isFinite(sweepCombos)
+                ? estimateSweepText(sweepCombos, recallSweepPace(epic, effectiveRes, sweepTarget))
+                : "∞ combos"}
+            </span>
+          )}
+          {sweepAxes.length > 0 && remoteCompute && (
+            <span className="bt-compute-toggle">
+              <span className="bt-compute-label">Compute:</span>
+              <span className="seg" role="group" aria-label="Compute target">
+                {(["local", "remote"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className={sweepTarget === t ? "seg-on" : ""}
+                    aria-pressed={sweepTarget === t}
+                    onClick={() => { sweepTargetSignal.set(t); saveSweepTarget(t); }}
+                  >
+                    {t === "local" ? "Local" : "Remote"}
+                  </button>
+                ))}
+              </span>
+            </span>
+          )}
+          {sweepAxes.length > 0 && (
             <Tooltip content="Turn all sweep fields off and go back to a plain backtest. Toggling a field back on recalls the range it last swept with.">
               <button className="ghost sweep-axes-off" onClick={() => setSweepAxes([])}>
                 Sweep off
               </button>
             </Tooltip>
           )}
-          <button onClick={runFromFooter} disabled={runInFlight || (sweepAxes.length > 0 && sweepOverCap)}>
+          <button onClick={runFromFooter} disabled={runInFlight}>
             {runInFlight ? "Running…" : sweepAxes.length > 0 ? "Run sweep" : "Run backtest"}
           </button>
         </div>
