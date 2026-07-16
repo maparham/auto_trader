@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # CAPITAL_RUNS_DB_PATH to relocate.
     runs_db_path: str = "backtest_runs.db"
 
+    # Where completed sweeps (axes + rows + windows) are archived so they can be
+    # listed and reopened in the UI. Capped at the most recent 50 sweeps. Set
+    # CAPITAL_SWEEPS_DB_PATH to relocate.
+    sweeps_db_path: str = "backtest_sweeps.db"
+
     # CAPITAL_STREAM_DEBUG=1 turns on a per-second latency summary for the live
     # candle streams (see capital_stream._StreamDebug): tick rate, tick->candle
     # yield ratio, and age_ms = now - tick_timestamp. Verifies that ticks reach

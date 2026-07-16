@@ -400,6 +400,9 @@ export async function fetchStrategySource(filename: string): Promise<string> {
 
 // --- param sweeps -------------------------------------------------------------
 
+// Type-only import (erased at compile time, so no runtime cycle with lib/sweep).
+import type { SweepAxis } from "./lib/sweep";
+
 export interface SweepRow {
   combo: Record<string, number | boolean | string>;
   metrics: {
@@ -504,4 +507,66 @@ export async function computeStatus(): Promise<ComputeStatus> {
   } catch {
     return { remoteConfigured: false };
   }
+}
+
+// --- sweep archive ------------------------------------------------------------
+// Completed sweeps persisted server-side so past runs can be listed and reopened.
+
+export interface SweepArchiveSummary {
+  id: string;
+  created_at: number;
+  epic: string;
+  timeframe: string;
+  name: string | null;
+  n_rows: number;
+  best_net_pnl: number | null;
+}
+
+export interface SweepArchive extends Omit<SweepArchiveSummary, "n_rows" | "best_net_pnl"> {
+  axes: SweepAxis[];
+  rows: SweepRow[];
+  windows: number[] | null;
+}
+
+export interface SweepArchiveIn {
+  epic: string;
+  timeframe: string;
+  name: string | null;
+  axes: SweepAxis[];
+  rows: SweepRow[];
+  windows: number[] | null;
+}
+
+// Archive a completed sweep (axes verbatim + rows + optional windows).
+export async function saveSweepArchive(rec: SweepArchiveIn): Promise<{ id: string }> {
+  const res = await fetch(`${BASE}/api/backtest/sweeps`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(rec),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `sweep archive failed (${res.status})`));
+  return res.json();
+}
+
+// Recent archived sweeps, newest first (summaries only).
+export async function listSweepArchives(epic?: string): Promise<SweepArchiveSummary[]> {
+  const qs = epic ? `?epic=${encodeURIComponent(epic)}` : "";
+  const res = await fetch(`${BASE}/api/backtest/sweeps${qs}`);
+  if (!res.ok) throw new Error(await errorDetail(res, `sweep list failed (${res.status})`));
+  return res.json();
+}
+
+// One archived sweep: axes + rows + windows, ready to reopen.
+export async function getSweepArchive(id: string): Promise<SweepArchive> {
+  const res = await fetch(`${BASE}/api/backtest/sweeps/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(await errorDetail(res, `sweep fetch failed (${res.status})`));
+  return res.json();
+}
+
+// Remove one archived sweep.
+export async function deleteSweepArchive(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/backtest/sweeps/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `sweep delete failed (${res.status})`));
 }

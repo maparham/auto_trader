@@ -427,10 +427,33 @@ export const backtestMessagesSignal = new Signal<{ error: string | null; warning
 // instead of a normal single run. Kept as a plain module import (not React
 // state) for the same reason the other backtest signals are: the modal and
 // the button are siblings under App, not parent/child.
-import type { SweepAxis } from "./sweep";
+import type { SweepAxis, SweepCombo } from "./sweep";
 import type { SweepTarget } from "../api";
 import { PREFIX, load, saveLocal } from "./persist/core";
 export const sweepAxesSignal = new Signal<SweepAxis[]>([]);
+
+// Random-search one-shot combo override. In Grid mode this stays null and the
+// runner enumerates the full grid; in Random mode the modal samples N combos
+// from the materialized axes and publishes them here right before bumping the
+// run request. BacktestButton reads it at the top of the sweep branch and
+// clears it (one-shot, like holdoutEvalSignal), passing it to runSweep as
+// combosOverride. Session-only, never persisted (like sweepAxesSignal).
+export const sweepCombosOverrideSignal = new Signal<SweepCombo[] | null>(null);
+
+// Holdout ("lockbox") one-shot evaluate flag. Normally every run clamps its `to`
+// bound to the training span, leaving the reserved tail untouched. When the modal
+// fires an explicit "Evaluate on holdout", it sets this true right before bumping
+// the run request; BacktestButton.run() reads it to run over the holdout tail
+// instead (skipping the training clamp), then resets it — so the very next run is
+// a normal clamped one again. Session-only, never persisted (like sweepAxesSignal).
+export const holdoutEvalSignal = new Signal<boolean>(false);
+
+// Bumped (monotonic counter) every time a completed sweep is archived
+// server-side — by the live run (BacktestButton) and by a re-attach
+// (lib/sweepResume.ts), each AFTER saveSweepArchive resolves. The settings
+// modal's past-sweeps picker keys its fetch effect on this so a sweep that
+// finishes while the section is open shows up without a reopen. Session-only.
+export const sweepArchivedSignal = new Signal<number>(0);
 
 // Live sweep progress + landed rows, published by BacktestButton as chunks
 // come back; the modal renders <SweepResults> off this. Null = no sweep run

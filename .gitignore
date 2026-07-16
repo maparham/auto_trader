@@ -237,6 +237,11 @@ backtest_runs.db
 backtest_runs.db-wal
 backtest_runs.db-shm
 
+# Backtest sweep archive store
+backtest_sweeps.db
+backtest_sweeps.db-wal
+backtest_sweeps.db-shm
+
 # MetaApi SDK local terminal-state cache (created at runtime by the streaming/RPC
 # connection; per-machine, never source)
 .metaapi/

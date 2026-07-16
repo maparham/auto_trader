@@ -101,7 +101,7 @@ export function mirrorRiskAxes(axes: SweepAxis[]): SweepAxis[] {
       : a);
 }
 
-function axisValues(a: RangeAxis): number[] {
+export function axisValues(a: RangeAxis): number[] {
   // Endpoints and step may be negative (e.g. sweeping a slope threshold below
   // zero). Walk from→to in whichever direction they point, using the step's
   // magnitude, so a descending range (0 → -1) enumerates instead of returning [].
@@ -319,17 +319,28 @@ export async function runSweep(
     // Whether an abort should kill the server job (Cancel) or leave it running
     // for a reload to re-attach (modal close / detach). Defaults to true.
     shouldCancelServer?: () => boolean;
+    // An explicit combo set to submit instead of enumerating the full grid
+    // (random search samples a subset of the grid up front). When present it is
+    // submitted verbatim; the axes still ride along for results labelling.
+    combosOverride?: SweepCombo[];
   },
 ): Promise<SweepRow[]> {
   const target: SweepTarget = opts.target ?? "local";
   if (opts.signal?.aborted) throw new Error("sweep aborted");
 
-  const combos: SweepCombo[] = enumerateCombos(axes);
+  const combos: SweepCombo[] = opts.combosOverride ?? enumerateCombos(axes);
   const { jobId } = await submitSweepJob(baseReq, combos, opts.windows, target);
   lastJob = { jobId, target };
   const shouldCancelServer = opts.shouldCancelServer ?? (() => true);
-  // Remember the job so a reload can re-attach to it (see sweepResume).
-  rememberSweepJob(jobId, target);
+  // Remember the job so a reload can re-attach to it (see sweepResume). The
+  // archive metadata rides along so a sweep that completes on a re-attach gets
+  // archived just like a live-run completion (BacktestButton archives that path).
+  rememberSweepJob(jobId, target, {
+    epic: baseReq.epic,
+    timeframe: baseReq.resolution,
+    axes,
+    windows: opts.windows ?? null,
+  });
 
   try {
     const rows = await pollToCompletion(jobId, target, {

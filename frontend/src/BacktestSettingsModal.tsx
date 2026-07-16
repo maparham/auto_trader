@@ -19,10 +19,13 @@ import {
   backtestRunningSignal,
   backtestMessagesSignal,
   sweepAxesSignal,
+  holdoutEvalSignal,
   sweepStateSignal,
   requestSweepCancel,
   sweepTargetSignal,
   saveSweepTarget,
+  sweepCombosOverrideSignal,
+  sweepArchivedSignal,
 } from "./lib/signals";
 import { resumeSweep } from "./lib/sweepResume";
 import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
@@ -63,17 +66,19 @@ import StrategyPicker from "./StrategyPicker";
 import { RangeChip } from "./components/RangeChip";
 import { StrategyParams } from "./components/StrategyParams";
 import { SweepResults } from "./SweepResults";
-import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepOption } from "./lib/sweep";
+import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepCombo, type SweepOption } from "./lib/sweep";
+import { refineAxesAround, sampleCombos } from "./lib/sweepSearch";
 import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLabels";
 import {
   sweepContext, recallSweepRange, recordSweepRanges,
   loadSweepAxes, saveSweepAxes, pruneSweepAxes,
   recallSweepPace, estimateSweepText,
 } from "./lib/sweepMemory";
+import { loadHoldout, saveHoldoutPct, recordPeek, splitHoldout } from "./lib/holdout";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { inspectModeSignal } from "./lib/backtestInspect";
 import { formatPeriodRange } from "./lib/backtestPeriods";
-import { fetchStrategies, computeStatus, type StrategyInfo, type ParamSpec } from "./api";
+import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, type StrategyInfo, type ParamSpec, type SweepArchiveSummary } from "./api";
 import {
   loadCodedCfg,
   saveCodedCfg,
@@ -471,11 +476,61 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // The axes that actually ran, materialized (period → concrete windows) at run
   // time — SweepResults labels against these, not the still-editable sweepAxes.
   const [ranAxes, setRanAxes] = useState<SweepAxis[]>([]);
+  // Past sweeps archived server-side for this epic, for the reopen picker.
+  const [pastSweeps, setPastSweeps] = useState<SweepArchiveSummary[]>([]);
+  const [pickedSweep, setPickedSweep] = useState("");
+  const refreshPastSweeps = () => {
+    listSweepArchives(epic)
+      .then(setPastSweeps)
+      .catch((e) => console.warn("list sweeps failed", e));
+  };
+  // Reopen an archived sweep: load its ran-axes into the results-axes state and
+  // its rows into the sweep results state, with progress cleared so apply works.
+  // No-op while a sweep is running: reopening would stomp the live run's axes and
+  // rows (wrong ranAxes for streaming rows, defeating applySweepCombo's running
+  // guard). The picker controls are disabled while running too; this is the
+  // belt-and-braces guard.
+  const reopenSweep = (id: string) => {
+    if (sweepStateSignal.value?.running) return;
+    getSweepArchive(id)
+      .then((a) => {
+        setRanAxes(a.axes);
+        sweepStateSignal.set({
+          rows: a.rows, done: a.rows.length, total: a.rows.length, running: false,
+        });
+      })
+      .catch((e) => console.warn("reopen sweep failed", e));
+  };
+  const removePastSweep = (id: string) => {
+    deleteSweepArchive(id)
+      .then(() => { setPickedSweep(""); refreshPastSweeps(); })
+      .catch((e) => console.warn("delete sweep failed", e));
+  };
+  // Search strategy for a sweep: "grid" enumerates every combo; "random" draws
+  // N combos uniformly from the same ranges (seed fixed at 1 for reproducibility).
+  // Session-only UI preference — plain state, not persisted.
+  const [searchMode, setSearchMode] = useState<"grid" | "random">("grid");
+  const [randomN, setRandomN] = useState(200);
   // Appends the toggled-on axis (shared by every sweep toggle).
   const addAxis = (axes: SweepAxis[], next: SweepAxis) => [...axes, next];
   // The storage context sweep memory/axes are keyed by: "rules", or the coded
   // strategy file, so param:n on two different .py files never collide.
   const sweepCtx = () => sweepContext(cfg.mode, cfg.codedStrategy);
+  // Holdout ("lockbox"): the reserved-tail config for the current strategy
+  // context. Keyed identically to sweep memory (rules / coded file), so the
+  // reservation follows the strategy, not the panel. Reloaded on context change.
+  const [holdout, setHoldout] = useState<{ pct: number; peeks: number } | null>(
+    () => loadHoldout(sweepContext(cfg.mode, cfg.codedStrategy)),
+  );
+  useEffect(() => {
+    setHoldout(loadHoldout(sweepContext(cfg.mode, cfg.codedStrategy)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg.mode, cfg.codedStrategy]);
+  const changeHoldoutPct = (pct: number | null) => {
+    const key = sweepCtx();
+    saveHoldoutPct(key, pct);
+    setHoldout(loadHoldout(key));
+  };
   // In Backtest mode every sweep control is inert: the glyphs render dimmed
   // (CSS off the bt-mode-backtest root class) and the toggles below no-op, so
   // the configured axes can't change invisibly while their editors are hidden.
@@ -661,9 +716,18 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     setSweepAxes((axes) => axes.map((a) =>
       a.kind === "period" ? { ...a, n: Math.max(2, Math.min(50, Math.round(n) || 2)) } : a));
   const sweepCombos = comboCount(sweepAxes);
-  const sweepWarn = !isFinite(sweepCombos) || sweepCombos > SWEEP_WARN_COMBOS;
+  // Random search submits at most `randomN` combos (sampleCombos dedupes, so it
+  // never exceeds the grid), so the footer count/estimate/warn track the actual
+  // sample size, not the full grid. Grid mode runs the whole grid.
+  const effectiveCombos = searchMode === "random" ? Math.min(randomN, sweepCombos) : sweepCombos;
+  const effectiveWarn = !isFinite(effectiveCombos) || effectiveCombos > SWEEP_WARN_COMBOS;
   const [sweepState, setSweepState] = useState(sweepStateSignal.value);
   useEffect(() => sweepStateSignal.subscribe(setSweepState), []);
+  // Bumped whenever a sweep is archived server-side (live run or re-attach). Mirror
+  // it into state so the past-sweeps fetch effect re-runs and a sweep that finishes
+  // while the section is open shows up in the picker without a reopen.
+  const [archivedTick, setArchivedTick] = useState(sweepArchivedSignal.value);
+  useEffect(() => sweepArchivedSignal.subscribe(setArchivedTick), []);
   // Where the sweep runs (local vs remote). Mirror the signal into state so the
   // footer estimate + toggle re-render when the target changes; the runner reads
   // sweepTargetSignal.value at submit time regardless.
@@ -899,6 +963,20 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     saveBacktestSplit(split);
   }, [split]);
   const toggleResults = () => setSplit((s) => ({ ...s, collapsed: !s.collapsed }));
+
+  // Load the archived sweeps for the reopen picker whenever the sweep results
+  // section becomes visible (or the epic changes).
+  const sweepSectionOpen = btMode === "sweep" && !split.collapsed;
+  useEffect(() => {
+    if (!sweepSectionOpen) return;
+    // Reset the picker: an epic switch invalidates the prior selection (its
+    // option is gone), and a fresh open should start unselected.
+    setPickedSweep("");
+    refreshPastSweeps();
+    // archivedTick re-fires this when a sweep lands server-side while the section
+    // is open, so the just-finished sweep appears in the picker without a reopen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sweepSectionOpen, epic, archivedTick]);
   // Clearing the results (the pane's ✕, via backtestClearRequest) collapses the
   // now-empty results section — the mirror of run() expanding it. Subscribing here
   // keeps the split state (owned by this modal) in sync with the clear the panel
@@ -1101,6 +1179,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     return { grid, resolved, cov: coverage(grid, resolved) };
      
   }, [cfg, resSeconds]);
+  // The reserved holdout window ("from → to" of the locked-away tail), for the
+  // footer/badge copy. Recomputed with the range so it tracks edits live.
+  const holdoutReserved = useMemo(() => {
+    if (!holdout) return null;
+    const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
+    const { holdoutFromMs } = splitHoldout(fromMs, toMs, holdout.pct);
+    const fmt = (ms: number) => new Date(ms).toLocaleDateString();
+    return `${fmt(holdoutFromMs)} to ${fmt(toMs)}`;
+  }, [holdout, cfg, resSeconds]);
   function setCosts(patch: Partial<Costs>) {
     setCfg({ ...cfg, costs: { ...cfg.costs, ...patch } });
   }
@@ -1128,10 +1215,14 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       // when axes are configured — the mode gates the run, so BacktestButton
       // must take its single-run path.
       sweepAxesSignal.set([]);
+      sweepCombosOverrideSignal.set(null);
       run();
       return;
     }
     if (sweepAxes.length === 0) return; // button is disabled; belt and braces
+    // A fresh sweep replaces the on-screen results, so any reopened-archive
+    // selection is now stale — clear it so the picker doesn't mislabel the run.
+    setPickedSweep("");
     // Synced SL/TP: stamp risk axes with their short-side mirror so the sweep
     // moves both legs together (the axes themselves stay long-side only).
     const synced = cfg.mode === "coded" ? riskSyncOn(codedCfg) : riskSyncOn(cfg);
@@ -1139,14 +1230,38 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     // Period axes materialize against the range as configured RIGHT NOW, so an
     // edit between toggle and run can never sweep stale windows.
     const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
+    // Holdout clamp: a reserved tail shrinks the sweepable window to the training
+    // span so period (window) axes never materialize over the locked-away tail.
+    const effToMs = holdout ? splitHoldout(fromMs, toMs, holdout.pct).trainToMs : toMs;
     // Re-label against the config as it runs (collision-aware across all axes),
     // so results name each axis by what it swept even if a rule is edited after.
-    const finalAxes = withSweepLabels(materializePeriodAxes(mirrored, fromMs, toMs), labelCfg());
+    const finalAxes = withSweepLabels(materializePeriodAxes(mirrored, fromMs, effToMs), labelCfg());
     // "Last used" range memory: recorded at run time, keyed per context.
     recordSweepRanges(sweepCtx(), sweepAxes);
     setRanAxes(finalAxes);
     sweepAxesSignal.set(finalAxes);
+    // Random search: sample N combos from the fully-materialized axes and hand
+    // them to BacktestButton as a one-shot override. Grid always clears it so a
+    // stale sample from a prior random run can never leak into this grid run.
+    // Seed fixed at 1: same ranges + N reproduce the same sample.
+    sweepCombosOverrideSignal.set(
+      searchMode === "random" ? sampleCombos(finalAxes, randomN, 1) : null,
+    );
     run();
+  }
+  // Evaluate on the reserved holdout tail: a single run over [holdoutFromMs, toMs]
+  // via the one-shot holdoutEvalSignal (BacktestButton skips the training clamp
+  // when it sees the flag). Every look is counted — a holdout peeked at often
+  // quietly stops being out-of-sample — and the count is surfaced below.
+  function evaluateHoldout() {
+    if (runInFlight || !holdout) return;
+    const key = sweepCtx();
+    sweepAxesSignal.set([]); // force BacktestButton's single-run path
+    sweepCombosOverrideSignal.set(null);
+    holdoutEvalSignal.set(true);
+    run();
+    const peeks = recordPeek(key);
+    setHoldout((h) => (h ? { ...h, peeks } : h));
   }
 
   function savePreset() {
@@ -1379,6 +1494,48 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   </button>
                 </Tooltip>
               </div>
+            )}
+            {/* Holdout ("lockbox"): reserve the last part of the range as an
+                out-of-sample tail. Runs and sweeps clamp to the training span;
+                the reserved tail is only touched by Evaluate on holdout, and
+                every look is counted. Keyed per strategy, like sweep memory. */}
+            <label className="al-row">
+              <span>Holdout</span>
+              <select
+                value={holdout?.pct ?? 0}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  changeHoldoutPct(v === 0 ? null : v);
+                }}
+              >
+                <option value={0}>None</option>
+                <option value={10}>10%</option>
+                <option value={20}>20%</option>
+                <option value={30}>30%</option>
+              </select>
+              <InfoTip text="Reserve the last part of the range as an out-of-sample lockbox. Normal runs and sweeps stop at the training cutoff; use Evaluate on holdout to test the reserved tail. Every look is counted, because a holdout you check often stops being out-of-sample." />
+            </label>
+            {holdout && (
+              <>
+                <div className="al-note">
+                  Holdout: last {holdout.pct}% reserved
+                  {holdoutReserved ? ` (${holdoutReserved})` : ""}
+                </div>
+                <button
+                  type="button"
+                  className="ghost bt-holdout-eval"
+                  disabled={runInFlight}
+                  onClick={evaluateHoldout}
+                >
+                  Evaluate on holdout
+                </button>
+                {holdout.peeks > 0 && (
+                  <div className="al-note">
+                    Holdout result viewed {holdout.peeks} times. Each look makes it
+                    less out-of-sample.
+                  </div>
+                )}
+              </>
             )}
           </Section>
 
@@ -1962,7 +2119,35 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               view with nothing cleared. */}
           {!split.collapsed && btMode === "backtest" && <BacktestPanel />}
           {!split.collapsed && btMode === "sweep" && (
-            sweepState ? (
+            <>
+            {pastSweeps.length > 0 && (
+              <div className="al-row bt-past-sweeps">
+                <span>Past sweeps</span>
+                <select
+                  value={pickedSweep}
+                  disabled={sweepState?.running}
+                  onChange={(e) => {
+                    setPickedSweep(e.target.value);
+                    if (e.target.value) reopenSweep(e.target.value);
+                  }}
+                >
+                  <option value="">Reopen a sweep…</option>
+                  {pastSweeps.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {new Date(s.created_at * 1000).toLocaleDateString()} · {s.name || `${s.n_rows} combos`} · best {s.best_net_pnl == null ? "n/a" : s.best_net_pnl.toFixed(0)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="ghost"
+                  disabled={!pickedSweep || sweepState?.running}
+                  onClick={() => removePastSweep(pickedSweep)}
+                >
+                  Delete
+                </button>
+              </div>
+            )}
+            {sweepState ? (
               <div className="sweep-panel">
                 {sweepState.running ? (
                   <button className="ghost sweep-cancel" onClick={() => requestSweepCancel(true)}>
@@ -1974,6 +2159,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                     onClick={() => {
                       sweepStateSignal.set(null);
                       setRanAxes([]);
+                      setPickedSweep(""); // let the same archive be re-selected
                     }}
                   >
                     Clear results
@@ -1988,6 +2174,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   rows={sweepState.rows}
                   axes={ranAxes.length ? ranAxes : sweepAxes}
                   onApply={applySweepCombo}
+                  onRefine={(combo) => setSweepAxes((axes) => refineAxesAround(axes, combo as SweepCombo))}
                   progress={sweepState.running ? { done: sweepState.done, total: sweepState.total } : null}
                 />
               </div>
@@ -1996,7 +2183,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 No sweep results yet. Turn on the sweep toggle next to the fields you want to
                 vary, then press Run sweep.
               </div>
-            )
+            )}
+            </>
           )}
         </div>
         </div>
@@ -2011,10 +2199,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               <span className="bt-mode-badge">{sweepCombos}</span>
             ) : null}
             sweepInfo={<>
+              {holdout && (
+                <span className="sweep-counter bt-holdout-badge">
+                  Holdout: last {holdout.pct}% reserved
+                </span>
+              )}
               {btMode === "sweep" && sweepAxes.length === 0 && (
                 <span className="sweep-counter">Turn on a field's sweep toggle to run</span>
               )}
-              {btMode === "sweep" && sweepAxes.length > 0 && (
+              {btMode === "sweep" && sweepAxes.length > 0 && searchMode === "grid" && (
                 <span className="sweep-counter">
                   {/* Per-axis counts via the SAME comboCount the runner uses. A
                       single axis's own combo count is exactly its step count (or
@@ -2033,11 +2226,52 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   {isFinite(sweepCombos) ? sweepCombos : "∞"} runs
                 </span>
               )}
+              {btMode === "sweep" && sweepAxes.length > 0 && searchMode === "random" && (
+                // Random samples a subset, so the per-axis grid breakdown would
+                // contradict the sampled total; show the sample size directly.
+                <span className="sweep-counter">
+                  {isFinite(effectiveCombos) ? effectiveCombos : "∞"} runs sampled
+                </span>
+              )}
               {btMode === "sweep" && sweepAxes.length > 0 && (
-                <span className={`bt-sweep-estimate${sweepWarn ? " bt-sweep-warn" : ""}`}>
-                  {isFinite(sweepCombos)
-                    ? estimateSweepText(sweepCombos, recallSweepPace(epic, effectiveRes, sweepTarget))
+                <span className={`bt-sweep-estimate${effectiveWarn ? " bt-sweep-warn" : ""}`}>
+                  {isFinite(effectiveCombos)
+                    ? estimateSweepText(effectiveCombos, recallSweepPace(epic, effectiveRes, sweepTarget))
                     : "∞ combos"}
+                </span>
+              )}
+              {btMode === "sweep" && sweepAxes.length > 0 && (
+                <span className="bt-search-toggle">
+                  <span className="bt-compute-label">
+                    Search:
+                    <InfoTip text="Random search samples N combos from the ranges. Same ranges and N always draw the same sample." />
+                  </span>
+                  <span className="seg" role="group" aria-label="Search strategy">
+                    {(["grid", "random"] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        className={searchMode === m ? "seg-on" : ""}
+                        aria-pressed={searchMode === m}
+                        onClick={() => setSearchMode(m)}
+                      >
+                        {m === "grid" ? "Grid" : "Random"}
+                      </button>
+                    ))}
+                  </span>
+                  {searchMode === "random" && (
+                    <label className="bt-random-n">
+                      <span>N</span>
+                      <input
+                        type="number"
+                        min={10}
+                        value={randomN}
+                        onKeyDown={blockNegKeys}
+                        onChange={(e) => setRandomN(Number(cleanNumInput(e.currentTarget)))}
+                        onBlur={(e) => clampPosOnBlur(e.currentTarget, 10, setRandomN)}
+                      />
+                    </label>
+                  )}
                 </span>
               )}
               {btMode === "sweep" && sweepAxes.length > 0 && remoteCompute && (

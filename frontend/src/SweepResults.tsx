@@ -156,9 +156,13 @@ export function SweepResults(props: {
   rows: SweepRow[];
   axes: SweepAxis[];
   onApply: (combo: Record<string, number | boolean | string>) => void;
+  // Refine-around-a-result: narrows the sweep ranges to this combo's
+  // neighborhood (halve step, re-center, clamp). Optional — omit to hide the
+  // Refine controls entirely.
+  onRefine?: (combo: SweepRow["combo"]) => void;
   progress?: { done: number; total: number } | null;
 }) {
-  const { rows, axes, onApply, progress } = props;
+  const { rows, axes, onApply, onRefine, progress } = props;
 
   // Plateau scoring over the loaded rows: new row objects whose metrics gain
   // `plateau_score`, so the existing sort / best-per-column / heatmap paths
@@ -266,6 +270,7 @@ export function SweepResults(props: {
           onApply={applyOrNoop}
           disabled={applyDisabled}
           plateauAction={plateauAction}
+          onRefine={onRefine && !applyDisabled ? onRefine : undefined}
         />
       )}
 
@@ -326,6 +331,7 @@ export function SweepResults(props: {
                   )}
                 </th>
               ))}
+              {onRefine && <th className="sweep-c-act" />}
             </tr>
           </thead>
           <tbody>
@@ -393,6 +399,14 @@ export function SweepResults(props: {
                       </td>
                     );
                   })}
+                  {onRefine && (
+                    <td className="sweep-c-act">
+                      <button type="button" disabled={applyDisabled}
+                              onClick={(e) => { e.stopPropagation(); onRefine(row.combo); }}>
+                        Refine
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -446,6 +460,7 @@ function SweepHeatmap({
   onApply,
   disabled,
   plateauAction,
+  onRefine,
 }: {
   rows: SweepRow[];
   axes: SweepAxis[];
@@ -457,6 +472,9 @@ function SweepHeatmap({
   // "Apply plateau center" button, rendered beside the color-metric dropdown
   // (built by the parent, which owns the scored rows and apply gating).
   plateauAction?: ReactNode;
+  // Refine around the hovered cell's combo; already gated off while a sweep
+  // streams (undefined then), so no extra disabled check is needed here.
+  onRefine?: (combo: SweepRow["combo"]) => void;
 }) {
   // Direction-aware "which row is better" on the selected color metric:
   // higher wins except drawdown (lower wins); a successful row always beats
@@ -574,6 +592,12 @@ function SweepHeatmap({
                       <span className="sweep-heat-detail-val">{fmtMetric(c.key, metricValue(hovered, c.key))}</span>
                     </span>
                   ))}
+                  {onRefine && (
+                    <button type="button" className="sweep-refine"
+                            onClick={() => onRefine(hovered.combo)}>
+                      Refine
+                    </button>
+                  )}
                 </>
               )}
             </>

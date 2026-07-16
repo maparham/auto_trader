@@ -159,6 +159,70 @@ describe("resumeSweep", () => {
   });
 });
 
+describe("resumeSweep archives a sweep that completes on re-attach", () => {
+  const archiveMeta = {
+    epic: "CS.D.EURUSD.MINI.IP",
+    timeframe: "HOUR",
+    axes: oneComboAxis,
+    windows: null,
+  };
+
+  it("archives an already-finished job with its remembered metadata + rows", async () => {
+    rememberSweepJob("j1", "local", archiveMeta);
+    vi.spyOn(api, "pollSweepJob").mockResolvedValue(
+      status({ rows: [row(1), row(2)], done: 2, total: 2, running: false }),
+    );
+    const save = vi.spyOn(api, "saveSweepArchive").mockResolvedValue({ id: "a1" });
+    expect(await resumeSweep()).toBe(true);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith({
+      epic: "CS.D.EURUSD.MINI.IP",
+      timeframe: "HOUR",
+      name: null,
+      axes: oneComboAxis,
+      rows: [row(1), row(2)],
+      windows: null,
+    });
+  });
+
+  it("archives a still-running job once it polls to completion", async () => {
+    vi.useFakeTimers();
+    rememberSweepJob("j1", "local", archiveMeta);
+    let call = 0;
+    vi.spyOn(api, "pollSweepJob").mockImplementation(async (_id, cursor) => {
+      call++;
+      if (call === 1) return status({ rows: [row(1)], done: 1, total: 2, running: true });
+      return status({ rows: [row(1), row(2)].slice(cursor), done: 2, total: 2, running: false });
+    });
+    const save = vi.spyOn(api, "saveSweepArchive").mockResolvedValue({ id: "a1" });
+    expect(await resumeSweep()).toBe(true);
+    expect(save).not.toHaveBeenCalled(); // not yet: still running
+    await vi.advanceTimersByTimeAsync(700);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save.mock.calls[0][0].rows).toHaveLength(2);
+  });
+
+  it("does NOT archive when the memo carries no metadata (old memo / not captured)", async () => {
+    rememberSweepJob("j1", "local"); // no archive meta
+    vi.spyOn(api, "pollSweepJob").mockResolvedValue(
+      status({ rows: [row(1)], done: 1, total: 1, running: false }),
+    );
+    const save = vi.spyOn(api, "saveSweepArchive").mockResolvedValue({ id: "a1" });
+    expect(await resumeSweep()).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("does NOT archive a cancelled re-attached job", async () => {
+    rememberSweepJob("j1", "local", archiveMeta);
+    vi.spyOn(api, "pollSweepJob").mockResolvedValue(
+      status({ rows: [row(1)], done: 1, total: 2, running: false, cancelled: true }),
+    );
+    const save = vi.spyOn(api, "saveSweepArchive").mockResolvedValue({ id: "a1" });
+    expect(await resumeSweep()).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+  });
+});
+
 describe("runSweep memo preservation on poll failure", () => {
   it("keeps the re-attach memo when polling fails 5 times (transport-exhausted)", async () => {
     vi.useFakeTimers();

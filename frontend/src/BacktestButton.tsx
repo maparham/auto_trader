@@ -20,7 +20,7 @@ import { buildChartOperandSeries } from "./lib/backtestSeries";
 import { defaultBacktestConfig, activeGroup, type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
 import { resolveMask } from "./lib/backtestSchedule";
 import { loadCodedCfg, resolveParamValues, sendableRisk } from "./lib/codedConfig";
-import { fetchStrategies } from "./api";
+import { fetchStrategies, saveSweepArchive } from "./api";
 import {
   resolveWindow,
   resolveHistoryStart,
@@ -50,9 +50,13 @@ import {
   sweepCancelRequest,
   sweepCancelServer,
   sweepTargetSignal,
+  holdoutEvalSignal,
+  sweepCombosOverrideSignal,
+  sweepArchivedSignal,
 } from "./lib/signals";
 import { robustWindowBounds, runSweep, sweepCatchState } from "./lib/sweep";
-import { recordSweepPace } from "./lib/sweepMemory";
+import { recordSweepPace, sweepContext } from "./lib/sweepMemory";
+import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
 import { inspectModeSignal } from "./lib/backtestInspect";
 import type { BacktestRequest, SweepRow } from "./api";
@@ -114,6 +118,13 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   }, []);
 
   async function run() {
+    // Holdout ("lockbox") one-shot: consume the evaluate flag at the VERY top,
+    // before the guard below can early-return. If a stranded flag survived a
+    // no-op run, the next NORMAL run would silently evaluate on the reserved
+    // tail — contaminating the out-of-sample guarantee this feature protects.
+    // Consuming it on a no-op run is harmless (the user just re-clicks).
+    const evaluatingHoldout = holdoutEvalSignal.value;
+    holdoutEvalSignal.set(false);
     if (!chart || !epic || !period || running) return;
     setRunning(true);
     // Published imperatively (not via an effect on `running`) so the settings
@@ -126,6 +137,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     // mode) right before bumping the run request, and nothing may change them
     // mid-run (run() no-ops while running).
     const sweepAxes = sweepAxesSignal.value;
+    // Random-search one-shot override: captured + cleared up front (like the
+    // holdout flag) so a stale sample can never leak into the next grid sweep.
+    const sweepCombosOverride = sweepCombosOverrideSignal.value;
+    sweepCombosOverrideSignal.set(null);
     // Single run: drop the previous result from the pane right away — when two
     // runs produce identical numbers, a pane that never visibly changes reads
     // as "the click did nothing". Emptying it (the pane shows its running
@@ -177,7 +192,27 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       const runResolution = cfg.range.resolution ?? period.resolution;
       const resSeconds = RESOLUTION_SECONDS[runResolution] ?? 60;
       const now = Date.now();
-      const { fromMs: windowFromMs, toMs: windowToMs } = resolveWindow(cfg, resSeconds, now);
+      const resolved = resolveWindow(cfg, resSeconds, now);
+      let windowFromMs = resolved.fromMs;
+      let windowToMs = resolved.toMs;
+      // Holdout ("lockbox"): reserve the tail pct of the configured range. A
+      // normal run or sweep clamps its `to` bound to the training span so the
+      // reserved tail is never touched; the explicit Evaluate action instead
+      // runs over the reserved tail only. Keyed per strategy context (rules /
+      // coded file), identical to sweep memory.
+      const holdoutPct = loadHoldout(sweepContext(cfg.mode, cfg.codedStrategy))?.pct ?? null;
+      if (holdoutPct) {
+        const { trainToMs } = splitHoldout(windowFromMs, windowToMs, holdoutPct);
+        if (evaluatingHoldout) {
+          // Invariant: evaluation must start strictly after the training span's
+          // last tradable second. splitHoldout returns holdoutFromMs === trainToMs
+          // (the shared cut), and training trades every bar <= floor(cut/1000)
+          // inclusive. Starting the holdout one whole second past that upper
+          // second prevents a bar sitting exactly on the boundary from trading in
+          // both spans (a one-bar leak of training data into out-of-sample).
+          windowFromMs = (Math.floor(trainToMs / 1000) + 1) * 1000;
+        } else windowToMs = trainToMs;
+      }
       const toSec = Math.floor(windowToMs / 1000);
       const fetchBars = (fromMs: number) =>
         fetchRange(epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId);
@@ -313,6 +348,8 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
             signal: ctl.signal,
             windows,
             target: sweepTarget,
+            // Random search: submit the sampled subset instead of the full grid.
+            combosOverride: sweepCombosOverride ?? undefined,
             // A modal-close abort (requestSweepCancel(false)) leaves the server
             // job running for a reload to re-attach; the Cancel button
             // (requestSweepCancel(true)) kills it. Read at abort time.
@@ -331,6 +368,18 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           // Only on a real completion with produced rows (never on cancel/empty).
           if (rows.length > 0) {
             recordSweepPace(baseReq.epic, baseReq.resolution, sweepTarget, (Date.now() - startedAt) / rows.length);
+            // Archive the completed sweep server-side (fire-and-forget) so it can
+            // be listed and reopened later. Never blocks the UI path.
+            saveSweepArchive({
+              epic: baseReq.epic,
+              timeframe: baseReq.resolution,
+              name: null,
+              axes: sweepAxes,
+              rows,
+              windows: windows ?? null,
+            })
+              .then(() => sweepArchivedSignal.set(sweepArchivedSignal.value + 1))
+              .catch((e) => console.warn("sweep archive failed", e));
           }
         } catch (e) {
           // A user Cancel and a real chunk failure both reject the same

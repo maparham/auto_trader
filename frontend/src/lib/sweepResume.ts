@@ -8,25 +8,65 @@
 // of the same tab, not a brand-new session. Access is guarded for the node test
 // env, where sessionStorage is not defined (unlike fetch, it is not a Node global).
 
-import { pollSweepJob, type SweepTarget } from "../api";
+import { pollSweepJob, saveSweepArchive, type SweepTarget } from "../api";
 import { pollToCompletion, sweepCatchState } from "./sweep";
-import { sweepStateSignal, sweepCancelRequest, sweepCancelServer } from "./signals";
+import type { SweepAxis } from "./sweep";
+import {
+  sweepStateSignal,
+  sweepCancelRequest,
+  sweepCancelServer,
+  sweepArchivedSignal,
+} from "./signals";
 
 const MEMO_KEY = "at.sweepJob";
+
+// Enough to archive the sweep server-side if it finishes after a reload re-attach
+// (the completing job's rows are the only other piece). Optional so an old memo
+// (or a job we couldn't capture this for) still re-attaches, just unarchived.
+interface SweepArchiveMeta {
+  epic: string;
+  timeframe: string;
+  axes: SweepAxis[];
+  windows: number[] | null;
+}
 
 interface SweepMemo {
   jobId: string;
   target: SweepTarget;
+  archive?: SweepArchiveMeta;
 }
 
-/** Record the in-flight job so a reload can re-attach to it. */
-export function rememberSweepJob(jobId: string, target: SweepTarget): void {
+/** Record the in-flight job so a reload can re-attach to it. `archive` carries the
+ * metadata needed to archive the sweep if it completes on a re-attach; omit it and
+ * that completion path simply won't archive. */
+export function rememberSweepJob(
+  jobId: string,
+  target: SweepTarget,
+  archive?: SweepArchiveMeta,
+): void {
   if (typeof sessionStorage === "undefined") return;
   try {
-    sessionStorage.setItem(MEMO_KEY, JSON.stringify({ jobId, target }));
+    sessionStorage.setItem(MEMO_KEY, JSON.stringify({ jobId, target, archive }));
   } catch {
     /* quota / serialization: non-fatal, re-attach just won't be available */
   }
+}
+
+// Archive a sweep that completed on a re-attach (fire-and-forget). Mirrors the
+// live-run archive in BacktestButton; only fires when the memo carried the
+// metadata and the run produced rows, so it never invents values.
+function archiveResumedSweep(archive: SweepArchiveMeta | undefined, rows: import("../api").SweepRow[]): void {
+  if (!archive || rows.length === 0) return;
+  saveSweepArchive({
+    epic: archive.epic,
+    timeframe: archive.timeframe,
+    name: null,
+    axes: archive.axes,
+    rows,
+    windows: archive.windows,
+  })
+    .then(() => sweepArchivedSignal.set(sweepArchivedSignal.value + 1))
+    .catch((e) => console.warn("sweep archive failed", e));
 }
 
 /** Forget the remembered job (it ended, or the poll found it gone). */
@@ -46,7 +86,11 @@ function readMemo(): SweepMemo | null {
     if (!raw) return null;
     const memo = JSON.parse(raw) as SweepMemo;
     if (!memo || typeof memo.jobId !== "string") return null;
-    return { jobId: memo.jobId, target: memo.target === "remote" ? "remote" : "local" };
+    return {
+      jobId: memo.jobId,
+      target: memo.target === "remote" ? "remote" : "local",
+      archive: memo.archive,
+    };
   } catch {
     return null; // malformed memo reads as "none remembered"
   }
@@ -73,7 +117,7 @@ export function stopResumedSweep(): void {
 // (false) just stops this poll. A FOREIGN cancel (another tab) surfaces as a
 // "sweep aborted" rejection, which sweepCatchState maps to a neutral cancelled
 // state, never an error.
-async function continueResume(jobId: string, target: SweepTarget): Promise<void> {
+async function continueResume(jobId: string, target: SweepTarget, archive?: SweepArchiveMeta): Promise<void> {
   const ctl = new AbortController();
   resumedCtl = ctl;
   const unsub = sweepCancelRequest.subscribe(() => ctl.abort());
@@ -91,6 +135,7 @@ async function continueResume(jobId: string, target: SweepTarget): Promise<void>
       },
     });
     sweepStateSignal.set({ rows, done: rows.length, total: rows.length, running: false });
+    archiveResumedSweep(archive, rows);
     clearSweepJob();
   } catch (e) {
     // A detach abort (modal close / takeover: this LOCAL signal aborted with
@@ -126,7 +171,7 @@ async function continueResume(jobId: string, target: SweepTarget): Promise<void>
 export async function resumeSweep(): Promise<boolean> {
   const memo = readMemo();
   if (!memo) return false;
-  const { jobId, target } = memo;
+  const { jobId, target, archive } = memo;
 
   let status: import("../api").SweepJobStatus;
   try {
@@ -144,7 +189,10 @@ export async function resumeSweep(): Promise<boolean> {
     } else if (status.error) {
       sweepStateSignal.set({ rows: status.rows, done: status.done, total: status.total, running: false, error: status.error });
     } else {
+      // Clean completion while we were away: archive it (the live-run path in
+      // BacktestButton never got to, since the tab reloaded before it finished).
       sweepStateSignal.set({ rows: status.rows, done: status.done, total: status.total, running: false });
+      archiveResumedSweep(archive, status.rows);
     }
     return true;
   }
@@ -152,6 +200,6 @@ export async function resumeSweep(): Promise<boolean> {
   // Still running: show what's landed so far, then keep polling to completion.
   // (continueResume re-fetches from cursor 0, so it doesn't double-count these.)
   sweepStateSignal.set({ rows: status.rows, done: status.done, total: status.total, running: true });
-  void continueResume(jobId, target);
+  void continueResume(jobId, target, archive);
   return true;
 }

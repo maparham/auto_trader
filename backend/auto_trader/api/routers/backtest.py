@@ -8,10 +8,12 @@ import uuid
 from types import ModuleType
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.core.run_store import RUN_STORE
+from auto_trader.core.sweep_store import SWEEP_STORE
 from auto_trader.engine.analysis import compute_analysis
 from auto_trader.engine.backtest import BacktestResult
 from auto_trader.engine.context_features import enrich_trades
@@ -435,6 +437,55 @@ async def get_run(run_id: str) -> dict:
 async def delete_run(run_id: str) -> dict:
     """Remove one stored run (housekeeping)."""
     await RUN_STORE.delete(run_id)
+    return {"ok": True}
+
+
+# --- sweep archive API: persist/list/get/delete completed sweeps -------------
+# The frontend posts the finished result set (axes + rows + windows) explicitly,
+# so this works identically for local and remote jobs. `GET /sweeps` is declared
+# BEFORE `GET /sweeps/{sweep_id}` so the literal path can't be shadowed.
+
+
+class SweepArchiveIn(BaseModel):
+    epic: str
+    timeframe: str
+    name: str | None = None
+    axes: list[dict]
+    rows: list[dict]
+    windows: list[int] | None = None
+
+
+@router.post("/api/backtest/sweeps")
+async def save_sweep(body: SweepArchiveIn) -> dict:
+    """Archive a completed sweep (axes verbatim + rows + optional windows)."""
+    sweep_id = uuid.uuid4().hex
+    await SWEEP_STORE.insert({
+        "id": sweep_id, "created_at": int(time.time()),
+        "epic": body.epic, "timeframe": body.timeframe, "name": body.name,
+        "axes": body.axes, "rows": body.rows, "windows": body.windows,
+    })
+    return {"id": sweep_id}
+
+
+@router.get("/api/backtest/sweeps")
+async def list_sweeps(limit: int = 50, epic: str | None = None) -> list[dict]:
+    """Recent archived sweeps, newest first (summaries only — no rows/axes)."""
+    return await SWEEP_STORE.list(limit=limit, epic=epic)
+
+
+@router.get("/api/backtest/sweeps/{sweep_id}")
+async def get_sweep(sweep_id: str) -> dict:
+    """One archived sweep: axes + rows + windows, ready to reopen."""
+    rec = await SWEEP_STORE.get(sweep_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="sweep not found")
+    return rec
+
+
+@router.delete("/api/backtest/sweeps/{sweep_id}")
+async def delete_sweep(sweep_id: str) -> dict:
+    """Remove one archived sweep (housekeeping)."""
+    await SWEEP_STORE.delete(sweep_id)
     return {"ok": True}
 
 

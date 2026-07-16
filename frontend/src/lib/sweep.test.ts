@@ -208,6 +208,19 @@ describe("runSweep", () => {
     expect(calls).toBe(5); // exactly 5 consecutive attempts, then it gives up
   });
 
+  it("submits an explicit combo override verbatim instead of enumerating", async () => {
+    mockJob([[row(7)]]);
+    const submit = vi.spyOn(api, "submitSweepJob");
+    const override = [{ "param:n": 7 }, { "param:n": 9 }];
+    const p = runSweep({} as never, [axis("param:n", 1, 100, 1)], {
+      onRows: () => {}, combosOverride: override,
+    });
+    await vi.advanceTimersByTimeAsync(700);
+    await p;
+    // The override is submitted verbatim, not the 100-value enumerated grid.
+    expect(submit).toHaveBeenCalledWith(expect.anything(), override, undefined, "local");
+  });
+
   it("appends target=remote query and records the last job", async () => {
     mockJob([[row(1)]]);
     const submit = vi.spyOn(api, "submitSweepJob");

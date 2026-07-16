@@ -4333,6 +4333,10 @@ span.bt-leg-short { color: var(--neg); }
 .bt-compute-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .bt-compute-label { font-size: 12px; color: var(--text-dim); }
 .bt-compute-toggle .seg button { padding: 4px 10px; font-size: 12px; }
+.bt-search-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.bt-search-toggle .seg button { padding: 4px 10px; font-size: 12px; }
+.bt-random-n { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.bt-random-n input { width: 56px; }
 
 /* Sweep results — table + heatmap, shown in the modal's results region in
    place of BacktestPanel while a sweep is active. */
@@ -4407,6 +4411,15 @@ span.bt-leg-short { color: var(--neg); }
 }
 .sweep-plateau-apply:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .sweep-plateau-apply:disabled { cursor: not-allowed; opacity: 0.55; }
+
+.sweep-c-act { text-align: center; white-space: nowrap; }
+.sweep-c-act button, .sweep-refine {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; font: inherit; font-size: 11px; color: var(--text-dim);
+  padding: 1px 7px; white-space: nowrap;
+}
+.sweep-c-act button:hover:not(:disabled), .sweep-refine:hover { background: var(--hover); color: var(--text); }
+.sweep-c-act button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .sweep-heatmap { display: flex; flex-direction: column; gap: 6px; position: relative; }
 .sweep-heat-metric { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; font-size: 12px; color: var(--text-dim); height: 24px; }
