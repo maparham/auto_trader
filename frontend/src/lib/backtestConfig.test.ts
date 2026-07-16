@@ -395,7 +395,7 @@ describe("longestIndicatorLength with slope", () => {
 describe("defaultBacktestConfig", () => {
   it("has four populated groups: long entry/exit + short entry/exit (mirror)", () => {
     const cfg = defaultBacktestConfig();
-    expect(cfg.range).toEqual({ mode: "bars", bars: 500, history: "full" });
+    expect(cfg.range).toEqual({ mode: "bars", bars: 500, history: "minimal" });
     expect(cfg.longEntry.rules[0].op).toBe("crossesAbove");
     expect(cfg.longExit.rules[0].op).toBe("crossesBelow");
     expect(cfg.shortEntry.rules[0].op).toBe("crossesBelow"); // mirror of long entry

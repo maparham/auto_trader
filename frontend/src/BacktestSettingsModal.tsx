@@ -181,9 +181,9 @@ const DEFAULT_SCALING: ScalingConfig = { maxConcurrent: 1 };
 // `tip` is a one-line tooltip. Crosses fire ONCE on the bar the lines meet (an
 // event); the comparisons are true on EVERY bar the condition holds (a state).
 const OPERATORS: { value: Operator; label: string; tip: string }[] = [
-  { value: "crossesAbove", label: "crosses above", tip: "Fires once — the bar the left rises through the right." },
-  { value: "crossesBelow", label: "crosses below", tip: "Fires once — the bar the left drops through the right." },
-  { value: "crosses", label: "crosses", tip: "Fires once — the bar the left crosses the right in either direction." },
+  { value: "crossesAbove", label: "crosses above", tip: "Fires once, on the bar the left rises through the right." },
+  { value: "crossesBelow", label: "crosses below", tip: "Fires once, on the bar the left drops through the right." },
+  { value: "crosses", label: "crosses", tip: "Fires once, on the bar the left crosses the right either way." },
   { value: "gt", label: "greater than", tip: "True on every bar the left is above the right." },
   { value: "lt", label: "less than", tip: "True on every bar the left is below the right." },
   { value: "gte", label: "greater or equal", tip: "True on every bar the left is at or above the right." },
@@ -292,7 +292,7 @@ function estimateWindowBars(cfg: BacktestConfig, resSeconds: number): number {
 function WindowTimeline({ cfg, resolution }: { cfg: BacktestConfig; resolution: string }) {
   const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
   const windowBars = estimateWindowBars(cfg, resSeconds);
-  const depth = cfg.range.history ?? "full";
+  const depth = cfg.range.history ?? "minimal";
   const historyBars =
     depth === "bars" ? cfg.range.historyBars ?? 500 : depth === "minimal" ? longestIndicatorLength(cfg) : null;
 
@@ -1130,7 +1130,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               <label className="bt-tf-inline bt-robust-windows">
                 <span className="bt-tf-label">
                   Windows
-                  <InfoTip text="The backtest range is split into equal windows to score consistency. Auto picks daily, weekly or monthly windows from the range length; set a number to override." />
+                  <InfoTip text="Splits the range into equal windows to score consistency. Auto picks daily, weekly, or monthly by range length; set a number to override." />
                 </span>
                 <input
                   type="number"
@@ -1223,7 +1223,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                       ? "Focus a chart to pick a range"
                       : pickingRange
                         ? "Picking… drag across the chart's time axis, or click a start then an end. Esc cancels."
-                        : "Pick the range on the chart — drag across the time axis, or click a start then an end"
+                        : "Pick the range on the chart: drag across the time axis, or click a start then an end"
                   }
                 >
                   <button
@@ -1258,7 +1258,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
 
           <Section
             title="Repeat / active windows"
-            info="Restrict trading to recurring windows — weekdays, months, days of the month, or a market session. Outside them the strategy opens no new positions; an open position keeps running unless you enable closing at session close."
+            info="Limit trading to recurring windows: weekdays, months, days of the month, or a market session. Outside them, no new positions open."
           >
             <label className="al-row bt-mask-toggle">
               <input
@@ -1267,7 +1267,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 onChange={(e) => setMask({ enabled: e.target.checked })}
               />
               <span>Only trade during selected windows</span>
-              <InfoTip text="When on, the strategy only opens positions inside the windows you pick below. Positions already open keep running unless you also close them at session close." />
+              <InfoTip text="When on, positions only open inside the windows below. Already-open positions keep running unless you also close them at session close." />
             </label>
 
             {cfg.range.mask?.enabled && (
@@ -1281,8 +1281,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   <span>Close open positions at session close</span>
                   <InfoTip
                     text={[
-                      "Off (default): a position opened inside a window keeps running past the session boundary until its stop or target hits (or the backtest range ends).",
-                      "On: any open position is force-flattened at each session close — the previous behavior.",
+                      "Off (default): a position opened in a window keeps running past the session boundary until its stop or target hits, or the range ends.",
+                      "On: any open position is force-closed at each session close.",
                     ]}
                   />
                 </label>
@@ -1322,7 +1322,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   <label className="bt-range-field">
                     <span className="bt-field-label">
                       Session
-                      <InfoTip text="Fills the From and To times from a market's hours, converted into your timezone, and sets Mon-Fri (Crypto clears both). Edit them afterward. Intraday timeframes only." />
+                      <InfoTip text="Fills From/To from a market's hours in your timezone and sets weekdays (Crypto clears both). Editable after. Intraday timeframes only." />
                     </span>
                     <select
                       disabled={resSeconds >= 86400}
@@ -1356,7 +1356,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   <label className="bt-range-field">
                     <span className="bt-field-label">
                       Timezone
-                      <InfoTip text="Timezone used to evaluate the weekday, day-of-month and clock filters (and the calendar chips). Picking a session fills From/To in this timezone; it does not change it." />
+                      <InfoTip text="Timezone for the weekday, day-of-month, and clock filters (and calendar chips). Picking a session fills From/To in this timezone but doesn't change it." />
                     </span>
                     <input
                       type="text"
@@ -1375,8 +1375,8 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   !cfg.range.mask?.daysOfWeek?.length &&
                   SESSION_PRESETS[cfg.range.mask.session].days && (
                     <div className="al-note">
-                      {SESSION_PRESETS[cfg.range.mask.session].label} trades Mon–Fri —
-                      weekends are excluded automatically. Pick weekday chips above to override.
+                      {SESSION_PRESETS[cfg.range.mask.session].label} trades weekdays; weekends are
+                      excluded automatically. Pick weekday chips above to override.
                     </div>
                   )}
 
@@ -1478,17 +1478,22 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
 
           <Section
             title="History depth"
-            info="How much history to load before the window so indicators are warmed up when trading starts. It never adds trades — only the range above does."
+            info={[
+              "Candles loaded before your window to warm up indicators. Never adds trades.",
+              <><strong>Minimal</strong>: just enough (fastest).</>,
+              <><strong>Bars</strong>: a count you set.</>,
+              <><strong>Full</strong>: years of history (slow; only when warm-up can't size itself).</>,
+            ]}
           >
             <div className="al-note">
-              Indicators warm up on history loaded before the window — trades still only open once
-              the window starts.
+              Indicators warm up on the candles loaded before your window. Trades still only open
+              once the window starts.
             </div>
             <div className="seg">
               {HISTORY_DEPTHS.map((h) => (
                 <button
                   key={h.value}
-                  className={(cfg.range.history ?? "full") === h.value ? "seg-on" : ""}
+                  className={(cfg.range.history ?? "minimal") === h.value ? "seg-on" : ""}
                   onClick={() => setRange({ history: h.value })}
                 >
                   {h.label}
@@ -1571,7 +1576,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                       info={`Conditions that close an open ${s} position. A stop or target can close it first.`}
                       group={isLong ? codedCfg.longExit : codedCfg.shortExit}
                       onChange={(g) => updateCoded({ ...codedCfg, [isLong ? "longExit" : "shortExit"]: g })}
-                      emptyHint={`No ${s}-exit rules — an open ${s} holds until the trading window ends.`}
+                      emptyHint={`No ${s}-exit rules, so an open ${s} holds until the trading window ends.`}
                       defaultAvwapAnchor={defaultAvwapAnchor}
                       baseResolution={effectiveRes}
                       clipboard={clipboard}
@@ -1673,7 +1678,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           {usesVolume && (
             <div className="al-note">
               Volume-based operands (Volume, Volume-MA, AVWAP) read 0 on epics that don't report
-              trade volume (e.g. many forex/CFD instruments) — they'll never fire there.
+              trade volume (e.g. many forex/CFD instruments), so they never fire there.
             </div>
           )}
             </>
@@ -1705,7 +1710,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               <label className="bt-field">
                 <span className="bt-field-label">
                   Commission/side
-                  <InfoTip text="Flat cost charged on each entry and each exit — a round trip pays it twice." />
+                  <InfoTip text="Flat cost charged on each entry and each exit, so a round trip pays it twice." />
                 </span>
                 <input
                   type="number"
@@ -1718,7 +1723,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               <label className="bt-field">
                 <span className="bt-field-label">
                   Slippage
-                  <InfoTip text="Price penalty applied to every fill, in the instrument's price units — you buy a bit higher and sell a bit lower." />
+                  <InfoTip text="Price penalty on every fill, in the instrument's price units: you buy a bit higher and sell a bit lower." />
                 </span>
                 <input
                   type="number"
@@ -1750,7 +1755,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             <section className="bt-scroll-section" ref={setRef("presets")}>
           <Section
             title="Presets"
-            info="Save the whole configuration — range, mask, rules, risk, and costs — under a name, and reload it later."
+            info="Save the whole configuration (range, mask, rules, risk, costs) under a name to reload later."
           >
             <div className="bt-presets">
               <div className="al-row">
@@ -1826,7 +1831,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   </button>
                 )}
                 {sweepState.cancelled ? (
-                  <div className="al-note">Cancelled — kept {sweepState.done} of {sweepState.total}</div>
+                  <div className="al-note">Cancelled, kept {sweepState.done} of {sweepState.total}</div>
                 ) : sweepState.error ? (
                   <div className="al-note bt-param-error">{sweepState.error}</div>
                 ) : null}
@@ -1849,7 +1854,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             className={`ghost bt-inspect-foot${inspectMode ? " on" : ""}`}
             title={
               inspectMode
-                ? "Inspect mode on — click a bar on the chart to see its rules"
+                ? "Inspect mode on: click a bar on the chart to see its rules"
                 : "Inspect a bar: click a bar to see every rule's value and why a trade did or didn't open"
             }
             aria-pressed={inspectMode}
@@ -2034,8 +2039,8 @@ export function RiskSection({
     <div className="bt-risk">
       <SectionTitle
         info={sync?.on
-          ? "Price-level exits. Whichever triggers first — stop, target, or a close rule — ends the trade. Synced: edits here apply to both long and short."
-          : "Price-level exits for this side. Whichever triggers first — stop, target, or a close rule — ends the trade."}
+          ? "Price-level exits. The trade ends on whichever triggers first: stop, target, or a close rule. Synced: edits here apply to both long and short."
+          : "Price-level exits for this side. The trade ends on whichever triggers first: stop, target, or a close rule."}
         extra={sync && (
           <label className="bt-risk-sync">
             <input type="checkbox" checked={sync.on} onChange={sync.onToggle} />
@@ -2222,7 +2227,7 @@ function SidePanel({
       </div>
       {!enabled && (
         <div className="al-note bt-parked-note">
-          Rules are kept — the {side} side won't open or close positions until you switch it back on.
+          Rules are kept. The {side} side won't open or close positions until you switch it back on.
         </div>
       )}
       {/* When the side is parked, `inert` makes every rule/field/button inside
@@ -2234,7 +2239,7 @@ function SidePanel({
           info={`Conditions that open a ${side} position. Multiple rules combine with the AND/OR switch.`}
           group={entry}
           onChange={(g) => setGroup(isLong ? "longEntry" : "shortEntry", g)}
-          emptyHint={`No ${side}-entry rules — this strategy won't open any ${side} positions.`}
+          emptyHint={`No ${side}-entry rules, so this strategy won't open any ${side} positions.`}
           defaultAvwapAnchor={defaultAvwapAnchor}
           baseResolution={baseResolution}
           clipboard={clipboard}
@@ -2249,7 +2254,7 @@ function SidePanel({
           info={`Conditions that close an open ${side} position. A stop or target can close it first.`}
           group={exit}
           onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
-          emptyHint={`No ${side}-exit rules — an open ${side} holds until the trading window ends.`}
+          emptyHint={`No ${side}-exit rules, so an open ${side} holds until the trading window ends.`}
           defaultAvwapAnchor={defaultAvwapAnchor}
           baseResolution={baseResolution}
           clipboard={clipboard}
@@ -2290,7 +2295,7 @@ function SidePanel({
 // A section heading with an optional ⓘ that explains what the section does.
 // Shared by <Section> and the risk/scaling blocks so every heading tips the
 // same way.
-function SectionTitle({ info, extra, children }: { info?: string | string[]; extra?: ReactNode; children: ReactNode }) {
+function SectionTitle({ info, extra, children }: { info?: string | Array<string | ReactNode>; extra?: ReactNode; children: ReactNode }) {
   return (
     <div className="instrument-section-title bt-section-title">
       <span>{children}</span>
@@ -2315,7 +2320,7 @@ function loadCollapsedSections(): Record<string, boolean> {
 // A collapsible settings section. The chevron + title is a toggle button; the ⓘ
 // sits outside it (nesting InfoTip's own <button> inside would be invalid HTML)
 // and swallows its own click, so tapping it never collapses the section.
-function Section({ title, info, extra, children }: { title: string; info?: string | string[]; extra?: ReactNode; children: ReactNode }) {
+function Section({ title, info, extra, children }: { title: string; info?: string | Array<string | ReactNode>; extra?: ReactNode; children: ReactNode }) {
   const [collapsed, setCollapsed] = useState<boolean>(() => loadCollapsedSections()[title] ?? false);
   const toggle = () => {
     setCollapsed((c) => {

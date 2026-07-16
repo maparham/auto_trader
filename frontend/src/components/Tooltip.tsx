@@ -159,7 +159,11 @@ export default function Tooltip({
           >
             {title && <div className="tooltip-title">{title}</div>}
             {lines.map((line, i) =>
-              typeof line === "string" || typeof line === "number" ? (
+              // Array content is a list of description lines (each gets the
+              // tooltip-desc spacing), whether the line is a string or a node
+              // (e.g. a line with a bold word). A lone non-array node is a
+              // custom block (e.g. WindowStrip) and stays unstyled.
+              Array.isArray(content) || typeof line === "string" || typeof line === "number" ? (
                 <div className="tooltip-desc" key={i}>
                   {line}
                 </div>

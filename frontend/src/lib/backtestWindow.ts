@@ -97,7 +97,7 @@ const FULL_HISTORY_LOOKBACK_MS = 5 * 365 * DAY_MS;
  * first bar (D6) — full history, a user-typed bar count, or just the longest
  * indicator's length. */
 export function resolveHistoryStart(cfg: BacktestConfig, windowFromMs: number, resSeconds: number): number {
-  const depth = cfg.range.history ?? "full";
+  const depth = cfg.range.history ?? "minimal";
   if (depth === "full") return windowFromMs - FULL_HISTORY_LOOKBACK_MS;
   if (depth === "bars") return windowFromMs - paddedLookbackMs(cfg.range.historyBars ?? 500, resSeconds);
   return minimalHistoryStart(cfg, windowFromMs, resSeconds);
@@ -108,7 +108,7 @@ export function resolveHistoryStart(cfg: BacktestConfig, windowFromMs: number, r
  * has no fixed target size, but still can't honestly warm less than the
  * longest indicator needs. */
 export function requiredWarmupBars(cfg: BacktestConfig, baseSeconds?: number): number {
-  const depth = cfg.range.history ?? "full";
+  const depth = cfg.range.history ?? "minimal";
   if (depth === "bars") {
     const asked = cfg.range.historyBars ?? 500;
     // A higher-timeframe indicator can need more base bars than the user's "N

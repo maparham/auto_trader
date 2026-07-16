@@ -186,7 +186,7 @@ export function SweepResults(props: {
 
       {applyDisabled && (
         <div className="al-note sweep-apply-hint">
-          Cancel the sweep to apply a combo — results keep landing until then.
+          Cancel the sweep to apply a combo; results keep landing until then.
         </div>
       )}
 

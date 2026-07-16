@@ -127,7 +127,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       const cfg = loadBacktestLastUsed() ?? defaultBacktestConfig();
       const coded = cfg.mode === "coded";
       if (coded && !cfg.codedStrategy) {
-        setError("no coded strategy selected — pick one in the backtest panel");
+        setError("no coded strategy selected: pick one in the backtest panel");
         return;
       }
       // Coded mode: the panel's per-file config (params + risk + exit rules,
@@ -172,7 +172,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         fetchRange(epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId);
 
       const required = requiredWarmupBars(cfg, resSeconds);
-      const depth = cfg.range.history ?? "full";
+      const depth = cfg.range.history ?? "minimal";
       // Temporary phase timing (perf investigation) — logged as [backtest perf].
       const tFetch0 = performance.now();
       let bars = await fetchBars(resolveHistoryStart(cfg, windowFromMs, resSeconds));
@@ -199,7 +199,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
 
       const warmup = warmupBarCount(bars, windowFromMs);
       if (warmup < required) {
-        setWarning(`only ${warmup} of ${required} warm-up bars available — indicators may be cold at the start of the window`);
+        setWarning(`only ${warmup} of ${required} warm-up bars available, so indicators may be cold at the start of the window`);
       }
 
       // A chart-operand rule may reference a higher timeframe than the base

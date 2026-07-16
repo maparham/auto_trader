@@ -246,9 +246,9 @@ export interface RecurrenceMask {
   flattenAtClose?: boolean;
 }
 // How far back to load candles before the trading window so indicators are
-// already warm at the window's first bar (D6 in the plan) — "full" = all
-// available history (default), "bars" = a user-typed count, "minimal" = just
-// enough for the longest indicator in the config.
+// already warm at the window's first bar (D6 in the plan) — "minimal" = just
+// enough for the longest indicator in the config (default), "bars" = a
+// user-typed count, "full" = all available history.
 export type HistoryDepth = "full" | "bars" | "minimal";
 
 export interface RangeConfig {
@@ -483,7 +483,7 @@ export function defaultBacktestConfig(): BacktestConfig {
     ],
   });
   return {
-    range: { mode: "bars", bars: 500, history: "full" },
+    range: { mode: "bars", bars: 500, history: "minimal" },
     longEntry: cross("crossesAbove"),
     longExit: cross("crossesBelow"),
     shortEntry: cross("crossesBelow"),

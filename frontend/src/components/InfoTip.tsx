@@ -2,8 +2,9 @@ import type { ReactNode } from "react";
 import Tooltip from "./Tooltip";
 
 interface InfoTipProps {
-  // One string, or several — each rendered as its own description line.
-  text: string | string[];
+  // One string, or several lines, each rendered as its own description line.
+  // A line may be a node (e.g. a line with a bold word), not just a string.
+  text: string | Array<string | ReactNode>;
   title?: string;
   // Optional custom trigger (e.g. a ⚠ badge); defaults to the ⓘ glyph.
   children?: ReactNode;
