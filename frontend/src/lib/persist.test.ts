@@ -146,15 +146,15 @@ describe("stored-alert direct edits (loadStoredAlert / updateStoredAlert / delet
   });
 });
 
-describe("loadTabs migration (v1 single-chart → cell-based)", () => {
+describe("layout-body migration (v1 single-chart → cell-based)", () => {
   it("wraps a pre-cells tab into one primary cell, preserving symbol/period", () => {
     localStorage.setItem(
-      "auto-trader.b.capital.tabs",
-      JSON.stringify([{ id: "t1", symbol: SYMBOL, period: PERIOD }]),
+      "auto-trader.b.capital.layout.L1",
+      JSON.stringify({ tabs: [{ id: "t1", symbol: SYMBOL, period: PERIOD }], activeTabId: "t1" }),
     );
-    const tabs = P.loadTabs();
-    expect(tabs).not.toBeNull();
-    const t = tabs![0];
+    const ws = P.loadLayout("L1");
+    expect(ws).not.toBeNull();
+    const t = ws!.tabs[0];
     expect(t.layout).toBe("1");
     expect(t.cells).toHaveLength(1);
     expect(t.activeCellId).toBe(t.cells[0].id);
@@ -165,16 +165,15 @@ describe("loadTabs migration (v1 single-chart → cell-based)", () => {
   });
 
   it("a drawing saved under the pre-cells key is readable via the migrated cell's scope", () => {
-    // Pre-cells key shape: auto-trader.tab.<id>.drawings.<epic>
     localStorage.setItem(
       "auto-trader.tab.t1.drawings.US100",
       JSON.stringify([{ name: "trend", points: [{ value: 1 }] }]),
     );
     localStorage.setItem(
-      "auto-trader.b.capital.tabs",
-      JSON.stringify([{ id: "t1", symbol: SYMBOL, period: PERIOD }]),
+      "auto-trader.b.capital.layout.L1",
+      JSON.stringify({ tabs: [{ id: "t1", symbol: SYMBOL, period: PERIOD }], activeTabId: "t1" }),
     );
-    const t = P.loadTabs()![0];
+    const t = P.loadLayout("L1")!.tabs[0];
     expect(P.loadDrawings(t.cells[0].scope, "US100")).toHaveLength(1);
   });
 
@@ -190,8 +189,35 @@ describe("loadTabs migration (v1 single-chart → cell-based)", () => {
         ],
       },
     ];
-    localStorage.setItem("auto-trader.b.capital.tabs", JSON.stringify(cellBased));
-    expect(P.loadTabs()).toEqual(cellBased);
+    localStorage.setItem(
+      "auto-trader.b.capital.layout.L1",
+      JSON.stringify({ tabs: cellBased, activeTabId: "t9" }),
+    );
+    expect(P.loadLayout("L1")!.tabs).toEqual(cellBased);
+  });
+});
+
+describe("pruneLegacyTabsKeys", () => {
+  it("removes stale per-broker .tabs keys and nothing else", () => {
+    localStorage.setItem("auto-trader.b.capital.tabs", "[]");
+    localStorage.setItem("auto-trader.b.ig-demo.tabs", "[]");
+    localStorage.setItem("auto-trader.b.capital.scratch", "{}");
+    localStorage.setItem("auto-trader.b.capital.layout.tabs", "{}"); // a layout ID that happens to be "tabs"
+    P.pruneLegacyTabsKeys();
+    expect(localStorage.getItem("auto-trader.b.capital.tabs")).toBeNull();
+    expect(localStorage.getItem("auto-trader.b.ig-demo.tabs")).toBeNull();
+    expect(localStorage.getItem("auto-trader.b.capital.scratch")).not.toBeNull();
+    expect(localStorage.getItem("auto-trader.b.capital.layout.tabs")).not.toBeNull();
+  });
+
+  it("isLegacyTabsKey matches only the retired per-broker tabs root", () => {
+    // Shared by the prune AND seedBackendFromLocal's skip — an empty-backend
+    // first run must not PUT a key the prune is about to DELETE (race).
+    expect(P.isLegacyTabsKey("auto-trader.b.capital.tabs")).toBe(true);
+    expect(P.isLegacyTabsKey("auto-trader.b.capital-live.tabs")).toBe(true);
+    expect(P.isLegacyTabsKey("auto-trader.b.capital.layout.tabs")).toBe(false);
+    expect(P.isLegacyTabsKey("auto-trader.b.capital.scratch")).toBe(false);
+    expect(P.isLegacyTabsKey("auto-trader.tabs")).toBe(false);
   });
 });
 
@@ -445,18 +471,17 @@ describe("per-broker workspace isolation", () => {
   // setPersistBroker is module state; restore the default so later tests are unaffected.
   afterEach(() => P.setPersistBroker("capital"));
 
-  it("roots (tabs) are isolated per broker", () => {
+  it("roots (scratch workspace) are isolated per broker", () => {
     P.setPersistBroker("capital");
-    P.saveTabs([seedTab("cap1")]);
+    P.saveScratch({ tabs: [seedTab("cap1")], activeTabId: "" });
     P.setPersistBroker("ig-demo");
-    expect(P.loadTabs()).toBeNull(); // ig-demo starts empty — capital's tabs don't leak
-    P.saveTabs([seedTab("ig1")]);
-    expect(P.loadTabs()!.map((t) => t.id)).toEqual(["ig1"]);
-    // Each broker's tabs live under its own key; switching back restores capital's.
+    expect(P.loadScratch()).toBeNull(); // ig-demo starts empty — capital's tabs don't leak
+    P.saveScratch({ tabs: [seedTab("ig1")], activeTabId: "" });
+    expect(P.loadScratch()!.tabs.map((t) => t.id)).toEqual(["ig1"]);
     P.setPersistBroker("capital");
-    expect(P.loadTabs()!.map((t) => t.id)).toEqual(["cap1"]);
-    expect(localStorage.getItem("auto-trader.b.capital.tabs")).not.toBeNull();
-    expect(localStorage.getItem("auto-trader.b.ig-demo.tabs")).not.toBeNull();
+    expect(P.loadScratch()!.tabs.map((t) => t.id)).toEqual(["cap1"]);
+    expect(localStorage.getItem("auto-trader.b.capital.scratch")).not.toBeNull();
+    expect(localStorage.getItem("auto-trader.b.ig-demo.scratch")).not.toBeNull();
   });
 
   it("alerts are isolated per broker (explicit broker arg)", () => {
@@ -822,5 +847,69 @@ describe("backtest result persistence", () => {
     P.clearBacktestResult("tab.A", "US100");
     expect(P.loadBacktestResult("tab.A", "US100")).toBeNull();
     expect(localStorage.getItem("auto-trader.tab.A.backtest.US100")).toBeNull();
+  });
+});
+
+describe("per-browser-tab active layout (session-first with device seed)", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+  });
+  afterEach(() => P.setPersistBroker("capital"));
+
+  it("a fresh tab seeds from the localStorage last-used value", () => {
+    localStorage.setItem("auto-trader.b.capital.activeLayoutId", JSON.stringify("L1"));
+    expect(P.loadActiveLayoutId()).toBe("L1");
+  });
+
+  it("saving writes both layers and the session value wins afterwards", () => {
+    P.saveActiveLayoutId("L2");
+    expect(sessionStorage.getItem("auto-trader.b.capital.activeLayoutId")).toBe('"L2"');
+    expect(localStorage.getItem("auto-trader.b.capital.activeLayoutId")).toBe('"L2"');
+    // A sibling tab moving the device seed does not move THIS tab.
+    localStorage.setItem("auto-trader.b.capital.activeLayoutId", JSON.stringify("L9"));
+    expect(P.loadActiveLayoutId()).toBe("L2");
+  });
+
+  it("explicit scratch (null) after a session choice does not fall back to the seed", () => {
+    P.saveActiveLayoutId("L0"); // this tab had a layout open → transition is explicit
+    P.saveActiveLayoutId(null);
+    expect(P.loadActiveLayoutId()).toBeNull();
+    expect(P.hasExplicitScratchSelection()).toBe(true);
+    // The device seed follows too (null clears it, matching prior removeLocal behavior).
+    expect(localStorage.getItem("auto-trader.b.capital.activeLayoutId")).toBeNull();
+    // A sibling tab re-writing the device seed afterwards must NOT drag this
+    // tab off its explicit scratch choice — the session null shields the seed.
+    localStorage.setItem("auto-trader.b.capital.activeLayoutId", JSON.stringify("L1"));
+    expect(P.loadActiveLayoutId()).toBeNull();
+  });
+
+  it("resolving to scratch with no prior session choice leaves the session unset", () => {
+    // The mount-time effect saves null for a tab that merely RESOLVED to
+    // scratch; that must NOT stamp the explicit-scratch tombstone, or the tab
+    // would stop following the device seed (e.g. after a sibling's Save-as).
+    P.saveActiveLayoutId(null);
+    expect(sessionStorage.getItem("auto-trader.b.capital.activeLayoutId")).toBeNull();
+    expect(P.hasExplicitScratchSelection()).toBe(false);
+    localStorage.setItem("auto-trader.b.capital.activeLayoutId", JSON.stringify("L2"));
+    expect(P.loadActiveLayoutId()).toBe("L2"); // still follows the seed
+  });
+
+  it("a corrupt session entry is dropped so the tab self-heals to the seed", () => {
+    sessionStorage.setItem("auto-trader.b.capital.activeLayoutId", "{not json");
+    localStorage.setItem("auto-trader.b.capital.activeLayoutId", JSON.stringify("L1"));
+    expect(P.hasExplicitScratchSelection()).toBe(false);
+    expect(P.loadActiveLayoutId()).toBe("L1");
+    // The corrupt entry was removed, not left to re-fail on every load.
+    expect(sessionStorage.getItem("auto-trader.b.capital.activeLayoutId")).toBeNull();
+  });
+
+  it("session selections are per broker (key includes the broker root)", () => {
+    P.saveActiveLayoutId("cap-layout");
+    P.setPersistBroker("ig-demo");
+    expect(P.loadActiveLayoutId()).toBeNull(); // ig-demo tab state is untouched
+    P.saveActiveLayoutId("ig-layout");
+    P.setPersistBroker("capital");
+    expect(P.loadActiveLayoutId()).toBe("cap-layout");
   });
 });

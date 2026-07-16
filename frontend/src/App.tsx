@@ -97,6 +97,7 @@ import {
   LAYOUT_CELLS,
   KIND_FOR_COUNT,
   pruneLegacyGlobalWorkspace,
+  pruneLegacyTabsKeys,
   setPersistBroker,
   getPersistBroker,
   loadStoredAlert,
@@ -109,6 +110,9 @@ import {
   loadDefaultLayoutId,
   loadActiveLayoutId,
   saveActiveLayoutId,
+  hasExplicitScratchSelection,
+  sessionGet,
+  sessionSet,
   loadScratch,
   saveScratch,
   clearScratch,
@@ -233,9 +237,15 @@ function resolveStartup(): { ws: Workspace; activeLayoutId: string | null } {
   if (activeId && known.has(activeId)) {
     return { ws: loadLayout(activeId) ?? blank, activeLayoutId: activeId };
   }
-  const defId = loadDefaultLayoutId();
-  if (defId && known.has(defId)) {
-    return { ws: loadLayout(defId) ?? blank, activeLayoutId: defId };
+  // THIS TAB explicitly chose scratch (session tombstone): the synced default
+  // layout must not override that choice — skip rule 2 and fall through to the
+  // scratch rules. Without this gate a scratch tab would be yanked onto the
+  // default layout on every reload or sibling defaultLayoutId push.
+  if (!hasExplicitScratchSelection()) {
+    const defId = loadDefaultLayoutId();
+    if (defId && known.has(defId)) {
+      return { ws: loadLayout(defId) ?? blank, activeLayoutId: defId };
+    }
   }
   const scratch = loadScratch();
   if (scratch && scratch.tabs.length > 0) {
@@ -363,7 +373,8 @@ export default function App() {
       history.replaceState(null, "", location.pathname);
     }
   }, []);
-  // The named layout this device currently shows (null = scratch). Device-local.
+  // The named layout THIS BROWSER TAB currently shows (null = scratch).
+  // Session-first with a device-local seed — see saveActiveLayoutId.
   const [activeLayoutId, setActiveLayoutId] = useState<string | null>(
     () => startup.activeLayoutId,
   );
@@ -386,10 +397,16 @@ export default function App() {
 
   // Active broker / trading account (registry key "{broker}:{env}"). Drives BOTH
   // the chart data feed (epics are broker-specific) and order/position routing.
-  // Device-local; the list of selectable accounts comes from GET /api/brokers.
+  // PER BROWSER TAB: sessionStorage is this tab's selection (each app tab can sit
+  // on a different broker); the bare localStorage key is only the last-used seed
+  // a brand-new tab opens on. The list of selectable accounts comes from GET
+  // /api/brokers.
   const [accounts, setAccounts] = useState<BrokerAccount[]>([]);
   const [activeAccount, setActiveAccount] = useState<TradeAccount>(
-    () => localStorage.getItem("activeAccount") ?? DEFAULT_ACCOUNT,
+    () =>
+      sessionGet("activeAccount") ??
+      localStorage.getItem("activeAccount") ??
+      DEFAULT_ACCOUNT,
   );
   const brokerId = brokerOf(activeAccount);
 
@@ -461,7 +478,8 @@ export default function App() {
   // Persist the active account and point the shared trades poll at it, so the
   // positions/orders dock follows the selection.
   useEffect(() => {
-    localStorage.setItem("activeAccount", activeAccount);
+    sessionSet("activeAccount", activeAccount); // this tab's truth (guarded write)
+    localStorage.setItem("activeAccount", activeAccount); // seed for future tabs
     // Always point the trades feed at the current account, INCLUDING a data-only
     // source: setTradesAccount clears the prior broker's trades synchronously, so
     // switching to Dukascopy can't leave a stale (and interactable) position lingering
@@ -469,8 +487,13 @@ export default function App() {
     // caught, leaving the feed empty (the dock shows a "history only" note).
     setTradesAccount(activeAccount);
     // Remember this as the broker's last-used account (read when the tab-bar selector
-    // switches back to this broker).
-    lastAccountByBroker.current[brokerId] = activeAccount;
+    // switches back to this broker). Re-read the map from disk first: sibling tabs
+    // write this shared device-local map too, and every write is flushed immediately,
+    // so disk is never behind — only this tab's own entry comes from memory.
+    lastAccountByBroker.current = {
+      ...loadLastAccountByBroker(),
+      [brokerId]: activeAccount,
+    };
     saveLastAccountByBroker(lastAccountByBroker.current);
   }, [activeAccount, brokerId]);
 
@@ -626,6 +649,9 @@ export default function App() {
       // (else the next hydrate re-seeds them). Idempotent (sentinel-gated); preserves
       // global preferences and every per-broker `auto-trader.b.*` key.
       pruneLegacyGlobalWorkspace();
+      // The working tab set now lives in the layout body / scratch; drop the
+      // abandoned per-broker `.tabs` roots (localStorage + backend).
+      pruneLegacyTabsKeys();
       // ALWAYS reconcile to the resolved workspace — not only when hydrate reports a
       // change. The useState initializers ran before hydration (so a fresh device
       // with a synced workspace rendered its default); resolving again here applies

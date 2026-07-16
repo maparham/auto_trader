@@ -26,5 +26,9 @@ export class MemStorage {
 export function installMemStorage(): MemStorage {
   const storage = new MemStorage();
   (globalThis as unknown as { localStorage: MemStorage }).localStorage = storage;
+  // Session-scoped selections (activeAccount / activeLayoutId) read sessionStorage
+  // first; give tests a separate in-memory instance so the two layers are distinct.
+  (globalThis as unknown as { sessionStorage: MemStorage }).sessionStorage =
+    new MemStorage();
   return storage;
 }

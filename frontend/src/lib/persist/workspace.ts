@@ -12,6 +12,10 @@ import {
   saveLocal,
   removeLocal,
   removeKeyEverywhere,
+  sessionGet,
+  sessionSet,
+  sessionRemove,
+  isLegacyTabsKey,
   primaryCellScope,
   cellScope,
   copyScopeContent,
@@ -75,9 +79,6 @@ interface ChartTabV1 {
   period: Period;
 }
 
-// Per-broker workspace roots (see root() — addresses the ACTIVE broker).
-const tabsKey = () => root("tabs");
-
 // Convert a persisted v1 tab (one chart) into the cell-based shape: a single
 // primary cell carrying the tab's old symbol/period and the byte-identical scope.
 function migrateTabV1(t: ChartTabV1): ChartTab {
@@ -93,22 +94,13 @@ function migrateTabV1(t: ChartTabV1): ChartTab {
 }
 
 // Migrate any v1 entries (no `cells`) so old users keep their work. Shared by
-// loadTabs (legacy bare-tabs key) and loadLayout/loadScratch (layout bodies).
+// loadLayout and loadScratch (layout bodies).
 function migrateTabs(list: Array<ChartTab | ChartTabV1>): ChartTab[] {
   return list.map((t) =>
     "cells" in t && Array.isArray((t as ChartTab).cells)
       ? (t as ChartTab)
       : migrateTabV1(t as ChartTabV1),
   );
-}
-
-export function loadTabs(): ChartTab[] | null {
-  const list = load<Array<ChartTab | ChartTabV1> | null>(tabsKey(), null);
-  if (!Array.isArray(list) || list.length === 0) return null;
-  return migrateTabs(list);
-}
-export function saveTabs(tabs: ChartTab[]): void {
-  save(tabsKey(), tabs);
 }
 
 // --- merge tabs (inverse of cell detach) --------------------------------------
@@ -204,7 +196,7 @@ export function unmergeScopes(pairs: Array<{ from: string; to: string }>): void 
 //   - the layout INDEX (`layouts`), each layout's body (`layout.<id>`) and the
 //     DEFAULT (`defaultLayoutId`) are MIRRORED → they appear on every device.
 //   - the ACTIVE layout (`activeLayoutId`) and the unsaved SCRATCH workspace are
-//     DEVICE-LOCAL → each browser/tab can have a different layout open.
+//     PER BROWSER TAB (session-first; device-local seed) → each browser/tab can have a different layout open.
 //
 // Per-cell content (drawings/indicators/alerts/avwap/indicatorConfig) is NOT
 // re-namespaced per layout: it's already addressed by each cell's globally-unique
@@ -214,13 +206,13 @@ export function unmergeScopes(pairs: Array<{ from: string; to: string }>): void 
 // (see cloneWorkspace) — otherwise two layouts alias the same drawings.
 
 // Per-broker named-layout roots. The MIRRORED ones (index/body/default) sync across
-// devices; the DEVICE-LOCAL ones (activeLayoutId/scratch/autosave) don't (see
-// isDeviceLocalKey + saveLocal). All address the ACTIVE broker via root().
+// devices; the PER BROWSER TAB ones (activeLayoutId; session-first; device-local seed) and
+// DEVICE-LOCAL ones (scratch/autosave) don't (see isDeviceLocalKey + saveLocal). All address the ACTIVE broker via root().
 // layoutsKey/layoutKey are namespaced by broker FAMILY (see layoutFamily above) so
 // the saved-layout library is shared between e.g. capital and capital-live.
 const layoutsKey = () => familyRoot("layouts");
 const defaultLayoutKey = () => root("defaultLayoutId");
-const activeLayoutKey = () => root("activeLayoutId"); // device-local
+const activeLayoutKey = () => root("activeLayoutId"); // per browser tab (session-first; device-local seed)
 const scratchKey = () => root("scratch"); // device-local
 const autosaveKey = () => root("autosave"); // device-local
 const layoutKey = (id: string) => familyRoot(`layout.${id}`);
@@ -258,7 +250,7 @@ export function loadLayouts(): LayoutMeta[] {
 export function loadLayout(id: string): Workspace | null {
   const w = load<Workspace | null>(layoutKey(id), null);
   if (!w || !Array.isArray(w.tabs)) return null;
-  // Run any v1 tabs in the body through the same migration loadTabs() applies.
+  // Run any v1 tabs in the body through the same migration loadScratch() applies.
   return { tabs: migrateTabs(w.tabs), activeTabId: w.activeTabId };
 }
 
@@ -312,13 +304,56 @@ export function saveDefaultLayoutId(id: string | null): void {
   }
 }
 
-// Device-local: which layout this browser/tab currently shows. null = scratch.
+// Which layout THIS BROWSER TAB currently shows (null = scratch). Session-first:
+// sessionStorage is this tab's truth (each app tab can sit on a different layout);
+// the device-local localStorage copy is the last-used seed a brand-new tab opens
+// on. A session value of JSON null means this tab EXPLICITLY chose scratch — it
+// must not fall back to the seed, or "go to scratch" would undo itself on reload.
 export function loadActiveLayoutId(): string | null {
+  const raw = sessionGet(activeLayoutKey());
+  if (raw != null) {
+    try {
+      return JSON.parse(raw) as string | null;
+    } catch {
+      // Corrupt session entry: drop it so this tab self-heals to the seed
+      // instead of re-parsing and re-failing for its whole lifetime.
+      sessionRemove(activeLayoutKey());
+    }
+  }
   return load<string | null>(activeLayoutKey(), null);
 }
 export function saveActiveLayoutId(id: string | null): void {
-  if (id == null) removeLocal(activeLayoutKey());
-  else saveLocal(activeLayoutKey(), id);
+  if (id == null) {
+    // Stamp the explicit-scratch tombstone (JSON null) only over a PREVIOUS
+    // session choice — a genuine within-tab transition to scratch (layout
+    // closed or deleted). A tab that merely RESOLVED to scratch at startup
+    // must leave the session unset so it keeps following the device seed /
+    // synced default; stamping it here would strand a reloaded scratch tab on
+    // a blank workspace after a sibling tab saves the scratch as a named
+    // layout (Save-as clears the shared scratch).
+    if (sessionGet(activeLayoutKey()) != null) {
+      sessionSet(activeLayoutKey(), "null");
+    }
+    removeLocal(activeLayoutKey());
+  } else {
+    sessionSet(activeLayoutKey(), JSON.stringify(id));
+    saveLocal(activeLayoutKey(), id);
+  }
+}
+
+// True when THIS TAB explicitly chose the scratch workspace (the session holds
+// the JSON-null tombstone). resolveStartup uses it to keep the synced default
+// layout from overriding an explicit scratch choice — loadActiveLayoutId alone
+// can't express that, since "explicit scratch" and "nothing selected" both
+// return null.
+export function hasExplicitScratchSelection(): boolean {
+  const raw = sessionGet(activeLayoutKey());
+  if (raw == null) return false;
+  try {
+    return (JSON.parse(raw) as string | null) === null;
+  } catch {
+    return false;
+  }
 }
 
 // Device-local: the unsaved workspace shown before the user names a layout.
@@ -340,6 +375,24 @@ export function loadAutosave(): boolean {
 }
 export function saveAutosave(enabled: boolean): void {
   saveLocal(autosaveKey(), enabled);
+}
+
+// One-time cleanup: the live working tab set USED to persist under a per-broker
+// `.tabs` root; the autosave effect has long written the working set into the
+// named layout body / scratch instead, leaving those keys as dead weight in
+// localStorage and the backend. Cheap full scan, idempotent, safe to run every
+// boot — call AFTER hydrateFromBackend so the deletes reach the backend.
+export function pruneLegacyTabsKeys(): void {
+  const doomed: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && isLegacyTabsKey(k)) doomed.push(k);
+    }
+  } catch {
+    return; // no localStorage (test/node) → nothing to prune
+  }
+  for (const k of doomed) removeKeyEverywhere(k);
 }
 
 // Deep-copy a workspace under FRESH tab/cell ids, copying each cell's scope

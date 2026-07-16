@@ -33,13 +33,25 @@ export const PREFIX = "auto-trader";
 // one root written from a remounting chart subtree is ALERTS, so those take an
 // EXPLICIT `broker` argument instead of reading persistBroker (see alert helpers).
 function brokerFromActiveAccount(): string {
+  // App persists the active account as "{broker}:{env}": sessionStorage is THIS
+  // browser tab's selection; the bare localStorage key is the last-used seed
+  // shared by all tabs (see App.tsx's activeAccount state + persist effect).
+  // Guarded PER LAYER: one storage throwing (e.g. partitioned iframe blocking
+  // sessionStorage) must not skip the other's still-working fallback.
+  let acct: string | null = null;
   try {
-    // App persists the active account as "{broker}:{env}" under this bare key.
-    const acct = localStorage.getItem("activeAccount");
-    if (acct) return acct.split(":")[0];
+    acct = sessionStorage.getItem("activeAccount");
   } catch {
-    /* test/node env without localStorage → default below */
+    /* sessionStorage unavailable → seed below */
   }
+  if (acct == null) {
+    try {
+      acct = localStorage.getItem("activeAccount");
+    } catch {
+      /* test/node env without storage → default below */
+    }
+  }
+  if (acct) return acct.split(":")[0];
   return "capital"; // feed.ts DEFAULT_BROKER; literal to avoid an import cycle
 }
 // Lazily initialized (NOT at module eval time): App.tsx's one-time key migration
@@ -319,6 +331,35 @@ export function removeLocal(key: string): void {
   }
 }
 
+// --- per-browser-tab session values -------------------------------------------
+//
+// The "what am I looking at" selections (active account, active layout) are
+// PER BROWSER TAB: sessionStorage is this tab's truth, and callers keep a
+// localStorage copy as the last-used seed for future tabs (same pattern as
+// App.tsx's ACTIVE_TAB_SESSION_KEY). Raw-string API — callers JSON-encode.
+// Guarded like the localStorage helpers so the module stays usable in node.
+export function sessionGet(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+export function sessionSet(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    /* non-fatal */
+  }
+}
+export function sessionRemove(key: string): void {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    /* non-fatal */
+  }
+}
+
 // --- startup hydration (backend wins) ----------------------------------------
 //
 // On app start, pull the whole workspace snapshot from the backend and overwrite
@@ -398,10 +439,21 @@ function seedBackendFromLocal(): void {
   const own = `${PREFIX}.`;
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (!k || !k.startsWith(own) || isDeviceLocalKey(k)) continue;
+    if (!k || !k.startsWith(own) || isDeviceLocalKey(k) || isLegacyTabsKey(k)) continue;
     const v = localStorage.getItem(k);
     if (v != null) mirrorSet(k, v);
   }
+}
+
+// The RETIRED per-broker working-set root (`auto-trader.b.<broker>.tabs`) — the
+// working tab set lives in the named layout body / scratch now. workspace.ts's
+// pruneLegacyTabsKeys deletes these on every boot; seedBackendFromLocal above
+// must skip them too, or its fire-and-forget PUT can race the prune's DELETE on
+// an empty-backend first run and resurrect the key in the backend. Broker ids
+// never contain dots, so requiring no further dot after the broker segment
+// spares a layout body that happens to be named "tabs" (`...layout.tabs`).
+export function isLegacyTabsKey(k: string): boolean {
+  return /^auto-trader\.b\.[^.]+\.tabs$/.test(k);
 }
 
 // --- live cross-tab/device updates (WebSocket push) --------------------------
