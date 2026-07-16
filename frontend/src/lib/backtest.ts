@@ -144,7 +144,11 @@ export function markerPlacement(fillPrice: number, high: number, low: number): "
 // installed, so a stale run's closures (over a now-cleared `trades`) can never
 // fire after clearBacktest/re-run.
 interface BacktestArtifacts {
-  equityPaneId: string | null;
+  // The equity sub-pane's INDICATOR id (klinecharts v10 createIndicator returns
+  // the indicator id, not the pane id). Removal must filter by `{ id }` — passing
+  // this as `{ paneId }` silently matches nothing and strands the pane (each run
+  // then stacks another). See removeEquity / teardownArtifacts.
+  equityIndicatorId: string | null;
   markerIds: string[];
   // Higher-timeframe aggregate pills (one per bar). Not klinecharts overlays —
   // ChartCore's redraw loop reads these via getBacktestAggregate, projects them
@@ -202,7 +206,7 @@ function artifactsFor(chart: Chart): BacktestArtifacts {
   let a = artifactsByChart.get(chart);
   if (!a) {
     a = {
-      equityPaneId: null,
+      equityIndicatorId: null,
       markerIds: [],
       aggClusters: [],
       markerMode: "none",
@@ -1325,17 +1329,18 @@ export function renderArtifacts(
   // the Results row shows/hides the pane without re-running. The series travels on
   // the instance's extendData so this chart's calc looks up its own values.
   const addEquity = () => {
-    if (artifacts.equityPaneId) return; // already drawn
+    if (artifacts.equityIndicatorId) return; // already drawn
     // Ascending [timestampMs, value] pairs — equityForBars re-anchors them onto
     // whatever bars are loaded (any timeframe), so no per-timeframe map.
     const equityPoints: Array<[number, number]> = result.equity.map((p) => [p.time * 1000, p.value]);
-    artifacts.equityPaneId =
+    // v10 createIndicator returns the INDICATOR id (not the pane id) — remove by id.
+    artifacts.equityIndicatorId =
       chart.createIndicator({ name: EQUITY_INDICATOR, extendData: equityPoints }, false) ?? null;
   };
   const removeEquity = () => {
-    if (artifacts.equityPaneId) {
-      chart.removeIndicator({ paneId: artifacts.equityPaneId, name: EQUITY_INDICATOR });
-      artifacts.equityPaneId = null;
+    if (artifacts.equityIndicatorId) {
+      chart.removeIndicator({ id: artifacts.equityIndicatorId });
+      artifacts.equityIndicatorId = null;
     }
   };
   if (canEquity && backtestEquityShownSignal.value) addEquity();
@@ -1607,9 +1612,9 @@ export function teardownArtifacts(chart: Chart): void {
   artifacts.aggClusters = [];
   artifacts.markerMode = "none";
   clearPeriodBands(chart, artifacts);
-  if (artifacts.equityPaneId) {
-    chart.removeIndicator({ paneId: artifacts.equityPaneId, name: EQUITY_INDICATOR });
-    artifacts.equityPaneId = null;
+  if (artifacts.equityIndicatorId) {
+    chart.removeIndicator({ id: artifacts.equityIndicatorId });
+    artifacts.equityIndicatorId = null;
   }
   if (artifacts.highlightOverlayId) {
     chart.removeOverlay({ id: artifacts.highlightOverlayId });
