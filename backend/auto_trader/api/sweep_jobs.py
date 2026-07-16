@@ -15,7 +15,7 @@ import os
 import threading
 import time
 import uuid
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass, field
 
 from auto_trader.api import sweep_worker
@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 # Workers per job. Env override, else one process per core.
 SWEEP_WORKERS: int = int(os.environ.get("SWEEP_WORKERS") or (os.cpu_count() or 1))
 
-# Finished jobs older than this (seconds) are pruned from the store on access.
+# Jobs finished longer ago than this (seconds) are pruned from the store on
+# access. Measured from completion, not submission, so a long-running or
+# long-queued sweep's results still get a full hour of poll/re-attach life.
 _TTL_SECONDS = 3600.0
 
 
@@ -42,6 +44,7 @@ class SweepJob:
     error: str | None = None
     eta_seconds: float | None = None
     created_at: float = 0.0
+    finished_at: float = 0.0
     # `_probe_offset` (1 if a probe row was seeded, else 0) is set as a bare
     # instance attribute in `submit`, NOT a dataclass field, so it stays out of
     # `fields()`/`asdict()` and never leaks into a serialized API payload.
@@ -119,7 +122,7 @@ class SweepJobManager:
         with self._store_lock:
             stale = [
                 jid for jid, j in self._jobs.items()
-                if not j.running and now - j.created_at > _TTL_SECONDS
+                if not j.running and now - (j.finished_at or j.created_at) > _TTL_SECONDS
             ]
             for jid in stale:
                 del self._jobs[jid]
@@ -130,6 +133,7 @@ class SweepJobManager:
         row_lock = threading.Lock()
         with self._gate:  # FIFO gate: one job computes at a time
             if job.cancelled:
+                job.finished_at = time.time()
                 job.running = False
                 return
             pool = None
@@ -145,14 +149,22 @@ class SweepJobManager:
                 )
                 futures = [pool.submit(sweep_worker.run_combo, c) for c in combos]
                 seen: set = set()
-                for fut in as_completed(futures):
+                pending = set(futures)
+                # Bounded wait (not as_completed) so a cancel is observed even
+                # when no combo ever completes (e.g. a coded strategy hangs) —
+                # otherwise the thread blocks forever holding the FIFO gate.
+                while pending:
+                    done_now, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                    # Record finished combos BEFORE honoring a cancel, so work
+                    # completed while we slept is never thrown away.
+                    for fut in done_now:
+                        row = fut.result()  # run_combo never raises
+                        seen.add(fut)
+                        self._record(job, row, row_lock, t0)
                     if job.cancelled:
                         pool.shutdown(wait=False, cancel_futures=True)
                         self._reap(pool, futures, seen, job, row_lock, t0, grace)
                         break
-                    row = fut.result()  # run_combo never raises
-                    seen.add(fut)
-                    self._record(job, row, row_lock, t0)
             except Exception as e:  # noqa: BLE001  surface, never leak a traceback
                 job.error = str(e)
             finally:
@@ -163,6 +175,7 @@ class SweepJobManager:
                 failed = sum(1 for r in job.rows if r.get("error"))
                 logger.info("sweep job done in %.1fs: %d ok, %d failed",
                             time.monotonic() - t0, len(job.rows) - failed, failed)
+                job.finished_at = time.time()
                 job.running = False
 
     def _record(self, job: SweepJob, row: dict, row_lock: threading.Lock,

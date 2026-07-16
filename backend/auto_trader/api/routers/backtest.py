@@ -575,11 +575,19 @@ async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
     if not coded:
         # Rule sweep: chart-operand (kind='series') keys are browser-supplied
         # and can't be recomputed server-side, so validate they're present
-        # once, up front.
+        # (and aligned to the candles, same as the single-run route) once,
+        # up front — a short series would silently stop rules firing mid-run.
         for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
             for op in group.operands():
-                if op.kind == "series" and series_name(op.to_operand()) not in req.series:
-                    raise HTTPException(422, f"missing series '{series_name(op.to_operand())}'")
+                if op.kind != "series":
+                    continue
+                name = series_name(op.to_operand())
+                arr = req.series.get(name)
+                if arr is None:
+                    raise HTTPException(422, f"missing series '{name}'")
+                if len(arr) != len(req.candles):
+                    raise HTTPException(
+                        422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}")
     else:
         _validate_coded_exit_series(req)
         try:

@@ -71,3 +71,35 @@ def test_rule_exit_closes_all_open_positions():
     assert len(res.trades) == 2
     # commission is charged per fill: 2 opens + 2 closes = 4; prices flat so pnl=0
     assert res.net_pnl == -4.0
+
+
+class OpenTwo(Strategy):
+    """Open on the first two decision bars (fills at bar 2 and bar 3 opens
+    under max_concurrent=2); never exit by rule."""
+    def on_bar(self, ctx: Context):
+        return [Signal(Side.BUY, 1.0, "enter", leg="long")] if len(ctx.history) <= 2 else []
+
+
+def test_stop_enforced_on_every_stacked_position():
+    from auto_trader.engine.risk import RiskConfig, StopSpec, TargetSpec
+
+    t0 = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    # Signals on bars 0 and 1 fill at bar1 open=100 (stop 98) and bar2
+    # open=104 (stop 101.92). Bar 3 dips to 95, breaching BOTH stops: both
+    # positions must exit as "stop" on that bar — not just positions[0].
+    candles = [
+        _c(t0, 0, 100, 100, 100, 100),
+        _c(t0, 1, 100, 104, 100, 104),
+        _c(t0, 2, 104, 104, 104, 104),
+        _c(t0, 3, 103, 103, 95, 96),
+        _c(t0, 4, 96, 96, 96, 96),
+    ]
+    res = BacktestEngine(
+        OpenTwo(),
+        long_risk=RiskConfig(StopSpec("pct", value=2.0), TargetSpec("none")),
+        long_scaling=ScalingConfig(max_concurrent=2),
+    ).run(candles)
+    assert len(res.trades) == 2
+    assert [t.reason_out for t in res.trades] == ["stop", "stop"]
+    assert sorted(t.exit_price for t in res.trades) == [98.0, 101.92]
+    assert all(t.exit_time == candles[3].time for t in res.trades)

@@ -1090,13 +1090,22 @@ export async function runAndRender(
  * Assumes the caller cleared any prior marker overlays/clusters for this chart. */
 function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: BacktestArtifacts): void {
   if (artifacts.markerMode === "native") {
-    // time|leg -> trade index, so each fill marker can be tied back to the trade
-    // it belongs to (its opening fill is at entry_time, its closing fill at
-    // exit_time, both tagged with the trade's leg).
-    const tradeIndexByFill = new Map<string, number>();
+    // time|leg|side -> QUEUE of trade indexes, so each fill marker can be tied
+    // back to the trade it belongs to (its opening fill is at entry_time, its
+    // closing fill at exit_time). Side splits entries from exits at the same
+    // bar; the queue disambiguates several same-leg trades sharing a timestamp
+    // (scaling + flatten-at-close closes them on one bar) — a plain map's
+    // last-write-wins would point all of those markers at one trade. Exit fills
+    // book trades in fill order, so queue order matches marker order per key.
+    const tradeIndexByFill = new Map<string, number[]>();
+    const pushFillKey = (key: string, i: number) => {
+      const q = tradeIndexByFill.get(key);
+      if (q) q.push(i);
+      else tradeIndexByFill.set(key, [i]);
+    };
     result.trades.forEach((t, i) => {
-      tradeIndexByFill.set(`${t.entry_time}|${t.leg}`, i);
-      tradeIndexByFill.set(`${t.exit_time}|${t.leg}`, i);
+      pushFillKey(`${t.entry_time}|${t.leg}|${t.leg === "long" ? "buy" : "sell"}`, i);
+      pushFillKey(`${t.exit_time}|${t.leg}|${t.leg === "long" ? "sell" : "buy"}`, i);
     });
 
     // Fill timestamps land on the native timeframe's bar opens. On a finer view
@@ -1127,7 +1136,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       // reanchorBacktestMarkers redraws, so the initially-skipped fills reappear
       // on their real candles once covered.
       if (!fillWithinLoadedWindow(m.time * 1000, barTimes)) continue;
-      const idx = tradeIndexByFill.get(`${m.time}|${m.leg}`);
+      const idx = tradeIndexByFill.get(`${m.time}|${m.leg}|${m.side}`)?.shift();
       const snappedTs = snapNearestBar(m.time * 1000, barTimes);
       const bar = barByTime.get(snappedTs);
       // Shared click handler for this trade's fill marker AND its signal caret:

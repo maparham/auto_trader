@@ -390,13 +390,13 @@ class BacktestEngine:
             realized = self._reduce(positions, side, result, realized, fill_price, bar_time, reason, positions[0].qty)
         return realized
 
-    def _reduce(self, positions, side, result, realized, fill_price, bar_time, reason, qty):
+    def _reduce(self, positions, side, result, realized, fill_price, bar_time, reason, qty, pos=None):
         """A closing fill (SELL for long, BUY for short) of `qty` units against the
-        side's open position; books a Trade and drops the position if flat. Returns
-        the updated realized pnl."""
+        side's open position (`pos`, defaulting to the oldest); books a Trade and
+        drops the position if flat. Returns the updated realized pnl."""
         if not positions:
             return realized
-        p = positions[0]
+        p = pos if pos is not None else positions[0]
         closing = min(qty, p.qty)
         if closing <= 0:
             return realized
@@ -437,50 +437,49 @@ class BacktestEngine:
         )
         p.qty -= closing
         if p.qty == 0:
-            positions.pop(0)
+            positions.remove(p)
         return realized
 
     def _intrabar_exit(self, positions, side, risk, result, realized, bar):
-        """Pessimistic intra-bar stop/target for the side's open position (the
-        open resolves the order when it gaps through the target). Books the exit
-        and returns updated realized pnl. See the stops-feature design."""
-        if not positions:
-            return realized
-        p = positions[0]
-        # Exit only if position has a stop/target (from risk config or per-signal) and risk is set.
-        # Per-signal brackets (no risk config) also get exits if they have stop/target.
-        if p.stop is None and p.target is None:
-            return realized
-        # A per-signal bracket is a static level: always "stop", never "trail",
-        # regardless of what the side-level RiskConfig's stop kind is.
-        is_trail = not p.bracket_from_signal and risk and is_trailing(risk.stop)
-        if side == "long":
-            if p.target is not None and bar.open >= p.target:
-                hit = (self._fill_price(p.target, Side.SELL), "target")
-            elif p.stop is not None and bar.low <= p.stop:
-                raw = min(bar.open, p.stop)
-                hit = (self._fill_price(raw, Side.SELL), "trail" if is_trail else "stop")
-            elif p.target is not None and bar.high >= p.target:
-                hit = (self._fill_price(p.target, Side.SELL), "target")
+        """Pessimistic intra-bar stop/target for EVERY open position on the side
+        (the open resolves the order when it gaps through the target). Each
+        position carries its own levels, so all are checked — not just the
+        oldest. Books the exits and returns updated realized pnl. See the
+        stops-feature design."""
+        close_side = Side.SELL if side == "long" else Side.BUY
+        for p in list(positions):
+            # Exit only if position has a stop/target (from risk config or per-signal) and risk is set.
+            # Per-signal brackets (no risk config) also get exits if they have stop/target.
+            if p.stop is None and p.target is None:
+                continue
+            # A per-signal bracket is a static level: always "stop", never "trail",
+            # regardless of what the side-level RiskConfig's stop kind is.
+            is_trail = not p.bracket_from_signal and risk and is_trailing(risk.stop)
+            if side == "long":
+                if p.target is not None and bar.open >= p.target:
+                    hit = (self._fill_price(p.target, Side.SELL), "target")
+                elif p.stop is not None and bar.low <= p.stop:
+                    raw = min(bar.open, p.stop)
+                    hit = (self._fill_price(raw, Side.SELL), "trail" if is_trail else "stop")
+                elif p.target is not None and bar.high >= p.target:
+                    hit = (self._fill_price(p.target, Side.SELL), "target")
+                else:
+                    hit = None
             else:
-                hit = None
-            close_side = Side.SELL
-        else:
-            if p.target is not None and bar.open <= p.target:
-                hit = (self._fill_price(p.target, Side.BUY), "target")
-            elif p.stop is not None and bar.high >= p.stop:
-                raw = max(bar.open, p.stop)
-                hit = (self._fill_price(raw, Side.BUY), "trail" if is_trail else "stop")
-            elif p.target is not None and bar.low <= p.target:
-                hit = (self._fill_price(p.target, Side.BUY), "target")
-            else:
-                hit = None
-            close_side = Side.BUY
-        if hit:
-            px, reason = hit
-            result.fills.append(Fill(bar.time, close_side, px, p.qty, reason, side))
-            realized -= self.commission
-            realized = self._reduce(positions, side, result, realized, px, bar.time, reason, p.qty)
+                if p.target is not None and bar.open <= p.target:
+                    hit = (self._fill_price(p.target, Side.BUY), "target")
+                elif p.stop is not None and bar.high >= p.stop:
+                    raw = max(bar.open, p.stop)
+                    hit = (self._fill_price(raw, Side.BUY), "trail" if is_trail else "stop")
+                elif p.target is not None and bar.low <= p.target:
+                    hit = (self._fill_price(p.target, Side.BUY), "target")
+                else:
+                    hit = None
+            if hit:
+                px, reason = hit
+                result.fills.append(Fill(bar.time, close_side, px, p.qty, reason, side))
+                realized -= self.commission
+                realized = self._reduce(positions, side, result, realized, px, bar.time, reason, p.qty, pos=p)
         return realized
 
     @staticmethod
@@ -503,21 +502,21 @@ class BacktestEngine:
         cold ATR never wipes it)."""
         if not positions or not risk or not is_trailing(risk.stop):
             return
-        p = positions[0]
-        # A per-signal bracket fully overrides side-level risk for this position:
-        # its stop is a static level, never ratcheted by the side's trailing config.
-        if p.bracket_from_signal:
-            return
-        if side == "long":
-            p.extreme = max(p.extreme, bar.high)
-        else:
-            p.extreme = min(p.extreme, bar.low)
-        new_stop = stop_level(risk.stop, p.entry, side, self._atr_at(risk.stop.length, i), p.extreme)
-        if new_stop is not None:
-            if p.stop is None:
-                p.stop = new_stop
+        for p in positions:
+            # A per-signal bracket fully overrides side-level risk for this position:
+            # its stop is a static level, never ratcheted by the side's trailing config.
+            if p.bracket_from_signal:
+                continue
+            if side == "long":
+                p.extreme = max(p.extreme, bar.high)
             else:
-                p.stop = max(p.stop, new_stop) if side == "long" else min(p.stop, new_stop)
+                p.extreme = min(p.extreme, bar.low)
+            new_stop = stop_level(risk.stop, p.entry, side, self._atr_at(risk.stop.length, i), p.extreme)
+            if new_stop is not None:
+                if p.stop is None:
+                    p.stop = new_stop
+                else:
+                    p.stop = max(p.stop, new_stop) if side == "long" else min(p.stop, new_stop)
 
     @staticmethod
     def _unrealized(positions, side, close):

@@ -54,6 +54,8 @@ import {
   holdoutEvalSignal,
   sweepCombosOverrideSignal,
   sweepArchivedSignal,
+  highlightTradeSignal,
+  selectedTradeSignal,
 } from "./lib/signals";
 import { robustWindowBounds, runSweep, sweepCatchState } from "./lib/sweep";
 import { recordSweepPace, sweepContext } from "./lib/sweepMemory";
@@ -149,7 +151,16 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     // by runAndRender, once the fresh result is in hand. A sweep leaves the
     // last single-run result alone: it streams into sweepStateSignal, and the
     // modal's mode switch flips between the two coexisting result sets.
-    if (sweepAxes.length === 0) backtestResultSignal.set(null);
+    // Selection/highlight indexes belong to the result being dropped — clear
+    // them here too. teardownArtifacts' own reset is owner-gated on
+    // backtestResultSignal still holding the old result, which this null-set
+    // defeats, so without this a re-run inherits the previous run's selected
+    // trade index against the NEW trade list.
+    if (sweepAxes.length === 0) {
+      backtestResultSignal.set(null);
+      highlightTradeSignal.set(null);
+      selectedTradeSignal.set(null);
+    }
     try {
       const cfg = loadBacktestLastUsed() ?? defaultBacktestConfig();
       const coded = cfg.mode === "coded";
@@ -218,11 +229,14 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       const fetchBars = (fromMs: number) =>
         fetchRange(epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId);
 
-      const required = requiredWarmupBars(cfg, resSeconds);
+      // Warm-up/history depth must size against the config the run actually
+      // executes (effCfg): in coded mode that's the file's panel exit rules +
+      // risk, not the dormant rules-mode groups sitting in cfg.
+      const required = requiredWarmupBars(effCfg, resSeconds);
       const depth = cfg.range.history ?? "minimal";
       // Temporary phase timing (perf investigation) — logged as [backtest perf].
       const tFetch0 = performance.now();
-      let bars = await fetchBars(resolveHistoryStart(cfg, windowFromMs, resSeconds));
+      let bars = await fetchBars(resolveHistoryStart(effCfg, windowFromMs, resSeconds));
 
       // The requested depth can exceed what the broker/account actually serves
       // (e.g. "Full" asking further back than a live account's history limit) —
@@ -232,7 +246,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // (the smallest, most likely-to-succeed ask) rather than only checking for
       // the empty case.
       if (depth !== "minimal" && (bars.length === 0 || warmupBarCount(bars, windowFromMs) < required)) {
-        const retried = await fetchBars(minimalHistoryStart(cfg, windowFromMs, resSeconds));
+        const retried = await fetchBars(minimalHistoryStart(effCfg, windowFromMs, resSeconds));
         if (warmupBarCount(retried, windowFromMs) > warmupBarCount(bars, windowFromMs)) {
           bars = retried;
         }

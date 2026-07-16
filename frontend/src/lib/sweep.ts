@@ -109,9 +109,14 @@ export function axisValues(a: RangeAxis): number[] {
   if (!(step > 0)) return [];
   const out: number[] = [];
   const dir = a.to >= a.from ? 1 : -1;
-  const eps = step * 1e-9;
-  // Epsilon guards float accumulation (from + step*n drift) at the inclusive end.
-  for (let v = a.from; dir > 0 ? v <= a.to + eps : v >= a.to - eps; v += dir * step) {
+  // Values are computed index-based (from + i*step), not accumulated (v += step):
+  // accumulation error grows with the count and magnitude (e.g. from=50,
+  // step=0.0001 silently drops the inclusive `to` endpoint). The epsilon only
+  // needs to cover a few ulps of the endpoint itself.
+  const eps = Math.max(step * 1e-9, Math.abs(a.to) * 1e-12);
+  for (let i = 0; ; i++) {
+    const v = a.from + dir * i * step;
+    if (dir > 0 ? v > a.to + eps : v < a.to - eps) break;
     out.push(Number(v.toPrecision(12)));
   }
   return out;

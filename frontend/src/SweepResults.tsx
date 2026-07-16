@@ -627,7 +627,9 @@ function SweepHeatmap({
                 <div
                   key={`hc-${xt.key}-${yt?.key ?? ""}`}
                   className={`sweep-cell${failed ? " sweep-error" : ""}${disabled ? " sweep-cell-disabled" : ""}`}
-                  style={{ background: divergingBg(v, maxAbs) }}
+                  // max_drawdown is a positive magnitude where SMALLER is better —
+                  // negate it so the ramp reads red-for-worse like every other metric.
+                  style={{ background: divergingBg(metric === "max_drawdown" && v !== null ? -v : v, maxAbs) }}
                   onClick={() => row && !disabled && onApply(row.combo)}
                   onMouseEnter={(e) => { setHovered(row ?? null); setCursor({ x: e.clientX, y: e.clientY }); }}
                   onMouseMove={(e) => setCursor({ x: e.clientX, y: e.clientY })}
