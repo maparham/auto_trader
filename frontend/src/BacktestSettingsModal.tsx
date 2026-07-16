@@ -9,6 +9,7 @@ import CloseButton from "./CloseButton";
 import ChartOperandPicker from "./ChartOperandPicker";
 import InfoTip from "./components/InfoTip";
 import NumberField from "./components/NumberField";
+import RunBar from "./components/RunBar";
 import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
 import {
@@ -59,8 +60,8 @@ import { SESSION_PRESETS, buildRangeChips, coverage, isActive, minToTime, resolv
 import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
+import { RangeChip } from "./components/RangeChip";
 import { StrategyParams } from "./components/StrategyParams";
-import { SweepAxisRow } from "./components/SweepAxisRow";
 import { SweepResults } from "./SweepResults";
 import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepOption } from "./lib/sweep";
 import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLabels";
@@ -89,6 +90,9 @@ import {
   saveBacktestSide,
   loadBacktestSplit,
   saveBacktestSplit,
+  loadBacktestPanelWidth,
+  saveBacktestPanelWidth,
+  BACKTEST_PANEL_DEFAULT_WIDTH,
   loadBacktestMode,
   saveBacktestMode,
   type BacktestRunMode,
@@ -406,6 +410,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     setSide(s);
     saveBacktestSide(s);
   };
+  // Whether the side being edited is armed (opens/closes positions). Drives the
+  // arm switch that sits beside the Long/Short tabs.
+  const sideEnabled = (side === "long" ? cfg.longEnabled : cfg.shortEnabled) !== false;
 
   // Coded strategies (mode === "coded"): the discovered file list is fetched
   // HERE (not inside StrategyPicker) so this modal can also read the selected
@@ -497,7 +504,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // The config a rule/risk axis label resolves against: rules mode reads the
   // rule config, coded mode reads the per-file coded config (exit rules + risk).
   const labelCfg = (): LabelConfig => (cfg.mode === "coded" ? codedCfg : cfg);
-  // Shared inline-editor patch: SweepAxisRow edits flow back through here.
+  // Shared inline-editor patch: RangeChip edits flow back through here.
   const patchAxis = (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) =>
     setSweepAxes((axes) => axes.map((a) => (a.target === target && a.kind === "range" ? { ...a, ...patch } : a)));
   // Write-through: every axes change lands in the current context's key. Deps
@@ -918,6 +925,40 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     dragging.current = false;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
   }
+  // Panel width (px), dragged via the left-edge handle. Device-local view
+  // preference like the split above. Clamped so the panel never eats the whole
+  // viewport (keeps at least the chart's ~380px) nor shrinks below its min.
+  const clampWidth = (w: number) =>
+    Math.max(560, Math.min(w, Math.max(560, window.innerWidth - 380)));
+  // Re-clamp on load: a width saved on a wider monitor must not swallow the
+  // chart when reopened on a smaller window.
+  const [panelWidth, setPanelWidth] = useState<number>(() => clampWidth(loadBacktestPanelWidth()));
+  const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = panelWidth;
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    let w = startW;
+    const onMove = (ev: PointerEvent) => {
+      // Left edge: dragging left (negative dx) grows the panel.
+      w = clampWidth(startW + (startX - ev.clientX));
+      setPanelWidth(w);
+    };
+    const onUp = () => {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      saveBacktestPanelWidth(w);
+    };
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    // A cancelled drag (e.g. the browser steals the pointer) must tear the
+    // move listener down too, or hovering the edge would keep resizing with no
+    // button held.
+    el.addEventListener("pointercancel", onUp);
+  };
+
   // Inline height for the results region: unset/collapsed use CSS defaults.
   const resultsStyle: CSSProperties =
     split.collapsed || split.resultsHeight <= 0
@@ -1127,7 +1168,18 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
 
   return (
     <>
-    <aside className={`bt-cfg-panel bt-mode-${btMode}`}>
+    <aside className={`bt-cfg-panel bt-mode-${btMode}`} style={{ width: panelWidth }}>
+        <div
+          className="bt-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize backtest panel"
+          onPointerDown={onResizeStart}
+          onDoubleClick={() => {
+            setPanelWidth(BACKTEST_PANEL_DEFAULT_WIDTH);
+            saveBacktestPanelWidth(BACKTEST_PANEL_DEFAULT_WIDTH);
+          }}
+        />
         <div className="bt-cfg-head">
           <span className="bt-cfg-title">
             Backtest — <strong>{epic}</strong> <span className="bt-cfg-res">{effectiveRes}</span>
@@ -1600,9 +1652,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 style={{ "--side": side === "long" ? "var(--pos)" : "var(--neg)" } as CSSProperties}
                 data-parked={(side === "long" ? cfg.longEnabled : cfg.shortEnabled) === false}
               >
-          <div className="bt-side-tabs seg bt-mode-tabs">
+          <div className="bt-subtabs" role="tablist" aria-label="Strategy mode">
             <button
-              className={(cfg.mode ?? "rules") === "rules" ? "seg-on" : ""}
+              className={(cfg.mode ?? "rules") === "rules" ? "on" : ""}
               onClick={() => {
                 // Sweep axes are mode-scoped (`param:`/`risk:` in coded, `rule:`
                 // in rules) and persisted per context, so each mode switch swaps
@@ -1613,16 +1665,16 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 setCfg({ ...cfg, mode: "rules" });
               }}
             >
-              Rules
+              User Defined
             </button>
             <button
-              className={cfg.mode === "coded" ? "seg-on" : ""}
+              className={cfg.mode === "coded" ? "on" : ""}
               onClick={() => {
                 setSweepAxes(pruneSweepAxes(loadSweepAxes(sweepContext("coded", cfg.codedStrategy)), codedCfg));
                 setCfg({ ...cfg, mode: "coded" });
               }}
             >
-              Strategy
+              Built-in
             </button>
           </div>
           {cfg.mode === "coded" ? (
@@ -1703,21 +1755,40 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
             </>
           ) : (
             <>
-          <div className="bt-side-tabs seg">
-            <button
-              className={`bt-side-long${side === "long" ? " seg-on" : ""}`}
-              onClick={() => selectSide("long")}
-            >
-              <span className={`bt-side-dot${cfg.longEnabled === false ? " off" : ""}`} aria-hidden="true" />
-              Long
-            </button>
-            <button
-              className={`bt-side-short${side === "short" ? " seg-on" : ""}`}
-              onClick={() => selectSide("short")}
-            >
-              <span className={`bt-side-dot${cfg.shortEnabled === false ? " off" : ""}`} aria-hidden="true" />
-              Short
-            </button>
+          <div className="bt-side-row">
+            <div className="bt-side-tabs seg">
+              <button
+                className={`bt-side-long${side === "long" ? " seg-on" : ""}`}
+                onClick={() => selectSide("long")}
+              >
+                <span className={`bt-side-dot${cfg.longEnabled === false ? " off" : ""}`} aria-hidden="true" />
+                Long
+              </button>
+              <button
+                className={`bt-side-short${side === "short" ? " seg-on" : ""}`}
+                onClick={() => selectSide("short")}
+              >
+                <span className={`bt-side-dot${cfg.shortEnabled === false ? " off" : ""}`} aria-hidden="true" />
+                Short
+              </button>
+            </div>
+            {/* Arm switch for the side being edited — parking keeps a side's rules
+                but stops it opening/closing positions. The aria-label + aria-checked
+                carry the accessible name and on/off; the state word is decorative.
+                The switch and its state word are one right-aligned control group. */}
+            <div className="bt-arm-group">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={sideEnabled}
+                aria-label={`Trade the ${side} side`}
+                className={`bt-switch${sideEnabled ? " on" : ""}`}
+                onClick={() => setCfg({ ...cfg, [side === "long" ? "longEnabled" : "shortEnabled"]: !sideEnabled })}
+              >
+                <span className="bt-switch-knob" />
+              </button>
+              <span className={`bt-arm-state${sideEnabled ? " on" : ""}`} aria-hidden="true">{sideEnabled ? "Trading" : "Parked"}</span>
+            </div>
           </div>
           <SidePanel
             side={side}
@@ -1931,128 +2002,70 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         </div>
 
         <div className="modal-foot bt-cfg-foot">
-          <Tooltip
-            content={
-              inspectMode
-                ? "Inspect mode on: click a bar on the chart to see its rules"
-                : "Inspect a bar: click a bar to see every rule's value and why a trade did or didn't open"
-            }
-          >
-            <button
-              className={`ghost bt-inspect-foot${inspectMode ? " on" : ""}`}
-              aria-pressed={inspectMode}
-              onClick={() => inspectModeSignal.set(!inspectModeSignal.value)}
-            >
-              <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-                {/* magnifier */}
-                <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-                <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-              <span>Inspect</span>
-            </button>
-          </Tooltip>
-          <span className="seg bt-mode-seg" role="group" aria-label="Run mode">
-            <Tooltip content="Run a single backtest. Sweep setup stays configured but inert.">
-              <button
-                type="button"
-                className={btMode === "backtest" ? "seg-on" : ""}
-                aria-pressed={btMode === "backtest"}
-                onClick={() => selectMode("backtest")}
-              >
-                Backtest
-              </button>
-            </Tooltip>
-            <Tooltip content="Sweep the toggled fields across their ranges, one run per combination.">
-              <button
-                type="button"
-                className={btMode === "sweep" ? "seg-on" : ""}
-                aria-pressed={btMode === "sweep"}
-                onClick={() => selectMode("sweep")}
-              >
-                Sweep
-                {/* A sweep stays visible from Backtest mode: progress while one
-                    runs in the background, else the configured combo count
-                    (redundant with the counter when Sweep mode is on). */}
-                {sweepState?.running ? (
-                  <span className="bt-mode-badge">
-                    {sweepState.done}/{sweepState.total}
+          <RunBar
+            mode={btMode}
+            onSelectMode={selectMode}
+            modeBadge={sweepState?.running ? (
+              <span className="bt-mode-badge">{sweepState.done}/{sweepState.total}</span>
+            ) : btMode === "backtest" && sweepAxes.length > 0 && isFinite(sweepCombos) ? (
+              <span className="bt-mode-badge">{sweepCombos}</span>
+            ) : null}
+            sweepInfo={<>
+              {btMode === "sweep" && sweepAxes.length === 0 && (
+                <span className="sweep-counter">Turn on a field's sweep toggle to run</span>
+              )}
+              {btMode === "sweep" && sweepAxes.length > 0 && (
+                <span className="sweep-counter">
+                  {/* Per-axis counts via the SAME comboCount the runner uses. A
+                      single axis's own combo count is exactly its step count (or
+                      Infinity for a degenerate step), so this can never drift from
+                      the total it multiplies to below. */}
+                  {sweepAxes.map((a, i) => {
+                    const n = comboCount([a]);
+                    return (
+                      <span key={a.target}>
+                        {i > 0 && " × "}
+                        {isFinite(n) ? n : "∞"}
+                      </span>
+                    );
+                  })}
+                  {" = "}
+                  {isFinite(sweepCombos) ? sweepCombos : "∞"} runs
+                </span>
+              )}
+              {btMode === "sweep" && sweepAxes.length > 0 && (
+                <span className={`bt-sweep-estimate${sweepWarn ? " bt-sweep-warn" : ""}`}>
+                  {isFinite(sweepCombos)
+                    ? estimateSweepText(sweepCombos, recallSweepPace(epic, effectiveRes, sweepTarget))
+                    : "∞ combos"}
+                </span>
+              )}
+              {btMode === "sweep" && sweepAxes.length > 0 && remoteCompute && (
+                <span className="bt-compute-toggle">
+                  <span className="bt-compute-label">Compute:</span>
+                  <span className="seg" role="group" aria-label="Compute target">
+                    {(["local", "remote"] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        className={sweepTarget === t ? "seg-on" : ""}
+                        aria-pressed={sweepTarget === t}
+                        onClick={() => { sweepTargetSignal.set(t); saveSweepTarget(t); }}
+                      >
+                        {t === "local" ? "Local" : "Remote"}
+                      </button>
+                    ))}
                   </span>
-                ) : btMode === "backtest" && sweepAxes.length > 0 && isFinite(sweepCombos) ? (
-                  <span className="bt-mode-badge">{sweepCombos}</span>
-                ) : null}
-              </button>
-            </Tooltip>
-          </span>
-          {/* Variable sweep info lives in this always-present flex slot, so the
-              pinned controls on either side never move when the mode flips or
-              axes come and go. */}
-          <span className="bt-sweep-foot-info">
-          {btMode === "sweep" && sweepAxes.length === 0 && (
-            <span className="sweep-counter">Turn on a field's sweep toggle to run</span>
-          )}
-          {btMode === "sweep" && sweepAxes.length > 0 && (
-            <span className="sweep-counter">
-              {/* Per-axis counts via the SAME comboCount the runner uses. A
-                  single axis's own combo count is exactly its step count (or
-                  Infinity for a degenerate step), so this can never drift from
-                  the total it multiplies to below. */}
-              {sweepAxes.map((a, i) => {
-                const n = comboCount([a]);
-                return (
-                  <span key={a.target}>
-                    {i > 0 && " × "}
-                    {isFinite(n) ? n : "∞"}
-                  </span>
-                );
-              })}
-              {" = "}
-              {isFinite(sweepCombos) ? sweepCombos : "∞"} runs
-            </span>
-          )}
-          {btMode === "sweep" && sweepAxes.length > 0 && (
-            <span className={`bt-sweep-estimate${sweepWarn ? " bt-sweep-warn" : ""}`}>
-              {isFinite(sweepCombos)
-                ? estimateSweepText(sweepCombos, recallSweepPace(epic, effectiveRes, sweepTarget))
-                : "∞ combos"}
-            </span>
-          )}
-          {btMode === "sweep" && sweepAxes.length > 0 && remoteCompute && (
-            <span className="bt-compute-toggle">
-              <span className="bt-compute-label">Compute:</span>
-              <span className="seg" role="group" aria-label="Compute target">
-                {(["local", "remote"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    className={sweepTarget === t ? "seg-on" : ""}
-                    aria-pressed={sweepTarget === t}
-                    onClick={() => { sweepTargetSignal.set(t); saveSweepTarget(t); }}
-                  >
-                    {t === "local" ? "Local" : "Remote"}
-                  </button>
-                ))}
-              </span>
-            </span>
-          )}
-          </span>
-          <button className="ghost" onClick={onClose}>
-            Close
-          </button>
-          <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
-            <button
-              className="ghost bt-golive"
-              onClick={() => requestGoLive(cfg)}
-            >
-              Go live →
-            </button>
-          </Tooltip>
-          <button
-            className="bt-run-btn"
-            onClick={runFromFooter}
-            disabled={runInFlight || (btMode === "sweep" && sweepAxes.length === 0)}
-          >
-            {runInFlight ? "Running…" : btMode === "sweep" ? "Run sweep" : "Run backtest"}
-          </button>
+                </span>
+              )}
+            </>}
+            inspectOn={inspectMode}
+            onToggleInspect={() => inspectModeSignal.set(!inspectModeSignal.value)}
+            onGoLive={() => requestGoLive(cfg)}
+            runLabel={runInFlight ? "Running…" : btMode === "sweep" ? "Run sweep" : "Run backtest"}
+            runDisabled={runInFlight || (btMode === "sweep" && sweepAxes.length === 0)}
+            onRun={runFromFooter}
+          />
         </div>
     </aside>
       {pickerFor && (
@@ -2102,10 +2115,6 @@ export function RiskSection({
     onToggle: (target: string, current: number) => void;
     onKindChange: (field: "stop" | "target") => void;
     onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
-    // Rules mode shows one side at a time, so a synced (long-canonical) axis
-    // must render its editor under whichever side is visible. Coded mode
-    // (both sides stacked) leaves this off and renders it under long only.
-    mirrorEditor?: boolean;
   };
   // "Same for long & short" header toggle. The caller owns the mirroring —
   // this component just renders the checkbox and reports clicks. Undefined
@@ -2152,8 +2161,8 @@ export function RiskSection({
   // StrategyParams' per-param toggle. Only rendered when the caller (coded
   // mode) passed a `sweep` prop; absent in rule mode / the Live panel.
   // Synced SL/TP canonicalizes risk axes to the long side: both sides' toggle
-  // buttons light for that one axis, and its editor renders under the long
-  // block (coded) or the visible side (rules mode, mirrorEditor).
+  // buttons light for that one axis, and its chip renders wherever the field
+  // renders, so both sides show the same synced range.
   const sweepSide = sync?.on ? "long" : sweep?.side;
   const swept = (field: "stop" | "target", prop: "value" | "mult") =>
     sweep?.axes.some((a) => a.target === `risk:${sweepSide}.${field}.${prop}`) ?? false;
@@ -2169,18 +2178,6 @@ export function RiskSection({
         </button>
       </Tooltip>
     );
-
-  // Inline from/to/step editor for a swept risk field, rendered beneath its
-  // bt-risk-row. Synced axes are canonical on long: render under the long
-  // block, or under this block too when the caller opted into mirroring.
-  const axisRow = (field: "stop" | "target", prop: "value" | "mult") => {
-    if (!sweep) return null;
-    const axis = sweep.axes.find(
-      (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.${field}.${prop}`);
-    if (!axis) return null;
-    if (sync?.on && sweep.side !== "long" && !sweep.mirrorEditor) return null;
-    return <SweepAxisRow axis={axis} onChange={(p) => sweep.onAxisChange(axis.target, p)} />;
-  };
 
   return (
     <div className="bt-risk">
@@ -2202,51 +2199,101 @@ export function RiskSection({
         <select value={risk.stop.kind} onChange={(e) => setStopKind(e.target.value as StopKind)}>
           {STOP_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
-        {(risk.stop.kind === "pct" || risk.stop.kind === "trailPct") && (
-          <>
-            {num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }), "any", 0.01, swept("stop", "value"))}
-            <span>%</span>
-            {sweepBtn("stop", "value", risk.stop.value ?? 2)}
-          </>
-        )}
-        {(risk.stop.kind === "atr" || risk.stop.kind === "trailAtr") && (
-          <>
-            {num(risk.stop.mult, (n) => onChange({ ...risk, stop: { ...risk.stop, mult: n } }), "any", undefined, swept("stop", "mult"))}
-            <span>× ATR</span>
-            {num(risk.stop.length, (n) => onChange({ ...risk, stop: { ...risk.stop, length: Math.max(1, Math.round(n)) } }), "1")}
-            {sweepBtn("stop", "mult", risk.stop.mult ?? 2)}
-          </>
-        )}
+        {(risk.stop.kind === "pct" || risk.stop.kind === "trailPct") && (() => {
+          const axis = sweep?.axes.find(
+            (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.stop.value`);
+          return axis && sweep ? (
+            <>
+              <RangeChip
+                axis={axis}
+                onPatch={(p) => sweep.onAxisChange(axis.target, p)}
+                onRemove={() => sweep.onToggle(axis.target, risk.stop.value ?? 2)}
+              />
+              <span>%</span>
+            </>
+          ) : (
+            <>
+              {num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }), "any", 0.01)}
+              <span>%</span>
+              {sweepBtn("stop", "value", risk.stop.value ?? 2)}
+            </>
+          );
+        })()}
+        {(risk.stop.kind === "atr" || risk.stop.kind === "trailAtr") && (() => {
+          const axis = sweep?.axes.find(
+            (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.stop.mult`);
+          return axis && sweep ? (
+            <>
+              <RangeChip
+                axis={axis}
+                onPatch={(p) => sweep.onAxisChange(axis.target, p)}
+                onRemove={() => sweep.onToggle(axis.target, risk.stop.mult ?? 2)}
+              />
+              <span>× ATR</span>
+              {num(risk.stop.length, (n) => onChange({ ...risk, stop: { ...risk.stop, length: Math.max(1, Math.round(n)) } }), "1")}
+            </>
+          ) : (
+            <>
+              {num(risk.stop.mult, (n) => onChange({ ...risk, stop: { ...risk.stop, mult: n } }), "any")}
+              <span>× ATR</span>
+              {num(risk.stop.length, (n) => onChange({ ...risk, stop: { ...risk.stop, length: Math.max(1, Math.round(n)) } }), "1")}
+              {sweepBtn("stop", "mult", risk.stop.mult ?? 2)}
+            </>
+          );
+        })()}
         {risk.stop.kind === "price" &&
           num(risk.stop.value, (n) => onChange({ ...risk, stop: { ...risk.stop, value: n } }))}
       </div>
-      {axisRow("stop", "value")}
-      {axisRow("stop", "mult")}
       <div className="bt-risk-row">
         <span className="bt-risk-label">Take profit</span>
         <select value={risk.target.kind} onChange={(e) => setTargetKind(e.target.value as TargetKind)}>
           {TARGET_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
-        {risk.target.kind === "pct" && (
-          <>
-            {num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }), "any", 0.01, swept("target", "value"))}
-            <span>%</span>
-            {sweepBtn("target", "value", risk.target.value ?? 4)}
-          </>
-        )}
-        {risk.target.kind === "atr" && (
-          <>
-            {num(risk.target.mult, (n) => onChange({ ...risk, target: { ...risk.target, mult: n } }), "any", undefined, swept("target", "mult"))}
-            <span>× ATR</span>
-            {num(risk.target.length, (n) => onChange({ ...risk, target: { ...risk.target, length: Math.max(1, Math.round(n)) } }), "1")}
-            {sweepBtn("target", "mult", risk.target.mult ?? 3)}
-          </>
-        )}
+        {risk.target.kind === "pct" && (() => {
+          const axis = sweep?.axes.find(
+            (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.target.value`);
+          return axis && sweep ? (
+            <>
+              <RangeChip
+                axis={axis}
+                onPatch={(p) => sweep.onAxisChange(axis.target, p)}
+                onRemove={() => sweep.onToggle(axis.target, risk.target.value ?? 4)}
+              />
+              <span>%</span>
+            </>
+          ) : (
+            <>
+              {num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }), "any", 0.01)}
+              <span>%</span>
+              {sweepBtn("target", "value", risk.target.value ?? 4)}
+            </>
+          );
+        })()}
+        {risk.target.kind === "atr" && (() => {
+          const axis = sweep?.axes.find(
+            (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.target.mult`);
+          return axis && sweep ? (
+            <>
+              <RangeChip
+                axis={axis}
+                onPatch={(p) => sweep.onAxisChange(axis.target, p)}
+                onRemove={() => sweep.onToggle(axis.target, risk.target.mult ?? 3)}
+              />
+              <span>× ATR</span>
+              {num(risk.target.length, (n) => onChange({ ...risk, target: { ...risk.target, length: Math.max(1, Math.round(n)) } }), "1")}
+            </>
+          ) : (
+            <>
+              {num(risk.target.mult, (n) => onChange({ ...risk, target: { ...risk.target, mult: n } }), "any")}
+              <span>× ATR</span>
+              {num(risk.target.length, (n) => onChange({ ...risk, target: { ...risk.target, length: Math.max(1, Math.round(n)) } }), "1")}
+              {sweepBtn("target", "mult", risk.target.mult ?? 3)}
+            </>
+          );
+        })()}
         {risk.target.kind === "price" &&
           num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }))}
       </div>
-      {axisRow("target", "value")}
-      {axisRow("target", "mult")}
     </div>
   );
 }
@@ -2355,23 +2402,8 @@ function SidePanel({
 
   return (
     <>
-      <div className="bt-arm">
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          aria-label={`Trade the ${side} side`}
-          className={`bt-switch${enabled ? " on" : ""}`}
-          onClick={() => setCfg({ ...cfg, [isLong ? "longEnabled" : "shortEnabled"]: !enabled })}
-        >
-          <span className="bt-switch-knob" />
-        </button>
-        {/* Visible label/state are decorative — the switch's aria-label + aria-checked
-            already carry the accessible name and on/off, so hide these to avoid a
-            doubled screen-reader announcement. */}
-        <span className="bt-arm-label" aria-hidden="true">Trade the {side} side</span>
-        <span className={`bt-arm-state${enabled ? " on" : ""}`} aria-hidden="true">{enabled ? "Trading" : "Parked"}</span>
-      </div>
+      {/* The arm switch now lives beside the Long/Short tabs in the parent; this
+          panel keeps only the parked note + inert wrapper. */}
       {!enabled && (
         <div className="al-note bt-parked-note">
           Rules are kept. The {side} side won't open or close positions until you switch it back on.
@@ -2421,7 +2453,6 @@ function SidePanel({
             onToggle: sweep.onToggleRisk,
             onKindChange: sweep.onKindChange,
             onAxisChange: sweep.onAxisChange,
-            mirrorEditor: true,
           }}
           sync={{
             on: riskSyncOn(cfg),
@@ -2624,18 +2655,6 @@ function KebabIcon() {
   );
 }
 
-// Enable/disable shortcut: an open eye when the rule is active, a slashed eye
-// when it's disabled (dropped from the run but kept).
-function EyeIcon({ on }: { on: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6">
-      <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="12" cy="12" r="2.6" />
-      {!on && <path d="M4 20 L20 4" strokeLinecap="round" />}
-    </svg>
-  );
-}
-
 // Two overlapping sheets — the standard "copy" glyph, reused for both the
 // copy-all and paste-all whole-group actions.
 function CopyAllIcon() {
@@ -2680,12 +2699,14 @@ function RuleMenu({
   onDuplicate,
   onCopy,
   onToggleEnabled,
+  onSwapSides,
   onRemove,
 }: {
   enabled: boolean;
   onDuplicate: () => void;
   onCopy: () => void;
   onToggleEnabled: () => void;
+  onSwapSides: () => void;
   onRemove: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -2751,6 +2772,7 @@ function RuleMenu({
           >
             <li role="menuitem" onClick={() => run(onDuplicate)}>Duplicate</li>
             <li role="menuitem" onClick={() => run(onCopy)}>Copy</li>
+            <li role="menuitem" onClick={() => run(onSwapSides)}>Swap sides</li>
             <li role="menuitem" onClick={() => run(onToggleEnabled)}>{enabled ? "Disable" : "Enable"}</li>
             <li role="menuitem" className="bt-rule-menu-danger" onClick={() => run(onRemove)}>Remove</li>
           </ul>,
@@ -2882,6 +2904,14 @@ export function RuleGroupSection({
       extra={
         group.rules.length > 0 ? (
           <div className="bt-groophead-actions">
+            {/* AND/OR only matters with 2+ rules; it stays fully visible (never
+                hover-dimmed) while the icon actions to its right reveal on hover. */}
+            {group.rules.length > 1 && (
+              <div className="seg bt-combine-seg" role="group" aria-label="Combine rules with">
+                <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>AND</button>
+                <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>OR</button>
+              </div>
+            )}
             <Tooltip content="Flip every operator to its opposite (> ↔ <, crosses above ↔ below)">
               <button
                 className="bt-rule-toggle bt-reverse-ops"
@@ -2916,85 +2946,56 @@ export function RuleGroupSection({
       {group.rules.length === 0 && (
         <div className="al-note bt-empty-rules">{emptyHint}</div>
       )}
-      {/* The AND/OR combiner only matters with 2+ rules; render its row only
-          then so single-rule groups stay compact. */}
-      {group.rules.length > 1 && (
-        <div className="bt-rule-groophead">
-          <div className="seg">
-            <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>
-              AND
-            </button>
-            <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>
-              OR
-            </button>
-          </div>
-        </div>
-      )}
       {group.rules.map((rule, i) => (
         <Fragment key={i}>
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`}>
-          <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `left.${leaf}`) } : undefined} />
-          <OperatorPicker
-            value={rule.op}
-            onChange={(op) => setRule(i, { ...rule, op })}
-            sweep={sweep && rule.enabled !== false ? {
-              swept: sweep.axes.some((a) => a.target === opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i))),
-              onToggle: () => sweep.onToggleOp(opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i)), rule.op),
-            } : undefined}
-          />
-          <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `right.${leaf}`) } : undefined} />
-          {isExit && (
-            <CountField
-              value={rule.count}
-              onChange={(count) => setRule(i, { ...rule, count })}
-              sweep={
-                sweep && rule.enabled !== false
-                  ? {
-                      axes: sweep.axes,
-                      onToggle: sweep.onToggle,
-                      target: ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), "count"),
-                    }
-                  : undefined
-              }
+          <div className="bt-rule-main">
+            <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, onAxisChange: sweep.onAxisChange, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `left.${leaf}`) } : undefined} />
+            <OperatorPicker
+              value={rule.op}
+              onChange={(op) => setRule(i, { ...rule, op })}
+              sweep={sweep && rule.enabled !== false ? {
+                swept: sweep.axes.some((a) => a.target === opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i))),
+                onToggle: () => sweep.onToggleOp(opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i)), rule.op),
+              } : undefined}
             />
-          )}
-          <div className="bt-rule-actions">
-            <Tooltip content={rule.enabled === false ? "Enable rule" : "Disable rule"}>
-              <button
-                className="bt-rule-toggle"
-                onClick={() => setRule(i, { ...rule, enabled: rule.enabled === false })}
-                aria-label={rule.enabled === false ? "Enable rule" : "Disable rule"}
-                aria-pressed={rule.enabled !== false}
-              >
-                <EyeIcon on={rule.enabled !== false} />
-              </button>
-            </Tooltip>
-            <Tooltip content="Swap sides (same condition)">
-              <button
-                type="button"
-                className="bt-rule-toggle bt-swap-sides"
-                onClick={() => setRule(i, swapSides(rule))}
-                aria-label="Swap sides"
-              >
-                ⇄
-              </button>
-            </Tooltip>
-            <Tooltip content="Delete rule">
-              <button
-                className="bt-rule-toggle bt-rule-delete"
-                onClick={() => removeRule(i)}
-                aria-label="Delete rule"
-              >
-                <TrashIcon />
-              </button>
-            </Tooltip>
-            <RuleMenu
-              enabled={rule.enabled !== false}
-              onDuplicate={() => duplicateRule(i)}
-              onCopy={() => onCopy(rule)}
-              onToggleEnabled={() => setRule(i, { ...rule, enabled: rule.enabled === false })}
-              onRemove={() => removeRule(i)}
-            />
+            <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, onAxisChange: sweep.onAxisChange, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `right.${leaf}`) } : undefined} />
+            {isExit && (
+              <CountField
+                value={rule.count}
+                onChange={(count) => setRule(i, { ...rule, count })}
+                sweep={
+                  sweep && rule.enabled !== false
+                    ? {
+                        axes: sweep.axes,
+                        onToggle: sweep.onToggle,
+                        onAxisChange: sweep.onAxisChange,
+                        target: ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), "count"),
+                      }
+                    : undefined
+                }
+              />
+            )}
+            <div className="bt-rule-actions">
+              <Tooltip content="Swap sides (same condition)">
+                <button
+                  type="button"
+                  className="bt-rule-toggle bt-swap-sides"
+                  onClick={() => setRule(i, swapSides(rule))}
+                  aria-label="Swap sides"
+                >
+                  ⇄
+                </button>
+              </Tooltip>
+              <RuleMenu
+                enabled={rule.enabled !== false}
+                onDuplicate={() => duplicateRule(i)}
+                onCopy={() => onCopy(rule)}
+                onToggleEnabled={() => setRule(i, { ...rule, enabled: rule.enabled === false })}
+                onSwapSides={() => setRule(i, swapSides(rule))}
+                onRemove={() => removeRule(i)}
+              />
+            </div>
           </div>
         </div>
         {sweep && rule.enabled !== false && (() => {
@@ -3022,13 +3023,6 @@ export function RuleGroupSection({
             </div>
           );
         })()}
-        {sweep && rule.enabled !== false && sweep.axes
-          .filter((a): a is RangeAxis =>
-            a.kind === "range" &&
-            a.target.startsWith(`rule:${sweep.side}.${sweep.group}.${activeRuleIndex(i)}.`))
-          .map((a) => (
-            <SweepAxisRow key={a.target} axis={a} onChange={(p) => sweep.onAxisChange(a.target, p)} />
-          ))}
         </Fragment>
       ))}
       <div className="bt-rule-foot">
@@ -3097,10 +3091,18 @@ function CountField({
   onChange: (n?: number) => void;
   // Task 9: optional sweep toggle on the count itself, keyed by the exact
   // `rule:...count` target the caller already built.
-  sweep?: { axes: SweepAxis[]; target: string; onToggle: (target: string, current: number) => void };
+  sweep?: {
+    axes: SweepAxis[];
+    target: string;
+    onToggle: (target: string, current: number) => void;
+    onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
+  };
 }) {
   const n = value && value > 1 ? value : undefined;
   const swept = sweep?.axes.some((a) => a.target === sweep.target) ?? false;
+  const sweptAxis = sweep?.axes.find(
+    (a): a is RangeAxis => a.kind === "range" && a.target === sweep.target,
+  );
   // Keep a local text buffer so the field shows exactly what the user typed
   // mid-edit. Deriving the input value straight from the model breaks typing:
   // a bare "1" (the default) maps to undefined, so a controlled value would
@@ -3119,31 +3121,40 @@ function CountField({
         ]}
       >
         <label className={`bt-rule-count${n ? " on" : ""}`}>
-          {/* Same visible-but-disabled treatment as the operand fields while
-              the Nth-count sweep axis owns the value. */}
-          <input
-              type="number"
-              disabled={swept}
-              // Floor at 2: 1 is the default and reads as blank, so letting the
-              // native spinner step to 1 would make the up-arrow appear dead.
-              min={2}
-              step={1}
-              className="bt-rule-count-input"
-              placeholder="1st"
-              value={text}
-              onKeyDown={blockNegKeys}
-              onChange={(e) => {
-                const raw = cleanNumInput(e.currentTarget);
-                setText(raw);
-                const num = Math.round(Number(raw));
-                onChange(raw === "" || num <= 1 || !Number.isFinite(num) ? undefined : num);
-              }}
-              // A stray "1" (or anything that resolves to the default) snaps back to
-              // the blank "1st" placeholder on blur so the field never lingers on a
-              // value the model dropped.
-              onBlur={() => setText(n ? String(n) : "")}
+          {/* While swept, a RangeChip edits the range in place; otherwise the
+              plain count input with its ordinal suffix. */}
+          {sweptAxis && sweep ? (
+            <RangeChip
+              axis={sweptAxis}
+              onPatch={(p) => sweep.onAxisChange(sweptAxis.target, p)}
+              onRemove={() => sweep.onToggle(sweep.target, n ?? 1)}
             />
-          <span className="bt-rule-count-suffix" aria-hidden="true">{n ? ordinal(n) : ""}</span>
+          ) : (
+            <>
+              <input
+                  type="number"
+                  // Floor at 2: 1 is the default and reads as blank, so letting the
+                  // native spinner step to 1 would make the up-arrow appear dead.
+                  min={2}
+                  step={1}
+                  className="bt-rule-count-input"
+                  placeholder="1st"
+                  value={text}
+                  onKeyDown={blockNegKeys}
+                  onChange={(e) => {
+                    const raw = cleanNumInput(e.currentTarget);
+                    setText(raw);
+                    const num = Math.round(Number(raw));
+                    onChange(raw === "" || num <= 1 || !Number.isFinite(num) ? undefined : num);
+                  }}
+                  // A stray "1" (or anything that resolves to the default) snaps back to
+                  // the blank "1st" placeholder on blur so the field never lingers on a
+                  // value the model dropped.
+                  onBlur={() => setText(n ? String(n) : "")}
+                />
+              <span className="bt-rule-count-suffix" aria-hidden="true">{n ? ordinal(n) : ""}</span>
+            </>
+          )}
         </label>
       </Tooltip>
       {sweep && (
@@ -3190,6 +3201,7 @@ function OperandPicker({
   sweep?: {
     axes: SweepAxis[];
     onToggle: (target: string, current: number) => void;
+    onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
     target: (leaf: "length" | "value") => string;
   };
 }) {
@@ -3199,6 +3211,8 @@ function OperandPicker({
   const sweptTarget = (leaf: "length" | "value") => sweep?.target(leaf);
   const isSwept = (leaf: "length" | "value") =>
     sweep ? sweep.axes.some((a) => a.target === sweptTarget(leaf)) : false;
+  const sweptAxis = (leaf: "length" | "value") =>
+    sweep?.axes.find((a): a is RangeAxis => a.kind === "range" && a.target === sweptTarget(leaf));
   const sweepToggle = (leaf: "length" | "value", current: number) =>
     sweep && (
       <Tooltip content="Sweep this field">
@@ -3211,6 +3225,18 @@ function OperandPicker({
         </button>
       </Tooltip>
     );
+  // Changing the operand's type can strand a swept leaf (a const's value axis
+  // under an indicator operand, a length axis under a const/series/AVWAP): the
+  // chip is leaf-matched so the axis would become invisible and unremovable
+  // while still multiplying the sweep. Drop stale leaves before committing the
+  // type change (mirrors RiskSection's onKindChange).
+  const dropOrphanAxes = (next: Operand) => {
+    if (!sweep) return;
+    const hasLength = next.kind === "indicator" && !NO_LENGTH.includes(next.indicator);
+    const hasValue = next.kind === "const";
+    if (!hasLength && isSwept("length")) sweep.onToggle(sweptTarget("length")!, 0);
+    if (!hasValue && isSwept("value")) sweep.onToggle(sweptTarget("value")!, 0);
+  };
   const sloped = slopeLen(value) !== null;
   function setSlope(spec: { len: number } | undefined) {
     if (value.kind !== "indicator" && value.kind !== "price" && value.kind !== "series") return;
@@ -3243,13 +3269,18 @@ function OperandPicker({
   const prevSlope =
     value.kind === "indicator" || value.kind === "price" || value.kind === "series" ? value.slope : undefined;
   function setType(token: string) {
-    if (token === "price") return onChange({ kind: "price", field: "close", slope: prevSlope });
-    if (token === "const") return onChange({ kind: "const", value: 0 });
-    if (token === "entry") return onChange({ kind: "entry" });
-    const indicator = token as IndicatorKind;
-    if (indicator === "AVWAP") onChange({ kind: "indicator", indicator, anchor: defaultAvwapAnchor, slope: prevSlope });
-    else if (NO_LENGTH.includes(indicator)) onChange({ kind: "indicator", indicator, slope: prevSlope });
-    else onChange({ kind: "indicator", indicator, length: prevLength ?? 9, slope: prevSlope });
+    let next: Operand;
+    if (token === "price") next = { kind: "price", field: "close", slope: prevSlope };
+    else if (token === "const") next = { kind: "const", value: 0 };
+    else if (token === "entry") next = { kind: "entry" };
+    else {
+      const indicator = token as IndicatorKind;
+      if (indicator === "AVWAP") next = { kind: "indicator", indicator, anchor: defaultAvwapAnchor, slope: prevSlope };
+      else if (NO_LENGTH.includes(indicator)) next = { kind: "indicator", indicator, slope: prevSlope };
+      else next = { kind: "indicator", indicator, length: prevLength ?? 9, slope: prevSlope };
+    }
+    dropOrphanAxes(next);
+    onChange(next);
   }
 
   return (
@@ -3262,7 +3293,11 @@ function OperandPicker({
               <button
                 type="button"
                 className="bt-operand-chip-clear"
-                onClick={() => onChange({ kind: "const", value: 0 })}
+                onClick={() => {
+                  const next: Operand = { kind: "const", value: 0 };
+                  dropOrphanAxes(next);
+                  onChange(next);
+                }}
                 aria-label="Clear pasted operand"
               >
                 ✕
@@ -3315,19 +3350,31 @@ function OperandPicker({
           )}
           {!NO_LENGTH.includes(value.indicator) && (
             <>
-              {/* Stays visible while swept (disabled: the sweep axis owns the
-                  value) so the rule row keeps reading as a complete rule. */}
-              <input
-                type="number"
-                min={1}
-                className="bt-operand-length"
-                value={value.length ?? 9}
-                disabled={isSwept("length")}
-                onKeyDown={blockNegKeys}
-                onChange={(e) => onChange({ ...value, length: Number(cleanNumInput(e.currentTarget)) })}
-                onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => onChange({ ...value, length: n }))}
-              />
-              {sweepToggle("length", value.length ?? 9)}
+              {/* While swept, a RangeChip edits the range in place; otherwise the
+                  plain length input with its sweep toggle. */}
+              {(() => {
+                const axis = sweptAxis("length");
+                return axis && sweep ? (
+                  <RangeChip
+                    axis={axis}
+                    onPatch={(p) => sweep.onAxisChange(axis.target, p)}
+                    onRemove={() => sweep.onToggle(axis.target, value.length ?? 9)}
+                  />
+                ) : (
+                  <>
+                    <input
+                      type="number"
+                      min={1}
+                      className="bt-operand-length"
+                      value={value.length ?? 9}
+                      onKeyDown={blockNegKeys}
+                      onChange={(e) => onChange({ ...value, length: Number(cleanNumInput(e.currentTarget)) })}
+                      onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => onChange({ ...value, length: n }))}
+                    />
+                    {sweepToggle("length", value.length ?? 9)}
+                  </>
+                );
+              })()}
             </>
           )}
           <Tooltip content="Timeframe this indicator is computed on">
@@ -3357,15 +3404,30 @@ function OperandPicker({
       )}
       {value.kind === "const" && (
         <>
-          <NumberField
-            signed
-            value={value.value}
-            onChange={(n) => onChange({ kind: "const", value: n })}
-            className="bt-operand-length"
-            disabled={isSwept("value")}
-          />
-          {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
-          {sweepToggle("value", value.value)}
+          {(() => {
+            const axis = sweptAxis("value");
+            return axis && sweep ? (
+              <>
+                <RangeChip
+                  axis={axis}
+                  onPatch={(p) => sweep.onAxisChange(axis.target, p)}
+                  onRemove={() => sweep.onToggle(axis.target, value.value)}
+                />
+                {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
+              </>
+            ) : (
+              <>
+                <NumberField
+                  signed
+                  value={value.value}
+                  onChange={(n) => onChange({ kind: "const", value: n })}
+                  className="bt-operand-length"
+                />
+                {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
+                {sweepToggle("value", value.value)}
+              </>
+            );
+          })()}
         </>
       )}
       {openChartPicker && (
@@ -3374,11 +3436,12 @@ function OperandPicker({
             type="button"
             className="bt-operand-add"
             onClick={() => openChartPicker((op) => {
-              if (prevSlope && (op.kind === "indicator" || op.kind === "price" || op.kind === "series")) {
-                onChange({ ...op, slope: prevSlope });
-              } else {
-                onChange(op);
-              }
+              const next: Operand =
+                prevSlope && (op.kind === "indicator" || op.kind === "price" || op.kind === "series")
+                  ? { ...op, slope: prevSlope }
+                  : op;
+              dropOrphanAxes(next);
+              onChange(next);
             })}
             aria-label="Add from chart"
           >

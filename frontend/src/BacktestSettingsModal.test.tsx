@@ -205,7 +205,7 @@ describe("chart-operand entry points", () => {
     openStrategy();
     // Empty the seeded "Buy to open" group so the empty group is what's exercised.
     const entry = groupSection("Buy to open");
-    fireEvent.click(within(entry).getByLabelText("Delete rule"));
+    ruleAction(entry, "Remove");
     expect(ruleRows(entry)).toHaveLength(0);
     // The always-present footer offers it exactly once (no redundant empty-state copy).
     const btns = within(entry).getAllByRole("button", { name: "+ Rule from chart" });
@@ -255,14 +255,46 @@ describe("operator sweep", () => {
     const row = ruleRows(section)[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
 
-    // The from/to/step editor renders inside this group section, after the row,
-    // and nowhere else in the document.
-    expect(section.querySelector(".sweep-axis-row")).toBeTruthy();
-    expect(document.querySelectorAll(".sweep-axis-row")).toHaveLength(1);
+    // The swept field renders a RangeChip in place of its value input, inside
+    // this group section and nowhere else in the document.
+    expect(section.querySelector(".range-chip")).toBeTruthy();
+    expect(document.querySelectorAll(".range-chip")).toHaveLength(1);
 
-    // Toggle off: gone.
+    // Toggle off via the chip popover's Remove action: gone.
+    fireEvent.click(section.querySelector(".range-chip")!);
+    fireEvent.click(screen.getByRole("button", { name: "Remove from sweep" }));
+    expect(section.querySelector(".range-chip")).toBeNull();
+  });
+
+  it("drops a swept const-value axis when the operand switches to an indicator", () => {
+    renderModal();
+    enterSweepMode();
+    openStrategy();
+
+    const section = groupSection("Buy to open");
+    const row = ruleRows(section)[0];
+    // Make the left operand a Number so its value can be swept.
+    const typeSelect = row.querySelector(".bt-operand select") as HTMLSelectElement;
+    fireEvent.change(typeSelect, { target: { value: "const" } });
+
+    // Sweep the const value: a RangeChip replaces the input and the footer
+    // starts counting combos.
     fireEvent.click(row.querySelector(".sp-sweep")!);
-    expect(section.querySelector(".sweep-axis-row")).toBeNull();
+    expect(section.querySelector(".range-chip")).toBeTruthy();
+    expect(document.querySelector(".sweep-counter")!.textContent).not.toContain(
+      "Turn on a field's sweep toggle to run",
+    );
+
+    // Switch the operand back to an indicator: the value leaf is orphaned, so
+    // its axis must drop — no stranded chip, and the counter resets.
+    fireEvent.change(
+      row.querySelector(".bt-operand select") as HTMLSelectElement,
+      { target: { value: "EMA" } },
+    );
+    expect(section.querySelector(".range-chip")).toBeNull();
+    expect(document.querySelector(".sweep-counter")!.textContent).toContain(
+      "Turn on a field's sweep toggle to run",
+    );
   });
 
   it("a swept exit count renders its editor inline inside its rule group", () => {
@@ -278,8 +310,8 @@ describe("operator sweep", () => {
     const glyphs = row.querySelectorAll(".sp-sweep");
     fireEvent.click(glyphs[glyphs.length - 1]);
 
-    expect(section.querySelector(".sweep-axis-row")).toBeTruthy();
-    expect(document.querySelectorAll(".sweep-axis-row")).toHaveLength(1);
+    expect(section.querySelector(".range-chip")).toBeTruthy();
+    expect(document.querySelectorAll(".range-chip")).toHaveLength(1);
   });
 });
 
@@ -450,23 +482,25 @@ describe("coded mode: params, risk, and exit-rule sections", () => {
     expect(await screen.findByText("Fast EMA")).toBeTruthy();
 
     const params = document.querySelector(".strategy-params") as HTMLElement;
-    expect(params.querySelector(".sweep-axis-row")).toBeNull();
+    expect(params.querySelector(".range-chip")).toBeNull();
 
-    // Toggle the param's sweep glyph on: the from/to/step row appears INSIDE
-    // the params block (inline), not as a sibling after it.
+    // Toggle the param's sweep glyph on: a RangeChip replaces the value input
+    // INSIDE the params block (inline), not as a sibling after it.
     fireEvent.click(params.querySelector(".sp-sweep")!);
-    expect(params.querySelector(".sweep-axis-row")).toBeTruthy();
-    expect(document.querySelectorAll(".sweep-axis-row")).toHaveLength(1);
+    expect(params.querySelector(".range-chip")).toBeTruthy();
+    expect(document.querySelectorAll(".range-chip")).toHaveLength(1);
 
-    // Editing "to" patches the axis: footer combo count grows past 1 run.
-    const nums = [...params.querySelectorAll(".sweep-axis-fields input")] as HTMLInputElement[];
+    // Editing "to" in the chip popover patches the axis: footer combo count
+    // grows past 1 run.
+    fireEvent.click(params.querySelector(".range-chip")!);
+    const nums = [...document.querySelectorAll(".range-chip-field input")] as HTMLInputElement[];
     fireEvent.change(nums[1], { target: { value: "15" } });
     fireEvent.blur(nums[1]);
-    expect(screen.getByText(/runs$/).textContent).not.toContain("1 = 1");
+    expect(document.querySelector(".sweep-counter")!.textContent).not.toContain("1 = 1");
 
-    // Toggle off: row gone.
-    fireEvent.click(params.querySelector(".sp-sweep")!);
-    expect(params.querySelector(".sweep-axis-row")).toBeNull();
+    // Remove from sweep via the popover: chip gone.
+    fireEvent.click(screen.getByRole("button", { name: "Remove from sweep" }));
+    expect(params.querySelector(".range-chip")).toBeNull();
   });
 
   it("keeps three sweep axes active at once (no oldest-axis drop)", async () => {
@@ -691,7 +725,7 @@ describe("inline risk sweep editors", () => {
     },
   ];
 
-  it("coded mode: a swept stop % renders its editor inline inside the risk block (long only when synced)", async () => {
+  it("coded mode: a swept stop % renders its chip in place inside the risk block", async () => {
     mockStrategies.mockResolvedValue(strategies);
     const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     renderModal(initial);
@@ -708,12 +742,14 @@ describe("inline risk sweep editors", () => {
     // Toggle the stop-value sweep glyph on (sync defaults ON, axis canonical on long).
     fireEvent.click(riskBlocks[0].querySelector(".sp-sweep")!);
 
-    // Editor renders inline inside the LONG risk block, exactly once app-wide.
-    expect(riskBlocks[0].querySelector(".sweep-axis-row")).toBeTruthy();
-    expect(document.querySelectorAll(".sweep-axis-row")).toHaveLength(1);
+    // Chip replaces the value input in the LONG block. Sync mirrors the pct
+    // field to the SHORT block too, so the same canonical axis's chip shows in
+    // both blocks (renders wherever the field renders).
+    expect(riskBlocks[0].querySelector(".range-chip")).toBeTruthy();
+    expect(document.querySelectorAll(".range-chip")).toHaveLength(2);
   });
 
-  it("rules mode: with sync on, the short tab shows the synced axis's editor too", () => {
+  it("rules mode: with sync on, the short tab shows the synced axis's chip too", () => {
     renderModal();
     enterSweepMode();
     openStrategy();
@@ -722,12 +758,12 @@ describe("inline risk sweep editors", () => {
     const longRisk = document.querySelector(".bt-risk") as HTMLElement;
     fireEvent.change(longRisk.querySelectorAll("select")[0], { target: { value: "pct" } });
     fireEvent.click(longRisk.querySelector(".sp-sweep")!);
-    expect(longRisk.querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(longRisk.querySelector(".range-chip")).toBeTruthy();
 
-    // Switch to the short tab: the same canonical axis's editor is visible there.
+    // Switch to the short tab: the same canonical axis's chip is visible there.
     fireEvent.click(screen.getByRole("button", { name: /Short/ }));
     const shortRisk = document.querySelector(".bt-risk") as HTMLElement;
-    expect(shortRisk.querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(shortRisk.querySelector(".range-chip")).toBeTruthy();
   });
 });
 
@@ -772,12 +808,12 @@ describe("persistent sweep setup", () => {
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
-    expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(document.querySelector(".range-chip")).toBeTruthy();
     cleanup();
     // Sweep mode is device-local persisted too, so the remount restores it.
     renderModal();
     openStrategy();
-    expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(document.querySelector(".range-chip")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Run sweep" })).toBeTruthy();
   });
 
@@ -790,7 +826,7 @@ describe("persistent sweep setup", () => {
     openStrategy();
     // The stale axis must not survive restore: no editor, and Run sweep stays
     // unavailable because no axis is configured.
-    expect(document.querySelector(".sweep-axis-row")).toBeNull();
+    expect(document.querySelector(".range-chip")).toBeNull();
     expect((screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -821,25 +857,27 @@ describe("persistent sweep setup", () => {
     expect(sweepStateSignal.value).not.toBeNull();
     enterSweepMode();
     expect(document.querySelector(".sweep-panel")).toBeTruthy();
-    expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(document.querySelector(".range-chip")).toBeTruthy();
     // A second row click (same single row here) still applies and re-runs.
     fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
     expect(onRun).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps a swept field's input visible but disabled", () => {
+  it("replaces a swept field's input with a RangeChip, and restores it on remove", () => {
     renderModal();
     enterSweepMode();
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     const before = row.querySelectorAll("input.bt-operand-length").length;
     fireEvent.click(row.querySelector(".sp-sweep")!);
-    const inputs = row.querySelectorAll("input.bt-operand-length");
-    expect(inputs.length).toBe(before);            // nothing hidden
-    expect((inputs[0] as HTMLInputElement).disabled).toBe(true);
-    // Toggling the sweep back off re-enables the field.
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    expect((row.querySelectorAll("input.bt-operand-length")[0] as HTMLInputElement).disabled).toBe(false);
+    // The swept field's value input is gone, replaced by its RangeChip.
+    expect(row.querySelectorAll("input.bt-operand-length").length).toBe(before - 1);
+    expect(row.querySelector(".range-chip")).toBeTruthy();
+    // Removing the sweep from the chip popover restores the plain input.
+    fireEvent.click(row.querySelector(".range-chip")!);
+    fireEvent.click(screen.getByRole("button", { name: "Remove from sweep" }));
+    expect(row.querySelectorAll("input.bt-operand-length").length).toBe(before);
+    expect(row.querySelector(".range-chip")).toBeNull();
   });
 
   it("toggling the last axis off disables Run sweep and persists the cleared set", () => {
@@ -850,14 +888,16 @@ describe("persistent sweep setup", () => {
     fireEvent.click(row.querySelector(".sp-sweep")!);
     const runBtn = () => screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement;
     expect(runBtn().disabled).toBe(false);
-    fireEvent.click(row.querySelector(".sp-sweep")!);   // off again
-    expect(document.querySelector(".sweep-axis-row")).toBeNull();
+    // Off again via the chip popover's Remove action.
+    fireEvent.click(row.querySelector(".range-chip")!);
+    fireEvent.click(screen.getByRole("button", { name: "Remove from sweep" }));
+    expect(document.querySelector(".range-chip")).toBeNull();
     expect(runBtn().disabled).toBe(true);
     // The empty set is what persists: a remount must not resurrect the axes.
     cleanup();
     renderModal();
     openStrategy();
-    expect(document.querySelector(".sweep-axis-row")).toBeNull();
+    expect(document.querySelector(".range-chip")).toBeNull();
     expect(runBtn().disabled).toBe(true);
   });
 
@@ -867,16 +907,16 @@ describe("persistent sweep setup", () => {
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
-    expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
-    // The Rules|Strategy segmented switch reuses the vertical tab's "Strategy"
+    expect(document.querySelector(".range-chip")).toBeTruthy();
+    // The User Defined|Built-in segmented switch reuses the vertical tab's "Strategy"
     // label; the seg button is the one that is NOT inside .bt-htabs.
     const segStrategy = screen
-      .getAllByRole("button", { name: "Strategy" })
+      .getAllByRole("button", { name: "Built-in" })
       .find((b) => !b.closest(".bt-htabs"))!;
     fireEvent.click(segStrategy);
-    expect(document.querySelector(".sweep-axis-row")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Rules" }));
-    expect(document.querySelector(".sweep-axis-row")).toBeTruthy();
+    expect(document.querySelector(".range-chip")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "User Defined" }));
+    expect(document.querySelector(".range-chip")).toBeTruthy();
   });
 
   it("prunes a stored param axis the file no longer declares when entering coded mode via the mode switch", async () => {
@@ -896,7 +936,7 @@ describe("persistent sweep setup", () => {
     enterSweepMode();
     openStrategy();
     const segStrategy = screen
-      .getAllByRole("button", { name: "Strategy" })
+      .getAllByRole("button", { name: "Built-in" })
       .find((b) => !b.closest(".bt-htabs"))!;
     fireEvent.click(segStrategy);
     // Let the strategy schema land so the param prune can validate against it.
@@ -905,7 +945,7 @@ describe("persistent sweep setup", () => {
     await screen.findByText("Fast EMA");
     await waitFor(() =>
       expect((screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement).disabled).toBe(true));
-    expect(document.querySelector(".sweep-axis-row")).toBeNull();
+    expect(document.querySelector(".range-chip")).toBeNull();
   });
 });
 
@@ -1028,7 +1068,7 @@ describe("backtest | sweep mode switch", () => {
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);   // no-op in Backtest mode
     enterSweepMode();
-    expect(document.querySelector(".sweep-axis-row")).toBeNull();
+    expect(document.querySelector(".range-chip")).toBeNull();
   });
 
   it("shows sweep progress on the Sweep segment while in Backtest mode", () => {

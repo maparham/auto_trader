@@ -182,6 +182,18 @@ export function saveBacktestSplit(split: BacktestSplit): void {
   saveLocal(BACKTEST_SPLIT_KEY, split);
 }
 
+// Backtest panel width (px), dragged via its left-edge handle. Device-local
+// view preference like the split above.
+const BACKTEST_PANEL_WIDTH_KEY = `${PREFIX}.backtestPanelWidth`;
+export const BACKTEST_PANEL_DEFAULT_WIDTH = 720;
+export function loadBacktestPanelWidth(): number {
+  const w = load<number>(BACKTEST_PANEL_WIDTH_KEY, BACKTEST_PANEL_DEFAULT_WIDTH);
+  return Number.isFinite(w) && w >= 560 ? w : BACKTEST_PANEL_DEFAULT_WIDTH;
+}
+export function saveBacktestPanelWidth(w: number): void {
+  saveLocal(BACKTEST_PANEL_WIDTH_KEY, w);
+}
+
 // Whether the docked backtest config panel was open. Device-local view
 // preference (like side & split) so the panel reopens after a reload if it was
 // open — showing the already-persisted config/results, without re-running.

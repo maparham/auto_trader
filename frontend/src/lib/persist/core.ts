@@ -120,6 +120,7 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   `${PREFIX}.backtestSide`,
   `${PREFIX}.backtestMode`,
   `${PREFIX}.backtestSplit`,
+  `${PREFIX}.backtestPanelWidth`,
   `${PREFIX}.backtestPeriodsShown`,
   `${PREFIX}.backtestMarkersShown`,
   `${PREFIX}.backtestEquityShown`,

@@ -3,13 +3,11 @@
 // switch idiom (bool, matches OrderTicket's ExitRow), or a select (choice),
 // with the default shown subtly and changed values tinted.
 
-import { Fragment } from "react";
-
 import type { ParamSpec, ParamValues } from "../api";
 import type { RangeAxis, SweepAxis } from "../lib/sweep";
 import InfoTip from "./InfoTip";
 import NumberField from "./NumberField";
-import { SweepAxisRow } from "./SweepAxisRow";
+import { RangeChip } from "./RangeChip";
 import Tooltip from "./Tooltip";
 
 interface Props {
@@ -50,8 +48,7 @@ export function StrategyParams({ specs, values, onChange, sweep }: Props) {
         const swept = !!axis;
 
         return (
-          <Fragment key={s.name}>
-            <div className={`sp-row${changed ? " sp-changed" : ""}`}>
+          <div key={s.name} className={`sp-row${changed ? " sp-changed" : ""}`}>
             <span className="sp-label">
               {s.label}
               {s.help && <InfoTip text={s.help} />}
@@ -74,15 +71,18 @@ export function StrategyParams({ specs, values, onChange, sweep }: Props) {
                   </option>
                 ))}
               </select>
+            ) : axis && sweep ? (
+              <RangeChip
+                axis={axis}
+                onPatch={(p) => sweep.onAxisChange(axis.target, p)}
+                onRemove={() => sweep.onToggle(`param:${s.name}`, s)}
+              />
             ) : (
-              // Stays visible while swept (disabled: the sweep axis owns the
-              // value), matching the rule-operand and risk fields.
               <NumberField
                 value={v as number}
                 step={s.step ?? undefined}
                 onChange={(n) => set(s.name, clamp(s, n))}
                 className="sp-num"
-                disabled={swept}
               />
             )}
             {(s.type === "int" || s.type === "float") && sweep && (
@@ -97,11 +97,7 @@ export function StrategyParams({ specs, values, onChange, sweep }: Props) {
               </Tooltip>
             )}
             <span className="sp-default">default {String(s.default)}</span>
-            </div>
-            {axis && sweep && (
-              <SweepAxisRow axis={axis} onChange={(p) => sweep.onAxisChange(axis.target, p)} />
-            )}
-          </Fragment>
+          </div>
         );
       })}
     </div>
