@@ -7,8 +7,10 @@
 // like a hand-picked color.
 //
 // Default colors are tuned as light-theme washes (the default theme): a
-// bright→dim / cool→warm progression. In dark theme they still read sensibly — the
-// same color composited over the dark background nudges it lighter.
+// bright→dim / cool→warm progression, applied at full opacity. In dark theme a
+// full-opacity light wash would replace the dark background (chart snaps light), so
+// the App theme effect caps the effective opacity in dark (DARK_CHART_BG_CAP) — the
+// wash then only lifts the dark background toward the color instead of replacing it.
 
 import type { Settings } from "../theme";
 

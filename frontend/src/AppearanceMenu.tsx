@@ -104,10 +104,7 @@ export default function AppearanceMenu({ settings, onChange }: Props) {
               <span className="appr-swatch appr-swatch--default" aria-hidden="true" />
               <button
                 className="appr-mood-label"
-                onClick={() => {
-                  onChange(clearBg(settings));
-                  setOpen(false);
-                }}
+                onClick={() => onChange(clearBg(settings))}
               >
                 Theme default
               </button>
@@ -127,10 +124,7 @@ export default function AppearanceMenu({ settings, onChange }: Props) {
                   />
                   <button
                     className="appr-mood-label"
-                    onClick={() => {
-                      onChange(applyMood(settings, def));
-                      setOpen(false);
-                    }}
+                    onClick={() => onChange(applyMood(settings, def))}
                   >
                     {def.label}
                   </button>

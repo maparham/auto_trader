@@ -2802,12 +2802,7 @@ function SidePanel({
   return (
     <>
       {/* The arm switch now lives beside the Long/Short tabs in the parent; this
-          panel keeps only the parked note + inert wrapper. */}
-      {!enabled && (
-        <div className="al-note bt-parked-note">
-          Rules are kept. The {side} side won't open or close positions until you switch it back on.
-        </div>
-      )}
+          panel keeps only the inert wrapper. */}
       {/* When the side is parked, `inert` makes every rule/field/button inside
           non-interactive (pointer AND keyboard) — the switch above stays live so
           it can be turned back on. `.bt-parked` supplies the dimmed visual cue. */}

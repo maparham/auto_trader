@@ -152,6 +152,11 @@ registerBacktestIndicators();
 registerCustomOverlays();
 registerPositionLine();
 
+// Max effective opacity for the chart-pane background wash in DARK theme. The bg
+// colors/moods are light washes; capping their opacity in dark lets them lift the
+// dark background toward the color instead of replacing it (see the theme effect).
+const DARK_CHART_BG_CAP = 0.15;
+
 const DEFAULT_SYMBOL: Instrument = {
   epic: "US100",
   name: "US Tech 100",
@@ -873,11 +878,21 @@ export default function App() {
     // background (not toward transparent) so it stays opaque — otherwise a low
     // opacity would reveal the grey grid behind the pane. So opacity 0 = the theme
     // background, opacity 1 = the full picked color, a clean dim/wash-out knob.
+    //
+    // The picked colors (and every bg "mood" preset) are light washes tuned for the
+    // light theme. In DARK theme a full-opacity light wash would replace the dark
+    // background and leave the chart glaringly light. So cap the effective opacity in
+    // dark (Math.min, never scaling up) — the wash then only lifts the dark bg toward
+    // the color instead of replacing it, dimming toward the active theme. Light is
+    // untouched, so moods look exactly as picked there; a user's own low opacity is
+    // never dimmed twice.
     if (settings.chartBg) {
+      const op = settings.chartBgOpacity ?? 1;
+      const effOpacity = settings.theme === "dark" ? Math.min(op, DARK_CHART_BG_CAP) : op;
       const bg = compositeOverHex(
         settings.chartBg,
         chartColors[settings.theme].bg,
-        settings.chartBgOpacity ?? 1,
+        effOpacity,
       );
       document.documentElement.style.setProperty("--chart-bg", bg);
     } else {
