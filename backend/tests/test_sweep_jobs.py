@@ -53,7 +53,10 @@ def test_cancel_stops_and_keeps_partial(strat_dir, tmp_path):
         STRAT.replace("return []", "import time; time.sleep(0.3); return []"))
     mgr = SweepJobManager(grace_seconds=2.0)  # kill stuck workers fast in test
     job = submit(mgr, str(tmp_path), [{"param:n": i} for i in range(3, 43)])
-    time.sleep(1.0)                       # let a few combos land
+    t0 = time.time()                      # wait for a first row, not a fixed
+    while job.done == 0 and time.time() - t0 < 30:   # sleep: spawn startup time
+        time.sleep(0.05)                  # varies wildly with machine load
+    assert job.done > 0, "no combo completed before cancel"
     assert mgr.cancel(job.job_id) is True
     wait(job, timeout=15)
     assert job.cancelled is True and 0 < job.done < job.total
