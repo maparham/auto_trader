@@ -30,8 +30,8 @@ and keep the committed `fly.toml`.
 
 ## 2. Create the data volume
 
-The mount in `fly.toml` is `candle_cache -> /data`. The four sqlite databases
-(candles, ticks, app state, backtest runs) live there via the
+The mount in `fly.toml` is `candle_cache -> /data`. The five sqlite databases
+(candles, ticks, app state, backtest runs, sweep archive) live there via the
 `CAPITAL_*_DB_PATH` overrides baked into the Dockerfile.
 
 ```

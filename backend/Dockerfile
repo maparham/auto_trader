@@ -28,13 +28,20 @@ RUN uv sync --frozen --no-dev
 ENV CAPITAL_TICK_DB_PATH=/data/tick_history.db \
     CAPITAL_CANDLE_DB_PATH=/data/candle_history.db \
     CAPITAL_STATE_DB_PATH=/data/app_state.db \
-    CAPITAL_RUNS_DB_PATH=/data/backtest_runs.db
+    CAPITAL_RUNS_DB_PATH=/data/backtest_runs.db \
+    CAPITAL_SWEEPS_DB_PATH=/data/backtest_sweeps.db
 
 # Build-time smoke test: the app imports and the strategies dir resolves inside
 # the image (guards against an editable-install regression that would make coded
 # strategies silently unavailable on the host). Doubles as the import check the
-# runbook can't run locally without a docker daemon.
-RUN uv run python -c "import auto_trader.api.app; from auto_trader.strategy import loader; assert loader.STRATEGIES_DIR.is_dir(), loader.STRATEGIES_DIR"
+# runbook can't run locally without a docker daemon. The /data volume only
+# exists at runtime, so point the eagerly-created sqlite files at /tmp here.
+RUN CAPITAL_TICK_DB_PATH=/tmp/tick.db \
+    CAPITAL_CANDLE_DB_PATH=/tmp/candle.db \
+    CAPITAL_STATE_DB_PATH=/tmp/state.db \
+    CAPITAL_RUNS_DB_PATH=/tmp/runs.db \
+    CAPITAL_SWEEPS_DB_PATH=/tmp/sweeps.db \
+    uv run python -c "import auto_trader.api.app; from auto_trader.strategy import loader; assert loader.STRATEGIES_DIR.is_dir(), loader.STRATEGIES_DIR"
 
 EXPOSE 8000
 
