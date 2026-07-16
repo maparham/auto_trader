@@ -1047,20 +1047,24 @@
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
 }
-.bt-results-col-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+/* Horizontal insets the stacked region gets from .bt-results-region .bt-results;
+   applied on the body here so sweep content is inset too. */
+.bt-results-col-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 0 16px 12px; }
 /* Header row that carries the stacked-region "move to column" button beside the
    collapse toggle. */
 .bt-results-head-row { display: flex; align-items: center; justify-content: space-between; }
 /* Right-pinned cluster in the results header: the Backtest | Sweep mode switch
    plus the dock/undock layout button. */
 .bt-results-head-actions { display: inline-flex; align-items: center; gap: 8px; }
+/* Left cluster in the docked column's header: dock-back button + title. */
+.bt-results-head-left { display: inline-flex; align-items: center; gap: 8px; }
 .bt-results-layout-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; padding: 0; margin-right: 8px;
-  border: none; background: transparent; color: var(--text-dim);
+  width: 26px; height: 26px; padding: 0;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
   font-size: 15px; line-height: 1; cursor: pointer; border-radius: 4px;
 }
-.bt-results-layout-btn:hover { background: var(--hover); color: var(--text); }
+.bt-results-layout-btn:hover { background: var(--hover); border-color: var(--text-faint); }
 /* Left-edge drag handle: grab to resize the panel, double-click to reset. */
 .bt-resize-handle {
   position: absolute;

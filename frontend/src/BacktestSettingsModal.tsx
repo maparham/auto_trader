@@ -1486,19 +1486,21 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           }}
         />
         <div className="bt-cfg-head">
-          <span className="bt-cfg-title">Results</span>
-          <span className="bt-results-head-actions">
-            {modeSeg}
+          {/* Dock-back sits at the header's far LEFT (away from the config
+              panel) and points right, toward the panel the results return to. */}
+          <span className="bt-results-head-left">
             <Tooltip content="Dock results back into the panel">
               <button
                 className="bt-results-layout-btn"
                 aria-label="Dock results back into the panel"
                 onClick={() => setResultsSideBySide(false)}
               >
-                ⇤
+                <ColumnGlyph flipped />
               </button>
             </Tooltip>
+            <span className="bt-cfg-title">Results</span>
           </span>
+          <span className="bt-results-head-actions">{modeSeg}</span>
         </div>
         <div className="bt-results-col-body">{resultsBody}</div>
       </aside>
@@ -2286,7 +2288,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           </div>
         </div>
 
-        {!split.collapsed && (
+        {!sideBySide && !split.collapsed && (
           <div
             className="bt-split-divider"
             role="separator"
@@ -2308,18 +2310,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 </span>
                 Results
               </button>
-              <span className="bt-results-head-actions">
-                {modeSeg}
-                <Tooltip content="Show results in a side column">
-                  <button
-                    className="bt-results-layout-btn"
-                    aria-label="Show results in a side column"
-                    onClick={() => setResultsSideBySide(true)}
-                  >
-                    ⇥
-                  </button>
-                </Tooltip>
-              </span>
+              <span className="bt-results-head-actions">{modeSeg}</span>
             </div>
             {!split.collapsed && resultsBody}
           </div>
@@ -2328,6 +2319,17 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
 
         <div className="modal-foot bt-cfg-foot">
           <RunBar
+            lead={
+              <Tooltip content={sideBySide ? "Dock results back into the panel" : "Show results in a side column"}>
+                <button
+                  className="bt-results-layout-btn"
+                  aria-label={sideBySide ? "Dock results back into the panel" : "Show results in a side column"}
+                  onClick={() => setResultsSideBySide(!sideBySide)}
+                >
+                  <ColumnGlyph flipped={sideBySide} />
+                </button>
+              </Tooltip>
+            }
             sweepInfo={<>
               {holdout && (
                 <span className="sweep-counter bt-holdout-badge">
@@ -2450,6 +2452,30 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         />
       )}
     </>
+  );
+}
+
+// Results-column icon: a panel with a column pane on the left and an arrow
+// pointing at it — results pop out INTO that column. `flipped` mirrors the
+// whole icon for the closing direction (pane on the right = the config panel,
+// arrow pointing right = results dock back into it). `currentColor` so it
+// inherits the button's colour.
+function ColumnGlyph({ flipped = false }: { flipped?: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="15"
+      height="15"
+      aria-hidden="true"
+      style={flipped ? { transform: "scaleX(-1)" } : undefined}
+    >
+      <g fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+        <path d="M5.5 2.5 V13.5" />
+        <path d="M12.5 8 H8.2" />
+        <path d="M10.2 5.9 L8 8 L10.2 10.1" />
+      </g>
+    </svg>
   );
 }
 

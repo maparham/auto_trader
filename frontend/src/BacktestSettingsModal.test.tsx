@@ -231,7 +231,7 @@ describe("BacktestSettingsModal results side-by-side column", () => {
     expect(document.querySelector(".bt-results-region")).toBeTruthy();
     expect(document.querySelector(".bt-results-col")).toBeNull();
 
-    // Turn on side-by-side.
+    // Turn on side-by-side via the footer toggle (the single opener).
     fireEvent.click(screen.getByLabelText("Show results in a side column"));
     const col = document.querySelector(".bt-results-col");
     expect(col).toBeTruthy();
@@ -239,8 +239,10 @@ describe("BacktestSettingsModal results side-by-side column", () => {
     expect(document.querySelector(".bt-results-region")).toBeNull();
     expect(within(col as HTMLElement).getByText(/Run a backtest to see results/)).toBeTruthy();
 
-    // Dock back.
-    fireEvent.click(screen.getByLabelText("Dock results back into the panel"));
+    // Dock back. Two closers exist while docked (column header + footer toggle).
+    const closers = screen.getAllByLabelText("Dock results back into the panel");
+    expect(closers.length).toBe(2);
+    fireEvent.click(closers[0]);
     expect(document.querySelector(".bt-results-col")).toBeNull();
     expect(document.querySelector(".bt-results-region")).toBeTruthy();
   });

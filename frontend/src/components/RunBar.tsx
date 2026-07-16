@@ -52,6 +52,7 @@ export function ModeSeg(props: {
 }
 
 export function RunBar(props: {
+  lead?: ReactNode;
   sweepInfo: ReactNode;
   runClusterLead?: ReactNode;
   onGoLive: () => void;
@@ -60,6 +61,7 @@ export function RunBar(props: {
   onRun: () => void;
 }): JSX.Element {
   const {
+    lead,
     sweepInfo,
     runClusterLead,
     onGoLive,
@@ -70,6 +72,9 @@ export function RunBar(props: {
 
   return (
     <>
+      {/* Leftmost slot: the results layout toggle lives here so it reads as a
+          panel-level control rather than part of the results view. */}
+      {lead}
       {/* Variable sweep info lives in this always-present flex slot, so the
           pinned controls on either side never move when the mode flips or
           axes come and go. */}
