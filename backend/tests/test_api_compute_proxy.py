@@ -29,8 +29,10 @@ def remote_env(monkeypatch):
 
 @pytest.fixture
 def no_remote_env(monkeypatch):
-    monkeypatch.delenv("COMPUTE_HOST_URL", raising=False)
-    monkeypatch.delenv("COMPUTE_HOST_TOKEN", raising=False)
+    # Empty strings, not delenv: process env must shadow any COMPUTE_HOST_*
+    # values in the developer's real backend/.env (the config falls back to it).
+    monkeypatch.setenv("COMPUTE_HOST_URL", "")
+    monkeypatch.setenv("COMPUTE_HOST_TOKEN", "")
     yield
 
 
@@ -45,7 +47,7 @@ def test_status_false_when_unconfigured(no_remote_env):
 
 def test_status_false_when_only_url_set(monkeypatch):
     monkeypatch.setenv("COMPUTE_HOST_URL", REMOTE_URL)
-    monkeypatch.delenv("COMPUTE_HOST_TOKEN", raising=False)
+    monkeypatch.setenv("COMPUTE_HOST_TOKEN", "")
     res = client.get("/api/compute/status")
     assert res.json() == {"remoteConfigured": False}
 

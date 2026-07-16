@@ -7,19 +7,20 @@ passes `?target=remote`, so the heavy engine runs off the user's machine. The
 forward is UNTOUCHED: no local validation, probe, or job creation happens on the
 proxy path (the remote host does all of that).
 
-Env is read PER REQUEST (matching guard.py) so tests can monkeypatch without
-reloading the app:
+Config is read PER REQUEST (matching guard.py) so tests can monkeypatch without
+reloading the app; process env wins, with `.env` as the fallback source (the
+backend never loads `.env` into os.environ, so reading it here is what lets the
+documented "add COMPUTE_HOST_* to backend/.env" flow work):
 - COMPUTE_HOST_URL   e.g. https://x.fly.dev  (trailing slash stripped)
 - COMPUTE_HOST_TOKEN bearer token the remote host's guard expects
 """
 
 from __future__ import annotations
 
-import os
-
 import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 URL_ENV = "COMPUTE_HOST_URL"
 TOKEN_ENV = "COMPUTE_HOST_TOKEN"
@@ -27,12 +28,22 @@ TOKEN_ENV = "COMPUTE_HOST_TOKEN"
 router = APIRouter()
 
 
+class _ComputeHostSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    compute_host_url: str = ""
+    compute_host_token: str = ""
+
+
 def _config() -> tuple[str, str]:
-    """Read (url, token) from env at request time; url has any trailing slash
-    stripped so `f"{url}{path}"` never doubles the separator."""
-    url = os.environ.get(URL_ENV, "").rstrip("/")
-    token = os.environ.get(TOKEN_ENV, "")
-    return url, token
+    """Read (url, token) at request time (process env beats .env); url has any
+    trailing slash stripped so `f"{url}{path}"` never doubles the separator."""
+    cfg = _ComputeHostSettings()
+    return cfg.compute_host_url.rstrip("/"), cfg.compute_host_token
 
 
 @router.get("/api/compute/status")
