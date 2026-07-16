@@ -110,7 +110,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
       handle.priceSideRef.current !== token.side ||
       handle.resRef.current !== token.resolution;
     // Take the scroll-back loader's mutex so klinecharts' own Forward-load (which
-    // our setBars(backward=true) keeps arming) can't page concurrently and race us
+    // our setBars(forward=true) keeps arming) can't page concurrently and race us
     // over cursorSecRef/exhaustedRef. If a scroll-back page is ALREADY in flight,
     // wait it out first — otherwise its .finally would flip loadingRef false partway
     // through our walk and reopen the gate. (Bounded so active scrolling can't wedge

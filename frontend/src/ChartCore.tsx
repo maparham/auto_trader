@@ -26,7 +26,7 @@ import {
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
-import { pageHistoryBack } from "./lib/historyPaging";
+import { pageHistoryBack, scrollbackLoadOlder } from "./lib/historyPaging";
 import { klineStyles } from "./lib/chartTheme";
 import ChartLegend, {
   type ChartLegendHandle,
@@ -219,6 +219,13 @@ const PAGE_BARS = 500; // older bars to request per scroll-back page
 // Empty windows can be legitimate (weekend/overnight gaps), so step back a few
 // windows before declaring history exhausted instead of stopping at the first gap.
 const MAX_EMPTY_WINDOWS = 6;
+// A window count alone under-budgets fine timeframes: 6 windows of 1m bars span
+// only ~50h, which a 3-4 day holiday closure exceeds, latching a false
+// exhaustion mid-gap. Budget by TIME as well: keep walking until this much
+// continuous emptiness before calling the broker's history bottomed out
+// (2 weeks dwarfs any real market closure). The count acts as a floor for
+// coarse timeframes whose windows already span years.
+const MAX_EMPTY_GAP_SEC = 14 * 86400;
 
 export default function ChartCore({
   cellId,
@@ -2077,71 +2084,62 @@ export default function ChartCore({
           done([], !exhaustedRef.current);
           return;
         }
-        loadingRef.current = true;
-        const resSec = RESOLUTION_SECONDS[resRef.current] ?? 60;
-        const toSec = cursorSecRef.current - 1;
-        // Cap the per-page span. For high/derived timeframes PAGE_BARS*resSec is
-        // enormous (a 1Y page = 500 years), and the backend folds that from DAY
-        // base bars — Capital.get_candles would loop ~180 sequential requests for
-        // one page, stalling the chart and tripping the breaker. Bounding the span
-        // just makes pages smaller (more of them); it stays hole-free because the
-        // cursor follows fromSec exactly. ~6yr keeps the base fetch to a few pages.
-        const MAX_PAGE_SPAN_SEC = 6 * 365 * 86400;
-        const fromSec = toSec - Math.min(PAGE_BARS * resSec, MAX_PAGE_SPAN_SEC);
-        const boundary = timestamp;
         const epic = epicRef.current;
         const resolution = resRef.current;
         const broker = brokerIdRef.current;
-        // fetchRangeStrict (not fetchRange): a non-2xx (503/504 from an open broker
-        // breaker or a slow source) THROWS here and lands in .catch as a transient
-        // "retry on next scroll", instead of being flattened to an empty page that
-        // would count toward MAX_EMPTY_WINDOWS and permanently latch exhaustedRef —
-        // walling scroll-back for the whole session over a momentary broker hiccup.
-        // A genuine empty 200 (real gap / end of history) still returns [] and does
-        // count toward exhaustion below.
-        fetchRangeStrict(epic, resolution, fromSec, toSec, priceSideRef.current, broker)
-          .then((older) => {
-            // Defend against the symbol/broker changing mid-flight.
-            if (
-              epic !== epicRef.current ||
-              resolution !== resRef.current ||
-              broker !== brokerIdRef.current
-            ) {
-              done([], true);
-              return;
-            }
-            cursorSecRef.current = fromSec; // advance back even across gaps
-            const fresh = older.filter((b) => b.timestamp < boundary);
-            if (fresh.length === 0) {
-              emptyStreakRef.current += 1;
-              if (emptyStreakRef.current >= MAX_EMPTY_WINDOWS) {
-                exhaustedRef.current = true;
-                done([], false);
-              } else {
-                done([], true); // keep walking back past the gap
-              }
-            } else {
-              emptyStreakRef.current = 0;
-              // A Forward load: klinecharts' own updatePointPosition shifts
-              // dataIndex-only overlay points by the prepend size here — do NOT
-              // shift them again (see applyOlderBars for the INIT-type path).
-              done(fresh, true);
-              // Extend any HTF EMA/MA overlay back over the newly-loaded range so
-              // the MTF curve doesn't stop where the older bars begin. `fresh[0]`
-              // is the new global oldest (explicit — klinecharts may not have merged
-              // the prepend into getDataList yet).
-              extendMtfCoverage(fresh[0].timestamp);
-            }
-          })
-          // Transient fetch failure (broker breaker open / slow source / network):
-          // report more=true WITHOUT advancing cursorSecRef or touching
-          // emptyStreakRef, so the same window retries on the next scroll rather than
-          // latching exhaustedRef. The backend already caches whatever it fetched
-          // before failing, so the retry resumes from deeper history.
-          .catch(() => done([], true))
-          .finally(() => {
-            loadingRef.current = false;
-          });
+        const side = priceSideRef.current;
+        const resSec = RESOLUTION_SECONDS[resolution] ?? 60;
+        // Cap the per-page span. For high/derived timeframes PAGE_BARS*resSec is
+        // enormous (a 1Y page = 500 years), and the backend folds that from DAY
+        // base bars: Capital.get_candles would loop ~180 sequential requests for
+        // one page, stalling the chart and tripping the breaker. Bounding the span
+        // just makes pages smaller (more of them); it stays hole-free because the
+        // cursor follows fromSec exactly. ~6yr keeps the base fetch to a few pages.
+        const pageSpanSec = Math.min(PAGE_BARS * resSec, 6 * 365 * 86400);
+        // scrollbackLoadOlder owns the mutex ordering and gap-crossing rules;
+        // see its contract note in historyPaging.ts.
+        void scrollbackLoadOlder<KLineData>({
+          boundary: timestamp,
+          resSec,
+          pageBars: PAGE_BARS,
+          maxPageSpanSec: pageSpanSec,
+          // Time-based exhaustion budget with the window count as a floor; see
+          // MAX_EMPTY_GAP_SEC.
+          maxEmpty: Math.max(MAX_EMPTY_WINDOWS, Math.ceil(MAX_EMPTY_GAP_SEC / pageSpanSec)),
+          cursorSec: cursorSecRef,
+          emptyStreak: emptyStreakRef,
+          exhausted: exhaustedRef,
+          loading: loadingRef,
+          // Stale once the series identity drifts mid-flight, the chart is torn
+          // down, or a quick-range pick takes over paging (its coverage walk
+          // owns the mutex; without this check an in-flight page here would
+          // stomp cursorSecRef and prepend bars under the walk's merge).
+          isStale: () =>
+            !chartRef.current ||
+            pendingRangeRef.current !== null ||
+            epic !== epicRef.current ||
+            resolution !== resRef.current ||
+            broker !== brokerIdRef.current ||
+            side !== priceSideRef.current,
+          // fetchRangeStrict (not fetchRange): a non-2xx (503/504 from an open
+          // broker breaker or a slow source) THROWS and is treated as a transient
+          // "retry on next scroll", instead of being flattened to an empty page
+          // that would count toward the exhaustion budget and permanently latch
+          // exhaustedRef, walling scroll-back for the whole session over a
+          // momentary broker hiccup. A genuine empty 200 (real gap / end of
+          // history) still returns [] and does count toward exhaustion.
+          fetchOlder: (fromSec, toSec) =>
+            fetchRangeStrict(epic, resolution, fromSec, toSec, side, broker),
+          // A Forward load's prepend: klinecharts' own updatePointPosition shifts
+          // dataIndex-only overlay points by the prepend size, so do NOT shift
+          // them again (see applyOlderBars for the INIT-type path).
+          done,
+          // Extend any HTF EMA/MA overlay back over the newly-loaded range so
+          // the MTF curve doesn't stop where the older bars begin. `fresh[0]`
+          // is the new global oldest (explicit, because klinecharts may not have
+          // merged the prepend into getDataList yet).
+          onFresh: (fresh) => extendMtfCoverage(fresh[0].timestamp),
+        });
       };
       overlays.attach(chart, dataFacade);
       // On-chart trade lines for this cell. Subscribes to the shared trades poll
