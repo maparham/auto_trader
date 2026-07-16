@@ -15,6 +15,7 @@ import { useEffect, useImperativeHandle, useRef, type Ref, type RefObject } from
 import { type Chart, type Indicator, type KLineData } from "klinecharts";
 import type { ChartController } from "./lib/chartController";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import {
   indTypeOf,
   prevHlDegenerateInfo,
@@ -304,53 +305,59 @@ export default function ChartLegend({
         {/* Live "ping" dot — signals streaming without overloading the symbol with the
             UP/green color (green on a down bar reads as a mixed signal). */}
         {ctx.stale ? (
-          <span
-            className="cl-live-dot cl-stale"
-            title="No recent data — the feed is connected but not receiving ticks"
-          />
+          <Tooltip content="No recent data: the feed is connected but not receiving ticks">
+            <span className="cl-live-dot cl-stale" />
+          </Tooltip>
         ) : (
-          ctx.live && <span className="cl-live-dot" title="Live" aria-hidden="true" />
+          ctx.live && (
+            <Tooltip content="Live">
+              <span className="cl-live-dot" aria-hidden="true" />
+            </Tooltip>
+          )
         )}
-        <span
-          className="cl-sym cl-sym-clickable"
-          title="Change instrument"
-          onClick={(e) => {
-            e.stopPropagation();
-            onChangeSymbol();
-          }}
-        >
-          {ctx.symbol}
-        </span>
+        <Tooltip content="Change instrument">
+          <span
+            className="cl-sym cl-sym-clickable"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChangeSymbol();
+            }}
+          >
+            {ctx.symbol}
+          </span>
+        </Tooltip>
         {/* The symbol name now changes the instrument (symbol search); the ⓘ button
             is the affordance for the instrument-details modal. */}
-        <button
-          className="cl-info"
-          aria-label="Instrument details"
-          title="Instrument details"
-          onClick={(e) => {
-            e.stopPropagation();
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            onOpenDetails(r.left, r.bottom + 6);
-          }}
-        >
-          {/* A rounded-square accent chip with a serif "i" — non-round so it never
-              competes with the circular chart markers, and avoids the old "bullseye"
-              (a ringed ⓘ glyph inside a ringed circle). */}
-          <span aria-hidden="true">i</span>
-        </button>
+        <Tooltip content="Instrument details">
+          <button
+            className="cl-info"
+            aria-label="Instrument details"
+            onClick={(e) => {
+              e.stopPropagation();
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              onOpenDetails(r.left, r.bottom + 6);
+            }}
+          >
+            {/* A rounded-square accent chip with a serif "i" — non-round so it never
+                competes with the circular chart markers, and avoids the old "bullseye"
+                (a ringed ⓘ glyph inside a ringed circle). */}
+            <span aria-hidden="true">i</span>
+          </button>
+        </Tooltip>
         {/* Hide/show the candlesticks only (indicators/drawings/price marks stay).
             Always visible — when candles are hidden the user needs an obvious way
             back — so it's not hover-gated like the indicator-row icons. */}
-        <button
-          className={`cl-icon cl-sym-eye${candleHidden ? " cl-hidden" : ""}`}
-          title={candleHidden ? "Show candles" : "Hide candles"}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleCandle();
-          }}
-        >
-          {candleHidden ? ICON_EYE_OFF : ICON_EYE}
-        </button>
+        <Tooltip content={candleHidden ? "Show candles" : "Hide candles"}>
+          <button
+            className={`cl-icon cl-sym-eye${candleHidden ? " cl-hidden" : ""}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCandle();
+            }}
+          >
+            {candleHidden ? ICON_EYE_OFF : ICON_EYE}
+          </button>
+        </Tooltip>
         <span className="cl-meta">
           · {ctx.period} · {ctx.broker}
         </span>
@@ -396,18 +403,19 @@ export default function ChartLegend({
           rendered when there are rows to collapse. */}
       {rows.length > 0 && (
         <div className="cl-row cl-collapse-row">
-          <button
-            className={`cl-icon cl-icon-svg cl-icon-stroke cl-collapse${
-              collapsed ? " cl-collapsed" : ""
-            }`}
-            title={collapsed ? "Show indicator legend" : "Hide indicator legend"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleCollapsed();
-            }}
-          >
-            {ICON_CHEVRON_UP}
-          </button>
+          <Tooltip content={collapsed ? "Show indicator legend" : "Hide indicator legend"}>
+            <button
+              className={`cl-icon cl-icon-svg cl-icon-stroke cl-collapse${
+                collapsed ? " cl-collapsed" : ""
+              }`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleCollapsed();
+              }}
+            >
+              {ICON_CHEVRON_UP}
+            </button>
+          </Tooltip>
         </div>
       )}
 
@@ -415,17 +423,18 @@ export default function ChartLegend({
           dock at the pane's top-right, but that corner now belongs to the cell
           controls (detach/maximize), which would cover it while hovered. */}
       {cacheBadge && (
-        <button
-          className="cl-cache-corner-badge"
-          title={cacheBadge.title}
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenCacheStats();
-          }}
-        >
-          <span className={`cl-cache-dot cl-cache-${cacheBadge.state}`} aria-hidden="true" />
-          {cacheBadge.label}
-        </button>
+        <Tooltip content={cacheBadge.title}>
+          <button
+            className="cl-cache-corner-badge"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenCacheStats();
+            }}
+          >
+            <span className={`cl-cache-dot cl-cache-${cacheBadge.state}`} aria-hidden="true" />
+            {cacheBadge.label}
+          </button>
+        </Tooltip>
       )}
     </div>
 
@@ -654,23 +663,24 @@ function SubPaneLegend({
 }) {
   return (
     <div className="chart-legend sub-pane-legend" style={{ top: data.top }}>
-      <button
-        className="sp-drag-handle"
-        title="Drag to reorder"
-        onClick={(e) => e.stopPropagation()}
-        onPointerDown={(e) => {
-          if (e.button !== 0) return; // primary button only — no right-click drags
-          e.stopPropagation();
-          e.preventDefault();
-          onStartReorder(data.paneId, data.rows[0]?.name ?? "");
-        }}
-      >
-        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-          <circle cx="9" cy="6" r="1.6" /><circle cx="15" cy="6" r="1.6" />
-          <circle cx="9" cy="12" r="1.6" /><circle cx="15" cy="12" r="1.6" />
-          <circle cx="9" cy="18" r="1.6" /><circle cx="15" cy="18" r="1.6" />
-        </svg>
-      </button>
+      <Tooltip content="Drag to reorder">
+        <button
+          className="sp-drag-handle"
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return; // primary button only — no right-click drags
+            e.stopPropagation();
+            e.preventDefault();
+            onStartReorder(data.paneId, data.rows[0]?.name ?? "");
+          }}
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <circle cx="9" cy="6" r="1.6" /><circle cx="15" cy="6" r="1.6" />
+            <circle cx="9" cy="12" r="1.6" /><circle cx="15" cy="12" r="1.6" />
+            <circle cx="9" cy="18" r="1.6" /><circle cx="15" cy="18" r="1.6" />
+          </svg>
+        </button>
+      </Tooltip>
       {/* Rows in their own column so the grip sits to their LEFT (the card lays out
           as a row: [grip | rows]), not stacked above the first row. */}
       <div className="sp-rows">

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { RANGE_KEYS, TRAILING_KEYS, RANGE_DESCRIPTIONS, type RangeKey } from "./lib/rangeWindow";
+import Tooltip from "./components/Tooltip";
 
 export interface ChartRangeBarProps {
   activeKey: RangeKey | null;
@@ -95,51 +96,52 @@ export default function ChartRangeBar({
       data-testid="chart-range-bar"
     >
       {RANGE_KEYS.map((k) => (
-        <button
-          key={k}
-          type="button"
-          className={`crb-btn${k === activeKey ? " active" : ""}`}
-          aria-pressed={k === activeKey}
-          title={RANGE_DESCRIPTIONS[k]}
-          disabled={disabled}
-          onClick={() => onPick(k)}
-        >
-          {k}
-        </button>
+        <Tooltip key={k} content={RANGE_DESCRIPTIONS[k]}>
+          <button
+            type="button"
+            className={`crb-btn${k === activeKey ? " active" : ""}`}
+            aria-pressed={k === activeKey}
+            disabled={disabled}
+            onClick={() => onPick(k)}
+          >
+            {k}
+          </button>
+        </Tooltip>
       ))}
       <span className="crb-sep" />
       {/* Trailing offsets: left edge exactly N back from now (vs the calendar
           period-to-date set above). */}
       {TRAILING_KEYS.map((k) => (
-        <button
-          key={k}
-          type="button"
-          className={`crb-btn${k === activeKey ? " active" : ""}`}
-          aria-pressed={k === activeKey}
-          title={RANGE_DESCRIPTIONS[k]}
-          disabled={disabled}
-          onClick={() => onPick(k)}
-        >
-          {k}
-        </button>
+        <Tooltip key={k} content={RANGE_DESCRIPTIONS[k]}>
+          <button
+            type="button"
+            className={`crb-btn${k === activeKey ? " active" : ""}`}
+            aria-pressed={k === activeKey}
+            disabled={disabled}
+            onClick={() => onPick(k)}
+          >
+            {k}
+          </button>
+        </Tooltip>
       ))}
       <span className="crb-sep" />
-      <button
-        ref={calBtnRef}
-        type="button"
-        className="crb-btn crb-cal"
-        aria-label="Open date picker"
-        title="Go to a specific date"
-        aria-expanded={calOpen}
-        disabled={disabled}
-        onClick={() => setCalOpen((o) => !o)}
-      >
-        {/* simple calendar glyph; matches the screenshot's outline icon */}
-        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="1.5" y="2.5" width="13" height="12" rx="1.5" fill="none" stroke="currentColor" />
-          <path d="M1.5 5.5h13M5 1v3M11 1v3" stroke="currentColor" />
-        </svg>
-      </button>
+      <Tooltip content="Go to a specific date">
+        <button
+          ref={calBtnRef}
+          type="button"
+          className="crb-btn crb-cal"
+          aria-label="Open date picker"
+          aria-expanded={calOpen}
+          disabled={disabled}
+          onClick={() => setCalOpen((o) => !o)}
+        >
+          {/* simple calendar glyph; matches the screenshot's outline icon */}
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="1.5" y="2.5" width="13" height="12" rx="1.5" fill="none" stroke="currentColor" />
+            <path d="M1.5 5.5h13M5 1v3M11 1v3" stroke="currentColor" />
+          </svg>
+        </button>
+      </Tooltip>
       {calOpen && (
         <form ref={calPopRef} className="crb-cal-pop" onSubmit={submitDate}>
           <input

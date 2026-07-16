@@ -129,6 +129,7 @@ import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
 import { loadSettings, saveSettings, chartColors, type Settings } from "./theme";
 import TabBar from "./TabBar";
+import Tooltip from "./components/Tooltip";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { isSynthetic } from "./lib/syntheticRegistry";
 import "./App.css";
@@ -1598,13 +1599,14 @@ export default function App() {
               />
             )}
             <AppearanceMenu settings={settings} onChange={setSettings} />
-            <button
-              className="tabbar-action icon-only gear"
-              onClick={() => setShowSettings(true)}
-              title="Settings"
-            >
-              ⚙
-            </button>
+            <Tooltip content="Settings">
+              <button
+                className="tabbar-action icon-only gear"
+                onClick={() => setShowSettings(true)}
+              >
+                ⚙
+              </button>
+            </Tooltip>
             {/* Active broker / trading account, pinned to the FAR RIGHT of the tab
                 bar. Lives here (not the chart toolbar) because switching broker swaps
                 the WHOLE workspace — a workspace-scope action; the toolbar holds only

@@ -22,6 +22,7 @@ import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility } from "./lib/visibility";
 import { toast } from "./lib/notify";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import { type FibConfig, asFibConfig } from "./lib/fibConfig";
 import {
   loadDrawingDefault,
@@ -340,16 +341,17 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                   <span onClick={() => applyPreset(nm)} title={`Apply "${nm}"`}>
                     {nm}
                   </span>
-                  <button
-                    className="ind-def-del"
-                    title={`Delete "${nm}"`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removePreset(nm);
-                    }}
-                  >
-                    ✕
-                  </button>
+                  <Tooltip content={`Delete "${nm}"`}>
+                    <button
+                      className="ind-def-del"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removePreset(nm);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </Tooltip>
                 </li>
               ))}
               {naming ? (

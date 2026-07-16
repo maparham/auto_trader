@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { brokerLabel, type BrokerAccount } from "./lib/trading";
+import Tooltip from "./components/Tooltip";
 
 interface Props {
   accounts: BrokerAccount[];
@@ -57,23 +58,24 @@ export default function BrokerSelector({ accounts, activeBroker, onChange }: Pro
 
   return (
     <div className="broker-selector" ref={menuRef}>
-      <button
-        className="anchor-btn broker-selector-btn"
-        title="Active broker (workspace)"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="broker-selector-label">{brokerLabel(activeBroker)}</span>
-        <svg
-          className="tb-caret"
-          viewBox="0 0 24 24" width="11" height="11" fill="none"
-          stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true"
+      <Tooltip content="Active broker (workspace)">
+        <button
+          className="anchor-btn broker-selector-btn"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
         >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
+          <span className="broker-selector-label">{brokerLabel(activeBroker)}</span>
+          <svg
+            className="tb-caret"
+            viewBox="0 0 24 24" width="11" height="11" fill="none"
+            stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+      </Tooltip>
 
       {open && (
         <div className="broker-menu" role="menu">

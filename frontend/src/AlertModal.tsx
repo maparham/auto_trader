@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
+import Tooltip from "./components/Tooltip";
 import type { AlertCondition, AlertNotifyChannels, AlertTrigger } from "./lib/persist";
 import type { AlertDefaults } from "./theme";
 import {
@@ -90,7 +91,8 @@ export default function AlertModal({
   const foot = (
     <>
       {isEdit && onDelete && (
-        <button className="al-trash" onClick={onDelete} title="Delete alert" aria-label="Delete alert">
+        <Tooltip content="Delete alert">
+        <button className="al-trash" onClick={onDelete} aria-label="Delete alert">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <polyline points="3 6 5 6 21 6" />
@@ -99,6 +101,7 @@ export default function AlertModal({
             <line x1="14" y1="11" x2="14" y2="17" />
           </svg>
         </button>
+        </Tooltip>
       )}
       <button className="ghost" onClick={onClose}>
         Cancel

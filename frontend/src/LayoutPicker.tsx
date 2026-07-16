@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { LayoutKind } from "./lib/persist";
+import Tooltip from "./components/Tooltip";
 
 interface Props {
   layout: LayoutKind;
@@ -88,13 +89,14 @@ export default function LayoutPicker({
 
   return (
     <div className="menu layout-menu" ref={menuRef}>
-      <button
-        className={`tabbar-action${open ? " on" : ""}`}
-        title="Chart layout"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <LayoutGlyph kind={layout} /> ▾
-      </button>
+      <Tooltip content="Chart layout">
+        <button
+          className={`tabbar-action${open ? " on" : ""}`}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <LayoutGlyph kind={layout} /> ▾
+        </button>
+      </Tooltip>
       {open && (
         <div className="dropdown layout-dropdown">
           <ul>
@@ -124,12 +126,9 @@ export default function LayoutPicker({
                 onChange={() => onToggleLock()}
               />
               <span className="ls-label">Lock charts</span>
-              <span
-                className="ls-info"
-                title="Locks the charts together: panning, zooming, or changing the timeframe on any chart applies to all of them, as if your cursor were on each. Each chart keeps its own symbol."
-              >
-                ⓘ
-              </span>
+              <Tooltip content="Pan, zoom, or change the timeframe on any chart and it applies to all of them. Each chart keeps its own symbol.">
+                <span className="ls-info">ⓘ</span>
+              </Tooltip>
             </label>
             <div className={`ls-group${locked ? " ls-disabled" : ""}`}>
             <label>
@@ -140,12 +139,9 @@ export default function LayoutPicker({
                 onChange={() => onToggleSync("symbol")}
               />
               <span className="ls-label">Sync symbol</span>
-              <span
-                className="ls-info"
-                title="Changing the symbol in the focused chart changes it in every chart of this layout."
-              >
-                ⓘ
-              </span>
+              <Tooltip content="Changing the symbol in the focused chart changes it in every chart of this layout.">
+                <span className="ls-info">ⓘ</span>
+              </Tooltip>
             </label>
             <label>
               <input
@@ -155,12 +151,9 @@ export default function LayoutPicker({
                 onChange={() => onToggleSync("interval")}
               />
               <span className="ls-label">Sync interval</span>
-              <span
-                className="ls-info"
-                title="Changing the timeframe in the focused chart changes it in every chart of this layout."
-              >
-                ⓘ
-              </span>
+              <Tooltip content="Changing the timeframe in the focused chart changes it in every chart of this layout.">
+                <span className="ls-info">ⓘ</span>
+              </Tooltip>
             </label>
             <label>
               <input
@@ -170,12 +163,9 @@ export default function LayoutPicker({
                 onChange={() => onToggleSync("crosshair")}
               />
               <span className="ls-label">Sync crosshair</span>
-              <span
-                className="ls-info"
-                title="Hovering one chart draws a matching time guide on the others (aligns the cursor by time)."
-              >
-                ⓘ
-              </span>
+              <Tooltip content="Hovering one chart draws a matching time guide on the others, aligning the cursor by time.">
+                <span className="ls-info">ⓘ</span>
+              </Tooltip>
             </label>
             <label>
               <input
@@ -185,12 +175,9 @@ export default function LayoutPicker({
                 onChange={() => onToggleSync("time")}
               />
               <span className="ls-label">Sync date range</span>
-              <span
-                className="ls-info"
-                title="Scrolling or zooming the time axis in one chart shows the same date range on the others (matched by time, across intervals)."
-              >
-                ⓘ
-              </span>
+              <Tooltip content="Scrolling or zooming the time axis in one chart shows the same date range on the others, matched by time across intervals.">
+                <span className="ls-info">ⓘ</span>
+              </Tooltip>
             </label>
             </div>
           </div>

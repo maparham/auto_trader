@@ -5,6 +5,7 @@ import { toast } from "../lib/notify";
 import { requestConfirm, setTradeSelected, discardPendingEdit, discardPendingField, type PendingEdit, type TradeLineField } from "../lib/signals";
 import { tradeLabel, mergeTradeLevels, applyEditedLevels, closePosition, cancelWorkingOrder, refreshTrades, getTradesAccount, type TradeView, type OrderSide } from "../lib/trading";
 import { computePlacement, type Placed } from "../components/tooltipPosition";
+import Tooltip from "../components/Tooltip";
 
 export interface TradePillItem {
   tradeId: string;
@@ -243,9 +244,9 @@ export default function TradePills({
             )}
             {p.changed && (
               <>
+                <Tooltip content="Apply changes">
                 <button
                   className="tp-btn tp-apply"
-                  title="Apply changes"
                   onClick={async () => {
                     const t = tradesRef.current.find((x) => x.id === p.tradeId);
                     if (!t) return;
@@ -263,9 +264,10 @@ export default function TradePills({
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 </button>
+                </Tooltip>
+                <Tooltip content="Discard changes">
                 <button
                   className="tp-btn tp-discard"
-                  title="Discard changes"
                   onClick={() => {
                     discardPendingField(p.tradeId, pendKey);
                     // Entry pendKey is "price"; at breakeven the merged SL/TP also rides
@@ -278,14 +280,15 @@ export default function TradePills({
                     <line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
                 </button>
+                </Tooltip>
               </>
             )}
             {/* Close (entry) / remove (SL·TP) only when the line ISN'T mid-edit — while
                 a drag is staged the pill shows just Apply (✓) / Discard (✕). */}
             {!p.changed && (isEntry ? (
+              <Tooltip content={p.kind === "order" ? "Cancel order" : "Close position"}>
               <button
                 className="tp-btn tp-close"
-                title={p.kind === "order" ? "Cancel order" : "Close position"}
                 onClick={() => {
                   const t = tradesRef.current.find((x) => x.id === p.tradeId);
                   if (!t) return;
@@ -331,10 +334,11 @@ export default function TradePills({
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
+              </Tooltip>
             ) : (
+              <Tooltip content={p.field === "stop" ? "Remove stop loss" : "Remove take profit"}>
               <button
                 className="tp-btn tp-remove"
-                title={p.field === "stop" ? "Remove stop loss" : "Remove take profit"}
                 onClick={removeLevel}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -342,6 +346,7 @@ export default function TradePills({
                   <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                 </svg>
               </button>
+              </Tooltip>
             ))}
           </div>
         );

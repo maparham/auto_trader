@@ -36,6 +36,7 @@ import ChartLegend, {
 import { ChartController } from "./lib/chartController";
 import { isInvertShortcut } from "./lib/invertShortcut";
 import MarketInfoPopover from "./MarketInfoPopover";
+import Tooltip from "./components/Tooltip";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
 import {
@@ -3595,35 +3596,38 @@ export default function ChartCore({
               {symbol.epic} {CONDITION_LABELS[t.condition]} {t.level.toFixed(precision)}
             </span>
             {/* Clickable one-time (1×) ↔ permanent (∞) toggle. Always present. */}
-            <button
-              className={`ap-trigger ${isOnce ? "once" : "every"}`}
-              title={isOnce ? "One-time alert — click to make permanent" : "Permanent alert — click to make one-time"}
-              aria-label={isOnce ? "One-time alert" : "Permanent alert"}
-              onClick={() => overlays.toggleAlertTrigger(t.id)}
-              onDoubleClick={(e) => e.stopPropagation()}
-            >
-              {isOnce ? "1×" : "∞"}
-            </button>
+            <Tooltip content={isOnce ? "One-time alert. Click to make permanent." : "Permanent alert. Click to make one-time."}>
+              <button
+                className={`ap-trigger ${isOnce ? "once" : "every"}`}
+                aria-label={isOnce ? "One-time alert" : "Permanent alert"}
+                onClick={() => overlays.toggleAlertTrigger(t.id)}
+                onDoubleClick={(e) => e.stopPropagation()}
+              >
+                {isOnce ? "1×" : "∞"}
+              </button>
+            </Tooltip>
             {remaining && (
-              <span className="ap-remaining" title="Time until this alert expires">
-                {remaining}
-              </span>
+              <Tooltip content="Time until this alert expires">
+                <span className="ap-remaining">
+                  {remaining}
+                </span>
+              </Tooltip>
             )}
-            <button
-              className="ap-del"
-              title="Delete alert"
-              onClick={() => {
-                requestConfirm({
-                  message: `Delete alert ${CONDITION_LABELS[t.condition]} ${t.level.toFixed(precision)} on ${symbol.epic}?`,
-                  onConfirm: () => {
-                    overlays.remove(t.id);
-                    setPillHoverId((cur) => (cur === t.id ? null : cur));
-                  },
-                });
-              }}
-              onDoubleClick={(e) => e.stopPropagation()}
-            >
-              <svg
+            <Tooltip content="Delete alert">
+              <button
+                className="ap-del"
+                onClick={() => {
+                  requestConfirm({
+                    message: `Delete alert ${CONDITION_LABELS[t.condition]} ${t.level.toFixed(precision)} on ${symbol.epic}?`,
+                    onConfirm: () => {
+                      overlays.remove(t.id);
+                      setPillHoverId((cur) => (cur === t.id ? null : cur));
+                    },
+                  });
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
+              >
+                <svg
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -3636,8 +3640,9 @@ export default function ChartCore({
                 <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                 <line x1="10" y1="11" x2="10" y2="17" />
                 <line x1="14" y1="11" x2="14" y2="17" />
-              </svg>
-            </button>
+                </svg>
+              </button>
+            </Tooltip>
           </div>
           );
         })}

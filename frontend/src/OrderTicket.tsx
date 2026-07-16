@@ -372,15 +372,15 @@ export default function OrderTicket({
           ["limit", "Limit", false],
           ["stop", "Stop", true],
         ] as [OrderType, string, boolean][]).map(([t, label, disabled]) => (
-          <button
-            key={t}
-            className={`ot-type-tab${orderType === t ? " on" : ""}`}
-            disabled={disabled}
-            title={disabled ? "Coming soon" : undefined}
-            onClick={() => setOrderType(t)}
-          >
-            {label}
-          </button>
+          <Tooltip key={t} content={disabled ? "Coming soon" : undefined}>
+            <button
+              className={`ot-type-tab${orderType === t ? " on" : ""}`}
+              disabled={disabled}
+              onClick={() => setOrderType(t)}
+            >
+              {label}
+            </button>
+          </Tooltip>
         ))}
       </div>
 
@@ -682,9 +682,11 @@ function EditTicket({
           Editing <span className={long ? "ot-edit-long" : "ot-edit-short"}>{word}</span>{" "}
           {trade.quantity} {trade.epic}
         </span>
-        <button className="ot-edit-x" title="Cancel edit" onClick={exit}>
-          ✕
-        </button>
+        <Tooltip content="Cancel edit">
+          <button className="ot-edit-x" onClick={exit}>
+            ✕
+          </button>
+        </Tooltip>
       </div>
 
       {/* Entry price — repriceable for a resting order, fixed for a fill. */}

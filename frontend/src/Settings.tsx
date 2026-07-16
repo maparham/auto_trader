@@ -124,7 +124,7 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
             <div className="setting-row">
               <label className="label-info">
                 Chart background
-                <InfoTip text="Override the chart pane's background with a custom color — e.g. a dimmer grey between light and dark for night use. Applies to all charts." />
+                <InfoTip text="Override the chart pane background with a custom color, e.g. a dimmer grey for night use. Applies to all charts." />
               </label>
               <div className="chart-bg-ctl">
                 <ColorLineStylePicker

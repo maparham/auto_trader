@@ -1850,33 +1850,37 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         </div>
 
         <div className="modal-foot bt-cfg-foot">
-          <button
-            className={`ghost bt-inspect-foot${inspectMode ? " on" : ""}`}
-            title={
+          <Tooltip
+            content={
               inspectMode
                 ? "Inspect mode on: click a bar on the chart to see its rules"
                 : "Inspect a bar: click a bar to see every rule's value and why a trade did or didn't open"
             }
-            aria-pressed={inspectMode}
-            onClick={() => inspectModeSignal.set(!inspectModeSignal.value)}
           >
-            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-              {/* magnifier */}
-              <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-              <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-            <span>Inspect</span>
-          </button>
+            <button
+              className={`ghost bt-inspect-foot${inspectMode ? " on" : ""}`}
+              aria-pressed={inspectMode}
+              onClick={() => inspectModeSignal.set(!inspectModeSignal.value)}
+            >
+              <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+                {/* magnifier */}
+                <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+              <span>Inspect</span>
+            </button>
+          </Tooltip>
           <button className="ghost" onClick={onClose}>
             Close
           </button>
-          <button
-            className="ghost bt-golive"
-            title="Copy this strategy into the Live panel to trade a demo/live account"
-            onClick={() => requestGoLive(cfg)}
-          >
-            Go live →
-          </button>
+          <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
+            <button
+              className="ghost bt-golive"
+              onClick={() => requestGoLive(cfg)}
+            >
+              Go live →
+            </button>
+          </Tooltip>
           {sweepAxes.length > 0 && (
             <span className={`sweep-counter${sweepOverCap ? " sweep-over-cap" : ""}`}>
               {/* Per-axis counts via the SAME comboCount the runner/cap use — a
@@ -2409,18 +2413,19 @@ function OperatorPicker({ value, onChange, sweep }: {
   const current = OPERATORS.find((o) => o.value === value);
   return (
     <div className="bt-op-menu">
-      <button
-        ref={btnRef}
-        type="button"
-        className={`bt-op-btn ${isCrossOp(value) ? "bt-op-cross" : "bt-op-compare"}${open ? " open" : ""}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={`Operator: ${current?.label}`}
-        title={current?.label}
-        onClick={toggle}
-      >
-        <OpGlyph op={value} />
-      </button>
+      <Tooltip content={current?.label ?? ""}>
+        <button
+          ref={btnRef}
+          type="button"
+          className={`bt-op-btn ${isCrossOp(value) ? "bt-op-cross" : "bt-op-compare"}${open ? " open" : ""}`}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label={`Operator: ${current?.label}`}
+          onClick={toggle}
+        >
+          <OpGlyph op={value} />
+        </button>
+      </Tooltip>
       {sweep && (
         <Tooltip content="Sweep this operator">
           <button
@@ -2579,18 +2584,19 @@ function RuleMenu({
 
   return (
     <div className="bt-rule-menu">
-      <button
-        ref={btnRef}
-        type="button"
-        className={`bt-rule-menu-btn${open ? " open" : ""}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Rule actions"
-        title="Rule actions"
-        onClick={toggle}
-      >
-        <KebabIcon />
-      </button>
+      <Tooltip content="Rule actions">
+        <button
+          ref={btnRef}
+          type="button"
+          className={`bt-rule-menu-btn${open ? " open" : ""}`}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="Rule actions"
+          onClick={toggle}
+        >
+          <KebabIcon />
+        </button>
+      </Tooltip>
       {open &&
         pos &&
         createPortal(
@@ -2733,30 +2739,33 @@ export function RuleGroupSection({
       extra={
         group.rules.length > 0 ? (
           <div className="bt-groophead-actions">
-            <button
-              className="bt-rule-toggle bt-reverse-ops"
-              onClick={reverseAll}
-              title="Flip every operator to its opposite (> ↔ <, crosses above ↔ below)"
-              aria-label="Reverse operators"
-            >
-              <ReverseOpsIcon />
-            </button>
-            <button
-              className="bt-rule-toggle bt-copyall"
-              onClick={copyAll}
-              title="Copy all rules in this group"
-              aria-label="Copy all rules"
-            >
-              <CopyAllIcon />
-            </button>
-            <button
-              className="bt-rule-toggle bt-clearall"
-              onClick={clearAll}
-              title="Delete all rules in this group"
-              aria-label="Delete all rules"
-            >
-              <TrashIcon />
-            </button>
+            <Tooltip content="Flip every operator to its opposite (> ↔ <, crosses above ↔ below)">
+              <button
+                className="bt-rule-toggle bt-reverse-ops"
+                onClick={reverseAll}
+                aria-label="Reverse operators"
+              >
+                <ReverseOpsIcon />
+              </button>
+            </Tooltip>
+            <Tooltip content="Copy all rules in this group">
+              <button
+                className="bt-rule-toggle bt-copyall"
+                onClick={copyAll}
+                aria-label="Copy all rules"
+              >
+                <CopyAllIcon />
+              </button>
+            </Tooltip>
+            <Tooltip content="Delete all rules in this group">
+              <button
+                className="bt-rule-toggle bt-clearall"
+                onClick={clearAll}
+                aria-label="Delete all rules"
+              >
+                <TrashIcon />
+              </button>
+            </Tooltip>
           </div>
         ) : undefined
       }
@@ -2807,15 +2816,16 @@ export function RuleGroupSection({
             />
           )}
           <div className="bt-rule-actions">
-            <button
-              className="bt-rule-toggle"
-              onClick={() => setRule(i, { ...rule, enabled: rule.enabled === false })}
-              title={rule.enabled === false ? "Enable rule" : "Disable rule"}
-              aria-label={rule.enabled === false ? "Enable rule" : "Disable rule"}
-              aria-pressed={rule.enabled !== false}
-            >
-              <EyeIcon on={rule.enabled !== false} />
-            </button>
+            <Tooltip content={rule.enabled === false ? "Enable rule" : "Disable rule"}>
+              <button
+                className="bt-rule-toggle"
+                onClick={() => setRule(i, { ...rule, enabled: rule.enabled === false })}
+                aria-label={rule.enabled === false ? "Enable rule" : "Disable rule"}
+                aria-pressed={rule.enabled !== false}
+              >
+                <EyeIcon on={rule.enabled !== false} />
+              </button>
+            </Tooltip>
             <Tooltip content="Swap sides (same condition)">
               <button
                 type="button"
@@ -2826,14 +2836,15 @@ export function RuleGroupSection({
                 ⇄
               </button>
             </Tooltip>
-            <button
-              className="bt-rule-toggle bt-rule-delete"
-              onClick={() => removeRule(i)}
-              title="Delete rule"
-              aria-label="Delete rule"
-            >
-              <TrashIcon />
-            </button>
+            <Tooltip content="Delete rule">
+              <button
+                className="bt-rule-toggle bt-rule-delete"
+                onClick={() => removeRule(i)}
+                aria-label="Delete rule"
+              >
+                <TrashIcon />
+              </button>
+            </Tooltip>
             <RuleMenu
               enabled={rule.enabled !== false}
               onDuplicate={() => duplicateRule(i)}
@@ -2892,18 +2903,21 @@ export function RuleGroupSection({
           </Tooltip>
         )}
         {clipboard && (
-          <button className="ghost" onClick={pasteRule} title="Paste the copied rule here">
-            Paste rule
-          </button>
+          <Tooltip content="Paste the copied rule here">
+            <button className="ghost" onClick={pasteRule}>
+              Paste rule
+            </button>
+          </Tooltip>
         )}
         {groupClipboard?.length ? (
-          <button
-            className="ghost bt-pasteall"
-            onClick={pasteAll}
-            title={`Paste all ${groupClipboard.length} copied rule${groupClipboard.length > 1 ? "s" : ""} here`}
-          >
-            <CopyAllIcon /> Paste all
-          </button>
+          <Tooltip content={`Paste all ${groupClipboard.length} copied rule${groupClipboard.length > 1 ? "s" : ""} here`}>
+            <button
+              className="ghost bt-pasteall"
+              onClick={pasteAll}
+            >
+              <CopyAllIcon /> Paste all
+            </button>
+          </Tooltip>
         ) : null}
       </div>
     </Section>
@@ -3116,19 +3130,20 @@ function OperandPicker({
               offering one would forward-fill the line into a step function. Only an
               indicator recipe can run on a higher timeframe. */}
           {value.recipe.source === "indicator" && (
-            <select
-              className="bt-operand-tf"
-              title="Timeframe this operand is computed on"
-              value={value.timeframe ?? ""}
-              onChange={(e) => onChange({ ...value, timeframe: e.target.value || undefined })}
-            >
-              <option value="">Base</option>
-              {higherTfs.map((p) => (
-                <option key={p.resolution} value={p.resolution}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+            <Tooltip content="Timeframe this operand is computed on">
+              <select
+                className="bt-operand-tf"
+                value={value.timeframe ?? ""}
+                onChange={(e) => onChange({ ...value, timeframe: e.target.value || undefined })}
+              >
+                <option value="">Base</option>
+                {higherTfs.map((p) => (
+                  <option key={p.resolution} value={p.resolution}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </Tooltip>
           )}
         </>
       ) : (
@@ -3172,19 +3187,20 @@ function OperandPicker({
               {sweepToggle("length", value.length ?? 9)}
             </>
           )}
-          <select
-            className="bt-operand-tf"
-            title="Timeframe this indicator is computed on"
-            value={value.timeframe ?? ""}
-            onChange={(e) => onChange({ ...value, timeframe: e.target.value || undefined })}
-          >
-            <option value="">Base</option>
-            {higherTfs.map((p) => (
-              <option key={p.resolution} value={p.resolution}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          <Tooltip content="Timeframe this indicator is computed on">
+            <select
+              className="bt-operand-tf"
+              value={value.timeframe ?? ""}
+              onChange={(e) => onChange({ ...value, timeframe: e.target.value || undefined })}
+            >
+              <option value="">Base</option>
+              {higherTfs.map((p) => (
+                <option key={p.resolution} value={p.resolution}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </Tooltip>
         </>
       )}
       {value.kind === "price" && (

@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 import type { ChartCell, ChartTab } from "./lib/persist";
 import { dropTarget, previewDeltas, type DragTarget, type Rect } from "./lib/tabDrag";
 import SymbolIcon from "./SymbolIcon";
+import Tooltip from "./components/Tooltip";
 import ContextMenu from "./ContextMenu";
 import MergeTabsMenu from "./MergeTabsMenu";
 import { isSynthetic } from "./lib/syntheticRegistry";
@@ -373,7 +374,7 @@ export default function TabBar({
               : undefined
           }
           onClick={() => onSelect(t.id)}
-          title={closedTip ? `${titleText} — ${closedTip}` : titleText}
+          title={closedTip ? `${titleText} · ${closedTip}` : titleText}
           draggable
           onDragStart={(e) => {
             // Cache every chip's rect NOW — the preview transforms change
@@ -441,9 +442,11 @@ export default function TabBar({
         </div>
         );
       })}
-      <button className="tab-add" onClick={onAdd} title="New tab">
-        +
-      </button>
+      <Tooltip content="New tab">
+        <button className="tab-add" onClick={onAdd}>
+          +
+        </button>
+      </Tooltip>
       </div>
       {trailing && <div className="tab-bar-actions">{trailing}</div>}
       {ctxMenu && tabs.length > 1 && (

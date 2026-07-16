@@ -44,6 +44,7 @@ import IndicatorRow from "./IndicatorRow";
 import type { ChartController } from "./lib/chartController";
 import ContextMenu from "./ContextMenu";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import { MenuIcons } from "./lib/menuIcons";
 import {
   Caret,
@@ -398,31 +399,34 @@ export default function Toolbar({
 
       {/* Searchable indicator menu. */}
       <div className="menu" ref={indMenuRef}>
-        <button
-          className={indOpen ? "on" : ""}
-          title="Indicators, metrics, and strategies"
-          onClick={() => setIndOpen((v) => !v)}
-        >
-          ƒ Indicators<Caret />
-        </button>
+        <Tooltip content="Indicators, metrics, and strategies">
+          <button
+            className={indOpen ? "on" : ""}
+            onClick={() => setIndOpen((v) => !v)}
+          >
+            ƒ Indicators<Caret />
+          </button>
+        </Tooltip>
         {indOpen && (
           <div className="dropdown dropdown-ind">
             <div className="ind-search">
-              <input
-                autoFocus
-                placeholder="search indicators…"
-                title="Search indicators"
-                value={indFilter}
-                onChange={(e) => setIndFilter(e.target.value)}
-              />
+              <Tooltip content="Search indicators">
+                <input
+                  autoFocus
+                  placeholder="search indicators…"
+                  value={indFilter}
+                  onChange={(e) => setIndFilter(e.target.value)}
+                />
+              </Tooltip>
               {indFilter && (
-                <button
-                  className="ind-search-clear"
-                  title="Clear"
-                  onClick={() => setIndFilter("")}
-                >
-                  ✕
-                </button>
+                <Tooltip content="Clear">
+                  <button
+                    className="ind-search-clear"
+                    onClick={() => setIndFilter("")}
+                  >
+                    ✕
+                  </button>
+                </Tooltip>
               )}
             </div>
             <ul>
@@ -465,9 +469,9 @@ export default function Toolbar({
 
           {/* Open the TV-style alert modal, prefilled with the last price. The bell is
               an inline SVG (currentColor) so it stays monochrome, not a colored emoji. */}
+          <Tooltip content="Create a price alert">
           <button
             className="anchor-btn icon-btn"
-            title="Create a price alert"
             onClick={() => {
               // This click is a user gesture: unlock audio so later (programmatic)
               // pings can sound, and request OS-notification permission. Surface the
@@ -492,6 +496,7 @@ export default function Toolbar({
             </svg>
             Alert
           </button>
+          </Tooltip>
         </>
       )}
 
@@ -502,24 +507,26 @@ export default function Toolbar({
           slim caret on its right edge opens the gallery. Sits just before the
           Template menu in the right-side cluster. */}
       <div className="snap-split">
-        <button
-          className="anchor-btn snap-save"
-          title="Save a snapshot of this chart (state + drawings + indicators)"
-          disabled={!chart || !symbol || !period}
-          onClick={() => void saveSnapshot_()}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-            <circle cx="12" cy="13" r="4" />
-          </svg>
-        </button>
-        <button
-          className="anchor-btn snap-gallery"
-          title="Browse saved snapshots"
-          onClick={() => snapshotsGalleryOpen.set(true)}
-        >
-          <Caret />
-        </button>
+        <Tooltip content="Save a snapshot of this chart: state, drawings, indicators">
+          <button
+            className="anchor-btn snap-save"
+            disabled={!chart || !symbol || !period}
+            onClick={() => void saveSnapshot_()}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+              <circle cx="12" cy="13" r="4" />
+            </svg>
+          </button>
+        </Tooltip>
+        <Tooltip content="Browse saved snapshots">
+          <button
+            className="anchor-btn snap-gallery"
+            onClick={() => snapshotsGalleryOpen.set(true)}
+          >
+            <Caret />
+          </button>
+        </Tooltip>
       </div>
       {snapSavedName && (
         <Snackbar
@@ -540,15 +547,16 @@ export default function Toolbar({
           "apply default to <symbol>"). Auto-applies to fresh charts of the symbol.
           Dropdown right-aligned so it doesn't spill off-screen. */}
       <div className="menu tmpl-menu" ref={tmplMenuRef}>
-        <button
-          className={tmplOpen ? "on" : ""}
-          title={`Save or apply the default layout (indicators + drawings) for ${symbol.epic}`}
-          onClick={() => setTmplOpen((v) => !v)}
-        >
-          <span className="tmpl-ic">{MenuIcons.clone}</span>
-          Template
-          <Caret className="tmpl-caret" />
-        </button>
+        <Tooltip content={`Save or apply the default layout (indicators, drawings) for ${symbol.epic}`}>
+          <button
+            className={tmplOpen ? "on" : ""}
+            onClick={() => setTmplOpen((v) => !v)}
+          >
+            <span className="tmpl-ic">{MenuIcons.clone}</span>
+            Template
+            <Caret className="tmpl-caret" />
+          </button>
+        </Tooltip>
         {tmplOpen && (
           <div className="dropdown dropdown-right tmpl-dropdown">
             <ul>

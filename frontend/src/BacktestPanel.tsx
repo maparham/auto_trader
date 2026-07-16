@@ -139,9 +139,11 @@ export default function BacktestPanel() {
     messages.error || messages.warning || selectNotice ? (
       <div className="bt-results-messages">
         {messages.warning && (
-          <span className="bt-warning" title={messages.warning}>
-            ⚠ short warm-up
-          </span>
+          <Tooltip content={messages.warning}>
+            <span className="bt-warning">
+              ⚠ short warm-up
+            </span>
+          </Tooltip>
         )}
         {messages.error && <span className="bt-error">{messages.error}</span>}
         {selectNotice && <span className="bt-notice">{selectNotice}</span>}
@@ -168,67 +170,71 @@ export default function BacktestPanel() {
           {s.net_pnl.toFixed(2)}
         </span>
         <span>{s.n_trades} trades</span>
-        <span title="Largest equity drop from a high to a low">−{s.max_drawdown.toFixed(2)} dd</span>
+        <Tooltip content="Largest equity drop from a high to a low">
+          <span>−{s.max_drawdown.toFixed(2)} dd</span>
+        </Tooltip>
         <span>{(s.win_rate * 100).toFixed(0)}% win</span>
         {(() => {
           // Effective reward:risk actually realized (avg win ÷ avg loss) — the true
           // payoff, which can differ sharply from the configured stop/target RR.
           const rr = result.metrics.avg_win_loss_ratio;
           const rrTitle =
-            "Effective reward:risk — average win ÷ average loss. Contrast with your configured stop/target RR.";
-          if (rr != null) return <span title={rrTitle}>{rr.toFixed(2)} RR</span>;
+            "Effective reward:risk. Average win ÷ average loss, versus your configured stop/target RR.";
+          if (rr != null) return <Tooltip content={rrTitle}><span>{rr.toFixed(2)} RR</span></Tooltip>;
           // null = no losing trades: infinite RR when there were any winners, else nothing to show.
-          return s.win_rate > 0 ? <span title={rrTitle}>∞ RR</span> : null;
+          return s.win_rate > 0 ? <Tooltip content={rrTitle}><span>∞ RR</span></Tooltip> : null;
         })()}
         {result.fileBracketsOverridden && (
-          <Tooltip content="The strategy file passed sl=/tp= but panel risk is configured — panel risk was applied.">
+          <Tooltip content="The strategy file passed sl=/tp= but panel risk is configured, so panel risk was applied.">
             <span className="bt-chip-muted">file sl/tp overridden</span>
           </Tooltip>
         )}
       </span>
       {result.period && (
-        <span className="bt-period-label" title="The date span this backtest traded over">
-          <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-            {/* calendar */}
-            <rect x="2" y="3" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-            <line x1="2" y1="6.5" x2="14" y2="6.5" stroke="currentColor" strokeWidth="1.3" />
-            <line x1="5" y1="1.5" x2="5" y2="4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            <line x1="11" y1="1.5" x2="11" y2="4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-          </svg>
-          {formatPeriodDateRange(result.period.fromMs, result.period.toMs)}
-        </span>
+        <Tooltip content="The date span this backtest traded over">
+          <span className="bt-period-label">
+            <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+              {/* calendar */}
+              <rect x="2" y="3" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+              <line x1="2" y1="6.5" x2="14" y2="6.5" stroke="currentColor" strokeWidth="1.3" />
+              <line x1="5" y1="1.5" x2="5" y2="4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              <line x1="11" y1="1.5" x2="11" y2="4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+            {formatPeriodDateRange(result.period.fromMs, result.period.toMs)}
+          </span>
+        </Tooltip>
       )}
       {result.period?.mask?.timeOfDay && (
-        <span
-          className="bt-period-label"
-          title={`Daily trading window${result.period.mask.tz ? ` (${result.period.mask.tz})` : ""}`}
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-            {/* clock */}
-            <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.3" />
-            <path d="M8 4.5 L8 8 L10.5 9.5" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          {formatDayWindow(result.period.mask.timeOfDay)}
-        </span>
+        <Tooltip content={`Daily trading window${result.period.mask.tz ? ` (${result.period.mask.tz})` : ""}`}>
+          <span className="bt-period-label">
+            <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+              {/* clock */}
+              <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.3" />
+              <path d="M8 4.5 L8 8 L10.5 9.5" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {formatDayWindow(result.period.mask.timeOfDay)}
+          </span>
+        </Tooltip>
       )}
       <div className="menu bt-display-menu" ref={displayMenuRef}>
-        <button
-          className={`bt-display-btn${displayOpen ? " on" : ""}`}
-          title="Choose what the backtest draws on the chart"
-          aria-haspopup="menu"
-          aria-expanded={displayOpen}
-          onClick={() => setDisplayOpen((v) => !v)}
-        >
-          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-            {/* stacked layers glyph */}
-            <path d="M8 1.5 L14.5 5 L8 8.5 L1.5 5 Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-            <path d="M2 8 L8 11 L14 8 M2 11 L8 14 L14 11" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" />
-          </svg>
-          <span>Display</span>
-          <svg className="tb-caret" width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M4 6 L8 10 L12 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        <Tooltip content="Choose what the backtest draws on the chart">
+          <button
+            className={`bt-display-btn${displayOpen ? " on" : ""}`}
+            aria-haspopup="menu"
+            aria-expanded={displayOpen}
+            onClick={() => setDisplayOpen((v) => !v)}
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+              {/* stacked layers glyph */}
+              <path d="M8 1.5 L14.5 5 L8 8.5 L1.5 5 Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+              <path d="M2 8 L8 11 L14 8 M2 11 L8 14 L14 11" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" />
+            </svg>
+            <span>Display</span>
+            <svg className="tb-caret" width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4 6 L8 10 L12 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </Tooltip>
         {displayOpen && (
           <div className="dropdown bt-display-dropdown" role="menu">
             <ul>
@@ -263,9 +269,11 @@ export default function BacktestPanel() {
           </div>
         )}
       </div>
-      <button className="bt-clear" title="Clear backtest" onClick={requestBacktestClear}>
-        ✕
-      </button>
+      <Tooltip content="Clear backtest">
+        <button className="bt-clear" onClick={requestBacktestClear}>
+          ✕
+        </button>
+      </Tooltip>
     </div>
   );
 
