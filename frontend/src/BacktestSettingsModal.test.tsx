@@ -38,6 +38,7 @@ vi.mock("./api", async () => {
 
 import BacktestSettingsModal from "./BacktestSettingsModal";
 import { defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig";
+import { SESSION_PRESETS, minToTime, sessionWindowInTz } from "./lib/backtestSchedule";
 import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
 import { saveBacktestPreset, loadBacktestLastUsed } from "./lib/persist/defaults";
 import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal } from "./lib/signals";
@@ -110,13 +111,17 @@ describe("BacktestSettingsModal period scheduling", () => {
     expect(screen.getByText(/Active on \d+ of \d+ sampled slots/)).toBeTruthy();
   });
 
-  it("session fill menu writes the preset's hours into From/To once", () => {
-    renderModal();
+  it("session fill menu writes the preset's hours, converted to the chart tz, into From/To", () => {
+    renderModal(); // chartTimezone="UTC"
     fireEvent.click(screen.getByLabelText(/only trade during selected windows/i));
     fireEvent.click(screen.getByRole("button", { name: "Fill from a market session" }));
     fireEvent.click(screen.getByText(/^NYSE/));
     const times = [...document.querySelectorAll(".bt-time-field input")] as HTMLInputElement[];
-    expect(times.map((i) => i.value)).toEqual(["09:30", "16:00"]);
+    // NYSE 09:30–16:00 New York expressed in UTC (offset varies with DST, so
+    // derive the expectation the same way instead of hard-coding 13:30/14:30).
+    const w = sessionWindowInTz(SESSION_PRESETS.NYSE.window, SESSION_PRESETS.NYSE.tz, "UTC", Date.now())!;
+    expect(times.map((i) => i.value)).toEqual([minToTime(w.startMin), minToTime(w.endMin)]);
+    expect(w.startMin).not.toBe(SESSION_PRESETS.NYSE.window!.startMin); // conversion actually happened
   });
 
   it("shows the session-close sub-toggle only when windows are enabled, and it toggles", () => {
