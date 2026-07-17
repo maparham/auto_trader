@@ -30,4 +30,4 @@ primary_region = "fra"
   min_machines_running = 0
 
 [[vm]]
-  size = "performance-8x"
+  size = "performance-16x"
