@@ -316,6 +316,15 @@ export default function ChartGrid({
               onReady(id, chart, controller);
             }}
             onFocus={onFocus}
+            // App resolves the focused cell with a first-cell fallback (its
+            // focusedCell), but passes the RAW activeCellId down — mirror the
+            // fallback here so a stale id can't leave every cell unfocused (which
+            // would kill the document-level Delete-key fallback in ChartCore).
+            focused={
+              cells.some((c) => c.id === focusedCellId)
+                ? cell.id === focusedCellId
+                : cell.id === cells[0]?.id
+            }
             onPeriod={onPeriod}
           />
         </div>

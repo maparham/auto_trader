@@ -212,6 +212,9 @@ interface Props {
   onReady?: (cellId: string, chart: Chart, controller: ChartController) => void;
   // Fired on pointer-down anywhere in the cell, so App can mark it focused.
   onFocus?: (cellId: string) => void;
+  // True when this cell is the app-focused cell. Gates the document-level
+  // Delete-key fallback so split layouts can't delete in two cells at once.
+  focused?: boolean;
   // Switch THIS cell's interval (used by the quick-range bar when a preset needs a
   // coarser/finer resolution than the current one). Cell-scoped so a keyboard-
   // activated preset targets the owning cell even without a prior pointer-down.
@@ -251,6 +254,7 @@ export default function ChartCore({
   locked,
   onReady,
   onFocus,
+  focused,
   onPeriod,
 }: Props) {
   // Per-cell controller: its own OverlayManager + the per-chart UI signals that
@@ -1423,11 +1427,15 @@ export default function ChartCore({
       const alertHit = alertHitTest(x, y);
       if (alertHit) overlays.selectAlert(alertHit);
       else if (!hit) overlays.selectAlert(null);
-      // Clear the drawing selection on an empty-space click. klinecharts fires
-      // onSelected for drawings but NOT onDeselected on empty space (verified), so
-      // mirror the indicator/alert deselect here. Skip when a drawing is under the
-      // cursor — that click is selecting it (onSelected handles that).
-      if (!hit && !alertHit && !overlays.getHoveredDrawingId()) overlays.selectDrawing(null);
+      // Sync the drawing-selection mirror to klinecharts' own click state (which
+      // this same click already updated — its listeners fire on mouseup, before
+      // this DOM click). This both clears the mirror on an empty-space click AND
+      // fixes the reverse desync: the old hover-based guard ("skip when a drawing
+      // is under the cursor") missed clicks with no prior mousemove over the
+      // drawing (pan/zoom under a resting cursor, trackpad tap), clearing the
+      // mirror while klinecharts kept the anchor handles — a selected-looking
+      // drawing the Delete key silently ignored.
+      overlays.syncDrawingSelectionFromClick();
       // Trade-line selection (chart -> dock). Single-click focuses THAT line (its pill
       // shows + dock row lights up) without opening the edit ticket — double-click
       // opens it. A click on empty space drops the trade.
@@ -1713,6 +1721,9 @@ export default function ChartCore({
     const onMeasureShift = (e: MouseEvent) => {
       if (e.button !== 0 || !e.shiftKey) return;
       if (measureArmed.value || overlays.isMeasureDrawing()) return;
+      // While a Draw tool is placing anchors, Shift means angle-snap (horizontal
+      // trendline etc.), not "start measuring" — that press belongs to the drawing.
+      if (overlays.isDrawing()) return;
       // The price-axis strip is a scale gesture, not a measurement.
       const c = chartRef.current;
       const mainW = c?.getSize("candle_pane", 'main')?.width ?? Infinity;
@@ -3186,6 +3197,40 @@ export default function ChartCore({
     setPaneDropTop,
     setIndMenu,
   });
+
+  // Delete/Backspace fallback at document level. The wrap's own onKeyDown only
+  // fires while the cell holds DOM focus — but selecting a drawing and then
+  // clicking any chrome outside the chart (draw sidebar, toolbar, a panel) moves
+  // focus away while the drawing still shows its anchor handles, so the key press
+  // died on <body> and "Delete sometimes does nothing". Only the app-focused cell
+  // listens (split layouts must not delete in two cells at once), and the wrap
+  // handler still wins when the cell IS focused: it runs first (React root
+  // delegation precedes this document listener in the bubble path) and its
+  // preventDefault() makes this one bail — no double delete.
+  useEffect(() => {
+    if (!focused) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (e.defaultPrevented) return;
+      const t = e.target as HTMLElement;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return;
+      // A blocking modal owns the keyboard while it's open — ConfirmDialog even
+      // autofocuses its danger button, so an unguarded Backspace there would
+      // delete a drawing behind the modal (the wrap handler never had this
+      // problem: it only fires with focus inside the chart). Floating modals are
+      // non-blocking by design; yield only when the key press is aimed inside one.
+      if (document.querySelector(".modal-backdrop") || t.closest?.(".floating-modal")) return;
+      if (deleteSelectedDrawing()) e.preventDefault();
+      else if (overlays.hasSlope()) {
+        // Same fallback as the wrap handler: Delete also clears the transient
+        // slope ruler — that too must not require chart focus.
+        overlays.clearSlope();
+        e.preventDefault();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [focused, deleteSelectedDrawing, overlays]);
 
   // Shared source of truth for the four price-level actions offered by both the
   // axis "+" menu and the empty-chart right-click menu. `price` is the level under

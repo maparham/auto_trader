@@ -644,6 +644,30 @@ export class OverlayManager {
     this.selectedDrawingId = id;
     this.drawingListener?.();
   }
+  // ChartCore calls this from its native container click handler, which runs AFTER
+  // klinecharts has processed the same click (its listeners fire on mouseup, before
+  // the DOM click). klinecharts' click-overlay info is the source of truth for the
+  // visible anchor handles, so mirroring it here keeps "handles visible" and
+  // "Delete works" in lockstep. The old guard inferred "this click was on a
+  // drawing" from the HOVER mirror, which is mousemove-driven — a click with no
+  // prior mousemove over the drawing (chart panned/zoomed under a resting cursor,
+  // trackpad tap) selected in klinecharts but cleared our mirror, leaving a
+  // selected-looking drawing the Delete key silently ignored. getChartStore() is a
+  // real ChartImp method absent from the public typings, hence the cast; if a
+  // future klinecharts drops it we fall back to the event-driven mirror untouched.
+  syncDrawingSelectionFromClick(): void {
+    const store = (
+      this.chart as unknown as {
+        getChartStore?: () => {
+          getClickOverlayInfo?: () => { overlay?: { id: string } | null } | null;
+        };
+      } | null
+    )?.getChartStore?.();
+    const info = store?.getClickOverlayInfo?.();
+    if (info === undefined) return; // store API unavailable
+    const id = info?.overlay?.id ?? null;
+    this.selectDrawing(id != null && this.entries.get(id) === "drawing" ? id : null);
+  }
   // Emphasize a drawing from OUTSIDE the chart (a chart-operand picker row hover),
   // thickening its line so the user can spot which on-chart drawing the row is —
   // essential when several same-type drawings share a name/color. `null` clears.

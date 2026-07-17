@@ -155,6 +155,13 @@ class FakeChart {
     this.captureCrosshair(s);
     this.styles = { ...this.styles, ...s };
   }
+  // klinecharts' internal click-selection state — the source of truth for the
+  // visible anchor handles. syncDrawingSelectionFromClick reads it through
+  // getChartStore() (a real ChartImp method, absent from the public typings).
+  clickInfo: { overlay: { id: string } | null } = { overlay: null };
+  getChartStore() {
+    return { getClickOverlayInfo: () => this.clickInfo };
+  }
 }
 
 // Test-only reader: fetch one overlay by id via the v10 filter API. Not a klinecharts
@@ -1708,5 +1715,57 @@ describe("OverlayManager rehydrate teardown vs re-entrant reconcile (TF-switch d
     } finally {
       unsub();
     }
+  });
+});
+
+// Delete-key "sometimes does nothing": the drawing-selection mirror used to be
+// cleared by ChartCore's DOM click handler whenever the HOVER mirror hadn't seen
+// the drawing (hover is mousemove-driven — a click after the chart panned/zoomed
+// under a resting cursor, or a trackpad tap, never hovers). klinecharts still
+// held the click-selection and kept drawing the anchor handles, so the drawing
+// LOOKED selected while getSelectedDrawingId() was null and Delete no-oped.
+// syncDrawingSelectionFromClick mirrors klinecharts' own click state instead.
+describe("OverlayManager syncDrawingSelectionFromClick (Delete-key desync)", () => {
+  const alertCfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
+
+  it("mirrors a click-selected drawing even when the hover mirror never saw it", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    chart.clickInfo = { overlay: { id } };
+    m.syncDrawingSelectionFromClick();
+    expect(m.getSelectedDrawingId()).toBe(id);
+  });
+
+  it("clears the mirror when klinecharts holds no click-selected overlay", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    chart.clickInfo = { overlay: { id } };
+    m.syncDrawingSelectionFromClick();
+    chart.clickInfo = { overlay: null }; // empty-space click
+    m.syncDrawingSelectionFromClick();
+    expect(m.getSelectedDrawingId()).toBeNull();
+  });
+
+  it("a click-selected ALERT is not mistaken for the selected drawing", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    chart.clickInfo = { overlay: { id } };
+    m.syncDrawingSelectionFromClick();
+    const alertId = m.addAlert(100, alertCfg)!;
+    chart.clickInfo = { overlay: { id: alertId } };
+    m.syncDrawingSelectionFromClick();
+    expect(m.getSelectedDrawingId()).toBeNull();
+  });
+
+  it("leaves the event-driven mirror alone when the store API is unavailable", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    // Select via klinecharts' onSelected event (the normal hover-then-click path).
+    (ovById(chart, id) as { onSelected?: (e: { overlay: { id: string } }) => void }).onSelected?.({
+      overlay: { id },
+    });
+    (chart as unknown as { getChartStore?: unknown }).getChartStore = undefined;
+    m.syncDrawingSelectionFromClick();
+    expect(m.getSelectedDrawingId()).toBe(id); // no false clear on a fallback path
   });
 });
