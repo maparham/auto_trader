@@ -12,6 +12,11 @@ export default defineConfig({
   // BACKEND_PORT lets a second instance (e2e, worktree verification) point the
   // proxy at its own backend without editing this file.
   server: {
+    // Enables the JS Self-Profiling API (new Profiler(...)) in dev for
+    // main-thread performance investigation.
+    headers: {
+      "Document-Policy": "js-profiling",
+    },
     proxy: {
       "/api": {
         target: `http://localhost:${process.env.BACKEND_PORT ?? 8000}`,

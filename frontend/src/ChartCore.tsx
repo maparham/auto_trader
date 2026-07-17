@@ -26,7 +26,7 @@ import {
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
-import { pageHistoryBack, scrollbackLoadOlder } from "./lib/historyPaging";
+import { pageHistoryBack, coverHistoryRangeParallel, scrollbackLoadOlder } from "./lib/historyPaging";
 import { klineStyles } from "./lib/chartTheme";
 import ChartLegend, {
   type ChartLegendHandle,
@@ -43,6 +43,7 @@ import {
   teardownArtifacts,
   releaseBacktestPanel,
   reanchorBacktestMarkers,
+  ensureMarkersCoverVisibleRange,
   extendBacktestArtifacts,
   registerBacktestPager,
 } from "./lib/backtest";
@@ -407,9 +408,9 @@ export default function ChartCore({
   // entry predates the loaded bars. ensureAnchorCoverage pages to the OLDEST anchor
   // with a small budget (enough for a just-finished run on the recent-only load);
   // this instead targets ONE trade's entry with a larger bounded budget, so an old
-  // trade can be reached on demand. The bars come from the local candle cache, so
-  // even a deep walk is fast, and pageHistoryBack stops the moment coverage reaches
-  // `fromTs` — the budget is only a safety cap. Returns whether the oldest loaded
+  // trade can be reached on demand. The bars come from the local candle cache, and
+  // coverHistoryRangeParallel fetches every needed window concurrently — the
+  // window budget is only a safety cap. Returns whether the oldest loaded
   // bar now reaches `fromTs` (false → older than reachable history: the caller
   // shows a notice rather than scrolling nowhere). Shares the loadingRef mutex +
   // stale guards with the other pagers; a quick-range pick still preempts it.
@@ -440,24 +441,22 @@ export default function ChartCore({
     if (isStale()) return false;
     loadingRef.current = true;
     try {
-      await pageHistoryBack<KLineData>({
+      // Parallel, not the sequential walk: fromTs is a KNOWN trade timestamp,
+      // so every window between it and the loaded bars can be computed up front
+      // and fetched concurrently (measured ~20s → ~2s for a 1-month jump on 5m,
+      // one sequential round-trip per 500-bar page before). No empty-exhaustion
+      // concept here for the same reason: real bars provably exist at the
+      // target, so empty windows en route are interior closed-market gaps,
+      // never the history edge. maxWindows is a safety cap sized to cover a
+      // full year of 5m bars (~210 windows); deeper than that the caller shows
+      // the "open it on a higher timeframe" notice, as before.
+      await coverHistoryRangeParallel<KLineData>({
         fromTs,
         toTs: first.timestamp,
         resSec: RESOLUTION_SECONDS[resolution] ?? 60,
         pageBars: PAGE_BARS,
-        // Bounded safety cap only: the walk breaks as soon as coverage reaches
-        // fromTs. Sized to reach a several-months-old trade on a fine timeframe
-        // (500 bars × 80 ≈ 40k bars ≈ ~14 months of near-24h 15m bars; ~28 days
-        // at 1m).
-        maxPages: 80,
-        // No empty-exhaustion here (unlike scroll-back): fromTs is a KNOWN trade
-        // timestamp, so real bars provably exist there and any empty windows en
-        // route are interior gaps the instrument is closed for (a weekend is
-        // ~49h — far past the 4×8.3h≈33h scroll-back budget), never the true
-        // history edge. Letting maxEmpty trip made a trade one weekend back read
-        // as "older than history available" even though the backtest fetched its
-        // 1m bars from the same endpoint. maxPages is the sole bound.
-        maxEmpty: Infinity,
+        maxWindows: 400,
+        concurrency: 6,
         isStale,
         getData: () => chartRef.current?.getDataList(),
         fetchOlder: (fromSec, toSec) => fetchRange(epic, resolution, fromSec, toSec, side, broker),
@@ -467,9 +466,6 @@ export default function ChartCore({
         },
         onProgress: () => {
           exhaustedRef.current = false;
-        },
-        onExhausted: () => {
-          exhaustedRef.current = true;
         },
       });
       // Redraw the markers/period bands against the now-extended history: the
@@ -2879,9 +2875,24 @@ export default function ChartCore({
   useEffect(() => {
     overlays.setAlertsListener(redraw);
     const chart = chartRef.current;
-    chart?.subscribeAction('onScroll', redraw);
-    chart?.subscribeAction('onZoom', redraw);
-    chart?.subscribeAction('onPaneDrag', redraw);
+    // Coalesce to one redraw per frame: klinecharts fires these actions many
+    // times per drag/wheel gesture, and each redraw is a full projection +
+    // legend + pill pass. The rAF callback also nudges the visible-range
+    // marker virtualization (a couple of comparisons unless the view left the
+    // drawn buffer, in which case the remount itself is debounced).
+    let redrawRaf: number | null = null;
+    const scheduleRedraw = () => {
+      if (redrawRaf != null) return;
+      redrawRaf = requestAnimationFrame(() => {
+        redrawRaf = null;
+        redraw();
+        const c = chartRef.current;
+        if (c) ensureMarkersCoverVisibleRange(c);
+      });
+    };
+    chart?.subscribeAction('onScroll', scheduleRedraw);
+    chart?.subscribeAction('onZoom', scheduleRedraw);
+    chart?.subscribeAction('onPaneDrag', scheduleRedraw);
     // OnPaneDrag keeps the cards moving DURING the drag; the final mouseup frame can
     // settle the pane geometry without another action, so re-read after layout on
     // pointerup (rAF = post-layout). A ResizeObserver on the container catches the
@@ -2908,9 +2919,10 @@ export default function ChartCore({
       unsubAlerts();
       ro.disconnect();
       window.removeEventListener("pointerup", onPointerUp);
-      chart?.unsubscribeAction('onScroll', redraw);
-      chart?.unsubscribeAction('onZoom', redraw);
-      chart?.unsubscribeAction('onPaneDrag', redraw);
+      if (redrawRaf != null) cancelAnimationFrame(redrawRaf);
+      chart?.unsubscribeAction('onScroll', scheduleRedraw);
+      chart?.unsubscribeAction('onZoom', scheduleRedraw);
+      chart?.unsubscribeAction('onPaneDrag', scheduleRedraw);
     };
   }, [redraw]);
 

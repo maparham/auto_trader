@@ -22,7 +22,7 @@ import {
 import { runBacktest, type BacktestRequest, type Marker } from "../api";
 import { setInspectTraces, inspectSelectedBarSignal } from "./backtestInspect";
 import { toast } from "./notify";
-import { applyVisibleRange, applyVisibleRangeKeepStart } from "./chartSync";
+import { applyVisibleRangeKeepStart, scrollTsToCenter } from "./chartSync";
 import {
   backtestResultSignal,
   highlightTradeSignal,
@@ -171,6 +171,14 @@ interface BacktestArtifacts {
   unsub: (() => void) | null;
   // Ids of the locked, non-interactive period-shading overlays (one per band).
   periodBandIds: string[];
+  // The timestamp span (ms, inclusive) native fill markers were last drawn for.
+  // Markers are VIRTUALIZED to the visible range plus a buffer (a 1-year 5m run
+  // registers ~500 overlays otherwise, and klinecharts re-runs every overlay's
+  // createPointFigures per repaint and hit-tests every one per mouse move).
+  // ±Infinity edges mean "drawn to the corresponding end of loaded data" so the
+  // live edge appending bars, or nothing older existing, can't read as
+  // out-of-window. null until a native draw happens.
+  markerDrawWindow: { fromTs: number; toTs: number } | null;
 }
 const artifactsByChart = new WeakMap<Chart, BacktestArtifacts>();
 
@@ -179,6 +187,11 @@ const artifactsByChart = new WeakMap<Chart, BacktestArtifacts>();
 // which knows nothing of the controller), so ChartCore registers its
 // coverBacktestTradeTo here at chart-ready and clears it on teardown. Lets the
 // subscription page an out-of-window trade in before scrolling to it.
+// True while a selectedTradeSignal.set originates from an on-chart marker
+// click (see toggleTradeSelect in drawMarkers). The selection subscription —
+// which runs synchronously inside the .set — consumes it to skip the scroll.
+let selectFromMarkerClick = false;
+
 const pagerByChart = new WeakMap<Chart, (fromTs: number) => Promise<boolean>>();
 export function registerBacktestPager(
   chart: Chart,
@@ -216,6 +229,7 @@ function artifactsFor(chart: Chart): BacktestArtifacts {
       result: null,
       unsub: null,
       periodBandIds: [],
+      markerDrawWindow: null,
     };
     artifactsByChart.set(chart, a);
   }
@@ -230,43 +244,41 @@ function removeSelectionOverlays(chart: Chart, artifacts: BacktestArtifacts): vo
   artifacts.selectionOverlayIds = [];
 }
 
-/** Pan/zoom the chart to center the trade's entry↔exit time span, with padding
- * for context. Reuses the date-range-sync geometry (applyVisibleRange) rather
- * than a bespoke scroll — same "given a time window, fit it" primitive the
- * cross-chart range sync uses (see chartSync.ts). Padding falls back to a
- * few-bars minimum so a same-bar (entry===exit) trade still yields a real,
- * non-empty window. */
+/** Pan the chart — never zoom — so the selected trade is in view. If the whole
+ * entry↔exit span is ALREADY visible, do nothing (selecting a trade you're
+ * looking at must not yank the view). Otherwise scroll, at the current bar
+ * spacing, to center the span's midpoint; when the span is wider than the
+ * view, center the ENTRY instead (seeing where the trade started beats a
+ * midpoint that shows neither end). */
 function scrollChartToTrade(chart: Chart, entryTs: number, exitTs: number): void {
   const data = chart.getDataList();
   if (!data || data.length < 2) return;
-  // Robust bar interval, not the last-two-bars gap (which can straddle a session
-  // break and blow the fitted window up to hours) — see minPositiveGap.
-  const barMs = minPositiveGap(data.map((k) => k.timestamp)) || 1;
   const firstTs = data[0].timestamp;
   const lastTs = data[data.length - 1].timestamp;
-  // Clamp the trade's span to the loaded bar window. A trade OLDER than the
-  // loaded history (e.g. a 5m run's Jun-22 trade viewed on 3m, whose broker
-  // history only reaches Jun-25) has entry/exit before the first bar; feeding
-  // those out-of-data timestamps to applyVisibleRange makes it extrapolate into
-  // negative virtual-bar indices and blow the zoom/scroll up (candles collapse to
-  // a sliver, price axis goes haywire). If the span doesn't overlap the loaded
-  // window at all, don't scroll — the trade can't be shown here (its markers are
-  // culled too), so leave the view put rather than wreck it.
   const lo = Math.min(entryTs, exitTs);
   const hi = Math.max(entryTs, exitTs);
-  // Bail only if the span doesn't overlap the loaded window at all (the trade
-  // can't be shown here). A same-bar trade (entry===exit, e.g. an intrabar
-  // stop-out on the entry bar) has a zero-width span but IS showable: don't
-  // conflate "zero width" with "no overlap".
+  // Bail if the span doesn't overlap the loaded window at all — the trade can't
+  // be shown here (its markers are culled too), so leave the view put rather
+  // than scroll somewhere meaningless. A same-bar trade (entry===exit) has a
+  // zero-width span but IS showable: don't conflate "zero width" with "no
+  // overlap".
   if (hi < firstTs || lo > lastTs) return;
-  const from = Math.max(lo, firstTs);
-  // Floor the span at one bar so a same-bar trade still yields a non-zero
-  // window to scroll to (mirrors drawSelectionZone's one-bar overlay floor).
-  const to = Math.max(Math.min(hi, lastTs), from + barMs);
-  const pad = Math.max((to - from) * 0.25, barMs * 3);
-  // Keep the padded window inside the loaded data so applyVisibleRange never
-  // extrapolates past either edge.
-  applyVisibleRange(chart, Math.max(from - pad, firstTs), Math.min(to + pad, lastTs));
+  const iLo = barIndexForBars(data, Math.max(lo, firstTs));
+  const iHi = barIndexForBars(data, Math.min(hi, lastTs));
+  const vr = chart.getVisibleRange();
+  // Already fully in view → don't pan.
+  if (iLo >= vr.from && iHi < vr.to) return;
+  const visibleBars = Math.max(1, vr.to - vr.from);
+  // Span comfortably narrower than the view (0.9 leaves a small context margin
+  // before flipping modes) → aim at its midpoint; wider → aim at its start.
+  const desired = iHi - iLo <= visibleBars * 0.9 ? Math.round((iLo + iHi) / 2) : iLo;
+  // Clamp the anchor so the centered window stays inside the loaded data: a
+  // trade near the live edge must not drag the last bar to mid-pane (half a
+  // pane of trailing whitespace), and one near the oldest loaded bar can't be
+  // centered anyway — pin to the window edge instead.
+  const half = Math.floor(visibleBars / 2);
+  const anchorIdx = Math.max(0, Math.min(Math.max(desired, half), data.length - 1 - half));
+  scrollTsToCenter(chart, data[anchorIdx].timestamp);
 }
 
 /**
@@ -553,16 +565,27 @@ export interface TradeCluster {
  * discoverable. Empty `barTimes` returns -1. Pure + exported (shared by
  * `aggregateTradesByBar` and the live trade-marker drawer). */
 export function barIndexForTs(barTimes: number[], ms: number): number {
-  const last = barTimes.length - 1;
+  return barIndexBy(barTimes.length, (i) => barTimes[i], ms);
+}
+
+/** barIndexForTs over the bar objects directly — for callers that only need a
+ * couple of lookups and shouldn't materialize a full timestamps array first
+ * (the loaded list can run to 150k+ bars after a deep jump). */
+export function barIndexForBars(bars: readonly { timestamp: number }[], ms: number): number {
+  return barIndexBy(bars.length, (i) => bars[i].timestamp, ms);
+}
+
+function barIndexBy(len: number, tsAt: (i: number) => number, ms: number): number {
+  const last = len - 1;
   if (last < 0) return -1;
-  if (ms <= barTimes[0]) return 0;
-  if (ms >= barTimes[last]) return last;
+  if (ms <= tsAt(0)) return 0;
+  if (ms >= tsAt(last)) return last;
   let lo = 0;
   let hi = last;
   let idx = 0;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (barTimes[mid] <= ms) {
+    if (tsAt(mid) <= ms) {
       idx = mid;
       lo = mid + 1;
     } else hi = mid - 1;
@@ -912,7 +935,12 @@ function drawPeriodBands(chart: Chart, artifacts: BacktestArtifacts, result: Sto
  * chart to its entry↔exit span. Pushes the created overlay's id into
  * `artifacts.selectionOverlayIds` (the caller is responsible for clearing any
  * prior selection first — see the selectedTradeSignal subscription). */
-function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade): void {
+function drawSelectionZone(
+  chart: Chart,
+  artifacts: BacktestArtifacts,
+  t: Trade,
+  scroll = true,
+): void {
   ensureZoneOverlayRegistered();
   const z = tradeZones(t);
   const entryTs = t.entry_time * 1000;
@@ -967,7 +995,13 @@ function drawSelectionZone(chart: Chart, artifacts: BacktestArtifacts, t: Trade)
     } satisfies ZoneExtra,
   });
   if (typeof id === "string") artifacts.selectionOverlayIds.push(id);
-  scrollChartToTrade(chart, entryTs, exitPointTs);
+  // `scroll` is false when the selection came from clicking an on-chart marker
+  // — the user is already looking at the trade, so the view must not move.
+  if (scroll) scrollChartToTrade(chart, entryTs, exitPointTs);
+  // The jump can land the view far from where the (visible-range-virtualized)
+  // markers were last drawn — remount them around the trade without waiting for
+  // a scroll/zoom event to notice.
+  ensureMarkersCoverVisibleRange(chart);
 }
 
 /** Map a native-bar equity series onto whatever bars are currently loaded,
@@ -1119,6 +1153,28 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
     // candle clears the body (markerPlacement), keyed by the snapped bar time.
     const barByTime = new Map(bars.map((k) => [k.timestamp, k]));
 
+    // Virtualize to the visible range plus one visible-span of buffer per side
+    // (floored so a tight zoom still buffers a real distance): only markers whose
+    // fill lands inside the window get overlays. ensureMarkersCoverVisibleRange
+    // (wired to scroll/zoom in ChartCore) schedules a remount once panning
+    // approaches the window's edge. An edge that reaches the corresponding end
+    // of the loaded data is recorded as ±Infinity — bars appended at the live
+    // edge, or a window that starts at the oldest loaded bar, must not read as
+    // "outside the drawn span" (markers can only appear via a prepend, which the
+    // extendBacktestArtifacts path already remounts for).
+    const vr = chart.getVisibleRange();
+    const span = Math.max(vr.to - vr.from, 1);
+    const buf = Math.max(span, 200);
+    const loIdx = Math.max(0, Math.floor(vr.from - buf));
+    const hiIdx = Math.min(bars.length - 1, Math.ceil(vr.to + buf));
+    const winFromTs = loIdx <= 0 ? -Infinity : (bars[loIdx]?.timestamp ?? -Infinity);
+    const winToTs = hiIdx >= bars.length - 1 ? Infinity : (bars[hiIdx]?.timestamp ?? Infinity);
+    artifacts.markerDrawWindow = { fromTs: winFromTs, toTs: winToTs };
+    // Culling by the RAW fill time is safe for the trade-index queues below:
+    // same-key markers share the exact timestamp, so they are always culled (or
+    // kept) together and the per-key queue order can't skew.
+    const inDrawWindow = (tMs: number) => tMs >= winFromTs && tMs <= winToTs;
+
     // Trade markers -> locked backtestMarker overlays (arrow + label). Markers
     // that map to a trade also emphasize/scroll the trades panel row on hover
     // (chart -> row half of the two-way sync; the row -> chart half is the
@@ -1136,6 +1192,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       // reanchorBacktestMarkers redraws, so the initially-skipped fills reappear
       // on their real candles once covered.
       if (!fillWithinLoadedWindow(m.time * 1000, barTimes)) continue;
+      if (!inDrawWindow(m.time * 1000)) continue;
       const idx = tradeIndexByFill.get(`${m.time}|${m.leg}|${m.side}`)?.shift();
       const snappedTs = snapNearestBar(m.time * 1000, barTimes);
       const bar = barByTime.get(snappedTs);
@@ -1146,7 +1203,16 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       // definition so the two glyphs of the same trade can't drift apart.
       const toggleTradeSelect = () => {
         if (backtestResultSignal.value === result && idx !== undefined) {
-          selectedTradeSignal.set(selectedTradeSignal.value === idx ? null : idx);
+          // The user clicked the trade ON the chart — they're already looking
+          // at it, so the selection subscription must not pan/zoom the view.
+          // Signal.set notifies synchronously; the subscription reads-and-
+          // clears this flag.
+          selectFromMarkerClick = true;
+          try {
+            selectedTradeSignal.set(selectedTradeSignal.value === idx ? null : idx);
+          } finally {
+            selectFromMarkerClick = false;
+          }
         }
         return false;
       };
@@ -1198,7 +1264,11 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       // together). Tracked in markerIds so teardown/reanchor clears it too.
       const [glyph] = buildSignalGlyphs([m]);
       if (glyph && idx !== undefined) glyph.tradeNo = idx + 1; // dock row number
-      if (glyph && fillWithinLoadedWindow(glyph.signalTime * 1000, barTimes)) {
+      if (
+        glyph &&
+        fillWithinLoadedWindow(glyph.signalTime * 1000, barTimes) &&
+        inDrawWindow(glyph.signalTime * 1000)
+      ) {
         const sigSnapped = snapNearestBar(glyph.signalTime * 1000, barTimes);
         const sigBar = barByTime.get(sigSnapped);
         // Anchor at the signal bar's low (long ⇒ glyph hangs below) / high (short
@@ -1249,6 +1319,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
     // overlays here — see the module note above.
     const bars = (chart.getDataList() ?? []).map((k) => ({ timestamp: k.timestamp, high: k.high }));
     artifacts.aggClusters = aggregateTradesByBar(result.trades, bars);
+    artifacts.markerDrawWindow = null; // native-only bookkeeping
   }
 }
 
@@ -1305,16 +1376,55 @@ export function reanchorBacktestMarkers(chart: Chart): void {
   const artifacts = artifactsByChart.get(chart);
   if (!artifacts || !artifacts.result) return;
   if (artifacts.markerMode !== "none") {
-    for (const id of artifacts.markerIds) chart.removeOverlay({ id });
-    artifacts.markerIds = [];
-    artifacts.aggClusters = [];
-    // Respect the "Show Markers" toggle — a history page-back must not resurrect
-    // markers the user has hidden (the period bands below still redraw).
-    if (backtestMarkersShownSignal.value) drawMarkers(chart, artifacts.result, artifacts);
+    redrawMarkersOnly(chart, artifacts);
   }
   clearPeriodBands(chart, artifacts);
   drawPeriodBands(chart, artifacts, artifacts.result);
 }
+
+/** Tear down and redraw ONLY the fill markers / aggregate clusters — the shared
+ * body of the reanchor, the "Show Markers" toggle flip, and the visible-range
+ * remount below. Respects the toggle: a redraw never resurrects markers the
+ * user has hidden. */
+function redrawMarkersOnly(chart: Chart, artifacts: BacktestArtifacts): void {
+  for (const id of artifacts.markerIds) chart.removeOverlay({ id });
+  artifacts.markerIds = [];
+  artifacts.aggClusters = [];
+  artifacts.markerDrawWindow = null;
+  if (backtestMarkersShownSignal.value && artifacts.result) {
+    drawMarkers(chart, artifacts.result, artifacts);
+  }
+}
+
+/** Remount native markers when the view pans/zooms toward the edge of the span
+ * they were drawn for (drawMarkers virtualizes to visible range + buffer).
+ * Called from ChartCore's scroll/zoom subscription; the check is a couple of
+ * comparisons, the actual remount is debounced so a continuous drag redraws
+ * once per settle, not per event. */
+export function ensureMarkersCoverVisibleRange(chart: Chart): void {
+  const artifacts = artifactsByChart.get(chart);
+  const win = artifacts?.markerDrawWindow;
+  if (!artifacts?.result || artifacts.markerMode !== "native" || !win) return;
+  if (!backtestMarkersShownSignal.value) return;
+  const bars = chart.getDataList() ?? [];
+  if (bars.length === 0) return;
+  const vr = chart.getVisibleRange();
+  const fromTs = bars[Math.max(0, Math.min(vr.from, bars.length - 1))]?.timestamp;
+  const toTs = bars[Math.max(0, Math.min(vr.to - 1, bars.length - 1))]?.timestamp;
+  if (fromTs == null || toTs == null) return;
+  if (fromTs >= win.fromTs && toTs <= win.toTs) return; // still inside the buffer
+  const prior = markerRemountTimerByChart.get(chart);
+  if (prior != null) clearTimeout(prior);
+  markerRemountTimerByChart.set(
+    chart,
+    setTimeout(() => {
+      markerRemountTimerByChart.delete(chart);
+      const a = artifactsByChart.get(chart);
+      if (a?.result && a.markerMode === "native") redrawMarkersOnly(chart, a);
+    }, 150),
+  );
+}
+const markerRemountTimerByChart = new WeakMap<Chart, ReturnType<typeof setTimeout>>();
 
 /** Redraw a chart's backtest artifacts after older history streamed in via the
  * NATIVE scroll-back loader (the user dragging left), which the coverage-walk
@@ -1344,7 +1454,27 @@ export function extendBacktestArtifacts(
     newestNeeded = Math.max(newestNeeded, m.time * 1000);
   }
   if (newestNeeded < newOldestMs) return; // window hasn't reached the run yet
-  reanchorBacktestMarkers(chart);
+  scheduleReanchor(chart);
+}
+
+// Coalesce a scroll-back page chain's redraws. Each prepended page that crosses
+// the run's span requests a reanchor, but a drag lands several pages per second
+// and a full overlay teardown+rebuild + period-band recompute per page (cost
+// growing with the loaded bar count) froze the chart in bursts. A trailing
+// debounce turns the chain into one redraw once the pages settle; a chart torn
+// down before the timer fires is a no-op (reanchorBacktestMarkers bails when
+// its artifacts are gone).
+const reanchorTimerByChart = new WeakMap<Chart, ReturnType<typeof setTimeout>>();
+function scheduleReanchor(chart: Chart): void {
+  const prior = reanchorTimerByChart.get(chart);
+  if (prior != null) clearTimeout(prior);
+  reanchorTimerByChart.set(
+    chart,
+    setTimeout(() => {
+      reanchorTimerByChart.delete(chart);
+      reanchorBacktestMarkers(chart);
+    }, 150),
+  );
 }
 
 /** Draw a backtest result's on-chart artifacts (equity sub-pane + trade
@@ -1435,10 +1565,7 @@ export function renderArtifacts(
   // selecting a trade still draws its zone with markers off) untouched.
   if (backtestMarkersShownSignal.value) drawMarkers(chart, result, artifacts);
   const unsubMarkers = backtestMarkersShownSignal.subscribe(() => {
-    for (const id of artifacts.markerIds) chart.removeOverlay({ id });
-    artifacts.markerIds = [];
-    artifacts.aggClusters = [];
-    if (backtestMarkersShownSignal.value) drawMarkers(chart, result, artifacts);
+    redrawMarkersOnly(chart, artifacts);
   });
 
   // Row -> chart: draw ONE transient locked line spanning entry -> exit,
@@ -1511,8 +1638,10 @@ export function renderArtifacts(
     const hi = Math.max(entryTs, exitTs);
     // In the loaded window → draw + scroll straight away (the common case; also
     // when firstTs/lastTs are unknown, let drawSelectionZone's own guard decide).
+    // A selection that came from clicking the trade's own on-chart marker skips
+    // the scroll entirely — the user is already looking at it.
     if (firstTs == null || lastTs == null || (hi >= firstTs && lo <= lastTs)) {
-      drawSelectionZone(chart, artifacts, t);
+      drawSelectionZone(chart, artifacts, t, !selectFromMarkerClick);
       return;
     }
     // Out of window. A finer timeframe's initial load is recent-only, so an older

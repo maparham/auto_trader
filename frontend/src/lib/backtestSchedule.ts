@@ -50,12 +50,27 @@ export function resolveMask(m: RecurrenceMask): RecurrenceMask {
   };
 }
 
+// Intl.DateTimeFormat construction is ~100x the cost of a format() call, and
+// computePeriodBands funnels EVERY loaded bar through localParts/tzOffsetMs on
+// every marker reanchor (profiled at ~35% of main-thread time during a
+// jump-to-trade history walk on a 5m year). Memoize the formatters per tz —
+// the option sets are fixed, so the key is the tz plus a variant tag.
+const fmtCache = new Map<string, Intl.DateTimeFormat>();
+function cachedFormat(key: string, make: () => Intl.DateTimeFormat): Intl.DateTimeFormat {
+  let fmt = fmtCache.get(key);
+  if (!fmt) {
+    fmt = make();
+    fmtCache.set(key, fmt);
+  }
+  return fmt;
+}
+
 // Wall-clock fields of `tMs` in `tz`, via Intl (DST-correct).
 function localParts(tMs: number, tz: string): { dow: number; month: number; day: number; minute: number } {
-  const fmt = new Intl.DateTimeFormat("en-US", {
+  const fmt = cachedFormat(`parts|${tz}`, () => new Intl.DateTimeFormat("en-US", {
     timeZone: tz, weekday: "short", month: "numeric", day: "numeric",
     hour: "2-digit", minute: "2-digit", hour12: false,
-  });
+  }));
   const parts = Object.fromEntries(fmt.formatToParts(tMs).map((p) => [p.type, p.value]));
   const DOW: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   let hour = Number(parts.hour);
@@ -72,10 +87,10 @@ function localParts(tMs: number, tz: string): { dow: number; month: number; day:
 // (negative when behind). DST-correct via Intl. One-pass; only inaccurate
 // within the ~1h of a DST transition, which never matters for a session label.
 function tzOffsetMs(tz: string, atMs: number): number {
-  const p = new Intl.DateTimeFormat("en-US", {
+  const p = cachedFormat(`offset|${tz}`, () => new Intl.DateTimeFormat("en-US", {
     timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  }).formatToParts(atMs);
+  })).formatToParts(atMs);
   const g = (t: string) => Number(p.find((x) => x.type === t)!.value);
   let h = g("hour"); if (h === 24) h = 0;
   return Date.UTC(g("year"), g("month") - 1, g("day"), h, g("minute"), g("second")) - atMs;

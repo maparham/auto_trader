@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   pageHistoryBack,
+  coverHistoryRangeParallel,
   scrollbackLoadOlder,
   type PageHistoryBackArgs,
+  type CoverRangeParallelArgs,
   type ScrollbackLoadArgs,
 } from "./historyPaging";
 
@@ -389,5 +391,161 @@ describe("scrollbackLoadOlder", () => {
     expect(h.doneCalls).toHaveLength(1);
     expect(h.doneCalls[0]).toMatchObject({ bars: [], more: true });
     expect(h.args.loading.current).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// coverHistoryRangeParallel — the jump-to-trade cover (known target, windows
+// computed up front, fetched concurrently, one settle-time apply).
+// ---------------------------------------------------------------------------
+function parallelHarness(opts: {
+  fromTs: number;
+  toTs: number;
+  server: number[]; // bar timestamps (ms) the broker can return
+  initial?: number[]; // bars already loaded (ms), ascending
+  stale?: () => boolean;
+  maxWindows?: number;
+  concurrency?: number;
+  failWindow?: (fromSec: number, toSec: number) => boolean; // throw for matching windows
+}) {
+  const data = (opts.initial ?? []).map((t) => bar(t));
+  const applied: number[][] = [];
+  const cursors: number[] = [];
+  const fetches: [number, number][] = [];
+  const args: CoverRangeParallelArgs<ReturnType<typeof bar>> = {
+    fromTs: opts.fromTs,
+    toTs: opts.toTs,
+    resSec: 60,
+    pageBars: 5,
+    maxWindows: opts.maxWindows ?? 20,
+    concurrency: opts.concurrency ?? 3,
+    isStale: opts.stale ?? (() => false),
+    getData: () => data,
+    fetchOlder: vi.fn(async (fromSec: number, toSec: number) => {
+      fetches.push([fromSec, toSec]);
+      if (opts.failWindow?.(fromSec, toSec)) throw new Error("transient");
+      const fromMs = fromSec * SEC;
+      const toMs = toSec * SEC;
+      return opts.server.filter((t) => t >= fromMs && t <= toMs).map((t) => bar(t));
+    }),
+    applyData: (merged) => {
+      data.length = 0;
+      data.push(...merged);
+      applied.push(merged.map((b) => b.timestamp));
+    },
+    onCursor: (sec) => {
+      cursors.push(sec);
+    },
+  };
+  return { args, data, applied, cursors, fetches };
+}
+
+describe("coverHistoryRangeParallel", () => {
+  it("covers to fromTs with one ascending, deduped apply", async () => {
+    const server = [88, 89, 90, 91, 92, 93, 94, 95, 96, 97].map((m) => m * MIN);
+    const h = parallelHarness({
+      fromTs: 88 * MIN,
+      toTs: 100 * MIN,
+      server,
+      initial: [96, 97, 98, 99, 100].map((m) => m * MIN),
+    });
+    const res = await coverHistoryRangeParallel(h.args);
+    expect(res).toBe("reached");
+    expect(h.applied).toHaveLength(1);
+    const timestamps = h.applied[0];
+    expect(timestamps[0]).toBeLessThanOrEqual(88 * MIN);
+    // Ascending, no duplicates, and the already-loaded 96/97 not re-prepended.
+    expect(timestamps).toEqual([...new Set(timestamps)].sort((a, b) => a - b));
+    expect(timestamps.filter((t) => t === 96 * MIN)).toHaveLength(1);
+    // Cursor points at the oldest applied bar.
+    expect(h.cursors).toEqual([Math.floor((88 * MIN) / 1000)]);
+  });
+
+  it("is a no-op returning 'reached' when already covered", async () => {
+    const h = parallelHarness({
+      fromTs: 96 * MIN,
+      toTs: 100 * MIN,
+      server: [90 * MIN],
+      initial: [96, 100].map((m) => m * MIN),
+    });
+    const res = await coverHistoryRangeParallel(h.args);
+    expect(res).toBe("reached");
+    expect(h.applied).toHaveLength(0);
+    expect(h.fetches).toHaveLength(0);
+  });
+
+  it("crosses interior empty windows (closed market) without stopping", async () => {
+    // Loaded [100]. Real bars only at 70..73; everything between is a gap.
+    const server = [70, 71, 72, 73].map((m) => m * MIN);
+    const h = parallelHarness({
+      fromTs: 70 * MIN,
+      toTs: 100 * MIN,
+      server,
+      initial: [100 * MIN],
+    });
+    const res = await coverHistoryRangeParallel(h.args);
+    expect(res).toBe("reached");
+    expect(h.data[0].timestamp).toBeLessThanOrEqual(70 * MIN);
+  });
+
+  it("a thrown window breaks contiguity: newer windows apply, older ones do not", async () => {
+    // Windows are 5min wide. Fail the window containing 85min; bars older than
+    // the failed window must NOT land (a hole would glue distant bars together).
+    const server = [75, 76, 80, 84, 90, 95].map((m) => m * MIN);
+    const h = parallelHarness({
+      fromTs: 75 * MIN,
+      toTs: 100 * MIN,
+      server,
+      initial: [100 * MIN],
+      failWindow: (fromSec, toSec) => fromSec * SEC <= 85 * MIN && 85 * MIN <= toSec * SEC,
+    });
+    const res = await coverHistoryRangeParallel(h.args);
+    expect(res).toBe("reached"); // settled — the caller re-checks coverage itself
+    const timestamps = h.data.map((b) => b.timestamp);
+    expect(timestamps).toContain(90 * MIN);
+    expect(timestamps).toContain(95 * MIN);
+    expect(timestamps).not.toContain(80 * MIN);
+    expect(timestamps).not.toContain(75 * MIN);
+  });
+
+  it("aborts without applying when isStale() flips true mid-run", async () => {
+    let stale = false;
+    const h = parallelHarness({
+      fromTs: 80 * MIN,
+      toTs: 100 * MIN,
+      server: [80, 85, 90, 95].map((m) => m * MIN),
+      initial: [100 * MIN],
+      stale: () => stale,
+    });
+    const realFetch = h.args.fetchOlder;
+    h.args.fetchOlder = vi.fn(async (a: number, b: number) => {
+      const r = await realFetch(a, b);
+      stale = true;
+      return r;
+    });
+    const res = await coverHistoryRangeParallel(h.args);
+    expect(res).toBe("aborted");
+    expect(h.applied).toHaveLength(0);
+    expect(h.cursors).toHaveLength(0);
+  });
+
+  it("caps the window count at maxWindows and still applies the contiguous newest span", async () => {
+    // 2 windows of 5min each reach back to ~90min; the target at 70min is past
+    // the budget. The fetched newest span still lands (partial beats none).
+    const server = [70, 91, 92, 95].map((m) => m * MIN);
+    const h = parallelHarness({
+      fromTs: 70 * MIN,
+      toTs: 100 * MIN,
+      server,
+      initial: [100 * MIN],
+      maxWindows: 2,
+    });
+    const res = await coverHistoryRangeParallel(h.args);
+    expect(res).toBe("reached");
+    const timestamps = h.data.map((b) => b.timestamp);
+    expect(timestamps).toContain(95 * MIN);
+    expect(timestamps).toContain(91 * MIN);
+    expect(timestamps).not.toContain(70 * MIN); // past the cap — caller shows the notice
+    expect(h.data[0].timestamp).toBeGreaterThan(70 * MIN);
   });
 });

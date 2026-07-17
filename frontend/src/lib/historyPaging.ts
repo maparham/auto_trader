@@ -124,6 +124,100 @@ export async function pageHistoryBack<T extends BarLike>(
   return result;
 }
 
+// Parallel variant of pageHistoryBack for a KNOWN target timestamp (jump to a
+// backtest trade). The sequential walk exists because scroll-back probes toward
+// an unknown history edge; here the left edge is a real trade time, so every
+// window between it and the loaded data can be computed up front and fetched
+// concurrently. Measured: a 1-month jump on 5m went from ~20s of one-page-at-a-
+// time round-trips to a handful of parallel batches. Same DI shape as
+// pageHistoryBack; one settle-time apply.
+//
+// Contiguity rule: a window whose fetch THREW breaks the chain — bars older
+// than it must not be applied (the chart's data list is a contiguous array; a
+// hole would silently glue distant bars together). Everything newer than the
+// first failure still applies. Empty windows are fine (market closed) and do
+// not break the chain: the target is a known bar, so any emptiness en route is
+// an interior gap, never the history edge (same reasoning as the trade pager's
+// maxEmpty: Infinity).
+export interface CoverRangeParallelArgs<T extends BarLike> {
+  fromTs: number; // ms — target left edge (the trade's earliest needed bar)
+  toTs: number; // ms — right edge; cursor fallback when no data is loaded yet
+  resSec: number; // seconds per bar (window width = pageBars * resSec)
+  pageBars: number; // bars to request per window (keeps request sizes broker-friendly)
+  maxWindows: number; // safety cap on the number of windows
+  concurrency: number; // parallel fetch lanes
+  isStale: () => boolean; // request no longer owns the chart
+  getData: () => T[] | null | undefined; // current loaded bars, ascending
+  fetchOlder: (fromSec: number, toSec: number) => Promise<T[]>;
+  applyData: (merged: T[]) => void; // called once, at settle, never when aborted
+  onCursor?: (sec: number) => void; // oldest applied bar (unix sec)
+  onProgress?: () => void; // fresh history landed
+}
+
+export async function coverHistoryRangeParallel<T extends BarLike>(
+  args: CoverRangeParallelArgs<T>,
+): Promise<PageResult> {
+  const { fromTs, toTs, resSec, pageBars, maxWindows, concurrency, isStale, getData, fetchOlder, applyData, onCursor, onProgress } = args;
+
+  const fromFloorSec = Math.floor(fromTs / 1000);
+  // Same window arithmetic as pageHistoryBack: [max(from, to-width), to] then
+  // step past it, so the two paths stay hole-free against the same backend.
+  const windows: { fromSec: number; toSec: number }[] = [];
+  let toSec = Math.floor((getData()?.[0]?.timestamp ?? toTs) / 1000) - 1;
+  while (toSec * 1000 > fromTs && windows.length < maxWindows) {
+    const fromSec = Math.max(fromFloorSec, toSec - pageBars * resSec);
+    windows.push({ fromSec, toSec });
+    if (fromSec <= fromFloorSec) break;
+    toSec = fromSec - 1;
+  }
+  if (windows.length === 0) return "reached"; // already covered
+
+  // Fixed-lane pool. `null` marks a thrown fetch (≠ a genuine empty window).
+  const results: (T[] | null)[] = new Array(windows.length).fill(null);
+  let next = 0;
+  let stale = false;
+  const lane = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= windows.length || stale) return;
+      if (isStale()) {
+        stale = true;
+        return;
+      }
+      try {
+        results[i] = await fetchOlder(windows[i].fromSec, windows[i].toSec);
+      } catch {
+        results[i] = null; // transient failure — breaks contiguity below
+      }
+      if (isStale()) {
+        stale = true;
+        return;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, windows.length) }, lane));
+  if (stale || isStale()) return "aborted";
+
+  // Keep the contiguous prefix (newest → oldest) up to the first failed window.
+  const firstFailed = results.indexOf(null);
+  const usable = firstFailed === -1 ? results : results.slice(0, firstFailed);
+  // Settle exactly like pageHistoryBack: re-read getData() so live-appended bars
+  // survive; only strictly-older bars count as fresh.
+  const current = getData() ?? [];
+  const oldestMs = current[0]?.timestamp ?? Infinity;
+  const fresh = usable
+    .slice()
+    .reverse()
+    .flat()
+    .filter((b): b is T => b != null && b.timestamp < oldestMs);
+  if (fresh.length) {
+    applyData([...fresh, ...current]);
+    onCursor?.(Math.floor(fresh[0].timestamp / 1000));
+    onProgress?.();
+  }
+  return "reached";
+}
+
 // The interactive scroll-back loader: answers ONE klinecharts forward ('older')
 // load. Distinct from pageHistoryBack in two load-bearing ways, both driven by
 // how klinecharts chains loads: it only re-triggers the next forward load when

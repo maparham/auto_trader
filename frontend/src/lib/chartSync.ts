@@ -344,6 +344,21 @@ export function applyVisibleRangeKeepStart(
   scrollBarToPixel(chart, barTs, leftPad);
 }
 
+/** Scroll — WITHOUT touching zoom — so the bar nearest `ts` sits at the
+ * horizontal center of the main pane. The pan-only counterpart of
+ * applyVisibleRange for callers that must preserve the user's bar spacing
+ * (e.g. trade-row selection navigation). Same iterated-nudge convergence as
+ * scrollBarToPixel; a ts outside the loaded data clamps to the nearest edge
+ * bar. */
+export function scrollTsToCenter(chart: Chart, ts: number): void {
+  const w = mainWidth(chart);
+  const data = chart.getDataList();
+  if (w <= 1 || !data || data.length < 2) return;
+  const barTs = data[nearestIdx(data, ts)].timestamp;
+  chart.scrollToTimestamp(barTs, 0);
+  scrollBarToPixel(chart, barTs, w / 2);
+}
+
 // Exact mirror for "lock charts": the sibling shares the master's interval, so we
 // copy its barSpace verbatim and scroll so the reference bar `anchorTs` lands on the
 // exact pixel `anchorX` it holds on the master — no bar-count re-derivation. With
