@@ -34,6 +34,7 @@ import { registerCustomIndicators } from "./lib/customIndicators";
 import { registerBacktestIndicators } from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
 import { installMagnetModifierKeys } from "./lib/magnet";
+import { matchingCellIds } from "./lib/tabSearch";
 import { compositeOverHex } from "./lib/lineStyle";
 import { registerPositionLine } from "./lib/positionLines";
 import type { ChartController } from "./lib/chartController";
@@ -376,6 +377,30 @@ export default function App() {
       return remembered;
     return startup.ws.activeTabId;
   });
+  // Find-open-symbol query (transient, never persisted). Lifted here because
+  // it drives both TabBar chip highlights and cell glow in ChartGrid.
+  const [tabSearchQuery, setTabSearchQuery] = useState("");
+  // Cells flashed by the symbol search (jump or live typing). Cleared after
+  // ~2s; the CSS animation fades the outline over the same window.
+  const [searchGlow, setSearchGlow] = useState<string[]>([]);
+  const glowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashCells = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    if (glowTimer.current != null) clearTimeout(glowTimer.current);
+    // Clear-then-set across a frame so re-flashing the same cells restarts
+    // the CSS animation (same class on the same node never replays).
+    setSearchGlow([]);
+    requestAnimationFrame(() => {
+      setSearchGlow(ids);
+      glowTimer.current = setTimeout(() => setSearchGlow([]), 2000);
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (glowTimer.current != null) clearTimeout(glowTimer.current);
+    },
+    [],
+  );
   // Remember the active tab for this browser tab so a reload restores it.
   useEffect(() => {
     if (activeId) sessionStorage.setItem(ACTIVE_TAB_SESSION_KEY, activeId);
@@ -704,6 +729,34 @@ export default function App() {
     active?.cells.find((c) => c.id === active.activeCellId) ?? active?.cells[0];
   const symbol = focusedCell?.symbol;
   const period = focusedCell?.period;
+
+  // Tab click from the bar. With a search active and the tab matching, also
+  // re-home the focused cell onto the first match and flash all matches
+  // (spec: click-to-jump).
+  const selectTabFromBar = useCallback(
+    (id: string) => {
+      setActiveId(id);
+      const tab = tabs.find((t) => t.id === id);
+      if (tab == null) return;
+      const hits = matchingCellIds(tab, tabSearchQuery);
+      if (hits.length === 0) return;
+      setTabs((ts) =>
+        ts.map((t) => (t.id === id ? { ...t, activeCellId: hits[0] } : t)),
+      );
+      flashCells(hits);
+    },
+    [tabs, tabSearchQuery, flashCells],
+  );
+
+  // Typing in the search flashes the ACTIVE tab's matches immediately —
+  // no tab click needed when the symbol is already in front of you.
+  useEffect(() => {
+    if (tabSearchQuery.trim() === "" || active == null) return;
+    flashCells(matchingCellIds(active, tabSearchQuery));
+    // Deliberately keyed on the query only: re-flashing on every tabs-array
+    // identity change would loop (flash → activeCellId write → new tabs).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabSearchQuery]);
 
   // Live chart instances + controllers, keyed by cell id. A ready/focus change
   // bumps a counter so the derived `focused` recomputes (the map itself is a ref).
@@ -1724,13 +1777,15 @@ export default function App() {
         activeId={active?.id ?? ""}
         closedEpics={epicClosed}
         alertTabIds={alertTabIds}
-        onSelect={setActiveId}
+        onSelect={selectTabFromBar}
         onAdd={addTab}
         onClose={closeTab}
         onReorder={reorderTab}
         canMerge={(s, d) => canMergeTabs(tabs, s, d)}
         onMerge={mergeTabs}
         onDragActive={setDragTabId}
+        searchQuery={tabSearchQuery}
+        onSearchQuery={setTabSearchQuery}
         trailing={
           <>
             <LayoutManager
@@ -1828,6 +1883,7 @@ export default function App() {
               cells={active.cells}
               layout={active.layout}
               focusedCellId={active.activeCellId}
+              searchGlowCellIds={searchGlow}
               brokerId={brokerId}
               theme={settings.theme}
               timezone={settings.timezone}

@@ -35,6 +35,8 @@ interface Props {
   cells: ChartCell[];
   layout: LayoutKind;
   focusedCellId: string;
+  // Cells to flash with the search-glow outline (find-open-symbol jump).
+  searchGlowCellIds?: string[];
   // Active data broker id ("capital") — every cell's feed is fetched against it.
   brokerId: string;
   theme: Theme;
@@ -88,6 +90,7 @@ export default function ChartGrid({
   cells,
   layout,
   focusedCellId,
+  searchGlowCellIds,
   brokerId,
   theme,
   timezone,
@@ -196,7 +199,9 @@ export default function ChartGrid({
           key={cell.id}
           className={`chart-cell${
             cell.id === focusedCellId && cells.length > 1 ? " focused" : ""
-          }${isMax ? " maximized" : ""}`}
+          }${searchGlowCellIds?.includes(cell.id) ? " search-glow" : ""}${
+            isMax ? " maximized" : ""
+          }`}
           style={{ display: hidden ? "none" : undefined }}
           onMouseEnter={() => measureAxis(cell.id)}
           onMouseMove={(e) => {

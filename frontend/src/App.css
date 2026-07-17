@@ -216,6 +216,32 @@
   box-shadow: inset 0 0 0 1px var(--accent);
   z-index: 20;
 }
+/* Search-jump flash: accent outline over the matched cell, fading out.
+   App removes the class after ~2s; the animation does the visual fade.
+   Mirrors the .focused box-shadow technique, a touch thicker to stand out. */
+.chart-cell.search-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  z-index: 50;
+  animation: search-glow-fade 2s ease forwards;
+}
+@keyframes search-glow-fade {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chart-cell.search-glow::after {
+    animation: none;
+  }
+}
 /* Per-cell maximize control: top-right INSIDE the chart area, just left of the
    price axis so it never covers axis labels — the horizontal offset is set
    inline by ChartGrid (measured axis width, dynamic). Revealed on cell hover,
@@ -282,6 +308,13 @@
   display: flex; align-items: center; gap: 4px; flex-shrink: 0;
   min-height: 34px; padding-left: 8px; margin-left: 4px;
   border-left: 1px solid var(--border);
+}
+/* Find-open-symbol control pinned at the end of the strip, OUTSIDE .tab-bar-tabs
+   so it never wraps to a second row when the chips wrap — it holds its own slot,
+   sized to one tab row like .tab-bar-actions. */
+.tab-bar-search {
+  display: flex; align-items: center; flex: none;
+  min-height: 34px; padding-left: 6px;
 }
 /* Pill/card tabs: each tab is a self-contained rounded chip with its own
    surface + border, separated by the .tab-bar-tabs gap, so adjacent tabs read
@@ -386,6 +419,27 @@
   font-size: 18px; line-height: 1; padding: 0 10px; flex-shrink: 0;
 }
 .tab-add:hover { color: var(--text); }
+
+/* Find-open-symbol search: collapsed magnifier at the end of the tab strip,
+   expanding into an inline input. Matching chips get .search-hit below. */
+.tab-search {
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; flex: none;
+  border: none; border-radius: 4px; background: none;
+  color: var(--text-faint); cursor: pointer;
+}
+.tab-search:hover { color: var(--text); background: var(--hover); }
+.tab-search-input {
+  font: inherit; font-size: 12px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--accent);
+  border-radius: 4px; padding: 3px 8px; width: 140px; flex: none;
+  outline: none;
+}
+.tab-search-input::placeholder { color: var(--text-faint); }
+.tab.search-hit {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: 1px solid var(--accent); outline-offset: -1px;
+}
 
 /* Workspace actions in the tab bar (Backtest, split picker, theme). Compact,
    borderless, TV-style: transparent with a subtle gray rounded hover. Sized to

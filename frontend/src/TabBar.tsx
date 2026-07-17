@@ -12,6 +12,7 @@ import Tooltip from "./components/Tooltip";
 import ContextMenu from "./ContextMenu";
 import MergeTabsMenu from "./MergeTabsMenu";
 import { isSynthetic } from "./lib/syntheticRegistry";
+import { matchingTabIds } from "./lib/tabSearch";
 
 // Must match .tab-bar-tabs { gap } in App.css — the flow simulation that
 // slides chips apart uses it to predict where each chip lands.
@@ -122,6 +123,11 @@ interface Props {
   // Workspace-level controls pinned to the right of the bar (Backtest, workspace
   // layouts, the split picker, theme toggle) — they aren't specific to one chart.
   trailing?: ReactNode;
+  // Find-open-symbol search (spec 2026-07-17-tab-symbol-search). The query is
+  // lifted to App because it also drives cell glow in ChartGrid; the
+  // open/collapsed state of the input is local to this component.
+  searchQuery: string;
+  onSearchQuery: (q: string) => void;
 }
 
 export default function TabBar({
@@ -137,7 +143,10 @@ export default function TabBar({
   onMerge,
   onDragActive,
   trailing,
+  searchQuery,
+  onSearchQuery,
 }: Props) {
+  const searchHits = matchingTabIds(tabs, searchQuery);
   // Drag-to-reorder state. The dragged tab is tracked by ID, not index (see
   // the effect below); `target` is where a drop right now would land — an
   // insertion slot (chips slide apart to preview it) or a merge into a chip
@@ -232,6 +241,57 @@ export default function TabBar({
   // where the user clicked.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
   const [mergePick, setMergePick] = useState<{ x: number; y: number; tabId: string } | null>(null);
+
+  // Find-open-symbol search: collapsed magnifier ⇄ inline input.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    onSearchQuery("");
+  }, [onSearchQuery]);
+
+  // Outside-click closes the search — but a click anywhere INSIDE the tab bar
+  // (a tab chip, the input itself) keeps it open, so the user can hop between
+  // matching tabs. Closing on input blur would clear the query on mousedown,
+  // before the chip's click handler runs.
+  useEffect(() => {
+    if (!searchOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const bar = barRef.current?.closest(".tab-bar");
+      if (bar != null && !bar.contains(e.target as Node)) closeSearch();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [searchOpen, closeSearch]);
+
+  // Ctrl/Cmd+F opens (or re-focuses) the search instead of the browser find.
+  // Suppressed while another editable element has focus so in-app text fields
+  // keep their native find/typing behavior.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Escape closes the open search from anywhere on the page — after a
+      // click-to-jump, focus sits on the clicked tab, not the input, so the
+      // input's own onKeyDown can't catch it. Guarded on searchOpen so a
+      // closed search never swallows Escape from other UI.
+      if (e.key === "Escape") {
+        if (searchOpen) closeSearch();
+        return;
+      }
+      if (e.key !== "f" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      const editable =
+        el != null &&
+        el !== searchRef.current &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      if (editable) return;
+      e.preventDefault();
+      if (searchOpen) searchRef.current?.select();
+      else setSearchOpen(true);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [searchOpen, closeSearch]);
 
   // committed = the drop landed and the real order is about to change: kill
   // the transition in the same commit, otherwise every chip animates its
@@ -387,6 +447,7 @@ export default function TabBar({
             target?.kind === "merge" && target.index === i && dragId !== t.id
               ? "drop-merge"
               : "",
+            searchHits.has(t.id) ? "search-hit" : "",
           ]
             .filter(Boolean)
             .join(" ")}
@@ -476,6 +537,38 @@ export default function TabBar({
           +
         </button>
       </Tooltip>
+      </div>
+      {/* Pinned outside .tab-bar-tabs so it never wraps to a second row with the
+          scrolling/wrapping chip strip — it stays put at the strip's end. */}
+      <div className="tab-bar-search">
+        {searchOpen ? (
+          <input
+            ref={searchRef}
+            className="tab-search-input"
+            placeholder="Find symbol…"
+            aria-label="Find open symbol"
+            value={searchQuery}
+            onChange={(e) => onSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") closeSearch();
+            }}
+            autoFocus
+          />
+        ) : (
+          <Tooltip content="Find open symbol (Ctrl/Cmd+F)">
+            <button
+              className="tab-search"
+              aria-label="Find open symbol"
+              onClick={() => setSearchOpen(true)}
+            >
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                   stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+            </button>
+          </Tooltip>
+        )}
       </div>
       {trailing && <div className="tab-bar-actions">{trailing}</div>}
       {ctxMenu && tabs.length > 1 && (
