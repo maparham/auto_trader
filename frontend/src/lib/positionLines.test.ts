@@ -2,7 +2,7 @@
 // PositionLines reconcile + tradeLineSpecs (pending-merge, labels, draggability).
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { PositionLines, tradeLineSpecs, bracketLabels, restingLineEndX, type LineSpec } from "./positionLines";
+import { PositionLines, tradeLineSpecs, bracketLabels, restingLineEndX, DRAFT_LABEL_X, type LineSpec } from "./positionLines";
 import type { TradeView } from "./trading";
 
 interface Call {
@@ -213,6 +213,30 @@ describe("tradeLineSpecs", () => {
     expect(specs.map((s) => s.key)).toEqual(["draft:price", "draft:stop", "draft:tp"]);
     expect(specs.every((s) => s.draggable)).toBe(true);
     expect(specs[0].label).toBe("Buy limit 1 @ 99.00");
+  });
+
+  it("anchors draft pills right of the bracket spine (badges own the left column)", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ stop: 95 })],
+      draft: {
+        epic: "EURUSD",
+        side: "buy",
+        quantity: 1,
+        type: "limit",
+        price: 99,
+        stop: 98,
+        takeProfit: 101,
+        expiresAt: null,
+      },
+    });
+    const drafts = specs.filter((s) => s.key.startsWith("draft:"));
+    expect(drafts).toHaveLength(3);
+    // Right of the spine/badge column (spine x = 92) — matches the DOM pill anchor.
+    expect(DRAFT_LABEL_X).toBe(106);
+    expect(drafts.map((s) => s.labelX)).toEqual([DRAFT_LABEL_X, DRAFT_LABEL_X, DRAFT_LABEL_X]);
+    // Real trade lines keep the default far-left pill anchor (labelX unset).
+    expect(specs.filter((s) => !s.key.startsWith("draft:")).every((s) => s.labelX === undefined)).toBe(true);
   });
 
   it("a market draft has no entry line (fills at market)", () => {

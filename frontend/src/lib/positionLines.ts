@@ -44,6 +44,10 @@ export interface LineSpec {
   // Raw entry time (ms) for a "bar" line — the drawer snaps it to the containing
   // candle and truncates the resting line there. Ignored for stub/full.
   entryTs?: number;
+  // Pill anchor x (px from the pane's left edge); unset → far-left (6). Draft lines
+  // set DRAFT_LABEL_X so their pills clear the bracket badge/spine column, which
+  // otherwise paints over them (real trades blank canvas labels for DOM pills).
+  labelX?: number;
   // Fully revealed (full width + end marker suppressed) — hover, click-select, or an
   // active drag of this trade. Precomputed by the caller since drag state lives there.
   emphasized?: boolean;
@@ -100,6 +104,13 @@ export interface SpecBuildOpts {
 }
 
 export const DRAFT_ID = "draft";
+
+// Where a DRAFT line's canvas pill anchors: just right of the bracket spine
+// (ChartCore TRADE_SPINE_X=92), the same slot the always-on DOM pills use for real
+// trades (TRADE_PILL_LEFT). The bracket's %/R:R badges live LEFT of the spine on a
+// canvas above this one — a far-left draft pill would sit under them and show only
+// a clipped sliver.
+export const DRAFT_LABEL_X = 106;
 
 /** Build the flat LineSpec list for all trades on `epic`, merging pending drags
  *  over server levels (so a dragged line doesn't snap back on the next poll). */
@@ -207,6 +218,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         label: `${verb} limit ${d.quantity} @ ${fmt(d.price)}`,
         draggable: true,
         restKind: "full",
+        labelX: DRAFT_LABEL_X,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "price", lvl),
       });
     }
@@ -218,6 +230,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         label: `SL ${fmt(d.stop)}`,
         draggable: true,
         restKind: "full",
+        labelX: DRAFT_LABEL_X,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "stop", lvl),
       });
     }
@@ -229,6 +242,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         label: `TP ${fmt(d.takeProfit)}`,
         draggable: true,
         restKind: "full",
+        labelX: DRAFT_LABEL_X,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "takeProfit", lvl),
       });
     }
@@ -244,6 +258,7 @@ interface LineExtra {
   selected?: boolean;
   restKind?: "bar" | "stub" | "full";
   emphasized?: boolean;
+  labelX?: number;
   // Whether the overlay carries a second, bar-anchored point (its x = the entry
   // candle). Set alongside restKind "bar"; when absent the "bar" line falls back to
   // a stub (entry candle not resolvable — e.g. older than the loaded window).
@@ -293,7 +308,11 @@ const tradeLine: OverlayTemplate = {
   totalStep: 2,
   needDefaultPointFigure: false,
   needDefaultXAxisFigure: false,
-  needDefaultYAxisFigure: true, // price tag on the y-axis
+  // NO y-axis price tag: klinecharts only draws it while the overlay is hovered, and
+  // its padding makes it a hair wider than the tick labels — the axis auto-width then
+  // flips (e.g. 53↔55px) on every hover in/out and the whole candle pane reflows
+  // ("chart nudges right"). The DOM pill on the line already shows the exact price.
+  needDefaultYAxisFigure: false,
   createPointFigures: (params) => {
     const { coordinates, bounding, overlay } = params;
     if (coordinates.length < 1) return [];
@@ -354,7 +373,7 @@ const tradeLine: OverlayTemplate = {
         type: "text",
         // Centre the pill ON the line (far left), like an alert's hover pill —
         // its solid fill sits over the dashed line.
-        attrs: { x: 6, y, text, align: "left", baseline: "middle" },
+        attrs: { x: extra.labelX ?? 6, y, text, align: "left", baseline: "middle" },
         styles: {
           color: "#ffffff",
           backgroundColor: extra.color,
@@ -432,7 +451,7 @@ export class PositionLines {
   }
 
   private sig(s: LineSpec, anchorTs: number | null): string {
-    return `${s.level}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.restKind}|${s.emphasized ?? false}|${anchorTs ?? ""}`;
+    return `${s.level}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.restKind}|${s.emphasized ?? false}|${anchorTs ?? ""}|${s.labelX ?? ""}`;
   }
 
   private onMoveEnd = (e: OverlayEvent<unknown>): boolean => {
@@ -482,6 +501,7 @@ export class PositionLines {
         restKind: spec.restKind,
         emphasized: spec.emphasized ?? false,
         hasBar: anchorTs != null,
+        labelX: spec.labelX,
       };
       const existing = this.lines.get(spec.key);
       if (existing) {

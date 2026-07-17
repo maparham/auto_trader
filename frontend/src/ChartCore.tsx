@@ -1103,6 +1103,40 @@ export default function ChartCore({
   const effPrecision = fetchedPrecision ?? symbol.pricePrecision ?? 2;
   const precisionRef = useRef(effPrecision);
   precisionRef.current = effPrecision;
+
+  // Pin the price (y) axis width so it can't lurch sideways on hover.
+  //
+  // klinecharts sizes the y-axis 'auto': it measures the widest price label and,
+  // to avoid per-tick jitter, never lets that width SHRINK (it holds the widest it
+  // has ever shown). But hovering a grabbable overlay (a trade or alert line) makes
+  // klinecharts hide the crosshair and re-run layout on a code path that skips that
+  // no-shrink guard, so the axis re-measures fresh, snaps ~2px narrower, and the
+  // whole candle pane jolts right — then back on hover-out. We can't patch the
+  // library, so we neutralise it: read the axis's own current measured width and pin
+  // it as a fixed size. Once it's a number, no re-measure (hover or otherwise) can
+  // move it. We re-run on symbol / timeframe / precision changes — the only things
+  // that legitimately change the label width — unlocking to 'auto' first so the new
+  // symbol measures correctly before we re-pin. (Scrolling far back to a very
+  // different price magnitude within one symbol won't re-pin until the next switch;
+  // that's rare and at worst clips a label a hair, never a jolt.)
+  useEffect(() => {
+    if (!chartReady || !hasData) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    // "candle_pane" is klinecharts' fixed main-pane id (PaneIdConstants.CANDLE),
+    // not exported publicly but stable in v10.
+    chart.setStyles({ yAxis: { size: "auto" } });
+    // klinecharts lays out on a microtask after setStyles; measure next frame, once
+    // the fresh 'auto' width has settled, then lock it in.
+    const raf = requestAnimationFrame(() => {
+      const c = chartRef.current;
+      const w = c?.getSize("candle_pane", "yAxis")?.width;
+      if (c && typeof w === "number" && Number.isFinite(w) && w > 0) {
+        c.setStyles({ yAxis: { size: Math.ceil(w) } });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [chartReady, hasData, symbol.epic, period.resolution, effPrecision]);
   // Whether this epic's market is currently closed (derived from opening hours),
   // fetched with precision and polled (see effect below). Drives the price label's
   // "closed" text in place of the candle countdown; the ref lets the once-mounted
