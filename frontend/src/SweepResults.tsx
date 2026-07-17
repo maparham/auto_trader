@@ -14,6 +14,8 @@ import { axisColumnLabel, comboAxisLabel, comboAxisText, fmtAxisValue, type Swee
 import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import Tooltip from "./components/Tooltip";
+import { verdictFor } from "./lib/backtestPanelData";
+import { metricTipLines } from "./components/metricScaleTip";
 
 type MetricKey =
   | "net_pnl"
@@ -42,11 +44,12 @@ const METRIC_COLS: { key: MetricKey; label: string; abbr: string; robust?: boole
   { key: "win_rate", label: "Win rate", abbr: "Win" },
   { key: "avg_win_loss_ratio", label: "RR", abbr: "RR" },
   { key: "max_drawdown", label: "Drawdown", abbr: "DD" },
-  { key: "profit_factor", label: "Profit factor", abbr: "PF" },
+  { key: "profit_factor", label: "Profit factor", abbr: "PF",
+    info: "Gross profit divided by gross loss; above 1 is profitable." },
   { key: "sharpe", label: "Sharpe", abbr: "Sh",
     info: "Annualized Sharpe ratio from daily equity returns. Treat with caution under 30 trades." },
   { key: "sqn", label: "SQN", abbr: "SQN",
-    info: "System Quality Number: sqrt(trades) times expectancy over trade P&L deviation. Van Tharp's scale calls 2 good and 3 excellent." },
+    info: "System Quality Number: sqrt(trades) times expectancy over trade P&L deviation." },
   { key: "plateau_score", label: "Plateau", abbr: "Plt",
     info: "Median Net P&L of this cell and its grid neighbors (one step on each numeric axis), capped at the cell's own result. A high plateau beats a high lone peak: neighbors confirm the edge is not one lucky cell." },
   { key: "worst_window_pnl", label: "Worst wnd", abbr: "Wst", robust: true,
@@ -63,6 +66,22 @@ type SortDir = "asc" | "desc";
 
 function metricValue(row: SweepRow, key: MetricKey): number | null {
   return row.metrics?.[key] ?? null;
+}
+
+// Columns sharing the backtest overview's interpretation scales: cells tint by
+// verdict band and the header ⓘ shows the same word/range/desc table. Keyed to
+// the scale's metric label in backtestPanelData. (Sweep drawdown is an absolute
+// amount, not the % the drawdown scale bands, so it stays unscaled.)
+const SCALED_COLS: Partial<Record<MetricKey, string>> = {
+  profit_factor: "Profit factor",
+  sharpe: "Sharpe",
+  sqn: "SQN",
+};
+
+function verdictClass(key: MetricKey, v: number | null): string {
+  const label = SCALED_COLS[key];
+  const tone = label ? verdictFor(label, v)?.tone : undefined;
+  return tone ? ` sweep-tone-${tone}` : "";
 }
 
 function fmtMetric(key: MetricKey, v: number | null): string {
@@ -303,7 +322,7 @@ export function SweepResults(props: {
               {baseCols.map((c) => (
                 <th key={c.key} className="sweep-c-num">
                   {c.info ? (
-                    <Tooltip content={c.info}>
+                    <Tooltip content={metricTipLines(SCALED_COLS[c.key] ?? "", c.info)}>
                       <span><SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} /></span>
                     </Tooltip>
                   ) : (
@@ -370,7 +389,7 @@ export function SweepResults(props: {
                     const v = metricValue(row, c.key);
                     const isBest = v !== null && bestByCol[c.key] === v;
                     return (
-                      <td key={c.key} className={`sweep-c-num${isBest ? " sweep-best" : ""}`}>
+                      <td key={c.key} className={`sweep-c-num${isBest ? " sweep-best" : ""}${verdictClass(c.key, v)}`}>
                         {c.key === "plateau_score" && spikeSet.has(row) ? (
                           <span className="sweep-spike" aria-label="isolated peak">▲ {fmtMetric(c.key, v)}</span>
                         ) : (

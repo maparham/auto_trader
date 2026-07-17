@@ -77,7 +77,7 @@ const METRIC_SCALES: Record<string, ScaleBand[]> = {
   ],
 };
 
-function verdictFor(label: string, value: number | null | undefined): MetricVerdict | undefined {
+export function verdictFor(label: string, value: number | null | undefined): MetricVerdict | undefined {
   if (value == null || !isFinite(value)) return undefined;
   const bands = METRIC_SCALES[label];
   if (!bands) return undefined;

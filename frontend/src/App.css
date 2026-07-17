@@ -4496,6 +4496,16 @@ span.bt-leg-short { color: var(--neg); }
 }
 .sweep-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .sweep-c-num { text-align: right; font-family: var(--mono); }
+/* Verdict-band tint on scaled columns (Sharpe/SQN/PF), matching the backtest
+   overview verdicts; the header ⓘ carries the scale. Defined before .sweep-best
+   so the best-in-column accent still wins on that one cell. Failed rows dim via
+   the row rule, but keep the tint from reading as live data — inherit instead. */
+.sweep-tone-good { color: var(--pos); }
+.sweep-tone-mid { color: #d48806; }
+.sweep-tone-bad { color: var(--neg); }
+.sweep-row.sweep-error .sweep-tone-good,
+.sweep-row.sweep-error .sweep-tone-mid,
+.sweep-row.sweep-error .sweep-tone-bad { color: inherit; }
 /* Per-axis columns: the swept value reads under an operand-name header. Headers
    clamp to a sane width with an ellipsis (full name on hover); values are mono
    so they line up across rows. */

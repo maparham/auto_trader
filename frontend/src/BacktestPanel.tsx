@@ -7,7 +7,7 @@
 // (tradeRows()/sortTradeRows()). Each row carries data-trade-index — a hook
 // Phase C uses to highlight the matching chart marker on hover/click.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   backtestResultSignal,
   highlightTradeSignal,
@@ -21,7 +21,8 @@ import {
   requestBacktestClear,
 } from "./lib/signals";
 import { saveBacktestPeriodsShown, saveBacktestMarkersShown, saveBacktestEquityShown } from "./lib/persist";
-import { metricGroups, METRIC_INFO, metricScale, legTable, tradeRows, sortTradeRows, rowWindow, type TradeRow, type LegTable } from "./lib/backtestPanelData";
+import { metricGroups, METRIC_INFO, legTable, tradeRows, sortTradeRows, rowWindow, type TradeRow, type LegTable } from "./lib/backtestPanelData";
+import { metricTipLines } from "./components/metricScaleTip";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { RESOLUTION_SECONDS } from "./lib/feed";
@@ -53,26 +54,6 @@ const fmtPrice = (n: number): string => n.toFixed(2);
 const fmtPnl = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
 const fmtPct = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}%`;
 const toneOf = (n: number): string => (n > 0 ? "pos" : n < 0 ? "neg" : "");
-
-// Metric ⓘ tooltip body: the plain-language line, plus an aligned range → word
-// table for metrics with an interpretation scale (words tinted like the tile's
-// verdict, so the tooltip explains the colour the user just saw).
-function metricTipLines(label: string): Array<string | ReactNode> | string {
-  const scale = metricScale(label);
-  if (!scale) return METRIC_INFO[label];
-  return [
-    METRIC_INFO[label],
-    <span className="bt-scale" key="scale">
-      {scale.map((s) => (
-        <span className="bt-scale-row" key={s.range}>
-          <span className={`bt-scale-word ${s.tone}`}>{s.label}</span>
-          <span className="bt-scale-range">{s.range}</span>
-          <span className="bt-scale-desc">{s.desc}</span>
-        </span>
-      ))}
-    </span>,
-  ];
-}
 
 export default function BacktestPanel() {
   const result = useSyncExternalStore(subscribeResult, () => backtestResultSignal.value);
@@ -382,7 +363,7 @@ export default function BacktestPanel() {
                       <div className="bt-panel-stat" key={m.label}>
                         <span className="bt-panel-stat-label">
                           <span className="bt-panel-stat-name">{m.label}</span>
-                          {METRIC_INFO[m.label] && <InfoTip title={m.label} text={metricTipLines(m.label)} />}
+                          {METRIC_INFO[m.label] && <InfoTip title={m.label} text={metricTipLines(m.label, METRIC_INFO[m.label])} />}
                         </span>
                         <span className={`bt-panel-stat-value${m.tone ? ` ${m.tone}` : ""}`}>{m.value}</span>
                         {m.verdict && <span className={`bt-panel-stat-verdict ${m.verdict.tone}`}>{m.verdict.label}</span>}
