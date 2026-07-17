@@ -125,7 +125,8 @@ def leg_metrics_from_dicts(trades: list[dict], res_seconds, round_trip_cost) -> 
     return _leg_metrics_core(pnls, durations, round_trip_cost)
 
 
-def compute_metrics(trades, equity, net_pnl, starting_cash, res_seconds) -> dict:
+def compute_metrics(trades, equity, net_pnl, starting_cash, res_seconds,
+                    financing_total: float = 0.0) -> dict:
     # Trade-list metrics come from the shared helper so they match the per-leg
     # breakdown exactly; win_rate is the engine's and not recomputed here.
     leg = leg_metrics(trades, res_seconds, round_trip_cost=0.0)
@@ -154,6 +155,7 @@ def compute_metrics(trades, equity, net_pnl, starting_cash, res_seconds) -> dict
         "avg_duration_bars": leg["avg_duration_bars"],
         "max_consec_wins": _max_consec(pnls, positive=True),
         "max_consec_losses": leg["max_consec_losses"],
+        "financing_total": financing_total,
     } | risk
 
 

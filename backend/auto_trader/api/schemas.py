@@ -113,6 +113,9 @@ class TradeDTO(BaseModel):
     context: dict | None = None
     # Per-trade counterfactuals (see engine.whatif); None when not computed.
     whatif: dict | None = None
+    # Overnight financing allocated to this trade (positive = cost). Default 0.0
+    # so zeroed financing and older stored runs stay valid.
+    financing: float = 0.0
 
 
 class EquityDTO(BaseModel):
@@ -268,10 +271,19 @@ class RuleGroupDTO(BaseModel):
         return result
 
 
+class SlippageDTO(BaseModel):
+    kind: Literal["fixed", "atr"]
+    value: float = Field(ge=0)          # fixed value, or the ATR mode's base
+    atrMult: float = Field(default=0.0, ge=0)
+
+
 class CostsDTO(BaseModel):
     quantity: float = Field(gt=0)
     commissionPerSide: float = Field(ge=0)
-    slippage: float = Field(ge=0)
+    slippage: SlippageDTO
+    spread: float = Field(default=0.0, ge=0)
+    finLongDailyPct: float = 0.0
+    finShortDailyPct: float = 0.0
     startingCash: float = Field(gt=0)
 
 

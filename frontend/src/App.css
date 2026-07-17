@@ -1548,10 +1548,20 @@
 .bt-costs-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 16px; }
 .bt-field { display: flex; flex-direction: column; gap: 4px; }
 .bt-field span { color: var(--text-dim); font-size: 12px; }
-.bt-field input {
+.bt-field input, .bt-field select {
   background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
 }
+
+/* Instrument-costs sub-group inside the costs grid: a full-width heading and a
+   source note + refetch button, both spanning all columns. */
+.bt-costs-subhead {
+  margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border);
+  color: var(--text-dim); font-size: 12px; font-weight: 600;
+}
+.bt-costs-source { display: flex; align-items: center; gap: 8px; }
+.bt-costs-source-note { color: var(--text-dim); font-size: 12px; }
+.bt-costs-refetch { font-size: 14px; line-height: 1; }
 
 /* Window timeline (History depth section) — the one idea in this modal that's
    easier shown than explained: the range picker sets where TRADES happen, not

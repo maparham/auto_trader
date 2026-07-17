@@ -55,7 +55,7 @@ def _trade_body():
         "shortEntry": empty,
         "shortExit": empty,
         "longRisk": {"stop": {"kind": "pct", "value": 1}, "target": {"kind": "none"}},
-        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": 0, "startingCash": 10000},
+        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": {"kind": "fixed", "value": 0}, "startingCash": 10000},
         "tradeFromTime": 0,
     }
 

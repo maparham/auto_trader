@@ -6,6 +6,7 @@ import {
   longestIndicatorLength,
   operandBaseLen,
   defaultBacktestConfig,
+  normalizeBacktestConfig,
   riskAtrLengths,
   scalingAtrLengths,
   recipeKey,
@@ -137,7 +138,7 @@ describe("collectSeriesOperands", () => {
       shortExit: EMPTY_GROUP,
       longEnabled: true,
       shortEnabled: true,
-      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+      costs: { quantity: 1, commissionPerSide: 0, slippage: { kind: "fixed", value: 0, atrMult: 0 }, startingCash: 10_000 },
     };
     const names = collectSeriesOperands(cfg).map(seriesName).sort();
     expect(names).toEqual(["EMA_21", "EMA_9"]);
@@ -155,7 +156,7 @@ describe("collectSeriesOperands", () => {
       shortExit: EMPTY_GROUP,
       longEnabled: true,
       shortEnabled: true,
-      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+      costs: { quantity: 1, commissionPerSide: 0, slippage: { kind: "fixed", value: 0, atrMult: 0 }, startingCash: 10_000 },
     };
     expect(collectSeriesOperands(cfg)).toEqual([]);
   });
@@ -174,7 +175,7 @@ describe("collectSeriesOperands", () => {
       longExit: { combine: "AND", rules: [] },
       shortEntry: { combine: "AND", rules: [] },
       shortExit: { combine: "AND", rules: [] },
-      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+      costs: { quantity: 1, commissionPerSide: 0, slippage: { kind: "fixed", value: 0, atrMult: 0 }, startingCash: 10_000 },
     };
     const names = collectSeriesOperands(cfg).map(seriesName).sort();
     expect(names).toEqual(["AVWAP_1000", "AVWAP_2000"]);
@@ -201,7 +202,7 @@ function cfgWith(...rules: { left: Operand; op: "gt"; right: Operand }[]): Backt
     shortExit: EMPTY_GROUP,
     longEnabled: true,
     shortEnabled: true,
-    costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+    costs: { quantity: 1, commissionPerSide: 0, slippage: { kind: "fixed", value: 0, atrMult: 0 }, startingCash: 10_000 },
   };
 }
 
@@ -284,7 +285,7 @@ describe("collectSeriesOperands with slope", () => {
       shortExit: EMPTY_GROUP,
       longEnabled: true,
       shortEnabled: true,
-      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+      costs: { quantity: 1, commissionPerSide: 0, slippage: { kind: "fixed", value: 0, atrMult: 0 }, startingCash: 10_000 },
     };
     expect(collectSeriesOperands(cfg).map(seriesName)).toEqual(["close~2"]);
   });
@@ -305,7 +306,7 @@ describe("longestIndicatorLength with slope", () => {
       shortExit: EMPTY_GROUP,
       longEnabled: true,
       shortEnabled: true,
-      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+      costs: { quantity: 1, commissionPerSide: 0, slippage: { kind: "fixed", value: 0, atrMult: 0 }, startingCash: 10_000 },
     };
     expect(longestIndicatorLength(cfg)).toBe(55);
   });
@@ -402,7 +403,47 @@ describe("defaultBacktestConfig", () => {
     expect(cfg.shortExit.rules[0].op).toBe("crossesAbove");
     expect(cfg.longEnabled).toBe(true); // both sides trade by default
     expect(cfg.shortEnabled).toBe(true);
-    expect(cfg.costs).toEqual({ quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 });
+    expect(cfg.costs).toEqual({
+      quantity: 1,
+      commissionPerSide: 0,
+      slippage: { kind: "fixed", value: 0, atrMult: 0 },
+      spread: 0,
+      finLongDailyPct: 0,
+      finShortDailyPct: 0,
+      startingCash: 10_000,
+    });
+  });
+});
+
+describe("normalizeBacktestConfig", () => {
+  it("coerces a persisted numeric slippage into the fixed model", () => {
+    const stored = {
+      ...defaultBacktestConfig(),
+      costs: { quantity: 1, commissionPerSide: 0, slippage: 0.4, startingCash: 1000 },
+    };
+    const cfg = normalizeBacktestConfig(stored as unknown as BacktestConfig);
+    expect(cfg.costs.slippage).toEqual({ kind: "fixed", value: 0.4, atrMult: 0 });
+    expect(cfg.costs.spread).toBe(0);
+    expect(cfg.costs.finLongDailyPct).toBe(0);
+    expect(cfg.costs.finShortDailyPct).toBe(0);
+  });
+
+  it("leaves a well-formed object slippage untouched and fills missing fields", () => {
+    const stored = {
+      ...defaultBacktestConfig(),
+      costs: {
+        quantity: 2,
+        commissionPerSide: 1,
+        slippage: { kind: "atr" as const, value: 0.1, atrMult: 1.5 },
+        startingCash: 5000,
+      },
+    };
+    const cfg = normalizeBacktestConfig(stored as unknown as BacktestConfig);
+    expect(cfg.costs.slippage).toEqual({ kind: "atr", value: 0.1, atrMult: 1.5 });
+    expect(cfg.costs.quantity).toBe(2);
+    expect(cfg.costs.startingCash).toBe(5000);
+    expect(cfg.costs.spread).toBe(0);
+    expect(cfg.costs.finLongDailyPct).toBe(0);
   });
 });
 
@@ -428,7 +469,7 @@ describe("longestIndicatorLength", () => {
       shortExit: EMPTY_GROUP,
       longEnabled: true,
       shortEnabled: true,
-      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+      costs: { quantity: 1, commissionPerSide: 0, slippage: { kind: "fixed", value: 0, atrMult: 0 }, startingCash: 10_000 },
     };
     expect(longestIndicatorLength(cfg)).toBe(200);
   });
@@ -442,7 +483,7 @@ describe("longestIndicatorLength", () => {
       shortExit: EMPTY_GROUP,
       longEnabled: true,
       shortEnabled: true,
-      costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+      costs: { quantity: 1, commissionPerSide: 0, slippage: { kind: "fixed", value: 0, atrMult: 0 }, startingCash: 10_000 },
     };
     expect(longestIndicatorLength(cfg)).toBe(1);
   });

@@ -1,3 +1,10 @@
+> **Simplified 2026-07-17:** Overnight financing is kept but simplified to static
+> manual per-night rates. The triple-swap-day and rollover-hour knobs were removed
+> (rollover is fixed at 21:00 UTC); broker fee prefill was dropped because broker
+> sign conventions are inconsistent (Capital reports negative when it charges you).
+> Financing is displayed as its P&L impact (negative = paid). Spread and slippage
+> are unchanged; spread broker-prefill stays.
+
 # Realism Costs Design (Phase 2, spec 1 of 3)
 
 Date: 2026-07-17. Status: approved design, ready for implementation planning.

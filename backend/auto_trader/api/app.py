@@ -29,7 +29,7 @@ from auto_trader.core.tick_store import TICK_STORE
 
 from . import deps
 from .guard import install_guards
-from .routers import backtest, charts, compute, markets, state, strategy, stream, trading, strategies
+from .routers import backtest, charts, compute, costs, markets, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ app.add_middleware(
 # unless the corresponding env flags are set, which happens only on the remote host.
 install_guards(app)
 
-for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies):
+for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs):
     app.include_router(_module.router)
 
 

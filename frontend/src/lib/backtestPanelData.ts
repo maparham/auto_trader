@@ -28,6 +28,7 @@ export interface TradeRow {
   pnlPct: number;
   durationBars: number;
   reason: string;
+  financing: number; // overnight financing on this trade (0 when off / no overnight)
 }
 
 function formatSignedMoney(value: number): string {
@@ -199,6 +200,19 @@ export function metricRows(res: PanelResult): MetricRow[] {
     tone: "",
   });
 
+  // Financing — only when the run actually used it (nonzero). Truthy guard also
+  // skips pre-financing cached payloads (undefined). Already inside net P&L, so
+  // it's an explanatory line, not additive. The engine convention is positive =
+  // cost (paid), so NEGATE to show its P&L impact: a paid fee reads as a red
+  // negative amount, a credit as green positive.
+  if (res.metrics.financing_total) {
+    rows.push({
+      label: "Financing",
+      value: formatSignedMoney(-res.metrics.financing_total),
+      tone: getTone(-res.metrics.financing_total),
+    });
+  }
+
   return rows;
 }
 
@@ -208,7 +222,7 @@ export function metricRows(res: PanelResult): MetricRow[] {
 // (Risk & extremes). Grouping is the hierarchy the flat grid was missing; order
 // within each group leads with the metric you'd read first.
 const METRIC_GROUPS: { title: string; labels: string[] }[] = [
-  { title: "Performance", labels: ["Net P&L", "Return %", "CAGR %", "Profit factor", "Expectancy", "Sharpe", "Sortino", "Calmar", "SQN"] },
+  { title: "Performance", labels: ["Net P&L", "Financing", "Return %", "CAGR %", "Profit factor", "Expectancy", "Sharpe", "Sortino", "Calmar", "SQN"] },
   { title: "Trades", labels: ["Trades", "Win rate", "Avg win", "Avg loss", "Avg win/loss", "Avg duration"] },
   { title: "Risk & extremes", labels: ["Drawdown", "Drawdown %", "Exposure %", "Largest win", "Largest loss", "Win streak", "Loss streak"] },
 ];
@@ -218,6 +232,7 @@ const METRIC_GROUPS: { title: string; labels: string[] }[] = [
 // definitions, away from the value/tone computation.
 export const METRIC_INFO: Record<string, string> = {
   "Net P&L": "Total profit after costs, across all trades.",
+  "Financing": "Total overnight financing across the run, shown as its P&L impact: negative means paid, positive received. Already included in net P&L.",
   "Return %": "Net profit as a % of starting capital.",
   "Profit factor": "Gross profit divided by gross loss; above 1 is profitable.",
   "Expectancy": "Average profit or loss per trade.",
@@ -374,6 +389,7 @@ export function tradeRows(res: PanelResult, resSeconds: number): TradeRow[] {
       pnlPct,
       durationBars,
       reason: trade.reason,
+      financing: trade.financing ?? 0,
     };
   });
 }

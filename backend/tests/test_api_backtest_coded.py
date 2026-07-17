@@ -54,7 +54,7 @@ def base_request(strategy: str, candles):
     return {
         "epic": "TEST", "resolution": "HOUR", "candles": candles, "series": {},
         "longEntry": empty, "longExit": empty, "shortEntry": empty, "shortExit": empty,
-        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": 0, "startingCash": 10000},
+        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": {"kind": "fixed", "value": 0}, "startingCash": 10000},
         "tradeFromTime": candles[0]["time"],
         "codedStrategy": strategy,
     }

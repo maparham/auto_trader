@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     # CAPITAL_SWEEPS_DB_PATH to relocate.
     sweeps_db_path: str = "backtest_sweeps.db"
 
+    # Where per-instrument cost profiles (spread, slippage, financing) are stored.
+    # Set CAPITAL_COST_PROFILES_DB_PATH to relocate.
+    cost_profiles_db_path: str = "cost_profiles.db"
+
     # CAPITAL_STREAM_DEBUG=1 turns on a per-second latency summary for the live
     # candle streams (see capital_stream._StreamDebug): tick rate, tick->candle
     # yield ratio, and age_ms = now - tick_timestamp. Verifies that ticks reach

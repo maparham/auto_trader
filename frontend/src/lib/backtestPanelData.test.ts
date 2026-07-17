@@ -31,6 +31,22 @@ describe("metricRows", () => {
     expect(byLabel["Win rate"].value).toBe("50%");
     expect(byLabel["Profit factor"].value).toBe("—"); // null -> dash
   });
+
+  it("financing metric appears only when nonzero", () => {
+    const off = metricRows(result({
+      metrics: { ...result().metrics, financing_total: 0 },
+    }));
+    expect(off.some((r) => r.label === "Financing")).toBe(false);
+
+    // Engine convention positive = paid; displayed as its P&L impact (negated),
+    // so a 12.5 paid fee renders as a red "−12.50".
+    const on = metricRows(result({
+      metrics: { ...result().metrics, financing_total: 12.5 },
+    }));
+    const row = on.find((r) => r.label === "Financing");
+    expect(row?.value).toBe("−12.50"); // U+2212 minus, formatSignedMoney
+    expect(row?.tone).toBe("neg");
+  });
 });
 
 describe("legTable", () => {
@@ -146,6 +162,17 @@ describe("tradeRows + sort", () => {
     expect(rows[0].pnlPct).toBeCloseTo(20 / (100 * 2) * 100, 6); // 10%
     expect(rows[0].durationBars).toBe(5); // 300s / 60s
     expect(rows[0].reason).toBe("target");
+  });
+  it("carries per-trade financing (0 when absent)", () => {
+    const r = result({
+      trades: [
+        { side: "buy", quantity: 1, entry_time: 0, entry_price: 100, exit_time: 60, exit_price: 101, pnl: 1, leg: "long", reason: "target", financing: -0.75 },
+        { side: "buy", quantity: 1, entry_time: 0, entry_price: 100, exit_time: 60, exit_price: 101, pnl: 1, leg: "long", reason: "target" },
+      ] as BacktestResult["trades"],
+    });
+    const rows = tradeRows(r, 60);
+    expect(rows[0].financing).toBe(-0.75);
+    expect(rows[1].financing).toBe(0);
   });
   it("sorts by pnl descending, stably", () => {
     const rows = sortTradeRows(tradeRows(res, 60), "pnl", "desc");

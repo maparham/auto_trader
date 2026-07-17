@@ -49,6 +49,7 @@ import {
   type Operator,
   type Combine,
   type Costs,
+  type SlippageModel,
   cloneRule,
   slopeLen,
   type RiskConfig,
@@ -79,7 +80,7 @@ import {
 import { loadHoldout, saveHoldoutPct, recordPeek, splitHoldout } from "./lib/holdout";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { formatPeriodRange } from "./lib/backtestPeriods";
-import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, type StrategyInfo, type ParamSpec, type SweepArchiveSummary } from "./api";
+import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, getCostProfile, putCostProfile, refetchCostProfile, type StrategyInfo, type ParamSpec, type SweepArchiveSummary, type CostProfile } from "./api";
 import {
   loadCodedCfg,
   saveCodedCfg,
@@ -115,6 +116,9 @@ import {
 interface Props {
   initial: BacktestConfig;
   epic: string;
+  // The active broker id, so the Costs tab can prefill/refetch the instrument
+  // cost profile (spread, slippage, financing) from that broker.
+  brokerId: string;
   resolution: string;
   // The focused chart cell, so "Pick Range" can arm a drag-select on it. Null when
   // no cell is focused — the button is then disabled.
@@ -374,7 +378,26 @@ function defaultRule(): Rule {
   return { left: defaultOperand(), op: "gt", right: { kind: "const", value: 0 } };
 }
 
-export default function BacktestSettingsModal({ initial, epic, resolution, controller, chartTimezone, onRun, onClose }: Props) {
+// Session-lived cache of fetched instrument cost profiles, keyed by epic, so the
+// Costs tab fetches a profile once per epic per session (re-opening the modal for
+// the same epic reuses it). Exported reset is for tests.
+const costProfileCache = new Map<string, CostProfile>();
+export function resetCostProfileCache(): void {
+  costProfileCache.clear();
+}
+
+// The instrument-cost fields a CostProfile carries into a Costs object. Quantity,
+// commission and starting cash are panel-only and never ride the profile.
+function profileToCostsPatch(p: CostProfile): Partial<Costs> {
+  return {
+    spread: p.spread,
+    slippage: p.slippage,
+    finLongDailyPct: p.finLongDailyPct,
+    finShortDailyPct: p.finShortDailyPct,
+  };
+}
+
+export default function BacktestSettingsModal({ initial, epic, brokerId, resolution, controller, chartTimezone, onRun, onClose }: Props) {
   // "Copy immediately" half of the SL/TP sync: a config arriving with sync on
   // but the sides drifted apart (saved before the option existed, or edited
   // while off) is normalized on load, the side being viewed winning.
@@ -385,6 +408,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   const [presets, setPresets] = useState(() => loadBacktestPresets());
   const [presetName, setPresetName] = useState("");
   const [loadName, setLoadName] = useState("");
+  // The instrument cost profile behind the Costs tab: source note + refetch. Seeded
+  // from the session cache so re-opening for the same epic shows the note without a
+  // refetch. null until the first fetch resolves (or when it fails).
+  const [costProfile, setCostProfile] = useState<CostProfile | null>(() => costProfileCache.get(epic) ?? null);
   // Restore the last-viewed tab (device-local) and persist it on switch, so
   // re-opening the modal returns to the side you were working on.
   const [side, setSide] = useState<"long" | "short">(loadBacktestSide);
@@ -1331,6 +1358,108 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   function setCosts(patch: Partial<Costs>) {
     setCfg({ ...cfg, costs: { ...cfg.costs, ...patch } });
   }
+
+  // --- instrument cost profile (Costs tab) ----------------------------------
+  // The subset of Costs that mirrors the broker profile — the only fields the
+  // debounced PUT sends (quantity/commission/starting cash are panel-only).
+  type InstrumentCostPatch = Partial<
+    Pick<Costs, "spread" | "slippage" | "finLongDailyPct" | "finShortDailyPct">
+  >;
+  const pendingCostPatch = useRef<InstrumentCostPatch>({});
+  const costPutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The epic the pending patch belongs to. The modal is docked and reused across
+  // symbol switches (no remount), so a patch must PUT to the epic it was edited
+  // on, NOT whatever epic is current when the debounce timer fires.
+  const pendingEpicRef = useRef(epic);
+  const currentEpicRef = useRef(epic);
+  currentEpicRef.current = epic;
+
+  function flushCostPut() {
+    if (costPutTimer.current) {
+      clearTimeout(costPutTimer.current);
+      costPutTimer.current = null;
+    }
+    const patch = pendingCostPatch.current;
+    if (Object.keys(patch).length === 0) return;
+    pendingCostPatch.current = {};
+    const targetEpic = pendingEpicRef.current;
+    putCostProfile(targetEpic, patch)
+      .then((p) => {
+        costProfileCache.set(targetEpic, p);
+        // Only reflect the returned profile if the modal is still on that epic —
+        // a late save for a previous epic must not overwrite the current one's note.
+        if (currentEpicRef.current === targetEpic) setCostProfile(p);
+      })
+      .catch(() => {
+        // Transient save failure: the value already lives in cfg.costs and is
+        // snapshotted into the run, so the edit is not lost — only the mirror is.
+      });
+  }
+
+  // Prefill the instrument-cost fields from the broker profile the first time the
+  // Costs tab is shown for an epic (once per epic per session). A failed fetch
+  // (broker 502/503/504 or network) keeps the current cfg values and does not
+  // retry-loop: the effect only re-runs on epic/broker change and a failure is
+  // not cached.
+  useEffect(() => {
+    const cached = costProfileCache.get(epic);
+    if (cached) {
+      // Already fetched this epic this session (its cache stays current because
+      // every edit's PUT writes the returned profile back). Re-apply it so a
+      // switch back to this epic on the same mounted modal restores its costs.
+      setCostProfile(cached);
+      setCfg((prev) => ({ ...prev, costs: { ...prev.costs, ...profileToCostsPatch(cached) } }));
+      return;
+    }
+    let cancelled = false;
+    getCostProfile(epic, brokerId)
+      .then((p) => {
+        if (cancelled) return;
+        costProfileCache.set(epic, p);
+        setCostProfile(p);
+        setCfg((prev) => ({ ...prev, costs: { ...prev.costs, ...profileToCostsPatch(p) } }));
+      })
+      .catch(() => {
+        /* keep current cfg; no retry */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [epic, brokerId]);
+
+  // Flush any pending profile edit when the modal unmounts, so an edit made inside
+  // the debounce window right before closing still reaches the broker profile.
+  useEffect(() => () => flushCostPut(), []);
+
+  // An instrument-cost edit: write it into cfg.costs immediately and mirror it back
+  // to the broker profile on a short debounce (coalescing rapid keystrokes).
+  function setInstrumentCost(patch: InstrumentCostPatch) {
+    setCosts(patch);
+    // An epic switch happened while a patch was pending: flush the old epic's
+    // patch to its own profile before starting this epic's, so patches never
+    // coalesce across instruments or PUT to the wrong one.
+    if (Object.keys(pendingCostPatch.current).length && pendingEpicRef.current !== epic) {
+      flushCostPut();
+    }
+    pendingEpicRef.current = epic;
+    pendingCostPatch.current = { ...pendingCostPatch.current, ...patch };
+    if (costPutTimer.current) clearTimeout(costPutTimer.current);
+    costPutTimer.current = setTimeout(flushCostPut, 400);
+  }
+
+  // Re-pull spread and financing from the broker and apply the new profile.
+  function refetchCosts() {
+    refetchCostProfile(epic, brokerId)
+      .then(({ new: fresh }) => {
+        costProfileCache.set(epic, fresh);
+        setCostProfile(fresh);
+        setCfg((prev) => ({ ...prev, costs: { ...prev.costs, ...profileToCostsPatch(fresh) } }));
+      })
+      .catch(() => {
+        /* broker error: keep current values */
+      });
+  }
+
   function setGroup(which: "longEntry" | "longExit" | "shortEntry" | "shortExit", group: RuleGroup) {
     setCfg({ ...cfg, [which]: group });
   }
@@ -2283,7 +2412,10 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   onChange={(e) => setCosts({ commissionPerSide: Number(cleanNumInput(e.currentTarget)) })}
                 />
               </label>
-              <label className="bt-field">
+              {/* These fields carry an InfoTip button inside the label, which a
+                  wrapping <label> would associate with instead of the input, so
+                  they use a div + explicit aria-label on the control. */}
+              <div className="bt-field">
                 <span className="bt-field-label">
                   Slippage
                   <InfoTip text="Price penalty on every fill, in the instrument's price units: you buy a bit higher and sell a bit lower." />
@@ -2292,10 +2424,47 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   type="number"
                   min={0}
                   step="any"
-                  value={cfg.costs.slippage}
-                  onChange={(e) => setCosts({ slippage: Number(cleanNumInput(e.currentTarget)) })}
+                  aria-label="Slippage"
+                  value={cfg.costs.slippage.value}
+                  onChange={(e) =>
+                    setInstrumentCost({ slippage: { ...cfg.costs.slippage, value: Number(cleanNumInput(e.currentTarget)) } })
+                  }
                 />
-              </label>
+              </div>
+              <div className="bt-field">
+                <span className="bt-field-label">
+                  Slippage model
+                  <InfoTip text="Fixed charges the same slippage on every fill. ATR-scaled adds a multiple of ATR(14) of the fill bar, so fast markets cost more." />
+                </span>
+                <select
+                  aria-label="Slippage model"
+                  value={cfg.costs.slippage.kind}
+                  onChange={(e) =>
+                    setInstrumentCost({ slippage: { ...cfg.costs.slippage, kind: e.currentTarget.value as SlippageModel["kind"] } })
+                  }
+                >
+                  <option value="fixed">Fixed</option>
+                  <option value="atr">ATR-scaled</option>
+                </select>
+              </div>
+              {cfg.costs.slippage.kind === "atr" && (
+                <div className="bt-field">
+                  <span className="bt-field-label">
+                    x ATR
+                    <InfoTip text="Per-fill slippage is base + multiplier x ATR(14) of the bar, so fast markets cost more." />
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    aria-label="Slippage ATR multiplier"
+                    value={cfg.costs.slippage.atrMult}
+                    onChange={(e) =>
+                      setInstrumentCost({ slippage: { ...cfg.costs.slippage, atrMult: Number(cleanNumInput(e.currentTarget)) } })
+                    }
+                  />
+                </div>
+              )}
               <label className="bt-field">
                 <span className="bt-field-label">
                   Starting cash
@@ -2311,6 +2480,62 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setCosts({ startingCash: n }))}
                 />
               </label>
+
+              {/* Instrument costs: broker-prefilled per-epic spread and financing.
+                  A full-width sub-heading and source note bracket the fields. */}
+              <div className="bt-costs-subhead" style={{ gridColumn: "1 / -1" }}>
+                Instrument costs
+              </div>
+              <div className="bt-field">
+                <span className="bt-field-label">
+                  Spread
+                  <InfoTip text="Full bid/ask spread in price units. Buys fill half a spread above the mid, sells half below." />
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step="any"
+                  aria-label="Spread"
+                  value={cfg.costs.spread}
+                  onChange={(e) => setInstrumentCost({ spread: Number(cleanNumInput(e.currentTarget)) })}
+                />
+              </div>
+              <div className="bt-field">
+                <span className="bt-field-label">
+                  Long %/night
+                  <InfoTip text="Charged per night a position is held (21:00 UTC rollover), as a percent of entry notional. Positive is a cost, negative a credit. Enter your broker's rate; fees are not fetched automatically." />
+                </span>
+                <input
+                  type="number"
+                  step="any"
+                  aria-label="Long %/night"
+                  value={cfg.costs.finLongDailyPct}
+                  onChange={(e) => setInstrumentCost({ finLongDailyPct: Number(e.currentTarget.value) })}
+                />
+              </div>
+              <div className="bt-field">
+                <span className="bt-field-label">
+                  Short %/night
+                  <InfoTip text="Charged per night a position is held (21:00 UTC rollover), as a percent of entry notional. Positive is a cost, negative a credit. Enter your broker's rate; fees are not fetched automatically." />
+                </span>
+                <input
+                  type="number"
+                  step="any"
+                  aria-label="Short %/night"
+                  value={cfg.costs.finShortDailyPct}
+                  onChange={(e) => setInstrumentCost({ finShortDailyPct: Number(e.currentTarget.value) })}
+                />
+              </div>
+              <div className="bt-costs-source" style={{ gridColumn: "1 / -1" }}>
+                <span className="bt-costs-source-note">
+                  {costProfile?.source === "broker" ? "from broker quote" : "manual"}
+                </span>
+                <Tooltip content="Refetch spread from the broker">
+                  <button type="button" className="icon-btn bt-costs-refetch" aria-label="Refetch from broker" onClick={refetchCosts}>
+                    ↻
+                  </button>
+                </Tooltip>
+              </div>
             </div>
           </Section>
             </section>

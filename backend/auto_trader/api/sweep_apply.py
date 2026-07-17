@@ -129,7 +129,11 @@ def run_rule_sync(
         strategy,
         starting_cash=req.costs.startingCash,
         commission_per_side=req.costs.commissionPerSide,
-        slippage=req.costs.slippage,
+        slippage=req.costs.slippage.value,
+        slippage_atr_mult=req.costs.slippage.atrMult if req.costs.slippage.kind == "atr" else 0.0,
+        spread=req.costs.spread,
+        fin_long_daily_pct=req.costs.finLongDailyPct,
+        fin_short_daily_pct=req.costs.finShortDailyPct,
         long_risk=req.longRisk.to_risk() if req.longRisk else None,
         short_risk=req.shortRisk.to_risk() if req.shortRisk else None,
         long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
@@ -176,7 +180,11 @@ def run_coded_sync(
             strategy,
             starting_cash=req.costs.startingCash,
             commission_per_side=req.costs.commissionPerSide,
-            slippage=req.costs.slippage,
+            slippage=req.costs.slippage.value,
+            slippage_atr_mult=req.costs.slippage.atrMult if req.costs.slippage.kind == "atr" else 0.0,
+            spread=req.costs.spread,
+            fin_long_daily_pct=req.costs.finLongDailyPct,
+            fin_short_daily_pct=req.costs.finShortDailyPct,
             long_risk=long_risk_dto.to_risk() if long_risk_dto else None,
             short_risk=short_risk_dto.to_risk() if short_risk_dto else None,
             long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
@@ -357,7 +365,8 @@ def sweep_row(req: BacktestRequest, combo: dict, result) -> SweepRowDTO:
     patches its own period runs over a different range than the sweep's
     windows, so it gets none (windows stay None, no aggregate keys)."""
     metrics = compute_metrics(result.trades, result.equity, result.net_pnl,
-                              req.costs.startingCash, resolution_seconds(req.resolution))
+                              req.costs.startingCash, resolution_seconds(req.resolution),
+                              financing_total=result.financing_total)
     row_metrics = {
         "net_pnl": round(result.net_pnl, 5),
         "n_trades": result.n_trades,

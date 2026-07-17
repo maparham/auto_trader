@@ -1,5 +1,13 @@
 # Realism Costs Implementation Plan
 
+> **Simplified 2026-07-17:** Overnight financing is kept but simplified to static
+> manual per-night rates. The triple-swap-day and rollover-hour knobs were removed
+> (rollover is fixed at 21:00 UTC); broker fee prefill was dropped because broker
+> sign conventions are inconsistent (Capital reports negative when it charges you).
+> Financing is displayed as its P&L impact (negative = paid). Spread and slippage
+> are unchanged; spread broker-prefill stays.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Backtest fills and P&L account for per-instrument spread, optionally ATR-scaled slippage, and overnight financing, with broker-prefilled per-instrument cost profiles snapshotted into each run.

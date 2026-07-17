@@ -2,7 +2,7 @@
 // per-name drawing defaults & presets, backtest configs, and symbol / default
 // chart templates.
 
-import type { BacktestConfig } from "../backtestConfig";
+import { normalizeBacktestConfig, type BacktestConfig } from "../backtestConfig";
 import { PREFIX, root, load, save, saveLocal, mirrorDelete } from "./core";
 import type {
   IndicatorInstance,
@@ -123,7 +123,12 @@ const BACKTEST_PRESETS_KEY = `${PREFIX}.backtestPresets.v2`;
 const BACKTEST_LAST_USED_KEY = `${PREFIX}.backtestLastUsed.v2`;
 
 export function loadBacktestPresets(): Record<string, SavedBacktestConfig> {
-  return load<Record<string, SavedBacktestConfig>>(BACKTEST_PRESETS_KEY, {});
+  const all = load<Record<string, SavedBacktestConfig>>(BACKTEST_PRESETS_KEY, {});
+  // Fold each stored preset forward (legacy numeric slippage → model, new cost
+  // fields filled) so an old preset loads into the current shape.
+  return Object.fromEntries(
+    Object.entries(all).map(([name, cfg]) => [name, normalizeBacktestConfig(cfg)]),
+  );
 }
 export function saveBacktestPreset(name: string, cfg: SavedBacktestConfig): void {
   const all = loadBacktestPresets();
@@ -139,7 +144,11 @@ export function deleteBacktestPreset(name: string): void {
 }
 
 export function loadBacktestLastUsed(): SavedBacktestConfig | null {
-  return load<SavedBacktestConfig | null>(BACKTEST_LAST_USED_KEY, null);
+  const cfg = load<SavedBacktestConfig | null>(BACKTEST_LAST_USED_KEY, null);
+  // Fold the stored snapshot forward: a legacy numeric slippage becomes the fixed
+  // model and any new cost fields fill from defaults, so an older last-used config
+  // loads into the panel (and the run payload) with a valid `costs` shape.
+  return cfg ? normalizeBacktestConfig(cfg) : null;
 }
 export function saveBacktestLastUsed(cfg: SavedBacktestConfig): void {
   save(BACKTEST_LAST_USED_KEY, cfg);

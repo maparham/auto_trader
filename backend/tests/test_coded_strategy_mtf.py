@@ -131,7 +131,7 @@ def test_backtest_route_fetch_retry_loop(tmp_path, monkeypatch):
                      "low": c.low, "close": c.close, "volume": c.volume} for c in base],
         "series": {},
         "longEntry": empty, "longExit": empty, "shortEntry": empty, "shortExit": empty,
-        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": 0, "startingCash": 10000},
+        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": {"kind": "fixed", "value": 0}, "startingCash": 10000},
         "tradeFromTime": int(base[0].time.timestamp()),
         "codedStrategy": "mtf.py", "broker": "capital", "priceSide": "mid",
     }

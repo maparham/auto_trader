@@ -242,6 +242,11 @@ backtest_sweeps.db
 backtest_sweeps.db-wal
 backtest_sweeps.db-shm
 
+# Per-instrument cost profile store
+cost_profiles.db
+cost_profiles.db-wal
+cost_profiles.db-shm
+
 # MetaApi SDK local terminal-state cache (created at runtime by the streaming/RPC
 # connection; per-machine, never source)
 .metaapi/

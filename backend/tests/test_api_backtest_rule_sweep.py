@@ -37,7 +37,7 @@ def _req(**over):
              "right": {"kind": "const", "value": 0}, "count": 1}]},
         "shortEntry": {"combine": "AND", "rules": []},
         "shortExit": {"combine": "AND", "rules": []},
-        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": 0, "startingCash": 1000},
+        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": {"kind": "fixed", "value": 0}, "startingCash": 1000},
         "tradeFromTime": 0,
     }
     base.update(over)
@@ -73,7 +73,7 @@ def _candles(closes: list[float]) -> list[dict]:
 
 
 def _costs() -> dict:
-    return {"quantity": 1.0, "commissionPerSide": 0.0, "slippage": 0.0, "startingCash": 10_000.0}
+    return {"quantity": 1.0, "commissionPerSide": 0.0, "slippage": {"kind": "fixed", "value": 0.0}, "startingCash": 10_000.0}
 
 
 def _groups(long_entry=None, long_exit=None, short_entry=None, short_exit=None):

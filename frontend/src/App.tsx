@@ -1793,6 +1793,7 @@ export default function App() {
           <BacktestSettingsModal
             initial={loadBacktestLastUsed() ?? defaultBacktestConfig()}
             epic={symbol.epic}
+            brokerId={brokerId}
             resolution={period.resolution}
             controller={focusedController}
             chartTimezone={settings.timezone || browserTimezone()}

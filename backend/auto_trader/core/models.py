@@ -252,6 +252,11 @@ class Trade:
     exit_time: datetime
     exit_price: float
     pnl: float
+    # Overnight financing allocated to this trade (positive = cost already
+    # subtracted from pnl-adjacent equity; see engine financing accrual). The
+    # trade's share of its position's accrued financing, apportioned by the
+    # closed quantity.
+    financing: float = 0.0
     leg: str = "long"
     reason_in: str = ""
     reason_out: str = ""

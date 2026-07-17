@@ -262,7 +262,17 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         multiples = [0.0, 1.0, 2.0, 3.0]
         # Nothing to scale (zero assumed costs) or no trades: every multiple
         # lands on the same net, so skip the re-runs entirely.
-        if (req.costs.slippage == 0 and req.costs.commissionPerSide == 0) or result.n_trades == 0:
+        # atrMult only bites when the slippage model is in "atr" mode, mirroring
+        # the engine wiring (slippage_atr_mult=... if kind == "atr" else 0.0). A
+        # stale atrMult on a "fixed" model contributes nothing, so it must not
+        # make an otherwise-zero cost profile look non-zero.
+        eff_atr_mult = req.costs.slippage.atrMult if req.costs.slippage.kind == "atr" else 0.0
+        zero_costs = (
+            req.costs.slippage.value == 0 and eff_atr_mult == 0
+            and req.costs.commissionPerSide == 0 and req.costs.spread == 0
+            and req.costs.finLongDailyPct == 0 and req.costs.finShortDailyPct == 0
+        )
+        if zero_costs or result.n_trades == 0:
             nets: list[float] = [result.net_pnl] * 4
         else:
             nets = []
@@ -273,8 +283,14 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                 scaled = req.model_copy(update={
                     "inspect": False,
                     "costs": req.costs.model_copy(update={
-                        "slippage": req.costs.slippage * m,
+                        "slippage": req.costs.slippage.model_copy(update={
+                            "value": req.costs.slippage.value * m,
+                            "atrMult": req.costs.slippage.atrMult * m,
+                        }),
                         "commissionPerSide": req.costs.commissionPerSide * m,
+                        "spread": req.costs.spread * m,
+                        "finLongDailyPct": req.costs.finLongDailyPct * m,
+                        "finShortDailyPct": req.costs.finShortDailyPct * m,
                     }),
                 })
                 if req.codedStrategy is not None:
@@ -313,6 +329,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             bars_to_mfe=t.bars_to_mfe, bars_to_mae=t.bars_to_mae,
             entry_crossings=t.entry_crossings,
             whatif=t.whatif,
+            financing=t.financing,
         )
         for t in result.trades
     ]
@@ -320,6 +337,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     metrics = compute_metrics(
         result.trades, result.equity, result.net_pnl,
         req.costs.startingCash, resolution_seconds(req.resolution),
+        financing_total=result.financing_total,
     )
 
     # Aggregate analytics from the DTO dicts, computed BEFORE the store write so a

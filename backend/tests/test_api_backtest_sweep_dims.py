@@ -46,7 +46,7 @@ def rule_request(candles, combos, entry_op="gt", entry_value=100.0, exit_rules=N
         }]},
         "longExit": {"combine": "AND", "rules": exit_rules} if exit_rules else empty,
         "shortEntry": empty, "shortExit": empty,
-        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": 0, "startingCash": 10000},
+        "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": {"kind": "fixed", "value": 0}, "startingCash": 10000},
         "tradeFromTime": candles[0]["time"],
         "sweep": {"combos": combos},
     }

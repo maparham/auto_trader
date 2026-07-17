@@ -38,7 +38,7 @@ def _candles(closes: list[float]) -> list[dict]:
 
 
 def _costs() -> dict:
-    return {"quantity": 1.0, "commissionPerSide": 0.0, "slippage": 0.0, "startingCash": 10_000.0}
+    return {"quantity": 1.0, "commissionPerSide": 0.0, "slippage": {"kind": "fixed", "value": 0.0}, "startingCash": 10_000.0}
 
 
 def _groups(long_entry=None, long_exit=None, short_entry=None, short_exit=None):

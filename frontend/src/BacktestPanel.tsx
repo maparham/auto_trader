@@ -415,6 +415,12 @@ function TradesTable({
   const [viewportH, setViewportH] = useState(0);
   const [rowH, setRowH] = useState(ROW_H_ESTIMATE);
 
+  // Only surface the Financing column when the run actually charged it; a
+  // no-financing run keeps the table visually unchanged. Individual cells stay
+  // blank when a trade held no overnight (financing 0).
+  const showFinancing = rows.some((r) => r.financing !== 0);
+  const colCount = showFinancing ? 11 : 10;
+
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -471,6 +477,9 @@ function TradesTable({
             <th className="bt-panel-c-num"><SortHeader label="Exit" col="exitPrice" sort={sort} onSort={onSort} /></th>
             <th className="bt-panel-c-num"><SortHeader label="P&L" col="pnl" sort={sort} onSort={onSort} /></th>
             <th className="bt-panel-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={onSort} /></th>
+            {showFinancing && (
+              <th className="bt-panel-c-num"><SortHeader label="Financing" col="financing" sort={sort} onSort={onSort} /></th>
+            )}
             <th><SortHeader label="Reason" col="reason" sort={sort} onSort={onSort} /></th>
             <th className="bt-panel-c-num"><SortHeader label="Duration" col="durationBars" sort={sort} onSort={onSort} /></th>
           </tr>
@@ -478,7 +487,7 @@ function TradesTable({
         <tbody>
           {padTop > 0 && (
             <tr aria-hidden="true">
-              <td colSpan={10} style={{ height: padTop, padding: 0, border: 0 }} />
+              <td colSpan={colCount} style={{ height: padTop, padding: 0, border: 0 }} />
             </tr>
           )}
           {rows.slice(start, end).map((row) => (
@@ -501,13 +510,20 @@ function TradesTable({
               <td className="bt-panel-c-num">{fmtPrice(row.exitPrice)}</td>
               <td className={`bt-panel-c-num ${toneOf(row.pnl)}`}>{fmtPnl(row.pnl)}</td>
               <td className={`bt-panel-c-num ${toneOf(row.pnlPct)}`}>{fmtPct(row.pnlPct)}</td>
+              {showFinancing && (
+                // Engine convention is positive = paid; negate to show the
+                // trade's financing P&L impact (paid = red negative, credit = green).
+                <td className={`bt-panel-c-num ${toneOf(-row.financing)}`}>
+                  {row.financing !== 0 ? fmtPnl(-row.financing) : ""}
+                </td>
+              )}
               <td>{row.reason}</td>
               <td className="bt-panel-c-num">{row.durationBars.toFixed(1)} bars</td>
             </tr>
           ))}
           {padBottom > 0 && (
             <tr aria-hidden="true">
-              <td colSpan={10} style={{ height: padBottom, padding: 0, border: 0 }} />
+              <td colSpan={colCount} style={{ height: padBottom, padding: 0, border: 0 }} />
             </tr>
           )}
         </tbody>

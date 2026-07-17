@@ -17,13 +17,18 @@ price. Keep it explicit so results aren't accidentally optimistic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from auto_trader.core.models import BarStats, BarTrace, Candle, Fill, Side, Signal, Trade
 from auto_trader.engine.risk import RiskConfig, is_trailing, stop_level, target_level
 from auto_trader.engine.scaling import ScalingConfig, spacing_ok
 from auto_trader.engine.schedule import RecurrenceMask, is_active
 from auto_trader.strategy.base import Context, Strategy
+
+# UTC hour a held position rolls over and is charged one night of financing.
+# Fixed (no per-run knob): brokers roll at a fixed daily instant and we model it
+# as a static 21:00 UTC crossing.
+ROLLOVER_HOUR_UTC = 21
 
 
 @dataclass(slots=True)
@@ -59,6 +64,9 @@ class Position:
     fav_extreme: float = 0.0
     # Per-bar dynamics accumulator, advanced once per held bar in _track_excursion.
     bar_stats: BarStats = field(default_factory=BarStats)
+    # Overnight financing accrued while this position was open (positive = cost),
+    # drawn down proportionally into each Trade as the position is reduced.
+    financing: float = 0.0
 
 
 @dataclass(slots=True)
@@ -74,6 +82,8 @@ class BacktestResult:
     n_trades: int = 0
     win_rate: float = 0.0
     max_drawdown: float = 0.0
+    # Total overnight financing charged across all trades (positive = net cost).
+    financing_total: float = 0.0
 
     def summary(self) -> dict:
         return {
@@ -81,6 +91,7 @@ class BacktestResult:
             "n_trades": self.n_trades,
             "win_rate": round(self.win_rate, 4),
             "max_drawdown": round(self.max_drawdown, 5),
+            "financing_total": round(self.financing_total, 5),
         }
 
 
@@ -91,6 +102,10 @@ class BacktestEngine:
         starting_cash: float = 10_000.0,
         commission_per_side: float = 0.0,
         slippage: float = 0.0,
+        spread: float = 0.0,
+        slippage_atr_mult: float = 0.0,
+        fin_long_daily_pct: float = 0.0,
+        fin_short_daily_pct: float = 0.0,
         long_risk: RiskConfig | None = None,
         short_risk: RiskConfig | None = None,
         series: dict[str, list[float | None]] | None = None,
@@ -105,6 +120,11 @@ class BacktestEngine:
         self.starting_cash = starting_cash
         self.commission = commission_per_side
         self.slippage = slippage
+        self.half_spread = spread / 2.0
+        self.slippage_atr_mult = slippage_atr_mult
+        self.fin_long_daily_pct = fin_long_daily_pct
+        self.fin_short_daily_pct = fin_short_daily_pct
+        self._slip_atr: list[float | None] = []
         self.long_risk = long_risk
         self.short_risk = short_risk
         self.series = series or {}
@@ -114,6 +134,8 @@ class BacktestEngine:
     def run(self, candles: list[Candle]) -> BacktestResult:
         result = BacktestResult()
         ctx = Context()
+
+        self._slip_atr = self._wilder_atr14(candles) if self.slippage_atr_mult > 0 else []
 
         longs: list[Position] = []
         shorts: list[Position] = []
@@ -131,6 +153,23 @@ class BacktestEngine:
         snapshots: list[dict] = []
 
         for i, bar in enumerate(candles):
+            # 0) Overnight financing: charge every rollover instant crossed since
+            # the previous bar, BEFORE any fill/close on this bar. A position that
+            # closes on this bar still held through the night that just ended, so
+            # it must be charged before it can leave longs/shorts. Accruing into
+            # `realized` here makes the equity curve reflect financing at rollover
+            # time (not at close). Positive daily pct is a cost; negative a credit.
+            if i > 0 and (self.fin_long_daily_pct or self.fin_short_daily_pct):
+                for _ in self._rollover_crossings(candles[i - 1].time, bar.time):
+                    for p in longs:
+                        charge = p.qty * p.entry * self.fin_long_daily_pct / 100.0
+                        p.financing += charge
+                        realized -= charge
+                    for p in shorts:
+                        charge = p.qty * p.entry * self.fin_short_daily_pct / 100.0
+                        p.financing += charge
+                        realized -= charge
+
             active = is_active(self.mask, bar.time)
             # Force-flat at the first inactive bar's open: close every open
             # position via the normal exit path with a "session close" reason.
@@ -139,10 +178,12 @@ class BacktestEngine:
             # self.mask guard is belt-and-suspenders.
             if not active and (longs or shorts) and self.mask and self.mask.flatten_at_close:
                 realized = self._close_all(
-                    longs, "long", result, realized, Side.SELL, bar.open, bar.time, "session close"
+                    longs, "long", result, realized, Side.SELL,
+                    self._fill_price(bar.open, Side.SELL, i), bar.time, "session close"
                 )
                 realized = self._close_all(
-                    shorts, "short", result, realized, Side.BUY, bar.open, bar.time, "session close"
+                    shorts, "short", result, realized, Side.BUY,
+                    self._fill_price(bar.open, Side.BUY, i), bar.time, "session close"
                 )
                 last_long_open = None
                 last_short_open = None
@@ -152,7 +193,7 @@ class BacktestEngine:
             # values are as-of that bar), so stamp the fill with that signal time.
             signal_time = candles[i - 1].time if i > 0 else None
             for sig in pending:
-                fill_price = self._fill_price(bar.open, sig.side)
+                fill_price = self._fill_price(bar.open, sig.side, i)
                 if sig.leg == "long":
                     positions, side, risk, scaling = longs, "long", self.long_risk, self.long_scaling
                     opening = sig.side is Side.BUY
@@ -199,8 +240,8 @@ class BacktestEngine:
             self._track_excursion(shorts, "short", bar)
 
             # 1c) Intra-bar stop/target, then 1d) trailing ratchet — per side.
-            realized = self._intrabar_exit(longs, "long", self.long_risk, result, realized, bar)
-            realized = self._intrabar_exit(shorts, "short", self.short_risk, result, realized, bar)
+            realized = self._intrabar_exit(longs, "long", self.long_risk, result, realized, bar, i)
+            realized = self._intrabar_exit(shorts, "short", self.short_risk, result, realized, bar, i)
             # An intrabar stop/target that empties a side clears its spacing
             # anchor, so the next entry isn't wrongly blocked by a stale last-open.
             if not longs:
@@ -262,11 +303,14 @@ class BacktestEngine:
         # matching how every other exit is treated.
         if candles:
             last_bar = candles[-1]
+            last_i = len(candles) - 1
             realized = self._close_all(
-                longs, "long", result, realized, Side.SELL, last_bar.close, last_bar.time, "range end"
+                longs, "long", result, realized, Side.SELL,
+                self._fill_price(last_bar.close, Side.SELL, last_i), last_bar.time, "range end"
             )
             realized = self._close_all(
-                shorts, "short", result, realized, Side.BUY, last_bar.close, last_bar.time, "range end"
+                shorts, "short", result, realized, Side.BUY,
+                self._fill_price(last_bar.close, Side.BUY, last_i), last_bar.time, "range end"
             )
         if inspect:
             result.bar_traces = self._build_bar_traces(snapshots, result.fills, candles)
@@ -341,9 +385,55 @@ class BacktestEngine:
             ))
         return out
 
-    def _fill_price(self, open_price: float, side: Side) -> float:
-        # Slippage pushes the price against us: pay more to buy, receive less to sell.
-        return open_price + (self.slippage if side is Side.BUY else -self.slippage)
+    @staticmethod
+    def _wilder_atr14(candles: list[Candle]) -> list[float | None]:
+        # Deliberate self-contained slippage basis: a fixed Wilder ATR(14) over
+        # the run's own candles, independent of any rule/operand ATR series the
+        # frontend may post (those key off ATR_{length}). Keeps ATR-scaled
+        # slippage well-defined even when no rule references ATR.
+        out: list[float | None] = [None] * len(candles)
+        trs: list[float] = []
+        prev_close: float | None = None
+        atr: float | None = None
+        for i, c in enumerate(candles):
+            tr = c.high - c.low if prev_close is None else max(
+                c.high - c.low, abs(c.high - prev_close), abs(c.low - prev_close))
+            prev_close = c.close
+            if atr is None:
+                trs.append(tr)
+                if len(trs) == 14:
+                    atr = sum(trs) / 14
+            else:
+                atr = (atr * 13 + tr) / 14
+            out[i] = atr
+        return out
+
+    def _rollover_crossings(self, prev: datetime, cur: datetime) -> list[datetime]:
+        """Every financing-rollover instant in (prev, cur]. Walks day by day and
+        is bounded by the bar span (a handful of iterations even for weekly bars)."""
+        out: list[datetime] = []
+        candidate = prev.replace(
+            hour=ROLLOVER_HOUR_UTC, minute=0, second=0, microsecond=0)
+        if candidate <= prev:
+            candidate += timedelta(days=1)
+        while candidate <= cur:
+            out.append(candidate)
+            candidate += timedelta(days=1)
+        return out
+
+    def _slip_at(self, i: int) -> float:
+        extra = 0.0
+        if self.slippage_atr_mult > 0 and i < len(self._slip_atr):
+            atr = self._slip_atr[i]
+            if atr is not None:
+                extra = self.slippage_atr_mult * atr
+        return self.slippage + extra
+
+    def _fill_price(self, open_price: float, side: Side, i: int) -> float:
+        # Costs push the price against us: buy at ask plus slippage, sell at
+        # bid minus slippage.
+        adj = self.half_spread + self._slip_at(i)
+        return open_price + (adj if side is Side.BUY else -adj)
 
     def _atr_at(self, length: int | None, i: int) -> float | None:
         if length is None:
@@ -414,11 +504,18 @@ class BacktestEngine:
         mae_r = mae / risk_dist if risk_dist > 0 else None
         mfe_r = mfe / risk_dist if risk_dist > 0 else None
         realized += pnl
+        # Allocate the position's accrued financing to this Trade by the share of
+        # quantity being closed. Compute the share against the PRE-decrement qty,
+        # then draw it down so a partial close leaves the remainder on the position.
+        share = p.financing * (closing / p.qty) if p.qty else 0.0
+        p.financing -= share
+        result.financing_total += share
         result.trades.append(
             Trade(
                 side=trade_side, quantity=closing,
                 entry_time=p.open_time, entry_price=p.entry,
                 exit_time=bar_time, exit_price=fill_price, pnl=pnl,
+                financing=share,
                 leg=side, reason_in=p.open_reason, reason_out=reason,
                 stop_initial=p.stop_initial, stop_final=p.stop, target=p.target,
                 mae=mae, mfe=mfe, mae_r=mae_r, mfe_r=mfe_r,
@@ -440,7 +537,7 @@ class BacktestEngine:
             positions.remove(p)
         return realized
 
-    def _intrabar_exit(self, positions, side, risk, result, realized, bar):
+    def _intrabar_exit(self, positions, side, risk, result, realized, bar, i):
         """Pessimistic intra-bar stop/target for EVERY open position on the side
         (the open resolves the order when it gaps through the target). Each
         position carries its own levels, so all are checked — not just the
@@ -456,23 +553,33 @@ class BacktestEngine:
             # regardless of what the side-level RiskConfig's stop kind is.
             is_trail = not p.bracket_from_signal and risk and is_trailing(risk.stop)
             if side == "long":
-                if p.target is not None and bar.open >= p.target:
-                    hit = (self._fill_price(p.target, Side.SELL), "target")
-                elif p.stop is not None and bar.low <= p.stop:
+                # Exits are SELLs executing at the bid: shift the candle down
+                # by half the spread before comparing to the levels.
+                b_open, b_high, b_low = (bar.open - self.half_spread,
+                                         bar.high - self.half_spread,
+                                         bar.low - self.half_spread)
+                if p.target is not None and b_open >= p.target:
+                    hit = (self._fill_price(p.target, Side.SELL, i), "target")
+                elif p.stop is not None and b_low <= p.stop:
                     raw = min(bar.open, p.stop)
-                    hit = (self._fill_price(raw, Side.SELL), "trail" if is_trail else "stop")
-                elif p.target is not None and bar.high >= p.target:
-                    hit = (self._fill_price(p.target, Side.SELL), "target")
+                    hit = (self._fill_price(raw, Side.SELL, i), "trail" if is_trail else "stop")
+                elif p.target is not None and b_high >= p.target:
+                    hit = (self._fill_price(p.target, Side.SELL, i), "target")
                 else:
                     hit = None
             else:
-                if p.target is not None and bar.open <= p.target:
-                    hit = (self._fill_price(p.target, Side.BUY), "target")
-                elif p.stop is not None and bar.high >= p.stop:
+                # Exits are BUYs executing at the ask: shift the candle up by
+                # half the spread before comparing to the levels.
+                b_open, b_high, b_low = (bar.open + self.half_spread,
+                                         bar.high + self.half_spread,
+                                         bar.low + self.half_spread)
+                if p.target is not None and b_open <= p.target:
+                    hit = (self._fill_price(p.target, Side.BUY, i), "target")
+                elif p.stop is not None and b_high >= p.stop:
                     raw = max(bar.open, p.stop)
-                    hit = (self._fill_price(raw, Side.BUY), "trail" if is_trail else "stop")
-                elif p.target is not None and bar.low <= p.target:
-                    hit = (self._fill_price(p.target, Side.BUY), "target")
+                    hit = (self._fill_price(raw, Side.BUY, i), "trail" if is_trail else "stop")
+                elif p.target is not None and b_low <= p.target:
+                    hit = (self._fill_price(p.target, Side.BUY, i), "target")
                 else:
                     hit = None
             if hit:

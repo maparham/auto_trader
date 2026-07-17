@@ -27,16 +27,36 @@ const mockStrategies = vi.fn().mockResolvedValue([]);
 // so the toggle stays hidden for the tests that don't care; the toggle tests
 // override it per case.
 const mockComputeStatus = vi.fn().mockResolvedValue({ remoteConfigured: false });
+// The Costs tab prefetches the instrument profile once per epic. Default to a
+// broker-sourced profile so the tab renders its values; putCostProfile/refetch
+// default to no-ops the profile-edit test overrides.
+const brokerProfile = {
+  epic: "TEST",
+  spread: 0.8,
+  slippage: { kind: "fixed" as const, value: 0.2, atrMult: 0 },
+  finLongDailyPct: -0.01,
+  finShortDailyPct: 0.01,
+  source: "broker" as const,
+  updatedAt: 123,
+};
+const mockGetCostProfile = vi.fn().mockResolvedValue(brokerProfile);
+const mockPutCostProfile = vi.fn().mockImplementation((_epic, patch) =>
+  Promise.resolve({ ...brokerProfile, ...patch, source: "manual" }),
+);
+const mockRefetchCostProfile = vi.fn().mockResolvedValue({ old: brokerProfile, new: brokerProfile });
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
   return {
     ...actual,
     fetchStrategies: (...args: unknown[]) => mockStrategies(...args),
     computeStatus: (...args: unknown[]) => mockComputeStatus(...args),
+    getCostProfile: (...args: unknown[]) => mockGetCostProfile(...args),
+    putCostProfile: (...args: unknown[]) => mockPutCostProfile(...args),
+    refetchCostProfile: (...args: unknown[]) => mockRefetchCostProfile(...args),
   };
 });
 
-import BacktestSettingsModal from "./BacktestSettingsModal";
+import BacktestSettingsModal, { resetCostProfileCache } from "./BacktestSettingsModal";
 import { defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig";
 import { SESSION_PRESETS, minToTime, sessionWindowInTz } from "./lib/backtestSchedule";
 import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
@@ -52,6 +72,12 @@ beforeEach(() => {
   localStorage.clear();
   mockStrategies.mockReset().mockResolvedValue([]);
   mockComputeStatus.mockReset().mockResolvedValue({ remoteConfigured: false });
+  mockGetCostProfile.mockReset().mockResolvedValue(brokerProfile);
+  mockPutCostProfile
+    .mockReset()
+    .mockImplementation((_epic, patch) => Promise.resolve({ ...brokerProfile, ...patch, source: "manual" }));
+  mockRefetchCostProfile.mockReset().mockResolvedValue({ old: brokerProfile, new: brokerProfile });
+  resetCostProfileCache();
 });
 
 // The rule group whose <div class="bt-section"> heading matches `title`. Each
@@ -72,6 +98,7 @@ function renderModal(initial = defaultBacktestConfig()) {
     <BacktestSettingsModal
       initial={initial}
       epic="TEST"
+      brokerId="capital"
       resolution="MINUTE"
       controller={null}
       chartTimezone="UTC"
@@ -169,6 +196,35 @@ function ruleAction(section: HTMLElement, name: RegExp | string) {
   fireEvent.click(within(section).getAllByLabelText("Rule actions")[0]);
   fireEvent.click(screen.getByRole("menuitem", { name }));
 }
+
+describe("Costs tab instrument profile", () => {
+  function openCosts() {
+    const nav = document.querySelector(".bt-htabs") as HTMLElement;
+    fireEvent.click(within(nav).getByRole("button", { name: "Costs" }));
+  }
+
+  it("Costs tab shows the instrument profile and edits PUT back", async () => {
+    renderModal();
+    openCosts();
+    await waitFor(() =>
+      expect((screen.getByLabelText("Spread") as HTMLInputElement).value).toBe("0.8"),
+    );
+    expect(screen.getByText(/from broker/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Spread"), { target: { value: "1.2" } });
+    await waitFor(() =>
+      expect(mockPutCostProfile).toHaveBeenCalledWith("TEST", expect.objectContaining({ spread: 1.2 })),
+    );
+  });
+
+  it("keeps the current config and does not crash when the profile fetch fails", async () => {
+    mockGetCostProfile.mockRejectedValueOnce(new Error("broker 503"));
+    renderModal();
+    openCosts();
+    // Spread stays at the config default (0) instead of a broker value.
+    await waitFor(() => expect(mockGetCostProfile).toHaveBeenCalled());
+    expect((screen.getByLabelText("Spread") as HTMLInputElement).value).toBe("0");
+  });
+});
 
 describe("BacktestSettingsModal rule duplicate/copy/paste", () => {
   it("duplicating a rule inserts an independent copy right after it", () => {
@@ -589,7 +645,7 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
     const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     render(
       <BacktestSettingsModal
-        initial={initial} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
+        initial={initial} epic="TEST" brokerId="capital" resolution="MINUTE" controller={null} chartTimezone="UTC"
         onRun={onRun} onClose={vi.fn()}
       />,
     );
@@ -616,7 +672,7 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
     const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     render(
       <BacktestSettingsModal
-        initial={initial} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
+        initial={initial} epic="TEST" brokerId="capital" resolution="MINUTE" controller={null} chartTimezone="UTC"
         onRun={onRun} onClose={vi.fn()}
       />,
     );
@@ -642,7 +698,7 @@ describe("rules-mode combo apply", () => {
     const onRun = vi.fn();
     render(
       <BacktestSettingsModal
-        initial={initial} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
+        initial={initial} epic="TEST" brokerId="capital" resolution="MINUTE" controller={null} chartTimezone="UTC"
         onRun={onRun} onClose={vi.fn()}
       />,
     );

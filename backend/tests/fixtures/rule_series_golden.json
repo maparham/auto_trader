@@ -272,7 +272,11 @@
     "costs": {
       "quantity": 1,
       "commissionPerSide": 0,
-      "slippage": 0,
+      "slippage": {
+        "kind": "fixed",
+        "value": 0,
+        "atrMult": 0
+      },
       "startingCash": 10000
     }
   },

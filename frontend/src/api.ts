@@ -1,6 +1,6 @@
 // Typed client for the Auto Trader backend.
 
-import type { RuleGroup, Costs, RiskConfig, ScalingConfig, RecurrenceMask } from "./lib/backtestConfig";
+import type { RuleGroup, Costs, SlippageModel, RiskConfig, ScalingConfig, RecurrenceMask } from "./lib/backtestConfig";
 import { API_BASE as BASE, errorDetail } from "./lib/http";
 import type { EvaluateRequest, EvaluateResult } from "./lib/liveTypes";
 
@@ -85,6 +85,10 @@ interface Trade {
   exit_time: number;
   exit_price: number;
   pnl: number;
+  // Overnight financing allocated to this trade, engine convention positive =
+  // cost (paid), negative = credit. Zero/absent when financing is off or the
+  // trade held no overnight. The panel negates it for display (P&L impact).
+  financing?: number;
   leg: "long" | "short";
   reason: string;
   stop_initial: number | null;
@@ -275,6 +279,10 @@ export interface BacktestResult {
     cagr_pct?: number | null;
     sqn?: number | null;
     exposure_pct?: number | null;
+    // Total overnight financing across the run, engine convention positive =
+    // cost (paid), negative = credit. Absent on pre-financing cached payloads;
+    // already folded into net P&L. The panel negates it for display.
+    financing_total?: number;
   };
   // Per-direction trade-list breakdown for the TRADES panel table. Absent on
   // older cached payloads; the table zeroes the LONG/SHORT rows when missing.
@@ -345,6 +353,55 @@ export async function runBacktest(req: BacktestRequest): Promise<BacktestResult>
       `backend+network ${(t2 - t1).toFixed(0)}ms, parse ${(t3 - t2).toFixed(0)}ms`,
   );
   return json;
+}
+
+// --- per-instrument cost profiles --------------------------------------------
+// Broker-prefilled (spread only), user-editable spread/slippage/financing tied to
+// an epic. The Costs tab prefetches this once per epic, writes the values into the
+// run config, and mirrors edits back with putCostProfile. `source` says where the
+// current values came from; `updatedAt` is epoch SECONDS of the last write (0 when
+// never set).
+export interface CostProfile {
+  epic: string;
+  spread: number;
+  slippage: SlippageModel;
+  finLongDailyPct: number;
+  finShortDailyPct: number;
+  source: "broker" | "manual";
+  updatedAt: number;
+}
+
+// Fetch the stored profile, prefilling from the broker on first read for the epic.
+export async function getCostProfile(epic: string, broker: string): Promise<CostProfile> {
+  const res = await fetch(`${BASE}/api/costs/${encodeURIComponent(epic)}?broker=${encodeURIComponent(broker)}`);
+  if (!res.ok) throw new Error(await errorDetail(res, `cost profile failed (${res.status})`));
+  return res.json();
+}
+
+// Partially patch the stored profile (only the fields present are written); the
+// server marks the result source "manual" and returns the merged profile.
+export async function putCostProfile(epic: string, patch: Partial<CostProfile>): Promise<CostProfile> {
+  const res = await fetch(`${BASE}/api/costs/${encodeURIComponent(epic)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `cost profile save failed (${res.status})`));
+  return res.json();
+}
+
+// Re-pull the spread from the broker, overwriting the stored profile; returns
+// the previous and new profiles so the caller can show what changed.
+export async function refetchCostProfile(
+  epic: string,
+  broker: string,
+): Promise<{ old: CostProfile | null; new: CostProfile }> {
+  const res = await fetch(
+    `${BASE}/api/costs/${encodeURIComponent(epic)}/refetch?broker=${encodeURIComponent(broker)}`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(await errorDetail(res, `cost profile refetch failed (${res.status})`));
+  return res.json();
 }
 
 export async function evaluateStrategy(req: EvaluateRequest): Promise<EvaluateResult> {

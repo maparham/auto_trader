@@ -265,10 +265,23 @@ export interface RangeConfig {
   resolution?: string;
 }
 
+// Per-fill slippage model. `kind: "fixed"` charges `value` price units on every
+// fill; `kind: "atr"` charges `value + atrMult * ATR(14)` of the fill bar, so
+// fast markets cost more. The backend rejects a bare numeric slippage (422); the
+// loader coerces a legacy stored number into the fixed model (normalizeBacktestConfig).
+export type SlippageModel = { kind: "fixed" | "atr"; value: number; atrMult: number };
+
 export interface Costs {
   quantity: number;
   commissionPerSide: number;
-  slippage: number;
+  slippage: SlippageModel;
+  // Full bid/ask spread in price units (buys fill half a spread above the mid,
+  // sells half below). Instrument-level, broker-prefilled via the cost profile.
+  spread: number;
+  // Financing charged per night a position is held, as a percent of entry
+  // notional. Negative is a credit. Long/short differ.
+  finLongDailyPct: number;
+  finShortDailyPct: number;
   startingCash: number;
 }
 
@@ -490,6 +503,40 @@ export function defaultBacktestConfig(): BacktestConfig {
     shortExit: cross("crossesAbove"),
     longEnabled: true,
     shortEnabled: true,
-    costs: { quantity: 1, commissionPerSide: 0, slippage: 0, startingCash: 10_000 },
+    costs: {
+      quantity: 1,
+      commissionPerSide: 0,
+      slippage: { kind: "fixed", value: 0, atrMult: 0 },
+      spread: 0,
+      finLongDailyPct: 0,
+      finShortDailyPct: 0,
+      startingCash: 10_000,
+    },
+  };
+}
+
+/** Fold a stored config forward to the current shape. The ONE permitted legacy
+ * coercion (spec-mandated): a previously persisted NUMERIC `slippage` becomes the
+ * fixed model `{ kind: "fixed", value: n, atrMult: 0 }`, so older panels don't
+ * break. Missing new cost fields (spread, financing) fill from the defaults.
+ * Everything else is passed through untouched. */
+export function normalizeBacktestConfig(cfg: BacktestConfig): BacktestConfig {
+  const d = defaultBacktestConfig().costs;
+  const c = (cfg.costs ?? d) as Partial<Costs> & { slippage?: number | SlippageModel };
+  const slippage: SlippageModel =
+    typeof c.slippage === "number"
+      ? { kind: "fixed", value: c.slippage, atrMult: 0 }
+      : c.slippage ?? d.slippage;
+  return {
+    ...cfg,
+    costs: {
+      quantity: c.quantity ?? d.quantity,
+      commissionPerSide: c.commissionPerSide ?? d.commissionPerSide,
+      slippage,
+      spread: c.spread ?? d.spread,
+      finLongDailyPct: c.finLongDailyPct ?? d.finLongDailyPct,
+      finShortDailyPct: c.finShortDailyPct ?? d.finShortDailyPct,
+      startingCash: c.startingCash ?? d.startingCash,
+    },
   };
 }
