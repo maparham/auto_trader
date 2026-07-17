@@ -28,6 +28,17 @@ export interface ChartDataFacade {
   /** Handler invoked when the chart hits the left/right edge (was setLoadDataCallback). */
   onLoadRequest: (type: "forward" | "backward", timestamp: number | null,
                   done: (bars: KLineData[], more: DataLoadMore) => void) => void;
+  /**
+   * Called with the prepend size just before a forward (scroll-back) load's bars
+   * are handed to the chart. v10's Forward merge just concats the prepend and
+   * renumbers every dataIndex without touching overlay points (v9's internal
+   * updatePointPosition shift is gone), so anything anchored to a dataIndex must
+   * shift BEFORE the bars land. Housing the hook here — the one choke point every
+   * native forward load flows through — means no answerer of onLoadRequest can
+   * forget it. OverlayManager.attach installs the shift; the facade stays
+   * overlay-agnostic.
+   */
+  onForwardPrepend: ((count: number) => void) | null;
   getBars(): KLineData[];
 }
 
@@ -46,6 +57,7 @@ export function createChartDataFacade(): ChartDataFacade {
 
   const facade: ChartDataFacade = {
     onLoadRequest: (_type, _ts, done) => done([], false),
+    onForwardPrepend: null,
     attach(c) {
       chart = c;
       c.setDataLoader({
@@ -54,7 +66,13 @@ export function createChartDataFacade(): ChartDataFacade {
             callback(bars, more);
             return;
           }
-          facade.onLoadRequest(type, timestamp, callback);
+          facade.onLoadRequest(type, timestamp, (pageBars, pageMore) => {
+            // Shift-first is safe: the prepend + repaint happen synchronously
+            // inside callback(), so no paint can see the shifted index against
+            // the old data. See onForwardPrepend's doc for why the shift exists.
+            if (type === "forward" && pageBars.length) facade.onForwardPrepend?.(pageBars.length);
+            callback(pageBars, pageMore);
+          });
         },
         subscribeBar: ({ callback }) => { subscribe = callback; },
         unsubscribeBar: () => { subscribe = null; },

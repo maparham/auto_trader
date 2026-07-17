@@ -174,6 +174,7 @@ function fakeFacade(chart: FakeChart) {
     setBars: (b: Array<{ timestamp: number }>) => chart.applyNewData(b),
     pushBar() {},
     onLoadRequest: () => {},
+    onForwardPrepend: null,
     getBars: () => chart.getDataList(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -1413,6 +1414,46 @@ describe("future-anchored drawing points survive persist/rehydrate", () => {
     const older = Array.from({ length: 20 }, (_, i) => ({ timestamp: T0 - (20 - i) * HOUR }));
     m.applyOlderBars([...older, ...chart.data] as never);
     expect(setBars).toHaveBeenCalledWith(expect.anything(), true);
+  });
+
+  // klinecharts v10.0.0's native Forward merge (_addData 'forward') just concats
+  // the prepend — v9's updatePointPosition, which shifted dataIndex-only points by
+  // the prepend size, no longer exists. So attach() installs a shift on the
+  // facade's onForwardPrepend hook, which the facade fires BEFORE forward-loaded
+  // bars are handed over (the prepend + repaint happen synchronously inside the
+  // DataLoader callback — ordering is covered by chartDataFacade.test.ts).
+  // Without this, reload → zoom out slides a future-anchored trendline endpoint a
+  // whole page into history.
+  it("attach installs a facade onForwardPrepend hook that shifts beyond-data anchors by the page size", () => {
+    const chart = new FakeChart();
+    const facade = fakeFacade(chart);
+    const m = new OverlayManager();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    m.attach(chart as any, facade);
+    m.setScope("tab.A");
+    m.setEpic("US100");
+    chart.data = bars(10);
+    m.setResolution("HOUR");
+    P.saveDrawings("tab.A", "US100", [
+      {
+        name: "segment",
+        points: [
+          { timestamp: chart.data[5].timestamp, value: 1 },
+          { timestamp: chart.data[9].timestamp + 4 * HOUR, value: 2 },
+        ],
+      },
+    ]);
+    m.rehydrate(); // future anchor → dataIndex 13, no timestamp
+    expect(facade.onForwardPrepend).toBeInstanceOf(Function);
+    facade.onForwardPrepend!(3); // a 3-bar scroll-back page is about to land
+    const pts = [...chart.overlays.values()].find((o) => o.name === "segment")!
+      .points as Array<{ timestamp?: number; dataIndex?: number }>;
+    expect(pts[1].dataIndex).toBe(16); // 13 + 3
+    expect(pts[1].timestamp).toBeUndefined();
+    // The timestamped anchor is untouched — it re-resolves at paint time.
+    expect(pts[0].timestamp).toBe(chart.data[5].timestamp);
+    m.detach();
+    expect(facade.onForwardPrepend).toBeNull(); // no stale shift into a dead manager
   });
 
   // The transient measure ruler can also have a beyond-data endpoint — it must

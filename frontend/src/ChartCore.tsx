@@ -2128,9 +2128,10 @@ export default function ChartCore({
           // history) still returns [] and does count toward exhaustion.
           fetchOlder: (fromSec, toSec) =>
             fetchRangeStrict(epic, resolution, fromSec, toSec, side, broker),
-          // A Forward load's prepend: klinecharts' own updatePointPosition shifts
-          // dataIndex-only overlay points by the prepend size, so do NOT shift
-          // them again (see applyOlderBars for the INIT-type path).
+          // A Forward load's prepend renumbers every dataIndex; the facade's
+          // onForwardPrepend hook (installed by overlays.attach) shifts
+          // dataIndex-only overlay points before the bars land — no wrapping
+          // needed here (applyOlderBars covers the INIT-type path).
           done,
           // Extend any HTF EMA/MA overlay back over the newly-loaded range so
           // the MTF curve doesn't stop where the older bars begin. `fresh[0]`

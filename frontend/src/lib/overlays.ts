@@ -312,6 +312,13 @@ export class OverlayManager {
   attach(chart: Chart, dataFacade?: ChartDataFacade): void {
     this.chart = chart;
     this.dataFacade = dataFacade ?? null;
+    // Native Forward (scroll-back) prepends renumber every dataIndex and v10
+    // never shifts overlay points itself — the facade's pre-delivery hook makes
+    // dataIndex-only (future-anchored) points shift before the bars land, no
+    // matter who answers the load. applyOlderBars covers the INIT-type path.
+    if (this.dataFacade) {
+      this.dataFacade.onForwardPrepend = (count) => this.shiftIndexAnchoredPoints(count);
+    }
     // Keep this cell's drawings' snap mode in lockstep with the global magnet toggle
     // AND the hold-invert modifier. New drawings pick it up at create() time; these
     // catch changes AFTER a drawing exists (so dragging an old line then snaps, and a
@@ -325,6 +332,7 @@ export class OverlayManager {
     this.magnetUnsub.forEach((u) => u());
     this.magnetUnsub = [];
     this.chart = null;
+    if (this.dataFacade) this.dataFacade.onForwardPrepend = null;
     this.dataFacade = null;
     this.entries.clear();
     this.alertCfg.clear();
@@ -2157,14 +2165,15 @@ export class OverlayManager {
   // Prepending renumbers every bar's dataIndex. Timestamped points re-resolve at
   // paint time, but a beyond-data point is dataIndex-ONLY (materializePoints
   // strips the timestamp), and a full setBars is an INIT-type change, where
-  // klinecharts' updatePointPosition skips the Forward shift but still BACK-FILLS
-  // point.timestamp from whatever bar now sits at the stale index, permanently
-  // pinning a future anchor onto a historical bar. So the shift MUST run before
-  // the data lands: the pre-shifted index stays beyond the data and the back-fill
-  // leaves the point timestamp-less. Housing this here (not at the call sites)
-  // makes the ordering structural — a new paging consumer can't get it wrong.
-  // klinecharts' native Forward loads (the scroll-back callback) already shift
-  // dataIndex-only points internally and must NOT come through here.
+  // klinecharts never shifts but still BACK-FILLS point.timestamp from whatever
+  // bar now sits at the stale index, permanently pinning a future anchor onto a
+  // historical bar. So the shift MUST run before the data lands: the pre-shifted
+  // index stays beyond the data and the back-fill leaves the point
+  // timestamp-less. Housing this here (not at the call sites) makes the ordering
+  // structural — a new paging consumer can't get it wrong. Native Forward loads
+  // (the scroll-back callback) don't come through here; since v10 dropped the
+  // internal shift (v9's updatePointPosition), they shift via the facade's
+  // onForwardPrepend hook, installed in attach().
   applyOlderBars(merged: KLineData[]): void {
     if (!this.chart || !this.dataFacade) return;
     this.shiftIndexAnchoredPoints(merged.length - this.chart.getDataList().length);

@@ -39,6 +39,41 @@ describe("chartDataFacade", () => {
     expect(cb).toHaveBeenCalledWith([], false);
   });
 
+  // v10's Forward merge concats the prepend and renumbers every dataIndex without
+  // shifting overlay points (v9's updatePointPosition is gone) — the facade must
+  // fire onForwardPrepend BEFORE delivering forward bars so dataIndex-anchored
+  // points shift before the prepend lands.
+  it("fires onForwardPrepend with the page size before delivering forward bars", () => {
+    const f = createChartDataFacade();
+    const chart = fakeChart();
+    f.attach(chart);
+    const page = [
+      { timestamp: 1, open: 1, high: 1, low: 1, close: 1 },
+      { timestamp: 2, open: 1, high: 1, low: 1, close: 1 },
+    ];
+    f.onLoadRequest = (_type, _ts, done) => done(page, true);
+    const order: string[] = [];
+    f.onForwardPrepend = (count) => order.push(`shift:${count}`);
+    const cb = vi.fn(() => order.push("deliver"));
+    chart._loader().getBars({ type: "forward", timestamp: 5, symbol: {} as any, period: {} as any, callback: cb });
+    expect(order).toEqual(["shift:2", "deliver"]);
+    expect(cb).toHaveBeenCalledWith(page, true);
+  });
+
+  it("skips onForwardPrepend for empty pages and backward loads", () => {
+    const f = createChartDataFacade();
+    const chart = fakeChart();
+    f.attach(chart);
+    const hook = vi.fn();
+    f.onForwardPrepend = hook;
+    f.onLoadRequest = (_type, _ts, done) => done([], false);
+    chart._loader().getBars({ type: "forward", timestamp: 5, symbol: {} as any, period: {} as any, callback: vi.fn() });
+    const bar = [{ timestamp: 9, open: 1, high: 1, low: 1, close: 1 }];
+    f.onLoadRequest = (_type, _ts, done) => done(bar, false);
+    chart._loader().getBars({ type: "backward", timestamp: 5, symbol: {} as any, period: {} as any, callback: vi.fn() });
+    expect(hook).not.toHaveBeenCalled();
+  });
+
   it("pushBar forwards to the captured subscribeBar callback", () => {
     const f = createChartDataFacade();
     const chart = fakeChart();
