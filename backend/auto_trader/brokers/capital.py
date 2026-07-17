@@ -471,7 +471,12 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
         end = _to_utc(end)
         out: list[Candle] = []
         cursor = start
-        step = timedelta(seconds=resolution.seconds * MAX_BARS_PER_REQUEST)
+        # A window of N buckets spans N+1 inclusive endpoints, and Capital counts
+        # both ends against `max`, so a full MAX_BARS_PER_REQUEST-bucket span asks
+        # for MAX_BARS_PER_REQUEST+1 points and 400s. Step one bucket short so a
+        # saturated window stays within the cap (cursor still advances past the
+        # last received bar, so no coverage gap).
+        step = timedelta(seconds=resolution.seconds * (MAX_BARS_PER_REQUEST - 1))
 
         while cursor < end:
             window_end = min(cursor + step, end)

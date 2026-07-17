@@ -329,3 +329,37 @@ def test_account_preferences_are_cached_across_detail_calls():
     asyncio.run(broker.get_market_detail("OIL_CRUDE"))
     asyncio.run(broker.get_market_detail("OIL_CRUDE"))
     assert calls.count("/api/v1/accounts/preferences") == 1
+
+
+def test_get_candles_never_requests_more_than_max_inclusive_points():
+    """Regression: a /prices window spans N buckets = N+1 inclusive endpoints,
+    and Capital counts both ends against `max`, so a full-width window must stay
+    one bucket short of MAX_BARS_PER_REQUEST or the live API 400s. This bit remote
+    sweeps (cold cache) on a range that landed on exactly MAX_BARS_PER_REQUEST
+    hours; local runs masked it by serving HTF bars from cache."""
+    from datetime import timedelta
+
+    from auto_trader.brokers.capital import MAX_BARS_PER_REQUEST
+    from auto_trader.core.models import Resolution
+
+    broker = CapitalComBroker(api_key="k", identifier="i", password="p", base_url="http://x")
+    windows: list[tuple[str, str]] = []
+
+    async def _fake_get(path: str, params: dict) -> _FakeResp:
+        windows.append((params["from"], params["to"]))
+        return _FakeResp({"prices": []})  # empty -> cursor advances by window_end
+
+    broker._get = _fake_get  # type: ignore[assignment]
+
+    start = datetime(2026, 1, 7, 0, 0, tzinfo=timezone.utc)
+    end = start + timedelta(hours=MAX_BARS_PER_REQUEST)  # exactly the failing span
+    asyncio.run(broker.get_candles("US100", Resolution.HOUR, start, end))
+
+    assert windows, "expected at least one /prices request"
+    fmt = "%Y-%m-%dT%H:%M:%S"
+    for frm, to in windows:
+        span_h = (datetime.strptime(to, fmt) - datetime.strptime(frm, fmt)).total_seconds() / 3600
+        inclusive_points = span_h + 1  # both endpoints returned
+        assert inclusive_points <= MAX_BARS_PER_REQUEST, (
+            f"window {frm}->{to} asks for {inclusive_points} points > max {MAX_BARS_PER_REQUEST}"
+        )
