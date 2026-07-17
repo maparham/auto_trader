@@ -8,10 +8,15 @@ without a database; the caller supplies the candles.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timezone
 
 from auto_trader.core.models import Candle, Trade
+
+logger = logging.getLogger(__name__)
+
+_DAY_S = 86400
 
 # The only exits that happen mid run-bar. Everything else fills at a bar boundary.
 _INTRABAR = frozenset({"stop", "trail", "target"})
@@ -59,21 +64,49 @@ async def attach_exit_times(
 ) -> None:
     """Populate exit_time_exact on every intra-bar-exit trade, resolving from the
     exit bar's 1-minute candles. `load_minutes(from_s, to_s)` supplies the candles
-    (injected so this is testable without a candle store). Runs at most one load
-    per distinct exit bar."""
+    (injected so this is testable without a candle store).
+
+    Loads are batched per UTC day of the exit bar — one span covering that day's
+    exit bars — because upstream minute fetches pay a large per-call cost (day
+    files) that would otherwise repeat per exit bar. Best-effort: a failed load
+    skips that day's trades and moves on rather than aborting the rest."""
     if run_tf_seconds <= 60:
         return
-    memo: dict[int, list[Candle]] = {}
-    for t in trades:
-        if t.reason_out not in _INTRABAR:
-            continue
+    intrabar = [t for t in trades if t.reason_out in _INTRABAR]
+    if not intrabar:
+        return
+
+    # Distinct exit-bar starts, grouped by the UTC day they begin in.
+    days: dict[int, list[int]] = {}
+    for t in intrabar:
         start_s = int(t.exit_time.timestamp())
-        if start_s not in memo:
-            memo[start_s] = await load_minutes(start_s, start_s + run_tf_seconds)
+        days.setdefault(start_s // _DAY_S, []).append(start_s)
+
+    minutes: dict[int, list[Candle]] = {}  # exit-bar start -> its minute candles
+    for starts in days.values():
+        span_from, span_to = min(starts), max(starts) + run_tf_seconds
+        try:
+            loaded = await load_minutes(span_from, span_to)
+        except Exception:
+            logger.warning(
+                "minute load %s..%s failed; skipping that day's exit times",
+                span_from, span_to, exc_info=True,
+            )
+            continue
+        for start_s in starts:
+            end_s = start_s + run_tf_seconds
+            minutes[start_s] = [
+                c for c in loaded if start_s <= int(c.time.timestamp()) < end_s
+            ]
+
+    for t in intrabar:
+        start_s = int(t.exit_time.timestamp())
+        if start_s not in minutes:
+            continue
         exact = resolve_exit_time(
             leg=t.leg, reason=t.reason_out, run_tf_seconds=run_tf_seconds,
             stop_final=t.stop_final, target=t.target, exit_price=t.exit_price,
-            minute_candles=memo[start_s],
+            minute_candles=minutes[start_s],
         )
         if exact is not None:
             t.exit_time_exact = datetime.fromtimestamp(exact, tz=timezone.utc)

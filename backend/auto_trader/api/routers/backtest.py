@@ -240,7 +240,8 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
 
     async def _load_minutes(from_s: int, to_s: int) -> list[Candle]:
         return await deps._fetch_symbol_candles(
-            req.broker, req.epic, "MINUTE", run_s // 60 + 2, from_s, to_s, req.priceSide,
+            req.broker, req.epic, "MINUTE", (to_s - from_s) // 60 + 2, from_s, to_s,
+            req.priceSide,
         )
 
     try:

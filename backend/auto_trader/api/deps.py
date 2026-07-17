@@ -68,7 +68,10 @@ def get_data(broker_id: str) -> MarketDataBroker:
 # (incl. across restarts). Monthly/yearly are cheaper: they derive from the daily
 # base series, which the cache bounds. Budget covers weekly's worst case (~45-70s
 # through the server) with headroom; scoped to mt5 so a hang can't stall the others.
-BROKER_HEALTH = BrokerHealth(per_key_timeout={"mt5": 90.0})
+# Dukascopy downloads and decodes day tick files, so even a small cold minute-window
+# fetch routinely exceeds 8s; like MT5 the cost is paid once and then the candle
+# cache serves it.
+BROKER_HEALTH = BrokerHealth(per_key_timeout={"mt5": 90.0, "dukascopy": 45.0})
 
 T = TypeVar("T")
 

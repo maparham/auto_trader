@@ -123,3 +123,45 @@ def test_attach_memoizes_shared_exit_bar():
     a, b = _trade("stop", T0), _trade("stop", T0)
     asyncio.run(attach_exit_times([a, b], run_tf_seconds=3600, load_minutes=load))
     assert loads == 1  # same exit bar fetched once
+
+
+def _minutes_for(start: int) -> list[Candle]:
+    # Bar whose third minute pierces the 29533.99 stop, anchored at `start`.
+    return [
+        _c(start + 0, high=29690, low=29650),
+        _c(start + 60, high=29680, low=29600),
+        _c(start + 120, high=29650, low=29520),
+        _c(start + 180, high=29560, low=29500),
+        _c(start + 240, high=29540, low=29480),
+    ]
+
+
+def test_attach_batches_same_day_exits_into_one_load():
+    t_late = T0 + 7 * 3600  # same UTC day, different exit bar
+    calls: list[tuple[int, int]] = []
+
+    async def load(from_s: int, to_s: int) -> list[Candle]:
+        calls.append((from_s, to_s))
+        return _minutes_for(T0) + _minutes_for(t_late)
+
+    a, b = _trade("stop", T0), _trade("stop", t_late)
+    asyncio.run(attach_exit_times([a, b], run_tf_seconds=3600, load_minutes=load))
+
+    assert calls == [(T0, t_late + 3600)]  # one load spanning both exit bars
+    assert int(a.exit_time_exact.timestamp()) == T0 + 120
+    assert int(b.exit_time_exact.timestamp()) == t_late + 120
+
+
+def test_attach_load_failure_skips_only_that_day():
+    t_next_day = T0 + 86400
+
+    async def load(from_s: int, to_s: int) -> list[Candle]:
+        if from_s == T0:
+            raise RuntimeError("broker timed out")
+        return _minutes_for(t_next_day)
+
+    a, b = _trade("stop", T0), _trade("stop", t_next_day)
+    asyncio.run(attach_exit_times([a, b], run_tf_seconds=3600, load_minutes=load))
+
+    assert a.exit_time_exact is None  # its day's load failed, skipped
+    assert int(b.exit_time_exact.timestamp()) == t_next_day + 120  # unaffected
