@@ -1557,33 +1557,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       {btMode === "backtest" && <BacktestPanel />}
       {btMode === "sweep" && (
         <>
-          {pastSweeps.length > 0 && (
-            <div className="al-row bt-past-sweeps">
-              <span>Past sweeps</span>
-              <select
-                value={pickedSweep}
-                disabled={sweepState?.running}
-                onChange={(e) => {
-                  setPickedSweep(e.target.value);
-                  if (e.target.value) reopenSweep(e.target.value, true);
-                }}
-              >
-                <option value="">Reopen a sweep…</option>
-                {pastSweeps.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {new Date(s.created_at * 1000).toLocaleDateString()} · {s.name || `${s.n_rows} combos`} · best {s.best_net_pnl == null ? "n/a" : s.best_net_pnl.toFixed(0)}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="ghost"
-                disabled={!pickedSweep || sweepState?.running}
-                onClick={() => removePastSweep(pickedSweep)}
-              >
-                Delete
-              </button>
-            </div>
-          )}
           {sweepState ? (
             <div className="sweep-panel">
               {sweepState.cancelled ? (
@@ -1650,6 +1623,20 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     : [sweepDurationMs, !!sweepState?.running];
   const durationInfo = durationMs != null && !durationBusy ? (
     <span className="sweep-counter bt-run-duration">Took {fmtRunDuration(durationMs)}</span>
+  ) : null;
+  // Compact past-sweeps reopen picker: a bare dropdown + delete icon, shown in
+  // the sweep footer only when there is archived history to reopen. No label or
+  // placeholder text — the dropdown is self-evident and stays narrow.
+  const pastSweepsPicker = btMode === "sweep" && pastSweeps.length > 0 ? (
+    <PastSweepsMenu
+      sweeps={pastSweeps}
+      disabled={sweepState?.running}
+      onReopen={(id) => {
+        setPickedSweep(id);
+        reopenSweep(id, true);
+      }}
+      onDelete={removePastSweep}
+    />
   ) : null;
   const runLabel = runInFlight ? "Running…" : btMode === "sweep" ? "Run sweep" : "Run backtest";
   const runDisabled = runInFlight || (btMode === "sweep" && sweepAxes.length === 0);
@@ -2644,6 +2631,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               {/* Duration follows the Run button: the docked column's footer
                   shows it while the column is open, so skip it here then. */}
               {!sideBySide && durationInfo}
+              {pastSweepsPicker}
               {btMode === "sweep" && sweepAxes.length > 0 && (
                 <span className="bt-search-toggle">
                   {/* No "Search" label: the seg self-describes, tooltips on the
@@ -3448,6 +3436,123 @@ function TrashIcon() {
       <path d="M6 6l1 13.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 6" />
       <path d="M10 10.5v6M14 10.5v6" />
     </svg>
+  );
+}
+
+// Compact past-sweeps reopen control for the sweep footer: a bare ⟳ icon button
+// that opens a portaled menu of archived sweeps. Each row reopens on click and
+// carries its own trash button, so the footer stays icon-width no matter which
+// sweep (if any) is selected — a native <select> would truncate the long
+// "date · name · best N" label into the narrow box. Opens UPWARD because it
+// lives at the bottom of the panel.
+const PAST_SWEEPS_MENU_WIDTH = 260;
+function PastSweepsMenu({
+  sweeps,
+  disabled,
+  onReopen,
+  onDelete,
+}: {
+  sweeps: SweepArchiveSummary[];
+  disabled?: boolean;
+  onReopen: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ bottom: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const close = () => setOpen(false);
+    // Scrolling INSIDE the menu (its own overflow list) must not dismiss it —
+    // only an outside scroll that would move the anchor out from under it.
+    const onScroll = (e: Event) => {
+      if (popRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [open]);
+
+  // When the last row is deleted the menu has nothing left to show.
+  useEffect(() => {
+    if (sweeps.length === 0) setOpen(false);
+  }, [sweeps.length]);
+
+  function toggle() {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - PAST_SWEEPS_MENU_WIDTH - 8));
+      setPos({ bottom: window.innerHeight - r.top + 4, left });
+    }
+    setOpen((v) => !v);
+  }
+
+  return (
+    <div className="bt-past-sweeps">
+      <Tooltip content="Reopen a past sweep">
+        <button
+          ref={btnRef}
+          type="button"
+          className={`bt-past-sweeps-btn${open ? " open" : ""}`}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="Reopen a past sweep"
+          disabled={disabled}
+          onClick={toggle}
+        >
+          ⟳
+        </button>
+      </Tooltip>
+      {open &&
+        pos &&
+        createPortal(
+          <ul
+            ref={popRef}
+            className="dropdown bt-past-sweeps-list"
+            role="menu"
+            style={{ position: "fixed", top: "auto", bottom: pos.bottom, left: pos.left, width: PAST_SWEEPS_MENU_WIDTH }}
+          >
+            {sweeps.map((s) => (
+              <li key={s.id} role="menuitem" className="bt-past-sweeps-item">
+                <button
+                  type="button"
+                  className="bt-past-sweeps-reopen"
+                  onClick={() => {
+                    onReopen(s.id);
+                    setOpen(false);
+                  }}
+                >
+                  {new Date(s.created_at * 1000).toLocaleDateString()} · {s.name || `${s.n_rows} combos`} · best {s.best_net_pnl == null ? "n/a" : s.best_net_pnl.toFixed(0)}
+                </button>
+                <Tooltip content="Delete this sweep">
+                  <button
+                    type="button"
+                    className="bt-past-sweeps-del"
+                    aria-label="Delete this sweep"
+                    onClick={() => onDelete(s.id)}
+                  >
+                    <TrashIcon />
+                  </button>
+                </Tooltip>
+              </li>
+            ))}
+          </ul>,
+          document.body,
+        )}
+    </div>
   );
 }
 

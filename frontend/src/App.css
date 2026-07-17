@@ -1589,13 +1589,37 @@
   flex: 1; background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
 }
-/* Past-sweeps reopen row: let the label sit on one line (the shared 90px al-row
-   label width wraps "Past sweeps") and keep the picker + Delete button tidy. */
-.bt-past-sweeps { gap: 8px; justify-content: flex-start; }
-.bt-past-sweeps > span { width: auto; white-space: nowrap; }
-/* Cap the reopen picker so it doesn't stretch the full row width; it shrinks
-   below 320px when the panel is narrow but never grows past it. */
-.bt-past-sweeps select { flex: 0 1 320px; min-width: 0; }
+/* Past-sweeps reopen control: a bare ⟳ icon button in the sweep footer that
+   opens a portaled menu of archived sweeps. Icon-width always, so a long
+   "date · name · best N" label never stretches the footer. */
+.bt-past-sweeps { display: inline-flex; align-items: center; }
+.bt-past-sweeps-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; font-size: 15px; line-height: 1;
+  background: transparent; color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+}
+.bt-past-sweeps-btn:hover:not(:disabled),
+.bt-past-sweeps-btn.open { color: var(--text); border-color: var(--accent); }
+.bt-past-sweeps-btn:disabled { opacity: 0.4; cursor: default; }
+/* The portaled menu — reopen row (grows) + trash button per item. */
+.bt-past-sweeps-list { padding: 4px; max-height: 320px; overflow-y: auto; }
+.bt-past-sweeps-item {
+  display: flex; align-items: center; gap: 4px; padding: 0 !important;
+}
+.bt-past-sweeps-reopen {
+  flex: 1; min-width: 0; text-align: left; background: transparent;
+  border: none; color: var(--text); font-size: 12px; padding: 6px 8px;
+  border-radius: 4px; cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.bt-past-sweeps-reopen:hover { background: var(--hover-bg, rgba(127,127,127,0.12)); }
+.bt-past-sweeps-del {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0; background: transparent;
+  border: none; color: var(--text-dim); border-radius: 4px; cursor: pointer;
+}
+.bt-past-sweeps-del:hover { color: var(--danger, #e5484d); background: var(--hover-bg, rgba(127,127,127,0.12)); }
 .al-note { color: var(--text-faint); font-size: 12px; }
 /* The resolved period ("1 May – 1 Jun 2026") — the headline result of the range
    picker, so full-strength text, not the faint note colour it inherits. */
