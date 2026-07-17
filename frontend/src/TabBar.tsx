@@ -49,10 +49,12 @@ function ChipContent({
   lead,
   cellCount,
   closedTip,
+  alertBadge = false,
 }: {
   lead: ChartCell;
   cellCount: number;
   closedTip: string | null;
+  alertBadge?: boolean;
 }) {
   return (
     <>
@@ -74,6 +76,24 @@ function ChipContent({
           </svg>
         </span>
       )}
+      {/* Inline bell when an alert fired for an epic in this tab while it was
+          in the background; cleared on visit (App owns the set). Inline (not
+          corner-pinned) so it can never be clipped by the bar edge or collide
+          with the close ×. */}
+      {alertBadge && (
+        <Tooltip content="Alert fired">
+          {/* Empty title suppresses the chip's ancestor native title while the
+              bell is hovered — otherwise both tooltips render at once. */}
+          <span className="tab-alert-badge" aria-label="Alert fired" title="">
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M12 22a2.3 2.3 0 0 0 2.3-2.3H9.7A2.3 2.3 0 0 0 12 22zm7-5.3v-1l-1.7-1.7v-4.2A5.3 5.3 0 0 0 13.5 4.6V4a1.5 1.5 0 0 0-3 0v.6A5.3 5.3 0 0 0 6.7 9.8V14L5 15.7v1z"
+              />
+            </svg>
+          </span>
+        </Tooltip>
+      )}
     </>
   );
 }
@@ -85,6 +105,9 @@ interface Props {
   // lead epic, so it's live for background tabs too). A tab shows a crescent-moon
   // badge when its lead cell's epic is closed; nextOpen feeds the badge tooltip.
   closedEpics: Record<string, { closed: boolean; nextOpen: string | null }>;
+  // Tabs with an unseen alert firing (App-owned, cleared on visit) — their chips
+  // show a bell dot.
+  alertTabIds: ReadonlySet<string>;
   onSelect: (id: string) => void;
   onAdd: () => void;
   onClose: (id: string) => void;
@@ -105,6 +128,7 @@ export default function TabBar({
   tabs,
   activeId,
   closedEpics,
+  alertTabIds,
   onSelect,
   onAdd,
   onClose,
@@ -427,7 +451,12 @@ export default function TabBar({
             if (tabs.length > 1) setCtxMenu({ x: e.clientX, y: e.clientY, tabId: t.id });
           }}
         >
-          <ChipContent lead={lead} cellCount={t.cells.length} closedTip={closedTip} />
+          <ChipContent
+            lead={lead}
+            cellCount={t.cells.length}
+            closedTip={closedTip}
+            alertBadge={alertTabIds.has(t.id)}
+          />
           <button
             className="tab-close"
             // Closing must not also select the tab.
@@ -493,6 +522,7 @@ export default function TabBar({
               lead={floatLead}
               cellCount={draggedTab.cells.length}
               closedTip={floatClosedTip}
+              alertBadge={alertTabIds.has(draggedTab.id)}
             />
           </div>,
           document.body,

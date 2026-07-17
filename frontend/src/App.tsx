@@ -50,6 +50,8 @@ import {
   tradePanelOpen,
   livePanelOpen,
   alertsChanged,
+  alertFired,
+  alertNavHandler,
   bumpAlerts,
   settingsRequest,
   backtestSettingsRequest,
@@ -89,6 +91,8 @@ import {
   hydrateFromBackend,
   subscribeToBackendUpdates,
   PREFIX,
+  load,
+  saveLocal,
   parseAlertsStateKey,
   purgeTabScope,
   purgeScope,
@@ -266,6 +270,10 @@ function resolveStartup(): { ws: Workspace; activeLayoutId: string | null } {
   }
   return { ws: blank, activeLayoutId: null };
 }
+
+// Unseen-alert bell badge storage (device-local; listed in DEVICE_LOCAL_FLAT_KEYS).
+const UNSEEN_KEY = `${PREFIX}.alertUnseen`;
+const readUnseen = () => new Set(load<string[]>(UNSEEN_KEY, []));
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -781,6 +789,91 @@ export default function App() {
     pendingSelectRef.current = { epic, cellId, ...target };
     resolvePendingSelect();
   };
+
+  // The alert engine's toast/banner clicks navigate through this handler (the
+  // engine lives outside React and can't reach openAlert directly). Re-assigned
+  // every render so it always closes over current tabs.
+  useEffect(() => {
+    alertNavHandler.current = (epic, savedId, precision) =>
+      openAlert(epic, { savedId }, precision);
+  });
+  useEffect(() => () => { alertNavHandler.current = null; }, []);
+
+  // Tab bell badges: an alert firing for an epic NOT visibly on the active tab
+  // marks that EPIC unseen; every non-active tab holding the epic shows a bell
+  // until one of them is visited. Keyed by epic (alerts are global per
+  // instrument). localStorage is the SOURCE OF TRUTH: every mutation is a
+  // read-modify-write against storage — shared across browser tabs, so two
+  // fires in one render frame or another tab's clear can't be stomped by a
+  // stale in-memory snapshot — and the storage listener folds other tabs'
+  // writes into this tab's state.
+  const [unseenAlertEpics, setUnseenAlertEpics] = useState<ReadonlySet<string>>(readUnseen);
+  const mutateUnseen = (mutate: (s: Set<string>) => boolean) => {
+    const cur = readUnseen();
+    const changed = mutate(cur);
+    // Sync state whenever it differs from the (possibly externally-updated)
+    // result, not only when the mutation changed storage — otherwise a silently
+    // dropped saveLocal (quota) leaves in-memory badges diverged forever.
+    const stateDiffers =
+      cur.size !== unseenAlertEpics.size || [...cur].some((e) => !unseenAlertEpics.has(e));
+    if (!changed && !stateDiffers) return;
+    if (changed) saveLocal(UNSEEN_KEY, [...cur]);
+    setUnseenAlertEpics(cur);
+  };
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      // key === null is localStorage.clear() — the set is gone there too.
+      if (e.key === UNSEEN_KEY || e.key === null) setUnseenAlertEpics(readUnseen());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  // Re-evaluate "user can see the active chart" when the browser tab is SHOWN
+  // — that's the moment the active tab's unseen epics become seen. Hide events
+  // don't bump (the mark-seen effect no-ops while hidden anyway), sparing an
+  // App re-render per tab switch-away.
+  const [visTick, setVisTick] = useState(0);
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") setVisTick((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+  useEffect(
+    () =>
+      alertFired.subscribe((f) => {
+        if (!f) return;
+        // A fire for an epic on the ACTIVE tab is seen as it happens — but only
+        // when the browser tab is actually visible; a fire behind a hidden tab
+        // still deserves a mark (the user may have muted the toast).
+        if (
+          document.visibilityState === "visible" &&
+          active?.cells.some((c) => c.symbol.epic === f.epic)
+        )
+          return;
+        mutateUnseen((s) => (s.has(f.epic) ? false : (s.add(f.epic), true)));
+      }),
+    [active],
+  );
+  // Viewing a tab (it's active AND the browser tab is visible) marks the epics
+  // it shows as seen.
+  useEffect(() => {
+    if (!active || document.visibilityState !== "visible") return;
+    if (!active.cells.some((c) => unseenAlertEpics.has(c.symbol.epic))) return;
+    mutateUnseen((s) => {
+      let changed = false;
+      for (const c of active.cells) changed = s.delete(c.symbol.epic) || changed;
+      return changed;
+    });
+  }, [active, unseenAlertEpics, visTick]);
+  const alertTabIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const t of tabs)
+      if (t.id !== active?.id && t.cells.some((c) => unseenAlertEpics.has(c.symbol.epic)))
+        ids.add(t.id);
+    return ids;
+  }, [tabs, active?.id, unseenAlertEpics]);
   // Market open/closed status (+ next-open time) keyed by EPIC, for the tab
   // closed badge. Polled at the App level (below) for every tab's lead epic, not
   // just the active tab's — only the active tab mounts a ChartGrid/ChartCore, so
@@ -1032,7 +1125,10 @@ export default function App() {
   // never purged). Keeps activeCellId valid.
   const setLayout = (layout: LayoutKind) => {
     if (!active) return;
-    flushPendingAutoSaves(); // a layout trim purges cell scopes below — land pending autosaves first
+    // A layout TRIM purges the dropped cells' scopes below — land pending
+    // autosaves first. Growth purges nothing, so don't flush (it would eagerly
+    // fire unrelated cells' debounced saves).
+    if (LAYOUT_CELLS[layout] < active.cells.length) flushPendingAutoSaves();
     setTabs((ts) =>
       ts.map((t) => {
         if (t.id !== active.id) return t;
@@ -1367,6 +1463,7 @@ export default function App() {
     const lead = dst ? (dst.cells.find((c) => c.id === dst.activeCellId) ?? dst.cells[0]) : null;
     const pairs: Array<{ from: string; to: string }> = [];
     let next = tabs;
+    flushPendingAutoSaves(); // mergeTabInto purges the source scopes — land ≤800ms-pending template autosaves first
     for (const srcId of sourceIds) {
       const res = mergeTabInto(next, srcId, targetId, position);
       if (!res) continue; // over-cap sources are UI-disabled; skip defensively
@@ -1626,6 +1723,7 @@ export default function App() {
         tabs={tabs}
         activeId={active?.id ?? ""}
         closedEpics={epicClosed}
+        alertTabIds={alertTabIds}
         onSelect={setActiveId}
         onAdd={addTab}
         onClose={closeTab}

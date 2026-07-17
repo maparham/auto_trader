@@ -49,8 +49,20 @@ vi.mock("./persist", () => ({
 }));
 
 // Silence notifications/sound in the node test env.
-vi.mock("./notify", () => ({ notify: vi.fn(), playPing: vi.fn(), toast: vi.fn() }));
-vi.mock("./signals", () => ({ bumpAlerts: vi.fn() }));
+const toastSpy = vi.fn();
+const notifySpy = vi.fn();
+vi.mock("./notify", () => ({
+  notify: (...a: unknown[]) => notifySpy(...a),
+  playPing: vi.fn(),
+  toast: (...a: unknown[]) => toastSpy(...a),
+}));
+const alertFiredSpy = vi.fn();
+const navSpy = vi.fn();
+vi.mock("./signals", () => ({
+  bumpAlerts: vi.fn(),
+  alertFired: { set: (v: unknown) => alertFiredSpy(v) },
+  alertNavHandler: { current: (...a: unknown[]) => navSpy(...a) },
+}));
 
 // Import AFTER mocks are registered.
 const { alertEngine } = await import("./alertEngine");
@@ -77,6 +89,10 @@ beforeEach(() => {
   deleteSpy.mockClear();
   pushSpy.mockClear();
   closeSpy.mockClear();
+  toastSpy.mockClear();
+  notifySpy.mockClear();
+  alertFiredSpy.mockClear();
+  navSpy.mockClear();
   emit = undefined;
 });
 
@@ -123,6 +139,31 @@ describe("alertEngine (background firing)", () => {
     emit!({ close: 100.01 });
     emit!({ close: 100.0 });
     expect(pushSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("attributes the fire: epic-led toast/banner, click-to-chart, alertFired signal", () => {
+    // Custom message — the epic must STILL lead the toast, and the banner title
+    // must be the epic (not the old generic "Price alert").
+    store.set("BTC", [
+      { level: 100, condition: "crossing", trigger: "every", message: "moon soon" },
+    ]);
+    alertEngine.setTabs([tab("t", "BTC")]);
+    emit!({ close: 99 });
+    emit!({ close: 101 }); // fires
+
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+    const [toastMsg, toastOpts] = toastSpy.mock.calls[0] as [
+      string,
+      { onClick: () => void; duration: number },
+    ];
+    expect(toastMsg).toContain("BTC");
+    expect(toastMsg).toContain("moon soon");
+    expect(notifySpy.mock.calls[0][0]).toBe("BTC"); // banner title = epic
+    expect(alertFiredSpy).toHaveBeenCalledWith({ epic: "BTC" });
+
+    // Clicking the toast navigates to the alert's chart via the registered handler.
+    toastOpts.onClick();
+    expect(navSpy).toHaveBeenCalledWith("BTC", "lg-100", 2);
   });
 
   it("dedupes feeds by epic and closes them when alerts/tabs go away", () => {

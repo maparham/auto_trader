@@ -40,7 +40,7 @@ import {
 } from "./persist";
 import { evaluateAlert } from "./alertEval";
 import { notify, playPing, toast } from "./notify";
-import { bumpAlerts } from "./signals";
+import { bumpAlerts, alertFired, alertNavHandler } from "./signals";
 import type { PriceSide } from "../theme";
 
 // Resolution for the background price feed. Alerts are price-level crossings,
@@ -239,12 +239,25 @@ class AlertEngine {
 
   private fire(epic: string, a: SavedAlert, price: number): void {
     const prec = this.precision.get(epic) ?? 2;
-    const body = a.message || `${epic} @ ${a.level.toFixed(prec)}`;
+    // Attribution: the toast/banner always leads with the epic, even when the
+    // alert carries a custom message — the sound alone says nothing about WHERE.
+    // One `detail` feeds both surfaces so their copy can't drift.
+    const now = price.toFixed(prec);
+    const detail = a.message || `@ ${a.level.toFixed(prec)}`;
+    const body = `${epic} ${a.message ? "· " : ""}${detail}`;
+    // Clicking either surface jumps to a chart showing this epic and selects the
+    // alert line (App-registered handler; resolving a removed "once" alert to
+    // nothing is fine — the chart still opens).
+    const goTo = () => alertNavHandler.current?.(epic, a.id, prec);
     // Per-alert notification channels (absent = all on). The triggered HISTORY
     // below is the record of the firing and is always written, independent of which
     // surfaces the user muted. (Sound is fired by the caller, gated the same way.)
-    if (a.notify?.toast ?? true) toast(`🔔 ${body} (now ${price.toFixed(prec)})`);
-    if (a.notify?.browser ?? true) notify("Price alert", `${body} — now ${price.toFixed(prec)}`);
+    if (a.notify?.toast ?? true)
+      toast(`🔔 ${body} (now ${now})`, { onClick: goTo, duration: null });
+    if (a.notify?.browser ?? true) notify(epic, `${detail} · now ${now}`, goTo);
+    // Deliberately OUTSIDE the channel gates, like the history write: the tab
+    // badge is attribution ("something fired here"), not a mutable surface.
+    alertFired.set({ epic });
     pushTriggered({
       time: Date.now(),
       epic,

@@ -524,6 +524,19 @@ export function bumpAlerts(): void {
   alertsChanged.set(alertsChanged.value + 1);
 }
 
+// Fired every time a price alert FIRES, carrying the epic. App subscribes to
+// badge the (non-active) tabs showing that epic. A fresh object per fire, so
+// back-to-back fires for the same epic still notify. null = nothing fired yet.
+export const alertFired = new Signal<{ epic: string } | null>(null);
+
+// Navigation handler for "jump to the chart of the alert that just fired",
+// registered by App (it owns tabs) and called by the alert engine's toast /
+// banner click handlers. A plain holder, not a Signal — it's called, not
+// observed (same idiom as sweepCancelServer above).
+export const alertNavHandler: {
+  current: ((epic: string, savedId: string, precision: number) => void) | null;
+} = { current: null };
+
 // Request to open the symbol-search modal. The modal itself lives in Toolbar
 // (local state); App sets this when opening a fresh tab (the new tab starts
 // empty and immediately prompts for a symbol, TradingView-style). Bumped counter

@@ -143,6 +143,7 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   `${PREFIX}.sweepTarget`,
   `${PREFIX}.lastDrawTools`,
   `${PREFIX}.holdout`,
+  `${PREFIX}.alertUnseen`,
 ]);
 function isDeviceLocalKey(k: string): boolean {
   return (

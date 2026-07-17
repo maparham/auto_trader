@@ -20,7 +20,7 @@ export async function ensureNotifyPermission(): Promise<NotifyPermission> {
   }
 }
 
-export function notify(title: string, body: string): void {
+export function notify(title: string, body: string, onClick?: () => void): void {
   if ("Notification" in window && Notification.permission === "granted") {
     try {
       const n = new Notification(title, {
@@ -30,9 +30,11 @@ export function notify(title: string, body: string): void {
         // banner rather than silently replacing the previous one.
         tag: `auto-trader-alert-${title}-${body}`,
       } as NotificationOptions);
-      // Click the banner -> focus the trading tab.
+      // Click the banner -> focus the trading tab (and let the caller navigate,
+      // e.g. jump to the chart the alert belongs to).
       n.onclick = () => {
         window.focus();
+        onClick?.();
         n.close();
       };
     } catch {
@@ -84,6 +86,13 @@ export function playPing(): void {
   });
 }
 
+// Most toasts kept on screen at once. Eviction prefers the oldest NON-sticky
+// toast (sticky alert toasts hold their "stays until acted on" contract as long
+// as possible) and always goes through that toast's own dismiss() so its
+// visibilitychange hook is removed and the fade-out runs.
+const MAX_TOASTS = 5;
+const dismissers = new WeakMap<Element, () => void>();
+
 function container(): HTMLElement {
   let el = document.getElementById("toast-container");
   if (!el) {
@@ -94,16 +103,91 @@ function container(): HTMLElement {
   return el;
 }
 
-// Transient toast that fades out and removes itself.
-export function toast(message: string): void {
+// Toast. `onClick` makes it clickable (pointer cursor, dismisses immediately
+// after running the handler); `duration` overrides the default auto-dismiss,
+// and `duration: null` makes the toast STICKY — it stays until clicked or
+// dismissed via the × button that a sticky toast always carries.
+//
+// Hidden-tab contract: alerts fire from the background engine, so a toast often
+// lands while this browser tab is HIDDEN — where rAF never runs (the fade-in
+// class is never applied, the toast stays at opacity 0) while plain timers keep
+// running and would remove the never-painted toast before the user returns. So
+// the fade-in class is applied synchronously (forced reflow, no rAF) and the
+// auto-dismiss countdown only starts once the tab is visible.
+export function toast(
+  message: string,
+  opts: { onClick?: () => void; duration?: number | null } = {},
+): void {
+  const sticky = opts.duration === null;
   const el = document.createElement("div");
   el.className = "toast";
-  el.textContent = message;
-  container().appendChild(el);
-  // Force reflow so the fade-in transition runs, then schedule removal.
-  requestAnimationFrame(() => el.classList.add("show"));
-  setTimeout(() => {
+  const msg = document.createElement("span");
+  msg.className = "toast-msg";
+  msg.textContent = message;
+  el.appendChild(msg);
+  let onVis: (() => void) | null = null;
+  const dismiss = () => {
+    if (el.classList.contains("closing")) return; // already fading out
+    if (onVis) document.removeEventListener("visibilitychange", onVis);
+    // `closing` excludes the fading toast from the cap count below.
+    el.classList.add("closing");
     el.classList.remove("show");
     setTimeout(() => el.remove(), 300);
-  }, 4000);
+  };
+  dismissers.set(el, dismiss);
+  if (sticky) el.classList.add("sticky");
+  if (opts.onClick) {
+    el.classList.add("clickable");
+    el.addEventListener("click", () => {
+      opts.onClick?.();
+      dismiss();
+    });
+  }
+  if (sticky) {
+    // A sticky toast needs an explicit dismissal path that doesn't trigger the
+    // click action. pointer-events re-enabled on the button (the container is
+    // none) so it stays clickable even on a toast without onClick.
+    const x = document.createElement("button");
+    x.className = "toast-close";
+    x.textContent = "×";
+    x.title = "Dismiss";
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      dismiss();
+    });
+    el.appendChild(x);
+  }
+  const box = container();
+  // Cap the stack: an "every" alert firing repeatedly behind a hidden tab would
+  // otherwise pile up sticky toasts without bound and wall off the chart on
+  // return. Fading (`closing`) toasts don't count — their slot is already
+  // freeing. Evict the oldest non-sticky toast first; only when everything on
+  // screen is a sticky alert does the oldest sticky one go.
+  const live = () => [...box.children].filter((c) => !c.classList.contains("closing"));
+  for (let l = live(); l.length >= MAX_TOASTS; l = live()) {
+    const victim = l.find((c) => !c.classList.contains("sticky")) ?? l[0];
+    const d = dismissers.get(victim);
+    if (d) d();
+    else victim.remove(); // foreign node in the container — drop it so the loop can't spin
+  }
+  box.appendChild(el);
+  // Force a synchronous reflow so the fade-in transition runs — NOT rAF, which
+  // never fires in a hidden tab (the toast would sit unpainted at opacity 0).
+  void el.offsetHeight;
+  el.classList.add("show");
+  if (sticky) return;
+  // The auto-dismiss countdown starts only once the tab is visible.
+  const start = () => {
+    setTimeout(dismiss, opts.duration ?? 4000);
+  };
+  if (document.visibilityState === "visible") start();
+  else {
+    onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      document.removeEventListener("visibilitychange", onVis!);
+      onVis = null;
+      start();
+    };
+    document.addEventListener("visibilitychange", onVis);
+  }
 }
