@@ -436,6 +436,13 @@ class BacktestRequest(BaseModel):
     # combo per entry instead of the single codedParams/longRisk/shortRisk on
     # this request. Ignored by POST /api/backtest.
     sweep: SweepDTO | None = None
+    # Pre-fetched higher-timeframe bars, keyed by timeframe ("HOUR_4", ...). The
+    # local backend fills this from ITS cache before forwarding a sweep to the
+    # remote compute host, so the remote runs purely on shipped data and never
+    # calls a broker (a COMPUTE_ONLY host refuses broker fetches — see
+    # deps._fetch_symbol_candles). None on a normal local run: the handler fetches
+    # the set itself, as before.
+    htfCandles: dict[str, list[CandleDTO]] | None = None
 
 
 class SweepDTO(BaseModel):

@@ -56,15 +56,17 @@ from ..sweep_apply import (
     apply_env_combo,
     apply_rule_combo,
     candle_from_dto,
+    htf_from_dto,
+    htf_to_dto,
     run_coded_sync,
     run_rule_sync,
     split_env_combo,
     sweep_row,
+    ts_seconds as _ts,
     _MAX_TF_PASSES,
     _rule_operands,
 )
 from ..sweep_jobs import JOBS
-from .charts import _ts
 
 # Extra HTF bars to fetch BEFORE the base window's start so ad-hoc tf= indicators
 # warm up. Without it an HTF EMA/SMA seeds from the first in-window bar and reports
@@ -571,11 +573,52 @@ def _validate_combo_targets(
         raise HTTPException(e.status_code, e.detail)
 
 
+async def _prefetch_sweep_htf(
+    req: BacktestRequest, candles: list[Candle], coded: bool
+) -> dict[str, list[Candle]]:
+    """Fetch (through the local cache) the full higher-timeframe set a sweep needs,
+    so it can be SHIPPED to the remote compute host in req.htfCandles — the remote
+    then runs on provided bars and never calls a broker. Rule mode: the combo-
+    invariant HTF set. Coded mode: run combos[0] as a discovery probe, letting its
+    tf= calls pull each referenced timeframe into the dict (best-effort — if that
+    probe combo errors mid-run we ship what it gathered; the remote re-validates
+    and any still-missing tf trips the compute-host guard loudly)."""
+    if not coded:
+        return await _fetch_rule_htf(req)
+    try:
+        module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
+    except StrategyLoadError as e:
+        raise HTTPException(422, str(e))
+    htf: dict[str, list[Candle]] = {}
+    env, rest = split_env_combo(req.sweep.combos[0])
+    patched_req, combo_candles = apply_env_combo(req, candles, env)
+    try:
+        params_sent, long_risk, short_risk = apply_combo(patched_req, rest)
+        resolved = resolve_params(module, params_sent)
+        await _run_coded(
+            patched_req, combo_candles, module, resolved, long_risk, short_risk, htf,
+        )
+    except HTTPException:
+        raise
+    except SweepValidationError as e:
+        raise HTTPException(e.status_code, e.detail)
+    except Exception:  # noqa: BLE001  discovery is best-effort; ship what we gathered
+        pass
+    return htf
+
+
 @router.post("/api/backtest/sweep/jobs", response_model=SweepJobSubmitResponse)
 async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
-    # target=remote forwards the raw request to the remote compute host BEFORE any
-    # local validation/probe/job creation: the remote host owns all of that.
+    # target=remote: the remote compute host owns validation/probe/job creation, but
+    # it must never fetch bars from a broker (COMPUTE_ONLY blocks that). So the local
+    # backend fills req.htfCandles from ITS cache here, THEN forwards; the remote runs
+    # purely on shipped data. Bars the request already carries (base candles, chart
+    # series, and htfCandles if a client pre-shipped) ride along untouched.
     if target == "remote":
+        if req.sweep is not None and req.sweep.combos and req.htfCandles is None:
+            candles = [candle_from_dto(c) for c in req.candles]
+            htf = await _prefetch_sweep_htf(req, candles, req.codedStrategy is not None)
+            req = req.model_copy(update={"htfCandles": htf_to_dto(htf)})
         return await compute.forward(
             "POST", "/api/backtest/sweep/jobs", json_body=req.model_dump(mode="json"),
         )
@@ -627,13 +670,18 @@ async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
 
     _validate_combo_targets(req, candles, coded)
 
+    # Shipped by the local proxy for a remote run (req.htfCandles): use those bars
+    # verbatim and never fetch — on a COMPUTE_ONLY host a fetch would be blocked
+    # anyway. None on a normal local run: acquire the set below as before.
+    shipped_htf = htf_from_dto(req.htfCandles) if req.htfCandles is not None else None
+
     if coded:
-        # Probe: run combos[0] in-request with a fresh HTF cache. It discovers
-        # and fetches every NeedTimeframe tf the strategy asks for, so the pool
-        # workers (which do zero network) inherit a fully-populated dict. A
-        # request-shaped failure 422s the submit; anything else becomes the
-        # probe combo's error row and the job carries on with the rest.
-        htf_candles: dict[str, list[Candle]] = {}
+        # Probe: run combos[0] in-request. With shipped HTF it uses those bars; else
+        # it discovers and fetches every NeedTimeframe tf the strategy asks for, so
+        # the pool workers (which do zero network) inherit a fully-populated dict. A
+        # request-shaped failure 422s the submit; anything else becomes the probe
+        # combo's error row and the job carries on with the rest.
+        htf_candles: dict[str, list[Candle]] = shipped_htf if shipped_htf is not None else {}
         probe_combo = combos[0]
         try:
             env, rest = split_env_combo(probe_combo)
@@ -653,9 +701,9 @@ async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
         pool_combos = combos[1:]
         mode = "coded"
     else:
-        # HTF set is combo-invariant (combos never sweep `timeframe`): fetch it
-        # once here and ship it to every worker.
-        htf_candles = await _fetch_rule_htf(req)
+        # HTF set is combo-invariant (combos never sweep `timeframe`): use the
+        # shipped set, or fetch it once here, then ship it to every worker.
+        htf_candles = shipped_htf if shipped_htf is not None else await _fetch_rule_htf(req)
         probe_row = None
         pool_combos = combos
         mode = "rule"
@@ -663,7 +711,10 @@ async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
     logger.info("sweep %s %s: %d combos (%s mode)",
                 req.epic, req.resolution, len(combos), mode)
     job = JOBS.submit(
-        req_dict=req.model_dump(mode="json"),
+        # htfCandles ships to workers via htf_candles= below; excluding it from the
+        # per-worker req_dict avoids pickling the whole HTF set twice into every
+        # worker's init payload (the worker reads s.htf, never req.htfCandles).
+        req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
         htf_candles=htf_candles,
         strategies_dir=str(loader.STRATEGIES_DIR) if coded else None,
         windows=req.sweep.windows,

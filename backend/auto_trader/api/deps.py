@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import TypeVar
 
 from fastapi import HTTPException
+
+from auto_trader.api.guard import COMPUTE_ONLY_ENV
 
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.brokers.capital_stream import SECONDS_INTERVALS
@@ -168,6 +171,24 @@ def _parse_resolution(raw: str) -> Resolution:
         raise HTTPException(422, f"unknown resolution '{raw}'") from None
 
 
+def _reject_symbol_fetch_on_compute_host(epic: str, resolution: str) -> None:
+    """A COMPUTE_ONLY host (the remote Fly compute node) must never source market
+    data itself — every bar it needs is shipped in the request (base candles inline,
+    higher timeframes in req.htfCandles). Reaching a symbol fetch at all means a bar
+    was NOT shipped, so fail loudly here.
+
+    This blocks BEFORE the candle cache, not just the broker call: the cache is never
+    populated on a compute-only host, and its window() swallows a fetch exception when
+    partial rows happen to exist (returning stale/incomplete bars) — which would let a
+    sweep run on wrong higher-timeframe data instead of failing."""
+    if os.environ.get(COMPUTE_ONLY_ENV) == "1":
+        raise HTTPException(
+            503,
+            f"compute host has no shipped bars for {epic} {resolution} and must not "
+            "source them itself; higher-timeframe bars must be provided in the request",
+        )
+
+
 async def _fetch_symbol_candles(
     broker_id: str,
     epic: str,
@@ -182,6 +203,7 @@ async def _fetch_symbol_candles(
     same HTTPExceptions as before for bad brokers/windows/IG-derived; does NOT
     raise the native-path "no data at all" 404 — that decision stays with the
     caller (a symbol's emptiness may or may not be fatal depending on context)."""
+    _reject_symbol_fetch_on_compute_host(epic, resolution)
     if resolution in SECONDS_INTERVALS:
         return await TICK_STORE.bars(broker_id, epic, SECONDS_INTERVALS[resolution], bars)
     if is_derived(resolution):

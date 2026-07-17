@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -20,23 +19,9 @@ from ..schemas import (
     CandleCacheStatsDTO,
     CandleDTO,
 )
+from ..sweep_apply import candle_to_dto as _candle_dto
 
 router = APIRouter()
-
-
-def _ts(dt: datetime) -> int:
-    return int(dt.timestamp())
-
-
-def _candle_dto(c: Candle) -> CandleDTO:
-    return CandleDTO(
-        time=_ts(c.time),
-        open=c.open,
-        high=c.high,
-        low=c.low,
-        close=c.close,
-        volume=c.volume,
-    )
 
 
 @router.get("/api/candles", response_model=list[CandleDTO])

@@ -69,6 +69,28 @@ def candle_from_dto(c: CandleDTO) -> Candle:
     )
 
 
+def ts_seconds(dt: datetime) -> int:
+    """A tz-aware datetime as whole unix seconds (the CandleDTO/trade-DTO wire form)."""
+    return int(dt.timestamp())
+
+
+def candle_to_dto(c: Candle) -> CandleDTO:
+    return CandleDTO(
+        time=ts_seconds(c.time),
+        open=c.open, high=c.high, low=c.low, close=c.close, volume=c.volume,
+    )
+
+
+def htf_to_dto(htf: dict[str, list[Candle]]) -> dict[str, list[CandleDTO]]:
+    """Serialize a fetched HTF set for shipping in BacktestRequest.htfCandles."""
+    return {tf: [candle_to_dto(c) for c in bars] for tf, bars in htf.items()}
+
+
+def htf_from_dto(htf: dict[str, list[CandleDTO]]) -> dict[str, list[Candle]]:
+    """Decode BacktestRequest.htfCandles back into the engine's HTF set."""
+    return {tf: [candle_from_dto(c) for c in bars] for tf, bars in htf.items()}
+
+
 def _rule_operands(req: BacktestRequest) -> list:
     ops = []
     for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):

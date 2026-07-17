@@ -1,9 +1,11 @@
 """GET /api/compute/status + the ?target=remote proxy for the three sweep-job
 endpoints (submit / poll / cancel).
 
-target=remote forwards the request UNTOUCHED to the remote compute host: no local
-validation, no probe, no local job creation. The remote host does all of that, so
-these tests never create the strategies dir yet the forward still succeeds."""
+On a remote SUBMIT the local proxy first fills req.htfCandles from its cache (so
+the remote never fetches bars from a broker), then forwards; poll/cancel forward
+verbatim. The remote host owns validation/probe/job creation. These submit tests
+use a base-timeframe-only rule sweep so the HTF pre-fetch is a trivial empty set
+(no broker call, no strategies dir needed)."""
 
 import httpx
 import pytest
@@ -12,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from auto_trader.api.app import app
 
-from test_api_backtest_coded import base_request, make_candles
+from test_api_backtest_coded import make_candles
 
 client = TestClient(app)
 
@@ -34,6 +36,25 @@ def no_remote_env(monkeypatch):
     monkeypatch.setenv("COMPUTE_HOST_URL", "")
     monkeypatch.setenv("COMPUTE_HOST_TOKEN", "")
     yield
+
+
+def rule_sweep_request() -> dict:
+    """A base-timeframe-only RULE sweep: no coded strategy, no HTF operand. The
+    local proxy's HTF pre-fetch is therefore trivial (empty set, no broker call),
+    so these tests exercise pure forward mechanics without a strategies dir."""
+    empty = {"combine": "AND", "rules": []}
+    return {
+        "epic": "EURUSD", "resolution": "HOUR", "candles": make_candles(20), "series": {},
+        "longEntry": {"combine": "AND", "rules": [
+            {"left": {"kind": "indicator", "indicator": "EMA", "length": 9},
+             "op": "gt", "right": {"kind": "const", "value": 50.0}}]},
+        "longExit": empty, "shortEntry": empty, "shortExit": empty,
+        "costs": {"quantity": 1, "commissionPerSide": 0,
+                  "slippage": {"kind": "fixed", "value": 0}, "startingCash": 1000},
+        "tradeFromTime": make_candles(20)[0]["time"],
+        "sweep": {"combos": [{"rule:long.entry.0.left.length": 9},
+                             {"rule:long.entry.0.left.length": 12}]},
+    }
 
 
 # --- status endpoint ----------------------------------------------------------
@@ -66,8 +87,7 @@ def test_submit_remote_forwards_body_and_bearer(remote_env):
     route = respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs").mock(
         return_value=httpx.Response(200, json={"jobId": "r1", "total": 5})
     )
-    req = base_request("does-not-exist.py", make_candles(20))
-    req["sweep"] = {"combos": [{"param:n": 3}]}
+    req = rule_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 
@@ -81,9 +101,11 @@ def test_submit_remote_forwards_body_and_bearer(remote_env):
     import json as _json
     body = _json.loads(sent.content)
     assert body["epic"] == req["epic"]
-    assert body["codedStrategy"] == "does-not-exist.py"
-    assert body["sweep"]["combos"] == [{"param:n": 3}]
+    assert body["sweep"]["combos"] == req["sweep"]["combos"]
     assert body["candles"] == req["candles"]
+    # The proxy attaches an htfCandles set (empty here — no HTF operand) so the
+    # remote never fetches from a broker.
+    assert body["htfCandles"] == {}
 
 
 # --- poll proxy ---------------------------------------------------------------
@@ -127,8 +149,7 @@ def test_cancel_remote_relays_404(remote_env):
 @respx.mock(assert_all_called=False)
 def test_submit_remote_unconfigured_422_no_http(no_remote_env):
     route = respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs")
-    req = base_request("does-not-exist.py", make_candles(20))
-    req["sweep"] = {"combos": [{"param:n": 3}]}
+    req = rule_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 
@@ -141,8 +162,7 @@ def test_submit_remote_non_json_maps_502(remote_env):
     respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs").mock(
         return_value=httpx.Response(200, text="<html>gateway</html>")
     )
-    req = base_request("does-not-exist.py", make_candles(20))
-    req["sweep"] = {"combos": [{"param:n": 3}]}
+    req = rule_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 
@@ -155,8 +175,7 @@ def test_submit_remote_connect_error_maps_502(remote_env):
     respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs").mock(
         side_effect=httpx.ConnectError("boom")
     )
-    req = base_request("does-not-exist.py", make_candles(20))
-    req["sweep"] = {"combos": [{"param:n": 3}]}
+    req = rule_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 
@@ -171,8 +190,7 @@ def test_submit_remote_read_timeout_maps_502(remote_env):
     respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs").mock(
         side_effect=httpx.ReadTimeout("slow")
     )
-    req = base_request("does-not-exist.py", make_candles(20))
-    req["sweep"] = {"combos": [{"param:n": 3}]}
+    req = rule_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 
