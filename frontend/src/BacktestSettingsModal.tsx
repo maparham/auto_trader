@@ -1478,6 +1478,25 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     />
   );
 
+  // The Cancel-sweep/Clear-results lead and the Run button normally sit in the
+  // panel footer, but move to the docked column's own footer when it is open —
+  // Go live and the sweep info (counters, Search/Compute toggles) stay behind
+  // in the panel. Built once here because either footer may render them.
+  const runClusterLead =
+    btMode === "sweep" && sweepState ? (
+      sweepState.running ? (
+        <button className="ghost" onClick={() => requestSweepCancel(true)}>
+          Cancel sweep
+        </button>
+      ) : (
+        <button className="ghost" onClick={clearSweepResults}>
+          Clear results
+        </button>
+      )
+    ) : null;
+  const runLabel = runInFlight ? "Running…" : btMode === "sweep" ? "Run sweep" : "Run backtest";
+  const runDisabled = runInFlight || (btMode === "sweep" && sweepAxes.length === 0);
+
   return (
     <>
     {sideBySide && (
@@ -1511,6 +1530,15 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
           <span className="bt-results-head-actions">{modeSeg}</span>
         </div>
         <div className="bt-results-col-body">{resultsBody}</div>
+        <div className="modal-foot bt-cfg-foot">
+          <RunBar
+            sweepInfo={null}
+            runClusterLead={runClusterLead}
+            runLabel={runLabel}
+            runDisabled={runDisabled}
+            onRun={runFromFooter}
+          />
+        </div>
       </aside>
     )}
     <aside className={`bt-cfg-panel bt-mode-${btMode}`} style={{ width: panelWidth }}>
@@ -2433,21 +2461,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                 </span>
               )}
             </>}
-            runClusterLead={btMode === "sweep" && sweepState ? (
-              sweepState.running ? (
-                <button className="ghost" onClick={() => requestSweepCancel(true)}>
-                  Cancel sweep
-                </button>
-              ) : (
-                <button className="ghost" onClick={clearSweepResults}>
-                  Clear results
-                </button>
-              )
-            ) : null}
+            runClusterLead={sideBySide ? null : runClusterLead}
             onGoLive={() => requestGoLive(cfg)}
-            runLabel={runInFlight ? "Running…" : btMode === "sweep" ? "Run sweep" : "Run backtest"}
-            runDisabled={runInFlight || (btMode === "sweep" && sweepAxes.length === 0)}
-            onRun={runFromFooter}
+            runLabel={runLabel}
+            runDisabled={runDisabled}
+            onRun={sideBySide ? undefined : runFromFooter}
           />
         </div>
     </aside>

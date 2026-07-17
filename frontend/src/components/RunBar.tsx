@@ -8,6 +8,9 @@
 // (it only applies to a single backtest), not here. `runClusterLead` is an
 // optional slot at the head of the right-pinned run cluster — the sweep view
 // puts its Cancel/Clear-results button there so it reads as a footer action.
+// `onGoLive` and `onRun` are optional so the modal can split the footer when
+// the docked results column is open: the panel keeps Go live + sweep info,
+// the column's own footer takes Cancel/Clear + Run.
 // There is no Close button here — the header × is the only close control.
 
 import type { JSX, ReactNode } from "react";
@@ -55,10 +58,10 @@ export function RunBar(props: {
   lead?: ReactNode;
   sweepInfo: ReactNode;
   runClusterLead?: ReactNode;
-  onGoLive: () => void;
-  runLabel: string;
-  runDisabled: boolean;
-  onRun: () => void;
+  onGoLive?: () => void;
+  runLabel?: string;
+  runDisabled?: boolean;
+  onRun?: () => void;
 }): JSX.Element {
   const {
     lead,
@@ -81,14 +84,18 @@ export function RunBar(props: {
       <span className="bt-sweep-foot-info">{sweepInfo}</span>
       <div className="bt-run-cluster">
         {runClusterLead}
-        <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
-          <button className="ghost bt-golive" onClick={onGoLive}>
-            Go live →
+        {onGoLive && (
+          <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
+            <button className="ghost bt-golive" onClick={onGoLive}>
+              Go live →
+            </button>
+          </Tooltip>
+        )}
+        {onRun && (
+          <button className="bt-run-btn" onClick={onRun} disabled={runDisabled}>
+            {runLabel}
           </button>
-        </Tooltip>
-        <button className="bt-run-btn" onClick={onRun} disabled={runDisabled}>
-          {runLabel}
-        </button>
+        )}
       </div>
     </>
   );
