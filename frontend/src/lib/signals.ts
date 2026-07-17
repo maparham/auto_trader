@@ -405,6 +405,15 @@ export function requestBacktestRun(): void {
 // button LOOK unavailable too.
 export const backtestRunningSignal = new Signal<boolean>(false);
 
+// Wall-clock duration (ms) of the last run that COMPLETED this session, one
+// per mode so a backtest run never stomps the sweep's number (or vice versa).
+// BacktestButton clears the relevant one at run start and writes it only on a
+// successful finish — errors and cancels leave it null so no stale duration
+// lingers. Session-only by design: re-attached sweeps (started before this
+// page load) have no client start time and simply show nothing.
+export const backtestDurationSignal = new Signal<number | null>(null);
+export const sweepDurationSignal = new Signal<number | null>(null);
+
 // Bumped when the results pane's clear (✕) is clicked. Like the run request,
 // BacktestButton owns the chart-side teardown (it has the chart/controller/epic),
 // so the results pane just asks for a clear rather than duplicating that logic.

@@ -17,6 +17,8 @@ import {
   requestConfirm,
   backtestClearRequest,
   backtestRunningSignal,
+  backtestDurationSignal,
+  sweepDurationSignal,
   backtestMessagesSignal,
   sweepAxesSignal,
   holdoutEvalSignal,
@@ -73,7 +75,6 @@ import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLa
 import {
   sweepContext, recallSweepRange, recordSweepRanges,
   loadSweepAxes, saveSweepAxes, pruneSweepAxes,
-  recallSweepPace, estimateSweepText,
 } from "./lib/sweepMemory";
 import { loadHoldout, saveHoldoutPct, recordPeek, splitHoldout } from "./lib/holdout";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
@@ -164,6 +165,17 @@ function tzDisplay(tz: string): string {
   const city = TIMEZONES.find((t) => t.value === tz)?.label ?? tz;
   const off = offsetLabel(tz);
   return off ? `${city} ${off}` : city;
+}
+
+// Footer "Took Ns" readout: sub-10s keeps a decimal (short runs would all read
+// "4s"), longer runs round to whole units.
+function fmtRunDuration(ms: number): string {
+  const s = ms / 1000;
+  if (s < 10) return `${s.toFixed(1)}s`;
+  if (s < 60) return `${Math.round(s)}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${Math.round(s - m * 60)}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 function withChartTz(cfg: BacktestConfig, tz: string): BacktestConfig {
@@ -1002,6 +1014,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   // already a no-op mid-run, but the button looked active.
   const [runInFlight, setRunInFlight] = useState(backtestRunningSignal.value);
   useEffect(() => backtestRunningSignal.subscribe(setRunInFlight), []);
+  // Last completed run's wall-clock duration, per mode (footer readout).
+  const [btDurationMs, setBtDurationMs] = useState(backtestDurationSignal.value);
+  useEffect(() => backtestDurationSignal.subscribe(setBtDurationMs), []);
+  const [sweepDurationMs, setSweepDurationMs] = useState(sweepDurationSignal.value);
+  useEffect(() => sweepDurationSignal.subscribe(setSweepDurationMs), []);
   // Settings (top) / results (bottom) vertical split. resultsHeight 0 means
   // "unset" — the CSS default flex-basis governs until the user drags. Persisted
   // device-local so the layout survives re-opens and reloads.
@@ -2375,57 +2392,50 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               {btMode === "sweep" && sweepAxes.length === 0 && (
                 <span className="sweep-counter">Turn on a field's sweep toggle to run</span>
               )}
-              {btMode === "sweep" && sweepAxes.length > 0 && searchMode === "grid" && (
-                <span className="sweep-counter">
-                  {/* Per-axis counts via the SAME comboCount the runner uses. A
-                      single axis's own combo count is exactly its step count (or
-                      Infinity for a degenerate step), so this can never drift from
-                      the total it multiplies to below. */}
-                  {sweepAxes.map((a, i) => {
-                    const n = comboCount([a]);
-                    return (
-                      <span key={a.target}>
-                        {i > 0 && " × "}
-                        {isFinite(n) ? n : "∞"}
-                      </span>
-                    );
-                  })}
-                  {" = "}
-                  {isFinite(sweepCombos) ? sweepCombos : "∞"} runs
-                </span>
-              )}
-              {btMode === "sweep" && sweepAxes.length > 0 && searchMode === "random" && (
-                // Random samples a subset, so the per-axis grid breakdown would
-                // contradict the sampled total; show the sample size directly.
-                <span className="sweep-counter">
-                  {isFinite(effectiveCombos) ? effectiveCombos : "∞"} runs sampled
-                </span>
-              )}
+              {/* No per-axis breakdown or "runs sampled" counter here: the
+                  footer shows ONLY the total combo count (user decision). */}
               {btMode === "sweep" && sweepAxes.length > 0 && (
                 <span className={`bt-sweep-estimate${effectiveWarn ? " bt-sweep-warn" : ""}`}>
-                  {isFinite(effectiveCombos)
-                    ? estimateSweepText(effectiveCombos, recallSweepPace(epic, effectiveRes, sweepTarget))
-                    : "∞ combos"}
+                  {/* The number carries the weight; the unit stays quiet. The
+                      space keeps textContent reading "275 combos". */}
+                  <strong>{isFinite(effectiveCombos) ? effectiveCombos : "∞"}</strong>{" "}
+                  {effectiveCombos === 1 ? "combo" : "combos"}
                 </span>
+              )}
+              {/* Last completed run's wall-clock duration (session-only, final
+                  number only — hidden while a run is in flight). Per mode so a
+                  backtest never shows the sweep's time or vice versa. */}
+              {btMode === "backtest" && btDurationMs != null && !runInFlight && (
+                <span className="sweep-counter bt-run-duration">Took {fmtRunDuration(btDurationMs)}</span>
+              )}
+              {btMode === "sweep" && sweepDurationMs != null && !sweepState?.running && (
+                <span className="sweep-counter bt-run-duration">Took {fmtRunDuration(sweepDurationMs)}</span>
               )}
               {btMode === "sweep" && sweepAxes.length > 0 && (
                 <span className="bt-search-toggle">
-                  <span className="bt-compute-label">
-                    Search:
-                    <InfoTip text="Random search samples N combos from the ranges. Same ranges and N always draw the same sample." />
-                  </span>
+                  {/* No "Search" label: the seg self-describes, tooltips on the
+                      buttons carry the explanation (same pattern as ModeSeg). */}
                   <span className="seg" role="group" aria-label="Search strategy">
-                    {(["grid", "random"] as const).map((m) => (
+                    <Tooltip content="Run every combination of the ranges.">
                       <button
-                        key={m}
                         type="button"
-                        className={searchMode === m ? "seg-on" : ""}
-                        aria-pressed={searchMode === m}
-                        onClick={() => setSearchMode(m)}
+                        className={searchMode === "grid" ? "seg-on" : ""}
+                        aria-pressed={searchMode === "grid"}
+                        onClick={() => setSearchMode("grid")}
                       >
-                        {m === "grid" ? "Grid" : "Random"}
+                        Grid
                       </button>
-                    ))}
+                    </Tooltip>
+                    <Tooltip content="Sample N combos from the ranges. Same ranges and N always draw the same sample.">
+                      <button
+                        type="button"
+                        className={searchMode === "random" ? "seg-on" : ""}
+                        aria-pressed={searchMode === "random"}
+                        onClick={() => setSearchMode("random")}
+                      >
+                        Random
+                      </button>
+                    </Tooltip>
                   </span>
                   {searchMode === "random" && (
                     <label className="bt-random-n">
@@ -2444,18 +2454,23 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
               )}
               {btMode === "sweep" && sweepAxes.length > 0 && remoteCompute && (
                 <span className="bt-compute-toggle">
-                  <span className="bt-compute-label">Compute:</span>
                   <span className="seg" role="group" aria-label="Compute target">
                     {(["local", "remote"] as const).map((t) => (
-                      <button
+                      <Tooltip
                         key={t}
-                        type="button"
-                        className={sweepTarget === t ? "seg-on" : ""}
-                        aria-pressed={sweepTarget === t}
-                        onClick={() => { sweepTargetSignal.set(t); saveSweepTarget(t); }}
+                        content={t === "local"
+                          ? "Run the sweep on this machine."
+                          : "Run the sweep on the remote compute host."}
                       >
-                        {t === "local" ? "Local" : "Remote"}
-                      </button>
+                        <button
+                          type="button"
+                          className={sweepTarget === t ? "seg-on" : ""}
+                          aria-pressed={sweepTarget === t}
+                          onClick={() => { sweepTargetSignal.set(t); saveSweepTarget(t); }}
+                        >
+                          {t === "local" ? "Local" : "Remote"}
+                        </button>
+                      </Tooltip>
                     ))}
                   </span>
                 </span>

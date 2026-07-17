@@ -4386,11 +4386,13 @@ span.bt-leg-short { color: var(--neg); }
 /* Footer combo counter next to "Run backtest" / "Run sweep" */
 .sweep-counter { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* Footer runtime estimate: combo count + a rough time drawn from the per-epic
-   pace memory. Amber (the app's caution tone, mirroring the alert identity
-   #f5a623) once the run gets large, but the Run button is never disabled by it. */
-.bt-sweep-estimate { font-size: 12px; color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.bt-sweep-estimate.bt-sweep-warn { color: #f5a623; }
+/* Footer combo count: the one number read before pressing Run, so the number
+   carries the weight and the "combos" unit stays quiet. Amber (the app's
+   caution tone, mirroring the alert identity #f5a623) once the run gets large,
+   but the Run button is never disabled by it. */
+.bt-sweep-estimate { font-size: 12px; color: var(--text-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bt-sweep-estimate strong { font-weight: 600; color: var(--text); }
+.bt-sweep-estimate.bt-sweep-warn strong { color: #f5a623; }
 /* Footer Backtest | Sweep mode switch. The badge on the Sweep segment shows a
    background sweep's progress (or, from Backtest mode, the configured combo count). */
 .bt-mode-seg { flex: 0 0 auto; }
@@ -4400,12 +4402,19 @@ span.bt-leg-short { color: var(--neg); }
   background: color-mix(in srgb, currentColor 14%, transparent);
   font-variant-numeric: tabular-nums;
 }
-/* Local | Remote compute-target toggle beside the estimate. */
+/* Grid | Random and Local | Remote footer toggles: unlabeled (the segs
+   self-describe; per-button tooltips explain), so hairline separators mark the
+   zone boundaries count | search | compute in the strip. */
 .bt-compute-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.bt-compute-label { font-size: 12px; color: var(--text-dim); }
 .bt-compute-toggle .seg button { padding: 4px 10px; font-size: 12px; }
 .bt-search-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .bt-search-toggle .seg button { padding: 4px 10px; font-size: 12px; }
+.bt-cfg-foot .bt-search-toggle,
+.bt-cfg-foot .bt-compute-toggle {
+  border-left: 1px solid var(--border);
+  padding-left: 12px;
+  align-self: stretch;
+}
 .bt-random-n { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-dim); }
 .bt-random-n input { width: 56px; }
 

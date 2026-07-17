@@ -46,6 +46,8 @@ import {
   backtestMarkersShownSignal,
   backtestEquityShownSignal,
   backtestRunningSignal,
+  backtestDurationSignal,
+  sweepDurationSignal,
   sweepAxesSignal,
   sweepStateSignal,
   sweepCancelRequest,
@@ -58,7 +60,7 @@ import {
   selectedTradeSignal,
 } from "./lib/signals";
 import { robustWindowBounds, runSweep, sweepCatchState } from "./lib/sweep";
-import { recordSweepPace, sweepContext } from "./lib/sweepMemory";
+import { sweepContext } from "./lib/sweepMemory";
 import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
 import { inspectModeSignal } from "./lib/backtestInspect";
@@ -130,6 +132,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     holdoutEvalSignal.set(false);
     if (!chart || !epic || !period || running) return;
     setRunning(true);
+    // Wall-clock start for the footer's "Took Ns" readout. Captured before any
+    // fetching so the displayed duration covers the whole run, not just the
+    // engine call.
+    const runStart = performance.now();
     // Published imperatively (not via an effect on `running`) so the settings
     // modal's disabled "Run backtest" can never strand: the finally below always
     // resets it, even if this component were unmounted mid-run.
@@ -160,6 +166,8 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       backtestResultSignal.set(null);
       highlightTradeSignal.set(null);
       selectedTradeSignal.set(null);
+      // Only a successful finish writes a duration; a failed run shows none.
+      backtestDurationSignal.set(null);
     }
     try {
       const cfg = loadBacktestLastUsed() ?? defaultBacktestConfig();
@@ -354,9 +362,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // submission owns the sweep state cleanly instead of racing a resumed one.
         stopResumedSweep();
         sweepStateSignal.set({ rows: [], done: 0, total: 0, running: true });
+        // Cleared up front, written only on completion below — a cancelled or
+        // failed sweep shows no duration.
+        sweepDurationSignal.set(null);
         const windows = robustWindowBounds(windowFromMs, windowToMs, cfg.robustWindows);
         const sweepTarget = sweepTargetSignal.value;
-        const startedAt = Date.now();
         try {
           const landed: SweepRow[] = [];
           const rows = await runSweep(baseReq, sweepAxes, {
@@ -378,11 +388,9 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
             },
           });
           sweepStateSignal.set({ rows, done: rows.length, total: rows.length, running: false });
-          // Remember how long a combo took on this epic/timeframe/target so the
-          // modal footer can turn a combo count into a runtime estimate next time.
+          sweepDurationSignal.set(performance.now() - runStart);
           // Only on a real completion with produced rows (never on cancel/empty).
           if (rows.length > 0) {
-            recordSweepPace(baseReq.epic, baseReq.resolution, sweepTarget, (Date.now() - startedAt) / rows.length);
             // Archive the completed sweep server-side (fire-and-forget) so it can
             // be listed and reopened later. Never blocks the UI path.
             saveSweepArchive({
@@ -452,6 +460,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           `coverage walk ${(tCover1 - tCover0).toFixed(0)}ms, fit ${(tFit1 - tCover1).toFixed(0)}ms, ` +
           `run total ${(tFit1 - tFetch0).toFixed(0)}ms`,
       );
+      backtestDurationSignal.set(performance.now() - runStart);
       saveBacktestLastUsed(cfg);
     } catch (e) {
       setError(e instanceof Error ? e.message : "backtest failed");

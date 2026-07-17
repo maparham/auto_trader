@@ -42,7 +42,7 @@ import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
 import { saveBacktestPreset, loadBacktestLastUsed } from "./lib/persist/defaults";
 import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal } from "./lib/signals";
 import type { SweepRow } from "./api";
-import { recordSweepRanges, recallSweepRange, saveSweepAxes, recordSweepPace } from "./lib/sweepMemory";
+import { recordSweepRanges, recallSweepRange, saveSweepAxes } from "./lib/sweepMemory";
 
 // See VisibilityTab.test.tsx: vitest isn't run with jest-style globals, so RTL's
 // automatic cleanup never registers. Without this each render leaks into the next.
@@ -316,9 +316,8 @@ describe("operator sweep", () => {
     // starts counting combos.
     fireEvent.click(row.querySelector(".sp-sweep")!);
     expect(section.querySelector(".range-chip")).toBeTruthy();
-    expect(document.querySelector(".sweep-counter")!.textContent).not.toContain(
-      "Turn on a field's sweep toggle to run",
-    );
+    expect(screen.queryByText("Turn on a field's sweep toggle to run")).toBeNull();
+    expect(document.querySelector(".bt-sweep-estimate")).toBeTruthy();
 
     // Switch the operand back to an indicator: the value leaf is orphaned, so
     // its axis must drop — no stranded chip, and the counter resets.
@@ -327,9 +326,8 @@ describe("operator sweep", () => {
       { target: { value: "EMA" } },
     );
     expect(section.querySelector(".range-chip")).toBeNull();
-    expect(document.querySelector(".sweep-counter")!.textContent).toContain(
-      "Turn on a field's sweep toggle to run",
-    );
+    expect(screen.getByText("Turn on a field's sweep toggle to run")).toBeTruthy();
+    expect(document.querySelector(".bt-sweep-estimate")).toBeNull();
   });
 
   it("a swept exit count renders its editor inline inside its rule group", () => {
@@ -533,7 +531,7 @@ describe("coded mode: params, risk, and exit-rule sections", () => {
     const nums = [...document.querySelectorAll(".range-chip-field input")] as HTMLInputElement[];
     fireEvent.change(nums[1], { target: { value: "15" } });
     fireEvent.blur(nums[1]);
-    expect(document.querySelector(".sweep-counter")!.textContent).not.toContain("1 = 1");
+    expect(document.querySelector(".bt-sweep-estimate")!.textContent).not.toBe("1 combo");
 
     // Remove from sweep via the popover: chip gone.
     fireEvent.click(screen.getByRole("button", { name: "Remove from sweep" }));
@@ -557,8 +555,8 @@ describe("coded mode: params, risk, and exit-rule sections", () => {
     // All three stay on: both param glyphs and the period toggle.
     expect(params.querySelectorAll(".sp-sweep.on")).toHaveLength(2);
     expect(document.querySelector(".bt-period-sweep-toggle")!.className).toContain("on");
-    // Footer multiplies three factors: two multiplication signs.
-    expect(screen.getByText(/runs$/).textContent?.match(/×/g)).toHaveLength(2);
+    // Footer combo count reflects all three axes multiplied together.
+    expect(document.querySelector(".bt-sweep-estimate")!.textContent).toMatch(/^\d+ combos$/);
   });
 });
 
@@ -817,8 +815,8 @@ describe("sweep range memory", () => {
     openStrategy();
     const row = ruleRows(groupSection("Buy to open"))[0];
     fireEvent.click(row.querySelector(".sp-sweep")!);
-    // Footer combo count proves the recalled range seeded the axis: 11 runs.
-    expect(screen.getByText(/runs$/).textContent).toContain("11");
+    // Footer combo count proves the recalled range seeded the axis: 11 combos.
+    expect(document.querySelector(".bt-sweep-estimate")!.textContent).toBe("11 combos");
   });
 
   it("running a sweep records each range axis's from/to/step", () => {
@@ -1009,20 +1007,10 @@ describe("sweep footer estimate + compute toggle", () => {
     const est = document.querySelector(".bt-sweep-estimate") as HTMLElement;
     expect(est).toBeTruthy();
     expect(est.className).toContain("bt-sweep-warn");
-    expect(est.textContent).toContain("2001 combos");
+    expect(est.textContent).toBe("2001 combos");
     // The combo count must never gate the Run button.
     const run = screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement;
     expect(run.disabled).toBe(false);
-  });
-
-  it("shows a runtime estimate when a pace has been recorded for this epic/tf/target", () => {
-    // 2001 combos * 200ms = 400200ms -> about 7m.
-    recordSweepPace("TEST", "MINUTE", "local", 200);
-    bigAxis();
-    renderModal();
-    enterSweepMode();
-    const est = document.querySelector(".bt-sweep-estimate") as HTMLElement;
-    expect(est.textContent).toBe("2001 combos, about 7m on this run target");
   });
 
   it("hides the Compute toggle when remote compute is not configured", async () => {
