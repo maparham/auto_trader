@@ -7,14 +7,14 @@
 // row/cell applies that combo via onApply. Session-state only, never persisted.
 // (Spec: docs/superpowers/specs/2026-07-09-strategy-panel-params-design.md)
 
-import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { SweepRow } from "./api";
 import { axisColumnLabel, comboAxisLabel, comboAxisText, fmtAxisValue, type SweepAxis } from "./lib/sweep";
 import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import Tooltip from "./components/Tooltip";
-import { verdictFor } from "./lib/backtestPanelData";
+import { rowWindow, verdictFor, type RowWindow } from "./lib/backtestPanelData";
 import { metricTipLines } from "./components/metricScaleTip";
 
 type MetricKey =
@@ -171,6 +171,90 @@ function divergingBg(v: number | null, maxAbs: number): string {
   return v > 0 ? `rgba(38, 166, 91, ${alpha})` : v < 0 ? `rgba(220, 62, 66, ${alpha})` : "transparent";
 }
 
+// Row virtualization for the results table. A sweep can land 9000+ combos, and
+// rendering every one as a <tr> (~10 cells + tooltips each) buries the browser
+// in tens of thousands of DOM nodes. Rows are uniform single-line height, so we
+// render only the window that's actually scrolled into view plus a buffer, with
+// spacer <tr>s above and below that preserve the table's height and scrollbar.
+//
+// We don't own the scroll container (.sweep-panel, an ancestor), so we walk up
+// from a ref to find the nearest scrollable element and measure the visible
+// window via getBoundingClientRect deltas — robust regardless of what sits above
+// the table (heatmap, legend). The window maths (and its stale-scroll clamp) are
+// the shared `rowWindow` helper the trades table uses. Returns null when it can't
+// measure (no scroll parent, zero-height container as in jsdom); callers fall
+// back to a render-time top window sized by an assumed viewport.
+const VROW_OVERSCAN = 12;
+const VROW_ESTIMATE = 30; // px; replaced by the first real measurement
+// Pre-measurement viewport cap so a large result set never renders every row for
+// a frame before the container is measured (comfortably larger than any real
+// panel, so the measured window that lands before paint only ever shrinks it).
+const VROW_INITIAL_VIEWPORT = 2400;
+
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const oy = getComputedStyle(node).overflowY;
+    if ((oy === "auto" || oy === "scroll") && node.scrollHeight > node.clientHeight) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function useVirtualRows(
+  anchorRef: RefObject<HTMLElement | null>,
+  listRef: RefObject<HTMLElement | null>,
+  rowCount: number,
+  rowHeight: number,
+): RowWindow | null {
+  const [win, setWin] = useState<RowWindow | null>(null);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const parent = findScrollParent(anchorRef.current);
+    if (!parent || !list) {
+      setWin(null);
+      return;
+    }
+    let frame = 0;
+    const recompute = () => {
+      frame = 0;
+      const pRect = parent.getBoundingClientRect();
+      const lRect = list.getBoundingClientRect();
+      if (pRect.height === 0) {
+        // Can't measure a viewport (e.g. jsdom) — fall back to render-all.
+        setWin((prev) => (prev === null ? prev : null));
+        return;
+      }
+      // How far the list top is scrolled above the viewport top == scrollTop
+      // relative to the list; rowWindow clamps a stale value to the real range.
+      const offset = pRect.top - lRect.top;
+      const next = rowWindow(offset, pRect.height, rowHeight, rowCount, VROW_OVERSCAN);
+      setWin((prev) =>
+        prev && prev.start === next.start && prev.end === next.end && prev.padTop === next.padTop
+          ? prev
+          : next,
+      );
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(recompute);
+    };
+    recompute();
+    parent.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(onScroll);
+    ro.observe(parent);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      parent.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [anchorRef, listRef, rowCount, rowHeight]);
+
+  return win;
+}
+
 export function SweepResults(props: {
   rows: SweepRow[];
   axes: SweepAxis[];
@@ -192,7 +276,9 @@ export function SweepResults(props: {
   // rows is mutated in place during a streaming sweep (BacktestButton re-sets
   // the same `landed` array each chunk), so length is the change signal.
   const { rows: scoredRows, spikes } = useMemo(() => withPlateau(rows, axes), [rows, rows.length, axes]);
-  const spikeSet = new Set(scoredRows.filter((_, i) => spikes[i]));
+  // Memoized so a scroll-driven re-render (the virtualization hook lives in this
+  // component and updates on every scroll frame) doesn't rebuild the spike set.
+  const spikeSet = useMemo(() => new Set(scoredRows.filter((_, i) => spikes[i])), [scoredRows, spikes]);
   const center = useMemo(() => plateauCenter(scoredRows), [scoredRows]);
 
   const [sort, setSort] = useState<{ key: MetricKey; dir: SortDir } | null>(null);
@@ -215,28 +301,39 @@ export function SweepResults(props: {
 
   // Failed (metrics === null) rows always sort to the bottom, independent of
   // direction — an error isn't "worse" or "better", it's just not comparable.
-  const sortedRows = sort
-    ? [...scoredRows].sort((a, b) => {
-        const av = metricValue(a, sort.key);
-        const bv = metricValue(b, sort.key);
-        if (av === null && bv === null) return 0;
-        if (av === null) return 1;
-        if (bv === null) return -1;
-        return sort.dir === "asc" ? av - bv : bv - av;
-      })
-    : scoredRows;
+  // Memoized: with thousands of rows this sort must not re-run on every
+  // scroll-driven re-render (see the virtualization hook below).
+  const sortedRows = useMemo(
+    () =>
+      sort
+        ? [...scoredRows].sort((a, b) => {
+            const av = metricValue(a, sort.key);
+            const bv = metricValue(b, sort.key);
+            if (av === null && bv === null) return 0;
+            if (av === null) return 1;
+            if (bv === null) return -1;
+            return sort.dir === "asc" ? av - bv : bv - av;
+          })
+        : scoredRows,
+    [scoredRows, sort],
+  );
 
   // Best value per column (highest wins, except drawdown where smaller-magnitude
   // is better) — only among successful rows.
-  const bestByCol: Partial<Record<MetricKey, number>> = {};
-  for (const { key } of METRIC_COLS) {
-    const vals = scoredRows.map((r) => metricValue(r, key)).filter((v): v is number => v !== null);
-    if (!vals.length) continue;
-    bestByCol[key] = key === "max_drawdown" ? Math.min(...vals) : Math.max(...vals);
-  }
+  const bestByCol = useMemo(() => {
+    const best: Partial<Record<MetricKey, number>> = {};
+    for (const { key } of METRIC_COLS) {
+      const vals = scoredRows.map((r) => metricValue(r, key)).filter((v): v is number => v !== null);
+      if (!vals.length) continue;
+      best[key] = key === "max_drawdown" ? Math.min(...vals) : Math.max(...vals);
+    }
+    return best;
+  }, [scoredRows]);
 
-  const heatVals = scoredRows.map((r) => metricValue(r, heatMetric)).filter((v): v is number => v !== null);
-  const maxAbs = heatVals.length ? Math.max(...heatVals.map((v) => Math.abs(v))) : 0;
+  const maxAbs = useMemo(() => {
+    const heatVals = scoredRows.map((r) => metricValue(r, heatMetric)).filter((v): v is number => v !== null);
+    return heatVals.length ? Math.max(...heatVals.map((v) => Math.abs(v))) : 0;
+  }, [scoredRows, heatMetric]);
 
   // While a sweep is still streaming, clicking a row/cell can't apply: the
   // runner is mid-run and a re-run request would silently no-op instead of
@@ -259,8 +356,39 @@ export function SweepResults(props: {
     </button>
   );
 
+  // Virtualization wiring. `anchorRef` locates the scroll container (walked up
+  // from the results root); `bodyRef` marks the top of the row area; `rowRef`
+  // measures one real row (uniform height) so the spacer math is exact.
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLTableSectionElement>(null);
+  const rowRef = useRef<HTMLTableRowElement>(null);
+  const [rowHeight, setRowHeight] = useState(VROW_ESTIMATE);
+  useLayoutEffect(() => {
+    // Replace the estimate with the real rendered height (subpixel, so spacer
+    // heights don't drift over thousands of rows); it's a fixed single line, so
+    // the >0.5px guard settles it after one measurement.
+    const h = rowRef.current?.getBoundingClientRect().height ?? 0;
+    if (h > 0 && Math.abs(h - rowHeight) > 0.5) setRowHeight(h);
+  }, [sortedRows.length, rowHeight]);
+
+  // Full column span for the spacer rows so table layout/scrollbar stay put:
+  // axis cells (one per axis, or a single "Combo" cell) + base metrics + the
+  // robustness-toggle column + open robust metrics + optional Refine action.
+  const axisColCount = axes.length > 0 ? axes.length : 1;
+  const colCount = axisColCount + baseCols.length + 1 + robustCols.length + (onRefine ? 1 : 0);
+
+  // Before the container is measured (mount, or re-mount with results already
+  // present), fall back to a render-time top window so a large set never renders
+  // every row for a frame; the measured window lands before paint.
+  const measuredWin = useVirtualRows(anchorRef, bodyRef, sortedRows.length, rowHeight);
+  const win = measuredWin ?? rowWindow(0, VROW_INITIAL_VIEWPORT, rowHeight, sortedRows.length, VROW_OVERSCAN);
+  const visibleRows = sortedRows.slice(win.start, win.end);
+  const baseIndex = win.start;
+  const padTop = win.padTop;
+  const padBottom = win.padBottom;
+
   return (
-    <div className="sweep-results">
+    <div className="sweep-results" ref={anchorRef}>
       {progress && (
         <div className="sweep-progress">
           <span>{progress.done} / {progress.total}</span>
@@ -353,13 +481,20 @@ export function SweepResults(props: {
               {onRefine && <th className="sweep-c-act" />}
             </tr>
           </thead>
-          <tbody>
-            {sortedRows.map((row, i) => {
+          <tbody ref={bodyRef}>
+            {padTop > 0 && (
+              <tr aria-hidden="true" className="sweep-vspacer">
+                <td colSpan={colCount} style={{ height: padTop, padding: 0, border: "none" }} />
+              </tr>
+            )}
+            {visibleRows.map((row, vi) => {
+              const i = baseIndex + vi;
               const failed = row.metrics === null;
               const combo = row.combo as Record<string, number | string>;
               return (
                 <tr
                   key={i}
+                  ref={vi === 0 ? rowRef : undefined}
                   className={`sweep-row${failed ? " sweep-error" : ""}${applyDisabled ? " sweep-row-disabled" : ""}`}
                   aria-disabled={applyDisabled}
                   onClick={() => applyOrNoop(row.combo)}
@@ -429,6 +564,11 @@ export function SweepResults(props: {
                 </tr>
               );
             })}
+            {padBottom > 0 && (
+              <tr aria-hidden="true" className="sweep-vspacer">
+                <td colSpan={colCount} style={{ height: padBottom, padding: 0, border: "none" }} />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
