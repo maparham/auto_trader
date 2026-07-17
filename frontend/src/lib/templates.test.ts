@@ -18,6 +18,8 @@ vi.mock("./indicators", () => {
     applyIndicator: vi.fn(() => "pane_x"),
     mintInstanceId: vi.fn((_chart: unknown, type: string) => `${type}#m${++seq}`),
     effectiveCalcParams: vi.fn((_type: string, saved?: number[]) => saved),
+    removeIndicatorById: vi.fn(),
+    isSubPaneIndicator: vi.fn(() => false),
   };
 });
 
@@ -58,6 +60,19 @@ beforeEach(() => {
   // simulate indicators.ts's real normalization for the type(s) they exercise.
   vi.mocked(I.effectiveCalcParams).mockImplementation((_type, saved) => saved);
 });
+
+// A stub chart/controller is enough to exercise the storage-level behavior; the
+// live-chart side of apply needs a real klinecharts instance and is covered by
+// e2e. Shared by the gate + replace describes below.
+const stubChart = {} as unknown as import("klinecharts").Chart;
+// Captures what the apply path set, so precedence tests can read it back.
+let applied: { id: string; type: string }[] = [];
+const stubController = {
+  indicators: { value: [] as unknown[], set: (v: { id: string; type: string }[]) => (applied = v) },
+  indicatorsHidden: { value: false },
+  subPanesHidden: { value: false, set: () => {} },
+  overlays: { rehydrate: () => {} },
+} as unknown as import("./chartController").ChartController;
 
 describe("captureSymbolTemplate", () => {
   it("snapshots a cell's indicators, configs, drawings and AVWAP anchors", () => {
@@ -105,37 +120,27 @@ describe("captureDefaultTemplate", () => {
   });
 });
 
-describe("maybeAutoApplyTemplate gate", () => {
-  // A stub chart/controller is enough to exercise the EARLY-RETURN branches; the
-  // apply path itself needs a real klinecharts instance and is covered by e2e.
-  const stubChart = {} as unknown as import("klinecharts").Chart;
-  // Captures what the apply path set, so precedence tests can read it back.
-  let applied: { id: string; type: string }[] = [];
-  const stubController = {
-    indicators: { value: [] as unknown[], set: (v: { id: string; type: string }[]) => (applied = v) },
-    indicatorsHidden: { value: false },
-    subPanesHidden: { value: false },
-    overlays: { rehydrate: () => {} },
-  } as unknown as import("./chartController").ChartController;
-
-  it("does not apply when there is no template for the symbol", () => {
-    expect(T.maybeAutoApplyTemplate(stubChart, stubController, SCOPE, EPIC)).toBe(false);
+describe("applyLookOnOpen", () => {
+  it("nothing saved anywhere: no-op", () => {
+    expect(T.applyLookOnOpen(stubChart, stubController, SCOPE, EPIC)).toBe(false);
   });
 
-  it("does not apply when the cell already has saved indicators", () => {
+  it("with replace: applies the per-symbol template even when the cell already has indicators", () => {
+    P.saveIndicators(SCOPE, [{ id: "SLOPE", type: "SLOPE" }]); // birth-symbol leftovers
     P.saveSymbolTemplate({
       epic: EPIC,
-      indicators: [{ id: "EMA", type: "EMA" }],
+      indicators: [{ id: "VOL#t", type: "VOL" }],
       indicatorConfigs: {},
       drawings: [],
       avwapAnchors: {},
       savedAt: 1,
     });
-    P.saveIndicators(SCOPE, [{ id: "RSI", type: "RSI" }]);
-    expect(T.maybeAutoApplyTemplate(stubChart, stubController, SCOPE, EPIC)).toBe(false);
+    expect(T.applyLookOnOpen(stubChart, stubController, SCOPE, EPIC, { replace: true })).toBe(true);
+    expect(P.loadIndicators(SCOPE).map((i) => i.type)).toEqual(["VOL"]);
   });
 
-  it("does not apply when the cell already has saved drawings", () => {
+  it("with replace: applies the per-symbol template's drawings over the cell's for that epic", () => {
+    P.saveDrawings(SCOPE, EPIC, [{ name: "existing", points: [{ value: 2 }] }]);
     P.saveSymbolTemplate({
       epic: EPIC,
       indicators: [],
@@ -144,18 +149,57 @@ describe("maybeAutoApplyTemplate gate", () => {
       avwapAnchors: {},
       savedAt: 1,
     });
-    P.saveDrawings(SCOPE, EPIC, [{ name: "existing", points: [{ value: 2 }] }]);
-    expect(T.maybeAutoApplyTemplate(stubChart, stubController, SCOPE, EPIC)).toBe(false);
+    expect(T.applyLookOnOpen(stubChart, stubController, SCOPE, EPIC, { replace: true })).toBe(true);
+    expect(P.loadDrawings(SCOPE, EPIC).map((d) => d.name)).toEqual(["trend"]);
   });
 
-  it("applies the global default onto a fresh cell when no per-symbol template exists", () => {
-    applied = [];
+  it("without replace (mount/reload): a populated cell is left untouched even when a template exists", () => {
+    P.saveIndicators(SCOPE, [{ id: "RSI", type: "RSI" }]); // un-captured user edits
+    P.saveSymbolTemplate({
+      epic: EPIC,
+      indicators: [{ id: "VOL#t", type: "VOL" }],
+      indicatorConfigs: {},
+      drawings: [],
+      avwapAnchors: {},
+      savedAt: 1,
+    });
+    expect(T.applyLookOnOpen(stubChart, stubController, SCOPE, EPIC)).toBe(false);
+    expect(P.loadIndicators(SCOPE).map((i) => i.id)).toEqual(["RSI"]);
+  });
+
+  it("without replace: a FRESH cell still gets the per-symbol template (new-tab open)", () => {
+    P.saveSymbolTemplate({
+      epic: EPIC,
+      indicators: [{ id: "VOL#t", type: "VOL" }],
+      indicatorConfigs: {},
+      drawings: [{ name: "trend", points: [{ value: 1 }] }],
+      avwapAnchors: {},
+      savedAt: 1,
+    });
+    expect(T.applyLookOnOpen(stubChart, stubController, SCOPE, EPIC)).toBe(true);
+    expect(P.loadIndicators(SCOPE).map((i) => i.type)).toEqual(["VOL"]);
+    expect(P.loadDrawings(SCOPE, EPIC).map((d) => d.name)).toEqual(["trend"]);
+  });
+
+  it("no per-symbol template + populated cell: keeps the cell as-is", () => {
+    P.saveIndicators(SCOPE, [{ id: "EMA", type: "EMA" }]);
     P.saveDefaultTemplate({
-      indicators: [{ id: "VOL", type: "VOL" }],
+      indicators: [{ id: "VOL#d", type: "VOL" }],
       indicatorConfigs: {},
       savedAt: 1,
     });
-    expect(T.maybeAutoApplyTemplate(stubChart, stubController, SCOPE, EPIC)).toBe(true);
+    expect(T.applyLookOnOpen(stubChart, stubController, SCOPE, EPIC)).toBe(false);
+    expect(P.loadIndicators(SCOPE).map((i) => i.id)).toEqual(["EMA"]);
+  });
+
+  it("no per-symbol template + fresh cell: falls back to the global default", () => {
+    applied = [];
+    P.saveDefaultTemplate({
+      indicators: [{ id: "VOL#d", type: "VOL" }],
+      indicatorConfigs: {},
+      savedAt: 1,
+    });
+    expect(T.applyLookOnOpen(stubChart, stubController, SCOPE, EPIC)).toBe(true);
     expect(applied.map((i) => (i as { type: string }).type)).toEqual(["VOL"]);
   });
 
@@ -174,7 +218,7 @@ describe("maybeAutoApplyTemplate gate", () => {
       indicatorConfigs: {},
       savedAt: 1,
     });
-    expect(T.maybeAutoApplyTemplate(stubChart, stubController, SCOPE, EPIC)).toBe(true);
+    expect(T.applyLookOnOpen(stubChart, stubController, SCOPE, EPIC)).toBe(true);
     expect(applied.map((i) => (i as { type: string }).type)).toEqual(["RSI"]);
   });
 });
@@ -416,6 +460,85 @@ describe("applySymbolTemplate merge (additive, existing wins)", () => {
     }));
 
     expect(P.loadIndicators(SCOPE).filter((i) => i.type === "RSI")).toHaveLength(2);
+  });
+});
+
+describe("replaceSymbolTemplate", () => {
+  it("keeps signature-matched instances, removes extras, adds missing", () => {
+    // Cell: EMA(9) [matches template] + SLOPE [not in template].
+    P.saveIndicators(SCOPE, [
+      { id: "EMA", type: "EMA" },
+      { id: "SLOPE", type: "SLOPE" },
+    ]);
+    P.saveIndicatorConfig(SCOPE, "EMA", { calcParams: [9] });
+    const t: import("./persist").SymbolTemplate = {
+      epic: EPIC,
+      indicators: [
+        { id: "EMA#t", type: "EMA" },
+        { id: "VOL#t", type: "VOL" },
+      ],
+      indicatorConfigs: { "EMA#t": { calcParams: [9] } },
+      drawings: [],
+      avwapAnchors: {},
+      savedAt: 1,
+    };
+    T.replaceSymbolTemplate(stubChart, stubController, SCOPE, EPIC, t);
+    const full = P.loadIndicators(SCOPE);
+    // EMA kept under its ORIGINAL id (untouched), SLOPE removed, VOL added.
+    expect(full.map((i) => i.type).sort()).toEqual(["EMA", "VOL"]);
+    expect(full.find((i) => i.type === "EMA")!.id).toBe("EMA");
+    expect(vi.mocked(I.removeIndicatorById)).toHaveBeenCalledWith(stubChart, SCOPE, "SLOPE");
+  });
+
+  it("empty template wipes indicators and drawings (exact blank look)", () => {
+    P.saveIndicators(SCOPE, [{ id: "EMA", type: "EMA" }]);
+    P.saveDrawings(SCOPE, EPIC, [{ name: "segment", points: [{ value: 1 }] }]);
+    const t: import("./persist").SymbolTemplate = {
+      epic: EPIC, indicators: [], indicatorConfigs: {}, drawings: [], avwapAnchors: {}, savedAt: 1,
+    };
+    T.replaceSymbolTemplate(stubChart, stubController, SCOPE, EPIC, t);
+    expect(P.loadIndicators(SCOPE)).toEqual([]);
+    expect(P.loadDrawings(SCOPE, EPIC)).toEqual([]);
+  });
+
+  it("drawings become exactly the template's; identical set is not rewritten", () => {
+    const d1 = { name: "segment", points: [{ value: 1 }] };
+    const d2 = { name: "fibonacciLine", points: [{ value: 2 }] };
+    P.saveDrawings(SCOPE, EPIC, [d1]);
+    const t: import("./persist").SymbolTemplate = {
+      epic: EPIC, indicators: [], indicatorConfigs: {}, drawings: [d1, d2], avwapAnchors: {}, savedAt: 1,
+    };
+    let rehydrated = 0;
+    const ctrl = {
+      indicators: { value: [], set: () => {} },
+      indicatorsHidden: { value: false },
+      subPanesHidden: { value: false, set: () => {} },
+      overlays: { rehydrate: () => rehydrated++ },
+    } as unknown as import("./chartController").ChartController;
+    T.replaceSymbolTemplate(stubChart, ctrl, SCOPE, EPIC, t);
+    expect(P.loadDrawings(SCOPE, EPIC)).toHaveLength(2);
+    expect(rehydrated).toBe(1);
+    // Second apply: already exact — no rewrite, no rehydrate churn.
+    T.replaceSymbolTemplate(stubChart, ctrl, SCOPE, EPIC, t);
+    expect(rehydrated).toBe(1);
+  });
+
+  it("AVWAP: adds with anchor pre-written, removes stale instance's anchor", () => {
+    P.saveIndicators(SCOPE, [{ id: "AVWAP", type: "AVWAP" }]);
+    P.saveAvwapAnchor(SCOPE, EPIC, "AVWAP", 111); // does NOT match template's 222
+    const t: import("./persist").SymbolTemplate = {
+      epic: EPIC,
+      indicators: [{ id: "AVWAP#t", type: "AVWAP" }],
+      indicatorConfigs: {},
+      drawings: [],
+      avwapAnchors: { "AVWAP#t": 222 },
+      savedAt: 1,
+    };
+    T.replaceSymbolTemplate(stubChart, stubController, SCOPE, EPIC, t);
+    const full = P.loadIndicators(SCOPE);
+    expect(full).toHaveLength(1);
+    expect(P.loadAvwapAnchor(SCOPE, EPIC, full[0].id)).toBe(222);
+    expect(P.loadAvwapAnchor(SCOPE, EPIC, "AVWAP")).toBe(0); // zeroed on removal
   });
 });
 

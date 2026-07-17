@@ -27,7 +27,9 @@ import { loadAvwapAnchor } from "../lib/persist";
 import { loadSnapshotMeta, saveSnapshotMeta, type SnapshotMeta } from "../lib/persist";
 import { renderSnapshotMarker } from "../lib/snapshotMarker";
 import { applyIndicatorVisibility, forceCollapseSubPanes, getIndicatorsByPane } from "../lib/indicators";
-import { maybeAutoApplyTemplate } from "../lib/templates";
+import { applyLookOnOpen } from "../lib/templates";
+import { flushTemplateCapture } from "../lib/templateAutosave";
+import { loadSettings } from "../theme";
 import { indTypeOf } from "../lib/customIndicators";
 import { applyVisibleRange } from "../lib/chartSync";
 import { refreshMtfIndicators } from "../lib/mtfCoordinator";
@@ -93,6 +95,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
   // ChartCore locals. Not shared → private refs here.
   const prevEpicRef = useRef(symbol.epic);
   const prevResRef = useRef(period.resolution);
+  // Epic whose look (template) this cell last applied — gates replace-on-open to
+  // actual symbol opens: a TF-only effect re-run must NOT re-apply the template
+  // (it would revert the last <800ms of not-yet-autosaved edits).
+  const lookEpicRef = useRef<string | null>(null);
 
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
   useEffect(() => {
@@ -134,6 +140,26 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     //   today" marker is still valid at any interval).
     const epicChanged = prevEpicRef.current !== symbol.epic;
     const resChanged = prevResRef.current !== period.resolution;
+    // Preserve the outgoing symbol's analysis BEFORE anything of the incoming
+    // symbol is written: capture it into its own template now (the replace-on-
+    // open below would otherwise destroy un-captured work). The capture target
+    // is lookEpicRef — the epic that actually OWNS the current on-chart look —
+    // not prevEpicRef: a rapid A→B→A switch cancels B's async apply before it
+    // ever ran, so at the return leg the cell still holds A's look and writing
+    // it into B's template (the prev epic) would corrupt B. Guards:
+    //  - autoSaveTemplates ON: with it off the user manages templates manually
+    //    (an unconditional capture would silently overwrite a curated template);
+    //    the matching replace below is gated off too, so nothing is destroyed.
+    //  - lookEpic differs from the incoming epic (mount and TF-only re-runs
+    //    are not switches; A→B→A lands here with lookEpic === epic → no-op).
+    //  - Snapshot tabs are study copies and must never write the symbol's template.
+    const autosaveOn = loadSettings().autoSaveTemplates;
+    const lookEpic = lookEpicRef.current;
+    const templateSwitch =
+      autosaveOn && lookEpic !== null && lookEpic !== symbol.epic && !loadSnapshotMeta(scope);
+    if (templateSwitch) {
+      flushTemplateCapture(scope, lookEpic);
+    }
     // Park the captured trade for the post-walk restore below. An epic change
     // loads a DIFFERENT backtest whose trade array the old index wouldn't map
     // onto — drop it instead.
@@ -301,16 +327,22 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // stashed series belonged to the previous epic/range (no-op otherwise).
       void refreshMtfIndicators(handle.chartRef.current, symbol.epic, brokerId);
 
-      // Auto-apply this symbol's default template onto a FRESH cell (no saved
-      // indicators or drawings yet). Runs after rehydrate so the empty-cell gate
-      // sees the final state; a populated/customized cell is left untouched.
-      // Skip entirely for a restored snapshot tab (markerMeta non-null — written
-      // unconditionally by writeSnapshotToScope): an empty snapshot has
-      // no saved indicators/drawings either, so the auto-apply gate can't tell
-      // it apart from a fresh cell, and would silently graft the symbol's default
-      // template onto it, contradicting "restore reproduces the saved state exactly".
-      if (!markerMeta) {
-        maybeAutoApplyTemplate(handle.chartRef.current, controller, scope, symbol.epic);
+      // Make the cell LOOK like this symbol's saved template (replace-on-open).
+      // Runs once per epic open (lookEpicRef), after rehydrate so it sees final
+      // state. Replace is allowed ONLY on the switch that captured the outgoing
+      // look above (templateSwitch) — on mount/reload, or with autosave off, a
+      // populated cell may hold analysis no template ever captured, so only a
+      // FRESH cell gets the template (applyLookOnOpen's default gate). A snapshot
+      // tab (markerMeta non-null) marks the epic handled WITHOUT applying — and
+      // must keep doing so through Unlock, or the freshly unlocked study copy
+      // would be stomped by the symbol's template on the next effect re-run.
+      if (lookEpicRef.current !== symbol.epic) {
+        lookEpicRef.current = symbol.epic;
+        if (!markerMeta) {
+          applyLookOnOpen(handle.chartRef.current, controller, scope, symbol.epic, {
+            replace: templateSwitch,
+          });
+        }
       }
 
       // A restored snapshot tab parks a one-shot pendingRange on this scope's

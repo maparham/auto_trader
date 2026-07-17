@@ -34,27 +34,25 @@ export function sameTemplate(
 
 export function maybeAutoSaveTemplate(scope: string, epic: string): void {
   if (!loadSettings().autoSaveTemplates) return;
-  const next = captureSymbolTemplate(scope, epic);
-  const prev = loadSymbolTemplate(epic);
-  if (sameTemplate(prev, next)) return;
-  saveSymbolTemplate(next);
+  flushTemplateCapture(scope, epic);
 }
 
-const timers = new Map<string, ReturnType<typeof setTimeout>>();
+const timers = new Map<string, { scope: string; epic: string; timer: ReturnType<typeof setTimeout> }>();
 const DEBOUNCE_MS = 800;
 
 // Debounced per (scope+epic). Coalesces a drag / multi-step edit into one write.
 export function scheduleAutoSave(scope: string, epic: string): void {
   const key = `${scope} ${epic}`;
   const existing = timers.get(key);
-  if (existing) clearTimeout(existing);
-  timers.set(
-    key,
-    setTimeout(() => {
+  if (existing) clearTimeout(existing.timer);
+  timers.set(key, {
+    scope,
+    epic,
+    timer: setTimeout(() => {
       timers.delete(key);
       maybeAutoSaveTemplate(scope, epic);
     }, DEBOUNCE_MS),
-  );
+  });
 }
 
 // Drop a pending debounced save. MUST run on cell/tab teardown: a timer that
@@ -66,7 +64,32 @@ export function cancelAutoSave(scope: string, epic: string): void {
   const key = `${scope} ${epic}`;
   const existing = timers.get(key);
   if (existing) {
-    clearTimeout(existing);
+    clearTimeout(existing.timer);
     timers.delete(key);
   }
+}
+
+// Capture `scope`'s current look into `epic`'s template RIGHT NOW. This is the
+// unconditional primitive (no setting gate, no debounce) — callers own the
+// policy: maybeAutoSaveTemplate gates it on the autoSaveTemplates setting, and
+// the symbol-switch path in useLiveMarketData calls it (setting-gated there)
+// immediately BEFORE the incoming symbol's replace-apply so the replace never
+// destroys un-captured analysis.
+export function flushTemplateCapture(scope: string, epic: string): void {
+  cancelAutoSave(scope, epic); // the pending capture is superseded by this one
+  const next = captureSymbolTemplate(scope, epic);
+  if (sameTemplate(loadSymbolTemplate(epic), next)) return;
+  saveSymbolTemplate(next);
+}
+
+// Fire every pending debounced save immediately. Called before purgeScope on
+// cell/tab close so the last <800ms of edits aren't lost with the timer
+// (cancelAutoSave alone drops them). Setting gate preserved: these are the
+// ordinary autosaves, just early.
+export function flushPendingAutoSaves(): void {
+  for (const { scope, epic, timer } of [...timers.values()]) {
+    clearTimeout(timer);
+    maybeAutoSaveTemplate(scope, epic);
+  }
+  timers.clear();
 }

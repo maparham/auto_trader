@@ -21,6 +21,8 @@ import {
   maybeAutoSaveTemplate,
   scheduleAutoSave,
   cancelAutoSave,
+  flushTemplateCapture,
+  flushPendingAutoSaves,
 } from "./templateAutosave";
 import { saveIndicators, loadSymbolTemplate } from "./persist";
 import { loadSettings, saveSettings } from "../theme";
@@ -125,5 +127,47 @@ describe("scheduleAutoSave / cancelAutoSave", () => {
     vi.advanceTimersByTime(1000);
     // The cancelled timer never ran, so the real template is intact (not blanked).
     expect(loadSymbolTemplate(EPIC)?.indicators).toHaveLength(1);
+  });
+});
+
+describe("flushTemplateCapture", () => {
+  it("captures immediately even with autoSaveTemplates OFF", () => {
+    setAutoSave(false);
+    saveIndicators(SCOPE, [{ id: "EMA#1", type: "EMA" }]);
+    flushTemplateCapture(SCOPE, EPIC);
+    expect(loadSymbolTemplate(EPIC)?.indicators).toHaveLength(1);
+  });
+
+  it("cancels a pending debounced save for the same scope+epic", () => {
+    vi.useFakeTimers();
+    saveIndicators(SCOPE, [{ id: "EMA#1", type: "EMA" }]);
+    scheduleAutoSave(SCOPE, EPIC);
+    flushTemplateCapture(SCOPE, EPIC);
+    saveIndicators(SCOPE, []); // storage changes after flush...
+    vi.runAllTimers(); // ...a surviving timer would capture the empty layout
+    expect(loadSymbolTemplate(EPIC)?.indicators).toHaveLength(1);
+    vi.useRealTimers();
+  });
+});
+
+describe("flushPendingAutoSaves", () => {
+  it("fires every pending debounced save immediately", () => {
+    vi.useFakeTimers();
+    saveIndicators(SCOPE, [{ id: "EMA#1", type: "EMA" }]);
+    scheduleAutoSave(SCOPE, EPIC);
+    flushPendingAutoSaves();
+    expect(loadSymbolTemplate(EPIC)?.indicators).toHaveLength(1);
+    vi.runAllTimers(); // nothing left pending
+    vi.useRealTimers();
+  });
+
+  it("pending saves keep the setting gate (OFF means no write)", () => {
+    vi.useFakeTimers();
+    setAutoSave(false);
+    saveIndicators(SCOPE, [{ id: "EMA#1", type: "EMA" }]);
+    scheduleAutoSave(SCOPE, EPIC);
+    flushPendingAutoSaves();
+    expect(loadSymbolTemplate(EPIC)).toBeNull();
+    vi.useRealTimers();
   });
 });

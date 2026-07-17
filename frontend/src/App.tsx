@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Chart } from "klinecharts";
 import ChartGrid from "./ChartGrid";
+import { flushPendingAutoSaves } from "./lib/templateAutosave";
 import Toolbar from "./Toolbar";
 import SnapshotToolbar from "./SnapshotToolbar";
 import DrawSidebar from "./DrawSidebar";
@@ -371,6 +372,16 @@ export default function App() {
   useEffect(() => {
     if (activeId) sessionStorage.setItem(ACTIVE_TAB_SESSION_KEY, activeId);
   }, [activeId]);
+  // Reload/close within the template-autosave debounce (~800ms after an edit)
+  // would drop the pending capture with the page timer, leaving the symbol's
+  // template one edit behind. Land it now: the capture is a synchronous
+  // localStorage write, so it reliably completes inside pagehide (which, unlike
+  // beforeunload, also fires on mobile and bfcache navigations).
+  useEffect(() => {
+    const flush = () => flushPendingAutoSaves();
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, []);
   // Strip a deep-link ?tab= param after mount (not in the useState
   // initializer above) so a reload behaves normally without risking the
   // StrictMode double-invoke racing the read against the strip.
@@ -1021,6 +1032,7 @@ export default function App() {
   // never purged). Keeps activeCellId valid.
   const setLayout = (layout: LayoutKind) => {
     if (!active) return;
+    flushPendingAutoSaves(); // a layout trim purges cell scopes below — land pending autosaves first
     setTabs((ts) =>
       ts.map((t) => {
         if (t.id !== active.id) return t;
@@ -1200,7 +1212,10 @@ export default function App() {
       // Only burn the original once the copy fully landed — on storage quota the
       // copy silently drops keys, so keeping the source turns permanent data
       // loss into a mere orphaned-scope leak (mirrors mergeTabInto).
-      if (copiedOk && src.scope !== primaryCellScope(active.id)) purgeScope(src.scope);
+      if (copiedOk && src.scope !== primaryCellScope(active.id)) {
+        flushPendingAutoSaves(); // land ≤800ms-pending template autosaves pre-purge
+        purgeScope(src.scope);
+      }
       nextTabs = nextTabs.map((tt) => {
         if (tt.id !== active.id) return tt;
         const cells = tt.cells.filter((c) => c.id !== cellId);
@@ -1282,6 +1297,7 @@ export default function App() {
       message: "Close this chart? Its drawings and indicators will be removed.",
       confirmLabel: "Close",
       onConfirm: () => {
+        flushPendingAutoSaves(); // land ≤800ms-pending template autosaves pre-purge
         if (cell.scope !== primaryCellScope(active.id)) purgeScope(cell.scope);
         setTabs((ts) =>
           ts.map((t) => {
@@ -1427,6 +1443,10 @@ export default function App() {
   // prefix). NOTE: this purges per-cell content even for a saved layout's tab — the
   // user explicitly closed it; the layout body simply records one fewer tab.
   const closeTab = (id: string) => {
+    // Land any pending (≤800ms debounce) template autosaves before the purge
+    // wipes the scope storage they'd capture from — else those last edits die
+    // with the timer (cancelAutoSave in ChartCore's cleanup only drops it).
+    flushPendingAutoSaves();
     purgeTabScope(id);
     clearAlignAnchor(id); // drop this tab's sticky lock anchor so the map doesn't leak
     setTabs((ts) => {

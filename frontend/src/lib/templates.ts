@@ -32,7 +32,13 @@ import {
   type SavedIndicatorConfig,
   type IndicatorInstance,
 } from "./persist";
-import { applyIndicator, mintInstanceId, effectiveCalcParams, isSubPaneIndicator } from "./indicators";
+import {
+  applyIndicator,
+  mintInstanceId,
+  effectiveCalcParams,
+  isSubPaneIndicator,
+  removeIndicatorById,
+} from "./indicators";
 import {
   indicatorSignature,
   drawingSignature,
@@ -82,6 +88,40 @@ function savedIndicatorSignature(
   return indicatorSignature(identity);
 }
 
+// Add one template indicator instance to the cell under a freshly-minted id.
+// The ordering is load-bearing and shared by BOTH apply paths (additive merge
+// and exact-look replace): the AVWAP anchor is written BEFORE applyIndicator
+// (rehydrate:true reads it from storage), the config is written only after
+// success, and a failed add zeroes back any anchor it pre-wrote so a rejected
+// AVWAP doesn't leave a placed-anchor orphan under an id no instance ever used.
+// Returns the new instance, or null if the add failed.
+function addTemplateIndicator(
+  chart: Chart,
+  controller: ChartController,
+  scope: string,
+  epic: string,
+  t: SymbolTemplate,
+  inst: IndicatorInstance,
+): IndicatorInstance | null {
+  const id = mintInstanceId(chart, inst.type);
+  const anchor = t.avwapAnchors[inst.id];
+  if (anchor) saveAvwapAnchor(scope, epic, id, anchor);
+  const cfg = t.indicatorConfigs[inst.id];
+  const ok = applyIndicator(chart, scope, epic, { id, type: inst.type }, {
+    rehydrate: true,
+    config: cfg,
+    // Honor the cell's master "Hide indicators" switch — a template applied
+    // while it's on must not repaint indicators the sidebar eye says are hidden.
+    forceHidden: controller.indicatorsHidden.value,
+  });
+  if (!ok) {
+    if (anchor) saveAvwapAnchor(scope, epic, id, 0); // undo the pre-write
+    return null;
+  }
+  if (cfg) saveIndicatorConfig(scope, id, cfg);
+  return { id, type: inst.type };
+}
+
 // Apply a template onto a cell — ADDITIVE MERGE, existing wins (see
 // docs/superpowers/specs/2026-07-02-template-apply-merge-design.md). For each
 // template indicator/drawing we compute its identity signature and add it only
@@ -124,23 +164,8 @@ export function applySymbolTemplate(
     have.add(sig); // two identical template rows still add only once
     // Fresh id in the target cell — the template's id may collide with an
     // existing instance (ids are the bare type name or a random suffix).
-    const id = mintInstanceId(chart, inst.type);
-    const anchor = t.avwapAnchors[inst.id];
-    if (anchor) saveAvwapAnchor(scope, epic, id, anchor);
-    const cfg = t.indicatorConfigs[inst.id];
-    const ok = applyIndicator(chart, scope, epic, { id, type: inst.type }, {
-      rehydrate: true,
-      config: cfg,
-      // Honor the cell's master "Hide indicators" switch — a template applied
-      // while it's on must not repaint indicators the sidebar eye says are hidden.
-      forceHidden: controller.indicatorsHidden.value,
-    });
-    if (!ok) {
-      if (anchor) saveAvwapAnchor(scope, epic, id, 0); // undo the pre-write; id never became a real instance
-      continue;
-    }
-    if (cfg) saveIndicatorConfig(scope, id, cfg);
-    added.push({ id, type: inst.type });
+    const addedInst = addTemplateIndicator(chart, controller, scope, epic, t, inst);
+    if (addedInst) added.push(addedInst);
   }
   if (added.length > 0) {
     const full = [...existing, ...added];
@@ -172,6 +197,76 @@ export function applySymbolTemplate(
     // to the first loaded bar with the wrong slope.
     controller.coverDrawingAnchors?.();
   }
+  });
+}
+
+// Apply a template onto a cell as its EXACT look — the replace-on-open path
+// (spec: docs/superpowers/specs/2026-07-17-symbol-look-follows-template-design.md).
+// Unlike the additive applySymbolTemplate (manual Apply, never destroys), this
+// makes the cell end up exactly like the template: signature-matched existing
+// instances are KEPT untouched (no id/config/styling churn), unmatched ones are
+// removed, missing ones added, and the epic's drawings become the template's
+// drawings verbatim. Safe because the caller has already captured the outgoing
+// look into ITS template (flushTemplateCapture) — nothing is destroyed, it
+// travels with its own symbol.
+export function replaceSymbolTemplate(
+  chart: Chart,
+  controller: ChartController,
+  scope: string,
+  epic: string,
+  t: SymbolTemplate,
+): void {
+  withLayoutEventsSuppressed(() => {
+    // --- indicators: keep matched, remove extra, add missing -----------------
+    const existing = loadIndicators(scope);
+    const existingCfgs = loadIndicatorConfigs(scope);
+    // Multiset of wanted looks: signature -> template instances not yet matched
+    // (two identical template rows need two live instances).
+    const want = new Map<string, IndicatorInstance[]>();
+    for (const inst of t.indicators) {
+      const sig = savedIndicatorSignature(inst, t.indicatorConfigs[inst.id], t.avwapAnchors[inst.id]);
+      const q = want.get(sig) ?? [];
+      q.push(inst);
+      want.set(sig, q);
+    }
+    const kept: IndicatorInstance[] = [];
+    for (const inst of existing) {
+      const sig = savedIndicatorSignature(inst, existingCfgs[inst.id], loadAvwapAnchor(scope, epic, inst.id));
+      const q = want.get(sig);
+      if (q && q.length > 0) {
+        q.shift();
+        kept.push(inst);
+      } else {
+        removeIndicatorById(chart, scope, inst.id);
+        // Don't leave a placed anchor behind under a dead id for this epic.
+        if (inst.type === "AVWAP") saveAvwapAnchor(scope, epic, inst.id, 0);
+      }
+    }
+    const added: IndicatorInstance[] = [];
+    for (const q of want.values()) {
+      for (const inst of q) {
+        const addedInst = addTemplateIndicator(chart, controller, scope, epic, t, inst);
+        if (addedInst) added.push(addedInst);
+      }
+    }
+    const full = [...kept, ...added];
+    saveIndicators(scope, full);
+    controller.indicators.set(full);
+    if (controller.subPanesHidden.value && added.some((a) => isSubPaneIndicator(a.type)))
+      controller.subPanesHidden.set(false);
+
+    // --- drawings: the epic's set becomes exactly the template's -------------
+    // Order-sensitive signature compare skips the rewrite (and the id-minting
+    // rehydrate, which would drop selection) when the look is already exact.
+    const existingDrawings = loadDrawings(scope, epic);
+    const same =
+      existingDrawings.length === t.drawings.length &&
+      existingDrawings.every((d, i) => drawingSignature(d) === drawingSignature(t.drawings[i]));
+    if (!same) {
+      saveDrawings(scope, epic, t.drawings);
+      controller.overlays.rehydrate();
+      controller.coverDrawingAnchors?.();
+    }
   });
 }
 
@@ -220,35 +315,31 @@ export function applyDefaultTemplate(
   });
 }
 
-// Auto-apply a default template to a FRESH cell only. Tries the per-symbol
-// template first, then falls back to the GLOBAL default (symbol-agnostic) so
-// staple indicators (Volume, …) appear on every fresh chart. Gate: the cell has
-// zero saved indicators AND zero saved drawings for this epic — otherwise a reload
-// of a populated/customized cell would clobber it, or double-apply alongside the
-// normal mount hydrate. Returns true if a template was applied.
-//
-// Two nuances of the gate worth knowing:
-//  - Indicators are CELL-scoped (no epic), drawings are EPIC-scoped. So a cell that
-//    has only drawings (no indicators) and switches to a brand-new epic still passes
-//    the gate and auto-applies — its old-epic drawings are untouched (separate key).
-//    That's intentional: a never-touched epic in this cell IS fresh for templating.
-//  - The gate can't distinguish "fresh cell" from "user deliberately cleared it", so
-//    a fully-emptied cell will re-acquire the template on the next reload / symbol
-//    change. Acceptable: the symbol's default is meant to be the baseline.
-export function maybeAutoApplyTemplate(
+// Make a cell LOOK like `epic`'s saved template on open. Two modes:
+//  - opts.replace (a real symbol SWITCH whose outgoing look was just captured
+//    by flushTemplateCapture): exact-look replace, even onto a populated cell —
+//    safe because the capture means nothing on the chart is un-saved.
+//  - default (mount / reload / autosave-off): only a completely FRESH cell (no
+//    indicators, no drawings for this epic) gets the template. A populated cell
+//    is left exactly as persisted — its content may hold edits no template ever
+//    captured (autosave off, pre-reload debounce, a sibling cell on the same
+//    epic), and replacing here would destroy them.
+// No per-symbol template → fresh cell falls back to the GLOBAL default
+// (symbol-agnostic staples). Returns true if a template was applied.
+export function applyLookOnOpen(
   chart: Chart,
   controller: ChartController,
   scope: string,
   epic: string,
+  opts?: { replace?: boolean },
 ): boolean {
-  if (loadIndicators(scope).length > 0 || loadDrawings(scope, epic).length > 0) return false;
-  // Precedence: a per-symbol template (specific) wins over the global default
-  // (general). Same empty-cell gate guards both; only one is applied.
+  const fresh = loadIndicators(scope).length === 0 && loadDrawings(scope, epic).length === 0;
   const t = loadSymbolTemplate(epic);
-  if (t) {
-    applySymbolTemplate(chart, controller, scope, epic, t);
+  if (t && (opts?.replace || fresh)) {
+    replaceSymbolTemplate(chart, controller, scope, epic, t);
     return true;
   }
+  if (!fresh) return false;
   const d = loadDefaultTemplate();
   if (d) {
     applyDefaultTemplate(chart, controller, scope, epic, d);
