@@ -21,6 +21,7 @@ export default function NumberField({
   signed = false,
   className,
   disabled = false,
+  ariaLabel,
 }: {
   value: number | undefined;
   onChange: (n: number) => void;
@@ -38,6 +39,9 @@ export default function NumberField({
   /** Render greyed-out and non-editable (e.g. while a sweep axis owns the
    *  field's value). */
   disabled?: boolean;
+  /** Accessible name for label-less fields (tests and screen readers find the
+   *  input by it, matching the aria-label the raw inputs carried). */
+  ariaLabel?: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const shown = draft ?? String(value ?? 0);
@@ -91,6 +95,7 @@ export default function NumberField({
       type="text"
       inputMode="decimal"
       className={className}
+      aria-label={ariaLabel}
       value={shown}
       disabled={disabled}
       onChange={handleChange}

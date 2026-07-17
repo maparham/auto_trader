@@ -38,7 +38,12 @@ async def _broker_prefill(broker_id: str, epic: str) -> dict | None:
     snap = detail.get("snapshot") or {}
     bid, offer = snap.get("bid"), snap.get("offer")
     spread = round(offer - bid, 10) if isinstance(bid, (int, float)) and isinstance(offer, (int, float)) else 0.0
-    return {"spread": max(spread, 0.0)}
+    if spread <= 0:
+        # A missing or crossed quote (closed market, stale snapshot) carries no
+        # information; treating it as "no data" keeps a stale zero from being
+        # persisted as an authoritative source:"broker" profile.
+        return None
+    return {"spread": spread}
 
 
 @router.get("/api/costs/{epic}")

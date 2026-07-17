@@ -2407,15 +2407,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   Slippage
                   <InfoTip text="Price penalty on every fill, in the instrument's price units: you buy a bit higher and sell a bit lower." />
                 </span>
-                <input
-                  type="number"
-                  min={0}
-                  step="any"
-                  aria-label="Slippage"
+                <NumberField
+                  ariaLabel="Slippage"
                   value={cfg.costs.slippage.value}
-                  onChange={(e) =>
-                    setInstrumentCost({ slippage: { ...cfg.costs.slippage, value: Number(cleanNumInput(e.currentTarget)) } })
-                  }
+                  onChange={(n) => setInstrumentCost({ slippage: { ...cfg.costs.slippage, value: n } })}
                 />
               </div>
               <div className="bt-field">
@@ -2440,15 +2435,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                     x ATR
                     <InfoTip text="Per-fill slippage is base + multiplier x ATR(14) of the bar, so fast markets cost more." />
                   </span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="any"
-                    aria-label="Slippage ATR multiplier"
+                  <NumberField
+                    ariaLabel="Slippage ATR multiplier"
                     value={cfg.costs.slippage.atrMult}
-                    onChange={(e) =>
-                      setInstrumentCost({ slippage: { ...cfg.costs.slippage, atrMult: Number(cleanNumInput(e.currentTarget)) } })
-                    }
+                    onChange={(n) => setInstrumentCost({ slippage: { ...cfg.costs.slippage, atrMult: n } })}
                   />
                 </div>
               )}
@@ -2478,13 +2468,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   Spread
                   <InfoTip text="Full bid/ask spread in price units. Buys fill half a spread above the mid, sells half below." />
                 </span>
-                <input
-                  type="number"
-                  min={0}
-                  step="any"
-                  aria-label="Spread"
+                <NumberField
+                  ariaLabel="Spread"
                   value={cfg.costs.spread}
-                  onChange={(e) => setInstrumentCost({ spread: Number(cleanNumInput(e.currentTarget)) })}
+                  onChange={(n) => setInstrumentCost({ spread: n })}
                 />
               </div>
               <div className="bt-field">
@@ -2492,12 +2479,11 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   Long %/night
                   <InfoTip text="Charged per night a position is held (21:00 UTC rollover), as a percent of entry notional. Positive is a cost, negative a credit. Enter your broker's rate; fees are not fetched automatically." />
                 </span>
-                <input
-                  type="number"
-                  step="any"
-                  aria-label="Long %/night"
+                <NumberField
+                  ariaLabel="Long %/night"
+                  signed
                   value={cfg.costs.finLongDailyPct}
-                  onChange={(e) => setInstrumentCost({ finLongDailyPct: Number(e.currentTarget.value) })}
+                  onChange={(n) => setInstrumentCost({ finLongDailyPct: n })}
                 />
               </div>
               <div className="bt-field">
@@ -2505,12 +2491,11 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   Short %/night
                   <InfoTip text="Charged per night a position is held (21:00 UTC rollover), as a percent of entry notional. Positive is a cost, negative a credit. Enter your broker's rate; fees are not fetched automatically." />
                 </span>
-                <input
-                  type="number"
-                  step="any"
-                  aria-label="Short %/night"
+                <NumberField
+                  ariaLabel="Short %/night"
+                  signed
                   value={cfg.costs.finShortDailyPct}
-                  onChange={(e) => setInstrumentCost({ finShortDailyPct: Number(e.currentTarget.value) })}
+                  onChange={(n) => setInstrumentCost({ finShortDailyPct: n })}
                 />
               </div>
               <div className="bt-costs-source" style={{ gridColumn: "1 / -1" }}>
