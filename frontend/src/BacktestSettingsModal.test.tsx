@@ -104,9 +104,19 @@ describe("BacktestSettingsModal period scheduling", () => {
     renderModal();
     fireEvent.click(screen.getByLabelText(/only trade during selected windows/i));
     expect(screen.getByRole("button", { name: "Mon" })).toBeTruthy();
-    expect(screen.getByText("Session")).toBeTruthy();
+    // Session presets are a one-shot fill menu now, not a stateful selector.
+    expect(screen.getByRole("button", { name: "Fill from a market session" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Mon" }));
     expect(screen.getByText(/Active on \d+ of \d+ sampled slots/)).toBeTruthy();
+  });
+
+  it("session fill menu writes the preset's hours into From/To once", () => {
+    renderModal();
+    fireEvent.click(screen.getByLabelText(/only trade during selected windows/i));
+    fireEvent.click(screen.getByRole("button", { name: "Fill from a market session" }));
+    fireEvent.click(screen.getByText(/^NYSE/));
+    const times = [...document.querySelectorAll(".bt-time-field input")] as HTMLInputElement[];
+    expect(times.map((i) => i.value)).toEqual(["09:30", "16:00"]);
   });
 
   it("shows the session-close sub-toggle only when windows are enabled, and it toggles", () => {
@@ -385,7 +395,10 @@ describe("time-window sweep", () => {
   // toggle glyph. Activating a session preset while a timeWindow axis exists must
   // hide the editor (the axis is kept, not removed: the glyph/editor reappear when
   // the preset is cleared).
-  it("hides the window-sweep editor while a session preset is active", () => {
+  it("keeps the window-sweep editor when a loaded preset carries a legacy session", () => {
+    // Sessions are no longer persistent mask state (the fill menu inlines them
+    // into From/To and clears `session`), so a legacy preset that still carries
+    // one must NOT hide the window-sweep controls the way it used to.
     // A saved preset whose config carries an active session, loadable via the UI.
     const sessionCfg: BacktestConfig = {
       ...defaultBacktestConfig(),
@@ -411,10 +424,9 @@ describe("time-window sweep", () => {
     fireEvent.change(presetSelect, { target: { value: "session-preset" } });
     fireEvent.click(screen.getByRole("button", { name: "Load" }));
 
-    // Glyph gone (proves the session took effect, independent of the fix) AND the
-    // editor gone (the fix under test). The axis itself is still present.
-    expect(document.querySelector(".bt-tw-sweep-toggle")).toBeNull();
-    expect(document.querySelector(".bt-tw-sweep")).toBeNull();
+    // Both the glyph and the editor survive the load: no session-based gate.
+    expect(document.querySelector(".bt-tw-sweep-toggle")).toBeTruthy();
+    expect(document.querySelector(".bt-tw-sweep")).toBeTruthy();
   });
 });
 
