@@ -10,7 +10,7 @@
 import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { SweepRow } from "./api";
-import { axisColumnLabel, comboAxisLabel, comboAxisText, type SweepAxis } from "./lib/sweep";
+import { axisColumnLabel, comboAxisLabel, comboAxisText, fmtAxisValue, type SweepAxis } from "./lib/sweep";
 import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import Tooltip from "./components/Tooltip";
@@ -514,7 +514,7 @@ function SweepHeatmap({
       const v = r.combo[a.target];
       if (typeof v === "number") set.add(v);
     }
-    return [...set].sort((x, y) => x - y).map((v) => ({ key: String(v), label: String(v), match: { [a.target]: v } }));
+    return [...set].sort((x, y) => x - y).map((v) => ({ key: String(v), label: fmtAxisValue(v), match: { [a.target]: v } }));
   };
 
   // Picked grid axes, stored by TARGET (stable across streaming re-renders);

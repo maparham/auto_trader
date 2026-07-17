@@ -117,9 +117,19 @@ export function axisValues(a: RangeAxis): number[] {
   for (let i = 0; ; i++) {
     const v = a.from + dir * i * step;
     if (dir > 0 ? v > a.to + eps : v < a.to - eps) break;
-    out.push(Number(v.toPrecision(12)));
+    // toPrecision is relative, so it can't clean a near-zero artifact like
+    // -0.15 + 6*0.025 = 2.77e-17 — snap anything far below the step to 0.
+    const clean = Number(v.toPrecision(12));
+    out.push(Math.abs(clean) < step * 1e-9 ? 0 : clean);
   }
   return out;
+}
+
+/** Display text for a numeric axis value. Flushes float-noise near-zeros
+ * (e.g. 2.77e-17 in combos stored by archives predating the axisValues
+ * zero-snap) to a clean 0 — no real sweep point is that small. */
+export function fmtAxisValue(v: number): string {
+  return String(Math.abs(v) < 1e-12 ? 0 : Number(v.toPrecision(12)));
 }
 
 export function comboCount(axes: SweepAxis[]): number {
@@ -198,7 +208,8 @@ export function axisOptionFor(axis: SweepAxis, combo: SweepCombo): SweepOption |
  * the raw value for a range axis. */
 export function comboAxisText(axis: SweepAxis, combo: SweepCombo): string {
   if (axis.kind === "list") return axisOptionFor(axis, combo)?.label ?? "?";
-  return String(combo[axis.target] ?? "?");
+  const v = combo[axis.target];
+  return typeof v === "number" ? fmtAxisValue(v) : String(v ?? "?");
 }
 
 /** Label + value for one axis of a combo, for results rows. A rule VALUE

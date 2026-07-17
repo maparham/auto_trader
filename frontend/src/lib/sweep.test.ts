@@ -56,6 +56,15 @@ describe("enumerateCombos", () => {
     expect(comboCount(axes)).toBe(8);
   });
 
+  it("snaps float-noise near-zeros to exactly 0", () => {
+    // -0.15 + 6*0.025 = 2.7755575615628914e-17 in doubles; toPrecision alone
+    // can't clean it (relative precision), the zero-snap must.
+    const vals = enumerateCombos([axis("param:n", -0.15, 0.05, 0.025)])
+      .map((c) => c["param:n"]);
+    expect(vals).toContain(0);
+    expect(vals.every((v) => v === 0 || Math.abs(v as number) > 1e-9)).toBe(true);
+  });
+
   it("SWEEP_WARN_COMBOS is 1000", () => {
     expect(SWEEP_WARN_COMBOS).toBe(1000);
   });
@@ -340,6 +349,9 @@ describe("list axes", () => {
     expect(axisOptionFor(op, { "op:long.entry.0": "gte" })).toBeNull();
     expect(comboAxisText(op, { "op:long.entry.0": "gt" })).toBe("greater than");
     expect(comboAxisText(axis("param:n", 1, 2, 1), { "param:n": 1.5 })).toBe("1.5");
+    // Combos stored by old archives can carry enumeration float noise; the
+    // display text flushes it to a clean 0 (fmtAxisValue).
+    expect(comboAxisText(axis("param:n", -0.15, 0.05, 0.025), { "param:n": 2.7755575615628914e-17 })).toBe("0");
   });
 
   it("substitutes a rule value axis's x placeholder with the row's value", () => {
