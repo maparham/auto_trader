@@ -402,6 +402,11 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
   useEffect(() => {
     if (firstCfgSave.current) {
       firstCfgSave.current = false;
+      // The copy-on-load risk-sync normalization (applyRiskSync above, which
+      // returns `initial` unchanged when it's a no-op) must reach storage right
+      // away: the run payload is rebuilt from loadBacktestLastUsed(), so a
+      // drifted stored side would run a stop the panel no longer displays.
+      if (cfg !== initial) saveBacktestLastUsed(cfg);
       return;
     }
     const t = setTimeout(() => saveBacktestLastUsed(cfg), 400);
@@ -466,11 +471,14 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
     applyRiskSync(cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg(), "long"),
   );
   useEffect(() => {
-    const nextCoded = applyRiskSync(
-      cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg(),
-      "long",
-    );
+    const stored = cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : defaultCodedCfg();
+    const nextCoded = applyRiskSync(stored, "long");
     setCodedCfg(nextCoded);
+    // Write the normalization back: the run payload is rebuilt from storage
+    // (BacktestButton's loadCodedCfg), not from this state — leaving the stored
+    // copy drifted would show one stop kind while the run sends the other.
+    // applyRiskSync returns the same reference when it changed nothing.
+    if (cfg.codedStrategy && nextCoded !== stored) saveCodedCfg("backtest", cfg.codedStrategy, nextCoded);
     // Coded axes are per-file: switching files swaps in that file's saved set.
     if (cfg.mode === "coded") {
       setSweepAxes(pruneSweepAxes(loadSweepAxes(sweepContext("coded", cfg.codedStrategy)), nextCoded));

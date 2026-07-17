@@ -38,8 +38,8 @@ vi.mock("./api", async () => {
 
 import BacktestSettingsModal from "./BacktestSettingsModal";
 import { defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig";
-import { loadCodedCfg } from "./lib/codedConfig";
-import { saveBacktestPreset } from "./lib/persist/defaults";
+import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
+import { saveBacktestPreset, loadBacktestLastUsed } from "./lib/persist/defaults";
 import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal } from "./lib/signals";
 import type { SweepRow } from "./api";
 import { recordSweepRanges, recallSweepRange, saveSweepAxes, recordSweepPace } from "./lib/sweepMemory";
@@ -1139,5 +1139,32 @@ describe("clear sweep results", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
     expect(sweepStateSignal.value).toBeNull();
     expect(document.querySelector(".sweep-panel")).toBeNull();
+  });
+});
+
+// The run payload is rebuilt from storage (BacktestButton: loadBacktestLastUsed /
+// loadCodedCfg), not from the modal's React state. So the applyRiskSync copy-on-load
+// normalization must be WRITTEN BACK to storage when it changes anything — otherwise
+// the panel displays the synced risk (e.g. "% from entry") while the run still sends
+// the stored, drifted side (e.g. the old ATR stop).
+describe("risk sync load normalization write-back", () => {
+  const pctRisk = { stop: { kind: "pct" as const, value: 2 }, target: { kind: "none" as const } };
+  const atrRisk = { stop: { kind: "atr" as const, mult: 2, length: 14 }, target: { kind: "none" as const } };
+
+  it("persists the synced rule-mode risk to last-used on open", () => {
+    const initial = defaultBacktestConfig();
+    // riskSynced absent = ON; sides drifted apart (saved before sync existed).
+    initial.longRisk = pctRisk;
+    initial.shortRisk = atrRisk;
+    renderModal(initial);
+    // Long side wins (default viewed side): storage must now carry pct on BOTH sides.
+    expect(loadBacktestLastUsed()?.shortRisk?.stop.kind).toBe("pct");
+  });
+
+  it("persists the synced coded-mode risk back to the per-file store on open", () => {
+    saveCodedCfg("backtest", "desync.py", { ...defaultCodedCfg(), longRisk: pctRisk, shortRisk: atrRisk });
+    const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "desync.py" };
+    renderModal(initial);
+    expect(loadCodedCfg("backtest", "desync.py").shortRisk?.stop.kind).toBe("pct");
   });
 });
