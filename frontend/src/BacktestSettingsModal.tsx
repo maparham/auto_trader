@@ -62,7 +62,7 @@ import {
   ruleFromChartOperand,
   OP_REVERSE,
 } from "./lib/backtestConfig";
-import { SESSION_PRESETS, buildRangeChips, coverage, formatDayWindow, isActive, minToTime, resolveMask } from "./lib/backtestSchedule";
+import { SESSION_PRESETS, buildRangeChips, coverage, formatDayWindow, isActive, minToTime, resolveMask, sessionWindowInTz } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
@@ -749,13 +749,14 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
       a.target === "timeWindow" && a.kind === "list" && !a.options.some((x) => x.label === o.label)
         ? { ...a, options: [...a.options, o] }
         : a));
-  // A session preset just fills its standard hours as raw clock numbers; like
-  // every other window they are read in the chart timezone (no per-preset tz).
+  // A session preset fills its hours converted into the chart timezone (the
+  // window is read there like every other clock filter, no per-preset tz).
   const addSessionWindowOption = (key: SessionPreset | "") => {
     if (!key) return;
     const p = SESSION_PRESETS[key];
-    if (!p.window) return; // Crypto: 24h, no window to sweep
-    addTimeWindowOption(twOption(p.window.startMin, p.window.endMin, chartTimezone, p.label));
+    const w = sessionWindowInTz(p.window, p.tz, chartTimezone, Date.now());
+    if (!w) return; // Crypto: 24h, no window to sweep
+    addTimeWindowOption(twOption(w.startMin, w.endMin, chartTimezone, p.label));
   };
   // Removing the last option empties the axis; drop it entirely (mirrors the
   // operator path in tickOpOption) so an empty kind:"list" axis can't strand a
@@ -1511,6 +1512,16 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         </button>
       )
     ) : null;
+  // Last completed run's wall-clock duration (session-only, final number only —
+  // hidden while a run is in flight). Per mode so a backtest never shows the
+  // sweep's time or vice versa. Built once: it renders in whichever footer
+  // holds the Run button — the docked column's when open, else the panel's.
+  const [durationMs, durationBusy] = btMode === "backtest"
+    ? [btDurationMs, runInFlight]
+    : [sweepDurationMs, !!sweepState?.running];
+  const durationInfo = durationMs != null && !durationBusy ? (
+    <span className="sweep-counter bt-run-duration">Took {fmtRunDuration(durationMs)}</span>
+  ) : null;
   const runLabel = runInFlight ? "Running…" : btMode === "sweep" ? "Run sweep" : "Run backtest";
   const runDisabled = runInFlight || (btMode === "sweep" && sweepAxes.length === 0);
 
@@ -1549,7 +1560,7 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
         <div className="bt-results-col-body">{resultsBody}</div>
         <div className="modal-foot bt-cfg-foot">
           <RunBar
-            sweepInfo={null}
+            sweepInfo={durationInfo}
             runClusterLead={runClusterLead}
             runLabel={runLabel}
             runDisabled={runDisabled}
@@ -1906,14 +1917,17 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                           selector that would show a stale "selected" value. */}
                       <SessionFillMenu
                         disabled={resSeconds >= 86400}
+                        chartTz={chartTimezone}
                         onPick={(key) => {
-                          // Fill From/To (raw clock numbers) + weekdays from the
-                          // preset. The tz is NOT set: the window is read in the
-                          // chart timezone like every other clock filter.
+                          // Fill From/To with the session's hours converted into
+                          // the chart timezone — the window is read there like
+                          // every other clock filter (the tz is NOT set).
                           // resolveMask keeps existing weekday chips if the user set
                           // any (non-destructive), else fills the preset's weekdays.
                           const r = resolveMask({ ...cfg.range.mask, session: key });
-                          setMask({ session: undefined, timeOfDay: r.timeOfDay, daysOfWeek: r.daysOfWeek });
+                          const p = SESSION_PRESETS[key];
+                          const timeOfDay = sessionWindowInTz(r.timeOfDay ?? null, p.tz, chartTimezone, Date.now()) ?? undefined;
+                          setMask({ session: undefined, timeOfDay, daysOfWeek: r.daysOfWeek });
                         }}
                       />
                       <InfoTip text="Fills From/To (and weekdays, if none are set yet) from a market's hours. Everything stays editable after. Intraday timeframes only." />
@@ -2402,15 +2416,9 @@ export default function BacktestSettingsModal({ initial, epic, resolution, contr
                   {effectiveCombos === 1 ? "combo" : "combos"}
                 </span>
               )}
-              {/* Last completed run's wall-clock duration (session-only, final
-                  number only — hidden while a run is in flight). Per mode so a
-                  backtest never shows the sweep's time or vice versa. */}
-              {btMode === "backtest" && btDurationMs != null && !runInFlight && (
-                <span className="sweep-counter bt-run-duration">Took {fmtRunDuration(btDurationMs)}</span>
-              )}
-              {btMode === "sweep" && sweepDurationMs != null && !sweepState?.running && (
-                <span className="sweep-counter bt-run-duration">Took {fmtRunDuration(sweepDurationMs)}</span>
-              )}
+              {/* Duration follows the Run button: the docked column's footer
+                  shows it while the column is open, so skip it here then. */}
+              {!sideBySide && durationInfo}
               {btMode === "sweep" && sweepAxes.length > 0 && (
                 <span className="bt-search-toggle">
                   {/* No "Search" label: the seg self-describes, tooltips on the
@@ -3087,8 +3095,9 @@ function OperatorPicker({ value, onChange, sweep }: {
 // to <body> like OperatorPicker so it escapes the modal's scroll clip.
 const SESSION_MENU_WIDTH = 240;
 
-function SessionFillMenu({ disabled, onPick }: {
+function SessionFillMenu({ disabled, chartTz, onPick }: {
   disabled: boolean;
+  chartTz: string;
   onPick: (key: SessionPreset) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -3149,9 +3158,9 @@ function SessionFillMenu({ disabled, onPick }: {
             style={{ position: "fixed", top: pos.top, left: pos.left }}
           >
             {Object.entries(SESSION_PRESETS).map(([k, v]) => {
-              // Show the preset's native clock hours — they fill From/To as raw
-              // numbers, read in the chart timezone (no conversion).
-              const hrs = formatDayWindow(v.window ?? undefined);
+              // Hours shown converted into the chart timezone — the exact
+              // numbers a pick fills into From/To (the mask is read there).
+              const hrs = formatDayWindow(sessionWindowInTz(v.window, v.tz, chartTz, Date.now()) ?? undefined);
               return (
                 <li
                   key={k}
