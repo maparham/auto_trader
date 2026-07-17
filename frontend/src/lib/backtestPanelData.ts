@@ -9,6 +9,100 @@ export interface MetricRow {
   label: string;
   value: string;
   tone: "pos" | "neg" | "";
+  verdict?: MetricVerdict;
+}
+
+export type VerdictTone = "good" | "mid" | "bad";
+
+export interface MetricVerdict {
+  label: string;
+  tone: VerdictTone;
+}
+
+// One band of a metric's interpretation scale: applies while value < upTo (the
+// last band uses Infinity). Bands double as the source for the tooltip's
+// threshold lines, so display and verdict can't drift apart. desc is the
+// tooltip's one-phrase reading of the band.
+interface ScaleBand {
+  upTo: number;
+  label: string;
+  tone: VerdictTone;
+  desc: string;
+}
+
+// Conventional interpretation scales for the metrics where a single number has
+// an accepted reading (Sharpe/Sortino/Calmar from common practitioner rules of
+// thumb, SQN from Van Tharp's scale). Drawdown % is inverted: small is good.
+const METRIC_SCALES: Record<string, ScaleBand[]> = {
+  "Sharpe": [
+    { upTo: 0, label: "poor", tone: "bad", desc: "loses money on average" },
+    { upTo: 1, label: "weak", tone: "mid", desc: "yearly return below its volatility" },
+    { upTo: 2, label: "good", tone: "good", desc: "earns 1–2x its volatility" },
+    { upTo: 3, label: "very good", tone: "good", desc: "earns 2–3x its volatility" },
+    { upTo: Infinity, label: "excellent", tone: "good", desc: "earns 3x+ its volatility; check for overfit" },
+  ],
+  "Sortino": [
+    { upTo: 0, label: "poor", tone: "bad", desc: "loses money on average" },
+    { upTo: 1, label: "weak", tone: "mid", desc: "return below its downside volatility" },
+    { upTo: 2, label: "fair", tone: "mid", desc: "earns 1–2x its downside volatility" },
+    { upTo: 3, label: "good", tone: "good", desc: "earns 2–3x its downside volatility" },
+    { upTo: Infinity, label: "excellent", tone: "good", desc: "earns 3x+ its downside; check for overfit" },
+  ],
+  "Calmar": [
+    { upTo: 0, label: "poor", tone: "bad", desc: "shrinks over the period" },
+    { upTo: 0.5, label: "weak", tone: "mid", desc: "2+ years of growth to regain the worst drop" },
+    { upTo: 1, label: "fair", tone: "mid", desc: "1–2 years of growth to regain the worst drop" },
+    { upTo: 3, label: "good", tone: "good", desc: "a year's growth covers the worst drop" },
+    { upTo: Infinity, label: "excellent", tone: "good", desc: "worst drop regained in months" },
+  ],
+  "SQN": [
+    { upTo: 1.6, label: "poor", tone: "bad", desc: "edge indistinguishable from luck" },
+    { upTo: 2.5, label: "average", tone: "mid", desc: "edge visible but noisy" },
+    { upTo: 3, label: "good", tone: "good", desc: "edge clearly beats randomness" },
+    { upTo: 5, label: "excellent", tone: "good", desc: "steady edge, little luck dependence" },
+    { upTo: Infinity, label: "superb", tone: "good", desc: "this uniform is rarely real; verify" },
+  ],
+  "Profit factor": [
+    { upTo: 1, label: "losing", tone: "bad", desc: "wins don't cover the losses" },
+    { upTo: 1.25, label: "thin", tone: "mid", desc: "under $1.25 won per $1 lost" },
+    { upTo: 1.75, label: "decent", tone: "mid", desc: "$1.25–1.75 won per $1 lost" },
+    { upTo: 2.5, label: "good", tone: "good", desc: "about $2 won per $1 lost" },
+    { upTo: Infinity, label: "strong", tone: "good", desc: "$2.50+ won per $1 lost" },
+  ],
+  "Drawdown %": [
+    { upTo: 10, label: "mild", tone: "good", desc: "under +11% gain to recover" },
+    { upTo: 20, label: "moderate", tone: "mid", desc: "+11–25% gain to recover" },
+    { upTo: 30, label: "deep", tone: "bad", desc: "+25–43% gain to recover" },
+    { upTo: Infinity, label: "severe", tone: "bad", desc: "+43% or more just to break even" },
+  ],
+};
+
+function verdictFor(label: string, value: number | null | undefined): MetricVerdict | undefined {
+  if (value == null || !isFinite(value)) return undefined;
+  const bands = METRIC_SCALES[label];
+  if (!bands) return undefined;
+  const band = bands.find((b) => value < b.upTo) ?? bands[bands.length - 1];
+  return { label: band.label, tone: band.tone };
+}
+
+export interface ScaleLine {
+  range: string;
+  label: string;
+  tone: VerdictTone;
+  desc: string;
+}
+
+// The tooltip's threshold table, derived from the same bands the verdict uses
+// so display and verdict can't drift apart: "< 0 poor", "0 – 1 weak", ...,
+// "> 3 excellent". Null for metrics without a scale.
+export function metricScale(label: string): ScaleLine[] | null {
+  const bands = METRIC_SCALES[label];
+  if (!bands) return null;
+  return bands.map((b, i) => {
+    const lo = i === 0 ? null : bands[i - 1].upTo;
+    const range = lo === null ? `< ${b.upTo}` : b.upTo === Infinity ? `> ${lo}` : `${lo} – ${b.upTo}`;
+    return { range, label: b.label, tone: b.tone, desc: b.desc };
+  });
 }
 
 export interface MetricGroup {
@@ -80,6 +174,7 @@ export function metricRows(res: PanelResult): MetricRow[] {
     label: "Profit factor",
     value: res.metrics.profit_factor !== null ? res.metrics.profit_factor.toFixed(2) : "—",
     tone: "",
+    verdict: verdictFor("Profit factor", res.metrics.profit_factor),
   });
 
   // Expectancy
@@ -87,6 +182,11 @@ export function metricRows(res: PanelResult): MetricRow[] {
     label: "Expectancy",
     value: res.metrics.expectancy.toFixed(2),
     tone: getTone(res.metrics.expectancy),
+    verdict: res.metrics.expectancy > 0
+      ? { label: "positive", tone: "good" }
+      : res.metrics.expectancy < 0
+        ? { label: "negative", tone: "bad" }
+        : undefined,
   });
 
   // Per-trade magnitudes below are sign-fixed (a win is always ≥0, a loss ≤0),
@@ -143,6 +243,7 @@ export function metricRows(res: PanelResult): MetricRow[] {
     label: "Drawdown %",
     value: res.metrics.max_drawdown_pct.toFixed(2) + "%",
     tone: "",
+    verdict: verdictFor("Drawdown %", res.metrics.max_drawdown_pct),
   });
 
   // Avg duration
@@ -173,16 +274,19 @@ export function metricRows(res: PanelResult): MetricRow[] {
     label: "Sharpe",
     value: res.metrics.sharpe == null ? "-" : res.metrics.sharpe.toFixed(2),
     tone: "",
+    verdict: verdictFor("Sharpe", res.metrics.sharpe),
   });
   rows.push({
     label: "Sortino",
     value: res.metrics.sortino == null ? "-" : res.metrics.sortino.toFixed(2),
     tone: "",
+    verdict: verdictFor("Sortino", res.metrics.sortino),
   });
   rows.push({
     label: "Calmar",
     value: res.metrics.calmar == null ? "-" : res.metrics.calmar.toFixed(2),
     tone: "",
+    verdict: verdictFor("Calmar", res.metrics.calmar),
   });
   rows.push({
     label: "CAGR %",
@@ -193,6 +297,7 @@ export function metricRows(res: PanelResult): MetricRow[] {
     label: "SQN",
     value: res.metrics.sqn == null ? "-" : res.metrics.sqn.toFixed(2),
     tone: "",
+    verdict: verdictFor("SQN", res.metrics.sqn),
   });
   rows.push({
     label: "Exposure %",
@@ -237,23 +342,23 @@ export const METRIC_INFO: Record<string, string> = {
   "Profit factor": "Gross profit divided by gross loss; above 1 is profitable.",
   "Expectancy": "Average profit or loss per trade.",
   "Trades": "Number of closed trades.",
-  "Win rate": "Share of trades that closed in profit.",
+  "Win rate": "Share of trades that closed in profit. No good or bad number on its own: 40% is fine with big winners, 70% can lose with big losers. Read it against avg win/loss; breakeven is 1/(1+R).",
   "Avg win": "Average size of a winning trade.",
   "Avg loss": "Average size of a losing trade.",
-  "Avg win/loss": "Average win divided by average loss.",
+  "Avg win/loss": "Average win divided by average loss (R). Only meaningful next to win rate: a low ratio needs a high win rate to profit, and vice versa.",
   "Avg duration": "Average time a trade stayed open.",
   "Drawdown": "Largest equity drop from a high to a low.",
   "Drawdown %": "That drop as a % of the equity high.",
-  "Largest win": "Biggest single winning trade.",
-  "Largest loss": "Biggest single losing trade.",
-  "Win streak": "Longest run of wins in a row.",
-  "Loss streak": "Longest run of losses in a row.",
+  "Largest win": "Biggest single winning trade. If it dominates net P&L, the edge may be one lucky outlier rather than repeatable.",
+  "Largest loss": "Biggest single losing trade. If it dwarfs the average loss, the stop discipline failed at least once; expect it to happen again live.",
+  "Win streak": "Longest run of wins in a row. Mostly a psychology read; long streaks in a short run can also mean the entry only works in one regime.",
+  "Loss streak": "Longest run of losses in a row. Ask: could you sit through this many losses live without abandoning the system?",
   "Sharpe": "Annualized Sharpe ratio from daily equity returns. Treat with caution under 30 trades.",
   "Sortino": "Like Sharpe but only penalizes downside volatility.",
   "Calmar": "CAGR divided by max drawdown; return earned per unit of worst-case loss.",
-  "CAGR %": "Compound annual growth rate of the equity curve.",
-  "SQN": "System Quality Number: sqrt(trades) times expectancy over trade P&L deviation. Van Tharp's scale calls 2 good and 3 excellent.",
-  "Exposure %": "Share of the backtest period spent holding a position.",
+  "CAGR %": "Compound annual growth rate of the equity curve. No universal good number: judge it against the drawdown taken to earn it (that's Calmar) and what buy-and-hold returned.",
+  "SQN": "System Quality Number: sqrt(trades) times expectancy over trade P&L deviation.",
+  "Exposure %": "Share of the backtest period spent holding a position. Neither good nor bad alone: low exposure with the same return means capital was used efficiently; high exposure means returns lean on staying in the market.",
 };
 
 export function metricGroups(res: PanelResult): MetricGroup[] {
@@ -314,15 +419,26 @@ function allLeg(res: PanelResult): LegMetrics {
   };
 }
 
+// Win rate and avg win/loss have no meaning alone — only the pair does. Both
+// cells share one verdict: green when the win rate clears the breakeven rate
+// implied by the payoff ratio (w > 1/(1+R)), red when it doesn't. Skipped for
+// legs without both inputs (no trades, or no losses so R is null).
+function breakevenTone(m: LegMetrics): "pos" | "neg" | "" {
+  if (m.n_trades === 0 || m.avg_win_loss_ratio === null) return "";
+  const breakeven = 1 / (1 + m.avg_win_loss_ratio);
+  if (m.win_rate === breakeven) return "";
+  return m.win_rate > breakeven ? "pos" : "neg";
+}
+
 // One column per metric: label, tooltip, and how to render a LegMetrics into a
-// cell. Only Net P&L carries sign tone — the per-trade magnitudes are sign-fixed
-// (a win is always ≥0, a loss ≤0), so colouring them is decoration, matching the
-// flat stat grid above.
+// cell. Sign tone is reserved for cells whose colour is a verdict: Net P&L,
+// expectancy, and the breakeven pair above. The per-trade magnitudes are
+// sign-fixed (a win is always ≥0, a loss ≤0), so colouring them is decoration.
 const LEG_COLUMNS: { label: string; info: string; cell: (m: LegMetrics) => LegCell }[] = [
   { label: "Trades", info: "Number of closed trades.",
     cell: (m) => ({ value: String(m.n_trades), tone: "" }) },
-  { label: "Win rate", info: "Share of trades that closed in profit.",
-    cell: (m) => ({ value: Math.round(m.win_rate * 100) + "%", tone: "" }) },
+  { label: "Win rate", info: "Share of trades that closed in profit. Green when above the breakeven rate implied by this leg's avg win/loss (1/(1+R)), red when below — a win rate means nothing on its own.",
+    cell: (m) => ({ value: Math.round(m.win_rate * 100) + "%", tone: breakevenTone(m) }) },
   { label: "Net P&L", info: "Total profit after costs, across these trades.",
     cell: (m) => ({ value: formatSignedMoney(m.net_pnl), tone: getTone(m.net_pnl) }) },
   { label: "Expectancy", info: "Average profit per trade, winners and losers together.",
@@ -333,8 +449,8 @@ const LEG_COLUMNS: { label: string; info: string; cell: (m: LegMetrics) => LegCe
     cell: (m) => ({ value: m.avg_win.toFixed(2), tone: "" }) },
   { label: "Avg loss", info: "Average size of a losing trade.",
     cell: (m) => ({ value: m.avg_loss.toFixed(2), tone: "" }) },
-  { label: "Avg win/loss", info: "Average win divided by average loss.",
-    cell: (m) => ({ value: m.avg_win_loss_ratio !== null ? m.avg_win_loss_ratio.toFixed(2) : "—", tone: "" }) },
+  { label: "Avg win/loss", info: "Average win divided by average loss (R). Only meaningful next to win rate: green when the pair clears breakeven (win rate above 1/(1+R)), red when it doesn't.",
+    cell: (m) => ({ value: m.avg_win_loss_ratio !== null ? m.avg_win_loss_ratio.toFixed(2) : "—", tone: breakevenTone(m) }) },
   { label: "Largest win", info: "Biggest single winning trade.",
     cell: (m) => ({ value: m.largest_win.toFixed(2), tone: "" }) },
   { label: "Largest loss", info: "Biggest single losing trade.",

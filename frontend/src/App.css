@@ -4056,6 +4056,31 @@
 }
 .bt-panel-stat-value.pos { color: var(--pos); }
 .bt-panel-stat-value.neg { color: var(--neg); }
+/* One-word interpretation under the ratio tiles (Sharpe "good", SQN "average"…).
+   Amber is a fixed mid-tone readable on both themes; good/bad reuse pos/neg. */
+.bt-panel-stat-verdict {
+  font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.bt-panel-stat-verdict.good { color: var(--pos); }
+.bt-panel-stat-verdict.mid { color: #d48806; }
+.bt-panel-stat-verdict.bad { color: var(--neg); }
+/* Interpretation-scale table inside the metric ⓘ tooltip: verdict word (tinted
+   to match the tile verdict it explains), its range in tabular mono, then a
+   one-phrase reading of the band. All left-aligned; the tooltip frame widens
+   to fit the extra column. */
+.tooltip:has(.bt-scale) { max-width: 400px; }
+.bt-scale { display: grid; grid-template-columns: max-content max-content 1fr; gap: 3px 12px; }
+/* Each row wrapper dissolves so range/word land in the grid's two columns. */
+.bt-scale-row { display: contents; }
+.bt-scale-range {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 11px; color: var(--text-faint); white-space: nowrap;
+}
+.bt-scale-word { font-size: 11px; color: var(--text-dim); }
+.bt-scale-desc { font-size: 11px; color: var(--text-dim); }
+.bt-scale-word.good { color: var(--pos); }
+.bt-scale-word.mid { color: #d48806; }
+.bt-scale-word.bad { color: var(--neg); }
 
 /* Analysis tab: SL/TP efficiency read-outs, exit-reason + context breakdown
    tables, and inline R-distribution histograms. Flat, light-first, no shadows;
