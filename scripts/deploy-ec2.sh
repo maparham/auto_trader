@@ -21,6 +21,15 @@ IP=$(aws ec2 describe-instances --region $REGION --instance-ids "$ID" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
 SSH="ssh -i $KEY -o StrictHostKeyChecking=accept-new ec2-user@$IP"
 
+# Wait for sshd (a freshly started box passes instance-running before ssh is up),
+# then make sure the rsync destination exists on first deploy.
+for i in $(seq 1 30); do
+  $SSH true 2>/dev/null && break
+  [ "$i" = 30 ] && { echo "ssh not reachable at $IP after 90s" >&2; exit 1; }
+  sleep 3
+done
+$SSH mkdir -p /home/ec2-user/src/backend
+
 # Source + assets. The Dockerfile expects repo-root context with backend/ prefix.
 rsync -az --delete -e "ssh -i $KEY -o StrictHostKeyChecking=accept-new" \
   backend/Dockerfile backend/pyproject.toml backend/uv.lock \

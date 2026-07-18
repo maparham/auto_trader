@@ -102,12 +102,12 @@ def _host_state(start: bool = False) -> dict:
 
 
 @router.get("/api/compute/host")
-async def compute_host_state() -> dict:
+def compute_host_state() -> dict:
     return _host_state()
 
 
 @router.post("/api/compute/host/start")
-async def compute_host_start() -> dict:
+def compute_host_start() -> dict:
     return _host_state(start=True)
 
 
