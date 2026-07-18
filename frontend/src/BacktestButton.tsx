@@ -364,7 +364,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // outer finally resets `running`, so an early return here is clean.
         const hostState = computeHostStateSignal.value;
         if (sweepTargetSignal.value === "remote" && (hostState === "stopped" || hostState === "booting")) {
-          toast("Compute host is not ready yet. Start it from the sweep settings.");
+          toast("Compute host is not ready yet. Start it from the toolbar (Host off / Start).");
           return;
         }
         const ctl = new AbortController();

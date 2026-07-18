@@ -63,42 +63,54 @@ def _ec2_client(region: str):
     return boto3.client("ec2", region_name=region)
 
 
-def _probe_ready(url: str, token: str) -> bool:
-    """The instance is `ready` once the app inside answers with our token."""
+def _probe_activity(url: str, token: str) -> int | None:
+    """Probe the app inside the instance. Returns its `activeJobs` count when it
+    answers with our token (the instance is then `ready`), else None (still
+    booting / unreachable)."""
     try:
         r = httpx.get(
             f"{url}/api/compute/activity",
             headers={"Authorization": f"Bearer {token}"},
             timeout=3.0,
         )
-        return r.status_code == 200
-    except httpx.HTTPError:
-        return False
+        if r.status_code != 200:
+            return None
+        return int(r.json().get("activeJobs", 0))
+    except (httpx.HTTPError, ValueError):
+        return None
 
 
-def _host_state(start: bool = False) -> dict:
+def _host_state(start: bool = False, stop: bool = False) -> dict:
     cfg = _ComputeHostSettings()
     instance_id = cfg.compute_ec2_instance_id
     if not instance_id:
-        return {"state": "unconfigured", "detail": None}
+        return {"state": "unconfigured", "detail": None, "activeJobs": 0}
     try:
         ec2 = _ec2_client(cfg.compute_ec2_region)
         desc = ec2.describe_instances(InstanceIds=[instance_id])
         ec2_state = desc["Reservations"][0]["Instances"][0]["State"]["Name"]
         if start and ec2_state in ("stopped", "stopping"):
             ec2.start_instances(InstanceIds=[instance_id])
-            return {"state": "booting", "detail": None}
+            return {"state": "booting", "detail": None, "activeJobs": 0}
+        if stop and ec2_state in ("running", "pending"):
+            ec2.stop_instances(InstanceIds=[instance_id])
+            return {"state": "stopped", "detail": None, "activeJobs": 0}
     except Exception as exc:  # boto3's error taxonomy is broad; surface verbatim
         raise HTTPException(502, f"EC2 error: {exc}") from None
     if ec2_state in ("stopped", "stopping"):
-        return {"state": "stopped", "detail": None}
+        return {"state": "stopped", "detail": None, "activeJobs": 0}
     if ec2_state == "pending":
-        return {"state": "booting", "detail": None}
+        return {"state": "booting", "detail": None, "activeJobs": 0}
     if ec2_state == "running":
         url, token = _config()
-        ready = _probe_ready(url, token)
-        return {"state": "ready" if ready else "booting", "detail": None}
-    return {"state": "stopped", "detail": f"ec2 state: {ec2_state}"}
+        jobs = _probe_activity(url, token)
+        ready = jobs is not None
+        return {
+            "state": "ready" if ready else "booting",
+            "detail": None,
+            "activeJobs": jobs or 0,
+        }
+    return {"state": "stopped", "detail": f"ec2 state: {ec2_state}", "activeJobs": 0}
 
 
 @router.get("/api/compute/host")
@@ -109,6 +121,13 @@ def compute_host_state() -> dict:
 @router.post("/api/compute/host/start")
 def compute_host_start() -> dict:
     return _host_state(start=True)
+
+
+@router.post("/api/compute/host/stop")
+def compute_host_stop() -> dict:
+    """Stop the instance if running (manual button). No job guard here: the
+    frontend confirms and warns when a sweep is active; a deliberate stop wins."""
+    return _host_state(stop=True)
 
 
 @router.get("/api/compute/activity")

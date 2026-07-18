@@ -570,7 +570,11 @@ export async function computeStatus(): Promise<ComputeStatus> {
 // four states; `detail` carries a human-readable note (e.g. an AWS error) or null.
 export type ComputeHostState = "unconfigured" | "stopped" | "booting" | "ready";
 
-export async function computeHostState(): Promise<{ state: ComputeHostState; detail: string | null }> {
+export async function computeHostState(): Promise<{
+  state: ComputeHostState;
+  detail: string | null;
+  activeJobs: number;
+}> {
   const res = await fetch(`${BASE}/api/compute/host`);
   if (!res.ok) throw new Error(`host state: ${res.status}`);
   return res.json();
@@ -581,6 +585,13 @@ export async function computeHostState(): Promise<{ state: ComputeHostState; det
 export async function startComputeHost(): Promise<{ state: ComputeHostState }> {
   const res = await fetch(`${BASE}/api/compute/host/start`, { method: "POST" });
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `start: ${res.status}`);
+  return res.json();
+}
+
+// Stop the host (manual toolbar button). Same 502-detail unwrap as start.
+export async function stopComputeHost(): Promise<{ state: ComputeHostState }> {
+  const res = await fetch(`${BASE}/api/compute/host/stop`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `stop: ${res.status}`);
   return res.json();
 }
 

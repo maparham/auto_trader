@@ -56,6 +56,7 @@ import {
 } from "./ToolbarControls";
 import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
+import ComputeHostButton from "./ComputeHostButton";
 import BrokerSelector from "./BrokerSelector";
 import { isDataOnlyBroker, type BrokerAccount } from "./lib/trading";
 import { isSynthetic } from "./lib/syntheticRegistry";
@@ -622,6 +623,11 @@ export default function Toolbar({
           onChange={onSelectBroker}
         />
       )}
+
+      {/* Managed EC2 compute host: a loud "ON" pill while it's running so its
+          hourly cost stays visible, with manual Start/Stop. Renders nothing on
+          non-EC2 installs. Self-contained (owns its own polling + state). */}
+      <ComputeHostButton />
 
       {/* Backtest + Live sit together here (kept off the tab bar so they survive
           maximized view): backtest a rule strategy, then arm the same strategy

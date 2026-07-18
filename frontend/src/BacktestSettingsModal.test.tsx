@@ -67,7 +67,7 @@ import { defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig
 import { SESSION_PRESETS, minToTime, sessionWindowInTz } from "./lib/backtestSchedule";
 import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
 import { saveBacktestPreset, loadBacktestLastUsed } from "./lib/persist/defaults";
-import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal, computeHostStateSignal } from "./lib/signals";
+import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal } from "./lib/signals";
 import type { SweepRow } from "./api";
 import { recordSweepRanges, recallSweepRange, saveSweepAxes } from "./lib/sweepMemory";
 
@@ -1117,39 +1117,9 @@ describe("sweep footer estimate + compute toggle", () => {
   });
 });
 
-describe("compute host chip + start button", () => {
-  // A range axis so Sweep mode has something to run (the compute UI only renders
-  // with a configured axis).
-  const bigAxis = () =>
-    saveSweepAxes("rules", [
-      { kind: "range", target: "rule:long.entry.0.left.length", label: "len", from: 1, to: 10, step: 1 },
-    ]);
-
-  beforeEach(() => {
-    sweepTargetSignal.set("remote");
-    computeHostStateSignal.set("unknown");
-  });
-  afterEach(() => {
-    sweepStateSignal.set(null);
-    sweepAxesSignal.set([]);
-    sweepTargetSignal.set("local");
-    computeHostStateSignal.set("unknown");
-  });
-
-  it("shows 'Host stopped' + a Start button, and Start calls startComputeHost", async () => {
-    mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
-    mockComputeHostState.mockResolvedValue({ state: "stopped", detail: null });
-    bigAxis();
-    renderModal();
-    enterSweepMode();
-
-    // The chip renders once the poll resolves the host as stopped.
-    await waitFor(() => expect(screen.getByText("Host stopped")).toBeTruthy());
-    const start = screen.getByRole("button", { name: "Start" });
-    fireEvent.click(start);
-    await waitFor(() => expect(mockStartComputeHost).toHaveBeenCalled());
-  });
-});
+// The compute-host status + Start/Stop moved to the toolbar (ComputeHostButton,
+// covered by ComputeHostButton.test.tsx). The sweep footer no longer renders a
+// host chip, so there is nothing to test here.
 
 describe("backtest | sweep mode switch", () => {
   afterEach(() => {

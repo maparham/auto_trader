@@ -514,6 +514,10 @@ export const sweepTargetSignal = new Signal<SweepTarget>(loadSweepTarget());
 // proceeds as before).
 export type ComputeHostUiState = "unknown" | "unconfigured" | "stopped" | "booting" | "ready";
 export const computeHostStateSignal = new Signal<ComputeHostUiState>("unknown");
+// Sweep jobs the remote host reports running now. Read by the toolbar Stop
+// button so its confirm can warn "a sweep is running" even for a sweep started
+// from another tab or a detached run.
+export const computeHostJobsSignal = new Signal<number>(0);
 
 // Transient notice shown when selecting a trade row can't navigate the chart to
 // it — the trade predates the history reachable at the current timeframe (a fine

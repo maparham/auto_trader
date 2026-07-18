@@ -3182,6 +3182,48 @@
 .toolbar .anchor-btn.on { background: var(--hover-strong); }
 .toolbar .anchor-btn:disabled { opacity: 0.5; cursor: default; }
 
+/* Compute-host pill. When the EC2 host is running it costs ~$3/hr, so the ON
+   state is a filled amber pill (the app's "notice me, not an alarm" amber) that
+   is hard to miss on either theme; off/booting are quiet. */
+.compute-host-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 8px; border-radius: 13px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.compute-host-btn.is-off {
+  color: var(--text-dim); border: 1px solid var(--border);
+}
+.compute-host-btn.is-booting {
+  color: #8a6d00; background: color-mix(in srgb, #e0a82e 16%, transparent);
+  border: 1px solid color-mix(in srgb, #e0a82e 45%, transparent);
+}
+.compute-host-btn.is-on {
+  color: #2a2100; background: #e0a82e;
+  border: 1px solid color-mix(in srgb, #e0a82e 70%, #000);
+}
+.compute-host-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #6b5200;
+  animation: compute-host-pulse 1.8s ease-in-out infinite;
+}
+@keyframes compute-host-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .compute-host-dot { animation: none; } }
+/* Scoped under .compute-host-btn so these win over the toolbar's generic
+   button styling (which would otherwise paint them accent-blue). */
+.compute-host-btn .compute-host-start,
+.compute-host-btn .compute-host-stop {
+  height: 20px; padding: 0 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.compute-host-btn .compute-host-start {
+  color: var(--accent-text); background: var(--accent); border: none;
+}
+.compute-host-btn .compute-host-start:hover { background: color-mix(in srgb, var(--accent) 85%, #000); }
+.compute-host-btn .compute-host-stop {
+  color: #2a2100; background: rgba(255, 255, 255, 0.6);
+  border: 1px solid color-mix(in srgb, #e0a82e 80%, #000);
+}
+.compute-host-btn .compute-host-stop:hover { background: rgba(255, 255, 255, 0.9); }
+
 /* Snapshot split control: ONE control — the camera face saves instantly, the
    slim caret opens the gallery. No gap; the halves share the rounded ends so
    the pair reads as a single button. */
