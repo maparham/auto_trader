@@ -29,7 +29,7 @@ export interface SlopeSpec { len: number }
 
 /** The app's custom indicator types reachable as a rule operand (SESSIONS is
  * deferred — it has no price line and nothing to click-select). */
-export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI" | "PIVOT_BANDS" | "PIVOT_ANALYSIS" | "SLOPE";
+export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI" | "PIVOT_BANDS" | "PIVOT_ANALYSIS" | "SLOPE" | "CANDLE_PATTERNS";
 /** The straight-line drawing family evaluable as a per-bar price series. */
 export type DrawingKind = "segment" | "rayLine" | "straightLine" | "horizontalStraightLine" | "priceLine";
 
@@ -446,6 +446,9 @@ export function operandBaseLen(op: Operand): number {
       const n = Math.max(1, Number(r.calcParams[0]) || 50);
       return 2 * n;
     }
+    // Candle Patterns: eps needs 14 TRs (15 bars); the deepest pattern (ladder
+    // bottom) needs 5. 15 covers both.
+    if (r.indicatorType === "CANDLE_PATTERNS") return 15;
     // Slope is rate-only (mirrors computeIndicatorRecipe/indicatorOutputs): four
     // fixed blocks relative to K (capped at 5 lengths, mirrors slopeLengths in
     // indicators/slope.ts) so `line % K` indexes the same length the operand reads.

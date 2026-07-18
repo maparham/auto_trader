@@ -296,6 +296,40 @@ describe("computeCandlePatterns (chart calc): enable filtering + canonical indic
   });
 });
 
+describe("operand parity: template calc === patternLineSeries per line", () => {
+  // A mixed fixture that fires several patterns (bull_engulfing, pin_bottom,
+  // bear_engulfing, doji from the flat pad). Concatenated hit sequences —
+  // parity holds regardless of cross-bar interactions.
+  const mixed = withPad(
+    B(100, 101, 97, 98), B(97, 102, 96, 101), // bull_engulfing
+    B(100, 100.5, 90, 99.5),                   // pin_bottom
+    B(98, 101, 97, 100), B(101, 102, 96, 97),  // bear_engulfing
+  );
+
+  it("fires at least one enabled hit (non-vacuous)", () => {
+    const pts = computeCandlePatterns(mixed, {});
+    expect(pts.some((p) => (p.hits ?? []).length > 0)).toBe(true);
+  });
+
+  it("each canonical line matches the all-enabled template's per-bar hit set", () => {
+    const template = computeCandlePatterns(mixed, {});
+    for (let i = 0; i < CANDLE_PATTERN_DEFS.length; i++) {
+      const expected = template.map((pt) => ((pt.hits ?? []).includes(i) ? 1 : 0));
+      expect(patternLineSeries(mixed, i)).toEqual(expected);
+    }
+  });
+
+  it("aggregate lines match the polarity-OR over the template hits", () => {
+    const template = computeCandlePatterns(mixed, {});
+    const aggFor = (pol: "bull" | "bear") =>
+      template.map((pt) =>
+        (pt.hits ?? []).some((idx) => CANDLE_PATTERN_DEFS[idx].polarity === pol) ? 1 : 0,
+      );
+    expect(patternLineSeries(mixed, ANY_BULL_LINE)).toEqual(aggFor("bull"));
+    expect(patternLineSeries(mixed, ANY_BEAR_LINE)).toEqual(aggFor("bear"));
+  });
+});
+
 describe("warm-up: short arrays never crash or over-report", () => {
   it("3-bar array has no morning_star (needs 4 bars) and does not throw", () => {
     const bars = [B(100, 101, 99, 100), B(100, 101, 99, 100), B(100, 101, 99, 100)];

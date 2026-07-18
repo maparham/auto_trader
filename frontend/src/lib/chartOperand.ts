@@ -15,9 +15,10 @@ import { maLegendLabel, templateMaKind } from "./indicators/ma";
 import { normalizeMaKind } from "./mtf";
 import { PREV_HL_PERIODS } from "./indicators/prevHl";
 import { DIVERGENCE_KINDS, RSI_DIVERGENCE_DEFAULTS, type DivergenceKind, type RsiExtend } from "./customIndicators";
+import { CANDLE_PATTERN_DEFS, ANY_BULL_LINE, ANY_BEAR_LINE, type CandlePatternsExtend } from "./indicators/candlePatterns";
 
 /** Custom indicator types copyable into a rule (SESSIONS deferred). */
-const SUPPORTED_INDICATORS = new Set<string>(["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI", "PIVOT_BANDS", "PIVOT_ANALYSIS", "SLOPE"]);
+const SUPPORTED_INDICATORS = new Set<string>(["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI", "PIVOT_BANDS", "PIVOT_ANALYSIS", "SLOPE", "CANDLE_PATTERNS"]);
 /** Straight-line drawings evaluable as a per-bar price series. */
 const SUPPORTED_DRAWINGS = new Set<string>([
   "segment", "rayLine", "straightLine", "horizontalStraightLine", "priceLine",
@@ -67,6 +68,18 @@ export function indicatorToRecipe(
   line = 0,
 ): { recipe: IndicatorRecipe; timeframe?: string } | null {
   if (!isSupportedIndicatorType(indType)) return null;
+  if (indType === "CANDLE_PATTERNS") {
+    // extendData is all render state (colors, toggles, labels) — none of it
+    // computes, EXCEPT the aggregate-line membership, which must be snapshotted
+    // so toggling patterns on the chart never silently rewrites an existing rule.
+    const recipe: IndicatorRecipe = { source: "indicator", indicatorType: "CANDLE_PATTERNS", calcParams: [], line };
+    if (line === ANY_BULL_LINE || line === ANY_BEAR_LINE) {
+      const dis = ((extendData as CandlePatternsExtend | undefined)?.disabled) ?? {};
+      const pol = line === ANY_BULL_LINE ? "bull" : "bear";
+      recipe.extend = { members: CANDLE_PATTERN_DEFS.filter((d) => d.polarity === pol && !dis[d.toggle]).map((d) => d.id) };
+    }
+    return { recipe, timeframe: undefined };
+  }
   const recipe: IndicatorRecipe = {
     source: "indicator",
     indicatorType: indType as SeriesIndicatorType,
@@ -153,6 +166,7 @@ export function recipeLabel(recipe: SeriesRecipe): string {
   const t = recipe.indicatorType;
   // Types whose calcParams aren't a meaningful "(length)" label.
   if (t === "PIVOT_BANDS") return "Pivot Bands";
+  if (t === "CANDLE_PATTERNS") return "Candle Patterns";
   if (t === "PIVOT_ANALYSIS") return "Pivots High/Low [LuxAlgo]";
   if (t === "SLOPE") return "MA Slope";
   if (t === "VWAP" || t === "AVWAP" || t === "PREV_HL") return t === "PREV_HL" ? "Prev H/L" : t;
@@ -296,6 +310,20 @@ export function indicatorOutputs(indType: string, extendData: unknown, calcParam
           })
         : [];
       return [...slopes, ...smoothed, ...accel, ...accelSmoothed];
+    }
+    // Candle Patterns: one output per ENABLED pattern (lineIndex = canonical
+    // index, so it stays stable when toggles change) plus the two aggregates.
+    // chipLabel carries the pattern name verbatim (SLOPE precedent: the parent
+    // name doesn't distinguish lines).
+    case "CANDLE_PATTERNS": {
+      const dis = ((ext.disabled ?? {}) as Record<string, boolean>);
+      const out: OutputChoice[] = [];
+      CANDLE_PATTERN_DEFS.forEach((d, i) => {
+        if (!dis[d.toggle]) out.push({ lineIndex: i, label: d.label, chipLabel: d.label });
+      });
+      out.push({ lineIndex: ANY_BULL_LINE, label: "Any bullish pattern", chipLabel: "Any bullish pattern" });
+      out.push({ lineIndex: ANY_BEAR_LINE, label: "Any bearish pattern", chipLabel: "Any bearish pattern" });
+      return out;
     }
     default:
       return [];

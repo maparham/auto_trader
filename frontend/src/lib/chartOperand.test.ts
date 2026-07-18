@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { KLineData } from "klinecharts";
 import type { Operand } from "./backtestConfig";
+import { recipeKey } from "./backtestConfig";
 
 // chartOperandSources always builds series operands; narrow the Operand union
 // to that variant so tests can read .label / .recipe / .seriesKey.
@@ -32,7 +33,7 @@ const candles = (n: number): KLineData[] =>
 
 describe("supported-type gates", () => {
   it("accepts the 7 custom indicator types, rejects SESSIONS and stock built-ins", () => {
-    for (const t of ["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI"]) expect(isSupportedIndicatorType(t)).toBe(true);
+    for (const t of ["EMA", "MA", "LR", "VWAP", "AVWAP", "PREV_HL", "RSI", "CANDLE_PATTERNS"]) expect(isSupportedIndicatorType(t)).toBe(true);
     for (const t of ["SESSIONS", "MACD", "BOLL", "KDJ"]) expect(isSupportedIndicatorType(t)).toBe(false);
   });
   it("accepts the straight-line drawing family, rejects channels/fibs/vertical", () => {
@@ -155,6 +156,39 @@ describe("indicatorToRecipe maType canonicalization", () => {
   });
 });
 
+describe("CANDLE_PATTERNS operand recipes", () => {
+  it("aggregate line (24) snapshots the enabled bull members, excluding a disabled toggle", () => {
+    const built = indicatorToRecipe("CANDLE_PATTERNS", [], { disabled: { kicking: true } }, 24);
+    expect(built).not.toBeNull();
+    expect(built!.recipe).toMatchObject({ source: "indicator", indicatorType: "CANDLE_PATTERNS", calcParams: [], line: 24 });
+    const members = built!.recipe.extend?.members as string[];
+    // Default bull set is 12; disabling "kicking" drops bull_kicking -> 11.
+    expect(members).not.toContain("bull_kicking");
+    expect(members).toContain("pin_bottom");
+    expect(members.length).toBe(11);
+  });
+
+  it("aggregate line (25) snapshots the enabled bear members", () => {
+    const built = indicatorToRecipe("CANDLE_PATTERNS", [], { disabled: { kicking: true } }, 25)!;
+    const members = built.recipe.extend?.members as string[];
+    expect(members).not.toContain("bear_kicking");
+    expect(members).toContain("bear_engulfing");
+    expect(members.length).toBe(8); // 9 bear defaults - bear_kicking
+  });
+
+  it("per-pattern recipe (line < 24) carries NO extend (all render state, nothing computes)", () => {
+    const built = indicatorToRecipe("CANDLE_PATTERNS", [], { disabled: { kicking: true }, bullColor: "#123" }, 3)!;
+    expect(built.recipe).toMatchObject({ source: "indicator", indicatorType: "CANDLE_PATTERNS", calcParams: [], line: 3 });
+    expect(built.recipe.extend).toBeUndefined();
+  });
+
+  it("two aggregate recipes with different member sets hash to different recipeKeys", () => {
+    const all = indicatorToRecipe("CANDLE_PATTERNS", [], {}, 24)!;
+    const fewer = indicatorToRecipe("CANDLE_PATTERNS", [], { disabled: { kicking: true } }, 24)!;
+    expect(recipeKey(all.recipe)).not.toBe(recipeKey(fewer.recipe));
+  });
+});
+
 describe("indicatorOutputs", () => {
   it("EMA/MA: base only, plus Smoothing when the smoothing MA is enabled", () => {
     expect(indicatorOutputs("EMA", {}, [9])).toEqual([{ lineIndex: 0, label: "Value", base: true }]);
@@ -258,6 +292,21 @@ describe("indicatorOutputs", () => {
       cp,
     );
     expect(smoothed.map((o) => o.lineIndex)).toEqual([0, 1, 4, 5, 6, 7]);
+  });
+
+  it("CANDLE_PATTERNS: one output per enabled pattern (canonical lineIndex) + two aggregates", () => {
+    const all = indicatorOutputs("CANDLE_PATTERNS", {}, []);
+    // 24 patterns + Any bullish + Any bearish.
+    expect(all.length).toBe(26);
+    expect(all[0]).toEqual({ lineIndex: 0, label: "Bullish Engulfing", chipLabel: "Bullish Engulfing" });
+    expect(all[24]).toEqual({ lineIndex: 24, label: "Any bullish pattern", chipLabel: "Any bullish pattern" });
+    expect(all[25]).toEqual({ lineIndex: 25, label: "Any bearish pattern", chipLabel: "Any bearish pattern" });
+    // Disabling a toggle drops BOTH its patterns but keeps canonical indices stable.
+    const off = indicatorOutputs("CANDLE_PATTERNS", { disabled: { engulfing: true } }, []);
+    expect(off.length).toBe(24); // 22 patterns + 2 aggregates
+    expect(off.map((o) => o.lineIndex)).not.toContain(0);
+    expect(off.map((o) => o.lineIndex)).not.toContain(1);
+    expect(off.map((o) => o.lineIndex)).toContain(2); // pin_top still there at its canonical index
   });
 
   it("unsupported types return []", () => {

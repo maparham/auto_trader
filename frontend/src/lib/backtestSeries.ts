@@ -24,6 +24,7 @@ import { atrSeries } from "./atr";
 import { computePivotBands, type PivotBandsExtend } from "./indicators/pivotBands";
 import { computePivotAnalysis } from "./indicators/pivotAnalysis";
 import { slopeLineSeries, accelLineSeries, inferBarHours, slopeLengths, type SlopeUnit, type SlopeExtend } from "./indicators/slope";
+import { patternLineSeries } from "./indicators/candlePatterns";
 import { RESOLUTION_SECONDS } from "./feed";
 
 function toNullable(arr: Array<number | undefined>): Array<number | null> {
@@ -315,6 +316,13 @@ export function computeIndicatorRecipe(r: IndicatorRecipe, candles: KLineData[],
       }
       return slopeLineSeries(candles, maType, len, n, units, sext.source,
         block === 1 ? sext.smoothing : undefined, bh);
+    }
+    case "CANDLE_PATTERNS": {
+      // line < 24 = one canonical pattern; 24/25 = aggregate over the member ids
+      // snapshotted in the recipe (never the live enable-set — spec: toggling
+      // patterns on the chart must not silently change an existing rule).
+      const members = ext.members as string[] | undefined;
+      return patternLineSeries(candles, line, members);
     }
     default:
       return candles.map(() => undefined);
