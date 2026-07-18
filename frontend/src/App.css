@@ -4717,6 +4717,20 @@ span.bt-leg-short { color: var(--neg); }
 .sweep-cell.sweep-error { color: var(--text-faint); font-style: italic; }
 .sweep-cell.sweep-cell-disabled { cursor: not-allowed; opacity: 0.55; }
 .sweep-cell.sweep-cell-disabled:hover { outline: none; }
+/* Compact tier (past the readable-text cell cap): color-only micro-cells.
+   No gap: at this density the 2px gutters would outweigh the cells. */
+.sweep-heat-grid.sweep-heat-compact { gap: 1px; }
+.sweep-heat-compact .sweep-cell { min-height: 10px; padding: 0; border-radius: 0; }
+/* No "err" text in compact cells, so failed combos need a visible tint to
+   stay distinguishable from neutral/zero cells. */
+.sweep-heat-compact .sweep-cell.sweep-error { background: color-mix(in srgb, var(--text) 14%, transparent); }
+.sweep-heat-compact .sweep-heat-xlabel, .sweep-heat-compact .sweep-heat-ylabel { padding: 0; }
+.sweep-heat-show {
+  align-self: flex-start; font-size: 12px; padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); cursor: pointer;
+}
+.sweep-heat-show:hover { background: var(--surface-2, color-mix(in srgb, var(--text) 5%, transparent)); }
 
 /* Live panel: read-only coded-strategy summary shown in place of the rule editors */
 .live-strat-summary { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }

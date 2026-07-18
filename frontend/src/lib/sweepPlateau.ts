@@ -45,6 +45,31 @@ export function withPlateau(
   const coords = rows.map((r, i) => (ok[i] ? coord(r) : null));
   const val = (i: number): number => (rows[i].metrics as Record<string, number>)[metric] ?? 0;
 
+  // Cell lookup keyed by list-axis values + grid coordinate, so each row's
+  // neighborhood is the <=3^d - 1 offset lookups around its own coordinate
+  // instead of a scan over every other row (O(n^2) froze the UI per streamed
+  // chunk on multi-thousand-combo sweeps). Each cell holds ALL rows landing
+  // on it (normally one; duplicates happen on e.g. overlapping resumed
+  // chunks), preserving the old scan's neighbor multiplicity in the median.
+  const cellOf = (i: number): string =>
+    `${listTargets.map((t) => String(rows[i].combo[t])).join("|")}#${coords[i]!.join(",")}`;
+  const byCell = new Map<string, number[]>();
+  for (let i = 0; i < rows.length; i++) {
+    if (!ok[i] || coords[i] === null) continue;
+    const k = cellOf(i);
+    const cell = byCell.get(k);
+    if (cell) cell.push(i);
+    else byCell.set(k, [i]);
+  }
+  // All non-zero Chebyshev-distance-1 offsets in d dimensions.
+  const offsets: number[][] = [];
+  const dims = rangeTargets.length;
+  for (let m = 0; m < Math.pow(3, dims); m++) {
+    const o: number[] = [];
+    for (let k = 0, rest = m; k < dims; k++, rest = Math.floor(rest / 3)) o.push((rest % 3) - 1);
+    if (o.some((x) => x !== 0)) offsets.push(o);
+  }
+
   const scored: SweepRow[] = [];
   const spikes: boolean[] = [];
   for (let i = 0; i < rows.length; i++) {
@@ -55,12 +80,12 @@ export function withPlateau(
       spikes.push(false);
       continue;
     }
+    const listKey = listTargets.map((t) => String(rows[i].combo[t])).join("|");
     const neighbors: number[] = [];
-    for (let j = 0; j < rows.length; j++) {
-      if (j === i || !ok[j] || coords[j] === null) continue;
-      if (!listTargets.every((t) => rows[i].combo[t] === rows[j].combo[t])) continue;
-      const cheb = Math.max(...coords[i]!.map((c, k) => Math.abs(c - coords[j]![k])));
-      if (cheb === 1) neighbors.push(val(j));
+    for (const o of offsets) {
+      const cell = byCell.get(`${listKey}#${coords[i]!.map((c, k) => c + o[k]).join(",")}`);
+      if (!cell) continue;
+      for (const j of cell) if (j !== i) neighbors.push(val(j));
     }
     const score = Math.min(val(i), median([val(i), ...neighbors]));
     scored.push({ ...rows[i], metrics: { ...rows[i].metrics!, plateau_score: score } as never });

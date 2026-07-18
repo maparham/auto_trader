@@ -7,14 +7,16 @@
 // row/cell applies that combo via onApply. Session-state only, never persisted.
 // (Spec: docs/superpowers/specs/2026-07-09-strategy-panel-params-design.md)
 
-import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { SweepRow } from "./api";
-import { axisColumnLabel, comboAxisLabel, comboAxisText, fmtAxisValue, type SweepAxis } from "./lib/sweep";
+import { axisColumnLabel, comboAxisLabel, comboAxisText, type SweepAxis } from "./lib/sweep";
+import { axisTicks, buildHeatIndex, cellKey, heatTier, type HeatTick } from "./lib/sweepHeat";
 import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import Tooltip from "./components/Tooltip";
 import { rowWindow, verdictFor, type RowWindow } from "./lib/backtestPanelData";
+import { useStableCallback } from "./lib/useStableCallback";
 import { metricTipLines } from "./components/metricScaleTip";
 
 type MetricKey =
@@ -129,26 +131,22 @@ function WindowStrip({ windows }: { windows: NonNullable<SweepRow["windows"]> })
 // (not an inline block): rendering it inline would shift the grid under a
 // stationary cursor, firing mouseleave on the hovered cell and unmounting
 // itself (hover flicker). pointer-events:none so it never steals the hover
-// that keeps it open. Placed near the cursor with a small offset, flipped to
-// the other side of the pointer when it would spill off screen.
-function WindowStripOverlay({ windows, cursor }: {
+// that keeps it open. Positioning is IMPERATIVE: the grid's mousemove writes
+// the cursor to a ref and calls `place`, which styles this element directly —
+// cursor position must never be React state, or every pointer move re-renders
+// the whole heatmap (the big-sweep freeze). `place` offsets from the cursor
+// and flips to the other side of the pointer when it would spill off screen;
+// mounted off-screen until the first placement.
+function WindowStripOverlay({ windows, overlayRef, place }: {
   windows: NonNullable<SweepRow["windows"]>;
-  cursor: { x: number; y: number };
+  overlayRef: RefObject<HTMLDivElement | null>;
+  place: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number }>({ left: cursor.x + 14, top: cursor.y + 16 });
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const { width: w, height: h } = el.getBoundingClientRect();
-    let left = cursor.x + 14;
-    let top = cursor.y + 16;
-    if (left + w > window.innerWidth - 8) left = cursor.x - 14 - w;
-    if (top + h > window.innerHeight - 8) top = cursor.y - 16 - h;
-    setPos({ left: Math.max(8, left), top: Math.max(8, top) });
-  }, [cursor.x, cursor.y, windows]);
+    place();
+  }, [windows, place]);
   return createPortal(
-    <div ref={ref} className="sweep-heat-detail-wstrip" style={{ left: pos.left, top: pos.top }}>
+    <div ref={overlayRef} className="sweep-heat-detail-wstrip" style={{ left: -9999, top: -9999 }}>
       <WindowStrip windows={windows} />
     </div>,
     document.body,
@@ -255,7 +253,10 @@ function useVirtualRows(
   return win;
 }
 
-export function SweepResults(props: {
+// Memoized so keystrokes/toggles elsewhere in the (large) hosting panel don't
+// re-render the whole results tree; the host must pass stable callbacks and a
+// stable progress object for this to bite.
+export const SweepResults = memo(function SweepResults(props: {
   rows: SweepRow[];
   axes: SweepAxis[];
   onApply: (combo: Record<string, number | boolean | string>) => void;
@@ -341,20 +342,23 @@ export function SweepResults(props: {
   // inert, with a hint explaining why — cancel the sweep (or let it finish)
   // to apply a combo.
   const applyDisabled = !!progress;
-  const applyOrNoop = (combo: Record<string, number | boolean | string>) => {
+  // Stable identity so the memoized SweepHeatmap below doesn't see a fresh
+  // callback on every scroll-driven re-render.
+  const applyOrNoop = useStableCallback((combo: Record<string, number | boolean | string>) => {
     if (!applyDisabled) onApply(combo);
-  };
+  });
 
   // One-click jump to the most robust neighborhood: the row with the highest
   // plateau_score (ties broken by net P&L). Hidden when nothing is scored
-  // (no numeric range axes, or no successful rows yet).
-  const plateauAction = center && (
+  // (no numeric range axes, or no successful rows yet). Memoized: it's a
+  // SweepHeatmap prop, and fresh JSX each render would defeat that memo.
+  const plateauAction = useMemo(() => center && (
     <button type="button" className="sweep-plateau-apply"
             disabled={applyDisabled}
             onClick={() => applyOrNoop(center.combo)}>
       Apply plateau center
     </button>
-  );
+  ), [center, applyDisabled, applyOrNoop]);
 
   // Virtualization wiring. `anchorRef` locates the scroll container (walked up
   // from the results root); `bodyRef` marks the top of the row area; `rowRef`
@@ -574,7 +578,7 @@ export function SweepResults(props: {
       </div>
     </div>
   );
-}
+});
 
 function SweepSortHeader({
   label,
@@ -607,10 +611,18 @@ function SweepSortHeader({
 // With 3+ axes the unpicked axes collapse: each cell shows the best matching
 // row by the color metric (min for drawdown), and clicking applies that best
 // row's full combo. Cell background is the diverging scale.
+//
+// Display tiers by cell count (heatTier): readable text cells, then color-only
+// compact cells (a dense grid reads plateaus BETTER without text; hover still
+// shows the full detail row), then collapsed behind a "Show heatmap" button —
+// at that density even colors are subpixel noise, so nothing renders unless
+// asked. Cell -> row resolution is the precomputed buildHeatIndex map, one
+// O(rows) pass, NOT a per-cell scan over every row.
 
-type HeatTick = { key: string; label: string; match: Record<string, number | string> };
-
-function SweepHeatmap({
+// Memoized: the parent re-renders on every table scroll frame (virtualization
+// window state) and every panel keystroke above it; with all props stable the
+// whole heatmap subtree skips those renders.
+const SweepHeatmap = memo(function SweepHeatmap({
   rows,
   axes,
   metric,
@@ -635,47 +647,6 @@ function SweepHeatmap({
   // streams (undefined then), so no extra disabled check is needed here.
   onRefine?: (combo: SweepRow["combo"]) => void;
 }) {
-  // Direction-aware "which row is better" on the selected color metric:
-  // higher wins except drawdown (lower wins); a successful row always beats
-  // a failed one; among two failures the first seen is kept.
-  const better = (a: SweepRow, b: SweepRow): SweepRow => {
-    // Success vs failure is decided on `metrics === null` BEFORE any metric
-    // comparison: a nullable metric (profit_factor, avg_win_loss_ratio) can be
-    // null on a successful row too, so comparing values first would let a
-    // failed row tie and win. Failure only wins over another failure.
-    if (a.metrics === null) return b.metrics === null ? a : b;
-    if (b.metrics === null) return a;
-    const av = metricValue(a, metric);
-    const bv = metricValue(b, metric);
-    if (bv === null) return a;   // null metric value on a success loses
-    if (av === null) return b;
-    if (metric === "max_drawdown") return bv < av ? b : a;
-    return bv > av ? b : a;
-  };
-  // A cell's row: the best row (per `better`) among all rows matching the
-  // cell's x+y values. With <= 2 axes each cell matches at most one row, so
-  // this degenerates to today's exact lookup.
-  const find = (match: Record<string, number | string>) => {
-    let best: SweepRow | undefined;
-    for (const r of rows) {
-      if (!Object.entries(match).every(([k, v]) => r.combo[k] === v)) continue;
-      best = best ? better(best, r) : r;
-    }
-    return best;
-  };
-
-  const axisTicks = (a: SweepAxis): HeatTick[] => {
-    if (a.kind === "list") {
-      return a.options.map((o, i) => ({ key: `o${i}`, label: o.label, match: o.patch }));
-    }
-    const set = new Set<number>();
-    for (const r of rows) {
-      const v = r.combo[a.target];
-      if (typeof v === "number") set.add(v);
-    }
-    return [...set].sort((x, y) => x - y).map((v) => ({ key: String(v), label: fmtAxisValue(v), match: { [a.target]: v } }));
-  };
-
   // Picked grid axes, stored by TARGET (stable across streaming re-renders);
   // a stale target (new sweep, different axes) falls back to the defaults:
   // X = first axis, Y = second, never the axis the other picker holds.
@@ -689,17 +660,73 @@ function SweepHeatmap({
   // never be the same axis.
   const pickX = (t: string) => { if (t === yAxis?.target) setYSel(xAxis.target); setXSel(t); };
   const pickY = (t: string) => { if (t === xAxis.target) setXSel(yAxis?.target ?? null); setYSel(t); };
-  const xTicks = axisTicks(xAxis);
-  const yTicks: (HeatTick | null)[] = yAxis ? axisTicks(yAxis) : [null];
+  const xTicks = useMemo(() => axisTicks(xAxis, rows), [xAxis, rows, rows.length]);
+  const yTicks = useMemo<(HeatTick | null)[]>(
+    () => (yAxis ? axisTicks(yAxis, rows) : [null]),
+    [yAxis, rows, rows.length],
+  );
+  // cellKey -> best row, one O(rows) pass (rows is mutated in place during a
+  // streaming sweep, so length joins the deps as the change signal).
+  const heatIndex = useMemo(
+    () => buildHeatIndex(rows, xAxis, yAxis, metric),
+    [rows, rows.length, xAxis, yAxis, metric],
+  );
+
+  const tier = heatTier(xTicks.length * yTicks.length);
+  // "Show heatmap" opt-in for the collapsed tier, keyed to the axis pair it
+  // was granted for and dropped when a different result set arrives, so an
+  // axis swap or a new sweep collapses again instead of eagerly rendering
+  // thousands of cells off a stale opt-in. Streaming growth of the SAME run
+  // keeps the opt-in: `rows` holds its identity across chunks.
+  const gridId = `${xAxis.target}|${yAxis?.target ?? ""}`;
+  const [shownFor, setShownFor] = useState<string | null>(null);
+  useEffect(() => {
+    setShownFor(null);
+  }, [rows]);
+  const showCollapsed = shownFor === gridId;
+  const compact = tier !== "text";
 
   // Hovered cell's full metric breakdown, surfaced inline in the header row
   // beside the color-metric dropdown (the grid cells themselves only show the
   // one selected metric).
   const [hovered, setHovered] = useState<SweepRow | null>(null);
-  // Cursor position (viewport coords) so the per-window breakdown strip can
-  // follow the pointer instead of pinning over the top-left cells. Null until
-  // the first mouse event, which guards against a flash at (0,0).
-  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
+  // Cursor position lives in a REF, not state: mousemove fires per pixel and a
+  // state write there re-renders every heat cell (the big-sweep freeze). The
+  // window-strip overlay is positioned imperatively from this ref instead.
+  // Written on cell enter BEFORE setHovered, so the overlay never mounts
+  // without a cursor to anchor to.
+  const cursorRef = useRef<{ x: number; y: number } | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const placeOverlay = useCallback(() => {
+    const el = overlayRef.current;
+    const c = cursorRef.current;
+    if (!el || !c) return;
+    const { width: w, height: h } = el.getBoundingClientRect();
+    let left = c.x + 14;
+    let top = c.y + 16;
+    if (left + w > window.innerWidth - 8) left = c.x - 14 - w;
+    if (top + h > window.innerHeight - 8) top = c.y - 16 - h;
+    el.style.left = `${Math.max(8, left)}px`;
+    el.style.top = `${Math.max(8, top)}px`;
+  }, []);
+
+  // Stable cell handlers so the memoized HeatGrid's props don't change when
+  // this component re-renders on hover — otherwise every cell-enter would
+  // reconcile the full grid.
+  const cellClick = useStableCallback((row: SweepRow | null) => {
+    if (row && !disabled) onApply(row.combo);
+  });
+  const cellEnter = useCallback((row: SweepRow | null, e: { clientX: number; clientY: number }) => {
+    cursorRef.current = { x: e.clientX, y: e.clientY };
+    setHovered(row);
+  }, []);
+  const cellMove = useCallback((e: { clientX: number; clientY: number }) => {
+    cursorRef.current = { x: e.clientX, y: e.clientY };
+    placeOverlay();
+  }, [placeOverlay]);
+  const cellLeave = useCallback((row: SweepRow | null) => {
+    setHovered((h) => (h === row ? null : h));
+  }, []);
 
   // Robustness columns share short table labels; the dropdown spells them out.
   const heatLabel = (c: (typeof METRIC_COLS)[number]) =>
@@ -763,50 +790,105 @@ function SweepHeatmap({
           )}
         </div>
       </div>
-      {hovered && hovered.windows && hovered.windows.length > 0 && cursor && (
-        <WindowStripOverlay windows={hovered.windows} cursor={cursor} />
+      {hovered && hovered.windows && hovered.windows.length > 0 && (
+        <WindowStripOverlay windows={hovered.windows} overlayRef={overlayRef} place={placeOverlay} />
       )}
-      <div
-        className="sweep-heat-grid"
-        style={{ gridTemplateColumns: `auto repeat(${xTicks.length}, 1fr)` }}
-      >
-        <div className="sweep-heat-corner" />
-        {xTicks.map((xt) => (
-          <div key={`hx-${xt.key}`} className="sweep-heat-xlabel">{xt.label}</div>
-        ))}
-        {yTicks.map((yt) => (
-          <Fragment key={`hy-${yt?.key ?? ""}`}>
-            <div className="sweep-heat-ylabel">{yt?.label ?? ""}</div>
-            {xTicks.map((xt) => {
-              const match = { ...xt.match, ...(yt ? yt.match : {}) };
-              const row = find(match);
-              const v = row ? metricValue(row, metric) : null;
-              const failed = row && row.metrics === null;
-              return (
-                <div
-                  key={`hc-${xt.key}-${yt?.key ?? ""}`}
-                  className={`sweep-cell${failed ? " sweep-error" : ""}${disabled ? " sweep-cell-disabled" : ""}`}
-                  // max_drawdown is a positive magnitude where SMALLER is better —
-                  // negate it so the ramp reads red-for-worse like every other metric.
-                  style={{ background: divergingBg(metric === "max_drawdown" && v !== null ? -v : v, maxAbs) }}
-                  onClick={() => row && !disabled && onApply(row.combo)}
-                  onMouseEnter={(e) => { setHovered(row ?? null); setCursor({ x: e.clientX, y: e.clientY }); }}
-                  onMouseMove={(e) => setCursor({ x: e.clientX, y: e.clientY })}
-                  onMouseLeave={() => setHovered((h) => (h === row ? null : h))}
-                >
-                  {failed ? (
-                    <Tooltip content={row!.error ?? "failed"}>
-                      <span>err</span>
-                    </Tooltip>
-                  ) : (
-                    fmtMetric(metric, v)
-                  )}
-                </div>
-              );
-            })}
-          </Fragment>
-        ))}
-      </div>
+      {tier === "collapsed" && !showCollapsed ? (
+        <button type="button" className="sweep-heat-show" onClick={() => setShownFor(gridId)}>
+          Show heatmap ({xTicks.length}×{yTicks.length} cells)
+        </button>
+      ) : (
+        <HeatGrid
+          xTicks={xTicks}
+          yTicks={yTicks}
+          heatIndex={heatIndex}
+          metric={metric}
+          maxAbs={maxAbs}
+          disabled={disabled}
+          compact={compact}
+          onCellClick={cellClick}
+          onCellEnter={cellEnter}
+          onCellMove={cellMove}
+          onCellLeave={cellLeave}
+        />
+      )}
     </div>
   );
-}
+});
+
+// The grid itself, memoized: SweepHeatmap re-renders on every hover (the
+// detail row is state up there), and the parent SweepResults re-renders on
+// every table scroll frame (virtualization window). With thousands of cells,
+// reconciling the grid on each of those froze the UI — so the grid only
+// re-renders when the data/shape actually changes. All callbacks are stable
+// (parent reads live values through refs).
+const HeatGrid = memo(function HeatGrid({
+  xTicks,
+  yTicks,
+  heatIndex,
+  metric,
+  maxAbs,
+  disabled,
+  compact,
+  onCellClick,
+  onCellEnter,
+  onCellMove,
+  onCellLeave,
+}: {
+  xTicks: HeatTick[];
+  yTicks: (HeatTick | null)[];
+  heatIndex: Map<string, SweepRow>;
+  metric: MetricKey;
+  maxAbs: number;
+  disabled?: boolean;
+  compact: boolean;
+  onCellClick: (row: SweepRow | null) => void;
+  onCellEnter: (row: SweepRow | null, e: { clientX: number; clientY: number }) => void;
+  onCellMove: (e: { clientX: number; clientY: number }) => void;
+  onCellLeave: (row: SweepRow | null) => void;
+}) {
+  return (
+    <div
+      className={`sweep-heat-grid${compact ? " sweep-heat-compact" : ""}`}
+      style={{ gridTemplateColumns: `auto repeat(${xTicks.length}, 1fr)` }}
+    >
+      <div className="sweep-heat-corner" />
+      {xTicks.map((xt) => (
+        <div key={`hx-${xt.key}`} className="sweep-heat-xlabel">{compact ? "" : xt.label}</div>
+      ))}
+      {yTicks.map((yt) => (
+        <Fragment key={`hy-${yt?.key ?? ""}`}>
+          <div className="sweep-heat-ylabel">{compact ? "" : yt?.label ?? ""}</div>
+          {xTicks.map((xt) => {
+            const row = heatIndex.get(cellKey(xt, yt)) ?? null;
+            const v = row ? metricValue(row, metric) : null;
+            const failed = row && row.metrics === null;
+            return (
+              <div
+                key={`hc-${xt.key}-${yt?.key ?? ""}`}
+                className={`sweep-cell${failed ? " sweep-error" : ""}${disabled ? " sweep-cell-disabled" : ""}`}
+                // max_drawdown is a positive magnitude where SMALLER is better —
+                // negate it so the ramp reads red-for-worse like every other metric.
+                // Failed cells get NO inline background so the compact tier's CSS
+                // tint can mark them (there's no "err" text there to do it).
+                style={failed ? undefined : { background: divergingBg(metric === "max_drawdown" && v !== null ? -v : v, maxAbs) }}
+                onClick={() => onCellClick(row)}
+                onMouseEnter={(e) => onCellEnter(row, e)}
+                onMouseMove={onCellMove}
+                onMouseLeave={() => onCellLeave(row)}
+              >
+                {compact ? null : failed ? (
+                  <Tooltip content={row!.error ?? "failed"}>
+                    <span>err</span>
+                  </Tooltip>
+                ) : (
+                  fmtMetric(metric, v)
+                )}
+              </div>
+            );
+          })}
+        </Fragment>
+      ))}
+    </div>
+  );
+});

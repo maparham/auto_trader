@@ -199,6 +199,60 @@ describe("SweepResults 3+ axes", () => {
   });
 });
 
+// Dense-grid fixtures for the display tiers: n x n combos over two range axes.
+function gridRows(n: number): { rows: SweepRow[]; axes: SweepAxis[] } {
+  const rows: SweepRow[] = [];
+  for (let a = 1; a <= n; a++) {
+    for (let b = 1; b <= n; b++) {
+      rows.push({
+        combo: { "param:a": a, "param:b": b },
+        metrics: { net_pnl: a - b, n_trades: 1, win_rate: 1, max_drawdown: 1,
+                   profit_factor: null, avg_win_loss_ratio: null, return_pct: 0 },
+        error: null, windows: null,
+      });
+    }
+  }
+  return {
+    rows,
+    axes: [
+      { kind: "range", target: "param:a", label: "A", from: 1, to: n, step: 1 },
+      { kind: "range", target: "param:b", label: "B", from: 1, to: n, step: 1 },
+    ],
+  };
+}
+
+describe("SweepResults heatmap tiers", () => {
+  it("past the text cap the grid goes compact: color-only cells that still apply on click", () => {
+    const { rows, axes } = gridRows(21);                 // 441 cells > 400
+    const onApply = vi.fn();
+    render(<SweepResults rows={rows} axes={axes} onApply={onApply} />);
+    const grid = document.querySelector(".sweep-heat-grid")!;
+    expect(grid.className).toContain("sweep-heat-compact");
+    const cells = document.querySelectorAll(".sweep-cell");
+    expect(cells.length).toBe(441);
+    expect(cells[0].textContent).toBe("");               // no per-cell text
+    fireEvent.click(cells[0]);
+    expect(onApply).toHaveBeenCalledWith(rows[0].combo);
+  });
+
+  it("past the compact cap the heatmap collapses behind a Show heatmap toggle", () => {
+    const { rows, axes } = gridRows(65);                 // 4225 cells > 4000
+    render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
+    expect(document.querySelector(".sweep-cell")).toBeNull();
+    const toggle = screen.getByRole("button", { name: /Show heatmap/ });
+    fireEvent.click(toggle);
+    expect(document.querySelectorAll(".sweep-cell").length).toBe(4225);
+    expect(document.querySelector(".sweep-heat-grid")!.className).toContain("sweep-heat-compact");
+  });
+
+  it("under the text cap cells keep their metric text", () => {
+    render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
+    const cell = [...document.querySelectorAll(".sweep-cell")].find((c) => c.textContent === "+100.00");
+    expect(cell).toBeTruthy();
+    expect(document.querySelector(".sweep-heat-grid")!.className).not.toContain("sweep-heat-compact");
+  });
+});
+
 describe("SweepResults robustness columns", () => {
   const axes: SweepAxis[] = [
     { kind: "range", target: "param:n", label: "n", from: 1, to: 2, step: 1 },

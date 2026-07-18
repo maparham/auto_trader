@@ -3,7 +3,7 @@
 // (useDraggable/useCloseOnEscape/CloseButton, .modal-backdrop/.modal/.modal-head/
 // .modal-foot) — no shared wrapper, no portal.
 
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CloseButton from "./CloseButton";
 import ChartOperandPicker from "./ChartOperandPicker";
@@ -72,6 +72,7 @@ import { StrategyParams } from "./components/StrategyParams";
 import { SweepResults } from "./SweepResults";
 import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepCombo, type SweepOption } from "./lib/sweep";
 import { refineAxesAround, sampleCombos } from "./lib/sweepSearch";
+import { useStableCallback } from "./lib/useStableCallback";
 import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLabels";
 import {
   sweepContext, recallSweepRange, recordSweepRanges,
@@ -1550,6 +1551,20 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     if (loadName === name) setLoadName("");
   }
 
+  // Stable SweepResults props: it's memoized, and a fresh onApply/onRefine
+  // closure or progress object here would re-render the whole (large) results
+  // tree on every keystroke in this modal.
+  const applySweepComboStable = useStableCallback(applySweepCombo);
+  const refineSweepAxes = useCallback(
+    (combo: Record<string, number | boolean | string>) =>
+      setSweepAxes((axes) => refineAxesAround(axes, combo as SweepCombo)),
+    [],
+  );
+  const sweepProgress = useMemo(
+    () => (sweepState?.running ? { done: sweepState.done, total: sweepState.total } : null),
+    [sweepState],
+  );
+
   // One results instance, rendered either in the stacked region or the docked
   // column. Follows the active Backtest|Sweep mode; nothing is duplicated.
   const resultsBody = (
@@ -1567,9 +1582,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               <SweepResults
                 rows={sweepState.rows}
                 axes={ranAxes.length ? ranAxes : sweepAxes}
-                onApply={applySweepCombo}
-                onRefine={(combo) => setSweepAxes((axes) => refineAxesAround(axes, combo as SweepCombo))}
-                progress={sweepState.running ? { done: sweepState.done, total: sweepState.total } : null}
+                onApply={applySweepComboStable}
+                onRefine={refineSweepAxes}
+                progress={sweepProgress}
               />
             </div>
           ) : (
