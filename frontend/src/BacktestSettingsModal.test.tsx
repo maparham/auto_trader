@@ -27,6 +27,10 @@ const mockStrategies = vi.fn().mockResolvedValue([]);
 // so the toggle stays hidden for the tests that don't care; the toggle tests
 // override it per case.
 const mockComputeStatus = vi.fn().mockResolvedValue({ remoteConfigured: false });
+// Managed-host lifecycle: defaults to "unconfigured" (renders no host chip) so
+// tests that don't care see no new UI; the host-chip tests override per case.
+const mockComputeHostState = vi.fn().mockResolvedValue({ state: "unconfigured", detail: null });
+const mockStartComputeHost = vi.fn().mockResolvedValue({ state: "booting" });
 // The Costs tab prefetches the instrument profile once per epic. Default to a
 // broker-sourced profile so the tab renders its values; putCostProfile/refetch
 // default to no-ops the profile-edit test overrides.
@@ -50,6 +54,8 @@ vi.mock("./api", async () => {
     ...actual,
     fetchStrategies: (...args: unknown[]) => mockStrategies(...args),
     computeStatus: (...args: unknown[]) => mockComputeStatus(...args),
+    computeHostState: (...args: unknown[]) => mockComputeHostState(...args),
+    startComputeHost: (...args: unknown[]) => mockStartComputeHost(...args),
     getCostProfile: (...args: unknown[]) => mockGetCostProfile(...args),
     putCostProfile: (...args: unknown[]) => mockPutCostProfile(...args),
     refetchCostProfile: (...args: unknown[]) => mockRefetchCostProfile(...args),
@@ -61,7 +67,7 @@ import { defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig
 import { SESSION_PRESETS, minToTime, sessionWindowInTz } from "./lib/backtestSchedule";
 import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
 import { saveBacktestPreset, loadBacktestLastUsed } from "./lib/persist/defaults";
-import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal } from "./lib/signals";
+import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal, computeHostStateSignal } from "./lib/signals";
 import type { SweepRow } from "./api";
 import { recordSweepRanges, recallSweepRange, saveSweepAxes } from "./lib/sweepMemory";
 
@@ -72,6 +78,8 @@ beforeEach(() => {
   localStorage.clear();
   mockStrategies.mockReset().mockResolvedValue([]);
   mockComputeStatus.mockReset().mockResolvedValue({ remoteConfigured: false });
+  mockComputeHostState.mockReset().mockResolvedValue({ state: "unconfigured", detail: null });
+  mockStartComputeHost.mockReset().mockResolvedValue({ state: "booting" });
   mockGetCostProfile.mockReset().mockResolvedValue(brokerProfile);
   mockPutCostProfile
     .mockReset()
@@ -1105,6 +1113,40 @@ describe("sweep footer estimate + compute toggle", () => {
     fireEvent.click(within(toggle).getByRole("button", { name: "Remote" }));
     expect(sweepTargetSignal.value).toBe("remote");
     expect(localStorage.getItem("auto-trader.sweepTarget")).toBe(JSON.stringify("remote"));
+  });
+});
+
+describe("compute host chip + start button", () => {
+  // A range axis so Sweep mode has something to run (the compute UI only renders
+  // with a configured axis).
+  const bigAxis = () =>
+    saveSweepAxes("rules", [
+      { kind: "range", target: "rule:long.entry.0.left.length", label: "len", from: 1, to: 10, step: 1 },
+    ]);
+
+  beforeEach(() => {
+    sweepTargetSignal.set("remote");
+    computeHostStateSignal.set("unknown");
+  });
+  afterEach(() => {
+    sweepStateSignal.set(null);
+    sweepAxesSignal.set([]);
+    sweepTargetSignal.set("local");
+    computeHostStateSignal.set("unknown");
+  });
+
+  it("shows 'Host stopped' + a Start button, and Start calls startComputeHost", async () => {
+    mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
+    mockComputeHostState.mockResolvedValue({ state: "stopped", detail: null });
+    bigAxis();
+    renderModal();
+    enterSweepMode();
+
+    // The chip renders once the poll resolves the host as stopped.
+    await waitFor(() => expect(screen.getByText("Host stopped")).toBeTruthy());
+    const start = screen.getByRole("button", { name: "Start" });
+    fireEvent.click(start);
+    await waitFor(() => expect(mockStartComputeHost).toHaveBeenCalled());
   });
 });
 

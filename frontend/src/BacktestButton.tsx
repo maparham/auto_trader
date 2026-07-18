@@ -53,6 +53,7 @@ import {
   sweepCancelRequest,
   sweepCancelServer,
   sweepTargetSignal,
+  computeHostStateSignal,
   holdoutEvalSignal,
   sweepCombosOverrideSignal,
   sweepArchivedSignal,
@@ -60,6 +61,7 @@ import {
   selectedTradeSignal,
 } from "./lib/signals";
 import { robustWindowBounds, runSweep, sweepCatchState } from "./lib/sweep";
+import { toast } from "./lib/notify";
 import { sweepContext } from "./lib/sweepMemory";
 import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
@@ -356,6 +358,15 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // the modal's <SweepResults> to show. Clicking a result applies it, which
       // clears the axes and re-enters this function on the normal path.
       if (sweepAxes.length > 0) {
+        // Managed-host gate: a remote sweep can't run while the EC2 host is
+        // stopped or still booting. "unknown"/"unconfigured" submit as before
+        // (plain remote hosts without lifecycle management keep working). The
+        // outer finally resets `running`, so an early return here is clean.
+        const hostState = computeHostStateSignal.value;
+        if (sweepTargetSignal.value === "remote" && (hostState === "stopped" || hostState === "booting")) {
+          toast("Compute host is not ready yet. Start it from the sweep settings.");
+          return;
+        }
         const ctl = new AbortController();
         const unsubCancel = sweepCancelRequest.subscribe(() => ctl.abort());
         // Take over from any live re-attached (resumed) poll first, so this fresh

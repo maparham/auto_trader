@@ -566,6 +566,24 @@ export async function computeStatus(): Promise<ComputeStatus> {
   }
 }
 
+// Managed-compute host lifecycle (EC2-era installs only). The host reports one of
+// four states; `detail` carries a human-readable note (e.g. an AWS error) or null.
+export type ComputeHostState = "unconfigured" | "stopped" | "booting" | "ready";
+
+export async function computeHostState(): Promise<{ state: ComputeHostState; detail: string | null }> {
+  const res = await fetch(`${BASE}/api/compute/host`);
+  if (!res.ok) throw new Error(`host state: ${res.status}`);
+  return res.json();
+}
+
+// Boot the host. AWS/lifecycle errors surface as HTTP 502 with a `detail` body;
+// unwrap that into the thrown Error so the caller can toast it verbatim.
+export async function startComputeHost(): Promise<{ state: ComputeHostState }> {
+  const res = await fetch(`${BASE}/api/compute/host/start`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `start: ${res.status}`);
+  return res.json();
+}
+
 // --- sweep archive ------------------------------------------------------------
 // Completed sweeps persisted server-side so past runs can be listed and reopened.
 

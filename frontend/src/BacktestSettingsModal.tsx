@@ -28,6 +28,8 @@ import {
   saveSweepTarget,
   sweepCombosOverrideSignal,
   sweepArchivedSignal,
+  computeHostStateSignal,
+  type ComputeHostUiState,
 } from "./lib/signals";
 import { resumeSweep } from "./lib/sweepResume";
 import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
@@ -81,7 +83,8 @@ import {
 import { loadHoldout, saveHoldoutPct, recordPeek, splitHoldout } from "./lib/holdout";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { formatPeriodRange } from "./lib/backtestPeriods";
-import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, getCostProfile, putCostProfile, refetchCostProfile, type StrategyInfo, type ParamSpec, type SweepArchiveSummary, type CostProfile } from "./api";
+import { fetchStrategies, computeStatus, computeHostState, startComputeHost, listSweepArchives, getSweepArchive, deleteSweepArchive, getCostProfile, putCostProfile, refetchCostProfile, type StrategyInfo, type ParamSpec, type SweepArchiveSummary, type CostProfile } from "./api";
+import { toast } from "./lib/notify";
 import {
   loadCodedCfg,
   saveCodedCfg,
@@ -397,6 +400,20 @@ function profileToCostsPatch(p: CostProfile): Partial<Costs> {
     finShortDailyPct: p.finShortDailyPct,
   };
 }
+
+// Managed-host chip visuals. Inline (not App.css) so this task's commit stays
+// isolated from the unrelated uncommitted App.css edits; all colours derive from
+// theme tokens so the flat, shadow-free chip tracks light/dark.
+const hostChipStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  fontSize: 12,
+  paddingLeft: 12,
+  borderLeft: "1px solid var(--border)",
+  whiteSpace: "nowrap",
+};
+const hostStartBtnStyle: CSSProperties = { padding: "4px 10px", fontSize: 12, borderRadius: 4 };
 
 export default function BacktestSettingsModal({ initial, epic, brokerId, resolution, controller, chartTimezone, onRun, onClose }: Props) {
   // "Copy immediately" half of the SL/TP sync: a config arriving with sync on
@@ -837,6 +854,42 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     void computeStatus().then((s) => { if (alive) setRemoteCompute(s.remoteConfigured); });
     return () => { alive = false; };
   }, []);
+  // Managed-host lifecycle. While the modal is open with the remote target
+  // selected, poll GET /api/compute/host every 5s so the chip (and BacktestButton's
+  // submit gate, which reads computeHostStateSignal) stay current. Stop rescheduling
+  // once a poll returns "unconfigured" — a Fly-era install without EC2 lifecycle
+  // has no host to manage, so there's nothing to keep polling for. A setTimeout
+  // chain (not setInterval) so that "stop on unconfigured" is a clean early return.
+  const [hostState, setHostState] = useState<ComputeHostUiState>(computeHostStateSignal.value);
+  useEffect(() => computeHostStateSignal.subscribe(setHostState), []);
+  useEffect(() => {
+    if (!remoteCompute || sweepTarget !== "remote") return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const { state } = await computeHostState();
+        if (!alive) return;
+        computeHostStateSignal.set(state);
+        if (state === "unconfigured") return; // nothing to manage; stop the loop
+      } catch {
+        /* transient fetch error: keep polling, leave the last known state */
+      }
+      if (alive) timer = setTimeout(poll, 5000);
+    };
+    void poll();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, [remoteCompute, sweepTarget]);
+  // Kick off the host boot; the next poll tick picks up "booting". AWS/lifecycle
+  // errors arrive as the thrown Error's message (the 502 detail) — toast it.
+  const onStartHost = async () => {
+    try {
+      const { state } = await startComputeHost();
+      computeHostStateSignal.set(state);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "could not start the compute host");
+    }
+  };
   // On open, re-attach to a sweep job that survived a reload (submitted then the
   // panel/tab closed: the server job keeps running). Only when no run already
   // owns the state, so we never double-publish into a live in-session sweep.
@@ -2694,6 +2747,31 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                       </Tooltip>
                     ))}
                   </span>
+                  {/* Managed-host lifecycle chip. Only for the remote target, and
+                      only once the poll resolves a manageable state. "unknown"/
+                      "unconfigured" render nothing (a plain remote host without EC2
+                      lifecycle keys sees no new UI). Inline styles + the shared
+                      chart-nodata-spinner class avoid touching App.css. */}
+                  {sweepTarget === "remote" && hostState === "stopped" && (
+                    <span className="bt-host-chip" style={hostChipStyle}>
+                      <span style={{ color: "var(--text-dim)" }}>Host stopped</span>
+                      <button type="button" className="seg-on" style={hostStartBtnStyle} onClick={() => void onStartHost()}>
+                        Start
+                      </button>
+                    </span>
+                  )}
+                  {sweepTarget === "remote" && hostState === "booting" && (
+                    <span className="bt-host-chip" style={hostChipStyle}>
+                      <span className="chart-nodata-spinner" aria-hidden="true" />
+                      <span style={{ color: "var(--text-dim)" }}>Starting… (~40s)</span>
+                    </span>
+                  )}
+                  {sweepTarget === "remote" && hostState === "ready" && (
+                    <span className="bt-host-chip" style={hostChipStyle}>
+                      <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--pos)" }} />
+                      <span style={{ color: "var(--text-dim)" }}>Host ready</span>
+                    </span>
+                  )}
                 </span>
               )}
             </>}

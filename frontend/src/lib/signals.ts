@@ -507,6 +507,14 @@ export function saveSweepTarget(t: SweepTarget): void {
 }
 export const sweepTargetSignal = new Signal<SweepTarget>(loadSweepTarget());
 
+// Managed-compute host lifecycle state, polled by the sweep settings modal while
+// it's open and read by BacktestButton at submit time to block a remote sweep
+// when the host isn't ready. "unknown" until the first poll lands; "unconfigured"
+// on Fly-era installs without EC2 lifecycle env vars (no host to manage, submit
+// proceeds as before).
+export type ComputeHostUiState = "unknown" | "unconfigured" | "stopped" | "booting" | "ready";
+export const computeHostStateSignal = new Signal<ComputeHostUiState>("unknown");
+
 // Transient notice shown when selecting a trade row can't navigate the chart to
 // it — the trade predates the history reachable at the current timeframe (a fine
 // timeframe whose loaded/pageable window doesn't reach that far back). Set by the
