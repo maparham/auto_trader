@@ -1,7 +1,7 @@
 """Remote-compute proxy: status probe + a `forward` helper that relays a request
 verbatim to the remote compute host.
 
-The remote host is a second copy of this backend deployed on Fly (see guard.py).
+The remote host is a second copy of this backend deployed on EC2 (see guard.py).
 The local backend forwards sweep-job submit/poll/cancel to it when the frontend
 passes `?target=remote`, so the heavy engine runs off the user's machine. The
 forward is UNTOUCHED: no local validation, probe, or job creation happens on the

@@ -1,6 +1,6 @@
 """Remote-deployment request guards: bearer-token gate + compute-only dealing block.
 
-Both are opt-in via env flags set ONLY on the remote Fly deployment (locally
+Both are opt-in via env flags set ONLY on the remote EC2 deployment (locally
 unset, so zero behavior change). Env is read PER REQUEST so tests can monkeypatch
 without reloading the app.
 

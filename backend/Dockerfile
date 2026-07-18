@@ -1,8 +1,8 @@
-# Compute-host image for the Fly.io remote backend (COMPUTE_ONLY deployment).
+# Compute-host image for the EC2 remote backend (COMPUTE_ONLY deployment).
 #
-# Build context is the REPO ROOT (fly.toml lives there and names this file as
-# build.dockerfile), so every COPY source is prefixed with `backend/`. Run the
-# deploy from the repo root: `cd <repo> && fly deploy`.
+# Build context is the REPO ROOT, so every COPY source is prefixed with
+# `backend/`. scripts/deploy-ec2.sh builds this on the box from the repo root:
+# `docker build -f backend/Dockerfile -t auto-trader-compute:latest .`.
 #
 # sqlite databases default to cwd-relative filenames (see auto_trader/config.py).
 # We relocate all four onto the /data volume via the CAPITAL_*_DB_PATH env

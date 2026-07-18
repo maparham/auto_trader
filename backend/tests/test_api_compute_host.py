@@ -17,7 +17,10 @@ def _ec2_state(state: str) -> MagicMock:
 
 
 def test_host_unconfigured(monkeypatch):
-    monkeypatch.delenv("COMPUTE_EC2_INSTANCE_ID", raising=False)
+    # Force-empty in os.environ (which wins over the .env fallback) so this
+    # asserts "not configured" even when the developer's real .env sets a
+    # COMPUTE_EC2_INSTANCE_ID for an actual deployed host.
+    monkeypatch.setenv("COMPUTE_EC2_INSTANCE_ID", "")
     assert client.get("/api/compute/host").json()["state"] == "unconfigured"
 
 
