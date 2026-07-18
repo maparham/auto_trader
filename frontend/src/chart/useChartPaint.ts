@@ -1024,17 +1024,25 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     const agg = getBacktestAggregate(chart);
     if (agg) {
       const paneW = chart.getSize("candle_pane", 'main')?.width ?? Infinity;
-      // Project each per-bar cluster to a pixel, keeping only those on-screen.
+      // Project EVERY cluster (on- and off-screen) in one batch call. Grouping
+      // below must see the full set: it bins by pixel *differences* between
+      // clusters, which are invariant under pan (a pan translates all clusters by
+      // the same delta), so the windowing stays stable while scrolling. Culling
+      // off-screen clusters here instead would move the first-in-view anchor as
+      // bars scroll off the edge, reshuffling every window and making the pills
+      // jump on tiny pans. We cull per merged pill (by centroid) after grouping.
+      const pts = agg.clusters.map((cl) => ({ timestamp: cl.barTs, value: cl.high }));
+      const pxArr = pts.length
+        ? (chart.convertToPixel(pts, { paneId: "candle_pane", absolute: true }) as Array<{
+            x: number | null;
+            y: number | null;
+          }>)
+        : [];
       const proj: { x: number; y: number; cl: (typeof agg.clusters)[number] }[] = [];
-      for (const cl of agg.clusters) {
-        const px = first(
-          chart.convertToPixel([{ timestamp: cl.barTs, value: cl.high }], {
-            paneId: "candle_pane",
-            absolute: true,
-          }),
-        );
-        if (px.x == null || px.y == null || px.x < 0 || px.x > paneW) continue;
-        proj.push({ x: px.x, y: px.y, cl });
+      for (let i = 0; i < agg.clusters.length; i++) {
+        const px = pxArr[i];
+        if (!px || px.x == null || px.y == null) continue;
+        proj.push({ x: px.x, y: px.y, cl: agg.clusters[i] });
       }
       // Pixel re-aggregation: on a much coarser timeframe the per-bar pills pack
       // together and overlap. Walk x-ascending and bin consecutive clusters into
@@ -1046,26 +1054,30 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       // ≥ MERGE_GAP apart and each pill anchors at its window centroid (which stays
       // inside the window), so neighbours are well clear at ~one-pill-width in
       // practice. Each merged pill sums count/net, concatenates trades, and spans
-      // min→max for drill-in, anchored above the tallest bar. A lone cluster in a
-      // window is unchanged, so native-TF and sparse views look exactly as before.
-      // proj is x-ascending (clusters arrive sorted by barTs, monotonic in x).
+      // min→max for drill-in, anchored above the tallest bar. A window whose
+      // centroid falls off-screen is dropped. A lone cluster in a window is
+      // unchanged, so native-TF and sparse views look exactly as before. proj is
+      // x-ascending (clusters arrive sorted by barTs, monotonic in x).
       const MERGE_GAP = 84; // px, ~one pill's width (covers 3-digit count + net)
       const pills: AggPill[] = [];
       let g: typeof proj = [];
       const flush = () => {
         if (g.length === 0) return;
-        const trades = g.flatMap((p) => p.cl.trades.map((t) => t.trade));
-        pills.push({
-          key: `agg:${g[0].cl.barTs}-${g[g.length - 1].cl.barTs}`,
-          x: g.reduce((s, p) => s + p.x, 0) / g.length,
-          y: Math.max(Math.min(...g.map((p) => p.y)), 14),
-          count: trades.length,
-          net: g.reduce((s, p) => s + p.cl.net, 0),
-          trades,
-          resolution: agg.result.resolution,
-          fromMs: Math.min(...g.map((p) => p.cl.fromTs)),
-          toMs: Math.max(...g.map((p) => p.cl.toTs)),
-        });
+        const cx = g.reduce((s, p) => s + p.x, 0) / g.length;
+        if (cx >= 0 && cx <= paneW) {
+          const trades = g.flatMap((p) => p.cl.trades.map((t) => t.trade));
+          pills.push({
+            key: `agg:${g[0].cl.barTs}-${g[g.length - 1].cl.barTs}`,
+            x: cx,
+            y: Math.max(Math.min(...g.map((p) => p.y)), 14),
+            count: trades.length,
+            net: g.reduce((s, p) => s + p.cl.net, 0),
+            trades,
+            resolution: agg.result.resolution,
+            fromMs: Math.min(...g.map((p) => p.cl.fromTs)),
+            toMs: Math.max(...g.map((p) => p.cl.toTs)),
+          });
+        }
         g = [];
       };
       for (const p of proj) {
