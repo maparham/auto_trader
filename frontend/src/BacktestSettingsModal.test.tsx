@@ -1099,8 +1099,9 @@ describe("sweep footer estimate + compute toggle", () => {
     enterSweepMode();
     await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
     const toggle = document.querySelector(".bt-compute-toggle") as HTMLElement;
-    expect(within(toggle).getByRole("button", { name: "Local" })).toBeTruthy();
-    expect(within(toggle).getByRole("button", { name: "Remote" })).toBeTruthy();
+    const select = within(toggle).getByRole("combobox") as HTMLSelectElement;
+    expect(within(select).getByRole("option", { name: "Local" })).toBeTruthy();
+    expect(within(select).getByRole("option", { name: "Remote" })).toBeTruthy();
   });
 
   it("clicking Remote writes the sweep-target signal and persists it", async () => {
@@ -1110,7 +1111,7 @@ describe("sweep footer estimate + compute toggle", () => {
     enterSweepMode();
     await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
     const toggle = document.querySelector(".bt-compute-toggle") as HTMLElement;
-    fireEvent.click(within(toggle).getByRole("button", { name: "Remote" }));
+    fireEvent.change(within(toggle).getByRole("combobox"), { target: { value: "remote" } });
     expect(sweepTargetSignal.value).toBe("remote");
     expect(localStorage.getItem("auto-trader.sweepTarget")).toBe(JSON.stringify("remote"));
   });

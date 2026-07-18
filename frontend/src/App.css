@@ -2216,6 +2216,19 @@
 .seg button { background: var(--input-bg); color: var(--text); border: none; padding: 6px 14px; cursor: pointer; }
 .seg button.seg-on { background: var(--accent); color: var(--accent-text); }
 
+/* Softer AND/OR combine seg: no blue accent, muted neutral fill for the
+   selected side so it reads as a quiet inline toggle, not a primary control. */
+.bt-combine-seg button { color: var(--text-dim); padding: 2px 8px; font-size: 11px; }
+.bt-combine-seg button.seg-on { background: var(--border); color: var(--text); }
+
+/* Search-strategy / compute-target dropdowns (replaced the .seg toggles).
+   Sized to match the sibling ghost buttons in the run strip. */
+.bt-search-select {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 8px; font-size: 12px; line-height: 1.4; cursor: pointer;
+}
+
 /* Alert toasts (top-right, below the tab bar so they don't cover the chips). */
 #toast-container {
   position: fixed; top: 44px; right: 16px; z-index: 3000;
@@ -4562,9 +4575,7 @@ span.bt-leg-short { color: var(--neg); }
    self-describe; per-button tooltips explain), so hairline separators mark the
    zone boundaries count | search | compute in the strip. */
 .bt-compute-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.bt-compute-toggle .seg button { padding: 4px 10px; font-size: 12px; }
 .bt-search-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.bt-search-toggle .seg button { padding: 4px 10px; font-size: 12px; }
 .bt-cfg-foot .bt-search-toggle,
 .bt-cfg-foot .bt-compute-toggle {
   border-left: 1px solid var(--border);

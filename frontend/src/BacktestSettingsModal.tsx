@@ -2687,30 +2687,20 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               {pastSweepsPicker}
               {btMode === "sweep" && sweepAxes.length > 0 && (
                 <span className="bt-search-toggle">
-                  {/* No "Search" label: the seg self-describes, tooltips on the
-                      buttons carry the explanation (same pattern as ModeSeg). */}
-                  <span className="seg" role="group" aria-label="Search strategy">
-                    <Tooltip content="Run every combination of the ranges.">
-                      <button
-                        type="button"
-                        className={searchMode === "grid" ? "seg-on" : ""}
-                        aria-pressed={searchMode === "grid"}
-                        onClick={() => setSearchMode("grid")}
-                      >
-                        Grid
-                      </button>
-                    </Tooltip>
-                    <Tooltip content="Sample N combos from the ranges. Same ranges and N always draw the same sample.">
-                      <button
-                        type="button"
-                        className={searchMode === "random" ? "seg-on" : ""}
-                        aria-pressed={searchMode === "random"}
-                        onClick={() => setSearchMode("random")}
-                      >
-                        Random
-                      </button>
-                    </Tooltip>
-                  </span>
+                  <Tooltip content={[
+                    "Grid: run every combination of the ranges.",
+                    "Random: sample N combos (same ranges + N draw the same sample).",
+                  ]}>
+                    <select
+                      className="bt-search-select"
+                      aria-label="Search strategy"
+                      value={searchMode}
+                      onChange={(e) => setSearchMode(e.currentTarget.value as "grid" | "random")}
+                    >
+                      <option value="grid">Grid</option>
+                      <option value="random">Random</option>
+                    </select>
+                  </Tooltip>
                   {searchMode === "random" && (
                     <label className="bt-random-n">
                       <span>N</span>
@@ -2728,25 +2718,24 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               )}
               {btMode === "sweep" && sweepAxes.length > 0 && remoteCompute && (
                 <span className="bt-compute-toggle">
-                  <span className="seg" role="group" aria-label="Compute target">
-                    {(["local", "remote"] as const).map((t) => (
-                      <Tooltip
-                        key={t}
-                        content={t === "local"
-                          ? "Run the sweep on this machine."
-                          : "Run the sweep on the remote compute host."}
-                      >
-                        <button
-                          type="button"
-                          className={sweepTarget === t ? "seg-on" : ""}
-                          aria-pressed={sweepTarget === t}
-                          onClick={() => { sweepTargetSignal.set(t); saveSweepTarget(t); }}
-                        >
-                          {t === "local" ? "Local" : "Remote"}
-                        </button>
-                      </Tooltip>
-                    ))}
-                  </span>
+                  <Tooltip content={[
+                    "Local: run the sweep on this machine.",
+                    "Remote: run the sweep on the remote compute host.",
+                  ]}>
+                    <select
+                      className="bt-search-select"
+                      aria-label="Compute target"
+                      value={sweepTarget}
+                      onChange={(e) => {
+                        const t = e.currentTarget.value as "local" | "remote";
+                        sweepTargetSignal.set(t);
+                        saveSweepTarget(t);
+                      }}
+                    >
+                      <option value="local">Local</option>
+                      <option value="remote">Remote</option>
+                    </select>
+                  </Tooltip>
                   {/* Managed-host lifecycle chip. Only for the remote target, and
                       only once the poll resolves a manageable state. "unknown"/
                       "unconfigured" render nothing (a plain remote host without EC2
@@ -3853,8 +3842,12 @@ export function RuleGroupSection({
                 hover-dimmed) while the icon actions to its right reveal on hover. */}
             {group.rules.length > 1 && (
               <div className="seg bt-combine-seg" role="group" aria-label="Combine rules with">
-                <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>AND</button>
-                <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>OR</button>
+                <Tooltip content="Fire only when every rule in this group is true.">
+                  <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>AND</button>
+                </Tooltip>
+                <Tooltip content="Fire when any rule in this group is true.">
+                  <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>OR</button>
+                </Tooltip>
               </div>
             )}
             <Tooltip content="Flip every operator to its opposite (> ↔ <, crosses above ↔ below)">
