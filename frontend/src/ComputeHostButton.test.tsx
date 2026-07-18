@@ -93,6 +93,28 @@ describe("ComputeHostButton", () => {
     expect(await screen.findByText("Compute host ON")).toBeTruthy();
   });
 
+  it("a stale in-flight poll cannot repaint ON after a Stop", async () => {
+    // The mount poll hangs; we resolve it with a now-wrong "ready" only AFTER the
+    // Stop completes, reproducing the slow-poll-resolves-late race.
+    let resolvePoll!: (v: { state: string; detail: null; activeJobs: number }) => void;
+    const hung = new Promise<{ state: string; detail: null; activeJobs: number }>((r) => {
+      resolvePoll = r;
+    });
+    mockComputeHostState.mockReturnValueOnce(hung);
+    computeHostStateSignal.set("ready"); // pill starts ON so Stop is available
+    mockStopComputeHost.mockResolvedValue({ state: "stopped" });
+    render(<ComputeHostButton />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    confirmRequest.value!.onConfirm();
+    await waitFor(() => expect(mockStopComputeHost).toHaveBeenCalled());
+
+    // The stale poll resolves late with the pre-stop "ready" — must be discarded.
+    resolvePoll({ state: "ready", detail: null, activeJobs: 0 });
+    await waitFor(() => expect(screen.getByText("Host off")).toBeTruthy());
+    expect(screen.queryByText("Compute host ON")).toBeNull();
+  });
+
   it("warns that a running sweep will be cancelled", async () => {
     seed("ready");
     sweepStateSignal.set({ rows: [], done: 1, total: 4, running: true });

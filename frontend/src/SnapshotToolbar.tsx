@@ -16,6 +16,7 @@
 import { type Instrument, type Period } from "./lib/feed";
 import type { ChartController } from "./lib/chartController";
 import BrokerSelector from "./BrokerSelector";
+import ComputeHostButton from "./ComputeHostButton";
 import type { BrokerAccount } from "./lib/trading";
 import {
   SymbolChip,
@@ -80,6 +81,12 @@ export default function SnapshotToolbar({
           onChange={onSelectBroker}
         />
       )}
+
+      {/* Also here so a running host (its ~$3/hr cost) stays visible and its
+          poll keeps running even while viewing a read-only snapshot. Only one
+          toolbar mounts at a time (App renders this OR the full Toolbar), so
+          there is never a second poller. */}
+      <ComputeHostButton />
 
       <PanelToggles />
       <MaximizeToggle maximized={maximized} onToggleMaximize={onToggleMaximize} />
