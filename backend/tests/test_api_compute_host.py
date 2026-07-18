@@ -13,6 +13,11 @@ def _ec2_state(state: str) -> MagicMock:
     ec2.describe_instances.return_value = {
         "Reservations": [{"Instances": [{"State": {"Name": state}}]}]
     }
+    # stop_instances echoes the instance's new (transitional) state, as the real
+    # AWS API does; _host_state reads it back to report an AWS-confirmed state.
+    ec2.stop_instances.return_value = {
+        "StoppingInstances": [{"CurrentState": {"Name": "stopping"}}]
+    }
     return ec2
 
 

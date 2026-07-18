@@ -93,8 +93,11 @@ def _host_state(start: bool = False, stop: bool = False) -> dict:
             ec2.start_instances(InstanceIds=[instance_id])
             return {"state": "booting", "detail": None, "activeJobs": 0}
         if stop and ec2_state in ("running", "pending"):
-            ec2.stop_instances(InstanceIds=[instance_id])
-            return {"state": "stopped", "detail": None, "activeJobs": 0}
+            # Read the state AWS reports back rather than assuming "stopped": the
+            # instance is "stopping" now (terminal "stopped" is ~30-60s away), and
+            # falling through to the mapping below returns that AWS-confirmed state.
+            resp = ec2.stop_instances(InstanceIds=[instance_id])
+            ec2_state = resp["StoppingInstances"][0]["CurrentState"]["Name"]
     except Exception as exc:  # boto3's error taxonomy is broad; surface verbatim
         raise HTTPException(502, f"EC2 error: {exc}") from None
     if ec2_state in ("stopped", "stopping"):

@@ -46,24 +46,38 @@ export default function ComputeHostButton() {
     };
   }, []);
 
+  // Best-effort one-shot re-read of the true host state. Used after a failed
+  // action so the pill never lingers on an optimistic value — for a cost signal,
+  // a false "off" (or "on") must be corrected immediately, not 12s later.
+  const refresh = async () => {
+    try {
+      const { state: s, activeJobs } = await computeHostState();
+      computeHostStateSignal.set(s);
+      computeHostJobsSignal.set(activeJobs);
+    } catch {
+      /* leave last-known state; the background poll will retry */
+    }
+  };
+
   const onStart = async () => {
-    computeHostStateSignal.set("booting"); // optimistic; the poll confirms
+    computeHostStateSignal.set("booting"); // optimistic; the poll/return confirms
     try {
       const res = await startComputeHost();
       computeHostStateSignal.set(res.state);
     } catch (e) {
-      computeHostStateSignal.set("stopped");
       toast(e instanceof Error ? e.message : "could not start the compute host");
+      void refresh(); // don't strand a false state; read what AWS actually reports
     }
   };
 
   const doStop = async () => {
-    computeHostStateSignal.set("stopped"); // optimistic
+    computeHostStateSignal.set("stopped"); // optimistic; the return is AWS-confirmed
     try {
       const res = await stopComputeHost();
       computeHostStateSignal.set(res.state);
     } catch (e) {
       toast(e instanceof Error ? e.message : "could not stop the compute host");
+      void refresh(); // a rejected stop must not show a false "off" (still billing)
     }
   };
 

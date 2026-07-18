@@ -82,6 +82,17 @@ describe("ComputeHostButton", () => {
     await waitFor(() => expect(mockStopComputeHost).toHaveBeenCalledOnce());
   });
 
+  it("a rejected Stop flips back to ON (no false 'off'), not left optimistic", async () => {
+    seed("ready"); // poll + the post-failure refresh both report the box still up
+    mockStopComputeHost.mockRejectedValue(new Error("EC2 error: stop denied"));
+    render(<ComputeHostButton />);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    confirmRequest.value!.onConfirm();
+    await waitFor(() => expect(mockStopComputeHost).toHaveBeenCalled());
+    // The optimistic "off" is corrected by the refresh() re-read: pill is ON again.
+    expect(await screen.findByText("Compute host ON")).toBeTruthy();
+  });
+
   it("warns that a running sweep will be cancelled", async () => {
     seed("ready");
     sweepStateSignal.set({ rows: [], done: 1, total: 4, running: true });
