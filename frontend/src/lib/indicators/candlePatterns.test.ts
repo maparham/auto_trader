@@ -8,6 +8,7 @@ import {
   patternLineSeries,
   defaultMembers,
   computeCandlePatterns,
+  epsSeries,
   type PatternBar,
 } from "./candlePatterns";
 
@@ -340,5 +341,59 @@ describe("warm-up: short arrays never crash or over-report", () => {
   });
   it("empty array returns empty", () => {
     expect(detectAllPatterns([]).length).toBe(0);
+  });
+});
+
+describe("epsSeries: independent hand-computed oracle", () => {
+  it("ATR path: 20 identical gap-free bars with range 2 give eps exactly 0.05 * 2 from index 13", () => {
+    // Every bar: high-low = 2, prev close inside [low, high] -> TR = 2 for all
+    // bars (including bar 0, where TR = high-low). SMA14 of a constant 2 is 2,
+    // so eps = 0.05 * 2 = 0.1 -- computed by hand, not via epsSeries itself.
+    const bars = Array.from({ length: 20 }, () => B(100, 101, 99, 100));
+    const eps = epsSeries(bars);
+    for (let i = 13; i < 20; i++) expect(eps[i]).toBeCloseTo(0.1, 12);
+  });
+  it("fallback path: below 14 TRs eps is 1e-4 * close", () => {
+    const bars = Array.from({ length: 20 }, () => B(100, 101, 99, 100));
+    const eps = epsSeries(bars);
+    for (let i = 0; i < 13; i++) expect(eps[i]).toBeCloseTo(1e-4 * 100, 12);
+  });
+  it("fallback eps gates a TV equality in short arrays", () => {
+    // bull_belt_hold needs eq(o0, l0, e) with e = 1e-4 * close = ~0.00998 here.
+    // Prev bar down, gapping fully above the current open.
+    const prev = B(100, 100.5, 99.9, 99.95);
+    const hit = [prev, B(99.8, 100.6, 99.799995, 100.4)]; // |o0-l0| = 5e-6 <= eps
+    const miss = [prev, B(99.8, 100.6, 99.7, 100.4)]; // |o0-l0| = 0.1 > eps
+    expect(detectAllPatterns(hit)[1].has("bull_belt_hold")).toBe(true);
+    expect(detectAllPatterns(miss)[1].has("bull_belt_hold")).toBe(false);
+  });
+});
+
+describe("detectAllPatterns memoization", () => {
+  it("same array reference with unchanged bars returns the cached result", () => {
+    const bars = [...pad, B(100, 102, 98, 101)];
+    const first = detectAllPatterns(bars);
+    expect(detectAllPatterns(bars)).toBe(first);
+  });
+  it("in-place append invalidates the cache", () => {
+    const bars = [...pad];
+    const first = detectAllPatterns(bars);
+    bars.push(B(100, 102, 98, 101));
+    const second = detectAllPatterns(bars);
+    expect(second).not.toBe(first);
+    expect(second.length).toBe(bars.length);
+  });
+  it("in-place forming-bar mutation invalidates the cache", () => {
+    const bars = [...pad, B(100, 102, 98, 101)];
+    const first = detectAllPatterns(bars);
+    bars[bars.length - 1] = B(100, 103, 98, 102.5);
+    const second = detectAllPatterns(bars);
+    expect(second).not.toBe(first);
+  });
+  it("distinct arrays with equal content are computed independently", () => {
+    const a = [...pad];
+    const b = [...pad];
+    expect(detectAllPatterns(a)).not.toBe(detectAllPatterns(b));
+    expect(detectAllPatterns(a)).toEqual(detectAllPatterns(b));
   });
 });

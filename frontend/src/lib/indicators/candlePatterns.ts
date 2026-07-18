@@ -93,7 +93,8 @@ export function defaultMembers(polarity: "bull" | "bear"): string[] {
 
 // eps[i] = 0.05 * SMA14 of true range up to and including bar i; while fewer
 // than 14 TRs exist, fall back to 1e-4 * close (index data has no fixed tick).
-function epsSeries(bars: readonly PatternBar[]): number[] {
+// Exported for the test suite's independent oracle assertions only.
+export function epsSeries(bars: readonly PatternBar[]): number[] {
   const eps: number[] = new Array(bars.length);
   let sum = 0;
   const trs: number[] = [];
@@ -111,13 +112,44 @@ function epsSeries(bars: readonly PatternBar[]): number[] {
 
 const eq = (a: number, b: number, e: number) => Math.abs(a - b) <= e;
 
+// Memo of the last detection per bars-array reference. One backtest build calls
+// detectAllPatterns once per pattern operand over the SAME candles array, and the
+// chart calc re-runs on every klinecharts tick — both hit this cache. klinecharts
+// mutates its dataList in place (forming-bar updates, appends), so a hit is only
+// valid when the length AND the last bar's OHLC are unchanged; interior mutation
+// with an identical last bar is not a case any caller produces.
+interface DetectCacheEntry {
+  n: number;
+  lastOpen: number;
+  lastHigh: number;
+  lastLow: number;
+  lastClose: number;
+  hits: Array<Set<string>>;
+}
+const detectCache = new WeakMap<object, DetectCacheEntry>();
+
 /**
  * hits[i] = Set of matched pattern ids at bar i, across ALL patterns with no
  * enable filtering. Unlike the backend `classify_candle` (first-match, single
  * label), every matching pattern is reported because operands are independent.
+ * Memoized per bars reference (see DetectCacheEntry); treat the result as
+ * read-only.
  */
 export function detectAllPatterns(bars: readonly PatternBar[]): Array<Set<string>> {
   const n = bars.length;
+  const last = n > 0 ? bars[n - 1] : null;
+  const cached = detectCache.get(bars as object);
+  if (
+    cached &&
+    cached.n === n &&
+    (last === null ||
+      (cached.lastOpen === last.open &&
+        cached.lastHigh === last.high &&
+        cached.lastLow === last.low &&
+        cached.lastClose === last.close))
+  ) {
+    return cached.hits;
+  }
   const eps = epsSeries(bars);
   const hits: Array<Set<string>> = new Array(n);
 
@@ -206,6 +238,16 @@ export function detectAllPatterns(bars: readonly PatternBar[]): Array<Set<string
     }
   }
 
+  if (last !== null) {
+    detectCache.set(bars as object, {
+      n,
+      lastOpen: last.open,
+      lastHigh: last.high,
+      lastLow: last.low,
+      lastClose: last.close,
+      hits,
+    });
+  }
   return hits;
 }
 
@@ -275,6 +317,9 @@ const TRI_HEIGHT = 8; // triangle height
 const TRI_GAP = 4; // gap between the bar wick and the triangle
 const LABEL_FONT = "10px sans-serif";
 const LABEL_LINE_HEIGHT = 11;
+// Below this per-bar pixel spacing, labels are suppressed (triangles stay): at
+// wide zoom the text of adjacent hits overlaps into an unreadable smear.
+const MIN_LABEL_BAR_SPACE = 12;
 
 // Per-bar enabled-hit indices. A pattern is enabled when its def's TOGGLE is not
 // disabled; the stored value is the def's canonical index (immutable regardless
@@ -301,8 +346,10 @@ export function computeCandlePatterns(
 // labels stacked downward; bear + neutral hits get one down-triangle above the
 // bar high with labels stacked upward. Label color follows each hit's polarity.
 // The above-group triangle uses bearColor when any bear hit is present, else
-// neutralColor (a pure-doji bar gets no red marker). showLabels === false paints
-// triangles only. Pure pixel space; returns true so klinecharts draws no figures.
+// neutralColor (a pure-doji bar gets no red marker). Labels are suppressed when
+// showLabels === false OR the bar spacing is below MIN_LABEL_BAR_SPACE (zoomed
+// far out); triangles always paint. Pure pixel space; returns true so
+// klinecharts draws no figures.
 function drawCandlePatterns(
   params: IndicatorDrawParams<CandlePatternsPoint, unknown, unknown>,
 ): boolean {
@@ -311,7 +358,7 @@ function drawCandlePatterns(
   const bullColor = ext.bullColor ?? DEFAULT_BULL_COLOR;
   const bearColor = ext.bearColor ?? DEFAULT_BEAR_COLOR;
   const neutralColor = ext.neutralColor ?? DEFAULT_NEUTRAL_COLOR;
-  const showLabels = ext.showLabels !== false;
+  const showLabels = ext.showLabels !== false && chart.getBarSpace().bar >= MIN_LABEL_BAR_SPACE;
   const points = indicator.result ?? [];
   const kLineDataList = chart.getDataList();
 
