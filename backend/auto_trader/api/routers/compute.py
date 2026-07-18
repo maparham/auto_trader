@@ -37,6 +37,8 @@ class _ComputeHostSettings(BaseSettings):
 
     compute_host_url: str = ""
     compute_host_token: str = ""
+    compute_ec2_instance_id: str = ""
+    compute_ec2_region: str = "eu-central-1"
 
 
 def _config() -> tuple[str, str]:
@@ -52,6 +54,61 @@ async def compute_status() -> dict:
     frontend hides the remote toggle when this is False."""
     url, token = _config()
     return {"remoteConfigured": bool(url and token)}
+
+
+def _ec2_client(region: str):
+    """Isolated for test patching; late import keeps boto3 off the hot path."""
+    import boto3
+
+    return boto3.client("ec2", region_name=region)
+
+
+def _probe_ready(url: str, token: str) -> bool:
+    """The instance is `ready` once the app inside answers with our token."""
+    try:
+        r = httpx.get(
+            f"{url}/api/compute/activity",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=3.0,
+        )
+        return r.status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def _host_state(start: bool = False) -> dict:
+    cfg = _ComputeHostSettings()
+    instance_id = cfg.compute_ec2_instance_id
+    if not instance_id:
+        return {"state": "unconfigured", "detail": None}
+    try:
+        ec2 = _ec2_client(cfg.compute_ec2_region)
+        desc = ec2.describe_instances(InstanceIds=[instance_id])
+        ec2_state = desc["Reservations"][0]["Instances"][0]["State"]["Name"]
+        if start and ec2_state in ("stopped", "stopping"):
+            ec2.start_instances(InstanceIds=[instance_id])
+            return {"state": "booting", "detail": None}
+    except Exception as exc:  # boto3's error taxonomy is broad; surface verbatim
+        raise HTTPException(502, f"EC2 error: {exc}") from None
+    if ec2_state in ("stopped", "stopping"):
+        return {"state": "stopped", "detail": None}
+    if ec2_state == "pending":
+        return {"state": "booting", "detail": None}
+    if ec2_state == "running":
+        url, token = _config()
+        ready = _probe_ready(url, token)
+        return {"state": "ready" if ready else "booting", "detail": None}
+    return {"state": "stopped", "detail": f"ec2 state: {ec2_state}"}
+
+
+@router.get("/api/compute/host")
+async def compute_host_state() -> dict:
+    return _host_state()
+
+
+@router.post("/api/compute/host/start")
+async def compute_host_start() -> dict:
+    return _host_state(start=True)
 
 
 @router.get("/api/compute/activity")
