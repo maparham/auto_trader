@@ -13,6 +13,17 @@ import Tooltip from "./Tooltip";
 
 const POP_WIDTH = 230;
 
+// The field's current scalar shown read-only beside its RangeChip, so the base
+// value a plain backtest would use stays visible while the field is swept. Edit
+// it by switching back to Backtest mode (where the plain input returns).
+export function SweepBaseValue({ children }: { children: React.ReactNode }) {
+  return (
+    <Tooltip content="Current value. Switch to Backtest mode to edit.">
+      <span className="sweep-base">{children}</span>
+    </Tooltip>
+  );
+}
+
 export function RangeChip({
   axis,
   onPatch,

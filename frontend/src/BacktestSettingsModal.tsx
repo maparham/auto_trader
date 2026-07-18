@@ -67,7 +67,7 @@ import { SESSION_PRESETS, buildRangeChips, coverage, formatDayWindow, isActive, 
 import type { ChartController } from "./lib/chartController";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
-import { RangeChip } from "./components/RangeChip";
+import { RangeChip, SweepBaseValue } from "./components/RangeChip";
 import { StrategyParams } from "./components/StrategyParams";
 import { SweepResults } from "./SweepResults";
 import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepCombo, type SweepOption } from "./lib/sweep";
@@ -2860,6 +2860,7 @@ export function RiskSection({
             (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.stop.value`);
           return axis && sweep ? (
             <>
+              <SweepBaseValue>{risk.stop.value ?? 2}</SweepBaseValue>
               <RangeChip
                 axis={axis}
                 onPatch={(p) => sweep.onAxisChange(axis.target, p)}
@@ -2880,6 +2881,7 @@ export function RiskSection({
             (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.stop.mult`);
           return axis && sweep ? (
             <>
+              <SweepBaseValue>{risk.stop.mult ?? 2}</SweepBaseValue>
               <RangeChip
                 axis={axis}
                 onPatch={(p) => sweep.onAxisChange(axis.target, p)}
@@ -2910,6 +2912,7 @@ export function RiskSection({
             (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.target.value`);
           return axis && sweep ? (
             <>
+              <SweepBaseValue>{risk.target.value ?? 4}</SweepBaseValue>
               <RangeChip
                 axis={axis}
                 onPatch={(p) => sweep.onAxisChange(axis.target, p)}
@@ -2930,6 +2933,7 @@ export function RiskSection({
             (a): a is RangeAxis => a.kind === "range" && a.target === `risk:${sweepSide}.target.mult`);
           return axis && sweep ? (
             <>
+              <SweepBaseValue>{risk.target.mult ?? 3}</SweepBaseValue>
               <RangeChip
                 axis={axis}
                 onPatch={(p) => sweep.onAxisChange(axis.target, p)}
@@ -3990,11 +3994,14 @@ function CountField({
           {/* While swept, a RangeChip edits the range in place; otherwise the
               plain count input with its ordinal suffix. */}
           {sweptAxis && sweep ? (
-            <RangeChip
-              axis={sweptAxis}
-              onPatch={(p) => sweep.onAxisChange(sweptAxis.target, p)}
-              onRemove={() => sweep.onToggle(sweep.target, n ?? 1)}
-            />
+            <>
+              <SweepBaseValue>{ordinal(n ?? 1)}</SweepBaseValue>
+              <RangeChip
+                axis={sweptAxis}
+                onPatch={(p) => sweep.onAxisChange(sweptAxis.target, p)}
+                onRemove={() => sweep.onToggle(sweep.target, n ?? 1)}
+              />
+            </>
           ) : (
             <>
               <input
@@ -4221,11 +4228,14 @@ function OperandPicker({
               {(() => {
                 const axis = sweptAxis("length");
                 return axis && sweep ? (
-                  <RangeChip
-                    axis={axis}
-                    onPatch={(p) => sweep.onAxisChange(axis.target, p)}
-                    onRemove={() => sweep.onToggle(axis.target, value.length ?? 9)}
-                  />
+                  <>
+                    <SweepBaseValue>{value.length ?? 9}</SweepBaseValue>
+                    <RangeChip
+                      axis={axis}
+                      onPatch={(p) => sweep.onAxisChange(axis.target, p)}
+                      onRemove={() => sweep.onToggle(axis.target, value.length ?? 9)}
+                    />
+                  </>
                 ) : (
                   <>
                     <input
@@ -4274,6 +4284,7 @@ function OperandPicker({
             const axis = sweptAxis("value");
             return axis && sweep ? (
               <>
+                <SweepBaseValue>{value.value}</SweepBaseValue>
                 <RangeChip
                   axis={axis}
                   onPatch={(p) => sweep.onAxisChange(axis.target, p)}

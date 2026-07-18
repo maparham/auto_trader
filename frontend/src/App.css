@@ -4847,6 +4847,10 @@ span.bt-leg-short { color: var(--neg); }
   font-variant-numeric: tabular-nums;
 }
 .range-chip:hover, .range-chip.open { filter: brightness(1.06); }
+.sweep-base {
+  color: var(--text-dim); font-size: 11px; white-space: nowrap;
+  font-variant-numeric: tabular-nums; cursor: default;
+}
 .range-chip:disabled { opacity: 0.5; cursor: default; filter: none; }
 .range-chip-bad { background: var(--neg); }
 .range-chip-pop { padding: 8px; display: flex; flex-direction: column; gap: 6px; width: 214px; }

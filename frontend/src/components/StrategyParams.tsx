@@ -7,7 +7,7 @@ import type { ParamSpec, ParamValues } from "../api";
 import type { RangeAxis, SweepAxis } from "../lib/sweep";
 import InfoTip from "./InfoTip";
 import NumberField from "./NumberField";
-import { RangeChip } from "./RangeChip";
+import { RangeChip, SweepBaseValue } from "./RangeChip";
 import Tooltip from "./Tooltip";
 
 interface Props {
@@ -72,11 +72,14 @@ export function StrategyParams({ specs, values, onChange, sweep }: Props) {
                 ))}
               </select>
             ) : axis && sweep ? (
-              <RangeChip
-                axis={axis}
-                onPatch={(p) => sweep.onAxisChange(axis.target, p)}
-                onRemove={() => sweep.onToggle(`param:${s.name}`, s)}
-              />
+              <>
+                <SweepBaseValue>{String(v)}</SweepBaseValue>
+                <RangeChip
+                  axis={axis}
+                  onPatch={(p) => sweep.onAxisChange(axis.target, p)}
+                  onRemove={() => sweep.onToggle(`param:${s.name}`, s)}
+                />
+              </>
             ) : (
               <NumberField
                 value={v as number}
