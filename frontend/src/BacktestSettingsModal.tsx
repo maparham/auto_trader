@@ -244,6 +244,9 @@ const OPERATORS: { value: Operator; label: string; tip: string }[] = [
   { value: "lte", label: "less or equal", tip: "True on every bar the left is at or below the right." },
 ];
 
+// Compact operator text for sweep-results cells (op-axis option labels).
+const OP_CELL: Partial<Record<Operator, string>> = { gt: ">", lt: "<", gte: "≥", lte: "≤" };
+
 // The compact glyph shown in the operator button (the row must fit on one line):
 // a crossing-lines icon for the two "crosses" operators, a math symbol for the
 // plain comparisons. The full wording stays in the dropdown.
@@ -720,8 +723,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       return addAxis(axes, next);
     });
   };
+  // Results cells read this label; symbols keep the axis columns narrow. The
+  // crosses operators have no symbol and stay as words.
   const opOption = (target: string, op: Operator): SweepOption => ({
-    label: OPERATORS.find((o) => o.value === op)?.label ?? op,
+    label: OP_CELL[op] ?? OPERATORS.find((o) => o.value === op)?.label ?? op,
     patch: { [target]: op },
   });
   // Operator axis: a discrete list seeded with the rule's current operator.
