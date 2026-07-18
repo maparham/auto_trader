@@ -40,24 +40,36 @@ AMI=$(aws ssm get-parameter --region $REGION \
 
 # Instance: 20 GB gp3, docker via user-data, shutdown-behavior=stop (that is
 # what turns the watchdog's `shutdown -h` into a billing stop, not a terminate).
-ID=$(aws ec2 run-instances --region $REGION \
-  --image-id "$AMI" --instance-type $TYPE --key-name $NAME \
-  --security-group-ids "$SG" \
-  --instance-initiated-shutdown-behavior stop \
-  --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp3"}}]' \
-  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME}]" \
-  --user-data '#!/bin/bash
+# Reuse an existing instance if one was already provisioned.
+ID=$(aws ec2 describe-instances --region $REGION \
+  --filters Name=tag:Name,Values=$NAME Name=instance-state-name,Values=pending,running,stopping,stopped \
+  --query 'Reservations[0].Instances[0].InstanceId' --output text)
+if [ "$ID" = "None" ]; then
+  ID=$(aws ec2 run-instances --region $REGION \
+    --image-id "$AMI" --instance-type $TYPE --key-name $NAME \
+    --security-group-ids "$SG" \
+    --instance-initiated-shutdown-behavior stop \
+    --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp3"}}]' \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME}]" \
+    --user-data '#!/bin/bash
 dnf install -y docker rsync
 systemctl enable --now docker
 mkdir -p /data /etc/auto-trader' \
-  --query 'Instances[0].InstanceId' --output text)
+    --query 'Instances[0].InstanceId' --output text)
+  aws ec2 wait instance-running --region $REGION --instance-ids "$ID"
+fi
 echo "instance: $ID"
-aws ec2 wait instance-running --region $REGION --instance-ids "$ID"
 
 # Elastic IP so COMPUTE_HOST_URL survives stop/start.
-EIP=$(aws ec2 allocate-address --region $REGION \
-  --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=$NAME}]" \
-  --query 'AllocationId' --output text)
+# Reuse an existing Elastic IP if one is already tagged.
+EIP=$(aws ec2 describe-addresses --region $REGION \
+  --filters Name=tag:Name,Values=$NAME \
+  --query 'Addresses[0].AllocationId' --output text)
+if [ "$EIP" = "None" ]; then
+  EIP=$(aws ec2 allocate-address --region $REGION \
+    --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=$NAME}]" \
+    --query 'AllocationId' --output text)
+fi
 aws ec2 associate-address --region $REGION --instance-id "$ID" --allocation-id "$EIP"
 IP=$(aws ec2 describe-addresses --region $REGION --allocation-ids "$EIP" \
   --query 'Addresses[0].PublicIp' --output text)
