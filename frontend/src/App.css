@@ -4640,6 +4640,7 @@ span.bt-leg-short { color: var(--neg); }
 .sweep-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .sweep-progress-bar { flex: 1; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
 .sweep-progress-fill { height: 100%; background: var(--accent); transition: width 0.15s ease; }
+.sweep-progress-timing { white-space: nowrap; }
 
 .sweep-table-wrap { overflow: auto; }
 .sweep-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }

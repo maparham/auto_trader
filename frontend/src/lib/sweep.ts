@@ -275,7 +275,7 @@ export async function pollToCompletion(
   jobId: string,
   target: SweepTarget,
   opts: {
-    onRows: (rows: SweepRow[], done: number, total: number) => void;
+    onRows: (rows: SweepRow[], done: number, total: number, etaSeconds: number | null) => void;
     signal?: AbortSignal;
     shouldCancelServer?: () => boolean;
   },
@@ -305,7 +305,12 @@ export async function pollToCompletion(
     }
     consecutiveFailures = 0;
     all.push(...status.rows);
-    if (status.rows.length) opts.onRows(status.rows, all.length, status.total);
+    // Fires on EVERY successful poll, rows or not: the ETA re-syncs to the
+    // backend's latest pace estimate even when no new combo landed in this
+    // interval (long combos on a saturated pool).
+    if (status.running || status.rows.length) {
+      opts.onRows(status.rows, all.length, status.total, status.etaSeconds);
+    }
     if (!status.running) {
       if (status.cancelled) throw new Error("sweep aborted");
       if (status.error) {
@@ -325,7 +330,7 @@ export async function runSweep(
   baseReq: BacktestRequest,
   axes: SweepAxis[],
   opts: {
-    onRows: (rows: SweepRow[], done: number, total: number) => void;
+    onRows: (rows: SweepRow[], done: number, total: number, etaSeconds: number | null) => void;
     signal?: AbortSignal;
     // Sub-window robustness bounds (epoch seconds, ascending); forwarded to the
     // job so every combo's run slices the same windows.

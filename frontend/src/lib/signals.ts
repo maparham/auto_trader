@@ -476,6 +476,13 @@ export interface SweepRunState {
   // Set when the user hit Cancel (as opposed to a real chunk failure) — the
   // modal shows a neutral note instead of the red error box.
   cancelled?: boolean;
+  // Backend pace estimate from the latest poll (null until the first combo
+  // lands); the progress bar ticks it down locally between polls.
+  etaSeconds?: number | null;
+  // Client clock (performance.now() ms) when THIS run started, for the live
+  // elapsed readout. Absent on re-attached sweeps (started before this page
+  // load), which show only the ETA.
+  startedAt?: number;
 }
 export const sweepStateSignal = new Signal<SweepRunState | null>(null);
 

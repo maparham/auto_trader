@@ -18,6 +18,7 @@ import Tooltip from "./components/Tooltip";
 import { rowWindow, verdictFor, type RowWindow } from "./lib/backtestPanelData";
 import { useStableCallback } from "./lib/useStableCallback";
 import { metricTipLines } from "./components/metricScaleTip";
+import { fmtRunDuration, remainingEta } from "./lib/duration";
 
 type MetricKey =
   | "net_pnl"
@@ -253,6 +254,54 @@ function useVirtualRows(
   return win;
 }
 
+export interface SweepProgressInfo {
+  done: number;
+  total: number;
+  // Backend pace estimate from the latest poll; null/absent until the first
+  // combo lands.
+  etaSeconds?: number | null;
+  // Client clock (performance.now() ms) the run started; absent on re-attached
+  // sweeps, which then show only the ETA.
+  startedAt?: number;
+}
+
+// Live progress header: count + fill bar + "elapsed · ~eta left" readout. Its
+// own component so the 1-second countdown tick re-renders only this row, never
+// the (large) results table below it. Mounted only while a sweep is running.
+function SweepProgress({ progress }: { progress: SweepProgressInfo }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  // The backend recomputes etaSeconds only when combos complete, so between
+  // chunks the value repeats — remember the client clock at which the latest
+  // DISTINCT value arrived and count down from there, so the readout keeps
+  // moving between polls instead of freezing on the last estimate.
+  const syncRef = useRef<{ eta: number; at: number } | null>(null);
+  if (progress.etaSeconds != null && syncRef.current?.eta !== progress.etaSeconds) {
+    syncRef.current = { eta: progress.etaSeconds, at: performance.now() };
+  }
+  const now = performance.now();
+  const elapsed = progress.startedAt != null ? fmtRunDuration(now - progress.startedAt) : null;
+  const eta = syncRef.current
+    ? `~${fmtRunDuration(remainingEta(syncRef.current.eta, syncRef.current.at, now) * 1000)} left`
+    : null;
+  const timing = [elapsed, eta].filter(Boolean).join(" · ");
+  return (
+    <div className="sweep-progress">
+      <span>{progress.done} / {progress.total}</span>
+      <div className="sweep-progress-bar">
+        <div
+          className="sweep-progress-fill"
+          style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+        />
+      </div>
+      {timing && <span className="sweep-progress-timing">{timing}</span>}
+    </div>
+  );
+}
+
 // Memoized so keystrokes/toggles elsewhere in the (large) hosting panel don't
 // re-render the whole results tree; the host must pass stable callbacks and a
 // stable progress object for this to bite.
@@ -264,7 +313,7 @@ export const SweepResults = memo(function SweepResults(props: {
   // neighborhood (halve step, re-center, clamp). Optional — omit to hide the
   // Refine controls entirely.
   onRefine?: (combo: SweepRow["combo"]) => void;
-  progress?: { done: number; total: number } | null;
+  progress?: SweepProgressInfo | null;
 }) {
   const { rows, axes, onApply, onRefine, progress } = props;
 
@@ -393,17 +442,7 @@ export const SweepResults = memo(function SweepResults(props: {
 
   return (
     <div className="sweep-results" ref={anchorRef}>
-      {progress && (
-        <div className="sweep-progress">
-          <span>{progress.done} / {progress.total}</span>
-          <div className="sweep-progress-bar">
-            <div
-              className="sweep-progress-fill"
-              style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
-            />
-          </div>
-        </div>
-      )}
+      {progress && <SweepProgress progress={progress} />}
 
       {applyDisabled && (
         <div className="al-note sweep-apply-hint">

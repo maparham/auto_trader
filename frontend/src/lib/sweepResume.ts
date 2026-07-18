@@ -126,12 +126,14 @@ async function continueResume(jobId: string, target: SweepTarget, archive?: Swee
     const rows = await pollToCompletion(jobId, target, {
       signal: ctl.signal,
       shouldCancelServer: () => sweepCancelServer.value,
-      onRows: (chunk, done, total) => {
+      onRows: (chunk, done, total, etaSeconds) => {
         // After an abort (detach / takeover) the state may already be cleared or
         // owned by a new run: a late-resolving poll must not publish stale rows.
+        // No startedAt: the run began before this page load, so there is no
+        // client start time — the progress bar shows only the ETA.
         if (ctl.signal.aborted) return;
         landed.push(...chunk);
-        sweepStateSignal.set({ rows: landed, done, total, running: true });
+        sweepStateSignal.set({ rows: landed, done, total, running: true, etaSeconds });
       },
     });
     sweepStateSignal.set({ rows, done: rows.length, total: rows.length, running: false });
@@ -199,7 +201,7 @@ export async function resumeSweep(): Promise<boolean> {
 
   // Still running: show what's landed so far, then keep polling to completion.
   // (continueResume re-fetches from cursor 0, so it doesn't double-count these.)
-  sweepStateSignal.set({ rows: status.rows, done: status.done, total: status.total, running: true });
+  sweepStateSignal.set({ rows: status.rows, done: status.done, total: status.total, running: true, etaSeconds: status.etaSeconds });
   void continueResume(jobId, target, archive);
   return true;
 }

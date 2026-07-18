@@ -81,6 +81,7 @@ import {
 import { loadHoldout, saveHoldoutPct, recordPeek, splitHoldout } from "./lib/holdout";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { formatPeriodRange } from "./lib/backtestPeriods";
+import { fmtRunDuration } from "./lib/duration";
 import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, getCostProfile, putCostProfile, refetchCostProfile, type StrategyInfo, type ParamSpec, type SweepArchiveSummary, type CostProfile } from "./api";
 import {
   loadCodedCfg,
@@ -170,17 +171,6 @@ function tzDisplay(tz: string): string {
   const city = TIMEZONES.find((t) => t.value === tz)?.label ?? tz;
   const off = offsetLabel(tz);
   return off ? `${city} ${off}` : city;
-}
-
-// Footer "Took Ns" readout: sub-10s keeps a decimal (short runs would all read
-// "4s"), longer runs round to whole units.
-function fmtRunDuration(ms: number): string {
-  const s = ms / 1000;
-  if (s < 10) return `${s.toFixed(1)}s`;
-  if (s < 60) return `${Math.round(s)}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${Math.round(s - m * 60)}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 function withChartTz(cfg: BacktestConfig, tz: string): BacktestConfig {
@@ -1567,7 +1557,15 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     [],
   );
   const sweepProgress = useMemo(
-    () => (sweepState?.running ? { done: sweepState.done, total: sweepState.total } : null),
+    () =>
+      sweepState?.running
+        ? {
+            done: sweepState.done,
+            total: sweepState.total,
+            etaSeconds: sweepState.etaSeconds,
+            startedAt: sweepState.startedAt,
+          }
+        : null,
     [sweepState],
   );
 

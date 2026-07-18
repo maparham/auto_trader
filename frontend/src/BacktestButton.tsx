@@ -372,7 +372,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // Take over from any live re-attached (resumed) poll first, so this fresh
         // submission owns the sweep state cleanly instead of racing a resumed one.
         stopResumedSweep();
-        sweepStateSignal.set({ rows: [], done: 0, total: 0, running: true });
+        sweepStateSignal.set({ rows: [], done: 0, total: 0, running: true, etaSeconds: null, startedAt: runStart });
         // Cleared up front, written only on completion below — a cancelled or
         // failed sweep shows no duration.
         sweepDurationSignal.set(null);
@@ -390,12 +390,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
             // job running for a reload to re-attach; the Cancel button
             // (requestSweepCancel(true)) kills it. Read at abort time.
             shouldCancelServer: () => sweepCancelServer.value,
-            onRows: (chunkRows, done, total) => {
+            onRows: (chunkRows, done, total, etaSeconds) => {
               // After an abort (modal closed / Cancel) the state may already be
               // cleared — a late chunk must not resurrect a ghost sweep.
               if (ctl.signal.aborted) return;
               landed.push(...chunkRows);
-              sweepStateSignal.set({ rows: landed, done, total, running: true });
+              sweepStateSignal.set({ rows: landed, done, total, running: true, etaSeconds, startedAt: runStart });
             },
           });
           sweepStateSignal.set({ rows, done: rows.length, total: rows.length, running: false });
