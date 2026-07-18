@@ -3364,6 +3364,9 @@
 }
 .bt-summary .pos { color: var(--pos); font-weight: 600; }
 .bt-summary .neg { color: var(--neg); font-weight: 600; }
+/* Key stats (trades / dd / win / RR) — bold, full-strength color so they read at
+   a glance instead of blending into the dim summary row. */
+.bt-summary .bt-stat { color: var(--text); font-weight: 600; }
 /* "file sl/tp overridden" transparency chip — a muted outline so it reads as a
    note rather than a metric, but is never silent about the override. */
 .bt-chip-muted {
@@ -4112,24 +4115,30 @@
   padding: 2px 0 4px; overflow-y: auto;
 }
 .bt-panel-group + .bt-panel-group {
-  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border);
+  margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--border);
 }
+/* Section eyebrow: the title sits on the left with a hairline trailing to the
+   right edge, so each section reads as a labelled band rather than loose text. */
 .bt-panel-group-title {
-  margin: 0 0 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.09em;
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.11em;
   text-transform: uppercase; color: var(--text-dim);
+}
+.bt-panel-group-title::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
 }
 .bt-cost-sense {
   margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border);
   font-size: 12px; color: var(--text-dim);
 }
 .bt-panel-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
   gap: 12px 16px;
 }
-.bt-panel-stat { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bt-panel-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .bt-panel-stat-label {
   display: flex; align-items: center; gap: 3px; min-width: 0;
-  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint);
+  font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-faint);
 }
 .bt-panel-stat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The ⓘ mustn't be squeezed out when the name ellipsizes, and stays put on hover.
@@ -4138,7 +4147,7 @@
 .bt-panel-stat-label .ind-info svg { width: 11px; height: 11px; }
 .bt-panel-stat-value {
   font-family: var(--mono); font-variant-numeric: tabular-nums;
-  font-size: 14px; font-weight: 600; color: var(--text);
+  font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.25;
 }
 .bt-panel-stat-value.pos { color: var(--pos); }
 .bt-panel-stat-value.neg { color: var(--neg); }
@@ -4266,13 +4275,15 @@ span.bt-leg-short { color: var(--neg); }
    put via a sticky first column. */
 .bt-leg-wrap { overflow-x: auto; }
 .bt-leg-table {
-  border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums;
+  width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums;
 }
 .bt-leg-table th, .bt-leg-table td { white-space: nowrap; }
-.bt-leg-col { text-align: right; padding: 0 0 6px 14px; vertical-align: bottom; }
+/* Header row: hairline under it separates column labels from the data band. */
+.bt-leg-table thead tr { border-bottom: 1px solid var(--border); }
+.bt-leg-col { text-align: right; padding: 0 0 7px 16px; vertical-align: bottom; }
 .bt-leg-colhead {
   display: inline-flex; align-items: center; gap: 3px;
-  font-size: 9px; font-weight: 500; letter-spacing: 0.06em;
+  font-size: 9px; font-weight: 500; letter-spacing: 0.07em;
   text-transform: uppercase; color: var(--text-faint);
 }
 .bt-leg-colname { overflow: hidden; text-overflow: ellipsis; }
@@ -4280,12 +4291,12 @@ span.bt-leg-short { color: var(--neg); }
 .bt-leg-colhead .ind-info svg { width: 11px; height: 11px; }
 .bt-leg-rowhead {
   position: sticky; left: 0; z-index: 1; background: var(--surface);
-  text-align: left; padding: 5px 10px 5px 0;
+  text-align: left; padding: 7px 12px 7px 0;
   font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-dim);
 }
 .bt-leg-cell {
-  padding: 5px 0 5px 14px; text-align: right;
+  padding: 7px 0 7px 16px; text-align: right;
   font-family: var(--mono); font-weight: 600; color: var(--text);
 }
 .bt-leg-table tbody tr + tr .bt-leg-cell,

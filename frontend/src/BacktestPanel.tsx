@@ -170,20 +170,20 @@ export default function BacktestPanel() {
           {s.net_pnl >= 0 ? "+" : ""}
           {s.net_pnl.toFixed(2)}
         </span>
-        <span>{s.n_trades} trades</span>
+        <span className="bt-stat">{s.n_trades} trades</span>
         <Tooltip content="Largest equity drop from a high to a low">
-          <span>−{s.max_drawdown.toFixed(2)} dd</span>
+          <span className="bt-stat">−{s.max_drawdown.toFixed(2)} dd</span>
         </Tooltip>
-        <span>{(s.win_rate * 100).toFixed(0)}% win</span>
+        <span className="bt-stat">{(s.win_rate * 100).toFixed(0)}% win</span>
         {(() => {
           // Effective reward:risk actually realized (avg win ÷ avg loss) — the true
           // payoff, which can differ sharply from the configured stop/target RR.
           const rr = result.metrics.avg_win_loss_ratio;
           const rrTitle =
             "Effective reward:risk. Average win ÷ average loss, versus your configured stop/target RR.";
-          if (rr != null) return <Tooltip content={rrTitle}><span>{rr.toFixed(2)} RR</span></Tooltip>;
+          if (rr != null) return <Tooltip content={rrTitle}><span className="bt-stat">{rr.toFixed(2)} RR</span></Tooltip>;
           // null = no losing trades: infinite RR when there were any winners, else nothing to show.
-          return s.win_rate > 0 ? <Tooltip content={rrTitle}><span>∞ RR</span></Tooltip> : null;
+          return s.win_rate > 0 ? <Tooltip content={rrTitle}><span className="bt-stat">∞ RR</span></Tooltip> : null;
         })()}
         {result.fileBracketsOverridden && (
           <Tooltip content="The strategy file passed sl=/tp= but panel risk is configured, so panel risk was applied.">
