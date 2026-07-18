@@ -907,7 +907,11 @@ export class OverlayManager {
       // transient measure ruler. klinecharts does the snapping natively when `mode`
       // is weak/strong on the candle pane (see lib/magnet.ts).
       // Slope snaps like a drawing (user opted in); alerts/measure/rangeBand never do.
-      mode: isDrawing || isSlope ? (effectiveMagnetMode() as OverlayMode) : undefined,
+      // v10 gotcha: OverlayView._coordinateToPoint snaps whenever `mode !== 'normal'`,
+      // and createOverlay's config merge CLOBBERS the OverlayImp 'normal' default even
+      // with `undefined` (same gotcha as `visible` above). So a non-snapping overlay
+      // MUST pass 'normal' explicitly — `undefined` reads as "not normal" and snaps.
+      mode: isDrawing || isSlope ? (effectiveMagnetMode() as OverlayMode) : ("normal" as OverlayMode),
       modeSensitivity: isDrawing || isSlope ? MAGNET_SENSITIVITY : undefined,
       // Alerts render their own TV-style axis label (DOM pill in ChartCore), so
       // suppress klinecharts' default y-axis value box to avoid a duplicate. For
