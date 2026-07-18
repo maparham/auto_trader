@@ -1,0 +1,19 @@
+# deploy/ec2/auto-trader-compute.service
+# Runs the compute-host container. Installed to /etc/systemd/system/ by
+# scripts/deploy-ec2.sh; image is built on the box from the rsynced source.
+[Unit]
+Description=auto-trader compute host container
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=3
+ExecStartPre=-/usr/bin/docker rm -f auto-trader-compute
+ExecStart=/usr/bin/docker run --rm --name auto-trader-compute \
+  --env-file /etc/auto-trader/compute.env \
+  -v /data:/data -p 8000:8000 auto-trader-compute:latest
+ExecStop=/usr/bin/docker stop auto-trader-compute
+
+[Install]
+WantedBy=multi-user.target

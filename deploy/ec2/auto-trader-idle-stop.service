@@ -1,0 +1,7 @@
+# deploy/ec2/auto-trader-idle-stop.service
+[Unit]
+Description=auto-trader idle shutdown check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/idle-stop.sh

@@ -1,0 +1,10 @@
+# deploy/ec2/auto-trader-idle-stop.timer
+[Unit]
+Description=auto-trader idle shutdown timer (1 min cadence)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
