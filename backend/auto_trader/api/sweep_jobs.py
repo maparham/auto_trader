@@ -117,6 +117,10 @@ class SweepJobManager:
         with self._store_lock:
             return sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)
 
+    def running_count(self) -> int:
+        with self._store_lock:
+            return sum(1 for j in self._jobs.values() if j.running)
+
     def _prune(self) -> None:
         now = time.time()
         with self._store_lock:

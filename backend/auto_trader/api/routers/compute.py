@@ -54,6 +54,19 @@ async def compute_status() -> dict:
     return {"remoteConfigured": bool(url and token)}
 
 
+@router.get("/api/compute/activity")
+async def compute_activity() -> dict:
+    """Idle signal for the on-box watchdog: running sweep jobs + seconds since
+    the last real request. This endpoint itself never counts as activity."""
+    from .. import activity
+    from ..sweep_jobs import JOBS
+
+    return {
+        "activeJobs": JOBS.running_count(),
+        "idleSeconds": round(activity.idle_seconds(), 1),
+    }
+
+
 async def forward(
     method: str,
     path: str,

@@ -95,6 +95,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from . import activity
+
+
+@app.middleware("http")
+async def _track_activity(request, call_next):
+    # Feed the compute host's idle watchdog. The activity poll itself is
+    # excluded so the watchdog doesn't keep the box alive by watching it.
+    if request.url.path != "/api/compute/activity":
+        activity.touch()
+    return await call_next(request)
+
+
 # Remote-deployment guards (bearer-token gate + compute-only dealing block). No-op
 # unless the corresponding env flags are set, which happens only on the remote host.
 install_guards(app)
