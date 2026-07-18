@@ -114,6 +114,8 @@ import {
   TimeHighlightStylePanel,
   timeHighlightConfig,
 } from "./indicatorSettings/TimeHighlightPanels";
+import { CandlePatternsPanel, candlePatternsConfig } from "./indicatorSettings/CandlePatternsPanel";
+import type { CandlePatternsExtend } from "./lib/indicators/candlePatterns";
 import {
   DEFAULT_LINE_PALETTE,
   CURVE_LABEL_TYPES,
@@ -166,6 +168,10 @@ export default function IndicatorSettings({
   // Pivots High/Low: draw-only connector styling (color/width/dash/arrowheads) in
   // the Style tab — no recompute, just an extendData override.
   const isPivotAnalysis = type === "PIVOT_ANALYSIS";
+  // Candle Patterns: figure-less main-pane overlay, no numeric calcParams. Its
+  // whole config (pattern toggles, show-labels, colours) is a small extendData
+  // object edited on the Inputs tab (colours included, unlike EMA/MA).
+  const isCandlePatterns = type === "CANDLE_PATTERNS";
   // Overlay indicators with a multi-line channel get per-line show/hide checkboxes
   // (+ opacity) in the Style tab, like TradingView's band toggles.
   const hasLineToggle = isAvwap || type === "LR" || type === "PREV_HL";
@@ -507,6 +513,25 @@ export default function IndicatorSettings({
   const patchWindow = makePatchWindow(windows, writeWindows);
   const addWindow = makeAddWindow(windows, writeWindows);
 
+  // --- CANDLE_PATTERNS: pattern toggles + show-labels + colours (extendData) ---
+  // The whole config is this small object. Writes merge the live extendData
+  // (preserve indType) and let calc/draw re-run; persistence is the snapshot
+  // effect (keyed on `candleExt`). `disabled` is deep-copied on init so a later
+  // toggle never mutates the opening snapshot.
+  const candleExt0 = (ind?.extendData ?? {}) as CandlePatternsExtend;
+  const [candleExt, setCandleExt] = useState<CandlePatternsExtend>(() => ({
+    disabled: { ...(candleExt0.disabled ?? {}) },
+    showLabels: candleExt0.showLabels,
+    bullColor: candleExt0.bullColor,
+    bearColor: candleExt0.bearColor,
+    neutralColor: candleExt0.neutralColor,
+  }));
+  function writeCandlePatterns(next: CandlePatternsExtend) {
+    setCandleExt(next);
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), ...next } });
+  }
+
   // PREV_HL family writers (moved to PrevHlPanels.tsx; state stays here since the
   // persistence effect + currentConfig() read it directly).
   const setPrevHlTimezone = makeSetPrevHlTimezone(chart, paneId, name, setPrevHlTz);
@@ -686,6 +711,9 @@ export default function IndicatorSettings({
     if (type === "TIME_HIGHLIGHT") {
       timeHighlightConfig(extendData, windows);
     }
+    if (isCandlePatterns) {
+      candlePatternsConfig(extendData, candleExt);
+    }
     if (!showValue) extendData.hideLegendValue = true;
     // Per-timeframe visibility (TV Visibility tab) — model only when non-default,
     // but userVisible (the intent) is always written once touched, so a later read
@@ -710,7 +738,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt]);
 
   // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
   // setParam's isMa branch below, so it stays a shell-local binding.
@@ -1237,9 +1265,13 @@ export default function IndicatorSettings({
               {inputs.length === 0 &&
                 type !== "PREV_HL" &&
                 type !== "SESSIONS" &&
-                type !== "TIME_HIGHLIGHT" && (
+                type !== "TIME_HIGHLIGHT" &&
+                !isCandlePatterns && (
                   <p className="ind-note">This indicator has no adjustable inputs.</p>
                 )}
+              {isCandlePatterns && (
+                <CandlePatternsPanel ext={candleExt} onChange={writeCandlePatterns} />
+              )}
               {type === "SESSIONS" && (
                 <SessionsInputsPanel
                   sessions={sessions}
@@ -1748,10 +1780,10 @@ export default function IndicatorSettings({
                   setPrevHlAnchorInput={setPrevHlAnchorInput}
                 />
               )}
-              {type !== "SESSIONS" && type !== "TIME_HIGHLIGHT" && (
+              {type !== "SESSIONS" && type !== "TIME_HIGHLIGHT" && !isCandlePatterns && (
                 <div className="ind-group">Calculation</div>
               )}
-              {type === "SESSIONS" || type === "TIME_HIGHLIGHT" ? null : type === "PREV_HL" ? (
+              {type === "SESSIONS" || type === "TIME_HIGHLIGHT" || isCandlePatterns ? null : type === "PREV_HL" ? (
                 <PrevHlCalculationRows
                   prevHlGapMode={prevHlGapMode}
                   prevHlTz={prevHlTz}

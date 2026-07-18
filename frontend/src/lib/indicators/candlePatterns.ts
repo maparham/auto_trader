@@ -263,9 +263,11 @@ export interface CandlePatternsPoint {
   hits?: number[];
 }
 
-const DEFAULT_BULL_COLOR = "#1FADA2";
-const DEFAULT_BEAR_COLOR = "#F35A54";
-const DEFAULT_NEUTRAL_COLOR = "#787B86";
+// Single source of truth for the marker colors — the draw falls back to these
+// and the settings panel shows them as the current value when extendData is empty.
+export const DEFAULT_BULL_COLOR = "#1FADA2";
+export const DEFAULT_BEAR_COLOR = "#F35A54";
+export const DEFAULT_NEUTRAL_COLOR = "#787B86";
 
 // Marker geometry (pixels).
 const TRI_HALF_WIDTH = 6; // half base width of the polarity triangle

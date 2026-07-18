@@ -2136,6 +2136,11 @@
 
 /* Sessions indicator: one editable row per session (Inputs tab). Compact flex row
    of enable + name + timezone + open–close, with a remove button. */
+/* Candle Patterns: two-column checkbox grid for the 16 pattern-group toggles
+   (layout only; each cell reuses the shared .ind-check markup). */
+.candle-patterns-editor { display: flex; flex-direction: column; gap: 6px; }
+.candle-patterns-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+
 .sessions-editor { display: flex; flex-direction: column; gap: 6px; }
 .session-row { display: flex; align-items: center; gap: 5px; }
 .session-row.is-off { opacity: 0.55; }
