@@ -21,6 +21,7 @@ export * from "./indicators/pivotBands";
 export * from "./indicators/pivotAnalysis";
 export * from "./indicators/curveLabels";
 export * from "./indicators/slope";
+export * from "./indicators/candlePatterns";
 
 import { EMA_TEMPLATE, MA_TEMPLATE } from "./indicators/ma";
 import { LR_TEMPLATE } from "./indicators/lr";
@@ -32,6 +33,7 @@ import { TIME_HIGHLIGHT_TEMPLATE } from "./indicators/timeHighlight";
 import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
 import { PIVOT_ANALYSIS_TEMPLATE } from "./indicators/pivotAnalysis";
 import { SLOPE_TEMPLATE, SLOPE_ACCEL_TEMPLATE } from "./indicators/slope";
+import { CANDLE_PATTERNS_TEMPLATE } from "./indicators/candlePatterns";
 
 // Base templates for our custom indicator TYPES, keyed by type. Each is a full
 // klinecharts indicator definition MINUS the `name` (the name is assigned per
@@ -50,7 +52,8 @@ export type CustomIndicatorType =
   | "PIVOT_BANDS"
   | "PIVOT_ANALYSIS"
   | "SLOPE"
-  | "SLOPE_ACCEL";
+  | "SLOPE_ACCEL"
+  | "CANDLE_PATTERNS";
 
 export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate, "name">> = {
   EMA: EMA_TEMPLATE,
@@ -66,6 +69,7 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   PIVOT_ANALYSIS: PIVOT_ANALYSIS_TEMPLATE,
   SLOPE: SLOPE_TEMPLATE,
   SLOPE_ACCEL: SLOPE_ACCEL_TEMPLATE,
+  CANDLE_PATTERNS: CANDLE_PATTERNS_TEMPLATE,
 };
 
 // Register each base type under its own name (so a single instance can still use
@@ -93,4 +97,5 @@ export const OVERLAY_INDICATORS = new Set([
   "PIVOT_BANDS",
   "PIVOT_ANALYSIS",
   "TIME_HIGHLIGHT",
+  "CANDLE_PATTERNS",
 ]);

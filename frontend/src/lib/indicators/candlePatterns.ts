@@ -232,3 +232,175 @@ export function patternLineSeries(
   if (!def) return hits.map(() => 0);
   return hits.map((set) => (set.has(def.id) ? 1 : 0));
 }
+
+// ---------------------------------------------------------------------------
+// Chart template (Task 2). Figure-less MAIN-pane overlay, modelled on
+// timeHighlight.ts: `series: 'price'`, `figures: []`, `calc` stores per-bar
+// state on indicator.result and `draw` paints pure pixels (returning true so
+// klinecharts skips its default figure loop). All klinecharts imports are
+// TYPE-ONLY so this file still pulls no klinecharts runtime — preserving the
+// backtestConfig.ts import-cycle invariant noted at the top of the file.
+// ---------------------------------------------------------------------------
+import type {
+  Indicator,
+  IndicatorTemplate,
+  IndicatorDrawParams,
+  KLineData,
+} from "klinecharts";
+
+export interface CandlePatternsExtend {
+  disabled?: Record<string, boolean>; // by TOGGLE id; absent/false = enabled
+  showLabels?: boolean; // default true
+  bullColor?: string; // default "#1FADA2"
+  bearColor?: string; // default "#F35A54"
+  neutralColor?: string; // default "#787B86"
+  hideLegendValue?: boolean;
+}
+
+// Canonical line INDICES (into CANDLE_PATTERN_DEFS) of the ENABLED matches at
+// this bar. Empty/absent when no enabled pattern hit.
+export interface CandlePatternsPoint {
+  hits?: number[];
+}
+
+const DEFAULT_BULL_COLOR = "#1FADA2";
+const DEFAULT_BEAR_COLOR = "#F35A54";
+const DEFAULT_NEUTRAL_COLOR = "#787B86";
+
+// Marker geometry (pixels).
+const TRI_HALF_WIDTH = 6; // half base width of the polarity triangle
+const TRI_HEIGHT = 8; // triangle height
+const TRI_GAP = 4; // gap between the bar wick and the triangle
+const LABEL_FONT = "10px sans-serif";
+const LABEL_LINE_HEIGHT = 11;
+
+// Per-bar enabled-hit indices. A pattern is enabled when its def's TOGGLE is not
+// disabled; the stored value is the def's canonical index (immutable regardless
+// of which toggles are on). Iterates in canonical order so labels stack stably.
+export function computeCandlePatterns(
+  dataList: readonly PatternBar[],
+  ext: CandlePatternsExtend,
+): CandlePatternsPoint[] {
+  const disabled = ext.disabled ?? {};
+  const all = detectAllPatterns(dataList);
+  return all.map((set) => {
+    const hits: number[] = [];
+    for (let idx = 0; idx < CANDLE_PATTERN_DEFS.length; idx++) {
+      const def = CANDLE_PATTERN_DEFS[idx];
+      if (disabled[def.toggle]) continue;
+      if (set.has(def.id)) hits.push(idx);
+    }
+    return hits.length ? { hits } : {};
+  });
+}
+
+// Paint polarity triangles + stacked labels onto the candle pane. For each bar
+// with enabled hits: bull hits get one filled up-triangle below the bar low with
+// labels stacked downward; bear + neutral hits get one down-triangle above the
+// bar high with labels stacked upward. Label color follows each hit's polarity.
+// The above-group triangle uses bearColor when any bear hit is present, else
+// neutralColor (a pure-doji bar gets no red marker). showLabels === false paints
+// triangles only. Pure pixel space; returns true so klinecharts draws no figures.
+function drawCandlePatterns(
+  params: IndicatorDrawParams<CandlePatternsPoint, unknown, unknown>,
+): boolean {
+  const { ctx, chart, indicator, xAxis, yAxis } = params;
+  const ext = (indicator.extendData ?? {}) as CandlePatternsExtend;
+  const bullColor = ext.bullColor ?? DEFAULT_BULL_COLOR;
+  const bearColor = ext.bearColor ?? DEFAULT_BEAR_COLOR;
+  const neutralColor = ext.neutralColor ?? DEFAULT_NEUTRAL_COLOR;
+  const showLabels = ext.showLabels !== false;
+  const points = indicator.result ?? [];
+  const kLineDataList = chart.getDataList();
+
+  ctx.save();
+  ctx.font = LABEL_FONT;
+  ctx.textAlign = "center";
+  // Iterate the full result (off-screen bars draw off-canvas, harmlessly) —
+  // same convention as timeHighlight/RSI/Sessions draws.
+  for (let i = 0; i < points.length; i++) {
+    const hits = points[i].hits;
+    if (!hits || hits.length === 0) continue;
+    const k = kLineDataList[i];
+    if (!k) continue;
+    const x = xAxis.convertToPixel(i);
+
+    // Split enabled hits into the below-group (bull) and above-group (bear +
+    // neutral), preserving canonical order.
+    const below: CandlePatternDef[] = [];
+    const above: CandlePatternDef[] = [];
+    let aboveHasBear = false;
+    for (const idx of hits) {
+      const def = CANDLE_PATTERN_DEFS[idx];
+      if (!def) continue;
+      if (def.polarity === "bull") below.push(def);
+      else {
+        above.push(def);
+        if (def.polarity === "bear") aboveHasBear = true;
+      }
+    }
+
+    // Bull group: up-triangle below the low, labels stacked downward.
+    if (below.length) {
+      const lowY = yAxis.convertToPixel(k.low);
+      const apexY = lowY + TRI_GAP; // apex points up, toward the bar
+      const baseY = apexY + TRI_HEIGHT;
+      ctx.fillStyle = bullColor;
+      ctx.beginPath();
+      ctx.moveTo(x, apexY);
+      ctx.lineTo(x - TRI_HALF_WIDTH, baseY);
+      ctx.lineTo(x + TRI_HALF_WIDTH, baseY);
+      ctx.closePath();
+      ctx.fill();
+      if (showLabels) {
+        ctx.textBaseline = "top";
+        ctx.fillStyle = bullColor;
+        let y = baseY + 2;
+        for (const def of below) {
+          ctx.fillText(def.short, x, y);
+          y += LABEL_LINE_HEIGHT;
+        }
+      }
+    }
+
+    // Bear + neutral group: down-triangle above the high, labels stacked upward.
+    if (above.length) {
+      const highY = yAxis.convertToPixel(k.high);
+      const apexY = highY - TRI_GAP; // apex points down, toward the bar
+      const baseY = apexY - TRI_HEIGHT;
+      ctx.fillStyle = aboveHasBear ? bearColor : neutralColor;
+      ctx.beginPath();
+      ctx.moveTo(x, apexY);
+      ctx.lineTo(x - TRI_HALF_WIDTH, baseY);
+      ctx.lineTo(x + TRI_HALF_WIDTH, baseY);
+      ctx.closePath();
+      ctx.fill();
+      if (showLabels) {
+        ctx.textBaseline = "bottom";
+        let y = baseY - 2;
+        for (const def of above) {
+          ctx.fillStyle = def.polarity === "bear" ? bearColor : neutralColor;
+          ctx.fillText(def.short, x, y);
+          y -= LABEL_LINE_HEIGHT;
+        }
+      }
+    }
+  }
+  ctx.restore();
+  return true;
+}
+
+// Figure-less candle-pane overlay. 'price' so it shares the candle price axis
+// (yAxis.convertToPixel maps price→pixel); no figures and no numeric result
+// values, so it never perturbs the price auto-range. calc stores per-bar enabled
+// hits; draw paints the polarity markers.
+export const CANDLE_PATTERNS_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
+  shortName: "Candle Patterns",
+  series: "price",
+  precision: 0,
+  figures: [],
+  calc: (dataList: KLineData[], ind: Indicator) =>
+    computeCandlePatterns(dataList, (ind.extendData ?? {}) as CandlePatternsExtend),
+  draw: (params) =>
+    drawCandlePatterns(params as IndicatorDrawParams<CandlePatternsPoint, unknown, unknown>),
+};

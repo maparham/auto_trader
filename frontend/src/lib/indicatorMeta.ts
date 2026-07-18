@@ -91,6 +91,11 @@ export const SMOOTHING_TYPES: Array<{ value: string; label: string }> = [
 ];
 
 const INDICATOR_META: Record<string, IndicatorMetaDef> = {
+  CANDLE_PATTERNS: {
+    inputs: [],
+    title: "Candle Patterns",
+    desc: "Marks candlestick patterns (engulfing, harami, stars, pins and more) on the chart. Each pattern is usable as a backtest rule condition.",
+  },
   // EMA/MA are our TV-style single-line moving averages (see customIndicators);
   // their Source / Offset / Smoothing / Timeframe inputs are rendered by a
   // dedicated panel in the settings modal (they write extendData + drive an

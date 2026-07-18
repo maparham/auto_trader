@@ -7,6 +7,7 @@ import {
   detectAllPatterns,
   patternLineSeries,
   defaultMembers,
+  computeCandlePatterns,
   type PatternBar,
 } from "./candlePatterns";
 
@@ -260,6 +261,38 @@ describe("aggregate lines", () => {
     const last = bars.length - 1;
     expect(patternLineSeries(bars, 3)[last]).toBe(1);
     expect(patternLineSeries(bars, 2)[last]).toBe(0); // pin_top not hit
+  });
+});
+
+describe("computeCandlePatterns (chart calc): enable filtering + canonical indices", () => {
+  // pin_bottom (canonical index 3, toggle "pin_bottom") on a lone bar.
+  const pinBottom = withPad(B(100, 100.5, 90, 99.5));
+  // A bar that fires BOTH engulfing patterns' toggle group is hard to build in
+  // one bar, so cover the two-patterns-one-toggle contract via bull_engulfing
+  // (index 0) and its shared "engulfing" toggle also gating bear_engulfing (1).
+  const bullEngulf = withPad(B(100, 101, 97, 98), B(97, 102, 96, 101));
+
+  it("enabled hit carries its canonical index (pin_bottom -> 3)", () => {
+    const pts = computeCandlePatterns(pinBottom, {});
+    const last = pts[pts.length - 1];
+    expect(last.hits).toContain(3);
+  });
+
+  it("disabling a toggle removes BOTH patterns it gates from hits", () => {
+    // bull_engulfing (0) present when enabled.
+    const on = computeCandlePatterns(bullEngulf, {});
+    expect(on[on.length - 1].hits).toContain(0);
+    // Disabling the "engulfing" toggle must drop index 0 AND index 1 everywhere.
+    const off = computeCandlePatterns(bullEngulf, { disabled: { engulfing: true } });
+    for (const pt of off) {
+      expect(pt.hits ?? []).not.toContain(0);
+      expect(pt.hits ?? []).not.toContain(1);
+    }
+  });
+
+  it("disabling an unrelated toggle leaves the hit intact", () => {
+    const pts = computeCandlePatterns(pinBottom, { disabled: { engulfing: true } });
+    expect(pts[pts.length - 1].hits).toContain(3);
   });
 });
 
