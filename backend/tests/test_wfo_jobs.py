@@ -4,23 +4,7 @@ from concurrent.futures import Future
 
 from auto_trader.api import wfo_jobs, wfo_worker
 
-
-class _SyncPool:
-    """Runs submitted fns inline; mimics the ProcessPoolExecutor surface."""
-    def __init__(self, max_workers=None, initializer=None, initargs=()):
-        if initializer:
-            initializer(*initargs)
-
-    def submit(self, fn, *args):
-        f = Future()
-        try:
-            f.set_result(fn(*args))
-        except Exception as e:  # pragma: no cover
-            f.set_exception(e)
-        return f
-
-    def shutdown(self, wait=True, cancel_futures=False):
-        pass
+from tests.wfo_fixtures import _SyncPool
 
 
 def _wait(job, timeout=30.0):

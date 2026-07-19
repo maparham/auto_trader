@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+import datetime as dt
 import logging
 import time
 import uuid
@@ -14,6 +16,7 @@ from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.core.run_store import RUN_STORE
 from auto_trader.core.sweep_store import SWEEP_STORE
+from auto_trader.core.wfo_store import WFO_STORE
 from auto_trader.engine.analysis import compute_analysis
 from auto_trader.engine.backtest import BacktestResult
 from auto_trader.engine.context_features import enrich_trades
@@ -48,6 +51,9 @@ from ..schemas import (
     SweepRowDTO,
     TermDTO,
     TradeDTO,
+    WfoJobStatusResponse,
+    WfoJobSubmitResponse,
+    axis_dicts,
 )
 from ..sweep_apply import (
     SweepValidationError,
@@ -67,6 +73,8 @@ from ..sweep_apply import (
     _rule_operands,
 )
 from ..sweep_jobs import JOBS
+from ..wfo_jobs import WFO_JOBS
+from ..wfo_plan import WfoPlanError, parse_span, plan as wfo_plan
 
 # Extra HTF bars to fetch BEFORE the base window's start so ad-hoc tf= indicators
 # warm up. Without it an HTF EMA/SMA seeds from the first in-window bar and reports
@@ -555,14 +563,17 @@ def _bar_traces_dto(result: BacktestResult, trade_from_time: int) -> list[BarTra
 
 def _validate_combo_targets(
     req: BacktestRequest, candles: list[Candle], coded: bool,
+    combos: list[dict] | None = None,
 ) -> None:
     """Dry-apply every combo's patches (no engine run) so a malformed target on
     ANY combo 422s the submit synchronously, matching the old chunk endpoint
     where a bad target failed the whole chunk. Cheap: pydantic model copies
     only. Combo VALUES the engine rejects later (e.g. an out-of-range param)
-    are not checked here; they isolate to their row's error."""
+    are not checked here; they isolate to their row's error. `combos` defaults
+    to the sweep's list; the WFO submit passes its own."""
+    combos = combos if combos is not None else req.sweep.combos
     try:
-        for combo in req.sweep.combos:
+        for combo in combos:
             env, rest = split_env_combo(combo)
             patched, _ = apply_env_combo(req, candles, env)
             if coded:
@@ -574,7 +585,8 @@ def _validate_combo_targets(
 
 
 async def _prefetch_sweep_htf(
-    req: BacktestRequest, candles: list[Candle], coded: bool
+    req: BacktestRequest, candles: list[Candle], coded: bool,
+    combos: list[dict] | None = None,
 ) -> dict[str, list[Candle]]:
     """Fetch (through the local cache) the full higher-timeframe set a sweep needs,
     so it can be SHIPPED to the remote compute host in req.htfCandles — the remote
@@ -582,7 +594,9 @@ async def _prefetch_sweep_htf(
     invariant HTF set. Coded mode: run combos[0] as a discovery probe, letting its
     tf= calls pull each referenced timeframe into the dict (best-effort — if that
     probe combo errors mid-run we ship what it gathered; the remote re-validates
-    and any still-missing tf trips the compute-host guard loudly)."""
+    and any still-missing tf trips the compute-host guard loudly). `combos`
+    defaults to the sweep's list; the WFO remote path passes its own."""
+    combos = combos if combos is not None else req.sweep.combos
     if not coded:
         return await _fetch_rule_htf(req)
     try:
@@ -590,7 +604,7 @@ async def _prefetch_sweep_htf(
     except StrategyLoadError as e:
         raise HTTPException(422, str(e))
     htf: dict[str, list[Candle]] = {}
-    env, rest = split_env_combo(req.sweep.combos[0])
+    env, rest = split_env_combo(combos[0])
     patched_req, combo_candles = apply_env_combo(req, candles, env)
     try:
         params_sent, long_risk, short_risk = apply_combo(patched_req, rest)
@@ -769,4 +783,286 @@ async def cancel_sweep_job(job_id: str, target: str = "local"):
     if JOBS.get(job_id) is None:
         raise HTTPException(404, "sweep job not found")
     JOBS.cancel(job_id)  # idempotent: cancelling a finished job is a no-op
+    return {"ok": True}
+
+
+# --- walk-forward optimization jobs: submit / poll / cancel / fold / archive ---
+# One WFO run is submitted as ONE background meta-job (wfo_jobs.WFO_JOBS): phase
+# 1 runs the combo grid, phase 2 tests each fold's selected winner, phase 3
+# aggregates. All request-shaped problems 422 at submit; the frontend polls
+# status (streamed winner rows via a cursor) and fetches per-fold ranking
+# tables lazily. A completed job auto-persists to WFO_STORE for the archive.
+
+
+async def _prefetch_wfo_htf(
+    req: BacktestRequest, candles: list[Candle]
+) -> dict[str, list[Candle]]:
+    """HTF prefetch for a remote WFO submit: same discovery as the sweep path but
+    over the walkforward combo list, so the shipped set covers combos[0]'s tf=
+    calls (rule mode fetches the combo-invariant set)."""
+    return await _prefetch_sweep_htf(
+        req, candles, req.codedStrategy is not None, combos=req.walkforward.combos,
+    )
+
+
+def _persist_wfo(req: BacktestRequest):
+    """Build the on_complete callback that archives a finished WFO job. Slimmed
+    like run_store: bulky re-derivable market data (candles/series/htfCandles)
+    stays out of the stored request. Wrapped in try/except so a store failure
+    can never mark a completed job as errored."""
+    slim = req.model_dump(mode="json", exclude={"candles", "series", "htfCandles"})
+
+    def _cb(job) -> None:
+        try:
+            WFO_STORE.insert_sync({
+                "id": job.job_id, "created_at": int(job.created_at),
+                "epic": job.epic, "timeframe": job.timeframe, "name": None,
+                "request": slim, "result": job.result,
+                "fold_tables": job.fold_tables,
+            })
+        except Exception:  # noqa: BLE001  persistence must not kill the job thread
+            logger.exception("wfo persist failed for %s", job.job_id)
+
+    return _cb
+
+
+@router.post("/api/backtest/walkforward/jobs", response_model=WfoJobSubmitResponse)
+async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
+    # target=remote: fill req.htfCandles from the LOCAL cache, then forward
+    # verbatim — the COMPUTE_ONLY remote host runs on shipped bars and never
+    # fetches from a broker (mirrors submit_sweep_job).
+    if target == "remote":
+        if (req.walkforward is not None and req.walkforward.combos
+                and req.htfCandles is None):
+            candles = [candle_from_dto(c) for c in req.candles]
+            htf = await _prefetch_wfo_htf(req, candles)
+            req = req.model_copy(update={"htfCandles": htf_to_dto(htf)})
+        return await compute.forward(
+            "POST", "/api/backtest/walkforward/jobs", json_body=req.model_dump(mode="json"),
+        )
+
+    wf = req.walkforward
+    if wf is None or not wf.combos:
+        raise HTTPException(422, "walkforward.combos is required")
+    if wf.evalMode == "exact":
+        raise HTTPException(422, "exact eval mode is not yet supported")
+    if not req.candles:
+        raise HTTPException(422, "candles are required")
+
+    # Plan every scheme's folds from the request's own date range. `plan()` is
+    # only ever fed parse_span outputs (always > 0), so its no-step<=0-guard is
+    # never tripped from here.
+    res_s = resolution_seconds(req.resolution)
+    range_from = req.tradeFromTime
+    range_to = req.candles[-1].time
+    spans = [wf.schedule.trainSpan, *wf.matrixTrainSpans]
+    seen: set[str] = set()
+    schemes: list[dict] = []
+    try:
+        test_s = parse_span(wf.schedule.testSpan, res_s)
+        step_s = parse_span(wf.schedule.step, res_s) if wf.schedule.step else test_s
+        for span in spans:
+            if span in seen:
+                continue
+            seen.add(span)
+            train_s = parse_span(span, res_s)
+            folds = wfo_plan(range_from, range_to, wf.schedule.mode,
+                             train_s, test_s, step_s)
+            schemes.append({
+                "train_span": span,
+                "folds": [dataclasses.asdict(f) for f in folds],
+                "min_train_trades": wf.schedule.minTrainTrades,
+                "min_test_trades": wf.schedule.minTestTrades,
+            })
+    except WfoPlanError as e:
+        raise HTTPException(422, str(e))
+
+    # Candle-range feasibility: `plan()` guarantees every train_from >= range_from
+    # (= tradeFromTime), but the first posted candle can sit LATER than that, so
+    # verify the data actually reaches back to the earliest train window.
+    first_candle = req.candles[0].time
+    for sc in schemes:
+        earliest = min(f["train_from"] for f in sc["folds"])
+        if first_candle > earliest:
+            needs = dt.datetime.fromtimestamp(earliest, dt.timezone.utc).date().isoformat()
+            raise HTTPException(
+                422, f"not enough history for the {sc['train_span']} scheme: "
+                     f"needs data from {needs}")
+
+    candles = [candle_from_dto(c) for c in req.candles]
+    coded = req.codedStrategy is not None
+
+    # Same per-mode validation as the sweep submit.
+    if not coded:
+        for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
+            for op in group.operands():
+                if op.kind != "series":
+                    continue
+                name = series_name(op.to_operand())
+                arr = req.series.get(name)
+                if arr is None:
+                    raise HTTPException(422, f"missing series '{name}'")
+                if len(arr) != len(req.candles):
+                    raise HTTPException(
+                        422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}")
+    else:
+        _validate_coded_exit_series(req)
+        try:
+            module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
+        except StrategyLoadError as e:
+            raise HTTPException(422, str(e))
+        meta = getattr(module, "meta", None)
+        declared = {p["name"] for p in validate_params_schema(meta if isinstance(meta, dict) else None)}
+        for combo in wf.combos:
+            for tgt in combo:
+                if tgt.startswith("param:") and tgt[len("param:"):] not in declared:
+                    raise HTTPException(
+                        422, f"sweep target '{tgt}' names a param the strategy does not declare")
+
+    _validate_combo_targets(req, candles, coded, combos=wf.combos)
+
+    # HTF acquisition mirrors submit_sweep_job. Coded mode runs combos[0] as an
+    # in-request discovery probe to populate htf_candles (result discarded — WFO
+    # has no probe row); rule mode fetches the combo-invariant set once.
+    shipped_htf = htf_from_dto(req.htfCandles) if req.htfCandles is not None else None
+    if coded:
+        htf_candles: dict[str, list[Candle]] = shipped_htf if shipped_htf is not None else {}
+        try:
+            env, rest = split_env_combo(wf.combos[0])
+            patched_req, combo_candles = apply_env_combo(req, candles, env)
+            params_sent, long_risk, short_risk = apply_combo(patched_req, rest)
+            resolved = resolve_params(module, params_sent)
+            await _run_coded(
+                patched_req, combo_candles, module, resolved,
+                long_risk, short_risk, htf_candles,
+            )
+        except HTTPException:
+            raise
+        except SweepValidationError as e:
+            raise HTTPException(e.status_code, e.detail)
+        except Exception:  # noqa: BLE001  discovery is best-effort; workers re-raise per row
+            pass
+    else:
+        htf_candles = shipped_htf if shipped_htf is not None else await _fetch_rule_htf(req)
+
+    logger.info("wfo %s %s: %d combos, %d scheme(s) (%s mode)",
+                req.epic, req.resolution, len(wf.combos), len(schemes),
+                "coded" if coded else "rule")
+    job = WFO_JOBS.submit(
+        req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
+        htf_candles=htf_candles,
+        strategies_dir=str(loader.STRATEGIES_DIR) if coded else None,
+        schemes=schemes,
+        axes=axis_dicts(wf.axes),
+        combos=wf.combos,
+        objective={"metric": wf.objective.metric,
+                   "composite": wf.objective.composite,
+                   "selection": wf.objective.selection,
+                   "min_trades": wf.schedule.minTrainTrades},
+        schedule_meta=wf.schedule.model_dump(),
+        epic=req.epic,
+        timeframe=req.resolution,
+        on_complete=_persist_wfo(req),
+    )
+    # Build the response from OUR pre-submit scheme copy, selecting only the 4
+    # window keys — the orchestrator mutates the passed fold dicts (adds a "_w"
+    # union index), so never echo those dicts wholesale.
+    return WfoJobSubmitResponse(
+        jobId=job.job_id, total=job.total,
+        schemes=[{"trainSpan": s["train_span"],
+                  "folds": [{k: f[k] for k in
+                             ("train_from", "train_to", "test_from", "test_to")}
+                            for f in s["folds"]]}
+                 for s in schemes])
+
+
+# Declared BEFORE the {job_id} route so the literal `/jobs` sub-paths can't be
+# shadowed by the path-param route.
+@router.get("/api/backtest/walkforward/jobs/{job_id}", response_model=WfoJobStatusResponse)
+async def wfo_job_status(job_id: str, cursor: int = 0, target: str = "local"):
+    if target == "remote":
+        return await compute.forward(
+            "GET", f"/api/backtest/walkforward/jobs/{job_id}", params={"cursor": cursor},
+        )
+    job = WFO_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "wfo job not found")
+    cursor = max(0, cursor)  # a cursor past the end just yields no rows
+    return WfoJobStatusResponse(
+        phase=job.phase,
+        done=job.done,
+        total=job.total,
+        running=job.running,
+        cancelled=job.cancelled,
+        error=job.error,
+        etaSeconds=job.eta_seconds,
+        foldRows=job.fold_rows[cursor:],
+        result=job.result if job.phase == "done" else None,
+    )
+
+
+@router.post("/api/backtest/walkforward/jobs/{job_id}/cancel")
+async def cancel_wfo_job(job_id: str, target: str = "local"):
+    if target == "remote":
+        return await compute.forward(
+            "POST", f"/api/backtest/walkforward/jobs/{job_id}/cancel",
+        )
+    if WFO_JOBS.get(job_id) is None:
+        raise HTTPException(404, "wfo job not found")
+    WFO_JOBS.cancel(job_id)  # idempotent: cancelling a finished job is a no-op
+    return {"ok": True}
+
+
+@router.get("/api/backtest/walkforward/jobs/{job_id}/fold")
+async def wfo_job_fold(job_id: str, key: str, target: str = "local"):
+    """Lazy per-fold ranking table (key like 's0/f1'). Query param avoids the
+    slash a path segment would choke on."""
+    if target == "remote":
+        return await compute.forward(
+            "GET", f"/api/backtest/walkforward/jobs/{job_id}/fold", params={"key": key},
+        )
+    job = WFO_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "wfo job not found")
+    rows = job.fold_tables.get(key)
+    if rows is None:
+        raise HTTPException(404, "fold table not found")
+    return {"rows": rows}
+
+
+# --- walk-forward archive: list/get/tables/delete persisted jobs -------------
+# Archive endpoints are local-only (no remote forwarding): a completed job
+# auto-persists on whichever host ran it, matching the sweep-archive split.
+# `GET /archive` is declared BEFORE `/archive/{wfo_id}` so the literal path
+# can't be shadowed.
+
+
+@router.get("/api/backtest/walkforward/archive")
+async def list_wfo(limit: int = 50, epic: str | None = None) -> list[dict]:
+    """Recent archived WFO jobs, newest first (summaries only)."""
+    return await WFO_STORE.list(limit=limit, epic=epic)
+
+
+@router.get("/api/backtest/walkforward/archive/{wfo_id}")
+async def get_wfo(wfo_id: str) -> dict:
+    """One archived WFO job: request config + full result."""
+    rec = await WFO_STORE.get(wfo_id)
+    if rec is None:
+        raise HTTPException(404, "wfo job not found")
+    return rec
+
+
+@router.get("/api/backtest/walkforward/archive/{wfo_id}/tables")
+async def get_wfo_tables(wfo_id: str) -> dict:
+    """The per-fold ranking tables for an archived job (lazy, bulky)."""
+    tables = await WFO_STORE.get_fold_tables(wfo_id)
+    if tables is None:
+        raise HTTPException(404, "wfo job not found")
+    return tables
+
+
+@router.delete("/api/backtest/walkforward/archive/{wfo_id}")
+async def delete_wfo(wfo_id: str) -> dict:
+    """Remove one archived WFO job (housekeeping)."""
+    await WFO_STORE.delete(wfo_id)
     return {"ok": True}

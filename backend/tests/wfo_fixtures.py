@@ -2,6 +2,26 @@
 candle series with gentle regime waves, and the request dict the worker consumes.
 Moved here so both tests/test_wfo_worker.py and tests/test_wfo_jobs.py reuse them."""
 import datetime as dt
+from concurrent.futures import Future
+
+
+class _SyncPool:
+    """Runs submitted fns inline; mimics the ProcessPoolExecutor surface. Shared
+    by tests/test_wfo_jobs.py and tests/test_api_wfo.py."""
+    def __init__(self, max_workers=None, initializer=None, initargs=()):
+        if initializer:
+            initializer(*initargs)
+
+    def submit(self, fn, *args):
+        f = Future()
+        try:
+            f.set_result(fn(*args))
+        except Exception as e:  # pragma: no cover
+            f.set_exception(e)
+        return f
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        pass
 
 T0 = int(dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc).timestamp())
 H = 3600
