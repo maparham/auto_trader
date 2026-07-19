@@ -1868,7 +1868,16 @@ export default function App() {
         <main className="chart">
           {/* No draw sidebar in a read-only snapshot view (nothing may be drawn). */}
           {active && !focusedReadOnly && (
-            <DrawSidebar controller={focusedController} />
+            <DrawSidebar
+              controller={focusedController}
+              resetViewOnTf={settings.resetViewOnTimeframeChange}
+              onToggleResetViewOnTf={() =>
+                setSettings((s) => ({
+                  ...s,
+                  resetViewOnTimeframeChange: !s.resetViewOnTimeframeChange,
+                }))
+              }
+            />
           )}
           <div className="chart-cells">
           {active ? (

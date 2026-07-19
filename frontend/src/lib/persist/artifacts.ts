@@ -220,6 +220,39 @@ export function saveLastDrawTools(map: Record<string, string>): void {
   saveLocal(LAST_DRAW_TOOLS_KEY, map);
 }
 
+// --- last view position per cell (DEVICE-LOCAL) ------------------------------
+//
+// The centered bar time + zoom of each cell's last scroll/zoom, restored after a
+// page reload so the chart reopens where the user left it (gated on the same
+// "Reset view on timeframe change" setting the TF-switch preserve uses; see
+// useLiveMarketData). One flat record keyed by cell scope — device-local like
+// the layout scratch, since another device's viewport has its own geometry.
+// Restore is only honored when the saved epic+resolution still match the cell.
+export interface SavedViewPos {
+  epic: string;
+  resolution: string;
+  centerTs: number; // ms — bar at the horizontal center of the view
+  barSpace: number; // px per bar (zoom)
+  savedAt: number; // ms epoch, for pruning
+}
+const VIEW_POS_KEY = `${PREFIX}.viewPos`;
+const VIEW_POS_CAP = 120; // scopes kept; oldest pruned beyond this
+export function loadViewPos(scope: string): SavedViewPos | null {
+  return load<Record<string, SavedViewPos>>(VIEW_POS_KEY, {})[scope] ?? null;
+}
+export function saveViewPos(scope: string, pos: SavedViewPos): void {
+  const all = load<Record<string, SavedViewPos>>(VIEW_POS_KEY, {});
+  all[scope] = pos;
+  const keys = Object.keys(all);
+  if (keys.length > VIEW_POS_CAP) {
+    keys
+      .sort((a, b) => (all[a].savedAt ?? 0) - (all[b].savedAt ?? 0))
+      .slice(0, keys.length - VIEW_POS_CAP)
+      .forEach((k) => delete all[k]);
+  }
+  saveLocal(VIEW_POS_KEY, all);
+}
+
 // Favorite timeframes (GLOBAL preference) — resolution keys the user pinned onto
 // the quick-access bar, on top of the fixed defaults. Order here is just the pin
 // set; the bar itself always renders in duration order. Mirrors the indicator /

@@ -22,6 +22,11 @@ import type { ChartController } from "./lib/chartController";
 
 interface Props {
   controller: ChartController | null;
+  // "Reset view to the latest candle on a timeframe change" (global Settings).
+  // Off (default) keeps the centered time fixed across timeframes. Owned by
+  // App's settings state so this button and the Settings modal stay in sync.
+  resetViewOnTf: boolean;
+  onToggleResetViewOnTf: () => void;
 }
 
 // Star (filled when on) — same path as IndicatorRow's.
@@ -34,7 +39,7 @@ function Star({ on }: { on: boolean }) {
   );
 }
 
-export default function DrawSidebar({ controller }: Props) {
+export default function DrawSidebar({ controller, resetViewOnTf, onToggleResetViewOnTf }: Props) {
   const overlays = controller?.overlays ?? null;
 
   // Whether the drawing-tools flyout is open. Outside-click closes it.
@@ -357,6 +362,37 @@ export default function DrawSidebar({ controller }: Props) {
       </div>
 
       <span className="ds-spacer" aria-hidden="true" />
+
+      {/* Reset-view-on-timeframe-change toggle (global Settings; mirrors the
+          Settings → General switch). On = jump to the latest candle when the
+          timeframe changes; off (default) keeps the centered time fixed. */}
+      <Tooltip
+        placement="right"
+        content={
+          resetViewOnTf
+            ? [
+                "Timeframe change jumps to the latest candle.",
+                "Click to keep the centered time fixed instead.",
+              ]
+            : [
+                "Timeframe change keeps the centered time fixed.",
+                "Click to jump to the latest candle instead.",
+              ]
+        }
+      >
+        <button
+          className={"ds-btn" + (resetViewOnTf ? " on" : "")}
+          aria-pressed={resetViewOnTf}
+          onClick={onToggleResetViewOnTf}
+        >
+          {/* skip-to-latest: two chevrons into a right-edge bar */}
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M5 6l6 6-6 6M12 6l6 6-6 6M20 5v14" />
+          </svg>
+        </button>
+      </Tooltip>
+      <span className="ds-div" aria-hidden="true" />
 
       {/* Bulk cluster (focused cell): eye menu, lock-all, delete-all. */}
       <div className="ds-family" ref={eyeRef}>

@@ -142,6 +142,7 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   `${PREFIX}.backtestAnalysisCollapsed`,
   `${PREFIX}.sweepTarget`,
   `${PREFIX}.lastDrawTools`,
+  `${PREFIX}.viewPos`,
   `${PREFIX}.holdout`,
   `${PREFIX}.alertUnseen`,
 ]);
