@@ -93,6 +93,10 @@ export interface Settings {
   // Auto-save each symbol's chart template as you edit (global, all symbols).
   // Default on. See lib/templateAutosave.ts.
   autoSaveTemplates: boolean;
+  // On a timeframe change, reset the view to the latest candle. Default off:
+  // the current center timestamp stays centered across timeframes instead.
+  // See chart/useLiveMarketData.ts.
+  resetViewOnTimeframeChange: boolean;
   // Override the chart pane background (candle + sub-panes) with a custom color,
   // e.g. a dimmer grey between the light and dark themes. Undefined follows the
   // theme's default background. Global, independent of the light/dark theme.
@@ -191,6 +195,7 @@ const DEFAULT_SETTINGS: Settings = {
   alertDefaults: DEFAULT_ALERT_DEFAULTS,
   trading: DEFAULT_TRADING_SETTINGS,
   autoSaveTemplates: true,
+  resetViewOnTimeframeChange: false,
 };
 
 export function loadSettings(): Settings {

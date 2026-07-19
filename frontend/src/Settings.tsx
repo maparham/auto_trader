@@ -337,6 +337,29 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
                 ))}
               </div>
             </div>
+
+            <div className="setting-row">
+              <label className="label-info">
+                Reset view on timeframe change
+                <InfoTip text="On: switching timeframe jumps to the latest candle. Off: the centered time stays put across timeframes." />
+              </label>
+              <div className="seg">
+                {[
+                  [false, "Off"],
+                  [true, "On"],
+                ].map(([value, label]) => (
+                  <button
+                    key={String(value)}
+                    className={settings.resetViewOnTimeframeChange === value ? "seg-on" : ""}
+                    onClick={() =>
+                      onChange({ ...settings, resetViewOnTimeframeChange: value as boolean })
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </>
         )}
 

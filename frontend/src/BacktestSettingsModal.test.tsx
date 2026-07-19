@@ -695,6 +695,36 @@ describe("sweep results: click-to-apply mid-sweep (I2)", () => {
     expect(onRun).toHaveBeenCalledTimes(1);
     expect(loadCodedCfg("backtest", "ema_cross.py").params.ema_fast).toBe(12);
   });
+
+  it("keeps the results table mounted across a Backtest↔Sweep flip (no remount freeze)", async () => {
+    mockStrategies.mockResolvedValue(strategies);
+    const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
+    render(
+      <BacktestSettingsModal
+        initial={initial} epic="TEST" brokerId="capital" resolution="MINUTE" controller={null} chartTimezone="UTC"
+        onRun={vi.fn()} onClose={vi.fn()}
+      />,
+    );
+    enterSweepMode();
+    openStrategy();
+    await screen.findByText("Fast EMA");
+    act(() => sweepStateSignal.set({ rows, done: 1, total: 1, running: false }));
+
+    // Capture the actual DOM node so we can prove it's the SAME instance (kept
+    // mounted), not a fresh one after an unmount/remount.
+    const table = document.querySelector(".sweep-results") as HTMLElement;
+    expect(table).toBeTruthy();
+
+    // Flip to backtest: the table stays in the DOM, just hidden by its panel.
+    enterBacktestMode();
+    expect(table.isConnected).toBe(true);
+    expect((table.closest(".sweep-panel") as HTMLElement).style.display).toBe("none");
+
+    // Flip back: same node, and now visible.
+    enterSweepMode();
+    expect(document.querySelector(".sweep-results")).toBe(table);
+    expect((table.closest(".sweep-panel") as HTMLElement).style.display).toBe("");
+  });
 });
 
 describe("rules-mode combo apply", () => {
@@ -958,11 +988,12 @@ describe("persistent sweep setup", () => {
     expect(sweepAxesSignal.value).toEqual([]);
     // Apply lands you in Backtest mode so the follow-up run's result shows.
     expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy();
-    expect(document.querySelector(".sweep-panel")).toBeNull();
-    // The sweep table AND the configured axes survive one flip away.
+    // The sweep table stays mounted (hidden), not unmounted, so flipping back is
+    // instant and the table + configured axes survive one flip away.
+    expect((document.querySelector(".sweep-panel") as HTMLElement).style.display).toBe("none");
     expect(sweepStateSignal.value).not.toBeNull();
     enterSweepMode();
-    expect(document.querySelector(".sweep-panel")).toBeTruthy();
+    expect((document.querySelector(".sweep-panel") as HTMLElement).style.display).toBe("");
     expect(document.querySelector(".range-chip")).toBeTruthy();
     // A second row click (same single row here) still applies and re-runs.
     fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
@@ -1135,13 +1166,14 @@ describe("backtest | sweep mode switch", () => {
     renderModal();
     enterSweepMode();
     act(() => sweepStateSignal.set({ rows, done: 1, total: 1, running: false }));
-    expect(document.querySelector(".sweep-panel")).toBeTruthy();
+    expect((document.querySelector(".sweep-panel") as HTMLElement).style.display).toBe("");
     enterBacktestMode();
-    // Backtest view shows; the sweep state survives untouched behind it.
-    expect(document.querySelector(".sweep-panel")).toBeNull();
+    // Backtest view shows; the sweep table stays mounted (hidden) behind it, so
+    // the state survives untouched and flipping back is instant, not a remount.
+    expect((document.querySelector(".sweep-panel") as HTMLElement).style.display).toBe("none");
     expect(sweepStateSignal.value).not.toBeNull();
     enterSweepMode();
-    expect(document.querySelector(".sweep-panel")).toBeTruthy();
+    expect((document.querySelector(".sweep-panel") as HTMLElement).style.display).toBe("");
   });
 
   it("Run in Backtest mode publishes no axes even when axes are configured", () => {

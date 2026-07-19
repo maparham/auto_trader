@@ -1574,30 +1574,35 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   const resultsBody = (
     <>
       {btMode === "backtest" && <BacktestPanel />}
-      {btMode === "sweep" && (
-        <>
-          {sweepState ? (
-            <div className="sweep-panel">
-              {sweepState.cancelled ? (
-                <div className="al-note">Cancelled, kept {sweepState.done} of {sweepState.total}</div>
-              ) : sweepState.error ? (
-                <div className="al-note bt-param-error">{sweepState.error}</div>
-              ) : null}
-              <SweepResults
-                rows={sweepState.rows}
-                axes={ranAxes.length ? ranAxes : sweepAxes}
-                onApply={applySweepComboStable}
-                onRefine={refineSweepAxes}
-                progress={sweepProgress}
-              />
-            </div>
-          ) : (
-            <div className="bt-results-empty">
-              No sweep results yet. Turn on the sweep toggle next to the fields you want to
-              vary, then press Run sweep.
-            </div>
-          )}
-        </>
+      {/* Kept mounted whenever results exist, hidden with CSS when the mode
+          isn't sweep: flipping Backtest↔Sweep would otherwise unmount and
+          remount this whole tree, re-running the full derived cascade (plateau,
+          sort, best-per-column, heatmap index) over every row and re-mounting
+          the Tooltip-heavy DOM in one blocking commit — the large-sweep freeze.
+          A display toggle keeps the memoized state and DOM alive, so the switch
+          is instant. */}
+      {sweepState ? (
+        <div className="sweep-panel" style={btMode === "sweep" ? undefined : { display: "none" }}>
+          {sweepState.cancelled ? (
+            <div className="al-note">Cancelled, kept {sweepState.done} of {sweepState.total}</div>
+          ) : sweepState.error ? (
+            <div className="al-note bt-param-error">{sweepState.error}</div>
+          ) : null}
+          <SweepResults
+            rows={sweepState.rows}
+            axes={ranAxes.length ? ranAxes : sweepAxes}
+            onApply={applySweepComboStable}
+            onRefine={refineSweepAxes}
+            progress={sweepProgress}
+          />
+        </div>
+      ) : (
+        btMode === "sweep" && (
+          <div className="bt-results-empty">
+            No sweep results yet. Turn on the sweep toggle next to the fields you want to
+            vary, then press Run sweep.
+          </div>
+        )
       )}
     </>
   );

@@ -31,7 +31,7 @@ import { applyLookOnOpen } from "../lib/templates";
 import { flushTemplateCapture } from "../lib/templateAutosave";
 import { loadSettings } from "../theme";
 import { indTypeOf } from "../lib/customIndicators";
-import { applyVisibleRange } from "../lib/chartSync";
+import { applyVisibleRange, readVisibleRange, scrollTsToCenter } from "../lib/chartSync";
 import { refreshMtfIndicators } from "../lib/mtfCoordinator";
 import { setLivePrice } from "../lib/trading";
 import { isSynthetic, setSyntheticPrecision } from "../lib/syntheticRegistry";
@@ -106,6 +106,13 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     const dataFacade = handle.dataFacadeRef.current;
     if (!chart || !dataFacade) return;
     let cancelled = false;
+
+    // Center-preservation across a timeframe change: capture the currently
+    // centered timestamp from the OLD (about-to-be-replaced) bars now, before
+    // setBars below resets the view to the live edge. Restored after the new
+    // bars load, unless the user opted into reset-on-TF-change (see below).
+    const priorVr = readVisibleRange(chart);
+    const priorCenterTs = priorVr ? (priorVr.fromTs + priorVr.toTs) / 2 : null;
 
     // Declare the instrument (carries precision) + timeframe to v10. Both must be
     // set before the async setBars below, since v10 fires getBars(init) once
@@ -235,8 +242,24 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // below flips hasData true. Native intervals with no history are genuinely
       // empty until proven otherwise.
       setHasData(bars.length > 0);
-      // Anchor to the latest bars so the live/forming candle is on-screen.
-      handle.chartRef.current.scrollToRealTime();
+      // Anchor the view. Default (reset-on-TF off): a pure timeframe change
+      // keeps the previously-centered time centered, so the same moment stays
+      // in view across timeframes (scrollTsToCenter clamps to the nearest
+      // loaded bar). Jump to the latest bar when the user opted into
+      // reset-on-TF-change, when this isn't a pure TF switch (epic change, or
+      // a side/broker refresh that left the resolution unchanged), or when we
+      // couldn't read a prior center.
+      const keepCenter =
+        resChanged &&
+        !epicChanged &&
+        priorCenterTs != null &&
+        !handle.pendingRangeRef.current &&
+        !loadSettings().resetViewOnTimeframeChange;
+      if (keepCenter) {
+        scrollTsToCenter(handle.chartRef.current, priorCenterTs);
+      } else {
+        handle.chartRef.current.scrollToRealTime();
+      }
       // Rehydrate this symbol's saved drawings + alerts now that the data (and
       // therefore the timescale their points map onto) is loaded. Passing the
       // resolution makes rehydrate adopt it BEFORE points materialize — a
@@ -434,7 +457,17 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         void anchorWalk.then(() => {
           if (cancelled || !handle.chartRef.current) return;
           const restore = handle.pendingTradeRestoreRef.current;
-          if (restore == null) return;
+          if (restore == null) {
+            // No studied trade to restore. If we're preserving the pre-switch
+            // center across a timeframe change (reset-on-TF off), re-assert it
+            // now: the same page-back setBars that clobbers a trade re-center
+            // also clobbers the center set right after load. Skip if a quick-
+            // range walk claimed the view in the meantime.
+            if (keepCenter && priorCenterTs != null && !handle.pendingRangeRef.current) {
+              scrollTsToCenter(handle.chartRef.current, priorCenterTs);
+            }
+            return;
+          }
           handle.pendingTradeRestoreRef.current = null;
           restoreTradeSelection(handle.chartRef.current, restore);
         });
