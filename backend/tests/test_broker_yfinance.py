@@ -14,6 +14,8 @@ def test_curated_epics_map_to_yahoo_tickers():
     assert _ticker_for("EURUSD") == "EURUSD=X"
     assert _ticker_for("US500") == "^GSPC"
     assert _ticker_for("XAUUSD") == "GC=F"
+    assert _ticker_for("OIL_CRUDE") == "CL=F"
+    assert _ticker_for("OIL_BRENT") == "BZ=F"
     assert _ticker_for("BTCUSD") == "BTC-USD"
     assert _ticker_for("AAPL") == "AAPL"
 

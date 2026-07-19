@@ -53,6 +53,8 @@ _INSTRUMENT_LIST: list[InstrumentInfo] = [
     InstrumentInfo("US500", "^GSPC", "S&P 500", 2, "index"),
     InstrumentInfo("US30", "^DJI", "Dow 30", 1, "index"),
     InstrumentInfo("US100", "^NDX", "Nasdaq 100", 1, "index"),
+    InstrumentInfo("OIL_CRUDE", "CL=F", "WTI Crude Oil (NYMEX)", 2, "commodity"),
+    InstrumentInfo("OIL_BRENT", "BZ=F", "Brent Crude Oil (ICE)", 2, "commodity"),
     InstrumentInfo("AAPL", "AAPL", "Apple", 2, "stock"),
     InstrumentInfo("MSFT", "MSFT", "Microsoft", 2, "stock"),
     InstrumentInfo("NVDA", "NVDA", "NVIDIA", 2, "stock"),
