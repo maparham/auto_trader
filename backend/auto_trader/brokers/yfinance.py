@@ -156,6 +156,12 @@ def _fetch_history(ticker: str, interval: str, start: datetime, end: datetime):
     )
 
 
+def _search_yahoo(query: str, limit: int) -> list[dict]:
+    """Synchronous Yahoo symbol search, module-level so tests can monkeypatch.
+    Returns yfinance Search quote dicts (symbol/shortname/quoteType/...)."""
+    return yf.Search(query, max_results=limit).quotes
+
+
 class YFinanceBroker(MarketDataBroker):
     """Read-only historical candles from Yahoo Finance. Data-only: no stream,
     no quote. price_side ignored (last-trade data, treated as mid)."""
@@ -206,3 +212,65 @@ class YFinanceBroker(MarketDataBroker):
         """Historical-only source: no live quote. Paper trading cannot price
         off this broker (documented limitation, same as Dukascopy)."""
         return (None, None)
+
+    def _market_row(
+        self, epic: str, name: str, kind: str, precision: int, note: str = ""
+    ) -> dict:
+        return {
+            "epic": epic,
+            "name": name,
+            "status": "TRADEABLE",  # history is always available; no session gate
+            "type": kind,
+            # `pricePrecision` is the key the /api/market route + frontend read;
+            # "precision" would be silently dropped.
+            "pricePrecision": precision,
+            "note": note,
+        }
+
+    def _curated_row(self, info: InstrumentInfo) -> dict:
+        return self._market_row(info.epic, info.name, info.kind, info.precision)
+
+    async def all_markets(self) -> list[dict]:
+        return [self._curated_row(i) for i in _INSTRUMENT_LIST]
+
+    async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
+        """Curated matches first, then live Yahoo search results. A Yahoo
+        outage degrades to curated-only rather than failing the search."""
+        q = query.strip()
+        ql = q.lower()
+        rows = [
+            self._curated_row(i)
+            for i in _INSTRUMENT_LIST
+            if ql in i.epic.lower() or ql in i.name.lower()
+        ]
+        seen = {r["epic"] for r in rows} | set(_INSTRUMENTS)
+        if q:
+            try:
+                quotes = await asyncio.to_thread(_search_yahoo, q, limit)
+            except Exception:
+                quotes = []
+            for quote in quotes:
+                symbol = quote.get("symbol")
+                if not symbol or symbol in seen:
+                    continue
+                seen.add(symbol)
+                rows.append(
+                    self._market_row(
+                        symbol,
+                        quote.get("shortname") or quote.get("longname") or symbol,
+                        (quote.get("quoteType") or "").lower() or "stock",
+                        _DEFAULT_PRECISION,
+                    )
+                )
+        return rows[:limit]
+
+    async def get_market_meta(self, epic: str) -> dict | None:
+        info = _INSTRUMENTS.get(epic)
+        if info is not None:
+            return self._curated_row(info)
+        # Uncurated (searched) epic: minimal row so charts open without a
+        # catalogue entry.
+        return self._market_row(epic, epic, "stock", _DEFAULT_PRECISION)
+
+    async def get_market_detail(self, epic: str) -> dict | None:
+        return await self.get_market_meta(epic)

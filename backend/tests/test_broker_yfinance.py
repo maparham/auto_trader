@@ -173,3 +173,56 @@ def test_get_quote_is_none_none():
     import auto_trader.brokers.yfinance as yfb
 
     assert asyncio.run(yfb.YFinanceBroker().get_quote("AAPL")) == (None, None)
+
+
+def test_all_markets_rows_use_price_precision_key():
+    import auto_trader.brokers.yfinance as yfb
+
+    rows = asyncio.run(yfb.YFinanceBroker().all_markets())
+    assert len(rows) == len(yfb._INSTRUMENT_LIST)
+    row = next(r for r in rows if r["epic"] == "EURUSD")
+    assert row["pricePrecision"] == 5
+    assert row["status"] == "TRADEABLE"
+    assert "precision" not in row
+
+
+def test_search_merges_curated_and_yahoo(monkeypatch):
+    import auto_trader.brokers.yfinance as yfb
+
+    def fake_search(query, limit):
+        return [
+            {"symbol": "SHOP", "shortname": "Shopify Inc.", "quoteType": "EQUITY"},
+            {"symbol": "AAPL", "shortname": "Apple Inc.", "quoteType": "EQUITY"},
+        ]
+
+    monkeypatch.setattr(yfb, "_search_yahoo", fake_search)
+    rows = asyncio.run(yfb.YFinanceBroker().search_markets("sho"))
+    epics = [r["epic"] for r in rows]
+    assert "SHOP" in epics  # from Yahoo
+    shop = next(r for r in rows if r["epic"] == "SHOP")
+    assert shop["pricePrecision"] == yfb._DEFAULT_PRECISION
+    assert shop["name"] == "Shopify Inc."
+    # AAPL is curated: appears once, not duplicated by the Yahoo hit
+    assert epics.count("AAPL") <= 1
+
+
+def test_search_survives_yahoo_failure(monkeypatch):
+    import auto_trader.brokers.yfinance as yfb
+
+    def boom(query, limit):
+        raise RuntimeError("yahoo down")
+
+    monkeypatch.setattr(yfb, "_search_yahoo", boom)
+    rows = asyncio.run(yfb.YFinanceBroker().search_markets("EUR"))
+    assert any(r["epic"] == "EURUSD" for r in rows)  # curated still works
+
+
+def test_market_meta_curated_and_fallback():
+    import auto_trader.brokers.yfinance as yfb
+
+    broker = yfb.YFinanceBroker()
+    meta = asyncio.run(broker.get_market_meta("US500"))
+    assert meta["name"] == "S&P 500"
+    fallback = asyncio.run(broker.get_market_meta("SHOP"))
+    assert fallback["epic"] == "SHOP"
+    assert fallback["pricePrecision"] == yfb._DEFAULT_PRECISION
