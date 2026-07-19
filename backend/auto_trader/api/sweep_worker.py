@@ -15,6 +15,7 @@ from types import ModuleType
 from auto_trader.api import sweep_apply as sa
 from auto_trader.api.schemas import BacktestRequest
 from auto_trader.core.models import Candle
+from auto_trader.engine.backtest import BacktestResult
 from auto_trader.strategy import loader
 from auto_trader.strategy.params import resolve_params
 
@@ -69,6 +70,23 @@ def worker_init(
     _STATE = s
 
 
+def execute_combo(s: _State, req: BacktestRequest, combo: dict) -> BacktestResult:
+    """Apply one combo (env split + strategy patch) and run the engine over the
+    worker's candles. Raises on any problem; callers own error-row semantics."""
+    env, rest = sa.split_env_combo(combo)
+    patched, candles = sa.apply_env_combo(req, s.candles, env)
+    if s.module is None:
+        patched = sa.apply_rule_combo(patched, rest)
+        return sa.run_rule_sync(patched, candles, dict(s.htf))
+    params, long_risk, short_risk = sa.apply_combo(patched, rest)
+    resolved = resolve_params(s.module, params)
+    result, _ = sa.run_coded_sync(
+        patched, candles, s.module, resolved, long_risk, short_risk, dict(s.htf),
+        indicator_cache=indicator_cache_for(candles),
+    )
+    return result
+
+
 def run_combo(combo: dict) -> dict:
     """Run one combo against the init-once `_STATE`; return a SweepRowDTO dump.
 
@@ -86,18 +104,7 @@ def run_combo(combo: dict) -> dict:
     else:
         req = s.req
     try:
-        env, rest = sa.split_env_combo(combo)
-        patched, candles = sa.apply_env_combo(req, s.candles, env)
-        if s.module is None:
-            patched = sa.apply_rule_combo(patched, rest)
-            result = sa.run_rule_sync(patched, candles, dict(s.htf))
-        else:
-            params, long_risk, short_risk = sa.apply_combo(patched, rest)
-            resolved = resolve_params(s.module, params)
-            result, _ = sa.run_coded_sync(
-                patched, candles, s.module, resolved, long_risk, short_risk, dict(s.htf),
-                indicator_cache=indicator_cache_for(candles),
-            )
+        result = execute_combo(s, req, combo)
         return sa.sweep_row(req, combo, result).model_dump()
     except Exception as e:  # noqa: BLE001  one combo must never kill the worker
         return {"combo": combo, "metrics": None, "windows": None, "error": str(e)}
