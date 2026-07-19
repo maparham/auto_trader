@@ -502,6 +502,35 @@ export function requestSweepCancel(server: boolean = true): void {
   sweepCancelRequest.set(sweepCancelRequest.value + 1);
 }
 
+// Live walk-forward progress + streamed winner rows, published by BacktestButton
+// as the job advances; the modal renders the WFO results off this. Null = no WFO
+// run in flight / completed this session. (Mirrors SweepRunState.)
+export interface WfoRunState {
+  phase: "grid" | "test" | "aggregate" | "done";
+  done: number; total: number;
+  running: boolean;
+  cancelled?: boolean;
+  error?: string;
+  etaSeconds?: number | null;
+  foldRows: import("../api").WfoFoldRow[];
+  result: import("../api").WfoResult | null;
+  jobId?: string;
+  startedAt?: number;
+}
+export const wfoStateSignal = new Signal<WfoRunState | null>(null);
+// Modal -> BacktestButton handoff (one-shot request payload, cleared by the consumer):
+export const wfoRequestSignal = new Signal<import("../api").WalkForwardPayload | null>(null);
+// Bumped by the modal's Cancel button AND its unmount cleanup; the runner holds the
+// AbortController and aborts on the next tick (mirrors sweepCancelRequest).
+export const wfoCancelRequest = new Signal<number>(0);
+// Whether the pending abort should ALSO kill the server-side job (see sweepCancelServer).
+export const wfoCancelServer = { value: true };
+export function requestWfoCancel(server = true): void { wfoCancelServer.value = server; wfoCancelRequest.set(wfoCancelRequest.value + 1); }
+// Chart toggles (mirror backtestEquityShownSignal idiom):
+export const wfoEquityShownSignal = new Signal<boolean>(true);
+export const wfoBandsShownSignal = new Signal<boolean>(true);
+export const wfoEquityCompoundedSignal = new Signal<boolean>(true);
+
 // Where a sweep runs (local backend vs remote compute). Global preference,
 // device-local (never mirrored), seeded from storage at startup and defaulting
 // to "local". The compute-target dropdown writes it via saveSweepTarget; the
