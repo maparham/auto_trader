@@ -1,0 +1,377 @@
+"""Background walk-forward job manager: a meta-job over the sweep pool.
+
+Phase 1 (grid): every combo runs ONCE over the full range; workers return
+per-train-window sliced metrics. Phase 2 (test): each fold's selected winner
+runs exactly over its test window. Phase 3 (aggregate): selection tables,
+stitching, stability, robustness -- pure arithmetic in this thread.
+
+Mirrors SweepJobManager (FIFO gate, daemon thread, bounded-wait cancel loop,
+reap-and-kill) but drives the three phases above instead of a flat row stream.
+"""
+from __future__ import annotations
+
+import logging
+import threading
+import time
+import uuid
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from dataclasses import dataclass, field
+
+from auto_trader.api import wfo_worker
+from auto_trader.api.sweep_jobs import SWEEP_WORKERS
+from auto_trader.api.wfo_select import plateau_breadth, select_fold
+from auto_trader.api.wfo_stitch import aggregate, annualized_rate, fold_wfe, stitch
+from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.engine.stability import parameter_stability
+
+logger = logging.getLogger(__name__)
+
+# Jobs finished longer ago than this (seconds) are pruned from the store on
+# access. Measured from completion so a long run keeps a full hour of poll life.
+_TTL_SECONDS = 3600.0
+
+
+@dataclass
+class WfoJob:
+    job_id: str
+    epic: str
+    timeframe: str
+    total: int
+    done: int = 0
+    phase: str = "grid"  # "grid" | "test" | "aggregate" | "done"
+    fold_rows: list[dict] = field(default_factory=list)  # streamed winner rows
+    result: dict | None = None
+    # "s{scheme}/f{fold}" -> ranked table rows for the lazy endpoint.
+    fold_tables: dict[str, list[dict]] = field(default_factory=dict)
+    running: bool = True
+    cancelled: bool = False
+    error: str | None = None
+    eta_seconds: float | None = None
+    created_at: float = 0.0
+    finished_at: float = 0.0
+
+
+class WfoJobManager:
+    """Owns the job store, the FIFO gate, and one worker thread per job."""
+
+    def __init__(self, pool_factory=ProcessPoolExecutor, grace_seconds: float = 10.0):
+        self._pool_factory = pool_factory
+        self._grace_seconds = grace_seconds
+        self._jobs: dict[str, WfoJob] = {}
+        self._store_lock = threading.Lock()
+        # Instance-level gate: one job computes at a time for THIS manager.
+        self._gate = threading.Semaphore(1)
+
+    def submit(
+        self,
+        *,
+        req_dict: dict,
+        htf_candles: dict,
+        strategies_dir: str | None,
+        schemes: list[dict],
+        axes: list[dict],
+        objective: dict,
+        schedule_meta: dict,
+        epic: str,
+        timeframe: str,
+        combos: list[dict],
+        workers: int | None = None,
+        on_complete=None,
+    ) -> WfoJob:
+        total = len(combos) + sum(len(sc["folds"]) for sc in schemes)
+        job = WfoJob(
+            job_id=uuid.uuid4().hex,
+            epic=epic,
+            timeframe=timeframe,
+            total=total,
+            created_at=time.time(),
+        )
+        with self._store_lock:
+            self._jobs[job.job_id] = job
+        kw = {
+            "req_dict": req_dict,
+            "htf_candles": htf_candles,
+            "strategies_dir": strategies_dir,
+            "schemes": schemes,
+            "axes": axes,
+            "objective": objective,
+            "schedule_meta": schedule_meta,
+            "combos": combos,
+            "workers": workers,
+            "on_complete": on_complete,
+        }
+        t = threading.Thread(target=self._run, args=(job, kw), daemon=True)
+        t.start()
+        return job
+
+    def get(self, job_id: str) -> WfoJob | None:
+        self._prune()
+        return self._jobs.get(job_id)
+
+    def cancel(self, job_id: str) -> bool:
+        job = self._jobs.get(job_id)
+        if job is None or not job.running:
+            return False
+        # Set cancelled first; the thread flips running=False in its finally, so a
+        # poll consumer that sees running=False can trust cancelled is already set.
+        job.cancelled = True
+        return True
+
+    def list(self) -> list[WfoJob]:
+        self._prune()
+        with self._store_lock:
+            return sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)
+
+    def running_count(self) -> int:
+        with self._store_lock:
+            return sum(1 for j in self._jobs.values() if j.running)
+
+    def _prune(self) -> None:
+        now = time.time()
+        with self._store_lock:
+            stale = [
+                jid for jid, j in self._jobs.items()
+                if not j.running and now - (j.finished_at or j.created_at) > _TTL_SECONDS
+            ]
+            for jid in stale:
+                del self._jobs[jid]
+
+    def _finish(self, job: WfoJob) -> None:
+        job.finished_at = time.time()
+        job.running = False
+
+    def _run(self, job: WfoJob, kw: dict) -> None:
+        with self._gate:  # FIFO gate: one job computes at a time
+            if job.cancelled:
+                self._finish(job)
+                return
+            pool = None
+            t0 = time.monotonic()
+            try:
+                schemes = kw["schemes"]
+                # De-duplicated union of train windows across schemes; each fold
+                # remembers its index into the union so the worker slices once.
+                union: list[list[int]] = []
+                index: dict[tuple[int, int], int] = {}
+                for sc in schemes:
+                    for f in sc["folds"]:
+                        key = (f["train_from"], f["train_to"])
+                        if key not in index:
+                            index[key] = len(union)
+                            union.append([f["train_from"], f["train_to"]])
+                        f["_w"] = index[key]
+
+                # Managed manually (not via `with`): __exit__ calls
+                # shutdown(wait=True), which would block on killed/in-flight
+                # workers after a cancel. We shut down non-blocking in `finally`.
+                pool = self._pool_factory(
+                    max_workers=kw.get("workers") or SWEEP_WORKERS,
+                    initializer=wfo_worker.worker_init,
+                    initargs=(kw["req_dict"], kw["htf_candles"],
+                              kw["strategies_dir"], union),
+                )
+                # --- phase 1: grid ---
+                grid_rows = self._drain(
+                    pool,
+                    [pool.submit(wfo_worker.run_grid_combo, c) for c in kw["combos"]],
+                    job, t0)
+                if job.cancelled:
+                    return
+                # --- phase 2: select + test ---
+                job.phase = "test"
+                objective = kw["objective"]
+                selections: dict[str, dict] = {}
+                test_payloads: list[dict] = []
+                for si, sc in enumerate(schemes):
+                    for fi, f in enumerate(sc["folds"]):
+                        rows = [
+                            {"combo": r["combo"],
+                             "metrics": (r["folds"][f["_w"]] if r["folds"] else None)}
+                            for r in grid_rows
+                        ]
+                        obj = {**objective, "min_trades": sc["min_train_trades"]}
+                        best_i, values, scores = select_fold(
+                            rows, kw["axes"], obj, objective["selection"])
+                        key = f"s{si}/f{fi}"
+                        job.fold_tables[key] = [
+                            {**rows[i], "objective": values[i],
+                             "plateau_score": scores[i]}
+                            for i in range(len(rows))
+                        ]
+                        selections[key] = {"rows": rows, "values": values,
+                                           "best_i": best_i}
+                        if best_i is not None:
+                            test_payloads.append({
+                                "key": key, "combo": rows[best_i]["combo"],
+                                "test_from": f["test_from"], "test_to": f["test_to"],
+                            })
+                test_rows = self._drain(
+                    pool,
+                    [pool.submit(wfo_worker.run_test, p) for p in test_payloads],
+                    job, t0,
+                    stream=lambda r: job.fold_rows.append(
+                        {"key": r["key"], "combo": r["combo"],
+                         "oos_metrics": r["metrics"], "error": r["error"]}))
+                if job.cancelled:
+                    return
+                # --- phase 3: aggregate ---
+                job.phase = "aggregate"
+                job.done = job.total  # folds with no eligible winner finish early
+                job.result = self._aggregate(
+                    kw, schemes, selections,
+                    {r["key"]: r for r in test_rows if r})
+                job.phase = "done"
+                cb = kw.get("on_complete")
+                if cb is not None and not job.cancelled:
+                    cb(job)
+            except Exception as e:  # noqa: BLE001  surface, never leak a traceback
+                job.error = str(e)
+            finally:
+                if pool is not None:
+                    pool.shutdown(wait=False)
+                # Emitted BEFORE running flips so a log consumer polling on
+                # running=False always finds the line already written.
+                logger.info("wfo job %s done in %.1fs (phase=%s)",
+                            job.job_id, time.monotonic() - t0, job.phase)
+                self._finish(job)
+
+    def _record(self, job: WfoJob, row_lock: threading.Lock, t0: float) -> None:
+        with row_lock:
+            job.done += 1
+            produced = max(1, job.done)
+            pace = (time.monotonic() - t0) / produced
+            job.eta_seconds = pace * max(0, job.total - job.done)
+
+    def _drain(self, pool, futures: list, job: WfoJob, t0: float,
+               stream=None) -> list:
+        """Bounded-wait harvest of `futures` (mirrors SweepJobManager._run's
+        loop). Records progress via `_record`, streams each result through
+        `stream` if given, and on cancel shuts the pool down and reaps in-flight
+        futures. Returns results in completion order."""
+        row_lock = threading.Lock()
+        results: list = []
+        seen: set = set()
+        pending = set(futures)
+        # Bounded wait (not as_completed) so a cancel is observed even when no
+        # combo ever completes -- otherwise the thread blocks forever holding
+        # the FIFO gate.
+        while pending:
+            done_now, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+            # Record finished work BEFORE honoring a cancel, so results produced
+            # while we slept are never thrown away.
+            for fut in done_now:
+                row = fut.result()  # run_grid_combo/run_test never raise
+                seen.add(fut)
+                results.append(row)
+                if stream is not None:
+                    stream(row)
+                self._record(job, row_lock, t0)
+            if job.cancelled:
+                pool.shutdown(wait=False, cancel_futures=True)
+                self._reap(pool, futures, seen, results, job, row_lock, t0, stream)
+                break
+        return results
+
+    def _reap(self, pool, futures: list, seen: set, results: list, job: WfoJob,
+              row_lock: threading.Lock, t0: float, stream) -> None:
+        """After a cancel: harvest futures that finished before/while we stopped,
+        wait up to `grace` for in-flight ones, then kill any survivors so the
+        thread cannot hang on a slow combo. `seen` are futures already recorded
+        by the main loop, so we do not double-count them."""
+        deadline = time.monotonic() + self._grace_seconds
+        pending = [f for f in futures if f not in seen]
+        while pending and time.monotonic() < deadline:
+            still = []
+            for fut in pending:
+                if fut.cancelled():
+                    continue  # shutdown(cancel_futures=True) dropped a pending combo
+                if fut.done():
+                    row = fut.result()
+                    results.append(row)
+                    if stream is not None:
+                        stream(row)
+                    self._record(job, row_lock, t0)
+                else:
+                    still.append(fut)
+            pending = still
+            if pending:
+                time.sleep(0.05)
+        # Kill any workers still running an in-flight combo. `_processes` is a
+        # private ProcessPoolExecutor attr: acceptable for a single-user tool,
+        # and there is no public API to force-terminate stuck workers. Snapshot
+        # first because the dict mutates as processes exit.
+        procs = getattr(pool, "_processes", None) or {}
+        for p in list(procs.values()):
+            try:
+                p.kill()
+            except Exception:  # noqa: BLE001  process may already be gone
+                pass
+
+    def _aggregate(self, kw: dict, schemes: list[dict], selections: dict,
+                   tests_by_key: dict) -> dict:
+        res_s = resolution_seconds(kw["req_dict"]["resolution"])
+        cash = kw["req_dict"]["costs"]["startingCash"]
+        out_schemes = []
+        for si, sc in enumerate(schemes):
+            folds_out, fold_tests, chosen = [], [], []
+            is_ret_total = oos_ret_total = 0.0
+            is_secs = oos_secs = 0
+            tables = []
+            for fi, f in enumerate(sc["folds"]):
+                key = f"s{si}/f{fi}"
+                sel = selections[key]
+                test = tests_by_key.get(key)
+                entry = {
+                    "train_from": f["train_from"], "train_to": f["train_to"],
+                    "test_from": f["test_from"], "test_to": f["test_to"],
+                    "combo": None, "is_metrics": None, "oos_metrics": None,
+                    "wfe": None, "low_sample": False,
+                    "error": test["error"] if test else None,
+                }
+                tables.append(([r["combo"] for r in sel["rows"]], sel["values"]))
+                if sel["best_i"] is not None:
+                    row = sel["rows"][sel["best_i"]]
+                    entry["combo"] = row["combo"]
+                    entry["is_metrics"] = row["metrics"]
+                if test and test["metrics"] is not None and entry["is_metrics"]:
+                    entry["oos_metrics"] = test["metrics"]
+                    tr_s = f["train_to"] - f["train_from"]
+                    te_s = f["test_to"] - f["test_from"]
+                    entry["wfe"] = fold_wfe(entry["is_metrics"], test["metrics"],
+                                            tr_s, te_s)
+                    entry["low_sample"] = (
+                        (test["metrics"].get("n_trades") or 0) < sc["min_test_trades"])
+                    if entry["is_metrics"].get("return_pct") is not None:
+                        is_ret_total += entry["is_metrics"]["return_pct"]
+                        is_secs += tr_s
+                    if test["metrics"].get("return_pct") is not None:
+                        oos_ret_total += test["metrics"]["return_pct"]
+                        oos_secs += te_s
+                    chosen.append(entry["combo"])
+                    fold_tests.append({"fold": f, "trades": test["trades"],
+                                       "equity": test["equity"]})
+                folds_out.append(entry)
+            stitched = stitch(fold_tests, cash, res_s) if fold_tests else {
+                "equity": [], "equity_scaled": [], "trades": [], "metrics": {}}
+            stab = parameter_stability(chosen, kw["axes"],
+                                       [(c, v) for c, v in tables])
+            # Median plateau breadth across fold tables.
+            breadths = [plateau_breadth(v) for _, v in tables]
+            breadths = [b for b in breadths if b is not None]
+            breadth = sorted(breadths)[len(breadths) // 2] if breadths else None
+            block = aggregate(folds_out, stitched["metrics"], stab, breadth,
+                              oos_trades_total=len(stitched["trades"]))
+            is_rate = annualized_rate(is_ret_total, is_secs) if is_secs else None
+            oos_rate = annualized_rate(oos_ret_total, oos_secs) if oos_secs else None
+            if is_rate and is_rate > 0 and oos_rate is not None:
+                block["wfe_aggregate"] = round(oos_rate / is_rate, 4)
+            out_schemes.append({
+                "train_span": sc["train_span"], "folds": folds_out,
+                "stitched": stitched, "stability": stab, "robustness": block,
+            })
+        return {"eval_mode": "sliced", "objective": kw["objective"],
+                "schedule": kw["schedule_meta"], "axes": kw["axes"],
+                "schemes": out_schemes}
+
+
+WFO_JOBS = WfoJobManager()  # module singleton
