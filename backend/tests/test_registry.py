@@ -33,9 +33,9 @@ def _no_ig(monkeypatch):
 
 def test_build_registry_ships_capital_and_paper() -> None:
     described = build_registry().describe()
-    # dukascopy is an always-on read-only history source; capital is the only
-    # live feed here (no live creds), so the pair is capital + dukascopy.
-    assert described["data"] == ["capital", "dukascopy"]
+    # dukascopy and yfinance are always-on read-only history sources; capital is the only
+    # live feed here (no live creds), so the trio is capital + dukascopy + yfinance.
+    assert described["data"] == ["capital", "dukascopy", "yfinance"]
     keys = {e["key"]: e for e in described["exec"]}
     assert keys["capital:paper"] == {
         "key": "capital:paper",
@@ -55,6 +55,14 @@ def test_build_registry_ships_capital_and_paper() -> None:
     assert keys["dukascopy:data"] == {
         "key": "dukascopy:data",
         "broker": "dukascopy",
+        "env": "data",
+        "isRealMoney": False,
+        "dataOnly": True,
+    }
+    # yfinance also gets a synthetic pseudo-account.
+    assert keys["yfinance:data"] == {
+        "key": "yfinance:data",
+        "broker": "yfinance",
         "env": "data",
         "isRealMoney": False,
         "dataOnly": True,
@@ -89,8 +97,8 @@ def test_no_live_creds_registers_only_demo_feed(monkeypatch):
     monkeypatch.setattr(settings, "live_password", "", raising=False)
 
     reg = build_registry()
-    # dukascopy (read-only history) always registers; capital is the only feed.
-    assert set(reg.data) == {"capital", "dukascopy"}
+    # dukascopy and yfinance (read-only history) always register; capital is the only feed.
+    assert set(reg.data) == {"capital", "dukascopy", "yfinance"}
     assert "capital:paper" in reg.exec
     assert "capital:demo" in reg.exec
     assert "capital-live:live" not in reg.exec

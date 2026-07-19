@@ -104,7 +104,7 @@ class BrokerRegistry:
 def build_registry() -> BrokerRegistry:
     """Wire every broker the app ships with. Adding a broker is one block here:
     register its data broker, then register the executors that price off it."""
-    from auto_trader.brokers import capital, dukascopy, ig, mt5
+    from auto_trader.brokers import capital, dukascopy, ig, mt5, yfinance
     from auto_trader.config import ig_settings, mt5_settings
 
     from auto_trader.config import settings
@@ -114,6 +114,9 @@ def build_registry() -> BrokerRegistry:
     # always available. Data-only, so no executor: a chart/backtest source, not a
     # tradeable account.
     dukascopy.register(registry)
+    # Yahoo Finance: decades of daily history + US stocks/ETFs/crypto. No
+    # credentials, always available. Data-only, same shape as dukascopy.
+    yfinance.register(registry)
     capital.register(registry)  # demo feed: capital data + capital:paper + capital:demo
     # Live feed: capital-live data + capital-live:paper + capital-live:live. Only when
     # the live credentials are present, so a half-configured account never shows a

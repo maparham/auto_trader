@@ -274,3 +274,12 @@ class YFinanceBroker(MarketDataBroker):
 
     async def get_market_detail(self, epic: str) -> dict | None:
         return await self.get_market_meta(epic)
+
+
+def register(registry) -> YFinanceBroker:
+    """Register the read-only Yahoo Finance data broker. No credentials, always
+    available. Data-only: no executor, so it appears as a chart/backtest source
+    but not a tradeable account."""
+    broker = YFinanceBroker()
+    registry.add_data("yfinance", broker)
+    return broker

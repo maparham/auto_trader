@@ -226,3 +226,31 @@ def test_market_meta_curated_and_fallback():
     fallback = asyncio.run(broker.get_market_meta("SHOP"))
     assert fallback["epic"] == "SHOP"
     assert fallback["pricePrecision"] == yfb._DEFAULT_PRECISION
+
+
+import os
+
+
+def test_registered_in_build_registry():
+    from auto_trader.brokers.registry import build_registry
+
+    registry = build_registry()
+    from auto_trader.brokers.yfinance import YFinanceBroker
+
+    assert isinstance(registry.data.get("yfinance"), YFinanceBroker)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("YF_LIVE_TESTS"), reason="network test; set YF_LIVE_TESTS=1"
+)
+def test_live_daily_eurusd_smoke():
+    """Gated live smoke: a few real daily candles for EURUSD=X."""
+    import auto_trader.brokers.yfinance as yfb
+
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2024, 1, 15, tzinfo=timezone.utc)
+    candles = asyncio.run(
+        yfb.YFinanceBroker().get_candles("EURUSD", Resolution.DAY, start, end)
+    )
+    assert len(candles) >= 5
+    assert all(0.8 < c.close < 1.5 for c in candles)
