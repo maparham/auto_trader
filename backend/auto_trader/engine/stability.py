@@ -91,7 +91,7 @@ def robustness_score(*, wfe_median, pct_folds_profitable, oos_sharpe,
         + 0.20 * (pct_folds_profitable or 0.0)
         + 0.15 * _ramp(oos_sharpe, 0.0, 1.5)
         + 0.15 * (param_stability or 0.0)
-        + 0.10 * _ramp(-(oos_max_dd_pct or 100.0), -40.0, -10.0)
+        + 0.10 * _ramp(-oos_max_dd_pct if oos_max_dd_pct is not None else None, -40.0, -10.0)
         + 0.10 * (plateau_breadth or 0.0)
     )
     penalty = min(1.0, (oos_trades_total or 0) / 100.0) * min(1.0, (n_folds or 0) / 5.0)

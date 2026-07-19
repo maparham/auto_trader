@@ -42,3 +42,15 @@ def test_robustness_score_bounds_and_penalty():
         param_stability=1.0, oos_max_dd_pct=5.0, plateau_breadth=0.8,
         oos_trades_total=20, n_folds=3)
     assert thin < hi * 0.5  # sample penalty bites
+
+
+def test_zero_drawdown_is_best_not_worst():
+    zero_dd = robustness_score(
+        wfe_median=0.9, pct_folds_profitable=1.0, oos_sharpe=2.0,
+        param_stability=1.0, oos_max_dd_pct=0.0, plateau_breadth=0.8,
+        oos_trades_total=300, n_folds=10)
+    small_dd = robustness_score(
+        wfe_median=0.9, pct_folds_profitable=1.0, oos_sharpe=2.0,
+        param_stability=1.0, oos_max_dd_pct=5.0, plateau_breadth=0.8,
+        oos_trades_total=300, n_folds=10)
+    assert zero_dd >= small_dd
