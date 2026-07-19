@@ -656,3 +656,158 @@ export async function deleteSweepArchive(id: string): Promise<void> {
   });
   if (!res.ok) throw new Error(await errorDetail(res, `sweep delete failed (${res.status})`));
 }
+
+// --- walk-forward optimization ------------------------------------------------
+
+export interface WfoAxis {
+  kind: "range" | "list";
+  targets: string[];
+  values?: number[];               // ordered swept values, range axes only
+}
+
+export interface WfoSchedule {
+  mode: "rolling" | "anchored";
+  trainSpan: string;               // backend token grammar: 10d, 2w, 3m, 500b
+  testSpan: string;
+  step?: string | null;
+  minTrainTrades?: number;
+  minTestTrades?: number;
+}
+
+export interface WfoObjective {
+  metric: string;
+  selection: "best" | "plateau";
+  composite?: Record<string, number> | null;
+}
+
+export interface WalkForwardPayload {
+  combos: Array<Record<string, number | boolean | string>>;
+  axes: WfoAxis[];
+  schedule: WfoSchedule;
+  objective?: WfoObjective;
+  matrixTrainSpans?: string[];
+}
+
+export interface WfoFoldRow {       // streamed winner row (job status foldRows)
+  key: string;                      // "s0/f2"
+  combo: Record<string, number | boolean | string> | null;
+  oos_metrics: Record<string, number | null> | null;
+  error: string | null;
+}
+
+export interface WfoFold {          // result payload, snake_case
+  train_from: number; train_to: number; test_from: number; test_to: number;
+  combo: Record<string, number | boolean | string> | null;
+  is_metrics: Record<string, number | null> | null;
+  oos_metrics: Record<string, number | null> | null;
+  wfe: number | null;
+  low_sample: boolean;
+  error: string | null;
+}
+
+export interface WfoScheme {
+  train_span: string;
+  folds: WfoFold[];
+  stitched: {
+    equity: Array<[number, number]>;         // summed, [unix s, equity]
+    equity_scaled: Array<[number, number]>;  // compounded
+    trades: Array<{ entry_time: number; exit_time: number; pnl: number; side: string; fold: number }>;
+    metrics: Record<string, number | null>;
+  };
+  stability: {
+    per_axis: Record<string, { stability: number; adjacency: number; values: Array<number | string | null> }>;
+    overall: number | null;
+    adjacency: number | null;
+  };
+  robustness: Record<string, number | null>; // wfe_median, robustness_score, ...
+}
+
+export interface WfoResult {
+  eval_mode: string;
+  objective: WfoObjective;
+  schedule: Record<string, unknown>;
+  axes: WfoAxis[];
+  schemes: WfoScheme[];
+  grid_errors?: { failed: number; total: number; sample: string | null };
+}
+
+export interface WfoJobStatus {
+  phase: "grid" | "test" | "aggregate" | "done";
+  done: number; total: number;
+  running: boolean; cancelled: boolean;
+  error: string | null;
+  etaSeconds: number | null;
+  foldRows: WfoFoldRow[];
+  result: WfoResult | null;
+}
+
+export interface WfoArchiveSummary {
+  id: string; created_at: number; epic: string; timeframe: string;
+  name: string | null; n_schemes: number | null;
+  robustness_score: number | null; wfe_median: number | null;
+}
+
+const wfoJobsBase = (target: SweepTarget) =>
+  `${BASE}/api/backtest/walkforward/jobs${target === "remote" ? "?target=remote" : ""}`;
+
+export async function submitWfoJob(
+  req: BacktestRequest, wf: WalkForwardPayload, target: SweepTarget,
+): Promise<{ jobId: string; total: number; schemes: Array<{ trainSpan: string; folds: Array<Record<string, number>> }> }> {
+  const res = await fetch(wfoJobsBase(target), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...req, walkforward: wf }),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `walk-forward submit failed (${res.status})`));
+  return res.json();
+}
+
+export async function pollWfoJob(jobId: string, cursor: number, target: SweepTarget): Promise<WfoJobStatus> {
+  const res = await fetch(
+    `${BASE}/api/backtest/walkforward/jobs/${jobId}?cursor=${cursor}${target === "remote" ? "&target=remote" : ""}`,
+  );
+  if (!res.ok) throw new Error(await errorDetail(res, `walk-forward poll failed (${res.status})`));
+  return res.json();
+}
+
+export async function cancelWfoJob(jobId: string, target: SweepTarget): Promise<void> {
+  const res = await fetch(
+    `${BASE}/api/backtest/walkforward/jobs/${jobId}/cancel${target === "remote" ? "?target=remote" : ""}`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(await errorDetail(res, `walk-forward cancel failed (${res.status})`));
+}
+
+export async function getWfoFoldTable(jobId: string, key: string, target: SweepTarget): Promise<{ rows: SweepRow[] }> {
+  const res = await fetch(
+    `${BASE}/api/backtest/walkforward/jobs/${jobId}/fold?key=${encodeURIComponent(key)}${target === "remote" ? "&target=remote" : ""}`,
+  );
+  if (!res.ok) throw new Error(await errorDetail(res, `fold table fetch failed (${res.status})`));
+  return res.json();
+}
+
+export async function listWfoArchives(epic?: string): Promise<WfoArchiveSummary[]> {
+  const qs = epic ? `?epic=${encodeURIComponent(epic)}` : "";
+  const res = await fetch(`${BASE}/api/backtest/walkforward/archive${qs}`);
+  if (!res.ok) throw new Error(await errorDetail(res, `walk-forward list failed (${res.status})`));
+  return res.json();
+}
+
+export async function getWfoArchive(id: string): Promise<{ id: string; created_at: number; epic: string; timeframe: string; name: string | null; request: unknown; result: WfoResult }> {
+  const res = await fetch(`${BASE}/api/backtest/walkforward/archive/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(await errorDetail(res, `walk-forward fetch failed (${res.status})`));
+  return res.json();
+}
+
+export async function getWfoArchiveTables(id: string): Promise<Record<string, SweepRow[]>> {
+  const res = await fetch(`${BASE}/api/backtest/walkforward/archive/${encodeURIComponent(id)}/tables`);
+  if (!res.ok) throw new Error(await errorDetail(res, `walk-forward tables fetch failed (${res.status})`));
+  return res.json();
+}
+
+export async function deleteWfoArchive(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/backtest/walkforward/archive/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `walk-forward delete failed (${res.status})`));
+}
