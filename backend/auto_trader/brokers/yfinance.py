@@ -146,3 +146,63 @@ def _resample_4h(df):
         {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
     )
     return out.dropna(subset=["Open"])
+
+
+def _fetch_history(ticker: str, interval: str, start: datetime, end: datetime):
+    """Synchronous Yahoo fetch, module-level so tests can monkeypatch it.
+    auto_adjust=True: split/dividend-adjusted prices, per spec."""
+    return yf.Ticker(ticker).history(
+        start=start, end=end, interval=interval, auto_adjust=True, raise_errors=False
+    )
+
+
+class YFinanceBroker(MarketDataBroker):
+    """Read-only historical candles from Yahoo Finance. Data-only: no stream,
+    no quote. price_side ignored (last-trade data, treated as mid)."""
+
+    supports_streaming = False
+
+    async def get_candles(
+        self,
+        epic: str,
+        resolution: Resolution,
+        start: datetime,
+        end: datetime,
+        price_side: str = "mid",
+    ) -> list[Candle]:
+        ticker = _ticker_for(epic)
+        if resolution is Resolution.HOUR_4:
+            # Yahoo has no 4h interval: fetch 1h and bucket. Extend the start
+            # back one bucket so the first 4h bar isn't built from a partial
+            # set of hours.
+            df = await asyncio.to_thread(
+                _fetch_history, ticker, "1h", start - timedelta(hours=4), end
+            )
+            df = _resample_4h(df)
+            candles = _df_to_candles(df, resolution)
+            return [c for c in candles if c.time >= start]
+        interval = _interval_for(resolution)  # raises on unsupported resolution
+        df = await asyncio.to_thread(_fetch_history, ticker, interval, start, end)
+        return _df_to_candles(df, resolution)
+
+    async def get_recent_candles(
+        self,
+        epic: str,
+        resolution: Resolution,
+        count: int,
+        price_side: str = "mid",
+    ) -> list[Candle]:
+        """Most-recent `count` bars. Yahoo has no 'recent N' primitive: fetch a
+        window generously sized for weekends/holidays/short sessions and take
+        the tail. One fetch — Yahoo requests are cheap, unlike Dukascopy."""
+        if count <= 0:
+            return []
+        now = datetime.now(timezone.utc)
+        span = timedelta(seconds=resolution.seconds * count * 3) + timedelta(days=7)
+        candles = await self.get_candles(epic, resolution, now - span, now, price_side)
+        return candles[-count:]
+
+    async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
+        """Historical-only source: no live quote. Paper trading cannot price
+        off this broker (documented limitation, same as Dukascopy)."""
+        return (None, None)

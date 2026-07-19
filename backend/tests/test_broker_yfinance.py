@@ -107,3 +107,69 @@ def test_resample_4h_epoch_aligned_ohlcv():
     assert first["Low"] == 0.5  # min low
     assert first["Close"] == 4.5  # close of 03:00 (1.5+3)
     assert first["Volume"] == 400.0  # summed
+
+
+import asyncio
+
+
+def test_get_candles_fetches_and_converts(monkeypatch):
+    import auto_trader.brokers.yfinance as yfb
+
+    calls = []
+
+    def fake_fetch(ticker, interval, start, end):
+        calls.append((ticker, interval, start, end))
+        return _frame(["2020-01-01", "2020-01-02"])
+
+    monkeypatch.setattr(yfb, "_fetch_history", fake_fetch)
+    broker = yfb.YFinanceBroker()
+    start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2020, 1, 3, tzinfo=timezone.utc)
+    candles = asyncio.run(broker.get_candles("EURUSD", Resolution.DAY, start, end))
+    assert calls == [("EURUSD=X", "1d", start, end)]
+    assert len(candles) == 2
+    assert candles[0].time == datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+
+def test_get_candles_hour4_fetches_1h_and_resamples(monkeypatch):
+    import auto_trader.brokers.yfinance as yfb
+
+    calls = []
+
+    def fake_fetch(ticker, interval, start, end):
+        calls.append(interval)
+        return _frame([f"2020-01-01 {h:02d}:00" for h in range(8)])
+
+    monkeypatch.setattr(yfb, "_fetch_history", fake_fetch)
+    broker = yfb.YFinanceBroker()
+    start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2020, 1, 2, tzinfo=timezone.utc)
+    candles = asyncio.run(broker.get_candles("AAPL", Resolution.HOUR_4, start, end))
+    assert calls == ["1h"]
+    assert [c.time.hour for c in candles] == [0, 4]
+
+
+def test_get_recent_candles_returns_last_n(monkeypatch):
+    import auto_trader.brokers.yfinance as yfb
+
+    def fake_fetch(ticker, interval, start, end):
+        return _frame([f"2020-01-{d:02d}" for d in range(1, 21)])
+
+    monkeypatch.setattr(yfb, "_fetch_history", fake_fetch)
+    broker = yfb.YFinanceBroker()
+    candles = asyncio.run(broker.get_recent_candles("AAPL", Resolution.DAY, 5))
+    assert len(candles) == 5
+    assert candles[-1].time == datetime(2020, 1, 20, tzinfo=timezone.utc)
+    assert candles[0].time == datetime(2020, 1, 16, tzinfo=timezone.utc)
+
+
+def test_get_recent_candles_zero_count():
+    import auto_trader.brokers.yfinance as yfb
+
+    assert asyncio.run(yfb.YFinanceBroker().get_recent_candles("AAPL", Resolution.DAY, 0)) == []
+
+
+def test_get_quote_is_none_none():
+    import auto_trader.brokers.yfinance as yfb
+
+    assert asyncio.run(yfb.YFinanceBroker().get_quote("AAPL")) == (None, None)
