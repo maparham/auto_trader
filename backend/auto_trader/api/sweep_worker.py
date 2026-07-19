@@ -29,6 +29,20 @@ class _State:
 
 _STATE: _State | None = None
 
+# Per-worker indicator-series caches, keyed by candle-list identity so an
+# env-combo (period:to) truncated list never shares series with the full one.
+_IND_CACHES: dict[tuple, dict] = {}
+
+
+def indicator_cache_key(candles: list[Candle]) -> tuple:
+    if not candles:
+        return (0, 0, 0)
+    return (len(candles), candles[0].time.timestamp(), candles[-1].time.timestamp())
+
+
+def indicator_cache_for(candles: list[Candle]) -> dict:
+    return _IND_CACHES.setdefault(indicator_cache_key(candles), {})
+
 
 def worker_init(
     req_dict: dict,
@@ -41,6 +55,7 @@ def worker_init(
     `strategies_dir` is set explicitly (never inherited): tests monkeypatch
     `loader.STRATEGIES_DIR`, which a spawned worker does not see."""
     global _STATE
+    _IND_CACHES.clear()
     s = _State()
     s.req = BacktestRequest.model_validate(req_dict)
     s.candles = [sa.candle_from_dto(c) for c in s.req.candles]
@@ -81,6 +96,7 @@ def run_combo(combo: dict) -> dict:
             resolved = resolve_params(s.module, params)
             result, _ = sa.run_coded_sync(
                 patched, candles, s.module, resolved, long_risk, short_risk, dict(s.htf),
+                indicator_cache=indicator_cache_for(candles),
             )
         return sa.sweep_row(req, combo, result).model_dump()
     except Exception as e:  # noqa: BLE001  one combo must never kill the worker

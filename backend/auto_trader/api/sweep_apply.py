@@ -171,6 +171,7 @@ def run_coded_sync(
     req: BacktestRequest, candles: list[Candle], module: ModuleType,
     resolved_params: dict, long_risk_dto: RiskConfigDTO | None,
     short_risk_dto: RiskConfigDTO | None, htf_candles: dict[str, list[Candle]],
+    indicator_cache: dict | None = None,
 ) -> tuple[BacktestResult, Strategy]:
     """One coded engine run over the already-fetched `htf_candles`: risk DTOs
     are passed explicitly (the sweep patches them per combo). When the strategy
@@ -189,6 +190,7 @@ def run_coded_sync(
             trade_from_time=req.tradeFromTime, htf_candles=htf_candles,
             base_timeframe=req.resolution, params=resolved_params,
             panel_risk_legs=panel_risk_legs,
+            indicator_cache=indicator_cache,
         )
         if req.longExit.rules or req.shortExit.rules:
             empty = RuleGroupDTO(combine="AND", rules=[]).to_group()

@@ -348,7 +348,8 @@ class CodedStrategy(Strategy):
                  htf_candles: dict[str, list[Candle]] | None = None,
                  base_timeframe: str | None = None,
                  params: dict | None = None,
-                 panel_risk_legs: frozenset[str] = frozenset()) -> None:
+                 panel_risk_legs: frozenset[str] = frozenset(),
+                 indicator_cache: dict | None = None) -> None:
         self.module = module
         self.candles = candles
         self.quantity = quantity
@@ -368,7 +369,10 @@ class CodedStrategy(Strategy):
         # file_brackets_overridden below).
         self.panel_risk_legs = panel_risk_legs
         self.file_brackets_overridden = False
-        self._cache: dict[str, list[float | None]] = {}
+        # externally-owned cache (worker-level reuse across combos); private when absent
+        self._cache: dict[str, list[float | None]] = (
+            indicator_cache if indicator_cache is not None else {}
+        )
         self._arrays: dict[str, np.ndarray] = {
             "open": np.array([c.open for c in candles], dtype=np.float64),
             "high": np.array([c.high for c in candles], dtype=np.float64),
@@ -376,6 +380,11 @@ class CodedStrategy(Strategy):
             "close": np.array([c.close for c in candles], dtype=np.float64),
             "volume": np.array([c.volume for c in candles], dtype=np.float64),
         }
+
+    @property
+    def indicator_cache(self) -> dict:
+        """The memoized indicator-series dict (shared when injected by a worker)."""
+        return self._cache
 
     def on_bar(self, ctx: Context) -> list[Signal]:
         i = len(ctx.history) - 1
