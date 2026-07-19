@@ -95,3 +95,54 @@ def _interval_for(resolution: Resolution) -> str:
     if interval is None:
         raise ValueError(f"unsupported yfinance resolution: {resolution}")
     return interval
+
+
+def _df_to_candles(df, resolution: Resolution, now: datetime | None = None) -> list[Candle]:
+    """Yahoo OHLCV frame (capitalized columns, index = bar open time) →
+    ascending tz-aware-UTC Candles. Drops the still-forming last bar (any bar
+    whose close time is in the future) so only closed bars reach the cache.
+    NaN rows (Yahoo pads session gaps) are skipped."""
+    if df is None or len(df) == 0:
+        return []
+    if now is None:
+        now = datetime.now(timezone.utc)
+    idx = df.index
+    if idx.tz is None:
+        idx = idx.tz_localize(timezone.utc)
+    else:
+        idx = idx.tz_convert(timezone.utc)
+    bar = timedelta(seconds=resolution.seconds)
+    out: list[Candle] = []
+    for ts, row in zip(idx, df.itertuples(index=False)):
+        o = float(row.Open)
+        if o != o:  # NaN row
+            continue
+        t = ts.to_pydatetime()
+        if t + bar > now:
+            continue
+        out.append(
+            Candle(
+                time=t,
+                open=o,
+                high=float(row.High),
+                low=float(row.Low),
+                close=float(row.Close),
+                volume=float(getattr(row, "Volume", 0.0) or 0.0),
+            )
+        )
+    out.sort(key=lambda c: c.time)
+    return out
+
+
+def _resample_4h(df):
+    """1h Yahoo frame → 4h buckets, UTC epoch-aligned (00/04/08/.. opens),
+    matching how the other brokers bucket HOUR_4. Empty buckets dropped."""
+    if df is None or len(df) == 0:
+        return df
+    idx = df.index
+    idx = idx.tz_localize(timezone.utc) if idx.tz is None else idx.tz_convert(timezone.utc)
+    df = df.set_axis(idx)
+    out = df.resample("4h", origin="epoch", label="left", closed="left").agg(
+        {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
+    )
+    return out.dropna(subset=["Open"])
