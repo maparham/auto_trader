@@ -176,6 +176,17 @@ export function saveBacktestMode(mode: BacktestRunMode): void {
   saveLocal(BACKTEST_MODE_KEY, mode);
 }
 
+// Walk-forward optimization schedule configuration (device-local). Persists
+// the user's selected training/test spans and other schedule settings across
+// reloads, so the WFO panel reopens with the same config.
+const WFO_SCHEDULE_KEY = `${PREFIX}.wfoSchedule`;
+export function loadWfoSchedule<T>(fallback: T): T {
+  return load<T>(WFO_SCHEDULE_KEY, fallback);
+}
+export function saveWfoSchedule<T>(cfg: T): void {
+  saveLocal(WFO_SCHEDULE_KEY, cfg);
+}
+
 // The settings/results vertical split in the backtest panel: the results-region
 // height (px) and whether it's collapsed. Device-local view preference, like the
 // side above — persists the layout you dragged to across re-opens and reloads.
