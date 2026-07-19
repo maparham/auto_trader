@@ -436,6 +436,9 @@ class BacktestRequest(BaseModel):
     # combo per entry instead of the single codedParams/longRisk/shortRisk on
     # this request. Ignored by POST /api/backtest.
     sweep: SweepDTO | None = None
+    # Walk-forward optimization: when set, POST /api/backtest/walkforward/jobs
+    # runs a multi-fold job. Ignored by POST /api/backtest.
+    walkforward: "WalkForwardDTO | None" = None
     # Pre-fetched higher-timeframe bars, keyed by timeframe ("HOUR_4", ...). The
     # local backend fills this from ITS cache before forwarding a sweep to the
     # remote compute host, so the remote runs purely on shipped data and never
@@ -474,6 +477,72 @@ class SweepRowDTO(BaseModel):
     # were requested or the combo patches its own period.
     windows: list[dict] | None = None
     error: str | None = None
+
+
+class WfoAxisDTO(BaseModel):
+    kind: Literal["range", "list"]
+    targets: list[str]
+    values: list[float] | None = None   # ordered swept values, range axes only
+
+
+class WfoScheduleDTO(BaseModel):
+    mode: Literal["rolling", "anchored"] = "rolling"
+    trainSpan: str
+    testSpan: str
+    step: str | None = None             # default = testSpan
+    minTrainTrades: int = 30
+    minTestTrades: int = 5
+
+
+class WfoObjectiveDTO(BaseModel):
+    metric: str = "sharpe"
+    selection: Literal["best", "plateau"] = "plateau"
+    composite: dict[str, float] | None = None
+
+
+class WalkForwardDTO(BaseModel):
+    """Walk-forward optimization job spec (POST /api/backtest/walkforward/jobs).
+    combos/targets use the sweep grammar (see SweepDTO); axes describe the grid
+    structure so the backend can do plateau selection and stability. Spans use
+    the wfo_plan token grammar: 10d, 2w, 3m, 500b."""
+    combos: list[dict[str, float | int | bool | str]]
+    axes: list[WfoAxisDTO]
+    schedule: WfoScheduleDTO
+    objective: WfoObjectiveDTO = Field(default_factory=WfoObjectiveDTO)
+    matrixTrainSpans: list[str] = []
+    evalMode: Literal["auto", "sliced", "exact"] = "auto"
+
+
+class WfoJobSubmitResponse(BaseModel):
+    jobId: str
+    total: int
+    schemes: list[dict]                 # per scheme: trainSpan + fold windows
+
+
+class WfoJobStatusResponse(BaseModel):
+    phase: str                          # "grid" | "test" | "aggregate" | "done"
+    done: int
+    total: int
+    running: bool
+    cancelled: bool
+    error: str | None = None
+    etaSeconds: float | None = None
+    foldRows: list[dict]                # streamed winner rows from cursor
+    result: dict | None = None          # final WfoResult once finished
+
+
+def axis_dicts(axes: list[WfoAxisDTO]) -> list[dict]:
+    """Convert WfoAxisDTO list to plain dicts with values coerced to float."""
+    result = []
+    for axis in axes:
+        d = {
+            "kind": axis.kind,
+            "targets": axis.targets,
+        }
+        if axis.values is not None:
+            d["values"] = [float(v) for v in axis.values]
+        result.append(d)
+    return result
 
 
 class SweepJobSubmitResponse(BaseModel):

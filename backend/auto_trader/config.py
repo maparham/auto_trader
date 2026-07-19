@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # CAPITAL_SWEEPS_DB_PATH to relocate.
     sweeps_db_path: str = "backtest_sweeps.db"
 
+    # Where completed walk-forward jobs (folds + winner combos + metrics) are
+    # archived so they can be listed and reopened in the UI. Set
+    # CAPITAL_WFO_DB_PATH to relocate.
+    wfo_db_path: str = "backtest_wfo.db"
+
     # Where per-instrument cost profiles (spread, slippage, financing) are stored.
     # Set CAPITAL_COST_PROFILES_DB_PATH to relocate.
     cost_profiles_db_path: str = "cost_profiles.db"
