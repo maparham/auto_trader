@@ -92,6 +92,61 @@ def test_df_to_candles_empty_and_none():
     assert _df_to_candles(_frame([]), Resolution.DAY) == []
 
 
+def test_df_to_candles_nan_volume_becomes_zero():
+    from auto_trader.brokers.yfinance import _df_to_candles
+
+    df = _frame(["2020-01-01"])
+    df["Volume"] = [float("nan")]  # valid OHLC, NaN volume
+    now = datetime(2020, 6, 1, tzinfo=timezone.utc)
+    (c,) = _df_to_candles(df, Resolution.DAY, now=now)
+    assert c.volume == 0.0
+
+
+def test_fetch_history_no_data_returns_empty(monkeypatch):
+    """A genuine no-data response (YFPricesMissingError) yields an empty frame,
+    so get_candles returns [] (not an exception the breaker would trip on)."""
+    import auto_trader.brokers.yfinance as yfb
+    from yfinance.exceptions import YFPricesMissingError
+
+    def raise_no_data(*args, **kwargs):
+        raise YFPricesMissingError("AAPL", "no price data")
+
+    monkeypatch.setattr(yfb.yf.Ticker, "history", raise_no_data)
+    df = yfb._fetch_history("AAPL", "1d", start=None, end=None)
+    assert len(df) == 0
+    candles = asyncio.run(
+        yfb.YFinanceBroker().get_candles(
+            "AAPL",
+            Resolution.DAY,
+            datetime(2020, 1, 1, tzinfo=timezone.utc),
+            datetime(2020, 1, 3, tzinfo=timezone.utc),
+        )
+    )
+    assert candles == []
+
+
+def test_fetch_history_transport_error_propagates(monkeypatch):
+    """A transport/server error must propagate into the caller's circuit
+    breaker rather than being swallowed into an empty (fully-covered) frame."""
+    import auto_trader.brokers.yfinance as yfb
+
+    def raise_transport(*args, **kwargs):
+        raise ConnectionError("yahoo unreachable")
+
+    monkeypatch.setattr(yfb.yf.Ticker, "history", raise_transport)
+    with pytest.raises(ConnectionError):
+        yfb._fetch_history("AAPL", "1d", start=None, end=None)
+    with pytest.raises(ConnectionError):
+        asyncio.run(
+            yfb.YFinanceBroker().get_candles(
+                "AAPL",
+                Resolution.DAY,
+                datetime(2020, 1, 1, tzinfo=timezone.utc),
+                datetime(2020, 1, 3, tzinfo=timezone.utc),
+            )
+        )
+
+
 def test_resample_4h_epoch_aligned_ohlcv():
     from auto_trader.brokers.yfinance import _resample_4h
 

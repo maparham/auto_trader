@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import yfinance as yf
+from yfinance.exceptions import YFPricesMissingError
 
 from auto_trader.brokers.base import MarketDataBroker
 from auto_trader.core.models import Candle, Resolution
@@ -120,6 +121,8 @@ def _df_to_candles(df, resolution: Resolution, now: datetime | None = None) -> l
         t = ts.to_pydatetime()
         if t + bar > now:
             continue
+        v = float(getattr(row, "Volume", 0.0) or 0.0)
+        volume = v if v == v else 0.0  # NaN is truthy: guard it explicitly
         out.append(
             Candle(
                 time=t,
@@ -127,7 +130,7 @@ def _df_to_candles(df, resolution: Resolution, now: datetime | None = None) -> l
                 high=float(row.High),
                 low=float(row.Low),
                 close=float(row.Close),
-                volume=float(getattr(row, "Volume", 0.0) or 0.0),
+                volume=volume,
             )
         )
     out.sort(key=lambda c: c.time)
@@ -150,10 +153,21 @@ def _resample_4h(df):
 
 def _fetch_history(ticker: str, interval: str, start: datetime, end: datetime):
     """Synchronous Yahoo fetch, module-level so tests can monkeypatch it.
-    auto_adjust=True: split/dividend-adjusted prices, per spec."""
-    return yf.Ticker(ticker).history(
-        start=start, end=end, interval=interval, auto_adjust=True, raise_errors=False
-    )
+    auto_adjust=True: split/dividend-adjusted prices, per spec.
+
+    Errors are made visible (yf.config.debug.hide_exceptions = False, the
+    non-deprecated equivalent of raise_errors=True) so the caller's circuit
+    breaker sees them: transport/server failures (network errors, Yahoo down,
+    rate limits) propagate. A genuine no-data response (YFPricesMissingError,
+    e.g. a closed session) is caught and returned as an empty frame so it is
+    not mistaken for an outage."""
+    yf.config.debug.hide_exceptions = False
+    try:
+        return yf.Ticker(ticker).history(
+            start=start, end=end, interval=interval, auto_adjust=True
+        )
+    except YFPricesMissingError:
+        return yf.utils.empty_df()
 
 
 def _search_yahoo(query: str, limit: int) -> list[dict]:
