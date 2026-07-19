@@ -45,6 +45,18 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Deferred / forward-looking
 
+- **Cloud candle DB (source of truth)** — centralize candle history in a cloud
+  Postgres (same schema/PK as the sqlite cache) so the remote sweep host shares
+  it and an accidental local delete costs nothing. The data is more than a
+  cache: broker daily/weekly candle allowances make deep history hard to
+  re-fetch. Local sqlite stays as a read-through edge cache for chart/backtest
+  latency. Hosting must be always-on (small EC2 or Neon) — the self-stopping
+  sweep box can't hold it. Plain Postgres over InfluxDB/TSDBs (OHLC range scans
+  are relational; ~5M rows is tiny by TSDB standards); TimescaleDB extension
+  only if raw tick storage moves up later. Interim first step, independent of
+  the migration: back up the sqlite files to S3 (Litestream or nightly
+  snapshot). No spec yet.
+
 - **Node backtest compute offload** — run backtest math in a Node service to
   move heavy work off the browser. Explicitly not a current pain point; revisit
   on real slowness or headless/scheduled-run demand.
