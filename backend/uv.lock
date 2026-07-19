@@ -214,7 +214,7 @@ requires-dist = [
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.23.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
     { name = "websockets", specifier = ">=14.0" },
-    { name = "yfinance", specifier = ">=0.2.50" },
+    { name = "yfinance", specifier = ">=1.5.1" },
 ]
 provides-extras = ["dev"]
 

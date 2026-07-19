@@ -15,7 +15,7 @@ dependencies = [
     "metaapi-cloud-sdk>=29.1.1",
     "numpy>=2.0",
     "dukascopy-python>=4.0.1",
-    "yfinance>=0.2.50",
+    "yfinance>=1.5.1",
     "boto3>=1.43.51",
 ]
 

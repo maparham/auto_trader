@@ -190,20 +190,126 @@ def test_get_candles_fetches_and_converts(monkeypatch):
 
 def test_get_candles_hour4_fetches_1h_and_resamples(monkeypatch):
     import auto_trader.brokers.yfinance as yfb
+    from datetime import timedelta
 
     calls = []
 
     def fake_fetch(ticker, interval, start, end):
-        calls.append(interval)
-        return _frame([f"2020-01-01 {h:02d}:00" for h in range(8)])
+        calls.append((interval, start, end))
+        # 12 hourly bars from the (padded) fetch start: one pre-start bucket
+        # plus two full in-range buckets.
+        times = [(start + timedelta(hours=h)).strftime("%Y-%m-%d %H:%M") for h in range(12)]
+        return _frame(times)
 
     monkeypatch.setattr(yfb, "_fetch_history", fake_fetch)
     broker = yfb.YFinanceBroker()
-    start = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    end = datetime(2020, 1, 2, tzinfo=timezone.utc)
+    # Recent dates: 1h (and thus 4h) history older than ~730d is clamped away.
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
     candles = asyncio.run(broker.get_candles("AAPL", Resolution.HOUR_4, start, end))
-    assert calls == ["1h"]
+    # Both edges padded one bucket so no 4h bar is built from partial hours.
+    assert calls == [("1h", start - timedelta(hours=4), end + timedelta(hours=4))]
     assert [c.time.hour for c in candles] == [0, 4]
+
+
+def test_get_candles_clamps_beyond_intraday_lookback(monkeypatch):
+    """A 1m request entirely beyond Yahoo's ~30d lookback returns [] without
+    hitting Yahoo (an over-deep request errors wholesale and would otherwise
+    be cached as a covered hole)."""
+    import auto_trader.brokers.yfinance as yfb
+    from datetime import timedelta
+
+    calls = []
+
+    def fake_fetch(ticker, interval, start, end):
+        calls.append((start, end))
+        return _frame([])
+
+    monkeypatch.setattr(yfb, "_fetch_history", fake_fetch)
+    now = datetime.now(timezone.utc)
+    candles = asyncio.run(
+        yfb.YFinanceBroker().get_candles(
+            "AAPL", Resolution.MINUTE, now - timedelta(days=60), now - timedelta(days=45)
+        )
+    )
+    assert candles == []
+    assert calls == []  # never fetched
+
+
+def test_get_candles_1m_chunks_into_max_7_day_requests(monkeypatch):
+    """Yahoo rejects single 1m requests spanning more than ~8 days; the broker
+    must split the window and merge without seam duplicates."""
+    import auto_trader.brokers.yfinance as yfb
+    from datetime import timedelta
+
+    calls = []
+
+    def fake_fetch(ticker, interval, start, end):
+        calls.append((start, end))
+        return _frame([start.strftime("%Y-%m-%d %H:%M")])  # one bar per chunk
+
+    monkeypatch.setattr(yfb, "_fetch_history", fake_fetch)
+    now = datetime.now(timezone.utc)
+    start, end = now - timedelta(days=20), now - timedelta(days=1)
+    candles = asyncio.run(
+        yfb.YFinanceBroker().get_candles("AAPL", Resolution.MINUTE, start, end)
+    )
+    assert len(calls) >= 3
+    assert all(e - s <= timedelta(days=7) for s, e in calls)
+    assert calls[0][0] == start and calls[-1][1] == end
+    assert len(candles) == len(calls)  # merged, ascending, no dupes
+    assert candles == sorted(candles, key=lambda c: c.time)
+
+
+def test_daily_bars_normalized_to_utc_midnight_of_session_date(monkeypatch):
+    """Yahoo stamps daily bars at exchange-local midnight (04:00/05:00 UTC for
+    US listings, 23:00 UTC prior day for London FX); the broker restamps them
+    at UTC midnight of the session date so derived weekly/monthly folds bucket
+    correctly."""
+    import auto_trader.brokers.yfinance as yfb
+
+    def fake_fetch(ticker, interval, start, end):
+        return _frame(["2020-01-02", "2020-01-03"], tz="America/New_York")
+
+    monkeypatch.setattr(yfb, "_fetch_history", fake_fetch)
+    start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2020, 1, 10, tzinfo=timezone.utc)
+    candles = asyncio.run(
+        yfb.YFinanceBroker().get_candles("AAPL", Resolution.DAY, start, end)
+    )
+    assert [c.time for c in candles] == [
+        datetime(2020, 1, 2, tzinfo=timezone.utc),
+        datetime(2020, 1, 3, tzinfo=timezone.utc),
+    ]
+
+
+def test_fetch_history_bad_ticker_returns_empty(monkeypatch):
+    """YFTzMissingError (unknown/delisted ticker) is no-data, not an outage:
+    it must not count as a failure on the shared circuit breaker."""
+    import auto_trader.brokers.yfinance as yfb
+    from yfinance.exceptions import YFTzMissingError
+
+    def raise_tz(*args, **kwargs):
+        raise YFTzMissingError("BOGUS")
+
+    monkeypatch.setattr(yfb.yf.Ticker, "history", raise_tz)
+    assert len(yfb._fetch_history("BOGUS", "1d", start=None, end=None)) == 0
+
+
+def test_fetch_history_server_error_propagates(monkeypatch):
+    """YFPricesMissingError carrying a status_code marker is a Yahoo server
+    error dressed as no-data: it must reach the breaker, not become an empty
+    (covered-forever) range."""
+    import auto_trader.brokers.yfinance as yfb
+    from yfinance.exceptions import YFPricesMissingError
+
+    def raise_server_error(*args, **kwargs):
+        raise YFPricesMissingError("AAPL", "1d (Yahoo status_code = 500)")
+
+    monkeypatch.setattr(yfb.yf.Ticker, "history", raise_server_error)
+    with pytest.raises(YFPricesMissingError):
+        yfb._fetch_history("AAPL", "1d", start=None, end=None)
 
 
 def test_get_recent_candles_returns_last_n(monkeypatch):
@@ -261,6 +367,33 @@ def test_search_merges_curated_and_yahoo(monkeypatch):
     assert shop["name"] == "Shopify Inc."
     # AAPL is curated: appears once, not duplicated by the Yahoo hit
     assert epics.count("AAPL") <= 1
+
+
+def test_search_dedups_curated_tickers(monkeypatch):
+    """A Yahoo hit for a curated instrument's own ticker (GC=F for XAUUSD) must
+    not add a duplicate row that would build a second cached series."""
+    import auto_trader.brokers.yfinance as yfb
+
+    def fake_search(query, limit):
+        return [{"symbol": "GC=F", "shortname": "Gold Futures", "quoteType": "FUTURE"}]
+
+    monkeypatch.setattr(yfb, "_search_yahoo", fake_search)
+    rows = asyncio.run(yfb.YFinanceBroker().search_markets("gold"))
+    epics = [r["epic"] for r in rows]
+    assert "XAUUSD" in epics  # curated match
+    assert "GC=F" not in epics  # deduped against the curated ticker
+
+
+def test_search_currency_results_get_fx_precision(monkeypatch):
+    import auto_trader.brokers.yfinance as yfb
+
+    def fake_search(query, limit):
+        return [{"symbol": "EURJPY=X", "shortname": "EUR/JPY", "quoteType": "CURRENCY"}]
+
+    monkeypatch.setattr(yfb, "_search_yahoo", fake_search)
+    rows = asyncio.run(yfb.YFinanceBroker().search_markets("eurjpy"))
+    row = next(r for r in rows if r["epic"] == "EURJPY=X")
+    assert row["pricePrecision"] == 5
 
 
 def test_search_survives_yahoo_failure(monkeypatch):

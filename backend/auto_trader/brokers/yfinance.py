@@ -2,7 +2,9 @@
 
 Free deep history: daily/weekly bars back decades for FX, indices, futures,
 US stocks/ETFs and crypto. Intraday is capped by Yahoo (1m ~30 days,
-1h ~730 days); requests beyond the window simply return what Yahoo has.
+1h ~730 days); we clamp requests to those windows locally because Yahoo
+rejects an over-deep request WHOLESALE (error, not a partial tail), which
+would otherwise read as "no data" and poison the cache's coverage marks.
 
 Data-only, same shape as the Dukascopy source: no stream, no quote, no
 executor. Cache namespace ("yfinance", epic, resolution, side) keeps its
@@ -23,10 +25,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import yfinance as yf
-from yfinance.exceptions import YFPricesMissingError
+from yfinance.exceptions import YFPricesMissingError, YFTzMissingError
 
 from auto_trader.brokers.base import MarketDataBroker
 from auto_trader.core.models import Candle, Resolution
+
+# Make yfinance raise instead of logging-and-returning-empty (non-deprecated
+# equivalent of raise_errors=True). Process-global; set once at import.
+yf.config.debug.hide_exceptions = False
 
 
 @dataclass(frozen=True)
@@ -35,7 +41,7 @@ class InstrumentInfo:
     ticker: str  # Yahoo ticker
     name: str  # display name
     precision: int  # decimal places for price display
-    kind: str  # "fx" | "metal" | "index" | "stock" | "etf" | "crypto"
+    kind: str  # "fx" | "metal" | "index" | "commodity" | "stock" | "etf" | "crypto"
 
 
 # Curated catalogue. FX uses Yahoo's "=X" pairs, metals/indices use futures /
@@ -84,6 +90,34 @@ _INTERVALS: dict[Resolution, str] = {
 }
 
 _DEFAULT_PRECISION = 2  # searched/uncurated instruments
+
+# Yahoo's hard intraday lookback caps, in days back from now. An over-deep
+# request errors WHOLESALE (no partial tail), so clamp locally and fetch only
+# the reachable range. Daily/weekly are uncapped.
+_LOOKBACK_DAYS: dict[str, int] = {"1m": 29, "5m": 59, "15m": 59, "30m": 59, "1h": 729}
+
+# Yahoo additionally rejects any single 1m request spanning more than ~8 days;
+# split 1m windows into 7-day slices.
+_MAX_1M_SPAN = timedelta(days=7)
+
+
+def _clamp_start(interval: str, start: datetime, now: datetime) -> datetime:
+    days = _LOOKBACK_DAYS.get(interval)
+    if days is None:
+        return start
+    return max(start, now - timedelta(days=days))
+
+
+def _chunks(interval: str, start: datetime, end: datetime):
+    """Yield (start, end) sub-windows sized to what Yahoo accepts per request."""
+    if interval != "1m":
+        yield start, end
+        return
+    s = start
+    while s < end:
+        e = min(s + _MAX_1M_SPAN, end)
+        yield s, e
+        s = e
 
 
 def _ticker_for(epic: str) -> str:
@@ -139,9 +173,27 @@ def _df_to_candles(df, resolution: Resolution, now: datetime | None = None) -> l
     return out
 
 
+def _normalize_session_days(df):
+    """Yahoo stamps daily/weekly bars at exchange-local midnight (23:00 UTC of
+    the prior day for London FX in summer, 04:00/05:00 UTC for US listings).
+    Restamp each bar at UTC midnight of its exchange-local calendar date so
+    the derived-timeframe fold (weekly/monthly buckets by UTC calendar) puts
+    every session in the right bucket, matching the other brokers."""
+    if df is None or len(df) == 0:
+        return df
+    idx = df.index
+    if idx.tz is not None:
+        idx = idx.tz_localize(None)  # exchange-local wall time
+    idx = idx.normalize().tz_localize(timezone.utc)
+    return df.set_axis(idx)
+
+
 def _resample_4h(df):
     """1h Yahoo frame → 4h buckets, UTC epoch-aligned (00/04/08/.. opens),
-    matching how the other brokers bucket HOUR_4. Empty buckets dropped."""
+    matching how the other brokers bucket HOUR_4. Empty buckets dropped.
+    Known limitation: Yahoo equity 1h bars open at session offsets (:30 UTC),
+    so a session-offset bar spanning a bucket boundary lands whole in the
+    earlier bucket; exact 4h equity bars would need session-aware anchoring."""
     if df is None or len(df) == 0:
         return df
     idx = df.index
@@ -157,18 +209,24 @@ def _fetch_history(ticker: str, interval: str, start: datetime, end: datetime):
     """Synchronous Yahoo fetch, module-level so tests can monkeypatch it.
     auto_adjust=True: split/dividend-adjusted prices, per spec.
 
-    Errors are made visible (yf.config.debug.hide_exceptions = False, the
-    non-deprecated equivalent of raise_errors=True) so the caller's circuit
-    breaker sees them: transport/server failures (network errors, Yahoo down,
-    rate limits) propagate. A genuine no-data response (YFPricesMissingError,
-    e.g. a closed session) is caught and returned as an empty frame so it is
-    not mistaken for an outage."""
-    yf.config.debug.hide_exceptions = False
+    Error triage (transport failures and rate limits always propagate into the
+    caller's circuit breaker):
+    - YFTzMissingError: unknown/delisted ticker — no data, not an outage. A
+      stale searched symbol must not open the shared breaker.
+    - YFPricesMissingError with a status_code marker: Yahoo server error
+      dressed as no-data — re-raise, or the cache would mark the range as
+      covered-empty forever.
+    - other YFPricesMissingError: genuine no-data (closed session, delisted
+      range) — empty frame."""
     try:
         return yf.Ticker(ticker).history(
             start=start, end=end, interval=interval, auto_adjust=True
         )
-    except YFPricesMissingError:
+    except YFTzMissingError:
+        return yf.utils.empty_df()
+    except YFPricesMissingError as exc:
+        if "status_code" in str(exc):
+            raise
         return yf.utils.empty_df()
 
 
@@ -193,19 +251,36 @@ class YFinanceBroker(MarketDataBroker):
         price_side: str = "mid",
     ) -> list[Candle]:
         ticker = _ticker_for(epic)
+        now = datetime.now(timezone.utc)
         if resolution is Resolution.HOUR_4:
-            # Yahoo has no 4h interval: fetch 1h and bucket. Extend the start
-            # back one bucket so the first 4h bar isn't built from a partial
-            # set of hours.
+            # Yahoo has no 4h interval: fetch 1h and bucket. Pad BOTH edges by
+            # one bucket so neither the first nor the last 4h bar is built from
+            # a partial set of hours (a partial trailing bucket would be cached
+            # as a wrong closed bar).
+            fetch_start = _clamp_start("1h", start - timedelta(hours=4), now)
+            fetch_end = end + timedelta(hours=4)
+            if fetch_start >= fetch_end:
+                return []
             df = await asyncio.to_thread(
-                _fetch_history, ticker, "1h", start - timedelta(hours=4), end
+                _fetch_history, ticker, "1h", fetch_start, fetch_end
             )
             df = _resample_4h(df)
-            candles = _df_to_candles(df, resolution)
-            return [c for c in candles if c.time >= start]
+            return [c for c in _df_to_candles(df, resolution) if start <= c.time <= end]
         interval = _interval_for(resolution)  # raises on unsupported resolution
-        df = await asyncio.to_thread(_fetch_history, ticker, interval, start, end)
-        return _df_to_candles(df, resolution)
+        start = _clamp_start(interval, start, now)
+        if start >= end:
+            return []  # entirely beyond Yahoo's intraday lookback
+        out: list[Candle] = []
+        seen: set[datetime] = set()
+        for s, e in _chunks(interval, start, end):
+            df = await asyncio.to_thread(_fetch_history, ticker, interval, s, e)
+            if resolution in (Resolution.DAY, Resolution.WEEK):
+                df = _normalize_session_days(df)
+            for c in _df_to_candles(df, resolution):
+                if c.time not in seen:  # chunk-seam duplicates
+                    seen.add(c.time)
+                    out.append(c)
+        return out
 
     async def get_recent_candles(
         self,
@@ -220,7 +295,9 @@ class YFinanceBroker(MarketDataBroker):
         if count <= 0:
             return []
         now = datetime.now(timezone.utc)
-        span = timedelta(seconds=resolution.seconds * count * 3) + timedelta(days=7)
+        # x5, not x3: US equities trade ~27% of the clock (6.5h/24), so a x3
+        # window systematically under-fills intraday requests for stocks/ETFs.
+        span = timedelta(seconds=resolution.seconds * count * 5) + timedelta(days=7)
         candles = await self.get_candles(epic, resolution, now - span, now, price_side)
         return candles[-count:]
 
@@ -259,7 +336,14 @@ class YFinanceBroker(MarketDataBroker):
             for i in _INSTRUMENT_LIST
             if ql in i.epic.lower() or ql in i.name.lower()
         ]
-        seen = {r["epic"] for r in rows} | set(_INSTRUMENTS)
+        # Seed with curated tickers too (XAUUSD's GC=F, ...), so a Yahoo hit
+        # for a curated instrument's own ticker doesn't add a duplicate row
+        # that would build a second cached series for the same market.
+        seen = (
+            {r["epic"] for r in rows}
+            | set(_INSTRUMENTS)
+            | {i.ticker for i in _INSTRUMENT_LIST}
+        )
         if q:
             try:
                 quotes = await asyncio.to_thread(_search_yahoo, q, limit)
@@ -270,12 +354,15 @@ class YFinanceBroker(MarketDataBroker):
                 if not symbol or symbol in seen:
                     continue
                 seen.add(symbol)
+                kind = (quote.get("quoteType") or "").lower() or "stock"
+                # FX pairs need pip-level precision or the axis hides moves.
+                precision = 5 if kind == "currency" else _DEFAULT_PRECISION
                 rows.append(
                     self._market_row(
                         symbol,
                         quote.get("shortname") or quote.get("longname") or symbol,
-                        (quote.get("quoteType") or "").lower() or "stock",
-                        _DEFAULT_PRECISION,
+                        kind,
+                        precision,
                     )
                 )
         return rows[:limit]
