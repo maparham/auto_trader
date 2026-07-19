@@ -19,10 +19,12 @@ def _ramp(x: float | None, lo: float, hi: float) -> float:
 def parameter_stability(chosen, axes, fold_tables) -> dict:
     per_axis: dict[str, dict] = {}
     weights: dict[str, float] = {}
-    range_axes = [a for a in axes if a["kind"] == "range"]
+    # Skip range axes with no ordered values: they contribute nothing to
+    # stability and would otherwise KeyError on a["values"].
+    range_axes = [a for a in axes if a["kind"] == "range" and (a.get("values") or [])]
     for a in range_axes:
         target = a["targets"][0]
-        values = list(a["values"])
+        values = list(a.get("values") or [])
         idx = {v: i for i, v in enumerate(values)}
         picks = [idx.get(c.get(target)) for c in chosen]
         picks = [p for p in picks if p is not None]
@@ -70,7 +72,7 @@ def parameter_stability(chosen, axes, fold_tables) -> dict:
             ok = True
             for a in range_axes:
                 t = a["targets"][0]
-                idx = {v: i for i, v in enumerate(a["values"])}
+                idx = {v: i for i, v in enumerate(a.get("values") or [])}
                 i0, i1 = idx.get(chosen[k].get(t)), idx.get(chosen[k + 1].get(t))
                 if i0 is None or i1 is None or abs(i0 - i1) > 1:
                     ok = False

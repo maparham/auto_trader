@@ -186,7 +186,8 @@ class WfoJobManager:
                     for fi, f in enumerate(sc["folds"]):
                         rows = [
                             {"combo": r["combo"],
-                             "metrics": (r["folds"][f["_w"]] if r["folds"] else None)}
+                             "metrics": (r["folds"][f["_w"]] if r["folds"] else None),
+                             "error": r["error"]}
                             for r in grid_rows
                         ]
                         obj = {**objective, "min_trades": sc["min_train_trades"]}
@@ -219,7 +220,7 @@ class WfoJobManager:
                 job.done = job.total  # folds with no eligible winner finish early
                 job.result = self._aggregate(
                     kw, schemes, selections,
-                    {r["key"]: r for r in test_rows if r})
+                    {r["key"]: r for r in test_rows if r}, grid_rows)
                 job.phase = "done"
                 cb = kw.get("on_complete")
                 if cb is not None and not job.cancelled:
@@ -308,7 +309,7 @@ class WfoJobManager:
                 pass
 
     def _aggregate(self, kw: dict, schemes: list[dict], selections: dict,
-                   tests_by_key: dict) -> dict:
+                   tests_by_key: dict, grid_rows: list[dict]) -> dict:
         res_s = resolution_seconds(kw["req_dict"]["resolution"])
         cash = kw["req_dict"]["costs"]["startingCash"]
         out_schemes = []
@@ -369,9 +370,17 @@ class WfoJobManager:
                 "train_span": sc["train_span"], "folds": folds_out,
                 "stitched": stitched, "stability": stab, "robustness": block,
             })
+        # Grid diagnostic: a combo that errored in phase 1 contributes no metrics
+        # to any fold, so a run where every combo failed still "completes" with
+        # empty tables. Surface the failure count (job.error stays None) so the
+        # caller can tell an empty result from a broken one.
+        grid_failed = sum(1 for r in grid_rows if r["error"])
+        grid_sample = next((r["error"] for r in grid_rows if r["error"]), None)
         return {"eval_mode": "sliced", "objective": kw["objective"],
                 "schedule": kw["schedule_meta"], "axes": kw["axes"],
-                "schemes": out_schemes}
+                "schemes": out_schemes,
+                "grid_errors": {"failed": grid_failed, "total": len(grid_rows),
+                                "sample": grid_sample}}
 
 
 WFO_JOBS = WfoJobManager()  # module singleton

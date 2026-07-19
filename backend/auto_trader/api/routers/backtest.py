@@ -919,6 +919,24 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
                     raise HTTPException(
                         422, f"sweep target '{tgt}' names a param the strategy does not declare")
 
+    # A range axis with no ordered values would crash at aggregate time
+    # (stability reads its values); reject it up front.
+    for ax in wf.axes:
+        if ax.kind == "range" and not ax.values:
+            raise HTTPException(
+                422, f"range axis '{ax.targets[0] if ax.targets else ''}' "
+                     "needs its ordered values")
+
+    # WFO combos own only strategy/param/risk targets: the fold windows own the
+    # period, so a period:/timeWindow: target in a combo would silently fight the
+    # test-window slicing. Reject at submit.
+    for combo in wf.combos:
+        for tgt in combo:
+            if tgt.startswith("period:") or tgt.startswith("timeWindow:"):
+                raise HTTPException(
+                    422, "walk-forward combos must not contain period:/timeWindow: "
+                         "targets (fold windows own the period)")
+
     _validate_combo_targets(req, candles, coded, combos=wf.combos)
 
     # HTF acquisition mirrors submit_sweep_job. Coded mode runs combos[0] as an

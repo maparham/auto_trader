@@ -111,14 +111,14 @@ class WfoStore:
                     best_scheme = None
                     best_score = None
                     for s in schemes:
-                        score = s.get("robustness", {}).get("robustness_score")
+                        score = (s.get("robustness") or {}).get("robustness_score")
                         if score is not None and (best_score is None or score > best_score):
                             best_score = score
                             best_scheme = s
 
                     wfe_median = None
                     if best_scheme is not None:
-                        wfe_median = best_scheme.get("robustness", {}).get("wfe_median")
+                        wfe_median = (best_scheme.get("robustness") or {}).get("wfe_median")
 
                     out.append({
                         "id": r[0], "created_at": r[1], "epic": r[2],

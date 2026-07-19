@@ -54,6 +54,28 @@ def test_submit_rejects_exact_mode():
     assert client.post("/api/backtest/walkforward/jobs", json=req).status_code == 422
 
 
+def test_submit_rejects_range_axis_without_values(sync_wfo_manager):
+    req = make_req_dict(100 * 24)
+    req["walkforward"] = {
+        **WFO,
+        "axes": [{"kind": "range", "targets": ["param:fast"], "values": []}],
+    }
+    r = client.post("/api/backtest/walkforward/jobs", json=req)
+    assert r.status_code == 422
+    assert "ordered values" in r.json()["detail"]
+
+
+def test_submit_rejects_period_combo(sync_wfo_manager):
+    req = make_req_dict(100 * 24)
+    req["walkforward"] = {
+        **WFO,
+        "combos": [{"param:fast": 3, "period:from": 123}],
+    }
+    r = client.post("/api/backtest/walkforward/jobs", json=req)
+    assert r.status_code == 422
+    assert "period" in r.json()["detail"]
+
+
 def test_job_lifecycle_and_archive(sync_wfo_manager):
     req = make_req_dict(100 * 24)
     req["walkforward"] = WFO

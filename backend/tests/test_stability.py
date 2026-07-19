@@ -26,6 +26,20 @@ def test_bouncing_winner_scores_low():
     assert out["adjacency"] == 0.0
 
 
+def test_range_axis_without_values_is_skipped():
+    # A range axis missing its "values" contributes nothing and must not raise.
+    axes = [{"kind": "range", "targets": ["param:fast"]}]  # no "values" key
+    chosen = [{"param:fast": 10}, {"param:fast": 10}]
+    out = parameter_stability(chosen, axes, [])
+    assert out == {"per_axis": {}, "overall": None, "adjacency": None}
+    # Mixed: one valued axis alongside a valueless one still works.
+    axes2 = [AXES[0], {"kind": "range", "targets": ["param:slow"], "values": []}]
+    tables = _tables({5: 0, 10: 3, 15: 1, 20: 0}, 2)
+    out2 = parameter_stability([{"param:fast": 10}] * 2, axes2, tables)
+    assert "param:fast" in out2["per_axis"]
+    assert "param:slow" not in out2["per_axis"]
+
+
 def test_robustness_score_bounds_and_penalty():
     hi = robustness_score(
         wfe_median=0.9, pct_folds_profitable=1.0, oos_sharpe=2.0,

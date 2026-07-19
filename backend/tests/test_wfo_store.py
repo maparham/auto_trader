@@ -30,6 +30,20 @@ def test_roundtrip_and_summary(tmp_path):
     assert "s0/f0" in tables
 
 
+def test_list_tolerates_null_robustness(tmp_path):
+    # A scheme can carry an explicit "robustness": null (e.g. a run that
+    # produced no eligible folds). Listing must not crash on it.
+    store = WfoStore(str(tmp_path / "wfo.db"), cap=10)
+    rec = _rec(1, 50.0)
+    rec["result"] = {"schemes": [{"robustness": None}]}
+    store.insert_sync(rec)
+    rows = asyncio.run(store.list())
+    assert len(rows) == 1
+    assert rows[0]["id"] == "id1"
+    assert rows[0]["robustness_score"] is None
+    assert rows[0]["wfe_median"] is None
+
+
 def test_cap_prunes_oldest(tmp_path):
     store = WfoStore(str(tmp_path / "wfo.db"), cap=2)
     for i in range(4):
