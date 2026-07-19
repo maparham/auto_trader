@@ -555,6 +555,21 @@ export const computeHostStateSignal = new Signal<ComputeHostUiState>("unknown");
 // from another tab or a detached run.
 export const computeHostJobsSignal = new Signal<number>(0);
 
+// Keep the compute-target preference in lockstep with the host lifecycle: when
+// the host is ON ("ready") default to "remote", and when it's off ("stopped")
+// snap back to "local". Only "ready"/"stopped" drive this — transient states
+// ("unknown"/"booting"/"unconfigured") leave the current choice untouched. The
+// user can still override the dropdown afterwards; the next host state change
+// re-asserts the matching default.
+computeHostStateSignal.subscribe((state) => {
+  const desired: SweepTarget | null =
+    state === "ready" ? "remote" : state === "stopped" ? "local" : null;
+  if (desired && sweepTargetSignal.value !== desired) {
+    sweepTargetSignal.set(desired);
+    saveSweepTarget(desired);
+  }
+});
+
 // Transient notice shown when selecting a trade row can't navigate the chart to
 // it — the trade predates the history reachable at the current timeframe (a fine
 // timeframe whose loaded/pageable window doesn't reach that far back). Set by the

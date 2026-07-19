@@ -5,8 +5,6 @@ import { toast } from "./lib/notify";
 import {
   computeHostStateSignal,
   computeHostJobsSignal,
-  sweepStateSignal,
-  requestConfirm,
   type ComputeHostUiState,
 } from "./lib/signals";
 import { computeHostState, startComputeHost, stopComputeHost } from "./api";
@@ -99,18 +97,7 @@ export default function ComputeHostButton() {
     }
   };
 
-  const onStop = () => {
-    const sweeping =
-      sweepStateSignal.value?.running === true || computeHostJobsSignal.value > 0;
-    requestConfirm({
-      title: "Stop compute host?",
-      message: sweeping
-        ? "A sweep is running on the host. Stopping it now will cancel that run. Stop anyway?"
-        : "Stop the compute host? You can start it again from here when you next need it.",
-      confirmLabel: "Stop",
-      onConfirm: () => void doStop(),
-    });
-  };
+  const onStop = () => void doStop();
 
   if (state === "unknown" || state === "unconfigured") return null;
 
