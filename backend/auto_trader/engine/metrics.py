@@ -191,3 +191,38 @@ def window_metrics(trades, bounds: Sequence[int]) -> tuple[list[dict], dict]:
         "mean_window_pnl_minus_std": round(mean - std, 5),
     }
     return windows, agg
+
+
+class _Pt:
+    """Minimal EquityPoint stand-in for rebased window slices."""
+    __slots__ = ("time", "equity")
+
+    def __init__(self, time, equity):
+        self.time = time
+        self.equity = equity
+
+
+def slice_window_metrics(trades, equity, from_ts: float, to_ts: float,
+                         starting_cash: float, res_seconds: int) -> dict:
+    """Full metrics for one sub-window of a continuous run, as if the window
+    were its own run. Trades belong to the window their ENTRY falls in
+    ([from_ts, to_ts)); equity points inside the window are rebased so the
+    window starts at starting_cash (offset by the last pre-window equity).
+    net_pnl is the sum of attributed trade pnls (entry attribution), which can
+    differ slightly from the equity delta when a trade straddles the boundary;
+    the sliced approximation is documented in the WFO design doc."""
+    w_trades = [t for t in trades
+                if from_ts <= t.entry_time.timestamp() < to_ts]
+    e0 = starting_cash
+    for pt in equity:
+        if pt.time.timestamp() >= from_ts:
+            break
+        e0 = pt.equity
+    offset = starting_cash - e0
+    w_equity = [_Pt(pt.time, pt.equity + offset) for pt in equity
+                if from_ts <= pt.time.timestamp() < to_ts]
+    net = sum(t.pnl for t in w_trades)
+    core = compute_metrics(w_trades, w_equity, net, starting_cash, res_seconds)
+    leg = leg_metrics(w_trades, res_seconds, round_trip_cost=0.0)
+    return {"net_pnl": round(net, 5), "n_trades": len(w_trades),
+            "win_rate": round(leg["win_rate"], 4)} | core
