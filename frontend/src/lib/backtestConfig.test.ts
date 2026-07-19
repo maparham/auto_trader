@@ -11,6 +11,7 @@ import {
   scalingAtrLengths,
   recipeKey,
   swapSides,
+  invertRule,
   ruleFromChartOperand,
   activeGroup,
   OP_REVERSE,
@@ -549,6 +550,32 @@ describe("swapSides", () => {
   });
   it("OP_REVERSE is a complete involution", () => {
     for (const [k, v] of Object.entries(OP_REVERSE)) expect(OP_REVERSE[v]).toBe(k);
+  });
+});
+
+describe("invertRule", () => {
+  it("EMA(50) < low -> EMA(50) > high (operand mirrored in place, operator flipped)", () => {
+    const rule: Rule = { left: { kind: "indicator", indicator: "EMA", length: 50 }, op: "lt", right: { kind: "price", field: "low" } };
+    expect(invertRule(rule)).toEqual({ left: { kind: "indicator", indicator: "EMA", length: 50 }, op: "gt", right: { kind: "price", field: "high" } });
+  });
+  it("X < 1 -> X > -1 (constant negated, operator flipped)", () => {
+    const rule: Rule = { left: series, op: "lt", right: { kind: "const", value: 1 } };
+    expect(invertRule(rule)).toEqual({ left: series, op: "gt", right: { kind: "const", value: -1 } });
+  });
+  it("high↔low both directions; open/close are not extremes and stay put", () => {
+    const highLow: Rule = { left: { kind: "price", field: "high" }, op: "gt", right: { kind: "price", field: "low" } };
+    expect(invertRule(highLow)).toEqual({ left: { kind: "price", field: "low" }, op: "lt", right: { kind: "price", field: "high" } });
+    const closeOpen: Rule = { left: { kind: "price", field: "close" }, op: "gt", right: { kind: "price", field: "open" } };
+    expect(invertRule(closeOpen)).toEqual({ left: { kind: "price", field: "close" }, op: "lt", right: { kind: "price", field: "open" } });
+  });
+  it("preserves enabled/count and is its own inverse (round-trip)", () => {
+    const rule: Rule = { left: { kind: "price", field: "high" }, op: "crossesAbove", right: { kind: "const", value: 30 }, enabled: false, count: 3 };
+    expect(invertRule(invertRule(rule))).toEqual(rule);
+  });
+  it("does not mutate the input rule", () => {
+    const rule: Rule = { left: { kind: "price", field: "low" }, op: "lt", right: { kind: "const", value: 5 } };
+    invertRule(rule);
+    expect(rule).toEqual({ left: { kind: "price", field: "low" }, op: "lt", right: { kind: "const", value: 5 } });
   });
 });
 

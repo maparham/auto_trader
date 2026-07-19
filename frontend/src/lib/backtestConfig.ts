@@ -169,6 +169,33 @@ export function swapSides(rule: Rule): Rule {
   return { ...rule, left: rule.right, right: rule.left, op: OP_REVERSE[rule.op] };
 }
 
+/** The mirror of a single operand for the "invert" transform: the reflection that
+ * turns a long-side condition into its short-side twin. `high`↔`low` (the candle's
+ * two extremes swap); a constant negates (`1` → `-1`); every other operand kind —
+ * indicators, series, entry, open/close (not extremes) — is left as-is. Slope and
+ * other nested fields are preserved via {@link cloneOperand}. Numbers that don't
+ * mirror by sign (e.g. an `RSI < 30` threshold that should become `70`, not `-30`)
+ * negate here and are meant to be hand-corrected afterward. */
+function mirrorOperand(op: Operand): Operand {
+  const copy = cloneOperand(op);
+  if (copy.kind === "price") {
+    if (copy.field === "high") copy.field = "low";
+    else if (copy.field === "low") copy.field = "high";
+  } else if (copy.kind === "const") {
+    copy.value = -copy.value;
+  }
+  return copy;
+}
+
+/** The true inverse of a rule: the short-side twin of a long-side condition (or
+ * vice versa). Unlike {@link swapSides} (which swaps operands to keep the SAME
+ * truth), this flips the operator AND mirrors each operand in place, so the rule's
+ * meaning is reflected: `EMA(50) < low` → `EMA(50) > high` (whole candle above the
+ * MA → whole candle below it), `X < 1` → `X > -1`. enabled/count preserved. */
+export function invertRule(rule: Rule): Rule {
+  return { ...rule, left: mirrorOperand(rule.left), right: mirrorOperand(rule.right), op: OP_REVERSE[rule.op] };
+}
+
 /** A new rule seeded from a chart operand: `<operand> > 0`, ready to edit. Used by
  * the group-level "+ Rule from chart" entry so an empty group needs no pre-step. */
 export function ruleFromChartOperand(op: Operand): Rule {

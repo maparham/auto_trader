@@ -60,8 +60,8 @@ import {
   type SessionPreset,
   type DayTimeWindow,
   swapSides,
+  invertRule,
   ruleFromChartOperand,
-  OP_REVERSE,
 } from "./lib/backtestConfig";
 import { SESSION_PRESETS, buildRangeChips, coverage, formatDayWindow, isActive, minToTime, resolveMask, sessionWindowInTz } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
@@ -3415,9 +3415,10 @@ function CopyAllIcon() {
   );
 }
 
-// Flip-operators glyph: a ">" chevron above a "<" chevron (the ≷ motif) —
-// distinct from the swap-sides straight double-arrow, since this inverts each
-// operator to its opposite rather than swapping the two operands.
+// Invert-rules glyph: a ">" chevron above a "<" chevron (the ≷ motif) — distinct
+// from the swap-sides straight double-arrow. This reflects each rule into its
+// opposite-side twin (flip operator, swap high/low, negate numbers) rather than
+// swapping the two operands.
 function ReverseOpsIcon() {
   return (
     <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3698,14 +3699,17 @@ export function RuleGroupSection({
   function setCombine(combine: Combine) {
     onChange({ ...group, combine });
   }
-  // Flip every rule's operator to its opposite in one go. Gated behind a confirm
-  // since it rewrites the group's logic (> ↔ <, crosses above ↔ below).
+  // Invert every rule in one go — the short-side twin of a long condition (or vice
+  // versa): flips the operator, swaps high/low, and negates numbers. Gated behind a
+  // confirm since it rewrites the group's logic. Numbers that don't mirror by sign
+  // (e.g. an RSI 30 threshold that should read 70, not -30) land negated and can be
+  // fixed in place afterward.
   function reverseAll() {
     requestConfirm({
-      title: "Reverse operators",
-      message: `Flip every operator in ${title} to its opposite (> ↔ <, crosses above ↔ below)?`,
-      confirmLabel: "Reverse",
-      onConfirm: () => onChange({ ...group, rules: group.rules.map((r) => ({ ...r, op: OP_REVERSE[r.op] })) }),
+      title: "Invert rules",
+      message: `Invert every rule in ${title} (flip operator, swap high/low, negate numbers)? Check any RSI-style thresholds afterward.`,
+      confirmLabel: "Invert",
+      onConfirm: () => onChange({ ...group, rules: group.rules.map(invertRule) }),
     });
   }
   // Wipe every rule in this group, gated behind a confirm (unlike the per-row
@@ -3782,11 +3786,11 @@ export function RuleGroupSection({
                 </Tooltip>
               </div>
             )}
-            <Tooltip content="Flip every operator to its opposite (> ↔ <, crosses above ↔ below)">
+            <Tooltip content="Invert rules for the opposite side: flip operator, swap high/low, negate numbers">
               <button
                 className="bt-rule-toggle bt-reverse-ops"
                 onClick={reverseAll}
-                aria-label="Reverse operators"
+                aria-label="Invert rules"
               >
                 <ReverseOpsIcon />
               </button>
