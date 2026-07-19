@@ -1063,6 +1063,9 @@ export default function App() {
     // local edit differs from localStorage until this save writes it.
     if (JSON.stringify(settings) === JSON.stringify(loadSettings())) return;
     saveSettings(settings);
+    // Imperative readers (the chart's center-pin in useLiveMarketData reads
+    // loadSettings outside React) refresh on this instead of a prop thread.
+    window.dispatchEvent(new Event("at:settings-saved"));
   }, [settings]);
 
   // Persist the workspace. When autosave is on (default), every edit writes back to
@@ -1870,11 +1873,11 @@ export default function App() {
           {active && !focusedReadOnly && (
             <DrawSidebar
               controller={focusedController}
-              resetViewOnTf={settings.resetViewOnTimeframeChange}
-              onToggleResetViewOnTf={() =>
+              preserveCenterOnTf={settings.preserveCenterOnTfChange}
+              onTogglePreserveCenterOnTf={() =>
                 setSettings((s) => ({
                   ...s,
-                  resetViewOnTimeframeChange: !s.resetViewOnTimeframeChange,
+                  preserveCenterOnTfChange: !s.preserveCenterOnTfChange,
                 }))
               }
             />

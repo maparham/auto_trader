@@ -27,6 +27,7 @@ import { slopeMetrics } from "./slopeMetrics";
 import { slopeHandles } from "./slopeHandles";
 import { UP, DOWN } from "./chartTheme";
 import { hexToRgba } from "./lineStyle";
+import { bandEdges, formatTimeRangeReadout } from "./timeRangeMetrics";
 
 // --- line geometry, replicated from klinecharts' (non-exported) built-ins so the
 // overridden variants paint byte-identically to the originals. ---------------
@@ -630,6 +631,82 @@ const rangeBand: OverlayTemplate = {
   },
 };
 
+// --- timeRange: a PERSISTENT full-height time-range highlight ---------------
+// Marks a time interval [from, to) as a full-height shaded vertical band. Unlike
+// the transient rangeBand it is a real drawing: persisted, selectable, colorable
+// (fill/border from overlay.styles.polygon, editable in the settings modal), with
+// an optional label (extendData.text). Stored as two anchor TIMESTAMPS so the same
+// interval stays highlighted across timeframe changes (mark a 4H candle, see the 4
+// hours on 15m). The y anchors are ignored — the band always spans the pane height.
+//
+// Geometry note (bandEdges): klinecharts anchors overlay points at the candle's
+// CENTER x, so the raw coordinates sit half a bar right of the boundary. bandEdges
+// shifts both edges left by half a bar width so the band lands on bar boundaries
+// and exactly encloses the covered candles. Bar width comes from getBarSpace().bar,
+// not by differencing the two coords (that fails for a single-candle band).
+const TIME_RANGE_READOUT = "rgba(41, 98, 255, 0.9)";
+const timeRange: OverlayTemplate = {
+  name: "timeRange",
+  totalStep: 3,
+  needDefaultPointFigure: true, // top-edge grips → free horizontal resize
+  needDefaultXAxisFigure: true,
+  needDefaultYAxisFigure: false, // time-only; no price tag
+  createPointFigures: (params) => {
+    const { overlay, coordinates, bounding, chart } = params;
+    if (coordinates.length < 2) return [];
+    const barWidth = chart.getBarSpace().bar;
+    const { left, right } = bandEdges(coordinates[0].x, coordinates[1].x, barWidth);
+    const h = bounding.height;
+    const figures: OverlayFigure[] = [
+      {
+        type: "polygon",
+        attrs: {
+          coordinates: [
+            { x: left, y: 0 },
+            { x: right, y: 0 },
+            { x: right, y: h },
+            { x: left, y: h },
+          ],
+        },
+      },
+    ];
+    // Readout (span · bar count) + optional label, stacked at the top-left inside
+    // the band. Bars = loaded candles whose open falls in [from, to) — robust to
+    // session gaps and always reflects the CURRENT timeframe.
+    const t0 = overlay.points?.[0]?.timestamp;
+    const t1 = overlay.points?.[1]?.timestamp;
+    const width = right - left;
+    if (typeof t0 === "number" && typeof t1 === "number" && width > 28) {
+      const from = Math.min(t0, t1);
+      const to = Math.max(t0, t1);
+      const bars = chart.getDataList().filter((k) => k.timestamp >= from && k.timestamp < to).length;
+      const readout = formatTimeRangeReadout(to - from, bars);
+      figures.push({
+        type: "text",
+        attrs: { x: left + 4, y: 3, text: readout, align: "left", baseline: "top" },
+        styles: {
+          color: TIME_RANGE_READOUT,
+          size: 11,
+          family: "-apple-system, system-ui, sans-serif",
+          backgroundColor: "transparent",
+          borderColor: "transparent",
+          borderSize: 0,
+          paddingLeft: 0,
+          paddingRight: 0,
+          paddingTop: 0,
+          paddingBottom: 0,
+        },
+        ignoreEvent: true,
+      });
+      const extra = asDrawingExtra(overlay.extendData);
+      if (extra.text && extra.text.trim()) {
+        figures.push(labelFigure(left + 4, 18, extra.text, "left", "top"));
+      }
+    }
+    return figures;
+  },
+};
+
 let registered = false;
 // Idempotent — safe to call on every chart mount (registration is global).
 export function registerCustomOverlays(): void {
@@ -643,4 +720,5 @@ export function registerCustomOverlays(): void {
   registerOverlay(measure);
   registerOverlay(slope);
   registerOverlay(rangeBand);
+  registerOverlay(timeRange);
 }

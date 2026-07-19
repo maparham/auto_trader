@@ -742,3 +742,24 @@ export function quickBarPeriods(favoriteResolutions: string[]): Period[] {
       (RESOLUTION_SECONDS[b.resolution] ?? 0),
   );
 }
+
+// The enabled quick-bar period immediately FINER than `currentResolution`
+// (largest duration strictly below it), or null when there is none (the user
+// is already on their lowest enabled timeframe). Duration-based so it works
+// even when `currentResolution` itself is not on the quick bar. Used by the
+// zoom-to-range tool to drop one timeframe on release.
+export function oneTfLower(
+  currentResolution: string,
+  favoriteResolutions: string[],
+): Period | null {
+  const curSecs = RESOLUTION_SECONDS[currentResolution];
+  if (curSecs == null) return null;
+  const ladder = quickBarPeriods(favoriteResolutions); // ascending by duration
+  let best: Period | null = null;
+  for (const p of ladder) {
+    if (p.liveOnly) continue; // live-only seconds TFs have no history to zoom into
+    const secs = RESOLUTION_SECONDS[p.resolution] ?? 0;
+    if (secs < curSecs) best = p; // ascending, so the last one below wins
+  }
+  return best;
+}

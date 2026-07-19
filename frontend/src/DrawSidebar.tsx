@@ -17,16 +17,16 @@ import {
   saveLastDrawTools,
 } from "./lib/persist";
 import { magnetSignal, toggleMagnet, setMagnetStrength } from "./lib/magnet";
-import { MagnetIcon, StrongMagnetIcon, RulerIcon, SlopeIcon } from "./lib/menuIcons";
+import { MagnetIcon, StrongMagnetIcon, RulerIcon, SlopeIcon, ZoomRangeIcon } from "./lib/menuIcons";
 import type { ChartController } from "./lib/chartController";
 
 interface Props {
   controller: ChartController | null;
-  // "Reset view to the latest candle on a timeframe change" (global Settings).
-  // Off (default) keeps the centered time fixed across timeframes. Owned by
+  // "Preserve the centered time across timeframe changes" (global Settings).
+  // Off (default) jumps to the latest candle on a timeframe change. Owned by
   // App's settings state so this button and the Settings modal stay in sync.
-  resetViewOnTf: boolean;
-  onToggleResetViewOnTf: () => void;
+  preserveCenterOnTf: boolean;
+  onTogglePreserveCenterOnTf: () => void;
 }
 
 // Star (filled when on) — same path as IndicatorRow's.
@@ -39,7 +39,7 @@ function Star({ on }: { on: boolean }) {
   );
 }
 
-export default function DrawSidebar({ controller, resetViewOnTf, onToggleResetViewOnTf }: Props) {
+export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePreserveCenterOnTf }: Props) {
   const overlays = controller?.overlays ?? null;
 
   // Whether the drawing-tools flyout is open. Outside-click closes it.
@@ -86,6 +86,13 @@ export default function DrawSidebar({ controller, resetViewOnTf, onToggleResetVi
     if (!controller?.slopeArmed) return;
     setSloping(controller.slopeArmed.value);
     return controller.slopeArmed.subscribe(setSloping);
+  }, [controller]);
+  // Zoom-to-range tool mirror (same optional-chain HMR-safe pattern as measure).
+  const [zooming, setZooming] = useState(controller?.zoomRangeArmed?.value ?? false);
+  useEffect(() => {
+    if (!controller?.zoomRangeArmed) return;
+    setZooming(controller.zoomRangeArmed.value);
+    return controller.zoomRangeArmed.subscribe(setZooming);
   }, [controller]);
 
   // Eye menu: drawings-hidden lives on the manager (existing); indicators/positions
@@ -141,6 +148,18 @@ export default function DrawSidebar({ controller, resetViewOnTf, onToggleResetVi
   const favShown = favs.filter((n) => supported.has(n));
 
   function arm(name: string) {
+    // Time Range uses its own press-drag placement (click = one candle, drag =
+    // range), driven off a controller signal in ChartCore, not klinecharts'
+    // interactive click-to-place. Arm the signal instead of addDrawing.
+    if (name === "timeRange") {
+      controller?.timeRangeArmed.set(true);
+      controller?.focusChart?.();
+      const next = { ...lastUsed, tool: name };
+      setLastUsed(next);
+      saveLastDrawTools(next);
+      setOpenFly(false);
+      return;
+    }
     overlays?.addDrawing(name);
     // Hand keyboard focus to the chart so Esc cancels the armed tool immediately —
     // without this the sidebar button keeps focus and the chart's Esc handler
@@ -318,6 +337,23 @@ export default function DrawSidebar({ controller, resetViewOnTf, onToggleResetVi
         </button>
       </Tooltip>
 
+      {/* Zoom to range: drag a band, drop one timeframe lower centered on it. */}
+      <Tooltip
+        placement="right"
+        content={[
+          "Zoom to range. Drag across a time range.",
+          "On release, drops one timeframe lower centered on it.",
+        ]}
+      >
+        <button
+          className={"ds-btn zoom-range-toggle" + (zooming ? " on" : "")}
+          disabled={!controller?.zoomRangeArmed}
+          onClick={() => controller?.zoomRangeArmed?.set(!controller.zoomRangeArmed.value)}
+        >
+          <ZoomRangeIcon />
+        </button>
+      </Tooltip>
+
       {/* Magnet (moved from the toolbar): icon toggles, caret picks strength. */}
       <div className="ds-family" ref={magnetRef}>
         <button
@@ -363,32 +399,32 @@ export default function DrawSidebar({ controller, resetViewOnTf, onToggleResetVi
 
       <span className="ds-spacer" aria-hidden="true" />
 
-      {/* Reset-view-on-timeframe-change toggle (global Settings; mirrors the
-          Settings → General switch). On = jump to the latest candle when the
-          timeframe changes; off (default) keeps the centered time fixed. */}
+      {/* Preserve-center-on-timeframe-change toggle (global Settings; mirrors
+          the Settings → General switch). On = the centered time stays fixed
+          across timeframes (anchored bar marked on the time axis); off
+          (default) jumps to the latest candle. */}
       <Tooltip
         placement="right"
         content={
-          resetViewOnTf
-            ? [
+          preserveCenterOnTf
+            ? ["Timeframe change keeps the centered time fixed."]
+            : [
                 "Timeframe change jumps to the latest candle.",
                 "Click to keep the centered time fixed instead.",
-              ]
-            : [
-                "Timeframe change keeps the centered time fixed.",
-                "Click to jump to the latest candle instead.",
               ]
         }
       >
         <button
-          className={"ds-btn" + (resetViewOnTf ? " on" : "")}
-          aria-pressed={resetViewOnTf}
-          onClick={onToggleResetViewOnTf}
+          className={"ds-btn" + (preserveCenterOnTf ? " on" : "")}
+          aria-pressed={preserveCenterOnTf}
+          onClick={onTogglePreserveCenterOnTf}
         >
-          {/* skip-to-latest: two chevrons into a right-edge bar */}
+          {/* target: circle + crosshair ticks + center dot */}
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
             strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M5 6l6 6-6 6M12 6l6 6-6 6M20 5v14" />
+            <circle cx="12" cy="12" r="7" />
+            <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />
+            <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
           </svg>
         </button>
       </Tooltip>

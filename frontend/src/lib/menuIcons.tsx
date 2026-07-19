@@ -56,6 +56,21 @@ export function SlopeIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// Zoom-to-range glyph: a magnifier with a small range bracket inside the lens —
+// reads as "zoom into this time span". Same 24x24 / currentColor conventions as
+// RulerIcon/SlopeIcon so it lights up when armed.
+export function ZoomRangeIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="10" cy="10" r="6.5" />
+      <path d="M14.8 14.8L21 21" />
+      <path d="M6.8 10h6.4" opacity="0.85" />
+      <path d="M6.8 8v4M13.2 8v4" opacity="0.85" />
+    </svg>
+  );
+}
+
 // Horseshoe magnet, angled −45° with detached pole caps (matches the user's
 // reference art). "Filled" look built from thick butt-capped strokes so it
 // still inherits currentColor like every other icon here.

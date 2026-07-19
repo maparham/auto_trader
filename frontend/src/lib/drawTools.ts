@@ -19,6 +19,7 @@ export const DRAW_TOOLS: DrawTool[] = [
   { name: "priceLine", label: "Price line" },
   { name: "priceChannelLine", label: "Parallel channel" },
   { name: "fibonacciLine", label: "Fib retracement" },
+  { name: "timeRange", label: "Time range" },
 ];
 
 const BY_NAME = new Map(DRAW_TOOLS.map((t) => [t.name, t]));

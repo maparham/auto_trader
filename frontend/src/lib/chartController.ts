@@ -56,6 +56,17 @@ export class ChartController {
   // picked [fromMs,toMs] is published on rangePickResult and the tool disarms.
   // Armed from OUTSIDE the chart (the backtest panel), so it also focuses the wrap.
   readonly rangePickArmed = new Signal<boolean>(false);
+  // True while the Zoom-to-range tool is armed (sidebar button toggled on). The
+  // next press-drag on the candle pane marks a time range; on release the chart
+  // drops one timeframe lower centered on the range midpoint and the band stays
+  // visible until a click-away. One-shot: disarms after a pick. Esc also disarms.
+  readonly zoomRangeArmed = new Signal<boolean>(false);
+  // True while the Time Range highlight tool is armed (from the draw sidebar). The
+  // next press-drag places a persistent full-height band marking a time interval; a
+  // click with no drag marks the single clicked candle. One-shot: disarms on place.
+  // Esc disarms. Uses its own press-drag (not klinecharts interactive draw) so it can
+  // support the click=one-candle gesture, so it's armed via a signal like rangePick.
+  readonly timeRangeArmed = new Signal<boolean>(false);
   // The most recent time range picked on the chart (ms), or null. The backtest
   // panel subscribes and drops it into the Custom from/to. One-shot: consumers may
   // reset it to null after reading.

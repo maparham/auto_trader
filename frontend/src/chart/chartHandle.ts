@@ -30,6 +30,19 @@ export type RangeReq = {
   side: PriceSide;
 };
 
+// A parked "drop one timeframe and center here" request from the zoom-to-range
+// tool. Consumed by useLiveMarketData after the lower-TF bars load: it forces
+// the view to center on centerTs (winning over keepCenter and the
+// reset-on-TF-change setting), then redraws the band from bandStart/EndTs. Only
+// fires when its resolution matches the incoming load; an epic change clears it
+// (via the epicChanged flag), so it carries no epic/broker/side of its own.
+export type CenterReq = {
+  resolution: string;
+  centerTs: number;
+  bandStartTs: number;
+  bandEndTs: number;
+};
+
 export interface ChartHandle {
   controller: ChartController;
   overlays: OverlayManager;
@@ -60,6 +73,7 @@ export interface ChartHandle {
   cursorSecRef: React.MutableRefObject<number>;
   emptyStreakRef: React.MutableRefObject<number>;
   pendingRangeRef: React.MutableRefObject<RangeReq | null>;
+  pendingCenterRef: React.MutableRefObject<CenterReq | null>;
   launchedTokenRef: React.MutableRefObject<RangeReq | null>;
   cappedAnchorRef: React.MutableRefObject<Map<string, { target: number; reached: number }>>;
   separatorTsRef: React.MutableRefObject<number | null>;

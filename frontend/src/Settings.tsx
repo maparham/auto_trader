@@ -340,8 +340,8 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
 
             <div className="setting-row">
               <label className="label-info">
-                Reset view on timeframe change
-                <InfoTip text="On: switching timeframe jumps to the latest candle. Off: the centered time stays put across timeframes." />
+                Preserve center on timeframe change
+                <InfoTip text="On: the centered time stays put across timeframes and reloads, and the anchored bar is marked on the time axis. Off: switching timeframe jumps to the latest candle." />
               </label>
               <div className="seg">
                 {[
@@ -350,9 +350,9 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
                 ].map(([value, label]) => (
                   <button
                     key={String(value)}
-                    className={settings.resetViewOnTimeframeChange === value ? "seg-on" : ""}
+                    className={settings.preserveCenterOnTfChange === value ? "seg-on" : ""}
                     onClick={() =>
-                      onChange({ ...settings, resetViewOnTimeframeChange: value as boolean })
+                      onChange({ ...settings, preserveCenterOnTfChange: value as boolean })
                     }
                   >
                     {label}

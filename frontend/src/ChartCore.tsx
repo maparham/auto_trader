@@ -23,6 +23,7 @@ import {
   type CandleCacheStats,
   isFeedStale,
   periodByResolution,
+  oneTfLower,
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
@@ -87,6 +88,7 @@ import {
   CONDITION_LABELS,
   loadSnapshotMeta,
   deleteSnapshotMeta,
+  loadFavoriteResolutions,
   type SnapshotMeta,
   type AlertCondition,
   type AlertTrigger,
@@ -113,7 +115,7 @@ import {
   browserTimezone,
   first,
 } from "./chart/chartPainters";
-import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell } from "./lib/chartSync";
+import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, scrollTsToCenter } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, restingLineEndX } from "./lib/positionLines";
 import {
@@ -142,7 +144,7 @@ import { hexToRgba } from "./lib/lineStyle";
 import { makeFormatDate } from "./lib/timeFormat";
 import { formatRemaining, resolveExpiry } from "./lib/alertUi";
 import { isSynthetic } from "./lib/syntheticRegistry";
-import type { ChartHandle, RangeReq } from "./chart/chartHandle";
+import type { ChartHandle, RangeReq, CenterReq } from "./chart/chartHandle";
 import { createChartDataFacade, type ChartDataFacade } from "./chart/chartDataFacade";
 import { applyScalePriceOnly } from "./chart/priceOnlyRange";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
@@ -273,6 +275,8 @@ export default function ChartCore({
     slopeArmed,
     rangePickArmed,
     rangePickResult,
+    zoomRangeArmed,
+    timeRangeArmed,
     selectedIndicator,
     legendHovered,
     legendHoverName,
@@ -297,6 +301,7 @@ export default function ChartCore({
   // The data-load effect consumes it once the (possibly new-resolution) bars land.
   // (RangeReq now lives in chart/chartHandle.ts so the extracted hooks share it.)
   const pendingRangeRef = useRef<RangeReq | null>(null);
+  const pendingCenterRef = useRef<CenterReq | null>(null);
   // Bridge refs for the range-coverage walks (defined below as ChartCore locals,
   // moving to useRangeNavigation in Step 7). Assigned in render (before any effect
   // runs) so useLiveMarketData can call them across the extraction boundary via
@@ -512,6 +517,36 @@ export default function ChartCore({
     pendingRangeRef.current = { resolution, fromTs, toTs, epic: symbol.epic, broker: brokerId, side: priceSide };
     setActiveRange(null);
     onPeriod?.(cellId, target);
+  };
+
+  // Zoom-to-range release: keep the view centered on the range midpoint, one
+  // timeframe lower. The drawn width only picks the midpoint; the range is NOT
+  // fit to the viewport (deliberate — see the design doc). At the TF floor there
+  // is no lower step, so just recenter on the current TF. Either way the band
+  // stays visible (redrawn by useLiveMarketData after a TF change, kept as-is
+  // when there is none).
+  const onZoomToRange = (fromMs: number, toMs: number) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    onFocusRef.current?.(cellId);
+    const midTs = Math.round((fromMs + toMs) / 2);
+    // Called from zoomFinalize inside the once-mounted init effect, which captures
+    // this function's mount-time closure forever — read the live refs (updated
+    // every render), not render-scope props, same as coverBacktestTradeTo.
+    const resolution = resRef.current;
+    const target = oneTfLower(resolution, loadFavoriteResolutions());
+    if (!target || target.resolution === resolution) {
+      // Floor: recenter now, keep the band (already frozen by finishZoomBand).
+      scrollTsToCenter(chart, midTs);
+      return;
+    }
+    pendingCenterRef.current = {
+      resolution: target.resolution,
+      centerTs: midTs,
+      bandStartTs: fromMs,
+      bandEndTs: toMs,
+    };
+    onPeriodRef.current?.(cellId, target);
   };
 
   // On-chart trade lines (entry/SL/TP for positions + resting orders). Server-
@@ -791,6 +826,10 @@ export default function ChartCore({
   // Same, for the Slope tool while it's armed (placing the two anchors).
   const [slopeArmedUi, setSlopeArmedUi] = useState(false);
   const [rangePickArmedUi, setRangePickArmedUi] = useState(false);
+  // Same, for the Zoom-to-range tool while it's armed (press-drag to place).
+  const [zoomArmedUi, setZoomArmedUi] = useState(false);
+  // Same, for the Time Range highlight tool while it's armed (press-drag to place).
+  const [timeRangeArmedUi, setTimeRangeArmedUi] = useState(false);
   // Cursor over the chart canvas: "cur-pointer" (hand) over a selectable indicator
   // curve, "cur-default" (arrow) over the legend strip, "" = klinecharts crosshair.
   // A class (not inline style) because klinecharts sets cursor on the canvas itself,
@@ -1209,6 +1248,12 @@ export default function ChartCore({
   // Scroll-back (getBars) reads refs, not props, so keep the live price side here.
   const priceSideRef = useRef(priceSide);
   priceSideRef.current = priceSide;
+  // onZoomToRange runs from the once-mounted init effect, so it must read these
+  // through live refs (updated every render), not its mount-time closure props.
+  const onPeriodRef = useRef(onPeriod);
+  onPeriodRef.current = onPeriod;
+  const onFocusRef = useRef(onFocus);
+  onFocusRef.current = onFocus;
   // redraw() (a []-deps callback) reads the bid/ask setting + latest quote sides
   // through refs, not the captured props.
   const bidAskRef = useRef(bidAsk);
@@ -1272,6 +1317,7 @@ export default function ChartCore({
       cursorSecRef,
       emptyStreakRef,
       pendingRangeRef,
+      pendingCenterRef,
       launchedTokenRef,
       cappedAnchorRef,
       separatorTsRef,
@@ -1878,12 +1924,21 @@ export default function ChartCore({
     let rangePickPhase: "idle" | "drag" | "track" = "idle";
     let rangePickDownX = 0;
     let rangePickMoved = false;
+    // Zoom-to-range gesture state (clone of Pick Range above).
+    let zoomPhase: "idle" | "drag" | "track" = "idle";
+    let zoomDownX = 0;
+    let zoomMoved = false;
+    let zoomDragCleanup: (() => void) | null = null;
     // Timestamp at an absolute page x, clamped into whitespace to the nearest end
     // bar (a range to "now" ends past the last bar, where convertFromPixel is null).
     const rangePickTsAtX = (clientX: number): number | null => {
       const c = chartRef.current;
       if (!c) return null;
-      const r = c.convertFromPixel([{ x: clientX }], { paneId: "candle_pane", absolute: true });
+      // "absolute" convert coords are chart-container-relative, NOT viewport —
+      // feed raw clientX and every timestamp lands right of the cursor by the
+      // chart's left offset (sidebar etc). Same convention as onClick above.
+      const x = clientX - el.getBoundingClientRect().left;
+      const r = c.convertFromPixel([{ x }], { paneId: "candle_pane", absolute: true });
       const p = Array.isArray(r) ? r[0] : r;
       if (p && typeof p.timestamp === "number") return p.timestamp;
       // convertFromPixel is null in the whitespace past either end — snap to that
@@ -1900,9 +1955,9 @@ export default function ChartCore({
         return qp && typeof qp.x === "number" ? qp.x : null;
       };
       const lastX = xOf(lastTs);
-      if (lastX != null && clientX > lastX) return lastTs;
+      if (lastX != null && x > lastX) return lastTs;
       const firstX = xOf(firstTs);
-      if (firstX != null && clientX < firstX) return firstTs;
+      if (firstX != null && x < firstX) return firstTs;
       return null;
     };
     const rangePickFinalize = (endTs: number | null) => {
@@ -1954,6 +2009,145 @@ export default function ChartCore({
       rangePickDragCleanup = () => {
         window.removeEventListener("mousemove", onRangePickMove, true);
         window.removeEventListener("mouseup", onRangePickUp, true);
+      };
+    };
+
+    // --- Zoom to range (clone of Pick Range) ---
+    // Armed from the draw sidebar (zoomRangeArmed). Same two-gesture placement:
+    // press-drag-release, or click-move-click. On a real-width release the view
+    // drops one timeframe centered on the band midpoint (onZoomToRange); the band
+    // stays frozen and visible.
+    const zoomFinalize = (endTs: number | null) => {
+      if (endTs != null) overlays.updateZoomBand(endTs);
+      const res = overlays.finishZoomBand(); // null if no real width (a plain click)
+      zoomDragCleanup?.();
+      zoomDragCleanup = null;
+      zoomPhase = "idle";
+      zoomRangeArmed.set(false); // one-shot: disarm after a pick
+      if (res) onZoomToRange(res.fromMs, res.toMs); // band stays; view drops one TF
+    };
+    const onZoomMove = (me: MouseEvent) => {
+      const ts = rangePickTsAtX(me.clientX);
+      if (ts == null) return;
+      if (Math.abs(me.clientX - zoomDownX) > 4) zoomMoved = true;
+      overlays.updateZoomBand(ts);
+    };
+    const onZoomUp = (ue: MouseEvent) => {
+      window.removeEventListener("mouseup", onZoomUp, true);
+      if (zoomPhase !== "drag") return;
+      if (zoomMoved) {
+        zoomFinalize(rangePickTsAtX(ue.clientX)); // press-drag: release ends it
+      } else {
+        zoomPhase = "track"; // a plain click: cursor sizes it, next click ends
+      }
+    };
+    const onZoomDown = (e: MouseEvent) => {
+      if (!zoomRangeArmed.value || e.button !== 0) return;
+      const c = chartRef.current;
+      const mainW = c?.getSize("candle_pane", 'main')?.width ?? Infinity;
+      if (e.clientX - el.getBoundingClientRect().left > mainW) return; // price-axis strip
+      if (zoomPhase === "track") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        zoomFinalize(rangePickTsAtX(e.clientX));
+        return;
+      }
+      const startTs = rangePickTsAtX(e.clientX);
+      if (startTs == null) return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // the zoom tool owns this gesture
+      overlays.startZoomBand(startTs);
+      zoomPhase = "drag";
+      zoomDownX = e.clientX;
+      zoomMoved = false;
+      window.addEventListener("mousemove", onZoomMove, true);
+      window.addEventListener("mouseup", onZoomUp, true);
+      zoomDragCleanup = () => {
+        window.removeEventListener("mousemove", onZoomMove, true);
+        window.removeEventListener("mouseup", onZoomUp, true);
+      };
+    };
+    // A plain press with a FROZEN zoom band (not armed) dismisses it — "click away".
+    const onZoomBandClear = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      if (zoomRangeArmed.value || zoomPhase !== "idle") return;
+      if (overlays.hasZoomBand()) overlays.clearZoomBand();
+    };
+
+    // --- Time Range highlight (persistent) ---
+    // Armed from the draw sidebar (timeRangeArmed). Trendline-style placement,
+    // mirroring Pick Range above: the first click fixes the start edge, the second
+    // edge then follows the cursor until a second click commits it. A second click
+    // before the cursor has moved (or a plain click-release with no drag) collapses
+    // to the single candle at the first click's timestamp. Press-drag-release also
+    // commits, like TV. On commit the band is persisted and the tool disarms
+    // (one-shot). Reuses rangePickTsAtX to snap the cursor x to a bar open. Chart
+    // scroll/zoom are disabled while armed so the gesture selects instead of
+    // panning; this handler owns the press (stopImmediatePropagation).
+    let timeRangeCleanup: (() => void) | null = null;
+    let timeRangePhase: "idle" | "drag" | "track" = "idle";
+    let timeRangeDownX = 0;
+    let timeRangeMoved = false;
+    let timeRangeLastTs: number | null = null; // last previewed end (fallback when the commit x resolves null)
+    const timeRangeFinalize = (endTs: number | null) => {
+      // No cursor movement → null end collapses to the clicked candle's span.
+      // A moved commit whose x transiently resolves to no timestamp keeps the
+      // last previewed end instead of silently collapsing the band.
+      // finishTimeRange leaves the band click-selected (so Delete works at once).
+      overlays.finishTimeRange(timeRangeMoved ? (endTs ?? timeRangeLastTs) : null);
+      // Swallow the trailing click that closes this gesture so onClick's
+      // syncDrawingSelectionFromClick doesn't immediately clear that selection
+      // (the placement press was consumed before klinecharts saw it, so its click
+      // state is empty). Same idiom as an anchor/clone drag end.
+      justDraggedRef.current = true;
+      setTimeout(() => { justDraggedRef.current = false; }, 0);
+      timeRangeCleanup?.();
+      timeRangeCleanup = null;
+      timeRangePhase = "idle";
+      timeRangeArmed.set(false); // one-shot: disarm after placing
+    };
+    const onTimeRangeMove = (me: MouseEvent) => {
+      const ts = rangePickTsAtX(me.clientX);
+      if (ts == null) return;
+      if (Math.abs(me.clientX - timeRangeDownX) > 4) timeRangeMoved = true;
+      timeRangeLastTs = ts;
+      overlays.updateTimeRange(ts);
+    };
+    const onTimeRangeUp = (ue: MouseEvent) => {
+      window.removeEventListener("mouseup", onTimeRangeUp, true);
+      if (timeRangePhase !== "drag") return;
+      if (timeRangeMoved) {
+        timeRangeFinalize(rangePickTsAtX(ue.clientX)); // press-drag: release commits
+      } else {
+        timeRangePhase = "track"; // a click: cursor now sizes the band (onMove stays), next click commits
+      }
+    };
+    const onTimeRangeDown = (e: MouseEvent) => {
+      if (!timeRangeArmed.value || e.button !== 0) return;
+      const c = chartRef.current;
+      const mainW = c?.getSize("candle_pane", 'main')?.width ?? Infinity;
+      if (e.clientX - el.getBoundingClientRect().left > mainW) return; // price-axis strip
+      // Second click of a click-move-click commits the band here.
+      if (timeRangePhase === "track") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        timeRangeFinalize(rangePickTsAtX(e.clientX));
+        return;
+      }
+      const startTs = rangePickTsAtX(e.clientX);
+      if (startTs == null) return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // the highlight tool owns this gesture
+      overlays.startTimeRange(startTs);
+      timeRangePhase = "drag";
+      timeRangeDownX = e.clientX;
+      timeRangeMoved = false;
+      timeRangeLastTs = null;
+      window.addEventListener("mousemove", onTimeRangeMove, true);
+      window.addEventListener("mouseup", onTimeRangeUp, true);
+      timeRangeCleanup = () => {
+        window.removeEventListener("mousemove", onTimeRangeMove, true);
+        window.removeEventListener("mouseup", onTimeRangeUp, true);
       };
     };
 
@@ -2083,6 +2277,50 @@ export default function ChartCore({
       }
     });
 
+    // Zoom-to-range arm/disarm: like Pick Range, disable chart scroll/zoom while
+    // armed (so the press-drag selects instead of panning) and restore on disarm.
+    // On disarm, tear down any half-drawn drag but LEAVE a completed band visible.
+    const unsubZoomArm = zoomRangeArmed.subscribe((on) => {
+      setZoomArmedUi(on);
+      const c = chartRef.current;
+      if (on) {
+        c?.setScrollEnabled(false);
+        c?.setZoomEnabled(false);
+        wrapRef.current?.focus({ preventScroll: true }); // so Esc reaches onKeyDown
+      } else {
+        zoomDragCleanup?.();
+        zoomDragCleanup = null;
+        if (zoomPhase !== "idle") {
+          zoomPhase = "idle";
+          // disarmed mid-drag: freeze the band; a zero-width one self-clears via
+          // finishZoomBand's side effect, a real one stays visible.
+          if (overlays.hasZoomBand()) overlays.finishZoomBand();
+        }
+        c?.setScrollEnabled(true);
+        c?.setZoomEnabled(true);
+      }
+    });
+
+    // Time Range arm/disarm: mirror rangePick — crosshair cursor, disable
+    // scroll/zoom so the press-drag selects instead of panning, focus for Esc, and
+    // on disarm clean up + discard any half-placed band + restore scroll/zoom.
+    const unsubTimeRangeArm = timeRangeArmed.subscribe((on) => {
+      setTimeRangeArmedUi(on);
+      const c = chartRef.current;
+      if (on) {
+        c?.setScrollEnabled(false);
+        c?.setZoomEnabled(false);
+        wrapRef.current?.focus({ preventScroll: true });
+      } else {
+        timeRangeCleanup?.();
+        timeRangeCleanup = null;
+        timeRangePhase = "idle";
+        if (overlays.isTimeRangeDrawing()) overlays.clearTimeRangeDraft();
+        c?.setScrollEnabled(true);
+        c?.setZoomEnabled(true);
+      }
+    });
+
     if (chart) {
       chart.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current, candleHiddenRef.current));
       el.addEventListener("click", onClick);
@@ -2094,9 +2332,13 @@ export default function ChartCore({
       // handler stops propagation — klinecharts still needs the press to place a point.
       // Pick Range FIRST: when armed it owns the press (stopImmediatePropagation),
       // so the measure/line/clone/anchor handlers below never fire during a pick.
+      // Zoom-to-range FIRST (before Pick Range): when armed it owns the press.
+      el.addEventListener("mousedown", onZoomDown, true);
       el.addEventListener("mousedown", onRangePickDown, true);
+      el.addEventListener("mousedown", onTimeRangeDown, true);
       el.addEventListener("mousedown", onMeasureShift, true);
       el.addEventListener("mousedown", onMeasureClear, true);
+      el.addEventListener("mousedown", onZoomBandClear, true);
       // Slope handles before the line/anchor/pan handlers: a grab on an endpoint /
       // midpoint / rotate knob owns the press (stopPropagation); a miss falls through.
       el.addEventListener("mousedown", onSlopeHandleDown, true);
@@ -2439,7 +2681,10 @@ export default function ChartCore({
       unsubMeasureArm();
       unsubSlopeArm();
       unsubRangePickArm();
+      unsubZoomArm();
+      unsubTimeRangeArm();
       rangePickDragCleanup?.();
+      timeRangeCleanup?.(); // drop an in-flight highlight placement's window listeners
       slopeDragCleanup?.(); // drop an in-flight slope handle drag's window listeners
       overlays.setMeasureDone(null);
       overlays.setSlopeDone(null);
@@ -2456,9 +2701,12 @@ export default function ChartCore({
       el.removeEventListener("click", onClick);
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
+      el.removeEventListener("mousedown", onZoomDown, true);
       el.removeEventListener("mousedown", onRangePickDown, true);
+      el.removeEventListener("mousedown", onTimeRangeDown, true);
       el.removeEventListener("mousedown", onMeasureShift, true);
       el.removeEventListener("mousedown", onMeasureClear, true);
+      el.removeEventListener("mousedown", onZoomBandClear, true);
       el.removeEventListener("mousedown", onSlopeHandleDown, true);
       // onAnchorDown / onLineDown detach + the in-flight line-drag dispose + the
       // anchor window listeners are all handled by useLineDrag's own effect cleanup.
@@ -3303,8 +3551,15 @@ export default function ChartCore({
         // then a leftover frozen measure box — a stale box must not swallow the
         // Esc meant for the tool the user just armed.
         if (e.key === "Escape") {
-          if (rangePickArmed.value) {
+          if (zoomRangeArmed.value) {
+            zoomRangeArmed.set(false); // subscription restores scroll/zoom
+            overlays.clearZoomBand();
+            e.preventDefault();
+          } else if (rangePickArmed.value) {
             rangePickArmed.set(false); // subscription clears the band + restores scroll
+            e.preventDefault();
+          } else if (timeRangeArmed.value) {
+            timeRangeArmed.set(false); // subscription discards the draft + restores scroll
             e.preventDefault();
           } else if (measureArmed.value) {
             measureArmed.set(false);
@@ -3316,6 +3571,9 @@ export default function ChartCore({
             e.preventDefault();
           } else if (overlays.cancelDrawing()) {
             // TV: Esc cancels an armed/mid-placement drawing tool.
+            e.preventDefault();
+          } else if (overlays.hasZoomBand()) {
+            overlays.clearZoomBand(); // Esc dismisses a frozen band too (clears last)
             e.preventDefault();
           } else if (overlays.hasMeasure()) {
             overlays.clearMeasure();
@@ -3364,7 +3622,7 @@ export default function ChartCore({
     >
       <div
         ref={containerRef}
-        className={anchoring || measureArmedUi || slopeArmedUi || rangePickArmedUi ? "anchoring" : undefined}
+        className={anchoring || measureArmedUi || slopeArmedUi || rangePickArmedUi || zoomArmedUi || timeRangeArmedUi ? "anchoring" : undefined}
         style={{ width: "100%", height: "100%" }}
       />
       {paneDropTop != null && (

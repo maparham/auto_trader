@@ -42,6 +42,7 @@ import {
   barsSpanned,
 } from "./visibility";
 import { RESOLUTION_SECONDS } from "./feed";
+import { timeRangeSpan } from "./timeRangeMetrics";
 import type { ChartDataFacade } from "../chart/chartDataFacade";
 import { type FibConfig, asFibConfig } from "./fibConfig";
 
@@ -165,6 +166,13 @@ const RECT_DEFAULT_STYLE: DeepPartial<OverlayStyle> = {
   polygon: { style: "stroke_fill" as PolygonType, color: "rgba(41, 98, 255, 0.12)", borderColor: "#2962ff", borderSize: 1 },
 };
 
+// Built-in default look for a fresh time-range highlight (no saved default yet):
+// translucent accent fill + solid border, same accent family as rect/rangeBand.
+// Overridable per-instance and via "set as default" (per-overlay-name).
+const TIME_RANGE_DEFAULT_STYLE: DeepPartial<OverlayStyle> = {
+  polygon: { style: "stroke_fill" as PolygonType, color: "rgba(41, 98, 255, 0.10)", borderColor: "#2962ff", borderSize: 1 },
+};
+
 export class OverlayManager {
   private chart: Chart | null = null;
   // v10 data-pipeline facade (set alongside chart in attach). applyOlderBars
@@ -208,6 +216,18 @@ export class OverlayManager {
   private rangeBandId: string | null = null;
   private rangeStartTs: number | null = null;
   private rangeEndTs: number | null = null;
+  // Zoom-to-range tool's persistent band (survives the TF drop it triggers,
+  // redrawn from these timestamps after the reload). Tracked separately from the
+  // backtest Pick Range band above so the two never clear each other.
+  private zoomBandId: string | null = null;
+  private zoomBandStartTs: number | null = null;
+  private zoomBandEndTs: number | null = null;
+  // The time-range highlight being placed (press-drag). Unlike rangeBand it is a
+  // PERSISTENT drawing (kind "drawing"): finishTimeRange keeps the overlay and
+  // persists it. The start timestamp is held here so a click (no drag) can collapse
+  // to the clicked candle's span. null when not placing.
+  private timeRangeId: string | null = null;
+  private timeRangeStartTs: number | null = null;
   private alertCfg = new Map<string, AlertConfig>();
   // klinecharts overlay id -> the alert's STABLE id (SavedAlert.id). The overlay id
   // is regenerated on every rehydrate; the stable id is the identity persisted to
@@ -1019,6 +1039,15 @@ export class OverlayManager {
           this.rangeStartTs = null;
           this.rangeEndTs = null;
         }
+        if (this.zoomBandId === e.overlay.id) {
+          this.zoomBandId = null;
+          this.zoomBandStartTs = null;
+          this.zoomBandEndTs = null;
+        }
+        if (this.timeRangeId === e.overlay.id) {
+          this.timeRangeId = null;
+          this.timeRangeStartTs = null;
+        }
         this.alertCfg.delete(e.overlay.id);
         this.alertIds.delete(e.overlay.id);
         this.alertCreatedAt.delete(e.overlay.id);
@@ -1315,6 +1344,151 @@ export class OverlayManager {
 
   hasRangePick(): boolean {
     return this.rangeBandId != null;
+  }
+
+  // --- Zoom-to-range tool band -----------------------------------------------
+  // Like the Pick Range band, but finishZoomBand KEEPS the band on release (the
+  // whole point of the tool is that the range stays marked after the zoom), and
+  // redrawZoomBand recreates it from timestamps once the lower-TF bars land.
+  startZoomBand(startTs: number): string | null {
+    if (!this.chart) return null;
+    this.clearZoomBand();
+    this.zoomBandStartTs = startTs;
+    this.zoomBandEndTs = startTs;
+    const id = this.create("rangeBand", "rangeBand", [
+      { timestamp: startTs, value: 0 },
+      { timestamp: startTs, value: 0 },
+    ], null, true);
+    this.zoomBandId = id;
+    return id;
+  }
+
+  updateZoomBand(endTs: number): void {
+    if (!this.zoomBandId || this.zoomBandStartTs == null || !this.chart) return;
+    this.zoomBandEndTs = endTs;
+    this.chart.overrideOverlay({
+      id: this.zoomBandId,
+      points: [
+        { timestamp: this.zoomBandStartTs, value: 0 },
+        { timestamp: endTs, value: 0 },
+      ],
+    });
+  }
+
+  // Freeze the selection but KEEP the band visible. Returns the ordered range,
+  // or null if no real width was drawn (a plain click).
+  finishZoomBand(): { fromMs: number; toMs: number } | null {
+    const start = this.zoomBandStartTs;
+    const end = this.zoomBandEndTs;
+    if (start == null || end == null || start === end) {
+      this.clearZoomBand();
+      return null;
+    }
+    return { fromMs: Math.min(start, end), toMs: Math.max(start, end) };
+  }
+
+  // Recreate the band from timestamps after a timeframe change reload. Because
+  // the tool only ever moves to a FINER timeframe, both edges land on bar
+  // boundaries at the new TF, so no off-grid interpolation is needed.
+  redrawZoomBand(startTs: number, endTs: number): void {
+    if (!this.chart) return;
+    this.clearZoomBand();
+    this.zoomBandStartTs = startTs;
+    this.zoomBandEndTs = endTs;
+    this.zoomBandId = this.create("rangeBand", "rangeBand", [
+      { timestamp: startTs, value: 0 },
+      { timestamp: endTs, value: 0 },
+    ], null, true);
+  }
+
+  clearZoomBand(): void {
+    if (this.zoomBandId) this.chart?.removeOverlay({ id: this.zoomBandId });
+    this.zoomBandId = null;
+    this.zoomBandStartTs = null;
+    this.zoomBandEndTs = null;
+  }
+
+  hasZoomBand(): boolean {
+    return this.zoomBandId != null;
+  }
+
+  // --- time-range highlight (persistent) -------------------------------------
+  // Begin placing a highlight at `startTs` (bar open under the press): create the
+  // full-height band with both anchors at the start. ChartCore's drag calls
+  // updateTimeRange as the cursor moves and finishTimeRange on release. Seeded from
+  // this overlay-name's saved default (like addDrawing) so per-name colors/templates
+  // apply. Persistent — the overlay stays after placement.
+  startTimeRange(startTs: number): string | null {
+    if (!this.chart || this.readOnly) return null;
+    this.clearTimeRangeDraft();
+    this.timeRangeStartTs = startTs;
+    this.drawingInProgress = true; // suppress lock click-align during the press-drag
+    const seed = this.seedFromDefault("timeRange");
+    const styles = seed?.styles ?? TIME_RANGE_DEFAULT_STYLE;
+    const id = this.create("drawing", "timeRange", [
+      { timestamp: startTs, value: 0 },
+      { timestamp: startTs, value: 0 },
+    ], styles, undefined, { extendData: seed?.extendData });
+    this.timeRangeId = id;
+    if (!id) this.drawingInProgress = false;
+    return id;
+  }
+
+  // Move the band's end anchor during the drag (live preview).
+  updateTimeRange(endTs: number): void {
+    if (!this.timeRangeId || this.timeRangeStartTs == null || !this.chart) return;
+    this.chart.overrideOverlay({
+      id: this.timeRangeId,
+      points: [
+        { timestamp: this.timeRangeStartTs, value: 0 },
+        { timestamp: endTs, value: 0 },
+      ],
+    });
+  }
+
+  // Finish placing: collapse to the clicked candle's span (endTs null/unchanged) or
+  // the dragged range, INCLUSIVE of the bar under the cursor (to = later open + one
+  // bar). Normalizes, keeps the overlay, and persists. Returns the placed id or null.
+  finishTimeRange(endTs: number | null): string | null {
+    const start = this.timeRangeStartTs;
+    const id = this.timeRangeId;
+    this.timeRangeId = null;
+    this.timeRangeStartTs = null;
+    this.drawingInProgress = false;
+    if (!id || start == null || !this.chart) {
+      if (id) this.chart?.removeOverlay({ id });
+      return null;
+    }
+    const tfMs = this.barIntervalMs() ?? 0;
+    const { from, to } = timeRangeSpan(start, endTs, tfMs);
+    this.chart.overrideOverlay({
+      id,
+      points: this.materializePoints([
+        { timestamp: from, value: 0 },
+        { timestamp: to, value: 0 },
+      ]) as Overlay["points"],
+    });
+    const ov = this.byId(id);
+    if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
+    this.persist();
+    // Leave the just-placed band click-selected so the user can hit Delete/⌘C
+    // immediately (mirrors the clone path). deleteSelectedDrawing reads this id.
+    this.selectedDrawingId = id;
+    this.drawingListener?.();
+    return id;
+  }
+
+  // Discard the in-progress highlight (disarm, Esc, symbol/interval change) BEFORE
+  // it's placed. A finished highlight is a normal drawing and isn't touched here.
+  clearTimeRangeDraft(): void {
+    if (this.timeRangeId) this.chart?.removeOverlay({ id: this.timeRangeId });
+    this.timeRangeId = null;
+    this.timeRangeStartTs = null;
+    this.drawingInProgress = false;
+  }
+
+  isTimeRangeDrawing(): boolean {
+    return this.timeRangeId != null;
   }
 
   // --- user actions (called by Toolbar / chart "+" menu) ---------------------

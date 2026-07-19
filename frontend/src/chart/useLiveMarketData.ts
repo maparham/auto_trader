@@ -106,8 +106,11 @@ function captureViewPos(
   scope: string,
   epic: string,
   resolution: string,
+  // A center to persist INSTEAD of the on-screen one — a too-deep switch shows
+  // the latest candles but must keep the chosen (unreached) center saved.
+  overrideCenterTs?: number,
 ): void {
-  const ts = readCenterBarTs(chart);
+  const ts = overrideCenterTs ?? readCenterBarTs(chart);
   if (ts == null) return;
   saveViewPos(scope, {
     epic,
@@ -157,6 +160,18 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
   // prevEpicRef/prevResRef can't tell a mount apart (they seed from the current
   // props), and only a mount restores the saved view position.
   const didInitRef = useRef(false);
+  // A preserved center a too-deep switch could NOT reach (it toasted and
+  // showed the latest candles instead). The chosen center must survive that
+  // failure: the next timeframe change re-targets it — but only while the
+  // view still sits parked at the live edge where the failed switch left it.
+  // Cleared by a user pan/zoom (the gesture subscription below; programmatic
+  // positioning fires no scroll action), by an epic change, and by any switch
+  // that actually lands on its target.
+  const intendedCenterRef = useRef<number | null>(null);
+  // Repositions the time-axis center pin (set by the pin effect at the bottom).
+  // Called from the load effect's settle points, where the view moves without
+  // any scroll/zoom action firing.
+  const repositionPinRef = useRef<(() => void) | null>(null);
 
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
   useEffect(() => {
@@ -168,7 +183,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // Center-preservation across a timeframe change: capture the bar at the
     // horizontal center of the view now, from the OLD (about-to-be-replaced)
     // bars, before setBars below resets the view to the live edge. Restored
-    // after the new bars load, unless the user opted into reset-on-TF-change
+    // after the new bars load when the user opted into preserve-center
     // (see below). Same center-pixel read as the persisted view position; the
     // index-midpoint fallback (biased left in right-edge whitespace, see
     // readCenterBarTs) covers a zero-width pane where the pixel read fails.
@@ -189,7 +204,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     })();
 
     // A pure timeframe change (not an epic switch, no pending range pick) with
-    // reset-on-TF off preserves the centered time instead of jumping to the live
+    // preserve-center ON keeps the centered time instead of jumping to the live
     // edge. Decided up front so the view can be held steady through the WHOLE
     // reload — the setPeriod re-init and the awaited fetch below both otherwise
     // snap to the edge. (epic/res change flags are recomputed with the same
@@ -201,9 +216,9 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       !isEpicChange &&
       priorCenterTs != null &&
       !handle.pendingRangeRef.current &&
-      !loadSettings().resetViewOnTimeframeChange;
+      loadSettings().preserveCenterOnTfChange;
     // Fresh mount (page reload / cell open): restore the view position the
-    // scroll/zoom subscription below last saved for this cell — same opt-out as
+    // scroll/zoom subscription below last saved for this cell — same opt-in as
     // the TF-change preserve, and only when the saved epic+resolution still
     // match (a symbol or TF changed elsewhere makes the saved center stale).
     // Snapshot tabs position themselves (parked pendingRange), so skip them.
@@ -211,7 +226,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // mounts, cleans up, and remounts this effect, and the first (immediately
     // cancelled) run must not consume the one-shot restore before the second
     // run — the one that actually loads — gets to use it.
-    const savedView = !didInitRef.current && !loadSettings().resetViewOnTimeframeChange ? loadViewPos(scope) : null;
+    const savedView = !didInitRef.current && loadSettings().preserveCenterOnTfChange ? loadViewPos(scope) : null;
     const restoreView =
       savedView &&
       savedView.epic === symbol.epic &&
@@ -222,8 +237,23 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         : null;
     // The single "where should the view land" target for the whole load: the
     // held center on a TF change, the saved center on a reload, else null (jump
-    // to the latest bar).
-    const wantCenterTs = keepCenter && priorCenterTs != null ? priorCenterTs : (restoreView?.centerTs ?? null);
+    // to the latest bar). A pending intended center (a previous switch was too
+    // deep and fell back to the latest candles) takes precedence over the
+    // current view's center — but only while the view still sits snapped at
+    // the live edge, i.e. exactly where that failed switch left it; anywhere
+    // else means something (trade restore, range fit) repositioned the view
+    // deliberately and the stale intent must not yank it away.
+    if (isEpicChange) intendedCenterRef.current = null;
+    const atLiveEdge = (() => {
+      const data = chart.getDataList();
+      if (!data || data.length === 0) return false;
+      return chart.getVisibleRange().to >= data.length - 1;
+    })();
+    const pendingIntentTs = atLiveEdge ? intendedCenterRef.current : null;
+    const wantCenterTs =
+      keepCenter && priorCenterTs != null
+        ? (pendingIntentTs ?? priorCenterTs)
+        : (restoreView?.centerTs ?? null);
     // A center too deep for this timeframe's cover budget (e.g. a 1D view
     // centered years back switched to 1m) can never be reached — covering it
     // would fetch an unbounded bar count. Depth is knowable up front (target
@@ -241,8 +271,18 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     if (tooDeep) {
       const day = new Date(wantCenterTs!).toLocaleDateString();
       toast(`${day} is too far back for ${period.label}. Showing the latest candles instead.`);
+      // Park the unreached center so the NEXT timeframe change can restore it
+      // (cleared on gesture / epic change / a switch that lands — see the ref).
+      intendedCenterRef.current = wantCenterTs;
     }
-    const centerTargetTs = tooDeep ? null : wantCenterTs;
+    // A parked zoom-to-range center wins unconditionally: it is an explicit user
+    // intent that must override keepCenter, the too-deep fallback, and the
+    // reset-view-on-timeframe-change setting. Only when THIS load is its target
+    // resolution (else it stays parked for the load it was queued for).
+    const pendingCenter = handle.pendingCenterRef.current;
+    const zoomCenterTs =
+      pendingCenter && pendingCenter.resolution === period.resolution ? pendingCenter.centerTs : null;
+    const centerTargetTs = zoomCenterTs ?? (tooDeep ? null : wantCenterTs);
 
     // Declare the instrument (carries precision) + timeframe to v10. Both must be
     // set before the async setBars below, since v10 fires getBars(init) once
@@ -321,6 +361,14 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // A live Pick Range band is anchored to the old timescale too — disarm it.
       rangePickArmed.set(false);
       overlays.clearRangePick();
+      // The zoom-to-range band: on an epic change or a MANUAL interval change
+      // (no matching parked center) it is stale — drop it. On the tool's OWN
+      // interval change (pendingCenterRef matches the incoming resolution) the
+      // old-timescale overlay is dropped here too and redrawn after the load
+      // settles (Step 3). Either way the old overlay goes now; on an epic change
+      // the parked target is also stale, so null the ref.
+      overlays.clearZoomBand();
+      if (epicChanged) handle.pendingCenterRef.current = null; // stale target
     }
     if (epicChanged) {
       handle.separatorTsRef.current = null;
@@ -337,6 +385,13 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         handle.pendingRangeRef.current = null;
       }
       if (!handle.pendingRangeRef.current) setActiveRange(null);
+      // Same for a parked zoom-to-range center: a manual switch to a DIFFERENT
+      // resolution overrides it, and consumption requires resolution equality —
+      // left parked, a later switch back to its target resolution would
+      // spuriously re-force the stale center and redraw the stale band. Drop it.
+      if (handle.pendingCenterRef.current && handle.pendingCenterRef.current.resolution !== period.resolution) {
+        handle.pendingCenterRef.current = null;
+      }
     }
     // No data for the new series until history loads or a live tick arrives. The
     // banner is grace-gated, so this can't flash during a normal load — only when
@@ -436,13 +491,25 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       }
       if (centerTargetTs != null) {
         scrollTsToCenter(handle.chartRef.current, centerTargetTs);
+        // Landed on the target — any parked too-deep intent is fulfilled (or
+        // superseded by this fresher preserve).
+        intendedCenterRef.current = null;
       } else {
         handle.chartRef.current.scrollToRealTime();
       }
       // Record the settled position (see captureViewPos): programmatic
       // positioning fires no scroll action, so the subscription alone would
-      // leave the saved view stale after a TF/symbol switch.
-      captureViewPos(handle.chartRef.current, scope, symbol.epic, period.resolution);
+      // leave the saved view stale after a TF/symbol switch. A too-deep switch
+      // persists the UNREACHED intended center, not the latest-candles view it
+      // fell back to, so a reload keeps the chosen center too.
+      captureViewPos(
+        handle.chartRef.current,
+        scope,
+        symbol.epic,
+        period.resolution,
+        tooDeep ? (intendedCenterRef.current ?? undefined) : undefined,
+      );
+      repositionPinRef.current?.();
       // Rehydrate this symbol's saved drawings + alerts now that the data (and
       // therefore the timescale their points map onto) is loaded. Passing the
       // resolution makes rehydrate adopt it BEFORE points materialize — a
@@ -462,6 +529,17 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       setSnapView(markerMeta);
       overlays.setReadOnly(markerMeta != null);
       overlays.rehydrate(period.resolution);
+      // Redraw the zoom-to-range band from its stored timestamps now that the
+      // lower-TF bars are loaded and the view is centered, then consume the ref
+      // (guarded on matching resolution so it fires at most once). Must run
+      // AFTER rehydrate: rehydrate starts by tearing down EVERY overlay
+      // registered in the manager's entries — including transient ones like
+      // this band — so a redraw before it is wiped a few lines later.
+      const pc = handle.pendingCenterRef.current;
+      if (pc && pc.resolution === period.resolution) {
+        overlays.redrawZoomBand(pc.bandStartTs, pc.bandEndTs);
+        handle.pendingCenterRef.current = null;
+      }
       // Snapshot-moment marker: dashed vertical line + time-axis chip at the
       // taken-at timestamp of a restored snapshot tab, independent of the
       // pendingRange walk below. Remove the previous marker first — this effect
@@ -642,7 +720,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           const restore = handle.pendingTradeRestoreRef.current;
           if (restore == null) {
             // No studied trade to restore. If we're preserving a center (TF
-            // change with reset-on-TF off, or a reload's saved view), re-assert
+            // change with preserve-center on, or a reload's saved view), re-assert
             // it now: the same page-back setBars that clobbers a trade
             // re-center also clobbers the center set right after load. Skip if
             // a quick-range walk claimed the view in the meantime, and skip
@@ -656,6 +734,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
               if (data.length > 0 && vr.to >= data.length - 1) {
                 scrollTsToCenter(handle.chartRef.current, centerTargetTs);
                 captureViewPos(handle.chartRef.current, scope, symbol.epic, period.resolution);
+                repositionPinRef.current?.();
               }
             }
             return;
@@ -692,6 +771,9 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
             return;
           }
           handle.dataFacadeRef.current?.pushBar(k);
+          // An APPENDED bar shifts every bar left at the live edge without any
+          // scroll/zoom action — keep the center pin from drifting stale.
+          if (k.timestamp > lastTs) repositionPinRef.current?.();
           setHasData(true); // a flowing stream clears the no-data banner (React no-ops if unchanged)
           setLastPrice(k.close);
           // Publish the price so the positions dock can mark P&L to market without
@@ -721,32 +803,132 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol.epic, period.resolution, priceSide, brokerId]);
 
-  // Persist the view position (centered bar time + zoom) on every scroll/zoom,
-  // debounced, so a page reload can reopen the chart where the user left it
-  // (the restore path in the load effect above). Programmatic scrolls fire
-  // onScroll too, so the settle position of a TF switch is captured without an
-  // explicit save. The center is read at the horizontal CENTER PIXEL
-  // (convertFromPixel), not the visible index midpoint — the midpoint is
-  // biased left whenever the view extends into right-edge whitespace.
+  // Persist the view position (centered bar time + zoom) on every user
+  // pan/zoom, debounced, so a page reload can reopen the chart where the user
+  // left it (the restore path in the load effect above). Detected via DOM
+  // events (wheel; pointer drag, not a bare click), NOT the chart's
+  // onScroll/onZoom actions: those also fire for some programmatic moves (the
+  // load settle's own positioning), which both overwrote the saved intended
+  // center of a too-deep switch with the fallback latest-candles view and
+  // cleared the parked intent before the settle save could persist it. The
+  // same claim-listener idiom as the date-range sync's user-vs-programmatic
+  // split. Programmatic repositioning is persisted by the load's explicit
+  // settle saves instead.
   useEffect(() => {
     const chart = handle.chartRef.current;
-    if (!chart) return;
+    const dom = chart?.getDom();
+    if (!chart || !dom) return;
     let timer: number | null = null;
+    let dragging = false;
     const save = () => {
       timer = null;
       const c = handle.chartRef.current;
       if (c) captureViewPos(c, scope, symbol.epic, period.resolution);
     };
-    const onMove = () => {
+    const gesture = () => {
+      // A real pan/zoom gesture: the user owns the position now — drop any
+      // parked too-deep intended center (see intendedCenterRef).
+      intendedCenterRef.current = null;
       if (timer == null) timer = window.setTimeout(save, 400);
     };
-    chart.subscribeAction("onScroll", onMove);
-    chart.subscribeAction("onZoom", onMove);
+    const onWheel = () => gesture();
+    const onPointerDown = () => {
+      dragging = true;
+    };
+    const onPointerMove = () => {
+      if (dragging) gesture();
+    };
+    const onPointerUp = () => {
+      dragging = false;
+    };
+    dom.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    dom.addEventListener("pointerdown", onPointerDown, { capture: true });
+    dom.addEventListener("pointermove", onPointerMove, { capture: true });
+    dom.addEventListener("pointerup", onPointerUp, { capture: true });
     return () => {
       if (timer != null) window.clearTimeout(timer);
-      chart.unsubscribeAction("onScroll", onMove);
-      chart.unsubscribeAction("onZoom", onMove);
+      dom.removeEventListener("wheel", onWheel, { capture: true });
+      dom.removeEventListener("pointerdown", onPointerDown, { capture: true });
+      dom.removeEventListener("pointermove", onPointerMove, { capture: true });
+      dom.removeEventListener("pointerup", onPointerUp, { capture: true });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol.epic, period.resolution, scope]);
+
+  // Center pin: with preserve-center ON, a small diamond on the time axis marks
+  // the bar whose time is anchored (the one a TF change keeps centered and a
+  // reload restores). Pure DOM over the axis — the same read as the capture
+  // (readCenterBarTs), so the pin always shows exactly what would be preserved:
+  // usually the bar under the screen center, the LAST bar when the view sits in
+  // right-edge whitespace. Repositioned on the chart's scroll/zoom actions
+  // (programmatic moves included — this only repositions, unlike the gesture
+  // effect above which must ignore them) and on the settings toggle (App
+  // dispatches "at:settings-saved"; no prop reaches this hook).
+  useEffect(() => {
+    const chart = handle.chartRef.current;
+    const dom = chart?.getDom();
+    if (!chart || !dom) return;
+    // Append beside the chart, not inside getDom(): klinecharts manages that
+    // element's children and wipes foreign nodes on relayout. The parent (the
+    // React-owned chart container, created once per mount) is stable; it is
+    // static, so the pin's absolute offsets resolve against .chart-wrap, same
+    // as the app's other DOM overlays (pane-clip, axis-plus, price tags).
+    const host = dom.parentElement ?? dom;
+    const pin = document.createElement("div");
+    pin.className = "center-pin";
+    pin.style.cssText =
+      "position:absolute;bottom:4px;width:13px;height:13px;color:#2962ff;" +
+      "pointer-events:none;z-index:40;display:none;line-height:0;";
+    // Same target glyph as the DrawSidebar toggle button.
+    pin.innerHTML =
+      '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" ' +
+      'stroke-width="2.2" stroke-linecap="round" aria-hidden="true">' +
+      '<circle cx="12" cy="12" r="7" />' +
+      '<path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />' +
+      '<circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" /></svg>';
+    host.appendChild(pin);
+    let raf: number | null = null;
+    const reposition = () => {
+      raf = null;
+      const c = handle.chartRef.current;
+      if (!c) return;
+      const ts = loadSettings().preserveCenterOnTfChange ? readCenterBarTs(c) : null;
+      if (ts == null) {
+        pin.style.display = "none";
+        return;
+      }
+      const p = c.convertToPixel([{ timestamp: ts }], { paneId: "candle_pane", absolute: true });
+      const x = (Array.isArray(p) ? p[0] : p)?.x;
+      if (x == null || !isFinite(x)) {
+        pin.style.display = "none";
+        return;
+      }
+      pin.style.display = "block";
+      pin.style.left = `${Math.round(x) - 7}px`;
+    };
+    // rAF-coalesced, except when the browser tab is hidden — rAF never fires
+    // there (same gotcha as notify.ts) and the pin would wake up stale.
+    const schedule = () => {
+      if (raf != null) return;
+      raf = document.hidden ? window.setTimeout(reposition, 0) : requestAnimationFrame(reposition);
+    };
+    repositionPinRef.current = schedule;
+    schedule();
+    chart.subscribeAction("onScroll", schedule);
+    chart.subscribeAction("onZoom", schedule);
+    window.addEventListener("at:settings-saved", schedule);
+    return () => {
+      if (raf != null) {
+        cancelAnimationFrame(raf);
+        window.clearTimeout(raf);
+      }
+      repositionPinRef.current = null;
+      window.removeEventListener("at:settings-saved", schedule);
+      const c = handle.chartRef.current;
+      c?.unsubscribeAction("onScroll", schedule);
+      c?.unsubscribeAction("onZoom", schedule);
+      pin.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }

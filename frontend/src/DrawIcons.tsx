@@ -97,6 +97,14 @@ const GLYPHS: Record<string, () => ReactNode> = {
       <Dot x={15} y={15.5} />
     </svg>
   ),
+  // Time range: a full-height vertical band (two edges) marking a time span.
+  timeRange: () => (
+    <svg {...S}>
+      <rect x="6" y="3" width="8" height="14" rx="0.5" fill="currentColor" fillOpacity="0.12" />
+      <line x1="6" y1="3" x2="6" y2="17" />
+      <line x1="14" y1="3" x2="14" y2="17" />
+    </svg>
+  ),
 };
 
 export default function DrawGlyph({ name }: GlyphProps) {
