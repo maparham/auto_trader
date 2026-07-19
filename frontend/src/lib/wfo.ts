@@ -326,6 +326,34 @@ export async function runWalkForward(
   }
 }
 
+// Maps a caught runWalkForward rejection + the AbortController's signal back
+// onto the next wfoStateSignal value (mirrors sweepCatchState in lib/sweep). A
+// user Cancel and a real failure both reject the same promise, so the signal —
+// not the error's message/identity — is the source of truth for which
+// happened: Cancel must never render as an error.
+export function wfoCatchState(
+  prev: WfoRunState | null,
+  aborted: boolean,
+  err: unknown,
+): WfoRunState {
+  const base: WfoRunState = {
+    phase: prev?.phase ?? "grid",
+    done: prev?.done ?? 0,
+    total: prev?.total ?? 0,
+    running: false,
+    etaSeconds: null,
+    foldRows: prev?.foldRows ?? [],
+    result: prev?.result ?? null,
+    jobId: prev?.jobId,
+    startedAt: prev?.startedAt,
+  };
+  if (aborted) return { ...base, cancelled: true };
+  return {
+    ...base,
+    error: err instanceof Error ? err.message : "walk-forward failed",
+  };
+}
+
 // The controller for a currently-running re-attached poll, so the visible "Cancel"
 // button (and a takeover by a newly submitted run) can stop it. Null when idle.
 let resumedCtl: AbortController | null = null;

@@ -59,8 +59,13 @@ import {
   sweepArchivedSignal,
   highlightTradeSignal,
   selectedTradeSignal,
+  wfoRequestSignal,
+  wfoStateSignal,
+  wfoCancelRequest,
+  wfoCancelServer,
 } from "./lib/signals";
 import { robustWindowBounds, runSweep, sweepCatchState } from "./lib/sweep";
+import { runWalkForward, stopResumedWfo, wfoCatchState } from "./lib/wfo";
 import { toast } from "./lib/notify";
 import { sweepContext } from "./lib/sweepMemory";
 import { loadHoldout, splitHoldout } from "./lib/holdout";
@@ -351,6 +356,45 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // so the sweep path below pays nothing.
         costSensitivity: true,
       };
+
+      // Walk-forward mode: the modal populated wfoRequestSignal (one-shot,
+      // consumed here) and asked for this same run — submit the whole grid +
+      // test schedule as one backend job via runWalkForward, streaming state
+      // into wfoStateSignal for the modal's WFO results view. Sibling branch
+      // BEFORE the sweep branch: a consumed request takes precedence, and the
+      // two never fire together because the modal sets only one.
+      if (wfoRequestSignal.value) {
+        const wf = wfoRequestSignal.value;
+        wfoRequestSignal.set(null);
+        // Managed-host gate, same as the sweep branch below.
+        const hostState = computeHostStateSignal.value;
+        if (sweepTargetSignal.value === "remote" && (hostState === "stopped" || hostState === "booting")) {
+          toast("Compute host is not ready yet. Start it from the toolbar (Host off / Start).");
+          return;
+        }
+        // Take over from any live re-attached (resumed) poll first, so this
+        // fresh submission owns the WFO state cleanly.
+        stopResumedWfo();
+        const ctl = new AbortController();
+        const unsub = wfoCancelRequest.subscribe(() => ctl.abort());
+        wfoStateSignal.set({ phase: "grid", done: 0, total: 0, running: true, foldRows: [], result: null, startedAt: Date.now() });
+        try {
+          const result = await runWalkForward(baseReq, wf, {
+            signal: ctl.signal,
+            target: sweepTargetSignal.value,
+            shouldCancelServer: () => wfoCancelServer.value,
+            onState: (st) => wfoStateSignal.set(st),
+          });
+          // Chart render lands in Task 7 (renderWfoOnChart); the terminal
+          // onState above already published the final result for the modal.
+          void result;
+        } catch (e) {
+          wfoStateSignal.set(wfoCatchState(wfoStateSignal.value, ctl.signal.aborted, e));
+        } finally {
+          unsub();
+        }
+        return;
+      }
 
       // Sweep mode (Task 10): the modal populated sweepAxesSignal and asked for
       // this same run — chunk through runSweep instead of a single runAndRender.

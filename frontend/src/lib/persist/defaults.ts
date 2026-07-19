@@ -164,13 +164,14 @@ export function saveBacktestSide(side: "long" | "short"): void {
   saveLocal(BACKTEST_SIDE_KEY, side);
 }
 
-// Whether the backtest panel runs a single backtest or a parameter sweep. The
-// mode gates what Run does and which results the region shows. Device-local
-// view preference like the side above.
+// Whether the backtest panel runs a single backtest, a parameter sweep, or a
+// walk-forward optimization. The mode gates what Run does and which results
+// the region shows. Device-local view preference like the side above.
 const BACKTEST_MODE_KEY = `${PREFIX}.backtestMode`;
-export type BacktestRunMode = "backtest" | "sweep";
+export type BacktestRunMode = "backtest" | "sweep" | "walkforward";
 export function loadBacktestMode(): BacktestRunMode {
-  return load<BacktestRunMode>(BACKTEST_MODE_KEY, "backtest") === "sweep" ? "sweep" : "backtest";
+  const m = load<BacktestRunMode>(BACKTEST_MODE_KEY, "backtest");
+  return m === "sweep" || m === "walkforward" ? m : "backtest";
 }
 export function saveBacktestMode(mode: BacktestRunMode): void {
   saveLocal(BACKTEST_MODE_KEY, mode);

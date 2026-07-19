@@ -1,6 +1,6 @@
 // The backtest modal footer: a flexible sweep-info slot on the left and a
 // right-pinned run cluster (Go live, Run). Extracted from BacktestSettingsModal
-// so the footer layout lives in one place. The Backtest | Sweep mode switch
+// so the footer layout lives in one place. The Backtest | Sweep | Walk-fwd mode switch
 // (`ModeSeg`) renders in the Results header row instead, but is exported from
 // here so mode UI stays alongside the rest of the run controls. The four
 // sweep-info pieces are passed in as `sweepInfo` because they read modal-local
@@ -16,14 +16,17 @@
 import type { JSX, ReactNode } from "react";
 import Tooltip from "./Tooltip";
 
-type RunMode = "backtest" | "sweep";
+import type { BacktestRunMode as RunMode } from "../lib/persist/defaults";
 
 export function ModeSeg(props: {
   mode: RunMode;
   onSelectMode: (m: RunMode) => void;
   modeBadge: ReactNode;
+  // Optional badge slot inside the Walk-fwd button (mirrors modeBadge in
+  // Sweep); optional so existing two-mode callers compile unchanged.
+  wfoBadge?: ReactNode;
 }): JSX.Element {
-  const { mode, onSelectMode, modeBadge } = props;
+  const { mode, onSelectMode, modeBadge, wfoBadge } = props;
   return (
     <span className="seg bt-mode-seg" role="group" aria-label="Run mode">
       <Tooltip content="Run a single backtest. Sweep setup stays configured but inert.">
@@ -48,6 +51,17 @@ export function ModeSeg(props: {
               runs in the background, else the configured combo count
               (redundant with the counter when Sweep mode is on). */}
           {modeBadge}
+        </button>
+      </Tooltip>
+      <Tooltip content="Walk-forward optimization: pick parameters on train windows, verify out-of-sample">
+        <button
+          type="button"
+          className={mode === "walkforward" ? "seg-on" : ""}
+          aria-pressed={mode === "walkforward"}
+          onClick={() => onSelectMode("walkforward")}
+        >
+          Walk-fwd
+          {wfoBadge}
         </button>
       </Tooltip>
     </span>
