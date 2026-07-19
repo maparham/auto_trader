@@ -241,6 +241,9 @@ backtest_runs.db-shm
 backtest_sweeps.db
 backtest_sweeps.db-wal
 backtest_sweeps.db-shm
+backtest_wfo.db
+backtest_wfo.db-wal
+backtest_wfo.db-shm
 
 # Per-instrument cost profile store
 cost_profiles.db
