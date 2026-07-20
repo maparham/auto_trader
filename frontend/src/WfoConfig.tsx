@@ -47,6 +47,7 @@ export function WfoConfig(props: {
 
   return (
     <div className="wfo-config">
+      {/* Row 1 — window sizes: Train and Test span pickers side by side. */}
       <div className="wfo-row">
         <span className="wfo-label">
           Train
@@ -71,9 +72,6 @@ export function WfoConfig(props: {
             </button>
           ))}
         </span>
-      </div>
-
-      <div className="wfo-row">
         <span className="wfo-label">Test</span>
         <span className="seg wfo-seg">
           {TEST_SPAN_PICKS.map((span) => (
@@ -88,6 +86,10 @@ export function WfoConfig(props: {
             </button>
           ))}
         </span>
+      </div>
+
+      {/* Row 2 — window mode + objective/selection. */}
+      <div className="wfo-row">
         <span className="seg wfo-seg">
           <button
             type="button"
@@ -107,9 +109,6 @@ export function WfoConfig(props: {
           </button>
         </span>
         <InfoTip text="Rolling slides a fixed train window; anchored grows it from the range start." />
-      </div>
-
-      <div className="wfo-row">
         <span className="wfo-label">Objective</span>
         <select
           className="wfo-select"
@@ -144,29 +143,31 @@ export function WfoConfig(props: {
         <InfoTip text="Plateau picks the cell whose neighborhood is good, not the luckiest single cell." />
       </div>
 
-      <details className="wfo-advanced">
-        <summary>Advanced</summary>
-        <div className="wfo-row">
-          <span className="wfo-label">Step</span>
-          <span className="seg wfo-seg">
-            {STEP_PICKS.map((s) => (
-              <button
-                key={s.label}
-                type="button"
-                className={cfg.step === s.value ? "seg-on" : ""}
-                aria-pressed={cfg.step === s.value}
-                onClick={() => onChange({ ...cfg, step: s.value })}
-              >
-                {s.label}
-              </button>
-            ))}
-          </span>
-        </div>
-      </details>
-
-      <div className="wfo-foot">
-        {comboTotal} {comboTotal === 1 ? "combo" : "combos"} x {schemes}{" "}
-        {schemes === 1 ? "scheme" : "schemes"}
+      {/* Row 3 — Advanced toggle and the combo count share one line. */}
+      <div className="wfo-row wfo-foot-row">
+        <details className="wfo-advanced">
+          <summary>Advanced</summary>
+          <div className="wfo-row">
+            <span className="wfo-label">Step</span>
+            <span className="seg wfo-seg">
+              {STEP_PICKS.map((s) => (
+                <button
+                  key={s.label}
+                  type="button"
+                  className={cfg.step === s.value ? "seg-on" : ""}
+                  aria-pressed={cfg.step === s.value}
+                  onClick={() => onChange({ ...cfg, step: s.value })}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </span>
+          </div>
+        </details>
+        <span className="wfo-foot">
+          {comboTotal} {comboTotal === 1 ? "combo" : "combos"} x {schemes}{" "}
+          {schemes === 1 ? "scheme" : "schemes"}
+        </span>
       </div>
       {droppedAxes.length > 0 && (
         <div className="wfo-note">

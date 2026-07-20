@@ -1412,13 +1412,32 @@
 /* WFO Data window: range unit (chips above From/To) on the left, Timeframe +
    Holdout as a right-aligned column, so the quick-fill chips sit next to the
    From/To they fill instead of being split off by unrelated settings. */
-/* WFO Data window: chips + From/To form the range unit on the left; Timeframe +
-   Holdout stack as a slim column on the right so From/To keeps its full width and
-   the quick-fill chips sit directly above the From/To they fill. */
-.bt-wfo-data-row { display: flex; gap: 14px; align-items: flex-start; }
-.bt-wfo-range-col { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
-.bt-wfo-window-controls { display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
-.bt-wfo-window-controls > .bt-tf-inline { margin-left: 0; }
+/* WFO Data window: chips in one row above a From/To + Timeframe + Holdout grid.
+   Labels sit on the first grid row, inputs aligned beneath them. From/To take the
+   flexible columns; TF/Holdout columns hug their selects (as narrow as possible). */
+.bt-wfo-range-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* Columns: From, To, pick, flexible spacer (the gap between the two groups),
+   Timeframe, Holdout. From/To are capped so they don't stretch full-width; the
+   spacer soaks up the slack so a clear gap sits before Timeframe/Holdout. */
+.bt-wfo-window-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 185px) minmax(0, 185px) auto 1fr auto auto;
+  gap: 4px 6px;
+  align-items: center;
+}
+.bt-wfo-gl {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.bt-wfo-gi, .bt-wfo-gs {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  min-width: 0;
+}
+.bt-wfo-gi { width: 100%; padding: 6px 8px; }
+/* Slim selects: hug their value, minimal padding, native arrow only. */
+.bt-wfo-gs { width: auto; cursor: pointer; justify-self: start; padding: 6px 4px; font-size: 12px; }
 .bt-robust-windows input {
   width: 56px;
   background: var(--input-bg); color: var(--text);
@@ -2260,6 +2279,10 @@
   border: 1px solid var(--border); border-radius: 6px;
   padding: 4px 8px; font-size: 12px; line-height: 1.4; cursor: pointer;
 }
+/* Advanced toggle sits left, combo count right, on one shared row. Top-align so
+   an expanded Advanced (Step row) drops below its summary without shifting the
+   count. */
+.wfo-foot-row { justify-content: space-between; align-items: flex-start; }
 .wfo-advanced { font-size: 12px; }
 .wfo-advanced > summary { cursor: pointer; color: var(--text-dim); padding: 2px 0; }
 .wfo-advanced .wfo-row { margin-top: 6px; }

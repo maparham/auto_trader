@@ -2055,36 +2055,122 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                       title="Data window"
                       info="The span of history walk-forward runs over. Set From/To directly, or use a quick-fill chip: relative chips roll with today, calendar chips pin a fixed year."
                     >
-                      <div className="bt-wfo-data-row">
-                        <div className="bt-wfo-range-col">
-                          <div className="bt-chip-row bt-range-chip-row bt-wfo-chip-row">
-                            {WFO_RELATIVE_CHIPS.map((c) => (
+                      <div className="bt-wfo-range-col">
+                        <div className="bt-chip-row bt-range-chip-row bt-wfo-chip-row">
+                          {WFO_RELATIVE_CHIPS.map((c) => (
+                            <button
+                              key={c.mode}
+                              className={cfg.range.mode === c.mode ? "seg-on bt-chip" : "bt-chip"}
+                              onClick={() => setRange({ mode: c.mode, fromMs: undefined, toMs: undefined })}
+                            >
+                              {c.label}
+                            </button>
+                          ))}
+                          {buildRangeChips("year", Date.now(), chartTimezone).map((chip) => {
+                            const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
+                            return (
                               <button
-                                key={c.mode}
-                                className={cfg.range.mode === c.mode ? "seg-on bt-chip" : "bt-chip"}
-                                onClick={() => setRange({ mode: c.mode, fromMs: undefined, toMs: undefined })}
+                                key={chip.label}
+                                className={on ? "seg-on bt-chip" : "bt-chip"}
+                                onClick={() => setRange({ mode: "custom", fromMs: chip.fromMs, toMs: chip.toMs })}
                               >
-                                {c.label}
+                                {chip.label}
                               </button>
-                            ))}
-                            {buildRangeChips("year", Date.now(), chartTimezone).map((chip) => {
-                              const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
+                            );
+                          })}
+                        </div>
+                        {/* Labels on the first row, inputs aligned beneath them; TF/Holdout
+                            columns hug their selects so From/To take the remaining width. */}
+                        <div className="bt-wfo-window-grid">
+                          <span className="bt-wfo-gl">From</span>
+                          <span className="bt-wfo-gl">To</span>
+                          <span />
+                          <span />
+                          <span className="bt-wfo-gl">
+                            Timeframe
+                            <InfoTip text="Timeframe the backtest runs on. 'Chart' follows the active chart timeframe." />
+                          </span>
+                          <span className="bt-wfo-gl">
+                            Holdout
+                            <InfoTip text="Reserve the last part of the range as an out-of-sample lockbox. Normal runs and sweeps stop at the training cutoff; use Evaluate on holdout to test the reserved tail. Every look is counted, because a holdout you check often stops being out-of-sample." />
+                          </span>
+                          <input
+                            type="datetime-local"
+                            className="bt-wfo-gi"
+                            value={pickerFromMs ? msToLocalInput(pickerFromMs) : ""}
+                            onChange={(e) => setRange({ mode: "custom", fromMs: localInputToMs(e.target.value) ?? undefined })}
+                          />
+                          <input
+                            type="datetime-local"
+                            className="bt-wfo-gi"
+                            value={pickerToMs ? msToLocalInput(pickerToMs) : ""}
+                            onChange={(e) => setRange({ mode: "custom", toMs: localInputToMs(e.target.value) ?? undefined })}
+                          />
+                          <Tooltip
+                            content={
+                              !controller
+                                ? "Focus a chart to pick a range"
+                                : pickingRange
+                                  ? "Picking… drag across the chart's time axis, or click a start then an end. Esc cancels."
+                                  : "Pick the range on the chart: drag across the time axis, or click a start then an end"
+                            }
+                          >
+                            <button
+                              type="button"
+                              className={`bt-pick-range${pickingRange ? " on" : ""}`}
+                              disabled={!controller}
+                              aria-label="Pick range on chart"
+                              onClick={() => {
+                                if (!controller) return;
+                                if (controller.rangePickArmed.value) {
+                                  controller.rangePickArmed.set(false);
+                                } else {
+                                  controller.rangePickArmed.set(true);
+                                  controller.focusChart?.();
+                                }
+                              }}
+                            >
+                              <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+                                <path d="M3 4v8M13 4v8M3 8h10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                              </svg>
+                            </button>
+                          </Tooltip>
+                          <span />
+                          <select
+                            className="bt-wfo-gs"
+                            aria-label="Timeframe"
+                            value={cfg.range.resolution ?? ""}
+                            onChange={(e) => setRange({ resolution: e.target.value || undefined })}
+                          >
+                            <option value="">Chart</option>
+                            {PERIOD_GROUPS.map((group) => {
+                              const periods = group.periods.filter((p) => !p.liveOnly);
+                              if (periods.length === 0) return null;
                               return (
-                                <button
-                                  key={chip.label}
-                                  className={on ? "seg-on bt-chip" : "bt-chip"}
-                                  onClick={() => setRange({ mode: "custom", fromMs: chip.fromMs, toMs: chip.toMs })}
-                                >
-                                  {chip.label}
-                                </button>
+                                <optgroup key={group.label} label={group.label}>
+                                  {periods.map((p) => (
+                                    <option key={p.resolution} value={p.resolution}>
+                                      {p.label}
+                                    </option>
+                                  ))}
+                                </optgroup>
                               );
                             })}
-                          </div>
-                          {rangePicker}
-                        </div>
-                        <div className="bt-wfo-window-controls">
-                          {timeframeSelect}
-                          {holdoutSelect}
+                          </select>
+                          <select
+                            className="bt-wfo-gs"
+                            aria-label="Holdout"
+                            value={holdout?.pct ?? 0}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              changeHoldoutPct(v === 0 ? null : v);
+                            }}
+                          >
+                            <option value={0}>None</option>
+                            <option value={10}>10%</option>
+                            <option value={20}>20%</option>
+                            <option value={30}>30%</option>
+                          </select>
                         </div>
                       </div>
                       {holdout && (
