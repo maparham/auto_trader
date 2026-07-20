@@ -60,6 +60,18 @@ def _compile_group(rows, candles, resolution, htf, *, is_exit: bool, group: str)
 async def expr_backtest(req: ExprBacktestRequest):
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
+    # I4 (expr): the expr surface runs the engine with series={} and has no way to
+    # populate an ATR_{length} risk series in v1. An ATR-kind stop/target would
+    # find no series, _atr_at returns None, and the position runs with no stop —
+    # silently. Fail loud instead, mirroring the structured handler's I4 guard.
+    for risk in (req.longRisk, req.shortRisk):
+        if risk is not None and risk.atr_series_names():
+            raise HTTPException(422, {
+                "code": "atr_risk_unsupported",
+                "message": "ATR-based risk stops are not available for expression "
+                           "backtests in this version.",
+                "start": None, "end": None, "group": None, "row": None,
+            })
     candles = [candle_from_dto(c) for c in req.candles]
     htf: dict[str, list[Candle]] = {
         tf: [candle_from_dto(c) for c in bars]

@@ -67,6 +67,23 @@ def test_expr_backtest_disabled_row_is_skipped():
     assert r.status_code == 200
 
 
+def test_expr_backtest_atr_risk_rejected():
+    # An ATR-kind stop has no series on the expr surface (series={}); running it
+    # would yield a silent stop-less trade, so the handler 422s instead.
+    atr_risk = {"stop": {"kind": "atr", "mult": 2.0, "length": 14},
+                "target": {"kind": "none"}}
+    r = client.post("/api/expr/backtest", json=_base_req(longRisk=atr_risk))
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "atr_risk_unsupported"
+
+
+def test_expr_backtest_fixed_risk_still_runs():
+    # Non-ATR (points/pct) risk carries no ATR series requirement, so it runs.
+    pct_risk = {"stop": {"kind": "pct", "value": 5.0}, "target": {"kind": "none"}}
+    r = client.post("/api/expr/backtest", json=_base_req(longRisk=pct_risk))
+    assert r.status_code == 200
+
+
 def test_expr_literals_endpoint():
     r = client.post("/api/expr/literals", json={"expr": "EMA(50) > 30"})
     assert r.status_code == 200
