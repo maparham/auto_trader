@@ -75,6 +75,7 @@ class SweepJobManager:
         probe_row: dict | None,
         workers: int | None = None,
         grace_seconds: float | None = None,
+        expr_sweep: bool = False,
     ) -> SweepJob:
         probe_offset = 1 if probe_row is not None else 0
         job = SweepJob(
@@ -89,7 +90,7 @@ class SweepJobManager:
         job._probe_offset = probe_offset  # bare attr, not a dataclass field
         with self._store_lock:
             self._jobs[job.job_id] = job
-        init = (req_dict, htf_candles, strategies_dir, windows)
+        init = (req_dict, htf_candles, strategies_dir, windows, expr_sweep)
         grace = self._grace_seconds if grace_seconds is None else grace_seconds
         t = threading.Thread(
             target=self._run,

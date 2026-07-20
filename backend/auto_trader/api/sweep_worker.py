@@ -13,7 +13,7 @@ from pathlib import Path
 from types import ModuleType
 
 from auto_trader.api import sweep_apply as sa
-from auto_trader.api.schemas import BacktestRequest
+from auto_trader.api.schemas import BacktestRequest, ExprBacktestRequest
 from auto_trader.core.models import Candle
 from auto_trader.engine.backtest import BacktestResult
 from auto_trader.strategy import loader
@@ -26,6 +26,7 @@ class _State:
     htf: dict[str, list[Candle]]
     module: ModuleType | None
     windows: list[int] | None
+    expr: bool = False
 
 
 _STATE: _State | None = None
@@ -50,20 +51,26 @@ def worker_init(
     htf_candles: dict[str, list[Candle]],
     strategies_dir: str | None,
     windows: list[int] | None,
+    expr_sweep: bool = False,
 ) -> None:
     """Pool initializer: rebuild per-worker state from the parent's args.
 
     `strategies_dir` is set explicitly (never inherited): tests monkeypatch
-    `loader.STRATEGIES_DIR`, which a spawned worker does not see."""
+    `loader.STRATEGIES_DIR`, which a spawned worker does not see. `expr_sweep`
+    switches the state to an ExprBacktestRequest (no coded strategy load)."""
     global _STATE
     _IND_CACHES.clear()
     s = _State()
-    s.req = BacktestRequest.model_validate(req_dict)
+    s.expr = expr_sweep
+    s.module = None
+    if expr_sweep:
+        s.req = ExprBacktestRequest.model_validate(req_dict)
+    else:
+        s.req = BacktestRequest.model_validate(req_dict)
     s.candles = [sa.candle_from_dto(c) for c in s.req.candles]
     s.htf = htf_candles
     s.windows = windows
-    s.module = None
-    if s.req.codedStrategy is not None:
+    if not expr_sweep and s.req.codedStrategy is not None:
         if strategies_dir is not None:
             loader.STRATEGIES_DIR = Path(strategies_dir)
         s.module = loader.load_strategy(s.req.codedStrategy, loader.STRATEGIES_DIR)
@@ -75,6 +82,14 @@ def execute_combo(s: _State, req: BacktestRequest, combo: dict) -> BacktestResul
     worker's candles. Raises on any problem; callers own error-row semantics."""
     env, rest = sa.split_env_combo(combo)
     patched, candles = sa.apply_env_combo(req, s.candles, env)
+    if getattr(s, "expr", False):
+        overrides = sa.apply_lit_combo(patched, rest)
+        # lit: keys are consumed by apply_lit_combo; filter to risk: so apply_combo
+        # never sees a lit:/other key (it 422s on unknown targets).
+        _params, long_risk, short_risk = sa.apply_combo(
+            patched, {k: v for k, v in rest.items() if k.startswith("risk:")})
+        return sa.run_expr_sync(
+            patched, candles, dict(s.htf), overrides, long_risk, short_risk)
     if s.module is None:
         patched = sa.apply_rule_combo(patched, rest)
         return sa.run_rule_sync(patched, candles, dict(s.htf))

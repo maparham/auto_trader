@@ -29,8 +29,18 @@ from ..schemas import (
     ExprBacktestRequest,
     ExprLiteralsRequest,
     ExprSeriesRequest,
+    SweepJobSubmitResponse,
 )
-from ..sweep_apply import candle_from_dto
+from ..sweep_apply import (
+    SweepValidationError,
+    apply_combo,
+    apply_env_combo,
+    apply_lit_combo,
+    candle_from_dto,
+    htf_from_dto,
+    split_env_combo,
+)
+from ..sweep_jobs import JOBS
 
 router = APIRouter()
 
@@ -121,6 +131,47 @@ async def expr_backtest(req: ExprBacktestRequest):
         commission_per_side=req.costs.commissionPerSide,
         inspect=req.inspect,
     )
+
+
+@router.post("/api/expr/sweep/jobs", response_model=SweepJobSubmitResponse)
+async def submit_expr_sweep_job(req: ExprBacktestRequest):
+    """Submit an expression sweep as one job over the shared process pool. The
+    frontend polls the SAME GET /api/backtest/sweep/jobs/{job_id} route (JOBS is
+    a shared singleton), so there is no separate expr poll/cancel route. HTF is
+    combo-invariant for a lit: sweep (timeframes are name tokens, never sweepable
+    number literals), so req.htfCandles ships to the workers as-is."""
+    if req.sweep is None or not req.sweep.combos:
+        raise HTTPException(422, "sweep.combos is required")
+    bounds = req.sweep.windows
+    if bounds is not None and (len(bounds) < 2 or any(b <= a for a, b in zip(bounds, bounds[1:]))):
+        raise HTTPException(422, "sweep.windows must be >= 2 ascending epoch seconds")
+    if not req.candles:
+        raise HTTPException(422, "candles must not be empty")
+    candles = [candle_from_dto(c) for c in req.candles]
+    # Dry-validate every combo's targets so a malformed target 422s at submit
+    # (matches the structured sweep). apply_lit_combo covers lit: (parse+range);
+    # apply_combo covers risk:; apply_env_combo covers period:/timeWindow:.
+    try:
+        for combo in req.sweep.combos:
+            env, rest = split_env_combo(combo)
+            patched, _ = apply_env_combo(req, candles, env)
+            apply_lit_combo(patched, rest)
+            apply_combo(patched, {k: v for k, v in rest.items() if k.startswith("risk:")})
+    except SweepValidationError as e:
+        raise HTTPException(e.status_code, e.detail)
+    htf_candles = htf_from_dto(req.htfCandles) if req.htfCandles is not None else {}
+    job = JOBS.submit(
+        req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
+        htf_candles=htf_candles,
+        strategies_dir=None,
+        windows=req.sweep.windows,
+        combos=req.sweep.combos,
+        epic=req.epic,
+        timeframe=req.resolution,
+        probe_row=None,
+        expr_sweep=True,
+    )
+    return SweepJobSubmitResponse(jobId=job.job_id, total=job.total)
 
 
 @router.post("/api/expr/series")

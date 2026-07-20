@@ -819,6 +819,10 @@ class ExprBacktestRequest(BaseModel):
     tradeFromTime: int
     mask: RecurrenceMaskDTO | None = None
     inspect: bool = False
+    # Parameter/literal sweep: when set, POST /api/expr/sweep/jobs runs one combo
+    # per entry (lit:/risk:/period:/timeWindow: targets). Ignored by POST
+    # /api/expr/backtest.
+    sweep: SweepDTO | None = None
 
 
 class ExprSeriesRequest(BaseModel):

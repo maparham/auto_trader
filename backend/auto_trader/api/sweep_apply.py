@@ -22,8 +22,11 @@ from auto_trader.strategy.coded import (
 )
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
+from auto_trader.strategy.expr.evaluate import compile_row
 from auto_trader.strategy.expr.literals import substitute
 from auto_trader.strategy.expr.parser import parse
+from auto_trader.strategy.expr.strategy import ExprRuleStrategy
+from auto_trader.strategy.expr.validate import validate
 from auto_trader.strategy.rule import RuleStrategy, series_name
 from auto_trader.strategy.rule_series import build_rule_series
 
@@ -231,6 +234,84 @@ def run_coded_sync(
     raise SweepValidationError(422, "strategy needs too many timeframes (max 5)")
 
 
+def run_expr_sync(
+    req: ExprBacktestRequest, candles: list[Candle],
+    htf_candles: dict[str, list[Candle]],
+    overrides: dict[tuple[str, str, int], "N.Compare | N.Cross"],
+    long_risk: RiskConfigDTO | None, short_risk: RiskConfigDTO | None,
+) -> BacktestResult:
+    """One expression engine run for a sweep combo. `overrides` maps
+    (side, group, rowIdx) -> an already-substituted AST node (from
+    apply_lit_combo); rows NOT in overrides are parsed+validated+compiled fresh.
+    `long_risk`/`short_risk` are the combo-patched risk DTOs (mirroring
+    run_coded_sync's explicit risk params). Mirrors expr_backtest's engine config
+    with series={}. Raises SweepValidationError(422) on a parse/validate problem
+    or unsupported ATR risk so a combo isolates to its error row."""
+    # I4 (expr): the expr surface runs the engine with series={} and cannot
+    # populate an ATR_{length} risk series, so an ATR stop/target would run
+    # stop-less. Fail loud, mirroring expr_backtest's guard. Check the combo's
+    # patched risk DTOs (risk: targets can't change kind, so this matches req).
+    for risk in (long_risk, short_risk):
+        if risk is not None and risk.atr_series_names():
+            raise SweepValidationError(
+                422,
+                "ATR-based risk stops are not available for expression "
+                "backtests in this version.",
+            )
+    group_map = {
+        ("long", "entry"): req.longEntry,
+        ("long", "exit"): req.longExit,
+        ("short", "entry"): req.shortEntry,
+        ("short", "exit"): req.shortExit,
+    }
+
+    def compile_group(side: str, grp: str, *, is_exit: bool) -> list:
+        compiled = []
+        for idx, row in enumerate(group_map[(side, grp)]):
+            if not row.enabled:
+                continue
+            node = overrides.get((side, grp, idx))
+            try:
+                if node is None:
+                    node = parse(row.expr)
+                validate(node, is_exit=is_exit)
+            except ExprError as e:
+                raise SweepValidationError(422, e.message)
+            compiled.append(compile_row(node, candles, req.resolution, htf_candles))
+        return compiled
+
+    strategy = ExprRuleStrategy(
+        compile_group("long", "entry", is_exit=False),
+        compile_group("long", "exit", is_exit=True),
+        compile_group("short", "entry", is_exit=False),
+        compile_group("short", "exit", is_exit=True),
+        quantity=req.costs.quantity,
+        trade_from_time=req.tradeFromTime,
+        long_enabled=req.longEnabled,
+        short_enabled=req.shortEnabled,
+    )
+    engine = BacktestEngine(
+        strategy,
+        starting_cash=req.costs.startingCash,
+        commission_per_side=req.costs.commissionPerSide,
+        slippage=req.costs.slippage.value,
+        slippage_atr_mult=(
+            req.costs.slippage.atrMult if req.costs.slippage.kind == "atr" else 0.0
+        ),
+        spread=req.costs.spread,
+        fin_long_daily_pct=req.costs.finLongDailyPct,
+        fin_short_daily_pct=req.costs.finShortDailyPct,
+        long_risk=long_risk.to_risk() if long_risk else None,
+        short_risk=short_risk.to_risk() if short_risk else None,
+        long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
+        short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
+        series={},
+        mask=req.mask.to_mask() if req.mask else None,
+        inspect=req.inspect,
+    )
+    return engine.run(candles)
+
+
 # --- parameter/risk sweep combo application ----------------------------------
 
 _RISK_TARGET = re.compile(r"^risk:(long|short)\.(stop|target)\.(value|mult)$")
@@ -254,7 +335,10 @@ def apply_combo(
 ) -> tuple[dict, RiskConfigDTO | None, RiskConfigDTO | None]:
     """Split one combo into codedParams overrides + patched risk DTOs.
     Raises SweepValidationError(422) on a malformed target key."""
-    params = dict(req.codedParams or {})
+    # ExprBacktestRequest carries no codedParams; getattr keeps this helper usable
+    # by the expr sweep branch (which passes only risk: keys) without a change to
+    # the structured BacktestRequest behavior.
+    params = dict(getattr(req, "codedParams", None) or {})
     risks = {"long": req.longRisk, "short": req.shortRisk}
     for target, value in combo.items():
         if target.startswith("param:"):

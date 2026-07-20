@@ -362,6 +362,12 @@ export interface ExprBacktestRequest {
   tradeFromTime: number;
   mask?: RecurrenceMask;
   inspect?: boolean;
+  // Parameter/literal sweep body: mirrors the structured submitSweepJob body
+  // ({ combos, windows }). Set when submitting POST /api/expr/sweep/jobs.
+  sweep?: {
+    combos: Array<Record<string, number | boolean | string>>;
+    windows?: number[] | null;
+  };
 }
 
 export async function runExprBacktest(req: ExprBacktestRequest): Promise<BacktestResult> {
