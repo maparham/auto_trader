@@ -209,18 +209,14 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         setError("no coded strategy selected: pick one in the backtest panel");
         return;
       }
-      // The main rule groups now edit as expressions, which only the plain
-      // backtest path (/api/expr/backtest) can run. Sweeps, walk-forward, and
-      // holdout evaluation still build the structured request from those groups,
-      // so gate them for expression rules until they move onto the expr engine.
-      // Coded runs keep their structured path and are unaffected.
+      // The main rule groups edit as expressions. Sweeps now run on the expr
+      // engine (/api/expr/sweep/jobs) via the expr request built below. Walk-
+      // forward and holdout evaluation still build the structured request from
+      // those groups, so they stay gated for expression rules until they move
+      // onto the expr engine. Coded runs keep their structured path throughout.
       if (!coded) {
         if (wfoRequest) {
           toast("Walk-forward is not yet available for expression rules.");
-          return;
-        }
-        if (sweepAxes.length > 0) {
-          toast("Sweeps are not yet available for expression rules.");
           return;
         }
         if (evaluatingHoldout) {
@@ -403,6 +399,33 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         costSensitivity: true,
       };
 
+      // Task 13 Stage A: rule-mode runs go through the expression-native engine,
+      // posting { expr, enabled }[] groups. This request drives BOTH the plain
+      // single run (/api/expr/backtest) and the expr sweep (/api/expr/sweep/jobs)
+      // below; coded runs stay on the structured baseReq. Defined here so the
+      // sweep branch can reference it.
+      const exprRows = (g: RuleGroup): ExprRow[] =>
+        g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
+      const exprReq: ExprBacktestRequest = {
+        epic,
+        resolution: runResolution,
+        candles,
+        longEntry: exprRows(effCfg.longEntry),
+        longExit: exprRows(effCfg.longExit),
+        shortEntry: exprRows(effCfg.shortEntry),
+        shortExit: exprRows(effCfg.shortExit),
+        longEnabled: cfg.longEnabled !== false,
+        shortEnabled: cfg.shortEnabled !== false,
+        longRisk: sendableRisk(effCfg.longRisk),
+        shortRisk: sendableRisk(effCfg.shortRisk),
+        longScaling: effCfg.longScaling,
+        shortScaling: effCfg.shortScaling,
+        costs: cfg.costs,
+        tradeFromTime,
+        mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
+        inspect: inspectModeSignal.value,
+      };
+
       // Walk-forward mode: the modal populated wfoRequestSignal (one-shot,
       // captured + cleared up front) and asked for this same run — submit the
       // whole grid + test schedule as one backend job via runWalkForward,
@@ -493,10 +516,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         try {
           const landed: SweepRow[] = [];
           progressStageSignal.set(sweepTarget === "remote" ? "uploading" : "submitting");
-          const rows = await runSweep(baseReq, sweepAxes, {
+          const rows = await runSweep(coded ? baseReq : exprReq, sweepAxes, {
             signal: ctl.signal,
             windows,
             target: sweepTarget,
+            // Non-coded (expression) sweeps submit to the expr sweep route.
+            expr: !coded,
             // Random search: submit the sampled subset instead of the full grid.
             combosOverride: sweepCombosOverride ?? undefined,
             // A modal-close abort (requestSweepCancel(false)) leaves the server
@@ -551,31 +576,9 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       }
 
       progressStageSignal.set("engine");
-      // Task 13 Stage A: rule-mode single runs go through the expression-native
-      // /api/expr/backtest, posting { expr, enabled }[] groups. Coded runs stay
-      // on the structured request (the expr surface has no coded-strategy path
-      // yet — Stage C moves coded onto it). Sweeps/WFO above still use baseReq.
-      const exprRows = (g: RuleGroup): ExprRow[] =>
-        g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
-      const exprReq: ExprBacktestRequest = {
-        epic,
-        resolution: runResolution,
-        candles,
-        longEntry: exprRows(effCfg.longEntry),
-        longExit: exprRows(effCfg.longExit),
-        shortEntry: exprRows(effCfg.shortEntry),
-        shortExit: exprRows(effCfg.shortExit),
-        longEnabled: cfg.longEnabled !== false,
-        shortEnabled: cfg.shortEnabled !== false,
-        longRisk: sendableRisk(effCfg.longRisk),
-        shortRisk: sendableRisk(effCfg.shortRisk),
-        longScaling: effCfg.longScaling,
-        shortScaling: effCfg.shortScaling,
-        costs: cfg.costs,
-        tradeFromTime,
-        mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
-        inspect: inspectModeSignal.value,
-      };
+      // Rule-mode single runs go through the expression-native /api/expr/backtest
+      // via the exprReq built above (coded runs stay on baseReq). Sweeps/WFO above
+      // use their own routing.
       const res = await runAndRender(
         chart,
         coded ? baseReq : exprReq,
