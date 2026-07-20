@@ -6,8 +6,10 @@
 import {
   cancelSweepJob,
   pollSweepJob,
+  submitExprSweepJob,
   submitSweepJob,
   type BacktestRequest,
+  type ExprBacktestRequest,
   type SweepJobStatus,
   type SweepRow,
   type SweepTarget,
@@ -332,7 +334,7 @@ export async function pollToCompletion(
 }
 
 export async function runSweep(
-  baseReq: BacktestRequest,
+  baseReq: BacktestRequest | ExprBacktestRequest,
   axes: SweepAxis[],
   opts: {
     onRows: (rows: SweepRow[], done: number, total: number, etaSeconds: number | null) => void;
@@ -349,13 +351,19 @@ export async function runSweep(
     // (random search samples a subset of the grid up front). When present it is
     // submitted verbatim; the axes still ride along for results labelling.
     combosOverride?: SweepCombo[];
+    // Submit the expression sweep route (POST /api/expr/sweep/jobs) instead of
+    // the structured one. Everything else (poll, re-attach memo, archive) is
+    // identical: both routes share the same JOBS store and poll endpoint.
+    expr?: boolean;
   },
 ): Promise<SweepRow[]> {
   const target: SweepTarget = opts.target ?? "local";
   if (opts.signal?.aborted) throw new Error("sweep aborted");
 
   const combos: SweepCombo[] = opts.combosOverride ?? enumerateCombos(axes);
-  const { jobId } = await submitSweepJob(baseReq, combos, opts.windows, target);
+  const { jobId } = opts.expr
+    ? await submitExprSweepJob(baseReq as ExprBacktestRequest, combos, opts.windows)
+    : await submitSweepJob(baseReq as BacktestRequest, combos, opts.windows, target);
   lastJob = { jobId, target };
   const shouldCancelServer = opts.shouldCancelServer ?? (() => true);
   // Remember the job so a reload can re-attach to it (see sweepResume). The

@@ -573,6 +573,22 @@ export async function submitSweepJob(
   return res.json();
 }
 
+// Submit an EXPRESSION sweep as one job to the expr route; polls via the SAME
+// GET /api/backtest/sweep/jobs/{id} (shared JOBS store). Local target only.
+export async function submitExprSweepJob(
+  req: ExprBacktestRequest,
+  combos: Array<Record<string, number | boolean | string>>,
+  windows: number[] | undefined,
+): Promise<{ jobId: string; total: number }> {
+  const res = await fetch(`${BASE}/api/expr/sweep/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...req, sweep: { combos, windows } }),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `expr sweep submit failed (${res.status})`));
+  return res.json();
+}
+
 // Fetch a job's progress since `cursor` (the count of rows already consumed).
 export async function pollSweepJob(
   jobId: string,
