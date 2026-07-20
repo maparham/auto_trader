@@ -1,0 +1,98 @@
+// Lezer grammar for the strategy-expression editor.
+//
+// Scope: syntax highlighting ONLY. Error codes, arity, and semantic validation
+// live in parser.ts (the faithful port of the backend pipeline); this grammar is
+// intentionally permissive and never the source of truth for diagnostics. It is
+// authored here for CodeMirror 6 highlighting and is not yet wired to a
+// generator build step. Token classes match catalog.ts:
+//   Indicator, Wrapper, Cross, CandleField, Number, Operator, Timeframe.
+
+@top Row { expression }
+
+expression {
+  Cross "(" expression "," expression ")"
+  | comparison
+}
+
+comparison {
+  arith (Operator arith)?
+}
+
+arith {
+  term ((Plus | Minus) term)*
+}
+
+term {
+  factor ((Star | Slash) factor)*
+}
+
+factor {
+  Minus factor
+  | postfix
+}
+
+postfix {
+  primary (Dot Field | Offset | At Timeframe)*
+}
+
+primary {
+  Number
+  | "(" expression ")"
+  | Indicator ArgList?
+  | Wrapper ArgList
+  | Candle
+  | Entry
+  | Identifier ArgList?
+}
+
+ArgList {
+  "(" (expression ("," expression)*)? ")"
+}
+
+Offset {
+  "[" Minus Number "]"
+}
+
+@tokens {
+  // Numbers: digit runs with at most one embedded dot, not followed by a letter.
+  Number { $[0-9]+ ("." $[0-9]+)? }
+
+  // Comparison operators.
+  Operator { ">=" | "<=" | ">" | "<" }
+
+  Plus { "+" }
+  Minus { "-" }
+  Star { "*" }
+  Slash { "/" }
+  Dot { "." }
+  At { "@" }
+
+  // Timeframe aliases pinned after @ (5m, 15m, 30m, 1H, 4H, D, W).
+  Timeframe { ($[0-9]+)? $[a-zA-Z]+ }
+
+  // Candle field names (highlighted after `candle.` / `candle@tf.`).
+  CandleField {
+    "open" | "high" | "low" | "close" | "volume"
+    | "body" | "range" | "wickTop" | "wickBottom"
+  }
+
+  Field { $[a-zA-Z_] $[a-zA-Z0-9_]* }
+  Identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
+
+  @precedence { Number, Timeframe }
+  @precedence { CandleField, Field, Identifier }
+
+  space { @whitespace+ }
+}
+
+// Registered function/keyword names, keyed off the generic Identifier token so
+// the highlighter can color them by catalog class.
+@external specialize {Identifier} keywordTokens from "./tokens" {
+  Indicator,
+  Wrapper,
+  Cross,
+  Candle[@name=Candle],
+  Entry[@name=Entry]
+}
+
+@skip { space }
