@@ -111,6 +111,12 @@ allowed. Whitespace insignificant. Names case-sensitive.
 
 ## Editor UX
 
+- **Built on CodeMirror 6**: single-line mode, custom Lezer grammar for
+  highlighting, `@codemirror/autocomplete` for suggestions,
+  `@codemirror/lint` for error underlines. No Excel-engine library — Excel
+  formula libs (HyperFormula etc.) are JS evaluators with cell semantics and
+  don't fit backend-Python per-bar evaluation; the CM6 Lezer grammar doubles
+  as the frontend's advisory parser.
 - Row list unchanged: add/remove/reorder rows, per-row enable toggle.
 - Each row is a single-line code input with:
   - syntax highlighting (names, numbers, operators, `@tf`),
