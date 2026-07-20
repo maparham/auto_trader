@@ -209,6 +209,25 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         setError("no coded strategy selected: pick one in the backtest panel");
         return;
       }
+      // The main rule groups now edit as expressions, which only the plain
+      // backtest path (/api/expr/backtest) can run. Sweeps, walk-forward, and
+      // holdout evaluation still build the structured request from those groups,
+      // so gate them for expression rules until they move onto the expr engine.
+      // Coded runs keep their structured path and are unaffected.
+      if (!coded) {
+        if (wfoRequest) {
+          toast("Walk-forward is not yet available for expression rules.");
+          return;
+        }
+        if (sweepAxes.length > 0) {
+          toast("Sweeps are not yet available for expression rules.");
+          return;
+        }
+        if (evaluatingHoldout) {
+          toast("Live evaluation is not yet available for expression rules.");
+          return;
+        }
+      }
       // Coded mode: the panel's per-file config (params + risk + exit rules,
       // Task 8) drives the run — entries stay empty (the .py file opens
       // positions itself). Feeding this into `buildChartOperandSeries`

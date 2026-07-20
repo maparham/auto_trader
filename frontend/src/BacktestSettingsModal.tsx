@@ -2666,6 +2666,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 return (
                   <div key={s} style={{ "--side": isLong ? "var(--pos)" : "var(--neg)" } as CSSProperties}>
                     <RuleGroupSection
+                      editorMode="structured"
                       title={isLong ? "Sell to close" : "Buy to close"}
                       info={`Conditions that close an open ${s} position. A stop or target can close it first.`}
                       group={isLong ? codedCfg.longExit : codedCfg.shortExit}
@@ -3490,6 +3491,7 @@ function SidePanel({
           it can be turned back on. `.bt-parked` supplies the dimmed visual cue. */}
       <div className={`bt-side-rules${enabled ? "" : " bt-parked"}`} inert={!enabled}>
         <RuleGroupSection
+          editorMode="expr"
           title={isLong ? "Buy to open" : "Sell to open"}
           info={`Conditions that open a ${side} position. Multiple rules combine with the AND/OR switch.`}
           group={entry}
@@ -3505,6 +3507,7 @@ function SidePanel({
           sweep={sweep && { ...sweep, group: "entry" }}
         />
         <RuleGroupSection
+          editorMode="expr"
           title={isLong ? "Sell to close" : "Buy to close"}
           info={`Conditions that close an open ${side} position. A stop or target can close it first.`}
           group={exit}
@@ -4083,20 +4086,29 @@ export function RuleGroupSection({
   group,
   onChange,
   emptyHint,
+  editorMode = "structured",
+  defaultAvwapAnchor = 0,
   baseResolution,
   clipboard,
   onCopy,
   groupClipboard,
   onCopyAll,
+  openChartPicker,
   isExit = false,
+  sweep,
 }: {
   title: string;
   info?: string;
   group: ExprGroupLike;
   onChange: (g: RuleGroup) => void;
   emptyHint: string;
-  // Retained (unused in Stage A) so existing call sites keep passing their old
-  // props without a compile break; Stage C removes them from the callers.
+  // Which editor a row renders. "expr" (main backtest groups) shows the
+  // CodeMirror expression input writing `rule.expr`; "structured" (coded-strategy
+  // exit rules, the Live panel) shows the OperandPicker/OperatorPicker path
+  // writing `left/op/right`. Defaults to "structured" so untouched callers keep
+  // their old behavior.
+  editorMode?: "expr" | "structured";
+  // Only the structured path uses this (AVWAP anchor default for operand picks).
   defaultAvwapAnchor?: number;
   baseResolution: string;
   clipboard?: Rule | null;
@@ -4151,8 +4163,34 @@ export function RuleGroupSection({
     rules[i] = { ...rules[i], ...patch };
     emit(rules);
   }
+  // Structured mode: replace a whole row (the OperandPicker/OperatorPicker path
+  // rebuilds the full `Rule`, unlike the expr path's flat field patch).
+  function setRule(i: number, rule: Rule) {
+    const rules = group.rules.slice();
+    rules[i] = rule;
+    emit(rules);
+  }
+  // Structured mode: the group's AND/OR combine.
+  function setCombine(combine: Combine) {
+    onChange({ ...group, combine } as RuleGroup);
+  }
+  // Structured mode: invert every rule for the opposite side (flip operator, swap
+  // high/low, negate numbers). Gated behind a confirm since it rewrites the logic.
+  function reverseAll() {
+    requestConfirm({
+      title: "Invert rules",
+      message: `Invert every rule in ${title} (flip operator, swap high/low, negate numbers)? Check any RSI-style thresholds afterward.`,
+      confirmLabel: "Invert",
+      onConfirm: () => onChange({ ...group, rules: (group.rules as Rule[]).map(invertRule) } as RuleGroup),
+    });
+  }
+  // The engine only receives enabled rules (activeGroup drops the rest before
+  // POST), so a sweep axis targets a rule by its position in that enabled-only
+  // list — not its raw UI index. (Structured mode only.)
+  const activeRuleIndex = (i: number) =>
+    group.rules.slice(0, i).filter((r) => r.enabled !== false).length;
   function addRule() {
-    emit([...group.rules, { expr: "", enabled: true }]);
+    emit([...group.rules, editorMode === "structured" ? defaultRule() : { expr: "", enabled: true }]);
   }
   function removeRule(i: number) {
     emit(group.rules.filter((_, idx) => idx !== i));
@@ -4161,7 +4199,7 @@ export function RuleGroupSection({
   // reads as a variation of the one above it rather than landing at the bottom.
   function duplicateRule(i: number) {
     const rules = group.rules.slice();
-    rules.splice(i + 1, 0, { ...rules[i] });
+    rules.splice(i + 1, 0, editorMode === "structured" ? cloneRule(rules[i] as Rule) : { ...rules[i] });
     emit(rules);
   }
   // Paste appends — the clipboard rule may come from another group entirely, so
@@ -4185,6 +4223,29 @@ export function RuleGroupSection({
       extra={
         group.rules.length > 0 ? (
           <div className="bt-groophead-actions">
+            {/* Structured mode carries the AND/OR combine + invert-rules controls;
+                expr rows encode their own logic inside each expression. */}
+            {editorMode === "structured" && group.rules.length > 1 && (
+              <div className="seg bt-combine-seg" role="group" aria-label="Combine rules with">
+                <Tooltip content="Fire only when every rule in this group is true.">
+                  <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>AND</button>
+                </Tooltip>
+                <Tooltip content="Fire when any rule in this group is true.">
+                  <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>OR</button>
+                </Tooltip>
+              </div>
+            )}
+            {editorMode === "structured" && (
+              <Tooltip content="Invert rules for the opposite side: flip operator, swap high/low, negate numbers">
+                <button
+                  className="bt-rule-toggle bt-reverse-ops"
+                  onClick={reverseAll}
+                  aria-label="Invert rules"
+                >
+                  <ReverseOpsIcon />
+                </button>
+              </Tooltip>
+            )}
             <Tooltip content="Copy all rules in this group">
               <button
                 className="bt-rule-toggle bt-copyall"
@@ -4210,48 +4271,136 @@ export function RuleGroupSection({
       {group.rules.length === 0 && (
         <div className="al-note bt-empty-rules">{emptyHint}</div>
       )}
-      {group.rules.map((rule, i) => (
+      {group.rules.map((rule, i) => {
+        // Structured rows read the full `Rule` shape (left/op/right/count); expr
+        // rows only touch `expr`/`enabled`.
+        const r = rule as Rule;
+        return (
         <Fragment key={i}>
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`}>
           <div className="bt-rule-main">
-            <RuleExpressionInput
-              value={rule.expr ?? ""}
-              onChange={(expr) => patchRule(i, { expr })}
-              isExit={isExit}
-              placeholder="e.g. EMA(9) > EMA(21)"
-            />
+            {editorMode === "expr" ? (
+              <RuleExpressionInput
+                value={rule.expr ?? ""}
+                onChange={(expr) => patchRule(i, { expr })}
+                isExit={isExit}
+                placeholder="e.g. EMA(9) > EMA(21)"
+              />
+            ) : (
+              <>
+                <OperandPicker value={r.left} onChange={(left) => setRule(i, { ...r, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(r.right) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, onAxisChange: sweep.onAxisChange, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `left.${leaf}`) } : undefined} />
+                <OperatorPicker
+                  value={r.op}
+                  onChange={(op) => setRule(i, { ...r, op })}
+                  sweep={sweep && rule.enabled !== false ? {
+                    swept: sweep.axes.some((a) => a.target === opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i))),
+                    onToggle: () => sweep.onToggleOp(opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i)), r.op),
+                  } : undefined}
+                />
+                <OperandPicker value={r.right} onChange={(right) => setRule(i, { ...r, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(r.left) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, onAxisChange: sweep.onAxisChange, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `right.${leaf}`) } : undefined} />
+                {isExit && (
+                  <CountField
+                    value={r.count}
+                    onChange={(count) => setRule(i, { ...r, count })}
+                    sweep={
+                      sweep && rule.enabled !== false
+                        ? {
+                            axes: sweep.axes,
+                            onToggle: sweep.onToggle,
+                            onAxisChange: sweep.onAxisChange,
+                            target: ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), "count"),
+                          }
+                        : undefined
+                    }
+                  />
+                )}
+              </>
+            )}
             <div className="bt-rule-actions">
-              <Tooltip content="Insert an indicator, candle field, or timeframe">
-                <button
-                  type="button"
-                  className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
-                  onClick={() => setPaletteRow(paletteRow === i ? null : i)}
-                  aria-label="Insert from palette"
-                  aria-expanded={paletteRow === i}
-                >
-                  +
-                </button>
-              </Tooltip>
+              {editorMode === "expr" ? (
+                <Tooltip content="Insert an indicator, candle field, or timeframe">
+                  <button
+                    type="button"
+                    className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
+                    onClick={() => setPaletteRow(paletteRow === i ? null : i)}
+                    aria-label="Insert from palette"
+                    aria-expanded={paletteRow === i}
+                  >
+                    +
+                  </button>
+                </Tooltip>
+              ) : (
+                <Tooltip content="Swap sides (same condition)">
+                  <button
+                    type="button"
+                    className="bt-rule-toggle bt-swap-sides"
+                    onClick={() => setRule(i, swapSides(r))}
+                    aria-label="Swap sides"
+                  >
+                    ⇄
+                  </button>
+                </Tooltip>
+              )}
               <RuleMenu
                 enabled={rule.enabled !== false}
                 onDuplicate={() => duplicateRule(i)}
-                onCopy={() => onCopy?.(rule as Rule)}
-                onToggleEnabled={() => patchRule(i, { enabled: rule.enabled === false })}
-                onSwapSides={() => {}}
+                onCopy={() => onCopy?.(r)}
+                onToggleEnabled={() =>
+                  editorMode === "structured"
+                    ? setRule(i, { ...r, enabled: rule.enabled === false })
+                    : patchRule(i, { enabled: rule.enabled === false })
+                }
+                onSwapSides={() => (editorMode === "structured" ? setRule(i, swapSides(r)) : undefined)}
                 onRemove={() => removeRule(i)}
               />
             </div>
           </div>
-          {paletteRow === i && (
+          {editorMode === "expr" && paletteRow === i && (
             <RulePalette onInsert={(text) => insertInto(i, text)} />
           )}
         </div>
+        {editorMode === "structured" && sweep && rule.enabled !== false && (() => {
+          const target = opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i));
+          const axis = sweep.axes.find((a) => a.target === target);
+          if (axis?.kind !== "list") return null;
+          return (
+            <div className="sp-row sweep-axis-row bt-op-sweep-row">
+              <span className="sp-label">operators</span>
+              <span className="bt-chip-row">
+                {OPERATORS.map((o) => {
+                  const on = axis.options.some((opt) => opt.patch[target] === o.value);
+                  return (
+                    <button
+                      key={o.value}
+                      type="button"
+                      className={on ? "seg-on bt-chip" : "bt-chip"}
+                      onClick={() => sweep.onTickOp(target, o.value)}
+                    >
+                      {o.label}
+                    </button>
+                  );
+                })}
+              </span>
+            </div>
+          );
+        })()}
         </Fragment>
-      ))}
+        );
+      })}
       <div className="bt-rule-foot">
         <button className="ghost" onClick={addRule}>
           + Add rule
         </button>
+        {editorMode === "structured" && openChartPicker && (
+          <Tooltip content="Add a rule seeded from a chart indicator or drawing">
+            <button
+              className="ghost"
+              onClick={() => openChartPicker((op) => onChange({ ...group, rules: [...group.rules, ruleFromChartOperand(op)] } as RuleGroup))}
+            >
+              + Rule from chart
+            </button>
+          </Tooltip>
+        )}
         {clipboard && (
           <Tooltip content="Paste the copied rule here">
             <button className="ghost" onClick={pasteRule}>

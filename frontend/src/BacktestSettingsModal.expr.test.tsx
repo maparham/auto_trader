@@ -17,6 +17,7 @@ describe("RuleGroupSection (expression mode)", () => {
     const { container } = render(
       <RuleGroupSection
         title="Buy to open"
+        editorMode="expr"
         group={{ rules: [{ expr: "" }] }}
         onChange={onChange}
         emptyHint="none"

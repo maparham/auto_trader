@@ -582,22 +582,28 @@ export function operandBaseLen(op: Operand): number {
 }
 
 export function defaultBacktestConfig(): BacktestConfig {
-  const cross = (op: Operator): RuleGroup => ({
+  // The main backtest groups now edit as expressions, so each default rule
+  // carries both the `expr` the CodeMirror editor shows AND the structured
+  // left/op/right (still required by the `Rule` type and used by the chart /
+  // coded surfaces). `fn` is the expression cross-function that mirrors `op`.
+  const cross = (op: Operator, fn: "crossAbove" | "crossBelow"): RuleGroup => ({
     combine: "AND",
     rules: [
       {
         left: { kind: "indicator", indicator: "EMA", length: 9 },
         op,
         right: { kind: "indicator", indicator: "EMA", length: 21 },
+        expr: `${fn}(EMA(9), EMA(21))`,
+        enabled: true,
       },
     ],
   });
   return {
     range: { mode: "bars", bars: 500, history: "minimal" },
-    longEntry: cross("crossesAbove"),
-    longExit: cross("crossesBelow"),
-    shortEntry: cross("crossesBelow"),
-    shortExit: cross("crossesAbove"),
+    longEntry: cross("crossesAbove", "crossAbove"),
+    longExit: cross("crossesBelow", "crossBelow"),
+    shortEntry: cross("crossesBelow", "crossBelow"),
+    shortExit: cross("crossesAbove", "crossAbove"),
     longEnabled: true,
     shortEnabled: true,
     costs: {
