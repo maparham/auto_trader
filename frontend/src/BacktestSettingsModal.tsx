@@ -1573,6 +1573,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       try {
         const { payload } = buildWalkForwardPayload(mirrorRiskAxes(sweepAxes), wfoCfg);
         setWfoError(null);
+        setWfoArchiveOpen(null);
         wfoRequestSignal.set(payload);
         sweepCombosOverrideSignal.set(null);
         run();
