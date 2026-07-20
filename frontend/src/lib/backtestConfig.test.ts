@@ -587,6 +587,21 @@ describe("invertRule", () => {
     expect(r.left).toEqual({ kind: "price", field: "wickBottom" });
     expect(r.right).toEqual({ kind: "price", field: "body" });
   });
+  it("invertRule mirrors lookback high <-> low and leaves ago untouched", () => {
+    const r = invertRule({
+      left: { kind: "price", field: "close", lookback: { mode: "high", len: 20 } }, op: "gt",
+      right: { kind: "indicator", indicator: "EMA", length: 9, lookback: { mode: "ago", len: 3 } },
+    });
+    expect(r.left).toEqual({ kind: "price", field: "close", lookback: { mode: "low", len: 20 } });
+    expect(r.right).toEqual({ kind: "indicator", indicator: "EMA", length: 9, lookback: { mode: "ago", len: 3 } });
+  });
+  it("invertRule negates a scale offset and leaves the multiplier alone", () => {
+    const r = invertRule({
+      left: { kind: "price", field: "close", scale: { mult: 2, off: 1, offUnit: "pct" } }, op: "gt",
+      right: { kind: "const", value: 0 },
+    });
+    expect(r.left).toEqual({ kind: "price", field: "close", scale: { mult: 2, off: -1, offUnit: "pct" } });
+  });
 });
 
 describe("ruleFromChartOperand", () => {

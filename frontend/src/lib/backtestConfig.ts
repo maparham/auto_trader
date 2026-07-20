@@ -207,12 +207,16 @@ export function swapSides(rule: Rule): Rule {
 }
 
 /** The mirror of a single operand for the "invert" transform: the reflection that
- * turns a long-side condition into its short-side twin. `high`↔`low` (the candle's
- * two extremes swap); a constant negates (`1` → `-1`); every other operand kind —
- * indicators, series, entry, open/close (not extremes) — is left as-is. Slope and
- * other nested fields are preserved via {@link cloneOperand}. Numbers that don't
- * mirror by sign (e.g. an `RSI < 30` threshold that should become `70`, not `-30`)
- * negate here and are meant to be hand-corrected afterward. */
+ * turns a long-side condition into its short-side twin. The candle's paired
+ * extremes swap (`high`↔`low`, `wickTop`↔`wickBottom`); a constant negates
+ * (`1` → `-1`). Modifiers reflect too: a lookback in `high` mode becomes `low`
+ * mode (and vice versa; `ago`/`avg` are direction-neutral and stay), and a scale
+ * offset negates (a `+1%` offset mirrors to `-1%`; the multiplier stays). Every
+ * other operand kind and field — indicators, series, entry, open/close/body/range
+ * (not extremes) — is left as-is. Nested fields are preserved via
+ * {@link cloneOperand}. Numbers that don't mirror by sign (e.g. an `RSI < 30`
+ * threshold that should become `70`, not `-30`) negate here and are meant to be
+ * hand-corrected afterward. */
 function mirrorOperand(op: Operand): Operand {
   const copy = cloneOperand(op);
   if (copy.kind === "price") {
@@ -222,6 +226,15 @@ function mirrorOperand(op: Operand): Operand {
     else if (copy.field === "wickBottom") copy.field = "wickTop";
   } else if (copy.kind === "const") {
     copy.value = -copy.value;
+  }
+  // Lookback: the "highest over N bars" / "lowest over N bars" extremes swap.
+  if (copy.kind !== "const" && copy.lookback) {
+    if (copy.lookback.mode === "high") copy.lookback.mode = "low";
+    else if (copy.lookback.mode === "low") copy.lookback.mode = "high";
+  }
+  // Scale: negate the offset (a +1% edge above mirrors to -1% below); mult stays.
+  if (copy.kind !== "const" && copy.scale && copy.scale.off != null) {
+    copy.scale.off = -copy.scale.off;
   }
   return copy;
 }

@@ -4531,9 +4531,17 @@ function OperandPicker({
     onChange({ ...value, lookback: spec });
   }
   const scaled = scaleSpec(value) !== null;
-  function setScale(spec: ScaleSpec | undefined) {
+  // Write the spec verbatim on every keystroke. Typing "1" en route to "1.5" (or
+  // "10") is a transient no-op; stripping it here would unmount the `{scaled &&}`
+  // controls mid-edit and flip the × toggle off. The strip runs on blur instead.
+  function setScaleRaw(spec: ScaleSpec | undefined) {
     if (value.kind === "const") return;
-    // Strip no-op values so a cleared control removes the spec entirely.
+    onChange({ ...value, scale: spec });
+  }
+  // Once the user is done (input blur or × toggled off), drop a spec that's still a
+  // no-op so presets don't carry dead {mult:1,off:0} objects.
+  function commitScale(spec: ScaleSpec | undefined) {
+    if (value.kind === "const") return;
     const clean = spec && ((spec.mult != null && spec.mult !== 1) || (spec.off != null && spec.off !== 0)) ? spec : undefined;
     onChange({ ...value, scale: clean });
   }
@@ -4828,7 +4836,7 @@ function OperandPicker({
             <button
               type="button"
               className={`bt-operand-mod${scaled ? " on" : ""}`}
-              onClick={() => setScale(scaled ? undefined : { mult: 2 })}
+              onClick={() => (scaled ? commitScale(undefined) : setScaleRaw({ mult: 2 }))}
               aria-label="Scale or offset"
               aria-pressed={scaled}
             >
@@ -4841,20 +4849,22 @@ function OperandPicker({
                 <input
                   type="number" step="any" className="bt-operand-length"
                   value={scaleSpec(value)?.mult ?? 1}
-                  onChange={(e) => setScale({ ...scaleSpec(value), mult: Number(cleanNumInput(e.currentTarget)) })}
+                  onChange={(e) => setScaleRaw({ ...scaleSpec(value), mult: Number(cleanNumInput(e.currentTarget)) })}
+                  onBlur={() => commitScale(scaleSpec(value) ?? undefined)}
                 />
               </Tooltip>
               <Tooltip content="Offset, in the selected unit">
                 <input
                   type="number" step="any" className="bt-operand-length"
                   value={scaleSpec(value)?.off ?? 0}
-                  onChange={(e) => setScale({ ...scaleSpec(value), offUnit: scaleSpec(value)?.offUnit ?? "pct", off: Number(cleanNumInput(e.currentTarget)) })}
+                  onChange={(e) => setScaleRaw({ ...scaleSpec(value), offUnit: scaleSpec(value)?.offUnit ?? "pct", off: Number(cleanNumInput(e.currentTarget)) })}
+                  onBlur={() => commitScale(scaleSpec(value) ?? undefined)}
                 />
               </Tooltip>
               <select
                 className="bt-operand-tf"
                 value={scaleSpec(value)?.offUnit ?? "pct"}
-                onChange={(e) => setScale({ ...scaleSpec(value), offUnit: e.target.value as "pct" | "abs" })}
+                onChange={(e) => setScaleRaw({ ...scaleSpec(value), offUnit: e.target.value as "pct" | "abs" })}
               >
                 <option value="pct">%</option>
                 <option value="abs">pts</option>
