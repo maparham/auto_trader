@@ -157,6 +157,13 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     // holdout flag) so a stale sample can never leak into the next grid sweep.
     const sweepCombosOverride = sweepCombosOverrideSignal.value;
     sweepCombosOverrideSignal.set(null);
+    // Walk-forward one-shot request: captured + cleared up front (like the
+    // holdout flag and sweep override above) so a run that bails in prepare
+    // (no candles in range, a thrown fetch/schema error) can't leave the
+    // payload armed — the next plain backtest/sweep would silently execute a
+    // walk-forward. The walkforward branch below uses this captured value.
+    const wfoRequest = wfoRequestSignal.value;
+    wfoRequestSignal.set(null);
     // Single run: drop the previous result from the pane right away — when two
     // runs produce identical numbers, a pane that never visibly changes reads
     // as "the click did nothing". Emptying it (the pane shows its running
@@ -358,14 +365,13 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       };
 
       // Walk-forward mode: the modal populated wfoRequestSignal (one-shot,
-      // consumed here) and asked for this same run — submit the whole grid +
-      // test schedule as one backend job via runWalkForward, streaming state
-      // into wfoStateSignal for the modal's WFO results view. Sibling branch
-      // BEFORE the sweep branch: a consumed request takes precedence, and the
-      // two never fire together because the modal sets only one.
-      if (wfoRequestSignal.value) {
-        const wf = wfoRequestSignal.value;
-        wfoRequestSignal.set(null);
+      // captured + cleared up front) and asked for this same run — submit the
+      // whole grid + test schedule as one backend job via runWalkForward,
+      // streaming state into wfoStateSignal for the modal's WFO results view.
+      // Sibling branch BEFORE the sweep branch: a consumed request takes
+      // precedence, and the two never fire together because the modal sets only one.
+      if (wfoRequest) {
+        const wf = wfoRequest;
         // Managed-host gate, same as the sweep branch below.
         const hostState = computeHostStateSignal.value;
         if (sweepTargetSignal.value === "remote" && (hostState === "stopped" || hostState === "booting")) {
@@ -383,13 +389,24 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
             signal: ctl.signal,
             target: sweepTargetSignal.value,
             shouldCancelServer: () => wfoCancelServer.value,
-            onState: (st) => wfoStateSignal.set(st),
+            // After an abort (modal closed / Cancel) the state may already be
+            // cleared — a late-resolving poll must not resurrect a ghost run.
+            // Mirrors the sweep branch's onRows guard + continueResumeWfo.
+            onState: (st) => {
+              if (ctl.signal.aborted) return;
+              wfoStateSignal.set(st);
+            },
           });
           // Chart render lands in Task 7 (renderWfoOnChart); the terminal
           // onState above already published the final result for the modal.
           void result;
         } catch (e) {
-          wfoStateSignal.set(wfoCatchState(wfoStateSignal.value, ctl.signal.aborted, e));
+          // When the modal already tore the state down (detach-close abort),
+          // stay torn down instead of resurrecting a cancelled ghost — mirrors
+          // the sweep branch's teardown guard below.
+          if (!(ctl.signal.aborted && wfoStateSignal.value === null)) {
+            wfoStateSignal.set(wfoCatchState(wfoStateSignal.value, ctl.signal.aborted, e));
+          }
         } finally {
           unsub();
         }

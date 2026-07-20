@@ -896,9 +896,14 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     sweepStateSignal.set(null);
     sweepAxesSignal.set([]);
     // Detach any live WFO poll too (server=false: leave the job running so a
-    // reload can re-attach). The WFO state is left intact so a completed result
-    // survives reopen for the results view.
+    // reload can re-attach). A COMPLETED result is left intact so it survives
+    // reopen for the results view — but a still-RUNNING job's state must be
+    // cleared so the mount-resume gate (`if (wfoStateSignal.value === null)
+    // resumeWfo()`) fires on reopen and re-attaches to the live job. Without
+    // this the detached job would be orphaned (its poll aborted, its state
+    // frozen), never re-attached.
     requestWfoCancel(false);
+    if (wfoStateSignal.value?.running) wfoStateSignal.set(null);
   }, []);
 
   // Rule mode's own combo-apply — patches the operand/count a `rule:` axis
