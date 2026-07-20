@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class Num:
+    value: float
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Candle:
+    field: str | None
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Entry:
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Call:
+    name: str
+    args: list["Node"]
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Field:
+    base: "Node"
+    name: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Offset:
+    base: "Node"
+    n: int
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Tf:
+    base: "Node"
+    tf: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Unary:
+    operand: "Node"
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Binary:
+    op: str
+    left: "Node"
+    right: "Node"
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Compare:
+    op: str
+    left: "Node"
+    right: "Node"
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Cross:
+    fn: str
+    a: "Node"
+    b: "Node"
+    start: int
+    end: int
+
+
+Node = (
+    Num | Candle | Entry | Call | Field | Offset | Tf | Unary | Binary | Compare | Cross
+)
+
+CROSS_FNS = ("crossAbove", "crossBelow")
+CANDLE_FIELDS = ("open", "high", "low", "close", "volume", "body", "range", "wickTop", "wickBottom")
+
+
+def contains_tf(node: Node) -> bool:
+    if isinstance(node, Tf):
+        return True
+    if isinstance(node, (Field, Offset, Unary)):
+        return contains_tf(node.base if not isinstance(node, Unary) else node.operand)
+    if isinstance(node, Call):
+        return any(contains_tf(a) for a in node.args)
+    if isinstance(node, (Binary, Compare)):
+        return contains_tf(node.left) or contains_tf(node.right)
+    if isinstance(node, Cross):
+        return contains_tf(node.a) or contains_tf(node.b)
+    return False
