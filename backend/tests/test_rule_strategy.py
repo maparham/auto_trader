@@ -141,6 +141,42 @@ def test_slope_vs_slope_comparison():
     assert entries[0].time == candles[3].time  # fast slope>slow slope first at i=2
 
 
+def test_series_name_lookback_suffix_order():
+    from auto_trader.strategy.rule import Operand, series_name
+    assert series_name(Operand(kind="indicator", indicator="EMA", length=9,
+                               lookback_mode="high", lookback_len=20)) == "EMA_9#hi20"
+    assert series_name(Operand(kind="indicator", indicator="EMA", length=9, slope_len=3,
+                               lookback_mode="ago", lookback_len=2, timeframe="HOUR_4")) == "EMA_9~3#ago2@HOUR_4"
+    assert series_name(Operand(kind="price", field="close",
+                               lookback_mode="low", lookback_len=5)) == "close#lo5"
+
+
+def test_term_label_lookback():
+    from auto_trader.strategy.rule import Operand, _term_label
+    assert _term_label(Operand(kind="price", field="close", lookback_mode="ago", lookback_len=3)) == "ago(close,3)"
+    assert _term_label(Operand(kind="indicator", indicator="EMA", length=9,
+                               lookback_mode="high", lookback_len=20)) == "high(EMA(9),20)"
+
+
+def test_lookback_price_reads_series_not_candle():
+    # A looked-back price operand keys a series (like a sloped price), so it must
+    # be read from self.series, not straight off the candle. Left is a plain close
+    # (candle), right is close#hi2 (the high of the previous 2 bars). The breakout
+    # bar (close > prior-2-bar high) fires and fills next open.
+    candles = _series([10, 10, 10, 20, 20])
+    series = {"close#hi2": [None, None, 10.0, 10.0, 20.0]}
+    entry = RuleGroup(
+        "AND",
+        [Rule(_price("close"), "gt", Operand(kind="price", field="close", lookback_mode="high", lookback_len=2))],
+    )
+    strat = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), series, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    entries = [f for f in result.fills if f.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].side is Side.BUY
+    assert entries[0].time == candles[4].time  # close>hi2 first at i=3 -> fills at i=4 open
+
+
 def _ser(series_key: str, label: str, slope_len: int | None = None, timeframe: str | None = None) -> Operand:
     return Operand(kind="series", series_key=series_key, label=label, slope_len=slope_len, timeframe=timeframe)
 

@@ -44,6 +44,24 @@ def test_avwap_and_price_slope_and_atr():
     assert "ATR_3" in out and len(out["ATR_3"]) == len(cs)
 
 
+def test_lookback_of_matches_frontend_semantics():
+    from auto_trader.strategy.rule_series import lookback_of
+    raw = [1, 5, 2, 8, 3]
+    assert lookback_of(raw, "ago", 2) == [None, None, 1, 5, 2]
+    assert lookback_of(raw, "high", 2) == [None, None, 5, 5, 8]
+    assert lookback_of(raw, "low", 2) == [None, None, 1, 2, 2]
+    assert lookback_of(raw, "avg", 2) == [None, None, 3, 3.5, 5]
+    assert lookback_of([1, None, 2, 3], "high", 2) == [None, None, None, None]
+
+
+def test_build_rule_series_lookback_key():
+    cs = _candles([10, 11, 12, 13, 14, 15])
+    ops = [Operand(kind="indicator", indicator="EMA", length=3, lookback_mode="high", lookback_len=2)]
+    out = build_rule_series(ops, cs, "HOUR", {})
+    assert "EMA_3#hi2" in out
+    assert len(out["EMA_3#hi2"]) == len(cs)
+
+
 def test_series_kind_operand_is_skipped():
     cs = _candles([10, 11, 12])
     ops = [Operand(kind="series", series_key="EMA_abc123", label="EMA(9)")]

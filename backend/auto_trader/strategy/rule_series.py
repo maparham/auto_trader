@@ -45,11 +45,32 @@ def _compute_raw(op: Operand, candles: Sequence[Candle]) -> list[float | None]:
     return [None] * len(candles)
 
 
+def lookback_of(raw: Sequence[float | None], mode: str, length: int) -> list[float | None]:
+    """Previous-candles read of `raw` (mirrors frontend lookbackOf) — current bar
+    excluded; None until a full window exists or when any window value is None."""
+    if mode == "ago":
+        return [raw[i - length] if i >= length else None for i in range(len(raw))]
+    out: list[float | None] = []
+    for i in range(len(raw)):
+        if i < length:
+            out.append(None)
+            continue
+        window = raw[i - length : i]
+        if any(v is None for v in window):
+            out.append(None)
+            continue
+        vals = [v for v in window if v is not None]
+        out.append(max(vals) if mode == "high" else min(vals) if mode == "low" else sum(vals) / length)
+    return out
+
+
 def _derive(op: Operand, candles: Sequence[Candle], bar_hours: float) -> list[float | None]:
     raw = _compute_raw(op, candles)
-    if op.slope_len is None:
-        return raw
-    return slope_of(raw, op.slope_len, bar_hours)
+    if op.slope_len is not None:
+        raw = slope_of(raw, op.slope_len, bar_hours)
+    if op.lookback_len is not None:
+        raw = lookback_of(raw, op.lookback_mode or "ago", op.lookback_len)
+    return raw
 
 
 def htf_timeframes(operands: Iterable[Operand], base_resolution: str) -> set[str]:

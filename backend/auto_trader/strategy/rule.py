@@ -37,6 +37,12 @@ class Operand:
     # of change of its underlying curve (÷ elapsed time), computed frontend-side and
     # posted as its own series. Keys the series (series_name). indicator/price only.
     slope_len: int | None = None
+    # Lookback (previous-candles) transform: replaces the operand's value with a
+    # read over bars BEFORE the current one — mode "ago" = v[i−len]; "high"/"low"/
+    # "avg" aggregate v[i−len .. i−1]. Applied after slope, frontend-computed (or
+    # rule_series-computed) as its own series; keys the series (series_name).
+    lookback_mode: str | None = None  # "ago" | "high" | "low" | "avg"
+    lookback_len: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +79,9 @@ def price_field_value(bar, field: str | None) -> float | None:
     return getattr(bar, field or "close", None)
 
 
+_LB_TOKEN = {"ago": "ago", "high": "hi", "low": "lo", "avg": "avg"}
+
+
 def series_name(op: Operand) -> str | None:
     """The payload key this operand's series lives under, or None if it has no
     series (a plain price/const is read straight off the candle). AVWAP is keyed by
@@ -90,13 +99,15 @@ def series_name(op: Operand) -> str | None:
             base = f"AVWAP_{op.anchor or 0}"
         else:
             base = f"{op.indicator}_{op.length}"
-    elif op.kind == "price" and op.slope_len is not None:
-        # A plain price has no series; a sloped price does — it needs v[i−N].
+    elif op.kind == "price" and (op.slope_len is not None or op.lookback_len is not None):
+        # A plain price has no series; a sloped or looked-back price does.
         base = op.field or "price"
     else:
         return None
     if op.slope_len is not None:
         base = f"{base}~{op.slope_len}"
+    if op.lookback_len is not None:
+        base = f"{base}#{_LB_TOKEN[op.lookback_mode or 'ago']}{op.lookback_len}"
     # A per-operand timeframe qualifies the key so a base-timeframe indicator and
     # the same indicator on a higher timeframe are distinct series. None ⇒ base ⇒
     # the bare key. Must match the frontend's seriesName (backtestConfig.ts),
@@ -105,6 +116,10 @@ def series_name(op: Operand) -> str | None:
 
 
 def _operand_name(op: Operand) -> str:
+    if op.lookback_len is not None:
+        # Lookback applies after slope, so it wraps OUTSIDE the slope label.
+        inner = _operand_name(replace(op, lookback_mode=None, lookback_len=None))
+        return f"{op.lookback_mode or 'ago'}({inner},{op.lookback_len})"
     if op.slope_len is not None:
         # Render sloped operands legibly in exit reasons: slope(EMA_9,3), not the
         # raw series key EMA_9~3. Keep the timeframe (slope(EMA_9@HOUR,3)) so a
@@ -129,6 +144,10 @@ def _term_label(op: Operand) -> str:
     (the frontend appends `@tf` from `_operand_timeframe`). Unlike `_operand_name`
     (which renders the raw series key `EMA_56` for exit reasons), this renders the
     readable form `EMA(56)` / `slope(EMA(9),3)`."""
+    if op.lookback_len is not None:
+        # Lookback applies after slope, so it wraps OUTSIDE the slope label.
+        inner = _term_label(replace(op, lookback_mode=None, lookback_len=None))
+        return f"{op.lookback_mode or 'ago'}({inner},{op.lookback_len})"
     if op.slope_len is not None:
         inner = _term_label(replace(op, slope_len=None))
         return f"slope({inner},{op.slope_len})"
@@ -363,9 +382,9 @@ class RuleStrategy(Strategy):
             # entry line naturally).
             ep = ctx.long_entry_price if side == "long" else ctx.short_entry_price
             return ep, ep
-        # A plain price reads off the candle; a SLOPED price (op.slope_len set) is a
+        # A plain price reads off the candle; a SLOPED or LOOKED-BACK price is a
         # derived series like any indicator, so it falls through to the series read.
-        if op.kind == "price" and op.slope_len is None:
+        if op.kind == "price" and op.slope_len is None and op.lookback_len is None:
             now = price_field_value(ctx.history[i], op.field)
             prev = price_field_value(ctx.history[i - 1], op.field) if i > 0 else None
             return now, prev

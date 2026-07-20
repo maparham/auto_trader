@@ -201,6 +201,11 @@ class SlopeDTO(BaseModel):
     len: int = Field(ge=1)
 
 
+class LookbackDTO(BaseModel):
+    mode: Literal["ago", "high", "low", "avg"]
+    len: int = Field(ge=1)
+
+
 class OperandDTO(BaseModel):
     kind: Literal["indicator", "price", "const", "entry", "series"]
     indicator: Literal["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"] | None = None
@@ -220,6 +225,9 @@ class OperandDTO(BaseModel):
     # Slope transform (indicator/price only): the frontend computes the %/hr slope
     # as its own series; this only keys it (series_name), like `timeframe`.
     slope: SlopeDTO | None = None
+    # Lookback (previous-candles) transform (indicator/price/series): the frontend
+    # computes the looked-back array as its own series; this only keys it.
+    lookback: LookbackDTO | None = None
 
     @model_validator(mode="after")
     def _kind_matches_fields(self) -> "OperandDTO":
@@ -233,6 +241,8 @@ class OperandDTO(BaseModel):
             raise ValueError("series operand requires a non-empty 'seriesKey'")
         if self.slope is not None and self.kind not in ("indicator", "price", "series"):
             raise ValueError("slope is only valid on an indicator, price, or series operand")
+        if self.lookback is not None and self.kind not in ("indicator", "price", "series"):
+            raise ValueError("lookback is only valid on an indicator, price, or series operand")
         return self
 
     def to_operand(self) -> Operand:
@@ -241,6 +251,8 @@ class OperandDTO(BaseModel):
             field=self.field, value=self.value, anchor=self.anchor,
             timeframe=self.timeframe,
             slope_len=self.slope.len if self.slope else None,
+            lookback_mode=self.lookback.mode if self.lookback else None,
+            lookback_len=self.lookback.len if self.lookback else None,
             series_key=self.seriesKey, label=self.label,
         )
 
