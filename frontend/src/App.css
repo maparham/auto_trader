@@ -1409,9 +1409,15 @@
   color: var(--text-faint);
 }
 .bt-robust-windows { margin-left: 0; }
-/* WFO Data window: keep Timeframe + Holdout side by side as one right-aligned
-   cluster so Holdout never wraps onto a row of its own. */
-.bt-wfo-window-controls { display: flex; gap: 12px; margin-left: auto; align-items: flex-start; }
+/* WFO Data window: range unit (chips above From/To) on the left, Timeframe +
+   Holdout as a right-aligned column, so the quick-fill chips sit next to the
+   From/To they fill instead of being split off by unrelated settings. */
+/* WFO Data window: chips + From/To form the range unit on the left; Timeframe +
+   Holdout stack as a slim column on the right so From/To keeps its full width and
+   the quick-fill chips sit directly above the From/To they fill. */
+.bt-wfo-data-row { display: flex; gap: 14px; align-items: flex-start; }
+.bt-wfo-range-col { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.bt-wfo-window-controls { display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
 .bt-wfo-window-controls > .bt-tf-inline { margin-left: 0; }
 .bt-robust-windows input {
   width: 56px;

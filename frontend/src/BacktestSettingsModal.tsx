@@ -2055,37 +2055,37 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                       title="Data window"
                       info="The span of history walk-forward runs over. Set From/To directly, or use a quick-fill chip: relative chips roll with today, calendar chips pin a fixed year."
                     >
-                      <div className="bt-range-mode-row">
-                        {rangePicker}
+                      <div className="bt-wfo-data-row">
+                        <div className="bt-wfo-range-col">
+                          <div className="bt-chip-row bt-range-chip-row bt-wfo-chip-row">
+                            {WFO_RELATIVE_CHIPS.map((c) => (
+                              <button
+                                key={c.mode}
+                                className={cfg.range.mode === c.mode ? "seg-on bt-chip" : "bt-chip"}
+                                onClick={() => setRange({ mode: c.mode, fromMs: undefined, toMs: undefined })}
+                              >
+                                {c.label}
+                              </button>
+                            ))}
+                            {buildRangeChips("year", Date.now(), chartTimezone).map((chip) => {
+                              const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
+                              return (
+                                <button
+                                  key={chip.label}
+                                  className={on ? "seg-on bt-chip" : "bt-chip"}
+                                  onClick={() => setRange({ mode: "custom", fromMs: chip.fromMs, toMs: chip.toMs })}
+                                >
+                                  {chip.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {rangePicker}
+                        </div>
                         <div className="bt-wfo-window-controls">
                           {timeframeSelect}
                           {holdoutSelect}
                         </div>
-                      </div>
-                      <div className="bt-chip-row bt-range-chip-row">
-                        {WFO_RELATIVE_CHIPS.map((c) => (
-                          <button
-                            key={c.mode}
-                            className={cfg.range.mode === c.mode ? "seg-on bt-chip" : "bt-chip"}
-                            onClick={() => setRange({ mode: c.mode, fromMs: undefined, toMs: undefined })}
-                          >
-                            {c.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="bt-chip-row bt-range-chip-row">
-                        {buildRangeChips("year", Date.now(), chartTimezone).map((chip) => {
-                          const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
-                          return (
-                            <button
-                              key={chip.label}
-                              className={on ? "seg-on bt-chip" : "bt-chip"}
-                              onClick={() => setRange({ mode: "custom", fromMs: chip.fromMs, toMs: chip.toMs })}
-                            >
-                              {chip.label}
-                            </button>
-                          );
-                        })}
                       </div>
                       {holdout && (
                         <>
