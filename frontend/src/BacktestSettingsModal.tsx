@@ -10,6 +10,8 @@ import ChartOperandPicker from "./ChartOperandPicker";
 import InfoTip from "./components/InfoTip";
 import NumberField from "./components/NumberField";
 import RunBar, { ModeSeg } from "./components/RunBar";
+import RuleExpressionInput from "./components/RuleExpressionInput";
+import RulePalette from "./components/RulePalette";
 import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
 import {
@@ -4068,43 +4070,42 @@ function RuleMenu({
   );
 }
 
+// Task 13 Stage A: one rule row is now just an expression string (+ enabled).
+// The loose shape lets this section accept both the new minimal `{ expr }` rows
+// and the coexisting structured `Rule` rows the modal still stores in its config
+// (a `Rule` is assignable to `ExprRow` because `expr`/`enabled` are optional).
+type ExprRow = { expr?: string; enabled?: boolean };
+type ExprGroupLike = { combine?: Combine; rules: ExprRow[] };
+
 export function RuleGroupSection({
   title,
   info,
   group,
   onChange,
   emptyHint,
-  defaultAvwapAnchor,
   baseResolution,
   clipboard,
   onCopy,
   groupClipboard,
   onCopyAll,
-  openChartPicker,
   isExit = false,
-  sweep,
 }: {
   title: string;
   info?: string;
-  group: RuleGroup;
+  group: ExprGroupLike;
   onChange: (g: RuleGroup) => void;
   emptyHint: string;
-  defaultAvwapAnchor: number;
+  // Retained (unused in Stage A) so existing call sites keep passing their old
+  // props without a compile break; Stage C removes them from the callers.
+  defaultAvwapAnchor?: number;
   baseResolution: string;
-  clipboard: Rule | null;
-  onCopy: (rule: Rule) => void;
-  groupClipboard: Rule[] | null;
-  onCopyAll: (rules: Rule[]) => void;
-  // Absent in surfaces with no chart to pick from (e.g. the Live panel) — the
-  // affordances that need it simply don't render.
+  clipboard?: Rule | null;
+  onCopy?: (rule: Rule) => void;
+  groupClipboard?: Rule[] | null;
+  onCopyAll?: (rules: Rule[]) => void;
   openChartPicker?: (onPick: (op: Operand) => void) => void;
-  // Exit groups can reference the entry price and carry an "Nth time" count;
-  // entry groups can't (there's no position yet).
+  // Exit groups gate whether `entry` is a valid reference in the expression.
   isExit?: boolean;
-  // Task 9: per-operand-field sweep toggle (rule mode only — SidePanel passes
-  // it, coded mode's exit-rule use leaves it undefined). `group` here is this
-  // section's entry/exit half of the `rule:` target path, distinct from the
-  // `RuleGroup` prop above.
   sweep?: {
     axes: SweepAxis[];
     side: "long" | "short";
@@ -4115,22 +4116,14 @@ export function RuleGroupSection({
     onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
   };
 }) {
-  function setCombine(combine: Combine) {
-    onChange({ ...group, combine });
-  }
-  // Invert every rule in one go — the short-side twin of a long condition (or vice
-  // versa): flips the operator, swaps high/low, and negates numbers. Gated behind a
-  // confirm since it rewrites the group's logic. Numbers that don't mirror by sign
-  // (e.g. an RSI 30 threshold that should read 70, not -30) land negated and can be
-  // fixed in place afterward.
-  function reverseAll() {
-    requestConfirm({
-      title: "Invert rules",
-      message: `Invert every rule in ${title} (flip operator, swap high/low, negate numbers)? Check any RSI-style thresholds afterward.`,
-      confirmLabel: "Invert",
-      onConfirm: () => onChange({ ...group, rules: group.rules.map(invertRule) }),
-    });
-  }
+  // Which row's insert palette is open (one at a time), or null when none.
+  const [paletteRow, setPaletteRow] = useState<number | null>(null);
+
+  // Emit the group back to the parent. The stored config still types groups as
+  // `RuleGroup`; the cast bridges the coexistence window (Stage C rewrites the
+  // config's rule model to the expression shape, dropping the cast).
+  const emit = (rules: ExprRow[]) => onChange({ ...group, rules } as RuleGroup);
+
   // Wipe every rule in this group, gated behind a confirm (unlike the per-row
   // delete, which is cheap to undo by re-adding one rule).
   function clearAll() {
@@ -4138,50 +4131,49 @@ export function RuleGroupSection({
       title: "Delete all rules",
       message: `Remove all ${group.rules.length} rule${group.rules.length === 1 ? "" : "s"} from ${title}?`,
       confirmLabel: "Delete all",
-      onConfirm: () => onChange({ ...group, rules: [] }),
+      onConfirm: () => emit([]),
     });
   }
   // Copy the whole group's rules, and paste a copied set (appending independent
   // clones so they can land in another side/leg without sharing references).
   function copyAll() {
-    onCopyAll(group.rules);
+    onCopyAll?.(group.rules as Rule[]);
   }
   function pasteAll() {
     if (groupClipboard?.length) {
-      onChange({ ...group, rules: [...group.rules, ...groupClipboard.map(cloneRule)] });
+      emit([...group.rules, ...groupClipboard.map(cloneRule)]);
     }
   }
-  function setRule(i: number, rule: Rule) {
+  // Write one field of a single row back, cloning the row so unrelated rows keep
+  // their identity. Expr rows are flat, so a spread is a full copy.
+  function patchRule(i: number, patch: Partial<ExprRow>) {
     const rules = group.rules.slice();
-    rules[i] = rule;
-    onChange({ ...group, rules });
+    rules[i] = { ...rules[i], ...patch };
+    emit(rules);
   }
   function addRule() {
-    onChange({ ...group, rules: [...group.rules, defaultRule()] });
+    emit([...group.rules, { expr: "", enabled: true }]);
   }
   function removeRule(i: number) {
-    onChange({ ...group, rules: group.rules.filter((_, idx) => idx !== i) });
+    emit(group.rules.filter((_, idx) => idx !== i));
   }
   // Insert an independent copy right after the source row, so a duplicated rule
   // reads as a variation of the one above it rather than landing at the bottom.
   function duplicateRule(i: number) {
     const rules = group.rules.slice();
-    rules.splice(i + 1, 0, cloneRule(group.rules[i]));
-    onChange({ ...group, rules });
+    rules.splice(i + 1, 0, { ...rules[i] });
+    emit(rules);
   }
   // Paste appends — the clipboard rule may come from another group entirely, so
   // there's no "source row" here to sit beneath.
   function pasteRule() {
-    if (clipboard) onChange({ ...group, rules: [...group.rules, cloneRule(clipboard)] });
+    if (clipboard) emit([...group.rules, cloneRule(clipboard)]);
   }
-
-  // The engine only receives enabled rules (activeGroup drops the rest before
-  // POST), so a sweep axis must target a rule by its position in that
-  // enabled-only list — not its raw UI index. Otherwise a disabled rule above
-  // the swept one shifts the backend indices and the sweep 422s ("index out of
-  // range"). Disabled rules can't be swept (their toggle is hidden below).
-  const activeRuleIndex = (i: number) =>
-    group.rules.slice(0, i).filter((r) => r.enabled !== false).length;
+  // Palette insert (Stage A): append the picked token to the row's expression.
+  // A cursor-aware insert is a later refinement; append keeps the wiring simple.
+  function insertInto(i: number, text: string) {
+    patchRule(i, { expr: (group.rules[i].expr ?? "") + text });
+  }
 
   return (
     <Section
@@ -4193,27 +4185,6 @@ export function RuleGroupSection({
       extra={
         group.rules.length > 0 ? (
           <div className="bt-groophead-actions">
-            {/* AND/OR only matters with 2+ rules; it stays fully visible (never
-                hover-dimmed) while the icon actions to its right reveal on hover. */}
-            {group.rules.length > 1 && (
-              <div className="seg bt-combine-seg" role="group" aria-label="Combine rules with">
-                <Tooltip content="Fire only when every rule in this group is true.">
-                  <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>AND</button>
-                </Tooltip>
-                <Tooltip content="Fire when any rule in this group is true.">
-                  <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>OR</button>
-                </Tooltip>
-              </div>
-            )}
-            <Tooltip content="Invert rules for the opposite side: flip operator, swap high/low, negate numbers">
-              <button
-                className="bt-rule-toggle bt-reverse-ops"
-                onClick={reverseAll}
-                aria-label="Invert rules"
-              >
-                <ReverseOpsIcon />
-              </button>
-            </Tooltip>
             <Tooltip content="Copy all rules in this group">
               <button
                 className="bt-rule-toggle bt-copyall"
@@ -4243,95 +4214,44 @@ export function RuleGroupSection({
         <Fragment key={i}>
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`}>
           <div className="bt-rule-main">
-            <OperandPicker value={rule.left} onChange={(left) => setRule(i, { ...rule, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.right) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, onAxisChange: sweep.onAxisChange, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `left.${leaf}`) } : undefined} />
-            <OperatorPicker
-              value={rule.op}
-              onChange={(op) => setRule(i, { ...rule, op })}
-              sweep={sweep && rule.enabled !== false ? {
-                swept: sweep.axes.some((a) => a.target === opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i))),
-                onToggle: () => sweep.onToggleOp(opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i)), rule.op),
-              } : undefined}
+            <RuleExpressionInput
+              value={rule.expr ?? ""}
+              onChange={(expr) => patchRule(i, { expr })}
+              isExit={isExit}
+              placeholder="e.g. EMA(9) > EMA(21)"
             />
-            <OperandPicker value={rule.right} onChange={(right) => setRule(i, { ...rule, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(rule.left) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, onAxisChange: sweep.onAxisChange, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `right.${leaf}`) } : undefined} />
-            {isExit && (
-              <CountField
-                value={rule.count}
-                onChange={(count) => setRule(i, { ...rule, count })}
-                sweep={
-                  sweep && rule.enabled !== false
-                    ? {
-                        axes: sweep.axes,
-                        onToggle: sweep.onToggle,
-                        onAxisChange: sweep.onAxisChange,
-                        target: ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), "count"),
-                      }
-                    : undefined
-                }
-              />
-            )}
             <div className="bt-rule-actions">
-              <Tooltip content="Swap sides (same condition)">
+              <Tooltip content="Insert an indicator, candle field, or timeframe">
                 <button
                   type="button"
-                  className="bt-rule-toggle bt-swap-sides"
-                  onClick={() => setRule(i, swapSides(rule))}
-                  aria-label="Swap sides"
+                  className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
+                  onClick={() => setPaletteRow(paletteRow === i ? null : i)}
+                  aria-label="Insert from palette"
+                  aria-expanded={paletteRow === i}
                 >
-                  ⇄
+                  +
                 </button>
               </Tooltip>
               <RuleMenu
                 enabled={rule.enabled !== false}
                 onDuplicate={() => duplicateRule(i)}
-                onCopy={() => onCopy(rule)}
-                onToggleEnabled={() => setRule(i, { ...rule, enabled: rule.enabled === false })}
-                onSwapSides={() => setRule(i, swapSides(rule))}
+                onCopy={() => onCopy?.(rule as Rule)}
+                onToggleEnabled={() => patchRule(i, { enabled: rule.enabled === false })}
+                onSwapSides={() => {}}
                 onRemove={() => removeRule(i)}
               />
             </div>
           </div>
+          {paletteRow === i && (
+            <RulePalette onInsert={(text) => insertInto(i, text)} />
+          )}
         </div>
-        {sweep && rule.enabled !== false && (() => {
-          const target = opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i));
-          const axis = sweep.axes.find((a) => a.target === target);
-          if (axis?.kind !== "list") return null;
-          return (
-            <div className="sp-row sweep-axis-row bt-op-sweep-row">
-              <span className="sp-label">operators</span>
-              <span className="bt-chip-row">
-                {OPERATORS.map((o) => {
-                  const on = axis.options.some((opt) => opt.patch[target] === o.value);
-                  return (
-                    <button
-                      key={o.value}
-                      type="button"
-                      className={on ? "seg-on bt-chip" : "bt-chip"}
-                      onClick={() => sweep.onTickOp(target, o.value)}
-                    >
-                      {o.label}
-                    </button>
-                  );
-                })}
-              </span>
-            </div>
-          );
-        })()}
         </Fragment>
       ))}
       <div className="bt-rule-foot">
         <button className="ghost" onClick={addRule}>
           + Add rule
         </button>
-        {openChartPicker && (
-          <Tooltip content="Add a rule seeded from a chart indicator or drawing">
-            <button
-              className="ghost"
-              onClick={() => openChartPicker((op) => onChange({ ...group, rules: [...group.rules, ruleFromChartOperand(op)] }))}
-            >
-              + Rule from chart
-            </button>
-          </Tooltip>
-        )}
         {clipboard && (
           <Tooltip content="Paste the copied rule here">
             <button className="ghost" onClick={pasteRule}>

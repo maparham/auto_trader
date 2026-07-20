@@ -75,7 +75,7 @@ import { sweepContext } from "./lib/sweepMemory";
 import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
 import { inspectModeSignal } from "./lib/backtestInspect";
-import type { BacktestRequest, SweepRow } from "./api";
+import type { BacktestRequest, ExprBacktestRequest, ExprRow, SweepRow } from "./api";
 
 interface Props {
   controller: ChartController | null;
@@ -532,9 +532,34 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       }
 
       progressStageSignal.set("engine");
+      // Task 13 Stage A: rule-mode single runs go through the expression-native
+      // /api/expr/backtest, posting { expr, enabled }[] groups. Coded runs stay
+      // on the structured request (the expr surface has no coded-strategy path
+      // yet — Stage C moves coded onto it). Sweeps/WFO above still use baseReq.
+      const exprRows = (g: RuleGroup): ExprRow[] =>
+        g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
+      const exprReq: ExprBacktestRequest = {
+        epic,
+        resolution: runResolution,
+        candles,
+        longEntry: exprRows(effCfg.longEntry),
+        longExit: exprRows(effCfg.longExit),
+        shortEntry: exprRows(effCfg.shortEntry),
+        shortExit: exprRows(effCfg.shortExit),
+        longEnabled: cfg.longEnabled !== false,
+        shortEnabled: cfg.shortEnabled !== false,
+        longRisk: sendableRisk(effCfg.longRisk),
+        shortRisk: sendableRisk(effCfg.shortRisk),
+        longScaling: effCfg.longScaling,
+        shortScaling: effCfg.shortScaling,
+        costs: cfg.costs,
+        tradeFromTime,
+        mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
+        inspect: inspectModeSignal.value,
+      };
       const res = await runAndRender(
         chart,
-        baseReq,
+        coded ? baseReq : exprReq,
         controller!.scope,
         // Displayed TF, so runAndRender picks native/aggregate/none correctly when
         // the run's base TF (runResolution) differs from what the chart shows.

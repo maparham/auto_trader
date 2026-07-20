@@ -334,6 +334,46 @@ export interface BacktestRequest {
   costSensitivity?: boolean; // opt into the 0x/2x/3x cost re-runs (cost_sensitivity on the result)
 }
 
+// --- expression backtest surface (/api/expr/backtest) ------------------------
+// Task 13 Stage A: the coexisting expression-native run. Each rule group is a
+// list of raw expression strings the backend parses/compiles; the structured
+// BacktestRequest above still serves coded runs and sweeps/wfo during cutover.
+export interface ExprRow {
+  expr: string;
+  enabled: boolean;
+}
+
+export interface ExprBacktestRequest {
+  epic: string;
+  resolution: string;
+  candles: Candle[];
+  htfCandles?: Record<string, Candle[]>;
+  longEntry: ExprRow[];
+  longExit: ExprRow[];
+  shortEntry: ExprRow[];
+  shortExit: ExprRow[];
+  longEnabled: boolean;
+  shortEnabled: boolean;
+  longRisk?: RiskConfig;
+  shortRisk?: RiskConfig;
+  longScaling?: ScalingConfig;
+  shortScaling?: ScalingConfig;
+  costs: Costs;
+  tradeFromTime: number;
+  mask?: RecurrenceMask;
+  inspect?: boolean;
+}
+
+export async function runExprBacktest(req: ExprBacktestRequest): Promise<BacktestResult> {
+  const res = await fetch(`${BASE}/api/expr/backtest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `request failed (${res.status})`));
+  return res.json();
+}
+
 export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {
   // Temporary phase timing (perf investigation): split serialize / backend / parse.
   const t0 = performance.now();

@@ -19,7 +19,7 @@ import {
   type OverlayTemplate,
   type OverlayFigure,
 } from "klinecharts";
-import { runBacktest, type BacktestRequest, type Marker } from "../api";
+import { runBacktest, runExprBacktest, type BacktestRequest, type ExprBacktestRequest, type Marker } from "../api";
 import { setInspectTraces, inspectSelectedBarSignal } from "./backtestInspect";
 import { toast } from "./notify";
 import { applyVisibleRangeKeepStart, scrollTsToCenter } from "./chartSync";
@@ -1062,16 +1062,23 @@ export function registerBacktestIndicators(): void {
   });
 }
 
+// Task 13 Stage A: an expr run posts { expr, enabled }[] groups (arrays);
+// structured runs post RuleGroup objects. Both share epic/resolution, which is
+// all runAndRender itself reads off the request.
+function isExprRequest(req: BacktestRequest | ExprBacktestRequest): req is ExprBacktestRequest {
+  return Array.isArray((req as ExprBacktestRequest).longEntry);
+}
+
 export async function runAndRender(
   chart: Chart,
-  req: BacktestRequest,
+  req: BacktestRequest | ExprBacktestRequest,
   scope: string,
   displayResolution: string,
   period?: BacktestPeriod,
 ): Promise<StoredBacktestResult> {
   // Temporary phase timing (perf investigation).
   const t0 = performance.now();
-  const result = await runBacktest(req);
+  const result = isExprRequest(req) ? await runExprBacktest(req) : await runBacktest(req);
   const t1 = performance.now();
   // Session-only inspector trace: repopulate on an inspect run, clear otherwise
   // (a normal run returns no bar_traces, so this resets any stale trace).

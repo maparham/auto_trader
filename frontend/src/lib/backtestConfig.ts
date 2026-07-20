@@ -179,6 +179,10 @@ export interface Rule {
   left: Operand;
   op: Operator;
   right: Operand;
+  // Task 13 Stage A: the CodeMirror rule expression. Additive during the cutover
+  // so the structured fields above and the new editor coexist; Stage C drops the
+  // structured fields and leaves `expr` as the whole rule.
+  expr?: string;
   // A disabled rule is kept (editable) but excluded from the run — like a parked
   // side, but per rule. Absent ⇒ enabled (backward-safe for old presets).
   enabled?: boolean;
