@@ -54,7 +54,7 @@ export function WfoConfig(props: {
           <InfoTip
             title="Training window"
             text={[
-              "How much history each fold optimizes on.",
+              "The history window each fold optimizes on.",
               "Select several lengths to compare them in one run (matrix).",
             ]}
           />
@@ -76,7 +76,7 @@ export function WfoConfig(props: {
           Test
           <InfoTip
             title="Test window"
-            text="How far forward each fold is evaluated out-of-sample, after training."
+            text="The out-of-sample window each fold is scored on after training."
           />
         </span>
         <span className="seg wfo-seg">
