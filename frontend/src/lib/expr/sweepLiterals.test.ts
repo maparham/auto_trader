@@ -18,4 +18,19 @@ describe("sweep literals", () => {
     expect(Object.keys(kept)).toEqual(["lit:long.entry.0.0"]);
     expect(dropped).toEqual(["lit:long.entry.0.1"]);
   });
+  it("preserves ranges from other rows when editing one row", () => {
+    const prev = [{ ordinal: 0 }, { ordinal: 1 }] as any;
+    const next = [{ ordinal: 0 }] as any;
+    const ranges = {
+      "lit:long.entry.0.0": {},
+      "lit:long.entry.0.1": {},
+      "lit:short.exit.2.1": {},
+    };
+    const { kept, dropped } = reanchorRanges(prev, next, ranges, "long", "entry", 0);
+    expect(Object.keys(kept)).toEqual([
+      "lit:long.entry.0.0",
+      "lit:short.exit.2.1",
+    ]);
+    expect(dropped).toEqual(["lit:long.entry.0.1"]);
+  });
 });

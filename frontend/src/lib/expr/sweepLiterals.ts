@@ -61,11 +61,20 @@ export function reanchorRanges(
   // Build a set of ordinals that exist in nextLiterals for fast lookup
   const nextOrdinals = new Set(nextLiterals.map((lit) => lit.ordinal));
 
+  // Build the prefix for this row to identify which keys belong to it
+  const rowPrefix = `lit:${side}.${group}.${rowIdx}.`;
+
   const kept: Record<string, any> = {};
   const dropped: string[] = [];
 
-  // Iterate through the current ranges and check if their ordinals still exist
+  // Iterate through the current ranges
   for (const [key, value] of Object.entries(ranges)) {
+    // If the key doesn't belong to this row, pass it through unchanged
+    if (!key.startsWith(rowPrefix)) {
+      kept[key] = value;
+      continue;
+    }
+
     // Extract ordinal from the key (format: lit:side.group.rowIdx.ordinal)
     const match = key.match(/^lit:[^.]+\.[^.]+\.\d+\.(\d+)$/);
     if (!match) {
