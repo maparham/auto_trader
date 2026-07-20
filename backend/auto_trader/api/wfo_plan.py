@@ -12,6 +12,14 @@ _UNIT_SECONDS = {"d": 86400, "w": 7 * 86400, "m": 30 * 86400}
 MIN_FOLDS = 3
 
 
+def _days(seconds: float) -> str:
+    d = round(seconds / 86400, 1)
+    if d >= 1:
+        return f"{d:g} day" + ("s" if d != 1 else "")
+    h = round(seconds / 3600, 1)
+    return f"{h:g} hour" + ("s" if h != 1 else "")
+
+
 class WfoPlanError(Exception):
     """A schedule that cannot be planned (bad token, infeasible range)."""
 
@@ -51,8 +59,10 @@ def plan(range_from: int, range_to: int, mode: str,
         end -= step_s
     folds.reverse()
     if len(folds) < MIN_FOLDS:
+        have = _days(range_to - range_from)
+        need = _days(train_s + test_s + (MIN_FOLDS - 1) * step_s)
         raise WfoPlanError(
-            f"only {len(folds)} fold(s) fit this range with train "
-            f"{train_s}s / test {test_s}s; need at least {MIN_FOLDS}. "
-            "Shorten the windows or extend the date range.")
+            f"Date range too short: {MIN_FOLDS} folds of "
+            f"{_days(train_s)} train + {_days(test_s)} test need {need}, "
+            f"but you have {have}. Widen the range or shorten the windows.")
     return folds
