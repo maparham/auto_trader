@@ -9,6 +9,7 @@ import {
   wfoEquityShownSignal,
   wfoBandsShownSignal,
   wfoEquityCompoundedSignal,
+  progressStageSignal,
 } from "./lib/signals";
 import type { SweepAxis, SweepCombo } from "./lib/sweep";
 import { comboAxisLabel } from "./lib/sweep";
@@ -16,6 +17,7 @@ import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import { SweepResults, SweepSortHeader, type SortDir } from "./SweepResults";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
+import { stageLabel } from "./lib/progressLabels";
 
 export const PHASE_LABEL: Record<string, string> = {
   grid: "evaluating grid",
@@ -122,6 +124,10 @@ export const WfoResults = memo(function WfoResults(props: {
     (cb) => wfoEquityCompoundedSignal.subscribe(cb),
     () => wfoEquityCompoundedSignal.value,
   );
+  const stage = useSyncExternalStore(
+    (cb) => progressStageSignal.subscribe(cb),
+    () => progressStageSignal.value,
+  );
 
   const [sort, setSort] = useState<{ key: FoldCol; dir: SortDir } | null>(null);
   const toggleSort = (key: FoldCol) =>
@@ -195,6 +201,9 @@ export const WfoResults = memo(function WfoResults(props: {
         </div>
       )}
 
+      {stageLabel(stage) && (
+        <div className="sweep-progress"><span>{stageLabel(stage)}</span></div>
+      )}
       {state.running && (
         <div className="sweep-progress">
           <span>{PHASE_LABEL[state.phase] ?? state.phase}</span>
