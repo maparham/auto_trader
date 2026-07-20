@@ -78,3 +78,13 @@ def test_htf_ema_aligned_closed_bar():
     # 0..3 see nothing yet.
     assert out["EMA_2@HOUR_4"][0] is None
     assert out["EMA_2@HOUR_4"][4] is not None
+
+
+def test_compute_raw_body_field():
+    from auto_trader.strategy.rule import Operand
+    from auto_trader.strategy.rule_series import _compute_raw
+    candles = _candles([12, 11])  # use the file's candle helper
+    # Override with explicit open values for body calculation
+    candles[0] = Candle(time=candles[0].time, open=10, high=13, low=11, close=12, volume=1.0)
+    candles[1] = Candle(time=candles[1].time, open=12, high=13, low=11, close=11, volume=1.0)
+    assert _compute_raw(Operand(kind="price", field="body"), candles) == [2, 1]

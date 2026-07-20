@@ -57,6 +57,22 @@ class RuleGroup:
     rules: list[Rule] = field(default_factory=list)
 
 
+def price_field_value(bar, field: str | None) -> float | None:
+    """A price field read off one bar. open/high/low/close are attributes; the
+    anatomy fields derive (mirrors frontend priceFieldValue, backtestSeries.ts):
+    body = |close−open|, range = high−low, wickTop = high − max(open, close),
+    wickBottom = min(open, close) − low."""
+    if field == "body":
+        return abs(bar.close - bar.open)
+    if field == "range":
+        return bar.high - bar.low
+    if field == "wickTop":
+        return bar.high - max(bar.open, bar.close)
+    if field == "wickBottom":
+        return min(bar.open, bar.close) - bar.low
+    return getattr(bar, field or "close", None)
+
+
 def series_name(op: Operand) -> str | None:
     """The payload key this operand's series lives under, or None if it has no
     series (a plain price/const is read straight off the candle). AVWAP is keyed by
@@ -350,8 +366,8 @@ class RuleStrategy(Strategy):
         # A plain price reads off the candle; a SLOPED price (op.slope_len set) is a
         # derived series like any indicator, so it falls through to the series read.
         if op.kind == "price" and op.slope_len is None:
-            now = getattr(ctx.history[i], op.field)
-            prev = getattr(ctx.history[i - 1], op.field) if i > 0 else None
+            now = price_field_value(ctx.history[i], op.field)
+            prev = price_field_value(ctx.history[i - 1], op.field) if i > 0 else None
             return now, prev
         # indicator, or any sloped operand
         name = series_name(op)

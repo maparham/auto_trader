@@ -205,7 +205,7 @@ class OperandDTO(BaseModel):
     kind: Literal["indicator", "price", "const", "entry", "series"]
     indicator: Literal["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"] | None = None
     length: int | None = None
-    field: Literal["close", "open", "high", "low"] | None = None
+    field: Literal["close", "open", "high", "low", "body", "range", "wickTop", "wickBottom"] | None = None
     value: float | None = None
     anchor: int | None = None
     # A `series` operand (a chart indicator/drawing copied into a rule): the frontend

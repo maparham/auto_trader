@@ -16,7 +16,7 @@ from auto_trader.indicators.core import (
     atr_series, avwap_series, ema_series, rsi_series, sma_series,
 )
 from auto_trader.indicators.mtf import align_htf_to_base, slope_of
-from auto_trader.strategy.rule import Operand, series_name
+from auto_trader.strategy.rule import Operand, price_field_value, series_name
 
 
 def _tf_hours(resolution: str) -> float:
@@ -26,7 +26,7 @@ def _tf_hours(resolution: str) -> float:
 def _compute_raw(op: Operand, candles: Sequence[Candle]) -> list[float | None]:
     """Mirror frontend computeRaw for native operands (kind != series)."""
     if op.kind == "price":
-        return [getattr(c, op.field) for c in candles]
+        return [price_field_value(c, op.field) for c in candles]
     if op.kind != "indicator":
         return [None] * len(candles)
     closes = [c.close for c in candles]

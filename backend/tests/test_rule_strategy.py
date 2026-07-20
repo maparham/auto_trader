@@ -515,3 +515,29 @@ def test_short_disabled_skips_short_even_with_entry_rules():
     result = BacktestEngine(strat).run(candles)
     assert not any(f.leg == "short" for f in result.fills)  # short never even opened
     assert any(f.leg == "long" for f in result.fills)  # long still fired
+
+
+def test_price_field_value_candle_anatomy():
+    from auto_trader.strategy.rule import price_field_value
+    c = Candle(time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+               open=10, high=14, low=8, close=12, volume=1)
+    assert price_field_value(c, "close") == 12
+    assert price_field_value(c, "body") == 2
+    assert price_field_value(c, "range") == 6
+    assert price_field_value(c, "wickTop") == 2
+    assert price_field_value(c, "wickBottom") == 2
+
+
+def test_body_field_entry_and_exit():
+    # Rule: body gt const 1.5 fires on a candle with open=10, close=12
+    # (body=2), but not on open=10, close=11 (body=1).
+    candles = [
+        Candle(datetime(2024, 1, 1, tzinfo=timezone.utc), open=10, high=12, low=10, close=12, volume=1),
+        Candle(datetime(2024, 1, 1, 1, tzinfo=timezone.utc), open=10, high=12, low=10, close=11, volume=1),
+    ]
+    entry = RuleGroup("AND", [_rule(_price("body"), "gt", _const(1.5))])
+    strat = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), {}, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    entries = [f for f in result.fills if f.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].time == candles[1].time  # true at i=0 (body=2), fills at i=1's open
