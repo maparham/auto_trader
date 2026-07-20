@@ -60,6 +60,10 @@ import {
   type SlippageModel,
   cloneRule,
   slopeLen,
+  lookbackSpec,
+  scaleSpec,
+  type LookbackSpec,
+  type ScaleSpec,
   type RiskConfig,
   type StopKind,
   type TargetKind,
@@ -224,7 +228,11 @@ const HISTORY_DEPTHS: { value: HistoryDepth; label: string }[] = [
 
 const INDICATORS: IndicatorKind[] = ["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"];
 const NO_LENGTH: IndicatorKind[] = ["AVWAP", "VOL"];
-const PRICE_FIELDS: PriceField[] = ["close", "open", "high", "low"];
+const PRICE_FIELDS: PriceField[] = ["close", "open", "high", "low", "body", "range", "wickTop", "wickBottom"];
+const PRICE_FIELD_LABELS: Record<PriceField, string> = {
+  close: "close", open: "open", high: "high", low: "low",
+  body: "body", range: "range", wickTop: "upper wick", wickBottom: "lower wick",
+};
 const STOP_KINDS: { value: StopKind; label: string }[] = [
   { value: "none", label: "None" },
   { value: "pct", label: "% from entry" },
@@ -4517,6 +4525,18 @@ function OperandPicker({
     if (value.kind !== "indicator" && value.kind !== "price" && value.kind !== "series") return;
     onChange({ ...value, slope: spec });
   }
+  const lookedBack = lookbackSpec(value) !== null;
+  function setLookback(spec: LookbackSpec | undefined) {
+    if (value.kind !== "indicator" && value.kind !== "price" && value.kind !== "series") return;
+    onChange({ ...value, lookback: spec });
+  }
+  const scaled = scaleSpec(value) !== null;
+  function setScale(spec: ScaleSpec | undefined) {
+    if (value.kind === "const") return;
+    // Strip no-op values so a cleared control removes the spec entirely.
+    const clean = spec && ((spec.mult != null && spec.mult !== 1) || (spec.off != null && spec.off !== 0)) ? spec : undefined;
+    onChange({ ...value, scale: clean });
+  }
   // Timeframes a rule operand can run on: the base (blank ⇒ follow the run's
   // base timeframe) plus every non-live timeframe strictly higher than base.
   // Lower-than-base is excluded — it can't align onto the coarser base bars
@@ -4543,16 +4563,22 @@ function OperandPicker({
   // turn the rule into a different condition. const/entry can't be sloped.
   const prevSlope =
     value.kind === "indicator" || value.kind === "price" || value.kind === "series" ? value.slope : undefined;
+  const prevLookback =
+    value.kind === "indicator" || value.kind === "price" || value.kind === "series" ? value.lookback : undefined;
+  const prevScale = value.kind !== "const" ? value.scale : undefined;
   function setType(token: string) {
     let next: Operand;
-    if (token === "price") next = { kind: "price", field: "close", slope: prevSlope };
+    if (token === "price")
+      next = { kind: "price", field: "close", slope: prevSlope, lookback: prevLookback, scale: prevScale };
     else if (token === "const") next = { kind: "const", value: 0 };
-    else if (token === "entry") next = { kind: "entry" };
+    else if (token === "entry") next = { kind: "entry", scale: prevScale };
     else {
       const indicator = token as IndicatorKind;
-      if (indicator === "AVWAP") next = { kind: "indicator", indicator, anchor: defaultAvwapAnchor, slope: prevSlope };
-      else if (NO_LENGTH.includes(indicator)) next = { kind: "indicator", indicator, slope: prevSlope };
-      else next = { kind: "indicator", indicator, length: prevLength ?? 9, slope: prevSlope };
+      if (indicator === "AVWAP")
+        next = { kind: "indicator", indicator, anchor: defaultAvwapAnchor, slope: prevSlope, lookback: prevLookback, scale: prevScale };
+      else if (NO_LENGTH.includes(indicator))
+        next = { kind: "indicator", indicator, slope: prevSlope, lookback: prevLookback, scale: prevScale };
+      else next = { kind: "indicator", indicator, length: prevLength ?? 9, slope: prevSlope, lookback: prevLookback, scale: prevScale };
     }
     dropOrphanAxes(next);
     onChange(next);
@@ -4675,7 +4701,7 @@ function OperandPicker({
         <select value={value.field} onChange={(e) => onChange({ ...value, field: e.target.value as PriceField })}>
           {PRICE_FIELDS.map((f) => (
             <option key={f} value={f}>
-              {f}
+              {PRICE_FIELD_LABELS[f]}
             </option>
           ))}
         </select>
@@ -4755,6 +4781,85 @@ function OperandPicker({
                 onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setSlope({ len: n }))}
               />
             </Tooltip>
+          )}
+        </>
+      )}
+      {canSlope && (
+        <>
+          <Tooltip content="Use a previous-candles value: this operand N bars ago, or its high, low, or average over the last N bars. The current bar is excluded.">
+            <button
+              type="button"
+              className={`bt-operand-mod${lookedBack ? " on" : ""}`}
+              onClick={() => setLookback(lookedBack ? undefined : { mode: "ago", len: 1 })}
+              aria-label="Use previous candles"
+              aria-pressed={lookedBack}
+            >
+              ⟲
+            </button>
+          </Tooltip>
+          {lookedBack && (
+            <>
+              <select
+                className="bt-operand-tf"
+                value={lookbackSpec(value)!.mode}
+                onChange={(e) => setLookback({ ...lookbackSpec(value)!, mode: e.target.value as LookbackSpec["mode"] })}
+              >
+                <option value="ago">bars ago</option>
+                <option value="high">high of last</option>
+                <option value="low">low of last</option>
+                <option value="avg">avg of last</option>
+              </select>
+              <Tooltip content="Previous candles (bars)">
+                <input
+                  type="number" min={1} className="bt-operand-length"
+                  value={lookbackSpec(value)!.len}
+                  onKeyDown={blockNegKeys}
+                  onChange={(e) => setLookback({ ...lookbackSpec(value)!, len: Number(cleanNumInput(e.currentTarget)) })}
+                  onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setLookback({ ...lookbackSpec(value)!, len: n }))}
+                />
+              </Tooltip>
+            </>
+          )}
+        </>
+      )}
+      {value.kind !== "const" && (
+        <>
+          <Tooltip content="Adjust this value before comparing: multiply by a factor and/or add an offset in percent or points. Example: body > 2 x ATR, or low > EMA +1%.">
+            <button
+              type="button"
+              className={`bt-operand-mod${scaled ? " on" : ""}`}
+              onClick={() => setScale(scaled ? undefined : { mult: 2 })}
+              aria-label="Scale or offset"
+              aria-pressed={scaled}
+            >
+              ×
+            </button>
+          </Tooltip>
+          {scaled && (
+            <>
+              <Tooltip content="Multiplier">
+                <input
+                  type="number" step="any" className="bt-operand-length"
+                  value={scaleSpec(value)?.mult ?? 1}
+                  onChange={(e) => setScale({ ...scaleSpec(value), mult: Number(cleanNumInput(e.currentTarget)) })}
+                />
+              </Tooltip>
+              <Tooltip content="Offset, in the selected unit">
+                <input
+                  type="number" step="any" className="bt-operand-length"
+                  value={scaleSpec(value)?.off ?? 0}
+                  onChange={(e) => setScale({ ...scaleSpec(value), offUnit: scaleSpec(value)?.offUnit ?? "pct", off: Number(cleanNumInput(e.currentTarget)) })}
+                />
+              </Tooltip>
+              <select
+                className="bt-operand-tf"
+                value={scaleSpec(value)?.offUnit ?? "pct"}
+                onChange={(e) => setScale({ ...scaleSpec(value), offUnit: e.target.value as "pct" | "abs" })}
+              >
+                <option value="pct">%</option>
+                <option value="abs">pts</option>
+              </select>
+            </>
           )}
         </>
       )}
