@@ -4,7 +4,7 @@
 // sits to its right. Self-contained: it owns its own run state and only needs
 // the focused controller + the active period/broker.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   runAndRender,
   clearBacktest,
@@ -65,6 +65,7 @@ import {
   wfoCancelRequest,
   wfoCancelServer,
   wfoRenderRequest,
+  wfoDurationSignal,
 } from "./lib/signals";
 import { robustWindowBounds, runSweep, sweepCatchState } from "./lib/sweep";
 import { runWalkForward, stopResumedWfo, wfoCatchState } from "./lib/wfo";
@@ -73,7 +74,7 @@ import { sweepContext } from "./lib/sweepMemory";
 import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
 import { inspectModeSignal } from "./lib/backtestInspect";
-import type { BacktestRequest, SweepRow, WfoResult } from "./api";
+import type { BacktestRequest, SweepRow } from "./api";
 
 interface Props {
   controller: ChartController | null;
@@ -90,10 +91,6 @@ interface Props {
 
 export default function BacktestButton({ controller, period, epic, brokerId, priceSide }: Props) {
   const chart = controller?.chart ?? null;
-  // The last completed walk-forward result, kept so the modal's scheme picker can
-  // re-render a different scheme's stitched OOS equity + bands on the chart
-  // (via wfoRenderRequest) without re-running the job.
-  const lastWfoResult = useRef<WfoResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -134,7 +131,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     wfoRenderRequest.subscribe(() => {
       const req = wfoRenderRequest.value;
       if (!req) return;
-      const scheme = lastWfoResult.current?.schemes[req.schemeIndex];
+      // Render off the LIVE published result — a direct run, a resume, and a
+      // reopen all set wfoStateSignal.value.result. A ref that only the direct-run
+      // path writes would leave the scheme picker stale (or empty) on resumed runs.
+      const scheme = wfoStateSignal.value?.result?.schemes[req.schemeIndex];
       if (chart && scheme) renderWfoArtifacts(chart, scheme);
     }),
   );
@@ -401,6 +401,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         stopResumedWfo();
         const ctl = new AbortController();
         const unsub = wfoCancelRequest.subscribe(() => ctl.abort());
+        const wfoRunStart = performance.now();
+        // Cleared up front, written only on a clean completion below — a cancelled
+        // or failed walk-forward shows no duration (mirrors the sweep branch).
+        wfoDurationSignal.set(null);
         wfoStateSignal.set({ phase: "grid", done: 0, total: 0, running: true, foldRows: [], result: null, startedAt: Date.now() });
         try {
           const result = await runWalkForward(baseReq, wf, {
@@ -415,13 +419,15 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
               wfoStateSignal.set(st);
             },
           });
-          // Store for the modal's scheme picker (wfoRenderRequest re-renders a
-          // different scheme without re-running) and draw the primary scheme's
-          // stitched OOS equity + fold bands on the chart. Guarded: a run where
-          // every fold failed can yield zero schemes.
-          lastWfoResult.current = result;
-          const scheme0 = result.schemes[0];
-          if (chart && scheme0) renderWfoArtifacts(chart, scheme0);
+          // Draw the primary scheme's stitched OOS equity + fold bands on the
+          // chart. Guarded: `result` is null on a backend-reported cancel, and a
+          // run where every fold failed can yield zero schemes. The modal's scheme
+          // picker re-renders other schemes off the published wfoStateSignal.result.
+          if (result) {
+            wfoDurationSignal.set(performance.now() - wfoRunStart);
+            const scheme0 = result.schemes[0];
+            if (chart && scheme0) renderWfoArtifacts(chart, scheme0);
+          }
         } catch (e) {
           // When the modal already tore the state down (detach-close abort),
           // stay torn down instead of resurrecting a cancelled ghost — mirrors

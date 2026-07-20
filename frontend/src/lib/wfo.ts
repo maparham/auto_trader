@@ -63,12 +63,18 @@ export function wfoAxesFromSweepAxes(axes: SweepAxis[]): {
       continue;
     }
 
-    // Handle list axes: check if any option patch contains period: or timeWindow: keys
+    // Handle list axes. Drop (into `dropped`, by label) BEFORE touching
+    // options[0]:
+    //  - session (timeWindow) axes — backend 422s them in WFO combos, and a
+    //    timeWindow axis seeded from an empty mask has options: [] (would throw
+    //    on options[0] below) and also round-trips through persisted axes.
+    //  - any empty-options list axis (nothing to convert).
+    //  - any list axis whose option patches carry a period:/timeWindow: key.
     if (axis.kind === "list") {
       const hasForbiddenKey = axis.options.some((opt) =>
         Object.keys(opt.patch).some((k) => k.startsWith("period:") || k.startsWith("timeWindow:"))
       );
-      if (hasForbiddenKey) {
+      if (axis.target === "timeWindow" || axis.options.length === 0 || hasForbiddenKey) {
         dropped.push(axis.label);
         continue;
       }

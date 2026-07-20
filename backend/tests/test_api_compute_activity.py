@@ -32,3 +32,17 @@ def test_activity_counts_running_jobs(monkeypatch):
     client = TestClient(app)
     body = client.get("/api/compute/activity").json()
     assert body["activeJobs"] == 1
+
+
+def test_activity_counts_running_wfo_jobs(monkeypatch):
+    """WFO jobs must also keep the EC2 idle watchdog awake, not just sweeps."""
+    from auto_trader.api import sweep_jobs, wfo_jobs
+
+    class _Job:
+        running = True
+
+    monkeypatch.setattr(sweep_jobs.JOBS, "_jobs", {"s": _Job()}, raising=False)
+    monkeypatch.setattr(wfo_jobs.WFO_JOBS, "_jobs", {"w": _Job()}, raising=False)
+    client = TestClient(app)
+    body = client.get("/api/compute/activity").json()
+    assert body["activeJobs"] == 2

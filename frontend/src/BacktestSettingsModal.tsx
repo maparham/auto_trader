@@ -19,6 +19,7 @@ import {
   backtestRunningSignal,
   backtestDurationSignal,
   sweepDurationSignal,
+  wfoDurationSignal,
   backtestMessagesSignal,
   sweepAxesSignal,
   holdoutEvalSignal,
@@ -36,7 +37,7 @@ import {
 import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
 import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
-import { WfoResults } from "./WfoResults";
+import { PHASE_LABEL, WfoResults } from "./WfoResults";
 import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
 import type { EmphasisTarget } from "./lib/chartOperand";
 import { resolveWindow } from "./lib/backtestWindow";
@@ -842,8 +843,15 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // `wfoUsableAxes` are the surviving (non-period, non-timeWindow) sweep axes
   // the WFO grid actually varies — WfoResults labels params and drift by them.
   const { wfoComboTotal, wfoDroppedAxes, wfoUsableAxes } = useMemo(() => {
-    const { usable, dropped } = wfoAxesFromSweepAxes(sweepAxes);
+    // wfoAxesFromSweepAxes lives INSIDE the try: a malformed persisted axis (e.g.
+    // an options-[] list axis) must degrade to 0 combos, never throw and crash
+    // the whole modal render. Keep the dropped/usable it produced so the "dropped
+    // from WFO" hint still shows when buildWalkForwardPayload throws on a config
+    // that has only period/timeWindow axes (0 combos, but dropped is meaningful).
+    let usable: SweepAxis[] = [];
+    let dropped: string[] = [];
     try {
+      ({ usable, dropped } = wfoAxesFromSweepAxes(sweepAxes));
       const { comboTotal } = buildWalkForwardPayload(sweepAxes, wfoCfg);
       return { wfoComboTotal: comboTotal, wfoDroppedAxes: dropped, wfoUsableAxes: usable };
     } catch {
@@ -1132,6 +1140,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   useEffect(() => backtestDurationSignal.subscribe(setBtDurationMs), []);
   const [sweepDurationMs, setSweepDurationMs] = useState(sweepDurationSignal.value);
   useEffect(() => sweepDurationSignal.subscribe(setSweepDurationMs), []);
+  const [wfoDurationMs, setWfoDurationMs] = useState(wfoDurationSignal.value);
+  useEffect(() => wfoDurationSignal.subscribe(setWfoDurationMs), []);
   // Settings (top) / results (bottom) vertical split. resultsHeight 0 means
   // "unset" — the CSS default flex-basis governs until the user drags. Persisted
   // device-local so the layout survives re-opens and reloads.
@@ -1574,6 +1584,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         const { payload } = buildWalkForwardPayload(mirrorRiskAxes(sweepAxes), wfoCfg);
         setWfoError(null);
         setWfoArchiveOpen(null);
+        setWfoSchemeIndex(0); // a fresh run starts on the primary scheme, not a stale pick
         wfoRequestSignal.set(payload);
         sweepCombosOverrideSignal.set(null);
         run();
@@ -1771,7 +1782,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         <span className="bt-mode-badge">{sweepCombos}</span>
       ) : null}
       wfoBadge={wfoState?.running ? (
-        <span className="bt-mode-badge">{wfoState.phase} {wfoState.done}/{wfoState.total}</span>
+        <span className="bt-mode-badge">{PHASE_LABEL[wfoState.phase] ?? wfoState.phase} {wfoState.done}/{wfoState.total}</span>
       ) : wfoComboTotal > 0 ? (
         <span className="bt-mode-badge">{wfoComboTotal}x{wfoCfg.trainSpans.length}</span>
       ) : null}
@@ -1810,6 +1821,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // holds the Run button — the docked column's when open, else the panel's.
   const [durationMs, durationBusy] = btMode === "backtest"
     ? [btDurationMs, runInFlight]
+    : btMode === "walkforward"
+    ? [wfoDurationMs, !!wfoState?.running]
     : [sweepDurationMs, !!sweepState?.running];
   const durationInfo = durationMs != null && !durationBusy ? (
     <span className="sweep-counter bt-run-duration">Took {fmtRunDuration(durationMs)}</span>

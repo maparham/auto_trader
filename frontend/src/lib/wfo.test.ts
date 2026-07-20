@@ -24,6 +24,25 @@ describe("wfoAxesFromSweepAxes", () => {
     expect(dropped).toEqual(["Period", "Session"]);
   });
 
+  it("drops an options-[] list axis instead of throwing on options[0]", () => {
+    // A timeWindow axis seeded from a mask with no window has options: [] and
+    // round-trips through persistence — it must be dropped, never reach options[0].
+    const emptyTimeWin: SweepAxis = {
+      kind: "list", target: "timeWindow", label: "Window", options: [],
+    };
+    // A plain list axis (non-timeWindow target) with empty options must also drop.
+    const emptyList: SweepAxis = {
+      kind: "list", target: "op:long.entry.0", label: "Op", options: [],
+    };
+    let result!: ReturnType<typeof wfoAxesFromSweepAxes>;
+    expect(() => {
+      result = wfoAxesFromSweepAxes([range, emptyTimeWin, emptyList]);
+    }).not.toThrow();
+    expect(result.wfoAxes).toEqual([{ kind: "range", targets: ["param:fast"], values: [5, 10, 15] }]);
+    expect(result.usable.map((a) => a.target)).toEqual(["param:fast"]);
+    expect(result.dropped).toEqual(["Window", "Op"]);
+  });
+
   it("includes mirrorTarget in range targets", () => {
     const mirrored: SweepAxis = { ...range, mirrorTarget: "risk:short.stop.value" } as SweepAxis;
     const { wfoAxes } = wfoAxesFromSweepAxes([mirrored]);

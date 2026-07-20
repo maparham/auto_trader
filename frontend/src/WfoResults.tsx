@@ -17,7 +17,7 @@ import { SweepResults, SweepSortHeader, type SortDir } from "./SweepResults";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
 
-const PHASE_LABEL: Record<string, string> = {
+export const PHASE_LABEL: Record<string, string> = {
   grid: "evaluating grid",
   test: "testing winners",
   aggregate: "aggregating",

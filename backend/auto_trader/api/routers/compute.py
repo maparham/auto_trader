@@ -139,9 +139,10 @@ async def compute_activity() -> dict:
     the last real request. This endpoint itself never counts as activity."""
     from .. import activity
     from ..sweep_jobs import JOBS
+    from ..wfo_jobs import WFO_JOBS
 
     return {
-        "activeJobs": JOBS.running_count(),
+        "activeJobs": JOBS.running_count() + WFO_JOBS.running_count(),
         "idleSeconds": round(activity.idle_seconds(), 1),
     }
 

@@ -413,6 +413,7 @@ export const backtestRunningSignal = new Signal<boolean>(false);
 // page load) have no client start time and simply show nothing.
 export const backtestDurationSignal = new Signal<number | null>(null);
 export const sweepDurationSignal = new Signal<number | null>(null);
+export const wfoDurationSignal = new Signal<number | null>(null);
 
 // Bumped when the results pane's clear (✕) is clicked. Like the run request,
 // BacktestButton owns the chart-side teardown (it has the chart/controller/epic),
