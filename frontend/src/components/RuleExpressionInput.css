@@ -1,0 +1,54 @@
+/* Styling for the single-line CodeMirror rule editor. Uses the app's CSS vars so
+   it matches the surrounding toolbar/inputs in both themes. */
+
+.rule-expr-input {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.rule-expr-input.is-readonly {
+  opacity: 0.7;
+}
+
+.rule-expr-input .cm-editor {
+  background: transparent;
+}
+
+.rule-expr-input .cm-editor.cm-focused {
+  outline: none;
+}
+
+.rule-expr-input .cm-focused {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  border-radius: 4px;
+}
+
+.rule-expr-input .cm-content {
+  padding: 5px 8px;
+  color: var(--text);
+  caret-color: var(--text);
+}
+
+.rule-expr-input .cm-line {
+  padding: 0;
+}
+
+/* Numeric-literal (sweepable knob) underline. */
+.cm-sweep-literal {
+  text-decoration: underline dotted var(--text-dim);
+  text-underline-offset: 3px;
+}
+
+/* Token highlight classes. Colors lean on existing app vars where available and
+   fall back to sensible defaults so highlighting works before theming is tuned. */
+.cm-tok-indicator { color: var(--accent); }
+.cm-tok-wrapper { color: var(--accent); font-style: italic; }
+.cm-tok-cross { color: var(--warn, #c08a2a); }
+.cm-tok-field { color: var(--pos, #2e8b57); }
+.cm-tok-number { color: var(--text); font-weight: 600; }
+.cm-tok-operator { color: var(--text-dim); }
+.cm-tok-timeframe { color: var(--neg, #b34); }
+.cm-tok-variable { color: var(--text); }
