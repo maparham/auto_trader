@@ -1,0 +1,98 @@
+from datetime import datetime, timedelta, timezone
+
+from auto_trader.core.models import Candle
+from auto_trader.strategy.expr.evaluate import compile_row, series_of
+from auto_trader.strategy.expr.parser import parse
+
+
+def _candles(closes, resolution_s=3600):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    out = []
+    for k, c in enumerate(closes):
+        out.append(Candle(time=base + timedelta(seconds=resolution_s * k),
+                          open=c, high=c, low=c, close=c, volume=100.0))
+    return out
+
+
+def _row_bools(src, candles, resolution="HOUR", htf=None, is_exit=False, entry=None):
+    row = compile_row(parse(src), candles, resolution, htf or {})
+    return [row.evaluate(i, entry) for i in range(len(candles))]
+
+
+def test_ema_comparison():
+    c = _candles([1, 2, 3, 2, 1])
+    # EMA(2): 1, 1.6667, 2.5556, 2.3704, 1.7901
+    assert _row_bools("EMA(2) > 2", c) == [False, False, True, True, False]
+
+
+def test_arith_and_atr():
+    c = _candles([1, 2, 3, 2, 1])
+    # candle.close + 0 > EMA(2) at each bar
+    assert _row_bools("candle.close > EMA(2)", c) == [False, True, True, False, False]
+
+
+def test_highest_includes_current_bar():
+    c = _candles([1, 2, 3, 2, 1])
+    # highest(candle.close, 2): None, 2, 3, 3, 2  -> > 2.5 -> F,F,T,T,F
+    assert _row_bools("highest(candle.close, 2) > 2.5", c) == [False, False, True, True, False]
+
+
+def test_slope_positive():
+    c = _candles([1, 2, 3, 2, 1])
+    # slope(candle.close, 1) [%/hr]: None, 100, 50, -33.3, -50 -> > 0 -> F,T,T,F,F
+    assert _row_bools("slope(candle.close, 1) > 0", c) == [False, True, True, False, False]
+
+
+def test_offset_reads_prior_bar():
+    c = _candles([1, 2, 3, 2, 1])
+    # candle[-1].close: None, 1, 2, 3, 2 -> > 1.5 -> F,F,T,T,T
+    assert _row_bools("candle[-1].close > 1.5", c) == [False, False, True, True, True]
+
+
+def test_nan_poisons_to_false():
+    c = _candles([1, 2, 3, 2, 1])
+    # division by zero -> nan -> false everywhere
+    assert _row_bools("candle.close / 0 > 0", c) == [False] * 5
+
+
+def test_cross_above():
+    c = _candles([1, 2, 3, 2, 1])
+    # crossAbove(candle.close, 2): prev<=2 and now>2 -> only bar 2
+    assert _row_bools("crossAbove(candle.close, 2)", c) == [False, False, True, False, False]
+
+
+def test_entry_in_exit_rule():
+    c = _candles([1, 2, 3, 2, 1])
+    # candle.close > entry with entry price 2.5 -> only bar 2 (close 3)
+    assert _row_bools("candle.close > entry", c, is_exit=True, entry=2.5) == [
+        False, False, True, False, False]
+
+
+def test_tf_forward_fill():
+    # base hourly 4 bars; HOUR_2 has closes [10,20] at t=0 and t=2h
+    base = _candles([1, 1, 1, 1], resolution_s=3600)
+    htf_base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    htf = {"HOUR_2": [
+        Candle(time=htf_base, open=10, high=10, low=10, close=10, volume=1),
+        Candle(time=htf_base + timedelta(seconds=7200), open=20, high=20, low=20, close=20, volume=1),
+    ]}
+    arr = series_of(parse("candle.close@HOUR_2 > 5").left, base, "HOUR", htf)
+    assert arr == [None, None, 10.0, 10.0]
+
+
+def test_tf_field_wrapped_over_tf():
+    # Field wrapped over Tf: candle@HOUR_2.high pushes the field onto the inner
+    # Candle leaf, then forward-fills the HTF highs the same way as the close path.
+    base = _candles([1, 1, 1, 1], resolution_s=3600)
+    htf_base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    htf = {"HOUR_2": [
+        Candle(time=htf_base, open=10, high=10, low=10, close=10, volume=1),
+        Candle(time=htf_base + timedelta(seconds=7200), open=20, high=20, low=20, close=20, volume=1),
+    ]}
+    arr = series_of(parse("candle@HOUR_2.high > 0").left, base, "HOUR", htf)
+    assert arr == [None, None, 10.0, 10.0]
+
+
+def test_series_of_arith():
+    c = _candles([1, 2, 3, 2, 1])
+    assert series_of(parse("candle.close - EMA(1) > 0").left, c, "HOUR", {}) == [0.0, 0.0, 0.0, 0.0, 0.0]
