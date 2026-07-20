@@ -5,7 +5,7 @@
 // (single axis, base label) and again at run time (collision-aware) so the
 // results panel names each axis by what it actually sweeps, not its path.
 
-import { lookbackSpec, type Operand, type Operator, type RiskConfig, type RuleGroup } from "./backtestConfig";
+import { lookbackSpec, scaleSpec, type Operand, type Operator, type RiskConfig, type RuleGroup } from "./backtestConfig";
 import type { SweepAxis } from "./sweep";
 
 // The slice of a config this resolver reads. BacktestConfig (rules mode) and
@@ -36,9 +36,8 @@ const OP_SYMBOL: Record<Operator, string> = {
  * indicator plus its length ("EMA 21", "VOL"), a price field, a const value,
  * or the held position's entry price. */
 export function operandLabel(op: Operand): string {
-  // const/entry never carry a lookback (can't look back) — return early untouched.
+  // const never carries a lookback or scale (can't look back, can't scale itself) — return early untouched.
   if (op.kind === "const") return String(op.value);
-  if (op.kind === "entry") return "entry price";
   let base: string;
   switch (op.kind) {
     case "series":
@@ -50,13 +49,27 @@ export function operandLabel(op: Operand): string {
     case "indicator":
       base = op.length != null ? `${op.indicator} ${op.length}` : op.indicator;
       break;
+    case "entry":
+      base = "entry price";
+      break;
     default:
       return "?";
   }
   // A looked-back operand wraps its base: "ago" reads as a bar offset ("close
   // [-3]"), the aggregates read as "<mode> <len> of <base>" ("high 20 of EMA 9").
+  // Note: entry can't have lookback (can't look back), but can have scale.
   const lb = lookbackSpec(op);
-  if (lb) return lb.mode === "ago" ? `${base} [-${lb.len}]` : `${lb.mode} ${lb.len} of ${base}`;
+  if (lb) base = lb.mode === "ago" ? `${base} [-${lb.len}]` : `${lb.mode} ${lb.len} of ${base}`;
+  // A scaled operand wraps its base: multiplier prefix ("2x EMA 9"), then offset
+  // suffix ("+1%", "-2" points).
+  const sc = scaleSpec(op);
+  if (sc) {
+    if (sc.mult != null && sc.mult !== 1) base = `${sc.mult}x ${base}`;
+    if (sc.off != null && sc.off !== 0) {
+      const sign = sc.off > 0 ? "+" : "-";
+      base = `${base} ${sign}${Math.abs(sc.off)}${sc.offUnit === "pct" ? "%" : ""}`;
+    }
+  }
   return base;
 }
 

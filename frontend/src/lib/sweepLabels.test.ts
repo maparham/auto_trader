@@ -34,6 +34,12 @@ describe("operandLabel", () => {
     expect(operandLabel({ kind: "price", field: "close", lookback: { mode: "ago", len: 3 } })).toBe("close [-3]");
     expect(operandLabel({ kind: "indicator", indicator: "EMA", length: 9, lookback: { mode: "high", len: 20 } })).toBe("high 20 of EMA 9");
   });
+  it("renders scaled operands", () => {
+    expect(operandLabel({ kind: "indicator", indicator: "EMA", length: 9, scale: { mult: 2 } })).toBe("2x EMA 9");
+    expect(operandLabel({ kind: "price", field: "close", scale: { off: 1, offUnit: "pct" } })).toBe("close +1%");
+    expect(operandLabel({ kind: "entry", scale: { off: -2, offUnit: "abs" } })).toBe("entry price -2");
+    expect(operandLabel({ kind: "indicator", indicator: "EMA", length: 9, scale: { mult: 0.5, off: 1, offUnit: "pct" } })).toBe("0.5x EMA 9 +1%");
+  });
 });
 
 describe("sweepAxisLabel (rule axes)", () => {

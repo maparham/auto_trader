@@ -21,6 +21,7 @@ import {
   type Rule,
   type SeriesRecipe,
   type LookbackSpec,
+  type ScaleSpec,
 } from "./backtestConfig";
 
 const EMPTY_GROUP = { combine: "AND" as const, rules: [] };
@@ -613,5 +614,17 @@ describe("lookback series keys", () => {
     const dup = cloneRule(rule);
     (dup.left as { lookback: LookbackSpec }).lookback.len = 99;
     expect((rule.left as { lookback: LookbackSpec }).lookback.len).toBe(3);
+  });
+});
+
+describe("scale modifier", () => {
+  it("does not change the series key", () => {
+    expect(seriesName({ kind: "indicator", indicator: "EMA", length: 9, scale: { mult: 2 } })).toBe("EMA_9");
+  });
+  it("cloneRule deep-copies scale", () => {
+    const rule = { left: { kind: "indicator", indicator: "EMA", length: 9, scale: { mult: 2 } } as Operand, op: "gt" as const, right: { kind: "const", value: 0 } as Operand };
+    const dup = cloneRule(rule);
+    (dup.left as { scale: any }).scale.mult = 5;
+    expect((rule.left as { scale: any }).scale.mult).toBe(2);
   });
 });

@@ -30,6 +30,15 @@ export interface SlopeSpec { len: number }
 // keys a series (even price). const/entry can't look back.
 export interface LookbackSpec { mode: "ago" | "high" | "low" | "avg"; len: number }
 
+// `scale`, when set, adjusts the operand's compared value AT EVAL TIME (backend
+// _operand_values): v′ = v·mult, then + off% of that (offUnit "pct") or + off
+// points (offUnit "abs"). "body > 2× ATR" is mult=2 on the ATR side; "low 1%
+// above EMA" is off=1/pct on the EMA side. NOT part of the series key — the
+// underlying series is unchanged; only the comparison shifts. Allowed on
+// indicator/price/series AND entry (take-profit-style rules: "close crosses
+// above entry +1%"); a const scales itself, so it can't carry one.
+export interface ScaleSpec { mult?: number; off?: number; offUnit?: "pct" | "abs" }
+
 // --- chart operands (kind "series") -----------------------------------------
 // A chart indicator curve or drawing copied into a rule. The operand carries a
 // self-contained `recipe` (the exact params the chart instance had) plus a
@@ -112,15 +121,15 @@ export type Operand =
   // frontend fetches that timeframe, computes the indicator on it, and forward-
   // fills the values onto the base bars (no lookahead). It's part of the series
   // key (seriesName) so `EMA_9` and `EMA_9@HOUR` are distinct series.
-  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number; timeframe?: string; slope?: SlopeSpec; lookback?: LookbackSpec }
-  | { kind: "price"; field: PriceField; slope?: SlopeSpec; lookback?: LookbackSpec }
+  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number; timeframe?: string; slope?: SlopeSpec; lookback?: LookbackSpec; scale?: ScaleSpec }
+  | { kind: "price"; field: PriceField; slope?: SlopeSpec; lookback?: LookbackSpec; scale?: ScaleSpec }
   | { kind: "const"; value: number }
   // The open position's entry (fill) price. Only meaningful in an exit rule while
   // a position is held; parameterless. Has no series (read off the position).
-  | { kind: "entry" }
+  | { kind: "entry"; scale?: ScaleSpec }
   // A chart indicator curve or drawing copied into the rule (see recipe types
   // above). Always keys a series (the frontend computes it and posts it).
-  | { kind: "series"; seriesKey: string; label: string; recipe: SeriesRecipe; timeframe?: string; slope?: SlopeSpec; lookback?: LookbackSpec };
+  | { kind: "series"; seriesKey: string; label: string; recipe: SeriesRecipe; timeframe?: string; slope?: SlopeSpec; lookback?: LookbackSpec; scale?: ScaleSpec };
 
 /** The `series` variant of {@link Operand} (chart indicator/drawing copied into a
  * rule). Always carries `seriesKey`/`label`/`recipe`; used where an operand is known
@@ -139,6 +148,11 @@ export function lookbackSpec(op: Operand): LookbackSpec | null {
   return (op.kind === "indicator" || op.kind === "price" || op.kind === "series") && op.lookback
     ? op.lookback
     : null;
+}
+
+/** The scale spec for an operand, or null if it has none. */
+export function scaleSpec(op: Operand): ScaleSpec | null {
+  return op.kind !== "const" && op.scale ? op.scale : null;
 }
 
 // The token spelled into the series key per lookback mode (`#<token><len>`).
@@ -249,6 +263,9 @@ function cloneOperand(op: Operand): Operand {
   }
   if ((copy.kind === "indicator" || copy.kind === "price" || copy.kind === "series") && copy.lookback) {
     copy.lookback = { ...copy.lookback };
+  }
+  if (copy.kind !== "const" && copy.scale) {
+    copy.scale = { ...copy.scale };
   }
   // A series operand nests a recipe (with its own arrays) — deep-copy it too.
   if (copy.kind === "series") {
