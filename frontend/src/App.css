@@ -4930,3 +4930,24 @@ span.bt-leg-short { color: var(--neg); }
 .wfo-drift-label { min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wfo-drift-nums { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .wfo-drift-line { flex: 0 0 auto; }
+/* Archive ranking view: scope toggle, back-link, and the ranked runs table. */
+.wfo-arch { display: flex; flex-direction: column; gap: 8px; }
+.wfo-arch-head { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
+.wfo-arch-head .seg button { padding: 3px 10px; font-size: 12px; }
+.wfo-arch-table { width: 100%; }
+.wfo-arch-th { display: inline-flex; align-items: center; gap: 4px; }
+.wfo-arch-row { cursor: pointer; }
+.wfo-arch-row:hover { background: var(--hover); }
+.wfo-arch-score { font-weight: 600; }
+.wfo-arch-score.pos { color: var(--pos); }
+.wfo-arch-score.neg { color: var(--neg); }
+.wfo-arch-del {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; padding: 2px; cursor: pointer;
+  color: var(--text-faint);
+}
+.wfo-arch-del:hover { color: var(--neg); }
+.wfo-arch-del svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+/* Back-link to the ranking list, sits above a reopened archive's results. */
+.wfo-arch-back { padding: 0 2px; }
+.wfo-arch-back-btn { font-size: 12px; padding: 2px 8px; }

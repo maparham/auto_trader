@@ -89,7 +89,8 @@ import { loadHoldout, saveHoldoutPct, recordPeek, splitHoldout } from "./lib/hol
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { formatPeriodRange } from "./lib/backtestPeriods";
 import { fmtRunDuration } from "./lib/duration";
-import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, getCostProfile, putCostProfile, refetchCostProfile, getWfoFoldTable, type StrategyInfo, type ParamSpec, type SweepArchiveSummary, type CostProfile, type SweepRow } from "./api";
+import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, getCostProfile, putCostProfile, refetchCostProfile, getWfoFoldTable, getWfoArchiveTables, type StrategyInfo, type ParamSpec, type SweepArchiveSummary, type CostProfile, type SweepRow, type WfoResult } from "./api";
+import { WfoArchive } from "./WfoArchive";
 import {
   loadCodedCfg,
   saveCodedCfg,
@@ -859,6 +860,30 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     const { rows } = await getWfoFoldTable(jobId, key, sweepTargetSignal.value);
     return rows;
   });
+  // A reopened archive shown in the WFO results area (null = show the ranking
+  // list, when there is no live/last run). Carries the run id + its result so
+  // WfoResults renders off a reconstructed done-state.
+  const [wfoArchiveOpen, setWfoArchiveOpen] = useState<{ id: string; result: WfoResult } | null>(null);
+  const openWfoArchive = (a: { id: string; result: WfoResult }) => {
+    setWfoSchemeIndex(0);
+    setWfoArchiveOpen(a);
+  };
+  // Archive fold tables come as one dict keyed "s{i}/f{k}" — fetch once and cache
+  // it, so the folds drill-in resolves each key from memory (mirrors the live
+  // job's per-key fetch but off the stored dict).
+  const wfoArchiveTables = useRef<{ id: string; dict: Record<string, SweepRow[]> } | null>(null);
+  const loadWfoArchiveFoldTable = useStableCallback(async (key: string): Promise<SweepRow[]> => {
+    const id = wfoArchiveOpen?.id;
+    if (!id) return [];
+    if (wfoArchiveTables.current?.id !== id) {
+      wfoArchiveTables.current = { id, dict: await getWfoArchiveTables(id) };
+    }
+    return wfoArchiveTables.current.dict[key] ?? [];
+  });
+  // Reconstructed done-state for the reopened archive (WfoRunState shape).
+  const wfoArchiveState = wfoArchiveOpen
+    ? { phase: "done" as const, done: 0, total: 0, running: false, foldRows: [], result: wfoArchiveOpen.result }
+    : null;
   // Bumped whenever a sweep is archived server-side (live run or re-attach). Mirror
   // it into state so the past-sweeps fetch effect re-runs and a sweep that finishes
   // while the section is open shows up in the picker without a reopen.
@@ -1684,9 +1709,24 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           </div>
         )
       )}
-      {/* Walk-forward results: same keep-mounted display toggle as the sweep
-          panel above, so flipping modes never re-runs the results tree. */}
-      {wfoState ? (
+      {/* Walk-forward results. A reopened archive takes priority; otherwise the
+          live/last run's keep-mounted panel (same display toggle as the sweep
+          panel above, so flipping modes never re-runs the results tree); with no
+          run at all, the archive ranking list fills the area. */}
+      {wfoArchiveState ? (
+        <div className="wfo-panel" style={btMode === "walkforward" ? undefined : { display: "none" }}>
+          <WfoResults
+            state={wfoArchiveState}
+            archiveId={wfoArchiveOpen!.id}
+            onBackToArchive={() => setWfoArchiveOpen(null)}
+            onApplyCombo={applySweepComboStable}
+            onLoadFoldTable={loadWfoArchiveFoldTable}
+            axes={[]}
+            schemeIndex={wfoSchemeIndex}
+            onSchemeIndex={setWfoSchemeIndex}
+          />
+        </div>
+      ) : wfoState ? (
         <div className="wfo-panel" style={btMode === "walkforward" ? undefined : { display: "none" }}>
           {wfoState.cancelled ? (
             <div className="al-note">Cancelled after {wfoState.done} of {wfoState.total}</div>
@@ -1709,9 +1749,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         </div>
       ) : (
         btMode === "walkforward" && (
-          <div className="bt-results-empty">
-            No walk-forward results yet. Turn on the sweep toggle next to the fields you
-            want to vary, pick a schedule, then press Run walk-forward.
+          <div className="wfo-panel">
+            <WfoArchive epic={epic} onOpen={openWfoArchive} />
           </div>
         )
       )}

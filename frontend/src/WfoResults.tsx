@@ -89,8 +89,12 @@ export const WfoResults = memo(function WfoResults(props: {
   axes: SweepAxis[];
   schemeIndex: number;
   onSchemeIndex: (i: number) => void;
+  // Set when this view is a reopened archive (not a live/last run). Enables the
+  // "Archive" back-link in the header that returns to the ranking list.
+  archiveId?: string;
+  onBackToArchive?: () => void;
 }): JSX.Element {
-  const { state, onApplyCombo, onLoadFoldTable, axes, schemeIndex, onSchemeIndex } = props;
+  const { state, onApplyCombo, onLoadFoldTable, axes, schemeIndex, onSchemeIndex, archiveId, onBackToArchive } = props;
   const result = state.result;
   const schemes = result?.schemes ?? [];
   const scheme: WfoScheme | undefined = schemes[schemeIndex] ?? schemes[0];
@@ -176,6 +180,14 @@ export const WfoResults = memo(function WfoResults(props: {
 
   return (
     <div className="wfo-results">
+      {archiveId && onBackToArchive && (
+        <div className="wfo-arch-back">
+          <button type="button" className="ghost wfo-arch-back-btn" onClick={onBackToArchive}>
+            ‹ Archive
+          </button>
+        </div>
+      )}
+
       {state.running && (
         <div className="sweep-progress">
           <span>{PHASE_LABEL[state.phase] ?? state.phase}</span>
