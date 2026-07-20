@@ -17,8 +17,8 @@ import {
   type AvwapExtend, type RsiExtend, type LrExtend, type PrevHlExtend,
 } from "./customIndicators";
 import {
-  collectSeriesOperands, seriesName, slopeLen, riskAtrLengths, scalingAtrLengths,
-  type BacktestConfig, type Operand, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe, type PriceField,
+  collectSeriesOperands, seriesName, slopeLen, lookbackSpec, riskAtrLengths, scalingAtrLengths,
+  type BacktestConfig, type Operand, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe, type PriceField, type LookbackSpec,
 } from "./backtestConfig";
 import { atrSeries } from "./atr";
 import { computePivotBands, type PivotBandsExtend } from "./indicators/pivotBands";
@@ -131,9 +131,31 @@ function tfHours(resolution: string): number {
  * differenced before it's forward-filled onto the base bars, not after.
  * `barHours` is the hours-per-bar of THIS operand's timeframe. */
 function derive(op: Operand, candles: KLineData[], barHours: number): Array<number | undefined> {
-  const raw = computeRaw(op, candles, barHours);
+  let arr = computeRaw(op, candles, barHours);
   const n = slopeLen(op);
-  return n === null ? raw : slopeOf(raw, n, barHours);
+  if (n !== null) arr = slopeOf(arr, n, barHours);
+  const lb = lookbackSpec(op);
+  if (lb) arr = lookbackOf(arr, lb);
+  return arr;
+}
+
+/** Previous-candles read of `raw` per LookbackSpec — current bar excluded.
+ * undefined until a full window exists or when any window value is undefined. */
+export function lookbackOf(raw: Array<number | undefined>, lb: LookbackSpec): Array<number | undefined> {
+  const { mode, len } = lb;
+  if (mode === "ago") return raw.map((_, i) => (i >= len ? raw[i - len] : undefined));
+  return raw.map((_, i) => {
+    if (i < len) return undefined;
+    let hi = -Infinity, lo = Infinity, sum = 0;
+    for (let j = i - len; j < i; j++) {
+      const v = raw[j];
+      if (v === undefined) return undefined;
+      if (v > hi) hi = v;
+      if (v < lo) lo = v;
+      sum += v;
+    }
+    return mode === "high" ? hi : mode === "low" ? lo : sum / len;
+  });
 }
 
 /** Tangent rate of change of `raw` in percent per HOUR over `n` bars:

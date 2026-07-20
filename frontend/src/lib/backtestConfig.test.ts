@@ -20,6 +20,7 @@ import {
   type SeriesOperand,
   type Rule,
   type SeriesRecipe,
+  type LookbackSpec,
 } from "./backtestConfig";
 
 const EMPTY_GROUP = { combine: "AND" as const, rules: [] };
@@ -590,5 +591,27 @@ describe("invertRule", () => {
 describe("ruleFromChartOperand", () => {
   it("seeds { left: series, op: gt, right: const 0 }", () => {
     expect(ruleFromChartOperand(series)).toEqual({ left: series, op: "gt", right: { kind: "const", value: 0 } });
+  });
+});
+
+describe("lookback series keys", () => {
+  it("suffixes #<mode><len> after slope, before timeframe", () => {
+    expect(seriesName({ kind: "indicator", indicator: "EMA", length: 9, lookback: { mode: "high", len: 20 } }))
+      .toBe("EMA_9#hi20");
+    expect(seriesName({ kind: "indicator", indicator: "EMA", length: 9, slope: { len: 3 }, lookback: { mode: "ago", len: 2 }, timeframe: "HOUR_4" }))
+      .toBe("EMA_9~3#ago2@HOUR_4");
+    expect(seriesName({ kind: "price", field: "close", lookback: { mode: "low", len: 5 } }))
+      .toBe("close#lo5"); // a looked-back price keys a series, like a sloped price
+    expect(seriesName({ kind: "price", field: "close" })).toBeNull();
+  });
+  it("adds lookback len to warm-up", () => {
+    const cfg = cfgWith({ left: { kind: "indicator", indicator: "EMA", length: 10, lookback: { mode: "avg", len: 7 } }, op: "gt", right: { kind: "const", value: 0 } });
+    expect(longestIndicatorLength(cfg)).toBe(17);
+  });
+  it("cloneRule deep-copies lookback", () => {
+    const rule = { left: { kind: "indicator", indicator: "EMA", length: 9, lookback: { mode: "ago", len: 3 } } as Operand, op: "gt" as const, right: { kind: "const", value: 0 } as Operand };
+    const dup = cloneRule(rule);
+    (dup.left as { lookback: LookbackSpec }).lookback.len = 99;
+    expect((rule.left as { lookback: LookbackSpec }).lookback.len).toBe(3);
   });
 });

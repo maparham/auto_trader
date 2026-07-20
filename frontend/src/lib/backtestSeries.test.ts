@@ -12,7 +12,7 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-const { buildSeries, buildChartOperandSeries, computeIndicatorRecipe, priceFieldValue } = await import("./backtestSeries");
+const { buildSeries, buildChartOperandSeries, computeIndicatorRecipe, priceFieldValue, lookbackOf } = await import("./backtestSeries");
 const { maSeries } = await import("./mtf");
 const { computeRsi, computeLr, computePrevHl, vwapFrom, detectDivergences, RSI_DIVERGENCE_DEFAULTS } = await import("./customIndicators");
 const { computePivotBands } = await import("./indicators/pivotBands");
@@ -346,6 +346,36 @@ describe("buildSeries", () => {
     // Bars before the first 5m close (t < 300k) have no usable value → null.
     expect(s.slice(0, 5)).toEqual([null, null, null, null, null]);
     expect(s[5]).toBe(10); // t=300k: first 5m bar has now closed
+  });
+
+  it("emits a looked-back price under #<mode><len> equal to lookbackOf(closes)", async () => {
+    const closes = [1, 5, 2, 8, 3];
+    const bars = candles(closes);
+    const config = cfg({
+      longEntry: {
+        combine: "AND",
+        rules: [
+          { left: { kind: "price", field: "close", lookback: { mode: "high", len: 2 } }, op: "gt", right: { kind: "const", value: 0 } },
+        ],
+      },
+    });
+    const s = (await buildSeries(bars, config, BASE, noFetch))["close#hi2"];
+    expect(s).toEqual(lookbackOf(closes, { mode: "high", len: 2 }).map((v) => v ?? null));
+  });
+});
+
+describe("lookbackOf", () => {
+  const raw = [1, 5, 2, 8, 3] as Array<number | undefined>;
+  it("ago N reads raw[i−N], undefined before", () => {
+    expect(lookbackOf(raw, { mode: "ago", len: 2 })).toEqual([undefined, undefined, 1, 5, 2]);
+  });
+  it("high/low/avg aggregate the previous N bars, current excluded", () => {
+    expect(lookbackOf(raw, { mode: "high", len: 2 })).toEqual([undefined, undefined, 5, 5, 8]);
+    expect(lookbackOf(raw, { mode: "low", len: 2 })).toEqual([undefined, undefined, 1, 2, 2]);
+    expect(lookbackOf(raw, { mode: "avg", len: 2 })).toEqual([undefined, undefined, 3, 3.5, 5]);
+  });
+  it("any undefined in the window poisons the output", () => {
+    expect(lookbackOf([1, undefined, 2, 3], { mode: "high", len: 2 })).toEqual([undefined, undefined, undefined, undefined]);
   });
 });
 

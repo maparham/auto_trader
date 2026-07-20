@@ -5,7 +5,7 @@
 // (single axis, base label) and again at run time (collision-aware) so the
 // results panel names each axis by what it actually sweeps, not its path.
 
-import type { Operand, Operator, RiskConfig, RuleGroup } from "./backtestConfig";
+import { lookbackSpec, type Operand, type Operator, type RiskConfig, type RuleGroup } from "./backtestConfig";
 import type { SweepAxis } from "./sweep";
 
 // The slice of a config this resolver reads. BacktestConfig (rules mode) and
@@ -36,20 +36,28 @@ const OP_SYMBOL: Record<Operator, string> = {
  * indicator plus its length ("EMA 21", "VOL"), a price field, a const value,
  * or the held position's entry price. */
 export function operandLabel(op: Operand): string {
+  // const/entry never carry a lookback (can't look back) — return early untouched.
+  if (op.kind === "const") return String(op.value);
+  if (op.kind === "entry") return "entry price";
+  let base: string;
   switch (op.kind) {
     case "series":
-      return op.label;
-    case "const":
-      return String(op.value);
+      base = op.label;
+      break;
     case "price":
-      return op.field;
-    case "entry":
-      return "entry price";
+      base = op.field;
+      break;
     case "indicator":
-      return op.length != null ? `${op.indicator} ${op.length}` : op.indicator;
+      base = op.length != null ? `${op.indicator} ${op.length}` : op.indicator;
+      break;
     default:
       return "?";
   }
+  // A looked-back operand wraps its base: "ago" reads as a bar offset ("close
+  // [-3]"), the aggregates read as "<mode> <len> of <base>" ("high 20 of EMA 9").
+  const lb = lookbackSpec(op);
+  if (lb) return lb.mode === "ago" ? `${base} [-${lb.len}]` : `${lb.mode} ${lb.len} of ${base}`;
+  return base;
 }
 
 function cap(side: string): string {

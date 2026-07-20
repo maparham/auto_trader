@@ -30,6 +30,10 @@ describe("operandLabel", () => {
     expect(operandLabel({ kind: "price", field: "close" })).toBe("close");
     expect(operandLabel({ kind: "entry" })).toBe("entry price");
   });
+  it("renders lookback operands", () => {
+    expect(operandLabel({ kind: "price", field: "close", lookback: { mode: "ago", len: 3 } })).toBe("close [-3]");
+    expect(operandLabel({ kind: "indicator", indicator: "EMA", length: 9, lookback: { mode: "high", len: 20 } })).toBe("high 20 of EMA 9");
+  });
 });
 
 describe("sweepAxisLabel (rule axes)", () => {

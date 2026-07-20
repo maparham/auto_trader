@@ -18,6 +18,18 @@ export type Combine = "AND" | "OR";
 // series (even price, which normally has none). const/entry can't be sloped.
 export interface SlopeSpec { len: number }
 
+// `lookback`, when set, replaces the operand's value with a previous-candles
+// read of its (possibly sloped) curve — the CURRENT bar is always excluded:
+//   ago  → v[i−len]                       (the value exactly len bars ago)
+//   high → max(v[i−len .. i−1])           (highest over the last len bars)
+//   low  → min(v[i−len .. i−1])
+//   avg  → mean(v[i−len .. i−1])
+// Applied AFTER slope (raw → slope → lookback), so "the slope 3 bars ago"
+// composes. Part of the series key (`#<mode><len>`, after `~slope`, before
+// `@tf`) — see seriesName / rule.py:series_name. A looked-back operand ALWAYS
+// keys a series (even price). const/entry can't look back.
+export interface LookbackSpec { mode: "ago" | "high" | "low" | "avg"; len: number }
+
 // --- chart operands (kind "series") -----------------------------------------
 // A chart indicator curve or drawing copied into a rule. The operand carries a
 // self-contained `recipe` (the exact params the chart instance had) plus a
@@ -100,15 +112,15 @@ export type Operand =
   // frontend fetches that timeframe, computes the indicator on it, and forward-
   // fills the values onto the base bars (no lookahead). It's part of the series
   // key (seriesName) so `EMA_9` and `EMA_9@HOUR` are distinct series.
-  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number; timeframe?: string; slope?: SlopeSpec }
-  | { kind: "price"; field: PriceField; slope?: SlopeSpec }
+  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number; timeframe?: string; slope?: SlopeSpec; lookback?: LookbackSpec }
+  | { kind: "price"; field: PriceField; slope?: SlopeSpec; lookback?: LookbackSpec }
   | { kind: "const"; value: number }
   // The open position's entry (fill) price. Only meaningful in an exit rule while
   // a position is held; parameterless. Has no series (read off the position).
   | { kind: "entry" }
   // A chart indicator curve or drawing copied into the rule (see recipe types
   // above). Always keys a series (the frontend computes it and posts it).
-  | { kind: "series"; seriesKey: string; label: string; recipe: SeriesRecipe; timeframe?: string; slope?: SlopeSpec };
+  | { kind: "series"; seriesKey: string; label: string; recipe: SeriesRecipe; timeframe?: string; slope?: SlopeSpec; lookback?: LookbackSpec };
 
 /** The `series` variant of {@link Operand} (chart indicator/drawing copied into a
  * rule). Always carries `seriesKey`/`label`/`recipe`; used where an operand is known
@@ -121,6 +133,17 @@ export function slopeLen(op: Operand): number | null {
     ? op.slope.len
     : null;
 }
+
+/** The lookback spec for an operand, or null if it has none. */
+export function lookbackSpec(op: Operand): LookbackSpec | null {
+  return (op.kind === "indicator" || op.kind === "price" || op.kind === "series") && op.lookback
+    ? op.lookback
+    : null;
+}
+
+// The token spelled into the series key per lookback mode (`#<token><len>`).
+// The backend mirrors these byte-for-byte (rule.py:series_name) — do not change.
+const LB_TOKEN = { ago: "ago", high: "hi", low: "lo", avg: "avg" } as const;
 
 export type StopKind = "none" | "pct" | "price" | "atr" | "trailPct" | "trailAtr";
 export type TargetKind = "none" | "pct" | "price" | "atr";
@@ -223,6 +246,9 @@ function cloneOperand(op: Operand): Operand {
   const copy = { ...op };
   if ((copy.kind === "indicator" || copy.kind === "price" || copy.kind === "series") && copy.slope) {
     copy.slope = { ...copy.slope };
+  }
+  if ((copy.kind === "indicator" || copy.kind === "price" || copy.kind === "series") && copy.lookback) {
+    copy.lookback = { ...copy.lookback };
   }
   // A series operand nests a recipe (with its own arrays) — deep-copy it too.
   if (copy.kind === "series") {
@@ -359,9 +385,10 @@ export function seriesName(op: Operand): string | null {
     if (op.indicator === "VOL") base = "VOL";
     else if (op.indicator === "AVWAP") base = `AVWAP_${op.anchor ?? 0}`;
     else base = `${op.indicator}_${op.length}`;
-  } else if (op.kind === "price" && op.slope) {
-    // A plain price has no series (read off the candle); a SLOPED price does — its
-    // slope needs v[i−N] so it can't come from a single bar. Keyed by the field.
+  } else if (op.kind === "price" && (op.slope || op.lookback)) {
+    // A plain price has no series (read off the candle); a SLOPED or LOOKED-BACK
+    // price does — it reads other bars so it can't come from a single one. Keyed
+    // by the field.
     base = op.field;
   } else {
     return null;
@@ -371,6 +398,10 @@ export function seriesName(op: Operand): string | null {
   // ordering included, or the endpoint's D4 key check fails.
   const sl = slopeLen(op);
   if (sl !== null) base = `${base}~${sl}`;
+  // A lookback suffix (`#<mode><len>`) sits BETWEEN the slope and timeframe
+  // suffixes (raw → slope → lookback), mirrored byte-for-byte on the backend.
+  const lb = lookbackSpec(op);
+  if (lb) base = `${base}#${LB_TOKEN[lb.mode]}${lb.len}`;
   // A per-operand timeframe qualifies the key so a base-timeframe indicator and
   // the same indicator on a higher timeframe are stored/looked-up separately.
   // Absent ⇒ base timeframe ⇒ the bare key (byte-for-byte compatible with older
@@ -427,7 +458,7 @@ export function longestIndicatorLength(cfg: BacktestConfig): number {
     1,
     // A sloped operand needs `len` extra bars beyond its base indicator's length
     // before it has a value (it reads v[i] and v[i−len]).
-    ...collectSeriesOperands(cfg).map((op) => operandBaseLen(op) + (slopeLen(op) ?? 0)),
+    ...collectSeriesOperands(cfg).map((op) => operandBaseLen(op) + (slopeLen(op) ?? 0) + (lookbackSpec(op)?.len ?? 0)),
     ...riskAtrLengths(cfg),
     ...scalingAtrLengths(cfg),
   );
