@@ -2221,6 +2221,42 @@
 .seg button { background: var(--input-bg); color: var(--text); border: none; padding: 6px 14px; cursor: pointer; }
 .seg button.seg-on { background: var(--accent); color: var(--accent-text); }
 
+/* Walk-forward schedule config: flat, content-sized rows of labels + toggle
+   chips, shown in the config body only in walk-forward mode. */
+.wfo-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 2px;
+}
+.wfo-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wfo-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 64px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.wfo-seg { flex: 0 0 auto; }
+.wfo-seg button { padding: 4px 10px; font-size: 12px; }
+.wfo-select {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 8px; font-size: 12px; line-height: 1.4; cursor: pointer;
+}
+.wfo-advanced { font-size: 12px; }
+.wfo-advanced > summary { cursor: pointer; color: var(--text-dim); padding: 2px 0; }
+.wfo-advanced .wfo-row { margin-top: 6px; }
+.wfo-foot { font-size: 12px; color: var(--text-dim); }
+.wfo-foot strong { color: var(--text); }
+.wfo-note { font-size: 11px; color: var(--text-dim); }
+
 /* Softer AND/OR combine seg: no blue accent, muted neutral fill for the
    selected side so it reads as a quiet inline toggle, not a primary control. */
 .bt-combine-seg button { color: var(--text-dim); padding: 2px 8px; font-size: 11px; }

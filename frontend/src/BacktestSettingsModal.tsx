@@ -28,8 +28,13 @@ import {
   saveSweepTarget,
   sweepCombosOverrideSignal,
   sweepArchivedSignal,
+  wfoStateSignal,
+  wfoRequestSignal,
+  requestWfoCancel,
 } from "./lib/signals";
 import { resumeSweep } from "./lib/sweepResume";
+import { WfoConfig } from "./WfoConfig";
+import { buildWalkForwardPayload, resumeWfo, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
 import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
 import type { EmphasisTarget } from "./lib/chartOperand";
 import { resolveWindow } from "./lib/backtestWindow";
@@ -113,6 +118,8 @@ import {
   loadBacktestResultsColWidth,
   saveBacktestResultsColWidth,
   BACKTEST_RESULTS_COL_DEFAULT_WIDTH,
+  loadWfoSchedule,
+  saveWfoSchedule,
 } from "./lib/persist";
 
 interface Props {
@@ -622,7 +629,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // In Backtest mode every sweep control is inert: the glyphs render dimmed
   // (CSS off the bt-mode-backtest root class) and the toggles below no-op, so
   // the configured axes can't change invisibly while their editors are hidden.
-  const sweepEditable = btMode === "sweep";
+  // Sweep controls stay editable in walk-forward too: WFO reuses the same
+  // parameter-axis toggles to define its optimization grid. Only pure Backtest
+  // mode makes them inert.
+  const sweepEditable = btMode !== "backtest";
   // What the config sections render against: in Backtest mode the axes read as
   // absent, so swept fields show their plain inputs again (the value a single
   // run actually uses) and the inline from/to/step editors hide. The real
@@ -758,6 +768,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // mask's current window when one is set.
   const toggleTimeWindowSweepAxis = () => {
     if (!sweepEditable) return;
+    if (btMode === "walkforward") return; // session (timeWindow) axes are dropped in WFO
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === "timeWindow")) return axes.filter((a) => a.target !== "timeWindow");
       const t = cfg.range.mask?.timeOfDay;
@@ -798,6 +809,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // always reflects the range as currently configured.
   const togglePeriodSweepAxis = () => {
     if (!sweepEditable) return;
+    if (btMode === "walkforward") return; // period axes are dropped in WFO
     setSweepAxes((axes) =>
       axes.some((a) => a.target === "period")
         ? axes.filter((a) => a.target !== "period")
@@ -814,6 +826,25 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   const effectiveWarn = !isFinite(effectiveCombos) || effectiveCombos > SWEEP_WARN_COMBOS;
   const [sweepState, setSweepState] = useState(sweepStateSignal.value);
   useEffect(() => sweepStateSignal.subscribe(setSweepState), []);
+  // Walk-forward schedule config (device-local, re-hydrated on open) + its live
+  // run state, subscribed here so the mode badge and Run button re-render as a
+  // WFO job advances (mirrors the sweepState subscription above).
+  const [wfoCfg, setWfoCfg] = useState<WfoConfigState>(() => loadWfoSchedule(DEFAULT_WFO_CONFIG));
+  const changeWfoCfg = (n: WfoConfigState) => { setWfoCfg(n); saveWfoSchedule(n); };
+  const [wfoState, setWfoState] = useState(wfoStateSignal.value);
+  useEffect(() => wfoStateSignal.subscribe(setWfoState), []);
+  // Combo count + dropped-axis labels for the WFO config footer/badge. Building
+  // the payload throws on an invalid config (no axes / no train span); the panel
+  // treats that as 0 combos / no dropped axes rather than surfacing the error here.
+  const { wfoComboTotal, wfoDroppedAxes } = useMemo(() => {
+    try {
+      const { comboTotal, dropped } = buildWalkForwardPayload(sweepAxes, wfoCfg);
+      return { wfoComboTotal: comboTotal, wfoDroppedAxes: dropped };
+    } catch {
+      return { wfoComboTotal: 0, wfoDroppedAxes: [] as string[] };
+    }
+  }, [sweepAxes, wfoCfg]);
+  const [wfoError, setWfoError] = useState<string | null>(null);
   // Bumped whenever a sweep is archived server-side (live run or re-attach). Mirror
   // it into state so the past-sweeps fetch effect re-runs and a sweep that finishes
   // while the section is open shows up in the picker without a reopen.
@@ -845,6 +876,15 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         if (attached) setBtMode("sweep");
       });
   }, []);
+  // Same re-attach for a walk-forward job that outlived a reload: only when no
+  // run already owns the WFO state, and flip the view to walk-forward so its
+  // streaming folds are immediately visible (setBtMode, not selectMode).
+  useEffect(() => {
+    if (wfoStateSignal.value === null)
+      void resumeWfo().then((attached) => {
+        if (attached) setBtMode("walkforward");
+      });
+  }, []);
   // Clear any leftover sweep run/axes when the modal unmounts/closes, so a
   // stale in-flight state (or un-applied axes) from a previous session can't
   // bleed into a fresh open. Detach (server=false) rather than cancel: this
@@ -855,6 +895,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     requestSweepCancel(false);
     sweepStateSignal.set(null);
     sweepAxesSignal.set([]);
+    // Detach any live WFO poll too (server=false: leave the job running so a
+    // reload can re-attach). The WFO state is left intact so a completed result
+    // survives reopen for the results view.
+    requestWfoCancel(false);
   }, []);
 
   // Rule mode's own combo-apply — patches the operand/count a `rule:` axis
@@ -1476,6 +1520,23 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // separate from applySweepCombo's own run(), which explicitly clears the
   // signal to [] first for its single-combo follow-up run.
   function runFromFooter() {
+    if (btMode === "walkforward") {
+      // Build the whole grid + schedule payload and hand it to BacktestButton
+      // via wfoRequestSignal (its walk-forward branch consumes it). The request
+      // range is holdout-clamped by BacktestButton itself, exactly as for a
+      // sweep, so no extra clamp is needed here. Risk axes mirror the same way
+      // the sweep branch mirrors them.
+      try {
+        const { payload } = buildWalkForwardPayload(mirrorRiskAxes(sweepAxes), wfoCfg);
+        setWfoError(null);
+        wfoRequestSignal.set(payload);
+        sweepCombosOverrideSignal.set(null);
+        run();
+      } catch (e) {
+        setWfoError(e instanceof Error ? e.message : String(e));
+      }
+      return;
+    }
     if (btMode !== "sweep") {
       // Backtest mode: always a single run. Publish an empty axis set even
       // when axes are configured — the mode gates the run, so BacktestButton
@@ -1619,6 +1680,11 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       ) : btMode === "backtest" && sweepAxes.length > 0 && isFinite(sweepCombos) ? (
         <span className="bt-mode-badge">{sweepCombos}</span>
       ) : null}
+      wfoBadge={wfoState?.running ? (
+        <span className="bt-mode-badge">{wfoState.phase} {wfoState.done}/{wfoState.total}</span>
+      ) : wfoComboTotal > 0 ? (
+        <span className="bt-mode-badge">{wfoComboTotal}x{wfoCfg.trainSpans.length}</span>
+      ) : null}
     />
   );
 
@@ -1662,8 +1728,18 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       onDelete={removePastSweep}
     />
   ) : null;
-  const runLabel = runInFlight ? "Running…" : btMode === "sweep" ? "Run sweep" : "Run backtest";
-  const runDisabled = runInFlight || (btMode === "sweep" && sweepAxes.length === 0);
+  const runLabel = runInFlight
+    ? "Running…"
+    : btMode === "walkforward"
+      ? "Run walk-forward"
+      : btMode === "sweep"
+        ? "Run sweep"
+        : "Run backtest";
+  const runDisabled =
+    runInFlight ||
+    (btMode === "sweep" && sweepAxes.length === 0) ||
+    (btMode === "walkforward" &&
+      (wfoComboTotal === 0 || wfoCfg.trainSpans.length === 0 || !!wfoState?.running));
 
   return (
     <>
@@ -1785,15 +1861,17 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 })}
               </select>
               </label>
-              <Tooltip content="Sweep the trading period: split the range into N equal windows and run each">
-                <button
-                  type="button"
-                  className={`sp-sweep bt-period-sweep-toggle${periodAxis ? " on" : ""}`}
-                  onClick={togglePeriodSweepAxis}
-                >
-                  <SweepGlyph />
-                </button>
-              </Tooltip>
+              {btMode !== "walkforward" && (
+                <Tooltip content="Sweep the trading period: split the range into N equal windows and run each">
+                  <button
+                    type="button"
+                    className={`sp-sweep bt-period-sweep-toggle${periodAxis ? " on" : ""}`}
+                    onClick={togglePeriodSweepAxis}
+                  >
+                    <SweepGlyph />
+                  </button>
+                </Tooltip>
+              )}
               <label className="bt-tf-inline bt-robust-windows">
                 <span className="bt-tf-label">
                   Windows
@@ -1839,6 +1917,14 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 </select>
               </label>
             </div>
+            {btMode === "walkforward" && (
+              <WfoConfig
+                cfg={wfoCfg}
+                onChange={changeWfoCfg}
+                comboTotal={wfoComboTotal}
+                droppedAxes={wfoDroppedAxes}
+              />
+            )}
             {CHIP_UNIT[cfg.range.mode] ? (
               <div className="bt-chip-row bt-range-chip-row">
                 {buildRangeChips(CHIP_UNIT[cfg.range.mode]!, Date.now(), chartTimezone).map((chip) => {
@@ -2041,16 +2127,18 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                         onChange={(e) => setMask({ timeOfDay: withEnd(cfg.range.mask?.timeOfDay, timeToMin(e.target.value)) })}
                       />
                     </label>
-                    <Tooltip content="Sweep the time window: run each of several intraday windows">
-                      <button
-                        type="button"
-                        className={`sp-sweep bt-tw-sweep-toggle${timeWindowAxis ? " on" : ""}`}
-                        disabled={resSeconds >= 86400}
-                        onClick={toggleTimeWindowSweepAxis}
-                      >
-                        <SweepGlyph />
-                      </button>
-                    </Tooltip>
+                    {btMode !== "walkforward" && (
+                      <Tooltip content="Sweep the time window: run each of several intraday windows">
+                        <button
+                          type="button"
+                          className={`sp-sweep bt-tw-sweep-toggle${timeWindowAxis ? " on" : ""}`}
+                          disabled={resSeconds >= 86400}
+                          onClick={toggleTimeWindowSweepAxis}
+                        >
+                          <SweepGlyph />
+                        </button>
+                      </Tooltip>
+                    )}
                     <span className="bt-range-field bt-session-field">
                       {/* Not persisted: picking a session fills the fields once and
                           leaves them all editable — an action menu, not a stateful
@@ -2626,6 +2714,12 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               )}
               {btMode === "sweep" && sweepAxes.length === 0 && (
                 <span className="sweep-counter">Turn on a field's sweep toggle to run</span>
+              )}
+              {btMode === "walkforward" && sweepAxes.length === 0 && (
+                <span className="sweep-counter">Turn on a field's sweep toggle to define the grid</span>
+              )}
+              {btMode === "walkforward" && wfoError && (
+                <span className="sweep-counter bt-param-error">{wfoError}</span>
               )}
               {/* No per-axis breakdown or "runs sampled" counter here: the
                   footer shows ONLY the total combo count (user decision). */}
