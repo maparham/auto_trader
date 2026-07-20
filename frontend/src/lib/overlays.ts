@@ -2499,8 +2499,11 @@ export class OverlayManager {
       const ov = this.byId(id);
       if (!ov) continue;
       // Never write a collapsed/incomplete drawing to storage — it reloads as an
-      // unclickable, undeletable strip (see isDegenerateDrawing).
-      if (OverlayManager.isDegenerateDrawing(this.stablePoints(ov.points))) continue;
+      // unclickable, undeletable strip (see isDegenerateDrawing). Check the LIVE
+      // points, not stablePoints(): a valid future anchor keeps its dataIndex here
+      // (an anchor), but stablePoints() can't resolve it to a timestamp when no bars
+      // are loaded and would make the drawing look degenerate and drop it.
+      if (OverlayManager.isDegenerateDrawing(ov.points)) continue;
       drawings.push({
         name: ov.name,
         // Stable anchors only (timestamp/value) — see stablePoints for why a
