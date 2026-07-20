@@ -51,6 +51,16 @@ describe("rule series parity golden", () => {
             op: "gt",
             right: { kind: "const", value: 0 },
           },
+          {
+            left: { kind: "price", field: "body", lookback: { mode: "avg", len: 3 } },
+            op: "gt",
+            right: { kind: "const", value: 0 },
+          },
+          {
+            left: { kind: "indicator", indicator: "EMA", length: 3, lookback: { mode: "high", len: 2 } },
+            op: "gt",
+            right: { kind: "price", field: "close", slope: { len: 2 }, lookback: { mode: "ago", len: 1 } },
+          },
         ],
       },
       longExit: { combine: "AND", rules: [] },
@@ -69,7 +79,7 @@ describe("rule series parity golden", () => {
     // Sanity: the representative config exercises base EMA, HTF EMA, sloped
     // price, and ATR risk coverage before we snapshot it as the golden.
     expect(Object.keys(series).sort()).toEqual(
-      ["ATR_3", "EMA_2@HOUR_4", "EMA_3", "close~2"].sort(),
+      ["ATR_3", "EMA_2@HOUR_4", "EMA_3", "close~2", "body#avg3", "EMA_3#hi2", "close~2#ago1"].sort(),
     );
 
     writeFileSync(
