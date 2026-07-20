@@ -34,7 +34,8 @@ import {
 } from "./lib/signals";
 import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
-import { buildWalkForwardPayload, resumeWfo, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
+import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
+import { WfoResults } from "./WfoResults";
 import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
 import type { EmphasisTarget } from "./lib/chartOperand";
 import { resolveWindow } from "./lib/backtestWindow";
@@ -87,7 +88,7 @@ import { loadHoldout, saveHoldoutPct, recordPeek, splitHoldout } from "./lib/hol
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import { formatPeriodRange } from "./lib/backtestPeriods";
 import { fmtRunDuration } from "./lib/duration";
-import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, getCostProfile, putCostProfile, refetchCostProfile, type StrategyInfo, type ParamSpec, type SweepArchiveSummary, type CostProfile } from "./api";
+import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, getCostProfile, putCostProfile, refetchCostProfile, getWfoFoldTable, type StrategyInfo, type ParamSpec, type SweepArchiveSummary, type CostProfile, type SweepRow } from "./api";
 import {
   loadCodedCfg,
   saveCodedCfg,
@@ -836,15 +837,27 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // Combo count + dropped-axis labels for the WFO config footer/badge. Building
   // the payload throws on an invalid config (no axes / no train span); the panel
   // treats that as 0 combos / no dropped axes rather than surfacing the error here.
-  const { wfoComboTotal, wfoDroppedAxes } = useMemo(() => {
+  // `wfoUsableAxes` are the surviving (non-period, non-timeWindow) sweep axes
+  // the WFO grid actually varies — WfoResults labels params and drift by them.
+  const { wfoComboTotal, wfoDroppedAxes, wfoUsableAxes } = useMemo(() => {
+    const { usable, dropped } = wfoAxesFromSweepAxes(sweepAxes);
     try {
-      const { comboTotal, dropped } = buildWalkForwardPayload(sweepAxes, wfoCfg);
-      return { wfoComboTotal: comboTotal, wfoDroppedAxes: dropped };
+      const { comboTotal } = buildWalkForwardPayload(sweepAxes, wfoCfg);
+      return { wfoComboTotal: comboTotal, wfoDroppedAxes: dropped, wfoUsableAxes: usable };
     } catch {
-      return { wfoComboTotal: 0, wfoDroppedAxes: [] as string[] };
+      return { wfoComboTotal: 0, wfoDroppedAxes: dropped, wfoUsableAxes: usable };
     }
   }, [sweepAxes, wfoCfg]);
   const [wfoError, setWfoError] = useState<string | null>(null);
+  const [wfoSchemeIndex, setWfoSchemeIndex] = useState(0);
+  // Live-job fold-table fetch for the folds drill-in; archive-backed loading
+  // arrives with the archive browser task.
+  const loadWfoFoldTable = useStableCallback(async (key: string): Promise<SweepRow[]> => {
+    const jobId = wfoStateSignal.value?.jobId;
+    if (!jobId) return [];
+    const { rows } = await getWfoFoldTable(jobId, key, sweepTargetSignal.value);
+    return rows;
+  });
   // Bumped whenever a sweep is archived server-side (live run or re-attach). Mirror
   // it into state so the past-sweeps fetch effect re-runs and a sweep that finishes
   // while the section is open shows up in the picker without a reopen.
@@ -1667,6 +1680,32 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           <div className="bt-results-empty">
             No sweep results yet. Turn on the sweep toggle next to the fields you want to
             vary, then press Run sweep.
+          </div>
+        )
+      )}
+      {/* Walk-forward results: same keep-mounted display toggle as the sweep
+          panel above, so flipping modes never re-runs the results tree. */}
+      {wfoState ? (
+        <div className="wfo-panel" style={btMode === "walkforward" ? undefined : { display: "none" }}>
+          {wfoState.cancelled ? (
+            <div className="al-note">Cancelled after {wfoState.done} of {wfoState.total}</div>
+          ) : wfoState.error ? (
+            <div className="al-note bt-param-error">{wfoState.error}</div>
+          ) : null}
+          <WfoResults
+            state={wfoState}
+            onApplyCombo={applySweepComboStable}
+            onLoadFoldTable={loadWfoFoldTable}
+            axes={wfoUsableAxes}
+            schemeIndex={wfoSchemeIndex}
+            onSchemeIndex={setWfoSchemeIndex}
+          />
+        </div>
+      ) : (
+        btMode === "walkforward" && (
+          <div className="bt-results-empty">
+            No walk-forward results yet. Turn on the sweep toggle next to the fields you
+            want to vary, pick a schedule, then press Run walk-forward.
           </div>
         )
       )}

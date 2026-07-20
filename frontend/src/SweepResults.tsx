@@ -65,7 +65,7 @@ const METRIC_COLS: { key: MetricKey; label: string; abbr: string; robust?: boole
     info: "Mean window P&L minus one standard deviation. Rewards steady combos, punishes ones that swing between big wins and big losses." },
 ];
 
-type SortDir = "asc" | "desc";
+export type SortDir = "asc" | "desc";
 
 function metricValue(row: SweepRow, key: MetricKey): number | null {
   return row.metrics?.[key] ?? null;
@@ -619,16 +619,18 @@ export const SweepResults = memo(function SweepResults(props: {
   );
 });
 
-function SweepSortHeader({
+// Generic over the column-key type so other tables (WfoResults' folds table)
+// can reuse it with their own key unions; SweepResults instantiates K=MetricKey.
+export function SweepSortHeader<K extends string>({
   label,
   col,
   sort,
   onSort,
 }: {
   label: string;
-  col: MetricKey;
-  sort: { key: MetricKey; dir: SortDir } | null;
-  onSort: (key: MetricKey) => void;
+  col: K;
+  sort: { key: K; dir: SortDir } | null;
+  onSort: (key: K) => void;
 }) {
   const active = sort?.key === col;
   return (

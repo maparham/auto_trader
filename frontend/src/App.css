@@ -4895,3 +4895,35 @@ span.bt-leg-short { color: var(--neg); }
 .range-chip-pop-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
 .range-chip-pop-count { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .range-chip-remove { font-size: 12px; color: var(--neg); }
+
+/* ── Walk-forward results panel (WfoResults) ──────────────────────────── */
+.wfo-panel { display: flex; flex-direction: column; gap: 8px; height: 100%; overflow: auto; }
+.wfo-results { display: flex; flex-direction: column; gap: 12px; }
+.wfo-error {
+  padding: 6px 10px; border: 1px solid var(--neg); border-radius: 4px;
+  color: var(--neg); font-size: 12px;
+}
+/* Scorecard: robustness leads, the supporting stats read alongside. */
+.wfo-scorecard { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: flex-end; padding: 2px 2px 0; }
+.wfo-score-lead .wfo-score-value { font-size: 22px; font-weight: 600; line-height: 1.1; }
+/* Train-span matrix: one row per scheme, click to select. */
+.wfo-matrix { width: auto; }
+.wfo-matrix-row { cursor: pointer; }
+.wfo-matrix-row:hover { background: var(--hover); }
+.wfo-matrix-row.seg-on { background: var(--accent); color: var(--accent-text); }
+.wfo-matrix-row.seg-on td { border-bottom-color: transparent; }
+/* Folds table rows expand a drill-in on click; low-sample rows reuse the
+   sweep-error grey. */
+.wfo-fold-row { cursor: pointer; }
+.wfo-fold-row:hover { background: var(--hover); }
+.wfo-fold-row.sweep-error { color: var(--text-faint); font-style: italic; }
+.wfo-fold-open td { border-bottom: none; }
+.wfo-fold-drill td { padding: 4px 10px 10px; font-size: 12px; color: var(--text-dim); }
+.wfo-dim { color: var(--text-faint); font-style: italic; }
+.wfo-apply { font-size: 11px; padding: 2px 8px; }
+/* Parameter drift strip: label + numbers + step-line per axis. */
+.wfo-drift { display: flex; flex-direction: column; gap: 6px; }
+.wfo-drift-axis { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.wfo-drift-label { min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wfo-drift-nums { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wfo-drift-line { flex: 0 0 auto; }
