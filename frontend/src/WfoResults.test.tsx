@@ -52,4 +52,27 @@ describe("WfoResults", () => {
     expect(driftPath([5, null, 7]).match(/M/g)!.length).toBe(2);
     expect(driftPath([])).toBe("");
   });
+
+  it("fold click loads ranked table into SweepResults drill-in", async () => {
+    const rows = [{ combo: { "param:fast": 5 }, metrics: { net_pnl: 10, n_trades: 3, win_rate: 0.5, max_drawdown: 1 }, windows: null, error: null }];
+    const load = vi.fn().mockResolvedValue(rows);
+    render(<WfoResults state={doneState()} onApplyCombo={() => {}} onLoadFoldTable={load}
+      axes={[{ kind: "range", target: "param:fast", label: "fast", from: 5, to: 15, step: 5 }]} schemeIndex={0} onSchemeIndex={() => {}} />);
+    fireEvent.click(document.querySelectorAll(".wfo-fold-row")[0]);
+    expect(load).toHaveBeenCalledWith("s0/f0");
+    // SweepResults drill-in rendered: its "Net P/L" metric header is unique to
+    // the combo table (the fold rows above already contain the "fast" axis text).
+    await screen.findAllByText("Net P/L");
+    expect(document.querySelector(".wfo-fold-drill .sweep-results")).toBeTruthy();
+    fireEvent.click(document.querySelectorAll(".wfo-fold-row")[0]);   // collapse
+    fireEvent.click(document.querySelectorAll(".wfo-fold-row")[0]);   // re-expand
+    expect(load).toHaveBeenCalledTimes(1);    // cached, no refetch on re-expand
+  });
+
+  it("drill-in fetch failure shows expiry copy", async () => {
+    const load = vi.fn().mockRejectedValue(new Error("wfo job not found"));
+    render(<WfoResults state={doneState()} onApplyCombo={() => {}} onLoadFoldTable={load} axes={[]} schemeIndex={0} onSchemeIndex={() => {}} />);
+    fireEvent.click(document.querySelectorAll(".wfo-fold-row")[0]);
+    await screen.findByText(/reopen from the archive/i);
+  });
 });

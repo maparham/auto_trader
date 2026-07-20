@@ -8,7 +8,7 @@ import type { WfoRunState } from "./lib/signals";
 import type { SweepAxis, SweepCombo } from "./lib/sweep";
 import { comboAxisLabel } from "./lib/sweep";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
-import { SweepSortHeader, type SortDir } from "./SweepResults";
+import { SweepResults, SweepSortHeader, type SortDir } from "./SweepResults";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
 
@@ -73,6 +73,10 @@ const SCORE_TIP = [
 const WFE_TIP =
   "Out-of-sample return relative to in-sample, annualized. Above ~0.5 is strong; negative means train gains did not carry forward";
 
+// Fold-table endpoints 404 an hour after the job clears from the runner; the
+// drill-in surfaces this fixed copy rather than the raw fetch error.
+const FOLD_EXPIRY_COPY = "Fold tables expire with the job; reopen from the archive";
+
 export const WfoResults = memo(function WfoResults(props: {
   state: WfoRunState;
   onApplyCombo: (combo: Record<string, number | boolean | string>) => void;
@@ -91,20 +95,22 @@ export const WfoResults = memo(function WfoResults(props: {
   const toggleSort = (key: FoldCol) =>
     setSort((s) => (s?.key === key ? (s.dir === "desc" ? { key, dir: "asc" } : null) : { key, dir: "desc" }));
 
-  // Drill-in: one expanded fold at a time; rows === null while the fetch is in
-  // flight. Task 8 replaces the placeholder body with the real per-fold table.
-  const [expanded, setExpanded] = useState<{ key: string; rows: SweepRow[] | null; error?: string } | null>(null);
+  // Drill-in: one expanded fold at a time. `expandedKey` is the open fold (null
+  // when collapsed); fetched tables are cached per key in `foldCache` so
+  // collapsing and re-expanding never refetches. A cached entry's `rows === null`
+  // means the fetch is still in flight, `error` set means it failed.
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [foldCache, setFoldCache] = useState<Record<string, { rows: SweepRow[] | null; error?: string }>>({});
   const toggleFold = (key: string) => {
-    if (expanded?.key === key) { setExpanded(null); return; }
-    setExpanded({ key, rows: null });
+    if (expandedKey === key) { setExpandedKey(null); return; }
+    setExpandedKey(key);
+    if (foldCache[key]) return; // already fetched (or fetching) — use the cache
+    setFoldCache((c) => ({ ...c, [key]: { rows: null } }));
     onLoadFoldTable(key)
-      .then((rows) => setExpanded((cur) => (cur?.key === key ? { key, rows } : cur)))
-      .catch((e) =>
-        setExpanded((cur) =>
-          cur?.key === key ? { key, rows: [], error: e instanceof Error ? e.message : String(e) } : cur,
-        ),
-      );
+      .then((rows) => setFoldCache((c) => ({ ...c, [key]: { rows } })))
+      .catch(() => setFoldCache((c) => ({ ...c, [key]: { rows: [], error: FOLD_EXPIRY_COPY } })));
   };
+  const expanded = expandedKey ? { key: expandedKey, ...(foldCache[expandedKey] ?? { rows: null }) } : null;
 
   const comboText = (combo: Record<string, number | boolean | string>): string =>
     axes.length
@@ -295,11 +301,18 @@ export const WfoResults = memo(function WfoResults(props: {
                     {open && (
                       <tr className="wfo-fold-drill">
                         <td colSpan={7}>
-                          {expanded!.error
-                            ? expanded!.error
-                            : expanded!.rows === null
-                              ? "Loading fold table…"
-                              : `Fold table: ${expanded!.rows.length} combos`}
+                          {expanded!.error ? (
+                            <div className="wfo-error">{expanded!.error}</div>
+                          ) : expanded!.rows === null ? (
+                            <div className="wfo-dim">Loading fold table…</div>
+                          ) : (
+                            <SweepResults
+                              rows={expanded!.rows}
+                              axes={axes}
+                              onApply={onApplyCombo}
+                              progress={null}
+                            />
+                          )}
                         </td>
                       </tr>
                     )}
