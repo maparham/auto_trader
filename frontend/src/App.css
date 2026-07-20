@@ -1409,6 +1409,10 @@
   color: var(--text-faint);
 }
 .bt-robust-windows { margin-left: 0; }
+/* WFO Data window: keep Timeframe + Holdout side by side as one right-aligned
+   cluster so Holdout never wraps onto a row of its own. */
+.bt-wfo-window-controls { display: flex; gap: 12px; margin-left: auto; align-items: flex-start; }
+.bt-wfo-window-controls > .bt-tf-inline { margin-left: 0; }
 .bt-robust-windows input {
   width: 56px;
   background: var(--input-bg); color: var(--text);
@@ -3113,6 +3117,19 @@
 .tooltip-title { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
 .tooltip-desc  { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
 .tooltip-desc + .tooltip-desc { margin-top: 6px; }
+.tooltip-weights {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.tooltip-weights li {
+  display: flex;
+  gap: 6px;
+}
+.tooltip-weights b { min-width: 30px; color: var(--text); font-weight: 600; }
 
 /* Trade-pill details popover: label/value rows on the shared .tooltip frame. Wider
    than a text tip so the datetime + P/L values never wrap; the label column stays

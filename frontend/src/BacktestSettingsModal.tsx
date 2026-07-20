@@ -2057,8 +2057,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                     >
                       <div className="bt-range-mode-row">
                         {rangePicker}
-                        {timeframeSelect}
-                        {holdoutSelect}
+                        <div className="bt-wfo-window-controls">
+                          {timeframeSelect}
+                          {holdoutSelect}
+                        </div>
                       </div>
                       <div className="bt-chip-row bt-range-chip-row">
                         {WFO_RELATIVE_CHIPS.map((c) => (
