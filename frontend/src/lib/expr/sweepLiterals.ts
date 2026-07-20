@@ -51,7 +51,7 @@ export function literalLabel(expr: string, ordinal: number): string {
  * When ordinals drop, the panel shows: "Removed sweep ranges no longer match this rule."
  */
 export function reanchorRanges(
-  prevLiterals: LiteralSpan[],
+  _prevLiterals: LiteralSpan[],
   nextLiterals: LiteralSpan[],
   ranges: Record<string, any>,
   side: "long" | "short",

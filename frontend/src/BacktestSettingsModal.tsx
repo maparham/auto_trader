@@ -581,7 +581,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   const [ranAxes, setRanAxes] = useState<SweepAxis[]>([]);
   // Past sweeps archived server-side for this epic, for the reopen picker.
   const [pastSweeps, setPastSweeps] = useState<SweepArchiveSummary[]>([]);
-  const [pickedSweep, setPickedSweep] = useState("");
+  const [, setPickedSweep] = useState("");
   // The reopen picker stays a SHARED per-epic library (a past-sweeps history any
   // cell can pull from). It no longer auto-reopens the newest sweep — which
   // result is SHOWN is now bound per tab+cell via the sweep pointer (see the
