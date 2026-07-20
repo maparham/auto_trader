@@ -1,0 +1,43 @@
+[
+  { "expr": "EMA(50) > candle.high + 3 * ATR(14)", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":50,"from":4,"to":6,"label":"EMA length"},
+      {"ordinal":1,"value":3,"from":24,"to":25,"label":"multiplier of ATR(14)"},
+      {"ordinal":2,"value":14,"from":32,"to":34,"label":"ATR length"}
+    ] },
+  { "expr": "RSI(14) > 30", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":14,"from":4,"to":6,"label":"RSI length"},
+      {"ordinal":1,"value":30,"from":10,"to":12,"label":"threshold"}
+    ] },
+  { "expr": "EMA(9) EMA(21)", "isExit": false, "error": {"code":"expected_operator","from":7,"to":10}, "literals": [] },
+  { "expr": "FOO(9) > 0", "isExit": false, "error": {"code":"unknown_name","from":0,"to":6}, "literals": [] },
+  { "expr": "EMA(9)@4H@D > 0", "isExit": false, "error": {"code":"nested_tf","from":9,"to":11}, "literals": [] },
+  { "expr": "entry > candle.close", "isExit": false, "error": {"code":"entry_in_entry_rule","from":0,"to":5}, "literals": [] },
+  { "expr": "candle.close < entry", "isExit": true, "error": null, "literals": [] },
+  { "expr": "EMA(9)@4H > 0", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":4,"to":5,"label":"EMA length"},
+      {"ordinal":1,"value":0,"from":12,"to":13,"label":"threshold"}
+    ] },
+  { "expr": "candle@D.high > 5", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":5,"from":16,"to":17,"label":"threshold"}
+    ] },
+  { "expr": "candle@D.bogus > 5", "isExit": false, "error": {"code":"bad_candle_field","from":0,"to":14}, "literals": [] },
+  { "expr": "candle[-1].open > candle.open", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":1,"from":8,"to":9,"label":"bar offset"}
+    ] },
+  { "expr": "highest(candle.high, 20)[-1] > 0", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":20,"from":21,"to":23,"label":"highest window"},
+      {"ordinal":1,"value":1,"from":26,"to":27,"label":"bar offset"},
+      {"ordinal":2,"value":0,"from":31,"to":32,"label":"threshold"}
+    ] },
+  { "expr": "EMA(9)[2] > 0", "isExit": false, "error": {"code":"bad_offset","from":7,"to":8}, "literals": [] },
+  { "expr": "EMA(9).signal > 0", "isExit": false, "error": {"code":"field_on_call","from":0,"to":13}, "literals": [] },
+  { "expr": "EMA(9) > crossAbove(candle.close, EMA(9))", "isExit": false, "error": {"code":"cross_not_toplevel","from":9,"to":41}, "literals": [] },
+  { "expr": "EMA(9, 3) > 0", "isExit": false, "error": {"code":"bad_arity","from":0,"to":9}, "literals": [] },
+  { "expr": "candle > 0", "isExit": false, "error": {"code":"bad_candle_field","from":0,"to":6}, "literals": [] }
+]
