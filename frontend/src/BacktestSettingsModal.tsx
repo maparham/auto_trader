@@ -1854,6 +1854,114 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     (btMode === "walkforward" &&
       (wfoComboTotal === 0 || wfoCfg.trainSpans.length === 0 || !!wfoState?.running));
 
+  // Resolved window drives the always-on From/To display in WFO mode, where the
+  // range can be a rolling relative mode (fromMs/toMs unset). In non-WFO custom
+  // mode we keep the raw value so an unpicked range shows blank inputs.
+  const resolvedWindow = resolveWindow(cfg, resSeconds, Date.now());
+  const pickerFromMs = btMode === "walkforward" ? resolvedWindow.fromMs : cfg.range.fromMs;
+  const pickerToMs = btMode === "walkforward" ? resolvedWindow.toMs : cfg.range.toMs;
+
+  const timeframeSelect = (
+    <label className="bt-tf-inline">
+      <span className="bt-tf-label">
+        Timeframe
+        <InfoTip text="Timeframe the backtest runs on. 'Chart' follows the active chart timeframe." />
+      </span>
+      <select
+        className="bt-tf-select"
+        value={cfg.range.resolution ?? ""}
+        onChange={(e) => setRange({ resolution: e.target.value || undefined })}
+      >
+        <option value="">Chart</option>
+        {PERIOD_GROUPS.map((group) => {
+          const periods = group.periods.filter((p) => !p.liveOnly);
+          if (periods.length === 0) return null;
+          return (
+            <optgroup key={group.label} label={group.label}>
+              {periods.map((p) => (
+                <option key={p.resolution} value={p.resolution}>
+                  {p.label}
+                </option>
+              ))}
+            </optgroup>
+          );
+        })}
+      </select>
+    </label>
+  );
+
+  const holdoutSelect = (
+    <label className="bt-tf-inline bt-holdout-inline">
+      <span className="bt-tf-label">
+        Holdout
+        <InfoTip text="Reserve the last part of the range as an out-of-sample lockbox. Normal runs and sweeps stop at the training cutoff; use Evaluate on holdout to test the reserved tail. Every look is counted, because a holdout you check often stops being out-of-sample." />
+      </span>
+      <select
+        className="bt-tf-select"
+        value={holdout?.pct ?? 0}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          changeHoldoutPct(v === 0 ? null : v);
+        }}
+      >
+        <option value={0}>None</option>
+        <option value={10}>10%</option>
+        <option value={20}>20%</option>
+        <option value={30}>30%</option>
+      </select>
+    </label>
+  );
+
+  const rangePicker = (
+    <div className="al-row bt-range-row">
+      <label className="bt-range-field">
+        <span>From</span>
+        <input
+          type="datetime-local"
+          value={pickerFromMs ? msToLocalInput(pickerFromMs) : ""}
+          onChange={(e) => setRange({ mode: "custom", fromMs: localInputToMs(e.target.value) ?? undefined })}
+        />
+      </label>
+      <label className="bt-range-field">
+        <span>To</span>
+        <input
+          type="datetime-local"
+          value={pickerToMs ? msToLocalInput(pickerToMs) : ""}
+          onChange={(e) => setRange({ mode: "custom", toMs: localInputToMs(e.target.value) ?? undefined })}
+        />
+      </label>
+      <Tooltip
+        content={
+          !controller
+            ? "Focus a chart to pick a range"
+            : pickingRange
+              ? "Picking… drag across the chart's time axis, or click a start then an end. Esc cancels."
+              : "Pick the range on the chart: drag across the time axis, or click a start then an end"
+        }
+      >
+        <button
+          type="button"
+          className={`bt-pick-range${pickingRange ? " on" : ""}`}
+          disabled={!controller}
+          aria-label="Pick range on chart"
+          onClick={() => {
+            if (!controller) return;
+            if (controller.rangePickArmed.value) {
+              controller.rangePickArmed.set(false);
+            } else {
+              controller.rangePickArmed.set(true);
+              controller.focusChart?.();
+            }
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 4v8M13 4v8M3 8h10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </button>
+      </Tooltip>
+    </div>
+  );
+
   return (
     <>
     {sideBySide && (
@@ -1948,32 +2056,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   </button>
                 ))}
               </div>
-              <label className="bt-tf-inline">
-                <span className="bt-tf-label">
-                  Timeframe
-                  <InfoTip text="Timeframe the backtest runs on. 'Chart' follows the active chart timeframe." />
-                </span>
-              <select
-                className="bt-tf-select"
-                value={cfg.range.resolution ?? ""}
-                onChange={(e) => setRange({ resolution: e.target.value || undefined })}
-              >
-                <option value="">Chart</option>
-                {PERIOD_GROUPS.map((group) => {
-                  const periods = group.periods.filter((p) => !p.liveOnly);
-                  if (periods.length === 0) return null;
-                  return (
-                    <optgroup key={group.label} label={group.label}>
-                      {periods.map((p) => (
-                        <option key={p.resolution} value={p.resolution}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  );
-                })}
-              </select>
-              </label>
+              {timeframeSelect}
               {btMode !== "walkforward" && (
                 <Tooltip content="Sweep the trading period: split the range into N equal windows and run each">
                   <button
@@ -2010,25 +2093,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   }}
                 />
               </label>
-              <label className="bt-tf-inline bt-holdout-inline">
-                <span className="bt-tf-label">
-                  Holdout
-                  <InfoTip text="Reserve the last part of the range as an out-of-sample lockbox. Normal runs and sweeps stop at the training cutoff; use Evaluate on holdout to test the reserved tail. Every look is counted, because a holdout you check often stops being out-of-sample." />
-                </span>
-                <select
-                  className="bt-tf-select"
-                  value={holdout?.pct ?? 0}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    changeHoldoutPct(v === 0 ? null : v);
-                  }}
-                >
-                  <option value={0}>None</option>
-                  <option value={10}>10%</option>
-                  <option value={20}>20%</option>
-                  <option value={30}>30%</option>
-                </select>
-              </label>
+              {holdoutSelect}
             </div>
             {btMode === "walkforward" && (
               <WfoConfig
@@ -2086,61 +2151,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 />
               </label>
             )}
-            {cfg.range.mode === "custom" && (
-              <div className="al-row bt-range-row">
-                <label className="bt-range-field">
-                  <span>From</span>
-                  <input
-                    type="datetime-local"
-                    value={cfg.range.fromMs ? msToLocalInput(cfg.range.fromMs) : ""}
-                    onChange={(e) => setRange({ fromMs: localInputToMs(e.target.value) ?? undefined })}
-                  />
-                </label>
-                <label className="bt-range-field">
-                  <span>To</span>
-                  <input
-                    type="datetime-local"
-                    value={cfg.range.toMs ? msToLocalInput(cfg.range.toMs) : ""}
-                    onChange={(e) => setRange({ toMs: localInputToMs(e.target.value) ?? undefined })}
-                  />
-                </label>
-                <Tooltip
-                  content={
-                    !controller
-                      ? "Focus a chart to pick a range"
-                      : pickingRange
-                        ? "Picking… drag across the chart's time axis, or click a start then an end. Esc cancels."
-                        : "Pick the range on the chart: drag across the time axis, or click a start then an end"
-                  }
-                >
-                  <button
-                    type="button"
-                    className={`bt-pick-range${pickingRange ? " on" : ""}`}
-                    disabled={!controller}
-                    aria-label="Pick range on chart"
-                    onClick={() => {
-                      if (!controller) return;
-                      if (controller.rangePickArmed.value) {
-                        controller.rangePickArmed.set(false);
-                      } else {
-                        controller.rangePickArmed.set(true);
-                        controller.focusChart?.(); // so Esc reaches the chart
-                      }
-                    }}
-                  >
-                    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-                      <path
-                        d="M3 4v8M13 4v8M3 8h10"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.4"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </button>
-                </Tooltip>
-              </div>
-            )}
+            {cfg.range.mode === "custom" && rangePicker}
             {/* Holdout ("lockbox") reserves the last part of the range as an
                 out-of-sample tail. The picker itself lives up in the Time range
                 header (next to Timeframe/Windows); here we only surface the
