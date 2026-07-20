@@ -2283,6 +2283,9 @@
   font-size: 12px;
   color: var(--text-dim);
 }
+/* Extra breathing room before a second label on a shared row (Test after the
+   Train segment), so the two groups read as separate. */
+.wfo-label-sep { margin-left: 10px; }
 .wfo-seg { flex: 0 0 auto; }
 .wfo-seg button { padding: 4px 10px; font-size: 12px; }
 .wfo-select {

@@ -72,7 +72,13 @@ export function WfoConfig(props: {
             </button>
           ))}
         </span>
-        <span className="wfo-label">Test</span>
+        <span className="wfo-label wfo-label-sep">
+          Test
+          <InfoTip
+            title="Test window"
+            text="How far forward each fold is evaluated out-of-sample, after training."
+          />
+        </span>
         <span className="seg wfo-seg">
           {TEST_SPAN_PICKS.map((span) => (
             <button
