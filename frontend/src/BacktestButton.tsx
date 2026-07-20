@@ -47,6 +47,7 @@ import {
   backtestMarkersShownSignal,
   backtestEquityShownSignal,
   backtestRunningSignal,
+  progressStageSignal,
   backtestDurationSignal,
   sweepDurationSignal,
   sweepAxesSignal,
@@ -276,6 +277,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       const depth = cfg.range.history ?? "minimal";
       // Temporary phase timing (perf investigation) — logged as [backtest perf].
       const tFetch0 = performance.now();
+      progressStageSignal.set("downloading");
       let bars = await fetchBars(resolveHistoryStart(effCfg, windowFromMs, resSeconds));
 
       // The requested depth can exceed what the broker/account actually serves
@@ -407,6 +409,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         wfoDurationSignal.set(null);
         wfoStateSignal.set({ phase: "grid", done: 0, total: 0, running: true, foldRows: [], result: null, startedAt: Date.now() });
         try {
+          progressStageSignal.set(sweepTargetSignal.value === "remote" ? "uploading" : "submitting");
           const result = await runWalkForward(baseReq, wf, {
             signal: ctl.signal,
             target: sweepTargetSignal.value,
@@ -416,6 +419,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
             // Mirrors the sweep branch's onRows guard + continueResumeWfo.
             onState: (st) => {
               if (ctl.signal.aborted) return;
+              progressStageSignal.set(null);
               wfoStateSignal.set(st);
             },
           });
@@ -469,6 +473,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         const sweepTarget = sweepTargetSignal.value;
         try {
           const landed: SweepRow[] = [];
+          progressStageSignal.set(sweepTarget === "remote" ? "uploading" : "submitting");
           const rows = await runSweep(baseReq, sweepAxes, {
             signal: ctl.signal,
             windows,
@@ -483,6 +488,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
               // After an abort (modal closed / Cancel) the state may already be
               // cleared — a late chunk must not resurrect a ghost sweep.
               if (ctl.signal.aborted) return;
+              progressStageSignal.set(null);
               landed.push(...chunkRows);
               sweepStateSignal.set({ rows: landed, done, total, running: true, etaSeconds, startedAt: runStart });
             },
@@ -525,6 +531,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         return;
       }
 
+      progressStageSignal.set("engine");
       const res = await runAndRender(
         chart,
         baseReq,
@@ -567,6 +574,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     } finally {
       setRunning(false);
       backtestRunningSignal.set(false);
+      progressStageSignal.set(null);
     }
   }
 

@@ -405,6 +405,12 @@ export function requestBacktestRun(): void {
 // button LOOK unavailable too.
 export const backtestRunningSignal = new Signal<boolean>(false);
 
+// The current stall-window label for the active run (backtest/sweep/WFO), or
+// null when idle or when a moving progress bar has taken over. Set in
+// BacktestButton's run handler; read by the result panels. Values are stage keys
+// (see lib/progressLabels.ts).
+export const progressStageSignal = new Signal<string | null>(null);
+
 // Wall-clock duration (ms) of the last run that COMPLETED this session, one
 // per mode so a backtest run never stomps the sweep's number (or vice versa).
 // BacktestButton clears the relevant one at run start and writes it only on a
