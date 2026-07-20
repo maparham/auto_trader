@@ -91,6 +91,11 @@ export function opAxisTarget(side: "long" | "short", group: "entry" | "exit", id
   return `op:${side}.${group}.${idx}`;
 }
 
+// Re-export the literal target builder from sweepLiterals; it follows the same
+// convention as ruleAxisTarget and opAxisTarget (side/group/idx). Not removed
+// or modified until Task 13 cutover.
+export { sweepLiteralTarget } from "./expr/sweepLiterals";
+
 /** When the SL/TP sync is on, risk axes are canonicalized to the long side at
  * toggle time (RiskSection) — this stamps each with the short-side mirror so
  * enumerateCombos sweeps both legs in lockstep. Non-risk axes pass through. */
