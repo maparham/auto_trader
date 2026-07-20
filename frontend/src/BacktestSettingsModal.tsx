@@ -3,7 +3,7 @@
 // (useDraggable/useCloseOnEscape/CloseButton, .modal-backdrop/.modal/.modal-head/
 // .modal-foot) — no shared wrapper, no portal.
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CloseButton from "./CloseButton";
 import ChartOperandPicker from "./ChartOperandPicker";
@@ -33,7 +33,9 @@ import {
   wfoRequestSignal,
   wfoRenderRequest,
   requestWfoCancel,
+  progressStageSignal,
 } from "./lib/signals";
+import { stageLabel } from "./lib/progressLabels";
 import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
 import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
@@ -425,6 +427,14 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // but the sides drifted apart (saved before the option existed, or edited
   // while off) is normalized on load, the side being viewed winning.
   const [cfg, setCfg] = useState<BacktestConfig>(() => applyRiskSync(initial, loadBacktestSide()));
+  // Single source of truth for the stall-window progress label (downloading
+  // candles / submitting / uploading to compute host / running backtest),
+  // shown above all three result panels regardless of mode so it's visible
+  // even before a sweep/WFO panel has mounted.
+  const stage = useSyncExternalStore(
+    (cb) => progressStageSignal.subscribe(cb),
+    () => progressStageSignal.value,
+  );
   // True while "Pick Range" is armed on the chart (mirrors the controller signal),
   // so the button reflects the active state.
   const [pickingRange, setPickingRange] = useState(false);
@@ -1707,6 +1717,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // column. Follows the active Backtest|Sweep mode; nothing is duplicated.
   const resultsBody = (
     <>
+      {stageLabel(stage) && (
+        <div className="sweep-progress"><span>{stageLabel(stage)}</span></div>
+      )}
       {btMode === "backtest" && <BacktestPanel />}
       {/* Kept mounted whenever results exist, hidden with CSS when the mode
           isn't sweep: flipping Backtest↔Sweep would otherwise unmount and

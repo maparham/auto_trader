@@ -18,10 +18,8 @@ import {
   backtestMarkersShownSignal,
   backtestEquityShownSignal,
   backtestRunningSignal,
-  progressStageSignal,
   requestBacktestClear,
 } from "./lib/signals";
-import { stageLabel } from "./lib/progressLabels";
 import { saveBacktestPeriodsShown, saveBacktestMarkersShown, saveBacktestEquityShown } from "./lib/persist";
 import { metricGroups, METRIC_INFO, legTable, tradeRows, sortTradeRows, rowWindow, type TradeRow, type LegTable } from "./lib/backtestPanelData";
 import { metricTipLines } from "./components/metricScaleTip";
@@ -43,7 +41,6 @@ const subscribeSelected = (cb: () => void) => selectedTradeSignal.subscribe(cb);
 const subscribeMessages = (cb: () => void) => backtestMessagesSignal.subscribe(cb);
 const subscribeSelectNotice = (cb: () => void) => backtestSelectNoticeSignal.subscribe(cb);
 const subscribeRunning = (cb: () => void) => backtestRunningSignal.subscribe(cb);
-const subscribeStage = (cb: () => void) => progressStageSignal.subscribe(cb);
 
 type Tab = "overview" | "trades" | "analysis" | "inspect";
 type SortDir = "asc" | "desc";
@@ -65,7 +62,6 @@ export default function BacktestPanel() {
   const messages = useSyncExternalStore(subscribeMessages, () => backtestMessagesSignal.value);
   const selectNotice = useSyncExternalStore(subscribeSelectNotice, () => backtestSelectNoticeSignal.value);
   const running = useSyncExternalStore(subscribeRunning, () => backtestRunningSignal.value);
-  const stage = useSyncExternalStore(subscribeStage, () => progressStageSignal.value);
   const periodsShown = useSyncExternalStore(
     (cb) => backtestPeriodsShownSignal.subscribe(cb),
     () => backtestPeriodsShownSignal.value,
@@ -160,9 +156,7 @@ export default function BacktestPanel() {
       <div className="bt-results">
         {msgRow}
         <div className="bt-results-empty">
-          {running
-            ? stageLabel(stage) || "Backtest running…"
-            : "Run a backtest to see results here."}
+          {running ? "Backtest running…" : "Run a backtest to see results here."}
         </div>
       </div>
     );

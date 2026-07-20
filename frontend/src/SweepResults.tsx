@@ -7,7 +7,7 @@
 // row/cell applies that combo via onApply. Session-state only, never persisted.
 // (Spec: docs/superpowers/specs/2026-07-09-strategy-panel-params-design.md)
 
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { SweepRow } from "./api";
 import { axisColumnLabel, comboAxisLabel, comboAxisText, type SweepAxis } from "./lib/sweep";
@@ -19,10 +19,6 @@ import { rowWindow, verdictFor, type RowWindow } from "./lib/backtestPanelData";
 import { useStableCallback } from "./lib/useStableCallback";
 import { metricTipLines } from "./components/metricScaleTip";
 import { fmtRunDuration, remainingEta } from "./lib/duration";
-import { progressStageSignal } from "./lib/signals";
-import { stageLabel } from "./lib/progressLabels";
-
-const subscribeStage = (cb: () => void) => progressStageSignal.subscribe(cb);
 
 type MetricKey =
   | "net_pnl"
@@ -320,7 +316,6 @@ export const SweepResults = memo(function SweepResults(props: {
   progress?: SweepProgressInfo | null;
 }) {
   const { rows, axes, onApply, onRefine, progress } = props;
-  const stage = useSyncExternalStore(subscribeStage, () => progressStageSignal.value);
 
   // Plateau scoring over the loaded rows: new row objects whose metrics gain
   // `plateau_score`, so the existing sort / best-per-column / heatmap paths
@@ -447,9 +442,6 @@ export const SweepResults = memo(function SweepResults(props: {
 
   return (
     <div className="sweep-results" ref={anchorRef}>
-      {stageLabel(stage) && (
-        <div className="sweep-progress"><span>{stageLabel(stage)}</span></div>
-      )}
       {progress && <SweepProgress progress={progress} />}
 
       {applyDisabled && (
