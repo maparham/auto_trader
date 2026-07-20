@@ -1769,3 +1769,62 @@ describe("OverlayManager syncDrawingSelectionFromClick (Delete-key desync)", () 
     expect(m.getSelectedDrawingId()).toBe(id); // no false clear on a fallback path
   });
 });
+
+// A drawing whose anchors collapse onto one x (fib drawn on a single bar) or whose
+// second anchor lost its x (a straight line saved with a value-only point) renders as
+// a zero-width, unclickable strip the user can neither select nor delete. The guard
+// refuses to recreate/persist these and scrubs them from storage on load.
+describe("degenerate-drawing guard (unclickable half-drawn tool)", () => {
+  const T = 1_750_000_000_000;
+
+  it("rehydrate drops a collapsed fib (both anchors share one timestamp) and scrubs storage", () => {
+    const { chart, m } = setup();
+    P.saveDrawings("tab.A", "US100", [
+      { name: "fibonacciLine", points: [{ timestamp: T, value: 71.7 }, { timestamp: T, value: 75.2 }] },
+    ]);
+    m.rehydrate();
+    expect([...chart.overlays.values()].some((o) => o.name === "fibonacciLine")).toBe(false);
+    expect(P.loadDrawings("tab.A", "US100")).toEqual([]);
+  });
+
+  it("rehydrate drops a line whose second anchor lost its x (timestamp on one point only)", () => {
+    const { chart, m } = setup();
+    P.saveDrawings("tab.A", "US100", [
+      { name: "straightLine", points: [{ timestamp: T, value: 80.4 }, { value: 76.2 }] },
+    ]);
+    m.rehydrate();
+    expect([...chart.overlays.values()].some((o) => o.name === "straightLine")).toBe(false);
+    expect(P.loadDrawings("tab.A", "US100")).toEqual([]);
+  });
+
+  it("keeps a valid drawing and only scrubs the degenerate one", () => {
+    const { chart, m } = setup();
+    P.saveDrawings("tab.A", "US100", [
+      { name: "fibonacciLine", points: [{ timestamp: T, value: 71.7 }, { timestamp: T, value: 75.2 }] },
+      { name: "segment", points: [{ timestamp: T, value: 1 }, { timestamp: T + 3_600_000, value: 2 }] },
+    ]);
+    m.rehydrate();
+    const names = [...chart.overlays.values()].map((o) => o.name);
+    expect(names).toContain("segment");
+    expect(names).not.toContain("fibonacciLine");
+    const saved = P.loadDrawings("tab.A", "US100");
+    expect(saved.map((d) => d.name)).toEqual(["segment"]);
+  });
+
+  it("onDrawEnd removes a drawing that finished with collapsed anchors instead of persisting", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("fibonacciLine", [{ timestamp: T, value: 71.7 }, { timestamp: T, value: 75.2 }])!;
+    // Simulate klinecharts firing onDrawEnd once the (degenerate) second click lands.
+    (ovById(chart, id) as { onDrawEnd?: (e: { overlay: { id: string } }) => void }).onDrawEnd?.({
+      overlay: { id },
+    });
+    expect(ovById(chart, id)).toBeNull(); // removed, not left stuck
+    expect(P.loadDrawings("tab.A", "US100")).toEqual([]); // never persisted
+  });
+
+  it("does not flag the symmetric x-less fixture shorthand", () => {
+    const { m } = setup();
+    m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
+    expect(P.loadDrawings("tab.A", "US100")).toHaveLength(1);
+  });
+});

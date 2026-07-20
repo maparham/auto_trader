@@ -971,6 +971,17 @@ export class OverlayManager {
           this.slopeDone?.();
           return false;
         }
+        // Reject a drawing that finished with collapsed/incomplete anchors (e.g. a fib
+        // whose two clicks landed on the same bar): it renders as an unclickable
+        // zero-width strip the user can't select or delete. Remove it rather than
+        // persist the stuck state. onRemoved handles entries/persist bookkeeping.
+        if (isDrawing && typeof id === "string") {
+          const ov = this.byId(id);
+          if (ov && OverlayManager.isDegenerateDrawing(ov.points)) {
+            this.chart?.removeOverlay({ id });
+            return false;
+          }
+        }
         this.persist();
         // A seeded default may carry per-interval visibility; enforce it now (persist
         // alone doesn't run applyDisplay). Harmless when none is seeded — empty
@@ -2253,6 +2264,7 @@ export class OverlayManager {
     // selection; we re-select the line that still carries this saved id below.
     const prevSelectedSavedId =
       this.selectedAlertId != null ? this.alertIds.get(this.selectedAlertId) ?? null : null;
+    let droppedDegenerate = false;
     this.hydrating++;
     try {
       for (const id of [...this.entries.keys()]) this.chart.removeOverlay({ id });
@@ -2272,6 +2284,13 @@ export class OverlayManager {
       this.selectedDrawingId = null;
 
       for (const d of loadDrawings(this.scope, this.epic)) {
+        // Skip a drawing whose stored anchors are collapsed/incomplete — recreating it
+        // would resurrect an unclickable zero-width strip the user can't delete. We
+        // re-persist below so the corrupt entry is scrubbed from storage for good.
+        if (OverlayManager.isDegenerateDrawing(d.points)) {
+          droppedDegenerate = true;
+          continue;
+        }
         // Seed userVisible from the persisted top-level `visible` when extendData
         // hasn't recorded intent yet (the common case for a drawing whose Show-on-
         // chart toggle was never touched — persist() always writes the top-level
@@ -2315,6 +2334,9 @@ export class OverlayManager {
     } finally {
       this.hydrating--;
     }
+    // Scrub any degenerate drawings we skipped above out of storage (persist() is a
+    // no-op while hydrating, so it must run after the guard block re-enables writes).
+    if (droppedDegenerate) this.persist();
     this.notifyAlerts();
   }
 
@@ -2429,6 +2451,34 @@ export class OverlayManager {
     });
   }
 
+  // A multi-anchor drawing (fib, trendline, segment, rectangle…) is DEGENERATE when
+  // its anchors collapse onto one x, or one anchor lost its x while another kept it.
+  // Both render as a zero-width vertical strip (or pin an endpoint to the left edge)
+  // with no clickable body — the user can neither select nor delete it: the "stuck
+  // half-drawn tool" bug. Two observed shapes, both caught here:
+  //   • fib whose two clicks hit the SAME bar → every point shares one timestamp.
+  //   • straight line saved with a second point that has value only, no x anchor.
+  // We flag a 2+-point drawing when a point has no value (can't render), when some
+  // points carry an x anchor and others don't (inconsistent), or when every point
+  // resolves to the same x (collapsed). Symmetric x-less points are NOT flagged —
+  // that's the test-fixture shorthand and never a real finished-overlay shape.
+  private static isDegenerateDrawing(
+    points: ReadonlyArray<{ timestamp?: number; dataIndex?: number; value?: number }> | undefined,
+  ): boolean {
+    const pts = points ?? [];
+    if (pts.length < 2) return false;
+    const xKeys = new Set<string>();
+    let anchored = 0;
+    for (const p of pts) {
+      if (p.value == null) return true; // no y anchor — cannot render
+      if (p.timestamp != null) { xKeys.add(`t${p.timestamp}`); anchored++; }
+      else if (p.dataIndex != null) { xKeys.add(`d${Math.round(p.dataIndex)}`); anchored++; }
+    }
+    if (anchored === 0) return false; // symmetric x-less shorthand — leave it alone
+    if (anchored < pts.length) return true; // inconsistent: an anchor lost its x
+    return xKeys.size < 2; // all anchored on one vertical — zero horizontal extent
+  }
+
   // persist() is DRAWINGS-ONLY. Alerts are never written from the chart's in-memory
   // snapshot — they mutate through the by-id storage intents (addStoredAlert /
   // updateStoredAlert / deleteStoredAlert) at each user-intent site instead. That is
@@ -2448,6 +2498,9 @@ export class OverlayManager {
       if (kind === "alert" || kind === "measure" || kind === "rangeBand" || kind === "slope") continue;
       const ov = this.byId(id);
       if (!ov) continue;
+      // Never write a collapsed/incomplete drawing to storage — it reloads as an
+      // unclickable, undeletable strip (see isDegenerateDrawing).
+      if (OverlayManager.isDegenerateDrawing(this.stablePoints(ov.points))) continue;
       drawings.push({
         name: ov.name,
         // Stable anchors only (timestamp/value) — see stablePoints for why a
