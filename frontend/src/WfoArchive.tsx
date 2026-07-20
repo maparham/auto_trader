@@ -11,14 +11,14 @@ import {
   type WfoResult,
 } from "./api";
 import { periodByResolution } from "./lib/feed";
-import { requestConfirm } from "./lib/signals";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
+import { SCORE_TIP as SCORE_TIP_BASE } from "./WfoResults";
 
+// Archive appends its own "ranked by this score" line to the shared tip.
 const SCORE_TIP = [
-  "0-100 blend of the walk-forward health checks:",
-  "30% walk-forward efficiency, 20% folds profitable, 15% OOS Sharpe, 15% parameter stability, 10% OOS drawdown, 10% plateau breadth.",
-  "Discounted when total OOS trades or the fold count is low. Runs are ranked by this score.",
+  ...SCORE_TIP_BASE,
+  "Runs are ranked by this score.",
 ];
 
 function fmtScore(v: number | null): string {
@@ -88,16 +88,9 @@ export function WfoArchive(props: {
   };
 
   const remove = (s: WfoArchiveSummary) => {
-    requestConfirm({
-      title: "Delete run",
-      message: `Delete this ${s.epic} walk-forward run from ${new Date(s.created_at * 1000).toLocaleDateString()}?`,
-      confirmLabel: "Delete",
-      onConfirm: () => {
-        deleteWfoArchive(s.id)
-          .then(refresh)
-          .catch((e) => console.warn("delete walk-forward archive failed", e));
-      },
-    });
+    deleteWfoArchive(s.id)
+      .then(refresh)
+      .catch((e) => console.warn("delete walk-forward archive failed", e));
   };
 
   return (

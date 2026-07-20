@@ -70,9 +70,16 @@ function foldColValue(f: WfoFold, col: FoldCol, metric: string): number | null {
   }
 }
 
-const SCORE_TIP = [
+export const SCORE_TIP = [
   "0-100 blend of the walk-forward health checks:",
-  "30% walk-forward efficiency, 20% folds profitable, 15% OOS Sharpe, 15% parameter stability, 10% OOS drawdown, 10% plateau breadth.",
+  <ul className="tooltip-weights" key="weights">
+    <li><b>30%</b> walk-forward efficiency</li>
+    <li><b>20%</b> folds profitable</li>
+    <li><b>15%</b> OOS Sharpe</li>
+    <li><b>15%</b> parameter stability</li>
+    <li><b>10%</b> OOS drawdown</li>
+    <li><b>10%</b> plateau breadth</li>
+  </ul>,
   "Discounted when total OOS trades or the fold count is low.",
 ];
 const WFE_TIP =
