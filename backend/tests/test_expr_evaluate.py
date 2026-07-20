@@ -55,6 +55,19 @@ def test_nan_poisons_to_false():
     assert _row_bools("candle.close / 0 > 0", c) == [False] * 5
 
 
+def test_nan_poisons_highest_window():
+    # closes [3, 2, 5, 4]; raw = close/(close-2): [3, nan (2/0), 5/3, 2].
+    # highest(raw, 2) per bar:
+    #   bar0: window too short -> None -> False
+    #   bar1: window [3, nan] -> poisoned. Without the NaN screen, max(3, nan)
+    #         returns 3 (order-dependent) and would leak 3 > 0 -> True.
+    #   bar2: window [nan, 5/3] -> poisoned -> False
+    #   bar3: window [5/3, 2] -> max 2 > 0 -> True
+    c = _candles([3, 2, 5, 4])
+    assert _row_bools("highest(candle.close / (candle.close - 2), 2) > 0", c) == [
+        False, False, False, True]
+
+
 def test_cross_above():
     c = _candles([1, 2, 3, 2, 1])
     # crossAbove(candle.close, 2): prev<=2 and now>2 -> only bar 2
@@ -69,28 +82,30 @@ def test_entry_in_exit_rule():
 
 
 def test_tf_forward_fill():
-    # base hourly 4 bars; HOUR_2 has closes [10,20] at t=0 and t=2h
-    base = _candles([1, 1, 1, 1], resolution_s=3600)
+    # base hourly 5 bars; HOUR_4 has closes [10,20] at t=0 and t=4h. The first
+    # HOUR_4 bar (opens t=0) closes at t=4h, so it becomes usable only at base
+    # bar 4 (wait-close, no hindsight) -> [None, None, None, None, 10.0].
+    base = _candles([1, 1, 1, 1, 1], resolution_s=3600)
     htf_base = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    htf = {"HOUR_2": [
+    htf = {"HOUR_4": [
         Candle(time=htf_base, open=10, high=10, low=10, close=10, volume=1),
-        Candle(time=htf_base + timedelta(seconds=7200), open=20, high=20, low=20, close=20, volume=1),
+        Candle(time=htf_base + timedelta(seconds=14400), open=20, high=20, low=20, close=20, volume=1),
     ]}
-    arr = series_of(parse("candle.close@HOUR_2 > 5").left, base, "HOUR", htf)
-    assert arr == [None, None, 10.0, 10.0]
+    arr = series_of(parse("candle.close@HOUR_4 > 5").left, base, "HOUR", htf)
+    assert arr == [None, None, None, None, 10.0]
 
 
 def test_tf_field_wrapped_over_tf():
-    # Field wrapped over Tf: candle@HOUR_2.high pushes the field onto the inner
+    # Field wrapped over Tf: candle@HOUR_4.high pushes the field onto the inner
     # Candle leaf, then forward-fills the HTF highs the same way as the close path.
-    base = _candles([1, 1, 1, 1], resolution_s=3600)
+    base = _candles([1, 1, 1, 1, 1], resolution_s=3600)
     htf_base = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    htf = {"HOUR_2": [
+    htf = {"HOUR_4": [
         Candle(time=htf_base, open=10, high=10, low=10, close=10, volume=1),
-        Candle(time=htf_base + timedelta(seconds=7200), open=20, high=20, low=20, close=20, volume=1),
+        Candle(time=htf_base + timedelta(seconds=14400), open=20, high=20, low=20, close=20, volume=1),
     ]}
-    arr = series_of(parse("candle@HOUR_2.high > 0").left, base, "HOUR", htf)
-    assert arr == [None, None, 10.0, 10.0]
+    arr = series_of(parse("candle@HOUR_4.high > 0").left, base, "HOUR", htf)
+    assert arr == [None, None, None, None, 10.0]
 
 
 def test_series_of_arith():

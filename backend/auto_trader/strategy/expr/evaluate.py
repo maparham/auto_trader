@@ -37,26 +37,7 @@ def candle_field(c: Candle, field: str) -> float | None:
 
 
 def _tf_hours(resolution: str) -> float:
-    try:
-        secs = resolution_seconds(resolution)
-    except ValueError:
-        secs = 0
-    return (secs or 3600) / 3600
-
-
-def _tf_ms(tf: str, tf_candles: Sequence[Candle]) -> int:
-    """Bar width of an HTF in milliseconds. Real resolutions resolve via
-    resolution_seconds; an unknown tf (raises ValueError) falls back to the
-    spacing between the first two HTF candles."""
-    try:
-        secs = resolution_seconds(tf)
-    except ValueError:
-        secs = 0
-    if secs > 0:
-        return secs * 1000
-    if len(tf_candles) >= 2:
-        return int((tf_candles[1].time.timestamp() - tf_candles[0].time.timestamp()) * 1000)
-    return 0
+    return resolution_seconds(resolution) / 3600
 
 
 def _window(raw: Sequence[float | None], n: int, kind: str) -> list[float | None]:
@@ -66,7 +47,11 @@ def _window(raw: Sequence[float | None], n: int, kind: str) -> list[float | None
         if i + 1 < n:
             continue
         window = raw[i - n + 1 : i + 1]
-        if any(v is None for v in window):
+        # A None or NaN anywhere in the window poisons the whole bar. NaN must be
+        # screened explicitly: max/min over a list containing NaN is order-
+        # dependent, so highest/lowest could otherwise return a finite value and
+        # defeat the spec's NaN-poisoning rule.
+        if any(v is None or (isinstance(v, float) and math.isnan(v)) for v in window):
             continue
         vals = [float(v) for v in window]  # type: ignore[arg-type]
         out[i] = max(vals) if kind == "highest" else min(vals) if kind == "lowest" else sum(vals) / n
@@ -118,7 +103,7 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
         tf_candles = htf.get(node.tf, [])
         tf_vals = series_of(node.base, tf_candles, node.tf, htf)
         base_ms = [int(c.time.timestamp() * 1000) for c in candles]
-        tf_ms = _tf_ms(node.tf, tf_candles)
+        tf_ms = resolution_seconds(node.tf) * 1000
         return align_htf_to_base(base_ms, tf_candles, tf_vals, tf_ms)
     if isinstance(node, N.Unary):
         inner = series_of(node.operand, candles, resolution, htf)
