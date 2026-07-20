@@ -1135,6 +1135,14 @@ describe("sweep footer estimate + compute toggle", () => {
     expect(within(select).getByRole("option", { name: "Remote" })).toBeTruthy();
   });
 
+  it("shows the Compute toggle in walk-forward mode too", async () => {
+    mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
+    bigAxis();
+    renderModal();
+    fireEvent.click(within(modeSeg()).getByRole("button", { name: /Walk-fwd/ }));
+    await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
+  });
+
   it("clicking Remote writes the sweep-target signal and persists it", async () => {
     mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
     bigAxis();

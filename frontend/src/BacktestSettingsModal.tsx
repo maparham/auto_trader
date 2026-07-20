@@ -2879,11 +2879,11 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   )}
                 </span>
               )}
-              {btMode === "sweep" && sweepAxes.length > 0 && remoteCompute && (
+              {(btMode === "sweep" || btMode === "walkforward") && sweepAxes.length > 0 && remoteCompute && (
                 <span className="bt-compute-toggle">
                   <Tooltip content={[
-                    "Local: run the sweep on this machine.",
-                    "Remote: run the sweep on the remote compute host.",
+                    "Local: run the job on this machine.",
+                    "Remote: run the job on the remote compute host.",
                   ]}>
                     <select
                       className="bt-search-select"
