@@ -1331,8 +1331,9 @@
   background: var(--surface-2);
 }
 /* The whole rule reads as one line: left operand, operator, right operand, then
-   any exit count and the actions pinned right. Never wraps; operands shrink and
-   their chip labels ellipsize instead. */
+   any exit count and the actions pinned right. The row itself never wraps;
+   operands shrink and their chip labels ellipsize, and an over-full operand
+   (modifier controls open) wraps its own controls onto a second line. */
 .bt-rule-main {
   display: flex;
   align-items: center;
@@ -1346,9 +1347,10 @@
   background: var(--input-bg); color: var(--text); font: inherit;
   border: 1px solid var(--border); border-radius: 5px; padding: 4px 5px; min-width: 0;
 }
-/* An operand's controls size to content and can shrink; the wide AVWAP anchor
-   still drops to its own line via its flex-basis:100%. */
-.bt-operand { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; min-width: 0; }
+/* An operand's controls size to content and can shrink; when the modifier
+   controls (lookback/scale) don't fit beside the chip they wrap onto their own
+   line, and the wide AVWAP anchor drops to one via its flex-basis:100%. */
+.bt-operand { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .bt-operand-chip { min-width: 0; }
 .bt-operand select { flex: 0 1 auto; width: auto; min-width: 0; }
 .bt-operand-length { flex: 0 0 62px; min-width: 0; text-align: left; }
@@ -1363,8 +1365,11 @@
 .bt-rule-count-input::placeholder { color: var(--text-faint); }
 .bt-rule-count-suffix { font-size: 11px; color: var(--accent); font-weight: 600; }
 .bt-rule-count.on .bt-rule-count-input { border-color: var(--accent); color: var(--accent); }
-/* Per-operand timeframe: hug the selected value ("Base"/"1H") — never stretch. */
-.bt-operand-tf { flex: 0 0 auto; width: auto; min-width: 0; }
+/* Per-operand timeframe / modifier-mode selects: hug the selected value
+   ("Base"/"1H"/"bars ago") — never stretch, never shrink away. The extra
+   `select` qualifier outranks `.bt-operand select`'s flex-shrink above, which
+   otherwise collapses these to a sliver in a crowded row. */
+.bt-operand select.bt-operand-tf { flex: 0 0 auto; width: auto; min-width: 0; }
 /* Slope toggle (Δ): use the curve's rate of change instead of its value. Dim
    until on, accented when active — mirrors the "Nth time" count chip. */
 .bt-operand-slope, .bt-operand-mod {
