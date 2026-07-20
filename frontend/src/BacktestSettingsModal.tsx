@@ -1793,6 +1793,16 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           Clear results
         </button>
       )
+    ) : btMode === "walkforward" && wfoState ? (
+      wfoState.running ? (
+        <button className="ghost" onClick={() => requestWfoCancel(true)}>
+          Cancel walk-forward
+        </button>
+      ) : (
+        <button className="ghost" onClick={() => wfoStateSignal.set(null)}>
+          Clear results
+        </button>
+      )
     ) : null;
   // Last completed run's wall-clock duration (session-only, final number only —
   // hidden while a run is in flight). Per mode so a backtest never shows the
