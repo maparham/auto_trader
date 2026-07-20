@@ -4903,6 +4903,9 @@ span.bt-leg-short { color: var(--neg); }
   padding: 6px 10px; border: 1px solid var(--neg); border-radius: 4px;
   color: var(--neg); font-size: 12px;
 }
+/* Chart-display toggles: show/hide chips + compounded/summed seg above the card. */
+.wfo-display { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 2px; }
+.wfo-display .seg button { padding: 3px 10px; font-size: 12px; }
 /* Scorecard: robustness leads, the supporting stats read alongside. */
 .wfo-scorecard { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: flex-end; padding: 2px 2px 0; }
 .wfo-score-lead .wfo-score-value { font-size: 22px; font-weight: 600; line-height: 1.1; }

@@ -2,9 +2,14 @@
 // per-fold table with drill-in, and a parameter-drift strip. Renders off the
 // WfoRunState mirror (live run or archive reconstruction); all numbers come
 // from the backend result payload, nothing is recomputed here.
-import { memo, useState } from "react";
+import { memo, useState, useSyncExternalStore } from "react";
 import type { SweepRow, WfoFold, WfoScheme } from "./api";
 import type { WfoRunState } from "./lib/signals";
+import {
+  wfoEquityShownSignal,
+  wfoBandsShownSignal,
+  wfoEquityCompoundedSignal,
+} from "./lib/signals";
 import type { SweepAxis, SweepCombo } from "./lib/sweep";
 import { comboAxisLabel } from "./lib/sweep";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
@@ -90,6 +95,22 @@ export const WfoResults = memo(function WfoResults(props: {
   const schemes = result?.schemes ?? [];
   const scheme: WfoScheme | undefined = schemes[schemeIndex] ?? schemes[0];
   const metric = result?.objective?.metric ?? "objective";
+
+  // Chart-display toggles. The render side (renderWfoArtifacts) already subscribes
+  // to these signals, so writing them shows/hides/swaps the chart live with no
+  // re-run needed. Mirror the backtest equity-toggle idiom (useSyncExternalStore).
+  const equityShown = useSyncExternalStore(
+    (cb) => wfoEquityShownSignal.subscribe(cb),
+    () => wfoEquityShownSignal.value,
+  );
+  const bandsShown = useSyncExternalStore(
+    (cb) => wfoBandsShownSignal.subscribe(cb),
+    () => wfoBandsShownSignal.value,
+  );
+  const compounded = useSyncExternalStore(
+    (cb) => wfoEquityCompoundedSignal.subscribe(cb),
+    () => wfoEquityCompoundedSignal.value,
+  );
 
   const [sort, setSort] = useState<{ key: FoldCol; dir: SortDir } | null>(null);
   const toggleSort = (key: FoldCol) =>
@@ -198,6 +219,50 @@ export const WfoResults = memo(function WfoResults(props: {
 
       {result && scheme && (
         <>
+          <div className="wfo-display">
+            <button
+              type="button"
+              className={`bt-chip${equityShown ? " seg-on" : ""}`}
+              aria-pressed={equityShown}
+              onClick={() => wfoEquityShownSignal.set(!wfoEquityShownSignal.value)}
+            >
+              Equity
+            </button>
+            <button
+              type="button"
+              className={`bt-chip${bandsShown ? " seg-on" : ""}`}
+              aria-pressed={bandsShown}
+              onClick={() => wfoBandsShownSignal.set(!wfoBandsShownSignal.value)}
+            >
+              Fold bands
+            </button>
+            <div className="seg" role="group" aria-label="Equity mode">
+              <button
+                type="button"
+                className={compounded ? "seg-on" : ""}
+                aria-pressed={compounded}
+                onClick={() => wfoEquityCompoundedSignal.set(true)}
+              >
+                Compounded
+              </button>
+              <button
+                type="button"
+                className={compounded ? "" : "seg-on"}
+                aria-pressed={!compounded}
+                onClick={() => wfoEquityCompoundedSignal.set(false)}
+              >
+                Summed
+              </button>
+            </div>
+            <InfoTip
+              title="Equity mode"
+              text={[
+                "Compounded reinvests each fold's return, so the curve grows on the running balance.",
+                "Summed adds each fold's return on the starting balance, keeping folds equally weighted.",
+              ]}
+            />
+          </div>
+
           <div className="wfo-scorecard">
             <div className="bt-panel-stat wfo-score-lead">
               <span className="bt-panel-stat-label">

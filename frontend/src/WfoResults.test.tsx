@@ -3,8 +3,19 @@ import { fireEvent, render, screen, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WfoResults, driftPath } from "./WfoResults";
 import type { WfoRunState } from "./lib/signals";
+import {
+  wfoEquityShownSignal,
+  wfoBandsShownSignal,
+  wfoEquityCompoundedSignal,
+} from "./lib/signals";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // Signals are module singletons (default true) — reset so tests don't leak.
+  wfoEquityShownSignal.set(true);
+  wfoBandsShownSignal.set(true);
+  wfoEquityCompoundedSignal.set(true);
+});
 
 const fold = (i: number, over: Partial<import("./api").WfoFold> = {}): import("./api").WfoFold => ({
   train_from: 1000 + i, train_to: 2000 + i, test_from: 2000 + i, test_to: 3000 + i,
@@ -45,6 +56,28 @@ describe("WfoResults", () => {
     st.result = { ...st.result!, grid_errors: { failed: 4, total: 4, sample: "boom" } };
     render(<WfoResults state={st} onApplyCombo={() => {}} onLoadFoldTable={() => Promise.resolve([])} axes={[]} schemeIndex={0} onSchemeIndex={() => {}} />);
     expect(screen.getByText(/All 4 combos failed/)).toBeTruthy();
+  });
+
+  it("display chips flip the chart signals live", () => {
+    render(<WfoResults state={doneState()} onApplyCombo={() => {}} onLoadFoldTable={() => Promise.resolve([])}
+      axes={[]} schemeIndex={0} onSchemeIndex={() => {}} />);
+    // All three default on.
+    expect(wfoEquityShownSignal.value).toBe(true);
+    expect(wfoBandsShownSignal.value).toBe(true);
+    expect(wfoEquityCompoundedSignal.value).toBe(true);
+
+    fireEvent.click(screen.getByText("Equity"));
+    expect(wfoEquityShownSignal.value).toBe(false);
+    fireEvent.click(screen.getByText("Fold bands"));
+    expect(wfoBandsShownSignal.value).toBe(false);
+    fireEvent.click(screen.getByText("Summed"));
+    expect(wfoEquityCompoundedSignal.value).toBe(false);
+    fireEvent.click(screen.getByText("Compounded"));
+    expect(wfoEquityCompoundedSignal.value).toBe(true);
+
+    // The pressed state reflects the signal.
+    expect(screen.getByText("Equity").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByText("Compounded").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("driftPath maps values to a polyline and breaks on null", () => {
