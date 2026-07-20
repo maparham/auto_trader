@@ -32,19 +32,33 @@ moment, a human-readable line describing what they are doing right now — e.g.
 - `backend-owns-business-logic`: label existing frontend prep steps, but do not
   add new backend→frontend round-trips purely to feed labels.
 
+## Hard constraint discovered
+
+`CANDLE_CACHE` is a module singleton (`candle_cache.py:625`) whose per-key
+`asyncio.Lock`s (`candle_cache.py:70,92`) bind to the **server's event loop** on
+first use. Therefore **any candle fetch must run on the server event loop** — a
+job thread with its own `asyncio.run()` loop would raise "lock bound to a
+different event loop." This shapes decisions 2 and 3 below.
+
 ## Approved decisions
 
 1. **Backtest reports backend sub-steps** — it becomes a lightweight in-memory
-   polled job (like sweep/WFO) with a `stage` string and a **Cancel** button.
-   No reload/re-attach/resume (single runs are short).
-2. **Backtest executes in a daemon thread** (not a process pool). The label is
-   set before each CPU step, so the UI shows the correct label while the step
-   churns; polls resolve at the GIL switch interval. No pickling.
-3. **Sweep/WFO submit-time HTF-prefetch + probe move into the job thread** so
-   that previously-blind window reports `htf`/`probe` stages. Fast,
-   request-shaped validation (combo targets, series presence) **stays
-   synchronous at submit** and still 422s. A probe/HTF-fetch failure now
-   surfaces as a **job-error state** instead of a synchronous 422 — accepted.
+   polled job with a `stage` string and a **Cancel** button. No
+   reload/re-attach/resume (single runs are short).
+2. **Backtest executes as an asyncio background task on the server loop** (not a
+   thread, not a process pool — the cache constraint above). Submit does the
+   fast synchronous validation, starts the task, returns `jobId`. The task runs
+   the refactored backtest core, setting `stage` before each step. The engine's
+   CPU blocks the loop only as the current synchronous POST already does; the
+   label is set before the block, and the `await`s between the 4 cost-sensitivity
+   re-runs let polls through. No pickling.
+3. **Sweep/WFO keep HTF-prefetch + probe on the async submit route** (they fetch,
+   so they must stay on the loop). The frontend `submitting`/`uploading` label —
+   already shown for the whole submit POST — covers that window. This
+   **preserves the synchronous 422** on a probe/HTF failure. Backend `stage`
+   then covers only the pool phases (sweep: "Running combos"; WFO: grid → test
+   "Testing fold N/M" → aggregate). No separate "queued" stage — a job waiting on
+   the FIFO gate keeps showing the last frontend label until the pool starts.
 4. **Remote runs get distinct labels** ("Uploading to compute host", plus the
    existing host start/boot states); local runs say "Submitting".
 
@@ -59,34 +73,36 @@ all three panels:
 | `indicators`   | Preparing indicators           | frontend  |
 | `submitting`   | Submitting                     | frontend  |
 | `uploading`    | Uploading to compute host      | frontend (remote) |
-| `queued`       | Waiting for a free slot        | backend   |
-| `htf`          | Fetching higher-timeframe data | backend   |
-| `probe`        | Running a probe                | backend   |
-| `engine`       | Running backtest               | backend   |
-| `cost`         | Testing cost sensitivity       | backend   |
-| `enrich`       | Finalizing                     | backend   |
-| `saving`       | Saving                         | backend   |
-| `grid`         | Evaluating grid                | backend   |
-| `test`         | Testing fold N/M               | backend   |
-| `aggregate`    | Aggregating                    | backend   |
+| `htf`          | Fetching higher-timeframe data | backend (backtest) |
+| `engine`       | Running backtest               | backend (backtest) |
+| `cost`         | Testing cost sensitivity       | backend (backtest) |
+| `enrich`       | Finalizing                     | backend (backtest) |
+| `saving`       | Saving                         | backend (backtest) |
+| `grid`         | Running combos / Evaluating grid | backend (sweep/WFO) |
+| `test`         | Testing fold N/M               | backend (WFO) |
+| `aggregate`    | Aggregating                    | backend (WFO) |
 
 Frontend-driven stages are set in the shared prep region of `BacktestButton.tsx`
 before the branches diverge, so all three operations share the same
 "Downloading candles" / "Preparing indicators" / "Submitting|Uploading" opening.
-Backend-driven stages are carried on the existing poll response.
+`htf`/`engine`/`cost`/`enrich`/`saving` are polled from the **backtest** job
+(which runs on the loop under polling). Sweep/WFO fetch+probe happen inside the
+submit POST, so `submitting`/`uploading` covers them; their poll then reports the
+pool-phase stages. There is no `queued` stage (decision 3).
 
 ## Per-operation flow
 
-**Backtest:** `downloading → indicators → submitting → htf → engine → cost →
-enrich → saving → done(result)`. Cancel checked between steps, notably before
-each of the 4 cost-sensitivity re-runs.
+**Backtest:** `downloading → indicators → submitting → [job: htf → engine →
+cost → enrich → saving] → done(result)`. The bracketed stages are polled from
+the job. Cancel checked between steps, notably before each of the 4
+cost-sensitivity re-runs.
 
-**Sweep:** `downloading → indicators → submitting|uploading → queued → htf →
-probe (coded only) → grid/"Running combos" (done/total) → done`.
+**Sweep:** `downloading → indicators → submitting|uploading (covers route-side
+fetch+probe) → [job: grid/"Running combos" (done/total)] → done`.
 
-**WFO:** `downloading → indicators → submitting|uploading → queued → htf →
-probe (coded only) → grid (combo done/total) → test (per-fold "Testing fold
-N/M") → aggregate → done`. Keep `phase` for the results-view control flow; add
+**WFO:** `downloading → indicators → submitting|uploading (covers route-side
+fetch+probe) → [job: grid (combo done/total) → test (per-fold "Testing fold
+N/M") → aggregate] → done`. Keep `phase` for the results-view control flow; add
 `stage` as the human label.
 
 ## Backend changes
@@ -95,32 +111,37 @@ N/M") → aggregate → done`. Keep `phase` for the results-view control flow; a
   `WfoJobStatusResponse`. New `BacktestJobSubmitResponse{jobId}` and
   `BacktestJobStatusResponse{stage, running, cancelled, error, result}`
   (`result` is the existing `BacktestResponse`, present only when done).
-- **New `backtest_jobs.py`**: `BacktestJobManager` + `BACKTEST_JOBS` singleton,
-  mirroring `sweep_jobs.py` but without the pool/rows/archive. A `BacktestJob`
-  dataclass holds `job_id, stage, running, cancelled, error, result,
-  created_at, finished_at`. `submit()` starts a daemon thread that runs the
-  refactored backtest core with a `set_stage` callback; `get`, `cancel`, and a
-  TTL prune (1h, from completion) match the sweep manager.
+- **New `backtest_jobs.py`**: `BacktestJobManager` + `BACKTEST_JOBS` singleton.
+  A `BacktestJob` dataclass holds `job_id, stage, running, cancelled, error,
+  result, created_at, finished_at`. `submit(coro_factory)` calls
+  `asyncio.create_task(...)` on the running loop to execute the async backtest
+  core (passed a `set_stage` callback and reading `job.cancelled`); `get`,
+  `cancel` (sets the flag), and a TTL prune (1h from completion) mirror the
+  sweep manager. No thread, no pool.
 - **Refactor `backtest()` handler**: extract the execution body (HTF fetch,
   engine run, cost sensitivity, enrichment, run-store save, response build) into
-  a callable that accepts `set_stage` and a `is_cancelled` predicate. The
-  synchronous validation block stays in the route. New routes:
-  `POST /api/backtest/jobs` (submit, returns `jobId` after validation),
-  `GET /api/backtest/jobs/{job_id}` (poll), `POST .../{job_id}/cancel`. Each
-  route honors `?target=remote` via `compute.forward()` like the sweep routes.
-  The existing synchronous `POST /api/backtest` may remain for any non-UI
-  caller, or be removed if unused — decide during planning (check callers).
-- **`sweep_jobs.py`**: add `stage` to `SweepJob`; set `queued` before the gate,
-  then run HTF-prefetch + probe (moved from the route) inside `_run` as
-  `htf`/`probe`, then `grid` while the pool loop advances. Expose `stage` in the
-  status route. Keep the fast synchronous validation in `submit_sweep_job`.
-- **`wfo_jobs.py`**: add `stage` to `WfoJob`; set `queued`, `htf`, `probe`
-  (moved from the route), then per-phase stages; in the test loop set
-  `stage = f"Testing fold {i}/{n}"`. Keep `phase` for control flow. Expose
-  `stage` in the status route.
-- **`backtest.py` route module**: move the sweep/WFO probe + HTF-prefetch calls
-  out of `submit_sweep_job`/`submit_wfo_job` into the job managers; keep
-  validation. Wire the new backtest job routes.
+  an **async** `run_backtest_core(req, set_stage, is_cancelled) ->
+  BacktestResponse` that sets stage `htf → engine → cost → enrich → saving` and
+  checks `is_cancelled()` before each cost-sensitivity re-run. The synchronous
+  validation block stays in the route. New routes:
+  `POST /api/backtest/jobs` (validate, start task, return `jobId`),
+  `GET /api/backtest/jobs/{job_id}` (poll → `BacktestJobStatusResponse`),
+  `POST .../{job_id}/cancel`. Each honors `?target=remote` via
+  `compute.forward()` like the sweep routes. Keep the existing synchronous
+  `POST /api/backtest` (its callers/tests still use it); the UI switches to the
+  job route.
+- **`sweep_jobs.py`**: add `stage: str = "grid"` to `SweepJob`; the existing
+  `_run` thread already computes only the pool loop, so `stage` stays "grid"
+  (label "Running combos") for its lifetime. Expose `stage` in the status route.
+  HTF-prefetch + probe stay in `submit_sweep_job` (unchanged).
+- **`wfo_jobs.py`**: add `stage: str` to `WfoJob`, kept in lockstep with the
+  existing phase transitions (`grid` at start, `aggregate` at phase 3); in the
+  test-phase loop set `stage = f"Testing fold {i}/{n}"` as each fold runs. Keep
+  `phase` for control flow. Expose `stage` in the status route. HTF-prefetch +
+  probe stay in `submit_wfo_job` (unchanged).
+- **`backtest.py` route module**: add `stage=job.stage` to the sweep/WFO status
+  responses; wire the new backtest job routes. Sweep/WFO submit routes are
+  otherwise unchanged (fetch+probe stay put).
 
 ## Frontend changes
 
@@ -153,22 +174,26 @@ N/M") → aggregate → done`. Keep `phase` for the results-view control flow; a
 - **Backend**: assert the stage sequence per operation by monkeypatching the
   engine/fetch to record `set_stage` transitions. Backtest job: submit → poll →
   done returns the result; cancel mid-run stops before the next step; error path
-  sets `error` and clears `running`. Sweep/WFO: `queued`/`htf`/`probe` appear;
-  probe/HTF failure yields a job-error state (not a 422); fast validation still
-  422s at submit. Follow `wfoApi.test`/`sweep.test` patterns.
+  sets `error` and clears `running`. Sweep: status carries `stage="grid"`. WFO:
+  `stage` advances `grid → "Testing fold N/M" → aggregate` in lockstep with
+  `phase`; the existing submit 422s are unchanged. Follow the `test_sweep_jobs`,
+  `test_wfo_jobs`, and `test_api_wfo` patterns.
 - **Frontend**: label-map unit tests (incl. `test` N/M formatting and
   local-vs-remote submit label); `runBacktestJob` poll-loop test with mocked
   fetch, mirroring `sweep.test.ts` / `wfo.test.ts`.
 
 ## Risks / notes
 
-- Backtest daemon thread holds the GIL during pure-Python CPU sections; polls
-  resolve at the interpreter switch interval. Labels are set at step boundaries,
-  so the correct label is already showing before a CPU step blocks. Acceptable
-  for progress display; revisit only if polls visibly stall.
-- Moving probe/HTF into the job thread changes sweep/WFO submit failure timing
-  from a synchronous 422 to a job-error state (decision 3). The frontend already
-  renders job-error state; ensure its copy reads sensibly for these cases.
+- The backtest job runs as an asyncio task on the server loop. Its engine step
+  is CPU-bound and blocks the loop exactly as the current synchronous POST does;
+  the stage label is set before the block, and the `await`s between the 4
+  cost-sensitivity re-runs let concurrent polls resolve. Acceptable for progress
+  display; the run is short.
+- Candle fetches must stay on the server loop (shared loop-bound cache locks) —
+  never introduce a job thread that fetches. This is why sweep/WFO fetch+probe
+  stay on the submit route and backtest runs as a loop task, not a thread.
+- Sweep/WFO submit keeps its synchronous 422s (fetch+probe unchanged). The
+  frontend `submitting`/`uploading` label covers that window.
 - `phase` stays on the WFO job for control flow; `stage` is additive.
 - Do not add backend round-trips solely to feed labels; frontend prep labels are
   set client-side from steps that already run there.
