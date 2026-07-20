@@ -787,3 +787,49 @@ class StrategyInfoDTO(BaseModel):
 class StrategySourceDTO(BaseModel):
     filename: str
     source: str
+
+
+# --- expression surface (/api/expr/*) ----------------------------------------
+# Parallel to the structured BacktestRequest: each rule group is a list of raw
+# expression strings the backend parses/validates/compiles. The structured DTOs
+# above stay untouched.
+
+
+class ExprRowDTO(BaseModel):
+    expr: str
+    enabled: bool = True
+
+
+class ExprBacktestRequest(BaseModel):
+    epic: str
+    resolution: str
+    candles: list[CandleDTO]
+    htfCandles: dict[str, list[CandleDTO]] | None = None
+    longEntry: list[ExprRowDTO] = []
+    longExit: list[ExprRowDTO] = []
+    shortEntry: list[ExprRowDTO] = []
+    shortExit: list[ExprRowDTO] = []
+    longEnabled: bool = True
+    shortEnabled: bool = True
+    longRisk: RiskConfigDTO | None = None
+    shortRisk: RiskConfigDTO | None = None
+    longScaling: ScalingConfigDTO | None = None
+    shortScaling: ScalingConfigDTO | None = None
+    costs: CostsDTO
+    tradeFromTime: int
+    mask: RecurrenceMaskDTO | None = None
+    inspect: bool = False
+
+
+class ExprSeriesRequest(BaseModel):
+    epic: str
+    resolution: str
+    expr: str
+    fromTime: int
+    toTime: int
+    broker: str = "capital"
+    priceSide: str = "mid"
+
+
+class ExprLiteralsRequest(BaseModel):
+    expr: str

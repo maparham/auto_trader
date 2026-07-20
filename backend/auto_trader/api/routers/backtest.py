@@ -316,34 +316,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             "breakeven_multiple": breakeven_multiple(multiples, nets),
         }
 
-    trades_dto = [
-        TradeDTO(
-            side=t.side.value,
-            quantity=t.quantity,
-            entry_time=_ts(t.entry_time),
-            entry_price=t.entry_price,
-            exit_time=_ts(t.exit_time),
-            exit_time_exact=_ts(t.exit_time_exact) if t.exit_time_exact is not None else None,
-            exit_price=t.exit_price,
-            pnl=t.pnl,
-            leg=t.leg,
-            reason=t.reason_out,
-            stop_initial=t.stop_initial,
-            stop_final=t.stop_final,
-            target=t.target,
-            mae=t.mae, mfe=t.mfe, mae_r=t.mae_r, mfe_r=t.mfe_r, context=t.context,
-            bars_held=t.bars_held, bars_in_profit=t.bars_in_profit,
-            bars_in_loss=t.bars_in_loss, body_through=t.body_through,
-            wick_from_profit=t.wick_from_profit, wick_from_loss=t.wick_from_loss,
-            longest_profit_streak=t.longest_profit_streak,
-            longest_loss_streak=t.longest_loss_streak,
-            bars_to_mfe=t.bars_to_mfe, bars_to_mae=t.bars_to_mae,
-            entry_crossings=t.entry_crossings,
-            whatif=t.whatif,
-            financing=t.financing,
-        )
-        for t in result.trades
-    ]
+    trades_dto = _trades_to_dto(result)
     summary = result.summary()
     metrics = compute_metrics(
         result.trades, result.equity, result.net_pnl,
@@ -386,10 +359,97 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             logger.warning("run-store write failed; continuing without run_id", exc_info=True)
             run_id = None
 
-    return BacktestResponse(
+    return _result_to_response(
+        result,
         epic=req.epic,
         resolution=req.resolution,
-        candles=window,
+        candles_window=window,
+        trade_from_time=req.tradeFromTime,
+        starting_cash=req.costs.startingCash,
+        commission_per_side=req.costs.commissionPerSide,
+        inspect=req.inspect,
+        file_brackets_overridden=(
+            strategy.file_brackets_overridden if req.codedStrategy is not None else False
+        ),
+        run_id=run_id,
+        analysis=analysis,
+        cost_sensitivity=cost_sensitivity,
+        trades_dto=trades_dto,
+        summary=summary,
+        metrics=metrics,
+    )
+
+
+def _trades_to_dto(result: BacktestResult) -> list[TradeDTO]:
+    """Map engine Trades to wire DTOs. Pure; shared by the structured and expr
+    serializers (and by the structured handler's store/analysis step)."""
+    return [
+        TradeDTO(
+            side=t.side.value,
+            quantity=t.quantity,
+            entry_time=_ts(t.entry_time),
+            entry_price=t.entry_price,
+            exit_time=_ts(t.exit_time),
+            exit_time_exact=_ts(t.exit_time_exact) if t.exit_time_exact is not None else None,
+            exit_price=t.exit_price,
+            pnl=t.pnl,
+            leg=t.leg,
+            reason=t.reason_out,
+            stop_initial=t.stop_initial,
+            stop_final=t.stop_final,
+            target=t.target,
+            mae=t.mae, mfe=t.mfe, mae_r=t.mae_r, mfe_r=t.mfe_r, context=t.context,
+            bars_held=t.bars_held, bars_in_profit=t.bars_in_profit,
+            bars_in_loss=t.bars_in_loss, body_through=t.body_through,
+            wick_from_profit=t.wick_from_profit, wick_from_loss=t.wick_from_loss,
+            longest_profit_streak=t.longest_profit_streak,
+            longest_loss_streak=t.longest_loss_streak,
+            bars_to_mfe=t.bars_to_mfe, bars_to_mae=t.bars_to_mae,
+            entry_crossings=t.entry_crossings,
+            whatif=t.whatif,
+            financing=t.financing,
+        )
+        for t in result.trades
+    ]
+
+
+def _result_to_response(
+    result: BacktestResult,
+    *,
+    epic: str,
+    resolution: str,
+    candles_window: list,
+    trade_from_time: int,
+    starting_cash: float,
+    commission_per_side: float,
+    inspect: bool = False,
+    file_brackets_overridden: bool = False,
+    run_id: str | None = None,
+    analysis: dict | None = None,
+    cost_sensitivity: dict | None = None,
+    trades_dto: list[TradeDTO] | None = None,
+    summary: dict | None = None,
+    metrics: dict | None = None,
+) -> BacktestResponse:
+    """Serialize a BacktestResult into a BacktestResponse. Shared by the
+    structured `/api/backtest` handler and the expression `/api/expr/backtest`
+    handler. `trades_dto`/`summary`/`metrics` may be passed in when the caller
+    already computed them (the structured handler needs them for the run-store
+    write); otherwise they are computed here."""
+    if trades_dto is None:
+        trades_dto = _trades_to_dto(result)
+    if summary is None:
+        summary = result.summary()
+    if metrics is None:
+        metrics = compute_metrics(
+            result.trades, result.equity, result.net_pnl,
+            starting_cash, resolution_seconds(resolution),
+            financing_total=result.financing_total,
+        )
+    return BacktestResponse(
+        epic=epic,
+        resolution=resolution,
+        candles=candles_window,
         markers=[
             MarkerDTO(
                 time=_ts(f.time), side=f.side.value, price=f.price, reason=f.reason, leg=f.leg,
@@ -410,22 +470,20 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         equity=[
             EquityDTO(time=_ts(p.time), value=p.equity)
             for p in result.equity
-            if _ts(p.time) >= req.tradeFromTime
+            if _ts(p.time) >= trade_from_time
         ],
         summary=summary,
         metrics=metrics,
         by_leg={
             leg: leg_metrics(
                 [t for t in result.trades if t.leg == leg],
-                resolution_seconds(req.resolution),
-                2 * req.costs.commissionPerSide,
+                resolution_seconds(resolution),
+                2 * commission_per_side,
             )
             for leg in ("long", "short")
         },
-        fileBracketsOverridden=(
-            strategy.file_brackets_overridden if req.codedStrategy is not None else False
-        ),
-        bar_traces=_bar_traces_dto(result, req.tradeFromTime) if req.inspect else None,
+        fileBracketsOverridden=file_brackets_overridden,
+        bar_traces=_bar_traces_dto(result, trade_from_time) if inspect else None,
         run_id=run_id,
         analysis=analysis,
         cost_sensitivity=cost_sensitivity,

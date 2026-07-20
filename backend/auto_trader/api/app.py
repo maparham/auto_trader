@@ -29,7 +29,7 @@ from auto_trader.core.tick_store import TICK_STORE
 
 from . import deps
 from .guard import install_guards
-from .routers import backtest, charts, compute, costs, markets, state, strategy, stream, trading, strategies
+from .routers import backtest, charts, compute, costs, expr, markets, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ async def _track_activity(request, call_next):
 # unless the corresponding env flags are set, which happens only on the remote host.
 install_guards(app)
 
-for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs):
+for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr):
     app.include_router(_module.router)
 
 
