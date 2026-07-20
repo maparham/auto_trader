@@ -4,7 +4,7 @@
 // D4 check in app.py).
 
 export type IndicatorKind = "EMA" | "SMA" | "AVWAP" | "RSI" | "VOL" | "VOLMA";
-export type PriceField = "close" | "open" | "high" | "low";
+export type PriceField = "close" | "open" | "high" | "low" | "body" | "range" | "wickTop" | "wickBottom";
 export type Operator = "crossesAbove" | "crossesBelow" | "crosses" | "gt" | "lt" | "gte" | "lte";
 export type Combine = "AND" | "OR";
 
@@ -181,6 +181,8 @@ function mirrorOperand(op: Operand): Operand {
   if (copy.kind === "price") {
     if (copy.field === "high") copy.field = "low";
     else if (copy.field === "low") copy.field = "high";
+    else if (copy.field === "wickTop") copy.field = "wickBottom";
+    else if (copy.field === "wickBottom") copy.field = "wickTop";
   } else if (copy.kind === "const") {
     copy.value = -copy.value;
   }

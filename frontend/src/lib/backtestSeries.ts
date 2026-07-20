@@ -18,7 +18,7 @@ import {
 } from "./customIndicators";
 import {
   collectSeriesOperands, seriesName, slopeLen, riskAtrLengths, scalingAtrLengths,
-  type BacktestConfig, type Operand, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe,
+  type BacktestConfig, type Operand, type IndicatorRecipe, type DrawingRecipe, type SeriesRecipe, type PriceField,
 } from "./backtestConfig";
 import { atrSeries } from "./atr";
 import { computePivotBands, type PivotBandsExtend } from "./indicators/pivotBands";
@@ -150,12 +150,25 @@ function slopeOf(raw: Array<number | undefined>, n: number, barHours: number): A
   });
 }
 
+/** A price field read off one candle. open/high/low/close are direct; the
+ * anatomy fields derive: body = |close−open|, range = high−low, wickTop =
+ * high − max(open, close), wickBottom = min(open, close) − low. */
+export function priceFieldValue(k: KLineData, field: PriceField): number | undefined {
+  switch (field) {
+    case "body": return Math.abs(k.close - k.open);
+    case "range": return k.high - k.low;
+    case "wickTop": return k.high - Math.max(k.open, k.close);
+    case "wickBottom": return Math.min(k.open, k.close) - k.low;
+    default: return k[field] ?? undefined;
+  }
+}
+
 /** One indicator's per-bar values over the given candles (or a price field's, for
  * a sloped price operand), undefined where there's no value (warm-up gap, unplaced
  * AVWAP, missing volume). Pure in `candles`, so it runs identically on the base
  * bars or a higher timeframe's. */
 function computeRaw(op: Operand, candles: KLineData[], barHours: number): Array<number | undefined> {
-  if (op.kind === "price") return candles.map((k) => k[op.field] ?? undefined);
+  if (op.kind === "price") return candles.map((k) => priceFieldValue(k, op.field));
   if (op.kind === "series") return computeSeriesRecipe(op.recipe, candles, barHours);
   if (op.kind !== "indicator") return [];
   switch (op.indicator) {

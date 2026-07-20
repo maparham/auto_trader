@@ -577,6 +577,14 @@ describe("invertRule", () => {
     invertRule(rule);
     expect(rule).toEqual({ left: { kind: "price", field: "low" }, op: "lt", right: { kind: "const", value: 5 } });
   });
+  it("invertRule mirrors wickTop <-> wickBottom and leaves body/range alone", () => {
+    const r = invertRule({
+      left: { kind: "price", field: "wickTop" }, op: "gt",
+      right: { kind: "price", field: "body" },
+    });
+    expect(r.left).toEqual({ kind: "price", field: "wickBottom" });
+    expect(r.right).toEqual({ kind: "price", field: "body" });
+  });
 });
 
 describe("ruleFromChartOperand", () => {

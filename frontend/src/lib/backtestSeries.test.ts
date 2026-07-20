@@ -12,7 +12,7 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-const { buildSeries, buildChartOperandSeries, computeIndicatorRecipe } = await import("./backtestSeries");
+const { buildSeries, buildChartOperandSeries, computeIndicatorRecipe, priceFieldValue } = await import("./backtestSeries");
 const { maSeries } = await import("./mtf");
 const { computeRsi, computeLr, computePrevHl, vwapFrom, detectDivergences, RSI_DIVERGENCE_DEFAULTS } = await import("./customIndicators");
 const { computePivotBands } = await import("./indicators/pivotBands");
@@ -49,6 +49,21 @@ function cfg(overrides: Partial<BacktestConfig>): BacktestConfig {
     ...overrides,
   };
 }
+
+describe("priceFieldValue", () => {
+  const k = { timestamp: 0, open: 10, high: 14, low: 8, close: 12, volume: 1 } as KLineData;
+  it("derives candle anatomy", () => {
+    expect(priceFieldValue(k, "close")).toBe(12);
+    expect(priceFieldValue(k, "body")).toBe(2);        // |close − open|
+    expect(priceFieldValue(k, "range")).toBe(6);       // high − low
+    expect(priceFieldValue(k, "wickTop")).toBe(2);     // high − max(open, close)
+    expect(priceFieldValue(k, "wickBottom")).toBe(2);  // min(open, close) − low
+  });
+  it("red candle body is positive", () => {
+    const red = { ...k, open: 12, close: 10 };
+    expect(priceFieldValue(red, "body")).toBe(2);
+  });
+});
 
 describe("buildSeries", () => {
   it("keys the output by the seriesName contract", async () => {
