@@ -127,6 +127,9 @@ function enterSweepMode() {
 function enterBacktestMode() {
   fireEvent.click(within(modeSeg()).getByRole("button", { name: "Backtest" }));
 }
+function enterWfoMode() {
+  fireEvent.click(within(modeSeg()).getByRole("button", { name: /Walk-fwd/ }));
+}
 
 describe("BacktestSettingsModal period scheduling", () => {
   it("shows month suggestion chips when the Month tab is active", () => {
@@ -1268,5 +1271,39 @@ describe("risk sync load normalization write-back", () => {
     const initial = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "desync.py" };
     renderModal(initial);
     expect(loadCodedCfg("backtest", "desync.py").shortRisk?.stop.kind).toBe("pct");
+  });
+});
+
+describe("BacktestSettingsModal walk-forward Period layout", () => {
+  it("shows the From/To range picker without selecting Custom, and hides the mode seg + Windows", () => {
+    renderModal();
+    enterWfoMode();
+    // Two datetime-local inputs are always present in WFO mode (Data window).
+    const dataWindow = screen.getByText("Data window").closest(".bt-section") as HTMLElement;
+    expect(within(dataWindow).getByText("From")).toBeTruthy();
+    expect(within(dataWindow).getByText("To")).toBeTruthy();
+    // The Bars/Day/.../Custom mode seg and the Windows label are gone in WFO.
+    expect(screen.queryByRole("button", { name: "Custom" })).toBeNull();
+    expect(screen.queryByText("Windows")).toBeNull();
+  });
+
+  it("a relative chip sets a rolling mode; a calendar chip sets a fixed range", () => {
+    renderModal();
+    enterWfoMode();
+    // Relative: rolling -> the 1M chip highlights (mode lastMonth, no fixed dates).
+    fireEvent.click(screen.getByRole("button", { name: "1M" }));
+    expect(screen.getByRole("button", { name: "1M" }).className).toMatch(/seg-on/);
+    // Calendar: fixed -> a year chip writes explicit dates; the relative chip clears.
+    const yearChip = screen.getAllByRole("button").find((b) => /^\d{4}$/.test(b.textContent ?? ""));
+    expect(yearChip).toBeTruthy();
+    fireEvent.click(yearChip!);
+    expect(screen.getByRole("button", { name: "1M" }).className).not.toMatch(/seg-on/);
+  });
+
+  it("renders the Schedule section with the WfoConfig Train control under it", () => {
+    renderModal();
+    enterWfoMode();
+    expect(screen.getByText("Schedule")).toBeTruthy();
+    expect(screen.getByText("Train")).toBeTruthy();
   });
 });

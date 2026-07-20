@@ -170,6 +170,15 @@ const CHIP_UNIT: Partial<Record<RangeMode, "day" | "week" | "month" | "year">> =
   lastYear: "year",
 };
 
+// WFO quick-fill: relative presets stay rolling (mode set, fromMs/toMs cleared),
+// mirroring the non-WFO relative modes.
+const WFO_RELATIVE_CHIPS: { mode: RangeMode; label: string }[] = [
+  { mode: "lastDay", label: "1D" },
+  { mode: "lastWeek", label: "1W" },
+  { mode: "lastMonth", label: "1M" },
+  { mode: "lastYear", label: "1Y" },
+];
+
 const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -2040,6 +2049,78 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           </nav>
           <div className="bt-body" ref={bodyRef} onScroll={onBodyScroll}>
             <section className="bt-scroll-section" ref={setRef("period")}>
+                {btMode === "walkforward" ? (
+                  <>
+                    <Section
+                      title="Data window"
+                      info="The span of history walk-forward runs over. Set From/To directly, or use a quick-fill chip: relative chips roll with today, calendar chips pin a fixed year."
+                    >
+                      <div className="bt-range-mode-row">
+                        {rangePicker}
+                        {timeframeSelect}
+                        {holdoutSelect}
+                      </div>
+                      <div className="bt-chip-row bt-range-chip-row">
+                        {WFO_RELATIVE_CHIPS.map((c) => (
+                          <button
+                            key={c.mode}
+                            className={cfg.range.mode === c.mode ? "seg-on bt-chip" : "bt-chip"}
+                            onClick={() => setRange({ mode: c.mode, fromMs: undefined, toMs: undefined })}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="bt-chip-row bt-range-chip-row">
+                        {buildRangeChips("year", Date.now(), chartTimezone).map((chip) => {
+                          const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
+                          return (
+                            <button
+                              key={chip.label}
+                              className={on ? "seg-on bt-chip" : "bt-chip"}
+                              onClick={() => setRange({ mode: "custom", fromMs: chip.fromMs, toMs: chip.toMs })}
+                            >
+                              {chip.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {holdout && (
+                        <>
+                          <div className="al-note">
+                            Holdout: last {holdout.pct}% reserved
+                            {holdoutReserved ? ` (${holdoutReserved})` : ""}
+                          </div>
+                          <button
+                            type="button"
+                            className="ghost bt-holdout-eval"
+                            disabled={runInFlight}
+                            onClick={evaluateHoldout}
+                          >
+                            Evaluate on holdout
+                          </button>
+                          {holdout.peeks > 0 && (
+                            <div className="al-note">
+                              Holdout result viewed {holdout.peeks} times. Each look makes it
+                              less out-of-sample.
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </Section>
+                    <Section
+                      title="Schedule"
+                      info="The train/test cadence walk-forward optimizes on: how much history each fold trains over, how far it tests forward, and which metric picks the winning cell."
+                    >
+                      <WfoConfig
+                        cfg={wfoCfg}
+                        onChange={changeWfoCfg}
+                        comboTotal={wfoComboTotal}
+                        droppedAxes={wfoDroppedAxes}
+                      />
+                    </Section>
+                  </>
+                ) : (
                 <Section
                   title="Time range"
                   info="The span of history the backtest trades over. Pick a relative window (last day/week/month/year), a calendar period via the chips, or a custom from/to."
@@ -2057,17 +2138,16 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 ))}
               </div>
               {timeframeSelect}
-              {btMode !== "walkforward" && (
-                <Tooltip content="Sweep the trading period: split the range into N equal windows and run each">
-                  <button
-                    type="button"
-                    className={`sp-sweep bt-period-sweep-toggle${periodAxis ? " on" : ""}`}
-                    onClick={togglePeriodSweepAxis}
-                  >
-                    <SweepGlyph />
-                  </button>
-                </Tooltip>
-              )}
+              {/* This branch is non-WFO; the period sweep toggle never shows in WFO. */}
+              <Tooltip content="Sweep the trading period: split the range into N equal windows and run each">
+                <button
+                  type="button"
+                  className={`sp-sweep bt-period-sweep-toggle${periodAxis ? " on" : ""}`}
+                  onClick={togglePeriodSweepAxis}
+                >
+                  <SweepGlyph />
+                </button>
+              </Tooltip>
               <label className="bt-tf-inline bt-robust-windows">
                 <span className="bt-tf-label">
                   Windows
@@ -2095,14 +2175,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               </label>
               {holdoutSelect}
             </div>
-            {btMode === "walkforward" && (
-              <WfoConfig
-                cfg={wfoCfg}
-                onChange={changeWfoCfg}
-                comboTotal={wfoComboTotal}
-                droppedAxes={wfoDroppedAxes}
-              />
-            )}
             {CHIP_UNIT[cfg.range.mode] ? (
               <div className="bt-chip-row bt-range-chip-row">
                 {buildRangeChips(CHIP_UNIT[cfg.range.mode]!, Date.now(), chartTimezone).map((chip) => {
@@ -2181,6 +2253,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               </>
             )}
           </Section>
+                )}
 
           <Section
             title="Repeat / active windows"
