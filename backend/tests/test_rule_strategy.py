@@ -577,3 +577,58 @@ def test_body_field_entry_and_exit():
     entries = [f for f in result.fills if f.reason != "range end"]
     assert len(entries) == 1
     assert entries[0].time == candles[1].time  # true at i=0 (body=2), fills at i=1's open
+
+
+def test_scale_applies_to_operand_values():
+    from auto_trader.strategy.rule import Operand, _apply_scale
+    op = Operand(kind="price", field="close", scale_mult=2.0)
+    assert _apply_scale(op, 10.0) == 20.0
+    op = Operand(kind="price", field="close", scale_off=1.0, scale_off_unit="pct")
+    assert _apply_scale(op, 200.0) == 202.0
+    op = Operand(kind="price", field="close", scale_mult=2.0, scale_off=-5.0, scale_off_unit="abs")
+    assert _apply_scale(op, 10.0) == 15.0
+    assert _apply_scale(op, None) is None
+
+
+def test_term_label_scale():
+    from auto_trader.strategy.rule import Operand, _term_label
+    assert _term_label(Operand(kind="indicator", indicator="EMA", length=9, scale_mult=2.0)) == "2xEMA(9)"
+    assert _term_label(Operand(kind="price", field="low", scale_off=1.0, scale_off_unit="pct")) == "low+1%"
+    assert _term_label(Operand(kind="entry", scale_off=2.0, scale_off_unit="abs")) == "entryPrice+2"
+
+
+def test_scaled_operand_fires_only_where_close_gt_double_body():
+    # Entry: close gt 2×body. The scale doubles the body operand's compared value.
+    #   i=0: open=0, close=10 -> body=10, 2·body=20, close 10 !> 20 -> no fire.
+    #   i=1: open=10, close=12 -> body=2, 2·body=4, close 12 > 4 -> fires, fills i=2's open.
+    candles = [
+        Candle(datetime(2024, 1, 1, tzinfo=timezone.utc), open=0, high=10, low=0, close=10, volume=1),
+        Candle(datetime(2024, 1, 1, 1, tzinfo=timezone.utc), open=10, high=13, low=10, close=12, volume=1),
+        Candle(datetime(2024, 1, 1, 2, tzinfo=timezone.utc), open=12, high=13, low=10, close=12, volume=1),
+    ]
+    right = Operand(kind="price", field="body", scale_mult=2.0)
+    entry = RuleGroup("AND", [Rule(_price("close"), "gt", right)])
+    strat = RuleStrategy(entry, RuleGroup("AND", []), RuleGroup("AND", []), RuleGroup("AND", []), {}, quantity=1.0)
+    result = BacktestEngine(strat).run(candles)
+    entries = [f for f in result.fills if f.reason != "range end"]
+    assert len(entries) == 1
+    assert entries[0].time == candles[2].time  # fires at i=1, fills at i=2's open
+
+
+def test_close_crosses_above_entry_plus_one_percent():
+    # Always-true entry -> BUY at i=0 fills at i=1's open = 10 (entry price).
+    # Exit: close crossesAbove entryPrice+1% = 10.1. Both now AND prev are scaled,
+    # so the flat 10.1 level is crossed at i=4 (prev 10.05 <= 10.1, now 10.2 > 10.1),
+    # NOT at i=3 where close 10.05 only clears the unscaled 10 line.
+    candles = _series([10, 10, 10, 10.05, 10.2, 10.2])
+    right = Operand(kind="entry", scale_off=1.0, scale_off_unit="pct")
+    exit_ = RuleGroup("AND", [Rule(_price("close"), "crossesAbove", right)])
+    strat = RuleStrategy(
+        _always_entry(), exit_, RuleGroup("AND", []), RuleGroup("AND", []),
+        {}, quantity=1.0,
+    )
+    result = BacktestEngine(strat).run(candles)
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_price == 10.0
+    assert result.trades[0].exit_time == candles[5].time  # cross at i=4 fills i=5's open
+    assert result.trades[0].exit_price == 10.2

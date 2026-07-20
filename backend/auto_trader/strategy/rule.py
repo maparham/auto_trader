@@ -43,6 +43,23 @@ class Operand:
     # rule_series-computed) as its own series; keys the series (series_name).
     lookback_mode: str | None = None  # "ago" | "high" | "low" | "avg"
     lookback_len: int | None = None
+    # Scale transform, applied at EVAL time to the operand's compared value (never
+    # to the stored series): v′ = v·scale_mult, then + scale_off% of that ("pct")
+    # or + scale_off points ("abs"). Valid on indicator/price/series/entry.
+    scale_mult: float | None = None
+    scale_off: float | None = None
+    scale_off_unit: str | None = None  # "pct" | "abs"
+
+
+def _apply_scale(op: Operand, v: float | None) -> float | None:
+    """The operand's eval-time scale: v·mult, then ± off% of that or ± off points."""
+    if v is None:
+        return None
+    if op.scale_mult is not None:
+        v = v * op.scale_mult
+    if op.scale_off is not None:
+        v = v * (1 + op.scale_off / 100) if op.scale_off_unit == "pct" else v + op.scale_off
+    return v
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +133,15 @@ def series_name(op: Operand) -> str | None:
 
 
 def _operand_name(op: Operand) -> str:
+    if op.scale_mult is not None or op.scale_off is not None:
+        inner = _operand_name(replace(op, scale_mult=None, scale_off=None, scale_off_unit=None))
+        if op.scale_mult is not None and op.scale_mult != 1:
+            inner = f"{op.scale_mult:g}x{inner}"
+        if op.scale_off is not None and op.scale_off != 0:
+            sign = "+" if op.scale_off > 0 else "-"
+            unit = "%" if op.scale_off_unit == "pct" else ""
+            inner = f"{inner}{sign}{abs(op.scale_off):g}{unit}"
+        return inner
     if op.lookback_len is not None:
         # Lookback applies after slope, so it wraps OUTSIDE the slope label.
         inner = _operand_name(replace(op, lookback_mode=None, lookback_len=None))
@@ -144,6 +170,15 @@ def _term_label(op: Operand) -> str:
     (the frontend appends `@tf` from `_operand_timeframe`). Unlike `_operand_name`
     (which renders the raw series key `EMA_56` for exit reasons), this renders the
     readable form `EMA(56)` / `slope(EMA(9),3)`."""
+    if op.scale_mult is not None or op.scale_off is not None:
+        inner = _term_label(replace(op, scale_mult=None, scale_off=None, scale_off_unit=None))
+        if op.scale_mult is not None and op.scale_mult != 1:
+            inner = f"{op.scale_mult:g}x{inner}"
+        if op.scale_off is not None and op.scale_off != 0:
+            sign = "+" if op.scale_off > 0 else "-"
+            unit = "%" if op.scale_off_unit == "pct" else ""
+            inner = f"{inner}{sign}{abs(op.scale_off):g}{unit}"
+        return inner
     if op.lookback_len is not None:
         # Lookback applies after slope, so it wraps OUTSIDE the slope label.
         inner = _term_label(replace(op, lookback_mode=None, lookback_len=None))
@@ -375,25 +410,29 @@ class RuleStrategy(Strategy):
         self, op: Operand, ctx: Context, i: int, side: str
     ) -> tuple[float | None, float | None]:
         if op.kind == "const":
+            # The DTO forbids scale on a const (scale the constant itself), so this
+            # returns unscaled and short-circuits before the scaled exit below.
             return op.value, op.value
         if op.kind == "entry":
             # The position's entry price is constant for the life of the trade, so
             # both "now" and "prev" equal it (a moving series can cross the flat
-            # entry line naturally).
+            # entry line naturally). Scale still applies (e.g. entryPrice+1%).
             ep = ctx.long_entry_price if side == "long" else ctx.short_entry_price
-            return ep, ep
-        # A plain price reads off the candle; a SLOPED or LOOKED-BACK price is a
-        # derived series like any indicator, so it falls through to the series read.
-        if op.kind == "price" and op.slope_len is None and op.lookback_len is None:
+            now = prev = ep
+        elif op.kind == "price" and op.slope_len is None and op.lookback_len is None:
+            # A plain price reads off the candle; a SLOPED or LOOKED-BACK price is a
+            # derived series like any indicator, so it falls to the series read below.
             now = price_field_value(ctx.history[i], op.field)
             prev = price_field_value(ctx.history[i - 1], op.field) if i > 0 else None
-            return now, prev
-        # indicator, or any sloped operand
-        name = series_name(op)
-        arr = self.series.get(name, [])
-        now = arr[i] if i < len(arr) else None
-        prev = arr[i - 1] if 0 < i and i - 1 < len(arr) else None
-        return now, prev
+        else:
+            # indicator, series, or any sloped/looked-back operand
+            name = series_name(op)
+            arr = self.series.get(name, [])
+            now = arr[i] if i < len(arr) else None
+            prev = arr[i - 1] if 0 < i and i - 1 < len(arr) else None
+        # Scale applies to BOTH now and prev so cross operators see a consistently
+        # shifted curve.
+        return _apply_scale(op, now), _apply_scale(op, prev)
 
     def _terms(
         self, group: RuleGroup, results: list[bool], ctx: Context, i: int, side: str

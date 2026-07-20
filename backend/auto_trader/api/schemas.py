@@ -206,6 +206,12 @@ class LookbackDTO(BaseModel):
     len: int = Field(ge=1)
 
 
+class ScaleDTO(BaseModel):
+    mult: float | None = None
+    off: float | None = None
+    offUnit: Literal["pct", "abs"] | None = None
+
+
 class OperandDTO(BaseModel):
     kind: Literal["indicator", "price", "const", "entry", "series"]
     indicator: Literal["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"] | None = None
@@ -228,6 +234,9 @@ class OperandDTO(BaseModel):
     # Lookback (previous-candles) transform (indicator/price/series): the frontend
     # computes the looked-back array as its own series; this only keys it.
     lookback: LookbackDTO | None = None
+    # Scale transform (indicator/price/series/entry): applied at eval time to the
+    # operand's compared value (v·mult, then ± off% of that or ± off points).
+    scale: ScaleDTO | None = None
 
     @model_validator(mode="after")
     def _kind_matches_fields(self) -> "OperandDTO":
@@ -243,6 +252,8 @@ class OperandDTO(BaseModel):
             raise ValueError("slope is only valid on an indicator, price, or series operand")
         if self.lookback is not None and self.kind not in ("indicator", "price", "series"):
             raise ValueError("lookback is only valid on an indicator, price, or series operand")
+        if self.scale is not None and self.kind == "const":
+            raise ValueError("scale is not valid on a const operand (scale the constant itself)")
         return self
 
     def to_operand(self) -> Operand:
@@ -253,6 +264,9 @@ class OperandDTO(BaseModel):
             slope_len=self.slope.len if self.slope else None,
             lookback_mode=self.lookback.mode if self.lookback else None,
             lookback_len=self.lookback.len if self.lookback else None,
+            scale_mult=self.scale.mult if self.scale else None,
+            scale_off=self.scale.off if self.scale else None,
+            scale_off_unit=self.scale.offUnit if self.scale else None,
             series_key=self.seriesKey, label=self.label,
         )
 
