@@ -530,6 +530,11 @@ export function requestWfoCancel(server = true): void { wfoCancelServer.value = 
 export const wfoEquityShownSignal = new Signal<boolean>(true);
 export const wfoBandsShownSignal = new Signal<boolean>(true);
 export const wfoEquityCompoundedSignal = new Signal<boolean>(true);
+// Modal -> BacktestButton: re-render a different scheme's stitched OOS equity +
+// fold bands on the active chart. The modal owns the scheme picker but not the
+// chart, so switching schemes bumps this; BacktestButton re-renders from its
+// stored last WFO result. Mirrors the wfoRequestSignal handoff idiom.
+export const wfoRenderRequest = new Signal<{ schemeIndex: number } | null>(null);
 
 // Where a sweep runs (local backend vs remote compute). Global preference,
 // device-local (never mirrored), seeded from storage at startup and defaulting

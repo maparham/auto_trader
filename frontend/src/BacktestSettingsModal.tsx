@@ -30,6 +30,7 @@ import {
   sweepArchivedSignal,
   wfoStateSignal,
   wfoRequestSignal,
+  wfoRenderRequest,
   requestWfoCancel,
 } from "./lib/signals";
 import { resumeSweep } from "./lib/sweepResume";
@@ -1698,7 +1699,12 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             onLoadFoldTable={loadWfoFoldTable}
             axes={wfoUsableAxes}
             schemeIndex={wfoSchemeIndex}
-            onSchemeIndex={setWfoSchemeIndex}
+            onSchemeIndex={(i) => {
+              setWfoSchemeIndex(i);
+              // Re-render this scheme's stitched OOS equity + fold bands on the
+              // chart (BacktestButton owns the chart handle + last WFO result).
+              wfoRenderRequest.set({ schemeIndex: i });
+            }}
           />
         </div>
       ) : (

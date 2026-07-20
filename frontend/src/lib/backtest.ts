@@ -33,7 +33,11 @@ import {
   backtestMarkersShownSignal,
   backtestEquityShownSignal,
   backtestSelectNoticeSignal,
+  wfoEquityShownSignal,
+  wfoBandsShownSignal,
+  wfoEquityCompoundedSignal,
 } from "./signals";
+import type { WfoScheme } from "../api";
 import { buildSignalGlyphs, isEntryFill } from "./signalGlyphs";
 import { tradeZones } from "./tradeZones";
 import { minPositiveGap } from "./barInterval";
@@ -1680,6 +1684,112 @@ export function renderArtifacts(
     unsubEquity();
     unsubMarkers();
   };
+}
+
+// ─── Walk-forward (WFO) chart artifacts ──────────────────────────────────────
+// The stitched out-of-sample equity curve + alternating fold shading for a
+// walk-forward result. Reuses the EQUITY_INDICATOR and PERIOD_OVERLAY machinery
+// above (one results overlay at a time, so renderWfoArtifacts tears down first),
+// so WFO artifacts are cleared by teardownArtifacts like any other backtest.
+
+/** The stitched equity series as ascending `[timestampMs, value]` pairs, picking
+ * the compounded (`equity_scaled`) or summed (`equity`) series per `compounded`.
+ * The backend emits `[unixSeconds, equity]`; this carries the ×1000 unit
+ * conversion so equityForBars can re-anchor it onto the loaded bars. Pure +
+ * exported for tests. */
+export function wfoEquityPoints(scheme: WfoScheme, compounded: boolean): Array<[number, number]> {
+  const series = compounded ? scheme.stitched.equity_scaled : scheme.stitched.equity;
+  return series.map(([s, v]) => [s * 1000, v]);
+}
+
+/** The fold shading bands: every SECOND fold's out-of-sample test span, as
+ * `{ from, to }` in ms. Alternating (folds 0, 2, 4, …) so adjacent test windows
+ * read as distinct tinted stripes rather than one continuous block. Pure +
+ * exported for tests. */
+export function wfoFoldBandPoints(scheme: WfoScheme): Array<{ from: number; to: number }> {
+  const bands: Array<{ from: number; to: number }> = [];
+  scheme.folds.forEach((f, i) => {
+    if (i % 2 === 0) bands.push({ from: f.test_from * 1000, to: f.test_to * 1000 });
+  });
+  return bands;
+}
+
+/** Render a walk-forward scheme's stitched OOS equity curve and fold shading on
+ * `chart`. Tears down any prior results overlay first (only one at a time), then
+ * draws the equity pane (gated by wfoEquityShownSignal, series picked by
+ * wfoEquityCompoundedSignal) and the alternating fold bands (gated by
+ * wfoBandsShownSignal) — mirroring renderArtifacts' equity add/remove +
+ * subscription idiom so the Results-row toggles show/hide/swap live without a
+ * re-run. */
+export function renderWfoArtifacts(chart: Chart, scheme: WfoScheme): void {
+  teardownArtifacts(chart);
+  const artifacts = artifactsFor(chart);
+
+  // Equity pane — same createIndicator/extendData path as renderArtifacts, but
+  // the series and its shown/compounded gating come from the WFO signals.
+  const addEquity = () => {
+    if (artifacts.equityIndicatorId) return; // already drawn
+    const points = wfoEquityPoints(scheme, wfoEquityCompoundedSignal.value);
+    artifacts.equityIndicatorId =
+      chart.createIndicator({ name: EQUITY_INDICATOR, extendData: points }, false) ?? null;
+  };
+  const removeEquity = () => {
+    if (artifacts.equityIndicatorId) {
+      chart.removeIndicator({ id: artifacts.equityIndicatorId });
+      artifacts.equityIndicatorId = null;
+    }
+  };
+  if (wfoEquityShownSignal.value) addEquity();
+  const unsubEquity = wfoEquityShownSignal.subscribe(() => {
+    if (wfoEquityShownSignal.value) addEquity();
+    else removeEquity();
+  });
+  // Compounded vs summed: swap the series in place (only while the pane shows).
+  const unsubCompounded = wfoEquityCompoundedSignal.subscribe(() => {
+    if (!wfoEquityShownSignal.value) return;
+    removeEquity();
+    addEquity();
+  });
+
+  // Fold shading — reuse the period-band overlay; each band is a locked
+  // full-height rect over one OOS test span. Mirrors drawPeriodBands' point
+  // shape (timestamp + an in-range y so the point projects).
+  const drawBands = () => {
+    if (!wfoBandsShownSignal.value) return;
+    const data = chart.getDataList() ?? [];
+    if (data.length === 0) return;
+    ensurePeriodOverlayRegistered();
+    const yVal = data[0].close; // a valid in-range price so the point projects (y is unused)
+    for (const b of wfoFoldBandPoints(scheme)) {
+      const id = chart.createOverlay({
+        name: PERIOD_OVERLAY,
+        lock: true,
+        points: [
+          { timestamp: b.from, value: yVal },
+          { timestamp: b.to, value: yVal },
+        ],
+      });
+      if (typeof id === "string") artifacts.periodBandIds.push(id);
+    }
+  };
+  drawBands();
+  const unsubBands = wfoBandsShownSignal.subscribe(() => {
+    clearPeriodBands(chart, artifacts);
+    drawBands();
+  });
+
+  artifacts.unsub = () => {
+    unsubEquity();
+    unsubCompounded();
+    unsubBands();
+  };
+}
+
+/** Remove this chart's WFO artifacts (equity pane + fold bands) and detach their
+ * subscriptions. Identical to teardownArtifacts — named for symmetry with the
+ * render path and for callers that only mean to clear WFO output. */
+export function clearWfoArtifacts(chart: Chart): void {
+  teardownArtifacts(chart);
 }
 
 /** Decide what a saved backtest renders on the `current` timeframe given the
