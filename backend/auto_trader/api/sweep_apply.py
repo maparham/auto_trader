@@ -20,6 +20,10 @@ from auto_trader.strategy.coded import (
     CodedWithRuleExits,
     NeedTimeframe,
 )
+from auto_trader.strategy.expr import nodes as N
+from auto_trader.strategy.expr.errors import ExprError
+from auto_trader.strategy.expr.literals import substitute
+from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.rule import RuleStrategy, series_name
 from auto_trader.strategy.rule_series import build_rule_series
 
@@ -27,6 +31,7 @@ from .schemas import (
     BacktestRequest,
     CandleDTO,
     DayTimeWindowDTO,
+    ExprBacktestRequest,
     RecurrenceMaskDTO,
     RiskConfigDTO,
     RuleGroupDTO,
@@ -233,6 +238,12 @@ _RULE_TARGET = re.compile(
     r"^rule:(long|short)\.(entry|exit)\.(\d+)\.(?:(left|right)\.(length|value)|(count))$"
 )
 _OP_TARGET = re.compile(r"^op:(long|short)\.(entry|exit)\.(\d+)$")
+# Expression-literal sweep target: lit:<side>.<entry|exit>.<rowIdx>.<ordinal>.
+# rowIdx addresses the FULL group row list (disabled rows included), matching
+# the structured rule:/op: convention and _compile_group's enumerate; ordinal is
+# the literal position from expr.literals.literals(). Emitted by the frontend's
+# Task 12 sweepLiteralTarget. Applied against the expression request only.
+_LIT_TARGET = re.compile(r"^lit:(long|short)\.(entry|exit)\.(\d+)\.(\d+)$")
 # RuleDTO.op's Literal set. model_copy(update=...) skips pydantic validation,
 # so membership is checked explicitly before the patch.
 _OPERATORS = {"crossesAbove", "crossesBelow", "crosses", "gt", "lt", "gte", "lte"}
@@ -316,6 +327,60 @@ def apply_rule_combo(req: BacktestRequest, combo: dict) -> BacktestRequest:
         "shortExit": req.shortExit.model_copy(update={"rules": groups[("short", "exit")]}),
         "longRisk": long_risk, "shortRisk": short_risk,
     })
+
+
+def apply_lit_combo(
+    req: ExprBacktestRequest, combo: dict,
+) -> dict[tuple[str, str, int], N.Compare | N.Cross]:
+    """Parse + substitute every expression row a `lit:` target addresses.
+
+    Target form `lit:<side>.<entry|exit>.<rowIdx>.<ordinal>`: locate the addressed
+    expression row (side/group by full-list rowIdx), parse its expr, and
+    `substitute` the combo value into the literal at `ordinal`. Multiple `lit:`
+    targets on the same row are merged into one substitute pass. Returns a map
+    {(side, group, rowIdx): substituted AST} for the addressed rows only; non-
+    `lit:` keys are ignored (risk:/param: are applied separately).
+
+    422s a malformed key, an out-of-range rowIdx, a non-numeric value, or a row
+    whose expr fails to parse, so a stale axis can't silently no-op.
+
+    Stage B ships the addressing + substitution as a standalone, testable unit.
+    Stage C wires it into an expr sweep run: it must parse the un-addressed
+    enabled rows itself, merge this override map in, then compile every row
+    (compile_row) into an ExprRuleStrategy for the combo, with risk:/param:
+    handled as they are today.
+    """
+    group_map: dict[tuple[str, str], list] = {
+        ("long", "entry"): req.longEntry,
+        ("long", "exit"): req.longExit,
+        ("short", "entry"): req.shortEntry,
+        ("short", "exit"): req.shortExit,
+    }
+    overrides: dict[tuple[str, str, int], dict[int, float]] = {}
+    for target, value in combo.items():
+        if not target.startswith("lit:"):
+            continue
+        m = _LIT_TARGET.match(target)
+        if not m:
+            raise SweepValidationError(422, f"bad sweep target '{target}'")
+        side, grp, idx_s, ord_s = m.groups()
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise SweepValidationError(422, f"sweep target '{target}' needs a numeric value")
+        rows = group_map[(side, grp)]
+        idx = int(idx_s)
+        if idx >= len(rows):
+            raise SweepValidationError(422, f"sweep target '{target}' index out of range")
+        overrides.setdefault((side, grp, idx), {})[int(ord_s)] = float(value)
+
+    out: dict[tuple[str, str, int], N.Compare | N.Cross] = {}
+    for (side, grp, idx), ov in overrides.items():
+        try:
+            node = parse(group_map[(side, grp)][idx].expr)
+        except ExprError as e:
+            raise SweepValidationError(
+                422, f"sweep target 'lit:{side}.{grp}.{idx}' expr parse error: {e.message}")
+        out[(side, grp, idx)] = substitute(node, ov)
+    return out
 
 
 # Environment combo keys: they change the RUN's candle window / session mask
