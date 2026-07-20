@@ -2056,28 +2056,42 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                       info="The span of history walk-forward runs over. Set From/To directly, or use a quick-fill chip: relative chips roll with today, calendar chips pin a fixed year."
                     >
                       <div className="bt-wfo-range-col">
-                        <div className="bt-chip-row bt-range-chip-row bt-wfo-chip-row">
-                          {WFO_RELATIVE_CHIPS.map((c) => (
-                            <button
-                              key={c.mode}
-                              className={cfg.range.mode === c.mode ? "seg-on bt-chip" : "bt-chip"}
-                              onClick={() => setRange({ mode: c.mode, fromMs: undefined, toMs: undefined })}
-                            >
-                              {c.label}
-                            </button>
-                          ))}
-                          {buildRangeChips("year", Date.now(), chartTimezone).map((chip) => {
-                            const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
-                            return (
-                              <button
-                                key={chip.label}
-                                className={on ? "seg-on bt-chip" : "bt-chip"}
-                                onClick={() => setRange({ mode: "custom", fromMs: chip.fromMs, toMs: chip.toMs })}
-                              >
-                                {chip.label}
-                              </button>
-                            );
-                          })}
+                        {/* Two quick-fill families: relative chips roll with today,
+                            calendar chips pin a fixed year. The caption + divider encode
+                            that difference so the two behaviors read at a glance. */}
+                        <div className="bt-wfo-chips">
+                          <div className="bt-wfo-chip-group">
+                            <span className="bt-wfo-chip-cap">Roll</span>
+                            <div className="bt-chip-row bt-range-chip-row bt-wfo-chip-row">
+                              {WFO_RELATIVE_CHIPS.map((c) => (
+                                <button
+                                  key={c.mode}
+                                  className={cfg.range.mode === c.mode ? "seg-on bt-chip" : "bt-chip"}
+                                  onClick={() => setRange({ mode: c.mode, fromMs: undefined, toMs: undefined })}
+                                >
+                                  {c.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <span className="bt-wfo-chip-div" aria-hidden="true" />
+                          <div className="bt-wfo-chip-group">
+                            <span className="bt-wfo-chip-cap">Fixed</span>
+                            <div className="bt-chip-row bt-range-chip-row bt-wfo-chip-row">
+                              {buildRangeChips("year", Date.now(), chartTimezone).map((chip) => {
+                                const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
+                                return (
+                                  <button
+                                    key={chip.label}
+                                    className={on ? "seg-on bt-chip" : "bt-chip"}
+                                    onClick={() => setRange({ mode: "custom", fromMs: chip.fromMs, toMs: chip.toMs })}
+                                  >
+                                    {chip.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
                         {/* Labels on the first row, inputs aligned beneath them; TF/Holdout
                             columns hug their selects so From/To take the remaining width. */}

@@ -1412,6 +1412,18 @@
 /* WFO Data window: range unit (chips above From/To) on the left, Timeframe +
    Holdout as a right-aligned column, so the quick-fill chips sit next to the
    From/To they fill instead of being split off by unrelated settings. */
+/* Quick-fill families side by side: relative (Roll) and calendar (Fixed),
+   separated by a hairline so their different behavior reads. Captions are quiet
+   so the chips stay the focus. */
+.bt-wfo-chips { display: flex; align-items: stretch; flex-wrap: wrap; gap: 10px; }
+.bt-wfo-chip-group { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bt-wfo-chip-cap {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--text-faint); padding-left: 1px;
+}
+.bt-wfo-chip-div { align-self: stretch; width: 1px; background: var(--border); }
+.bt-wfo-chip-row { margin-top: 0; }
+
 /* WFO Data window: chips in one row above a From/To + Timeframe + Holdout grid.
    Labels sit on the first grid row, inputs aligned beneath them. From/To take the
    flexible columns; TF/Holdout columns hug their selects (as narrow as possible). */
