@@ -1464,10 +1464,13 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
 
   const defaultAvwapAnchor = resolveWindow(cfg, resSeconds, Date.now()).fromMs;
 
+  // Expression rows have no structured left/right operands, so guard op access
+  // (op is undefined on an expr rule); the volume-operand note is a structured-
+  // mode concern only.
   const usesVolume = [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit].some((g) =>
     g.rules.some((r) =>
       [r.left, r.right].some(
-        (op) => op.kind === "indicator" && (op.indicator === "VOL" || op.indicator === "VOLMA" || op.indicator === "AVWAP"),
+        (op) => op?.kind === "indicator" && (op.indicator === "VOL" || op.indicator === "VOLMA" || op.indicator === "AVWAP"),
       ),
     ),
   );
@@ -5023,4 +5026,5 @@ function OperandPicker({
     </div>
   );
 }
+
 
