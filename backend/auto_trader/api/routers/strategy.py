@@ -59,10 +59,11 @@ def _candle(c) -> Candle:
 def _compile_expr_group(rows, candles, resolution, htf, *, is_exit: bool, group: str):
     """Parse + validate + compile every ENABLED expression row in a group. Mirrors
     expr.py's _compile_group: a parse/validate error 422s with the expression span
-    plus the group/row location; disabled rows are dropped before parse."""
+    plus the group/row location; disabled and blank rows are dropped before
+    parse (an empty placeholder row is not a rule)."""
     compiled = []
     for idx, row in enumerate(rows):
-        if not row.enabled:
+        if not row.enabled or not row.expr.strip():
             continue
         try:
             node = parse_expr(row.expr)

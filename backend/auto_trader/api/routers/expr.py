@@ -48,11 +48,12 @@ router = APIRouter()
 def _compile_group(rows, candles, resolution, htf, *, is_exit: bool, group: str):
     """Parse + validate + compile every ENABLED row in a group. A parse/validate
     error 422s with the expression span plus the group/row location so the
-    frontend can map it back to the offending editor field. Disabled rows are
-    dropped before parse (a parked, possibly-invalid draft never blocks a run)."""
+    frontend can map it back to the offending editor field. Disabled rows and
+    blank rows are dropped before parse (a parked or empty draft never blocks a
+    run; an empty placeholder row is not a rule)."""
     compiled = []
     for idx, row in enumerate(rows):
-        if not row.enabled:
+        if not row.enabled or not row.expr.strip():
             continue
         try:
             node = parse(row.expr)

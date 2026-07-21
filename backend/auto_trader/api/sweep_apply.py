@@ -268,7 +268,9 @@ def run_expr_sync(
     def compile_group(side: str, grp: str, *, is_exit: bool) -> list:
         compiled = []
         for idx, row in enumerate(group_map[(side, grp)]):
-            if not row.enabled:
+            # Disabled and blank rows are not rules (a blank row never carries a
+            # lit override, so index alignment with lit: targets is preserved).
+            if not row.enabled or not row.expr.strip():
                 continue
             node = overrides.get((side, grp, idx))
             try:

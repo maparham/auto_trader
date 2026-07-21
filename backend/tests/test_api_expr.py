@@ -67,6 +67,15 @@ def test_expr_backtest_disabled_row_is_skipped():
     assert r.status_code == 200
 
 
+def test_expr_backtest_blank_enabled_row_is_skipped():
+    # An empty placeholder row (what the UI ships for an unauthored side) is not
+    # a rule: it must not 422 on an empty parse. shortEntry stays blank here.
+    r = client.post("/api/expr/backtest", json=_base_req(
+        shortEntry=[{"expr": "", "enabled": True}],
+        shortExit=[{"expr": "   ", "enabled": True}]))
+    assert r.status_code == 200
+
+
 def test_expr_backtest_atr_risk_rejected():
     # An ATR-kind stop has no series on the expr surface (series={}); running it
     # would yield a silent stop-less trade, so the handler 422s instead.
