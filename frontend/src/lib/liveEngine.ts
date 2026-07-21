@@ -145,9 +145,9 @@ export async function runOneCycle(
     shortExit: coded ? activeGroup(effCfg.shortExit) : emptyGroup,
     exprMode: coded ? undefined : true,
     exprLongEntry: coded ? undefined : exprRows(cfg.longEntry),
-    exprLongExit: coded ? undefined : exprRows(cfg.longExit),
+    exprLongExit: coded ? exprRows(codedCfg?.longExit ?? emptyGroup) : exprRows(cfg.longExit),
     exprShortEntry: coded ? undefined : exprRows(cfg.shortEntry),
-    exprShortExit: coded ? undefined : exprRows(cfg.shortExit),
+    exprShortExit: coded ? exprRows(codedCfg?.shortExit ?? emptyGroup) : exprRows(cfg.shortExit),
     // longEnabled/shortEnabled are rules-mode UI; RuleStrategy gates EXITS on
     // them (rule.py). A coded run must never let a rules-mode toggle silently
     // disable that side's panel exit rules while the .py file still opens

@@ -167,6 +167,10 @@ describe("runOneCycle", () => {
     expect(req.shortRisk).toBeUndefined();
     expect(req.longExit.rules.length).toBe(1);
     expect(req.shortExit.rules.length).toBe(0);
+    // Coded live now also carries its exit groups as expression rows so the
+    // backend expr route can decide exits from them.
+    expect(req.exprLongExit).toEqual([{ expr: RSI_EXIT_RULE.expr ?? "", enabled: true }]);
+    expect(req.exprShortExit).toEqual([]);
     expect(req.series).toEqual({ RSI_14: [70] });
   });
 
