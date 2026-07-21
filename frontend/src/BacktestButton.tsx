@@ -339,6 +339,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           `buildChartOperandSeries ${(tSeries1 - tSeries0).toFixed(0)}ms (${Object.keys(series).length} series)`,
       );
       const tRun0 = performance.now();
+      // Coded exits are sent as expression rows (baseReq below) and rule-mode
+      // runs post whole { expr, enabled }[] groups. Defined here so both the
+      // coded baseReq and the rule-mode exprReq/sweep branch can reference it.
+      const exprRows = (g: RuleGroup): ExprRow[] =>
+        g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
       const baseReq: BacktestRequest = {
         epic,
         resolution: runResolution,
@@ -364,6 +369,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         longExit: activeGroup(effCfg.longExit),
         shortEntry: activeGroup(effCfg.shortEntry),
         shortExit: activeGroup(effCfg.shortExit),
+        // Coded exits run as expressions; the structured longExit/shortExit above
+        // are ignored by the coded backend and removed in Phase 2.
+        exprLongExit: exprRows(effCfg.longExit),
+        exprShortExit: exprRows(effCfg.shortExit),
         // `!== false` so a preset predating these flags (undefined) still trades.
         // Coded mode: longEnabled/shortEnabled are rules-mode UI; RuleStrategy
         // gates EXITS on them (rule.py). A coded run must never let a
@@ -392,10 +401,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // Task 13 Stage A: rule-mode runs go through the expression-native engine,
       // posting { expr, enabled }[] groups. This request drives BOTH the plain
       // single run (/api/expr/backtest) and the expr sweep (/api/expr/sweep/jobs)
-      // below; coded runs stay on the structured baseReq. Defined here so the
-      // sweep branch can reference it.
-      const exprRows = (g: RuleGroup): ExprRow[] =>
-        g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
+      // below; coded runs stay on the structured baseReq.
       const exprReq: ExprBacktestRequest = {
         epic,
         resolution: runResolution,

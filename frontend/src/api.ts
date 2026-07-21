@@ -332,6 +332,10 @@ export interface BacktestRequest {
   codedParams?: ParamValues; // panel-tuned ctx.param() overrides for `codedStrategy`
   inspect?: boolean; // opt into the per-bar inspector trace (bar_traces on the result)
   costSensitivity?: boolean; // opt into the 0x/2x/3x cost re-runs (cost_sensitivity on the result)
+  // Coded runs send panel exits as expressions here (parallel to the structured
+  // longExit/shortExit, which coded no longer reads).
+  exprLongExit?: ExprRow[];
+  exprShortExit?: ExprRow[];
 }
 
 // --- expression backtest surface (/api/expr/backtest) ------------------------
