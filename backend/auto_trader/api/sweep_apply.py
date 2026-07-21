@@ -27,8 +27,6 @@ from auto_trader.strategy.expr.literals import substitute
 from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
 from auto_trader.strategy.expr.validate import validate
-from auto_trader.strategy.rule import RuleStrategy, series_name
-from auto_trader.strategy.rule_series import build_rule_series
 
 from .schemas import (
     BacktestRequest,
@@ -96,82 +94,6 @@ def htf_to_dto(htf: dict[str, list[Candle]]) -> dict[str, list[CandleDTO]]:
 def htf_from_dto(htf: dict[str, list[CandleDTO]]) -> dict[str, list[Candle]]:
     """Decode BacktestRequest.htfCandles back into the engine's HTF set."""
     return {tf: [candle_from_dto(c) for c in bars] for tf, bars in htf.items()}
-
-
-def _rule_operands(req: BacktestRequest) -> list:
-    ops = []
-    for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
-        ops += [o.to_operand() for o in group.operands()]
-    return ops
-
-
-def _rule_atr_lengths(req: BacktestRequest) -> list[int]:
-    lengths: list[int] = []
-    for cfg in (req.longRisk, req.shortRisk, req.longScaling, req.shortScaling):
-        if cfg is None:
-            continue
-        for name in cfg.atr_series_names():
-            lengths.append(int(name.split("_")[1]))
-    return lengths
-
-
-def assemble_rule_series_sync(
-    req: BacktestRequest, candles: list[Candle],
-    htf_candles: dict[str, list[Candle]],
-) -> dict[str, list[float | None]]:
-    """Backend-owned rule series: recompute native indicators from `candles`,
-    align the (already fetched) higher timeframes, and merge in the
-    browser-supplied chart-operand series (kind='series', which cannot be
-    recomputed server-side). On a native/chart-operand key collision the
-    recomputed value wins.
-
-    `htf_candles` is required and used as-is (no fetch): the router owns the
-    fetch and passes the full set in."""
-    ops = _rule_operands(req)
-    computed = build_rule_series(ops, candles, req.resolution, htf_candles, _rule_atr_lengths(req))
-    # Chart-operand/drawing series stay browser-supplied; native keys recompute.
-    chart_series = {
-        series_name(o.to_operand()): req.series.get(series_name(o.to_operand()))
-        for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit)
-        for o in group.operands()
-        if o.kind == "series"
-    }
-    return {**{k: v for k, v in chart_series.items() if v is not None}, **computed}
-
-
-def run_rule_sync(
-    req: BacktestRequest, candles: list[Candle],
-    htf_candles: dict[str, list[Candle]],
-) -> BacktestResult:
-    """Backend-recomputed rule run used by both the single-run /api/backtest
-    route and the sweep. `htf_candles` is the pre-fetched, combo-shared dict
-    (the router owns the fetch)."""
-    series = assemble_rule_series_sync(req, candles, htf_candles)
-    strategy = RuleStrategy(
-        req.longEntry.to_group(), req.longExit.to_group(),
-        req.shortEntry.to_group(), req.shortExit.to_group(),
-        series, quantity=req.costs.quantity, trade_from_time=req.tradeFromTime,
-        long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
-        base_timeframe=req.resolution,
-    )
-    engine = BacktestEngine(
-        strategy,
-        starting_cash=req.costs.startingCash,
-        commission_per_side=req.costs.commissionPerSide,
-        slippage=req.costs.slippage.value,
-        slippage_atr_mult=req.costs.slippage.atrMult if req.costs.slippage.kind == "atr" else 0.0,
-        spread=req.costs.spread,
-        fin_long_daily_pct=req.costs.finLongDailyPct,
-        fin_short_daily_pct=req.costs.finShortDailyPct,
-        long_risk=req.longRisk.to_risk() if req.longRisk else None,
-        short_risk=req.shortRisk.to_risk() if req.shortRisk else None,
-        long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
-        short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
-        series=series,
-        mask=req.mask.to_mask() if req.mask else None,
-        inspect=req.inspect,
-    )
-    return engine.run(candles)
 
 
 def _compile_expr_exits(rows, candles, resolution, htf):
@@ -333,19 +255,12 @@ def run_expr_sync(
 # --- parameter/risk sweep combo application ----------------------------------
 
 _RISK_TARGET = re.compile(r"^risk:(long|short)\.(stop|target)\.(value|mult)$")
-_RULE_TARGET = re.compile(
-    r"^rule:(long|short)\.(entry|exit)\.(\d+)\.(?:(left|right)\.(length|value)|(count))$"
-)
-_OP_TARGET = re.compile(r"^op:(long|short)\.(entry|exit)\.(\d+)$")
 # Expression-literal sweep target: lit:<side>.<entry|exit>.<rowIdx>.<ordinal>.
 # rowIdx addresses the FULL group row list (disabled rows included), matching
 # the structured rule:/op: convention and _compile_group's enumerate; ordinal is
 # the literal position from expr.literals.literals(). Emitted by the frontend's
 # Task 12 sweepLiteralTarget. Applied against the expression request only.
 _LIT_TARGET = re.compile(r"^lit:(long|short)\.(entry|exit)\.(\d+)\.(\d+)$")
-# RuleDTO.op's Literal set. model_copy(update=...) skips pydantic validation,
-# so membership is checked explicitly before the patch.
-_OPERATORS = {"crossesAbove", "crossesBelow", "crosses", "gt", "lt", "gte", "lte"}
 
 
 def apply_combo(
@@ -377,58 +292,6 @@ def apply_combo(
         spec = getattr(risk, spec_name).model_copy(update={field: float(value)})
         risks[side] = risk.model_copy(update={spec_name: spec})
     return params, risks["long"], risks["short"]
-
-
-def apply_rule_combo(req: BacktestRequest, combo: dict) -> BacktestRequest:
-    """Return a copy of `req` with each combo target patched into the rule tree /
-    risk DTO. Reuses `apply_combo` for `risk:` keys. Handles `op:` operator patches.
-    422s a malformed or out-of-range path so a stale axis can't silently no-op."""
-    groups = {
-        ("long", "entry"): [r.model_copy(deep=True) for r in req.longEntry.rules],
-        ("long", "exit"): [r.model_copy(deep=True) for r in req.longExit.rules],
-        ("short", "entry"): [r.model_copy(deep=True) for r in req.shortEntry.rules],
-        ("short", "exit"): [r.model_copy(deep=True) for r in req.shortExit.rules],
-    }
-    risk_combo: dict = {}
-    for target, value in combo.items():
-        if target.startswith("risk:"):
-            risk_combo[target] = value
-            continue
-        m = _OP_TARGET.match(target)
-        if m:
-            side, grp, idx_s = m.groups()
-            rules = groups[(side, grp)]
-            idx = int(idx_s)
-            if idx >= len(rules):
-                raise SweepValidationError(422, f"sweep target '{target}' index out of range")
-            if value not in _OPERATORS:
-                raise SweepValidationError(
-                    422, f"sweep target '{target}' needs one of {sorted(_OPERATORS)}")
-            rules[idx] = rules[idx].model_copy(update={"op": value})
-            continue
-        m = _RULE_TARGET.match(target)
-        if not m:
-            raise SweepValidationError(422, f"bad sweep target '{target}'")
-        side, grp, idx_s, operand, field, count = m.groups()
-        rules = groups[(side, grp)]
-        idx = int(idx_s)
-        if idx >= len(rules):
-            raise SweepValidationError(422, f"sweep target '{target}' index out of range")
-        rule = rules[idx]
-        if count:
-            rules[idx] = rule.model_copy(update={"count": int(value)})
-        else:
-            op = getattr(rule, operand)
-            rules[idx] = rule.model_copy(update={
-                operand: op.model_copy(update={field: value})})
-    _, long_risk, short_risk = apply_combo(req, risk_combo)  # risk-only combo
-    return req.model_copy(update={
-        "longEntry": req.longEntry.model_copy(update={"rules": groups[("long", "entry")]}),
-        "longExit": req.longExit.model_copy(update={"rules": groups[("long", "exit")]}),
-        "shortEntry": req.shortEntry.model_copy(update={"rules": groups[("short", "entry")]}),
-        "shortExit": req.shortExit.model_copy(update={"rules": groups[("short", "exit")]}),
-        "longRisk": long_risk, "shortRisk": short_risk,
-    })
 
 
 def apply_lit_combo(
@@ -487,8 +350,8 @@ def apply_lit_combo(
 
 # Environment combo keys: they change the RUN's candle window / session mask
 # rather than a strategy knob, so they're split off and applied to the request
-# + candle list before the per-combo strategy patch (apply_rule_combo /
-# apply_combo) runs. Shared by the rule and coded sweep branches.
+# + candle list before the per-combo strategy patch (apply_combo) runs.
+# Shared by the coded and expr sweep branches.
 _ENV_PREFIXES = ("period:", "timeWindow:")
 _ENV_KEYS = {"period:from", "period:to",
              "timeWindow:startMin", "timeWindow:endMin", "timeWindow:tz"}

@@ -20,7 +20,6 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from types import ModuleType
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -36,9 +35,6 @@ from auto_trader.indicators.core import (
 from auto_trader.indicators.mtf import align_htf_to_base, slope_of
 from auto_trader.strategy.base import Context, Strategy
 from auto_trader.strategy.params import resolve_params
-
-if TYPE_CHECKING:
-    from auto_trader.strategy.rule import RuleStrategy
 
 
 class StrategyRuntimeError(Exception):
