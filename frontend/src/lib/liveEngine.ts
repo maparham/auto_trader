@@ -9,7 +9,7 @@ import { save, load, ns } from "./persist";
 import {
   type LiveState, type ArmedSnapshot, activeRules, appendLog, setPositionVintage, markLost,
 } from "./liveState";
-import { activeGroup } from "./backtestConfig";
+import { activeGroup, type RuleGroup } from "./backtestConfig";
 import { sendableRisk } from "./codedConfig";
 import { markStrategyDeal, forgetStrategyDeal } from "./liveTags";
 import { recordClose } from "./liveJournal";
@@ -116,9 +116,18 @@ export async function runOneCycle(
       }
     : cfg;
   const fetchTf = deps.fetchTimeframe ?? (async () => bars);
-  const series = await deps.buildSeries(
-    bars as never, effCfg, resolution, (async (tf: string) => await fetchTf(tf)) as never,
-  );
+  // Expression (non-coded) live is always expr mode: the backend builds an
+  // expression strategy from the expr* rows below and ignores the structured
+  // groups + series. buildSeries reads structured operands that expr rows lack,
+  // so skip it for expr and send series={} (the backend uses {} for expr anyway).
+  const series = coded
+    ? await deps.buildSeries(
+        bars as never, effCfg, resolution, (async (tf: string) => await fetchTf(tf)) as never,
+      )
+    : {};
+
+  const exprRows = (g: RuleGroup): Array<{ expr: string; enabled: boolean }> =>
+    g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
 
   const req: EvaluateRequest = {
     epic, resolution,
@@ -127,10 +136,18 @@ export async function runOneCycle(
       open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
     })),
     series,
-    longEntry: coded ? effCfg.longEntry : activeGroup(cfg.longEntry),
-    longExit: coded ? activeGroup(effCfg.longExit) : activeGroup(cfg.longExit),
-    shortEntry: coded ? effCfg.shortEntry : activeGroup(cfg.shortEntry),
-    shortExit: coded ? activeGroup(effCfg.shortExit) : activeGroup(cfg.shortExit),
+    // Structured groups: the coded path sends its effective groups (unchanged);
+    // the expression path sends empty groups (the backend ignores them under
+    // exprMode) and carries the real rules in expr* below.
+    longEntry: coded ? effCfg.longEntry : emptyGroup,
+    longExit: coded ? activeGroup(effCfg.longExit) : emptyGroup,
+    shortEntry: coded ? effCfg.shortEntry : emptyGroup,
+    shortExit: coded ? activeGroup(effCfg.shortExit) : emptyGroup,
+    exprMode: coded ? undefined : true,
+    exprLongEntry: coded ? undefined : exprRows(cfg.longEntry),
+    exprLongExit: coded ? undefined : exprRows(cfg.longExit),
+    exprShortEntry: coded ? undefined : exprRows(cfg.shortEntry),
+    exprShortExit: coded ? undefined : exprRows(cfg.shortExit),
     // longEnabled/shortEnabled are rules-mode UI; RuleStrategy gates EXITS on
     // them (rule.py). A coded run must never let a rules-mode toggle silently
     // disable that side's panel exit rules while the .py file still opens

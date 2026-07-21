@@ -63,6 +63,43 @@ describe("runOneCycle", () => {
     expect(req.position).toBeNull();
   });
 
+  it("non-coded (expression) mode sends exprMode + expr rows, empty structured groups and no series", async () => {
+    const cfg = {
+      ...defaultBacktestConfig(), mode: "rules" as const,
+      longEntry: { combine: "AND" as const, rules: [{ expr: "candle.close > candle.open", enabled: true } as unknown as Rule] },
+      longExit: { combine: "AND" as const, rules: [] },
+      shortEntry: { combine: "AND" as const, rules: [] },
+      shortExit: { combine: "AND" as const, rules: [] },
+    };
+    const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    const deps = {
+      buildSeries: vi.fn().mockResolvedValue({ SHOULD_NOT: [1] }),
+      fetchOpenPositions: vi.fn().mockResolvedValue([]), // flat
+      evaluateStrategy: vi.fn().mockResolvedValue({
+        actions: [{ kind: "open", leg: "long", side: "buy", reason: "expr", stop_level: 9, take_profit_level: 12 }],
+      }),
+      placeActions: vi.fn((actions: unknown[]) =>
+        Promise.resolve(actions.map((action) => ({ ok: true, detail: "filled", dealId: "d1", action }))),
+      ),
+    };
+    const bars = [
+      { timestamp: 1_700_000_000_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+      { timestamp: 1_700_000_060_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+    ];
+    const result = await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", deps as never);
+    // expr path never calls buildSeries and sends an empty series object
+    expect(deps.buildSeries).not.toHaveBeenCalled();
+    const req = deps.evaluateStrategy.mock.calls[0][0];
+    expect(req.exprMode).toBe(true);
+    expect(req.exprLongEntry).toEqual([{ expr: "candle.close > candle.open", enabled: true }]);
+    expect(req.codedStrategy).toBeUndefined();
+    expect(req.series).toEqual({});
+    expect(req.longEntry).toEqual({ combine: "AND", rules: [] });
+    // the returned open action is placed and its vintage recorded
+    expect(deps.placeActions).toHaveBeenCalledTimes(1);
+    expect(result.state.positionVintage?.armedAtSec).toBe(1700);
+  });
+
   it("coded mode without a coded snapshot still sends empty groups, no risk, and calls buildSeries", async () => {
     const cfg = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);

@@ -41,6 +41,14 @@ export interface EvaluateRequest {
   broker?: string;
   priceSide?: string;
   codedParams?: ParamValues; // panel-tuned ctx.param() overrides for `codedStrategy`
+  // Expression-rule live decision (main groups). When exprMode is true the
+  // backend builds an expression strategy from these rows and ignores the
+  // structured groups + series above. Never sent together with codedStrategy.
+  exprMode?: boolean;
+  exprLongEntry?: Array<{ expr: string; enabled: boolean }>;
+  exprLongExit?: Array<{ expr: string; enabled: boolean }>;
+  exprShortEntry?: Array<{ expr: string; enabled: boolean }>;
+  exprShortExit?: Array<{ expr: string; enabled: boolean }>;
 }
 
 export interface EvaluateResult {
