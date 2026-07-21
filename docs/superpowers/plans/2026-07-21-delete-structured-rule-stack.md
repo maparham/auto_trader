@@ -69,25 +69,39 @@ EOF
 
 ---
 
-## Stage 2: Delete the structured rule editor in the modal
+## Stage 2: Delete the structured rule editor (modal + live panel)
+
+`RuleGroupSection` is EXPORTED and used by four files, and the `editorMode` prop
+defaults to `"structured"`. IMPORTANT correction to the original map: the
+`LiveTradingPanel.tsx` NON-CODED entry/exit editors (~262/275) pass NO
+`editorMode`, so they ride the structured default today — even though Phase 1's
+`liveEngine.ts` already sends non-coded live rules as EXPRESSIONS (`exprMode:true`,
+`exprRows(cfg.longEntry)`). That panel is therefore mismatched (structured editor,
+expr engine); flipping it to expr both removes the structured editor AND fixes
+that latent inconsistency. Dropping the `editorMode` prop entirely requires
+updating EVERY call site, including the two expr test files that pass
+`editorMode="expr"` (they must drop the now-removed prop or `tsc` breaks).
 
 **Files:**
-- Modify: `frontend/src/BacktestSettingsModal.tsx` — delete `OpGlyph` (~308), `defaultOperand` (~405), `defaultRule` (~409), `OperatorPicker` (~3728), `RuleMenu` (~4091), `OperandPicker` (~4714); every `editorMode === "structured"` branch inside `RuleGroupSection`/`RuleRow` (~4340, ~4350, ~4394-4412, ~4479-4488, ~4536, ~4568-4572); and drop the `editorMode` prop entirely (default at ~4192/~4214) since expr is the only mode.
-- Modify: `frontend/src/BacktestSettingsModal.test.tsx` — remove the ~19 structured describe/it blocks that use `defaultRule`/`OperandPicker`/`left:` literals (the known 19 failures). The expr coverage lives in the separate `*.expr.test.tsx`/`*.exprSweep.test.tsx` files (untouched).
+- Modify: `frontend/src/BacktestSettingsModal.tsx` — delete `OpGlyph`, `defaultOperand`, `defaultRule`, `OperatorPicker`, `RuleMenu`, `OperandPicker`; every `editorMode === "structured"` branch inside `RuleGroupSection`/`RuleRow`; and drop the `editorMode` prop from the component signature + its three call sites (2695, 3531, 3548).
+- Modify: `frontend/src/LiveTradingPanel.tsx` — drop `editorMode="expr"` from the coded-exit `RuleGroupSection` (~223). The two NON-CODED editors (~262/275) currently pass nothing (structured default); after the prop is removed they render the (now only) expression editor — this is the intended fix. Do NOT change any other LiveTradingPanel behavior.
+- Modify: `frontend/src/BacktestSettingsModal.expr.test.tsx` (~20) and `frontend/src/BacktestSettingsModal.exprSweep.test.tsx` (~33/59/92/112) — remove the now-removed `editorMode="expr"` prop from each `RuleGroupSection` usage. These tests keep asserting expr behavior (now the default); do NOT otherwise alter them.
+- Modify: `frontend/src/BacktestSettingsModal.test.tsx` — remove the ~19 structured describe/it blocks that use `defaultRule`/`OperandPicker`/`left:` literals (the known 19 failures). Keep non-structured cases.
 
-- [ ] **Step 1: Remove the structured branches and the `editorMode` prop.** Read `RuleGroupSection`/`RuleRow` (~4180-4600). Delete every `editorMode === "structured"` conditional arm (keep the expr arm as the unconditional body), then remove the `editorMode` prop from the component signature and every call site (the coded-exit and main-group sections currently pass `editorMode="expr"` — remove the prop there too; expr is implicit now). Delete the now-unreferenced `OpGlyph`, `defaultOperand`, `defaultRule`, `OperatorPicker`, `RuleMenu`, `OperandPicker` definitions and their imports.
-- [ ] **Step 2: Remove structured test cases.** In `BacktestSettingsModal.test.tsx`, delete the describe/it blocks that construct structured rules (`defaultRule`, `OperandPicker`, operand `left/op/right`, "Add from chart", operator-sweep-of-structured). Keep non-structured cases. Run the file to confirm the remaining cases pass (the 19 structured failures should be gone, not merely skipped).
-- [ ] **Step 3: Prove no dangling references.**
-Run: `cd frontend && grep -rn "editorMode\|OperandPicker\|OperatorPicker\|RuleMenu\|defaultRule\|defaultOperand\|OpGlyph" src/ | grep -v overlays`
+- [ ] **Step 1: Remove the structured branches and the `editorMode` prop.** Read `RuleGroupSection`/`RuleRow` first. Delete every `editorMode === "structured"` conditional arm (keep the expr arm as the unconditional body), remove the `editorMode` prop from the component signature, and delete the now-unreferenced `OpGlyph`, `defaultOperand`, `defaultRule`, `OperatorPicker`, `RuleMenu`, `OperandPicker` defs + imports. Any `openChartPicker`-guarded structured branches Stage 1 left behind (optional-prop decls, `editorMode==="structured"` arms) are removed here too — after this, `openChartPicker` has zero references.
+- [ ] **Step 2: Remove `editorMode="expr"` from all call sites.** In `BacktestSettingsModal.tsx` (2695/3531/3548), `LiveTradingPanel.tsx` (223), and both expr test files (`.expr.test.tsx`, `.exprSweep.test.tsx`). Confirm the LiveTradingPanel non-coded editors (262/275) still pass no `editorMode` — they now render expr, which is correct and intended.
+- [ ] **Step 3: Remove structured test cases.** In `BacktestSettingsModal.test.tsx`, delete the describe/it blocks that construct structured rules (`defaultRule`, `OperandPicker`, operand `left/op/right`, "Add from chart", structured operator-sweep). Keep non-structured cases.
+- [ ] **Step 4: Prove no dangling references.**
+Run: `cd frontend && grep -rn "editorMode\|OperandPicker\|OperatorPicker\|RuleMenu\|defaultRule\|defaultOperand\|OpGlyph\|openChartPicker" src/ | grep -v overlays`
 Expected: no output.
-- [ ] **Step 4: Typecheck + tests.**
-Run: `cd frontend && npx tsc -b 2>&1 | grep -E "BacktestSettingsModal"` → no new errors.
-Run: `cd frontend && npx vitest run src/BacktestSettingsModal.test.tsx src/BacktestSettingsModal.expr.test.tsx src/BacktestSettingsModal.exprSweep.test.tsx` → Expected: all pass (0 failures now; the 19-failure baseline is eliminated by this deletion).
-- [ ] **Step 5: Commit.**
+- [ ] **Step 5: Typecheck + tests.**
+Run: `cd frontend && npx tsc -b 2>&1 | grep -E "BacktestSettingsModal|LiveTradingPanel"` → no NEW errors beyond the known baseline (`BacktestSettingsModal.test.tsx:975/1193` brokerId, `.tsx:2503` RecurrenceMask).
+Run: `cd frontend && npx vitest run src/BacktestSettingsModal.test.tsx src/BacktestSettingsModal.expr.test.tsx src/BacktestSettingsModal.exprSweep.test.tsx` → Expected: all pass (the 19 structured failures are eliminated, not skipped). If `LiveTradingPanel` has a test file, run it too.
+- [ ] **Step 6: Commit.**
 ```bash
-git add frontend/src/BacktestSettingsModal.tsx frontend/src/BacktestSettingsModal.test.tsx
+git add frontend/src/BacktestSettingsModal.tsx frontend/src/BacktestSettingsModal.test.tsx frontend/src/LiveTradingPanel.tsx frontend/src/BacktestSettingsModal.expr.test.tsx frontend/src/BacktestSettingsModal.exprSweep.test.tsx
 git commit -m "$(cat <<'EOF'
-refactor(rules): delete the structured rule editor from the backtest modal
+refactor(rules): delete the structured rule editor (modal + live panel expr-only)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01KQj31kEhK1PUdg6xDfpjof
