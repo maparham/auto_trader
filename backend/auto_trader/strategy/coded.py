@@ -457,17 +457,17 @@ class CodedStrategy(Strategy):
         return signals
 
 
-class CodedWithRuleExits(Strategy):
-    """A coded strategy plus panel-authored exit rule groups: the coded module
-    supplies entries (and any exits of its own); a RuleStrategy configured with
-    EMPTY entry groups contributes rule-based exits. One close per leg per bar
-    — the coded module's own close wins when both fire."""
+class CodedWithExprExits(Strategy):
+    """A coded strategy plus panel-authored expression exit rows: the coded module
+    supplies entries (and any exits of its own); an exit-only strategy (empty entry
+    groups) contributes rule-based exits. One close per leg per bar — the coded
+    module's own close wins when both fire."""
 
     _CLOSES = {("long", Side.SELL), ("short", Side.BUY)}
 
-    def __init__(self, coded: CodedStrategy, rule_exits: "RuleStrategy") -> None:
+    def __init__(self, coded: CodedStrategy, exit_strategy: Strategy) -> None:
         self.coded = coded
-        self.rule_exits = rule_exits
+        self.exit_strategy = exit_strategy
         self.hedged = coded.hedged
 
     @property
@@ -477,7 +477,7 @@ class CodedWithRuleExits(Strategy):
     def on_bar(self, ctx: Context) -> list[Signal]:
         out = self.coded.on_bar(ctx)
         closed = {s.leg for s in out if (s.leg, s.side) in self._CLOSES}
-        for s in self.rule_exits.on_bar(ctx):
+        for s in self.exit_strategy.on_bar(ctx):
             if (s.leg, s.side) in self._CLOSES and s.leg not in closed:
                 # Rule exits close the WHOLE held side, like coded ctx.exit().
                 # size can be 0 on the coded entry's own signal bar (the buy
