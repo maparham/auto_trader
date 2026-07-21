@@ -1081,9 +1081,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       } else {
         const [operandSide, leaf] = rest as ["left" | "right", "length" | "value"];
         const operand = rule[operandSide];
-        if (operand.kind === "indicator" && leaf === "length") {
+        if (operand?.kind === "indicator" && leaf === "length") {
           patched = { ...rule, [operandSide]: { ...operand, length: value } };
-        } else if (operand.kind === "const" && leaf === "value") {
+        } else if (operand?.kind === "const" && leaf === "value") {
           patched = { ...rule, [operandSide]: { ...operand, value } };
         } else {
           continue;   // stale axis (operand kind changed since the axis was created)

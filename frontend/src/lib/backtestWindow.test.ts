@@ -5,6 +5,7 @@ import {
   minimalHistoryStart,
   requiredWarmupBars,
   warmupBarCount,
+  longestWarmupBars,
 } from "./backtestWindow";
 import type { BacktestConfig } from "./backtestConfig";
 
@@ -183,6 +184,23 @@ describe("requiredWarmupBars", () => {
     });
     expect(requiredWarmupBars(c, 60)).toBe(100);
     expect(requiredWarmupBars(c)).toBe(30); // unscaled falls back to the asked N
+  });
+});
+
+describe("expression-row warmup", () => {
+  it("sizes warmup from an all-expression config", () => {
+    const c = cfg({
+      longEntry: { combine: "AND", rules: [{ expr: "EMA(200) > candle.close", enabled: true } as never] },
+    });
+    expect(longestWarmupBars(c, 60)).toBeGreaterThanOrEqual(200);
+    expect(requiredWarmupBars(c, 60)).toBeGreaterThanOrEqual(200);
+  });
+
+  it("ignores a disabled expression row", () => {
+    const c = cfg({
+      longEntry: { combine: "AND", rules: [{ expr: "EMA(200) > candle.close", enabled: false } as never] },
+    });
+    expect(longestWarmupBars(c, 60)).toBe(1);
   });
 });
 

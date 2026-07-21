@@ -451,6 +451,9 @@ export function collectSeriesOperands(cfg: BacktestConfig): Operand[] {
   const seen = new Map<string, Operand>();
   for (const group of [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit]) {
     for (const rule of group.rules) {
+      // Expression rows carry `expr` and no structured left/right operands; they
+      // contribute warm-up via warmupOf (see backtestWindow), not through series here.
+      if (rule.expr != null) continue;
       for (const op of [rule.left, rule.right]) {
         const name = seriesName(op);
         if (name !== null && !seen.has(name)) seen.set(name, op);

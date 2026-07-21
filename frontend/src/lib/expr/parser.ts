@@ -593,3 +593,50 @@ export function analyze(src: string, opts?: { isExit?: boolean }): AnalyzeResult
 function toExprError(e: ExprErr): ExprError {
   return { code: e.code, message: e.message, from: e.start, to: e.end };
 }
+
+/** Warm-up bars an expression needs before its first honest value, mirroring the
+ * backend authority (strategy/expr/warmup.py::warmup_bars): an indicator's length,
+ * a wrapper's window plus its inner term, an offset's bar count, maxed across a
+ * comparison's two sides. No timeframe scaling (a @tf term passes through), matching
+ * the v1 HTF limitation. Returns 0 for an empty or unparseable expression so a bad
+ * row never blocks sizing (the lint/validate layer surfaces the error elsewhere). */
+export function warmupOf(src: string): number {
+  const trimmed = src.trim();
+  if (!trimmed) return 0;
+  const { tokens, error } = tokenize(trimmed);
+  if (error) return 0;
+  let ast: Row;
+  try {
+    ast = new Parser(tokens).parseRow();
+  } catch {
+    return 0;
+  }
+  return warmupNode(ast);
+}
+
+function warmupNode(node: Node): number {
+  switch (node.kind) {
+    case "Compare": return Math.max(warmupNode(node.left), warmupNode(node.right));
+    case "Cross": return Math.max(warmupNode(node.a), warmupNode(node.b));
+    case "Num": case "Candle": case "Entry": return 0;
+    case "Field": return warmupNode(node.base);
+    case "Offset": return warmupNode(node.base) + node.n;
+    case "Tf": return warmupNode(node.base);
+    case "Unary": return warmupNode(node.operand);
+    case "Binary": return Math.max(warmupNode(node.left), warmupNode(node.right));
+    case "Call": {
+      if (node.name in WRAPPER_ARITY) {
+        const w = node.args[1];
+        const n = w && w.kind === "Num" ? Math.trunc(w.value) : 0;
+        return (node.args[0] ? warmupNode(node.args[0]) : 0) + n;
+      }
+      const spec = INDICATOR_SPECS[node.name];
+      if (spec && spec.argKind === "length" && node.args.length > 0) {
+        const a = node.args[0];
+        return a && a.kind === "Num" ? Math.trunc(a.value) : 0;
+      }
+      return 0;
+    }
+    default: return 0;
+  }
+}

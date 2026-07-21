@@ -13,6 +13,20 @@ import {
   type BacktestConfig,
 } from "./backtestConfig";
 import { RESOLUTION_SECONDS } from "./feed";
+import { warmupOf } from "./expr/parser";
+
+/** The longest warm-up (in base bars) any enabled expression row needs. Structured
+ * (coded) configs have no `expr` rows, so this is 0 and nothing changes for them. */
+function exprWarmupBars(cfg: BacktestConfig): number {
+  let m = 0;
+  for (const g of [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit]) {
+    for (const r of g.rules) {
+      if (r.expr == null || r.enabled === false) continue;
+      m = Math.max(m, warmupOf(r.expr));
+    }
+  }
+  return m;
+}
 
 /** The longest warm-up need in BASE bars, accounting for per-operand timeframes:
  * an indicator of length N on a timeframe T needs N × (T / base) base bars of
@@ -20,7 +34,7 @@ import { RESOLUTION_SECONDS } from "./feed";
  * so this equals {@link longestIndicatorLength}. ATR risk/scaling lengths are
  * always base-timeframe. `baseSeconds` unknown/≤0 ⇒ no scaling. */
 export function longestWarmupBars(cfg: BacktestConfig, baseSeconds: number): number {
-  if (!(baseSeconds > 0)) return longestIndicatorLength(cfg);
+  if (!(baseSeconds > 0)) return Math.max(longestIndicatorLength(cfg), exprWarmupBars(cfg));
   const scaled = collectSeriesOperands(cfg).map((op) => {
     // A sloped operand needs `slope.len` extra bars in its OWN timeframe (it reads
     // v[i] and v[i−len] on that timeframe), so add it BEFORE scaling by the ratio.
@@ -32,7 +46,7 @@ export function longestWarmupBars(cfg: BacktestConfig, baseSeconds: number): num
     const ratio = Math.max(1, Math.ceil(tfSec / baseSeconds));
     return len * ratio;
   });
-  return Math.max(1, ...scaled, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg));
+  return Math.max(1, ...scaled, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg), exprWarmupBars(cfg));
 }
 
 const DAY_MS = 86_400_000;
