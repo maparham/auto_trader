@@ -18,7 +18,7 @@ from auto_trader.engine.risk import stop_level, target_level
 from auto_trader.strategy.base import Context, Strategy
 from auto_trader.strategy.coded import (
     CodedStrategy,
-    CodedWithRuleExits,
+    CodedWithExprExits,
     NeedTimeframe,
     StrategyRuntimeError,
 )
@@ -209,7 +209,7 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             )
             if req.longExit.rules or req.shortExit.rules:
                 empty = RuleGroupDTO(combine="AND", rules=[]).to_group()
-                strategy = CodedWithRuleExits(strategy, RuleStrategy(
+                strategy = CodedWithExprExits(strategy, RuleStrategy(
                     empty, req.longExit.to_group(), empty, req.shortExit.to_group(),
                     req.series, quantity=1.0,
                     long_enabled=req.longEnabled, short_enabled=req.shortEnabled,

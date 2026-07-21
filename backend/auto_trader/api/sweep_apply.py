@@ -17,7 +17,7 @@ from auto_trader.engine.metrics import compute_metrics, window_metrics
 from auto_trader.strategy.base import Strategy
 from auto_trader.strategy.coded import (
     CodedStrategy,
-    CodedWithRuleExits,
+    CodedWithExprExits,
     NeedTimeframe,
 )
 from auto_trader.strategy.expr import nodes as N
@@ -202,7 +202,7 @@ def run_coded_sync(
         )
         if req.longExit.rules or req.shortExit.rules:
             empty = RuleGroupDTO(combine="AND", rules=[]).to_group()
-            strategy = CodedWithRuleExits(strategy, RuleStrategy(
+            strategy = CodedWithExprExits(strategy, RuleStrategy(
                 empty, req.longExit.to_group(), empty, req.shortExit.to_group(),
                 req.series, quantity=req.costs.quantity,
                 long_enabled=req.longEnabled, short_enabled=req.shortEnabled,

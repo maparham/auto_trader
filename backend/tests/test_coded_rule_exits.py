@@ -13,14 +13,6 @@ from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
 
 
-@pytest.fixture(autouse=True)
-def _isolated_run_store():
-    # This test drives the wrapper directly and never touches the run store or
-    # API router. Shadow the conftest fixture so setup does not import the
-    # backtest router (which imports sweep_apply, still mid-migration here).
-    yield
-
-
 def make_candles(closes):
     t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
     return [Candle(time=t0 + timedelta(hours=i), open=c, high=c, low=c,
