@@ -429,6 +429,11 @@ class BacktestRequest(BaseModel):
     longExit: RuleGroupDTO
     shortEntry: RuleGroupDTO
     shortExit: RuleGroupDTO
+    # Coded runs carry panel exit rules as EXPRESSIONS here (parallel to the
+    # structured longExit/shortExit above, which coded no longer reads). Entries
+    # are always the coded module's, so no expr entry fields are needed.
+    exprLongExit: list[ExprRowDTO] = []
+    exprShortExit: list[ExprRowDTO] = []
     # Per-side master switches: a disabled side never trades even if its rule
     # groups are populated (the user keeps the rules while the side is parked).
     # Default on so an omitted flag means "trade this side" (backward-safe).
