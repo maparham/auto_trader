@@ -3,6 +3,7 @@
 
 import { analyze } from "./parser";
 import type { LiteralSpan } from "./parser";
+import type { SweepAxis } from "../sweep";
 
 /** Builds a `lit:` sweep-axis target for an expression's numeric literal.
  * The target encodes the rule side (long/short), group (entry/exit), rule
@@ -92,4 +93,27 @@ export function reanchorRanges(
   }
 
   return { kept, dropped };
+}
+
+/** Drop every `lit:` axis whose addressed literal no longer exists (row removed,
+ *  or the expression edited so that ordinal is gone). Non-`lit:` axes pass through
+ *  untouched. `groups` maps each (side, group) to its CURRENT expression row strings
+ *  (full list, disabled included), so ordinals are checked against a fresh analyze. */
+export function pruneLitAxes(
+  axes: SweepAxis[],
+  groups: { side: "long" | "short"; group: "entry" | "exit"; exprs: string[] }[],
+): SweepAxis[] {
+  const liveCount = new Map<string, number>(); // key `${side}.${group}.${rowIdx}` -> literal count
+  for (const g of groups) {
+    g.exprs.forEach((expr, rowIdx) => {
+      liveCount.set(`${g.side}.${g.group}.${rowIdx}`, analyze(expr).literals.length);
+    });
+  }
+  return axes.filter((a) => {
+    const m = /^lit:(long|short)\.(entry|exit)\.(\d+)\.(\d+)$/.exec(a.target);
+    if (!m) return true; // not a lit axis: keep
+    const [, side, group, rowIdx, ordinal] = m;
+    const n = liveCount.get(`${side}.${group}.${rowIdx}`) ?? 0;
+    return Number(ordinal) < n; // keep only if that ordinal still exists
+  });
 }

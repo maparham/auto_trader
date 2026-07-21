@@ -87,6 +87,8 @@ import { RangeChip, SweepBaseValue } from "./components/RangeChip";
 import { StrategyParams } from "./components/StrategyParams";
 import { SweepResults } from "./SweepResults";
 import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepCombo, type SweepOption } from "./lib/sweep";
+import { analyze } from "./lib/expr/parser";
+import { pruneLitAxes, sweepLiteralTarget } from "./lib/expr/sweepLiterals";
 import { refineAxesAround, sampleCombos } from "./lib/sweepSearch";
 import { useStableCallback } from "./lib/useStableCallback";
 import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLabels";
@@ -716,6 +718,27 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStrategy, cfg.mode]);
+  // Drop lit: axes whose literal vanished after an expression edit / row delete.
+  useEffect(() => {
+    const src = cfg.mode === "coded" ? codedCfg : cfg; // coded exits are structured; still safe to scan
+    const groups = (
+      [
+        ["long", "entry", "longEntry"],
+        ["long", "exit", "longExit"],
+        ["short", "entry", "shortEntry"],
+        ["short", "exit", "shortExit"],
+      ] as const
+    ).map(([side, group, key]) => ({
+      side,
+      group,
+      exprs: (((src as any)?.[key]?.rules ?? []) as any[]).map((r: any) => r.expr ?? ""),
+    }));
+    setSweepAxes((axes) => {
+      const next = pruneLitAxes(axes, groups);
+      return next.length === axes.length ? axes : next; // identity-stable no-op
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit]);
   // Risk numeric fields have no declared min/max/step — pick sensible defaults
   // from the field's current value (from = current, to = 2x, step = a coarse
   // fraction so a first sweep is immediately useful without hand-tuning).
@@ -2774,6 +2797,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             sweep={{
               axes: displayAxes,
               side,
+              editable: sweepEditable,
               onToggle: toggleRuleSweepAxis,
               onToggleOp: toggleOpSweepAxis,
               onTickOp: tickOpOption,
@@ -3469,6 +3493,7 @@ function SidePanel({
   sweep?: {
     axes: SweepAxis[];
     side: "long" | "short";
+    editable: boolean;
     onToggle: (target: string, current: number) => void;
     onToggleRisk: (target: string, current: number) => void;
     onKindChange: (field: "stop" | "target") => void;
@@ -4122,6 +4147,7 @@ export function RuleGroupSection({
     axes: SweepAxis[];
     side: "long" | "short";
     group: "entry" | "exit";
+    editable: boolean;
     onToggle: (target: string, current: number) => void;
     onToggleOp: (target: string, current: Operator) => void;
     onTickOp: (target: string, op: Operator) => void;
@@ -4359,6 +4385,45 @@ export function RuleGroupSection({
             <RulePalette onInsert={(text) => insertInto(i, text)} />
           )}
         </div>
+        {editorMode === "expr" && sweep?.editable && rule.enabled !== false && (() => {
+          // lit: targets address rows by RAW full-list index i (the expr request
+          // ships every row, disabled included), NOT activeRuleIndex(i).
+          const { literals } = analyze(rule.expr ?? "", { isExit });
+          if (!literals.length) return null;
+          return (
+            <div className="sp-row sweep-axis-row bt-lit-sweep-row">
+              <span className="sp-label">sweep</span>
+              <span className="bt-chip-row">
+                {literals.map((lit) => {
+                  const target = sweepLiteralTarget(sweep.side, sweep.group, i, lit.ordinal);
+                  const axis = sweep.axes.find(
+                    (a) => a.target === target && a.kind === "range",
+                  ) as RangeAxis | undefined;
+                  return axis ? (
+                    <span key={lit.ordinal} className="bt-lit-axis">
+                      <span className="sp-label">{lit.label}</span>
+                      <RangeChip
+                        axis={axis}
+                        onPatch={(p) => sweep.onAxisChange(target, p)}
+                        onRemove={() => sweep.onToggle(target, lit.value)}
+                      />
+                    </span>
+                  ) : (
+                    <button
+                      key={lit.ordinal}
+                      type="button"
+                      className="bt-chip"
+                      onClick={() => sweep.onToggle(target, lit.value)}
+                      title={`Sweep ${lit.label}`}
+                    >
+                      {lit.label} {lit.value}
+                    </button>
+                  );
+                })}
+              </span>
+            </div>
+          );
+        })()}
         {editorMode === "structured" && sweep && rule.enabled !== false && (() => {
           const target = opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i));
           const axis = sweep.axes.find((a) => a.target === target);
