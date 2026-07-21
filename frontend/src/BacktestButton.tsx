@@ -17,7 +17,7 @@ import type { ChartController } from "./lib/chartController";
 import Tooltip from "./components/Tooltip";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
-import { defaultBacktestConfig, activeGroup, type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
+import { defaultBacktestConfig, type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
 import { resolveMask } from "./lib/backtestSchedule";
 import { loadCodedCfg, resolveParamValues, sendableRisk } from "./lib/codedConfig";
 import { fetchStrategies, saveSweepArchive } from "./api";
@@ -350,17 +350,8 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         priceSide,
         // Panel-tuned ctx.param() overrides for the coded strategy.
         codedParams,
-        // Disabled rules are kept in the config but dropped from the run. Coded
-        // entries are always the empty group (the .py file opens positions
-        // itself); coded exits come from the panel's per-file config.
-        longEntry: activeGroup(effCfg.longEntry),
         // Coded exits travel on exprLongExit/exprShortExit (below); the structured
-        // longExit/shortExit must be empty or the expr-only rows fail RuleDTO validation.
-        longExit: EMPTY_GROUP,
-        shortEntry: activeGroup(effCfg.shortEntry),
-        shortExit: EMPTY_GROUP,
-        // Coded exits run as expressions; the structured longExit/shortExit above
-        // are ignored by the coded backend and removed in Phase 2.
+        // rule groups have been removed from the backtest request.
         exprLongExit: exprRows(effCfg.longExit),
         exprShortExit: exprRows(effCfg.shortExit),
         // `!== false` so a preset predating these flags (undefined) still trades.

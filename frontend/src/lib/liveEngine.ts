@@ -136,15 +136,8 @@ export async function runOneCycle(
       open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
     })),
     series,
-    // Structured groups: the coded path sends its effective groups (unchanged);
-    // the expression path sends empty groups (the backend ignores them under
-    // exprMode) and carries the real rules in expr* below.
-    longEntry: coded ? effCfg.longEntry : emptyGroup,
     // Coded exits travel on exprLongExit/exprShortExit (below); the structured
-    // longExit/shortExit must be empty or the expr-only rows fail RuleDTO validation.
-    longExit: emptyGroup,
-    shortEntry: coded ? effCfg.shortEntry : emptyGroup,
-    shortExit: emptyGroup,
+    // rule groups have been removed from the evaluate request.
     exprMode: coded ? undefined : true,
     exprLongEntry: coded ? undefined : exprRows(cfg.longEntry),
     exprLongExit: coded ? exprRows(codedCfg?.longExit ?? emptyGroup) : exprRows(cfg.longExit),

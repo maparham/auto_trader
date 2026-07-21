@@ -1062,11 +1062,12 @@ export function registerBacktestIndicators(): void {
   });
 }
 
-// Task 13 Stage A: an expr run posts { expr, enabled }[] groups (arrays);
-// structured runs post RuleGroup objects. Both share epic/resolution, which is
-// all runAndRender itself reads off the request.
-function isExprRequest(req: BacktestRequest | ExprBacktestRequest): req is ExprBacktestRequest {
-  return Array.isArray((req as ExprBacktestRequest).longEntry);
+// An expr run posts { expr, enabled }[] rows (arrays); a coded BacktestRequest no
+// longer carries longExit at all, so Array.isArray(longExit) cleanly separates
+// expr (ExprRow[] → true) from coded (undefined → false). Both share
+// epic/resolution, which is all runAndRender itself reads off the request.
+export function isExprRequest(req: BacktestRequest | ExprBacktestRequest): req is ExprBacktestRequest {
+  return Array.isArray((req as ExprBacktestRequest).longExit);
 }
 
 export async function runAndRender(

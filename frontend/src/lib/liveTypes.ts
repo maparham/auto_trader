@@ -1,4 +1,4 @@
-import type { RuleGroup, RiskConfig } from "./backtestConfig";
+import type { RiskConfig } from "./backtestConfig";
 import type { Candle, ParamValues } from "../api";
 
 export interface LiveAction {
@@ -27,10 +27,6 @@ export interface EvaluateRequest {
   resolution: string;
   candles: Candle[];
   series: Record<string, Array<number | null>>;
-  longEntry: RuleGroup;
-  longExit: RuleGroup;
-  shortEntry: RuleGroup;
-  shortExit: RuleGroup;
   longEnabled: boolean;
   shortEnabled: boolean;
   longRisk?: RiskConfig | null;

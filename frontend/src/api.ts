@@ -1,6 +1,6 @@
 // Typed client for the Auto Trader backend.
 
-import type { RuleGroup, Costs, SlippageModel, RiskConfig, ScalingConfig, RecurrenceMask } from "./lib/backtestConfig";
+import type { Costs, SlippageModel, RiskConfig, ScalingConfig, RecurrenceMask } from "./lib/backtestConfig";
 import { API_BASE as BASE, errorDetail } from "./lib/http";
 import type { EvaluateRequest, EvaluateResult } from "./lib/liveTypes";
 
@@ -312,10 +312,6 @@ export interface BacktestRequest {
   resolution: string;
   candles: Candle[];
   series: Record<string, Array<number | null>>;
-  longEntry: RuleGroup;
-  longExit: RuleGroup;
-  shortEntry: RuleGroup;
-  shortExit: RuleGroup;
   longEnabled: boolean; // per-side master switch (a disabled side never trades)
   shortEnabled: boolean;
   longRisk?: RiskConfig; // optional price-level exits (stop/target/trailing)

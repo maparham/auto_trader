@@ -63,7 +63,7 @@ describe("runOneCycle", () => {
     expect(req.position).toBeNull();
   });
 
-  it("non-coded (expression) mode sends exprMode + expr rows, empty structured groups and no series", async () => {
+  it("non-coded (expression) mode sends exprMode + expr rows, no structured groups and no series", async () => {
     const cfg = {
       ...defaultBacktestConfig(), mode: "rules" as const,
       longEntry: { combine: "AND" as const, rules: [{ expr: "candle.close > candle.open", enabled: true } as unknown as Rule] },
@@ -94,13 +94,14 @@ describe("runOneCycle", () => {
     expect(req.exprLongEntry).toEqual([{ expr: "candle.close > candle.open", enabled: true }]);
     expect(req.codedStrategy).toBeUndefined();
     expect(req.series).toEqual({});
-    expect(req.longEntry).toEqual({ combine: "AND", rules: [] });
+    // The structured rule-group fields were removed from the evaluate request.
+    expect(req.longEntry).toBeUndefined();
     // the returned open action is placed and its vintage recorded
     expect(deps.placeActions).toHaveBeenCalledTimes(1);
     expect(result.state.positionVintage?.armedAtSec).toBe(1700);
   });
 
-  it("coded mode without a coded snapshot still sends empty groups, no risk, and calls buildSeries", async () => {
+  it("coded mode without a coded snapshot sends no structured groups, no risk, and calls buildSeries", async () => {
     const cfg = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
     const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
     const deps = {
@@ -114,17 +115,18 @@ describe("runOneCycle", () => {
       { timestamp: 1_700_000_060_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
     ];
     await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", deps as never, "capital");
-    // Regression guard: no coded snapshot ⇒ request shape matches today's (empty
-    // groups, no risk) even though buildSeries is now always invoked.
+    // Regression guard: no coded snapshot ⇒ request shape matches today's (no
+    // structured groups, no risk) even though buildSeries is now always invoked.
     expect(deps.buildSeries).toHaveBeenCalled();
     expect(deps.evaluateStrategy).toHaveBeenCalledTimes(1);
     const req = deps.evaluateStrategy.mock.calls[0][0];
     expect(req.codedStrategy).toBe("ema_cross.py");
     expect(req.series).toEqual({});
-    expect(req.longEntry).toEqual({ combine: "AND", rules: [] });
-    expect(req.longExit).toEqual({ combine: "AND", rules: [] });
-    expect(req.shortEntry).toEqual({ combine: "AND", rules: [] });
-    expect(req.shortExit).toEqual({ combine: "AND", rules: [] });
+    // The structured rule-group fields were removed from the evaluate request.
+    expect(req.longEntry).toBeUndefined();
+    expect(req.longExit).toBeUndefined();
+    expect(req.shortEntry).toBeUndefined();
+    expect(req.shortExit).toBeUndefined();
     expect(req.longRisk).toBeUndefined();
     expect(req.shortRisk).toBeUndefined();
     expect(req.codedParams).toBeUndefined();
@@ -133,12 +135,12 @@ describe("runOneCycle", () => {
     expect(req.priceSide).toBe("mid");
   });
 
-  it("coded cycle carries an expr exit row on exprLongExit and keeps the structured longExit empty (422 guard)", async () => {
+  it("coded cycle carries an expr exit row on exprLongExit and sends no structured longExit (422 guard)", async () => {
     // Coded exits are now authored in the EXPRESSION editor, so an exit row is
     // shaped { expr, enabled } with NO left/op/right. Sending that row through the
-    // STRUCTURED longExit field fails the backend's RuleDTO (requires left/op/right)
-    // → HTTP 422. The real row must travel on exprLongExit; the structured
-    // longExit/shortExit must be empty.
+    // STRUCTURED longExit field would fail the backend's RuleDTO (requires
+    // left/op/right) → HTTP 422. The structured longExit/shortExit fields were
+    // removed from the request entirely, so the real row travels on exprLongExit.
     const EXPR_EXIT_ROW = { expr: "candle.close < EMA(20)", enabled: true } as unknown as Rule;
     const coded: CodedStrategyConfig = {
       params: { ema_fast: 12 },
@@ -165,10 +167,10 @@ describe("runOneCycle", () => {
     expect(req.codedParams).toEqual({ ema_fast: 12 });
     expect(req.longRisk).toEqual(coded.longRisk);
     expect(req.shortRisk).toBeUndefined();
-    // 422 guard: the structured groups must be empty — the expr-only exit row
-    // would fail RuleDTO if sent through longExit/shortExit.
-    expect(req.longExit.rules.length).toBe(0);
-    expect(req.shortExit.rules.length).toBe(0);
+    // 422 guard: the structured group fields were removed — the expr-only exit
+    // row would fail RuleDTO if sent through longExit/shortExit.
+    expect(req.longExit).toBeUndefined();
+    expect(req.shortExit).toBeUndefined();
     // The real exit row travels on exprLongExit so the backend expr route decides exits.
     expect(req.exprLongExit).toEqual([{ expr: "candle.close < EMA(20)", enabled: true }]);
     expect(req.exprShortExit).toEqual([]);
