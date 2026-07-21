@@ -4,14 +4,15 @@ endpoints (submit / poll / cancel).
 On a remote SUBMIT the local proxy first fills req.htfCandles from its cache (so
 the remote never fetches bars from a broker), then forwards; poll/cancel forward
 verbatim. The remote host owns validation/probe/job creation. These submit tests
-use a base-timeframe-only rule sweep so the HTF pre-fetch is a trivial empty set
-(no broker call, no strategies dir needed)."""
+use a base-timeframe-only coded param sweep so the HTF pre-fetch discovery probe
+finds no tf= call and ships a trivial empty set (no broker call)."""
 
 import httpx
 import pytest
 import respx
 from fastapi.testclient import TestClient
 
+import auto_trader.strategy.loader as loader
 from auto_trader.api.app import app
 
 from test_api_backtest_coded import make_candles
@@ -20,6 +21,21 @@ client = TestClient(app)
 
 REMOTE_URL = "https://x.fly.dev"
 REMOTE_TOKEN = "secret-token"
+
+SWEEP_STRAT = '''
+meta = {"params": [{"name": "n", "type": "int", "default": 9, "min": 1, "max": 50}]}
+def on_bar(ctx):
+    if ctx.position.is_flat and len(ctx.closes) >= ctx.param("n"):
+        return [ctx.buy(reason="go")]
+    return []
+'''
+
+
+@pytest.fixture
+def coded_strat(tmp_path, monkeypatch):
+    (tmp_path / "sweep_strat.py").write_text(SWEEP_STRAT)
+    monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
+    yield
 
 
 @pytest.fixture
@@ -38,22 +54,19 @@ def no_remote_env(monkeypatch):
     yield
 
 
-def rule_sweep_request() -> dict:
-    """A base-timeframe-only RULE sweep: no coded strategy, no HTF operand. The
-    local proxy's HTF pre-fetch is therefore trivial (empty set, no broker call),
-    so these tests exercise pure forward mechanics without a strategies dir."""
+def coded_sweep_request() -> dict:
+    """A base-timeframe-only CODED param sweep: no HTF operand, so the local
+    proxy's HTF pre-fetch discovery probe ships a trivial empty set (no broker
+    call). Exercises the surviving coded prefetch-and-forward mechanics."""
     empty = {"combine": "AND", "rules": []}
     return {
         "epic": "EURUSD", "resolution": "HOUR", "candles": make_candles(20), "series": {},
-        "longEntry": {"combine": "AND", "rules": [
-            {"left": {"kind": "indicator", "indicator": "EMA", "length": 9},
-             "op": "gt", "right": {"kind": "const", "value": 50.0}}]},
-        "longExit": empty, "shortEntry": empty, "shortExit": empty,
+        "longEntry": empty, "longExit": empty, "shortEntry": empty, "shortExit": empty,
         "costs": {"quantity": 1, "commissionPerSide": 0,
                   "slippage": {"kind": "fixed", "value": 0}, "startingCash": 1000},
         "tradeFromTime": make_candles(20)[0]["time"],
-        "sweep": {"combos": [{"rule:long.entry.0.left.length": 9},
-                             {"rule:long.entry.0.left.length": 12}]},
+        "codedStrategy": "sweep_strat.py",
+        "sweep": {"combos": [{"param:n": 9}, {"param:n": 12}]},
     }
 
 
@@ -83,11 +96,11 @@ def test_status_true_when_configured(remote_env):
 
 
 @respx.mock
-def test_submit_remote_forwards_body_and_bearer(remote_env):
+def test_submit_remote_forwards_body_and_bearer(remote_env, coded_strat):
     route = respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs").mock(
         return_value=httpx.Response(200, json={"jobId": "r1", "total": 5})
     )
-    req = rule_sweep_request()
+    req = coded_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 
@@ -147,9 +160,9 @@ def test_cancel_remote_relays_404(remote_env):
 
 
 @respx.mock(assert_all_called=False)
-def test_submit_remote_unconfigured_422_no_http(no_remote_env):
+def test_submit_remote_unconfigured_422_no_http(no_remote_env, coded_strat):
     route = respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs")
-    req = rule_sweep_request()
+    req = coded_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 
@@ -158,11 +171,11 @@ def test_submit_remote_unconfigured_422_no_http(no_remote_env):
 
 
 @respx.mock
-def test_submit_remote_non_json_maps_502(remote_env):
+def test_submit_remote_non_json_maps_502(remote_env, coded_strat):
     respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs").mock(
         return_value=httpx.Response(200, text="<html>gateway</html>")
     )
-    req = rule_sweep_request()
+    req = coded_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 
@@ -171,11 +184,11 @@ def test_submit_remote_non_json_maps_502(remote_env):
 
 
 @respx.mock
-def test_submit_remote_connect_error_maps_502(remote_env):
+def test_submit_remote_connect_error_maps_502(remote_env, coded_strat):
     respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs").mock(
         side_effect=httpx.ConnectError("boom")
     )
-    req = rule_sweep_request()
+    req = coded_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 
@@ -184,13 +197,13 @@ def test_submit_remote_connect_error_maps_502(remote_env):
 
 
 @respx.mock
-def test_submit_remote_read_timeout_maps_502(remote_env):
+def test_submit_remote_read_timeout_maps_502(remote_env, coded_strat):
     # A read timeout mid-request (Fly hiccup) is a TimeoutException, not a
     # ConnectError: it must still map to 502 unreachable, not surface as a 500.
     respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs").mock(
         side_effect=httpx.ReadTimeout("slow")
     )
-    req = rule_sweep_request()
+    req = coded_sweep_request()
 
     res = client.post("/api/backtest/sweep/jobs?target=remote", json=req)
 

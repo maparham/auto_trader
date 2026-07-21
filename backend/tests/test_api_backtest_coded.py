@@ -96,22 +96,6 @@ def test_runtime_error_422_with_bar_info(strategies):
     assert "kaboom" in detail and "bar" in detail
 
 
-def test_rule_path_recomputes_native_series(strategies):
-    """A rule referencing a native indicator no longer requires the series to be
-    shipped — the backend now recomputes native indicators from the candles."""
-    req = base_request(None, make_candles())
-    del req["codedStrategy"]
-    req["longEntry"] = {"combine": "AND", "rules": [{
-        "left": {"kind": "indicator", "indicator": "EMA", "length": 9},
-        "op": "gt",
-        "right": {"kind": "price", "field": "close"},
-    }]}
-    res = client.post("/api/backtest", json=req)
-    assert res.status_code == 200
-    assert res.json()["epic"] == "TEST"
-    assert "metrics" in res.json()
-
-
 def test_backtest_coded_params_change_behavior(strategies):
     candles = make_candles(30)
     req = base_request("params_api.py", candles)

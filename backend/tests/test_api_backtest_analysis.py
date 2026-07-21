@@ -16,7 +16,19 @@ from fastapi import HTTPException
 
 from auto_trader.api import app as app_module
 import auto_trader.api.routers.backtest as bt_router
+import auto_trader.strategy.loader as loader
 from auto_trader.core.run_store import RunStore
+
+
+# Always-open long: books a stopped-out trade with an initial stop (via panel
+# longRisk), so mae_r/mfe_r are computable and context attaches — same shape the
+# old always-firing rule config produced, now driven by a coded strategy.
+ALWAYS_BUY = '''
+def on_bar(ctx):
+    if ctx.position.is_flat:
+        return [ctx.buy(reason="in")]
+    return []
+'''
 
 
 @pytest.fixture()
@@ -24,6 +36,8 @@ def tmp_run_store(tmp_path, monkeypatch):
     store = RunStore(str(tmp_path / "runs.db"))
     # Patch the singleton where the router looks it up (imported into its namespace).
     monkeypatch.setattr(bt_router, "RUN_STORE", store)
+    (tmp_path / "always_buy.py").write_text(ALWAYS_BUY)
+    monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
     return store
 
 
@@ -48,15 +62,14 @@ def _trade_body():
         "resolution": "MINUTE",
         "candles": candles,
         "series": {},
-        "longEntry": {"combine": "AND", "rules": [
-            {"left": {"kind": "price", "field": "close"}, "op": "gt",
-             "right": {"kind": "const", "value": 0}}]},
+        "longEntry": empty,
         "longExit": empty,
         "shortEntry": empty,
         "shortExit": empty,
         "longRisk": {"stop": {"kind": "pct", "value": 1}, "target": {"kind": "none"}},
         "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": {"kind": "fixed", "value": 0}, "startingCash": 10000},
         "tradeFromTime": 0,
+        "codedStrategy": "always_buy.py",
     }
 
 
@@ -83,16 +96,16 @@ def test_run_is_persisted_and_readable(tmp_run_store):
     full = asyncio.run(bt_router.get_run(run_id))
     assert full["id"] == run_id
     assert "trades" in full and "request" in full
-    assert full["strategy_kind"] == "rules"
-    assert full["strategy_name"] is None
+    assert full["strategy_kind"] == "coded"
+    assert full["strategy_name"] == "always_buy.py"
     assert full["analysis"]["n_trades"] == len(full["trades"])
     # Re-derivable market data is stripped before the store write; the strategy
-    # config (rules/risk/epic/resolution) is kept.
+    # config (codedStrategy/risk/epic/resolution) is kept.
     assert "candles" not in full["request"]
     assert "series" not in full["request"]
     assert "sweep" not in full["request"]
     assert full["request"]["epic"] == "EURUSD"
-    assert full["request"]["longEntry"]["rules"]
+    assert full["request"]["codedStrategy"] == "always_buy.py"
 
     with pytest.raises(HTTPException) as e:
         asyncio.run(bt_router.get_run("nope"))

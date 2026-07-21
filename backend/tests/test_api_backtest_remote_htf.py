@@ -71,70 +71,6 @@ def _htf_candles(n=40) -> list[Candle]:
     ]
 
 
-def _htf_rule_sweep() -> dict:
-    """Rule sweep whose entry references an HOUR_4 EMA — so the run needs an HTF
-    bar set (base timeframe is HOUR)."""
-    empty = {"combine": "AND", "rules": []}
-    return {
-        "epic": "EURUSD", "resolution": "HOUR", "candles": _base_candles(), "series": {},
-        "longEntry": {"combine": "AND", "rules": [
-            {"left": {"kind": "indicator", "indicator": "EMA", "length": 3,
-                      "timeframe": "HOUR_4"},
-             "op": "gt", "right": {"kind": "const", "value": 0.0}}]},
-        "longExit": {"combine": "AND", "rules": [
-            {"left": {"kind": "price", "field": "close"}, "op": "lt",
-             "right": {"kind": "const", "value": 0}, "count": 1}]},
-        "shortEntry": empty, "shortExit": empty,
-        "costs": {"quantity": 1, "commissionPerSide": 0,
-                  "slippage": {"kind": "fixed", "value": 0}, "startingCash": 1000},
-        "tradeFromTime": _T0,
-        "sweep": {"combos": [{"rule:long.entry.0.left.length": 3},
-                             {"rule:long.entry.0.left.length": 5}]},
-    }
-
-
-@respx.mock
-def test_remote_proxy_ships_htf_from_cache(remote_env, monkeypatch):
-    """The local proxy fetches the HTF set (through its cache) and puts it in the
-    forwarded request, so the remote gets the bars and never fetches them itself."""
-    calls = {"n": 0}
-
-    async def fake_fetch(broker_id, epic, resolution, bars, from_ts, to_ts, price_side):
-        calls["n"] += 1
-        assert resolution == "HOUR_4"
-        return _htf_candles()
-
-    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
-    route = respx.post(f"{REMOTE_URL}/api/backtest/sweep/jobs").mock(
-        return_value=httpx.Response(200, json={"jobId": "r1", "total": 2})
-    )
-
-    res = client.post("/api/backtest/sweep/jobs?target=remote", json=_htf_rule_sweep())
-
-    assert res.status_code == 200
-    assert calls["n"] == 1  # HTF fetched ONCE, locally, before forwarding
-    body = _json.loads(route.calls.last.request.content)
-    shipped = body["htfCandles"]["HOUR_4"]
-    assert len(shipped) == len(_htf_dtos())
-    assert shipped[0]["time"] == _htf_dtos()[0]["time"]
-
-
-def test_compute_host_uses_shipped_htf_without_fetching(monkeypatch):
-    """On a COMPUTE_ONLY host, a sweep carrying htfCandles runs to completion and
-    never calls the broker-fetch path."""
-    monkeypatch.setenv("COMPUTE_ONLY", "1")
-
-    async def _boom(*a, **k):
-        raise AssertionError("compute host must not fetch bars — they were shipped")
-
-    monkeypatch.setattr(deps, "_fetch_symbol_candles", _boom)
-
-    req = _htf_rule_sweep()
-    req["htfCandles"] = {"HOUR_4": _htf_dtos()}
-    rows = run_sweep_via_jobs(client, req)  # target=local == the remote host running the job
-    assert len(rows) == 2
-
-
 _CODED_TF_STRAT = '''
 meta = {"params": [{"name": "n", "type": "int", "default": 3, "min": 1, "max": 50}]}
 def on_bar(ctx):
@@ -151,6 +87,37 @@ def coded_strategies(tmp_path, monkeypatch):
     (tmp_path / "tf_strat.py").write_text(_CODED_TF_STRAT)
     monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
     yield
+
+
+def _coded_htf_sweep() -> dict:
+    """Coded sweep whose strategy reads an HOUR_4 EMA (tf=), so the run needs an
+    HTF bar set (base timeframe is HOUR)."""
+    empty = {"combine": "AND", "rules": []}
+    return {
+        "epic": "EURUSD", "resolution": "HOUR", "candles": _base_candles(), "series": {},
+        "longEntry": empty, "longExit": empty, "shortEntry": empty, "shortExit": empty,
+        "costs": {"quantity": 1, "commissionPerSide": 0,
+                  "slippage": {"kind": "fixed", "value": 0}, "startingCash": 1000},
+        "tradeFromTime": _T0,
+        "codedStrategy": "tf_strat.py",
+        "sweep": {"combos": [{"param:n": 3}, {"param:n": 5}]},
+    }
+
+
+def test_compute_host_uses_shipped_htf_without_fetching(coded_strategies, monkeypatch):
+    """On a COMPUTE_ONLY host, a sweep carrying htfCandles runs to completion and
+    never calls the broker-fetch path."""
+    monkeypatch.setenv("COMPUTE_ONLY", "1")
+
+    async def _boom(*a, **k):
+        raise AssertionError("compute host must not fetch bars — they were shipped")
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", _boom)
+
+    req = _coded_htf_sweep()
+    req["htfCandles"] = {"HOUR_4": _htf_dtos()}
+    rows = run_sweep_via_jobs(client, req)  # target=local == the remote host running the job
+    assert len(rows) == 2
 
 
 @respx.mock

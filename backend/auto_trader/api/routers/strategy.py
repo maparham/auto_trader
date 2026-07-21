@@ -28,7 +28,6 @@ from auto_trader.strategy.expr.parser import parse as parse_expr
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
 from auto_trader.strategy.expr.validate import validate as validate_expr
 from auto_trader.strategy.params import resolve_params
-from auto_trader.strategy.rule import RuleStrategy, series_name
 from auto_trader.strategy import loader
 from auto_trader.strategy.loader import StrategyLoadError
 
@@ -108,12 +107,6 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
                     422,
                     "ATR-based risk stops are not available for expression rules in this version.",
                 )
-    elif req.codedStrategy is None:
-        for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
-            for op in group.operands():
-                name = series_name(op.to_operand())
-                if name is not None and name not in req.series:
-                    raise HTTPException(422, f"missing series '{name}' referenced by a rule")
     else:
         # Coded run: series-shaped checks a pure rule run gets, mirrored here
         # because coded runs skip the rule-mode validation block above (coded
@@ -163,13 +156,6 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             resolved_params = resolve_params(module, req.codedParams)
         except ValueError as e:
             raise HTTPException(422, str(e))
-    else:
-        strategy = RuleStrategy(
-            req.longEntry.to_group(), req.longExit.to_group(),
-            req.shortEntry.to_group(), req.shortExit.to_group(),
-            req.series, quantity=1.0, trade_from_time=None,
-            long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
-        )
 
     ctx = Context()
     ctx.history = candles

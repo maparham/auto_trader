@@ -90,9 +90,6 @@ def execute_combo(s: _State, req: BacktestRequest, combo: dict) -> BacktestResul
             patched, {k: v for k, v in rest.items() if k.startswith("risk:")})
         return sa.run_expr_sync(
             patched, candles, dict(s.htf), overrides, long_risk, short_risk)
-    if s.module is None:
-        patched = sa.apply_rule_combo(patched, rest)
-        return sa.run_rule_sync(patched, candles, dict(s.htf))
     params, long_risk, short_risk = sa.apply_combo(patched, rest)
     resolved = resolve_params(s.module, params)
     result, _ = sa.run_coded_sync(

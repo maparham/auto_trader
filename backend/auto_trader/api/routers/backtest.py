@@ -31,8 +31,6 @@ from auto_trader.strategy.coded import StrategyRuntimeError
 from auto_trader.strategy.loader import StrategyLoadError
 from auto_trader.strategy.base import Strategy
 from auto_trader.strategy.params import resolve_params, validate_params_schema
-from auto_trader.strategy.rule import series_name
-from auto_trader.strategy.rule_series import htf_timeframes
 
 from .. import deps
 from . import compute
@@ -60,17 +58,14 @@ from ..sweep_apply import (
     TimeframeNotPrefetched,
     apply_combo,
     apply_env_combo,
-    apply_rule_combo,
     candle_from_dto,
     htf_from_dto,
     htf_to_dto,
     run_coded_sync,
-    run_rule_sync,
     split_env_combo,
     sweep_row,
     ts_seconds as _ts,
     _MAX_TF_PASSES,
-    _rule_operands,
 )
 from ..sweep_jobs import JOBS
 from ..wfo_jobs import WFO_JOBS
@@ -87,34 +82,6 @@ _HTF_WARMUP_BARS = 300
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-async def _fetch_rule_htf(req: BacktestRequest) -> dict[str, list[Candle]]:
-    """Fetch the higher-timeframe candle set a rule run references (combo-
-    invariant: combos never sweep `timeframe`). 422s when a needed tf has no
-    candles. The pure series assembly lives in `assemble_rule_series_sync`."""
-    htf_candles: dict[str, list[Candle]] = {}
-    for tf in htf_timeframes(_rule_operands(req), req.resolution):
-        warmup_from = req.candles[0].time - _HTF_WARMUP_BARS * resolution_seconds(tf)
-        fetched = await deps._fetch_symbol_candles(
-            req.broker, req.epic, tf, 1000, warmup_from, req.candles[-1].time, req.priceSide,
-        )
-        if not fetched:
-            raise HTTPException(422, f"no candles for timeframe '{tf}'")
-        htf_candles[tf] = fetched
-    return htf_candles
-
-
-async def _run_rule(
-    req: BacktestRequest, candles: list[Candle],
-    htf_candles: dict[str, list[Candle]] | None = None,
-) -> BacktestResult:
-    """Thin async wrapper: own the HTF fetch (single-run callers omit
-    `htf_candles`; sweep callers pass a pre-fetched, combo-shared dict), then
-    run the pure `run_rule_sync` core."""
-    if htf_candles is None:
-        htf_candles = await _fetch_rule_htf(req)
-    return run_rule_sync(req, candles, htf_candles)
 
 
 async def _run_coded(
@@ -187,46 +154,24 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
 
-    if req.codedStrategy is None:
-        # Native indicators/ATR are recomputed server-side, so only chart-operand
-        # (kind=='series') keys — which cannot be recomputed — are required from
-        # the request's posted `series`.
-        for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
-            for op in group.operands():
-                if op.kind != "series":
-                    continue
-                name = series_name(op.to_operand())
-                arr = req.series.get(name)
-                if arr is None:
-                    raise HTTPException(422, f"missing series '{name}' referenced by a rule")
-                if len(arr) != len(req.candles):
-                    raise HTTPException(
-                        422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}")
-    elif req.codedStrategy is not None:
-        _validate_coded_exit_series(req)
+    _validate_coded_exit_series(req)
 
     candles = [candle_from_dto(c) for c in req.candles]
-    if req.codedStrategy is not None:
-        try:
-            module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
-        except StrategyLoadError as e:
-            raise HTTPException(422, str(e))
-        try:
-            resolved_params = resolve_params(module, req.codedParams)
-        except ValueError as e:
-            raise HTTPException(422, str(e))
-        htf_candles: dict[str, list[Candle]] = {}
-        try:
-            result, strategy = await _run_coded(
-                req, candles, module, resolved_params, req.longRisk, req.shortRisk, htf_candles,
-            )
-        except StrategyRuntimeError as e:
-            raise HTTPException(422, str(e))
-    else:
-        try:
-            result = await _run_rule(req, candles)
-        except StrategyRuntimeError as e:
-            raise HTTPException(422, str(e))
+    try:
+        module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
+    except StrategyLoadError as e:
+        raise HTTPException(422, str(e))
+    try:
+        resolved_params = resolve_params(module, req.codedParams)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    htf_candles: dict[str, list[Candle]] = {}
+    try:
+        result, strategy = await _run_coded(
+            req, candles, module, resolved_params, req.longRisk, req.shortRisk, htf_candles,
+        )
+    except StrategyRuntimeError as e:
+        raise HTTPException(422, str(e))
 
     # Fills/trades need no >= tradeFromTime filter here: RuleStrategy gates every
     # entry to tradeFromTime-or-later (rule.py), a fill only lands on a LATER
@@ -301,11 +246,8 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                         "finShortDailyPct": req.costs.finShortDailyPct * m,
                     }),
                 })
-                if req.codedStrategy is not None:
-                    r, _ = await _run_coded(scaled, candles, module, resolved_params,
-                                            req.longRisk, req.shortRisk, dict(htf_candles))
-                else:
-                    r = await _run_rule(scaled, candles)
+                r, _ = await _run_coded(scaled, candles, module, resolved_params,
+                                        req.longRisk, req.shortRisk, dict(htf_candles))
                 nets.append(r.net_pnl)
         cost_sensitivity = {
             "multiples": multiples,
@@ -323,7 +265,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
 
     # Aggregate analytics from the DTO dicts, computed BEFORE the store write so a
     # store failure still returns analysis (with run_id=None). Sweep child runs are
-    # NOT persisted: the sweep drives the engine via _run_rule/_run_coded directly
+    # NOT persisted: the sweep drives the engine via _run_coded directly
     # and never calls this handler, so this block only runs for normal runs.
     trade_dicts = [t.model_dump() for t in trades_dto]
     analysis = compute_analysis(trade_dicts)
@@ -631,10 +573,7 @@ def _validate_combo_targets(
         for combo in combos:
             env, rest = split_env_combo(combo)
             patched, _ = apply_env_combo(req, candles, env)
-            if coded:
-                apply_combo(patched, rest)
-            else:
-                apply_rule_combo(patched, rest)
+            apply_combo(patched, rest)
     except SweepValidationError as e:
         raise HTTPException(e.status_code, e.detail)
 
@@ -652,8 +591,6 @@ async def _prefetch_sweep_htf(
     and any still-missing tf trips the compute-host guard loudly). `combos`
     defaults to the sweep's list; the WFO remote path passes its own."""
     combos = combos if combos is not None else req.sweep.combos
-    if not coded:
-        return await _fetch_rule_htf(req)
     try:
         module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
     except StrategyLoadError as e:
@@ -703,39 +640,22 @@ async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
     combos = req.sweep.combos
     coded = req.codedStrategy is not None
 
-    if not coded:
-        # Rule sweep: chart-operand (kind='series') keys are browser-supplied
-        # and can't be recomputed server-side, so validate they're present
-        # (and aligned to the candles, same as the single-run route) once,
-        # up front — a short series would silently stop rules firing mid-run.
-        for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
-            for op in group.operands():
-                if op.kind != "series":
-                    continue
-                name = series_name(op.to_operand())
-                arr = req.series.get(name)
-                if arr is None:
-                    raise HTTPException(422, f"missing series '{name}'")
-                if len(arr) != len(req.candles):
-                    raise HTTPException(
-                        422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}")
-    else:
-        _validate_coded_exit_series(req)
-        try:
-            module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
-        except StrategyLoadError as e:
-            raise HTTPException(422, str(e))
-        # A sweep TARGET over an undeclared param must 422, not silently no-op:
-        # resolve_params drops unknown keys by design (stale baseline codedParams
-        # after a file edit are tolerated), but a swept axis whose param no longer
-        # exists would return N identical default-valued rows with no error.
-        meta = getattr(module, "meta", None)
-        declared = {p["name"] for p in validate_params_schema(meta if isinstance(meta, dict) else None)}
-        for combo in combos:
-            for target in combo:
-                if target.startswith("param:") and target[len("param:"):] not in declared:
-                    raise HTTPException(
-                        422, f"sweep target '{target}' names a param the strategy does not declare")
+    _validate_coded_exit_series(req)
+    try:
+        module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
+    except StrategyLoadError as e:
+        raise HTTPException(422, str(e))
+    # A sweep TARGET over an undeclared param must 422, not silently no-op:
+    # resolve_params drops unknown keys by design (stale baseline codedParams
+    # after a file edit are tolerated), but a swept axis whose param no longer
+    # exists would return N identical default-valued rows with no error.
+    meta = getattr(module, "meta", None)
+    declared = {p["name"] for p in validate_params_schema(meta if isinstance(meta, dict) else None)}
+    for combo in combos:
+        for target in combo:
+            if target.startswith("param:") and target[len("param:"):] not in declared:
+                raise HTTPException(
+                    422, f"sweep target '{target}' names a param the strategy does not declare")
 
     _validate_combo_targets(req, candles, coded)
 
@@ -744,41 +664,32 @@ async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
     # anyway. None on a normal local run: acquire the set below as before.
     shipped_htf = htf_from_dto(req.htfCandles) if req.htfCandles is not None else None
 
-    if coded:
-        # Probe: run combos[0] in-request. With shipped HTF it uses those bars; else
-        # it discovers and fetches every NeedTimeframe tf the strategy asks for, so
-        # the pool workers (which do zero network) inherit a fully-populated dict. A
-        # request-shaped failure 422s the submit; anything else becomes the probe
-        # combo's error row and the job carries on with the rest.
-        htf_candles: dict[str, list[Candle]] = shipped_htf if shipped_htf is not None else {}
-        probe_combo = combos[0]
-        try:
-            env, rest = split_env_combo(probe_combo)
-            patched_req, combo_candles = apply_env_combo(req, candles, env)
-            params_sent, long_risk, short_risk = apply_combo(patched_req, rest)
-            resolved = resolve_params(module, params_sent)
-            result, _ = await _run_coded(
-                patched_req, combo_candles, module, resolved, long_risk, short_risk, htf_candles,
-            )
-            probe_row = sweep_row(req, probe_combo, result).model_dump()
-        except HTTPException:
-            raise
-        except SweepValidationError as e:
-            raise HTTPException(e.status_code, e.detail)
-        except Exception as e:  # noqa: BLE001  one combo must not kill the job
-            probe_row = SweepRowDTO(combo=probe_combo, error=str(e)).model_dump()
-        pool_combos = combos[1:]
-        mode = "coded"
-    else:
-        # HTF set is combo-invariant (combos never sweep `timeframe`): use the
-        # shipped set, or fetch it once here, then ship it to every worker.
-        htf_candles = shipped_htf if shipped_htf is not None else await _fetch_rule_htf(req)
-        probe_row = None
-        pool_combos = combos
-        mode = "rule"
+    # Probe: run combos[0] in-request. With shipped HTF it uses those bars; else
+    # it discovers and fetches every NeedTimeframe tf the strategy asks for, so
+    # the pool workers (which do zero network) inherit a fully-populated dict. A
+    # request-shaped failure 422s the submit; anything else becomes the probe
+    # combo's error row and the job carries on with the rest.
+    htf_candles: dict[str, list[Candle]] = shipped_htf if shipped_htf is not None else {}
+    probe_combo = combos[0]
+    try:
+        env, rest = split_env_combo(probe_combo)
+        patched_req, combo_candles = apply_env_combo(req, candles, env)
+        params_sent, long_risk, short_risk = apply_combo(patched_req, rest)
+        resolved = resolve_params(module, params_sent)
+        result, _ = await _run_coded(
+            patched_req, combo_candles, module, resolved, long_risk, short_risk, htf_candles,
+        )
+        probe_row = sweep_row(req, probe_combo, result).model_dump()
+    except HTTPException:
+        raise
+    except SweepValidationError as e:
+        raise HTTPException(e.status_code, e.detail)
+    except Exception as e:  # noqa: BLE001  one combo must not kill the job
+        probe_row = SweepRowDTO(combo=probe_combo, error=str(e)).model_dump()
+    pool_combos = combos[1:]
 
-    logger.info("sweep %s %s: %d combos (%s mode)",
-                req.epic, req.resolution, len(combos), mode)
+    logger.info("sweep %s %s: %d combos (coded mode)",
+                req.epic, req.resolution, len(combos))
     job = JOBS.submit(
         # htfCandles ships to workers via htf_candles= below; excluding it from the
         # per-worker req_dict avoids pickling the whole HTF set twice into every
@@ -967,31 +878,18 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
     coded = req.codedStrategy is not None
 
     # Same per-mode validation as the sweep submit.
-    if not coded:
-        for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
-            for op in group.operands():
-                if op.kind != "series":
-                    continue
-                name = series_name(op.to_operand())
-                arr = req.series.get(name)
-                if arr is None:
-                    raise HTTPException(422, f"missing series '{name}'")
-                if len(arr) != len(req.candles):
-                    raise HTTPException(
-                        422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}")
-    else:
-        _validate_coded_exit_series(req)
-        try:
-            module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
-        except StrategyLoadError as e:
-            raise HTTPException(422, str(e))
-        meta = getattr(module, "meta", None)
-        declared = {p["name"] for p in validate_params_schema(meta if isinstance(meta, dict) else None)}
-        for combo in wf.combos:
-            for tgt in combo:
-                if tgt.startswith("param:") and tgt[len("param:"):] not in declared:
-                    raise HTTPException(
-                        422, f"sweep target '{tgt}' names a param the strategy does not declare")
+    _validate_coded_exit_series(req)
+    try:
+        module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
+    except StrategyLoadError as e:
+        raise HTTPException(422, str(e))
+    meta = getattr(module, "meta", None)
+    declared = {p["name"] for p in validate_params_schema(meta if isinstance(meta, dict) else None)}
+    for combo in wf.combos:
+        for tgt in combo:
+            if tgt.startswith("param:") and tgt[len("param:"):] not in declared:
+                raise HTTPException(
+                    422, f"sweep target '{tgt}' names a param the strategy does not declare")
 
     # A range axis with no ordered values would crash at aggregate time, and a
     # period:/timeWindow: combo target would silently fight the test-window slicing
@@ -1004,29 +902,25 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
     # in-request discovery probe to populate htf_candles (result discarded — WFO
     # has no probe row); rule mode fetches the combo-invariant set once.
     shipped_htf = htf_from_dto(req.htfCandles) if req.htfCandles is not None else None
-    if coded:
-        htf_candles: dict[str, list[Candle]] = shipped_htf if shipped_htf is not None else {}
-        try:
-            env, rest = split_env_combo(wf.combos[0])
-            patched_req, combo_candles = apply_env_combo(req, candles, env)
-            params_sent, long_risk, short_risk = apply_combo(patched_req, rest)
-            resolved = resolve_params(module, params_sent)
-            await _run_coded(
-                patched_req, combo_candles, module, resolved,
-                long_risk, short_risk, htf_candles,
-            )
-        except HTTPException:
-            raise
-        except SweepValidationError as e:
-            raise HTTPException(e.status_code, e.detail)
-        except Exception:  # noqa: BLE001  discovery is best-effort; workers re-raise per row
-            pass
-    else:
-        htf_candles = shipped_htf if shipped_htf is not None else await _fetch_rule_htf(req)
+    htf_candles: dict[str, list[Candle]] = shipped_htf if shipped_htf is not None else {}
+    try:
+        env, rest = split_env_combo(wf.combos[0])
+        patched_req, combo_candles = apply_env_combo(req, candles, env)
+        params_sent, long_risk, short_risk = apply_combo(patched_req, rest)
+        resolved = resolve_params(module, params_sent)
+        await _run_coded(
+            patched_req, combo_candles, module, resolved,
+            long_risk, short_risk, htf_candles,
+        )
+    except HTTPException:
+        raise
+    except SweepValidationError as e:
+        raise HTTPException(e.status_code, e.detail)
+    except Exception:  # noqa: BLE001  discovery is best-effort; workers re-raise per row
+        pass
 
-    logger.info("wfo %s %s: %d combos, %d scheme(s) (%s mode)",
-                req.epic, req.resolution, len(wf.combos), len(schemes),
-                "coded" if coded else "rule")
+    logger.info("wfo %s %s: %d combos, %d scheme(s) (coded mode)",
+                req.epic, req.resolution, len(wf.combos), len(schemes))
     job = WFO_JOBS.submit(
         req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
         htf_candles=htf_candles,
