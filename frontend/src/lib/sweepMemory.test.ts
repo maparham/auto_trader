@@ -11,7 +11,7 @@ import {
   pruneSweepAxes,
 } from "./sweepMemory";
 import type { RangeAxis, ListAxis, SweepAxis } from "./sweep";
-import { defaultBacktestConfig } from "./backtestConfig";
+import type { RuleGroup } from "./backtestConfig";
 import type { LabelConfig } from "./sweepLabels";
 
 const range = (target: string, from = 10, to = 20, step = 2): RangeAxis => ({
@@ -89,8 +89,17 @@ describe("axis-set persistence", () => {
 });
 
 describe("pruneSweepAxes", () => {
-  // Using defaultBacktestConfig which already has one enabled long-entry rule at index 0
-  const cfg = defaultBacktestConfig() as LabelConfig;
+  // A structured long-entry rule at index 0 (a rule: axis resolves against it);
+  // index 5 has no rule (its axis is dropped). Structured config on purpose: an
+  // expression default config would drop every rule:/op: axis (see sweepLabels).
+  const cfg: LabelConfig = {
+    longEntry: {
+      combine: "AND",
+      rules: [
+        { left: { kind: "indicator", indicator: "EMA", length: 9 }, op: "gt", right: { kind: "const", value: 0 } },
+      ],
+    } as RuleGroup,
+  };
 
   it("drops a rule axis whose rule no longer exists, keeps resolvable and self-labelled axes", () => {
     const axes: SweepAxis[] = [

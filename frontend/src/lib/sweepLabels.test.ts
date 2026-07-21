@@ -98,6 +98,28 @@ describe("sweepAxisLabel (risk axes)", () => {
   });
 });
 
+describe("sweepAxisLabel (expression literal axes)", () => {
+  const exprRow = (expr: string) =>
+    ({ expr, enabled: true } as unknown as RuleGroup["rules"][number]);
+
+  it("labels a lit: axis by the literal's context (full-list index)", () => {
+    const cfg: LabelConfig = { longEntry: group(exprRow("EMA(50) > 30")) };
+    expect(sweepAxisLabel("lit:long.entry.0.0", cfg)).toBe("EMA length");
+    expect(sweepAxisLabel("lit:long.entry.0.1", cfg)).toBe("threshold");
+  });
+
+  it("returns null for a lit: axis whose ordinal no longer exists", () => {
+    const cfg: LabelConfig = { longEntry: group(exprRow("EMA(9) > candle.close")) };
+    expect(sweepAxisLabel("lit:long.entry.0.1", cfg)).toBeNull();
+  });
+
+  it("returns null (no crash) for a stale rule:/op: axis over an expression row", () => {
+    const cfg: LabelConfig = { longEntry: group(exprRow("EMA(9) > 0")) };
+    expect(sweepAxisLabel("rule:long.entry.0.right.value", cfg)).toBeNull();
+    expect(sweepAxisLabel("op:long.entry.0", cfg)).toBeNull();
+  });
+});
+
 describe("sweepAxisLabels (collision disambiguation)", () => {
   it("qualifies two axes that share a base label with side and rule number", () => {
     const cfg: LabelConfig = {

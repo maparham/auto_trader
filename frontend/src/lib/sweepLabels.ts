@@ -7,6 +7,7 @@
 
 import { lookbackSpec, scaleSpec, type Operand, type Operator, type RiskConfig, type RuleGroup } from "./backtestConfig";
 import type { SweepAxis } from "./sweep";
+import { literalLabel } from "./expr/sweepLiterals";
 
 // The slice of a config this resolver reads. BacktestConfig (rules mode) and
 // CodedStrategyConfig (coded mode) both satisfy it; entry groups are absent in
@@ -94,7 +95,9 @@ function ruleLabel(target: string, cfg: LabelConfig): string | null {
   // "rule:<side>.<group>.<idx>.<left|right>.<length|value>" | "...count"
   const [, side, group, idxStr, ...leaf] = target.split(/[:.]/);
   const rule = ruleAt(cfg, side, group, Number(idxStr));
-  if (!rule) return null;
+  // A row carrying an `expr` is an expression rule with no structured
+  // left/op/right, so a stale rule: axis can't resolve against it (drop it).
+  if (!rule || rule.expr != null) return null;
   const left = operandLabel(rule.left);
   const right = operandLabel(rule.right);
   const sym = OP_SYMBOL[rule.op];
@@ -111,8 +114,20 @@ function opLabel(target: string, cfg: LabelConfig): string | null {
   // "op:<side>.<group>.<idx>"
   const [, side, group, idxStr] = target.split(/[:.]/);
   const rule = ruleAt(cfg, side, group, Number(idxStr));
-  if (!rule) return null;
+  if (!rule || rule.expr != null) return null;
   return `${operandLabel(rule.left)} op`;
+}
+
+function litLabel(target: string, cfg: LabelConfig): string | null {
+  // "lit:<side>.<group>.<rowIdx>.<ordinal>". rowIdx is the FULL-list row index
+  // (the expression request ships every row), NOT the enabled-only index that
+  // rule:/op: use. Resolves the literal's context label ("EMA length"); returns
+  // null when the row or that ordinal no longer exists so a stale axis is pruned.
+  const [, side, group, idxStr, ordStr] = target.split(/[:.]/);
+  const g = groupFor(cfg, side, group);
+  const row = g?.rules[Number(idxStr)];
+  if (!row || row.expr == null) return null;
+  return literalLabel(row.expr, Number(ordStr)) || null;
 }
 
 function riskLabel(target: string, cfg: LabelConfig): string | null {
@@ -144,6 +159,7 @@ function riskLabel(target: string, cfg: LabelConfig): string | null {
 export function sweepAxisLabel(target: string, cfg: LabelConfig): string | null {
   if (target.startsWith("rule:")) return ruleLabel(target, cfg);
   if (target.startsWith("op:")) return opLabel(target, cfg);
+  if (target.startsWith("lit:")) return litLabel(target, cfg);
   if (target.startsWith("risk:")) return riskLabel(target, cfg);
   return null;
 }
