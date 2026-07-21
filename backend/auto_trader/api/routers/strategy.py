@@ -33,7 +33,7 @@ from auto_trader.strategy import loader
 from auto_trader.strategy.loader import StrategyLoadError
 
 from .. import deps
-from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse, RuleGroupDTO
+from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse
 
 router = APIRouter()
 
@@ -120,11 +120,8 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
         # ignores the entry groups; only panel exit rules + panel risk apply).
         # Runs whenever codedStrategy is set, not only when exit rules exist
         # (I4 — ATR-kind panel risk with a missing ATR series must 422 too).
-        for group in (req.longExit, req.shortExit):
-            for op in group.operands():
-                name = series_name(op.to_operand())
-                if name is not None and name not in req.series:
-                    raise HTTPException(422, f"missing series '{name}' referenced by a rule")
+        # Coded panel exits are expressions (compiled from candles), so they
+        # reference no posted series — only the ATR-risk series check applies.
         for risk in (req.longRisk, req.shortRisk):
             if risk is None:
                 continue
@@ -196,6 +193,10 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             ctx.short_entry_time = entry_time
 
     if req.codedStrategy is not None:
+        htf: dict[str, list[Candle]] = {
+            tf: [_candle(c) for c in bars]
+            for tf, bars in (req.htfCandles or {}).items()
+        }
         panel_risk_legs = frozenset(
             leg for leg, r in (("long", req.longRisk), ("short", req.shortRisk))
             if r is not None and r.is_configured()
@@ -207,13 +208,17 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
                 base_timeframe=req.resolution, params=resolved_params,
                 panel_risk_legs=panel_risk_legs,
             )
-            if req.longExit.rules or req.shortExit.rules:
-                empty = RuleGroupDTO(combine="AND", rules=[]).to_group()
-                strategy = CodedWithExprExits(strategy, RuleStrategy(
-                    empty, req.longExit.to_group(), empty, req.shortExit.to_group(),
-                    req.series, quantity=1.0,
+            long_exit = _compile_expr_group(
+                req.exprLongExit, candles, req.resolution, htf, is_exit=True, group="longExit"
+            )
+            short_exit = _compile_expr_group(
+                req.exprShortExit, candles, req.resolution, htf, is_exit=True, group="shortExit"
+            )
+            if long_exit or short_exit:
+                strategy = CodedWithExprExits(strategy, ExprRuleStrategy(
+                    [], long_exit, [], short_exit,
+                    quantity=1.0,
                     long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
-                    base_timeframe=req.resolution,
                 ))
             try:
                 signals = strategy.on_bar(ctx)

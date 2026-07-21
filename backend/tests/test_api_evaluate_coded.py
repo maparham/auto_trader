@@ -175,29 +175,22 @@ HOLD_ONLY = '''def on_bar(ctx):
 
 
 def test_panel_exit_rule_closes_coded_position(strategies, tmp_path, monkeypatch):
-    """A held position + a panel-authored longExit rule that's TRUE now must
-    close through CodedWithRuleExits even though the coded file never exits
+    """A held position + a panel-authored longExit expression that's TRUE now
+    must close through CodedWithExprExits even though the coded file never exits
     itself."""
     (tmp_path / "hold_only.py").write_text(HOLD_ONLY)
     monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
 
     candles = make_candles()
-    series = {"SIG": [1.0] * len(candles)}
     pos = {"side": "buy", "quantity": 1, "open_level": 100,
            "open_time": candles[0]["time"]}
     req = base_request("hold_only.py", pos)
-    req["series"] = series
-    req["longExit"] = {"combine": "AND", "rules": [{
-        "left": {"kind": "series", "seriesKey": "SIG"},
-        "op": "gt",
-        "right": {"kind": "const", "value": 0.0},
-    }]}
+    req["exprLongExit"] = [{"expr": "candle.close > 0", "enabled": True}]
     res = client.post("/api/strategy/evaluate", json=req)
     assert res.status_code == 200, res.text
     actions = res.json()["actions"]
     assert len(actions) == 1
     assert actions[0]["kind"] == "close"
-    assert actions[0]["reason"] == "SIG gt 0.0"
 
 
 def test_evaluate_none_none_risk_keeps_file_brackets(strategies):
@@ -248,15 +241,25 @@ def test_evaluate_coded_atr_risk_with_series_200(strategies, tmp_path, monkeypat
     assert res.status_code == 200, res.text
 
 
-def test_evaluate_coded_with_exit_rules_missing_series_422(strategies):
-    """The missing-series 422 guard must also cover a coded request whose exit
-    rule groups reference a series that wasn't posted."""
-    req = base_request("always_in.py")
-    req["longExit"] = {"combine": "AND", "rules": [{
-        "left": {"kind": "series", "seriesKey": "SIG"},
-        "op": "gt",
-        "right": {"kind": "const", "value": 0.0},
-    }]}
+def test_evaluate_coded_expr_exit_closes_long(strategies):
+    """A held long + a panel-authored EXPRESSION exit that's TRUE now must close
+    through CodedWithExprExits, even though the coded file never exits itself.
+    Closes end with a sharp drop so `candle.close < EMA(2)` holds on the last bar."""
+    t0 = 1_700_000_000
+    closes = [100, 100, 100, 100, 50]
+    candles = [
+        {"time": t0 + i * 3600, "open": c, "high": c, "low": c, "close": c, "volume": 10}
+        for i, c in enumerate(closes)
+    ]
+    pos = {"side": "buy", "quantity": 1, "open_level": 100,
+           "open_time": candles[0]["time"]}
+    req = base_request("hold_only.py", pos)
+    req["candles"] = candles
+    req["exprLongExit"] = [{"expr": "candle.close < EMA(2)", "enabled": True}]
+    req["exprShortExit"] = []
+
+    (loader.STRATEGIES_DIR / "hold_only.py").write_text(HOLD_ONLY)
     res = client.post("/api/strategy/evaluate", json=req)
-    assert res.status_code == 422
-    assert "missing series 'SIG'" in res.json()["detail"]
+    assert res.status_code == 200, res.text
+    actions = res.json()["actions"]
+    assert any(a["kind"] == "close" and a["leg"] == "long" for a in actions)
