@@ -209,18 +209,15 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         setError("no coded strategy selected: pick one in the backtest panel");
         return;
       }
-      // The main rule groups edit as expressions. Sweeps now run on the expr
-      // engine (/api/expr/sweep/jobs) via the expr request built below. Walk-
-      // forward and holdout evaluation still build the structured request from
-      // those groups, so they stay gated for expression rules until they move
-      // onto the expr engine. Coded runs keep their structured path throughout.
+      // The main rule groups edit as expressions. Sweeps run on the expr engine
+      // (/api/expr/sweep/jobs) and holdout evaluation runs the expr backtest over
+      // the reserved tail window (both via the expr request built below). Walk-
+      // forward still builds the structured request from those groups, so it stays
+      // gated for expression rules until it moves onto the expr engine. Coded runs
+      // keep their structured path throughout.
       if (!coded) {
         if (wfoRequest) {
           toast("Walk-forward is not yet available for expression rules.");
-          return;
-        }
-        if (evaluatingHoldout) {
-          toast("Live evaluation is not yet available for expression rules.");
           return;
         }
       }
