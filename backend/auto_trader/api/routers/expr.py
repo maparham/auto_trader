@@ -30,6 +30,8 @@ from ..schemas import (
     ExprLiteralsRequest,
     ExprSeriesRequest,
     SweepJobSubmitResponse,
+    WfoJobSubmitResponse,
+    axis_dicts,
 )
 from ..sweep_apply import (
     SweepValidationError,
@@ -41,6 +43,7 @@ from ..sweep_apply import (
     split_env_combo,
 )
 from ..sweep_jobs import JOBS
+from ..wfo_jobs import WFO_JOBS
 
 router = APIRouter()
 
@@ -173,6 +176,67 @@ async def submit_expr_sweep_job(req: ExprBacktestRequest):
         expr_sweep=True,
     )
     return SweepJobSubmitResponse(jobId=job.job_id, total=job.total)
+
+
+@router.post("/api/expr/walkforward/jobs", response_model=WfoJobSubmitResponse)
+async def submit_expr_wfo_job(req: ExprBacktestRequest):
+    """Walk-forward over expression rules. Combos carry lit:/risk: targets; the
+    fold windows own the period. Polled via the shared GET
+    /api/backtest/walkforward/jobs/{id} route (WFO_JOBS is a singleton)."""
+    # Imported lazily to match the _result_to_response pattern above: backtest.py
+    # loads many things at module time and both routers are registered together.
+    # There is no cycle (backtest.py does not import this module), so this is a
+    # convention choice, not a hard requirement.
+    from ..routers.backtest import (
+        _persist_wfo, _plan_wfo_schemes, _validate_wfo_combo_hygiene,
+    )
+    wf = req.walkforward
+    if wf is None or not wf.combos:
+        raise HTTPException(422, "walkforward.combos is required")
+    if wf.evalMode == "exact":
+        raise HTTPException(422, "exact eval mode is not yet supported")
+    if not req.candles:
+        raise HTTPException(422, "candles are required")
+    res_s = resolution_seconds(req.resolution)
+    candles = [candle_from_dto(c) for c in req.candles]
+    schemes = _plan_wfo_schemes(wf, res_s, req.tradeFromTime, req.candles[-1].time,
+                                req.candles[0].time)
+    _validate_wfo_combo_hygiene(wf)
+    # Dry-validate every combo's targets (lit:/risk:) like the expr sweep, so a
+    # malformed target 422s at submit rather than failing every worker row.
+    try:
+        for combo in wf.combos:
+            env, rest = split_env_combo(combo)
+            patched, _ = apply_env_combo(req, candles, env)
+            apply_lit_combo(patched, rest)
+            apply_combo(patched, {k: v for k, v in rest.items() if k.startswith("risk:")})
+    except SweepValidationError as e:
+        raise HTTPException(e.status_code, e.detail)
+    htf_candles = htf_from_dto(req.htfCandles) if req.htfCandles is not None else {}
+    job = WFO_JOBS.submit(
+        req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
+        htf_candles=htf_candles,
+        strategies_dir=None,
+        schemes=schemes,
+        axes=axis_dicts(wf.axes),
+        combos=wf.combos,
+        objective={"metric": wf.objective.metric,
+                   "composite": wf.objective.composite,
+                   "selection": wf.objective.selection,
+                   "min_trades": wf.schedule.minTrainTrades},
+        schedule_meta=wf.schedule.model_dump(),
+        epic=req.epic,
+        timeframe=req.resolution,
+        expr=True,
+        on_complete=_persist_wfo(req),
+    )
+    return WfoJobSubmitResponse(
+        jobId=job.job_id, total=job.total,
+        schemes=[{"trainSpan": s["train_span"],
+                  "folds": [{k: f[k] for k in
+                             ("train_from", "train_to", "test_from", "test_to")}
+                            for f in s["folds"]]}
+                 for s in schemes])
 
 
 @router.post("/api/expr/series")

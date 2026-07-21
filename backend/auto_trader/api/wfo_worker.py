@@ -12,9 +12,9 @@ _TRAIN_WINDOWS: list[list[int]] | None = None
 _EQUITY_CAP = 500
 
 
-def worker_init(req_dict, htf_candles, strategies_dir, train_windows) -> None:
+def worker_init(req_dict, htf_candles, strategies_dir, train_windows, expr_sweep=False) -> None:
     global _TRAIN_WINDOWS
-    sweep_worker.worker_init(req_dict, htf_candles, strategies_dir, None)
+    sweep_worker.worker_init(req_dict, htf_candles, strategies_dir, None, expr_sweep)
     _TRAIN_WINDOWS = train_windows
 
 

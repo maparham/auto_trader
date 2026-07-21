@@ -76,6 +76,7 @@ class WfoJobManager:
         timeframe: str,
         combos: list[dict],
         workers: int | None = None,
+        expr: bool = False,
         on_complete=None,
     ) -> WfoJob:
         total = len(combos) + sum(len(sc["folds"]) for sc in schemes)
@@ -98,6 +99,7 @@ class WfoJobManager:
             "schedule_meta": schedule_meta,
             "combos": combos,
             "workers": workers,
+            "expr": expr,
             "on_complete": on_complete,
         }
         t = threading.Thread(target=self._run, args=(job, kw), daemon=True)
@@ -168,7 +170,7 @@ class WfoJobManager:
                     max_workers=kw.get("workers") or SWEEP_WORKERS,
                     initializer=wfo_worker.worker_init,
                     initargs=(kw["req_dict"], kw["htf_candles"],
-                              kw["strategies_dir"], union),
+                              kw["strategies_dir"], union, kw.get("expr", False)),
                 )
                 # --- phase 1: grid ---
                 grid_rows = self._drain(

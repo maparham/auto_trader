@@ -884,6 +884,57 @@ def _persist_wfo(req: BacktestRequest):
     return _cb
 
 
+def _plan_wfo_schemes(wf, res_s: int, range_from: int, range_to: int,
+                      first_candle: int) -> list[dict]:
+    """Plan every scheme's folds and verify history reaches the earliest train
+    window. 422s (HTTPException) on a plan error or insufficient history. Shared
+    by the structured and expression WFO submit endpoints."""
+    spans = [wf.schedule.trainSpan, *wf.matrixTrainSpans]
+    seen: set[str] = set()
+    schemes: list[dict] = []
+    try:
+        test_s = parse_span(wf.schedule.testSpan, res_s)
+        step_s = parse_span(wf.schedule.step, res_s) if wf.schedule.step else test_s
+        for span in spans:
+            if span in seen:
+                continue
+            seen.add(span)
+            train_s = parse_span(span, res_s)
+            folds = wfo_plan(range_from, range_to, wf.schedule.mode, train_s, test_s, step_s)
+            schemes.append({
+                "train_span": span,
+                "folds": [dataclasses.asdict(f) for f in folds],
+                "min_train_trades": wf.schedule.minTrainTrades,
+                "min_test_trades": wf.schedule.minTestTrades,
+            })
+    except WfoPlanError as e:
+        raise HTTPException(422, str(e))
+    for sc in schemes:
+        earliest = min(f["train_from"] for f in sc["folds"])
+        if first_candle > earliest:
+            needs = dt.datetime.fromtimestamp(earliest, dt.timezone.utc).date().isoformat()
+            raise HTTPException(
+                422, f"not enough history for the {sc['train_span']} scheme: "
+                     f"needs data from {needs}")
+    return schemes
+
+
+def _validate_wfo_combo_hygiene(wf) -> None:
+    """Reject a range axis with no ordered values, and any period:/timeWindow:
+    target in a combo (fold windows own the period). Shared, mode-agnostic."""
+    for ax in wf.axes:
+        if ax.kind == "range" and not ax.values:
+            raise HTTPException(
+                422, f"range axis '{ax.targets[0] if ax.targets else ''}' "
+                     "needs its ordered values")
+    for combo in wf.combos:
+        for tgt in combo:
+            if tgt.startswith("period:") or tgt.startswith("timeWindow:"):
+                raise HTTPException(
+                    422, "walk-forward combos must not contain period:/timeWindow: "
+                         "targets (fold windows own the period)")
+
+
 @router.post("/api/backtest/walkforward/jobs", response_model=WfoJobSubmitResponse)
 async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
     # target=remote: fill req.htfCandles from the LOCAL cache, then forward
@@ -907,45 +958,13 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
     if not req.candles:
         raise HTTPException(422, "candles are required")
 
-    # Plan every scheme's folds from the request's own date range. `plan()` is
-    # only ever fed parse_span outputs (always > 0), so its no-step<=0-guard is
-    # never tripped from here.
+    # Plan every scheme's folds from the request's own date range, then verify the
+    # posted candles reach back to the earliest train window. `plan()` is only ever
+    # fed parse_span outputs (always > 0), so its no-step<=0-guard is never tripped
+    # from here.
     res_s = resolution_seconds(req.resolution)
-    range_from = req.tradeFromTime
-    range_to = req.candles[-1].time
-    spans = [wf.schedule.trainSpan, *wf.matrixTrainSpans]
-    seen: set[str] = set()
-    schemes: list[dict] = []
-    try:
-        test_s = parse_span(wf.schedule.testSpan, res_s)
-        step_s = parse_span(wf.schedule.step, res_s) if wf.schedule.step else test_s
-        for span in spans:
-            if span in seen:
-                continue
-            seen.add(span)
-            train_s = parse_span(span, res_s)
-            folds = wfo_plan(range_from, range_to, wf.schedule.mode,
-                             train_s, test_s, step_s)
-            schemes.append({
-                "train_span": span,
-                "folds": [dataclasses.asdict(f) for f in folds],
-                "min_train_trades": wf.schedule.minTrainTrades,
-                "min_test_trades": wf.schedule.minTestTrades,
-            })
-    except WfoPlanError as e:
-        raise HTTPException(422, str(e))
-
-    # Candle-range feasibility: `plan()` guarantees every train_from >= range_from
-    # (= tradeFromTime), but the first posted candle can sit LATER than that, so
-    # verify the data actually reaches back to the earliest train window.
-    first_candle = req.candles[0].time
-    for sc in schemes:
-        earliest = min(f["train_from"] for f in sc["folds"])
-        if first_candle > earliest:
-            needs = dt.datetime.fromtimestamp(earliest, dt.timezone.utc).date().isoformat()
-            raise HTTPException(
-                422, f"not enough history for the {sc['train_span']} scheme: "
-                     f"needs data from {needs}")
+    schemes = _plan_wfo_schemes(wf, res_s, req.tradeFromTime, req.candles[-1].time,
+                                req.candles[0].time)
 
     candles = [candle_from_dto(c) for c in req.candles]
     coded = req.codedStrategy is not None
@@ -977,23 +996,10 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
                     raise HTTPException(
                         422, f"sweep target '{tgt}' names a param the strategy does not declare")
 
-    # A range axis with no ordered values would crash at aggregate time
-    # (stability reads its values); reject it up front.
-    for ax in wf.axes:
-        if ax.kind == "range" and not ax.values:
-            raise HTTPException(
-                422, f"range axis '{ax.targets[0] if ax.targets else ''}' "
-                     "needs its ordered values")
-
-    # WFO combos own only strategy/param/risk targets: the fold windows own the
-    # period, so a period:/timeWindow: target in a combo would silently fight the
-    # test-window slicing. Reject at submit.
-    for combo in wf.combos:
-        for tgt in combo:
-            if tgt.startswith("period:") or tgt.startswith("timeWindow:"):
-                raise HTTPException(
-                    422, "walk-forward combos must not contain period:/timeWindow: "
-                         "targets (fold windows own the period)")
+    # A range axis with no ordered values would crash at aggregate time, and a
+    # period:/timeWindow: combo target would silently fight the test-window slicing
+    # (the fold windows own the period). Reject both up front.
+    _validate_wfo_combo_hygiene(wf)
 
     _validate_combo_targets(req, candles, coded, combos=wf.combos)
 

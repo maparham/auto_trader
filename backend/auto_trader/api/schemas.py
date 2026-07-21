@@ -832,6 +832,10 @@ class ExprBacktestRequest(BaseModel):
     # per entry (lit:/risk:/period:/timeWindow: targets). Ignored by POST
     # /api/expr/backtest.
     sweep: SweepDTO | None = None
+    # Walk-forward optimization: when set, POST /api/expr/walkforward/jobs runs the
+    # grid + test schedule as one job (same WalkForwardDTO grammar as the structured
+    # request; combos use lit:/risk: targets, never rule:/param:).
+    walkforward: "WalkForwardDTO | None" = None
 
 
 class ExprSeriesRequest(BaseModel):
