@@ -73,7 +73,6 @@ import { toast } from "./lib/notify";
 import { sweepContext } from "./lib/sweepMemory";
 import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
-import { inspectModeSignal } from "./lib/backtestInspect";
 import type { BacktestRequest, ExprBacktestRequest, ExprRow, SweepRow } from "./api";
 
 interface Props {
@@ -371,9 +370,6 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         costs: cfg.costs,
         tradeFromTime,
         mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
-        // Ask the backend for the per-bar inspector trace only while inspect mode
-        // is on (rule mode only — coded strategies have no rule groups to trace).
-        inspect: inspectModeSignal.value && !coded,
         // Always-on for single runs: the handler skips it when a sweep is set,
         // so the sweep path below pays nothing.
         costSensitivity: true,
@@ -400,7 +396,6 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         costs: cfg.costs,
         tradeFromTime,
         mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
-        inspect: inspectModeSignal.value,
       };
 
       // Walk-forward mode: the modal populated wfoRequestSignal (one-shot,

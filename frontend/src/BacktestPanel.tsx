@@ -27,9 +27,7 @@ import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { RESOLUTION_SECONDS } from "./lib/feed";
 import { formatExpiryShort } from "./lib/alertUi";
-import BacktestInspectorPanel from "./BacktestInspectorPanel";
 import BacktestAnalysisPanel from "./BacktestAnalysisPanel";
-import { inspectModeSignal, inspectTraceSignal } from "./lib/backtestInspect";
 import { formatDayWindow } from "./lib/backtestSchedule";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
 
@@ -42,7 +40,7 @@ const subscribeMessages = (cb: () => void) => backtestMessagesSignal.subscribe(c
 const subscribeSelectNotice = (cb: () => void) => backtestSelectNoticeSignal.subscribe(cb);
 const subscribeRunning = (cb: () => void) => backtestRunningSignal.subscribe(cb);
 
-type Tab = "overview" | "trades" | "analysis" | "inspect";
+type Tab = "overview" | "trades" | "analysis";
 type SortDir = "asc" | "desc";
 
 // Text columns read more naturally A→Z on first click; numeric/time columns
@@ -110,21 +108,7 @@ export default function BacktestPanel() {
       document.removeEventListener("keydown", onKey);
     };
   }, [displayOpen]);
-  const inspectMode = useSyncExternalStore(
-    (cb) => inspectModeSignal.subscribe(cb),
-    () => inspectModeSignal.value,
-  );
-  const inspectTrace = useSyncExternalStore(
-    (cb) => inspectTraceSignal.subscribe(cb),
-    () => inspectTraceSignal.value,
-  );
   const [tab, setTab] = useState<Tab>("overview");
-  // The Inspect toggle now lives in the modal footer (next to Run backtest). Turning
-  // it on there should still jump this panel to the Inspect tab, so react to the
-  // shared signal here rather than switching the tab inside the button's handler.
-  useEffect(() => {
-    if (inspectMode) setTab("inspect");
-  }, [inspectMode]);
   const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
 
   // Row building and sorting are memoized so panel re-renders (row hover sets
@@ -317,14 +301,6 @@ export default function BacktestPanel() {
           >
             Analysis
           </button>
-          <button
-            className={tab === "inspect" ? "seg-on" : ""}
-            role="tab"
-            aria-selected={tab === "inspect"}
-            onClick={() => setTab("inspect")}
-          >
-            Inspect
-          </button>
         </div>
         <span className="bt-panel-count">
           {nTrades} {nTrades === 1 ? "trade" : "trades"}
@@ -332,27 +308,7 @@ export default function BacktestPanel() {
       </div>
 
       {(
-        tab === "inspect" ? (
-          <div className="bt-panel-inspect">
-            <label className={`bt-inspect-check${inspectMode ? " on" : ""}`}>
-              <input
-                type="checkbox"
-                checked={inspectMode}
-                onChange={() => inspectModeSignal.set(!inspectModeSignal.value)}
-              />
-              <span>Trace every rule at every bar on the next run</span>
-            </label>
-            {!inspectTrace ? (
-              <div className="bt-insp-empty">
-                {inspectMode
-                  ? "Run the backtest, then click a bar on the chart to inspect its rules."
-                  : "Tick the box above, run the backtest, then click a bar to see every rule’s value and why a trade did or didn’t open."}
-              </div>
-            ) : (
-              <BacktestInspectorPanel />
-            )}
-          </div>
-        ) : tab === "analysis" ? (
+        tab === "analysis" ? (
           <BacktestAnalysisPanel analysis={result?.analysis} barSeconds={resSeconds} />
         ) : tab === "overview" ? (
           <div className="bt-panel-overview">

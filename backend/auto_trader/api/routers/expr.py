@@ -118,7 +118,6 @@ async def expr_backtest(req: ExprBacktestRequest):
         short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
         series={},
         mask=req.mask.to_mask() if req.mask else None,
-        inspect=req.inspect,
     )
     result = engine.run(candles)
     # Imported lazily to avoid a router import cycle (backtest.py imports many
@@ -133,7 +132,6 @@ async def expr_backtest(req: ExprBacktestRequest):
         trade_from_time=req.tradeFromTime,
         starting_cash=req.costs.startingCash,
         commission_per_side=req.costs.commissionPerSide,
-        inspect=req.inspect,
     )
 
 

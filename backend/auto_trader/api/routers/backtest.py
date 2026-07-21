@@ -37,10 +37,7 @@ from . import compute
 from ..schemas import (
     BacktestRequest,
     BacktestResponse,
-    BarGroupTraceDTO,
-    BarTraceDTO,
     EquityDTO,
-    InspectorTermDTO,
     MarkerDTO,
     RiskConfigDTO,
     SweepJobInfoDTO,
@@ -234,7 +231,6 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                     nets.append(result.net_pnl)
                     continue
                 scaled = req.model_copy(update={
-                    "inspect": False,
                     "costs": req.costs.model_copy(update={
                         "slippage": req.costs.slippage.model_copy(update={
                             "value": req.costs.slippage.value * m,
@@ -306,7 +302,6 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         trade_from_time=req.tradeFromTime,
         starting_cash=req.costs.startingCash,
         commission_per_side=req.costs.commissionPerSide,
-        inspect=req.inspect,
         file_brackets_overridden=(
             strategy.file_brackets_overridden if req.codedStrategy is not None else False
         ),
@@ -361,7 +356,6 @@ def _result_to_response(
     trade_from_time: int,
     starting_cash: float,
     commission_per_side: float,
-    inspect: bool = False,
     file_brackets_overridden: bool = False,
     run_id: str | None = None,
     analysis: dict | None = None,
@@ -422,7 +416,6 @@ def _result_to_response(
             for leg in ("long", "short")
         },
         fileBracketsOverridden=file_brackets_overridden,
-        bar_traces=_bar_traces_dto(result, trade_from_time) if inspect else None,
         run_id=run_id,
         analysis=analysis,
         cost_sensitivity=cost_sensitivity,
@@ -513,43 +506,6 @@ async def delete_sweep(sweep_id: str) -> dict:
     """Remove one archived sweep (housekeeping)."""
     await SWEEP_STORE.delete(sweep_id)
     return {"ok": True}
-
-
-def _bar_traces_dto(result: BacktestResult, trade_from_time: int) -> list[BarTraceDTO] | None:
-    """Map the engine's per-bar traces to DTOs, keeping only bars in the trading
-    window (time >= tradeFromTime, matching equity/markers). Returns None when the
-    run produced no traces (e.g. a coded strategy, which has no rule groups)."""
-    traces = [
-        BarTraceDTO(
-            time=t.time,
-            groups=[
-                BarGroupTraceDTO(
-                    group=g.group,
-                    combine=g.combine,
-                    terms=[
-                        InspectorTermDTO(
-                            left=term.left_label, lval=term.left_val, op=term.op,
-                            right=term.right_label, rval=term.right_val,
-                            leftTf=term.left_tf, rightTf=term.right_tf, passed=term.passed,
-                        )
-                        for term in g.terms
-                    ],
-                    passed=g.passed,
-                )
-                for g in t.groups
-            ],
-            action=t.action,
-            reason=t.reason,
-            inPositionLong=t.in_position_long,
-            inPositionShort=t.in_position_short,
-            windowActive=t.window_active,
-            warmedUp=t.warmed_up,
-            spacingOk=t.spacing_ok,
-        )
-        for t in result.bar_traces
-        if t.time >= trade_from_time
-    ]
-    return traces or None
 
 
 # --- parameter/risk sweep jobs: submit / poll / cancel / list -----------------

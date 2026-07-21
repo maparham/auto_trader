@@ -247,7 +247,6 @@ def run_expr_sync(
         short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
         series={},
         mask=req.mask.to_mask() if req.mask else None,
-        inspect=req.inspect,
     )
     return engine.run(candles)
 

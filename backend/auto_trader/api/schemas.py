@@ -130,43 +130,6 @@ class MarketDTO(BaseModel):
     pricePrecision: int | None = None
 
 
-class InspectorTermDTO(BaseModel):
-    """One rule's comparison at an inspected bar — like TermDTO but recorded for
-    EVERY rule (not just passing ones), so `passed` carries the raw result."""
-
-    left: str
-    lval: float | None
-    op: str
-    right: str
-    rval: float | None
-    leftTf: str | None
-    rightTf: str | None
-    passed: bool
-
-
-class BarGroupTraceDTO(BaseModel):
-    group: str            # "longEntry" | "shortEntry" | "longExit" | "shortExit"
-    combine: str
-    terms: list[InspectorTermDTO]
-    passed: bool
-
-
-class BarTraceDTO(BaseModel):
-    """The bar inspector's per-bar snapshot: all rule groups plus the engine's
-    outcome + gate flags. `action` is opened/suppressed/none; `reason` explains a
-    suppression (session window / already in position / spacing-or-cap)."""
-
-    time: int
-    groups: list[BarGroupTraceDTO]
-    action: str
-    reason: str | None
-    inPositionLong: bool
-    inPositionShort: bool
-    windowActive: bool
-    warmedUp: bool
-    spacingOk: bool | None
-
-
 class BacktestResponse(BaseModel):
     epic: str
     resolution: str
@@ -180,10 +143,6 @@ class BacktestResponse(BaseModel):
     # leg_metrics() dict. Powers the LONG/SHORT rows of the TRADES panel table.
     by_leg: dict | None = None
     fileBracketsOverridden: bool = False
-    # Per-bar inspector trace — present only when the request set inspect=True and
-    # the strategy is rule-based (None otherwise). Session-only; the frontend holds
-    # it in memory and never persists it.
-    bar_traces: list[BarTraceDTO] | None = None
     # Persisted-run id (None if the store write failed) + aggregate analytics.
     run_id: str | None = None
     analysis: dict | None = None
@@ -336,9 +295,6 @@ class BacktestRequest(BaseModel):
     costs: CostsDTO
     tradeFromTime: int
     mask: RecurrenceMaskDTO | None = None
-    # Bar inspector opt-in: when True the (rule-based) engine emits a per-bar trace
-    # in `bar_traces`. Off by default so a normal run pays nothing.
-    inspect: bool = False
     # Cost-sensitivity opt-in: when True (single runs only) the handler re-runs
     # the engine at 0x/2x/3x costs and returns the per-multiple net P&L plus the
     # breakeven cost multiple in `cost_sensitivity`.
@@ -718,7 +674,6 @@ class ExprBacktestRequest(BaseModel):
     costs: CostsDTO
     tradeFromTime: int
     mask: RecurrenceMaskDTO | None = None
-    inspect: bool = False
     # Parameter/literal sweep: when set, POST /api/expr/sweep/jobs runs one combo
     # per entry (lit:/risk:/period:/timeWindow: targets). Ignored by POST
     # /api/expr/backtest.
