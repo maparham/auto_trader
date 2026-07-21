@@ -1,163 +1,9 @@
-// Shared rule-strategy schema: the same shape the backend's OperandDTO/RuleDTO/
-// RuleGroupDTO mirror, plus the seriesName contract both sides derive from so
-// serialization and validation can never disagree (see the backend endpoint's
-// D4 check in app.py).
+// Shared rule-strategy schema: the transport shape coded/expression rows travel
+// in (RuleGroup/BacktestConfig), plus the risk/scaling ATR-length helpers the
+// series builder and warm-up math consume. Rules author as CodeMirror
+// expressions (`Rule.expr`); the structured operand model is gone.
 
-export type IndicatorKind = "EMA" | "SMA" | "AVWAP" | "RSI" | "VOL" | "VOLMA";
-export type PriceField = "close" | "open" | "high" | "low" | "body" | "range" | "wickTop" | "wickBottom";
-export type Operator = "crossesAbove" | "crossesBelow" | "crosses" | "gt" | "lt" | "gte" | "lte";
 export type Combine = "AND" | "OR";
-
-// `slope`, when set, turns an indicator/price operand into the tangent rate of
-// change of its underlying curve, in percent per HOUR over a `len`-bar lookback:
-//   (v[i] − v[i−len]) / |v[i−len]| / (len × barHours) × 100
-// The run is elapsed time (len bars × the operand-timeframe's hours-per-bar), so
-// the value is %/hr regardless of timeframe — a 5-min and a 15-min slope compare
-// directly. It's part of the series key (seriesName) so a curve and its slope, and
-// two different lookbacks, are distinct series. A sloped operand ALWAYS keys a
-// series (even price, which normally has none). const/entry can't be sloped.
-export interface SlopeSpec { len: number }
-
-// `lookback`, when set, replaces the operand's value with a previous-candles
-// read of its (possibly sloped) curve — the CURRENT bar is always excluded:
-//   ago  → v[i−len]                       (the value exactly len bars ago)
-//   high → max(v[i−len .. i−1])           (highest over the last len bars)
-//   low  → min(v[i−len .. i−1])
-//   avg  → mean(v[i−len .. i−1])
-// Applied AFTER slope (raw → slope → lookback), so "the slope 3 bars ago"
-// composes. Part of the series key (`#<mode><len>`, after `~slope`, before
-// `@tf`) — see seriesName / rule.py:series_name. A looked-back operand ALWAYS
-// keys a series (even price). const/entry can't look back.
-export interface LookbackSpec { mode: "ago" | "high" | "low" | "avg"; len: number }
-
-// `scale`, when set, adjusts the operand's compared value AT EVAL TIME (backend
-// _operand_values): v′ = v·mult, then + off% of that (offUnit "pct") or + off
-// points (offUnit "abs"). "body > 2× ATR" is mult=2 on the ATR side; "low 1%
-// above EMA" is off=1/pct on the EMA side. NOT part of the series key — the
-// underlying series is unchanged; only the comparison shifts. Allowed on
-// indicator/price/series AND entry (take-profit-style rules: "close crosses
-// above entry +1%"); a const scales itself, so it can't carry one.
-export interface ScaleSpec { mult?: number; off?: number; offUnit?: "pct" | "abs" }
-
-// --- chart operands (kind "series") -----------------------------------------
-// A chart indicator curve or drawing copied into a rule. The operand carries a
-// self-contained `recipe` (the exact params the chart instance had) plus a
-// `seriesKey` (a deterministic hash of that recipe) and a human `label`. The
-// frontend recomputes the array from the recipe and posts it under seriesKey;
-// the backend reads it verbatim and never recomputes. `timeframe` and `slope`
-// live at the operand level (like an indicator operand), NOT in the recipe, so
-// the `@tf`/`~len` key suffixes and the MTF fetch path work unchanged.
-
-/** The app's custom indicator types reachable as a rule operand (SESSIONS is
- * deferred — it has no price line and nothing to click-select). */
-export type SeriesIndicatorType = "EMA" | "MA" | "LR" | "VWAP" | "AVWAP" | "PREV_HL" | "RSI" | "PIVOT_BANDS" | "PIVOT_ANALYSIS" | "SLOPE" | "CANDLE_PATTERNS";
-/** The straight-line drawing family evaluable as a per-bar price series. */
-export type DrawingKind = "segment" | "rayLine" | "straightLine" | "horizontalStraightLine" | "priceLine";
-
-export interface IndicatorRecipe {
-  source: "indicator";
-  indicatorType: SeriesIndicatorType;
-  calcParams: number[];   // positional, exactly as on the chart (AVWAP anchor = calcParams[0])
-  line: number;           // which output line (0 for single-line indicators)
-  // The chart instance's extendData snapshot — carries everything that isn't a
-  // positional calcParam (price source, PREV_HL period config, …). Passed
-  // verbatim to the same pure compute function the chart uses, so the operand
-  // reproduces the exact curve. Part of the recipe hash.
-  extend?: Record<string, unknown>;
-}
-export interface DrawingRecipe {
-  source: "drawing";
-  drawingKind: DrawingKind;
-  // Absolute, snapshotted at copy time (any dataIndex-anchored point resolved to
-  // a timestamp then) so TF switches can't corrupt the geometry.
-  anchors: Array<{ timestamp: number; value: number }>;
-}
-export type SeriesRecipe = IndicatorRecipe | DrawingRecipe;
-
-/** 32-bit FNV-1a of a string, base36 — a short, stable, dependency-free hash.
- * Not cryptographic; only needs to be deterministic and collision-free enough to
- * distinguish distinct recipes. */
-function fnv1a(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(36);
-}
-
-/** A deterministic key for a recipe: identical recipes hash identically (so two
- * pasted operands dedup into one posted series). Excludes timeframe/slope — those
- * are appended as key suffixes by seriesName, mirroring indicator operands. The
- * type prefix keeps the posted key legible. */
-export function recipeKey(recipe: SeriesRecipe): string {
-  if (recipe.source === "indicator") {
-    const canon = [
-      "ind", recipe.indicatorType, recipe.calcParams.join(","),
-      recipe.line, stableStringify(recipe.extend ?? {}),
-    ].join("|");
-    return `${recipe.indicatorType}_${fnv1a(canon)}`;
-  }
-  const canon = [
-    "draw", recipe.drawingKind,
-    recipe.anchors.map((a) => `${a.timestamp}:${a.value}`).join(";"),
-  ].join("|");
-  return `${recipe.drawingKind}_${fnv1a(canon)}`;
-}
-
-/** JSON with object keys sorted at every level, so two equal objects serialize
- * identically regardless of insertion order (recipe extend snapshots come from
- * chart state whose key order isn't guaranteed). */
-function stableStringify(v: unknown): string {
-  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
-  if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
-  const keys = Object.keys(v as Record<string, unknown>).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(",")}}`;
-}
-
-export type Operand =
-  // `timeframe` (absent ⇒ the run's base timeframe) lets a single rule reference
-  // an indicator computed on a higher timeframe than the backtest steps on — the
-  // frontend fetches that timeframe, computes the indicator on it, and forward-
-  // fills the values onto the base bars (no lookahead). It's part of the series
-  // key (seriesName) so `EMA_9` and `EMA_9@HOUR` are distinct series.
-  | { kind: "indicator"; indicator: IndicatorKind; length?: number; anchor?: number; timeframe?: string; slope?: SlopeSpec; lookback?: LookbackSpec; scale?: ScaleSpec }
-  | { kind: "price"; field: PriceField; slope?: SlopeSpec; lookback?: LookbackSpec; scale?: ScaleSpec }
-  | { kind: "const"; value: number }
-  // The open position's entry (fill) price. Only meaningful in an exit rule while
-  // a position is held; parameterless. Has no series (read off the position).
-  | { kind: "entry"; scale?: ScaleSpec }
-  // A chart indicator curve or drawing copied into the rule (see recipe types
-  // above). Always keys a series (the frontend computes it and posts it).
-  | { kind: "series"; seriesKey: string; label: string; recipe: SeriesRecipe; timeframe?: string; slope?: SlopeSpec; lookback?: LookbackSpec; scale?: ScaleSpec };
-
-/** The `series` variant of {@link Operand} (chart indicator/drawing copied into a
- * rule). Always carries `seriesKey`/`label`/`recipe`; used where an operand is known
- * to be series-kind so callers can read those fields without narrowing the union. */
-export type SeriesOperand = Extract<Operand, { kind: "series" }>;
-
-/** The slope lookback for an operand, or null if it isn't sloped. */
-export function slopeLen(op: Operand): number | null {
-  return (op.kind === "indicator" || op.kind === "price" || op.kind === "series") && op.slope
-    ? op.slope.len
-    : null;
-}
-
-/** The lookback spec for an operand, or null if it has none. */
-export function lookbackSpec(op: Operand): LookbackSpec | null {
-  return (op.kind === "indicator" || op.kind === "price" || op.kind === "series") && op.lookback
-    ? op.lookback
-    : null;
-}
-
-/** The scale spec for an operand, or null if it has none. */
-export function scaleSpec(op: Operand): ScaleSpec | null {
-  return op.kind !== "const" && op.scale ? op.scale : null;
-}
-
-// The token spelled into the series key per lookback mode (`#<token><len>`).
-// The backend mirrors these byte-for-byte (rule.py:series_name) — do not change.
-const LB_TOKEN = { ago: "ago", high: "hi", low: "lo", avg: "avg" } as const;
 
 export type StopKind = "none" | "pct" | "price" | "atr" | "trailPct" | "trailAtr";
 export type TargetKind = "none" | "pct" | "price" | "atr";
@@ -176,12 +22,8 @@ export interface SpacingSpec { kind: SpacingKind; value?: number; mult?: number;
 export interface ScalingConfig { maxConcurrent: number; spacing?: SpacingSpec }
 
 export interface Rule {
-  left: Operand;
-  op: Operator;
-  right: Operand;
-  // Task 13 Stage A: the CodeMirror rule expression. Additive during the cutover
-  // so the structured fields above and the new editor coexist; Stage C drops the
-  // structured fields and leaves `expr` as the whole rule.
+  // The CodeMirror rule expression — the whole rule. (The former structured
+  // left/op/right operand model has been removed.)
   expr?: string;
   // A disabled rule is kept (editable) but excluded from the run — like a parked
   // side, but per rule. Absent ⇒ enabled (backward-safe for old presets).
@@ -191,106 +33,16 @@ export interface Rule {
   count?: number;
 }
 
-/** Each operator's mirror, so swapping a rule's two operands preserves its truth:
- * gt↔lt, gte↔lte, crossesAbove↔crossesBelow; `crosses` (direction-agnostic) is its
- * own mirror. Single source of truth (BacktestSettingsModal's "reverse all" reuses it). */
-export const OP_REVERSE: Record<Operator, Operator> = {
-  crossesAbove: "crossesBelow",
-  crossesBelow: "crossesAbove",
-  crosses: "crosses",
-  gt: "lt",
-  lt: "gt",
-  gte: "lte",
-  lte: "gte",
-};
-
-/** Swap a rule's two operands AND flip the operator, so `A > B` becomes the
- * equivalent `B < A` (same truth value). enabled/count are preserved. */
-export function swapSides(rule: Rule): Rule {
-  return { ...rule, left: rule.right, right: rule.left, op: OP_REVERSE[rule.op] };
-}
-
-/** The mirror of a single operand for the "invert" transform: the reflection that
- * turns a long-side condition into its short-side twin. The candle's paired
- * extremes swap (`high`↔`low`, `wickTop`↔`wickBottom`); a constant negates
- * (`1` → `-1`). Modifiers reflect too: a lookback in `high` mode becomes `low`
- * mode (and vice versa; `ago`/`avg` are direction-neutral and stay), and a scale
- * offset negates (a `+1%` offset mirrors to `-1%`; the multiplier stays). Every
- * other operand kind and field — indicators, series, entry, open/close/body/range
- * (not extremes) — is left as-is. Nested fields are preserved via
- * {@link cloneOperand}. Numbers that don't mirror by sign (e.g. an `RSI < 30`
- * threshold that should become `70`, not `-30`) negate here and are meant to be
- * hand-corrected afterward. */
-function mirrorOperand(op: Operand): Operand {
-  const copy = cloneOperand(op);
-  if (copy.kind === "price") {
-    if (copy.field === "high") copy.field = "low";
-    else if (copy.field === "low") copy.field = "high";
-    else if (copy.field === "wickTop") copy.field = "wickBottom";
-    else if (copy.field === "wickBottom") copy.field = "wickTop";
-  } else if (copy.kind === "const") {
-    copy.value = -copy.value;
-  }
-  // Lookback: the "highest over N bars" / "lowest over N bars" extremes swap.
-  if (copy.kind !== "const" && copy.lookback) {
-    if (copy.lookback.mode === "high") copy.lookback.mode = "low";
-    else if (copy.lookback.mode === "low") copy.lookback.mode = "high";
-  }
-  // Scale: negate the offset (a +1% edge above mirrors to -1% below); mult stays.
-  if (copy.kind !== "const" && copy.scale && copy.scale.off != null) {
-    copy.scale.off = -copy.scale.off;
-  }
-  return copy;
-}
-
-/** The true inverse of a rule: the short-side twin of a long-side condition (or
- * vice versa). Unlike {@link swapSides} (which swaps operands to keep the SAME
- * truth), this flips the operator AND mirrors each operand in place, so the rule's
- * meaning is reflected: `EMA(50) < low` → `EMA(50) > high` (whole candle above the
- * MA → whole candle below it), `X < 1` → `X > -1`. enabled/count preserved. */
-export function invertRule(rule: Rule): Rule {
-  return { ...rule, left: mirrorOperand(rule.left), right: mirrorOperand(rule.right), op: OP_REVERSE[rule.op] };
-}
-
-/** A new rule seeded from a chart operand: `<operand> > 0`, ready to edit. Used by
- * the group-level "+ Rule from chart" entry so an empty group needs no pre-step. */
-export function ruleFromChartOperand(op: Operand): Rule {
-  return { left: op, op: "gt", right: { kind: "const", value: 0 } };
-}
-
 export interface RuleGroup {
   combine: Combine;
   rules: Rule[];
 }
 
 /** A fresh, independent copy of a rule — used to duplicate a rule within a group
- * or paste one copied from another side. Operands are flat value objects, so a
- * shallow spread of each is a full deep copy; sharing them instead would let an
- * edit to the original mutate the duplicate (and vice versa). */
+ * or paste one copied from another side. Expression rows are flat value objects,
+ * so a shallow spread is a full copy. */
 export function cloneRule(rule: Rule): Rule {
-  return { left: cloneOperand(rule.left), op: rule.op, right: cloneOperand(rule.right), enabled: rule.enabled, count: rule.count };
-}
-
-/** Deep copy of an operand. Operands are otherwise flat value objects, but a
- * sloped operand nests a `slope` object, so a bare spread would share it. */
-function cloneOperand(op: Operand): Operand {
-  const copy = { ...op };
-  if ((copy.kind === "indicator" || copy.kind === "price" || copy.kind === "series") && copy.slope) {
-    copy.slope = { ...copy.slope };
-  }
-  if ((copy.kind === "indicator" || copy.kind === "price" || copy.kind === "series") && copy.lookback) {
-    copy.lookback = { ...copy.lookback };
-  }
-  if (copy.kind !== "const" && copy.scale) {
-    copy.scale = { ...copy.scale };
-  }
-  // A series operand nests a recipe (with its own arrays) — deep-copy it too.
-  if (copy.kind === "series") {
-    copy.recipe = copy.recipe.source === "indicator"
-      ? { ...copy.recipe, calcParams: [...copy.recipe.calcParams] }
-      : { ...copy.recipe, anchors: copy.recipe.anchors.map((a) => ({ ...a })) };
-  }
-  return copy;
+  return { expr: rule.expr, enabled: rule.enabled, count: rule.count };
 }
 
 /** A rule group with its disabled rules dropped — what actually gets sent to the
@@ -405,64 +157,6 @@ export interface BacktestConfig {
   robustWindows?: number;
 }
 
-/** The payload key an operand's series lives under, or null if it has no
- * series (price/const are read straight off the candle). AVWAP is keyed by its
- * anchor (epoch-ms) so distinct anchors are distinct series; VOL has no length;
- * EMA/SMA/RSI/VOLMA are keyed by `${indicator}_${length}`. */
-export function seriesName(op: Operand): string | null {
-  let base: string;
-  if (op.kind === "series") {
-    // The recipe hash, authored at copy time and used verbatim (the backend reads
-    // it the same way); slope/tf suffixes still apply below.
-    base = op.seriesKey;
-  } else if (op.kind === "indicator") {
-    if (op.indicator === "VOL") base = "VOL";
-    else if (op.indicator === "AVWAP") base = `AVWAP_${op.anchor ?? 0}`;
-    else base = `${op.indicator}_${op.length}`;
-  } else if (op.kind === "price" && (op.slope || op.lookback)) {
-    // A plain price has no series (read off the candle); a SLOPED or LOOKED-BACK
-    // price does — it reads other bars so it can't come from a single one. Keyed
-    // by the field.
-    base = op.field;
-  } else {
-    return null;
-  }
-  // A slope suffix (`~len`) comes BEFORE the timeframe suffix (`@tf`); the backend
-  // derives this key identically (rule.py:series_name) — keep the two in lockstep,
-  // ordering included, or the endpoint's D4 key check fails.
-  const sl = slopeLen(op);
-  if (sl !== null) base = `${base}~${sl}`;
-  // A lookback suffix (`#<mode><len>`) sits BETWEEN the slope and timeframe
-  // suffixes (raw → slope → lookback), mirrored byte-for-byte on the backend.
-  const lb = lookbackSpec(op);
-  if (lb) base = `${base}#${LB_TOKEN[lb.mode]}${lb.len}`;
-  // A per-operand timeframe qualifies the key so a base-timeframe indicator and
-  // the same indicator on a higher timeframe are stored/looked-up separately.
-  // Absent ⇒ base timeframe ⇒ the bare key (byte-for-byte compatible with older
-  // presets and with same-timeframe operands).
-  const tf = op.kind === "indicator" || op.kind === "series" ? op.timeframe : undefined;
-  return tf ? `${base}@${tf}` : base;
-}
-
-/** Every indicator operand referenced by any of the four rule groups, deduped by
- * series name, so the caller computes each series once regardless of how many
- * rules use it. */
-export function collectSeriesOperands(cfg: BacktestConfig): Operand[] {
-  const seen = new Map<string, Operand>();
-  for (const group of [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit]) {
-    for (const rule of group.rules) {
-      // Expression rows carry `expr` and no structured left/right operands; they
-      // contribute warm-up via warmupOf (see backtestWindow), not through series here.
-      if (rule.expr != null) continue;
-      for (const op of [rule.left, rule.right]) {
-        const name = seriesName(op);
-        if (name !== null && !seen.has(name)) seen.set(name, op);
-      }
-    }
-  }
-  return [...seen.values()];
-}
-
 const ATR_KINDS = new Set(["atr", "trailAtr"]);
 
 /** Every distinct ATR length referenced by either side's stop or target, so the
@@ -488,125 +182,27 @@ export function scalingAtrLengths(cfg: BacktestConfig): number[] {
   return [...out];
 }
 
-/** The longest indicator length referenced anywhere in the config — the number
- * of bars of warm-up the slowest indicator needs before it produces a value. */
+/** The longest ATR length referenced anywhere in the config — the number of bars
+ * of warm-up the slowest ATR risk/scaling series needs before it produces a
+ * value. Expression rows contribute their warm-up separately (backtestWindow's
+ * exprWarmupBars). */
 export function longestIndicatorLength(cfg: BacktestConfig): number {
-  return Math.max(
-    1,
-    // A sloped operand needs `len` extra bars beyond its base indicator's length
-    // before it has a value (it reads v[i] and v[i−len]).
-    ...collectSeriesOperands(cfg).map((op) => operandBaseLen(op) + (slopeLen(op) ?? 0) + (lookbackSpec(op)?.len ?? 0)),
-    ...riskAtrLengths(cfg),
-    ...scalingAtrLengths(cfg),
-  );
-}
-
-// Series indicator types whose calcParams[0] is a lookback LENGTH (so it drives
-// warm-up). Everything else (VWAP/AVWAP anchored from a bar, PREV_HL configured on
-// extendData) has no length there — notably AVWAP's calcParams[0] is an anchor
-// epoch-ms, which must NOT be read as a bar count.
-const SERIES_LENGTH_TYPES = new Set<SeriesIndicatorType>(["EMA", "MA", "RSI", "LR"]);
-
-/** The warm-up bars an operand's base curve needs before it produces a value,
- * ignoring any slope lookback (added separately). Indicator = its length; a
- * series indicator = its length param for length-based types (else 1); a drawing
- * or anything else = 1. The single source of truth for per-operand warm-up length
- * (shared by longestIndicatorLength here and longestWarmupBars in backtestWindow). */
-export function operandBaseLen(op: Operand): number {
-  if (op.kind === "indicator") return op.length ?? 1;
-  if (op.kind === "series" && op.recipe.source === "indicator") {
-    const r = op.recipe;
-    const len = r.calcParams[0];
-    const base = SERIES_LENGTH_TYPES.has(r.indicatorType) && Number.isFinite(len) ? Math.max(1, len) : 1;
-    // An RSI divergence output (line ≥ 1) needs two pivots within range before the
-    // first signal: RSI length + rangeMax + lookbackLeft + lookbackRight bars. The
-    // detection params are snapshotted in the recipe (fallbacks mirror
-    // RSI_DIVERGENCE_DEFAULTS — inlined to avoid a customIndicators import cycle).
-    if (r.indicatorType === "RSI" && (r.line ?? 0) >= 1) {
-      const d = (r.extend?.divergence ?? {}) as { lookbackLeft?: number; lookbackRight?: number; rangeMax?: number };
-      return base + (d.rangeMax ?? 60) + (d.lookbackLeft ?? 5) + (d.lookbackRight ?? 5);
-    }
-    // Pivot Bands: a pivot at bar i confirms at i+N, and "avg" mode needs K pivots.
-    // 2N+K is the chart's established best-effort reach-back (pivots are sparse, so
-    // no fixed length guarantees one — a blank left edge is correct). N/K clamped
-    // to match the template defaults.
-    if (r.indicatorType === "PIVOT_BANDS") {
-      const n = Math.max(1, Number(r.calcParams[0]) || 5);
-      const k = Math.max(1, Number(r.calcParams[1]) || 3);
-      return 2 * n + k;
-    }
-    // Pivots High/Low [LuxAlgo]: a pivot at bar i confirms at i+Length, and the Δ%/Δt
-    // outputs need a SECOND same-type pivot to hold a value. 2·Length is the same
-    // best-effort reach-back as Pivot Bands (pivots are sparse, so no fixed length
-    // guarantees one — a blank left edge is correct). Length clamped like the template.
-    if (r.indicatorType === "PIVOT_ANALYSIS") {
-      const n = Math.max(1, Number(r.calcParams[0]) || 50);
-      return 2 * n;
-    }
-    // Candle Patterns: eps needs 14 TRs (15 bars); the deepest pattern (ladder
-    // bottom) needs 5. 15 covers both.
-    if (r.indicatorType === "CANDLE_PATTERNS") return 15;
-    // Slope is rate-only (mirrors computeIndicatorRecipe/indicatorOutputs): four
-    // fixed blocks relative to K (capped at 5 lengths, mirrors slopeLengths in
-    // indicators/slope.ts) so `line % K` indexes the same length the operand reads.
-    if (r.indicatorType === "SLOPE") {
-      const ext = (r.extend ?? {}) as {
-        slopePeriod?: number;
-        accelPeriod?: number;
-        smoothing?: { type?: string; length?: number };
-        accelSmoothing?: { type?: string; length?: number };
-      };
-      // Mirror slopeLengths() (indicators/slope.ts) inline rather than importing it:
-      // that module pulls in klinecharts at load time, which breaks this file's
-      // pure-config test isolation (no klinecharts mock there). Keep the filter +
-      // cap + default in lockstep with slopeLengths by hand.
-      const raw = (r.calcParams ?? []).map(Number).filter((v) => Number.isFinite(v) && v !== 0);
-      const lengths = (raw.length ? raw.slice(0, 5) : [9]);
-      const K = lengths.length;
-      const line = r.line ?? 0;
-      const block = Math.floor(line / K);
-      const len = lengths[line % K] ?? lengths[0];
-      const n = Number(ext.slopePeriod) || 3;
-      const n2 = Number(ext.accelPeriod) || 3;
-      const win = (s?: { type?: string; length?: number }): number =>
-        s && s.type && s.type !== "none" ? (Number(s.length) || 0) : 0;
-      const smLen = win(ext.smoothing);
-      // block 0: MA + slope lookback. block 1: + the smoothing window (only the
-      // smoothed line is built with smoothing; adding it to the raw line would
-      // over-warm a series that never smooths). blocks 2/3: accel differentiates
-      // the slope AS BUILT, so slope smoothing counts whenever it is on; block 3
-      // adds its own accel smoothing window.
-      if (block >= 2) return len + n + n2 + smLen + (block === 3 ? win(ext.accelSmoothing) : 0);
-      return len + n + (block === 1 ? smLen : 0);
-    }
-    return base;
-  }
-  return 1;
+  return Math.max(1, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg));
 }
 
 export function defaultBacktestConfig(): BacktestConfig {
-  // The main backtest groups now edit as expressions, so each default rule
-  // carries both the `expr` the CodeMirror editor shows AND the structured
-  // left/op/right (still required by the `Rule` type and used by the chart /
-  // coded surfaces). `fn` is the expression cross-function that mirrors `op`.
-  const cross = (op: Operator, fn: "crossAbove" | "crossBelow"): RuleGroup => ({
+  // The main backtest groups edit as expressions, so each default rule seeds an
+  // `{ expr, enabled }` row the CodeMirror editor shows.
+  const cross = (fn: "crossAbove" | "crossBelow"): RuleGroup => ({
     combine: "AND",
-    rules: [
-      {
-        left: { kind: "indicator", indicator: "EMA", length: 9 },
-        op,
-        right: { kind: "indicator", indicator: "EMA", length: 21 },
-        expr: `${fn}(EMA(9), EMA(21))`,
-        enabled: true,
-      },
-    ],
+    rules: [{ expr: `${fn}(EMA(9), EMA(21))`, enabled: true }],
   });
   return {
     range: { mode: "bars", bars: 500, history: "minimal" },
-    longEntry: cross("crossesAbove", "crossAbove"),
-    longExit: cross("crossesBelow", "crossBelow"),
-    shortEntry: cross("crossesBelow", "crossBelow"),
-    shortExit: cross("crossesAbove", "crossAbove"),
+    longEntry: cross("crossAbove"),
+    longExit: cross("crossBelow"),
+    shortEntry: cross("crossBelow"),
+    shortExit: cross("crossAbove"),
     longEnabled: true,
     shortEnabled: true,
     costs: {

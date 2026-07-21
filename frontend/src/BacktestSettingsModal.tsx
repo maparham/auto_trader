@@ -52,7 +52,6 @@ import {
   type HistoryDepth,
   type RuleGroup,
   type Rule,
-  type Operator,
   type Combine,
   type Costs,
   type SlippageModel,
@@ -239,21 +238,6 @@ const TARGET_KINDS: { value: TargetKind; label: string }[] = [
 
 export const EMPTY_RISK: RiskConfig = { stop: { kind: "none" }, target: { kind: "none" } };
 const DEFAULT_SCALING: ScalingConfig = { maxConcurrent: 1 };
-// `tip` is a one-line tooltip. Crosses fire ONCE on the bar the lines meet (an
-// event); the comparisons are true on EVERY bar the condition holds (a state).
-const OPERATORS: { value: Operator; label: string; tip: string }[] = [
-  { value: "crossesAbove", label: "crosses above", tip: "Fires once, on the bar the left rises through the right." },
-  { value: "crossesBelow", label: "crosses below", tip: "Fires once, on the bar the left drops through the right." },
-  { value: "crosses", label: "crosses", tip: "Fires once, on the bar the left crosses the right either way." },
-  { value: "gt", label: "greater than", tip: "True on every bar the left is above the right." },
-  { value: "lt", label: "less than", tip: "True on every bar the left is below the right." },
-  { value: "gte", label: "greater or equal", tip: "True on every bar the left is at or above the right." },
-  { value: "lte", label: "less or equal", tip: "True on every bar the left is at or below the right." },
-];
-
-// Compact operator text for sweep-results cells (op-axis option labels).
-const OP_CELL: Partial<Record<Operator, string>> = { gt: ">", lt: "<", gte: "≥", lte: "≤" };
-
 // A rough, illustrative bar count for the window timeline — not the exact fetch
 // math BacktestButton uses (which also depends on "now" and the live broker's
 // actual history limit), just enough to make the history-vs-window split
@@ -696,10 +680,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       return addAxis(axes, next);
     });
   };
-  // Rule-operand numeric fields (indicator length, const value, exit count) —
-  // same heuristic as toggleRiskSweepAxis (no declared min/max/step to draw
-  // from), keyed on the `rule:` path built by ruleAxisTarget at the call site.
-  const toggleRuleSweepAxis = (target: string, current: number) => {
+  // Numeric range axis for an expression literal (lit: target) — same heuristic
+  // as toggleRiskSweepAxis (no declared min/max/step to draw from). The literal
+  // sweep chips in RuleGroupSection wire their toggle through here.
+  const toggleRangeSweepAxis = (target: string, current: number) => {
     if (!sweepEditable) return;
     setSweepAxes((axes) => {
       if (axes.some((a) => a.target === target)) return axes.filter((a) => a.target !== target);
@@ -708,49 +692,13 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       const next: SweepAxis = {
         kind: "range",
         target,
-        label: sweepAxisLabel(target, labelCfg()) ?? target.replace(/^rule:/, ""),
+        label: sweepAxisLabel(target, labelCfg()) ?? target,
         from: mem?.from ?? base,
         to: mem?.to ?? base * 2,
         step: mem?.step ?? Math.max(base / 10, 1),
       };
       return addAxis(axes, next);
     });
-  };
-  // Results cells read this label; symbols keep the axis columns narrow. The
-  // crosses operators have no symbol and stay as words.
-  const opOption = (target: string, op: Operator): SweepOption => ({
-    label: OP_CELL[op] ?? OPERATORS.find((o) => o.value === op)?.label ?? op,
-    patch: { [target]: op },
-  });
-  // Operator axis: a discrete list seeded with the rule's current operator.
-  const toggleOpSweepAxis = (target: string, current: Operator) => {
-    if (!sweepEditable) return;
-    setSweepAxes((axes) =>
-      axes.some((a) => a.target === target)
-        ? axes.filter((a) => a.target !== target)
-        : addAxis(axes, {
-            kind: "list", target,
-            label: sweepAxisLabel(target, labelCfg()) ?? `${target.replace(/^op:/, "").replace(/\./g, " ")} op`,
-            options: [opOption(target, current)],
-          }));
-  };
-  // Tick/untick one operator in the axis's option list; unticking the last
-  // option removes the axis (nothing left to sweep). Options keep OPERATORS
-  // order so results enumerate in dropdown order.
-  const tickOpOption = (target: string, op: Operator) => {
-    setSweepAxes((axes) =>
-      axes
-        .map((a) => {
-          if (a.target !== target || a.kind !== "list") return a;
-          const has = a.options.some((o) => o.patch[target] === op);
-          const options = has
-            ? a.options.filter((o) => o.patch[target] !== op)
-            : OPERATORS.filter((o) =>
-                o.value === op || a.options.some((x) => x.patch[target] === o.value),
-              ).map((o) => opOption(target, o.value));
-          return { ...a, options };
-        })
-        .filter((a) => !(a.target === target && a.kind === "list" && a.options.length === 0)));
   };
   const timeWindowAxis = displayAxes.find((a) => a.target === "timeWindow");
   const twOption = (startMin: number, endMin: number, tz: string, label?: string): SweepOption => ({
@@ -786,9 +734,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     if (!w) return; // Crypto: 24h, no window to sweep
     addTimeWindowOption(twOption(w.startMin, w.endMin, chartTimezone, p.label));
   };
-  // Removing the last option empties the axis; drop it entirely (mirrors the
-  // operator path in tickOpOption) so an empty kind:"list" axis can't strand a
-  // slot or make comboCount return Infinity.
+  // Removing the last option empties the axis; drop it entirely so an empty
+  // kind:"list" axis can't strand a slot or make comboCount return Infinity.
   const removeTimeWindowOption = (i: number) =>
     setSweepAxes((axes) => axes
       .map((a) =>
@@ -974,20 +921,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       next = { ...next, range: { ...next.range, mode: "custom", fromMs: pFrom * 1000, toMs: pTo * 1000 } };
     }
     for (const [key, value] of Object.entries(combo)) {
-      // op:<side>.<entry|exit>.<idx> carries a string operator.
-      if (key.startsWith("op:") && typeof value === "string") {
-        const [oside, ogroup, oidxStr] = key.slice("op:".length).split(".");
-        const groupKey = `${oside}${ogroup === "entry" ? "Entry" : "Exit"}` as
-          "longEntry" | "longExit" | "shortEntry" | "shortExit";
-        const ruleGroup = next[groupKey];
-        const idx = rawRuleIndex(ruleGroup.rules, Number(oidxStr));
-        const rule = ruleGroup.rules[idx];
-        if (!rule) continue;
-        const rules = ruleGroup.rules.slice();
-        rules[idx] = { ...rule, op: value as Operator };
-        next = { ...next, [groupKey]: { ...ruleGroup, rules } };
-        continue;
-      }
       if (typeof value !== "number") continue;
       // SL/TP axes patch the per-side risk DTO, same shape as the coded branch.
       // risk:<side>.<stop|target>.<value|mult>
@@ -1001,34 +934,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         };
         continue;
       }
-      if (!key.startsWith("rule:")) continue;
-      // rule:<side>.<entry|exit>.<idx>.<left|right>.<length|value>
-      // rule:<side>.<entry|exit>.<idx>.count
-      const parts = key.slice("rule:".length).split(".");
-      const [side, group, idxStr, ...rest] = parts;
-      const groupKey = `${side}${group === "entry" ? "Entry" : "Exit"}` as
-        "longEntry" | "longExit" | "shortEntry" | "shortExit";
-      const ruleGroup = next[groupKey];
-      const idx = rawRuleIndex(ruleGroup.rules, Number(idxStr));
-      const rule = ruleGroup.rules[idx];
-      if (!rule) continue;
-      let patched: Rule;
-      if (rest[0] === "count") {
-        patched = { ...rule, count: value };
-      } else {
-        const [operandSide, leaf] = rest as ["left" | "right", "length" | "value"];
-        const operand = rule[operandSide];
-        if (operand?.kind === "indicator" && leaf === "length") {
-          patched = { ...rule, [operandSide]: { ...operand, length: value } };
-        } else if (operand?.kind === "const" && leaf === "value") {
-          patched = { ...rule, [operandSide]: { ...operand, value } };
-        } else {
-          continue;   // stale axis (operand kind changed since the axis was created)
-        }
-      }
-      const rules = ruleGroup.rules.slice();
-      rules[idx] = patched;
-      next = { ...next, [groupKey]: { ...ruleGroup, rules } };
+      // lit: expression-literal axes are not patched onto a structured operand
+      // here (there is no structured operand to patch).
     }
     // Synced risk axes are canonicalized to long; copy the applied values across
     // to short (no-op when unsynced or already equal).
@@ -1399,17 +1306,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   const resSeconds = RESOLUTION_SECONDS[effectiveRes] ?? 60;
 
   const defaultAvwapAnchor = resolveWindow(cfg, resSeconds, Date.now()).fromMs;
-
-  // Expression rows have no structured left/right operands, so guard op access
-  // (op is undefined on an expr rule); the volume-operand note is a structured-
-  // mode concern only.
-  const usesVolume = [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit].some((g) =>
-    g.rules.some((r) =>
-      [r.left, r.right].some(
-        (op) => op?.kind === "indicator" && (op.indicator === "VOL" || op.indicator === "VOLMA" || op.indicator === "AVWAP"),
-      ),
-    ),
-  );
 
   function setRange(patch: Partial<RangeConfig>) {
     setCfg({ ...cfg, range: { ...cfg.range, ...patch } });
@@ -2735,9 +2631,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               axes: displayAxes,
               side,
               editable: sweepEditable,
-              onToggle: toggleRuleSweepAxis,
-              onToggleOp: toggleOpSweepAxis,
-              onTickOp: tickOpOption,
+              onToggle: toggleRangeSweepAxis,
               onToggleRisk: toggleRiskSweepAxis,
               // Dropping a stop/target kind drops its stale value/mult axis so a
               // now-unread field can't sweep N identical rows (matches coded mode).
@@ -2749,13 +2643,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               onAxisChange: patchAxis,
             }}
           />
-
-          {usesVolume && (
-            <div className="al-note">
-              Volume-based operands (Volume, Volume-MA, AVWAP) read 0 on epics that don't report
-              trade volume (e.g. many forex/CFD instruments), so they never fire there.
-            </div>
-          )}
             </>
           )}
               </div>
@@ -3431,8 +3318,6 @@ function SidePanel({
     onToggleRisk: (target: string, current: number) => void;
     onKindChange: (field: "stop" | "target") => void;
     onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
-    onToggleOp: (target: string, current: Operator) => void;
-    onTickOp: (target: string, op: Operator) => void;
   };
 }) {
   const isLong = side === "long";
@@ -3962,8 +3847,6 @@ export function RuleGroupSection({
     group: "entry" | "exit";
     editable: boolean;
     onToggle: (target: string, current: number) => void;
-    onToggleOp: (target: string, current: Operator) => void;
-    onTickOp: (target: string, op: Operator) => void;
     onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
   };
 }) {
@@ -4187,15 +4070,4 @@ export function RuleGroupSection({
       </div>
     </Section>
   );
-}
-
-// A sweep target's rule index counts ENABLED rules only (activeGroup drops
-// disabled ones before POST); map it back to the raw UI index for apply.
-function rawRuleIndex(rules: Rule[], activeIdx: number): number {
-  let seen = -1;
-  for (let i = 0; i < rules.length; i++) {
-    if (rules[i].enabled !== false) seen++;
-    if (seen === activeIdx) return i;
-  }
-  return -1;
 }

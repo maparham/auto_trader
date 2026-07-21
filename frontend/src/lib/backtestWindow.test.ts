@@ -25,6 +25,13 @@ function cfg(overrides: Partial<BacktestConfig>): BacktestConfig {
   };
 }
 
+// Warm-up now comes from ATR risk/scaling lengths and expression rows only (the
+// structured operand model is gone). An ATR stop of length N drives an N-bar
+// warm-up, which these tests use to exercise the window math deterministically.
+const atrRisk = (length: number): Partial<BacktestConfig> => ({
+  longRisk: { stop: { kind: "atr", mult: 2, length }, target: { kind: "none" } },
+});
+
 describe("resolveWindow", () => {
   const now = 1_700_000_000_000;
 
@@ -55,34 +62,18 @@ describe("resolveHistoryStart / minimalHistoryStart — weekend padding", () => 
   const windowFromMs = 1_700_000_000_000;
 
   it("pads sub-week resolutions so a weekend inside the lookback doesn't undercount real bars", () => {
-    // "minimal" depth, indicator needs 200 bars on DAY resolution (86400s).
-    // A flat 200*86400s calendar subtraction would land ~28% short of 200 REAL
-    // trading-day candles (weekends have none) — the padded start must reach
-    // further back than the naive calculation to compensate.
-    const config = cfg({
-      longEntry: {
-        combine: "AND",
-        rules: [
-          {
-            left: { kind: "indicator", indicator: "SMA", length: 200 },
-            op: "gt",
-            right: { kind: "const", value: 0 },
-          },
-        ],
-      },
-    });
+    // "minimal" depth, warm-up needs 200 bars on DAY resolution (86400s). A flat
+    // 200*86400s calendar subtraction would land ~28% short of 200 REAL trading-
+    // day candles (weekends have none) — the padded start must reach further back
+    // than the naive calculation to compensate.
+    const config = cfg(atrRisk(200));
     const naiveStart = windowFromMs - 200 * 86_400 * 1000;
     const paddedStart = minimalHistoryStart(config, windowFromMs, 86_400);
     expect(paddedStart).toBeLessThan(naiveStart);
   });
 
   it("does not pad resolutions at/above a week (no weekend gap to compensate for)", () => {
-    const config = cfg({
-      longEntry: {
-        combine: "AND",
-        rules: [{ left: { kind: "indicator", indicator: "SMA", length: 20 }, op: "gt", right: { kind: "const", value: 0 } }],
-      },
-    });
+    const config = cfg(atrRisk(20));
     const weekSeconds = 604_800;
     const naiveStart = windowFromMs - 20 * weekSeconds * 1000;
     expect(minimalHistoryStart(config, windowFromMs, weekSeconds)).toBe(naiveStart);
@@ -99,13 +90,10 @@ describe("requiredWarmupBars", () => {
   const config = (history: "full" | "bars" | "minimal", historyBars?: number) =>
     cfg({
       range: { mode: "bars", bars: 500, history, historyBars },
-      longEntry: {
-        combine: "AND",
-        rules: [{ left: { kind: "indicator", indicator: "EMA", length: 21 }, op: "gt", right: { kind: "const", value: 0 } }],
-      },
+      ...atrRisk(21),
     });
 
-  it("minimal: the longest indicator length", () => {
+  it("minimal: the longest ATR length", () => {
     expect(requiredWarmupBars(config("minimal"))).toBe(21);
   });
 
@@ -113,84 +101,15 @@ describe("requiredWarmupBars", () => {
     expect(requiredWarmupBars(config("bars", 300))).toBe(300);
   });
 
-  it("full: the longest indicator length is still the floor (can't ask for less than that)", () => {
+  it("full: the longest ATR length is still the floor (can't ask for less than that)", () => {
     expect(requiredWarmupBars(config("full"))).toBe(21);
-  });
-
-  it("scales an operand's warm-up by its timeframe when baseSeconds is given", () => {
-    // EMA(10) on a 5-minute timeframe over a 1-minute base needs 10 × 5 = 50
-    // base bars of warm-up, not 10.
-    const c = cfg({
-      range: { mode: "bars", bars: 500, history: "minimal" },
-      longEntry: {
-        combine: "AND",
-        rules: [{ left: { kind: "indicator", indicator: "EMA", length: 10, timeframe: "MINUTE_5" }, op: "gt", right: { kind: "const", value: 0 } }],
-      },
-    });
-    expect(requiredWarmupBars(c, 60)).toBe(50); // 1-minute base
-    expect(requiredWarmupBars(c)).toBe(10); // no baseSeconds ⇒ unscaled
-  });
-
-  it("adds the slope lookback in the operand's OWN timeframe, then scales", () => {
-    // EMA(10)@5m sloped over 3 bars needs (10+3) 5-minute bars warm = 13 × 5 = 65
-    // base bars, not (10×5)+3.
-    const c = cfg({
-      range: { mode: "bars", bars: 500, history: "minimal" },
-      longEntry: {
-        combine: "AND",
-        rules: [
-          { left: { kind: "indicator", indicator: "EMA", length: 10, timeframe: "MINUTE_5", slope: { len: 3 } }, op: "gt", right: { kind: "const", value: 0 } },
-        ],
-      },
-    });
-    expect(requiredWarmupBars(c, 60)).toBe(65);
-  });
-
-  it("warms a pasted chart (series) operand by its length, scaled by its timeframe", () => {
-    // A copied LR(100) curve needs 100 base bars warm; on a 5m TF over a 1m base,
-    // 100 × 5 = 500. A drawing series (no length) needs just 1.
-    const emaKey = (tf?: string) =>
-      cfg({
-        range: { mode: "bars", bars: 500, history: "minimal" },
-        longEntry: {
-          combine: "AND",
-          rules: [
-            {
-              left: {
-                kind: "series",
-                seriesKey: "lr_x",
-                label: "LR(100)",
-                recipe: { source: "indicator", indicatorType: "LR", calcParams: [100, 2], line: 0 },
-                ...(tf ? { timeframe: tf } : {}),
-              },
-              op: "gt",
-              right: { kind: "const", value: 0 },
-            },
-          ],
-        },
-      });
-    expect(requiredWarmupBars(emaKey(), 60)).toBe(100); // base timeframe
-    expect(requiredWarmupBars(emaKey("MINUTE_5"), 60)).toBe(500); // 100 × 5
-  });
-
-  it("bars depth: a higher-timeframe operand can raise the requirement above the asked N", () => {
-    // Asking 30 base bars, but EMA(20)@5m needs 20 × 5 = 100 base bars warm.
-    const c = cfg({
-      range: { mode: "bars", bars: 500, history: "bars", historyBars: 30 },
-      longEntry: {
-        combine: "AND",
-        rules: [{ left: { kind: "indicator", indicator: "EMA", length: 20, timeframe: "MINUTE_5" }, op: "gt", right: { kind: "const", value: 0 } }],
-      },
-    });
-    expect(requiredWarmupBars(c, 60)).toBe(100);
-    expect(requiredWarmupBars(c)).toBe(30); // unscaled falls back to the asked N
   });
 });
 
 describe("expression-row warmup", () => {
   it("sizes warmup from an all-expression config", () => {
     const c = cfg({
-      longEntry: { combine: "AND", rules: [{ expr: "EMA(200) > candle.close", enabled: true } as never] },
+      longEntry: { combine: "AND", rules: [{ expr: "EMA(200) > candle.close", enabled: true }] },
     });
     expect(longestWarmupBars(c, 60)).toBeGreaterThanOrEqual(200);
     expect(requiredWarmupBars(c, 60)).toBeGreaterThanOrEqual(200);
@@ -198,7 +117,7 @@ describe("expression-row warmup", () => {
 
   it("ignores a disabled expression row", () => {
     const c = cfg({
-      longEntry: { combine: "AND", rules: [{ expr: "EMA(200) > candle.close", enabled: false } as never] },
+      longEntry: { combine: "AND", rules: [{ expr: "EMA(200) > candle.close", enabled: false }] },
     });
     expect(longestWarmupBars(c, 60)).toBe(1);
   });

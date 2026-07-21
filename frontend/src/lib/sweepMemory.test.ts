@@ -11,7 +11,6 @@ import {
   pruneSweepAxes,
 } from "./sweepMemory";
 import type { RangeAxis, ListAxis, SweepAxis } from "./sweep";
-import type { RuleGroup } from "./backtestConfig";
 import type { LabelConfig } from "./sweepLabels";
 
 const range = (target: string, from = 10, to = 20, step = 2): RangeAxis => ({
@@ -89,19 +88,14 @@ describe("axis-set persistence", () => {
 });
 
 describe("pruneSweepAxes", () => {
-  // A structured long-entry rule at index 0 (a rule: axis resolves against it);
-  // index 5 has no rule (its axis is dropped). Structured config on purpose: an
-  // expression default config would drop every rule:/op: axis (see sweepLabels).
+  // The structured operand model (and its rule:/op: sweep targets) is gone: a
+  // rule: axis no longer resolves to a label, so pruneSweepAxes drops it. risk:,
+  // param:, and period axes still resolve and are kept.
   const cfg: LabelConfig = {
-    longEntry: {
-      combine: "AND",
-      rules: [
-        { left: { kind: "indicator", indicator: "EMA", length: 9 }, op: "gt", right: { kind: "const", value: 0 } },
-      ],
-    } as RuleGroup,
+    longEntry: { combine: "AND", rules: [{ expr: "EMA(9) > 0", enabled: true }] },
   };
 
-  it("drops a rule axis whose rule no longer exists, keeps resolvable and self-labelled axes", () => {
+  it("drops rule: axes (structured targets removed), keeps risk/param/period axes", () => {
     const axes: SweepAxis[] = [
       range("rule:long.entry.0.left.length"),
       range("rule:long.entry.5.left.length"),
@@ -111,7 +105,6 @@ describe("pruneSweepAxes", () => {
     ];
     const kept = pruneSweepAxes(axes, cfg);
     expect(kept.map((a) => a.target)).toEqual([
-      "rule:long.entry.0.left.length",
       "risk:long.stop.value",
       "param:n",
       "period",

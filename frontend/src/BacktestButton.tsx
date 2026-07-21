@@ -17,7 +17,6 @@ import type { ChartController } from "./lib/chartController";
 import Tooltip from "./components/Tooltip";
 import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
-import { buildChartOperandSeries } from "./lib/backtestSeries";
 import { defaultBacktestConfig, activeGroup, type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
 import { resolveMask } from "./lib/backtestSchedule";
 import { loadCodedCfg, resolveParamValues, sendableRisk } from "./lib/codedConfig";
@@ -216,10 +215,8 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // structured path throughout.
       // Coded mode: the panel's per-file config (params + risk + exit rules,
       // Task 8) drives the run — entries stay empty (the .py file opens
-      // positions itself). Feeding this into `buildChartOperandSeries`
-      // unchanged (empty entry groups ⇒ only exit-rule chart-operand series
-      // come out; natives/ATR are computed server-side) is the "effective
-      // cfg" trick other tasks reuse, so no other machinery needs to know
+      // positions itself). This "effective cfg" trick (natives/ATR computed
+      // server-side) other tasks reuse, so no other machinery needs to know
       // coded mode exists.
       const EMPTY_GROUP: RuleGroup = { combine: "AND", rules: [] };
       const codedCfg = coded ? loadCodedCfg("backtest", cfg.codedStrategy!) : null;
@@ -310,20 +307,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         setWarning(`only ${warmup} of ${required} warm-up bars available, so indicators may be cold at the start of the window`);
       }
 
-      // A chart-operand rule may reference a higher timeframe than the base
-      // run; fetch each such timeframe over the same span as the base history
-      // so its indicator is warm, then buildChartOperandSeries forward-fills
-      // it onto the base bars.
-      const htfFromSec = Math.floor(Math.max(0, bars[0].timestamp) / 1000);
-      const fetchTimeframe = (resolution: string) =>
-        fetchRange(epic, resolution, htfFromSec, toSec, priceSide, brokerId);
+      // The backend recomputes every indicator/price/ATR series itself from the
+      // rule expressions (and coded mode's strategy-file indicators run in
+      // Python), so the browser ships no precomputed series.
       const tSeries0 = performance.now();
-      // The backend now recomputes native indicators/price/slope/ATR series
-      // itself from the rule config, so the browser only ships kind:"series"
-      // chart-operand/drawing series here — the ones the backend can't derive
-      // on its own. Coded mode's strategy-file indicators are computed in
-      // Python and never touch this series map either way.
-      const series = await buildChartOperandSeries(bars, effCfg, runResolution, fetchTimeframe);
+      const series: Record<string, Array<number | null>> = {};
       const tSeries1 = performance.now();
       const candles = bars.map((k) => ({
         time: Math.round(k.timestamp / 1000),
@@ -336,7 +324,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
 
       console.info(
         `[backtest perf] prepare: bars fetch ${(tSeries0 - tFetch0).toFixed(0)}ms (${bars.length} bars), ` +
-          `buildChartOperandSeries ${(tSeries1 - tSeries0).toFixed(0)}ms (${Object.keys(series).length} series)`,
+          `series ${(tSeries1 - tSeries0).toFixed(0)}ms (${Object.keys(series).length} series)`,
       );
       const tRun0 = performance.now();
       // Coded exits are sent as expression rows (baseReq below) and rule-mode

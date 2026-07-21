@@ -4,15 +4,10 @@
 
 import {
   longestIndicatorLength,
-  collectSeriesOperands,
-  operandBaseLen,
   riskAtrLengths,
   scalingAtrLengths,
-  slopeLen,
-  lookbackSpec,
   type BacktestConfig,
 } from "./backtestConfig";
-import { RESOLUTION_SECONDS } from "./feed";
 import { warmupOf } from "./expr/parser";
 
 /** The longest warm-up (in base bars) any enabled expression row needs. Structured
@@ -28,25 +23,13 @@ function exprWarmupBars(cfg: BacktestConfig): number {
   return m;
 }
 
-/** The longest warm-up need in BASE bars, accounting for per-operand timeframes:
- * an indicator of length N on a timeframe T needs N × (T / base) base bars of
- * history before it's warm. Base-timeframe operands (the common case) scale by 1,
- * so this equals {@link longestIndicatorLength}. ATR risk/scaling lengths are
- * always base-timeframe. `baseSeconds` unknown/≤0 ⇒ no scaling. */
+/** The longest warm-up need in BASE bars. ATR risk/scaling lengths are always
+ * base-timeframe; expression rows contribute their own warm-up via
+ * {@link exprWarmupBars}. `baseSeconds` is kept for call-site compatibility (the
+ * former per-operand timeframe scaling is gone with the structured operands). */
 export function longestWarmupBars(cfg: BacktestConfig, baseSeconds: number): number {
   if (!(baseSeconds > 0)) return Math.max(longestIndicatorLength(cfg), exprWarmupBars(cfg));
-  const scaled = collectSeriesOperands(cfg).map((op) => {
-    // A sloped operand needs `slope.len` extra bars in its OWN timeframe (it reads
-    // v[i] and v[i−len] on that timeframe), so add it BEFORE scaling by the ratio.
-    const len = operandBaseLen(op) + (slopeLen(op) ?? 0) + (lookbackSpec(op)?.len ?? 0);
-    // Both indicator and (pasted chart) series operands can carry a per-operand
-    // higher timeframe; a drawing series never does. Scale by that TF's ratio.
-    const tf = op.kind === "indicator" || op.kind === "series" ? op.timeframe : undefined;
-    const tfSec = tf ? RESOLUTION_SECONDS[tf] ?? baseSeconds : baseSeconds;
-    const ratio = Math.max(1, Math.ceil(tfSec / baseSeconds));
-    return len * ratio;
-  });
-  return Math.max(1, ...scaled, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg), exprWarmupBars(cfg));
+  return Math.max(1, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg), exprWarmupBars(cfg));
 }
 
 const DAY_MS = 86_400_000;
