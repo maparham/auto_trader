@@ -9,7 +9,7 @@ import { save, load, ns } from "./persist";
 import {
   type LiveState, type ArmedSnapshot, activeRules, appendLog, setPositionVintage, markLost,
 } from "./liveState";
-import { activeGroup, type RuleGroup } from "./backtestConfig";
+import { type RuleGroup } from "./backtestConfig";
 import { sendableRisk } from "./codedConfig";
 import { markStrategyDeal, forgetStrategyDeal } from "./liveTags";
 import { recordClose } from "./liveJournal";
@@ -140,9 +140,11 @@ export async function runOneCycle(
     // the expression path sends empty groups (the backend ignores them under
     // exprMode) and carries the real rules in expr* below.
     longEntry: coded ? effCfg.longEntry : emptyGroup,
-    longExit: coded ? activeGroup(effCfg.longExit) : emptyGroup,
+    // Coded exits travel on exprLongExit/exprShortExit (below); the structured
+    // longExit/shortExit must be empty or the expr-only rows fail RuleDTO validation.
+    longExit: emptyGroup,
     shortEntry: coded ? effCfg.shortEntry : emptyGroup,
-    shortExit: coded ? activeGroup(effCfg.shortExit) : emptyGroup,
+    shortExit: emptyGroup,
     exprMode: coded ? undefined : true,
     exprLongEntry: coded ? undefined : exprRows(cfg.longEntry),
     exprLongExit: coded ? exprRows(codedCfg?.longExit ?? emptyGroup) : exprRows(cfg.longExit),

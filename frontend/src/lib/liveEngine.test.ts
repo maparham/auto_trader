@@ -133,17 +133,17 @@ describe("runOneCycle", () => {
     expect(req.priceSide).toBe("mid");
   });
 
-  it("coded cycle sends params, risk, exit groups and exit-scoped series from the snapshot", async () => {
-    const RSI_EXIT_RULE: Rule = {
-      left: { kind: "indicator", indicator: "RSI", length: 14 },
-      op: "gt",
-      right: { kind: "const", value: 70 },
-      enabled: true,
-    };
+  it("coded cycle carries an expr exit row on exprLongExit and keeps the structured longExit empty (422 guard)", async () => {
+    // Coded exits are now authored in the EXPRESSION editor, so an exit row is
+    // shaped { expr, enabled } with NO left/op/right. Sending that row through the
+    // STRUCTURED longExit field fails the backend's RuleDTO (requires left/op/right)
+    // → HTTP 422. The real row must travel on exprLongExit; the structured
+    // longExit/shortExit must be empty.
+    const EXPR_EXIT_ROW = { expr: "candle.close < EMA(20)", enabled: true } as unknown as Rule;
     const coded: CodedStrategyConfig = {
       params: { ema_fast: 12 },
       longRisk: { stop: { kind: "pct", value: 2 }, target: { kind: "none" } },
-      longExit: { combine: "AND", rules: [RSI_EXIT_RULE] },
+      longExit: { combine: "AND", rules: [EXPR_EXIT_ROW] },
       shortExit: { combine: "AND", rules: [] },
     };
     const cfg = { ...defaultBacktestConfig(), mode: "coded" as const, codedStrategy: "ema_cross.py" };
@@ -165,11 +165,12 @@ describe("runOneCycle", () => {
     expect(req.codedParams).toEqual({ ema_fast: 12 });
     expect(req.longRisk).toEqual(coded.longRisk);
     expect(req.shortRisk).toBeUndefined();
-    expect(req.longExit.rules.length).toBe(1);
+    // 422 guard: the structured groups must be empty — the expr-only exit row
+    // would fail RuleDTO if sent through longExit/shortExit.
+    expect(req.longExit.rules.length).toBe(0);
     expect(req.shortExit.rules.length).toBe(0);
-    // Coded live now also carries its exit groups as expression rows so the
-    // backend expr route can decide exits from them.
-    expect(req.exprLongExit).toEqual([{ expr: RSI_EXIT_RULE.expr ?? "", enabled: true }]);
+    // The real exit row travels on exprLongExit so the backend expr route decides exits.
+    expect(req.exprLongExit).toEqual([{ expr: "candle.close < EMA(20)", enabled: true }]);
     expect(req.exprShortExit).toEqual([]);
     expect(req.series).toEqual({ RSI_14: [70] });
   });

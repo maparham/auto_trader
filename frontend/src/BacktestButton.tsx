@@ -366,9 +366,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // entries are always the empty group (the .py file opens positions
         // itself); coded exits come from the panel's per-file config.
         longEntry: activeGroup(effCfg.longEntry),
-        longExit: activeGroup(effCfg.longExit),
+        // Coded exits travel on exprLongExit/exprShortExit (below); the structured
+        // longExit/shortExit must be empty or the expr-only rows fail RuleDTO validation.
+        longExit: EMPTY_GROUP,
         shortEntry: activeGroup(effCfg.shortEntry),
-        shortExit: activeGroup(effCfg.shortExit),
+        shortExit: EMPTY_GROUP,
         // Coded exits run as expressions; the structured longExit/shortExit above
         // are ignored by the coded backend and removed in Phase 2.
         exprLongExit: exprRows(effCfg.longExit),
