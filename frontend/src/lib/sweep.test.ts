@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { axisColumnLabel, axisOptionFor, comboAxisLabel, comboAxisText, comboCount, enumerateCombos, getLastSweepJob, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, robustWindowBounds, ruleAxisTarget, runSweep, sweepCatchState, SWEEP_WARN_COMBOS } from "./sweep";
+import { axisColumnLabel, axisOptionFor, comboAxisLabel, comboAxisText, comboCount, enumerateCombos, getLastSweepJob, materializePeriodAxes, mirrorRiskAxes, robustWindowBounds, runSweep, sweepCatchState, SWEEP_WARN_COMBOS } from "./sweep";
 import * as api from "../api";
 
 const axis = (target: string, from: number, to: number, step: number) =>
@@ -276,20 +276,6 @@ describe("robustWindowBounds", () => {
   });
 });
 
-describe("ruleAxisTarget", () => {
-  it("builds an operand length target", () => {
-    expect(ruleAxisTarget("long", "entry", 0, "left.length")).toBe("rule:long.entry.0.left.length");
-  });
-
-  it("builds an operand value target for the right side", () => {
-    expect(ruleAxisTarget("short", "exit", 2, "right.value")).toBe("rule:short.exit.2.right.value");
-  });
-
-  it("builds a count target with no operand side", () => {
-    expect(ruleAxisTarget("long", "exit", 1, "count")).toBe("rule:long.exit.1.count");
-  });
-});
-
 describe("sweepCatchState", () => {
   const prev = { rows: [{ combo: { "param:n": 1 }, metrics: null, error: null, windows: null }], done: 20, total: 45, running: true };
 
@@ -320,24 +306,24 @@ describe("sweepCatchState", () => {
 });
 
 describe("list axes", () => {
-  const op = listAxis("op:long.entry.0", [
-    { label: "greater than", patch: { "op:long.entry.0": "gt" } },
-    { label: "less than", patch: { "op:long.entry.0": "lt" } },
+  const tw = listAxis("timeWindow", [
+    { label: "morning", patch: { "timeWindow:startMin": 480 } },
+    { label: "afternoon", patch: { "timeWindow:startMin": 720 } },
   ]);
 
   it("enumerates each option's patch and counts options", () => {
-    expect(enumerateCombos([op])).toEqual([
-      { "op:long.entry.0": "gt" }, { "op:long.entry.0": "lt" },
+    expect(enumerateCombos([tw])).toEqual([
+      { "timeWindow:startMin": 480 }, { "timeWindow:startMin": 720 },
     ]);
-    expect(comboCount([op])).toBe(2);
+    expect(comboCount([tw])).toBe(2);
     expect(comboCount([listAxis("timeWindow", [])])).toBe(Infinity); // empty list blocks Run
   });
 
   it("spreads multi-key patches and crosses with a range axis", () => {
-    const tw = listAxis("timeWindow", [
+    const win = listAxis("timeWindow", [
       { label: "morning", patch: { "timeWindow:startMin": 480, "timeWindow:endMin": 720, "timeWindow:tz": "UTC" } },
     ]);
-    const combos = enumerateCombos([tw, axis("param:n", 1, 2, 1)]);
+    const combos = enumerateCombos([win, axis("param:n", 1, 2, 1)]);
     expect(combos).toHaveLength(2);
     expect(combos[0]).toEqual({
       "timeWindow:startMin": 480, "timeWindow:endMin": 720, "timeWindow:tz": "UTC", "param:n": 1,
@@ -345,42 +331,25 @@ describe("list axes", () => {
   });
 
   it("resolves a row's option by patch-subset match", () => {
-    expect(axisOptionFor(op, { "op:long.entry.0": "lt", "param:n": 3 })?.label).toBe("less than");
-    expect(axisOptionFor(op, { "op:long.entry.0": "gte" })).toBeNull();
-    expect(comboAxisText(op, { "op:long.entry.0": "gt" })).toBe("greater than");
+    expect(axisOptionFor(tw, { "timeWindow:startMin": 720, "param:n": 3 })?.label).toBe("afternoon");
+    expect(axisOptionFor(tw, { "timeWindow:startMin": 999 })).toBeNull();
+    expect(comboAxisText(tw, { "timeWindow:startMin": 480 })).toBe("morning");
     expect(comboAxisText(axis("param:n", 1, 2, 1), { "param:n": 1.5 })).toBe("1.5");
     // Combos stored by old archives can carry enumeration float noise; the
     // display text flushes it to a clean 0 (fmtAxisValue).
     expect(comboAxisText(axis("param:n", -0.15, 0.05, 0.025), { "param:n": 2.7755575615628914e-17 })).toBe("0");
   });
 
-  it("substitutes a rule value axis's x placeholder with the row's value", () => {
-    const right = { ...axis("rule:long.entry.0.right.value", 0, 1, 0.5), label: "MA Slope 100 · SMA 9 > x" };
-    expect(comboAxisLabel(right, { "rule:long.entry.0.right.value": 0 })).toBe("MA Slope 100 · SMA 9 > 0");
-    expect(comboAxisLabel(right, { "rule:long.entry.0.right.value": -1 })).toBe("MA Slope 100 · SMA 9 > -1");
-    // Collision-qualified suffix after the placeholder still substitutes.
-    const qualified = { ...right, label: "Long 1 · SMA 9 > x (right)" };
-    expect(comboAxisLabel(qualified, { "rule:long.entry.0.right.value": 0.5 })).toBe("Long 1 · SMA 9 > 0.5 (right)");
-    const left = { ...axis("rule:long.entry.0.left.value", 0, 1, 0.5), label: "x < EMA 21" };
-    expect(comboAxisLabel(left, { "rule:long.entry.0.left.value": 1 })).toBe("1 < EMA 21");
-  });
-
-  it("appends the value for axes without a placeholder", () => {
+  it("appends the value after the axis label", () => {
     expect(comboAxisLabel({ ...axis("param:n", 1, 2, 1), label: "Fast EMA" }, { "param:n": 2 })).toBe("Fast EMA 2");
-    expect(comboAxisLabel({ ...axis("rule:long.entry.0.left.length", 5, 10, 5), label: "EMA 9 length" }, { "rule:long.entry.0.left.length": 5 })).toBe("EMA 9 length 5");
-    // A value axis whose stored label lost its placeholder falls back to appending.
-    expect(comboAxisLabel({ ...axis("rule:long.entry.0.right.value", 0, 1, 1), label: "threshold" }, { "rule:long.entry.0.right.value": 1 })).toBe("threshold 1");
-    expect(comboAxisLabel(op, { "op:long.entry.0": "gt" })).toBe(`${op.label} greater than`);
+    expect(comboAxisLabel({ ...axis("risk:long.stop.value", 0, 1, 1), label: "Long stop %" }, { "risk:long.stop.value": 1 })).toBe("Long stop % 1");
+    expect(comboAxisLabel(tw, { "timeWindow:startMin": 480 })).toBe(`${tw.label} morning`);
   });
 
-  it("strips the value placeholder for a per-axis column header", () => {
-    const right = { ...axis("rule:long.entry.0.right.value", 0, 1, 0.5), label: "MA Slope 100 · SMA 9 > x" };
-    expect(axisColumnLabel(right)).toBe("MA Slope 100 · SMA 9 >");
-    const left = { ...axis("rule:long.entry.0.left.value", 0, 1, 0.5), label: "x < EMA 21" };
-    expect(axisColumnLabel(left)).toBe("< EMA 21");
-    // Non-value axes keep their label verbatim; the value reads under it.
+  it("keeps the axis label verbatim for a per-axis column header", () => {
     expect(axisColumnLabel({ ...axis("param:n", 1, 2, 1), label: "Fast EMA" })).toBe("Fast EMA");
-    expect(axisColumnLabel({ ...axis("rule:long.entry.0.left.length", 5, 10, 5), label: "EMA 9 length" })).toBe("EMA 9 length");
+    expect(axisColumnLabel({ ...axis("risk:long.stop.value", 0, 1, 1), label: "Long stop %" })).toBe("Long stop %");
+    expect(axisColumnLabel(tw)).toBe("timeWindow");
   });
 });
 
@@ -408,12 +377,5 @@ describe("period axes", () => {
     // Non-period axes pass through untouched.
     const passthrough = axis("param:n", 1, 2, 1);
     expect(materializePeriodAxes([passthrough], fromMs, toMs)).toEqual([passthrough]);
-  });
-});
-
-describe("opAxisTarget", () => {
-  it("builds the op target path", () => {
-    expect(opAxisTarget("long", "entry", 0)).toBe("op:long.entry.0");
-    expect(opAxisTarget("short", "exit", 2)).toBe("op:short.exit.2");
   });
 });

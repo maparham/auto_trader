@@ -28,8 +28,7 @@ export interface SweepOption {
 
 // Numeric range axis (the original kind). Targets:
 // "param:<name>" | "risk:<side>.<stop|target>.<value|mult>" |
-// "rule:<side>.<entry|exit>.<idx>.<left|right>.<length|value>" |
-// "rule:<side>.<entry|exit>.<idx>.count"
+// "lit:<side>.<entry|exit>.<rowIdx>.<ordinal>" (expression literal).
 export interface RangeAxis {
   kind: "range";
   target: string;
@@ -44,10 +43,9 @@ export interface RangeAxis {
   step: number;
 }
 
-// Discrete-list axis. Targets: "op:<side>.<entry|exit>.<idx>" (operator per
-// rule term) | "timeWindow" (intraday window; patch keys timeWindow:startMin/
-// endMin/tz) | "period" (after materialization; patch keys period:from/to,
-// unix seconds).
+// Discrete-list axis. Targets: "timeWindow" (intraday window; patch keys
+// timeWindow:startMin/endMin/tz) | "period" (after materialization; patch keys
+// period:from/to, unix seconds).
 export interface ListAxis {
   kind: "list";
   target: string;
@@ -72,30 +70,8 @@ export type SweepCombo = Record<string, number | string>;
 // the runner enumerates and submits any size the user confirms past the warning.
 export const SWEEP_WARN_COMBOS = 1000;
 
-/** Builds a `rule:` sweep-axis target path for a rule operand's numeric field
- * (`length` on an indicator, `value` on a const) — `ruleAxisTarget("long",
- * "entry", 0, "left.length")` → `"rule:long.entry.0.left.length"`. Also used
- * for an exit rule's own `count` field, which has no operand side: pass
- * `"count"` as the leaf. Must match the backend's rule-sweep target grammar —
- * keep in sync with the doc-comment on SweepAxis.target above. */
-export function ruleAxisTarget(
-  side: "long" | "short",
-  group: "entry" | "exit",
-  idx: number,
-  leaf: "left.length" | "right.length" | "left.value" | "right.value" | "count",
-): string {
-  return `rule:${side}.${group}.${idx}.${leaf}`;
-}
-
-/** Builds an `op:` sweep-axis target for a rule's operator. `idx` is the rule's
- * position in the ENABLED-only list (same convention as ruleAxisTarget). */
-export function opAxisTarget(side: "long" | "short", group: "entry" | "exit", idx: number): string {
-  return `op:${side}.${group}.${idx}`;
-}
-
-// Re-export the literal target builder from sweepLiterals; it follows the same
-// convention as ruleAxisTarget and opAxisTarget (side/group/idx). Not removed
-// or modified until Task 13 cutover.
+// Re-export the literal target builder from sweepLiterals. It addresses an
+// expression literal by side/group/rowIdx/ordinal.
 export { sweepLiteralTarget } from "./expr/sweepLiterals";
 
 /** When the SL/TP sync is on, risk axes are canonicalized to the long side at
@@ -219,28 +195,15 @@ export function comboAxisText(axis: SweepAxis, combo: SweepCombo): string {
   return typeof v === "number" ? fmtAxisValue(v) : String(v ?? "?");
 }
 
-/** Label + value for one axis of a combo, for results rows. A rule VALUE
- * axis's label carries an "x" placeholder for the swept slot ("EMA 9 > x",
- * from sweepLabels); with the row's value known, substitute it ("EMA 9 > 0")
- * instead of appending ("EMA 9 > x 0"). Every other axis appends. */
+/** Label + value for one axis of a combo, for results rows: the axis label
+ * followed by the combo's value for that axis. */
 export function comboAxisLabel(axis: SweepAxis, combo: SweepCombo): string {
-  const text = comboAxisText(axis, combo);
-  if (/^rule:.+\.(left|right)\.value$/.test(axis.target)) {
-    const substituted = axis.label.replace(/\bx\b/, text);
-    if (substituted !== axis.label) return substituted;
-  }
-  return `${axis.label} ${text}`;
+  return `${axis.label} ${comboAxisText(axis, combo)}`;
 }
 
-/** Column header for a per-axis results column: the axis label with the swept-
- * value placeholder removed. A rule VALUE axis's label carries an "x" slot for
- * the swept number ("EMA 9 > x"); in a per-axis column that number lives in the
- * cell, so the header drops the "x" ("EMA 9 >"). Every other axis kind keeps its
- * label verbatim (the value simply reads under it). */
+/** Column header for a per-axis results column: the axis label verbatim (the
+ * swept value reads under it in the cell). */
 export function axisColumnLabel(axis: SweepAxis): string {
-  if (/^rule:.+\.(left|right)\.value$/.test(axis.target)) {
-    return axis.label.replace(/\s*\bx\b\s*/, " ").trim() || axis.label;
-  }
   return axis.label;
 }
 

@@ -1,11 +1,10 @@
 // Human labels for sweep axes. The axis `target` is a machine path
-// ("rule:long.entry.0.right.value", "risk:long.stop.value",
-// "op:long.entry.0"); this resolves it against the current config into copy a
-// trader reads: "MA Slope 9 · SMA 9 > x", "Long stop %". Used at toggle time
-// (single axis, base label) and again at run time (collision-aware) so the
-// results panel names each axis by what it actually sweeps, not its path.
+// ("lit:long.entry.0.1", "risk:long.stop.value"); this resolves it against the
+// current config into copy a trader reads: "EMA length", "Long stop %". Used at
+// toggle time (single axis, base label) and again at run time (collision-aware)
+// so the results panel names each axis by what it actually sweeps, not its path.
 
-import { lookbackSpec, scaleSpec, type Operand, type Operator, type RiskConfig, type RuleGroup } from "./backtestConfig";
+import { type RiskConfig, type RuleGroup } from "./backtestConfig";
 import type { SweepAxis } from "./sweep";
 import { literalLabel } from "./expr/sweepLiterals";
 
@@ -21,59 +20,6 @@ export interface LabelConfig {
   shortRisk?: RiskConfig;
 }
 
-// Compact comparison text. `crosses` variants stay as words so they never
-// collide with the "x" placeholder used for the swept value.
-const OP_SYMBOL: Record<Operator, string> = {
-  gt: ">",
-  lt: "<",
-  gte: ">=",
-  lte: "<=",
-  crossesAbove: "crosses above",
-  crossesBelow: "crosses below",
-  crosses: "crosses",
-};
-
-/** How one operand reads on a rule row: a chart operand's own chip label, an
- * indicator plus its length ("EMA 21", "VOL"), a price field, a const value,
- * or the held position's entry price. */
-export function operandLabel(op: Operand): string {
-  // const never carries a lookback or scale (can't look back, can't scale itself) — return early untouched.
-  if (op.kind === "const") return String(op.value);
-  let base: string;
-  switch (op.kind) {
-    case "series":
-      base = op.label;
-      break;
-    case "price":
-      base = op.field;
-      break;
-    case "indicator":
-      base = op.length != null ? `${op.indicator} ${op.length}` : op.indicator;
-      break;
-    case "entry":
-      base = "entry price";
-      break;
-    default:
-      return "?";
-  }
-  // A looked-back operand wraps its base: "ago" reads as a bar offset ("close
-  // [-3]"), the aggregates read as "<mode> <len> of <base>" ("high 20 of EMA 9").
-  // Note: entry can't have lookback (can't look back), but can have scale.
-  const lb = lookbackSpec(op);
-  if (lb) base = lb.mode === "ago" ? `${base} [-${lb.len}]` : `${lb.mode} ${lb.len} of ${base}`;
-  // A scaled operand wraps its base: multiplier prefix ("2x EMA 9"), then offset
-  // suffix ("+1%", "-2" points).
-  const sc = scaleSpec(op);
-  if (sc) {
-    if (sc.mult != null && sc.mult !== 1) base = `${sc.mult}x ${base}`;
-    if (sc.off != null && sc.off !== 0) {
-      const sign = sc.off > 0 ? "+" : "-";
-      base = `${base} ${sign}${Math.abs(sc.off)}${sc.offUnit === "pct" ? "%" : ""}`;
-    }
-  }
-  return base;
-}
-
 function cap(side: string): string {
   return side === "long" ? "Long" : "Short";
 }
@@ -81,41 +27,6 @@ function cap(side: string): string {
 function groupFor(cfg: LabelConfig, side: string, group: string): RuleGroup | undefined {
   if (group === "entry") return side === "long" ? cfg.longEntry : cfg.shortEntry;
   return side === "long" ? cfg.longExit : cfg.shortExit;
-}
-
-// A sweep target addresses a rule by its position in the ENABLED-only list
-// (activeRuleIndex in the modal), so resolve against the same filtered list.
-function ruleAt(cfg: LabelConfig, side: string, group: string, idx: number) {
-  const g = groupFor(cfg, side, group);
-  if (!g) return null;
-  return g.rules.filter((r) => r.enabled !== false)[idx] ?? null;
-}
-
-function ruleLabel(target: string, cfg: LabelConfig): string | null {
-  // "rule:<side>.<group>.<idx>.<left|right>.<length|value>" | "...count"
-  const [, side, group, idxStr, ...leaf] = target.split(/[:.]/);
-  const rule = ruleAt(cfg, side, group, Number(idxStr));
-  // A row carrying an `expr` is an expression rule with no structured
-  // left/op/right, so a stale rule: axis can't resolve against it (drop it).
-  if (!rule || rule.expr != null) return null;
-  const left = operandLabel(rule.left);
-  const right = operandLabel(rule.right);
-  const sym = OP_SYMBOL[rule.op];
-  const path = leaf.join(".");
-  if (path === "count") return `${left} ${sym} ${right}, Nth`;
-  if (path === "left.value") return `x ${sym} ${right}`;
-  if (path === "right.value") return `${left} ${sym} x`;
-  if (path === "left.length") return `${left} length`;
-  if (path === "right.length") return `${right} length`;
-  return null;
-}
-
-function opLabel(target: string, cfg: LabelConfig): string | null {
-  // "op:<side>.<group>.<idx>"
-  const [, side, group, idxStr] = target.split(/[:.]/);
-  const rule = ruleAt(cfg, side, group, Number(idxStr));
-  if (!rule || rule.expr != null) return null;
-  return `${operandLabel(rule.left)} op`;
 }
 
 function litLabel(target: string, cfg: LabelConfig): string | null {
@@ -157,8 +68,6 @@ function riskLabel(target: string, cfg: LabelConfig): string | null {
  * timeWindow targets return null on purpose: they keep their own stored
  * label. */
 export function sweepAxisLabel(target: string, cfg: LabelConfig): string | null {
-  if (target.startsWith("rule:")) return ruleLabel(target, cfg);
-  if (target.startsWith("op:")) return opLabel(target, cfg);
   if (target.startsWith("lit:")) return litLabel(target, cfg);
   if (target.startsWith("risk:")) return riskLabel(target, cfg);
   return null;
