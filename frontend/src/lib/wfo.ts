@@ -5,6 +5,7 @@ import {
   pollWfoJob,
   submitWfoJob,
   type BacktestRequest,
+  type ExprBacktestRequest,
   type SweepTarget,
   type WfoAxis,
   type WalkForwardPayload,
@@ -289,19 +290,20 @@ async function pollWfoToCompletion(
  * aborted" on a client abort (killing the server job only when shouldCancelServer()
  * is true), or the backend error on a reported failure. */
 export async function runWalkForward(
-  baseReq: BacktestRequest,
+  baseReq: BacktestRequest | ExprBacktestRequest,
   wf: WalkForwardPayload,
   opts: {
     signal?: AbortSignal;
     target?: SweepTarget;
     shouldCancelServer?: () => boolean;
+    expr?: boolean;
     onState: (st: WfoRunState) => void;
   },
 ): Promise<WfoResult | null> {
   const target: SweepTarget = opts.target ?? "local";
   if (opts.signal?.aborted) throw new Error("walk-forward aborted");
 
-  const { jobId } = await submitWfoJob(baseReq, wf, target);
+  const { jobId } = await submitWfoJob(baseReq, wf, target, opts.expr ?? false);
   rememberWfoJob(jobId, target);
   const startedAt = Date.now();
   const shouldCancelServer = opts.shouldCancelServer ?? (() => true);

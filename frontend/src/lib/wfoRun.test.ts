@@ -35,6 +35,24 @@ describe("runWalkForward", () => {
     expect(readWfoMemo()).toBeNull();
   });
 
+  it("passes expr flag through to submitWfoJob", async () => {
+    const submit = vi.spyOn(api, "submitWfoJob").mockResolvedValue({ jobId: "j1", total: 4, schemes: [] });
+    vi.spyOn(api, "pollWfoJob").mockResolvedValue(DONE);
+    const p = runWalkForward(REQ, WF, { onState: () => {}, expr: true });
+    await vi.advanceTimersByTimeAsync(WFO_POLL_MS * 2);
+    await p;
+    expect(submit).toHaveBeenCalledWith(REQ, WF, "local", true);
+  });
+
+  it("defaults to the structured endpoint (expr false)", async () => {
+    const submit = vi.spyOn(api, "submitWfoJob").mockResolvedValue({ jobId: "j1", total: 4, schemes: [] });
+    vi.spyOn(api, "pollWfoJob").mockResolvedValue(DONE);
+    const p = runWalkForward(REQ, WF, { onState: () => {} });
+    await vi.advanceTimersByTimeAsync(WFO_POLL_MS * 2);
+    await p;
+    expect(submit).toHaveBeenCalledWith(REQ, WF, "local", false);
+  });
+
   it("abort cancels server job when shouldCancelServer", async () => {
     vi.spyOn(api, "submitWfoJob").mockResolvedValue({ jobId: "j1", total: 4, schemes: [] });
     vi.spyOn(api, "pollWfoJob").mockImplementation(

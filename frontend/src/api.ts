@@ -812,10 +812,13 @@ export interface WfoArchiveSummary {
 const wfoJobsBase = (target: SweepTarget) =>
   `${BASE}/api/backtest/walkforward/jobs${target === "remote" ? "?target=remote" : ""}`;
 
+const exprWfoJobsBase = (target: SweepTarget) =>
+  `${BASE}/api/expr/walkforward/jobs${target === "remote" ? "?target=remote" : ""}`;
+
 export async function submitWfoJob(
-  req: BacktestRequest, wf: WalkForwardPayload, target: SweepTarget,
+  req: BacktestRequest | ExprBacktestRequest, wf: WalkForwardPayload, target: SweepTarget, expr = false,
 ): Promise<{ jobId: string; total: number; schemes: Array<{ trainSpan: string; folds: Array<Record<string, number>> }> }> {
-  const res = await fetch(wfoJobsBase(target), {
+  const res = await fetch(expr ? exprWfoJobsBase(target) : wfoJobsBase(target), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...req, walkforward: wf }),

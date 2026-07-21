@@ -210,17 +210,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         return;
       }
       // The main rule groups edit as expressions. Sweeps run on the expr engine
-      // (/api/expr/sweep/jobs) and holdout evaluation runs the expr backtest over
-      // the reserved tail window (both via the expr request built below). Walk-
-      // forward still builds the structured request from those groups, so it stays
-      // gated for expression rules until it moves onto the expr engine. Coded runs
-      // keep their structured path throughout.
-      if (!coded) {
-        if (wfoRequest) {
-          toast("Walk-forward is not yet available for expression rules.");
-          return;
-        }
-      }
+      // (/api/expr/sweep/jobs), holdout evaluation runs the expr backtest over the
+      // reserved tail window, and walk-forward routes to the expr engine
+      // (/api/expr/walkforward/jobs) via exprReq below. Coded runs keep their
+      // structured path throughout.
       // Coded mode: the panel's per-file config (params + risk + exit rules,
       // Task 8) drives the run — entries stay empty (the .py file opens
       // positions itself). Feeding this into `buildChartOperandSeries`
@@ -449,10 +442,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         wfoStateSignal.set({ phase: "grid", done: 0, total: 0, running: true, foldRows: [], result: null, startedAt: Date.now() });
         try {
           progressStageSignal.set(sweepTargetSignal.value === "remote" ? "uploading" : "submitting");
-          const result = await runWalkForward(baseReq, wf, {
+          const result = await runWalkForward(coded ? baseReq : exprReq, wf, {
             signal: ctl.signal,
             target: sweepTargetSignal.value,
             shouldCancelServer: () => wfoCancelServer.value,
+            expr: !coded,
             // After an abort (modal closed / Cancel) the state may already be
             // cleared — a late-resolving poll must not resurrect a ghost run.
             // Mirrors the sweep branch's onRows guard + continueResumeWfo.

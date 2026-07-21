@@ -25,6 +25,23 @@ describe("wfo api", () => {
     expect(JSON.parse((init as RequestInit).body as string).walkforward.schedule.trainSpan).toBe("3m");
   });
 
+  it("submitWfoJob routes to the expr endpoint when expr is true", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({ jobId: "j2", total: 4, schemes: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const req = { epic: "X" } as unknown as api.ExprBacktestRequest;
+    const wf: api.WalkForwardPayload = {
+      combos: [{ "param:fast": 5 }],
+      axes: [{ kind: "range", targets: ["param:fast"], values: [5, 10] }],
+      schedule: { mode: "rolling", trainSpan: "3m", testSpan: "1m" },
+    };
+    await api.submitWfoJob(req, wf, "local", true);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/expr/walkforward/jobs");
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/api/backtest/walkforward/jobs");
+    // Coded/default still hits the structured endpoint.
+    await api.submitWfoJob(req as unknown as api.BacktestRequest, wf, "local");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("/api/backtest/walkforward/jobs");
+  });
+
   it("pollWfoJob carries cursor and remote target", async () => {
     const fetchMock = vi.fn().mockResolvedValue(okJson({
       phase: "grid", done: 1, total: 9, running: true, cancelled: false,
