@@ -150,23 +150,6 @@ def test_sweep_undeclared_param_target_422(strategies):
     assert "does not declare" in resp.json()["detail"]
 
 
-def test_sweep_with_exit_rules_missing_series_422(strategies):
-    """The missing-series 422 guard from the single-run endpoint must also
-    cover a sweep request whose exit rule groups reference a series that
-    wasn't posted: otherwise RuleStrategy silently reads None past the
-    array end for every combo instead of 422ing the submit."""
-    candles = make_candles(20)
-    req = sweep_request(candles, [{"param:n": 3}])
-    req["longExit"] = {"combine": "AND", "rules": [{
-        "left": {"kind": "series", "seriesKey": "SIG"},
-        "op": "gt",
-        "right": {"kind": "const", "value": 0.0},
-    }]}
-    resp = client.post("/api/backtest/sweep/jobs", json=req)
-    assert resp.status_code == 422
-    assert "missing series 'SIG'" in resp.json()["detail"]
-
-
 def test_sweep_with_exit_rules_wrong_length_series_422(strategies):
     """Same as above but for a posted series shorter than the candles."""
     candles = make_candles(20)

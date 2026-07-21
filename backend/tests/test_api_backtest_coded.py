@@ -224,20 +224,6 @@ def test_coded_run_with_expr_exit_closes_and_reenters(strategies, tmp_path, monk
         f"at least one trade should close on the expr exit, got: {body['trades']}")
 
 
-def test_coded_with_exit_rules_missing_series_422(strategies):
-    """The missing-series 422 guard must also cover a coded request whose exit
-    rule groups reference a series that wasn't posted."""
-    req = base_request("test.py", make_candles())
-    req["longExit"] = {"combine": "AND", "rules": [{
-        "left": {"kind": "series", "seriesKey": "SIG"},
-        "op": "gt",
-        "right": {"kind": "const", "value": 0.0},
-    }]}
-    res = client.post("/api/backtest", json=req)
-    assert res.status_code == 422
-    assert "missing series 'SIG'" in res.json()["detail"]
-
-
 def test_coded_with_exit_rules_wrong_length_series_422(strategies):
     """The series-length 422 guard must also cover a coded request whose exit
     rule groups ride along with a posted series shorter than the candles —

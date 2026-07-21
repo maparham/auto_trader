@@ -154,23 +154,20 @@ async def _run_coded(
 def _validate_coded_exit_series(req: BacktestRequest) -> None:
     """Coded run: series-shaped checks a pure rule run gets, mirrored here
     because coded runs skip the rule-mode validation block entirely (coded
-    ignores the entry groups; only panel exit rules + panel risk apply).
-    Covers: exit-rule-group series (length + missing-series — without the
-    length check, RuleStrategy silently reads None past the array end instead
-    of 422ing) and ATR-kind panel risk's missing-series guard (I4 — without
-    this, a missing ATR series silently yields a stop-less trade instead of
-    the 422 rule mode gets). Runs whenever codedStrategy is set, not only when
-    exit rules exist. Shared by the single-run and sweep routes."""
+    ignores the entry groups; only panel risk applies for series checks).
+    Covers: posted-series length (without the length check, a series shorter
+    than the candles silently reads None past the array end instead of 422ing)
+    and ATR-kind panel risk's missing-series guard (I4 — without this, a
+    missing ATR series silently yields a stop-less trade instead of the 422
+    rule mode gets). Coded exit rules are now expressions validated at compile
+    time (expr parse/validate), so their operand series are no longer checked
+    here. Runs whenever codedStrategy is set. Shared by the single-run and
+    sweep routes."""
     for name, arr in req.series.items():
         if len(arr) != len(req.candles):
             raise HTTPException(
                 422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}"
             )
-    for group in (req.longExit, req.shortExit):
-        for op in group.operands():
-            name = series_name(op.to_operand())
-            if name is not None and name not in req.series:
-                raise HTTPException(422, f"missing series '{name}' referenced by a rule")
     for risk in (req.longRisk, req.shortRisk):
         if risk is None:
             continue
