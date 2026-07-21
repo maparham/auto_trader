@@ -195,27 +195,33 @@ def on_bar(ctx):
 '''
 
 
-def test_coded_run_with_panel_exit_rule_closes_via_rule(strategies, tmp_path, monkeypatch):
+def _flat_candles(closes):
+    t0 = 1_700_000_000
+    return [{"time": t0 + i * 3600, "open": c, "high": c, "low": c, "close": c, "volume": 10}
+            for i, c in enumerate(closes)]
+
+
+def test_coded_run_with_expr_exit_closes_and_reenters(strategies, tmp_path, monkeypatch):
     """A coded strategy that only enters (never exits itself) gets closed by a
-    panel-authored longExit rule group riding along on the coded run."""
+    panel-authored EXPRESSION exit riding along on the coded run. The expr exit
+    reason is empty, so the reliable proof it fired is re-entry: HOLD_FOREVER
+    re-buys the next flat bar, yielding more than one trade."""
     (tmp_path / "hold_forever.py").write_text(HOLD_FOREVER_STRAT)
     monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
 
-    candles = make_candles(20)
-    series = {"SIG": [(-1.0 if i < 10 else 1.0) for i in range(len(candles))]}
+    # Rise, then a drop at bar 5 pushes close under EMA(2); the drop is NOT the
+    # last bar, so an exit there re-enters and the final position closes at range end.
+    candles = _flat_candles([100, 101, 102, 103, 104, 90, 90, 90])
     req = base_request("hold_forever.py", candles)
-    req["series"] = series
-    req["longExit"] = {"combine": "AND", "rules": [{
-        "left": {"kind": "series", "seriesKey": "SIG"},
-        "op": "gt",
-        "right": {"kind": "const", "value": 0.0},
-    }]}
+    req["exprLongExit"] = [{"expr": "candle.close < EMA(2)", "enabled": True}]
+    req["exprShortExit"] = []
     res = client.post("/api/backtest", json=req)
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["trades"], "rule exit should have closed the coded entry"
-    rule_exits = [t for t in body["trades"] if t["reason"] == "SIG gt 0.0"]
-    assert rule_exits, f"expected a trade closed by the rule exit, got: {body['trades']}"
+    assert len(body["trades"]) >= 2, (
+        f"expr exit should have closed the coded entry then re-entered, got: {body['trades']}")
+    assert any(t["reason"] != "range end" for t in body["trades"]), (
+        f"at least one trade should close on the expr exit, got: {body['trades']}")
 
 
 def test_coded_with_exit_rules_missing_series_422(strategies):

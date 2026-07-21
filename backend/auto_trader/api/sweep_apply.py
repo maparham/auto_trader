@@ -37,7 +37,6 @@ from .schemas import (
     ExprBacktestRequest,
     RecurrenceMaskDTO,
     RiskConfigDTO,
-    RuleGroupDTO,
     SweepRowDTO,
 )
 
@@ -175,6 +174,23 @@ def run_rule_sync(
     return engine.run(candles)
 
 
+def _compile_expr_exits(rows, candles, resolution, htf):
+    """Parse+validate+compile enabled, non-blank expression exit rows. Isolation:
+    a parse/validate problem raises SweepValidationError(422) so one sweep combo
+    fails to its own error row (matches run_expr_sync)."""
+    compiled = []
+    for row in rows:
+        if not row.enabled or not row.expr.strip():
+            continue
+        try:
+            node = parse(row.expr)
+            validate(node, is_exit=True)
+        except ExprError as e:
+            raise SweepValidationError(422, e.message)
+        compiled.append(compile_row(node, candles, resolution, htf))
+    return compiled
+
+
 def run_coded_sync(
     req: BacktestRequest, candles: list[Candle], module: ModuleType,
     resolved_params: dict, long_risk_dto: RiskConfigDTO | None,
@@ -200,13 +216,13 @@ def run_coded_sync(
             panel_risk_legs=panel_risk_legs,
             indicator_cache=indicator_cache,
         )
-        if req.longExit.rules or req.shortExit.rules:
-            empty = RuleGroupDTO(combine="AND", rules=[]).to_group()
-            strategy = CodedWithExprExits(strategy, RuleStrategy(
-                empty, req.longExit.to_group(), empty, req.shortExit.to_group(),
-                req.series, quantity=req.costs.quantity,
+        long_exit = _compile_expr_exits(req.exprLongExit, candles, req.resolution, htf_candles)
+        short_exit = _compile_expr_exits(req.exprShortExit, candles, req.resolution, htf_candles)
+        if long_exit or short_exit:
+            strategy = CodedWithExprExits(strategy, ExprRuleStrategy(
+                [], long_exit, [], short_exit,
+                quantity=req.costs.quantity,
                 long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
-                base_timeframe=req.resolution,
             ))
         engine = BacktestEngine(
             strategy,
