@@ -2747,7 +2747,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 return (
                   <div key={s} style={{ "--side": isLong ? "var(--pos)" : "var(--neg)" } as CSSProperties}>
                     <RuleGroupSection
-                      editorMode="structured"
+                      editorMode="expr"
                       title={isLong ? "Sell to close" : "Buy to close"}
                       info={`Conditions that close an open ${s} position. A stop or target can close it first.`}
                       group={isLong ? codedCfg.longExit : codedCfg.shortExit}
@@ -2759,7 +2759,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                       onCopy={(rule) => setClipboard(cloneRule(rule))}
                       groupClipboard={groupClipboard}
                       onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
-                      openChartPicker={openChartPicker}
                       isExit
                     />
                     <RiskSection
