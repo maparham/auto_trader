@@ -52,19 +52,11 @@ import {
   type HistoryDepth,
   type RuleGroup,
   type Rule,
-  type Operand,
-  type IndicatorKind,
-  type PriceField,
   type Operator,
   type Combine,
   type Costs,
   type SlippageModel,
   cloneRule,
-  slopeLen,
-  lookbackSpec,
-  scaleSpec,
-  type LookbackSpec,
-  type ScaleSpec,
   type RiskConfig,
   type StopKind,
   type TargetKind,
@@ -72,9 +64,6 @@ import {
   type RecurrenceMask,
   type SessionPreset,
   type DayTimeWindow,
-  swapSides,
-  invertRule,
-  ruleFromChartOperand,
 } from "./lib/backtestConfig";
 import { SESSION_PRESETS, buildRangeChips, coverage, formatDayWindow, isActive, minToTime, resolveMask, sessionWindowInTz } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
@@ -87,7 +76,7 @@ import StrategyPicker from "./StrategyPicker";
 import { RangeChip, SweepBaseValue } from "./components/RangeChip";
 import { StrategyParams } from "./components/StrategyParams";
 import { SweepResults } from "./SweepResults";
-import { comboCount, materializePeriodAxes, mirrorRiskAxes, opAxisTarget, ruleAxisTarget, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepCombo, type SweepOption } from "./lib/sweep";
+import { comboCount, materializePeriodAxes, mirrorRiskAxes, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepCombo, type SweepOption } from "./lib/sweep";
 import { analyze } from "./lib/expr/parser";
 import { pruneLitAxes, sweepLiteralTarget } from "./lib/expr/sweepLiterals";
 import { refineAxesAround, sampleCombos } from "./lib/sweepSearch";
@@ -233,13 +222,6 @@ const HISTORY_DEPTHS: { value: HistoryDepth; label: string }[] = [
   { value: "minimal", label: "Auto-shortest" },
 ];
 
-const INDICATORS: IndicatorKind[] = ["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"];
-const NO_LENGTH: IndicatorKind[] = ["AVWAP", "VOL"];
-const PRICE_FIELDS: PriceField[] = ["close", "open", "high", "low", "body", "range", "wickTop", "wickBottom"];
-const PRICE_FIELD_LABELS: Record<PriceField, string> = {
-  close: "close", open: "open", high: "high", low: "low",
-  body: "body", range: "range", wickTop: "upper wick", wickBottom: "lower wick",
-};
 const STOP_KINDS: { value: StopKind; label: string }[] = [
   { value: "none", label: "None" },
   { value: "pct", label: "% from entry" },
@@ -271,44 +253,6 @@ const OPERATORS: { value: Operator; label: string; tip: string }[] = [
 
 // Compact operator text for sweep-results cells (op-axis option labels).
 const OP_CELL: Partial<Record<Operator, string>> = { gt: ">", lt: "<", gte: "≥", lte: "≤" };
-
-// The compact glyph shown in the operator button (the row must fit on one line):
-// a crossing-lines icon for the two "crosses" operators, a math symbol for the
-// plain comparisons. The full wording stays in the dropdown.
-function CrossGlyph({ dir }: { dir: "up" | "down" | "both" }) {
-  if (dir === "both") {
-    // Either-direction cross: an X over the reference line, no arrowhead.
-    return (
-      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" className="bt-op-crossicon">
-        <path d="M1 8 H15" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.5" />
-        <path d="M2 3 L14 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        <path d="M2 13 L14 3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" className="bt-op-crossicon">
-      {/* the reference line, and the series crossing through it up or down */}
-      <path d="M1 8 H15" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.5" />
-      <path
-        d={dir === "up" ? "M2 13 L14 3" : "M2 3 L14 13"}
-        fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
-      />
-      <path
-        d={dir === "up" ? "M14 3 l-4 0 M14 3 l0 4" : "M14 13 l-4 0 M14 13 l0 -4"}
-        fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function OpGlyph({ op }: { op: Operator }) {
-  if (op === "crossesAbove") return <CrossGlyph dir="up" />;
-  if (op === "crossesBelow") return <CrossGlyph dir="down" />;
-  if (op === "crosses") return <CrossGlyph dir="both" />;
-  const g: Record<string, string> = { gt: ">", lt: "<", gte: "≥", lte: "≤" };
-  return <span className="bt-op-glyph">{g[op]}</span>;
-}
 
 // A rough, illustrative bar count for the window timeline — not the exact fetch
 // math BacktestButton uses (which also depends on "now" and the live broker's
@@ -397,14 +341,6 @@ function WindowTimeline({ cfg, resolution }: { cfg: BacktestConfig; resolution: 
       </div>
     </div>
   );
-}
-
-function defaultOperand(): Operand {
-  return { kind: "indicator", indicator: "EMA", length: 9 };
-}
-
-function defaultRule(): Rule {
-  return { left: defaultOperand(), op: "gt", right: { kind: "const", value: 0 } };
 }
 
 // Session-lived cache of fetched instrument cost profiles, keyed by epic, so the
@@ -2692,7 +2628,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 return (
                   <div key={s} style={{ "--side": isLong ? "var(--pos)" : "var(--neg)" } as CSSProperties}>
                     <RuleGroupSection
-                      editorMode="expr"
                       title={isLong ? "Sell to close" : "Buy to close"}
                       info={`Conditions that close an open ${s} position. A stop or target can close it first.`}
                       group={isLong ? codedCfg.longExit : codedCfg.shortExit}
@@ -3463,7 +3398,6 @@ function SidePanel({
   onCopy,
   groupClipboard,
   onCopyAll,
-  openChartPicker,
   exprPick,
   sweep,
 }: {
@@ -3477,9 +3411,6 @@ function SidePanel({
   onCopy: (rule: Rule) => void;
   groupClipboard: Rule[] | null;
   onCopyAll: (rules: Rule[]) => void;
-  // Absent in surfaces with no chart to pick from (e.g. the Live panel) — the
-  // affordances that need it simply don't render.
-  openChartPicker?: (onPick: (op: Operand) => void) => void;
   // "Pick from chart" arming, coordinated by the parent so only one row is armed
   // at a time. Absent with no chart (Live panel) — the button doesn't render.
   exprPick?: {
@@ -3528,7 +3459,6 @@ function SidePanel({
           it can be turned back on. `.bt-parked` supplies the dimmed visual cue. */}
       <div className={`bt-side-rules${enabled ? "" : " bt-parked"}`} inert={!enabled}>
         <RuleGroupSection
-          editorMode="expr"
           title={isLong ? "Buy to open" : "Sell to open"}
           info={`Conditions that open a ${side} position. Multiple rules combine with the AND/OR switch.`}
           group={entry}
@@ -3540,12 +3470,10 @@ function SidePanel({
           onCopy={onCopy}
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
-          openChartPicker={openChartPicker}
           pickIndicator={sidePick(isLong ? "longEntry" : "shortEntry")}
           sweep={sweep && { ...sweep, group: "entry" }}
         />
         <RuleGroupSection
-          editorMode="expr"
           title={isLong ? "Sell to close" : "Buy to close"}
           info={`Conditions that close an open ${side} position. A stop or target can close it first.`}
           group={exit}
@@ -3557,7 +3485,6 @@ function SidePanel({
           onCopy={onCopy}
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
-          openChartPicker={openChartPicker}
           pickIndicator={sidePick(isLong ? "longExit" : "shortExit")}
           isExit
           sweep={sweep && { ...sweep, group: "exit" }}
@@ -3653,121 +3580,11 @@ function Section({ title, info, extra, children }: { title: string; info?: strin
 // hover for that operator's meaning. A "crosses" op (an event) reads in the
 // accent colour; the comparisons (a state) read muted. The menu is portaled to
 // <body> so it escapes the modal's scroll clip and a parked side's opacity.
-function isCrossOp(op: Operator): boolean {
-  return op === "crossesAbove" || op === "crossesBelow";
-}
-
-// Menu itself sizes to content (width: max-content in CSS) — this is only an
-// upper-bound estimate for keeping it on-screen before it has rendered.
-const OP_DROPDOWN_WIDTH = 150;
-
-function OperatorPicker({ value, onChange, sweep }: {
-  value: Operator;
-  onChange: (op: Operator) => void;
-  // Optional operator-sweep toggle (the equalizer glyph beside the button).
-  sweep?: { swept: boolean; onToggle: () => void };
-}) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const popRef = useRef<HTMLUListElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    const close = () => setOpen(false);
-    // Capture phase: the modal stops mousedown from bubbling past itself (so
-    // clicking inside it doesn't trigger the backdrop's close-on-click), which
-    // would otherwise swallow this listener too if it only listened on bubble.
-    document.addEventListener("mousedown", onDown, true);
-    window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown, true);
-      window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
-    };
-  }, [open]);
-
-  function toggle() {
-    if (!open && btnRef.current) {
-      const r = btnRef.current.getBoundingClientRect();
-      const left = Math.max(8, Math.min(r.left, window.innerWidth - OP_DROPDOWN_WIDTH - 8));
-      setPos({ top: r.bottom + 4, left });
-    }
-    setOpen((v) => !v);
-  }
-
-  const current = OPERATORS.find((o) => o.value === value);
-  return (
-    <div className="bt-op-menu">
-      <Tooltip content={current?.label ?? ""}>
-        <button
-          ref={btnRef}
-          type="button"
-          className={`bt-op-btn ${isCrossOp(value) ? "bt-op-cross" : "bt-op-compare"}${open ? " open" : ""}`}
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-label={`Operator: ${current?.label}`}
-          onClick={toggle}
-        >
-          <OpGlyph op={value} />
-        </button>
-      </Tooltip>
-      {sweep && (
-        <Tooltip content="Sweep this operator">
-          <button
-            type="button"
-            className={`sp-sweep bt-op-sweep-toggle${sweep.swept ? " on" : ""}`}
-            onClick={sweep.onToggle}
-          >
-            <SweepGlyph />
-          </button>
-        </Tooltip>
-      )}
-      {open &&
-        pos &&
-        createPortal(
-          <ul
-            ref={popRef}
-            className="dropdown bt-op-dropdown"
-            role="listbox"
-            style={{ position: "fixed", top: pos.top, left: pos.left }}
-          >
-            {OPERATORS.map((o) => (
-              <li
-                key={o.value}
-                role="option"
-                aria-selected={o.value === value}
-                className={o.value === value ? "on" : ""}
-                onClick={() => {
-                  onChange(o.value);
-                  setOpen(false);
-                }}
-              >
-                <span className={`bt-op-item-label${isCrossOp(o.value) ? " bt-op-cross" : ""}`}>
-                  <span className="bt-op-item-glyph"><OpGlyph op={o.value} /></span>
-                  {o.label}
-                </span>
-                <InfoTip title={o.label} text={o.tip} />
-              </li>
-            ))}
-          </ul>,
-          document.body,
-        )}
-    </div>
-  );
-}
-
 // "Fill from session" menu — a button, not a <select>. Picking a preset is a
 // one-shot action (it fills From/To + tz + weekdays, then everything stays
 // editable), so a stateful selector would lie about the current mask. A menu
 // button reads as an action and never shows a stale "selected" value. Portaled
-// to <body> like OperatorPicker so it escapes the modal's scroll clip.
+// to <body> so it escapes the modal's scroll clip.
 const SESSION_MENU_WIDTH = 240;
 
 function SessionFillMenu({ disabled, chartTz, onPick }: {
@@ -3874,19 +3691,6 @@ function CopyAllIcon() {
     <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6">
       <rect x="9" y="9" width="11" height="11" rx="2" strokeLinejoin="round" />
       <path d="M5 15 H4.5 A1.5 1.5 0 0 1 3 13.5 V4.5 A1.5 1.5 0 0 1 4.5 3 h9 A1.5 1.5 0 0 1 15 4.5 V5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-// Invert-rules glyph: a ">" chevron above a "<" chevron (the ≷ motif) — distinct
-// from the swap-sides straight double-arrow. This reflects each rule into its
-// opposite-side twin (flip operator, swap high/low, negate numbers) rather than
-// swapping the two operands.
-function ReverseOpsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8 4l5 4-5 4" />
-      <path d="M16 12l-5 4 5 4" />
     </svg>
   );
 }
@@ -4029,14 +3833,12 @@ function RuleMenu({
   onDuplicate,
   onCopy,
   onToggleEnabled,
-  onSwapSides,
   onRemove,
 }: {
   enabled: boolean;
   onDuplicate: () => void;
   onCopy: () => void;
   onToggleEnabled: () => void;
-  onSwapSides: () => void;
   onRemove: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -4102,7 +3904,6 @@ function RuleMenu({
           >
             <li role="menuitem" onClick={() => run(onDuplicate)}>Duplicate</li>
             <li role="menuitem" onClick={() => run(onCopy)}>Copy</li>
-            <li role="menuitem" onClick={() => run(onSwapSides)}>Swap sides</li>
             <li role="menuitem" onClick={() => run(onToggleEnabled)}>{enabled ? "Disable" : "Enable"}</li>
             <li role="menuitem" className="bt-rule-menu-danger" onClick={() => run(onRemove)}>Remove</li>
           </ul>,
@@ -4125,14 +3926,10 @@ export function RuleGroupSection({
   group,
   onChange,
   emptyHint,
-  editorMode = "structured",
-  defaultAvwapAnchor = 0,
-  baseResolution,
   clipboard,
   onCopy,
   groupClipboard,
   onCopyAll,
-  openChartPicker,
   pickIndicator,
   isExit = false,
   sweep,
@@ -4142,21 +3939,15 @@ export function RuleGroupSection({
   group: ExprGroupLike;
   onChange: (g: RuleGroup) => void;
   emptyHint: string;
-  // Which editor a row renders. "expr" (main backtest groups) shows the
-  // CodeMirror expression input writing `rule.expr`; "structured" (coded-strategy
-  // exit rules, the Live panel) shows the OperandPicker/OperatorPicker path
-  // writing `left/op/right`. Defaults to "structured" so untouched callers keep
-  // their old behavior.
-  editorMode?: "expr" | "structured";
-  // Only the structured path uses this (AVWAP anchor default for operand picks).
+  // Retained for call-site compatibility with the coded/live rule surfaces; the
+  // expression editor does not read them.
   defaultAvwapAnchor?: number;
-  baseResolution: string;
+  baseResolution?: string;
   clipboard?: Rule | null;
   onCopy?: (rule: Rule) => void;
   groupClipboard?: Rule[] | null;
   onCopyAll?: (rules: Rule[]) => void;
-  openChartPicker?: (onPick: (op: Operand) => void) => void;
-  // "Pick from chart" for THIS group (expr mode only): armedRow is the row armed
+  // "Pick from chart" for THIS group: armedRow is the row armed
   // in this group (or null), arm/disarm toggle it. Absent with no chart.
   pickIndicator?: {
     armedRow: number | null;
@@ -4211,34 +4002,8 @@ export function RuleGroupSection({
     rules[i] = { ...rules[i], ...patch };
     emit(rules);
   }
-  // Structured mode: replace a whole row (the OperandPicker/OperatorPicker path
-  // rebuilds the full `Rule`, unlike the expr path's flat field patch).
-  function setRule(i: number, rule: Rule) {
-    const rules = group.rules.slice();
-    rules[i] = rule;
-    emit(rules);
-  }
-  // Structured mode: the group's AND/OR combine.
-  function setCombine(combine: Combine) {
-    onChange({ ...group, combine } as RuleGroup);
-  }
-  // Structured mode: invert every rule for the opposite side (flip operator, swap
-  // high/low, negate numbers). Gated behind a confirm since it rewrites the logic.
-  function reverseAll() {
-    requestConfirm({
-      title: "Invert rules",
-      message: `Invert every rule in ${title} (flip operator, swap high/low, negate numbers)? Check any RSI-style thresholds afterward.`,
-      confirmLabel: "Invert",
-      onConfirm: () => onChange({ ...group, rules: (group.rules as Rule[]).map(invertRule) } as RuleGroup),
-    });
-  }
-  // The engine only receives enabled rules (activeGroup drops the rest before
-  // POST), so a sweep axis targets a rule by its position in that enabled-only
-  // list — not its raw UI index. (Structured mode only.)
-  const activeRuleIndex = (i: number) =>
-    group.rules.slice(0, i).filter((r) => r.enabled !== false).length;
   function addRule() {
-    emit([...group.rules, editorMode === "structured" ? defaultRule() : { expr: "", enabled: true }]);
+    emit([...group.rules, { expr: "", enabled: true }]);
   }
   function removeRule(i: number) {
     emit(group.rules.filter((_, idx) => idx !== i));
@@ -4247,7 +4012,7 @@ export function RuleGroupSection({
   // reads as a variation of the one above it rather than landing at the bottom.
   function duplicateRule(i: number) {
     const rules = group.rules.slice();
-    rules.splice(i + 1, 0, editorMode === "structured" ? cloneRule(rules[i] as Rule) : { ...rules[i] });
+    rules.splice(i + 1, 0, { ...rules[i] });
     emit(rules);
   }
   // Paste appends — the clipboard rule may come from another group entirely, so
@@ -4265,35 +4030,12 @@ export function RuleGroupSection({
     <Section
       title={title}
       info={info}
-      // Group-wide actions (reverse / copy-all / clear-all) sit beside the
-      // section title. Keeping them off their own row means a single-rule group
-      // doesn't leave an empty band between the heading and its one rule.
+      // Group-wide actions (copy-all / clear-all) sit beside the section title.
+      // Keeping them off their own row means a single-rule group doesn't leave an
+      // empty band between the heading and its one rule.
       extra={
         group.rules.length > 0 ? (
           <div className="bt-groophead-actions">
-            {/* Structured mode carries the AND/OR combine + invert-rules controls;
-                expr rows encode their own logic inside each expression. */}
-            {editorMode === "structured" && group.rules.length > 1 && (
-              <div className="seg bt-combine-seg" role="group" aria-label="Combine rules with">
-                <Tooltip content="Fire only when every rule in this group is true.">
-                  <button className={group.combine === "AND" ? "seg-on" : ""} onClick={() => setCombine("AND")}>AND</button>
-                </Tooltip>
-                <Tooltip content="Fire when any rule in this group is true.">
-                  <button className={group.combine === "OR" ? "seg-on" : ""} onClick={() => setCombine("OR")}>OR</button>
-                </Tooltip>
-              </div>
-            )}
-            {editorMode === "structured" && (
-              <Tooltip content="Invert rules for the opposite side: flip operator, swap high/low, negate numbers">
-                <button
-                  className="bt-rule-toggle bt-reverse-ops"
-                  onClick={reverseAll}
-                  aria-label="Invert rules"
-                >
-                  <ReverseOpsIcon />
-                </button>
-              </Tooltip>
-            )}
             <Tooltip content="Copy all rules in this group">
               <button
                 className="bt-rule-toggle bt-copyall"
@@ -4320,95 +4062,49 @@ export function RuleGroupSection({
         <div className="al-note bt-empty-rules">{emptyHint}</div>
       )}
       {group.rules.map((rule, i) => {
-        // Structured rows read the full `Rule` shape (left/op/right/count); expr
-        // rows only touch `expr`/`enabled`.
+        // Expr rows only touch `expr`/`enabled`; the alias keeps the copy handler
+        // typed against the stored `Rule` shape.
         const r = rule as Rule;
         return (
         <Fragment key={i}>
         <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`}>
           <div className="bt-rule-main">
-            {editorMode === "expr" ? (
-              <RuleExpressionInput
-                value={rule.expr ?? ""}
-                onChange={(expr) => patchRule(i, { expr })}
-                isExit={isExit}
-                placeholder="e.g. EMA(9) > EMA(21)"
-              />
-            ) : (
-              <>
-                <OperandPicker value={r.left} onChange={(left) => setRule(i, { ...r, left })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(r.right) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, onAxisChange: sweep.onAxisChange, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `left.${leaf}`) } : undefined} />
-                <OperatorPicker
-                  value={r.op}
-                  onChange={(op) => setRule(i, { ...r, op })}
-                  sweep={sweep && rule.enabled !== false ? {
-                    swept: sweep.axes.some((a) => a.target === opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i))),
-                    onToggle: () => sweep.onToggleOp(opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i)), r.op),
-                  } : undefined}
-                />
-                <OperandPicker value={r.right} onChange={(right) => setRule(i, { ...r, right })} defaultAvwapAnchor={defaultAvwapAnchor} baseResolution={baseResolution} allowEntry={isExit} siblingSloped={slopeLen(r.left) !== null} openChartPicker={openChartPicker} sweep={sweep && rule.enabled !== false ? { axes: sweep.axes, onToggle: sweep.onToggle, onAxisChange: sweep.onAxisChange, target: (leaf) => ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), `right.${leaf}`) } : undefined} />
-                {isExit && (
-                  <CountField
-                    value={r.count}
-                    onChange={(count) => setRule(i, { ...r, count })}
-                    sweep={
-                      sweep && rule.enabled !== false
-                        ? {
-                            axes: sweep.axes,
-                            onToggle: sweep.onToggle,
-                            onAxisChange: sweep.onAxisChange,
-                            target: ruleAxisTarget(sweep.side, sweep.group, activeRuleIndex(i), "count"),
-                          }
-                        : undefined
-                    }
-                  />
-                )}
-              </>
-            )}
+            <RuleExpressionInput
+              value={rule.expr ?? ""}
+              onChange={(expr) => patchRule(i, { expr })}
+              isExit={isExit}
+              placeholder="e.g. EMA(9) > EMA(21)"
+            />
             <div className="bt-rule-actions">
-              {editorMode === "expr" ? (
-                <>
-                  <Tooltip content="Insert an indicator, candle field, or timeframe">
-                    <button
-                      type="button"
-                      className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
-                      onClick={() => setPaletteRow(paletteRow === i ? null : i)}
-                      aria-label="Insert from palette"
-                      aria-expanded={paletteRow === i}
-                    >
-                      +
-                    </button>
-                  </Tooltip>
-                  {pickIndicator && (
-                    <Tooltip
-                      content={
-                        pickIndicator.armedRow === i
-                          ? "Click an indicator on the chart, or click here to cancel"
-                          : "Pick an indicator from the chart"
-                      }
-                    >
-                      <button
-                        type="button"
-                        className={`bt-rule-toggle bt-pick-toggle${pickIndicator.armedRow === i ? " on" : ""}`}
-                        onClick={() =>
-                          pickIndicator.armedRow === i ? pickIndicator.disarm() : pickIndicator.arm(i)
-                        }
-                        aria-label="Pick an indicator from the chart"
-                        aria-pressed={pickIndicator.armedRow === i}
-                      >
-                        ◎
-                      </button>
-                    </Tooltip>
-                  )}
-                </>
-              ) : (
-                <Tooltip content="Swap sides (same condition)">
+              <Tooltip content="Insert an indicator, candle field, or timeframe">
+                <button
+                  type="button"
+                  className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
+                  onClick={() => setPaletteRow(paletteRow === i ? null : i)}
+                  aria-label="Insert from palette"
+                  aria-expanded={paletteRow === i}
+                >
+                  +
+                </button>
+              </Tooltip>
+              {pickIndicator && (
+                <Tooltip
+                  content={
+                    pickIndicator.armedRow === i
+                      ? "Click an indicator on the chart, or click here to cancel"
+                      : "Pick an indicator from the chart"
+                  }
+                >
                   <button
                     type="button"
-                    className="bt-rule-toggle bt-swap-sides"
-                    onClick={() => setRule(i, swapSides(r))}
-                    aria-label="Swap sides"
+                    className={`bt-rule-toggle bt-pick-toggle${pickIndicator.armedRow === i ? " on" : ""}`}
+                    onClick={() =>
+                      pickIndicator.armedRow === i ? pickIndicator.disarm() : pickIndicator.arm(i)
+                    }
+                    aria-label="Pick an indicator from the chart"
+                    aria-pressed={pickIndicator.armedRow === i}
                   >
-                    ⇄
+                    ◎
                   </button>
                 </Tooltip>
               )}
@@ -4416,21 +4112,16 @@ export function RuleGroupSection({
                 enabled={rule.enabled !== false}
                 onDuplicate={() => duplicateRule(i)}
                 onCopy={() => onCopy?.(r)}
-                onToggleEnabled={() =>
-                  editorMode === "structured"
-                    ? setRule(i, { ...r, enabled: rule.enabled === false })
-                    : patchRule(i, { enabled: rule.enabled === false })
-                }
-                onSwapSides={() => (editorMode === "structured" ? setRule(i, swapSides(r)) : undefined)}
+                onToggleEnabled={() => patchRule(i, { enabled: rule.enabled === false })}
                 onRemove={() => removeRule(i)}
               />
             </div>
           </div>
-          {editorMode === "expr" && paletteRow === i && (
+          {paletteRow === i && (
             <RulePalette onInsert={(text) => insertInto(i, text)} />
           )}
         </div>
-        {editorMode === "expr" && sweep?.editable && rule.enabled !== false && (() => {
+        {sweep?.editable && rule.enabled !== false && (() => {
           // lit: targets address rows by RAW full-list index i (the expr request
           // ships every row, disabled included), NOT activeRuleIndex(i).
           const { literals } = analyze(rule.expr ?? "", { isExit });
@@ -4469,31 +4160,6 @@ export function RuleGroupSection({
             </div>
           );
         })()}
-        {editorMode === "structured" && sweep && rule.enabled !== false && (() => {
-          const target = opAxisTarget(sweep.side, sweep.group, activeRuleIndex(i));
-          const axis = sweep.axes.find((a) => a.target === target);
-          if (axis?.kind !== "list") return null;
-          return (
-            <div className="sp-row sweep-axis-row bt-op-sweep-row">
-              <span className="sp-label">operators</span>
-              <span className="bt-chip-row">
-                {OPERATORS.map((o) => {
-                  const on = axis.options.some((opt) => opt.patch[target] === o.value);
-                  return (
-                    <button
-                      key={o.value}
-                      type="button"
-                      className={on ? "seg-on bt-chip" : "bt-chip"}
-                      onClick={() => sweep.onTickOp(target, o.value)}
-                    >
-                      {o.label}
-                    </button>
-                  );
-                })}
-              </span>
-            </div>
-          );
-        })()}
         </Fragment>
         );
       })}
@@ -4501,16 +4167,6 @@ export function RuleGroupSection({
         <button className="ghost" onClick={addRule}>
           + Add rule
         </button>
-        {editorMode === "structured" && openChartPicker && (
-          <Tooltip content="Add a rule seeded from a chart indicator or drawing">
-            <button
-              className="ghost"
-              onClick={() => openChartPicker((op) => onChange({ ...group, rules: [...group.rules, ruleFromChartOperand(op)] } as RuleGroup))}
-            >
-              + Rule from chart
-            </button>
-          </Tooltip>
-        )}
         {clipboard && (
           <Tooltip content="Paste the copied rule here">
             <button className="ghost" onClick={pasteRule}>
@@ -4543,530 +4199,3 @@ function rawRuleIndex(rules: Rule[], activeIdx: number): number {
   }
   return -1;
 }
-
-// Compact ordinal suffix for the count chip: 1st, 2nd, 3rd, 4th…
-function ordinal(n: number): string {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-}
-
-// The optional "Nth time" modifier on an exit rule. Blank/1 ⇒ fire on the first
-// occurrence (the default); N ≥ 2 ⇒ fire on the Nth bar since entry the
-// condition is true (cumulative — non-consecutive bars count).
-function CountField({
-  value,
-  onChange,
-  sweep,
-}: {
-  value?: number;
-  onChange: (n?: number) => void;
-  // Task 9: optional sweep toggle on the count itself, keyed by the exact
-  // `rule:...count` target the caller already built.
-  sweep?: {
-    axes: SweepAxis[];
-    target: string;
-    onToggle: (target: string, current: number) => void;
-    onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
-  };
-}) {
-  const n = value && value > 1 ? value : undefined;
-  const swept = sweep?.axes.some((a) => a.target === sweep.target) ?? false;
-  const sweptAxis = sweep?.axes.find(
-    (a): a is RangeAxis => a.kind === "range" && a.target === sweep.target,
-  );
-  // Keep a local text buffer so the field shows exactly what the user typed
-  // mid-edit. Deriving the input value straight from the model breaks typing:
-  // a bare "1" (the default) maps to undefined, so a controlled value would
-  // wipe the leading "1" of 10–19 the instant it's typed. We sync back from the
-  // model only when it changes from the outside (e.g. a reset).
-  const [text, setText] = useState<string>(n ? String(n) : "");
-  useEffect(() => {
-    setText(n ? String(n) : "");
-  }, [n]);
-  return (
-    <>
-      <Tooltip
-        content={[
-          "Fire on the Nth time since entry this condition is true.",
-          "Counts every bar it's true, consecutive or not. Blank or 1 = the first time.",
-        ]}
-      >
-        <label className={`bt-rule-count${n ? " on" : ""}`}>
-          {/* While swept, a RangeChip edits the range in place; otherwise the
-              plain count input with its ordinal suffix. */}
-          {sweptAxis && sweep ? (
-            <>
-              <SweepBaseValue>{ordinal(n ?? 1)}</SweepBaseValue>
-              <RangeChip
-                axis={sweptAxis}
-                onPatch={(p) => sweep.onAxisChange(sweptAxis.target, p)}
-                onRemove={() => sweep.onToggle(sweep.target, n ?? 1)}
-              />
-            </>
-          ) : (
-            <>
-              <input
-                  type="number"
-                  // Floor at 2: 1 is the default and reads as blank, so letting the
-                  // native spinner step to 1 would make the up-arrow appear dead.
-                  min={2}
-                  step={1}
-                  className="bt-rule-count-input"
-                  placeholder="1st"
-                  value={text}
-                  onKeyDown={blockNegKeys}
-                  onChange={(e) => {
-                    const raw = cleanNumInput(e.currentTarget);
-                    setText(raw);
-                    const num = Math.round(Number(raw));
-                    onChange(raw === "" || num <= 1 || !Number.isFinite(num) ? undefined : num);
-                  }}
-                  // A stray "1" (or anything that resolves to the default) snaps back to
-                  // the blank "1st" placeholder on blur so the field never lingers on a
-                  // value the model dropped.
-                  onBlur={() => setText(n ? String(n) : "")}
-                />
-              <span className="bt-rule-count-suffix" aria-hidden="true">{n ? ordinal(n) : ""}</span>
-            </>
-          )}
-        </label>
-      </Tooltip>
-      {sweep && (
-        <Tooltip content="Sweep this field">
-          <button
-            type="button"
-            className={`sp-sweep${swept ? " on" : ""}`}
-            onClick={() => sweep.onToggle(sweep.target, n ?? 1)}
-          >
-            <SweepGlyph />
-          </button>
-        </Tooltip>
-      )}
-    </>
-  );
-}
-
-function OperandPicker({
-  value,
-  onChange,
-  defaultAvwapAnchor,
-  baseResolution,
-  allowEntry = false,
-  siblingSloped = false,
-  openChartPicker,
-  sweep,
-}: {
-  value: Operand;
-  onChange: (op: Operand) => void;
-  defaultAvwapAnchor: number;
-  baseResolution: string;
-  // Offer "Entry price" — only in exit rules, where a position exists to read it.
-  allowEntry?: boolean;
-  // The rule's OTHER operand is a slope, so this operand — if it's a Number — is
-  // being compared in %/hr; show a unit hint to make that legible.
-  siblingSloped?: boolean;
-  // Absent in surfaces with no chart to pick from (e.g. the Live panel) — the
-  // affordances that need it simply don't render.
-  openChartPicker?: (onPick: (op: Operand) => void) => void;
-  // Task 9: optional sweep toggle for this operand's numeric field (indicator
-  // `length` or const `value`). `target` builds the full `rule:` path from the
-  // leaf field name — the caller (RuleGroupSection) already knows the side/
-  // group/rule-index this operand sits at.
-  sweep?: {
-    axes: SweepAxis[];
-    onToggle: (target: string, current: number) => void;
-    onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
-    target: (leaf: "length" | "value") => string;
-  };
-}) {
-  // Slope can wrap an indicator, a price, or a pasted chart operand (not a constant
-  // or the entry price).
-  const canSlope = value.kind === "indicator" || value.kind === "price" || value.kind === "series";
-  const sweptTarget = (leaf: "length" | "value") => sweep?.target(leaf);
-  const isSwept = (leaf: "length" | "value") =>
-    sweep ? sweep.axes.some((a) => a.target === sweptTarget(leaf)) : false;
-  const sweptAxis = (leaf: "length" | "value") =>
-    sweep?.axes.find((a): a is RangeAxis => a.kind === "range" && a.target === sweptTarget(leaf));
-  const sweepToggle = (leaf: "length" | "value", current: number) =>
-    sweep && (
-      <Tooltip content="Sweep this field">
-        <button
-          type="button"
-          className={`sp-sweep${isSwept(leaf) ? " on" : ""}`}
-          onClick={() => sweep.onToggle(sweptTarget(leaf)!, current)}
-        >
-          <SweepGlyph />
-        </button>
-      </Tooltip>
-    );
-  // Changing the operand's type can strand a swept leaf (a const's value axis
-  // under an indicator operand, a length axis under a const/series/AVWAP): the
-  // chip is leaf-matched so the axis would become invisible and unremovable
-  // while still multiplying the sweep. Drop stale leaves before committing the
-  // type change (mirrors RiskSection's onKindChange).
-  const dropOrphanAxes = (next: Operand) => {
-    if (!sweep) return;
-    const hasLength = next.kind === "indicator" && !NO_LENGTH.includes(next.indicator);
-    const hasValue = next.kind === "const";
-    if (!hasLength && isSwept("length")) sweep.onToggle(sweptTarget("length")!, 0);
-    if (!hasValue && isSwept("value")) sweep.onToggle(sweptTarget("value")!, 0);
-  };
-  const sloped = slopeLen(value) !== null;
-  function setSlope(spec: { len: number } | undefined) {
-    if (value.kind !== "indicator" && value.kind !== "price" && value.kind !== "series") return;
-    onChange({ ...value, slope: spec });
-  }
-  const lookedBack = lookbackSpec(value) !== null;
-  function setLookback(spec: LookbackSpec | undefined) {
-    if (value.kind !== "indicator" && value.kind !== "price" && value.kind !== "series") return;
-    onChange({ ...value, lookback: spec });
-  }
-  const scaled = scaleSpec(value) !== null;
-  // Write the spec verbatim on every keystroke. Typing "1" en route to "1.5" (or
-  // "10") is a transient no-op; stripping it here would unmount the `{scaled &&}`
-  // controls mid-edit and flip the × toggle off. The strip runs on blur instead.
-  function setScaleRaw(spec: ScaleSpec | undefined) {
-    if (value.kind === "const") return;
-    onChange({ ...value, scale: spec });
-  }
-  // Once the user is done (input blur or × toggled off), drop a spec that's still a
-  // no-op so presets don't carry dead {mult:1,off:0} objects.
-  function commitScale(spec: ScaleSpec | undefined) {
-    if (value.kind === "const") return;
-    const clean = spec && ((spec.mult != null && spec.mult !== 1) || (spec.off != null && spec.off !== 0)) ? spec : undefined;
-    onChange({ ...value, scale: clean });
-  }
-  // Timeframes a rule operand can run on: the base (blank ⇒ follow the run's
-  // base timeframe) plus every non-live timeframe strictly higher than base.
-  // Lower-than-base is excluded — it can't align onto the coarser base bars
-  // without either losing information or leaking future ticks.
-  const baseSec = RESOLUTION_SECONDS[baseResolution] ?? 0;
-  const higherTfs = PERIOD_GROUPS.flatMap((g) => g.periods).filter(
-    (p) => !p.liveOnly && (RESOLUTION_SECONDS[p.resolution] ?? 0) > baseSec,
-  );
-  // If the operand already has a timeframe that's no longer "higher than base"
-  // (e.g. the base dropdown was raised to meet it), keep it selectable so the
-  // control doesn't render blank while silently holding a value.
-  const currentTf = value.kind === "indicator" || value.kind === "series" ? value.timeframe : undefined;
-  if (currentTf && !higherTfs.some((p) => p.resolution === currentTf)) {
-    const cur = PERIOD_GROUPS.flatMap((g) => g.periods).find((p) => p.resolution === currentTf);
-    if (cur) higherTfs.unshift(cur);
-  }
-  // One select drives the operand type: pick an indicator directly (EMA, SMA…),
-  // or Price, or Number — no separate "kind then indicator" step. The token is
-  // the indicator name for indicators, else the kind.
-  const typeToken = value.kind === "indicator" ? value.indicator : value.kind;
-  const prevLength = value.kind === "indicator" ? value.length : undefined;
-  // Carry the slope transform across a type switch (like `length` above), so
-  // swapping EMA↔SMA or indicator↔price doesn't silently drop an active slope and
-  // turn the rule into a different condition. const/entry can't be sloped.
-  const prevSlope =
-    value.kind === "indicator" || value.kind === "price" || value.kind === "series" ? value.slope : undefined;
-  const prevLookback =
-    value.kind === "indicator" || value.kind === "price" || value.kind === "series" ? value.lookback : undefined;
-  const prevScale = value.kind !== "const" ? value.scale : undefined;
-  function setType(token: string) {
-    let next: Operand;
-    if (token === "price")
-      next = { kind: "price", field: "close", slope: prevSlope, lookback: prevLookback, scale: prevScale };
-    else if (token === "const") next = { kind: "const", value: 0 };
-    else if (token === "entry") next = { kind: "entry", scale: prevScale };
-    else {
-      const indicator = token as IndicatorKind;
-      if (indicator === "AVWAP")
-        next = { kind: "indicator", indicator, anchor: defaultAvwapAnchor, slope: prevSlope, lookback: prevLookback, scale: prevScale };
-      else if (NO_LENGTH.includes(indicator))
-        next = { kind: "indicator", indicator, slope: prevSlope, lookback: prevLookback, scale: prevScale };
-      else next = { kind: "indicator", indicator, length: prevLength ?? 9, slope: prevSlope, lookback: prevLookback, scale: prevScale };
-    }
-    dropOrphanAxes(next);
-    onChange(next);
-  }
-
-  return (
-    <div className="bt-operand">
-      {value.kind === "series" ? (
-        <>
-          <Tooltip content="A chart curve/drawing copied into this rule. Clear (✕) to edit as a normal operand.">
-            <span className="bt-operand-chip">
-              <span className="bt-operand-chip-label">{value.label}</span>
-              <button
-                type="button"
-                className="bt-operand-chip-clear"
-                onClick={() => {
-                  const next: Operand = { kind: "const", value: 0 };
-                  dropOrphanAxes(next);
-                  onChange(next);
-                }}
-                aria-label="Clear pasted operand"
-              >
-                ✕
-              </button>
-            </span>
-          </Tooltip>
-          {/* A drawing has no meaningful timeframe (it's absolute-time anchored);
-              offering one would forward-fill the line into a step function. Only an
-              indicator recipe can run on a higher timeframe. */}
-          {value.recipe.source === "indicator" && (
-            <Tooltip content="Timeframe this operand is computed on">
-              <select
-                className="bt-operand-tf"
-                value={value.timeframe ?? ""}
-                onChange={(e) => onChange({ ...value, timeframe: e.target.value || undefined })}
-              >
-                <option value="">Base</option>
-                {higherTfs.map((p) => (
-                  <option key={p.resolution} value={p.resolution}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </Tooltip>
-          )}
-        </>
-      ) : (
-      <>
-      <select value={typeToken} onChange={(e) => setType(e.target.value)}>
-        <optgroup label="Indicator">
-          {INDICATORS.map((ind) => (
-            <option key={ind} value={ind}>
-              {ind}
-            </option>
-          ))}
-        </optgroup>
-        <option value="price">Price</option>
-        <option value="const">Number</option>
-        {(allowEntry || value.kind === "entry") && <option value="entry">Entry price</option>}
-      </select>
-      {value.kind === "indicator" && (
-        <>
-          {value.indicator === "AVWAP" && (
-            <input
-              type="datetime-local"
-              className="bt-operand-anchor"
-              value={value.anchor && value.anchor > 0 ? msToLocalInput(value.anchor) : ""}
-              onChange={(e) => onChange({ ...value, anchor: localInputToMs(e.target.value) ?? 0 })}
-            />
-          )}
-          {!NO_LENGTH.includes(value.indicator) && (
-            <>
-              {/* While swept, a RangeChip edits the range in place; otherwise the
-                  plain length input with its sweep toggle. */}
-              {(() => {
-                const axis = sweptAxis("length");
-                return axis && sweep ? (
-                  <>
-                    <SweepBaseValue>{value.length ?? 9}</SweepBaseValue>
-                    <RangeChip
-                      axis={axis}
-                      onPatch={(p) => sweep.onAxisChange(axis.target, p)}
-                      onRemove={() => sweep.onToggle(axis.target, value.length ?? 9)}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <input
-                      type="number"
-                      min={1}
-                      className="bt-operand-length"
-                      value={value.length ?? 9}
-                      onKeyDown={blockNegKeys}
-                      onChange={(e) => onChange({ ...value, length: Number(cleanNumInput(e.currentTarget)) })}
-                      onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => onChange({ ...value, length: n }))}
-                    />
-                    {sweepToggle("length", value.length ?? 9)}
-                  </>
-                );
-              })()}
-            </>
-          )}
-          <Tooltip content="Timeframe this indicator is computed on">
-            <select
-              className="bt-operand-tf"
-              value={value.timeframe ?? ""}
-              onChange={(e) => onChange({ ...value, timeframe: e.target.value || undefined })}
-            >
-              <option value="">Base</option>
-              {higherTfs.map((p) => (
-                <option key={p.resolution} value={p.resolution}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </Tooltip>
-        </>
-      )}
-      {value.kind === "price" && (
-        <select value={value.field} onChange={(e) => onChange({ ...value, field: e.target.value as PriceField })}>
-          {PRICE_FIELDS.map((f) => (
-            <option key={f} value={f}>
-              {PRICE_FIELD_LABELS[f]}
-            </option>
-          ))}
-        </select>
-      )}
-      {value.kind === "const" && (
-        <>
-          {(() => {
-            const axis = sweptAxis("value");
-            return axis && sweep ? (
-              <>
-                <SweepBaseValue>{value.value}</SweepBaseValue>
-                <RangeChip
-                  axis={axis}
-                  onPatch={(p) => sweep.onAxisChange(axis.target, p)}
-                  onRemove={() => sweep.onToggle(axis.target, value.value)}
-                />
-                {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
-              </>
-            ) : (
-              <>
-                <NumberField
-                  signed
-                  value={value.value}
-                  onChange={(n) => onChange({ kind: "const", value: n })}
-                  className="bt-operand-length"
-                />
-                {siblingSloped && <span className="bt-operand-unit">%/hr</span>}
-                {sweepToggle("value", value.value)}
-              </>
-            );
-          })()}
-        </>
-      )}
-      {openChartPicker && (
-        <Tooltip content="Add a chart indicator or drawing as this operand">
-          <button
-            type="button"
-            className="bt-operand-add"
-            onClick={() => openChartPicker((op) => {
-              const next: Operand =
-                prevSlope && (op.kind === "indicator" || op.kind === "price" || op.kind === "series")
-                  ? { ...op, slope: prevSlope }
-                  : op;
-              dropOrphanAxes(next);
-              onChange(next);
-            })}
-            aria-label="Add from chart"
-          >
-            +
-          </button>
-        </Tooltip>
-      )}
-      </>
-      )}
-      {canSlope && (
-        <>
-          <Tooltip content="Compare the slope (rate of change, % per hour) of this curve instead of its value">
-            <button
-              type="button"
-              className={`bt-operand-slope${sloped ? " on" : ""}`}
-              onClick={() => setSlope(sloped ? undefined : { len: 1 })}
-              aria-label="Use slope"
-              aria-pressed={sloped}
-            >
-              Δ
-            </button>
-          </Tooltip>
-          {sloped && (
-            <Tooltip content="Slope lookback (bars)">
-              <input
-                type="number"
-                min={1}
-                className="bt-operand-length"
-                value={slopeLen(value) ?? 1}
-                onKeyDown={blockNegKeys}
-                onChange={(e) => setSlope({ len: Number(cleanNumInput(e.currentTarget)) })}
-                onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setSlope({ len: n }))}
-              />
-            </Tooltip>
-          )}
-        </>
-      )}
-      {canSlope && (
-        <>
-          <Tooltip content="Use a previous-candles value: this operand N bars ago, or its high, low, or average over the last N bars. The current bar is excluded.">
-            <button
-              type="button"
-              className={`bt-operand-mod${lookedBack ? " on" : ""}`}
-              onClick={() => setLookback(lookedBack ? undefined : { mode: "ago", len: 1 })}
-              aria-label="Use previous candles"
-              aria-pressed={lookedBack}
-            >
-              ⟲
-            </button>
-          </Tooltip>
-          {lookedBack && (
-            <>
-              <select
-                className="bt-operand-tf"
-                value={lookbackSpec(value)!.mode}
-                onChange={(e) => setLookback({ ...lookbackSpec(value)!, mode: e.target.value as LookbackSpec["mode"] })}
-              >
-                <option value="ago">bars ago</option>
-                <option value="high">high of last</option>
-                <option value="low">low of last</option>
-                <option value="avg">avg of last</option>
-              </select>
-              <Tooltip content="Previous candles (bars)">
-                <input
-                  type="number" min={1} className="bt-operand-length"
-                  value={lookbackSpec(value)!.len}
-                  onKeyDown={blockNegKeys}
-                  onChange={(e) => setLookback({ ...lookbackSpec(value)!, len: Number(cleanNumInput(e.currentTarget)) })}
-                  onBlur={(e) => clampPosOnBlur(e.currentTarget, 1, (n) => setLookback({ ...lookbackSpec(value)!, len: n }))}
-                />
-              </Tooltip>
-            </>
-          )}
-        </>
-      )}
-      {value.kind !== "const" && (
-        <>
-          <Tooltip content="Adjust this value before comparing: multiply by a factor and/or add an offset in percent or points. Example: body > 2 x ATR, or low > EMA +1%.">
-            <button
-              type="button"
-              className={`bt-operand-mod${scaled ? " on" : ""}`}
-              onClick={() => (scaled ? commitScale(undefined) : setScaleRaw({ mult: 2 }))}
-              aria-label="Scale or offset"
-              aria-pressed={scaled}
-            >
-              ×
-            </button>
-          </Tooltip>
-          {scaled && (
-            <>
-              <Tooltip content="Multiplier">
-                <input
-                  type="number" step="any" className="bt-operand-length"
-                  value={scaleSpec(value)?.mult ?? 1}
-                  onChange={(e) => setScaleRaw({ ...scaleSpec(value), mult: Number(cleanNumInput(e.currentTarget)) })}
-                  onBlur={() => commitScale(scaleSpec(value) ?? undefined)}
-                />
-              </Tooltip>
-              <Tooltip content="Offset, in the selected unit">
-                <input
-                  type="number" step="any" className="bt-operand-length"
-                  value={scaleSpec(value)?.off ?? 0}
-                  onChange={(e) => setScaleRaw({ ...scaleSpec(value), offUnit: scaleSpec(value)?.offUnit ?? "pct", off: Number(cleanNumInput(e.currentTarget)) })}
-                  onBlur={() => commitScale(scaleSpec(value) ?? undefined)}
-                />
-              </Tooltip>
-              <select
-                className="bt-operand-tf"
-                value={scaleSpec(value)?.offUnit ?? "pct"}
-                onChange={(e) => setScaleRaw({ ...scaleSpec(value), offUnit: e.target.value as "pct" | "abs" })}
-              >
-                <option value="pct">%</option>
-                <option value="abs">pts</option>
-              </select>
-            </>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-

@@ -8,10 +8,9 @@ import { installMemStorage } from "./lib/testMemStorage";
 // so the coded-mode tests' persistence round-trip actually lands.
 installMemStorage();
 
-// The modal now threads openChartPicker -> enumerateChartOperands, which pulls in
-// backtestSeries -> customIndicators, which reads LineType at module load (AVWAP
-// line style table); stub klinecharts' runtime surface like backtestSeries.test.ts /
-// overlays.test.ts / chartOperand.test.ts do.
+// The modal pulls in backtestSeries -> customIndicators, which reads LineType at
+// module load (AVWAP line style table); stub klinecharts' runtime surface like
+// backtestSeries.test.ts / overlays.test.ts / chartOperand.test.ts do.
 vi.mock("klinecharts", () => ({
   registerIndicator: () => {},
   registerOverlay: () => {},
@@ -69,7 +68,7 @@ import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
 import { saveBacktestPreset, loadBacktestLastUsed } from "./lib/persist/defaults";
 import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal } from "./lib/signals";
 import type { SweepRow } from "./api";
-import { recordSweepRanges, recallSweepRange, saveSweepAxes } from "./lib/sweepMemory";
+import { saveSweepAxes } from "./lib/sweepMemory";
 
 // See VisibilityTab.test.tsx: vitest isn't run with jest-style globals, so RTL's
 // automatic cleanup never registers. Without this each render leaks into the next.
@@ -282,30 +281,6 @@ describe("BacktestSettingsModal rule duplicate/copy/paste", () => {
   });
 });
 
-describe("chart-operand entry points", () => {
-  it("an empty rule group offers '+ Rule from chart' (footer) and opens the picker", () => {
-    renderModal();
-    openStrategy();
-    // Empty the seeded "Buy to open" group so the empty group is what's exercised.
-    const entry = groupSection("Buy to open");
-    ruleAction(entry, "Remove");
-    expect(ruleRows(entry)).toHaveLength(0);
-    // The always-present footer offers it exactly once (no redundant empty-state copy).
-    const btns = within(entry).getAllByRole("button", { name: "+ Rule from chart" });
-    expect(btns).toHaveLength(1);
-    fireEvent.click(btns[0]);
-    // No controller in the test harness -> picker shows its empty state.
-    expect(screen.getByText(/No indicators on this chart/i)).toBeTruthy();
-  });
-
-  it("every operand shows an 'Add from chart' button", () => {
-    renderModal();
-    openStrategy();
-    fireEvent.click(screen.getAllByRole("button", { name: "+ Add rule" })[0]);
-    expect(screen.getAllByRole("button", { name: "Add from chart" }).length).toBeGreaterThan(0);
-  });
-});
-
 describe("BacktestSettingsModal results side-by-side column", () => {
   it("moves results into a docked column and back", () => {
     renderModal();
@@ -327,96 +302,6 @@ describe("BacktestSettingsModal results side-by-side column", () => {
     fireEvent.click(closers[0]);
     expect(document.querySelector(".bt-results-col")).toBeNull();
     expect(document.querySelector(".bt-results-region")).toBeTruthy();
-  });
-});
-
-describe("operator sweep", () => {
-  it("toggles an operator sweep axis and shows the 7-operator chip editor inline", () => {
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-    // Default config seeds one long-entry rule; add another so the group has rows.
-    fireEvent.click(screen.getAllByRole("button", { name: "+ Add rule" })[0]);
-    // The operator sweep glyph sits beside the operator button.
-    const glyphs = document.querySelectorAll(".bt-op-menu + .sp-sweep, .bt-op-sweep-toggle");
-    expect(glyphs.length).toBeGreaterThan(0);
-    fireEvent.click(glyphs[0]);
-    // Inline chip editor lists all 7 operators; the rule's current op is ticked.
-    const editor = document.querySelector(".bt-op-sweep-row")!;
-    expect(editor).toBeTruthy();
-    expect(editor.querySelectorAll(".bt-chip").length).toBe(7);
-    expect(editor.querySelectorAll(".seg-on").length).toBe(1);
-    // Ticking a second operator marks it selected (chip 3 is "greater than",
-    // which differs from the seeded "crosses above").
-    fireEvent.click(editor.querySelectorAll(".bt-chip")[3]);
-    expect(editor.querySelectorAll(".seg-on").length).toBe(2);
-  });
-
-  it("a swept indicator length renders its editor inline inside the rule group", () => {
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-
-    const section = groupSection("Buy to open");
-    // The left operand's length glyph is the first .sp-sweep inside the rule row.
-    const row = ruleRows(section)[0];
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-
-    // The swept field renders a RangeChip in place of its value input, inside
-    // this group section and nowhere else in the document.
-    expect(section.querySelector(".range-chip")).toBeTruthy();
-    expect(document.querySelectorAll(".range-chip")).toHaveLength(1);
-
-    // Toggle off via the chip popover's Remove action: gone.
-    fireEvent.click(section.querySelector(".range-chip")!);
-    fireEvent.click(screen.getByRole("button", { name: "Remove from sweep" }));
-    expect(section.querySelector(".range-chip")).toBeNull();
-  });
-
-  it("drops a swept const-value axis when the operand switches to an indicator", () => {
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-
-    const section = groupSection("Buy to open");
-    const row = ruleRows(section)[0];
-    // Make the left operand a Number so its value can be swept.
-    const typeSelect = row.querySelector(".bt-operand select") as HTMLSelectElement;
-    fireEvent.change(typeSelect, { target: { value: "const" } });
-
-    // Sweep the const value: a RangeChip replaces the input and the footer
-    // starts counting combos.
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    expect(section.querySelector(".range-chip")).toBeTruthy();
-    expect(screen.queryByText("Turn on a field's sweep toggle to run")).toBeNull();
-    expect(document.querySelector(".bt-sweep-estimate")).toBeTruthy();
-
-    // Switch the operand back to an indicator: the value leaf is orphaned, so
-    // its axis must drop — no stranded chip, and the counter resets.
-    fireEvent.change(
-      row.querySelector(".bt-operand select") as HTMLSelectElement,
-      { target: { value: "EMA" } },
-    );
-    expect(section.querySelector(".range-chip")).toBeNull();
-    expect(screen.getByText("Turn on a field's sweep toggle to run")).toBeTruthy();
-    expect(document.querySelector(".bt-sweep-estimate")).toBeNull();
-  });
-
-  it("a swept exit count renders its editor inline inside its rule group", () => {
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-
-    // Exit groups carry the count field; its glyph is the LAST .sp-sweep in
-    // the row (after both operands' length/value glyphs). Tooltip wraps each
-    // glyph in its own span, so sibling selectors on .bt-rule-count won't hit it.
-    const section = groupSection("Sell to close");
-    const row = ruleRows(section)[0];
-    const glyphs = row.querySelectorAll(".sp-sweep");
-    fireEvent.click(glyphs[glyphs.length - 1]);
-
-    expect(section.querySelector(".range-chip")).toBeTruthy();
-    expect(document.querySelectorAll(".range-chip")).toHaveLength(1);
   });
 });
 
@@ -761,24 +646,6 @@ describe("rules-mode combo apply", () => {
     sweepAxesSignal.set([]);
   });
 
-  it("op combo patches the first ENABLED long entry rule (skips a disabled rule at raw index 0)", () => {
-    const initial = defaultBacktestConfig();
-    // Raw index 0 is disabled; raw index 1 is the first ENABLED rule. The op axis
-    // counts enabled rules only, so "op:long.entry.0" must patch raw index 1.
-    initial.longEntry = {
-      combine: "AND",
-      rules: [
-        { left: { kind: "indicator", indicator: "EMA", length: 9 }, op: "lt", right: { kind: "indicator", indicator: "EMA", length: 21 }, enabled: false },
-        { left: { kind: "indicator", indicator: "EMA", length: 9 }, op: "crossesAbove", right: { kind: "indicator", indicator: "EMA", length: 21 } },
-      ],
-    };
-    const onRun = renderRules(initial);
-    const next = applyCombo(onRun, { "op:long.entry.0": "gt" });
-    expect(next.longEntry.rules[1].op).toBe("gt");      // enabled rule patched
-    expect(next.longEntry.rules[0].op).toBe("lt");      // disabled rule untouched
-    expect(next.longEntry.rules[0].enabled).toBe(false);
-  });
-
   it("period combo switches the range to a custom window (unix seconds -> ms)", () => {
     const onRun = renderRules(defaultBacktestConfig());
     const next = applyCombo(onRun, { "period:from": 1751155200, "period:to": 1751587200 });
@@ -906,54 +773,10 @@ describe("inline risk sweep editors", () => {
   });
 });
 
-describe("sweep range memory", () => {
-  it("toggling a sweep on recalls the last-run range instead of the heuristic", () => {
-    // 30..60 step 3 enumerates 11 values; the heuristic seed would not.
-    recordSweepRanges("rules", [
-      { kind: "range", target: "rule:long.entry.0.left.length", label: "len", from: 30, to: 60, step: 3 },
-    ]);
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-    const row = ruleRows(groupSection("Buy to open"))[0];
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    // Footer combo count proves the recalled range seeded the axis: 11 combos.
-    expect(document.querySelector(".bt-sweep-estimate")!.textContent).toBe("11 combos");
-  });
-
-  it("running a sweep records each range axis's from/to/step", () => {
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-    const row = ruleRows(groupSection("Buy to open"))[0];
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    expect(recallSweepRange("rules", "rule:long.entry.0.left.length")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Run sweep" }));
-    const rec = recallSweepRange("rules", "rule:long.entry.0.left.length");
-    expect(rec).not.toBeNull();
-    expect(rec!.step).toBeGreaterThan(0);
-  });
-});
-
 describe("persistent sweep setup", () => {
   afterEach(() => {
     sweepStateSignal.set(null);
     sweepAxesSignal.set([]);
-  });
-
-  it("restores the axis set after unmount/remount", () => {
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-    const row = ruleRows(groupSection("Buy to open"))[0];
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    expect(document.querySelector(".range-chip")).toBeTruthy();
-    cleanup();
-    // Sweep mode is device-local persisted too, so the remount restores it.
-    renderModal();
-    openStrategy();
-    expect(document.querySelector(".range-chip")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Run sweep" })).toBeTruthy();
   });
 
   it("prunes a stored axis whose rule no longer exists", () => {
@@ -967,96 +790,6 @@ describe("persistent sweep setup", () => {
     // unavailable because no axis is configured.
     expect(document.querySelector(".range-chip")).toBeNull();
     expect((screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("applying a combo flips to Backtest mode but keeps the axes and the results table one flip away", () => {
-    const onRun = vi.fn();
-    render(
-      <BacktestSettingsModal
-        initial={defaultBacktestConfig()} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
-        onRun={onRun} onClose={vi.fn()}
-      />,
-    );
-    enterSweepMode();
-    openStrategy();
-    const row = ruleRows(groupSection("Buy to open"))[0];
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    const rows: SweepRow[] = [
-      { combo: { "rule:long.entry.0.left.length": 30 }, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, windows: null, error: null },
-    ];
-    act(() => sweepStateSignal.set({ rows, done: 1, total: 1, running: false }));
-    fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
-    expect(onRun).toHaveBeenCalledTimes(1);
-    // The run that just fired was a plain backtest, not a sweep.
-    expect(sweepAxesSignal.value).toEqual([]);
-    // Apply lands you in Backtest mode so the follow-up run's result shows.
-    expect(screen.getByRole("button", { name: "Run backtest" })).toBeTruthy();
-    // The sweep table stays mounted (hidden), not unmounted, so flipping back is
-    // instant and the table + configured axes survive one flip away.
-    expect((document.querySelector(".sweep-panel") as HTMLElement).style.display).toBe("none");
-    expect(sweepStateSignal.value).not.toBeNull();
-    enterSweepMode();
-    expect((document.querySelector(".sweep-panel") as HTMLElement).style.display).toBe("");
-    expect(document.querySelector(".range-chip")).toBeTruthy();
-    // A second row click (same single row here) still applies and re-runs.
-    fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
-    expect(onRun).toHaveBeenCalledTimes(2);
-  });
-
-  it("replaces a swept field's input with a RangeChip, and restores it on remove", () => {
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-    const row = ruleRows(groupSection("Buy to open"))[0];
-    const before = row.querySelectorAll("input.bt-operand-length").length;
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    // The swept field's value input is gone, replaced by its RangeChip.
-    expect(row.querySelectorAll("input.bt-operand-length").length).toBe(before - 1);
-    expect(row.querySelector(".range-chip")).toBeTruthy();
-    // Removing the sweep from the chip popover restores the plain input.
-    fireEvent.click(row.querySelector(".range-chip")!);
-    fireEvent.click(screen.getByRole("button", { name: "Remove from sweep" }));
-    expect(row.querySelectorAll("input.bt-operand-length").length).toBe(before);
-    expect(row.querySelector(".range-chip")).toBeNull();
-  });
-
-  it("toggling the last axis off disables Run sweep and persists the cleared set", () => {
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-    const row = ruleRows(groupSection("Buy to open"))[0];
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    const runBtn = () => screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement;
-    expect(runBtn().disabled).toBe(false);
-    // Off again via the chip popover's Remove action.
-    fireEvent.click(row.querySelector(".range-chip")!);
-    fireEvent.click(screen.getByRole("button", { name: "Remove from sweep" }));
-    expect(document.querySelector(".range-chip")).toBeNull();
-    expect(runBtn().disabled).toBe(true);
-    // The empty set is what persists: a remount must not resurrect the axes.
-    cleanup();
-    renderModal();
-    openStrategy();
-    expect(document.querySelector(".range-chip")).toBeNull();
-    expect(runBtn().disabled).toBe(true);
-  });
-
-  it("mode switch round-trip restores each mode's own axes", () => {
-    renderModal();
-    enterSweepMode();
-    openStrategy();
-    const row = ruleRows(groupSection("Buy to open"))[0];
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    expect(document.querySelector(".range-chip")).toBeTruthy();
-    // The User Defined|Built-in segmented switch reuses the vertical tab's "Strategy"
-    // label; the seg button is the one that is NOT inside .bt-htabs.
-    const segStrategy = screen
-      .getAllByRole("button", { name: "Built-in" })
-      .find((b) => !b.closest(".bt-htabs"))!;
-    fireEvent.click(segStrategy);
-    expect(document.querySelector(".range-chip")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "User Defined" }));
-    expect(document.querySelector(".range-chip")).toBeTruthy();
   });
 
   it("prunes a stored param axis the file no longer declares when entering coded mode via the mode switch", async () => {
@@ -1103,19 +836,6 @@ describe("sweep footer estimate + compute toggle", () => {
       { kind: "range", target: "rule:long.entry.0.left.length", label: "len", from: 1, to: 2001, step: 1 },
     ]);
 
-  it("marks the estimate amber past 1000 combos but keeps Run sweep enabled", () => {
-    bigAxis();
-    renderModal();
-    enterSweepMode();
-    const est = document.querySelector(".bt-sweep-estimate") as HTMLElement;
-    expect(est).toBeTruthy();
-    expect(est.className).toContain("bt-sweep-warn");
-    expect(est.textContent).toBe("2001 combos");
-    // The combo count must never gate the Run button.
-    const run = screen.getByRole("button", { name: "Run sweep" }) as HTMLButtonElement;
-    expect(run.disabled).toBe(false);
-  });
-
   it("hides the Compute toggle when remote compute is not configured", async () => {
     mockComputeStatus.mockResolvedValue({ remoteConfigured: false });
     bigAxis();
@@ -1124,38 +844,6 @@ describe("sweep footer estimate + compute toggle", () => {
     // Let the mount fetch resolve; the toggle must stay absent.
     await waitFor(() => expect(mockComputeStatus).toHaveBeenCalled());
     expect(document.querySelector(".bt-compute-toggle")).toBeNull();
-  });
-
-  it("shows the Compute toggle once remote compute is configured", async () => {
-    mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
-    bigAxis();
-    renderModal();
-    enterSweepMode();
-    await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
-    const toggle = document.querySelector(".bt-compute-toggle") as HTMLElement;
-    const select = within(toggle).getByRole("combobox") as HTMLSelectElement;
-    expect(within(select).getByRole("option", { name: "Local" })).toBeTruthy();
-    expect(within(select).getByRole("option", { name: "Remote" })).toBeTruthy();
-  });
-
-  it("shows the Compute toggle in walk-forward mode too", async () => {
-    mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
-    bigAxis();
-    renderModal();
-    fireEvent.click(within(modeSeg()).getByRole("button", { name: /Walk-fwd/ }));
-    await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
-  });
-
-  it("clicking Remote writes the sweep-target signal and persists it", async () => {
-    mockComputeStatus.mockResolvedValue({ remoteConfigured: true });
-    bigAxis();
-    renderModal();
-    enterSweepMode();
-    await waitFor(() => expect(document.querySelector(".bt-compute-toggle")).toBeTruthy());
-    const toggle = document.querySelector(".bt-compute-toggle") as HTMLElement;
-    fireEvent.change(within(toggle).getByRole("combobox"), { target: { value: "remote" } });
-    expect(sweepTargetSignal.value).toBe("remote");
-    expect(localStorage.getItem("auto-trader.sweepTarget")).toBe(JSON.stringify("remote"));
   });
 });
 
@@ -1185,34 +873,6 @@ describe("backtest | sweep mode switch", () => {
     expect(sweepStateSignal.value).not.toBeNull();
     enterSweepMode();
     expect((document.querySelector(".sweep-panel") as HTMLElement).style.display).toBe("");
-  });
-
-  it("Run in Backtest mode publishes no axes even when axes are configured", () => {
-    const onRun = vi.fn();
-    render(
-      <BacktestSettingsModal
-        initial={defaultBacktestConfig()} epic="TEST" resolution="MINUTE" controller={null} chartTimezone="UTC"
-        onRun={onRun} onClose={vi.fn()}
-      />,
-    );
-    enterSweepMode();
-    openStrategy();
-    const row = ruleRows(groupSection("Buy to open"))[0];
-    fireEvent.click(row.querySelector(".sp-sweep")!);
-    enterBacktestMode();
-    fireEvent.click(screen.getByRole("button", { name: "Run backtest" }));
-    expect(onRun).toHaveBeenCalledTimes(1);
-    // The mode gates the run: BacktestButton must see an empty axis set.
-    expect(sweepAxesSignal.value).toEqual([]);
-  });
-
-  it("sweep toggles are inert in Backtest mode", () => {
-    renderModal();
-    openStrategy();
-    const row = ruleRows(groupSection("Buy to open"))[0];
-    fireEvent.click(row.querySelector(".sp-sweep")!);   // no-op in Backtest mode
-    enterSweepMode();
-    expect(document.querySelector(".range-chip")).toBeNull();
   });
 
   it("shows sweep progress on the Sweep segment while in Backtest mode", () => {

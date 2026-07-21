@@ -220,7 +220,6 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
                   return (
                     <div key={s} style={{ "--side": codedIsLong ? "var(--pos)" : "var(--neg)" } as CSSProperties}>
                       <RuleGroupSection
-                        editorMode="expr"
                         title={codedIsLong ? "Sell to close" : "Buy to close"}
                         info={`Conditions that close an open ${s} position. A stop or target can close it first.`}
                         group={codedIsLong ? liveCoded.longExit : liveCoded.shortExit}

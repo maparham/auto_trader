@@ -30,7 +30,6 @@ describe("RuleGroupSection (expression literal sweep)", () => {
     const { container, getByText } = render(
       <RuleGroupSection
         title="Buy to open"
-        editorMode="expr"
         group={{ rules: [{ expr: "EMA(50) > 30", enabled: true }] }}
         onChange={vi.fn()}
         emptyHint="none"
@@ -56,7 +55,6 @@ describe("RuleGroupSection (expression literal sweep)", () => {
     const { getByText } = render(
       <RuleGroupSection
         title="Buy to open"
-        editorMode="expr"
         group={{
           rules: [
             { expr: "RSI(14) > 70", enabled: false },
@@ -89,7 +87,6 @@ describe("RuleGroupSection (expression literal sweep)", () => {
     const { container } = render(
       <RuleGroupSection
         title="Buy to open"
-        editorMode="expr"
         group={{ rules: [{ expr: "EMA(50) > 30", enabled: true }] }}
         onChange={vi.fn()}
         emptyHint="none"
@@ -109,7 +106,6 @@ describe("RuleGroupSection (expression literal sweep)", () => {
     const { container } = render(
       <RuleGroupSection
         title="Buy to open"
-        editorMode="expr"
         group={{ rules: [{ expr: "EMA(50) > 30", enabled: true }] }}
         onChange={vi.fn()}
         emptyHint="none"
