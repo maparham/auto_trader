@@ -7,9 +7,10 @@ import type { SweepAxis } from "../sweep";
 
 /** Builds a `lit:` sweep-axis target for an expression's numeric literal.
  * The target encodes the rule side (long/short), group (entry/exit), rule
- * index (rowIdx, counting enabled rules only), and literal ordinal (position
- * in the expression's sorted literals list). Must match the backend's `lit:`
- * grammar added in Task 13.
+ * index (rowIdx, the FULL-list row index counting disabled rows too, since the
+ * expression request ships every row and the backend addresses rows by full
+ * index), and literal ordinal (position in the expression's sorted literals
+ * list). Must match the backend's `lit:` grammar.
  *
  * Example: sweepLiteralTarget("long", "entry", 0, 2) => "lit:long.entry.0.2"
  */
