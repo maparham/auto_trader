@@ -50,10 +50,8 @@ def make_candles(n=60):
 
 
 def base_request(strategy: str, candles):
-    empty = {"combine": "AND", "rules": []}
     return {
         "epic": "TEST", "resolution": "HOUR", "candles": candles, "series": {},
-        "longEntry": empty, "longExit": empty, "shortEntry": empty, "shortExit": empty,
         "costs": {"quantity": 1, "commissionPerSide": 0, "slippage": {"kind": "fixed", "value": 0}, "startingCash": 10000},
         "tradeFromTime": candles[0]["time"],
         "codedStrategy": strategy,
@@ -209,17 +207,12 @@ def test_coded_run_with_expr_exit_closes_and_reenters(strategies, tmp_path, monk
 
 
 def test_coded_with_exit_rules_wrong_length_series_422(strategies):
-    """The series-length 422 guard must also cover a coded request whose exit
-    rule groups ride along with a posted series shorter than the candles —
-    otherwise RuleStrategy silently reads None past the array end."""
+    """The series-length 422 guard must cover a coded request whose posted series
+    is shorter than the candles, otherwise the engine silently reads None past
+    the array end."""
     candles = make_candles(20)
     req = base_request("test.py", candles)
     req["series"] = {"SIG": [1.0] * (len(candles) - 1)}
-    req["longExit"] = {"combine": "AND", "rules": [{
-        "left": {"kind": "series", "seriesKey": "SIG"},
-        "op": "gt",
-        "right": {"kind": "const", "value": 0.0},
-    }]}
     res = client.post("/api/backtest", json=req)
     assert res.status_code == 422
     assert "series 'SIG' length" in res.json()["detail"]

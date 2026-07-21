@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field, model_validator
 from auto_trader.engine.schedule import RecurrenceMask
 from auto_trader.engine.risk import RiskConfig, StopSpec, TargetSpec
 from auto_trader.engine.scaling import ScalingConfig, SpacingSpec
-from auto_trader.strategy.rule import Operand, Rule, RuleGroup
 
 
 # --- response models (lightweight-charts friendly: unix-second timestamps) ---
@@ -193,110 +192,6 @@ class BacktestResponse(BaseModel):
     cost_sensitivity: dict | None = None
 
 
-# --- rule-based backtest request (D1/D4/D6: frontend computes series, posts
-# candles + series + rules; engine does no indicator math and no re-fetch) ---
-
-
-class SlopeDTO(BaseModel):
-    len: int = Field(ge=1)
-
-
-class LookbackDTO(BaseModel):
-    mode: Literal["ago", "high", "low", "avg"]
-    len: int = Field(ge=1)
-
-
-class ScaleDTO(BaseModel):
-    mult: float | None = None
-    off: float | None = None
-    offUnit: Literal["pct", "abs"] | None = None
-
-
-class OperandDTO(BaseModel):
-    kind: Literal["indicator", "price", "const", "entry", "series"]
-    indicator: Literal["EMA", "SMA", "AVWAP", "RSI", "VOL", "VOLMA"] | None = None
-    length: int | None = None
-    field: Literal["close", "open", "high", "low", "body", "range", "wickTop", "wickBottom"] | None = None
-    value: float | None = None
-    anchor: int | None = None
-    # A `series` operand (a chart indicator/drawing copied into a rule): the frontend
-    # already computed the array and posts it under `seriesKey`; the engine reads it
-    # verbatim and never recomputes. `label` is only for exit-reason rendering.
-    seriesKey: str | None = None
-    label: str | None = None
-    # Higher timeframe an indicator runs on (None ⇒ the run's base timeframe). The
-    # frontend aligns it onto the base bars, so the engine never reads this — it
-    # only rides along to key the series (series_name); see OperandDTO.to_operand.
-    timeframe: str | None = None
-    # Slope transform (indicator/price only): the frontend computes the %/hr slope
-    # as its own series; this only keys it (series_name), like `timeframe`.
-    slope: SlopeDTO | None = None
-    # Lookback (previous-candles) transform (indicator/price/series): the frontend
-    # computes the looked-back array as its own series; this only keys it.
-    lookback: LookbackDTO | None = None
-    # Scale transform (indicator/price/series/entry): applied at eval time to the
-    # operand's compared value (v·mult, then ± off% of that or ± off points).
-    scale: ScaleDTO | None = None
-
-    @model_validator(mode="after")
-    def _kind_matches_fields(self) -> "OperandDTO":
-        if self.kind == "indicator" and self.indicator is None:
-            raise ValueError("indicator operand requires 'indicator'")
-        if self.kind == "price" and self.field is None:
-            raise ValueError("price operand requires 'field'")
-        if self.kind == "const" and self.value is None:
-            raise ValueError("const operand requires 'value'")
-        if self.kind == "series" and not (self.seriesKey and self.seriesKey.strip()):
-            raise ValueError("series operand requires a non-empty 'seriesKey'")
-        if self.slope is not None and self.kind not in ("indicator", "price", "series"):
-            raise ValueError("slope is only valid on an indicator, price, or series operand")
-        if self.lookback is not None and self.kind not in ("indicator", "price", "series"):
-            raise ValueError("lookback is only valid on an indicator, price, or series operand")
-        if self.scale is not None and self.kind == "const":
-            raise ValueError("scale is not valid on a const operand (scale the constant itself)")
-        return self
-
-    def to_operand(self) -> Operand:
-        return Operand(
-            kind=self.kind, indicator=self.indicator, length=self.length,
-            field=self.field, value=self.value, anchor=self.anchor,
-            timeframe=self.timeframe,
-            slope_len=self.slope.len if self.slope else None,
-            lookback_mode=self.lookback.mode if self.lookback else None,
-            lookback_len=self.lookback.len if self.lookback else None,
-            scale_mult=self.scale.mult if self.scale else None,
-            scale_off=self.scale.off if self.scale else None,
-            scale_off_unit=self.scale.offUnit if self.scale else None,
-            series_key=self.seriesKey, label=self.label,
-        )
-
-
-class RuleDTO(BaseModel):
-    left: OperandDTO
-    op: Literal["crossesAbove", "crossesBelow", "crosses", "gt", "lt", "gte", "lte"]
-    right: OperandDTO
-    # "Nth time" modifier (exit-only; None ⇒ fire on first occurrence).
-    count: int | None = Field(default=None, ge=1)
-
-    def to_rule(self) -> Rule:
-        return Rule(self.left.to_operand(), self.op, self.right.to_operand(), count=self.count)
-
-
-class RuleGroupDTO(BaseModel):
-    combine: Literal["AND", "OR"]
-    rules: list[RuleDTO] = []
-
-    def to_group(self) -> RuleGroup:
-        return RuleGroup(self.combine, [r.to_rule() for r in self.rules])
-
-    def operands(self) -> list[OperandDTO]:
-        result = []
-        for r in self.rules:
-            result.append(r.left)
-            result.append(r.right)
-        return result
-
-
 class SlippageDTO(BaseModel):
     kind: Literal["fixed", "atr"]
     value: float = Field(ge=0)          # fixed value, or the ATR mode's base
@@ -425,13 +320,8 @@ class BacktestRequest(BaseModel):
     resolution: str
     candles: list[CandleDTO]
     series: dict[str, list[float | None]]
-    longEntry: RuleGroupDTO
-    longExit: RuleGroupDTO
-    shortEntry: RuleGroupDTO
-    shortExit: RuleGroupDTO
-    # Coded runs carry panel exit rules as EXPRESSIONS here (parallel to the
-    # structured longExit/shortExit above, which coded no longer reads). Entries
-    # are always the coded module's, so no expr entry fields are needed.
+    # Coded runs carry panel exit rules as EXPRESSIONS here. Entries are always
+    # the coded module's, so no expr entry fields are needed.
     exprLongExit: list[ExprRowDTO] = []
     exprShortExit: list[ExprRowDTO] = []
     # Per-side master switches: a disabled side never trades even if its rule
@@ -737,10 +627,6 @@ class EvaluateRequest(BaseModel):
     resolution: str
     candles: list[CandleDTO]
     series: dict[str, list[float | None]] = {}
-    longEntry: RuleGroupDTO
-    longExit: RuleGroupDTO
-    shortEntry: RuleGroupDTO
-    shortExit: RuleGroupDTO
     longEnabled: bool = True
     shortEnabled: bool = True
     longRisk: RiskConfigDTO | None = None
