@@ -750,6 +750,15 @@ class EvaluateRequest(BaseModel):
     # Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
     broker: str = "capital"
     priceSide: str = "mid"
+    # Expression mode: when True the structured rule groups are ignored and the
+    # expr* groups below drive the live decision (parallel to /api/expr/backtest).
+    # All optional so structured/coded callers are unaffected.
+    exprMode: bool = False
+    exprLongEntry: list[ExprRowDTO] = []
+    exprLongExit: list[ExprRowDTO] = []
+    exprShortEntry: list[ExprRowDTO] = []
+    exprShortExit: list[ExprRowDTO] = []
+    htfCandles: dict[str, list[CandleDTO]] | None = None
 
 
 class EvaluateResponse(BaseModel):

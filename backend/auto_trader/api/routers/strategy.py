@@ -22,6 +22,11 @@ from auto_trader.strategy.coded import (
     NeedTimeframe,
     StrategyRuntimeError,
 )
+from auto_trader.strategy.expr.errors import ExprError
+from auto_trader.strategy.expr.evaluate import compile_row
+from auto_trader.strategy.expr.parser import parse as parse_expr
+from auto_trader.strategy.expr.strategy import ExprRuleStrategy
+from auto_trader.strategy.expr.validate import validate as validate_expr
 from auto_trader.strategy.params import resolve_params
 from auto_trader.strategy.rule import RuleStrategy, series_name
 from auto_trader.strategy import loader
@@ -51,6 +56,26 @@ def _candle(c) -> Candle:
     )
 
 
+def _compile_expr_group(rows, candles, resolution, htf, *, is_exit: bool, group: str):
+    """Parse + validate + compile every ENABLED expression row in a group. Mirrors
+    expr.py's _compile_group: a parse/validate error 422s with the expression span
+    plus the group/row location; disabled rows are dropped before parse."""
+    compiled = []
+    for idx, row in enumerate(rows):
+        if not row.enabled:
+            continue
+        try:
+            node = parse_expr(row.expr)
+            validate_expr(node, is_exit=is_exit)
+        except ExprError as e:
+            raise HTTPException(422, {
+                "code": e.code, "message": e.message,
+                "start": e.start, "end": e.end, "group": group, "row": idx,
+            })
+        compiled.append(compile_row(node, candles, resolution, htf))
+    return compiled
+
+
 def _atr(spec, series: dict[str, list[float | None]], i: int) -> float | None:
     """Latest ATR value for an atr/trailAtr spec, or None."""
     if spec.kind not in ("atr", "trailAtr") or spec.length is None:
@@ -69,7 +94,20 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
                 422, f"series '{name}' length {len(arr)} != candles length {len(req.candles)}"
             )
 
-    if req.codedStrategy is None:
+    if req.exprMode and req.codedStrategy is not None:
+        raise HTTPException(422, "exprMode and codedStrategy are mutually exclusive.")
+
+    if req.exprMode:
+        # Expr live decision runs with series={} (natives computed from candles); an
+        # ATR-kind risk stop/target has no series to read, so reject it (mirrors the
+        # expr backtest I4 guard) rather than running a live position with no stop.
+        for risk in (req.longRisk, req.shortRisk):
+            if risk is not None and risk.atr_series_names():
+                raise HTTPException(
+                    422,
+                    "ATR-based risk stops are not available for expression rules in this version.",
+                )
+    elif req.codedStrategy is None:
         for group in (req.longEntry, req.longExit, req.shortEntry, req.shortExit):
             for op in group.operands():
                 name = series_name(op.to_operand())
@@ -100,7 +138,20 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
     pos_long = req.position.quantity if req.position and req.position.side == "buy" else 0.0
     pos_short = req.position.quantity if req.position and req.position.side == "sell" else 0.0
 
-    if req.codedStrategy is not None:
+    if req.exprMode:
+        htf: dict[str, list[Candle]] = {
+            tf: [_candle(c) for c in bars]
+            for tf, bars in (req.htfCandles or {}).items()
+        }
+        strategy = ExprRuleStrategy(
+            _compile_expr_group(req.exprLongEntry, candles, req.resolution, htf, is_exit=False, group="longEntry"),
+            _compile_expr_group(req.exprLongExit, candles, req.resolution, htf, is_exit=True, group="longExit"),
+            _compile_expr_group(req.exprShortEntry, candles, req.resolution, htf, is_exit=False, group="shortEntry"),
+            _compile_expr_group(req.exprShortExit, candles, req.resolution, htf, is_exit=True, group="shortExit"),
+            quantity=1.0, trade_from_time=None,
+            long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
+        )
+    elif req.codedStrategy is not None:
         try:
             module = loader.load_strategy(req.codedStrategy, loader.STRATEGIES_DIR)
         except StrategyLoadError as e:
