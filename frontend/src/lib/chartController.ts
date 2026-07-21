@@ -71,6 +71,15 @@ export class ChartController {
   // panel subscribes and drops it into the Custom from/to. One-shot: consumers may
   // reset it to null after reading.
   readonly rangePickResult = new Signal<{ fromMs: number; toMs: number } | null>(null);
+  // True while an expression rule row is armed to "pick from chart": the next
+  // click on an on-chart indicator (curve or legend row) publishes that instance
+  // on indicatorPickResult instead of selecting it, and the row disarms. Armed
+  // from OUTSIDE the chart (the backtest panel), mirroring rangePickArmed.
+  readonly indicatorPickArmed = new Signal<boolean>(false);
+  // The indicator instance most recently clicked while indicatorPickArmed. The
+  // panel resolves it to an expression token and inserts it. One-shot: the
+  // consumer resets it to null after reading.
+  readonly indicatorPickResult = new Signal<SelectedIndicator | null>(null);
   // TradingView-style price-axis "auto" mode (auto-fit y-axis to visible bars).
   // Starts ON; the toolbar "A" button reflects it and re-asserts auto-fit; the
   // cell turns it OFF when the user manually scales the price axis.

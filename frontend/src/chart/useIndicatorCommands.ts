@@ -112,11 +112,17 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   }, [controller, scope, indicatorRemoved]);
   const onLegendSelectRow = useCallback((name: string) => {
     const paneId = paneIdOf(name);
+    if (controller.indicatorPickArmed.value) {
+      // "Pick from chart" is armed: publish the clicked instance for the panel
+      // instead of selecting it (mirrors the curve-hit path in ChartCore).
+      controller.indicatorPickResult.set({ paneId, name });
+      return;
+    }
     const cur = selectedIndicator.value;
     if (cur?.paneId === paneId && cur?.name === name) return;
     selectedIndicator.set({ paneId, name });
     handle.redrawRef.current();
-  }, [paneIdOf]);
+  }, [paneIdOf, controller]);
 
   // Copy an indicator's full live config (type + calcParams / visibility / per-line
   // styles / extendData inputs) to the clipboard as JSON. Paste creates a fresh

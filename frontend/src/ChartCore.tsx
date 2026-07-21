@@ -1453,6 +1453,12 @@ export default function ChartCore({
       // hits on the canvas: a click near ANY indicator's curve (sub-panes included)
       // selects it; a click on empty chart space deselects.
       const hit = hitTestCache(lineCacheRef.current, x, y);
+      if (hit && controller.indicatorPickArmed.value) {
+        // "Pick from chart" is armed: publish the clicked instance for the panel
+        // to turn into an expression token, rather than selecting it on the chart.
+        controller.indicatorPickResult.set({ paneId: hit.paneId, name: hit.name });
+        return;
+      }
       if (hit) {
         const cur = selectedIndicator.value;
         if (cur?.paneId !== hit.paneId || cur?.name !== hit.name) {

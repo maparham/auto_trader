@@ -81,6 +81,10 @@ import {
 } from "./lib/backtestConfig";
 import { SESSION_PRESETS, buildRangeChips, coverage, formatDayWindow, isActive, minToTime, resolveMask, sessionWindowInTz } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
+import { getIndicator } from "./lib/indicators";
+import { indTypeOf } from "./lib/indicators/shared";
+import { chartIndicatorToExprToken } from "./lib/exprChartToken";
+import { toast } from "./lib/notify";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
 import { RangeChip, SweepBaseValue } from "./components/RangeChip";
@@ -1456,6 +1460,57 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     }
   };
 
+  // "Pick from chart" (expression editor): a rule row arms the chart, the user
+  // clicks an on-chart indicator, and its expression token (e.g. "EMA(9)") is
+  // appended to that row. Single source of truth for WHICH row is armed lives
+  // here (not per-section), so arming a second row replaces the first and the
+  // one chart click can only ever insert once. Mirrors the rangePick wiring.
+  const [exprPickArmed, setExprPickArmed] = useState<
+    { group: "longEntry" | "longExit" | "shortEntry" | "shortExit"; row: number } | null
+  >(null);
+  const exprPickArmedRef = useRef(exprPickArmed);
+  exprPickArmedRef.current = exprPickArmed;
+  useEffect(() => {
+    if (!controller) return;
+    const unsub = controller.indicatorPickResult.subscribe((sel) => {
+      const target = exprPickArmedRef.current;
+      if (!sel || !target) return;
+      controller.indicatorPickResult.set(null); // consume one-shot
+      setExprPickArmed(null);
+      controller.indicatorPickArmed.set(false);
+      const ind = controller.chart ? getIndicator(controller.chart, sel.paneId, sel.name) : null;
+      const token = ind
+        ? chartIndicatorToExprToken(indTypeOf(ind), (ind.calcParams ?? []).map(Number), ind.extendData)
+        : null;
+      if (!token) {
+        toast("That indicator has no expression equivalent.");
+        return;
+      }
+      setCfg((c) => {
+        const g = c[target.group] as { rules: Array<{ expr?: string }> };
+        const rules = g.rules.map((r, i) => (i === target.row ? { ...r, expr: (r.expr ?? "") + token } : r));
+        return { ...c, [target.group]: { ...g, rules } };
+      });
+    });
+    return () => {
+      unsub();
+      controller.indicatorPickArmed.set(false); // never leave the chart armed if the panel closes
+    };
+  }, [controller]);
+  const exprPick = controller
+    ? {
+        armed: exprPickArmed,
+        arm: (group: "longEntry" | "longExit" | "shortEntry" | "shortExit", row: number) => {
+          setExprPickArmed({ group, row });
+          controller.indicatorPickArmed.set(true);
+        },
+        disarm: () => {
+          setExprPickArmed(null);
+          controller.indicatorPickArmed.set(false);
+        },
+      }
+    : undefined;
+
   // The timeframe the run will actually use: the config override when set, else
   // the active chart timeframe (the `resolution` prop). Window math + the header
   // badge follow this so they reflect the run, not necessarily the chart.
@@ -2797,6 +2852,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             groupClipboard={groupClipboard}
             onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
             openChartPicker={openChartPicker}
+            exprPick={exprPick}
             sweep={{
               axes: displayAxes,
               side,
@@ -3473,6 +3529,7 @@ function SidePanel({
   groupClipboard,
   onCopyAll,
   openChartPicker,
+  exprPick,
   sweep,
 }: {
   side: "long" | "short";
@@ -3488,6 +3545,13 @@ function SidePanel({
   // Absent in surfaces with no chart to pick from (e.g. the Live panel) — the
   // affordances that need it simply don't render.
   openChartPicker?: (onPick: (op: Operand) => void) => void;
+  // "Pick from chart" arming, coordinated by the parent so only one row is armed
+  // at a time. Absent with no chart (Live panel) — the button doesn't render.
+  exprPick?: {
+    armed: { group: "longEntry" | "longExit" | "shortEntry" | "shortExit"; row: number } | null;
+    arm: (group: "longEntry" | "longExit" | "shortEntry" | "shortExit", row: number) => void;
+    disarm: () => void;
+  };
   // Task 9: optional per-operand-field sweep toggle for rule mode. Undefined
   // (coded mode's own RuleGroupSection use, the Live panel) renders as before.
   // `onToggleRisk` / `onKindChange` carry the SL/TP sweep toggle for the risk
@@ -3509,6 +3573,16 @@ function SidePanel({
   const enabled = (isLong ? cfg.longEnabled : cfg.shortEnabled) !== false;
   const entry = isLong ? cfg.longEntry : cfg.shortEntry;
   const exit = isLong ? cfg.longExit : cfg.shortExit;
+  // Bind the parent's arming API to one group key, so each rule section gets a
+  // simple { armedRow, arm(row), disarm } view of the single shared armed state.
+  const sidePick = (group: "longEntry" | "longExit" | "shortEntry" | "shortExit") =>
+    exprPick
+      ? {
+          armedRow: exprPick.armed?.group === group ? exprPick.armed.row : null,
+          arm: (row: number) => exprPick.arm(group, row),
+          disarm: exprPick.disarm,
+        }
+      : undefined;
 
   return (
     <>
@@ -3532,6 +3606,7 @@ function SidePanel({
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
           openChartPicker={openChartPicker}
+          pickIndicator={sidePick(isLong ? "longEntry" : "shortEntry")}
           sweep={sweep && { ...sweep, group: "entry" }}
         />
         <RuleGroupSection
@@ -3548,6 +3623,7 @@ function SidePanel({
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
           openChartPicker={openChartPicker}
+          pickIndicator={sidePick(isLong ? "longExit" : "shortExit")}
           isExit
           sweep={sweep && { ...sweep, group: "exit" }}
         />
@@ -4122,6 +4198,7 @@ export function RuleGroupSection({
   groupClipboard,
   onCopyAll,
   openChartPicker,
+  pickIndicator,
   isExit = false,
   sweep,
 }: {
@@ -4144,6 +4221,13 @@ export function RuleGroupSection({
   groupClipboard?: Rule[] | null;
   onCopyAll?: (rules: Rule[]) => void;
   openChartPicker?: (onPick: (op: Operand) => void) => void;
+  // "Pick from chart" for THIS group (expr mode only): armedRow is the row armed
+  // in this group (or null), arm/disarm toggle it. Absent with no chart.
+  pickIndicator?: {
+    armedRow: number | null;
+    arm: (row: number) => void;
+    disarm: () => void;
+  };
   // Exit groups gate whether `entry` is a valid reference in the expression.
   isExit?: boolean;
   sweep?: {
@@ -4347,17 +4431,40 @@ export function RuleGroupSection({
             )}
             <div className="bt-rule-actions">
               {editorMode === "expr" ? (
-                <Tooltip content="Insert an indicator, candle field, or timeframe">
-                  <button
-                    type="button"
-                    className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
-                    onClick={() => setPaletteRow(paletteRow === i ? null : i)}
-                    aria-label="Insert from palette"
-                    aria-expanded={paletteRow === i}
-                  >
-                    +
-                  </button>
-                </Tooltip>
+                <>
+                  <Tooltip content="Insert an indicator, candle field, or timeframe">
+                    <button
+                      type="button"
+                      className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
+                      onClick={() => setPaletteRow(paletteRow === i ? null : i)}
+                      aria-label="Insert from palette"
+                      aria-expanded={paletteRow === i}
+                    >
+                      +
+                    </button>
+                  </Tooltip>
+                  {pickIndicator && (
+                    <Tooltip
+                      content={
+                        pickIndicator.armedRow === i
+                          ? "Click an indicator on the chart, or click here to cancel"
+                          : "Pick an indicator from the chart"
+                      }
+                    >
+                      <button
+                        type="button"
+                        className={`bt-rule-toggle bt-pick-toggle${pickIndicator.armedRow === i ? " on" : ""}`}
+                        onClick={() =>
+                          pickIndicator.armedRow === i ? pickIndicator.disarm() : pickIndicator.arm(i)
+                        }
+                        aria-label="Pick an indicator from the chart"
+                        aria-pressed={pickIndicator.armedRow === i}
+                      >
+                        ◎
+                      </button>
+                    </Tooltip>
+                  )}
+                </>
               ) : (
                 <Tooltip content="Swap sides (same condition)">
                   <button
