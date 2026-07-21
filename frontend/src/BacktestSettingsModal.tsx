@@ -6,7 +6,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CloseButton from "./CloseButton";
-import ChartOperandPicker from "./ChartOperandPicker";
 import InfoTip from "./components/InfoTip";
 import NumberField from "./components/NumberField";
 import RunBar, { ModeSeg } from "./components/RunBar";
@@ -42,8 +41,6 @@ import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
 import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
 import { PHASE_LABEL, WfoResults } from "./WfoResults";
-import { enumerateChartOperands } from "./lib/chartOperandEnumerate";
-import type { EmphasisTarget } from "./lib/chartOperand";
 import { resolveWindow } from "./lib/backtestWindow";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
@@ -1407,58 +1404,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // A copied set of whole-group rules, shared across all four groups the same way
   // — so every rule in one side/leg can be pasted into another at once.
   const [groupClipboard, setGroupClipboard] = useState<Rule[] | null>(null);
-
-  // The chart-operand picker is modal-owned (opened from deep in the rule builder
-  // via a threaded callback). `pickerFor` holds the pick handler; non-null = open.
-  const [pickerFor, setPickerFor] = useState<((op: Operand) => void) | null>(null);
-  // The chart selection that existed BEFORE the picker opened, snapshotted so closing
-  // the picker restores it rather than clobbering it — the picker temporarily drives
-  // the on-chart selection to preview/highlight its rows, but it never owned whatever
-  // the user had selected beforehand.
-  const priorSelection = useRef<{ ind: { paneId: string; name: string } | null; draw: string | null }>({
-    ind: null,
-    draw: null,
-  });
-  const openChartPicker = (onPick: (op: Operand) => void) => {
-    if (controller) {
-      priorSelection.current = {
-        ind: controller.selectedIndicator.value,
-        draw: controller.overlays.getSelectedDrawingId(),
-      };
-    }
-    setPickerFor(() => onPick);
-  };
-  const pickerSources = useMemo(() => (pickerFor ? enumerateChartOperands(controller) : []), [pickerFor, controller]);
-  // Drive the on-chart element behind the picker's EFFECTIVE target (hovered row,
-  // else the selected row — see ChartOperandPicker) into real, persistent SELECTED
-  // mode, so the selected item stays selected on the chart until the picker
-  // selection changes or the picker closes:
-  //  - a drawing → selectDrawing (bookkeeping/keyboard) + a thicken so it's visible
-  //    (klinecharts has no programmatic native-handle API; the thicken is our cue).
-  //  - an indicator → selectedIndicator (the persistent selection that shows the
-  //    hollow handles and, unlike curveHover, survives the user hovering the chart).
-  // Reconcile BOTH on every change; null clears whichever was active.
-  const handleHoverSource = (t: EmphasisTarget | null) => {
-    if (!controller) return;
-    // No effective target (nothing hovered/selected in the picker, or the picker is
-    // closing) → RESTORE the pre-picker selection rather than clearing it, so a
-    // selection the user made before opening the picker survives the picker's close.
-    if (t === null) {
-      const prior = priorSelection.current;
-      controller.overlays.hoverDrawing(null);
-      controller.overlays.selectDrawing(prior.draw);
-      controller.selectedIndicator.set(prior.ind);
-      return;
-    }
-    const drawingId = t.kind === "drawing" ? t.id : null;
-    controller.overlays.selectDrawing(drawingId);
-    controller.overlays.hoverDrawing(drawingId);
-    const ind = t.kind === "indicator" ? { paneId: t.paneId, name: t.name } : null;
-    const cur = controller.selectedIndicator.value;
-    if ((cur?.paneId ?? null) !== (ind?.paneId ?? null) || (cur?.name ?? null) !== (ind?.name ?? null)) {
-      controller.selectedIndicator.set(ind);
-    }
-  };
 
   // "Pick from chart" (expression editor): a rule row arms the chart, the user
   // clicks an on-chart indicator, and its expression token (e.g. "EMA(9)") is
@@ -2850,7 +2795,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             onCopy={(rule) => setClipboard(cloneRule(rule))}
             groupClipboard={groupClipboard}
             onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
-            openChartPicker={openChartPicker}
             exprPick={exprPick}
             sweep={{
               axes: displayAxes,
@@ -3204,14 +3148,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           />
         </div>
     </aside>
-      {pickerFor && (
-        <ChartOperandPicker
-          sources={pickerSources}
-          onPick={(op) => { pickerFor(op); setPickerFor(null); }}
-          onClose={() => setPickerFor(null)}
-          onHoverSource={handleHoverSource}
-        />
-      )}
     </>
   );
 }

@@ -448,16 +448,6 @@ describe("series operand — indicator recipes match the chart template", () => 
     const dayHigh = await seriesFor({ source: "indicator", indicatorType: "PREV_HL", calcParams: [], line: 2 }, bars);
     expect(dayHigh).toEqual(nul(pts.map((p) => p.dayHigh)));
   });
-
-  it("a picker-built LR 'Upper' operand (line 1) resolves to computeLr().up end-to-end", async () => {
-    const { chartOperandSources } = await import("./chartOperand");
-    const bars = candles([1, 3, 2, 4, 6, 5, 7, 9, 8, 10]);
-    const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "LR#x", indType: "LR", calcParams: [5, 2], extendData: {} });
-    const upper = src.outputs.find((o) => (o.operand as Extract<Operand, { kind: "series" }>).label.endsWith("Upper"))!;
-    const recipe = (upper.operand as Extract<Operand, { kind: "series" }>).recipe;
-    const got = await seriesFor(recipe, bars);
-    expect(got).toEqual(nul(computeLr(bars, 5, 2, {}).map((p) => (p as Record<string, number | undefined>).up)));
-  });
 });
 
 describe("series operand — Pivot Bands recipe", () => {
@@ -489,16 +479,6 @@ describe("series operand — Pivot Bands recipe", () => {
     const ext = { mode: "avg" as const, source: "close" as const };
     const got = await seriesFor({ source: "indicator", indicatorType: "PIVOT_BANDS", calcParams: [1, 2], line: 1, extend: ext }, ZIG);
     const ref = computePivotBands(ZIG, 1, 2, ext) as unknown as Array<Record<string, number | undefined>>;
-    expect(got).toEqual(nul(ref.map((p) => p.pivotLow)));
-  });
-
-  it("a picker-built 'Pivot Low' operand resolves end-to-end", async () => {
-    const { chartOperandSources } = await import("./chartOperand");
-    const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "PIVOT_BANDS#x", indType: "PIVOT_BANDS", calcParams: [1, 1], extendData: {} });
-    const low = src.outputs.find((o) => (o.operand as Extract<Operand, { kind: "series" }>).label.endsWith("Pivot Low"))!;
-    const recipe = (low.operand as Extract<Operand, { kind: "series" }>).recipe;
-    const got = await seriesFor(recipe, ZIG);
-    const ref = computePivotBands(ZIG, 1, 1, {}) as unknown as Array<Record<string, number | undefined>>;
     expect(got).toEqual(nul(ref.map((p) => p.pivotLow)));
   });
 
@@ -548,15 +528,6 @@ describe("series operand — Pivots High/Low Analysis recipe", () => {
   it("defaults Length like the chart template (0/NaN → 50, then max 1)", async () => {
     const got = await seriesFor({ source: "indicator", indicatorType: "PIVOT_ANALYSIS", calcParams: [0], line: 0 }, ZIG);
     expect(got).toEqual(nul(computePivotAnalysis(ZIG, 50).map((p) => p.pivotHigh)));
-  });
-
-  it("a picker-built 'Δ% (last pivot)' operand resolves end-to-end", async () => {
-    const { chartOperandSources } = await import("./chartOperand");
-    const src = chartOperandSources({ kind: "indicator", paneId: "candle_pane", id: "PIVOT_ANALYSIS#x", indType: "PIVOT_ANALYSIS", calcParams: [1], extendData: {} });
-    const delta = src.outputs.find((o) => (o.operand as Extract<Operand, { kind: "series" }>).label.includes("Δ%"))!;
-    const recipe = (delta.operand as Extract<Operand, { kind: "series" }>).recipe;
-    const got = await seriesFor(recipe, ZIG);
-    expect(got).toEqual(nul(computePivotAnalysis(ZIG, 1).map((p) => p.deltaPct)));
   });
 
   it("warm-up is 2·Length (defaulting Length like the template)", () => {
@@ -614,53 +585,6 @@ describe("series operand — SLOPE recipe parity", () => {
   it("warm-up is length + slopePeriod", () => {
     const op = { kind: "series", seriesKey: "x", label: "x", recipe: { source: "indicator", indicatorType: "SLOPE", calcParams: [9], line: 0, extend: { slopePeriod: 3 } } } as Operand;
     expect(operandBaseLen(op)).toBe(9 + 3);
-  });
-
-  it("a picker-built 'MA Slope' operand resolves end-to-end (label + extend + parity)", async () => {
-    const { chartOperandSources } = await import("./chartOperand");
-    const src = chartOperandSources({
-      kind: "indicator", paneId: "candle_pane", id: "SLOPE#x",
-      indType: "SLOPE", calcParams: [3, 2], extendData: { maType: "sma", units: "pctBar" },
-    });
-    // Rate-only: smoothing off → K=2 raw-slope rows (lineIndex 0,1), no MA rows.
-    expect(src.outputs.map((o) => o.label)).toEqual(["Slope MA 3", "Slope MA 2"]);
-    expect(src.outputs.map((o) => o.lineIndex)).toEqual([0, 1]);
-    const out = src.outputs[0];
-    // recipeLabel(SLOPE) is the fixed "MA Slope" base label, but each slope output
-    // fuses its length into the chip (chipLabel "MA Slope 3") so multiple slope
-    // lengths don't collide on one chip: see chartOperandSources / OutputChoice.
-    expect((out.operand as Extract<Operand, { kind: "series" }>).label).toBe("MA Slope 3");
-    const recipe = (out.operand as Extract<Operand, { kind: "series" }>).recipe;
-    expect(recipe).toMatchObject({ extend: { maType: "sma", units: "pctBar" } });
-    const got = await seriesFor(recipe, bars);
-    const plotted = (
-      SLOPE_TEMPLATE.calc!(bars, {
-        calcParams: [3, 2],
-        extendData: { maType: "sma", units: "pctBar" },
-      } as never) as Array<{ slope0?: number }>
-    ).map((p) => p.slope0 ?? null);
-    expect(got).toEqual(plotted);
-  });
-
-  it("smoothing on adds a smoothed-slope operand per length (named with the period)", async () => {
-    const { chartOperandSources } = await import("./chartOperand");
-    const src = chartOperandSources({
-      kind: "indicator", paneId: "candle_pane", id: "SLOPE#x",
-      indType: "SLOPE", calcParams: [3, 2],
-      extendData: { maType: "sma", units: "pctBar", slopePeriod: 3, smoothing: { type: "sma", length: 4 } },
-    });
-    // K=2 → 2 raw slopes (0,1) then 2 smoothed slopes (2,3) suffixed with the period.
-    expect(src.outputs.map((o) => o.label)).toEqual([
-      "Slope MA 3", "Slope MA 2", "Slope MA 3 · SMA 4", "Slope MA 2 · SMA 4",
-    ]);
-    expect(src.outputs.map((o) => o.lineIndex)).toEqual([0, 1, 2, 3]);
-    // The smoothed operand (line 2) must resolve to the SMA-4-smoothed slope of MA 3,
-    // NOT the raw slope (line 0).
-    const smoothed = src.outputs[2].operand as Extract<Operand, { kind: "series" }>;
-    const raw = src.outputs[0].operand as Extract<Operand, { kind: "series" }>;
-    const smSeries = await seriesFor(smoothed.recipe, bars);
-    const rawSeries = await seriesFor(raw.recipe, bars);
-    expect(smSeries).not.toEqual(rawSeries);
   });
 
   it("a truthy sub-1 length must NOT be clamped — matches the unclamped visual (all-null)", async () => {
