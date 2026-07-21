@@ -122,10 +122,11 @@ EOF
 - [ ] **Step 2: Trim the tests.** Remove `rule:`/`op:` describe/it blocks in both test files.
 - [ ] **Step 3: Prove no dangling references.**
 Run: `cd frontend && grep -rn "ruleAxisTarget\|opAxisTarget\|ruleLabel\|opLabel\|operandLabel" src/ | grep -v overlays`
-Expected: no output.
+Expected: the ONLY remaining hit is a stale CODE COMMENT at `BacktestSettingsModal.tsx:~701` mentioning `ruleAxisTarget` (removed in Stage 4 along with the modal's dead structured-sweep machinery). No live imports/calls of the removed helpers. The modal does NOT import `ruleAxisTarget`/`opAxisTarget` (it builds/receives `rule:`/`op:` target strings itself and uses the `Operator` type), so removing these sweep-lib helpers does not break its compile.
 - [ ] **Step 4: Typecheck + tests.**
 Run: `cd frontend && npx tsc -b 2>&1 | grep -E "sweep"` → no new errors.
 Run: `cd frontend && npx vitest run src/lib/sweep.test.ts src/lib/sweepLabels.test.ts` → pass.
+Note: `BacktestSettingsModal.tsx` still contains dead `rule:`/`op:` sweep machinery (`toggleRuleSweepAxis`, `toggleOpSweepAxis`, `tickOpOption`, `opOption`, the `op:`/`rule:` combo-apply, and the `onToggle`/`onToggleOp`/`onTickOp` SidePanel props). It is NOT removed here (it depends on the `Operator` type). It is removed in Stage 4 when that type goes. It compiles fine in the interim (dead but valid).
 - [ ] **Step 5: Commit.**
 ```bash
 git add frontend/src/lib/sweep.ts frontend/src/lib/sweepLabels.ts frontend/src/lib/sweep.test.ts frontend/src/lib/sweepLabels.test.ts
@@ -151,20 +152,23 @@ EOF
 - Modify: `frontend/src/lib/backtestConfig.test.ts` — drop structured cases.
 - Modify: `frontend/src/BacktestButton.tsx` — drop the `buildChartOperandSeries` import/call (coded backtest posts no structured series; backend recomputes natives). Keep ATR series building if present.
 - Modify: `frontend/src/lib/liveEngine.ts` — reduce the `buildSeries` call to the ATR-only builder (coded live needs `ATR_{n}`); keep the expr branch. Do NOT delete the series call.
+- Modify: `frontend/src/BacktestSettingsModal.tsx` — remove the now-DEAD structured-sweep machinery that depends on the `Operator` type being deleted here: `toggleRuleSweepAxis` (~702), `opOption` (~721), `toggleOpSweepAxis` (~726), `tickOpOption` (~740); the `op:`/`rule:` combo-apply block (~945-1007, the `key.startsWith("op:")`/`key.startsWith("rule:")` arms in the combo-apply function — keep the `risk:`/`lit:`/`param:` arms); the `onToggle`/`onToggleOp`/`onTickOp` entries in the `SidePanel` `sweep={{...}}` prop (~2738-2740, keep `onToggleRisk`/`onKindChange`/`onAxisChange`/`axes`/`side`/`editable`); the matching prop declarations threaded through `SidePanel`/`RuleGroupSection` down-chain; the `usesVolume` structured-operand read (~1406, reads `r.left`/`r.right`); and the stale `ruleAxisTarget` comment (~701). Remove now-unused imports (`Operator`, `OPERATORS`, `OP_CELL`, `OP_REVERSE`, `mirrorOperand`, `ruleFromChartOperand`, `seriesName`, etc.) from `backtestConfig`. KEEP all `risk:`/`lit:`/`param:` sweep code and `cloneRule`/`activeGroup`/`RuleGroup` usage.
+- Modify: `frontend/src/BacktestSettingsModal.test.tsx` (+ `.expr.test.tsx`/`.exprSweep.test.tsx` only if a removed helper is referenced) — drop any remaining test that exercised the removed structured-sweep toggles.
 
 - [ ] **Step 1: Reduce `backtestSeries.ts` to ATR-only.** Read the file. Keep the ATR risk/scaling series computation; delete the structured-operand series machinery and `buildChartOperandSeries`. Update its test to keep ATR, drop structured cases. Run `npx vitest run src/lib/backtestSeries.test.ts`.
 - [ ] **Step 2: Trim `backtestWindow.ts`.** Remove the structured-operand `scaled` lookback branch; keep `exprWarmupBars` + ATR lengths. Update its test. Run it.
 - [ ] **Step 3: Strip structured members from `backtestConfig.ts`.** Remove `left/op/right` from `Rule`, delete the listed structured functions/types, fix `cloneRule`, and rewrite the default-config rule builder to seed `{expr:"", enabled:true}` rows instead of `cross()`. Update `backtestConfig.test.ts`. This is the highest-fan-out edit — after it, grep for every removed symbol.
-- [ ] **Step 4: Fix the two consumers.** In `BacktestButton.tsx` drop the `buildChartOperandSeries` usage; in `liveEngine.ts` point the series call at the ATR-only builder. Read both first.
+- [ ] **Step 4: Fix the two series consumers.** In `BacktestButton.tsx` drop the `buildChartOperandSeries` usage; in `liveEngine.ts` point the series call at the ATR-only builder. Read both first.
+- [ ] **Step 4b: Remove the modal's dead structured-sweep machinery.** In `BacktestSettingsModal.tsx`, delete `toggleRuleSweepAxis`/`opOption`/`toggleOpSweepAxis`/`tickOpOption`, the `op:`/`rule:` arms of the combo-apply function (keep `risk:`/`lit:`/`param:`), the `onToggle`/`onToggleOp`/`onTickOp` entries in the `SidePanel` `sweep={{...}}` prop and their prop declarations down-chain (`SidePanel`/`RuleGroupSection` no longer need them), the `usesVolume` structured read, and the stale `ruleAxisTarget` comment. Remove now-unused `backtestConfig` imports (`Operator`, `OPERATORS`, `OP_CELL`, `OP_REVERSE`, `mirrorOperand`, `ruleFromChartOperand`, `seriesName`). This is what lets the `Operator` type deletion in Step 3 typecheck. Read each site first; keep all `risk:`/`lit:` sweep behavior.
 - [ ] **Step 5: Prove no dangling references.**
-Run: `cd frontend && grep -rn "buildChartOperandSeries\|collectSeriesOperands\|ruleFromChartOperand\|mirrorOperand\|invertRule\|swapSides\|operandBaseLen\|slopeLen\|lookbackSpec\|scaleSpec\|OP_REVERSE\|\.op\b\|\.left\b\|\.right\b" src/lib src/BacktestButton.tsx | grep -iv "overlays\|expr\|\.split\|\.slice\|option\|drop\|crop\|prop\|\btop\b"`
-Manually confirm any remaining `.left/.right/.op` hits are unrelated (CSS, geometry), not `Rule` operands.
+Run: `cd frontend && grep -rn "buildChartOperandSeries\|collectSeriesOperands\|ruleFromChartOperand\|mirrorOperand\|invertRule\|swapSides\|operandBaseLen\|slopeLen\|lookbackSpec\|scaleSpec\|OP_REVERSE\|toggleRuleSweepAxis\|toggleOpSweepAxis\|tickOpOption\|usesVolume" src/ | grep -iv overlays`
+Expected: no output. Then manually scan for `.left`/`.right`/`.op` `Rule`-operand reads (excluding CSS/geometry): `grep -rn "\.left\b\|\.right\b" src/lib/backtestConfig.ts src/BacktestSettingsModal.tsx` should show no `Rule`-operand access.
 - [ ] **Step 6: Typecheck + full frontend suite.**
-Run: `cd frontend && npx tsc -b 2>&1 | grep -E "backtestSeries|backtestWindow|backtestConfig|BacktestButton|liveEngine"` → no new errors.
+Run: `cd frontend && npx tsc -b 2>&1 | grep -E "backtestSeries|backtestWindow|backtestConfig|BacktestButton|liveEngine|BacktestSettingsModal"` → no new errors beyond the known `RecurrenceMask` baseline.
 Run: `cd frontend && npx vitest run` → Expected: no failures beyond the known baseline (`overlays.test.ts` x2, `drawTools.test.ts` x1, `ComputeHostButton.test.tsx` x4 — all pre-existing/WIP).
 - [ ] **Step 7: Commit.**
 ```bash
-git add frontend/src/lib/backtestSeries.ts frontend/src/lib/backtestSeries.test.ts frontend/src/lib/backtestWindow.ts frontend/src/lib/backtestWindow.test.ts frontend/src/lib/backtestConfig.ts frontend/src/lib/backtestConfig.test.ts frontend/src/BacktestButton.tsx frontend/src/lib/liveEngine.ts
+git add frontend/src/lib/backtestSeries.ts frontend/src/lib/backtestSeries.test.ts frontend/src/lib/backtestWindow.ts frontend/src/lib/backtestWindow.test.ts frontend/src/lib/backtestConfig.ts frontend/src/lib/backtestConfig.test.ts frontend/src/BacktestButton.tsx frontend/src/lib/liveEngine.ts frontend/src/BacktestSettingsModal.tsx frontend/src/BacktestSettingsModal.test.tsx
 git commit -m "$(cat <<'EOF'
 refactor(rules): remove structured operand machinery (series, warm-up, config)
 
