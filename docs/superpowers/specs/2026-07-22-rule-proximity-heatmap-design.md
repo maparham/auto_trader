@@ -62,22 +62,21 @@ closeness = 1 - 0.28 = 0.72
 
 ### Cross rows
 
-`crossAbove(a, b)` fires only on the single bar `a` pierces `b` from below.
-Treating it as `1`/`0` would leave any group containing a cross dark on nearly
-every bar. Instead, measure the approach toward the cross:
-
-- `crossAbove(a, b)`: warm while `a < b` and converging. Use the gap between the
-  two lines as `g`:
-  ```
-  g = a - b                 # negative while below, toward 0 as they converge
-  d = relu(-g) / scale
-  closeness = clamp(1 - d, 0, 1)   # 1 on the cross bar, resets after
-  ```
-- `crossBelow(a, b)`: mirror (`a` above `b`, closing in; `g = b - a`).
-
-A cross row behaves like a `>=`/`<=` row against a moving threshold: it heats as
-the lines converge, peaks at the cross, cools once separated on the far side. It
-participates in the fold like any other row.
+`crossAbove(a, b)` / `crossBelow(a, b)` fire only on the single bar the lines
+pierce. Treating that as `1`/`0` would leave any group containing a cross dark on
+nearly every bar. Instead, measure how near the two lines are to touching,
+symmetric in the gap:
+```
+d = abs(a - b) / scale
+closeness = clamp(1 - d, 0, 1)
+```
+The lines heat as they converge, peak at ~1 when they touch (the cross bar),
+and cool as they separate on either side. Direction is not distinguished: a
+cross row's closeness is line-proximity, so it resets cleanly after the cross.
+The `scale` comes from the same basis as a comparison row, computed on the
+`a - b` gap series. Crosses are inherently approximate at the boundary (the
+actual crossing happens between bars), unlike comparison rows which hit exactly
+`1` on the firing bar.
 
 ### Normalization basis (`scale`)
 
