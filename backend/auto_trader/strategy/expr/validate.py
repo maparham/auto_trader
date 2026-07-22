@@ -5,7 +5,12 @@ from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.registry import CROSSES, INDICATORS, WRAPPERS
 
 
-def validate(node: N.Compare | N.Cross, *, is_exit: bool) -> None:
+def validate(node: N.Compare | N.Cross | N.Chain, *, is_exit: bool) -> None:
+    if isinstance(node, N.Chain):
+        for p in node.parts:
+            _walk(p.left, is_exit=is_exit)
+            _walk(p.right, is_exit=is_exit)
+        return
     if isinstance(node, N.Cross):
         _walk(node.a, is_exit=is_exit)
         _walk(node.b, is_exit=is_exit)
@@ -65,7 +70,7 @@ def _walk(node: N.Node, *, is_exit: bool) -> None:
         _walk(node.left, is_exit=is_exit)
         _walk(node.right, is_exit=is_exit)
         return
-    if isinstance(node, (N.Compare, N.Cross)):
+    if isinstance(node, (N.Compare, N.Cross, N.Chain)):
         raise ExprError("cross_not_toplevel", "A comparison or cross can only be the whole row.", node.start, node.end)
     if isinstance(node, N.Call):
         if node.name in CROSSES:

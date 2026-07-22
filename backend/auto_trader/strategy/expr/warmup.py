@@ -5,6 +5,8 @@ from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
 
 
 def warmup_bars(node: N.Node) -> int:
+    if isinstance(node, N.Chain):
+        return max(warmup_bars(p) for p in node.parts)
     if isinstance(node, (N.Compare,)):
         return max(warmup_bars(node.left), warmup_bars(node.right))
     if isinstance(node, N.Cross):
