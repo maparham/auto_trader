@@ -259,8 +259,12 @@ async def expr_series(req: ExprSeriesRequest):
         req.broker, req.epic, req.resolution, bars, req.fromTime, req.toTime, req.priceSide,
     )
     # Plot the left operand of the comparison (Compare.left / Cross.a): the RHS is
-    # usually a constant threshold; the LHS is the indicator/candle series.
-    top = node.left if hasattr(node, "left") else node.a
+    # usually a constant threshold; the LHS is the indicator/candle series. For a
+    # chain, plot the first link's left operand (the primary series).
+    if isinstance(node, N.Chain):
+        top = node.parts[0].left
+    else:
+        top = node.left if hasattr(node, "left") else node.a
     values = series_of(top, candles, req.resolution, {})
     return {
         "times": [int(c.time.timestamp()) for c in candles],
@@ -273,6 +277,8 @@ def _referenced_tfs(node: N.Node) -> set[str]:
     """All @TF timeframes referenced anywhere in a row's tree."""
     if isinstance(node, N.Tf):
         return {node.tf} | _referenced_tfs(node.base)
+    if isinstance(node, N.Chain):
+        return set().union(*(_referenced_tfs(p) for p in node.parts))
     if isinstance(node, (N.Field, N.Offset)):
         return _referenced_tfs(node.base)
     if isinstance(node, N.Unary):
