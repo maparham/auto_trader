@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
+
+from auto_trader.core.models import Candle
+from auto_trader.indicators.core import atr_series
+from auto_trader.strategy.expr import nodes as N
+from auto_trader.strategy.expr.evaluate import series_of
 
 
 def _defined(v: float | None) -> bool:
@@ -66,3 +72,50 @@ def scale_series(
         b = base[i] if i < len(base) else None
         out[i] = width * b if _defined(b) else None
     return out
+
+
+@dataclass(frozen=True, slots=True)
+class Norm:
+    basis: str  # "volatility" | "atr"
+    width: float
+    window: int  # rolling window for the volatility basis
+    atr_length: int  # Wilder length for the ATR basis
+
+
+def row_gap_series(
+    node: N.Compare | N.Cross,
+    candles: Sequence[Candle],
+    resolution: str,
+    htf: dict[str, list[Candle]],
+) -> list[float | None]:
+    """Gap oriented toward firing per bar. Comparison: signed_gap(op,l,r).
+    Cross: symmetric line distance abs(a - b) (proximity to touching)."""
+    n = len(candles)
+    if isinstance(node, N.Compare):
+        left = series_of(node.left, candles, resolution, htf)
+        right = series_of(node.right, candles, resolution, htf)
+        return [signed_gap(node.op, left[i], right[i]) for i in range(n)]
+    a = series_of(node.a, candles, resolution, htf)
+    b = series_of(node.b, candles, resolution, htf)
+    out: list[float | None] = []
+    for i in range(n):
+        if _defined(a[i]) and _defined(b[i]):
+            # symmetric: distance to the cross, oriented as "short" so ramp warms
+            # toward 1 as they converge. Represent as a non-positive gap.
+            out.append(-abs(a[i] - b[i]))
+        else:
+            out.append(None)
+    return out
+
+
+def row_closeness(
+    node: N.Compare | N.Cross,
+    candles: Sequence[Candle],
+    resolution: str,
+    htf: dict[str, list[Candle]],
+    norm: Norm,
+) -> list[float | None]:
+    gaps = row_gap_series(node, candles, resolution, htf)
+    atr = atr_series(candles, norm.atr_length) if norm.basis == "atr" else None
+    scale = scale_series(gaps, norm.basis, norm.width, norm.window, atr)
+    return [ramp(gaps[i], scale[i]) for i in range(len(gaps))]

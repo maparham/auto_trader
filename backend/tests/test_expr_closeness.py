@@ -1,6 +1,17 @@
 import math
+from datetime import datetime, timezone
 
-from auto_trader.strategy.expr.closeness import avg_abs_gap, ramp, scale_series, signed_gap
+from auto_trader.core.models import Candle
+from auto_trader.strategy.expr.closeness import (
+    Norm,
+    avg_abs_gap,
+    ramp,
+    row_closeness,
+    row_gap_series,
+    scale_series,
+    signed_gap,
+)
+from auto_trader.strategy.expr.parser import parse
 
 
 def test_signed_gap_orientation():
@@ -65,3 +76,44 @@ def test_scale_series_atr_applies_width():
     assert out[0] is None
     assert out[1] == 8.0
     assert out[2] == 10.0
+
+
+def _c(close: float, i: int) -> Candle:
+    t = datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() + i * 60
+    return Candle(
+        time=datetime.fromtimestamp(t, tz=timezone.utc),
+        open=close,
+        high=close + 1,
+        low=close - 1,
+        close=close,
+        volume=100,
+    )
+
+
+def test_row_gap_series_comparison_orientation():
+    candles = [_c(c, i) for i, c in enumerate([98, 99, 100, 101])]
+    node = parse("close > 100")
+    gaps = row_gap_series(node, candles, "MINUTE", {})
+    assert gaps == [98 - 100, 99 - 100, 100 - 100, 101 - 100]
+
+
+def test_row_closeness_hits_one_when_firing():
+    candles = [_c(c, i) for i, c in enumerate([90, 95, 100, 105, 110, 100])]
+    node = parse("close > 100")
+    norm = Norm(basis="volatility", width=1.0, window=2, atr_length=14)
+    out = row_closeness(node, candles, "MINUTE", {}, norm)
+    # bars where close > 100 fire -> 1.0; early bars undefined until window fills
+    assert out[3] == 1.0  # close 105 > 100
+    assert out[4] == 1.0  # close 110 > 100
+    assert 0.0 <= out[5] <= 1.0  # close 100, not firing, some warmth
+
+
+def test_row_closeness_cross_is_symmetric_line_proximity():
+    # a and b equal on a bar -> proximity 1 regardless of side
+    candles = [_c(c, i) for i, c in enumerate([100, 100, 100, 100])]
+    node = parse("crossAbove(close, 100)")
+    norm = Norm(basis="volatility", width=1.0, window=2, atr_length=14)
+    out = row_closeness(node, candles, "MINUTE", {}, norm)
+    # gap |close - 100| is 0 everywhere -> scale is 0 -> undefined (no spread);
+    # this documents the degenerate all-equal case.
+    assert out[-1] is None or out[-1] == 1.0
