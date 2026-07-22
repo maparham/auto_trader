@@ -284,14 +284,14 @@ def _c(close: float, i: int) -> Candle:
 
 def test_row_gap_series_comparison_orientation():
     candles = [_c(c, i) for i, c in enumerate([98, 99, 100, 101])]
-    node = parse("close > 100")
+    node = parse("candle.close > 100")
     gaps = row_gap_series(node, candles, "MINUTE", {})
     assert gaps == [98 - 100, 99 - 100, 100 - 100, 101 - 100]
 
 
 def test_row_closeness_hits_one_when_firing():
     candles = [_c(c, i) for i, c in enumerate([90, 95, 100, 105, 110, 100])]
-    node = parse("close > 100")
+    node = parse("candle.close > 100")
     norm = Norm(basis="volatility", width=1.0, window=2, atr_length=14)
     out = row_closeness(node, candles, "MINUTE", {}, norm)
     # bars where close > 100 fire -> 1.0; early bars undefined until window fills
@@ -303,7 +303,7 @@ def test_row_closeness_hits_one_when_firing():
 def test_row_closeness_cross_is_symmetric_line_proximity():
     # a and b equal on a bar -> proximity 1 regardless of side
     candles = [_c(c, i) for i, c in enumerate([100, 100, 100, 100])]
-    node = parse("crossAbove(close, 100)")
+    node = parse("crossAbove(candle.close, 100)")
     norm = Norm(basis="volatility", width=1.0, window=2, atr_length=14)
     out = row_closeness(node, candles, "MINUTE", {}, norm)
     # gap |close - 100| is 0 everywhere -> scale is 0 -> undefined (no spread);
@@ -414,7 +414,7 @@ from auto_trader.strategy.expr.closeness import group_closeness
 
 def test_group_fold_and_takes_min_or_none_poisons():
     candles = [_c(c, i) for i, c in enumerate([100, 100, 100, 100, 100, 99])]
-    rows = [parse("close > 100"), parse("close < 200")]
+    rows = [parse("candle.close > 100"), parse("candle.close < 200")]
     norm = Norm(basis="volatility", width=5.0, window=2, atr_length=14)
     out = group_closeness(rows, "AND", candles, "MINUTE", {}, norm)
     # both rows must be defined; AND folds to the min of the two
@@ -429,7 +429,7 @@ def test_group_fold_and_takes_min_or_none_poisons():
 
 def test_group_fold_or_takes_max():
     candles = [_c(c, i) for i, c in enumerate([90, 95, 100, 105, 110, 100])]
-    rows = [parse("close > 108"), parse("close > 100")]
+    rows = [parse("candle.close > 108"), parse("candle.close > 100")]
     norm = Norm(basis="volatility", width=5.0, window=2, atr_length=14)
     out = group_closeness(rows, "OR", candles, "MINUTE", {}, norm)
     per = [row_closeness(r, candles, "MINUTE", {}, norm) for r in rows]
@@ -634,7 +634,7 @@ async def test_closeness_endpoint_returns_values(monkeypatch):
 
     body = {
         "broker": "capital", "epic": "X", "priceSide": "mid",
-        "rows": ["close > 100"], "combine": "AND",
+        "rows": ["candle.close > 100"], "combine": "AND",
         "baseResolution": "MINUTE", "displayResolution": "MINUTE",
         "fromTime": int(candles[0].time.timestamp()),
         "toTime": int(candles[-1].time.timestamp()),
@@ -661,7 +661,7 @@ async def test_closeness_endpoint_422_on_bad_expr(monkeypatch):
     monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
     body = {
         "broker": "capital", "epic": "X", "priceSide": "mid",
-        "rows": ["close >>> 100"], "combine": "AND",
+        "rows": ["candle.close >>> 100"], "combine": "AND",
         "baseResolution": "MINUTE", "displayResolution": "MINUTE",
         "fromTime": 0, "toTime": 60,
         "norm": {"basis": "volatility", "width": 2.0, "window": 5, "atrLength": 14},
