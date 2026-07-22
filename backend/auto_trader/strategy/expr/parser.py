@@ -24,8 +24,8 @@ class _Parser:
             raise ExprError("unexpected_token", f"Expected {type_.lower()} here.", t.start, t.end)
         return self.next()
 
-    # row := crossfn "(" arith "," arith ")" | arith cmpop arith
-    def parse_row(self) -> N.Compare | N.Cross:
+    # row := crossfn "(" arith "," arith ")" | arith (cmpop arith)+
+    def parse_row(self) -> N.Compare | N.Cross | N.Chain:
         t = self.peek()
         if t.type == "NAME" and t.value in N.CROSS_FNS and self.toks[self.i + 1].type == "LPAREN":
             fn = self.next()
@@ -40,11 +40,18 @@ class _Parser:
         op = self.peek()
         if op.type not in ("GT", "LT", "GE", "LE"):
             raise ExprError("expected_operator", "Expected a comparison operator (> < >= <=).", op.start, op.end)
-        self.next()
-        right = self.parse_arith()
+        sym_of = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<="}
+        parts: list[N.Compare] = []
+        operand = left
+        while self.peek().type in ("GT", "LT", "GE", "LE"):
+            optok = self.next()
+            right = self.parse_arith()
+            parts.append(N.Compare(sym_of[optok.type], operand, right, operand.start, right.end))
+            operand = right
         self.expect("EOF")
-        sym = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<="}[op.type]
-        return N.Compare(sym, left, right, left.start, right.end)
+        if len(parts) == 1:
+            return parts[0]
+        return N.Chain(parts, parts[0].start, parts[-1].end)
 
     def parse_arith(self) -> N.Node:
         node = self.parse_term()
@@ -141,5 +148,5 @@ def _respan(node: N.Node, start: int, end: int):
     return dataclasses.replace(node, start=start, end=end)
 
 
-def parse(src: str) -> N.Compare | N.Cross:
+def parse(src: str) -> N.Compare | N.Cross | N.Chain:
     return _Parser(tokenize(src)).parse_row()
