@@ -109,13 +109,27 @@ def row_gap_series(
     return out
 
 
+def _fold(per: list[list[float | None]], combine: str, n: int) -> list[float | None]:
+    """Combine per-row closeness by fuzzy logic: AND -> min, OR -> max. Any
+    undefined row poisons the bar."""
+    reduce = min if combine == "AND" else max
+    out: list[float | None] = []
+    for i in range(n):
+        vals = [p[i] for p in per]
+        out.append(None if any(v is None for v in vals) else reduce(vals))
+    return out
+
+
 def row_closeness(
-    node: N.Compare | N.Cross,
+    node: N.Compare | N.Cross | N.Chain,
     candles: Sequence[Candle],
     resolution: str,
     htf: dict[str, list[Candle]],
     norm: Norm,
 ) -> list[float | None]:
+    if isinstance(node, N.Chain):
+        per = [row_closeness(p, candles, resolution, htf, norm) for p in node.parts]
+        return _fold(per, "AND", len(candles))
     gaps = row_gap_series(node, candles, resolution, htf)
     atr = atr_series(candles, norm.atr_length) if norm.basis == "atr" else None
     scale = scale_series(gaps, norm.basis, norm.width, norm.window, atr)
@@ -123,7 +137,7 @@ def row_closeness(
 
 
 def group_closeness(
-    rows: list[N.Compare | N.Cross],
+    rows: list[N.Compare | N.Cross | N.Chain],
     combine: str,
     candles: Sequence[Candle],
     resolution: str,
@@ -137,12 +151,7 @@ def group_closeness(
     if not rows:
         return [None] * n
     per = [row_closeness(r, candles, resolution, htf, norm) for r in rows]
-    fold = min if combine == "AND" else max
-    out: list[float | None] = []
-    for i in range(n):
-        vals = [p[i] for p in per]
-        out.append(None if any(v is None for v in vals) else fold(vals))
-    return out
+    return _fold(per, combine, n)
 
 
 def aggregate_to_display(

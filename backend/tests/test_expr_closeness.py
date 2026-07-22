@@ -2,6 +2,7 @@ import math
 from datetime import datetime, timezone
 
 from auto_trader.core.models import Candle
+from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.closeness import (
     Norm,
     aggregate_to_display,
@@ -206,3 +207,20 @@ def test_aggregate_empty_bucket_is_none():
     base_vals = [None, None]
     _, v = aggregate_to_display(base_times, base_vals, [0, 60], "max")
     assert v == [None, None]
+
+
+def test_chain_closeness_is_min_of_link_closeness():
+    candles = [_c(c, i) for i, c in enumerate([90, 95, 100, 105, 110, 100])]
+    close = N.Candle("close", 0, 0)
+    p1 = N.Compare(">", close, N.Num(108, 0, 0), 0, 0)
+    p2 = N.Compare(">", close, N.Num(100, 0, 0), 0, 0)
+    chain = N.Chain([p1, p2], 0, 0)
+    norm = Norm(basis="volatility", width=5.0, window=2, atr_length=14)
+    out = row_closeness(chain, candles, "MINUTE", {}, norm)
+    c1 = row_closeness(p1, candles, "MINUTE", {}, norm)
+    c2 = row_closeness(p2, candles, "MINUTE", {}, norm)
+    for i in range(len(candles)):
+        if c1[i] is None or c2[i] is None:
+            assert out[i] is None
+        else:
+            assert out[i] == min(c1[i], c2[i])
