@@ -108,9 +108,13 @@ def _collect(node: N.Node, label: str, out: list[tuple[N.Num, str]]) -> None:
     return
 
 
-def literals(node: N.Compare | N.Cross) -> list[Literal]:
+def literals(node: N.Compare | N.Cross | N.Chain) -> list[Literal]:
     out: list[tuple[N.Num, str]] = []
-    if isinstance(node, N.Compare):
+    if isinstance(node, N.Chain):
+        _collect_side(node.parts[0].left, out)
+        for p in node.parts:
+            _collect_side(p.right, out)
+    elif isinstance(node, N.Compare):
         _collect_side(node.left, out)
         _collect_side(node.right, out)
     else:
@@ -128,7 +132,7 @@ def _collect_side(side: N.Node, out: list[tuple[N.Num, str]]) -> None:
     _collect(side, "threshold", out)
 
 
-def substitute(node: N.Compare | N.Cross, overrides: dict[int, float]) -> N.Compare | N.Cross:
+def substitute(node: N.Compare | N.Cross | N.Chain, overrides: dict[int, float]) -> N.Compare | N.Cross | N.Chain:
     if not overrides:
         return node
     lits = literals(node)
@@ -159,6 +163,8 @@ def substitute(node: N.Compare | N.Cross, overrides: dict[int, float]) -> N.Comp
             return dataclasses.replace(n, left=rewrite(n.left), right=rewrite(n.right))
         if isinstance(n, N.Cross):
             return dataclasses.replace(n, a=rewrite(n.a), b=rewrite(n.b))
+        if isinstance(n, N.Chain):
+            return dataclasses.replace(n, parts=[rewrite(p) for p in n.parts])
         return n
 
     return rewrite(node)  # type: ignore[return-value]
