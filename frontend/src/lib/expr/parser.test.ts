@@ -57,3 +57,28 @@ describe("warmupOf", () => {
     expect(warmupOf("EMA(")).toBe(0);
   });
 });
+
+describe("chained comparisons", () => {
+  it("accepts a chain without a diagnostic", () => {
+    const res = analyze("candle.close > EMA(9) > EMA(50)");
+    expect(res.error).toBeNull();
+  });
+
+  it("still flags a single-comparison typo", () => {
+    const res = analyze("candle.close > EMA(9) >");
+    expect(res.error).not.toBeNull();
+  });
+
+  it("accepts a mixed-operator chain", () => {
+    expect(analyze("candle.close > EMA(9) < EMA(50)").error).toBeNull();
+  });
+
+  it("extracts each chain operand's literals once", () => {
+    const res = analyze("candle.close > EMA(9) > EMA(50)");
+    expect(res.literals.map((l) => l.value)).toEqual([9, 50]);
+  });
+
+  it("warms up to the largest link", () => {
+    expect(warmupOf("candle.close > EMA(9) > EMA(50)")).toBe(50);
+  });
+});

@@ -79,12 +79,13 @@ interface UnaryNode { kind: "Unary"; operand: Node; start: number; end: number; 
 interface BinaryNode { kind: "Binary"; op: string; left: Node; right: Node; start: number; end: number; }
 interface CompareNode { kind: "Compare"; op: string; left: Node; right: Node; start: number; end: number; }
 interface CrossNode { kind: "Cross"; fn: string; a: Node; b: Node; start: number; end: number; }
+interface ChainNode { kind: "Chain"; parts: CompareNode[]; start: number; end: number; }
 
 type Node =
   | NumNode | CandleNode | EntryNode | CallNode | FieldNode | OffsetNode
   | TfNode | UnaryNode | BinaryNode | CompareNode | CrossNode;
 
-type Row = CompareNode | CrossNode;
+type Row = CompareNode | CrossNode | ChainNode;
 
 function containsTf(node: Node): boolean {
   if (node.kind === "Tf") return true;
@@ -205,11 +206,18 @@ class Parser {
     if (op.type !== "GT" && op.type !== "LT" && op.type !== "GE" && op.type !== "LE") {
       throw new ExprErr("expected_operator", "Expected a comparison operator (> < >= <=).", op.start, op.end);
     }
-    this.next();
-    const right = this.parseArith();
+    const symOf: Record<string, string> = { GT: ">", LT: "<", GE: ">=", LE: "<=" };
+    const parts: CompareNode[] = [];
+    let operand: Node = left;
+    while (["GT", "LT", "GE", "LE"].includes(this.peek().type)) {
+      const optok = this.next();
+      const right = this.parseArith();
+      parts.push({ kind: "Compare", op: symOf[optok.type], left: operand, right, start: operand.start, end: right.end });
+      operand = right;
+    }
     this.expect("EOF");
-    const sym = ({ GT: ">", LT: "<", GE: ">=", LE: "<=" } as Record<string, string>)[op.type];
-    return { kind: "Compare", op: sym, left, right, start: left.start, end: right.end };
+    if (parts.length === 1) return parts[0];
+    return { kind: "Chain", parts, start: parts[0].start, end: parts[parts.length - 1].end };
   }
 
   private parseArith(): Node {
@@ -335,6 +343,13 @@ function candleRoot(node: Node): Node {
 }
 
 function validate(node: Row, isExit: boolean): void {
+  if (node.kind === "Chain") {
+    for (const p of node.parts) {
+      walk(p.left, isExit);
+      walk(p.right, isExit);
+    }
+    return;
+  }
   if (node.kind === "Cross") {
     walk(node.a, isExit);
     walk(node.b, isExit);
@@ -540,7 +555,10 @@ function collectSide(side: Node, out: Collected[]): void {
 
 function literalsOf(node: Row): LiteralSpan[] {
   const out: Collected[] = [];
-  if (node.kind === "Compare") {
+  if (node.kind === "Chain") {
+    collectSide(node.parts[0].left, out);
+    for (const p of node.parts) collectSide(p.right, out);
+  } else if (node.kind === "Compare") {
     collectSide(node.left, out);
     collectSide(node.right, out);
   } else {
@@ -614,8 +632,9 @@ export function warmupOf(src: string): number {
   return warmupNode(ast);
 }
 
-function warmupNode(node: Node): number {
+function warmupNode(node: Node | ChainNode): number {
   switch (node.kind) {
+    case "Chain": return Math.max(...node.parts.map(warmupNode));
     case "Compare": return Math.max(warmupNode(node.left), warmupNode(node.right));
     case "Cross": return Math.max(warmupNode(node.a), warmupNode(node.b));
     case "Num": case "Candle": case "Entry": return 0;
