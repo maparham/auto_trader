@@ -160,7 +160,7 @@ def _defined(v: float | None) -> bool:
 
 @dataclass(slots=True)
 class CompiledRow:
-    node: N.Compare | N.Cross
+    node: N.Compare | N.Cross | N.Chain
     candles: Sequence[Candle]
     resolution: str
     htf: dict[str, list[Candle]]
@@ -190,20 +190,25 @@ class CompiledRow:
         self._cache[key] = arr
         return arr[i] if 0 <= i < len(arr) else None
 
+    def _cmp(self, part: N.Compare, i: int, entry: float | None) -> bool:
+        l = self._val(part.left, i, entry)
+        r = self._val(part.right, i, entry)
+        if not (_defined(l) and _defined(r)):
+            return False
+        if part.op == ">":
+            return l > r
+        if part.op == "<":
+            return l < r
+        if part.op == ">=":
+            return l >= r
+        return l <= r
+
     def evaluate(self, i: int, entry_price: float | None) -> bool:
         node = self.node
         if isinstance(node, N.Compare):
-            l = self._val(node.left, i, entry_price)
-            r = self._val(node.right, i, entry_price)
-            if not (_defined(l) and _defined(r)):
-                return False
-            if node.op == ">":
-                return l > r
-            if node.op == "<":
-                return l < r
-            if node.op == ">=":
-                return l >= r
-            return l <= r
+            return self._cmp(node, i, entry_price)
+        if isinstance(node, N.Chain):
+            return all(self._cmp(p, i, entry_price) for p in node.parts)
         # Cross
         if i == 0:
             return False
@@ -249,9 +254,14 @@ def _precompute(node: N.Node, candles, resolution, htf, cache: dict[int, list[fl
         _precompute(node.right, candles, resolution, htf, cache)
 
 
-def compile_row(node: N.Compare | N.Cross, candles, resolution, htf) -> CompiledRow:
+def compile_row(node: N.Compare | N.Cross | N.Chain, candles, resolution, htf) -> CompiledRow:
     cache: dict[int, list[float | None]] = {}
-    subs = (node.left, node.right) if isinstance(node, N.Compare) else (node.a, node.b)
+    if isinstance(node, N.Chain):
+        subs = [operand for p in node.parts for operand in (p.left, p.right)]
+    elif isinstance(node, N.Compare):
+        subs = [node.left, node.right]
+    else:
+        subs = [node.a, node.b]
     for sub in subs:
         _precompute(sub, candles, resolution, htf, cache)
     return CompiledRow(node, candles, resolution, htf, warmup_bars(node), cache)
