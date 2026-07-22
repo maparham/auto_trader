@@ -4,6 +4,8 @@ run per combo, sliced N ways) and exact out-of-sample test runs. Spawn-safe,
 zero network, no FastAPI imports."""
 from __future__ import annotations
 
+import bisect
+
 from auto_trader.api import sweep_worker
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.engine.metrics import slice_window_metrics
@@ -34,6 +36,68 @@ def run_grid_combo(combo: dict) -> dict:
         return {"combo": combo, "folds": folds, "error": None}
     except Exception as e:  # noqa: BLE001
         return {"combo": combo, "folds": None, "error": str(e)}
+
+
+def _window_is_clean(trades, wfrom: int, wto: int) -> bool:
+    """True when the full-range run over [wfrom, wto) is identical to a real
+    flat-start run gated at wfrom, so the window can be sliced directly off the
+    full-range trades with no engine work. False (a "boundary" window) when a
+    trade crosses either edge, in which case a flat-start run would differ:
+      - a position open across wfrom (entered before, still open at/after it);
+      - a trade filled exactly at wfrom (its signal fired on the wfrom-1 bar and
+        a flat-start run gated at wfrom would suppress it);
+      - an in-window entry still open past wto (a flat-start run truncated at wto
+        force-closes it at wto, the full-range run lets it run on)."""
+    for t in trades:
+        e = t.entry_time.timestamp()
+        x = t.exit_time.timestamp()
+        if e < wfrom <= x:
+            return False
+        if e == wfrom:
+            return False
+        if wfrom <= e < wto < x:
+            return False
+    return True
+
+
+def _end_index(times: list[float], wto: int) -> int | None:
+    """Index of the last candle at or before wto (the bar a flat-start window run
+    stops on), or None when no candle falls at/before wto."""
+    i = bisect.bisect_right(times, wto) - 1
+    return i if i >= 0 else None
+
+
+def run_grid_combo_exact(combo: dict) -> dict:
+    """Exact per-train-window metrics for one combo. Runs the combo's full range
+    once, then for each train window either slices the full-range trades directly
+    (clean window, zero engine work) or replays a flat-start gated run over the
+    combo's reused indicator series (boundary window, exact by construction --
+    equivalent to run_test). Same row shape as run_grid_combo. Never raises."""
+    s = sweep_worker._STATE
+    assert s is not None and _TRAIN_WINDOWS is not None, "worker_init not called"
+    try:
+        session = sweep_worker.build_combo_session(s, s.req, combo)
+        res_s = resolution_seconds(s.req.resolution)
+        cash = s.req.costs.startingCash
+        times = [c.time.timestamp() for c in session.candles]
+        full = session.full
+        folds = [
+            _exact_window_metrics(session, full, w[0], w[1], times, cash, res_s)
+            for w in _TRAIN_WINDOWS
+        ]
+        return {"combo": combo, "folds": folds, "error": None}
+    except Exception as e:  # noqa: BLE001
+        return {"combo": combo, "folds": None, "error": str(e)}
+
+
+def _exact_window_metrics(session, full, wfrom, wto, times, cash, res_s) -> dict:
+    if _window_is_clean(full.trades, wfrom, wto):
+        return slice_window_metrics(full.trades, full.equity, wfrom, wto, cash, res_s)
+    end = _end_index(times, wto)
+    if end is None:  # window ends before any candle: empty slice
+        return slice_window_metrics([], [], wfrom, wto, cash, res_s)
+    win = session.run_window(wfrom, end)
+    return slice_window_metrics(win.trades, win.equity, wfrom, wto, cash, res_s)
 
 
 def _downsample(points: list[list[float]], cap: int) -> list[list[float]]:

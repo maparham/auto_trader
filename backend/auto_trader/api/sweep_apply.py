@@ -118,6 +118,7 @@ def run_coded_sync(
     resolved_params: dict, long_risk_dto: RiskConfigDTO | None,
     short_risk_dto: RiskConfigDTO | None, htf_candles: dict[str, list[Candle]],
     indicator_cache: dict | None = None,
+    stop_index: int | None = None,
 ) -> tuple[BacktestResult, Strategy]:
     """One coded engine run over the already-fetched `htf_candles`: risk DTOs
     are passed explicitly (the sweep patches them per combo). When the strategy
@@ -163,7 +164,7 @@ def run_coded_sync(
             mask=req.mask.to_mask() if req.mask else None,
         )
         try:
-            result = engine.run(candles)
+            result = engine.run(candles, stop_index=stop_index)
             return result, strategy
         except NeedTimeframe as need:
             if need.timeframe not in htf_candles:
@@ -172,19 +173,18 @@ def run_coded_sync(
     raise SweepValidationError(422, "strategy needs too many timeframes (max 5)")
 
 
-def run_expr_sync(
+def build_expr_engine(
     req: ExprBacktestRequest, candles: list[Candle],
     htf_candles: dict[str, list[Candle]],
     overrides: dict[tuple[str, str, int], "N.Compare | N.Cross"],
     long_risk: RiskConfigDTO | None, short_risk: RiskConfigDTO | None,
-) -> BacktestResult:
-    """One expression engine run for a sweep combo. `overrides` maps
-    (side, group, rowIdx) -> an already-substituted AST node (from
-    apply_lit_combo); rows NOT in overrides are parsed+validated+compiled fresh.
-    `long_risk`/`short_risk` are the combo-patched risk DTOs (mirroring
-    run_coded_sync's explicit risk params). Mirrors expr_backtest's engine config
-    with series={}. Raises SweepValidationError(422) on a parse/validate problem
-    or unsupported ATR risk so a combo isolates to its error row."""
+) -> tuple[BacktestEngine, ExprRuleStrategy]:
+    """Compile one expression combo into a (engine, strategy) pair WITHOUT
+    running it. Split out of run_expr_sync so WFO exact mode can build the
+    compiled strategy ONCE per combo and replay it over many gated sub-windows
+    (its CompiledRows cache the indicator series, so windows reuse them). Same
+    validation/config as run_expr_sync; raises SweepValidationError(422) the
+    same way."""
     # I4 (expr): the expr surface runs the engine with series={} and cannot
     # populate an ATR_{length} risk series, so an ATR stop/target would run
     # stop-less. Fail loud, mirroring expr_backtest's guard. Check the combo's
@@ -248,6 +248,19 @@ def run_expr_sync(
         series={},
         mask=req.mask.to_mask() if req.mask else None,
     )
+    return engine, strategy
+
+
+def run_expr_sync(
+    req: ExprBacktestRequest, candles: list[Candle],
+    htf_candles: dict[str, list[Candle]],
+    overrides: dict[tuple[str, str, int], "N.Compare | N.Cross"],
+    long_risk: RiskConfigDTO | None, short_risk: RiskConfigDTO | None,
+) -> BacktestResult:
+    """One expression engine run for a sweep combo (build + run). See
+    build_expr_engine for the compile step."""
+    engine, _strategy = build_expr_engine(
+        req, candles, htf_candles, overrides, long_risk, short_risk)
     return engine.run(candles)
 
 

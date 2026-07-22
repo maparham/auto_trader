@@ -99,6 +99,64 @@ def execute_combo(s: _State, req: BacktestRequest, combo: dict) -> BacktestResul
     return result
 
 
+class ComboSession:
+    """One combo's full-range result plus a reusable per-window runner. Window
+    runs reuse the combo's indicator series (expr: the same compiled rows;
+    coded: the shared per-worker indicator cache) so WFO exact mode never
+    recomputes indicators per window. `full` is the BacktestResult over the
+    whole (env-applied) candle list; `run_window` runs a flat-start,
+    entries-gated-at-`trade_from` run that processes only bars 0..`stop_index`
+    (see BacktestEngine.stop_index) over the SAME candles."""
+
+    def __init__(self, full, candles, run_window):
+        self.full = full
+        self.candles = candles
+        self.run_window = run_window
+
+
+def build_combo_session(s: _State, req: BacktestRequest, combo: dict) -> ComboSession:
+    """Compile one combo ONCE and run its full range, returning a ComboSession
+    whose run_window replays gated sub-windows without recomputing indicators.
+    Raises on any problem (same contract as execute_combo); callers own error
+    rows."""
+    env, rest = sa.split_env_combo(combo)
+    patched, candles = sa.apply_env_combo(req, s.candles, env)
+    if getattr(s, "expr", False):
+        overrides = sa.apply_lit_combo(patched, rest)
+        _params, long_risk, short_risk = sa.apply_combo(
+            patched, {k: v for k, v in rest.items() if k.startswith("risk:")})
+        engine, strategy = sa.build_expr_engine(
+            patched, candles, dict(s.htf), overrides, long_risk, short_risk)
+        full = engine.run(candles)
+
+        def run_window(trade_from, stop_index):
+            # ExprRuleStrategy is stateless except trade_from_time; mutate it and
+            # replay over the same candles (compiled rows keep their series cache).
+            strategy.trade_from_time = trade_from
+            return engine.run(candles, stop_index=stop_index)
+
+        return ComboSession(full, candles, run_window)
+
+    params, long_risk, short_risk = sa.apply_combo(patched, rest)
+    resolved = resolve_params(s.module, params)
+    cache = indicator_cache_for(candles)
+    full, _ = sa.run_coded_sync(
+        patched, candles, s.module, resolved, long_risk, short_risk, dict(s.htf),
+        indicator_cache=cache)
+
+    def run_window(trade_from, stop_index):
+        # Coded strategies carry per-run mutable state, so rebuild the strategy
+        # per window but share the indicator cache (keyed by the full candle
+        # list) so the expensive series are computed once, not per window.
+        req_w = patched.model_copy(update={"tradeFromTime": trade_from})
+        res, _ = sa.run_coded_sync(
+            req_w, candles, s.module, resolved, long_risk, short_risk, dict(s.htf),
+            indicator_cache=cache, stop_index=stop_index)
+        return res
+
+    return ComboSession(full, candles, run_window)
+
+
 def run_combo(combo: dict) -> dict:
     """Run one combo against the init-once `_STATE`; return a SweepRowDTO dump.
 
