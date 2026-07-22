@@ -27,6 +27,7 @@ export interface WfoConfigState {
   mode: "rolling" | "anchored";  // default "rolling"
   metric: string;                // default "sharpe"
   selection: "best" | "plateau"; // default "plateau"
+  evalMode: "exact" | "fast";    // default "exact"
 }
 
 export const DEFAULT_WFO_CONFIG: WfoConfigState = {
@@ -36,6 +37,7 @@ export const DEFAULT_WFO_CONFIG: WfoConfigState = {
   mode: "rolling",
   metric: "sharpe",
   selection: "plateau",
+  evalMode: "exact",
 };
 
 /**
@@ -147,6 +149,7 @@ export function buildWalkForwardPayload(
     schedule,
     objective,
     matrixTrainSpans: matrixTrainSpans.length > 0 ? matrixTrainSpans : undefined,
+    evalMode: cfg.evalMode,
   };
 
   return { payload, comboTotal: combos.length, dropped };

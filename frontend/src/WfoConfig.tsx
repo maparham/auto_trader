@@ -149,6 +149,35 @@ export function WfoConfig(props: {
         <InfoTip text="Plateau picks the cell whose neighborhood is good, not the luckiest single cell." />
       </div>
 
+      {/* Row 2b — in-sample evaluation mode. */}
+      <div className="wfo-row">
+        <span className="wfo-label">Evaluation</span>
+        <span className="seg wfo-seg">
+          <button
+            type="button"
+            className={cfg.evalMode === "exact" ? "seg-on" : ""}
+            aria-pressed={cfg.evalMode === "exact"}
+            onClick={() => onChange({ ...cfg, evalMode: "exact" })}
+          >
+            Exact
+          </button>
+          <button
+            type="button"
+            className={cfg.evalMode === "fast" ? "seg-on" : ""}
+            aria-pressed={cfg.evalMode === "fast"}
+            onClick={() => onChange({ ...cfg, evalMode: "fast" })}
+          >
+            Fast
+          </button>
+        </span>
+        <InfoTip
+          text={[
+            "Exact scores each training window as its own flat-start backtest, on the same footing as the out-of-sample test.",
+            "Fast runs each combo once and slices it per window: quicker, slightly approximate where a trade spans a window edge.",
+          ]}
+        />
+      </div>
+
       {/* Row 3 — Advanced toggle and the combo count share one line. */}
       <div className="wfo-row wfo-foot-row">
         <details className="wfo-advanced">

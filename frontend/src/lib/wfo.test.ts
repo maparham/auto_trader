@@ -59,6 +59,14 @@ describe("buildWalkForwardPayload", () => {
     expect(payload.schedule).toEqual({ mode: "rolling", trainSpan: "3m", testSpan: "2w", step: undefined });
     expect(payload.matrixTrainSpans).toEqual(["1m"]);
     expect(payload.objective).toEqual({ metric: "sharpe", selection: "plateau" });
+    expect(payload.evalMode).toBe("exact"); // default
+  });
+
+  it("threads evalMode through the payload", () => {
+    const fast = buildWalkForwardPayload([range], { ...DEFAULT_WFO_CONFIG, evalMode: "fast" });
+    expect(fast.payload.evalMode).toBe("fast");
+    const exact = buildWalkForwardPayload([range], { ...DEFAULT_WFO_CONFIG, evalMode: "exact" });
+    expect(exact.payload.evalMode).toBe("exact");
   });
 
   it("throws on no usable axes / no train span", () => {

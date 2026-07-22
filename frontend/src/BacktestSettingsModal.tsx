@@ -777,7 +777,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // Walk-forward schedule config (device-local, re-hydrated on open) + its live
   // run state, subscribed here so the mode badge and Run button re-render as a
   // WFO job advances (mirrors the sweepState subscription above).
-  const [wfoCfg, setWfoCfg] = useState<WfoConfigState>(() => loadWfoSchedule(DEFAULT_WFO_CONFIG));
+  // Spread over the defaults so a config persisted before a field existed
+  // (e.g. evalMode) still resolves to its default rather than undefined.
+  const [wfoCfg, setWfoCfg] = useState<WfoConfigState>(
+    () => ({ ...DEFAULT_WFO_CONFIG, ...loadWfoSchedule(DEFAULT_WFO_CONFIG) }));
   const changeWfoCfg = (n: WfoConfigState) => { setWfoCfg(n); saveWfoSchedule(n); };
   const [wfoState, setWfoState] = useState(wfoStateSignal.value);
   useEffect(() => wfoStateSignal.subscribe(setWfoState), []);

@@ -740,6 +740,9 @@ export interface WalkForwardPayload {
   schedule: WfoSchedule;
   objective?: WfoObjective;
   matrixTrainSpans?: string[];
+  // "exact" scores each train window as a real flat-start run (default);
+  // "fast" is the one-run-sliced approximation. Omitted defaults to exact.
+  evalMode?: "exact" | "fast";
 }
 
 export interface WfoFoldRow {       // streamed winner row (job status foldRows)
