@@ -60,14 +60,6 @@ def _window(raw: Sequence[float | None], n: int, kind: str) -> list[float | None
 
 def _indicator_raw(name: str, args_vals: list[float], candles: Sequence[Candle]) -> list[float | None]:
     closes = [c.close for c in candles]
-    if name == "close":
-        return closes
-    if name == "open":
-        return [c.open for c in candles]
-    if name == "high":
-        return [c.high for c in candles]
-    if name == "low":
-        return [c.low for c in candles]
     if name == "EMA":
         return ema_series(closes, int(args_vals[0]))
     if name == "SMA":
