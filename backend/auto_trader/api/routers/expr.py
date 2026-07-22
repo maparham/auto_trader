@@ -318,13 +318,26 @@ async def expr_closeness(req: ExprClosenessRequest):
             req.broker, req.epic, tf, tf_bars, req.fromTime, req.toTime, req.priceSide,
         )
 
+    # Display-bar opens for bucketing: at the base timeframe the base bars ARE the
+    # display bars; on a higher timeframe fetch the display candles so week/month/
+    # session-anchored bars align to the chart exactly (never guessed by modulo).
+    base_times = [int(c.time.timestamp()) for c in candles]
+    if req.displayResolution == req.baseResolution:
+        display_opens = base_times
+    else:
+        disp_bars = max(1, (req.toTime - req.fromTime) // display_s + 2)
+        disp_candles = await deps._fetch_symbol_candles(
+            req.broker, req.epic, req.displayResolution, disp_bars,
+            req.fromTime, req.toTime, req.priceSide,
+        )
+        display_opens = [int(c.time.timestamp()) for c in disp_candles]
+
     norm = Norm(
         basis=req.norm.basis, width=req.norm.width,
         window=req.norm.window, atr_length=req.norm.atrLength,
     )
     base_vals = group_closeness(nodes, req.combine, candles, req.baseResolution, htf, norm)
-    base_times = [int(c.time.timestamp()) for c in candles]
-    times, values = aggregate_to_display(base_times, base_vals, display_s, req.agg)
+    times, values = aggregate_to_display(base_times, base_vals, display_opens, req.agg)
     return {"times": times, "values": values}
 
 

@@ -3,6 +3,7 @@
 // aggregation). Presentational only — all state lives in useProximityHeatmap;
 // this renders the current view and reports changes up.
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import type { HeatmapView } from "./lib/heatmapController";
 
 interface Props {
@@ -18,13 +19,14 @@ interface Props {
 export default function HeatmapControls({ on, onToggle, view, onChange, belowBase }: Props) {
   return (
     <div className="heatmap-ctl">
-      <button
-        className={`heatmap-toggle${on ? " seg-on" : ""}`}
-        onClick={() => onToggle(!on)}
-        title="Rule proximity heatmap"
-      >
-        Heatmap
-      </button>
+      <Tooltip content="Rule proximity heatmap">
+        <button
+          className={`heatmap-toggle${on ? " seg-on" : ""}`}
+          onClick={() => onToggle(!on)}
+        >
+          Heatmap
+        </button>
+      </Tooltip>
 
       {on && (
         <div className="heatmap-panel">

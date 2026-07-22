@@ -156,22 +156,53 @@ def test_group_empty_rows_all_none():
     assert group_closeness([], "AND", candles, "MINUTE", {}, norm) == [None, None, None]
 
 
-def test_aggregate_buckets_by_display_resolution():
-    # base at 60s, display at 180s -> 3 base bars per display bar
+def test_aggregate_buckets_by_display_opens():
+    # base at 60s; display bars open at 0 and 180 -> 3 base bars per display bar
     base_times = [0, 60, 120, 180, 240, 300]
     base_vals = [0.2, 0.8, 0.5, None, 0.4, 0.9]
-    t_max, v_max = aggregate_to_display(base_times, base_vals, 180, "max")
+    opens = [0, 180]
+    t_max, v_max = aggregate_to_display(base_times, base_vals, opens, "max")
     assert t_max == [0, 180]
     assert v_max == [0.8, 0.9]
-    _, v_last = aggregate_to_display(base_times, base_vals, 180, "last")
+    _, v_last = aggregate_to_display(base_times, base_vals, opens, "last")
     assert v_last == [0.5, 0.9]   # last DEFINED in each bucket
-    _, v_avg = aggregate_to_display(base_times, base_vals, 180, "avg")
+    _, v_avg = aggregate_to_display(base_times, base_vals, opens, "avg")
     assert v_avg[0] == (0.2 + 0.8 + 0.5) / 3
     assert v_avg[1] == (0.4 + 0.9) / 2
+
+
+def test_aggregate_same_timeframe_is_identity():
+    # display opens == base times -> one base bar per display bar, values pass through
+    base_times = [0, 60, 120]
+    base_vals = [0.3, None, 0.7]
+    t, v = aggregate_to_display(base_times, base_vals, base_times, "max")
+    assert t == [0, 60, 120]
+    assert v == [0.3, None, 0.7]
+
+
+def test_aggregate_respects_non_epoch_aligned_display_opens():
+    # Weekly-style: display bars open Monday-anchored, NOT epoch (Thursday) aligned.
+    # Base daily bars must fold into the display bar whose open is at/just before
+    # them, so a naive floor-to-604800 would have mis-bucketed these.
+    mon1, mon2 = 1_720_396_800, 1_721_001_600  # 2024-07-08, 2024-07-15 (Mondays), 7 days apart
+    base_times = [mon1, mon1 + 86400, mon1 + 2 * 86400, mon2, mon2 + 86400]
+    base_vals = [0.2, 0.6, 0.4, 0.9, 0.1]
+    t, v = aggregate_to_display(base_times, base_vals, [mon1, mon2], "max")
+    assert t == [mon1, mon2]
+    assert v == [0.6, 0.9]
+
+
+def test_aggregate_base_before_first_display_open_is_dropped():
+    # A base bar earlier than any display open has no home and is skipped.
+    base_times = [0, 100, 200]
+    base_vals = [0.5, 0.7, 0.9]
+    t, v = aggregate_to_display(base_times, base_vals, [100], "max")
+    assert t == [100]
+    assert v == [0.9]  # 0.7 and 0.9 fold in; the t=0 bar is dropped
 
 
 def test_aggregate_empty_bucket_is_none():
     base_times = [0, 60]
     base_vals = [None, None]
-    _, v = aggregate_to_display(base_times, base_vals, 60, "max")
+    _, v = aggregate_to_display(base_times, base_vals, [0, 60], "max")
     assert v == [None, None]

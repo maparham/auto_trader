@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -147,15 +148,24 @@ def group_closeness(
 def aggregate_to_display(
     base_times: Sequence[int],
     base_vals: Sequence[float | None],
-    display_seconds: int,
+    display_opens: Sequence[int],
     agg: str,
 ) -> tuple[list[int], list[float | None]]:
-    """Group base bars into display buckets (floor of time to display_seconds)
-    and reduce each. None values are skipped; an all-None bucket yields None."""
+    """Group base bars into display bars and reduce each. `display_opens` are the
+    actual display-bar open timestamps (from the display candles the chart shows),
+    so week/month/session-anchored bars align exactly instead of being guessed by
+    epoch-modulo. Each base bar is assigned to the latest display open at or before
+    it (`bisect_right - 1`); base bars before the first display open are dropped.
+    None values are skipped; an all-None bucket yields None. Returns only the
+    display bars that received at least one base bar, ascending by open."""
+    opens = sorted(set(display_opens))
     buckets: dict[int, list[float]] = {}
     order: list[int] = []
     for t, v in zip(base_times, base_vals):
-        key = t - (t % display_seconds)
+        i = bisect.bisect_right(opens, t) - 1
+        if i < 0:
+            continue  # base bar precedes the first display bar; no home for it
+        key = opens[i]
         if key not in buckets:
             buckets[key] = []
             order.append(key)
