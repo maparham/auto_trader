@@ -5,6 +5,7 @@ from auto_trader.core.models import Candle
 from auto_trader.strategy.expr.closeness import (
     Norm,
     avg_abs_gap,
+    group_closeness,
     ramp,
     row_closeness,
     row_gap_series,
@@ -117,3 +118,38 @@ def test_row_closeness_cross_is_symmetric_line_proximity():
     # gap |close - 100| is 0 everywhere -> scale is 0 -> undefined (no spread);
     # this documents the degenerate all-equal case.
     assert out[-1] is None or out[-1] == 1.0
+
+
+def test_group_fold_and_takes_min_or_none_poisons():
+    candles = [_c(c, i) for i, c in enumerate([100, 100, 100, 100, 100, 99])]
+    rows = [parse("close > 100"), parse("close < 200")]
+    norm = Norm(basis="volatility", width=5.0, window=2, atr_length=14)
+    out = group_closeness(rows, "AND", candles, "MINUTE", {}, norm)
+    # both rows must be defined; AND folds to the min of the two
+    per = [row_closeness(r, candles, "MINUTE", {}, norm) for r in rows]
+    for i in range(len(candles)):
+        vals = [p[i] for p in per]
+        if any(v is None for v in vals):
+            assert out[i] is None
+        else:
+            assert out[i] == min(vals)
+
+
+def test_group_fold_or_takes_max():
+    candles = [_c(c, i) for i, c in enumerate([90, 95, 100, 105, 110, 100])]
+    rows = [parse("close > 108"), parse("close > 100")]
+    norm = Norm(basis="volatility", width=5.0, window=2, atr_length=14)
+    out = group_closeness(rows, "OR", candles, "MINUTE", {}, norm)
+    per = [row_closeness(r, candles, "MINUTE", {}, norm) for r in rows]
+    for i in range(len(candles)):
+        vals = [p[i] for p in per]
+        if any(v is None for v in vals):
+            assert out[i] is None
+        else:
+            assert out[i] == max(vals)
+
+
+def test_group_empty_rows_all_none():
+    candles = [_c(100, i) for i in range(3)]
+    norm = Norm(basis="volatility", width=5.0, window=2, atr_length=14)
+    assert group_closeness([], "AND", candles, "MINUTE", {}, norm) == [None, None, None]
