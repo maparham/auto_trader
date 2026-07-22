@@ -339,6 +339,39 @@ export async function runExprBacktest(req: ExprBacktestRequest): Promise<Backtes
   return res.json();
 }
 
+export type ClosenessNorm = {
+  basis: "volatility" | "atr";
+  width: number;
+  window: number;
+  atrLength: number;
+};
+export type ClosenessAgg = "max" | "avg" | "last";
+export interface ClosenessRequest {
+  broker: string;
+  epic: string;
+  priceSide: string;
+  rows: string[];
+  combine: "AND" | "OR";
+  baseResolution: string;
+  displayResolution: string;
+  fromTime: number;
+  toTime: number;
+  norm: ClosenessNorm;
+  agg: ClosenessAgg;
+}
+
+export async function fetchClosenessHeatmap(
+  req: ClosenessRequest,
+): Promise<{ times: number[]; values: (number | null)[] }> {
+  const res = await fetch(`${BASE}/api/expr/closeness`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) throw new Error(await errorDetail(res, `closeness request failed (${res.status})`));
+  return res.json();
+}
+
 export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {
   // Temporary phase timing (perf investigation): split serialize / backend / parse.
   const t0 = performance.now();
