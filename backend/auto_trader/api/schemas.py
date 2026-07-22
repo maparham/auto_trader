@@ -694,5 +694,26 @@ class ExprSeriesRequest(BaseModel):
     priceSide: str = "mid"
 
 
+class NormSpec(BaseModel):
+    basis: str = "volatility"   # "volatility" | "atr"
+    width: float = 2.0
+    window: int = 50
+    atrLength: int = 14
+
+
+class ExprClosenessRequest(BaseModel):
+    epic: str
+    broker: str = "capital"
+    priceSide: str = "mid"
+    rows: list[str]
+    combine: str = "AND"        # "AND" | "OR"
+    baseResolution: str
+    displayResolution: str
+    fromTime: int
+    toTime: int
+    norm: NormSpec = NormSpec()
+    agg: str = "max"            # "max" | "avg" | "last"
+
+
 class ExprLiteralsRequest(BaseModel):
     expr: str

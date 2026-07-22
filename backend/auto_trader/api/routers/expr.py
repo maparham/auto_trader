@@ -16,6 +16,12 @@ from fastapi import APIRouter, HTTPException
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.engine.backtest import BacktestEngine
+from auto_trader.strategy.expr import nodes as N
+from auto_trader.strategy.expr.closeness import (
+    Norm,
+    aggregate_to_display,
+    group_closeness,
+)
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.evaluate import compile_row, series_of
 from auto_trader.strategy.expr.literals import literals as compute_literals
@@ -27,6 +33,7 @@ from auto_trader.strategy.expr.warmup import warmup_bars
 from .. import deps
 from ..schemas import (
     ExprBacktestRequest,
+    ExprClosenessRequest,
     ExprLiteralsRequest,
     ExprSeriesRequest,
     SweepJobSubmitResponse,
@@ -260,6 +267,65 @@ async def expr_series(req: ExprSeriesRequest):
         "values": values,
         "warmup": warmup_bars(node),
     }
+
+
+def _referenced_tfs(node: N.Node) -> set[str]:
+    """All @TF timeframes referenced anywhere in a row's tree."""
+    if isinstance(node, N.Tf):
+        return {node.tf} | _referenced_tfs(node.base)
+    if isinstance(node, (N.Field, N.Offset)):
+        return _referenced_tfs(node.base)
+    if isinstance(node, N.Unary):
+        return _referenced_tfs(node.operand)
+    if isinstance(node, N.Call):
+        return set().union(*(_referenced_tfs(a) for a in node.args)) if node.args else set()
+    if isinstance(node, (N.Binary, N.Compare)):
+        return _referenced_tfs(node.left) | _referenced_tfs(node.right)
+    if isinstance(node, N.Cross):
+        return _referenced_tfs(node.a) | _referenced_tfs(node.b)
+    return set()
+
+
+@router.post("/api/expr/closeness")
+async def expr_closeness(req: ExprClosenessRequest):
+    try:
+        nodes = [parse(expr) for expr in req.rows]
+        for node in nodes:
+            validate(node, is_exit=False)
+    except ExprError as e:
+        raise HTTPException(422, {
+            "code": e.code, "message": e.message, "start": e.start, "end": e.end,
+        })
+
+    base_s = resolution_seconds(req.baseResolution)
+    display_s = resolution_seconds(req.displayResolution)
+    if display_s < base_s:
+        # below the authored timeframe there is no finer signal to show
+        return {"times": [], "values": []}
+
+    bars = max(1, (req.toTime - req.fromTime) // base_s + 2)
+    candles = await deps._fetch_symbol_candles(
+        req.broker, req.epic, req.baseResolution, bars, req.fromTime, req.toTime, req.priceSide,
+    )
+
+    tfs: set[str] = set()
+    for node in nodes:
+        tfs |= _referenced_tfs(node)
+    htf: dict[str, list[Candle]] = {}
+    for tf in tfs:
+        tf_bars = max(1, (req.toTime - req.fromTime) // resolution_seconds(tf) + 2)
+        htf[tf] = await deps._fetch_symbol_candles(
+            req.broker, req.epic, tf, tf_bars, req.fromTime, req.toTime, req.priceSide,
+        )
+
+    norm = Norm(
+        basis=req.norm.basis, width=req.norm.width,
+        window=req.norm.window, atr_length=req.norm.atrLength,
+    )
+    base_vals = group_closeness(nodes, req.combine, candles, req.baseResolution, htf, norm)
+    base_times = [int(c.time.timestamp()) for c in candles]
+    times, values = aggregate_to_display(base_times, base_vals, display_s, req.agg)
+    return {"times": times, "values": values}
 
 
 @router.post("/api/expr/literals")
