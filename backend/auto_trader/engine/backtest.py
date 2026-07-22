@@ -127,9 +127,17 @@ class BacktestEngine:
         self.long_scaling = long_scaling or ScalingConfig()
         self.short_scaling = short_scaling or ScalingConfig()
 
-    def run(self, candles: list[Candle]) -> BacktestResult:
+    def run(self, candles: list[Candle], *, stop_index: int | None = None) -> BacktestResult:
+        """Run the engine over `candles`. When `stop_index` is set, process only
+        bars 0..stop_index (inclusive) and force-close open positions at that bar,
+        exactly as if `candles[:stop_index + 1]` had been passed. Because every
+        indicator series is causal, passing the FULL candle list with a stop lets
+        a caller reuse series computed once across many sub-window runs (WFO exact
+        mode) instead of recomputing them per window."""
         result = BacktestResult()
         ctx = Context()
+
+        end = (len(candles) - 1) if stop_index is None else stop_index
 
         self._slip_atr = self._wilder_atr14(candles) if self.slippage_atr_mult > 0 else []
 
@@ -143,6 +151,8 @@ class BacktestEngine:
         last_short_open: float | None = None
 
         for i, bar in enumerate(candles):
+            if i > end:
+                break
             # 0) Overnight financing: charge every rollover instant crossed since
             # the previous bar, BEFORE any fill/close on this bar. A position that
             # closes on this bar still held through the night that just ended, so
@@ -261,7 +271,7 @@ class BacktestEngine:
             ctx.short_entry_price = shorts[0].entry if shorts else None
             ctx.long_entry_time = longs[0].open_time if longs else None
             ctx.short_entry_time = shorts[0].open_time if shorts else None
-            if i < len(candles) - 1:  # last bar has no next-open to fill on
+            if i < end:  # the run's last bar has no next-open to fill on
                 pending = list(self.strategy.on_bar(ctx))
 
         # Book any still-open positions at the last close via the normal exit path
@@ -269,8 +279,8 @@ class BacktestEngine:
         # silent mark-to-market. This charges an exit commission per open position,
         # matching how every other exit is treated.
         if candles:
-            last_bar = candles[-1]
-            last_i = len(candles) - 1
+            last_bar = candles[end]
+            last_i = end
             realized = self._close_all(
                 longs, "long", result, realized, Side.SELL,
                 self._fill_price(last_bar.close, Side.SELL, last_i), last_bar.time, "range end"
