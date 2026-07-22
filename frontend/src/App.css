@@ -2266,6 +2266,31 @@
 .seg button { background: var(--input-bg); color: var(--text); border: none; padding: 6px 14px; cursor: pointer; }
 .seg button.seg-on { background: var(--accent); color: var(--accent-text); }
 
+/* Rule-proximity heatmap controls: chart furniture pinned top-right, clear of the
+   top-left legend and the right price axis. Flat, no shadow, content-sized. */
+.heatmap-ctl {
+  position: absolute; top: 8px; right: 64px; z-index: 6;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+}
+.heatmap-toggle {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+.heatmap-toggle.seg-on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.heatmap-panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 232px;
+}
+.heatmap-panel .wfo-row { justify-content: space-between; }
+.heatmap-seg { font-size: 11px; }
+.heatmap-seg button { padding: 3px 9px; }
+.heatmap-width {
+  width: 56px; background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+}
+.heatmap-base { font-size: 11px; color: var(--text-dim); }
+
 /* Walk-forward schedule config: flat, content-sized rows of labels + toggle
    chips, shown in the config body only in walk-forward mode. */
 .wfo-config {

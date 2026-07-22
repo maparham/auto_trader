@@ -35,6 +35,7 @@ import {
   wfoRenderRequest,
   requestWfoCancel,
   progressStageSignal,
+  backtestConfigLive,
 } from "./lib/signals";
 import { stageLabel } from "./lib/progressLabels";
 import { resumeSweep } from "./lib/sweepResume";
@@ -412,6 +413,13 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // Flush the latest config when the modal unmounts, so an edit made inside the
   // debounce window right before closing isn't dropped by the timer cleanup above.
   useEffect(() => () => saveBacktestLastUsed(cfgRef.current), []);
+  // Publish the live config so the chart's rule-proximity heatmap tracks edits as
+  // they happen (undebounced: the heatmap fetch is debounced on its own side).
+  // Clear to null on unmount so the chart falls back to the persisted config.
+  useEffect(() => {
+    backtestConfigLive.set(cfg);
+  }, [cfg]);
+  useEffect(() => () => backtestConfigLive.set(null), []);
   // "Pick Range" ↔ chart wiring: mirror the armed flag for the button state, and
   // when the chart publishes a picked range drop it into the Custom from/to (and
   // switch to Custom mode). Re-subscribes if the focused cell changes.

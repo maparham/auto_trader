@@ -639,6 +639,12 @@ export function requestGoLive(cfg: BacktestConfig): void {
   openLivePanel();
 }
 
+// The live, in-progress backtest panel config, published by the docked backtest
+// panel so the chart's rule-proximity heatmap tracks edits as they happen. null
+// when the panel is closed — consumers fall back to the persisted last-used
+// config. This is view wiring only; the panel remains the source of truth.
+export const backtestConfigLive = new Signal<BacktestConfig | null>(null);
+
 // Request to open the per-indicator settings modal (TradingView-style gear). Set
 // by the indicator legend's gear icon (ChartCore's OnTooltipIconClick handler);
 // the modal (in App) reads/writes the live indicator via overrideIndicator.

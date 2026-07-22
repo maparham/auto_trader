@@ -38,6 +38,8 @@ import { ChartController } from "./lib/chartController";
 import { isInvertShortcut } from "./lib/invertShortcut";
 import MarketInfoPopover from "./MarketInfoPopover";
 import Tooltip from "./components/Tooltip";
+import HeatmapControls from "./HeatmapControls";
+import { useProximityHeatmap } from "./chart/useProximityHeatmap";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
 import {
@@ -1247,6 +1249,16 @@ export default function ChartCore({
   // Scroll-back (getBars) reads refs, not props, so keep the live price side here.
   const priceSideRef = useRef(priceSide);
   priceSideRef.current = priceSide;
+  // Rule-proximity heatmap overlay: reads the live/persisted backtest config and
+  // paints per-bar closeness. State + fetch/repaint live in the hook; the control
+  // surface is rendered below near the legend.
+  const heatmap = useProximityHeatmap({
+    chartRef,
+    epic: symbol.epic,
+    broker: brokerId,
+    priceSide,
+    displayResolution: period.resolution,
+  });
   // onZoomToRange runs from the once-mounted init effect, so it must read these
   // through live refs (updated every render), not its mount-time closure props.
   const onPeriodRef = useRef(onPeriod);
@@ -3802,6 +3814,14 @@ export default function ChartCore({
         // wrap's onPointerDownCapture has already focused this cell, so the shared
         // symbol-search modal targets this cell's symbol.
         onChangeSymbol={requestSymbolSearch}
+      />
+
+      <HeatmapControls
+        on={heatmap.on}
+        onToggle={heatmap.setOn}
+        view={heatmap.view}
+        onChange={heatmap.setView}
+        belowBase={heatmap.belowBase}
       />
 
       {detailsAnchor && (
