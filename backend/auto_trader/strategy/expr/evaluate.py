@@ -257,7 +257,15 @@ def _precompute(node: N.Node, candles, resolution, htf, cache: dict[int, list[fl
 def compile_row(node: N.Compare | N.Cross | N.Chain, candles, resolution, htf) -> CompiledRow:
     cache: dict[int, list[float | None]] = {}
     if isinstance(node, N.Chain):
-        subs = [operand for p in node.parts for operand in (p.left, p.right)]
+        # Consecutive links share their middle operand (p[i].right is p[i+1].left);
+        # dedup by identity so it is precomputed once.
+        seen: set[int] = set()
+        subs = []
+        for p in node.parts:
+            for operand in (p.left, p.right):
+                if id(operand) not in seen:
+                    seen.add(id(operand))
+                    subs.append(operand)
     elif isinstance(node, N.Compare):
         subs = [node.left, node.right]
     else:

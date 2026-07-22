@@ -171,6 +171,8 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
 // Parser (mirrors parser.py)
 // ---------------------------------------------------------------------------
 
+const CMP_TYPES = new Set(["GT", "LT", "GE", "LE"]);
+
 class Parser {
   private i = 0;
   private toks: LexToken[];
@@ -209,7 +211,7 @@ class Parser {
     const symOf: Record<string, string> = { GT: ">", LT: "<", GE: ">=", LE: "<=" };
     const parts: CompareNode[] = [];
     let operand: Node = left;
-    while (["GT", "LT", "GE", "LE"].includes(this.peek().type)) {
+    while (CMP_TYPES.has(this.peek().type)) {
       const optok = this.next();
       const right = this.parseArith();
       parts.push({ kind: "Compare", op: symOf[optok.type], left: operand, right, start: operand.start, end: right.end });

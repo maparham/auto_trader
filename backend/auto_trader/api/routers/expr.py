@@ -263,8 +263,10 @@ async def expr_series(req: ExprSeriesRequest):
     # chain, plot the first link's left operand (the primary series).
     if isinstance(node, N.Chain):
         top = node.parts[0].left
+    elif isinstance(node, N.Compare):
+        top = node.left
     else:
-        top = node.left if hasattr(node, "left") else node.a
+        top = node.a
     values = series_of(top, candles, req.resolution, {})
     return {
         "times": [int(c.time.timestamp()) for c in candles],
