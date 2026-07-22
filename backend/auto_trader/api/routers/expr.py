@@ -198,8 +198,6 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest):
     wf = req.walkforward
     if wf is None or not wf.combos:
         raise HTTPException(422, "walkforward.combos is required")
-    if wf.evalMode == "exact":
-        raise HTTPException(422, "exact eval mode is not yet supported")
     if not req.candles:
         raise HTTPException(422, "candles are required")
     res_s = resolution_seconds(req.resolution)
@@ -233,6 +231,7 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest):
         epic=req.epic,
         timeframe=req.resolution,
         expr=True,
+        eval_mode=wf.evalMode,
         on_complete=_persist_wfo(req),
     )
     return WfoJobSubmitResponse(

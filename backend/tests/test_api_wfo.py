@@ -48,10 +48,10 @@ def test_submit_rejects_infeasible_schedule():
     assert "fold" in r.json()["detail"]
 
 
-def test_submit_rejects_exact_mode():
+def test_submit_accepts_exact_mode(sync_wfo_manager):
     req = make_req_dict(100 * 24)
     req["walkforward"] = {**WFO, "evalMode": "exact"}
-    assert client.post("/api/backtest/walkforward/jobs", json=req).status_code == 422
+    assert client.post("/api/backtest/walkforward/jobs", json=req).status_code == 200
 
 
 def test_submit_rejects_range_axis_without_values(sync_wfo_manager):

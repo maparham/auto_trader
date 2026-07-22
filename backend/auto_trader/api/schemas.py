@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from auto_trader.engine.schedule import RecurrenceMask
 from auto_trader.engine.risk import RiskConfig, StopSpec, TargetSpec
@@ -387,7 +387,15 @@ class WalkForwardDTO(BaseModel):
     schedule: WfoScheduleDTO
     objective: WfoObjectiveDTO = Field(default_factory=WfoObjectiveDTO)
     matrixTrainSpans: list[str] = []
-    evalMode: Literal["auto", "sliced", "exact"] = "auto"
+    # Exact scores each train window as a real flat-start run (default); fast is
+    # the one-run-sliced-N-ways approximation. Legacy "auto"/"sliced" normalize
+    # to fast so older clients keep working.
+    evalMode: Literal["exact", "fast"] = "exact"
+
+    @field_validator("evalMode", mode="before")
+    @classmethod
+    def _normalize_eval_mode(cls, v):
+        return "fast" if v in ("auto", "sliced") else v
 
 
 class WfoJobSubmitResponse(BaseModel):

@@ -77,6 +77,7 @@ class WfoJobManager:
         combos: list[dict],
         workers: int | None = None,
         expr: bool = False,
+        eval_mode: str = "exact",
         on_complete=None,
     ) -> WfoJob:
         total = len(combos) + sum(len(sc["folds"]) for sc in schemes)
@@ -100,6 +101,7 @@ class WfoJobManager:
             "combos": combos,
             "workers": workers,
             "expr": expr,
+            "eval_mode": eval_mode,
             "on_complete": on_complete,
         }
         t = threading.Thread(target=self._run, args=(job, kw), daemon=True)
@@ -173,9 +175,15 @@ class WfoJobManager:
                               kw["strategies_dir"], union, kw.get("expr", False)),
                 )
                 # --- phase 1: grid ---
+                # Exact: score each train window as a real flat-start run
+                # (free-slice clean windows, engine-replay boundary windows).
+                # Fast: one full-range run sliced N ways (the legacy approximation).
+                grid_fn = (wfo_worker.run_grid_combo_exact
+                           if kw.get("eval_mode", "exact") == "exact"
+                           else wfo_worker.run_grid_combo)
                 grid_rows = self._drain(
                     pool,
-                    [pool.submit(wfo_worker.run_grid_combo, c) for c in kw["combos"]],
+                    [pool.submit(grid_fn, c) for c in kw["combos"]],
                     job, t0)
                 if job.cancelled:
                     return
@@ -378,7 +386,7 @@ class WfoJobManager:
         # caller can tell an empty result from a broken one.
         grid_failed = sum(1 for r in grid_rows if r["error"])
         grid_sample = next((r["error"] for r in grid_rows if r["error"]), None)
-        return {"eval_mode": "sliced", "objective": kw["objective"],
+        return {"eval_mode": kw.get("eval_mode", "exact"), "objective": kw["objective"],
                 "schedule": kw["schedule_meta"], "axes": kw["axes"],
                 "schemes": out_schemes,
                 "grid_errors": {"failed": grid_failed, "total": len(grid_rows),

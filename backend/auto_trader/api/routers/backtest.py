@@ -817,8 +817,6 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
     wf = req.walkforward
     if wf is None or not wf.combos:
         raise HTTPException(422, "walkforward.combos is required")
-    if wf.evalMode == "exact":
-        raise HTTPException(422, "exact eval mode is not yet supported")
     if not req.candles:
         raise HTTPException(422, "candles are required")
 
@@ -891,6 +889,7 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
         schedule_meta=wf.schedule.model_dump(),
         epic=req.epic,
         timeframe=req.resolution,
+        eval_mode=wf.evalMode,
         on_complete=_persist_wfo(req),
     )
     # Build the response from OUR pre-submit scheme copy, selecting only the 4
