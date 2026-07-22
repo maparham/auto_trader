@@ -89,8 +89,15 @@ class Cross:
     end: int
 
 
+@dataclass(frozen=True, slots=True)
+class Chain:
+    parts: list["Compare"]
+    start: int
+    end: int
+
+
 Node = (
-    Num | Candle | Entry | Call | Field | Offset | Tf | Unary | Binary | Compare | Cross
+    Num | Candle | Entry | Call | Field | Offset | Tf | Unary | Binary | Compare | Cross | Chain
 )
 
 CROSS_FNS = ("crossAbove", "crossBelow")
@@ -108,4 +115,6 @@ def contains_tf(node: Node) -> bool:
         return contains_tf(node.left) or contains_tf(node.right)
     if isinstance(node, Cross):
         return contains_tf(node.a) or contains_tf(node.b)
+    if isinstance(node, Chain):
+        return any(contains_tf(p) for p in node.parts)
     return False
