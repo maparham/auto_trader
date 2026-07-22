@@ -120,10 +120,13 @@ time; the early stop then saves only the position-loop tail, not the warmup.
 The "fast + tiny increment" cost holds **only** if indicators/series are
 compiled **once per combo** over the full range and the per-window re-sim
 replays the cheap position loop from `from` over the precomputed series with a
-flat book. **This compile-once / window-replay engine hook is an explicit
-deliverable**, not an incidental. If it proves too invasive, the fallback is
-per-window `run_test`-style runs (correct, exact, but M x W cost) with the
-no-straddle prune still applied -- ship correctness first, optimize second.
+flat book. **This compile-once / window-replay engine hook is the primary
+deliverable and is built from the start** -- the optimized convergence-splice
+path is the target implementation, not a follow-up. The parity gate (below)
+validates it against `run_test` regardless of internal shape. A per-window
+`run_test`-style run (correct but M x W cost) is only a contingency if the hook
+is proven infeasible mid-implementation; the plan targets the optimized path
+directly.
 
 ## Correctness gate (do this before the scoring step locks)
 
