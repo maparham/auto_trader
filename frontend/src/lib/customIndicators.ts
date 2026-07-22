@@ -34,6 +34,7 @@ import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
 import { PIVOT_ANALYSIS_TEMPLATE } from "./indicators/pivotAnalysis";
 import { SLOPE_TEMPLATE, SLOPE_ACCEL_TEMPLATE } from "./indicators/slope";
 import { CANDLE_PATTERNS_TEMPLATE } from "./indicators/candlePatterns";
+import { PROXIMITY_HEATMAP_TEMPLATE } from "./indicators/proximityHeatmap";
 
 // Base templates for our custom indicator TYPES, keyed by type. Each is a full
 // klinecharts indicator definition MINUS the `name` (the name is assigned per
@@ -80,6 +81,7 @@ export function registerCustomIndicators(): void {
   for (const [type, tmpl] of Object.entries(BASE_TEMPLATES)) {
     registerIndicator({ ...tmpl, name: type });
   }
+  registerIndicator({ ...PROXIMITY_HEATMAP_TEMPLATE, name: "ProximityHeatmap" });
 }
 
 // Indicators that overlay the price (candle) pane rather than a sub-pane.
