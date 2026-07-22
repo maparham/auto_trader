@@ -125,6 +125,14 @@ export function useProximityHeatmap({ chartRef, epic, broker, priceSide, display
       .catch(() => { /* transient fetch error: keep the last paint */ });
   }, [chartRef]);
 
+  // Symbol or timeframe switch: clear the previous paint at once so the old
+  // symbol's columns don't linger over new bars during the debounce + fetch below.
+  useEffect(() => {
+    const c = chartRef.current;
+    if (!c || !on) return;
+    c.overrideIndicator({ paneId: PANE, name: HEATMAP_NAME, extendData: { values: [] } });
+  }, [chartRef, on, epic, displayResolution]);
+
   // Refetch on any input change, debounced so a burst of rule edits fires once.
   useEffect(() => {
     if (!on) return;

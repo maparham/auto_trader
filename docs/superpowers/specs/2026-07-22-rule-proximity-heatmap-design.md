@@ -195,13 +195,13 @@ much/far" framing, no em dashes):
 
 - **Side**: Long | Short. Default Long.
 - **Scale**: Volatility | ATR. Default Volatility.
-  - InfoTip (Volatility): "Each condition is measured against how far it
-    normally sits from its trigger."
+  - InfoTip (Volatility): "Each condition is measured against its usual distance
+    from its trigger."
   - InfoTip (ATR): "Each condition is measured in ATR units."
 - **Sensitivity** (`width`): default `2`. InfoTip: "Higher values light up the
   chart from further away."
 - **On higher timeframes** (`agg`): Max | Average | Last close. Default Max.
-  InfoTip: "How each higher-timeframe bar combines the base bars it covers."
+  InfoTip: "Combines the base bars inside each higher-timeframe bar."
 
 ## Defaults
 

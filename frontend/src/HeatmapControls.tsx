@@ -52,7 +52,7 @@ export default function HeatmapControls({ on, onToggle, view, onChange, belowBas
               <InfoTip
                 title="Scale"
                 text={[
-                  "Volatility: each condition is measured against how far it normally sits from its trigger.",
+                  "Volatility: each condition is measured against its usual distance from its trigger.",
                   "ATR: each condition is measured in ATR units.",
                 ]}
               />
@@ -99,7 +99,7 @@ export default function HeatmapControls({ on, onToggle, view, onChange, belowBas
               On higher timeframes
               <InfoTip
                 title="On higher timeframes"
-                text="How each higher-timeframe bar combines the base bars it covers."
+                text="Combines the base bars inside each higher-timeframe bar."
               />
             </span>
             <div className="seg heatmap-seg">
