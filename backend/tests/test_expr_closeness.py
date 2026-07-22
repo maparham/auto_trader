@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from auto_trader.core.models import Candle
 from auto_trader.strategy.expr.closeness import (
     Norm,
+    aggregate_to_display,
     avg_abs_gap,
     group_closeness,
     ramp,
@@ -153,3 +154,24 @@ def test_group_empty_rows_all_none():
     candles = [_c(100, i) for i in range(3)]
     norm = Norm(basis="volatility", width=5.0, window=2, atr_length=14)
     assert group_closeness([], "AND", candles, "MINUTE", {}, norm) == [None, None, None]
+
+
+def test_aggregate_buckets_by_display_resolution():
+    # base at 60s, display at 180s -> 3 base bars per display bar
+    base_times = [0, 60, 120, 180, 240, 300]
+    base_vals = [0.2, 0.8, 0.5, None, 0.4, 0.9]
+    t_max, v_max = aggregate_to_display(base_times, base_vals, 180, "max")
+    assert t_max == [0, 180]
+    assert v_max == [0.8, 0.9]
+    _, v_last = aggregate_to_display(base_times, base_vals, 180, "last")
+    assert v_last == [0.5, 0.9]   # last DEFINED in each bucket
+    _, v_avg = aggregate_to_display(base_times, base_vals, 180, "avg")
+    assert v_avg[0] == (0.2 + 0.8 + 0.5) / 3
+    assert v_avg[1] == (0.4 + 0.9) / 2
+
+
+def test_aggregate_empty_bucket_is_none():
+    base_times = [0, 60]
+    base_vals = [None, None]
+    _, v = aggregate_to_display(base_times, base_vals, 60, "max")
+    assert v == [None, None]

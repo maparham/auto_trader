@@ -142,3 +142,39 @@ def group_closeness(
         vals = [p[i] for p in per]
         out.append(None if any(v is None for v in vals) else fold(vals))
     return out
+
+
+def aggregate_to_display(
+    base_times: Sequence[int],
+    base_vals: Sequence[float | None],
+    display_seconds: int,
+    agg: str,
+) -> tuple[list[int], list[float | None]]:
+    """Group base bars into display buckets (floor of time to display_seconds)
+    and reduce each. None values are skipped; an all-None bucket yields None."""
+    buckets: dict[int, list[float]] = {}
+    order: list[int] = []
+    for t, v in zip(base_times, base_vals):
+        key = t - (t % display_seconds)
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        if _defined(v):
+            buckets[key].append(float(v))
+    order.sort()
+    out_t: list[int] = []
+    out_v: list[float | None] = []
+    for key in order:
+        vals = buckets[key]
+        out_t.append(key)
+        if not vals:
+            out_v.append(None)
+        elif agg == "max":
+            out_v.append(max(vals))
+        elif agg == "avg":
+            out_v.append(sum(vals) / len(vals))
+        elif agg == "last":
+            out_v.append(vals[-1])
+        else:
+            raise ValueError(f"unknown agg: {agg}")
+    return out_t, out_v
