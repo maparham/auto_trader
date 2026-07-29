@@ -30,11 +30,11 @@ for free. No local flag file.
   endpoint. If MetaApi reports the account undeployed — whether we paused it,
   the dashboard did, or their side did — the app treats it as paused and does
   not spend money to heal it.
-- An in-memory `_paused: bool | None` cache on `MT5Broker` avoids a MetaApi
-  REST call per `_ensure()`: `None` until first checked, then updated by the
-  pause/resume/state endpoints. `_ensure()` consults the cache first and only
-  refreshes `_acct` state when the cache says paused (to notice a dashboard
-  redeploy) or is unset.
+- No extra cache is needed: the SDK account object already tracks `state`
+  locally, so `_ensure()` checks that first and only issues a MetaApi REST
+  `reload()` when it reads "not running" (to notice a dashboard-side
+  redeploy before raising). While paused, the shared circuit breaker
+  throttles repeated calls.
 
 ### Backend: `MT5Broker` methods
 
