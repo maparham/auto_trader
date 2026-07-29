@@ -60,3 +60,44 @@ def test_ensure_reload_detects_external_redeploy():
     with pytest.raises(AttributeError):  # _FakeAcct has no wait_connected
         asyncio.run(broker._ensure())
     assert acct.deploy_calls == 0
+
+
+def test_deploy_state_maps_sdk_states():
+    for sdk_state, ui in [
+        ("DEPLOYED", "on"),
+        ("DEPLOYING", "turning-on"),
+        ("UNDEPLOYING", "turning-off"),
+        ("UNDEPLOYED", "off"),
+        ("CREATED", "off"),
+    ]:
+        broker = _broker(_FakeAcct(state=sdk_state))
+        assert asyncio.run(broker.deploy_state()) == ui, sdk_state
+
+
+def test_pause_undeploys_and_drops_connection():
+    acct = _FakeAcct(state="DEPLOYED")
+    broker = _broker(acct)
+    broker._synced = True  # pretend a live RPC connection existed
+    state = asyncio.run(broker.pause())
+    assert acct.undeploy_calls == 1
+    assert state == "turning-off"
+    assert broker._synced is False and broker._conn is None
+
+
+def test_pause_is_idempotent_when_already_off():
+    acct = _FakeAcct(state="UNDEPLOYED")
+    broker = _broker(acct)
+    assert asyncio.run(broker.pause()) == "off"
+    assert acct.undeploy_calls == 0
+
+
+def test_resume_deploys_only_when_needed():
+    acct = _FakeAcct(state="UNDEPLOYED")
+    broker = _broker(acct)
+    assert asyncio.run(broker.resume()) == "turning-on"
+    assert acct.deploy_calls == 1
+
+    already = _FakeAcct(state="DEPLOYED")
+    broker2 = _broker(already)
+    assert asyncio.run(broker2.resume()) == "on"
+    assert already.deploy_calls == 0

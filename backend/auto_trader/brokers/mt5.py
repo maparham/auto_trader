@@ -63,6 +63,19 @@ class MT5PausedError(RuntimeError):
     endpoint (or the MetaApi dashboard) turns the account back on."""
 
 
+# MetaApi account states → the UI vocabulary the frontend pill renders.
+# Anything not deployed/deploying (UNDEPLOYED, CREATED, DELETING, …) is "off".
+_DEPLOY_STATE_UI = {
+    "DEPLOYED": "on",
+    "DEPLOYING": "turning-on",
+    "UNDEPLOYING": "turning-off",
+}
+
+
+def _ui_deploy_state(sdk_state: str) -> str:
+    return _DEPLOY_STATE_UI.get(sdk_state, "off")
+
+
 # Resolution -> MetaApi timeframe string. Every Resolution we support has a direct
 # MetaApi equivalent (MetaApi also has 2m/10m/… we don't use).
 _TIMEFRAME: dict[Resolution, str] = {
@@ -364,6 +377,49 @@ class MT5Broker(MarketDataBroker):
         """Locked account handle for lifecycle callers (deploy_state/pause/resume)."""
         async with self._lock:
             return await self._account_unlocked()
+
+    async def _close_connections(self) -> None:
+        """Drop + close the RPC and stream connections, BOUNDED (shared by
+        aclose and pause)."""
+        conn, self._conn, self._synced = self._conn, None, False
+        stream, self._stream_conn, self._stream_synced = self._stream_conn, None, False
+        for c in (conn, stream):
+            if c is not None:
+                try:
+                    await asyncio.wait_for(c.close(), self.CLOSE_BUDGET)
+                except Exception:  # best-effort teardown
+                    log.debug("mt5: error closing connection", exc_info=True)
+
+    # --- deploy lifecycle (the cost toggle) ------------------------------------
+    # Undeployed MetaApi accounts don't bill; the account record survives and a
+    # redeploy takes ~1-2 min. MetaApi's own account state is the source of
+    # truth (it survives our restarts), so there is no local paused flag.
+
+    async def deploy_state(self) -> str:
+        """Fresh deploy state from MetaApi, mapped to the UI vocabulary."""
+        acct = await self._account_handle()
+        await acct.reload()
+        return _ui_deploy_state(acct.state)
+
+    async def pause(self) -> str:
+        """Undeploy the account (stops MetaApi billing) and drop our
+        connections so nothing holds a socket to a dying terminal. Idempotent."""
+        acct = await self._account_handle()
+        await self._close_connections()
+        await acct.reload()
+        if acct.state in ("DEPLOYED", "DEPLOYING"):
+            await acct.undeploy()
+        return _ui_deploy_state(acct.state)
+
+    async def resume(self) -> str:
+        """Deploy the account if it isn't running. Returns without waiting for
+        sync — _ensure() reconnects lazily on next use and the UI watches
+        progress via deploy_state() polling. Idempotent."""
+        acct = await self._account_handle()
+        await acct.reload()
+        if acct.state not in ("DEPLOYED", "DEPLOYING"):
+            await acct.deploy()
+        return _ui_deploy_state(acct.state)
 
     async def _ensure(self):
         """Connect + synchronize once, then reuse. Re-entrant: concurrent callers
@@ -719,7 +775,7 @@ class MT5Broker(MarketDataBroker):
     async def aclose(self) -> None:
         """Close both connections on shutdown, BOUNDED. The account is left DEPLOYED —
         tearing it down would stop live trading and re-deploying is slow + costs a
-        deploy charge; deployment is managed in the MetaApi dashboard, not per
+        deploy charge; deployment is managed via the MT5 toolbar toggle (/api/mt5/*) or the MetaApi dashboard, not per
         process. Bounded because lifespan shutdown awaits this: a close that hangs
         on a wedged socket would hang uvicorn --reload's process swap and with it
         every request. The client is then reaped so no cancellation-immune SDK task
@@ -727,14 +783,7 @@ class MT5Broker(MarketDataBroker):
         if self._label_task is not None:
             self._label_task.cancel()
             self._label_task = None
-        conn, self._conn, self._synced = self._conn, None, False
-        stream, self._stream_conn, self._stream_synced = self._stream_conn, None, False
-        for c in (conn, stream):
-            if c is not None:
-                try:
-                    await asyncio.wait_for(c.close(), self.CLOSE_BUDGET)
-                except Exception:  # best-effort on shutdown
-                    log.debug("mt5: error closing connection", exc_info=True)
+        await self._close_connections()
         api, self._api, self._acct = self._api, None, None
         if api is not None:
             await self._reap_api(api)
