@@ -63,6 +63,14 @@ class MT5PausedError(RuntimeError):
     endpoint (or the MetaApi dashboard) turns the account back on."""
 
 
+# Shared message for both places MT5PausedError is raised (_ensure's own pause
+# gate, and _bounded's paused-hint fast-fail) so the two read paths present the
+# user with one consistent string.
+_PAUSED_MSG = (
+    "MetaApi account is paused (undeployed) — turn MT5 on in the toolbar to resume"
+)
+
+
 # MetaApi account states → the UI vocabulary the frontend pill renders.
 # Anything not deployed/deploying (UNDEPLOYED, CREATED, DELETING, …) is "off".
 _DEPLOY_STATE_UI = {
@@ -356,6 +364,13 @@ class MT5Broker(MarketDataBroker):
         # One-shot background fetch of the account's real broker name for the
         # selector label (see start_display_name_fetch).
         self._label_task: asyncio.Task | None = None
+        # In-memory UX hint: set when a rebuild attempt discovers the account is
+        # paused (undeployed), so `_bounded` can surface MT5PausedError instead of
+        # churning full-client rebuilds and showing "reconnecting" forever while
+        # paused (see _rebuild/_bounded). MetaApi's own account state remains the
+        # source of truth — a stale hint just costs one extra rebuild attempt that
+        # re-derives it; resume()/a successful _ensure() clear it.
+        self._paused_hint = False
 
     # --- connection -----------------------------------------------------------
 
@@ -419,6 +434,13 @@ class MT5Broker(MarketDataBroker):
         await acct.reload()
         if acct.state not in ("DEPLOYED", "DEPLOYING"):
             await acct.deploy()
+        # The user just asked to turn MT5 back on: drop the paused hint and any
+        # backoff a long pause built up, so the read path stops raising
+        # MT5PausedError and the FIRST reconnect attempt fires immediately
+        # instead of waiting up to RECONNECT_BACKOFF_MAX (300s) for the next poll.
+        self._paused_hint = False
+        self._rebuild_fails = 0
+        self._last_rebuild_at = float("-inf")
         return _ui_deploy_state(acct.state)
 
     async def _ensure(self):
@@ -438,16 +460,14 @@ class MT5Broker(MarketDataBroker):
             if acct.state not in ("DEPLOYING", "DEPLOYED"):
                 await acct.reload()
                 if acct.state not in ("DEPLOYING", "DEPLOYED"):
-                    raise MT5PausedError(
-                        "MetaApi account is paused (undeployed) — "
-                        "turn MT5 on in the toolbar to resume"
-                    )
+                    raise MT5PausedError(_PAUSED_MSG)
             await self._acct.wait_connected()
             conn = self._acct.get_rpc_connection()
             await conn.connect()
             await conn.wait_synchronized(120)
             self._conn = conn
             self._synced = True
+            self._paused_hint = False  # a real connection self-heals a stale hint
             log.info("mt5: connected + synchronized (account %s)", self._account_id)
             return conn
 
@@ -457,16 +477,24 @@ class MT5Broker(MarketDataBroker):
         block up to wait_synchronized's 120s — so a caller can never hang on it:
 
           * reconnect in flight  -> fast-fail (TimeoutException);
+          * known paused         -> fast-fail with MT5PausedError, no rebuild kicked
+            (a rebuild would just re-derive the same paused state — see
+            _paused_hint);
           * not synchronized     -> fast-fail AND kick a background reconnect (the
             unbounded connect lives only in `_rebuild`, off the request path);
           * synchronized         -> run the call under wait_for; a timeout feeds the
             consecutive-failure streak that escalates to a rebuild.
 
         Raises TimeoutException on any wedge so callers map it: reads surface
-        reconnecting, trades fall to their UNKNOWN/reconcile path."""
+        reconnecting, trades fall to their UNKNOWN/reconcile path. Raises
+        MT5PausedError instead when the account is known paused, so a paused
+        account doesn't show "reconnecting" forever and doesn't churn a full SDK
+        client rebuild every backoff interval."""
         if self._state == "RECONNECTING":
             raise TimeoutException("mt5: reconnecting")
         if not self._synced or self._conn is None:
+            if self._paused_hint:
+                raise MT5PausedError(_PAUSED_MSG)
             self._trigger_rebuild_if_idle()
             raise TimeoutException("mt5: connecting")
         conn = self._conn
@@ -627,6 +655,15 @@ class MT5Broker(MarketDataBroker):
                         )
             log.info("mt5: reconnected after wedge (account %s)", self._account_id)
             self._rebuild_fails = 0
+        except MT5PausedError:
+            # Not a wedge — the account is deliberately paused. Don't count it
+            # toward the reconnect-failure backoff (a paused account isn't
+            # "failing to reconnect", it's off on purpose) and don't log it as a
+            # scary reconnect-failed warning with a stack trace; `_bounded` picks
+            # this hint up and fast-fails as MT5PausedError instead of spinning on
+            # "connecting" forever.
+            self._paused_hint = True
+            log.info("mt5: rebuild found the account paused (account %s)", self._account_id)
         except Exception:
             self._rebuild_fails += 1
             log.warning(
