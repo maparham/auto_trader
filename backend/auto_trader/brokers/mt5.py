@@ -56,6 +56,13 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+
+class MT5PausedError(RuntimeError):
+    """The MetaApi account is deliberately undeployed — paused to stop MetaApi
+    hosting billing. Raised instead of auto-deploying: only the explicit deploy
+    endpoint (or the MetaApi dashboard) turns the account back on."""
+
+
 # Resolution -> MetaApi timeframe string. Every Resolution we support has a direct
 # MetaApi equivalent (MetaApi also has 2m/10m/… we don't use).
 _TIMEFRAME: dict[Resolution, str] = {
@@ -339,6 +346,25 @@ class MT5Broker(MarketDataBroker):
 
     # --- connection -----------------------------------------------------------
 
+    async def _account_unlocked(self):
+        """Client + account handle, no deploy, no connect. Caller holds _lock."""
+        if self._api is None:
+            _quiet_sdk_logging()
+            # MetaApi spawns background asyncio tasks in __init__, so it must be
+            # constructed inside a running loop (never at import time). The Python
+            # SDK auto-discovers the account's hosting region — passing a `region`
+            # option is explicitly discouraged (it triggers subscribe timeouts on
+            # the wrong socket), so `_region` is retained for reference only.
+            self._api = MetaApi(self._token)
+        if self._acct is None:
+            self._acct = await self._api.metatrader_account_api.get_account(self._account_id)
+        return self._acct
+
+    async def _account_handle(self):
+        """Locked account handle for lifecycle callers (deploy_state/pause/resume)."""
+        async with self._lock:
+            return await self._account_unlocked()
+
     async def _ensure(self):
         """Connect + synchronize once, then reuse. Re-entrant: concurrent callers
         share one connect via the lock, and a healthy connection short-circuits
@@ -348,19 +374,18 @@ class MT5Broker(MarketDataBroker):
         async with self._lock:
             if self._synced and self._conn is not None:
                 return self._conn
-            if self._api is None:
-                _quiet_sdk_logging()
-                # MetaApi spawns background asyncio tasks in __init__, so it must be
-                # constructed inside a running loop (never at import time). The Python
-                # SDK auto-discovers the account's hosting region — passing a `region`
-                # option is explicitly discouraged (it triggers subscribe timeouts on
-                # the wrong socket), so `_region` is retained for reference only.
-                self._api = MetaApi(self._token)
-            if self._acct is None:
-                self._acct = await self._api.metatrader_account_api.get_account(self._account_id)
-            # Account must be running in MetaApi's cloud; deploy if it isn't.
-            if self._acct.state not in ("DEPLOYING", "DEPLOYED"):
-                await self._acct.deploy()
+            acct = await self._account_unlocked()
+            # NEVER auto-deploy: deploying re-starts MetaApi billing, and the
+            # user may have undeployed on purpose (the cost toggle). The local
+            # `state` can be stale, so reload once — the dashboard/API may have
+            # redeployed since this handle was fetched.
+            if acct.state not in ("DEPLOYING", "DEPLOYED"):
+                await acct.reload()
+                if acct.state not in ("DEPLOYING", "DEPLOYED"):
+                    raise MT5PausedError(
+                        "MetaApi account is paused (undeployed) — "
+                        "turn MT5 on in the toolbar to resume"
+                    )
             await self._acct.wait_connected()
             conn = self._acct.get_rpc_connection()
             await conn.connect()
