@@ -649,6 +649,32 @@ export async function stopComputeHost(): Promise<{ state: ComputeHostState }> {
   return res.json();
 }
 
+// --- MetaApi (MT5) deploy toggle ------------------------------------------------
+// Undeployed MetaApi accounts don't bill; the account record survives and a
+// redeploy takes ~1-2 minutes. "unconfigured" (no MetaApi env vars) hides the pill.
+export type Mt5DeployState = "unconfigured" | "off" | "turning-on" | "turning-off" | "on";
+
+export async function mt5DeployState(): Promise<{ state: Mt5DeployState; detail: string | null }> {
+  const res = await fetch(`${BASE}/api/mt5/deploy-state`);
+  if (!res.ok) throw new Error(`mt5 deploy state: ${res.status}`);
+  return res.json();
+}
+
+// Deploy (turn on). MetaApi errors surface as HTTP 502 with a `detail` body;
+// unwrap that into the thrown Error so the caller can toast it verbatim.
+export async function deployMt5(): Promise<{ state: Mt5DeployState }> {
+  const res = await fetch(`${BASE}/api/mt5/deploy`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `deploy: ${res.status}`);
+  return res.json();
+}
+
+// Undeploy (turn off / pause billing). Same 502-detail unwrap as deploy.
+export async function undeployMt5(): Promise<{ state: Mt5DeployState }> {
+  const res = await fetch(`${BASE}/api/mt5/undeploy`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `undeploy: ${res.status}`);
+  return res.json();
+}
+
 // --- sweep archive ------------------------------------------------------------
 // Completed sweeps persisted server-side so past runs can be listed and reopened.
 

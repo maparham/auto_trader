@@ -582,6 +582,14 @@ computeHostStateSignal.subscribe((state) => {
   }
 });
 
+// MetaApi (MT5) account deploy state, polled by Mt5DeployButton. "unknown"
+// until the first poll lands; "unconfigured" when MetaApi env vars aren't set
+// (pill hidden). A signal (not component state) so both toolbars stay in sync
+// and a remount doesn't flash the pill back to hidden.
+export type Mt5DeployUiState =
+  | "unknown" | "unconfigured" | "off" | "turning-on" | "turning-off" | "on";
+export const mt5DeployStateSignal = new Signal<Mt5DeployUiState>("unknown");
+
 // Transient notice shown when selecting a trade row can't navigate the chart to
 // it — the trade predates the history reachable at the current timeframe (a fine
 // timeframe whose loaded/pageable window doesn't reach that far back). Set by the
