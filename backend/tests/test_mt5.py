@@ -1059,6 +1059,65 @@ def test_pause_during_connect_does_not_publish_connection():
     asyncio.run(scenario())
 
 
+def test_ensure_is_single_flight():
+    # Concurrent _ensure callers must share ONE _connect, not each build a client.
+    broker = MT5Broker(token="t", account_id="a")
+    connects = []
+
+    class _Acct:
+        state = "DEPLOYED"
+        async def reload(self): return None
+        async def wait_connected(self, timeout_in_seconds=None):
+            connects.append(1)
+            await asyncio.sleep(0.05)
+        def get_rpc_connection(self):
+            class _C:
+                async def connect(self): pass
+                async def wait_synchronized(self, t): pass
+                async def close(self): pass
+            return _C()
+
+    broker._api = object()
+    broker._acct = _Acct()
+
+    async def scenario():
+        conns = await asyncio.gather(broker._ensure(), broker._ensure(), broker._ensure())
+        assert len(connects) == 1          # exactly one connect ran
+        assert conns[0] is conns[1] is conns[2]
+        assert broker._synced is True
+
+    asyncio.run(scenario())
+
+
+def test_rebuild_recovers_state_after_wedged_connect():
+    # A wedged connect must fail within CONNECT_BUDGET (off the lock) so _rebuild
+    # reaches its finally and resets _state to OK — the self-heal that today needs a
+    # process restart. We shrink CONNECT_BUDGET and make wait_connected honour it.
+    broker = MT5Broker(token="t", account_id="a")
+    broker.CONNECT_BUDGET = 0.05
+
+    class _WedgedAcct:
+        state = "DEPLOYED"
+        async def reload(self): return None
+        async def wait_connected(self, timeout_in_seconds=None):
+            await asyncio.sleep(timeout_in_seconds)                 # burns the budget
+            raise TimeoutException("timed out")                    # ...then fails, like the SDK
+        def get_rpc_connection(self):
+            raise AssertionError("never reached — wait_connected fails first")
+
+    broker._api = object()
+    broker._acct = _WedgedAcct()
+    broker._tick_subs = {}
+
+    async def scenario():
+        broker._state = "RECONNECTING"          # as _start_rebuild would set it
+        await broker._rebuild(broker._gen)      # awaits the wedged _ensure, then heals
+        assert broker._state == "OK"            # finally ran — self-healed, no restart
+        assert broker._synced is False
+
+    asyncio.run(scenario())
+
+
 def test_trade_timeout_does_not_flip_synced_so_next_read_stays_bounded():
     # Regression guard: `_fail` must NOT drop `_synced`. If it did, the poll right
     # after a trade timeout would enter the unbounded connect path and hang.
