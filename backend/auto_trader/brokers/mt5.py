@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -82,6 +83,12 @@ _DEPLOY_STATE_UI = {
 
 def _ui_deploy_state(sdk_state: str) -> str:
     return _DEPLOY_STATE_UI.get(sdk_state, "off")
+
+
+# Auto-undeploy the MetaApi account after this many seconds with no genuine RPC
+# activity, to stop hosting billing when MT5 is left deployed but unused. Reset
+# on every successful RPC (see _bounded) and on resume(). Env-overridable.
+_IDLE_UNDEPLOY_SECS = int(os.getenv("MT5_IDLE_UNDEPLOY_SECS", "1800"))
 
 
 # Resolution -> MetaApi timeframe string. Every Resolution we support has a direct
@@ -346,6 +353,11 @@ class MT5Broker(MarketDataBroker):
         self._rebuild_fails = 0  # consecutive failed rebuilds — drives the backoff
         self._rebuild_task: asyncio.Task | None = None
         self._last_rebuild_at = float("-inf")
+        # Idle auto-undeploy: monotonic time of the last genuine RPC; a watchdog
+        # undeploys once (monotonic - _last_use) exceeds _idle_timeout. Seeded to
+        # "now" so a just-constructed broker gets a full grace window.
+        self._idle_timeout = _IDLE_UNDEPLOY_SECS
+        self._last_use = time.monotonic()
         # Streaming lives on a SECOND, stateful MetaApi connection alongside the RPC
         # one (they coexist — verified live). One shared connection multiplexes every
         # symbol; its listener fans ticks out to per-symbol consumer queues, and
@@ -441,7 +453,16 @@ class MT5Broker(MarketDataBroker):
         self._paused_hint = False
         self._rebuild_fails = 0
         self._last_rebuild_at = float("-inf")
+        self._last_use = time.monotonic()  # fresh deploy → full idle window
         return _ui_deploy_state(acct.state)
+
+    def seconds_until_idle_undeploy(self) -> int:
+        """Seconds of idle remaining before this account is eligible for
+        auto-undeploy. Local/pure (no I/O): the watchdog and the deploy-state
+        endpoint read it. Clamps at 0; only meaningful while deployed — callers
+        gate on deploy state."""
+        remaining = self._idle_timeout - (time.monotonic() - self._last_use)
+        return int(max(0, remaining))
 
     async def _ensure(self):
         """Connect + synchronize once, then reuse. Re-entrant: concurrent callers
@@ -519,6 +540,7 @@ class MT5Broker(MarketDataBroker):
             raise TimeoutException("mt5: rpc cancelled (connection dropped)")
         self._fail_streak = 0
         self._rebuild_fails = 0  # a working RPC proves the broker healed — reset backoff
+        self._last_use = time.monotonic()  # genuine activity → defer auto-undeploy
         return result
 
     async def read(self, make_coro):
