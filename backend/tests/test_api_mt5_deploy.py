@@ -22,13 +22,32 @@ def _broker(**async_returns) -> AsyncMock:
 def test_unconfigured_when_registry_has_no_mt5():
     with patch(_GET_DATA, side_effect=HTTPException(404, "unknown broker: mt5")):
         body = client.get("/api/mt5/deploy-state").json()
-    assert body == {"state": "unconfigured", "detail": None}
+    assert body == {"state": "unconfigured", "detail": None, "idle_seconds_remaining": None}
 
 
 def test_deploy_state_passthrough():
     broker = _broker(deploy_state="on")
+    broker.seconds_until_idle_undeploy = lambda: 5
     with patch(_GET_DATA, return_value=broker):
-        assert client.get("/api/mt5/deploy-state").json() == {"state": "on", "detail": None}
+        assert client.get("/api/mt5/deploy-state").json() == {
+            "state": "on", "detail": None, "idle_seconds_remaining": 5,
+        }
+
+
+def test_deploy_state_includes_idle_remaining_when_on():
+    broker = _broker(deploy_state="on")
+    broker.seconds_until_idle_undeploy = lambda: 1234  # sync method
+    with patch(_GET_DATA, return_value=broker):
+        body = client.get("/api/mt5/deploy-state").json()
+    assert body == {"state": "on", "detail": None, "idle_seconds_remaining": 1234}
+
+
+def test_deploy_state_idle_remaining_null_when_off():
+    broker = _broker(deploy_state="off")
+    broker.seconds_until_idle_undeploy = lambda: 1234
+    with patch(_GET_DATA, return_value=broker):
+        body = client.get("/api/mt5/deploy-state").json()
+    assert body["idle_seconds_remaining"] is None
 
 
 def test_deploy_calls_resume():
