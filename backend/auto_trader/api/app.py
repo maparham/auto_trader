@@ -20,7 +20,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from auto_trader.brokers.paper_exec import PaperExecutionBroker
@@ -71,14 +71,23 @@ async def lifespan(app: FastAPI):
         for key, b in deps._registry.exec.items()
         if isinstance(b, PaperExecutionBroker)
     ]
+    # MT5 idle watchdog: auto-undeploy a deployed-but-unused MetaApi account so a
+    # forgotten deployment stops billing. Spawned only when MT5 is configured.
+    try:
+        mt5_watchdog = asyncio.create_task(
+            deps._run_mt5_idle_watchdog(deps.get_data("mt5"))
+        )
+    except HTTPException:
+        mt5_watchdog = None
     try:
         yield
     finally:
-        for task in (flusher, *triggers):
+        watchdogs = [t for t in (mt5_watchdog,) if t is not None]
+        for task in (flusher, *triggers, *watchdogs):
             task.cancel()
         with suppress(asyncio.CancelledError):
             await flusher  # lets run_flusher do its final flush
-        for task in triggers:
+        for task in (*triggers, *watchdogs):
             with suppress(asyncio.CancelledError):
                 await task
         await deps._registry.aclose()
