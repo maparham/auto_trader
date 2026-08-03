@@ -3353,6 +3353,12 @@
   border: 1px solid color-mix(in srgb, #e0a82e 80%, #000);
 }
 .compute-host-btn .compute-host-stop:hover { background: rgba(255, 255, 255, 0.9); }
+/* Idle auto-undeploy countdown on the MT5 ON pill — a compact tabular-numeric
+   chip, secondary to the pill's label (inherits the pill's dark-amber text). */
+.compute-host-btn .compute-host-countdown {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px; opacity: 0.8; letter-spacing: 0.02em;
+}
 
 /* Snapshot split control: ONE control — the camera face saves instantly, the
    slim caret opens the gallery. No gap; the halves share the rounded ends so
