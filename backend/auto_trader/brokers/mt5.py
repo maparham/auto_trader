@@ -445,6 +445,11 @@ class MT5Broker(MarketDataBroker):
         """Undeploy the account (stops MetaApi billing) and drop our
         connections so nothing holds a socket to a dying terminal. Idempotent."""
         acct = await self._account_handle()
+        async with self._lock:
+            # Supersede any in-flight connect so it can't publish a connection to the
+            # account we're about to undeploy, and force the next _ensure to reconnect.
+            self._gen += 1
+            self._connect_task = None
         await self._close_connections()
         await acct.reload()
         if acct.state in ("DEPLOYED", "DEPLOYING"):
@@ -466,6 +471,7 @@ class MT5Broker(MarketDataBroker):
         self._paused_hint = False
         self._rebuild_fails = 0
         self._last_rebuild_at = float("-inf")
+        self._connect_task = None
         self._last_use = time.monotonic()  # fresh deploy → full idle window
         return _ui_deploy_state(acct.state)
 
@@ -694,6 +700,7 @@ class MT5Broker(MarketDataBroker):
             self._acct = None
             self._conn = None
             self._synced = False
+            self._connect_task = None
             self._stream_conn = None
             self._stream_synced = False
             symbols = list(self._tick_subs.keys())

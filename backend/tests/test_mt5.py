@@ -1021,6 +1021,44 @@ def test_deploy_state_not_blocked_by_stuck_connect():
     asyncio.run(scenario())
 
 
+def test_pause_during_connect_does_not_publish_connection():
+    # Releasing the lock during connect reintroduces a pause-vs-connect race: a
+    # connect that started before pause() must NOT publish a live connection to the
+    # account pause just undeployed. The _gen guard supersedes it.
+    broker = MT5Broker(token="t", account_id="a")
+    gate = asyncio.Event()
+
+    class _SlowAcct:
+        state = "DEPLOYED"
+        async def reload(self):
+            return None
+        async def undeploy(self):
+            self.state = "UNDEPLOYED"
+        async def wait_connected(self, timeout_in_seconds=None):
+            await gate.wait()  # hold the connect open until pause has run
+        def get_rpc_connection(self):
+            class _C:
+                async def connect(self): pass
+                async def wait_synchronized(self, t): pass
+                async def close(self): pass
+            return _C()
+
+    broker._api = object()
+    broker._acct = _SlowAcct()
+
+    async def scenario():
+        connect = asyncio.create_task(broker._ensure())
+        await asyncio.sleep(0.05)          # connect is now parked in wait_connected
+        await broker.pause()               # bumps _gen, nulls _connect_task
+        gate.set()                         # let the connect finish its network work
+        with pytest.raises(Exception):     # superseded -> raises, does not publish
+            await connect
+        assert broker._synced is False
+        assert broker._conn is None
+
+    asyncio.run(scenario())
+
+
 def test_trade_timeout_does_not_flip_synced_so_next_read_stays_bounded():
     # Regression guard: `_fail` must NOT drop `_synced`. If it did, the poll right
     # after a trade timeout would enter the unbounded connect path and hang.
