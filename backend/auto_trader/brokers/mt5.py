@@ -316,6 +316,13 @@ class MT5Broker(MarketDataBroker):
     RECONNECT_COOLDOWN = 5.0
     RECONNECT_BACKOFF_MAX = 300.0
 
+    # Wall-clock bound on a single RPC connect attempt (wait_connected). The SDK's
+    # wait_connected default is 300s and loops on reload(); we bound it so the
+    # background _connect task (and the _rebuild heal loop that awaits it) fails and
+    # retries in minutes rather than sitting on the full 300s. Off the lock, this
+    # budget no longer affects UI liveness. 120s covers a genuine deploy->CONNECT.
+    CONNECT_BUDGET = 120.0
+
     # Wall-clock bounds on tearing down a retired/wedged SDK client (see _reap_api)
     # and on closing connections at shutdown (see aclose). Shutdown MUST be bounded:
     # uvicorn --reload join()s the old process with no timeout while the parent
@@ -353,6 +360,12 @@ class MT5Broker(MarketDataBroker):
         self._rebuild_fails = 0  # consecutive failed rebuilds — drives the backoff
         self._rebuild_task: asyncio.Task | None = None
         self._last_rebuild_at = float("-inf")
+        # Single-flight for the slow RPC connect. `_ensure` claims/reuses ONE
+        # `_connect` task under `_lock` then awaits it WITHOUT the lock, so the
+        # connect's minutes of network I/O never block lifecycle callers that share
+        # `_lock` (deploy_state/pause/resume). Invalidated (nulled) by pause/resume/
+        # _rebuild so the next `_ensure` starts a fresh connect.
+        self._connect_task: asyncio.Task | None = None
         # Idle auto-undeploy: monotonic time of the last genuine RPC; a watchdog
         # undeploys once (monotonic - _last_use) exceeds _idle_timeout. Seeded to
         # "now" so a just-constructed broker gets a full grace window.
