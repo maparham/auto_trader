@@ -984,6 +984,43 @@ def test_disconnected_read_fast_fails_without_blocking_on_connect():
     asyncio.run(scenario())
 
 
+def test_deploy_state_not_blocked_by_stuck_connect():
+    # The reported wedge: a connect stuck in wait_connected must NOT freeze the
+    # lifecycle path. deploy_state() shares self._lock with the connect, so if the
+    # connect holds the lock across its multi-minute wait, deploy_state hangs
+    # (curl 000). The connect must run OFF the lock.
+    import time as _time
+
+    broker = MT5Broker(token="t", account_id="a")
+
+    class _StuckAcct:
+        state = "DEPLOYED"
+        async def reload(self):
+            return None
+        async def wait_connected(self, timeout_in_seconds=None):
+            await asyncio.sleep(3600)  # never connects — simulates a wedged socket
+        def get_rpc_connection(self):
+            raise AssertionError("should never reach connect while wait_connected hangs")
+
+    broker._api = object()          # skip MetaApi client construction
+    broker._acct = _StuckAcct()     # _account_unlocked returns this cached handle
+
+    async def scenario():
+        connect = asyncio.create_task(broker._ensure())  # will block in wait_connected
+        await asyncio.sleep(0.05)                          # let it enter the connect
+        t0 = _time.monotonic()
+        state = await asyncio.wait_for(broker.deploy_state(), 1.0)  # must NOT hang
+        assert _time.monotonic() - t0 < 1.0
+        assert state == "on"  # DEPLOYED maps to the UI "on" state
+        connect.cancel()
+        try:
+            await connect
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    asyncio.run(scenario())
+
+
 def test_trade_timeout_does_not_flip_synced_so_next_read_stays_bounded():
     # Regression guard: `_fail` must NOT drop `_synced`. If it did, the poll right
     # after a trade timeout would enter the unbounded connect path and hang.
