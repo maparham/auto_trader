@@ -47,6 +47,7 @@ import {
 import { usedMargin } from "./lib/orderInfo";
 import type { TradingSettings } from "./theme";
 import Tooltip from "./components/Tooltip";
+import Mt5DeployButton from "./Mt5DeployButton";
 
 interface Props {
   account?: TradeAccount;
@@ -680,6 +681,7 @@ export default function PositionsPanel({
             reads once, to their left. Backend-reported real name when the broker
             provides one (MT5 → "Ava Trade Ltd (demo)"), static label otherwise. */}
         <span className="pp-acct-broker">{brokerLabel(activeBroker)}</span>
+        {activeBroker === "mt5" && <Mt5DeployButton />}
         <div className="pp-acct-tabs" role="tablist" aria-label="Account">
           {acctTabs.map((a) => {
             const isActive = a.key === account;
