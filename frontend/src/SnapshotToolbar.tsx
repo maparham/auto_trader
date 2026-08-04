@@ -24,6 +24,7 @@ import {
   ScaleControls,
   PanelToggles,
   MaximizeToggle,
+  toolbarMaximizeDblClick,
 } from "./ToolbarControls";
 
 interface Props {
@@ -56,7 +57,7 @@ export default function SnapshotToolbar({
   }
 
   return (
-    <header className="toolbar">
+    <header className="toolbar" onDoubleClick={toolbarMaximizeDblClick(onToggleMaximize)}>
       {/* The symbol chip, non-clickable: a snapshot is OF this symbol. */}
       <SymbolChip
         symbol={symbol}

@@ -53,6 +53,7 @@ import {
   ScaleControls,
   PanelToggles,
   MaximizeToggle,
+  toolbarMaximizeDblClick,
 } from "./ToolbarControls";
 import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
@@ -383,7 +384,7 @@ export default function Toolbar({
   }
 
   return (
-    <header className="toolbar">
+    <header className="toolbar" onDoubleClick={toolbarMaximizeDblClick(onToggleMaximize)}>
       {/* Editable symbol name (TV-style): click to open the symbol-search modal.
           A resting chip + search icon make the clickability obvious at a glance. */}
       <SymbolChip

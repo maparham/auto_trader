@@ -4,6 +4,7 @@
 // toolbars compose the exact same DOM for the controls they have in common.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { MouseEvent } from "react";
 import {
   PERIOD_GROUPS,
   quickBarPeriods,
@@ -358,6 +359,23 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
       )}
     </>
   );
+}
+
+// Double-click on empty toolbar chrome toggles maximize (OS titlebar-style),
+// mirroring the "Maximize view" button. Ignored when the double-click lands on
+// an interactive control so double-clicking a button/input/menu keeps its own
+// behavior instead of also flipping the view.
+export function toolbarMaximizeDblClick(onToggleMaximize: () => void) {
+  return (e: MouseEvent<HTMLElement>) => {
+    if (
+      (e.target as HTMLElement).closest(
+        'button, input, select, a, label, [role="button"], [role="menu"], [contenteditable]',
+      )
+    ) {
+      return;
+    }
+    onToggleMaximize();
+  };
 }
 
 // Maximize / restore: hides the tab bar to focus the active tab. Icon reflects
