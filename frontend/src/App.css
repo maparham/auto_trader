@@ -2512,12 +2512,16 @@
   font-variant-numeric: tabular-nums;
   transition: box-shadow .12s, border-color .12s;
 }
+/* The WHOLE pill group of the selected trade — and of a hovered pill's trade — rises
+   above resting pills (47), so a selected position's entry/SL/TP win overlaps against
+   neighbouring trades' pills as one unit (and hovering its TP/SL raises the group too). */
+.trade-pill.raised { z-index: 48; }
 /* Hover A — subtle lift: soft shadow + stronger border; the close button flushes red.
-   Driven by the .hovering class (added while the pill's line is hovered). Raised above
-   resting pills (47) so a hovered trade's pills clear an overlapping neighbour's. */
-.trade-pill.hovering { box-shadow: 0 3px 10px rgba(20, 26, 35, .20); border-color: var(--pill); z-index: 48; }
-/* The pill of the focused LINE (selected field, or the hovered one) wins any overlap —
-   it sits on top of every other pill so a stack of close levels stays readable. */
+   Driven by the .hovering class (added while the pill's line is hovered). Tops even a
+   raised group (48) — the pill under the cursor always reads. */
+.trade-pill.hovering { box-shadow: 0 3px 10px rgba(20, 26, 35, .20); border-color: var(--pill); z-index: 49; }
+/* The pill of the focused LINE (selected field, or the hovered one) wins overlaps
+   within its own raised group so a stack of close levels stays readable. */
 .trade-pill.focused { z-index: 49; }
 /* Eyebrow tag — TP / SL / the side word (Long, Short, Sell limit…), small + uppercase +
    letter-spaced, in the role colour. The one place hue lives besides the border. */

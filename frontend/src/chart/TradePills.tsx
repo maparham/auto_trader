@@ -141,6 +141,13 @@ export default function TradePills({
   // not on a bare line-hover. Suppressed while that pill has a staged drag (it's showing
   // Apply/Discard then — a details card on top would be noise).
   const hoveredPill = hoveredPillRectKey ? pills.find((p) => `${p.tradeId}:${p.field}` === hoveredPillRectKey) : null;
+  // The trades whose WHOLE pill group rises above resting pills: the focused trade
+  // (selection wins in focusedPillKey upstream) and the hovered pill's trade — so
+  // hovering an SL/TP raises its entry sibling too. Keys are "tradeId:field"; the
+  // trade id may itself contain colons, so split on the LAST one.
+  const tradeIdOf = (key: string | null) => (key ? key.slice(0, key.lastIndexOf(":")) : null);
+  const focusedTradeId = tradeIdOf(focusedPillKey);
+  const hoveredTradeId = tradeIdOf(hoveredPillKey);
   const anchorNode = hoveredPillRectKey ? tradePillNodesRef.current.get(hoveredPillRectKey) ?? null : null;
   const hoveredTrade = hoveredPill ? tradesRef.current.find((t) => t.id === hoveredPill.tradeId) ?? null : null;
   const showDetails = hoveredPill != null && !hoveredPill.changed;
@@ -200,7 +207,7 @@ export default function TradePills({
               if (node) tradePillNodesRef.current.set(key, node);
               else tradePillNodesRef.current.delete(key);
             }}
-            className={`trade-pill tp-line-${p.field}${`${p.tradeId}:${p.field}` === hoveredPillKey ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
+            className={`trade-pill tp-line-${p.field}${p.tradeId === focusedTradeId || p.tradeId === hoveredTradeId ? " raised" : ""}${`${p.tradeId}:${p.field}` === hoveredPillKey ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
             style={{
               top: p.y,
               left: tradePillLeft,
