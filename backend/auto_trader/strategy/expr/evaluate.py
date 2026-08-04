@@ -78,6 +78,50 @@ def _indicator_raw(name: str, args_vals: list[float], candles: Sequence[Candle])
     return [None] * len(candles)
 
 
+def _defined(v: float | None) -> bool:
+    return v is not None and not (isinstance(v, float) and math.isnan(v))
+
+
+def _cmp_vals(op: str, l: float | None, r: float | None) -> bool:
+    if not (_defined(l) and _defined(r)):
+        return False
+    if op == ">":
+        return l > r
+    if op == "<":
+        return l < r
+    if op == ">=":
+        return l >= r
+    return l <= r
+
+
+def _cond_matches(cond: "N.Compare | N.Cross | N.Predicate", candles: Sequence[Candle],
+                   resolution: str, htf: dict[str, list[Candle]]) -> list[bool]:
+    """Per-bar truth of an embedded condition. Undefined operands -> False
+    (a warm-up bar is a non-match, it does not poison the window)."""
+    n = len(candles)
+    if isinstance(cond, N.Predicate):
+        opens = series_of(_apply_field_to_candle(cond.base, "open"), candles, resolution, htf)
+        closes = series_of(_apply_field_to_candle(cond.base, "close"), candles, resolution, htf)
+        if cond.fn == "bullish":
+            return [_defined(opens[i]) and _defined(closes[i]) and closes[i] > opens[i] for i in range(n)]
+        return [_defined(opens[i]) and _defined(closes[i]) and closes[i] < opens[i] for i in range(n)]
+    if isinstance(cond, N.Cross):
+        a = series_of(cond.a, candles, resolution, htf)
+        b = series_of(cond.b, candles, resolution, htf)
+        out = [False] * n
+        for i in range(1, n):
+            if not all(_defined(v) for v in (a[i], a[i - 1], b[i], b[i - 1])):
+                continue
+            if cond.fn == "crossAbove":
+                out[i] = a[i - 1] <= b[i - 1] and a[i] > b[i]
+            else:
+                out[i] = a[i - 1] >= b[i - 1] and a[i] < b[i]
+        return out
+    left = series_of(cond.left, candles, resolution, htf)
+    right = series_of(cond.right, candles, resolution, htf)
+    return [_cmp_vals(cond.op, left[i], right[i]) for i in range(n)]
+
+
 def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
               htf: dict[str, list[Candle]]) -> list[float | None]:
     """Evaluate an `entry`-free node to a per-bar array over `candles`."""
@@ -121,6 +165,27 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
         left = series_of(node.left, candles, resolution, htf)
         right = series_of(node.right, candles, resolution, htf)
         return [_binop(node.op, left[i], right[i]) for i in range(n)]
+    if isinstance(node, N.BarsSinceEntry):
+        raise ValueError("barsSinceEntry is not a series")
+    if isinstance(node, N.Count):
+        matches = _cond_matches(node.cond, candles, resolution, htf)
+        pre = [0] * (n + 1)  # prefix sums: pre[j+1] = matches in bars [0, j]
+        for j in range(n):
+            pre[j + 1] = pre[j] + (1 if matches[j] else 0)
+        wseries = series_of(node.window, candles, resolution, htf)
+        out: list[float | None] = [None] * n
+        for i in range(n):
+            wv = wseries[i]
+            if not _defined(wv):
+                continue
+            k = int(wv)
+            if k < 1:
+                out[i] = 0.0
+                continue
+            if i + 1 < k:
+                continue  # window does not fit yet
+            out[i] = float(pre[i + 1] - pre[i + 1 - k])
+        return out
     if isinstance(node, N.Call):
         if node.name in WRAPPER_KINDS:
             inner = series_of(node.args[0], candles, resolution, htf)
@@ -163,18 +228,15 @@ def _binop(op: str, a: float | None, b: float | None) -> float | None:
     raise ValueError(op)
 
 
-def _defined(v: float | None) -> bool:
-    return v is not None and not (isinstance(v, float) and math.isnan(v))
-
-
 @dataclass(slots=True)
 class CompiledRow:
-    node: N.Compare | N.Cross | N.Chain
+    node: N.Row
     candles: Sequence[Candle]
     resolution: str
     htf: dict[str, list[Candle]]
     warmup: int
     _cache: dict[int, list[float | None]]
+    _matches: dict[int, list[bool]]
 
     def _val(self, sub: N.Node, i: int, entry: float | None) -> float | None:
         # entry-free sub-expressions are precomputed to arrays; entry-bearing ones
@@ -202,18 +264,16 @@ class CompiledRow:
     def _cmp(self, part: N.Compare, i: int, entry: float | None) -> bool:
         l = self._val(part.left, i, entry)
         r = self._val(part.right, i, entry)
-        if not (_defined(l) and _defined(r)):
-            return False
-        if part.op == ">":
-            return l > r
-        if part.op == "<":
-            return l < r
-        if part.op == ">=":
-            return l >= r
-        return l <= r
+        return _cmp_vals(part.op, l, r)
 
     def evaluate(self, i: int, entry_price: float | None) -> bool:
         node = self.node
+        if isinstance(node, N.Predicate):
+            key = id(node)
+            if key not in self._matches:
+                self._matches[key] = _cond_matches(node, self.candles, self.resolution, self.htf)
+            m = self._matches[key]
+            return m[i] if 0 <= i < len(m) else False
         if isinstance(node, N.Compare):
             return self._cmp(node, i, entry_price)
         if isinstance(node, N.Chain):
@@ -247,6 +307,16 @@ def _entry_free(node: N.Node) -> bool:
         return _entry_free(node.left) and _entry_free(node.right)
     if isinstance(node, N.Call):
         return all(_entry_free(a) for a in node.args)
+    if isinstance(node, N.BarsSinceEntry):
+        return False
+    if isinstance(node, N.Predicate):
+        return _entry_free(node.base)
+    if isinstance(node, N.Count):
+        return _entry_free(node.cond) and _entry_free(node.window)
+    if isinstance(node, N.Compare):
+        return _entry_free(node.left) and _entry_free(node.right)
+    if isinstance(node, N.Cross):
+        return _entry_free(node.a) and _entry_free(node.b)
     return True
 
 
@@ -263,7 +333,7 @@ def _precompute(node: N.Node, candles, resolution, htf, cache: dict[int, list[fl
         _precompute(node.right, candles, resolution, htf, cache)
 
 
-def compile_row(node: N.Compare | N.Cross | N.Chain, candles, resolution, htf) -> CompiledRow:
+def compile_row(node: N.Row, candles, resolution, htf) -> CompiledRow:
     cache: dict[int, list[float | None]] = {}
     if isinstance(node, N.Chain):
         # Consecutive links share their middle operand (p[i].right is p[i+1].left);
@@ -277,8 +347,10 @@ def compile_row(node: N.Compare | N.Cross | N.Chain, candles, resolution, htf) -
                     subs.append(operand)
     elif isinstance(node, N.Compare):
         subs = [node.left, node.right]
+    elif isinstance(node, N.Predicate):
+        subs = []  # match series is built lazily on first evaluate
     else:
         subs = [node.a, node.b]
     for sub in subs:
         _precompute(sub, candles, resolution, htf, cache)
-    return CompiledRow(node, candles, resolution, htf, warmup_bars(node, resolution), cache)
+    return CompiledRow(node, candles, resolution, htf, warmup_bars(node, resolution), cache, {})

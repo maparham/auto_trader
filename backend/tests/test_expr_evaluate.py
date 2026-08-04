@@ -1,8 +1,19 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from auto_trader.core.models import Candle
 from auto_trader.strategy.expr.evaluate import compile_row, series_of
 from auto_trader.strategy.expr.parser import parse
+
+
+def _bars(ohlc):
+    """ohlc: list of (open, close); high/low derived."""
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return [
+        Candle(time=t0 + timedelta(minutes=5 * i), open=o, high=max(o, c) + 1, low=min(o, c) - 1, close=c, volume=100)
+        for i, (o, c) in enumerate(ohlc)
+    ]
 
 
 def _candles(closes, resolution_s=3600):
@@ -111,3 +122,54 @@ def test_tf_field_wrapped_over_tf():
 def test_series_of_arith():
     c = _candles([1, 2, 3, 2, 1])
     assert series_of(parse("candle.close - EMA(1) > 0").left, c, "HOUR", {}) == [0.0, 0.0, 0.0, 0.0, 0.0]
+
+
+def test_count_series_red_candles():
+    # closes below opens on bars 1,2,4
+    candles = _bars([(10, 11), (11, 10), (10, 9), (9, 10), (10, 8), (8, 9)])
+    node = parse("count(candle.open > candle.close, 3) >= 2")
+    vals = series_of(node.left, candles, "MINUTE_5", {})
+    # window of 3 incl current: None,None,2,2,2,1? -> bar2 window [0,1,2]=2, bar3 [1,2,3]=2, bar4 [2,3,4]=2, bar5 [3,4,5]=1
+    assert vals == [None, None, 2.0, 2.0, 2.0, 1.0]
+
+
+def test_count_window_below_one_is_zero():
+    candles = _bars([(10, 9), (9, 8)])
+    node = parse("count(candle.open > candle.close, 0.5) > 0")
+    assert series_of(node.left, candles, "MINUTE_5", {}) == [0.0, 0.0]
+
+
+def test_count_undefined_cond_counts_zero():
+    # EMA(3) is undefined for the first 2 bars; those bars count 0, and the
+    # count itself is defined once the window fits (window 2 -> from bar 1).
+    candles = _bars([(10, 11), (11, 12), (12, 13), (13, 14)])
+    node = parse("count(candle.close > EMA(3), 2) >= 1")
+    vals = series_of(node.left, candles, "MINUTE_5", {})
+    assert vals[0] is None and vals[1] is not None
+
+
+def test_predicate_row_evaluate():
+    candles = _bars([(10, 11), (11, 10), (10, 10)])
+    row = compile_row(parse("bearish(candle)"), candles, "MINUTE_5", {})
+    assert [row.evaluate(i, None) for i in range(3)] == [False, True, False]  # doji is neither
+
+
+def test_bullish_predicate_row():
+    candles = _bars([(10, 11), (11, 10)])
+    row = compile_row(parse("bullish(candle)"), candles, "MINUTE_5", {})
+    assert [row.evaluate(i, None) for i in range(2)] == [True, False]
+
+
+def test_count_cross_condition():
+    # close crossing above a constant-ish SMA is fiddly; use crossAbove(close, open) shape
+    candles = _bars([(10, 9), (10, 11), (10, 9), (10, 11)])
+    node = parse("count(crossAbove(candle.close, candle.open), 4) >= 2")
+    vals = series_of(node.left, candles, "MINUTE_5", {})
+    # matches at bars 1 and 3 (close moves from below open to above)
+    assert vals[3] == 2.0
+
+
+def test_bars_since_entry_not_a_series():
+    candles = _bars([(10, 11)])
+    with pytest.raises(ValueError):
+        series_of(parse("barsSinceEntry > 1").left, candles, "MINUTE_5", {})
