@@ -209,6 +209,25 @@ def test_aggregate_empty_bucket_is_none():
     assert v == [None, None]
 
 
+def _oc(open_: float, close: float, i: int) -> Candle:
+    t = datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() + i * 60
+    return Candle(
+        time=datetime.fromtimestamp(t, tz=timezone.utc),
+        open=open_,
+        high=max(open_, close) + 1,
+        low=min(open_, close) - 1,
+        close=close,
+        volume=100,
+    )
+
+
+def test_predicate_row_closeness_binary():
+    candles = [_oc(o, c, i) for i, (o, c) in enumerate([(10, 11), (11, 10), (10, 10)])]
+    norm = Norm(basis="volatility", width=1.0, window=2, atr_length=14)
+    vals = row_closeness(parse("bearish(candle)"), candles, "MINUTE_5", {}, norm)
+    assert vals == [0.0, 1.0, 0.0]
+
+
 def test_chain_closeness_is_min_of_link_closeness():
     candles = [_c(c, i) for i, c in enumerate([90, 95, 100, 105, 110, 100])]
     close = N.Candle("close", 0, 0)

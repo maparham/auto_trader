@@ -96,6 +96,10 @@ def _tf_inner_warmup(node: N.Node, tf: str) -> int:
         return _tf_inner_warmup(node.operand, tf)
     if isinstance(node, N.Call):
         return max((_tf_inner_warmup(a, tf) for a in node.args), default=0)
+    if isinstance(node, N.Predicate):
+        return _tf_inner_warmup(node.base, tf)
+    if isinstance(node, N.Count):
+        return max(_tf_inner_warmup(node.cond, tf), _tf_inner_warmup(node.window, tf))
     return 0
 
 
@@ -414,6 +418,10 @@ def _referenced_tfs(node: N.Node) -> set[str]:
         return _referenced_tfs(node.left) | _referenced_tfs(node.right)
     if isinstance(node, N.Cross):
         return _referenced_tfs(node.a) | _referenced_tfs(node.b)
+    if isinstance(node, N.Predicate):
+        return _referenced_tfs(node.base)
+    if isinstance(node, N.Count):
+        return _referenced_tfs(node.cond) | _referenced_tfs(node.window)
     return set()
 
 
