@@ -668,7 +668,13 @@ class ExprBacktestRequest(BaseModel):
     epic: str
     resolution: str
     candles: list[CandleDTO]
+    # @tf rows need higher-timeframe candles. When absent the route fetches the
+    # referenced set itself over broker/priceSide (which must match the base
+    # candles' source, like the structured request's fields); shipped bars win
+    # so a compute-only host never reaches a broker.
     htfCandles: dict[str, list[CandleDTO]] | None = None
+    broker: str = "capital"
+    priceSide: str = "mid"
     longEntry: list[ExprRowDTO] = []
     longExit: list[ExprRowDTO] = []
     shortEntry: list[ExprRowDTO] = []

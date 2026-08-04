@@ -11,6 +11,7 @@ from auto_trader.indicators.core import (
 )
 from auto_trader.indicators.mtf import align_htf_to_base, slope_of
 from auto_trader.strategy.expr import nodes as N
+from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.warmup import warmup_bars
 
 
@@ -100,10 +101,18 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
         base = series_of(node.base, candles, resolution, htf)
         return [base[i - node.n] if i >= node.n else None for i in range(n)]
     if isinstance(node, N.Tf):
-        tf_candles = htf.get(node.tf, [])
-        tf_vals = series_of(node.base, tf_candles, node.tf, htf)
+        # htf is keyed by the CANONICAL resolution ("HOUR"), the pin carries the
+        # alias ("1H"); also accept a dict keyed by the raw alias for older
+        # shippers. Missing/empty candles degrade to all-None (the alignment of
+        # nothing) rather than crashing — routes 422 before running when a
+        # referenced timeframe has no candles, this is the defensive layer.
+        tf_res = tf_resolution(node.tf) or node.tf
+        tf_candles = htf.get(tf_res) or htf.get(node.tf) or []
+        if not tf_candles:
+            return [None] * n
+        tf_vals = series_of(node.base, tf_candles, tf_res, htf)
         base_ms = [int(c.time.timestamp() * 1000) for c in candles]
-        tf_ms = resolution_seconds(node.tf) * 1000
+        tf_ms = resolution_seconds(tf_res) * 1000
         return align_htf_to_base(base_ms, tf_candles, tf_vals, tf_ms)
     if isinstance(node, N.Unary):
         inner = series_of(node.operand, candles, resolution, htf)
@@ -272,4 +281,4 @@ def compile_row(node: N.Compare | N.Cross | N.Chain, candles, resolution, htf) -
         subs = [node.a, node.b]
     for sub in subs:
         _precompute(sub, candles, resolution, htf, cache)
-    return CompiledRow(node, candles, resolution, htf, warmup_bars(node), cache)
+    return CompiledRow(node, candles, resolution, htf, warmup_bars(node, resolution), cache)

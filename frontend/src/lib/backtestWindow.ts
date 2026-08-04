@@ -10,14 +10,16 @@ import {
 } from "./backtestConfig";
 import { warmupOf } from "./expr/parser";
 
-/** The longest warm-up (in base bars) any enabled expression row needs. Structured
- * (coded) configs have no `expr` rows, so this is 0 and nothing changes for them. */
-function exprWarmupBars(cfg: BacktestConfig): number {
+/** The longest warm-up (in base bars) any enabled expression row needs — @tf
+ * pins scale by the timeframe ratio when `baseSeconds` is known (see warmupOf).
+ * Structured (coded) configs have no `expr` rows, so this is 0 and nothing
+ * changes for them. */
+function exprWarmupBars(cfg: BacktestConfig, baseSeconds?: number): number {
   let m = 0;
   for (const g of [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit]) {
     for (const r of g.rules) {
       if (r.expr == null || r.enabled === false) continue;
-      m = Math.max(m, warmupOf(r.expr));
+      m = Math.max(m, warmupOf(r.expr, baseSeconds));
     }
   }
   return m;
@@ -25,11 +27,10 @@ function exprWarmupBars(cfg: BacktestConfig): number {
 
 /** The longest warm-up need in BASE bars. ATR risk/scaling lengths are always
  * base-timeframe; expression rows contribute their own warm-up via
- * {@link exprWarmupBars}. `baseSeconds` is kept for call-site compatibility (the
- * former per-operand timeframe scaling is gone with the structured operands). */
+ * {@link exprWarmupBars}, with @tf pins scaled to base bars by `baseSeconds`. */
 export function longestWarmupBars(cfg: BacktestConfig, baseSeconds: number): number {
   if (!(baseSeconds > 0)) return Math.max(longestIndicatorLength(cfg), exprWarmupBars(cfg));
-  return Math.max(1, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg), exprWarmupBars(cfg));
+  return Math.max(1, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg), exprWarmupBars(cfg, baseSeconds));
 }
 
 const DAY_MS = 86_400_000;

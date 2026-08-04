@@ -13,6 +13,7 @@
   { "expr": "EMA(9) EMA(21)", "isExit": false, "error": {"code":"expected_operator","from":7,"to":10}, "literals": [] },
   { "expr": "FOO(9) > 0", "isExit": false, "error": {"code":"unknown_name","from":0,"to":6}, "literals": [] },
   { "expr": "EMA(9)@4H@D > 0", "isExit": false, "error": {"code":"nested_tf","from":9,"to":11}, "literals": [] },
+  { "expr": "EMA(9)@BOGUS > 0", "isExit": false, "error": {"code":"unknown_tf","from":0,"to":12}, "literals": [] },
   { "expr": "entry > candle.close", "isExit": false, "error": {"code":"entry_in_entry_rule","from":0,"to":5}, "literals": [] },
   { "expr": "candle.close < entry", "isExit": true, "error": null, "literals": [] },
   { "expr": "EMA(9)@4H > 0", "isExit": false, "error": null,

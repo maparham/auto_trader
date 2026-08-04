@@ -56,6 +56,44 @@ describe("warmupOf", () => {
     expect(warmupOf("")).toBe(0);
     expect(warmupOf("EMA(")).toBe(0);
   });
+
+  // @tf pins, mirroring warmup.py: with baseSeconds known a pin contributes
+  // ZERO base bars — its series comes from backend-sourced (and sufficiency-
+  // checked) higher-timeframe candles, never from the base history. Only terms
+  // operating on the base-aligned series count.
+  it("needs no base history for an @tf pin when baseSeconds is known", () => {
+    expect(warmupOf("EMA(50)@1H > 0", 300)).toBe(0);
+  });
+
+  it("still counts the base side of a cross against a pin", () => {
+    expect(warmupOf("crossAbove(EMA(9), EMA(50)@1H)", 300)).toBe(9);
+  });
+
+  it("passes an @tf pin through unscaled without baseSeconds (legacy callers)", () => {
+    expect(warmupOf("EMA(50)@1H > 0")).toBe(50);
+  });
+
+  it("keeps an offset OUTSIDE a pin in base bars", () => {
+    // candle@D.close[-1]: the offset shifts the base-aligned series -> 1 bar.
+    expect(warmupOf("candle@D.close[-1] > 0", 300)).toBe(1);
+  });
+
+  it("keeps a wrapper OUTSIDE a pin in base bars", () => {
+    expect(warmupOf("slope(EMA(50)@1H, 3) > 0", 300)).toBe(3);
+  });
+});
+
+describe("timeframe pins", () => {
+  it("rejects an unknown timeframe alias", () => {
+    const res = analyze("EMA(9)@BOGUS > 0");
+    expect(res.error?.code).toBe("unknown_tf");
+  });
+
+  it("accepts every catalog alias", () => {
+    for (const tf of ["5m", "15m", "30m", "1H", "4H", "D", "W"]) {
+      expect(analyze(`EMA(9)@${tf} > 0`).error).toBeNull();
+    }
+  });
 });
 
 describe("chained comparisons", () => {

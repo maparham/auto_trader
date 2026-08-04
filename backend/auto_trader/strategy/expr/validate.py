@@ -3,6 +3,7 @@ from __future__ import annotations
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.registry import CROSSES, INDICATORS, WRAPPERS
+from auto_trader.strategy.expr.tfs import TF_RESOLUTIONS, tf_resolution
 
 
 def validate(node: N.Compare | N.Cross | N.Chain, *, is_exit: bool) -> None:
@@ -60,7 +61,16 @@ def _walk(node: N.Node, *, is_exit: bool) -> None:
             raise ExprError("field_on_call", f"{root.name} has no named outputs.", node.start, node.end)
         _walk(node.base, is_exit=is_exit)
         return
-    if isinstance(node, (N.Offset, N.Tf)):
+    if isinstance(node, N.Tf):
+        if tf_resolution(node.tf) is None:
+            raise ExprError(
+                "unknown_tf",
+                f"Unknown timeframe {node.tf}. Try one of: {', '.join(TF_RESOLUTIONS)}.",
+                node.start, node.end,
+            )
+        _walk(node.base, is_exit=is_exit)
+        return
+    if isinstance(node, N.Offset):
         _walk(node.base, is_exit=is_exit)
         return
     if isinstance(node, N.Unary):

@@ -412,6 +412,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         epic,
         resolution: runResolution,
         candles,
+        // @tf rows: backend fetches HTF candles itself — over the chart's
+        // broker/side, or its "capital"/"mid" defaults would fetch the wrong
+        // series (same failure the coded baseReq comment above recounts).
+        broker: brokerId,
+        priceSide,
         longEntry: exprRows(effCfg.longEntry),
         longExit: exprRows(effCfg.longExit),
         shortEntry: exprRows(effCfg.shortEntry),

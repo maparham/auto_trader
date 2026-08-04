@@ -308,6 +308,11 @@ export interface ExprBacktestRequest {
   resolution: string;
   candles: Candle[];
   htfCandles?: Record<string, Candle[]>;
+  // @tf rows: the backend fetches the referenced higher-timeframe candles when
+  // htfCandles is absent — over THIS broker/side so they match the shipped base
+  // candles' source (defaults "capital"/"mid" backend-side; see baseReq's note).
+  broker?: string;
+  priceSide?: string;
   longEntry: ExprRow[];
   longExit: ExprRow[];
   shortEntry: ExprRow[];

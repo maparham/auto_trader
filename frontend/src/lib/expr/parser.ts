@@ -12,7 +12,9 @@ import {
   CANDLE_FIELDS,
   CROSS_FNS,
   INDICATOR_SPECS,
+  TIMEFRAMES,
   WRAPPER_ARITY,
+  tfSeconds,
 } from "./catalog";
 
 // ---------------------------------------------------------------------------
@@ -387,8 +389,17 @@ function walk(node: Node, isExit: boolean): void {
       walk(node.base, isExit);
       return;
     }
-    case "Offset":
     case "Tf":
+      if (tfSeconds(node.tf) === null) {
+        throw new ExprErr(
+          "unknown_tf",
+          `Unknown timeframe ${node.tf}. Try one of: ${TIMEFRAMES.map((t) => t.alias).join(", ")}.`,
+          node.start, node.end,
+        );
+      }
+      walk(node.base, isExit);
+      return;
+    case "Offset":
       walk(node.base, isExit);
       return;
     case "Unary":
@@ -614,13 +625,19 @@ function toExprError(e: ExprErr): ExprError {
   return { code: e.code, message: e.message, from: e.start, to: e.end };
 }
 
-/** Warm-up bars an expression needs before its first honest value, mirroring the
- * backend authority (strategy/expr/warmup.py::warmup_bars): an indicator's length,
- * a wrapper's window plus its inner term, an offset's bar count, maxed across a
- * comparison's two sides. No timeframe scaling (a @tf term passes through), matching
- * the v1 HTF limitation. Returns 0 for an empty or unparseable expression so a bad
- * row never blocks sizing (the lint/validate layer surfaces the error elsewhere). */
-export function warmupOf(src: string): number {
+/** Warm-up bars an expression needs from the BASE candle history before its
+ * first honest value, mirroring the backend authority
+ * (strategy/expr/warmup.py::warmup_bars): an indicator's length, a wrapper's
+ * window plus its inner term, an offset's bar count, maxed across a
+ * comparison's two sides. When `baseSeconds` is given, an @tf pin contributes
+ * ZERO base bars — the pinned series is computed from its own higher-timeframe
+ * candles, sourced and sufficiency-checked by the backend (_ensure_htf), never
+ * derived from the base history — while terms OUTSIDE the pin (offsets,
+ * wrappers on the base-aligned series) still count. Without `baseSeconds` a pin
+ * passes through unscaled (legacy callers that only ever see base-timeframe
+ * rows). Returns 0 for an empty or unparseable expression so a bad row never
+ * blocks sizing (the lint/validate layer surfaces the error elsewhere). */
+export function warmupOf(src: string, baseSeconds?: number): number {
   const trimmed = src.trim();
   if (!trimmed) return 0;
   const { tokens, error } = tokenize(trimmed);
@@ -631,25 +648,26 @@ export function warmupOf(src: string): number {
   } catch {
     return 0;
   }
-  return warmupNode(ast);
+  return warmupNode(ast, baseSeconds);
 }
 
-function warmupNode(node: Node | ChainNode): number {
+function warmupNode(node: Node | ChainNode, baseSeconds?: number): number {
   switch (node.kind) {
-    case "Chain": return Math.max(...node.parts.map(warmupNode));
-    case "Compare": return Math.max(warmupNode(node.left), warmupNode(node.right));
-    case "Cross": return Math.max(warmupNode(node.a), warmupNode(node.b));
+    case "Chain": return Math.max(...node.parts.map((p) => warmupNode(p, baseSeconds)));
+    case "Compare": return Math.max(warmupNode(node.left, baseSeconds), warmupNode(node.right, baseSeconds));
+    case "Cross": return Math.max(warmupNode(node.a, baseSeconds), warmupNode(node.b, baseSeconds));
     case "Num": case "Candle": case "Entry": return 0;
-    case "Field": return warmupNode(node.base);
-    case "Offset": return warmupNode(node.base) + node.n;
-    case "Tf": return warmupNode(node.base);
-    case "Unary": return warmupNode(node.operand);
-    case "Binary": return Math.max(warmupNode(node.left), warmupNode(node.right));
+    case "Field": return warmupNode(node.base, baseSeconds);
+    case "Offset": return warmupNode(node.base, baseSeconds) + node.n;
+    case "Tf":
+      return baseSeconds == null || !(baseSeconds > 0) ? warmupNode(node.base) : 0;
+    case "Unary": return warmupNode(node.operand, baseSeconds);
+    case "Binary": return Math.max(warmupNode(node.left, baseSeconds), warmupNode(node.right, baseSeconds));
     case "Call": {
       if (node.name in WRAPPER_ARITY) {
         const w = node.args[1];
         const n = w && w.kind === "Num" ? Math.trunc(w.value) : 0;
-        return (node.args[0] ? warmupNode(node.args[0]) : 0) + n;
+        return (node.args[0] ? warmupNode(node.args[0], baseSeconds) : 0) + n;
       }
       const spec = INDICATOR_SPECS[node.name];
       if (spec && spec.argKind === "length" && node.args.length > 0) {

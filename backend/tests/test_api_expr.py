@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 from auto_trader.api import deps
 from auto_trader.api.app import app
+from auto_trader.api.schemas import CandleDTO
+from auto_trader.api.sweep_apply import candle_from_dto
 from auto_trader.core.models import Candle
 
 client = TestClient(app)
@@ -91,6 +93,88 @@ def test_expr_backtest_fixed_risk_still_runs():
     pct_risk = {"stop": {"kind": "pct", "value": 5.0}, "target": {"kind": "none"}}
     r = client.post("/api/expr/backtest", json=_base_req(longRisk=pct_risk))
     assert r.status_code == 200
+
+
+# --- @tf sourcing ------------------------------------------------------------
+# The expr surface must be able to run a rule pinned to a higher timeframe: the
+# route fetches the referenced HTF candles itself when the request doesn't ship
+# them (htfCandles stays the override so compute-only hosts never hit a broker).
+
+
+def _hourly_dtos(n=80, t0=-40 * 3600):
+    out, px = [], 10.0
+    for i in range(n):
+        px += 0.1
+        out.append({"time": t0 + i * 3600, "open": px, "high": px + 0.5,
+                    "low": px - 0.5, "close": px, "volume": 1.0})
+    return out
+
+
+def _tf_req(**over):
+    # 5m base candles so @1H is genuinely a higher timeframe.
+    base = [{"time": 300 * k, "open": 10 + (k % 7) * 0.1, "high": 11, "low": 9,
+             "close": 10 + (k % 7) * 0.1, "volume": 1.0} for k in range(200)]
+    defaults = dict(
+        resolution="MINUTE_5", candles=base,
+        longEntry=[{"expr": "crossAbove(EMA(3), EMA(4)@1H)"}],
+        longExit=[{"expr": "candle.close < entry"}],
+    )
+    defaults.update(over)
+    return _base_req(**defaults)
+
+
+def test_expr_backtest_fetches_referenced_htf(monkeypatch):
+    calls = []
+
+    async def fake_fetch(broker, epic, resolution, bars, from_ts, to_ts, side):
+        calls.append((broker, epic, resolution, side))
+        return [candle_from_dto(CandleDTO(**c)) for c in _hourly_dtos()]
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
+    r = client.post("/api/expr/backtest", json=_tf_req(broker="mt5", priceSide="bid"))
+    assert r.status_code == 200, r.text
+    # Fetched once, as the CANONICAL resolution, against the request's broker/side.
+    assert calls == [("mt5", "TEST", "HOUR", "bid")]
+
+
+def test_expr_backtest_shipped_htf_skips_fetch(monkeypatch):
+    async def boom(*a, **k):  # pragma: no cover - failing is the assertion
+        raise AssertionError("must not fetch when htfCandles ships the timeframe")
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", boom)
+    r = client.post("/api/expr/backtest",
+                    json=_tf_req(htfCandles={"HOUR": _hourly_dtos()}))
+    assert r.status_code == 200, r.text
+
+
+def test_expr_backtest_empty_htf_is_422_not_crash(monkeypatch):
+    async def empty(*a, **k):
+        return []
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", empty)
+    r = client.post("/api/expr/backtest", json=_tf_req())
+    assert r.status_code == 422
+    assert "1H" in str(r.json()["detail"])
+
+
+def test_expr_backtest_short_htf_is_422_not_phantom_crosses(monkeypatch):
+    # A broker serving SOME hourly bars but fewer than the pin needs must fail
+    # loud: an EMA(4)@1H seeded from 2 bars is a different series whose phantom
+    # crosses would become trades.
+    async def short(*a, **k):
+        return [candle_from_dto(CandleDTO(**c)) for c in _hourly_dtos(n=2, t0=-2 * 3600)]
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", short)
+    r = client.post("/api/expr/backtest", json=_tf_req())
+    assert r.status_code == 422
+    assert "not enough history for timeframe '1H'" in str(r.json()["detail"])
+
+
+def test_expr_backtest_unknown_tf_alias_is_422():
+    r = client.post("/api/expr/backtest",
+                    json=_tf_req(longEntry=[{"expr": "EMA(3)@BOGUS > 0"}]))
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "unknown_tf"
 
 
 def test_expr_literals_endpoint():
