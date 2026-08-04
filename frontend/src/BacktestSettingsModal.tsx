@@ -3986,10 +3986,14 @@ export function RuleGroupSection({
         // Expr rows only touch `expr`/`enabled`; the alias keeps the copy handler
         // typed against the stored `Rule` shape.
         const r = rule as Rule;
+        // A disabled row is frozen: the editor goes read-only, and the two
+        // controls that write into it (palette insert, pick-from-chart) go with
+        // it — otherwise they'd keep editing an expression you can't type in.
+        const off = rule.enabled === false;
         return (
         <Fragment key={i}>
         <div
-          className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`}
+          className={`bt-rule-row${off ? " bt-rule-disabled" : ""}`}
           ref={paletteRow === i ? paletteHostRef : undefined}
         >
           <div className="bt-rule-main">
@@ -3997,20 +4001,24 @@ export function RuleGroupSection({
               value={rule.expr ?? ""}
               onChange={(expr) => patchRule(i, { expr })}
               isExit={isExit}
+              readOnly={off}
               placeholder="e.g. EMA(9) > EMA(21)"
             />
             <div className="bt-rule-actions">
               <Tooltip
                 content={
-                  paletteRow === i
-                    ? "Hide the insert palette"
-                    : "Insert an indicator, candle field, or timeframe"
+                  off
+                    ? "Enable this rule to edit it"
+                    : paletteRow === i
+                      ? "Hide the insert palette"
+                      : "Insert an indicator, candle field, or timeframe"
                 }
               >
                 <button
                   type="button"
                   className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
                   onClick={() => setPaletteRow(paletteRow === i ? null : i)}
+                  disabled={off}
                   aria-label={paletteRow === i ? "Hide the insert palette" : "Insert from palette"}
                   aria-expanded={paletteRow === i}
                 >
@@ -4020,9 +4028,11 @@ export function RuleGroupSection({
               {pickIndicator && (
                 <Tooltip
                   content={
-                    pickIndicator.armedRow === i
-                      ? "Click an indicator on the chart, or click here to cancel"
-                      : "Pick an indicator from the chart"
+                    off
+                      ? "Enable this rule to edit it"
+                      : pickIndicator.armedRow === i
+                        ? "Click an indicator on the chart, or click here to cancel"
+                        : "Pick an indicator from the chart"
                   }
                 >
                   <button
@@ -4031,6 +4041,7 @@ export function RuleGroupSection({
                     onClick={() =>
                       pickIndicator.armedRow === i ? pickIndicator.disarm() : pickIndicator.arm(i)
                     }
+                    disabled={off}
                     aria-label="Pick an indicator from the chart"
                     aria-pressed={pickIndicator.armedRow === i}
                   >
@@ -4039,10 +4050,18 @@ export function RuleGroupSection({
                 </Tooltip>
               )}
               <RuleMenu
-                enabled={rule.enabled !== false}
+                enabled={!off}
                 onDuplicate={() => duplicateRule(i)}
                 onCopy={() => onCopy?.(r)}
-                onToggleEnabled={() => patchRule(i, { enabled: rule.enabled === false })}
+                onToggleEnabled={() => {
+                  // Turning a row off closes anything it had open, so the frozen
+                  // row can't be left with a live palette or an armed picker.
+                  if (!off) {
+                    if (paletteRow === i) setPaletteRow(null);
+                    if (pickIndicator?.armedRow === i) pickIndicator.disarm();
+                  }
+                  patchRule(i, { enabled: off });
+                }}
                 onRemove={() => removeRule(i)}
               />
             </div>

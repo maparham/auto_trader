@@ -1530,8 +1530,9 @@
 }
 .bt-rule-toggle:hover,
 .bt-rule-menu-btn:hover { background: var(--hover); color: var(--text); }
-/* On a disabled row the eye is the way back on — keep it legible, not dimmed. */
-.bt-rule-disabled .bt-rule-toggle { color: var(--neg); opacity: 1; }
+/* The eye that this once painted red ("the way back on") now lives in the row's
+   ⋮ menu; the only .bt-rule-toggle buttons left are insert/pick, which have
+   nothing to do with the row being off — so they keep their normal color. */
 /* "Pick from chart": while armed, the button glows with the accent so it's clear
    the chart is waiting for an indicator click. The row's actions also stay fully
    opaque while armed (below) so the lit button never fades on mouse-out. */
@@ -1547,10 +1548,15 @@
 .bt-rule-menu-list li:hover { background: var(--hover); }
 .bt-rule-menu-danger { color: var(--neg); }
 .bt-rule-menu-danger:hover { background: color-mix(in srgb, var(--neg) 14%, transparent); }
-/* A disabled rule stays visible but reads as inactive; its menu stays usable. */
-.bt-rule-disabled .bt-operand,
-.bt-rule-disabled .bt-op-menu { opacity: 0.42; }
-.bt-rule-disabled { background: var(--surface); }
+/* A disabled rule stays visible but reads as inactive; its menu stays usable.
+   The dimming has to land on the expression editor — it replaced the operand
+   dropdowns these rules used to target, so for a while a disabled row looked
+   identical to an active one. The dashed border carries the state at a glance,
+   since a dimmed row alone is easy to miss in a stack of rules. */
+.bt-rule-disabled { background: var(--surface); border-style: dashed; }
+/* Compound so it beats .rule-expr-input.is-readonly (same specificity, other
+   file) — a disabled row's editor is read-only, so both selectors match it. */
+.bt-rule-row.bt-rule-disabled .rule-expr-input { opacity: 0.45; }
 /* Add / Paste live on one row; Paste only appears while a rule is on the
    clipboard, so the group can gain a rule copied from the other side. */
 .bt-rule-foot { display: flex; gap: 8px; }
