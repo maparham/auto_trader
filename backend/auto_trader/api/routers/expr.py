@@ -56,7 +56,7 @@ from ..wfo_jobs import WFO_JOBS
 router = APIRouter()
 
 
-def _parse_group(rows, *, is_exit: bool, group: str) -> list[N.Compare | N.Cross | N.Chain]:
+def _parse_group(rows, *, is_exit: bool, group: str) -> list[N.Row]:
     """Parse + validate every ENABLED row in a group. A parse/validate error 422s
     with the expression span plus the group/row location so the frontend can map
     it back to the offending editor field. Disabled rows and blank rows are
@@ -367,6 +367,14 @@ async def expr_series(req: ExprSeriesRequest):
     except ExprError as e:
         raise HTTPException(422, {
             "code": e.code, "message": e.message, "start": e.start, "end": e.end,
+        })
+    # A bare bullish(...)/bearish(...) row is a boolean predicate with no numeric
+    # series to plot at all — reject before fetching any candles.
+    if isinstance(node, N.Predicate):
+        raise HTTPException(422, {
+            "code": "predicate_not_plottable",
+            "message": "bullish/bearish rows have no numeric series to plot.",
+            "start": node.start, "end": node.end,
         })
     res_s = resolution_seconds(req.resolution)
     bars = max(1, (req.toTime - req.fromTime) // res_s + 2)

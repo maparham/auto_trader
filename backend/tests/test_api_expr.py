@@ -230,6 +230,17 @@ def test_expr_series_parse_error():
     assert r.json()["detail"]["code"] == "expected_operator"
 
 
+def test_expr_series_bare_predicate_row_422s():
+    # A bare bullish(...)/bearish(...) row is a boolean predicate with no numeric
+    # series to plot — must 422, not 500 (parse() can now return N.Predicate).
+    r = client.post("/api/expr/series", json={
+        "epic": "TEST", "resolution": "HOUR", "expr": "bullish(candle)",
+        "fromTime": 0, "toTime": 3600,
+    })
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "predicate_not_plottable"
+
+
 # --- count()/bullish()/bearish()/barsSinceEntry --------------------------
 
 
