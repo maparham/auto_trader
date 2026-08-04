@@ -471,7 +471,11 @@ class MT5Broker(MarketDataBroker):
         self._paused_hint = False
         self._rebuild_fails = 0
         self._last_rebuild_at = float("-inf")
-        self._connect_task = None
+        # No need to touch _connect_task here: pause() already supersedes any
+        # in-flight connect under _lock, and _ensure replaces a `.done()` task
+        # (a connect that hit the pause gate finished with MT5PausedError) on its
+        # next call. Nulling it here would be off-lock and could race a concurrent
+        # _ensure into spawning a second _connect that leaks an RPC connection.
         self._last_use = time.monotonic()  # fresh deploy → full idle window
         return _ui_deploy_state(acct.state)
 
