@@ -3865,6 +3865,31 @@ export function RuleGroupSection({
 }) {
   // Which row's insert palette is open (one at a time), or null when none.
   const [paletteRow, setPaletteRow] = useState<number | null>(null);
+  // The open row's wrapper — covers the toggle, the expression input, and the
+  // palette itself, so typing/inserting doesn't count as clicking outside.
+  const paletteHostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (paletteRow === null) return;
+    const onDown = (e: MouseEvent) => {
+      if (paletteHostRef.current?.contains(e.target as Node)) return;
+      setPaletteRow(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // The editor's own completion popup owns Escape while it's up; only take
+      // the key once it's gone, and keep it from reaching the modal's closer.
+      if (document.querySelector(".cm-tooltip-autocomplete")) return;
+      e.stopPropagation();
+      setPaletteRow(null);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [paletteRow]);
 
   // Emit the group back to the parent. The stored config still types groups as
   // `RuleGroup`; the cast bridges the coexistence window (Stage C rewrites the
@@ -3963,7 +3988,10 @@ export function RuleGroupSection({
         const r = rule as Rule;
         return (
         <Fragment key={i}>
-        <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`}>
+        <div
+          className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`}
+          ref={paletteRow === i ? paletteHostRef : undefined}
+        >
           <div className="bt-rule-main">
             <RuleExpressionInput
               value={rule.expr ?? ""}
@@ -3972,15 +4000,21 @@ export function RuleGroupSection({
               placeholder="e.g. EMA(9) > EMA(21)"
             />
             <div className="bt-rule-actions">
-              <Tooltip content="Insert an indicator, candle field, or timeframe">
+              <Tooltip
+                content={
+                  paletteRow === i
+                    ? "Hide the insert palette"
+                    : "Insert an indicator, candle field, or timeframe"
+                }
+              >
                 <button
                   type="button"
                   className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
                   onClick={() => setPaletteRow(paletteRow === i ? null : i)}
-                  aria-label="Insert from palette"
+                  aria-label={paletteRow === i ? "Hide the insert palette" : "Insert from palette"}
                   aria-expanded={paletteRow === i}
                 >
-                  +
+                  {paletteRow === i ? "−" : "+"}
                 </button>
               </Tooltip>
               {pickIndicator && (
