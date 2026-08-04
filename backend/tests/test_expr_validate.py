@@ -62,3 +62,49 @@ def test_wrapped_candle_field_passes():
 
 def test_wrapped_candle_bad_field():
     assert _err("candle@D.bogus > 5").code == "bad_candle_field"
+
+
+def test_predicate_row_valid():
+    validate(parse("bullish(candle)"), is_exit=False)
+    validate(parse("bearish(candle[-2])"), is_exit=False)
+    validate(parse("bearish(candle@1H)"), is_exit=False)
+
+
+def test_predicate_arg_must_be_bare_candle():
+    with pytest.raises(ExprError) as ei:
+        validate(parse("bullish(candle.close)"), is_exit=False)
+    assert ei.value.code == "bad_predicate_arg"
+    with pytest.raises(ExprError) as ei:
+        validate(parse("bullish(EMA(9))"), is_exit=False)
+    assert ei.value.code == "bad_predicate_arg"
+
+
+def test_predicate_unknown_tf_still_reported():
+    with pytest.raises(ExprError) as ei:
+        validate(parse("bullish(candle@BOGUS)"), is_exit=False)
+    assert ei.value.code == "unknown_tf"
+
+
+def test_predicate_as_value_rejected():
+    with pytest.raises(ExprError) as ei:
+        validate(parse("bullish(candle) + 1 > 0"), is_exit=False)
+    assert ei.value.code == "predicate_as_value"
+
+
+def test_count_validates_condition_and_window():
+    validate(parse("count(candle.open > candle.close, 10) >= 3"), is_exit=False)
+    validate(parse("count(crossAbove(candle.close, EMA(9)), 20) >= 1"), is_exit=False)
+    validate(parse("count(bearish(candle), barsSinceEntry) >= 3"), is_exit=True)
+
+
+def test_bars_since_entry_exit_only():
+    with pytest.raises(ExprError) as ei:
+        validate(parse("barsSinceEntry > 5"), is_exit=False)
+    assert ei.value.code == "entry_in_entry_rule"
+    validate(parse("barsSinceEntry > 5"), is_exit=True)
+
+
+def test_count_condition_operands_validated():
+    with pytest.raises(ExprError) as ei:
+        validate(parse("count(FOO(9) > 0, 10) > 1"), is_exit=False)
+    assert ei.value.code == "unknown_name"

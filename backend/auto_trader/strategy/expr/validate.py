@@ -6,7 +6,7 @@ from auto_trader.strategy.expr.registry import CROSSES, INDICATORS, WRAPPERS
 from auto_trader.strategy.expr.tfs import TF_RESOLUTIONS, tf_resolution
 
 
-def validate(node: N.Compare | N.Cross | N.Chain, *, is_exit: bool) -> None:
+def validate(node: N.Row, *, is_exit: bool) -> None:
     if isinstance(node, N.Chain):
         for p in node.parts:
             _walk(p.left, is_exit=is_exit)
@@ -16,8 +16,31 @@ def validate(node: N.Compare | N.Cross | N.Chain, *, is_exit: bool) -> None:
         _walk(node.a, is_exit=is_exit)
         _walk(node.b, is_exit=is_exit)
         return
+    if isinstance(node, N.Predicate):
+        _check_predicate(node)
+        return
     _walk(node.left, is_exit=is_exit)
     _walk(node.right, is_exit=is_exit)
+
+
+def _check_predicate(node: N.Predicate) -> None:
+    """A predicate's argument must bottom out in a bare `candle` (no field),
+    wrapped only by offsets and at most one timeframe pin."""
+    base = node.base
+    while isinstance(base, (N.Offset, N.Tf)):
+        if isinstance(base, N.Tf) and tf_resolution(base.tf) is None:
+            raise ExprError(
+                "unknown_tf",
+                f"Unknown timeframe {base.tf}. Try one of: {', '.join(TF_RESOLUTIONS)}.",
+                base.start, base.end,
+            )
+        base = base.base
+    if not (isinstance(base, N.Candle) and base.field is None):
+        raise ExprError(
+            "bad_predicate_arg",
+            f"{node.fn} takes a candle, like {node.fn}(candle).",
+            node.start, node.end,
+        )
 
 
 def _candle_root(node: N.Node) -> N.Node:
@@ -79,6 +102,28 @@ def _walk(node: N.Node, *, is_exit: bool) -> None:
     if isinstance(node, N.Binary):
         _walk(node.left, is_exit=is_exit)
         _walk(node.right, is_exit=is_exit)
+        return
+    if isinstance(node, N.BarsSinceEntry):
+        if not is_exit:
+            raise ExprError("entry_in_entry_rule", "barsSinceEntry is only available in exit rules.", node.start, node.end)
+        return
+    if isinstance(node, N.Predicate):
+        raise ExprError(
+            "predicate_as_value",
+            f"{node.fn}(...) is a condition — use it as a whole row or inside count(...).",
+            node.start, node.end,
+        )
+    if isinstance(node, N.Count):
+        cond = node.cond
+        if isinstance(cond, N.Predicate):
+            _check_predicate(cond)
+        elif isinstance(cond, N.Cross):
+            _walk(cond.a, is_exit=is_exit)
+            _walk(cond.b, is_exit=is_exit)
+        else:
+            _walk(cond.left, is_exit=is_exit)
+            _walk(cond.right, is_exit=is_exit)
+        _walk(node.window, is_exit=is_exit)
         return
     if isinstance(node, (N.Compare, N.Cross, N.Chain)):
         raise ExprError("cross_not_toplevel", "A comparison or cross can only be the whole row.", node.start, node.end)
