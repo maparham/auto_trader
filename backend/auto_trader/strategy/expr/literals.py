@@ -36,6 +36,16 @@ def _render(node: N.Node) -> str:
         return f"-{_render(node.operand)}"
     if isinstance(node, N.Binary):
         return f"{_render(node.left)} {node.op} {_render(node.right)}"
+    if isinstance(node, N.Compare):
+        return f"{_render(node.left)} {node.op} {_render(node.right)}"
+    if isinstance(node, N.Cross):
+        return f"{node.fn}({_render(node.a)}, {_render(node.b)})"
+    if isinstance(node, N.Predicate):
+        return f"{node.fn}({_render(node.base)})"
+    if isinstance(node, N.Count):
+        return f"count({_render(node.cond)}, {_render(node.window)})"
+    if isinstance(node, N.BarsSinceEntry):
+        return "barsSinceEntry"
     return "?"
 
 
@@ -50,6 +60,10 @@ def _has_indicator(node: N.Node) -> bool:
         return _has_indicator(node.operand)
     if isinstance(node, N.Binary):
         return _has_indicator(node.left) or _has_indicator(node.right)
+    if isinstance(node, N.Predicate):
+        return _has_indicator(node.base)
+    if isinstance(node, N.Count):
+        return True  # a count term behaves like an indicator for multiplier labeling
     return False
 
 
@@ -57,7 +71,7 @@ def _collect(node: N.Node, label: str, out: list[tuple[N.Num, str]]) -> None:
     if isinstance(node, N.Num):
         out.append((node, label))
         return
-    if isinstance(node, (N.Candle, N.Entry)):
+    if isinstance(node, (N.Candle, N.Entry, N.BarsSinceEntry)):
         return
     if isinstance(node, N.Field):
         _collect(node.base, label, out)
@@ -105,11 +119,33 @@ def _collect(node: N.Node, label: str, out: list[tuple[N.Num, str]]) -> None:
                 else:
                     _collect(a, label, out)
             return
+    if isinstance(node, N.Predicate):
+        _collect(node.base, label, out)
+        return
+    if isinstance(node, N.Count):
+        cond = node.cond
+        if isinstance(cond, N.Predicate):
+            _collect(cond.base, "constant", out)
+        elif isinstance(cond, N.Cross):
+            _collect(cond.a, "constant", out)
+            _collect(cond.b, "constant", out)
+        else:
+            _collect(cond.left, "constant", out)
+            _collect(cond.right, "constant", out)
+        if isinstance(node.window, N.Num):
+            out.append((node.window, "count window"))
+        else:
+            _collect(node.window, "constant", out)
+        return
     return
 
 
-def literals(node: N.Compare | N.Cross | N.Chain) -> list[Literal]:
+def literals(node: N.Row) -> list[Literal]:
     out: list[tuple[N.Num, str]] = []
+    if isinstance(node, N.Predicate):
+        _collect(node.base, "constant", out)
+        out.sort(key=lambda pair: pair[0].start)
+        return [Literal(k, num.value, num.start, num.end, label) for k, (num, label) in enumerate(out)]
     if isinstance(node, N.Chain):
         _collect_side(node.parts[0].left, out)
         for p in node.parts:
@@ -132,7 +168,7 @@ def _collect_side(side: N.Node, out: list[tuple[N.Num, str]]) -> None:
     _collect(side, "threshold", out)
 
 
-def substitute(node: N.Compare | N.Cross | N.Chain, overrides: dict[int, float]) -> N.Compare | N.Cross | N.Chain:
+def substitute(node: N.Row, overrides: dict[int, float]) -> N.Row:
     if not overrides:
         return node
     lits = literals(node)
@@ -157,6 +193,12 @@ def substitute(node: N.Compare | N.Cross | N.Chain, overrides: dict[int, float])
             return dataclasses.replace(n, operand=rewrite(n.operand))
         if isinstance(n, N.Binary):
             return dataclasses.replace(n, left=rewrite(n.left), right=rewrite(n.right))
+        if isinstance(n, N.Predicate):
+            return dataclasses.replace(n, base=rewrite(n.base))
+        if isinstance(n, N.Count):
+            return dataclasses.replace(n, cond=rewrite(n.cond), window=rewrite(n.window))
+        if isinstance(n, N.BarsSinceEntry):
+            return n
         if isinstance(n, N.Call):
             return dataclasses.replace(n, args=[rewrite(a) for a in n.args])
         if isinstance(n, N.Compare):
