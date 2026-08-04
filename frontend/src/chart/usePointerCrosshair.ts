@@ -79,7 +79,6 @@ export interface PointerCrosshairDeps {
   setOnAxis: (v: boolean) => void;
   setTradeHovered: typeof setTradeHovered;
   setHoveredPillKey: (v: string | null) => void;
-  setHoveredPillRectKey: (v: string | null) => void;
   setFocusedPillKey: (v: string | null) => void;
   // In-direction bridges to init-effect-local functions the crosshair calls.
   tradeLinePixelsRef: React.MutableRefObject<() => TradeLinePx[]>;
@@ -120,7 +119,6 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     setOnAxis,
     setTradeHovered,
     setHoveredPillKey,
-    setHoveredPillRectKey,
     setFocusedPillKey,
     tradeLinePixelsRef,
     alertHitTestRef,
@@ -274,24 +272,27 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       let hoverTradeId: string | null = null;
       let hoverField: TradeLineField | null = null;
       if (!nextOnAxis) {
-        let bestD = Infinity;
-        for (const t of tlp) {
-          if (t.id === DRAFT_ID || t.y == null) continue; // the draft has no dock row
-          const d = Math.abs(t.y - y);
-          if (d <= HIT_TOLERANCE_PX && d < bestD) { bestD = d; hoverTradeId = t.id; hoverField = t.field; }
+        // The pill under the cursor wins over any line's ±6px band: a pill is an opaque
+        // chip ON TOP of the lines, so while the cursor is inside its rect another
+        // trade's line passing beneath it (overlapping trades sit at near-identical
+        // levels) must not steal the hover mid-pill. The band test only runs on the
+        // bare line, outside every pill.
+        if (pillHit) {
+          hoverTradeId = pillHit.id;
+          hoverField = pillHit.field;
+        } else {
+          let bestD = Infinity;
+          for (const t of tlp) {
+            if (t.id === DRAFT_ID || t.y == null) continue; // the draft has no dock row
+            const d = Math.abs(t.y - y);
+            if (d <= HIT_TOLERANCE_PX && d < bestD) { bestD = d; hoverTradeId = t.id; hoverField = t.field; }
+          }
         }
-        // The pill (22px tall) pokes past the line's ±6px band. Inside its rect the
-        // hand cursor shows and a click selects, so the hover affordances (pill lift,
-        // dock-row highlight) must agree even on the strips the band misses.
-        if (!hoverTradeId && pillHit) { hoverTradeId = pillHit.id; hoverField = pillHit.field; }
       }
       hoveredFieldRef.current = hoverField;
       setTradeHovered(hoverTradeId);
       // Hover-lift shadow is scoped to the single line under the cursor, not the trade.
       setHoveredPillKey(hoverTradeId ? `${hoverTradeId}:${hoverField}` : null);
-      // Details popover gate: the cursor must be INSIDE the pill's rect, not just its
-      // line's ±6px band — so hovering the bare line never pops the card.
-      setHoveredPillRectKey(pillHit ? `${pillHit.id}:${pillHit.field}` : null);
       // Focus for z-order: a selected line wins, else the hovered line. Set here (not only
       // via the signal) so moving between fields of the SAME hovered trade — which doesn't
       // change the signal — still re-tops the pill under the cursor.
@@ -396,21 +397,19 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
         cursorModeRef.current = "cur-ns";
         setCursorMode("cur-ns");
       }
-      btn.classList.toggle("passthrough", overAlertId != null || snapTarget != null);
-      // Over a TRADE line (entry/limit, SL, TP, or the staged draft) fully HIDE the
-      // "+" price pill — unlike an alert line, which keeps it as a click-through
-      // readout, a trade line already carries its own price pill, so a second "+"
-      // readout snapped on top just doubles it. The native crosshair line is already
-      // suppressed by the snap above, so the trade line stays the sole guide. Alerts
-      // still win (keep the passthrough readout) when the cursor is genuinely over
-      // one. Union the 6px hover hit (covers open positions/orders) with the 5px snap
-      // isTrade flag (also covers the draft, which the hover test skips).
+      // Over a TRADE line (entry/limit, SL, TP, or the staged draft) the "+" pill
+      // stays visible as a click-through price readout, exactly like an alert line:
+      // the cursor's price label must never drop out or hide behind the line's own
+      // pill. Passthrough (pointer-events:none) lets the mousedown reach the canvas
+      // to select/drag the line underneath. Union the 6px hover hit (covers open
+      // positions/orders) with the 5px snap isTrade flag (also covers the draft,
+      // which the hover test skips) — without the hover half, the "+" circle would
+      // swallow clicks in the 5–6px ring where the line is grabbable but unsnapped.
       const overTradeLine = hoverTradeId != null || snapTarget?.isTrade === true;
-      if (overTradeLine && overAlertId == null) {
-        btn.style.display = "none";
-        setPlusCrosshair(null);
-        return;
-      }
+      btn.classList.toggle(
+        "passthrough",
+        overAlertId != null || snapTarget != null || overTradeLine,
+      );
       // Hide the "+" pill the moment the cursor crosses onto the price-axis strip
       // (x > mainW), even when it's over the "+" itself. The axis is a drag/scale
       // gesture zone; a DOM button sitting there with pointer-events:auto would
@@ -476,7 +475,6 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // it's heading for a dock row, that row's onMouseEnter re-sets it (mouseleave
       // here fires before the row's mouseenter), so the highlight lands correctly.
       setTradeHovered(null);
-      setHoveredPillRectKey(null); // close the details popover as the cursor leaves
       // Clear a hover-only bracket now that the hover is gone (a SELECTED trade's bracket
       // stays). Runs after setTradeHovered so paintBracket sees the cleared hover.
       handle.paintBracketRef.current();

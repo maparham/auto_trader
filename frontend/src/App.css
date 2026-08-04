@@ -2530,7 +2530,29 @@
   background: var(--surface-2);
   font-family: -apple-system, system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
-  transition: box-shadow .12s, border-color .12s;
+  transition: box-shadow .12s, border-color .12s, opacity .15s;
+}
+/* While a trade is SELECTED, every other trade's pills fade back so the selected
+   group (entry + SL + TP) owns the stage — contrast ties the spine to its pills.
+   Hovering a dimmed pill restores it so it stays readable and clickable. */
+.trade-pill.dimmed { opacity: .55; }
+.trade-pill.dimmed.hovering { opacity: 1; }
+/* Leader tick: hairline tying a vertically-displaced pill (overlap spread) back to its
+   true line. Sits just left of the pill column, under the pills (z below 47). */
+.tp-leader {
+  position: absolute; width: 0; z-index: 46; pointer-events: none;
+  border-left: 1px solid var(--text-faint); opacity: .5;
+}
+.tp-leader.dimmed { opacity: .25; }
+/* The click-SELECTED trade's whole pill group carries a persistent selected look —
+   full-strength role-coloured border + a whisper of tinted fill — so when two trades'
+   pills overlap at near-identical levels, the bracket spine unambiguously reads as
+   belonging to the highlighted pills. Padding drops 1px per side to offset the thicker
+   border (border-box), keeping the content from shifting on select. */
+.trade-pill.selected {
+  border: 1.5px solid var(--pill);
+  padding: 0 3px 0 6px;
+  background: color-mix(in srgb, var(--pill) 6%, var(--surface-2));
 }
 /* The WHOLE pill group of the selected trade — and of a hovered pill's trade — rises
    above resting pills (47), so a selected position's entry/SL/TP win overlaps against
@@ -2589,6 +2611,13 @@
 }
 .trade-pill .tp-btn svg { width: 18px; height: 18px; display: block; stroke-width: 1.9; }
 .trade-pill .tp-btn:hover { opacity: 1; }
+/* ⓘ details trigger: quieter than the action buttons (it reveals, never mutates).
+   Neutral hover — the red tint is reserved for destructive actions. */
+/* Narrower than the 22px action buttons (its glyph is only 14px), with negative
+   margins eating into the pill's 6px gaps, so the icon doesn't open a hole in the row. */
+.trade-pill .tp-info { color: var(--text-faint); opacity: .8; width: 16px; margin: 0 -3px; }
+.trade-pill .tp-info svg { width: 14px; height: 14px; }
+.trade-pill .tp-info:hover { color: var(--text-dim); background: color-mix(in srgb, var(--text-dim) 12%, transparent); }
 .trade-pill .tp-apply { color: var(--pos); opacity: .9; }
 .trade-pill .tp-apply:hover { opacity: 1; background: color-mix(in srgb, var(--pos) 14%, transparent); }
 .trade-pill .tp-close:hover,
@@ -2713,11 +2742,12 @@
   height: 22px;
   font-variant-numeric: tabular-nums;
 }
-/* Over ANY alert line (selected or not): keep the WHOLE "+" affordance (circle + price
-   box) looking identical to a normal hover, but go non-interactive (pointer-events:none)
-   so the mousedown passes THROUGH to the canvas — selecting/dragging the line underneath —
-   instead of being swallowed by the "+" circle that protrudes into the pane. The box
-   (z-49) still reads on top of the never-hidden amber alert tag (ChartCore toggles this
+/* Over ANY alert or trade line (selected or not): keep the WHOLE "+" affordance (circle +
+   price box) looking identical to a normal hover, but go non-interactive (pointer-events:
+   none) so the mousedown passes THROUGH to the canvas — selecting/dragging the line
+   underneath — instead of being swallowed by the "+" circle that protrudes into the pane.
+   The box (z-49) still reads on top of the never-hidden amber alert tag, and — being a
+   later sibling — above a hovered trade pill at the same z (ChartCore toggles this
    class). */
 .axis-plus.passthrough { pointer-events: none; }
 .axis-plus-icon {
@@ -3227,11 +3257,9 @@
 }
 .tooltip-weights b { min-width: 30px; color: var(--text); font-weight: 600; }
 
-/* Trade-pill details popover: label/value rows on the shared .tooltip frame. Wider
-   than a text tip so the datetime + P/L values never wrap; the label column stays
-   muted, the value column reads in the theme's ink (mono for the numbers). */
-.tooltip.pill-tip { max-width: 300px; }
-.pill-tip .tooltip-title { margin-bottom: 6px; }
+/* Trade-pill ⓘ details grid: label/value rows inside the shared .tooltip frame.
+   The label column stays muted, the value column reads in the theme's ink (mono
+   for the numbers); nowrap keeps the datetime + P/L values on one line. */
 .pill-tip-grid { display: grid; grid-template-columns: auto 1fr; column-gap: 18px; row-gap: 3px; margin: 0; }
 .pill-tip-row { display: contents; }
 .pill-tip-row dt { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
