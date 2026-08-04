@@ -36,6 +36,16 @@ def _to_candle(ts: int, o: float, h: float, l: float, c: float, v: float) -> Can
     )
 
 
+def _key_label(key: CandleKey) -> str:
+    """Compact one-token series name for log lines: broker/epic/resolution/side."""
+    return "/".join(key)
+
+
+def _stamp(ts: int) -> str:
+    """Log-friendly UTC timestamp (minute precision — bars are minute-and-above)."""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+
 def _bucket_start(now_s: float, res_seconds: int) -> int:
     """Open time (unix s) of the bucket containing now_s — the forming bar's open.
     Bars with ts < this are closed; the bar at/after it is still forming."""
@@ -363,6 +373,22 @@ class CandleCache:
         fetched_any = False
         err: Exception | None = None
         cursor = fetch_end
+        # Progress logging. A multi-chunk backfill (a backtest's warm-up ask, a deep
+        # scroll-back) can run for minutes inside ONE http request, and uvicorn only
+        # logs that request when it finishes — so without these lines the download is
+        # invisible while it's happening. Kept to multi-chunk walks: a warm 1-chunk
+        # fetch (ordinary scroll-back page) would otherwise spam a line per page.
+        span_secs = max(1, int(fetch_end.timestamp()) - from_ts)
+        total_chunks = max(1, -(-span_secs // chunk_secs))  # ceil
+        started = time.monotonic()
+        done_chunks = 0
+        bars_in = 0
+        if total_chunks > 1:
+            log.info(
+                "backfill start %s %s..%s (%d chunks x %d bars)",
+                _key_label(key), _stamp(from_ts), _stamp(int(fetch_end.timestamp())),
+                total_chunks, chunk_bars,
+            )
         while start < cursor:
             chunk_from_ts = max(from_ts, int(cursor.timestamp()) - chunk_secs)
             chunk_from = datetime.fromtimestamp(chunk_from_ts, tz=timezone.utc)
@@ -378,6 +404,25 @@ class CandleCache:
             if hi >= chunk_from_ts:
                 await asyncio.to_thread(self._extend_coverage, key, chunk_from_ts, hi)
             cursor = chunk_from
+            done_chunks += 1
+            bars_in += len(chunk)
+            if total_chunks > 1:
+                elapsed = time.monotonic() - started
+                # ETA from the mean chunk time so far: chunk cost is roughly flat
+                # (same bar count per broker call), so a mean is a fair estimate.
+                eta = elapsed / done_chunks * max(0, total_chunks - done_chunks)
+                log.info(
+                    "backfill %s %d/%d (%d%%) at %s, %d bars, %.1fs elapsed, ~%.0fs left",
+                    _key_label(key), done_chunks, total_chunks,
+                    done_chunks * 100 // total_chunks, _stamp(chunk_from_ts),
+                    bars_in, elapsed, eta,
+                )
+        if total_chunks > 1 and fetched_any:
+            log.info(
+                "backfill %s %s after %d/%d chunks, %d bars, %.1fs",
+                _key_label(key), "stopped (fetch failed)" if err is not None else "done",
+                done_chunks, total_chunks, bars_in, time.monotonic() - started,
+            )
         if fetched_any:
             self._record_miss(key)
             self._record_last_fetch(key, now if now is not None else time.time())
