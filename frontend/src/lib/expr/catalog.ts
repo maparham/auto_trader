@@ -80,3 +80,13 @@ export const WRAPPER_ARITY: Record<string, number> = {
 };
 
 export const CROSS_FNS = ["crossAbove", "crossBelow"] as const;
+
+export const CONDITIONS: CatalogEntry[] = [
+  { name: "count", insert: "count(bearish(candle), 10)", signature: "count(cond, n)", detail: "Bars matching a condition in the last n bars" },
+  { name: "bullish", insert: "bullish(candle)", signature: "bullish(candle)", detail: "Candle closed above its open" },
+  { name: "bearish", insert: "bearish(candle)", signature: "bearish(candle)", detail: "Candle closed below its open" },
+  { name: "barsSinceEntry", insert: "barsSinceEntry", signature: "barsSinceEntry", detail: "Bars since the trade opened (exit rules only)" },
+];
+
+export const PREDICATE_FNS = ["bullish", "bearish"] as const;
+export const COUNT_FN = "count";

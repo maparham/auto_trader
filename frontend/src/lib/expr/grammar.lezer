@@ -6,6 +6,9 @@
 // authored here for CodeMirror 6 highlighting and is not yet wired to a
 // generator build step. Token classes match catalog.ts:
 //   Indicator, Wrapper, Cross, CandleField, Number, Operator, Timeframe.
+// count/bullish/bearish/barsSinceEntry are specialized the same way (Wrapper
+// for count, Cross for bullish/bearish, plain Identifier for barsSinceEntry);
+// see catalog.ts CONDITIONS/PREDICATE_FNS/COUNT_FN and highlight.ts classify().
 
 @top Row { expression }
 
