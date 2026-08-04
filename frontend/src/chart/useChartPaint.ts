@@ -677,7 +677,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       active: boolean;
       selected: boolean;
     }> = [];
-    for (const a of overlays.getAlerts()) {
+    // Eye menu "Hide alert lines": the DOM axis tags drop with the lines.
+    for (const a of overlays.getAlertsHidden() ? [] : overlays.getAlerts()) {
       const y = yOf(a.level);
       if (y != null)
         tags.push({

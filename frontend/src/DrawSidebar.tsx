@@ -4,7 +4,7 @@
 // button (click = arm the last-used tool; hover-caret = flyout listing all
 // 8 tools flat, no groups), measure + magnet (relocated from the toolbar),
 // then the bulk cluster (hide-all eye / lock-all padlock / delete-all).
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getSupportedOverlays } from "klinecharts";
 import DrawGlyph from "./DrawIcons";
 import InfoTip from "./components/InfoTip";
@@ -17,7 +17,7 @@ import {
   saveLastDrawTools,
 } from "./lib/persist";
 import { magnetSignal, toggleMagnet, setMagnetStrength } from "./lib/magnet";
-import { MagnetIcon, StrongMagnetIcon, RulerIcon, SlopeIcon, ZoomRangeIcon } from "./lib/menuIcons";
+import { MagnetIcon, StrongMagnetIcon, RulerIcon, SlopeIcon, ZoomRangeIcon, MenuIcons } from "./lib/menuIcons";
 import type { ChartController } from "./lib/chartController";
 
 interface Props {
@@ -27,6 +27,25 @@ interface Props {
   // App's settings state so this button and the Settings modal stay in sync.
   preserveCenterOnTf: boolean;
   onTogglePreserveCenterOnTf: () => void;
+}
+
+// Shared flyout shell for the three sidebar menus (tools / magnet / eye). The CSS
+// anchors it downward from the trigger's top; a menu near the viewport bottom (the
+// eye menu lives in the bottom cluster) would crop, so measure once on open — before
+// paint, so the down-anchored frame never flashes — and flip it upward (.up) when
+// its bottom would leave the screen.
+function DsFlyout({ children, className }: { children: React.ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [up, setUp] = useState(false);
+  useLayoutEffect(() => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setUp(r.bottom > window.innerHeight - 8);
+  }, []);
+  return (
+    <div ref={ref} className={"ds-flyout" + (up ? " up" : "") + (className ? ` ${className}` : "")}>
+      {children}
+    </div>
+  );
 }
 
 // Star (filled when on) — same path as IndicatorRow's.
@@ -95,16 +114,18 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
     return controller.zoomRangeArmed.subscribe(setZooming);
   }, [controller]);
 
-  // Eye menu: drawings-hidden lives on the manager (existing); indicators/positions
-  // are per-cell signals on the controller. Re-sync all three when focus moves, and
+  // Eye menu: drawings/alerts-hidden live on the manager (existing); indicators/
+  // positions are per-cell signals on the controller. Re-sync all four when focus moves, and
   // subscribe to the two signals for external changes (e.g. another surface toggling
   // them later). `eyeOpen` is this flyout's own open state (outside-click closes it,
   // same idiom as the drawing-tools and magnet flyouts).
   const [hidden, setHidden] = useState(false);
+  const [alertsHidden, setAlertsHidden] = useState(false);
   const [indicatorsHidden, setIndicatorsHidden] = useState(false);
   const [positionsHidden, setPositionsHidden] = useState(false);
   useEffect(() => {
     setHidden(overlays?.getDrawingsHidden() ?? false);
+    setAlertsHidden(overlays?.getAlertsHidden() ?? false);
     setIndicatorsHidden(controller?.indicatorsHidden.value ?? false);
     setPositionsHidden(controller?.positionsHidden.value ?? false);
     if (!controller) return;
@@ -125,7 +146,7 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [eyeOpen]);
-  const anyHidden = hidden || indicatorsHidden || positionsHidden;
+  const anyHidden = hidden || alertsHidden || indicatorsHidden || positionsHidden;
 
   // Esc closes any open flyout. Document-level because the flyouts never hold
   // focus; the chart's own Esc handling (measure/drawing cancel) lives on the
@@ -186,6 +207,13 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
     setHidden(next);
   }
 
+  function toggleAlertsHidden() {
+    if (!overlays) return;
+    const next = !overlays.getAlertsHidden();
+    overlays.setAlertsHidden(next);
+    setAlertsHidden(next);
+  }
+
   function toggleIndicatorsHidden() {
     if (!controller) return;
     controller.indicatorsHidden.set(!controller.indicatorsHidden.value);
@@ -198,11 +226,13 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
 
   function toggleHideAll() {
     if (!overlays || !controller) return;
-    // ✓ when all three are already hidden → show all; otherwise hide all three.
-    const allHidden = hidden && indicatorsHidden && positionsHidden;
+    // ✓ when all four are already hidden → show all; otherwise hide all four.
+    const allHidden = hidden && alertsHidden && indicatorsHidden && positionsHidden;
     const next = !allHidden;
     overlays.setDrawingsHidden(next);
     setHidden(next);
+    overlays.setAlertsHidden(next);
+    setAlertsHidden(next);
     controller.indicatorsHidden.set(next);
     controller.positionsHidden.set(next);
   }
@@ -244,7 +274,7 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
               </svg>
             </button>
             {openFly && (
-              <div className="ds-flyout">
+              <DsFlyout>
                 <div className="ds-fly-section">Drawing tools</div>
                 <ul>
                   {tools.map((t) => (
@@ -263,7 +293,7 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
                     </li>
                   ))}
                 </ul>
-              </div>
+              </DsFlyout>
             )}
           </div>
         );
@@ -374,7 +404,7 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
           </svg>
         </button>
         {magnetOpen && (
-          <div className="ds-flyout">
+          <DsFlyout>
             <ul>
               <li className="ds-row magnet-opt"
                 onClick={() => { setMagnetStrength("weak"); setMagnetOpen(false); }}>
@@ -393,7 +423,7 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
                   text="Always snaps a drawing point to the nearest OHLC price of the bar under the cursor." />
               </li>
             </ul>
-          </div>
+          </DsFlyout>
         )}
       </div>
 
@@ -450,26 +480,35 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
           )}
         </button>
         {eyeOpen && (
-          <div className="ds-flyout">
+          <DsFlyout className="compact">
             <ul>
               <li className="ds-row" onClick={toggleDrawingsHidden}>
-                <span className="check">{hidden ? "✓" : ""}</span>
+                <span className="ds-glyph">{MenuIcons.pencil}</span>
                 <span className="ds-label">Hide drawings</span>
+                <span className="check">{hidden ? "✓" : ""}</span>
               </li>
               <li className="ds-row" onClick={toggleIndicatorsHidden}>
-                <span className="check">{indicatorsHidden ? "✓" : ""}</span>
+                <span className="ds-glyph">{MenuIcons.indicator}</span>
                 <span className="ds-label">Hide indicators</span>
+                <span className="check">{indicatorsHidden ? "✓" : ""}</span>
               </li>
               <li className="ds-row" onClick={togglePositionsHidden}>
+                <span className="ds-glyph">{MenuIcons.positions}</span>
+                <span className="ds-label">Hide positions</span>
                 <span className="check">{positionsHidden ? "✓" : ""}</span>
-                <span className="ds-label">Hide positions and orders</span>
+              </li>
+              <li className="ds-row" onClick={toggleAlertsHidden}>
+                <span className="ds-glyph">{MenuIcons.bell}</span>
+                <span className="ds-label">Hide alert lines</span>
+                <span className="check">{alertsHidden ? "✓" : ""}</span>
               </li>
               <li className="ds-row" onClick={toggleHideAll}>
-                <span className="check">{hidden && indicatorsHidden && positionsHidden ? "✓" : ""}</span>
+                <span className="ds-glyph">{MenuIcons.hide}</span>
                 <span className="ds-label">Hide all</span>
+                <span className="check">{hidden && alertsHidden && indicatorsHidden && positionsHidden ? "✓" : ""}</span>
               </li>
             </ul>
-          </div>
+          </DsFlyout>
         )}
       </div>
       <Tooltip content="Lock or unlock all drawings" placement="right">

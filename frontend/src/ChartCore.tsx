@@ -1521,6 +1521,7 @@ export default function ChartCore({
       if (!c) return null;
       const mainW = c.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (x > mainW) return null;
+      if (overlays.getAlertsHidden()) return null; // eye menu: hidden lines aren't hittable
       for (const a of overlays.getAlerts()) {
         const ay = first(
           c.convertToPixel([{ value: a.level }], { paneId: "candle_pane", absolute: true }),

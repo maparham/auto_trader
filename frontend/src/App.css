@@ -87,6 +87,16 @@
   /* Content-sized (user: minimal width) — rows set the width, no floor. */
   width: max-content; padding: 6px 0;
 }
+/* Flipped variant (DsFlyout): anchored to the trigger's bottom edge and growing
+   upward, applied when the down-anchored menu would crop at the viewport bottom
+   (the eye menu sits in the sidebar's bottom cluster). */
+.draw-sidebar .ds-flyout.up { top: auto; bottom: -4px; }
+/* Compact variant (the eye menu): rows start flush with a slim 16px-icon glyph
+   column — no reserved leading check column — and the ✓ sits at the row's right
+   edge instead (its 16px stays reserved so toggling doesn't change the width). */
+.draw-sidebar .ds-flyout.compact .ds-row { gap: 8px; padding: 0 8px; }
+.draw-sidebar .ds-flyout.compact .ds-row .check { width: 11px; margin-left: -2px; text-align: right; }
+.draw-sidebar .ds-flyout.compact .ds-glyph { width: 18px; }
 .draw-sidebar .ds-fly-section {
   padding: 8px 16px 6px; font-size: 11px; font-weight: 500; color: var(--text-faint);
   text-transform: uppercase; letter-spacing: 0.05em;

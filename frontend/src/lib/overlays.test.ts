@@ -1079,8 +1079,10 @@ describe("magnet mode (TV-style OHLC snap)", () => {
 
     expect(modeOf(chart, draw)).toBe("weak_magnet");
     expect(ovById(chart, draw)!.modeSensitivity).toBeGreaterThan(0);
-    // Alert lines must not snap to OHLC regardless of the magnet setting.
-    expect(modeOf(chart, alert)).toBeUndefined();
+    // Alert lines must not snap to OHLC regardless of the magnet setting. 'normal'
+    // must be EXPLICIT: v10 snaps whenever mode !== 'normal', and createOverlay's
+    // config merge clobbers the OverlayImp default even with undefined (see create()).
+    expect(modeOf(chart, alert)).toBe("normal");
   });
 
   it("a drawing added while magnet is off has no snap mode", () => {
@@ -1096,7 +1098,7 @@ describe("magnet mode (TV-style OHLC snap)", () => {
 
     setMagnet({ on: true, strength: "strong" });
     expect(modeOf(chart, draw)).toBe("strong_magnet");
-    expect(modeOf(chart, alert)).toBeUndefined(); // alert untouched
+    expect(modeOf(chart, alert)).toBe("normal"); // alert untouched (explicit non-snap)
 
     setMagnet(DEFAULT_MAGNET); // back off
     expect(modeOf(chart, draw)).toBe("normal");
@@ -1150,6 +1152,47 @@ describe("OverlayManager hide-all drawings (sidebar eye)", () => {
     const back = ovById(chart, id)!;
     expect(back.visible).toBe(true);
     expect((back.styles as { line?: { color?: string } }).line?.color).toMatch(/^rgba\(/);
+  });
+});
+
+describe("OverlayManager hide-all alert lines (sidebar eye)", () => {
+  const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
+
+  it("hides alert lines only (drawings untouched), keeps storage, restores on unhide", () => {
+    const { chart, m } = setup();
+    const d = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const a = m.addAlert(100, cfg)!;
+
+    expect(m.getAlertsHidden()).toBe(false);
+    m.setAlertsHidden(true);
+    expect(m.getAlertsHidden()).toBe(true);
+    expect(ovById(chart, a)!.visible).toBe(false);
+    expect(ovById(chart, d)!.visible).not.toBe(false); // drawings unaffected
+    // Session-only: the stored alert row survives (the engine still fires it).
+    expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100]);
+
+    m.setAlertsHidden(false);
+    expect(ovById(chart, a)!.visible).toBe(true);
+  });
+
+  it("an alert materialised while hidden comes in hidden, and unhide reveals it", () => {
+    const { chart, m } = setup();
+    m.setAlertsHidden(true);
+    const a = m.addAlert(200, cfg)!;
+    expect(ovById(chart, a)!.visible).toBe(false);
+    m.setAlertsHidden(false);
+    expect(ovById(chart, a)!.visible).toBe(true);
+  });
+
+  it("hiding clears alert hover and selection (no stuck emphasis on invisible lines)", () => {
+    const { m } = setup();
+    const a = m.addAlert(300, cfg)!;
+    m.hoverAlert(a);
+    m.selectAlert(a);
+    expect(m.getAlerts()[0].selected).toBe(true);
+    m.setAlertsHidden(true);
+    expect(m.getAlerts()[0].selected).toBe(false);
+    expect(m.getAlerts()[0].hovered).toBe(false);
   });
 });
 

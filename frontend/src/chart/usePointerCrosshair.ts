@@ -330,7 +330,9 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // are draggable; trade lines use their spec's `draggable` (a filled
       // position's entry is not).
       const snapTargets: { y: number; level: number; draggable: boolean; isTrade?: boolean; alertId?: string }[] = [];
-      for (const al of overlays.getAlerts()) {
+      // Hidden alert lines (eye menu) are not snap targets — the magnet must not
+      // lock onto (or auto-hover) a line that isn't on screen.
+      for (const al of overlays.getAlertsHidden() ? [] : overlays.getAlerts()) {
         const ay = first(
           c.convertToPixel([{ value: al.level }], { paneId: "candle_pane", absolute: true }),
         ).y;
