@@ -574,6 +574,73 @@ def test_get_positions_computes_signed_upnl(monkeypatch) -> None:
     assert pos.upnl == pytest.approx(8.0)
 
 
+def test_get_positions_maps_created_date_utc(monkeypatch) -> None:
+    """IG's position payload carries createdDateUTC (ISO, already UTC), same
+    UTC-suffixed shape as snapshotTimeUTC handled by _parse_ig_time — map it to
+    Position.created_at (like capital.py's createdDateUTC -> created_at) so
+    barsSinceEntry-gated live exits have an entry bar to count from."""
+    from datetime import datetime, timezone
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/session":
+            return _session_response()
+        if req.url.path == "/positions":
+            return httpx.Response(200, json={"positions": [{
+                "position": {"dealId": "D1", "direction": "BUY", "size": 2.0,
+                             "level": 100.0, "createdDateUTC": "2026-06-28T17:15:11.288"},
+                "market": {"epic": "EPIC1", "bid": 104.0, "offer": 105.0},
+            }]})
+        raise AssertionError(req.url.path)
+
+    b = _broker(handler, monkeypatch)
+    ex = IGExecutionBroker(b)
+    [pos] = asyncio.run(ex.get_positions())
+    asyncio.run(b.aclose())
+    assert pos.created_at == datetime(2026, 6, 28, 17, 15, 11, 288000, tzinfo=timezone.utc)
+
+
+def test_get_positions_falls_back_to_local_created_date(monkeypatch) -> None:
+    """When createdDateUTC is absent, fall back to the local createdDate
+    ("2022/09/09 12:39:21:000") — same UTC-first/local-fallback shape as
+    _parse_ig_time's snapshotTimeUTC/snapshotTime."""
+    from datetime import datetime, timezone
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/session":
+            return _session_response()
+        if req.url.path == "/positions":
+            return httpx.Response(200, json={"positions": [{
+                "position": {"dealId": "D1", "direction": "BUY", "size": 2.0,
+                             "level": 100.0, "createdDate": "2022/09/09 12:39:21:000"},
+                "market": {"epic": "EPIC1", "bid": 104.0, "offer": 105.0},
+            }]})
+        raise AssertionError(req.url.path)
+
+    b = _broker(handler, monkeypatch)
+    ex = IGExecutionBroker(b)
+    [pos] = asyncio.run(ex.get_positions())
+    asyncio.run(b.aclose())
+    assert pos.created_at == datetime(2022, 9, 9, 12, 39, 21, tzinfo=timezone.utc)
+
+
+def test_get_positions_created_at_none_when_missing(monkeypatch) -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/session":
+            return _session_response()
+        if req.url.path == "/positions":
+            return httpx.Response(200, json={"positions": [{
+                "position": {"dealId": "D1", "direction": "BUY", "size": 2.0, "level": 100.0},
+                "market": {"epic": "EPIC1", "bid": 104.0, "offer": 105.0},
+            }]})
+        raise AssertionError(req.url.path)
+
+    b = _broker(handler, monkeypatch)
+    ex = IGExecutionBroker(b)
+    [pos] = asyncio.run(ex.get_positions())
+    asyncio.run(b.aclose())
+    assert pos.created_at is None
+
+
 def test_account_summary_picks_preferred_account(monkeypatch) -> None:
     """A live IG account exposes real balance/available/currency from GET /accounts
     (version 1), so the dock shows its true figures instead of paper ones. Pins the

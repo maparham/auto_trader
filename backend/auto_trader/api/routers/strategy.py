@@ -8,6 +8,7 @@ scale-in), exit -> close. One position per side (netted); no hedging.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -22,6 +23,7 @@ from auto_trader.strategy.coded import (
     NeedTimeframe,
     StrategyRuntimeError,
 )
+from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.evaluate import compile_row
 from auto_trader.strategy.expr.parser import parse as parse_expr
@@ -35,6 +37,7 @@ from .. import deps
 from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Cap on fetch-retry passes for a coded strategy's ad-hoc tf= calls (Task 15).
 _MAX_TF_PASSES = 5
@@ -74,6 +77,23 @@ def _compile_expr_group(rows, candles, resolution, htf, *, is_exit: bool, group:
             })
         compiled.append(compile_row(node, candles, resolution, htf))
     return compiled
+
+
+def _warn_bars_since_entry_no_entry_time(
+    epic: str, leg: str, exit_rows: list, entry_time: "datetime | None", candles0_time: datetime,
+) -> None:
+    """barsSinceEntry counts closed bars strictly after the entry bar. With no
+    usable entry_time (the broker reported no open time for the held position,
+    or the position opened before our fetched candle history starts) every bar
+    in view reads as "before entry", so a barsSinceEntry-gated exit can never
+    fire. Log loudly rather than let the position silently never close."""
+    if not exit_rows or not any(N.contains_bars_since_entry(r.node) for r in exit_rows):
+        return
+    if entry_time is None or entry_time < candles0_time:
+        logger.warning(
+            "barsSinceEntry has no usable entry time for %s (%s side) — "
+            "counted exits will not fire", epic, leg,
+        )
 
 
 def _atr(spec, series: dict[str, list[float | None]], i: int) -> float | None:
@@ -178,6 +198,16 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             ctx.short_entry_price = entry_price
             ctx.short_entry_time = entry_time
 
+    if req.exprMode:
+        if pos_long > 0:
+            _warn_bars_since_entry_no_entry_time(
+                req.epic, "long", strategy.long_exit, ctx.long_entry_time, candles[0].time
+            )
+        elif pos_short > 0:
+            _warn_bars_since_entry_no_entry_time(
+                req.epic, "short", strategy.short_exit, ctx.short_entry_time, candles[0].time
+            )
+
     if req.codedStrategy is not None:
         htf: dict[str, list[Candle]] = {
             tf: [_candle(c) for c in bars]
@@ -188,6 +218,7 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             if r is not None and r.is_configured()
         )
         htf_candles: dict[str, list[Candle]] = {}
+        warned_bse = False
         for _ in range(_MAX_TF_PASSES):
             strategy: Strategy = CodedStrategy(
                 module, candles, quantity=1.0, htf_candles=htf_candles,
@@ -200,6 +231,16 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             short_exit = _compile_expr_group(
                 req.exprShortExit, candles, req.resolution, htf, is_exit=True, group="shortExit"
             )
+            if not warned_bse:
+                if pos_long > 0:
+                    _warn_bars_since_entry_no_entry_time(
+                        req.epic, "long", long_exit, ctx.long_entry_time, candles[0].time
+                    )
+                elif pos_short > 0:
+                    _warn_bars_since_entry_no_entry_time(
+                        req.epic, "short", short_exit, ctx.short_entry_time, candles[0].time
+                    )
+                warned_bse = True
             if long_exit or short_exit:
                 strategy = CodedWithExprExits(strategy, ExprRuleStrategy(
                     [], long_exit, [], short_exit,

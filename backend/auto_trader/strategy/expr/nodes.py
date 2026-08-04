@@ -149,3 +149,23 @@ def contains_tf(node: Node) -> bool:
     if isinstance(node, Count):
         return contains_tf(node.cond) or contains_tf(node.window)
     return False
+
+
+def contains_bars_since_entry(node: Node) -> bool:
+    if isinstance(node, BarsSinceEntry):
+        return True
+    if isinstance(node, (Field, Offset, Unary)):
+        return contains_bars_since_entry(node.base if not isinstance(node, Unary) else node.operand)
+    if isinstance(node, Call):
+        return any(contains_bars_since_entry(a) for a in node.args)
+    if isinstance(node, (Binary, Compare)):
+        return contains_bars_since_entry(node.left) or contains_bars_since_entry(node.right)
+    if isinstance(node, Cross):
+        return contains_bars_since_entry(node.a) or contains_bars_since_entry(node.b)
+    if isinstance(node, Chain):
+        return any(contains_bars_since_entry(p) for p in node.parts)
+    if isinstance(node, Predicate):
+        return contains_bars_since_entry(node.base)
+    if isinstance(node, Count):
+        return contains_bars_since_entry(node.cond) or contains_bars_since_entry(node.window)
+    return False

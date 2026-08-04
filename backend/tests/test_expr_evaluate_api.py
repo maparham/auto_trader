@@ -101,6 +101,38 @@ def test_expr_evaluate_with_coded_is_422():
     assert "mutually exclusive" in r.json()["detail"]
 
 
+def test_expr_evaluate_warns_when_bars_since_entry_has_no_entry_time(caplog):
+    # Held long, exit rule uses barsSinceEntry, but the position carries no
+    # open_time (older caller, or broker gave none) -> the exit can never fire
+    # since every bar reads as "before entry". Must warn, naming the epic, rather
+    # than fail silently.
+    import logging
+    with caplog.at_level(logging.WARNING, logger="auto_trader.api.routers.strategy"):
+        r = client.post("/api/strategy/evaluate", json=_base(
+            exprLongEntry=[],
+            exprLongExit=[{"expr": "count(bearish(candle), barsSinceEntry) >= 3"}],
+            position={"side": "buy", "quantity": 1.0, "open_level": 1.0},  # no open_time
+        ))
+    assert r.status_code == 200
+    assert any(
+        "barsSinceEntry" in rec.message and "TEST" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_expr_evaluate_no_warning_when_entry_time_present(caplog):
+    # Same shape, but open_time is a valid bar within history -> no warning.
+    import logging
+    with caplog.at_level(logging.WARNING, logger="auto_trader.api.routers.strategy"):
+        r = client.post("/api/strategy/evaluate", json=_base(
+            exprLongEntry=[],
+            exprLongExit=[{"expr": "count(bearish(candle), barsSinceEntry) >= 3"}],
+            position={"side": "buy", "quantity": 1.0, "open_level": 1.0, "open_time": 0},
+        ))
+    assert r.status_code == 200
+    assert not any("barsSinceEntry" in rec.message for rec in caplog.records)
+
+
 def test_expr_evaluate_disabled_row_skipped():
     # A disabled (garbage) entry row is dropped before parse; enabled true-row fires.
     r = client.post("/api/strategy/evaluate", json=_base(

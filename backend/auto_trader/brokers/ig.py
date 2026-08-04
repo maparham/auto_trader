@@ -585,6 +585,7 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
                     stop_level=_f(pos.get("stopLevel")),
                     take_profit_level=_f(pos.get("limitLevel")),
                     upnl=upnl,
+                    created_at=_parse_ig_created(pos),
                 )
             )
         return out
@@ -809,3 +810,29 @@ def _parse_ig_time(p: dict) -> datetime:
         return datetime.fromisoformat(utc).replace(tzinfo=timezone.utc)
     raw = p["snapshotTime"].replace("/", "-").replace(" ", "T")
     return datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
+
+
+def _parse_ig_created(pos: dict) -> "datetime | None":
+    """IG's open-position payload carries `createdDateUTC` ("2022-02-24T10:00:00",
+    ISO, already UTC) with a local-time `createdDate` ("2022/09/09 12:39:21:000")
+    fallback — same UTC-first/local-fallback shape as _parse_ig_time's
+    snapshotTimeUTC/snapshotTime. NOTE: unlike snapshotTimeUTC (exercised by live
+    /prices tests), neither field name is verified against a real IG payload or
+    repo fixture for /positions — this is reconstructed from IG's documented API
+    shape, not confirmed live. Tolerant on failure (IG dealing is demo/untested):
+    a bad or missing timestamp yields None rather than breaking get_positions for
+    the whole account."""
+    utc = pos.get("createdDateUTC")
+    if utc:
+        try:
+            return datetime.fromisoformat(utc).replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            pass
+    raw = pos.get("createdDate")
+    if raw:
+        for fmt in ("%Y/%m/%d %H:%M:%S:%f", "%Y/%m/%d %H:%M:%S"):
+            try:
+                return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                continue
+    return None
