@@ -2373,6 +2373,16 @@
   margin: 1px -4px 0 0; width: 16px; height: 16px; border-radius: 3px; flex-shrink: 0;
 }
 .toast-close:hover { background: var(--border); color: var(--text); }
+/* Repeat-fire count on a coalesced alert toast (same alert fired ×N). */
+.toast-count {
+  flex-shrink: 0; align-self: center; padding: 1px 6px; border-radius: 9px;
+  background: #f5a623; color: #1a1a1a; font-size: 11px; font-weight: 600;
+}
+/* Pulse when a coalesced toast absorbs a repeat fire (class re-added per fire). */
+.toast.bump { animation: toast-bump 0.3s ease; }
+@keyframes toast-bump {
+  50% { transform: scale(1.04); }
+}
 
 /* Transient snackbar (merge undo) — same idiom as the toasts. Sits just below
    the tab bar; when anchored, inline left/top place it under the merged chip

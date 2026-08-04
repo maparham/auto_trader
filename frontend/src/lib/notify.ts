@@ -20,15 +20,18 @@ export async function ensureNotifyPermission(): Promise<NotifyPermission> {
   }
 }
 
-export function notify(title: string, body: string, onClick?: () => void): void {
+// `tag` (when given) is a stable per-alert identity: a repeat fire REPLACES the
+// previous banner in Notification Center instead of stacking, and `renotify`
+// keeps it re-alerting (sound/banner) on each replacement. Without a tag, each
+// call gets a distinct banner as before.
+export function notify(title: string, body: string, onClick?: () => void, tag?: string): void {
   if ("Notification" in window && Notification.permission === "granted") {
     try {
       const n = new Notification(title, {
         body,
         icon: "/favicon.svg",
-        // Tag distinct per fire (timestamp) so each alert surfaces its own
-        // banner rather than silently replacing the previous one.
-        tag: `auto-trader-alert-${title}-${body}`,
+        tag: `auto-trader-alert-${tag ?? `${title}-${body}`}`,
+        ...(tag ? { renotify: true } : null),
       } as NotificationOptions);
       // Click the banner -> focus the trading tab (and let the caller navigate,
       // e.g. jump to the chart the alert belongs to).
@@ -92,6 +95,9 @@ export function playPing(): void {
 // visibilitychange hook is removed and the fade-out runs.
 const MAX_TOASTS = 5;
 const dismissers = new WeakMap<Element, () => void>();
+// Live keyed toasts (coalescing): key -> the on-screen toast element for that
+// key, so a repeat fire updates it in place instead of stacking a duplicate.
+const keyed = new Map<string, HTMLElement>();
 
 function container(): HTMLElement {
   let el = document.getElementById("toast-container");
@@ -108,6 +114,11 @@ function container(): HTMLElement {
 // and `duration: null` makes the toast STICKY — it stays until clicked or
 // dismissed via the × button that a sticky toast always carries.
 //
+// `key` coalesces repeats: while a toast with the same key is still on screen,
+// a new call updates it in place — message refreshed, a ×N badge incremented,
+// a brief pulse to draw the eye — instead of stacking a duplicate. Once
+// dismissed, the next fire for that key starts a fresh toast (count reset).
+//
 // Hidden-tab contract: alerts fire from the background engine, so a toast often
 // lands while this browser tab is HIDDEN — where rAF never runs (the fade-in
 // class is never applied, the toast stays at opacity 0) while plain timers keep
@@ -116,9 +127,34 @@ function container(): HTMLElement {
 // auto-dismiss countdown only starts once the tab is visible.
 export function toast(
   message: string,
-  opts: { onClick?: () => void; duration?: number | null } = {},
+  opts: { onClick?: () => void; duration?: number | null; key?: string } = {},
 ): void {
   const sticky = opts.duration === null;
+  if (opts.key) {
+    const live = keyed.get(opts.key);
+    // `isConnected` guards against a stale entry whose element left the DOM
+    // without going through its dismiss() (e.g. dropped as a foreign node).
+    if (live && live.isConnected && !live.classList.contains("closing")) {
+      // Repeat fire for an on-screen toast: update in place.
+      const count = Number(live.dataset.count ?? "1") + 1;
+      live.dataset.count = String(count);
+      live.querySelector(".toast-msg")!.textContent = message;
+      let badge = live.querySelector(".toast-count");
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "toast-count";
+        // Before the × button so the badge sits with the message text.
+        live.insertBefore(badge, live.querySelector(".toast-close"));
+      }
+      badge.textContent = `×${count}`;
+      // Re-trigger the pulse animation (forced reflow, same no-rAF contract as
+      // the fade-in below — must work behind a hidden tab).
+      live.classList.remove("bump");
+      void live.offsetHeight;
+      live.classList.add("bump");
+      return;
+    }
+  }
   const el = document.createElement("div");
   el.className = "toast";
   const msg = document.createElement("span");
@@ -129,12 +165,16 @@ export function toast(
   const dismiss = () => {
     if (el.classList.contains("closing")) return; // already fading out
     if (onVis) document.removeEventListener("visibilitychange", onVis);
+    // Release the key only if it still points at THIS element (a fresh toast
+    // may already have re-claimed it while this one fades).
+    if (opts.key && keyed.get(opts.key) === el) keyed.delete(opts.key);
     // `closing` excludes the fading toast from the cap count below.
     el.classList.add("closing");
     el.classList.remove("show");
     setTimeout(() => el.remove(), 300);
   };
   dismissers.set(el, dismiss);
+  if (opts.key) keyed.set(opts.key, el);
   if (sticky) el.classList.add("sticky");
   if (opts.onClick) {
     el.classList.add("clickable");

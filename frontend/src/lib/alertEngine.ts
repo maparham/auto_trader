@@ -252,9 +252,13 @@ class AlertEngine {
     // Per-alert notification channels (absent = all on). The triggered HISTORY
     // below is the record of the firing and is always written, independent of which
     // surfaces the user muted. (Sound is fired by the caller, gated the same way.)
+    // Keyed per alert: a repeat fire (an "every" trigger oscillating around its
+    // level) coalesces into the existing toast with a ×N count / replaces the
+    // previous OS banner, instead of stacking duplicates.
+    const dedupeKey = stateKey(epic, a.id);
     if (a.notify?.toast ?? true)
-      toast(`🔔 ${body} (now ${now})`, { onClick: goTo, duration: null });
-    if (a.notify?.browser ?? true) notify(epic, `${detail} · now ${now}`, goTo);
+      toast(`🔔 ${body} (now ${now})`, { onClick: goTo, duration: null, key: dedupeKey });
+    if (a.notify?.browser ?? true) notify(epic, `${detail} · now ${now}`, goTo, dedupeKey);
     // Deliberately OUTSIDE the channel gates, like the history write: the tab
     // badge is attribution ("something fired here"), not a mutable surface.
     alertFired.set({ epic });
