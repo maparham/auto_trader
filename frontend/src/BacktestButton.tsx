@@ -27,6 +27,8 @@ import {
   minimalHistoryStart,
   requiredWarmupBars,
   warmupBarCount,
+  widenUntilWarm,
+  warmupWalkFloor,
 } from "./lib/backtestWindow";
 import {
   loadBacktestLastUsed,
@@ -92,26 +94,23 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   const chart = controller?.chart ?? null;
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
 
-  // The transient run messages (error / short-warm-up warning) belong to a
-  // specific run; drop them when the symbol or timeframe changes. Reset during
-  // render on the key change (React's "adjust state on prop change" pattern)
-  // rather than in an effect. The result itself is now persisted and rehydrated
-  // by ChartCore, so it is NOT cleared here anymore.
+  // The transient run error belongs to a specific run; drop it when the symbol or
+  // timeframe changes. Reset during render on the key change (React's "adjust
+  // state on prop change" pattern) rather than in an effect. The result itself is
+  // now persisted and rehydrated by ChartCore, so it is NOT cleared here anymore.
   const runKey = `${epic ?? ""}|${period?.resolution ?? ""}`;
   const [msgKey, setMsgKey] = useState(runKey);
   if (msgKey !== runKey) {
     setMsgKey(runKey);
     setError(null);
-    setWarning(null);
   }
 
-  // Publish the transient messages so the results pane renders them (they no
-  // longer live next to this toolbar button).
+  // Publish the transient error so the results pane renders it (it no longer
+  // lives next to this toolbar button).
   useEffect(() => {
-    backtestMessagesSignal.set({ error, warning });
-  }, [error, warning]);
+    backtestMessagesSignal.set({ error });
+  }, [error]);
 
   // The results pane's clear (✕) asks for a clear through this signal; the
   // teardown lives here because only this component has the chart/controller.
@@ -165,7 +164,6 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     // resets it, even if this component were unmounted mid-run.
     backtestRunningSignal.set(true);
     setError(null);
-    setWarning(null);
     // Captured once up front: the modal publishes the axes (empty in Backtest
     // mode) right before bumping the run request, and nothing may change them
     // mid-run (run() no-ops while running).
@@ -279,7 +277,8 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // Temporary phase timing (perf investigation) — logged as [backtest perf].
       const tFetch0 = performance.now();
       progressStageSignal.set("downloading");
-      let bars = await fetchBars(resolveHistoryStart(effCfg, windowFromMs, resSeconds));
+      let historyFromMs = resolveHistoryStart(effCfg, windowFromMs, resSeconds);
+      let bars = await fetchBars(historyFromMs);
 
       // The requested depth can exceed what the broker/account actually serves
       // (e.g. "Full" asking further back than a live account's history limit) —
@@ -289,11 +288,29 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // (the smallest, most likely-to-succeed ask) rather than only checking for
       // the empty case.
       if (depth !== "minimal" && (bars.length === 0 || warmupBarCount(bars, windowFromMs) < required)) {
-        const retried = await fetchBars(minimalHistoryStart(effCfg, windowFromMs, resSeconds));
+        const minimalFromMs = minimalHistoryStart(effCfg, windowFromMs, resSeconds);
+        const retried = await fetchBars(minimalFromMs);
         if (warmupBarCount(retried, windowFromMs) > warmupBarCount(bars, windowFromMs)) {
           bars = retried;
+          historyFromMs = minimalFromMs;
         }
       }
+
+      // An indicator's warm-up is a mathematical requirement of the indicator —
+      // it isn't bounded by the user's range or by session hours. The asks above
+      // are calendar-time conversions of a bar count, so one landing inside a
+      // weekend/holiday closure comes back short (see widenedHistoryStart).
+      bars = await widenUntilWarm(
+        bars,
+        historyFromMs,
+        {
+          windowFromMs,
+          resSeconds,
+          required,
+          floorMs: warmupWalkFloor(effCfg, windowFromMs, resSeconds),
+        },
+        fetchBars,
+      );
 
       const tradeFromTime = Math.round(windowFromMs / 1000);
       if (!bars.some((k) => Math.round(k.timestamp / 1000) >= tradeFromTime)) {
@@ -301,9 +318,21 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         return;
       }
 
+      // Insufficient warm-up is a hard failure, not a warning. An indicator seeded
+      // from fewer bars than its lookback isn't a less-accurate version of itself —
+      // it's a different series, and near the window start it crosses where the
+      // real one doesn't. Those phantom crosses become trades, and a result that
+      // silently mixes them with real ones is worse than no result: it reports a
+      // P&L the strategy never had. The widening walk above already tried to get
+      // the bars honestly, so reaching here means they aren't available.
       const warmup = warmupBarCount(bars, windowFromMs);
       if (warmup < required) {
-        setWarning(`only ${warmup} of ${required} warm-up bars available, so indicators may be cold at the start of the window`);
+        setError(
+          `not enough history: ${warmup} of ${required} warm-up bars before the window. ` +
+            `Indicators can't be computed correctly here — start the range later, ` +
+            `raise the history depth, or shorten the longest indicator.`,
+        );
+        return;
       }
 
       // The backend recomputes every indicator/price/ATR series itself from the
@@ -604,7 +633,6 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     if (chart && controller && epic) clearBacktest(chart, controller.scope, epic);
     backtestResultSignal.set(null);
     setError(null);
-    setWarning(null);
   }
 
   return (
