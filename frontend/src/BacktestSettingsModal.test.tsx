@@ -189,6 +189,43 @@ describe("BacktestSettingsModal period scheduling", () => {
     fireEvent.blur(input);
     expect(input.value).toBe("50");
   });
+
+  // The timeline must size warm-up from what the run actually requires
+  // (BacktestButton's requiredWarmupBars), not from the ATR-only
+  // longestIndicatorLength — expression rows are the usual source of warm-up,
+  // and reporting "1 bar" for an EMA(21) config misdraws the split entirely.
+  it("counts expression warm-up in the auto-shortest timeline label", () => {
+    renderModal(); // default rules: crossAbove(EMA(9), EMA(21)), history "minimal"
+    const labels = document.querySelector(".bt-timeline-labels") as HTMLElement;
+    expect(labels.textContent).toContain("21 bars warm-up");
+  });
+
+  it("excludes an @tf pin from the base warm-up label (HTF is backend-sourced)", () => {
+    const cfg = defaultBacktestConfig();
+    cfg.longEntry = { combine: "AND", rules: [{ expr: "crossAbove(EMA(9), EMA(50)@1H)", enabled: true }] };
+    renderModal(cfg);
+    const labels = document.querySelector(".bt-timeline-labels") as HTMLElement;
+    // The pinned EMA(50) warms from the backend's own hourly fetch; the base
+    // ask is driven by the deepest BASE term (the default exit's EMA(21)).
+    expect(labels.textContent).toContain("21 bars warm-up");
+  });
+
+  it("raises the 'N bars' timeline label to the warm-up the run would demand", () => {
+    const cfg = defaultBacktestConfig();
+    cfg.range = { ...cfg.range, history: "bars", historyBars: 5 };
+    renderModal(cfg);
+    const labels = document.querySelector(".bt-timeline-labels") as HTMLElement;
+    expect(labels.textContent).toContain("21 bars warm-up");
+  });
+
+  it("leaves the 'Full' timeline open-ended rather than fabricating a bar count", () => {
+    const cfg = defaultBacktestConfig();
+    cfg.range = { ...cfg.range, history: "full" };
+    renderModal(cfg);
+    const labels = document.querySelector(".bt-timeline-labels") as HTMLElement;
+    expect(labels.textContent).toContain("as much history as the broker has");
+    expect(document.querySelector(".bt-timeline-history.open-ended")).toBeTruthy();
+  });
 });
 
 // The rule builder now lives under the "Strategy" vertical tab, so tests must

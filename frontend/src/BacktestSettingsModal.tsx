@@ -42,11 +42,10 @@ import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
 import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
 import { PHASE_LABEL, WfoResults } from "./WfoResults";
-import { resolveWindow } from "./lib/backtestWindow";
+import { requiredWarmupBars, resolveWindow } from "./lib/backtestWindow";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
-  longestIndicatorLength,
   type BacktestConfig,
   type RangeConfig,
   type RangeMode,
@@ -304,8 +303,11 @@ function WindowTimeline({ cfg, resolution }: { cfg: BacktestConfig; resolution: 
   const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
   const windowBars = estimateWindowBars(cfg, resSeconds);
   const depth = cfg.range.history ?? "minimal";
-  const historyBars =
-    depth === "bars" ? cfg.range.historyBars ?? 500 : depth === "minimal" ? longestIndicatorLength(cfg) : null;
+  // Size from what the run itself demands (BacktestButton passes the same
+  // resolution into requiredWarmupBars) — expression rows carry almost all of a
+  // config's warm-up, and the ATR-only longestIndicatorLength never saw them.
+  // "Full" stays open-ended: it has no known size to draw.
+  const historyBars = depth === "full" ? null : requiredWarmupBars(cfg, resSeconds);
 
   const historyShare = historyBars === null ? 0.62 : historyBars / (historyBars + windowBars);
   const windowShare = 1 - historyShare;
