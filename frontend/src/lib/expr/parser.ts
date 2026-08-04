@@ -12,6 +12,8 @@ import {
   CANDLE_FIELDS,
   CROSS_FNS,
   INDICATOR_SPECS,
+  PREDICATE_FNS,
+  COUNT_FN,
   TIMEFRAMES,
   WRAPPER_ARITY,
   tfSeconds,
@@ -65,6 +67,7 @@ class ExprErr {
 
 const CANDLE_FIELD_SET = new Set<string>(CANDLE_FIELDS);
 const CROSS_SET = new Set<string>(CROSS_FNS);
+const PREDICATE_SET = new Set<string>(PREDICATE_FNS);
 
 // ---------------------------------------------------------------------------
 // AST (mirrors nodes.py). Discriminated union on `kind`.
@@ -82,12 +85,16 @@ interface BinaryNode { kind: "Binary"; op: string; left: Node; right: Node; star
 interface CompareNode { kind: "Compare"; op: string; left: Node; right: Node; start: number; end: number; }
 interface CrossNode { kind: "Cross"; fn: string; a: Node; b: Node; start: number; end: number; }
 interface ChainNode { kind: "Chain"; parts: CompareNode[]; start: number; end: number; }
+interface PredicateNode { kind: "Predicate"; fn: string; base: Node; start: number; end: number; }
+interface CountNode { kind: "Count"; cond: CompareNode | CrossNode | PredicateNode; window: Node; start: number; end: number; }
+interface BarsSinceEntryNode { kind: "BarsSinceEntry"; start: number; end: number; }
 
 type Node =
   | NumNode | CandleNode | EntryNode | CallNode | FieldNode | OffsetNode
-  | TfNode | UnaryNode | BinaryNode | CompareNode | CrossNode;
+  | TfNode | UnaryNode | BinaryNode | CompareNode | CrossNode
+  | PredicateNode | CountNode | BarsSinceEntryNode;
 
-type Row = CompareNode | CrossNode | ChainNode;
+type Row = CompareNode | CrossNode | ChainNode | PredicateNode;
 
 function containsTf(node: Node): boolean {
   if (node.kind === "Tf") return true;
@@ -96,6 +103,8 @@ function containsTf(node: Node): boolean {
   if (node.kind === "Call") return node.args.some(containsTf);
   if (node.kind === "Binary" || node.kind === "Compare") return containsTf(node.left) || containsTf(node.right);
   if (node.kind === "Cross") return containsTf(node.a) || containsTf(node.b);
+  if (node.kind === "Predicate") return containsTf(node.base);
+  if (node.kind === "Count") return containsTf(node.cond) || containsTf(node.window);
   return false;
 }
 
@@ -207,6 +216,10 @@ class Parser {
     }
     const left = this.parseArith();
     const op = this.peek();
+    if (left.kind === "Predicate" && op.type === "EOF") {
+      this.next();
+      return left;
+    }
     if (op.type !== "GT" && op.type !== "LT" && op.type !== "GE" && op.type !== "LE") {
       throw new ExprErr("expected_operator", "Expected a comparison operator (> < >= <=).", op.start, op.end);
     }
@@ -273,6 +286,21 @@ class Parser {
       const name = this.next();
       if (name.value === "candle") return { kind: "Candle", field: null, start: name.start, end: name.end };
       if (name.value === "entry") return { kind: "Entry", start: name.start, end: name.end };
+      if (name.value === "barsSinceEntry") return { kind: "BarsSinceEntry", start: name.start, end: name.end };
+      if (PREDICATE_SET.has(name.value) && this.peek().type === "LPAREN") {
+        this.next();
+        const arg = this.parseArith();
+        const close = this.expect("RPAREN");
+        return { kind: "Predicate", fn: name.value, base: arg, start: name.start, end: close.end };
+      }
+      if (name.value === COUNT_FN && this.peek().type === "LPAREN") {
+        this.next();
+        const cond = this.parseCondition();
+        this.expect("COMMA");
+        const window = this.parseArith();
+        const close = this.expect("RPAREN");
+        return { kind: "Count", cond, window, start: name.start, end: close.end };
+      }
       if (this.peek().type === "LPAREN") {
         this.next();
         const args: Node[] = [];
@@ -291,6 +319,34 @@ class Parser {
       return { kind: "Call", name: name.value, args: [], start: name.start, end: name.end };
     }
     throw new ExprErr("unexpected_token", "Expected a value here.", t.start, t.end);
+  }
+
+  // condition := cross "(" arith "," arith ")" | arith cmpop arith | predicate
+  private parseCondition(): CompareNode | CrossNode | PredicateNode {
+    const t = this.peek();
+    if (t.type === "NAME" && CROSS_SET.has(t.value) && this.toks[this.i + 1].type === "LPAREN") {
+      const fn = this.next();
+      this.expect("LPAREN");
+      const a = this.parseArith();
+      this.expect("COMMA");
+      const b = this.parseArith();
+      const close = this.expect("RPAREN");
+      return { kind: "Cross", fn: fn.value, a, b, start: fn.start, end: close.end };
+    }
+    const left = this.parseArith();
+    const op = this.peek();
+    if (op.type !== "GT" && op.type !== "LT" && op.type !== "GE" && op.type !== "LE") {
+      if (left.kind === "Predicate") return left;
+      throw new ExprErr(
+        "count_needs_condition",
+        "count's first argument must be a condition, like candle.open > candle.close.",
+        left.start, left.end,
+      );
+    }
+    const symOf: Record<string, string> = { GT: ">", LT: "<", GE: ">=", LE: "<=" };
+    const optok = this.next();
+    const right = this.parseArith();
+    return { kind: "Compare", op: symOf[optok.type], left, right, start: left.start, end: right.end };
   }
 
   private parsePostfix(node: Node): Node {
@@ -359,8 +415,35 @@ function validate(node: Row, isExit: boolean): void {
     walk(node.b, isExit);
     return;
   }
+  if (node.kind === "Predicate") {
+    checkPredicate(node);
+    return;
+  }
   walk(node.left, isExit);
   walk(node.right, isExit);
+}
+
+// A predicate's argument must bottom out in a bare `candle` (no field), wrapped
+// only by offsets and at most one timeframe pin.
+function checkPredicate(node: PredicateNode): void {
+  let base: Node = node.base;
+  while (base.kind === "Offset" || base.kind === "Tf") {
+    if (base.kind === "Tf" && tfSeconds(base.tf) === null) {
+      throw new ExprErr(
+        "unknown_tf",
+        `Unknown timeframe ${base.tf}. Try one of: ${TIMEFRAMES.map((t) => t.alias).join(", ")}.`,
+        base.start, base.end,
+      );
+    }
+    base = base.base;
+  }
+  if (!(base.kind === "Candle" && base.field === null)) {
+    throw new ExprErr(
+      "bad_predicate_arg",
+      `${node.fn} takes a candle, like ${node.fn}(candle).`,
+      node.start, node.end,
+    );
+  }
 }
 
 function walk(node: Node, isExit: boolean): void {
@@ -409,6 +492,29 @@ function walk(node: Node, isExit: boolean): void {
       walk(node.left, isExit);
       walk(node.right, isExit);
       return;
+    case "BarsSinceEntry":
+      if (!isExit) throw new ExprErr("entry_in_entry_rule", "barsSinceEntry is only available in exit rules.", node.start, node.end);
+      return;
+    case "Predicate":
+      throw new ExprErr(
+        "predicate_as_value",
+        `${node.fn}(...) is a condition — use it as a whole row or inside count(...).`,
+        node.start, node.end,
+      );
+    case "Count": {
+      const cond = node.cond;
+      if (cond.kind === "Predicate") {
+        checkPredicate(cond);
+      } else if (cond.kind === "Cross") {
+        walk(cond.a, isExit);
+        walk(cond.b, isExit);
+      } else {
+        walk(cond.left, isExit);
+        walk(cond.right, isExit);
+      }
+      walk(node.window, isExit);
+      return;
+    }
     case "Compare":
     case "Cross":
       throw new ExprErr("cross_not_toplevel", "A comparison or cross can only be the whole row.", node.start, node.end);
@@ -465,6 +571,16 @@ function render(node: Node): string {
       return `-${render(node.operand)}`;
     case "Binary":
       return `${render(node.left)} ${node.op} ${render(node.right)}`;
+    case "Compare":
+      return `${render(node.left)} ${node.op} ${render(node.right)}`;
+    case "Cross":
+      return `${node.fn}(${render(node.a)}, ${render(node.b)})`;
+    case "Predicate":
+      return `${node.fn}(${render(node.base)})`;
+    case "Count":
+      return `count(${render(node.cond)}, ${render(node.window)})`;
+    case "BarsSinceEntry":
+      return "barsSinceEntry";
     default:
       return "?";
   }
@@ -487,6 +603,8 @@ function hasIndicator(node: Node): boolean {
   if (node.kind === "Field" || node.kind === "Offset" || node.kind === "Tf") return hasIndicator(node.base);
   if (node.kind === "Unary") return hasIndicator(node.operand);
   if (node.kind === "Binary") return hasIndicator(node.left) || hasIndicator(node.right);
+  if (node.kind === "Predicate") return hasIndicator(node.base);
+  if (node.kind === "Count") return true;
   return false;
 }
 
@@ -495,7 +613,7 @@ function collect(node: Node, label: string, out: Collected[]): void {
     out.push({ num: node, label });
     return;
   }
-  if (node.kind === "Candle" || node.kind === "Entry") return;
+  if (node.kind === "Candle" || node.kind === "Entry" || node.kind === "BarsSinceEntry") return;
   if (node.kind === "Field") {
     collect(node.base, label, out);
     return;
@@ -556,6 +674,28 @@ function collect(node: Node, label: string, out: Collected[]): void {
       return;
     }
   }
+  if (node.kind === "Predicate") {
+    collect(node.base, label, out);
+    return;
+  }
+  if (node.kind === "Count") {
+    const cond = node.cond;
+    if (cond.kind === "Predicate") {
+      collect(cond.base, "constant", out);
+    } else if (cond.kind === "Cross") {
+      collect(cond.a, "constant", out);
+      collect(cond.b, "constant", out);
+    } else {
+      collect(cond.left, "constant", out);
+      collect(cond.right, "constant", out);
+    }
+    if (node.window.kind === "Num") {
+      out.push({ num: node.window, label: "count window" });
+    } else {
+      collect(node.window, "constant", out);
+    }
+    return;
+  }
 }
 
 function collectSide(side: Node, out: Collected[]): void {
@@ -568,6 +708,17 @@ function collectSide(side: Node, out: Collected[]): void {
 
 function literalsOf(node: Row): LiteralSpan[] {
   const out: Collected[] = [];
+  if (node.kind === "Predicate") {
+    collect(node.base, "constant", out);
+    out.sort((x, y) => x.num.start - y.num.start);
+    return out.map((c, ordinal) => ({
+      ordinal,
+      value: c.num.value,
+      from: c.num.start,
+      to: c.num.end,
+      label: c.label,
+    }));
+  }
   if (node.kind === "Chain") {
     collectSide(node.parts[0].left, out);
     for (const p of node.parts) collectSide(p.right, out);
@@ -663,6 +814,13 @@ function warmupNode(node: Node | ChainNode, baseSeconds?: number): number {
       return baseSeconds == null || !(baseSeconds > 0) ? warmupNode(node.base) : 0;
     case "Unary": return warmupNode(node.operand, baseSeconds);
     case "Binary": return Math.max(warmupNode(node.left, baseSeconds), warmupNode(node.right, baseSeconds));
+    case "Predicate": return warmupNode(node.base, baseSeconds);
+    case "BarsSinceEntry": return 0;
+    case "Count": {
+      const w = node.window;
+      const n = w.kind === "Num" ? Math.trunc(w.value) : 0;
+      return n + warmupNode(node.cond, baseSeconds);
+    }
     case "Call": {
       if (node.name in WRAPPER_ARITY) {
         const w = node.args[1];
