@@ -22,3 +22,5 @@ INDICATORS: dict[str, IndicatorSpec] = {
 WRAPPERS: dict[str, int] = {"slope": 2, "highest": 2, "lowest": 2, "avg": 2}
 
 CROSSES = ("crossAbove", "crossBelow")
+PREDICATES = ("bullish", "bearish")
+COUNT = "count"
