@@ -173,3 +173,48 @@ def test_bars_since_entry_not_a_series():
     candles = _bars([(10, 11)])
     with pytest.raises(ValueError):
         series_of(parse("barsSinceEntry > 1").left, candles, "MINUTE_5", {})
+
+
+def test_bars_since_entry_value():
+    candles = _bars([(10, 11)] * 6)
+    row = compile_row(parse("barsSinceEntry > 2"), candles, "MINUTE_5", {})
+    # entry at bar 2 -> barsSinceEntry = i - 2
+    assert [row.evaluate(i, 10.0, 2) for i in range(6)] == [False, False, False, False, False, True]
+    # flat (no entry_i) -> never fires
+    assert row.evaluate(5, None, None) is False
+
+
+def test_count_dynamic_window_since_entry():
+    # bars: green, entry@1, red, red, green, red -> reds since entry at bars 2,3,5
+    candles = _bars([(10, 11), (11, 12), (12, 11), (11, 10), (10, 11), (11, 10)])
+    row = compile_row(parse("count(bearish(candle), barsSinceEntry) >= 3"), candles, "MINUTE_5", {})
+    entry_i = 1
+    got = [row.evaluate(i, 12.0, entry_i) for i in range(6)]
+    # bar5: window = 4 bars (2..5), reds = 3 -> fires; bar4: window 3 (2..4), reds 2 -> no
+    assert got == [False, False, False, False, False, True]
+
+
+def test_count_dynamic_window_entry_price_condition():
+    # count closes below entry since entry
+    candles = _bars([(10, 11), (11, 12), (12, 9), (9, 8), (8, 13), (13, 7)])
+    row = compile_row(parse("count(candle.close < entry, barsSinceEntry) >= 3"), candles, "MINUTE_5", {})
+    got = [row.evaluate(i, 12.0, 1) for i in range(6)]
+    # closes below 12 since entry: bars 2(9),3(8),5(7) -> 3rd at bar 5
+    assert got[5] is True and got[4] is False
+
+
+def test_strategy_passes_entry_index():
+    from auto_trader.strategy.base import Context
+    from auto_trader.strategy.expr.strategy import ExprRuleStrategy
+    candles = _bars([(10, 11), (11, 12), (12, 11), (11, 10), (10, 9)])
+    exit_row = compile_row(parse("count(bearish(candle), barsSinceEntry) >= 3"), candles, "MINUTE_5", {})
+    strat = ExprRuleStrategy([], [exit_row], [], [], quantity=1.0)
+    ctx = Context()
+    ctx.history = list(candles)
+    ctx.position_long = 1.0
+    ctx.long_entry_price = 12.0
+    ctx.long_entry_time = candles[1].time
+    signals = strat.on_bar(ctx)
+    # bars 2 (12->11), 3 (11->10), 4 (10->9) are all red; entry bar 1, i=4 ->
+    # window of barsSinceEntry=3 covers bars 2..4 with 3 reds -> the exit fires.
+    assert len(signals) == 1 and signals[0].leg == "long"

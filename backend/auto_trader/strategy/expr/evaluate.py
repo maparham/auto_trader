@@ -237,8 +237,9 @@ class CompiledRow:
     warmup: int
     _cache: dict[int, list[float | None]]
     _matches: dict[int, list[bool]]
+    _pred_nodes: dict[int, tuple[N.Node, N.Node]]
 
-    def _val(self, sub: N.Node, i: int, entry: float | None) -> float | None:
+    def _val(self, sub: N.Node, i: int, entry: float | None, entry_i: int | None = None) -> float | None:
         # entry-free sub-expressions are precomputed to arrays; entry-bearing ones
         # recurse per bar (entry is a scalar constant across the trade).
         key = id(sub)
@@ -252,21 +253,65 @@ class CompiledRow:
             assert sub.field is not None
             return candle_field(self.candles[i], sub.field) if 0 <= i < len(self.candles) else None
         if isinstance(sub, N.Unary):
-            v = self._val(sub.operand, i, entry)
+            v = self._val(sub.operand, i, entry, entry_i)
             return None if v is None else -v
         if isinstance(sub, N.Binary):
-            return _binop(sub.op, self._val(sub.left, i, entry), self._val(sub.right, i, entry))
+            return _binop(sub.op, self._val(sub.left, i, entry, entry_i), self._val(sub.right, i, entry, entry_i))
+        if isinstance(sub, N.BarsSinceEntry):
+            if entry_i is None or i < entry_i:
+                return None
+            return float(i - entry_i)
+        if isinstance(sub, N.Count):
+            wv = self._val(sub.window, i, entry, entry_i)
+            if not _defined(wv):
+                return None
+            k = int(wv)
+            if k < 1:
+                return 0.0
+            if i + 1 < k:
+                return None
+            return float(sum(
+                1 for j in range(i - k + 1, i + 1)
+                if self._match_at(sub.cond, j, entry, entry_i)
+            ))
         # Any remaining node is entry-free -> it was precomputed; guard defensively.
         arr = series_of(sub, self.candles, self.resolution, self.htf)
         self._cache[key] = arr
         return arr[i] if 0 <= i < len(arr) else None
 
-    def _cmp(self, part: N.Compare, i: int, entry: float | None) -> bool:
-        l = self._val(part.left, i, entry)
-        r = self._val(part.right, i, entry)
+    def _match_at(self, cond, j: int, entry: float | None, entry_i: int | None) -> bool:
+        """Truth of an embedded condition at bar j (per-bar path)."""
+        if isinstance(cond, N.Predicate):
+            key = id(cond)
+            if key not in self._pred_nodes:
+                self._pred_nodes[key] = (
+                    _apply_field_to_candle(cond.base, "open"),
+                    _apply_field_to_candle(cond.base, "close"),
+                )
+            o_node, c_node = self._pred_nodes[key]
+            o = self._val(o_node, j, entry, entry_i)
+            c = self._val(c_node, j, entry, entry_i)
+            if not (_defined(o) and _defined(c)):
+                return False
+            return c > o if cond.fn == "bullish" else c < o
+        if isinstance(cond, N.Cross):
+            if j == 0:
+                return False
+            a1, a0 = self._val(cond.a, j, entry, entry_i), self._val(cond.a, j - 1, entry, entry_i)
+            b1, b0 = self._val(cond.b, j, entry, entry_i), self._val(cond.b, j - 1, entry, entry_i)
+            if not all(_defined(v) for v in (a1, a0, b1, b0)):
+                return False
+            if cond.fn == "crossAbove":
+                return a0 <= b0 and a1 > b1
+            return a0 >= b0 and a1 < b1
+        return _cmp_vals(cond.op, self._val(cond.left, j, entry, entry_i), self._val(cond.right, j, entry, entry_i))
+
+    def _cmp(self, part: N.Compare, i: int, entry: float | None, entry_i: int | None = None) -> bool:
+        l = self._val(part.left, i, entry, entry_i)
+        r = self._val(part.right, i, entry, entry_i)
         return _cmp_vals(part.op, l, r)
 
-    def evaluate(self, i: int, entry_price: float | None) -> bool:
+    def evaluate(self, i: int, entry_price: float | None, entry_i: int | None = None) -> bool:
         node = self.node
         if isinstance(node, N.Predicate):
             key = id(node)
@@ -275,16 +320,16 @@ class CompiledRow:
             m = self._matches[key]
             return m[i] if 0 <= i < len(m) else False
         if isinstance(node, N.Compare):
-            return self._cmp(node, i, entry_price)
+            return self._cmp(node, i, entry_price, entry_i)
         if isinstance(node, N.Chain):
-            return all(self._cmp(p, i, entry_price) for p in node.parts)
+            return all(self._cmp(p, i, entry_price, entry_i) for p in node.parts)
         # Cross
         if i == 0:
             return False
-        lnow = self._val(node.a, i, entry_price)
-        lprev = self._val(node.a, i - 1, entry_price)
-        rnow = self._val(node.b, i, entry_price)
-        rprev = self._val(node.b, i - 1, entry_price)
+        lnow = self._val(node.a, i, entry_price, entry_i)
+        lprev = self._val(node.a, i - 1, entry_price, entry_i)
+        rnow = self._val(node.b, i, entry_price, entry_i)
+        rprev = self._val(node.b, i - 1, entry_price, entry_i)
         if not all(_defined(v) for v in (lnow, lprev, rnow, rprev)):
             return False
         if node.fn == "crossAbove":
@@ -353,4 +398,4 @@ def compile_row(node: N.Row, candles, resolution, htf) -> CompiledRow:
         subs = [node.a, node.b]
     for sub in subs:
         _precompute(sub, candles, resolution, htf, cache)
-    return CompiledRow(node, candles, resolution, htf, warmup_bars(node, resolution), cache, {})
+    return CompiledRow(node, candles, resolution, htf, warmup_bars(node, resolution), cache, {}, {})
