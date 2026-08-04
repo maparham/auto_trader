@@ -446,6 +446,24 @@ function checkPredicate(node: PredicateNode): void {
   }
 }
 
+// True if `node`'s subtree contains an entry-based value (entry or
+// barsSinceEntry) — used to keep those out of wrappers/indicators, which are
+// expected to compute over a plain series and would otherwise crash trying to
+// evaluate an entry-scoped operand with no active position. Mirrors
+// containsTf's shape; Node excludes Chain (Chain is only ever a top-level Row,
+// never nested inside another node's subtree), so there is no Chain case here.
+function containsEntryKind(node: Node): boolean {
+  if (node.kind === "Entry" || node.kind === "BarsSinceEntry") return true;
+  if (node.kind === "Field" || node.kind === "Offset" || node.kind === "Tf") return containsEntryKind(node.base);
+  if (node.kind === "Unary") return containsEntryKind(node.operand);
+  if (node.kind === "Binary" || node.kind === "Compare") return containsEntryKind(node.left) || containsEntryKind(node.right);
+  if (node.kind === "Cross") return containsEntryKind(node.a) || containsEntryKind(node.b);
+  if (node.kind === "Predicate") return containsEntryKind(node.base);
+  if (node.kind === "Count") return containsEntryKind(node.cond) || containsEntryKind(node.window);
+  if (node.kind === "Call") return node.args.some(containsEntryKind);
+  return false;
+}
+
 function walk(node: Node, isExit: boolean): void {
   switch (node.kind) {
     case "Num":
@@ -527,6 +545,13 @@ function walk(node: Node, isExit: boolean): void {
         if (node.args.length !== spec.arity) {
           throw new ExprErr("bad_arity", `${node.name} takes ${spec.arity} argument(s).`, node.start, node.end);
         }
+        if (node.args.some((a) => containsEntryKind(a))) {
+          throw new ExprErr(
+            "entry_in_wrapper",
+            `${node.name} cannot take entry-based values like entry or barsSinceEntry.`,
+            node.start, node.end,
+          );
+        }
         for (const a of node.args) walk(a, isExit);
         return;
       }
@@ -534,6 +559,13 @@ function walk(node: Node, isExit: boolean): void {
         const arity = WRAPPER_ARITY[node.name];
         if (node.args.length !== arity) {
           throw new ExprErr("bad_arity", `${node.name} takes ${arity} arguments.`, node.start, node.end);
+        }
+        if (node.args.some((a) => containsEntryKind(a))) {
+          throw new ExprErr(
+            "entry_in_wrapper",
+            `${node.name} cannot take entry-based values like entry or barsSinceEntry.`,
+            node.start, node.end,
+          );
         }
         for (const a of node.args) walk(a, isExit);
         return;

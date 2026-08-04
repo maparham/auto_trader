@@ -43,6 +43,32 @@ def _check_predicate(node: N.Predicate) -> None:
         )
 
 
+def _contains_entry_kind(node: N.Node) -> bool:
+    """True if `node`'s subtree contains an entry-based value (entry or
+    barsSinceEntry) — used to keep those out of wrappers/indicators, which are
+    expected to compute over a plain series and would otherwise crash trying to
+    evaluate an entry-scoped operand with no active position."""
+    if isinstance(node, (N.Entry, N.BarsSinceEntry)):
+        return True
+    if isinstance(node, (N.Field, N.Offset, N.Tf)):
+        return _contains_entry_kind(node.base)
+    if isinstance(node, N.Unary):
+        return _contains_entry_kind(node.operand)
+    if isinstance(node, (N.Binary, N.Compare)):
+        return _contains_entry_kind(node.left) or _contains_entry_kind(node.right)
+    if isinstance(node, N.Cross):
+        return _contains_entry_kind(node.a) or _contains_entry_kind(node.b)
+    if isinstance(node, N.Chain):
+        return any(_contains_entry_kind(p) for p in node.parts)
+    if isinstance(node, N.Predicate):
+        return _contains_entry_kind(node.base)
+    if isinstance(node, N.Count):
+        return _contains_entry_kind(node.cond) or _contains_entry_kind(node.window)
+    if isinstance(node, N.Call):
+        return any(_contains_entry_kind(a) for a in node.args)
+    return False
+
+
 def _candle_root(node: N.Node) -> N.Node:
     """Unwrap Offset/Tf wrappers to find the base a postfix chain bottoms out in.
 
@@ -134,12 +160,24 @@ def _walk(node: N.Node, *, is_exit: bool) -> None:
             spec = INDICATORS[node.name]
             if len(node.args) != spec.arity:
                 raise ExprError("bad_arity", f"{node.name} takes {spec.arity} argument(s).", node.start, node.end)
+            if any(_contains_entry_kind(a) for a in node.args):
+                raise ExprError(
+                    "entry_in_wrapper",
+                    f"{node.name} cannot take entry-based values like entry or barsSinceEntry.",
+                    node.start, node.end,
+                )
             for a in node.args:
                 _walk(a, is_exit=is_exit)
             return
         if node.name in WRAPPERS:
             if len(node.args) != WRAPPERS[node.name]:
                 raise ExprError("bad_arity", f"{node.name} takes {WRAPPERS[node.name]} arguments.", node.start, node.end)
+            if any(_contains_entry_kind(a) for a in node.args):
+                raise ExprError(
+                    "entry_in_wrapper",
+                    f"{node.name} cannot take entry-based values like entry or barsSinceEntry.",
+                    node.start, node.end,
+                )
             for a in node.args:
                 _walk(a, is_exit=is_exit)
             return

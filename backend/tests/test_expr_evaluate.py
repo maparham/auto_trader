@@ -140,12 +140,18 @@ def test_count_window_below_one_is_zero():
 
 
 def test_count_undefined_cond_counts_zero():
-    # EMA(3) is undefined for the first 2 bars; those bars count 0, and the
-    # count itself is defined once the window fits (window 2 -> from bar 1).
+    # window=2 needs 2 bars to fit, so the count itself is undefined (None) at
+    # bar 0. EMA(3) is defined from bar 0 in this engine (SMA-seeded: 11, 11.5,
+    # 12.25, 13.125), so close>EMA matches are [False, True, True, True]; the
+    # count-so-far is 0,1,2,2 as the window fills: vals[1] = 1 (bars 0-1: only
+    # bar 1 matches), and later bars stay consistent (both bars in the window
+    # match once EMA is well past its seed).
     candles = _bars([(10, 11), (11, 12), (12, 13), (13, 14)])
     node = parse("count(candle.close > EMA(3), 2) >= 1")
     vals = series_of(node.left, candles, "MINUTE_5", {})
-    assert vals[0] is None and vals[1] is not None
+    assert vals[0] is None
+    assert vals[1] == 1.0
+    assert vals[2] == 2.0 and vals[3] == 2.0
 
 
 def test_predicate_row_evaluate():
@@ -165,8 +171,10 @@ def test_count_cross_condition():
     candles = _bars([(10, 9), (10, 11), (10, 9), (10, 11)])
     node = parse("count(crossAbove(candle.close, candle.open), 4) >= 2")
     vals = series_of(node.left, candles, "MINUTE_5", {})
-    # matches at bars 1 and 3 (close moves from below open to above)
-    assert vals[3] == 2.0
+    # window=4 doesn't fit until bar 3 -> None on bars 0-2 (bar 0 never matches:
+    # a cross needs a prior bar). Matches at bars 1 and 3 (close moves from below
+    # open to above) -> the window-4 count at bar 3 is 2.
+    assert vals == [None, None, None, 2.0]
 
 
 def test_bars_since_entry_not_a_series():
@@ -182,6 +190,25 @@ def test_bars_since_entry_value():
     assert [row.evaluate(i, 10.0, 2) for i in range(6)] == [False, False, False, False, False, True]
     # flat (no entry_i) -> never fires
     assert row.evaluate(5, None, None) is False
+
+
+def test_count_literal_window_per_bar_none_until_window_fits():
+    # 6 bars; window=10 never fits (max i+1 is 6 < 10) -> every bar hits the
+    # per-bar Count path's `i + 1 < k -> None` branch, so the row must NOT fire
+    # even though every bar's close(9) < entry(100) would otherwise match.
+    candles = _bars([(10, 9)] * 6)
+    row = compile_row(parse("count(candle.close < entry, 10) >= 3"), candles, "MINUTE_5", {})
+    assert [row.evaluate(i, 100.0, 0) for i in range(6)] == [False] * 6
+
+
+def test_count_literal_window_per_bar_fires_when_window_fits():
+    # Same bars, a window (3) that DOES fit within 6 bars -> fires once the
+    # window has 3 bars behind it (i>=2), every bar closing below entry.
+    candles = _bars([(10, 9)] * 6)
+    row = compile_row(parse("count(candle.close < entry, 3) >= 3"), candles, "MINUTE_5", {})
+    assert [row.evaluate(i, 100.0, 0) for i in range(6)] == [
+        False, False, True, True, True, True,
+    ]
 
 
 def test_count_dynamic_window_since_entry():

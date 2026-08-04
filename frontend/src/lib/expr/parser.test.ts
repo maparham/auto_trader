@@ -153,4 +153,14 @@ describe("count / predicates / barsSinceEntry", () => {
     expect(warmupOf("count(bearish(candle), barsSinceEntry) >= 3")).toBe(0);
     expect(warmupOf("bearish(candle[-2])")).toBe(2);
   });
+  it("rejects entry/barsSinceEntry inside a wrapper or indicator arg", () => {
+    expect(analyze("highest(barsSinceEntry, 3) > 2", { isExit: true }).error?.code).toBe("entry_in_wrapper");
+    expect(
+      analyze("avg(count(bearish(candle), barsSinceEntry), 2) > 1", { isExit: true }).error?.code,
+    ).toBe("entry_in_wrapper");
+    expect(analyze("highest(entry, 3) > 2", { isExit: true }).error?.code).toBe("entry_in_wrapper");
+  });
+  it("still allows entry directly inside count(...)'s condition", () => {
+    expect(analyze("count(candle.close < entry, 10) >= 3", { isExit: true }).error).toBeNull();
+  });
 });

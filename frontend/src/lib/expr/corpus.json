@@ -59,5 +59,12 @@
   { "expr": "barsSinceEntry > 5", "isExit": false, "error": {"code":"entry_in_entry_rule","from":0,"to":14}, "literals": [] },
   { "expr": "barsSinceEntry > 5", "isExit": true, "error": null, "literals": [
       {"ordinal":0,"value":5,"from":17,"to":18,"label":"threshold"}
+    ] },
+  { "expr": "highest(barsSinceEntry, 3) > 2", "isExit": true, "error": {"code":"entry_in_wrapper","from":0,"to":26}, "literals": [] },
+  { "expr": "count(candle.close > EMA(9), 10) >= 3", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":25,"to":26,"label":"EMA length"},
+      {"ordinal":1,"value":10,"from":29,"to":31,"label":"count window"},
+      {"ordinal":2,"value":3,"from":36,"to":37,"label":"threshold"}
     ] }
 ]

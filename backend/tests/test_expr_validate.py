@@ -108,3 +108,20 @@ def test_count_condition_operands_validated():
     with pytest.raises(ExprError) as ei:
         validate(parse("count(FOO(9) > 0, 10) > 1"), is_exit=False)
     assert ei.value.code == "unknown_name"
+
+
+def test_entry_in_wrapper_rejected():
+    # entry/barsSinceEntry inside a wrapper or indicator arg crashes evaluation
+    # (no per-bar scalar to recurse with) — the validator must catch it up front,
+    # on both the wrapper path (highest/avg) and the indicator path.
+    assert _err("highest(barsSinceEntry, 3) > 2", is_exit=True).code == "entry_in_wrapper"
+    assert _err(
+        "avg(count(bearish(candle), barsSinceEntry), 2) > 1", is_exit=True
+    ).code == "entry_in_wrapper"
+    assert _err("highest(entry, 3) > 2", is_exit=True).code == "entry_in_wrapper"
+
+
+def test_entry_directly_in_count_condition_stays_valid():
+    # entry directly inside count(...)'s condition is fine — it evaluates on the
+    # per-bar path, not through a wrapper/indicator's array-of-values path.
+    validate(parse("count(candle.close < entry, 10) >= 3"), is_exit=True)
