@@ -25,7 +25,7 @@ class _Parser:
         return self.next()
 
     # row := crossfn "(" arith "," arith ")" | arith (cmpop arith)+
-    def parse_row(self) -> N.Compare | N.Cross | N.Chain:
+    def parse_row(self) -> N.Row:
         t = self.peek()
         if t.type == "NAME" and t.value in N.CROSS_FNS and self.toks[self.i + 1].type == "LPAREN":
             fn = self.next()
@@ -38,6 +38,9 @@ class _Parser:
             return N.Cross(fn.value, a, b, fn.start, close.end)
         left = self.parse_arith()
         op = self.peek()
+        if isinstance(left, N.Predicate) and op.type == "EOF":
+            self.next()
+            return left
         if op.type not in ("GT", "LT", "GE", "LE"):
             raise ExprError("expected_operator", "Expected a comparison operator (> < >= <=).", op.start, op.end)
         sym_of = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<="}
@@ -96,6 +99,20 @@ class _Parser:
                 return N.Candle(None, name.start, name.end)
             if name.value == "entry":
                 return N.Entry(name.start, name.end)
+            if name.value == "barsSinceEntry":
+                return N.BarsSinceEntry(name.start, name.end)
+            if name.value in N.PREDICATE_FNS and self.peek().type == "LPAREN":
+                self.next()
+                arg = self.parse_arith()
+                close = self.expect("RPAREN")
+                return N.Predicate(name.value, arg, name.start, close.end)
+            if name.value == "count" and self.peek().type == "LPAREN":
+                self.next()
+                cond = self.parse_condition()
+                self.expect("COMMA")
+                window = self.parse_arith()
+                close = self.expect("RPAREN")
+                return N.Count(cond, window, name.start, close.end)
             if self.peek().type == "LPAREN":
                 self.next()
                 args: list[N.Node] = []
@@ -110,6 +127,32 @@ class _Parser:
             # validator reports it. Model it as a zero-arg Call so spans survive.
             return N.Call(name.value, [], name.start, name.end)
         raise ExprError("unexpected_token", "Expected a value here.", t.start, t.end)
+
+    # condition := cross "(" arith "," arith ")" | arith cmpop arith | predicate
+    def parse_condition(self) -> N.Compare | N.Cross | N.Predicate:
+        t = self.peek()
+        if t.type == "NAME" and t.value in N.CROSS_FNS and self.toks[self.i + 1].type == "LPAREN":
+            fn = self.next()
+            self.expect("LPAREN")
+            a = self.parse_arith()
+            self.expect("COMMA")
+            b = self.parse_arith()
+            close = self.expect("RPAREN")
+            return N.Cross(fn.value, a, b, fn.start, close.end)
+        left = self.parse_arith()
+        op = self.peek()
+        if op.type not in ("GT", "LT", "GE", "LE"):
+            if isinstance(left, N.Predicate):
+                return left
+            raise ExprError(
+                "count_needs_condition",
+                "count's first argument must be a condition, like candle.open > candle.close.",
+                left.start, left.end,
+            )
+        sym_of = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<="}
+        optok = self.next()
+        right = self.parse_arith()
+        return N.Compare(sym_of[optok.type], left, right, left.start, right.end)
 
     def parse_postfix(self, node: N.Node) -> N.Node:
         while True:
@@ -148,5 +191,5 @@ def _respan(node: N.Node, start: int, end: int):
     return dataclasses.replace(node, start=start, end=end)
 
 
-def parse(src: str) -> N.Compare | N.Cross | N.Chain:
+def parse(src: str) -> N.Row:
     return _Parser(tokenize(src)).parse_row()

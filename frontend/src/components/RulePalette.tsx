@@ -1,4 +1,4 @@
-import { CANDLE_FIELDS, INDICATORS, WRAPPERS, CROSSES, TIMEFRAMES } from "../lib/expr/catalog";
+import { CANDLE_FIELDS, INDICATORS, WRAPPERS, CROSSES, CONDITIONS, TIMEFRAMES } from "../lib/expr/catalog";
 import Tooltip from "./Tooltip";
 
 export default function RulePalette({ onInsert }: { onInsert: (text: string) => void }) {
@@ -60,6 +60,20 @@ export default function RulePalette({ onInsert }: { onInsert: (text: string) => 
               <button
                 onClick={() => onInsert(entry.insert)}
               >
+                {entry.signature}
+              </button>
+            </Tooltip>
+          ))}
+        </div>
+      </div>
+
+      {/* Conditions section */}
+      <div className="rule-palette-group">
+        <h3>Conditions</h3>
+        <div className="rule-palette-items">
+          {CONDITIONS.map((entry) => (
+            <Tooltip key={entry.name} content={entry.detail}>
+              <button onClick={() => onInsert(entry.insert)}>
                 {entry.signature}
               </button>
             </Tooltip>

@@ -56,3 +56,21 @@ def test_tf_offset_outside_pin_is_base_bars():
 def test_tf_wrapper_outside_pin_is_base_bars():
     # slope's window runs over the base-aligned series: 3 base bars.
     assert warmup_bars(parse("slope(EMA(50)@1H, 3) > 0"), "MINUTE_5") == 3
+
+
+def test_warmup_count_literal_window():
+    # window 10 + cond warmup (EMA 9) = 19
+    assert warmup_bars(parse("count(candle.close > EMA(9), 10) >= 3")) == 19
+
+
+def test_warmup_count_dynamic_window():
+    # barsSinceEntry window contributes 0; cond is candle-only -> 0
+    assert warmup_bars(parse("count(bearish(candle), barsSinceEntry) >= 3")) == 0
+
+
+def test_warmup_predicate_offset():
+    assert warmup_bars(parse("bearish(candle[-2])")) == 2
+
+
+def test_warmup_bars_since_entry_standalone():
+    assert warmup_bars(parse("barsSinceEntry > 12")) == 0

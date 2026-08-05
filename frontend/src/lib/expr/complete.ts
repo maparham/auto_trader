@@ -16,6 +16,7 @@ import type {
 import type { EditorView } from "@codemirror/view";
 import {
   CANDLE_FIELDS,
+  CONDITIONS,
   CROSSES,
   INDICATORS,
   TIMEFRAMES,
@@ -64,6 +65,7 @@ const WORD_CANDIDATES: WordCandidate[] = [
   ...INDICATORS.map((e) => fnCandidate(e, "indicator")),
   ...WRAPPERS.map((e) => fnCandidate(e, "wrapper")),
   ...CROSSES.map((e) => fnCandidate(e, "cross")),
+  ...CONDITIONS.map((e) => fnCandidate(e, "cross")),
   { label: "candle", type: "variable", detail: "Current bar", insert: "candle." },
   { label: "entry", type: "variable", detail: "Entry price (exit rules only)", insert: "entry" },
 ];

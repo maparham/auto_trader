@@ -176,7 +176,7 @@ def run_coded_sync(
 def build_expr_engine(
     req: ExprBacktestRequest, candles: list[Candle],
     htf_candles: dict[str, list[Candle]],
-    overrides: dict[tuple[str, str, int], "N.Compare | N.Cross"],
+    overrides: dict[tuple[str, str, int], "N.Row"],
     long_risk: RiskConfigDTO | None, short_risk: RiskConfigDTO | None,
 ) -> tuple[BacktestEngine, ExprRuleStrategy]:
     """Compile one expression combo into a (engine, strategy) pair WITHOUT
@@ -254,7 +254,7 @@ def build_expr_engine(
 def run_expr_sync(
     req: ExprBacktestRequest, candles: list[Candle],
     htf_candles: dict[str, list[Candle]],
-    overrides: dict[tuple[str, str, int], "N.Compare | N.Cross"],
+    overrides: dict[tuple[str, str, int], "N.Row"],
     long_risk: RiskConfigDTO | None, short_risk: RiskConfigDTO | None,
 ) -> BacktestResult:
     """One expression engine run for a sweep combo (build + run). See
@@ -308,7 +308,7 @@ def apply_combo(
 
 def apply_lit_combo(
     req: ExprBacktestRequest, combo: dict,
-) -> dict[tuple[str, str, int], N.Compare | N.Cross]:
+) -> dict[tuple[str, str, int], N.Row]:
     """Parse + substitute every expression row a `lit:` target addresses.
 
     Target form `lit:<side>.<entry|exit>.<rowIdx>.<ordinal>`: locate the addressed
@@ -349,7 +349,7 @@ def apply_lit_combo(
             raise SweepValidationError(422, f"sweep target '{target}' index out of range")
         overrides.setdefault((side, grp, idx), {})[int(ord_s)] = float(value)
 
-    out: dict[tuple[str, str, int], N.Compare | N.Cross] = {}
+    out: dict[tuple[str, str, int], N.Row] = {}
     for (side, grp, idx), ov in overrides.items():
         try:
             node = parse(group_map[(side, grp)][idx].expr)

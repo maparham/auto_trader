@@ -39,6 +39,13 @@ def warmup_bars(node: N.Node, resolution: str | None = None) -> int:
         return warmup_bars(node.operand, resolution)
     if isinstance(node, N.Binary):
         return max(warmup_bars(node.left, resolution), warmup_bars(node.right, resolution))
+    if isinstance(node, N.Predicate):
+        return warmup_bars(node.base, resolution)
+    if isinstance(node, N.BarsSinceEntry):
+        return 0
+    if isinstance(node, N.Count):
+        n = int(node.window.value) if isinstance(node.window, N.Num) else 0
+        return n + warmup_bars(node.cond, resolution)
     if isinstance(node, N.Call):
         if node.name in WRAPPERS:
             # wrapper window (2nd arg literal) + the inner term's warm-up

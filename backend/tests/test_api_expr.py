@@ -228,3 +228,71 @@ def test_expr_series_parse_error():
     })
     assert r.status_code == 422
     assert r.json()["detail"]["code"] == "expected_operator"
+
+
+def test_expr_series_bare_predicate_row_422s():
+    # A bare bullish(...)/bearish(...) row is a boolean predicate with no numeric
+    # series to plot — must 422, not 500 (parse() can now return N.Predicate).
+    r = client.post("/api/expr/series", json={
+        "epic": "TEST", "resolution": "HOUR", "expr": "bullish(candle)",
+        "fromTime": 0, "toTime": 3600,
+    })
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "predicate_not_plottable"
+
+
+# --- count()/bullish()/bearish()/barsSinceEntry --------------------------
+
+
+def _oc_candles(bars):
+    """bars: list of (open, close); high/low derived. Hourly steps."""
+    return [{"time": 3600 * k, "open": o, "high": max(o, c) + 1, "low": min(o, c) - 1,
+             "close": c, "volume": 100.0} for k, (o, c) in enumerate(bars)]
+
+
+def test_expr_backtest_count_red_since_entry_exit():
+    """Canonical spec rule: exit when a 3rd red candle since entry closes below
+    the entry price. crossAbove(close, 103) fires exactly once, at bar 1
+    (102 -> 104); the position fills at bar 2 open (104) -> entry bar 2. Bar 2
+    is itself red (104 -> 103) but is the entry bar, so it is EXCLUDED from the
+    barsSinceEntry window. Reds since entry: bars 3, 4, 5 -> the count hits 3 on
+    bar 5 (close 100 < entry 104 too), exit fills at bar 6 open (100)."""
+    bars = [(101, 102), (102, 104), (104, 103), (103, 102), (102, 101), (101, 100), (100, 100)]
+    r = client.post("/api/expr/backtest", json=_base_req(
+        candles=_oc_candles(bars),
+        longEntry=[{"expr": "crossAbove(candle.close, 103)"}],
+        longExit=[{"expr": "count(bearish(candle), barsSinceEntry) >= 3"},
+                  {"expr": "candle.close < entry"}],
+    ))
+    assert r.status_code == 200
+    trades = r.json()["trades"]
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["entry_time"] == 3600 * 2 and t["entry_price"] == 104
+    assert t["exit_time"] == 3600 * 6 and t["exit_price"] == 100  # bar-6 open fill
+    assert t["reason"] != "range end"
+
+
+def test_expr_backtest_count_needs_third_red():
+    """Same shape but bar 5 is green (101 -> 103, still below the 103 cross
+    threshold so the entry never re-fires): only 2 reds since entry, the rule
+    never fires, and the trade exits at range end."""
+    bars = [(101, 102), (102, 104), (104, 103), (103, 102), (102, 101), (101, 103), (103, 103)]
+    r = client.post("/api/expr/backtest", json=_base_req(
+        candles=_oc_candles(bars),
+        longEntry=[{"expr": "crossAbove(candle.close, 103)"}],
+        longExit=[{"expr": "count(bearish(candle), barsSinceEntry) >= 3"},
+                  {"expr": "candle.close < entry"}],
+    ))
+    assert r.status_code == 200
+    trades = r.json()["trades"]
+    assert len(trades) == 1
+    assert trades[0]["reason"] == "range end"
+
+
+def test_referenced_tfs_sees_into_count_and_predicates():
+    from auto_trader.api.routers.expr import _referenced_tfs
+    from auto_trader.strategy.expr.parser import parse
+
+    node = parse("count(bearish(candle@1H), 10) >= 2")
+    assert _referenced_tfs(node) == {"1H"}

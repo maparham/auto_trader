@@ -100,3 +100,30 @@ async def test_closeness_endpoint_422_on_bad_expr(monkeypatch):
     async with AsyncClient(transport=transport, base_url="http://t") as ac:
         r = await ac.post("/api/expr/closeness", json=body)
     assert r.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_closeness_endpoint_422_on_bars_since_entry_in_non_exit_row(monkeypatch):
+    # /api/expr/closeness always validates rows as non-exit (is_exit=False), so a
+    # count(...) predicate keyed on barsSinceEntry must be rejected at validate()
+    # before it ever reaches series_of/group_closeness -- which raises a bare
+    # ValueError for barsSinceEntry and would otherwise 500 instead of 422.
+    from auto_trader.api import deps
+
+    async def fake_fetch(*a, **k):
+        return []
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
+    body = {
+        "broker": "capital", "epic": "X", "priceSide": "mid",
+        "rows": ["count(bearish(candle), barsSinceEntry) >= 3"], "combine": "AND",
+        "baseResolution": "MINUTE", "displayResolution": "MINUTE",
+        "fromTime": 0, "toTime": 60,
+        "norm": {"basis": "volatility", "width": 2.0, "window": 5, "atrLength": 14},
+        "agg": "max",
+    }
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://t") as ac:
+        r = await ac.post("/api/expr/closeness", json=body)
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "entry_in_entry_rule"

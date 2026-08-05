@@ -39,7 +39,7 @@ Note: uncommitted changes from the other branch may ride along in the worktree â
 - [ ] **Step 2: Verify baseline tests pass**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_parser.py tests/test_expr_validate.py tests/test_expr_evaluate.py tests/test_expr_warmup.py tests/test_expr_parser_corpus.py -q
+cd backend && .venv/bin/pytest tests/test_expr_parser.py tests/test_expr_validate.py tests/test_expr_evaluate.py tests/test_expr_warmup.py tests/test_expr_parser_corpus.py -q
 cd ../frontend && npm run test:unit -- src/lib/expr
 ```
 
@@ -125,7 +125,7 @@ COUNT = "count"
 - [ ] **Step 3: Smoke-check imports**
 
 ```bash
-cd backend && ../.venv/bin/python -c "from auto_trader.strategy.expr import nodes as N; print(N.Predicate, N.Count, N.BarsSinceEntry, N.Row)"
+cd backend && .venv/bin/python -c "from auto_trader.strategy.expr import nodes as N; print(N.Predicate, N.Count, N.BarsSinceEntry, N.Row)"
 ```
 
 Expected: prints the three classes and the alias without error.
@@ -207,7 +207,7 @@ def test_count_spans():
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_parser.py -q -k "count or predicate or bars_since"
+cd backend && .venv/bin/pytest tests/test_expr_parser.py -q -k "count or predicate or bars_since"
 ```
 
 Expected: FAIL (`count_needs_condition` not raised / nodes are plain `Call`s).
@@ -281,7 +281,7 @@ In `parser.py`:
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_parser.py tests/test_expr_parser_chain.py -q
+cd backend && .venv/bin/pytest tests/test_expr_parser.py tests/test_expr_parser_chain.py -q
 ```
 
 Expected: PASS (including pre-existing tests).
@@ -359,7 +359,7 @@ def test_count_condition_operands_validated():
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_validate.py -q -k "predicate or count or bars_since"
+cd backend && .venv/bin/pytest tests/test_expr_validate.py -q -k "predicate or count or bars_since"
 ```
 
 Expected: FAIL (new node kinds fall through to `unknown_name` / no branch).
@@ -431,7 +431,7 @@ def _check_predicate(node: N.Predicate) -> None:
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_validate.py -q
+cd backend && .venv/bin/pytest tests/test_expr_validate.py -q
 ```
 
 Expected: PASS.
@@ -485,7 +485,7 @@ def test_substitute_count_window():
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd backend && ../.venv/bin/pytest backend/tests -q -k "count_literal or count_predicate_offset or predicate_row_no or substitute_count" 2>/dev/null || cd backend && ../.venv/bin/pytest tests -q -k "count_literals or count_predicate_offset or predicate_row_no or substitute_count"
+cd backend && .venv/bin/pytest backend/tests -q -k "count_literal or count_predicate_offset or predicate_row_no or substitute_count" 2>/dev/null || cd backend && .venv/bin/pytest tests -q -k "count_literals or count_predicate_offset or predicate_row_no or substitute_count"
 ```
 
 Expected: FAIL (new nodes not collected / rewrite misses them).
@@ -568,7 +568,7 @@ Also update `_collect_side`? No change needed â€” a Predicate row reaches `liter
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests -q -k "literal or substitute"
+cd backend && .venv/bin/pytest tests -q -k "literal or substitute"
 ```
 
 Expected: PASS.
@@ -618,7 +618,7 @@ def test_warmup_bars_since_entry_standalone():
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_warmup.py -q
+cd backend && .venv/bin/pytest tests/test_expr_warmup.py -q
 ```
 
 Expected: new tests FAIL (fall through to 0 / wrong values or TypeError).
@@ -642,7 +642,7 @@ In `warmup.py`, add branches before the `N.Call` branch:
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_warmup.py -q
+cd backend && .venv/bin/pytest tests/test_expr_warmup.py -q
 ```
 
 Expected: PASS.
@@ -741,7 +741,7 @@ Adjust `_bars`/imports to the file's existing conventions rather than duplicatin
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_evaluate.py -q -k "count or predicate or bars_since"
+cd backend && .venv/bin/pytest tests/test_expr_evaluate.py -q -k "count or predicate or bars_since"
 ```
 
 Expected: FAIL (`series_of` raises "cannot evaluate Count as a series", etc.).
@@ -870,7 +870,7 @@ In `CompiledRow.evaluate`, add before the Compare branch:
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_evaluate.py -q
+cd backend && .venv/bin/pytest tests/test_expr_evaluate.py -q
 ```
 
 Expected: PASS (all, including pre-existing).
@@ -951,7 +951,7 @@ def test_strategy_passes_entry_index():
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_evaluate.py -q -k "bars_since or dynamic or passes_entry"
+cd backend && .venv/bin/pytest tests/test_expr_evaluate.py -q -k "bars_since or dynamic or passes_entry"
 ```
 
 Expected: FAIL (TypeError: evaluate takes 2 positional args / fallback crash).
@@ -1067,7 +1067,7 @@ In `on_bar`, compute per side only when held and pass along:
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_evaluate.py tests/test_api_expr.py -q
+cd backend && .venv/bin/pytest tests/test_expr_evaluate.py tests/test_api_expr.py -q
 ```
 
 Expected: PASS.
@@ -1165,7 +1165,7 @@ def test_referenced_tfs_sees_into_count_and_predicates():
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_closeness.py tests/test_api_expr.py -q -k "predicate or referenced or count"
+cd backend && .venv/bin/pytest tests/test_expr_closeness.py tests/test_api_expr.py -q -k "predicate or referenced or count"
 ```
 
 Expected: FAIL.
@@ -1211,7 +1211,7 @@ Widen `row_closeness`/`group_closeness` annotations to accept `N.Row` (`N.Compar
 - [ ] **Step 4: Run the full backend suite**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests -q
+cd backend && .venv/bin/pytest tests -q
 ```
 
 Expected: PASS.
@@ -1452,7 +1452,7 @@ IMPORTANT: verify each `from`/`to` by running BOTH corpus suites (next step); fi
 - [ ] **Step 2: Run both corpus suites**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests/test_expr_parser_corpus.py -q
+cd backend && .venv/bin/pytest tests/test_expr_parser_corpus.py -q
 cd ../frontend && npm run test:unit -- src/lib/expr/corpus.test.ts
 ```
 
@@ -1501,7 +1501,7 @@ git commit -m "feat(expr-editor): parity corpus + completion for count/predicate
 - [ ] **Step 1: Full backend suite**
 
 ```bash
-cd backend && ../.venv/bin/pytest tests -q
+cd backend && .venv/bin/pytest tests -q
 ```
 
 Expected: PASS. Pay attention to `test_expr_closeness.py`, `test_api_expr.py`, `test_expr_warmup.py`, and any sweep tests (`substitute` changed).
