@@ -870,7 +870,8 @@ export default function ChartCore({
   // line the user clicked/dragged. The entry pill shows symbol + summary + uPnL +
   // close; the SL/TP pills show symbol + level + the P/L that level would realise if
   // hit + remove. Any pill shows Apply/Discard when ITS OWN line has a staged drag.
-  // Anchored at the line's pixel y (recomputed in redraw); x frozen at selection.
+  // Anchored at the line's pixel y (recomputed in redraw; TradePills spreads
+  // overlapping pills vertically with leader ticks); x frozen at selection.
   const [tradePills, setTradePills] = useState<
     Array<{
       tradeId: string;
@@ -916,14 +917,14 @@ export default function ChartCore({
   // whole trade), so its hover-lift shadow is scoped to that one pill. Hover-only: a
   // selected-but-unhovered pill gets no shadow. String-encoded so React dedupes.
   const [hoveredPillKey, setHoveredPillKey] = useState<string | null>(null);
-  // The pill whose RECT the cursor is literally inside (not merely its line's band),
-  // keyed "tradeId:field" — gates the details popover so it opens on the pill only, not
-  // on a bare line-hover. Distinct from hoveredPillKey, which also lifts on line hover.
-  const [hoveredPillRectKey, setHoveredPillRectKey] = useState<string | null>(null);
   // The focused pill, keyed "tradeId:field" — the selected line wins, else the hovered
   // one. Drives z-order so an overlapped pill in focus rises above its neighbours. Encoded
   // as a string so React dedupes: staying on the same line doesn't re-render.
   const [focusedPillKey, setFocusedPillKey] = useState<string | null>(null);
+  // The click-SELECTED trade id (never hover) — its whole pill group shows a persistent
+  // selected style so the bracket spine reads as belonging to those pills when trades
+  // overlap at near-identical levels.
+  const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   // The on-line pill is shown while the line is hovered/selected (driven by
   // klinecharts via overlays) OR while the cursor is over the pill itself —
   // moving cursor from canvas line onto the DOM pill ends the line hover, so this
@@ -1499,9 +1500,12 @@ export default function ChartCore({
       // A pill click (its body is pointer-events:none, so it lands here on the canvas)
       // selects the pill's line even where the pill pokes past the line's ±6px click
       // band — the hand cursor shows across the whole pill, so the whole pill selects.
+      // The pill is tested FIRST: it's an opaque chip on top of the lines, so a click
+      // inside its rect must select ITS trade, not another trade's line passing beneath
+      // (overlapping trades sit at near-identical levels).
       const tradeHit = overTradeMarker
         ? null
-        : tradeLineHitTest(x, y) ?? tradePillHitTest(e.clientX, e.clientY);
+        : tradePillHitTest(e.clientX, e.clientY) ?? tradeLineHitTest(x, y);
       if (tradeHit) selectTradeLine(tradeHit.id, tradeHit.field, false /* openPanel */);
       // Click on empty space drops the trade — UNLESS the edit ticket is open (clicking
       // away from the lines must not slam an open ticket shut; it closes only via its
@@ -1521,6 +1525,7 @@ export default function ChartCore({
       if (!c) return null;
       const mainW = c.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (x > mainW) return null;
+      if (overlays.getAlertsHidden()) return null; // eye menu: hidden lines aren't hittable
       for (const a of overlays.getAlerts()) {
         const ay = first(
           c.convertToPixel([{ value: a.level }], { paneId: "candle_pane", absolute: true }),
@@ -1640,10 +1645,11 @@ export default function ChartCore({
       // Double-click a trade line -> force the edit ticket open. Using openTradeEditor
       // rather than selectTradeLine because a dblclick is preceded by two clicks that
       // may have toggled selection back to its start state — force-set unconditionally.
-      // The pill-rect fallback mirrors onClick's: the whole pill is one hit target,
-      // so a dblclick on its outer strips opens the ticket too instead of falling
-      // through to the empty-space sub-pane collapse.
-      const tradeHit = tradeLineHitTest(x, y) ?? tradePillHitTest(e.clientX, e.clientY);
+      // The pill test mirrors onClick's and runs FIRST for the same reason: the whole
+      // pill is one opaque hit target, so a dblclick inside it opens ITS trade's ticket
+      // even where another trade's line passes beneath the pill; the outer strips still
+      // hit too instead of falling through to the empty-space sub-pane collapse.
+      const tradeHit = tradePillHitTest(e.clientX, e.clientY) ?? tradeLineHitTest(x, y);
       if (tradeHit) {
         openTradeEditor(tradeHit.id, tradeHit.field);
         return;
@@ -2619,6 +2625,7 @@ export default function ChartCore({
           const fField = ui.selected != null ? ui.selectedField : hoveredFieldRef.current;
           setFocusedPillKey(fId ? `${fId}:${fField}` : null);
         }
+        setSelectedTradeId(ui.selected ?? null);
       });
       // The bracket now keys off EDIT state, which lives in its own signals — repaint it
       // when the edit ticket opens/closes or its target changes (e.g. Cancel sets
@@ -2766,6 +2773,7 @@ export default function ChartCore({
     setCursorMode,
     setTradeSelectedFn: setTradeSelected,
     tradeLinePixelsRef,
+    tradePillHitTest,
     tradeDragActiveRef,
     alertDragActiveRef,
   });
@@ -2805,7 +2813,6 @@ export default function ChartCore({
     setOnAxis,
     setTradeHovered,
     setHoveredPillKey,
-    setHoveredPillRectKey,
     setFocusedPillKey,
     tradeLinePixelsRef,
     alertHitTestRef,
@@ -4039,8 +4046,8 @@ export default function ChartCore({
         pendingRef={pendingRef}
         tradePillNodesRef={tradePillNodesRef}
         hoveredPillKey={hoveredPillKey}
-        hoveredPillRectKey={hoveredPillRectKey}
         focusedPillKey={focusedPillKey}
+        selectedTradeId={selectedTradeId}
         tradePillLeft={TRADE_PILL_LEFT}
       />
       </div>

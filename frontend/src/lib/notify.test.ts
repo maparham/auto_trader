@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { toast } from "./notify";
+import { notify, toast } from "./notify";
 
 // The hidden-tab contract: a toast fired while the browser tab is HIDDEN (alerts
 // fire from a background engine; rAF doesn't run and timers would silently remove
@@ -106,6 +106,44 @@ describe("toast visibility lifecycle", () => {
     expect(document.querySelectorAll(".toast").length).toBe(0);
   });
 
+  it("same key coalesces: one toast, updated message, ×N badge", () => {
+    toast("🔔 EURUSD @ 1.10 (now 1.1000)", { key: "EURUSD:a1", duration: null });
+    toast("🔔 EURUSD @ 1.10 (now 1.1002)", { key: "EURUSD:a1", duration: null });
+    const toasts = document.querySelectorAll(".toast");
+    expect(toasts.length).toBe(1);
+    expect(toasts[0].querySelector(".toast-msg")!.textContent).toBe(
+      "🔔 EURUSD @ 1.10 (now 1.1002)",
+    );
+    expect(toasts[0].querySelector(".toast-count")!.textContent).toBe("×2");
+    toast("🔔 EURUSD @ 1.10 (now 1.1005)", { key: "EURUSD:a1", duration: null });
+    expect(document.querySelectorAll(".toast").length).toBe(1);
+    expect(document.querySelector(".toast-count")!.textContent).toBe("×3");
+  });
+
+  it("different keys don't coalesce", () => {
+    toast("a", { key: "EURUSD:a1", duration: null });
+    toast("b", { key: "EURUSD:a2", duration: null });
+    expect(document.querySelectorAll(".toast").length).toBe(2);
+  });
+
+  it("keyless toasts never coalesce, even with identical text", () => {
+    toast("same text", { duration: null });
+    toast("same text", { duration: null });
+    expect(document.querySelectorAll(".toast").length).toBe(2);
+  });
+
+  it("after dismissal a keyed re-fire starts a fresh toast without a badge", () => {
+    toast("first", { key: "k", duration: null });
+    (document.querySelector(".toast-close") as HTMLElement).click();
+    // Re-fire while the old toast is still fading out — must be a NEW toast.
+    toast("second", { key: "k", duration: null });
+    vi.advanceTimersByTime(400);
+    const toasts = document.querySelectorAll(".toast");
+    expect(toasts.length).toBe(1);
+    expect(toasts[0].querySelector(".toast-msg")!.textContent).toBe("second");
+    expect(toasts[0].querySelector(".toast-count")).toBeNull();
+  });
+
   it("clickable toast: click runs the handler and dismisses immediately", () => {
     const onClick = vi.fn();
     toast("clicky", { onClick, duration: 4000 });
@@ -115,5 +153,25 @@ describe("toast visibility lifecycle", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(400);
     expect(document.querySelector(".toast")).toBeNull();
+  });
+});
+
+describe("notify OS banner tag", () => {
+  it("same tag on repeat fires so the banner replaces instead of stacking", () => {
+    const seen: Array<{ title: string; opts: NotificationOptions & { renotify?: boolean } }> = [];
+    class FakeNotification {
+      static permission = "granted";
+      onclick: (() => void) | null = null;
+      constructor(title: string, opts: NotificationOptions) {
+        seen.push({ title, opts });
+      }
+      close(): void {}
+    }
+    vi.stubGlobal("Notification", FakeNotification);
+    notify("EURUSD", "@ 1.10 · now 1.1000", undefined, "EURUSD:a1");
+    notify("EURUSD", "@ 1.10 · now 1.1002", undefined, "EURUSD:a1");
+    expect(seen.length).toBe(2);
+    expect(seen[0].opts.tag).toBe(seen[1].opts.tag);
+    expect(seen[1].opts.renotify).toBe(true);
   });
 });

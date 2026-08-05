@@ -17,4 +17,12 @@ describe("completionsFor", () => {
     const opts = completionsFor("EM", 2).map((o) => o.label);
     expect(opts[0]).toBe("EMA");
   });
+  it("offers conditions on a bare prefix", () => {
+    const labels = completionsFor("cou", 3).map((o) => o.label);
+    expect(labels).toContain("count");
+  });
+  it("offers barsSinceEntry", () => {
+    const labels = completionsFor("bars", 4).map((o) => o.label);
+    expect(labels).toContain("barsSinceEntry");
+  });
 });

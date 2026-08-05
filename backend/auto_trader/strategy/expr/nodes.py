@@ -96,11 +96,38 @@ class Chain:
     end: int
 
 
+@dataclass(frozen=True, slots=True)
+class Predicate:
+    fn: str  # "bullish" | "bearish"
+    base: "Node"  # candle-rooted expression (candle, candle[-1], candle@1H, ...)
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Count:
+    cond: "Compare | Cross | Predicate"
+    window: "Node"
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class BarsSinceEntry:
+    start: int
+    end: int
+
+
 Node = (
     Num | Candle | Entry | Call | Field | Offset | Tf | Unary | Binary | Compare | Cross | Chain
+    | Predicate | Count | BarsSinceEntry
 )
 
+# A parsed row: what parse() returns and validate()/compile_row() accept.
+Row = Compare | Cross | Chain | Predicate
+
 CROSS_FNS = ("crossAbove", "crossBelow")
+PREDICATE_FNS = ("bullish", "bearish")
 CANDLE_FIELDS = ("open", "high", "low", "close", "volume", "body", "range", "wickTop", "wickBottom")
 
 
@@ -117,4 +144,28 @@ def contains_tf(node: Node) -> bool:
         return contains_tf(node.a) or contains_tf(node.b)
     if isinstance(node, Chain):
         return any(contains_tf(p) for p in node.parts)
+    if isinstance(node, Predicate):
+        return contains_tf(node.base)
+    if isinstance(node, Count):
+        return contains_tf(node.cond) or contains_tf(node.window)
+    return False
+
+
+def contains_bars_since_entry(node: Node) -> bool:
+    if isinstance(node, BarsSinceEntry):
+        return True
+    if isinstance(node, (Field, Offset, Unary)):
+        return contains_bars_since_entry(node.base if not isinstance(node, Unary) else node.operand)
+    if isinstance(node, Call):
+        return any(contains_bars_since_entry(a) for a in node.args)
+    if isinstance(node, (Binary, Compare)):
+        return contains_bars_since_entry(node.left) or contains_bars_since_entry(node.right)
+    if isinstance(node, Cross):
+        return contains_bars_since_entry(node.a) or contains_bars_since_entry(node.b)
+    if isinstance(node, Chain):
+        return any(contains_bars_since_entry(p) for p in node.parts)
+    if isinstance(node, Predicate):
+        return contains_bars_since_entry(node.base)
+    if isinstance(node, Count):
+        return contains_bars_since_entry(node.cond) or contains_bars_since_entry(node.window)
     return False

@@ -42,11 +42,10 @@ import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
 import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
 import { PHASE_LABEL, WfoResults } from "./WfoResults";
-import { resolveWindow } from "./lib/backtestWindow";
+import { requiredWarmupBars, resolveWindow } from "./lib/backtestWindow";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
-  longestIndicatorLength,
   type BacktestConfig,
   type RangeConfig,
   type RangeMode,
@@ -304,8 +303,11 @@ function WindowTimeline({ cfg, resolution }: { cfg: BacktestConfig; resolution: 
   const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
   const windowBars = estimateWindowBars(cfg, resSeconds);
   const depth = cfg.range.history ?? "minimal";
-  const historyBars =
-    depth === "bars" ? cfg.range.historyBars ?? 500 : depth === "minimal" ? longestIndicatorLength(cfg) : null;
+  // Size from what the run itself demands (BacktestButton passes the same
+  // resolution into requiredWarmupBars) — expression rows carry almost all of a
+  // config's warm-up, and the ATR-only longestIndicatorLength never saw them.
+  // "Full" stays open-ended: it has no known size to draw.
+  const historyBars = depth === "full" ? null : requiredWarmupBars(cfg, resSeconds);
 
   const historyShare = historyBars === null ? 0.62 : historyBars / (historyBars + windowBars);
   const windowShare = 1 - historyShare;
@@ -3863,6 +3865,31 @@ export function RuleGroupSection({
 }) {
   // Which row's insert palette is open (one at a time), or null when none.
   const [paletteRow, setPaletteRow] = useState<number | null>(null);
+  // The open row's wrapper — covers the toggle, the expression input, and the
+  // palette itself, so typing/inserting doesn't count as clicking outside.
+  const paletteHostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (paletteRow === null) return;
+    const onDown = (e: MouseEvent) => {
+      if (paletteHostRef.current?.contains(e.target as Node)) return;
+      setPaletteRow(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // The editor's own completion popup owns Escape while it's up; only take
+      // the key once it's gone, and keep it from reaching the modal's closer.
+      if (document.querySelector(".cm-tooltip-autocomplete")) return;
+      e.stopPropagation();
+      setPaletteRow(null);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [paletteRow]);
 
   // Emit the group back to the parent. The stored config still types groups as
   // `RuleGroup`; the cast bridges the coexistence window (Stage C rewrites the
@@ -3959,34 +3986,53 @@ export function RuleGroupSection({
         // Expr rows only touch `expr`/`enabled`; the alias keeps the copy handler
         // typed against the stored `Rule` shape.
         const r = rule as Rule;
+        // A disabled row is frozen: the editor goes read-only, and the two
+        // controls that write into it (palette insert, pick-from-chart) go with
+        // it — otherwise they'd keep editing an expression you can't type in.
+        const off = rule.enabled === false;
         return (
         <Fragment key={i}>
-        <div className={`bt-rule-row${rule.enabled === false ? " bt-rule-disabled" : ""}`}>
+        <div
+          className={`bt-rule-row${off ? " bt-rule-disabled" : ""}`}
+          ref={paletteRow === i ? paletteHostRef : undefined}
+        >
           <div className="bt-rule-main">
             <RuleExpressionInput
               value={rule.expr ?? ""}
               onChange={(expr) => patchRule(i, { expr })}
               isExit={isExit}
+              readOnly={off}
               placeholder="e.g. EMA(9) > EMA(21)"
             />
             <div className="bt-rule-actions">
-              <Tooltip content="Insert an indicator, candle field, or timeframe">
+              <Tooltip
+                content={
+                  off
+                    ? "Enable this rule to edit it"
+                    : paletteRow === i
+                      ? "Hide the insert palette"
+                      : "Insert an indicator, candle field, or timeframe"
+                }
+              >
                 <button
                   type="button"
                   className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
                   onClick={() => setPaletteRow(paletteRow === i ? null : i)}
-                  aria-label="Insert from palette"
+                  disabled={off}
+                  aria-label={paletteRow === i ? "Hide the insert palette" : "Insert from palette"}
                   aria-expanded={paletteRow === i}
                 >
-                  +
+                  {paletteRow === i ? "−" : "+"}
                 </button>
               </Tooltip>
               {pickIndicator && (
                 <Tooltip
                   content={
-                    pickIndicator.armedRow === i
-                      ? "Click an indicator on the chart, or click here to cancel"
-                      : "Pick an indicator from the chart"
+                    off
+                      ? "Enable this rule to edit it"
+                      : pickIndicator.armedRow === i
+                        ? "Click an indicator on the chart, or click here to cancel"
+                        : "Pick an indicator from the chart"
                   }
                 >
                   <button
@@ -3995,6 +4041,7 @@ export function RuleGroupSection({
                     onClick={() =>
                       pickIndicator.armedRow === i ? pickIndicator.disarm() : pickIndicator.arm(i)
                     }
+                    disabled={off}
                     aria-label="Pick an indicator from the chart"
                     aria-pressed={pickIndicator.armedRow === i}
                   >
@@ -4003,10 +4050,18 @@ export function RuleGroupSection({
                 </Tooltip>
               )}
               <RuleMenu
-                enabled={rule.enabled !== false}
+                enabled={!off}
                 onDuplicate={() => duplicateRule(i)}
                 onCopy={() => onCopy?.(r)}
-                onToggleEnabled={() => patchRule(i, { enabled: rule.enabled === false })}
+                onToggleEnabled={() => {
+                  // Turning a row off closes anything it had open, so the frozen
+                  // row can't be left with a live palette or an armed picker.
+                  if (!off) {
+                    if (paletteRow === i) setPaletteRow(null);
+                    if (pickIndicator?.armedRow === i) pickIndicator.disarm();
+                  }
+                  patchRule(i, { enabled: off });
+                }}
                 onRemove={() => removeRule(i)}
               />
             </div>

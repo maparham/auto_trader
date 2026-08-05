@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -82,6 +83,12 @@ _DEPLOY_STATE_UI = {
 
 def _ui_deploy_state(sdk_state: str) -> str:
     return _DEPLOY_STATE_UI.get(sdk_state, "off")
+
+
+# Auto-undeploy the MetaApi account after this many seconds with no genuine RPC
+# activity, to stop hosting billing when MT5 is left deployed but unused. Reset
+# on every successful RPC (see _bounded) and on resume(). Env-overridable.
+_IDLE_UNDEPLOY_SECS = int(os.getenv("MT5_IDLE_UNDEPLOY_SECS", "1800"))
 
 
 # Resolution -> MetaApi timeframe string. Every Resolution we support has a direct
@@ -309,6 +316,13 @@ class MT5Broker(MarketDataBroker):
     RECONNECT_COOLDOWN = 5.0
     RECONNECT_BACKOFF_MAX = 300.0
 
+    # Wall-clock bound on a single RPC connect attempt (wait_connected). The SDK's
+    # wait_connected default is 300s and loops on reload(); we bound it so the
+    # background _connect task (and the _rebuild heal loop that awaits it) fails and
+    # retries in minutes rather than sitting on the full 300s. Off the lock, this
+    # budget no longer affects UI liveness. 120s covers a genuine deploy->CONNECT.
+    CONNECT_BUDGET = 120.0
+
     # Wall-clock bounds on tearing down a retired/wedged SDK client (see _reap_api)
     # and on closing connections at shutdown (see aclose). Shutdown MUST be bounded:
     # uvicorn --reload join()s the old process with no timeout while the parent
@@ -346,6 +360,17 @@ class MT5Broker(MarketDataBroker):
         self._rebuild_fails = 0  # consecutive failed rebuilds — drives the backoff
         self._rebuild_task: asyncio.Task | None = None
         self._last_rebuild_at = float("-inf")
+        # Single-flight for the slow RPC connect. `_ensure` claims/reuses ONE
+        # `_connect` task under `_lock` then awaits it WITHOUT the lock, so the
+        # connect's minutes of network I/O never block lifecycle callers that share
+        # `_lock` (deploy_state/pause/resume). Invalidated (nulled) by pause/resume/
+        # _rebuild so the next `_ensure` starts a fresh connect.
+        self._connect_task: asyncio.Task | None = None
+        # Idle auto-undeploy: monotonic time of the last genuine RPC; a watchdog
+        # undeploys once (monotonic - _last_use) exceeds _idle_timeout. Seeded to
+        # "now" so a just-constructed broker gets a full grace window.
+        self._idle_timeout = _IDLE_UNDEPLOY_SECS
+        self._last_use = time.monotonic()
         # Streaming lives on a SECOND, stateful MetaApi connection alongside the RPC
         # one (they coexist — verified live). One shared connection multiplexes every
         # symbol; its listener fans ticks out to per-symbol consumer queues, and
@@ -420,6 +445,11 @@ class MT5Broker(MarketDataBroker):
         """Undeploy the account (stops MetaApi billing) and drop our
         connections so nothing holds a socket to a dying terminal. Idempotent."""
         acct = await self._account_handle()
+        async with self._lock:
+            # Supersede any in-flight connect so it can't publish a connection to the
+            # account we're about to undeploy, and force the next _ensure to reconnect.
+            self._gen += 1
+            self._connect_task = None
         await self._close_connections()
         await acct.reload()
         if acct.state in ("DEPLOYED", "DEPLOYING"):
@@ -441,35 +471,76 @@ class MT5Broker(MarketDataBroker):
         self._paused_hint = False
         self._rebuild_fails = 0
         self._last_rebuild_at = float("-inf")
+        # No need to touch _connect_task here: pause() already supersedes any
+        # in-flight connect under _lock, and _ensure replaces a `.done()` task
+        # (a connect that hit the pause gate finished with MT5PausedError) on its
+        # next call. Nulling it here would be off-lock and could race a concurrent
+        # _ensure into spawning a second _connect that leaks an RPC connection.
+        self._last_use = time.monotonic()  # fresh deploy → full idle window
         return _ui_deploy_state(acct.state)
 
+    def seconds_until_idle_undeploy(self) -> int:
+        """Seconds of idle remaining before this account is eligible for
+        auto-undeploy. Local/pure (no I/O): the watchdog and the deploy-state
+        endpoint read it. Clamps at 0; only meaningful while deployed — callers
+        gate on deploy state."""
+        remaining = self._idle_timeout - (time.monotonic() - self._last_use)
+        return int(max(0, remaining))
+
     async def _ensure(self):
-        """Connect + synchronize once, then reuse. Re-entrant: concurrent callers
-        share one connect via the lock, and a healthy connection short-circuits
-        before taking it."""
+        """Return the live RPC connection, connecting once and reusing it. The slow
+        connect runs in a single-flighted background `_connect` task that this method
+        awaits WITHOUT holding `_lock`, so lifecycle callers that share `_lock`
+        (deploy_state/pause/resume) are never blocked by it. Re-entrant: concurrent
+        callers share one `_connect`; a healthy connection short-circuits before any
+        lock or task."""
         if self._synced and self._conn is not None:
             return self._conn
         async with self._lock:
             if self._synced and self._conn is not None:
                 return self._conn
-            acct = await self._account_unlocked()
-            # NEVER auto-deploy: deploying re-starts MetaApi billing, and the
-            # user may have undeployed on purpose (the cost toggle). The local
-            # `state` can be stale, so reload once — the dashboard/API may have
-            # redeployed since this handle was fetched.
+            if self._connect_task is None or self._connect_task.done():
+                self._connect_task = asyncio.create_task(self._connect(self._gen))
+            task = self._connect_task
+        # `_lock` RELEASED before awaiting the slow connect.
+        return await task
+
+    async def _connect(self, gen: int):
+        """The slow RPC connect, run OFF `_lock` and single-flighted via
+        `_connect_task`. Publishes `_conn`/`_synced` under `_lock` only for the O(1)
+        handoff, and only if this connect's captured `gen` still matches — a `pause`
+        or a newer `_rebuild` bumps `_gen` to supersede an in-flight connect so it
+        can't resurrect a connection to an account that was just torn down."""
+        conn = None
+        published = False
+        try:
+            async with self._lock:
+                acct = await self._account_unlocked()
+            # NEVER auto-deploy: deploying re-starts MetaApi billing and the user may
+            # have undeployed on purpose. Reload once — the local state can be stale.
             if acct.state not in ("DEPLOYING", "DEPLOYED"):
                 await acct.reload()
                 if acct.state not in ("DEPLOYING", "DEPLOYED"):
                     raise MT5PausedError(_PAUSED_MSG)
-            await self._acct.wait_connected()
-            conn = self._acct.get_rpc_connection()
+            await acct.wait_connected(self.CONNECT_BUDGET)
+            conn = acct.get_rpc_connection()
             await conn.connect()
             await conn.wait_synchronized(120)
-            self._conn = conn
-            self._synced = True
-            self._paused_hint = False  # a real connection self-heals a stale hint
+            async with self._lock:
+                if gen != self._gen:
+                    raise TimeoutException("mt5: connect superseded")
+                self._conn = conn
+                self._synced = True
+                self._paused_hint = False  # a real connection self-heals a stale hint
+                published = True
             log.info("mt5: connected + synchronized (account %s)", self._account_id)
             return conn
+        finally:
+            if conn is not None and not published:
+                try:
+                    await asyncio.wait_for(conn.close(), self.CLOSE_BUDGET)
+                except Exception:  # best-effort teardown of a conn we won't publish
+                    log.debug("mt5: error closing unpublished conn", exc_info=True)
 
     async def _bounded(self, make_coro):
         """Run an RPC coroutine against the CACHED RPC connection, bounded to
@@ -519,6 +590,7 @@ class MT5Broker(MarketDataBroker):
             raise TimeoutException("mt5: rpc cancelled (connection dropped)")
         self._fail_streak = 0
         self._rebuild_fails = 0  # a working RPC proves the broker healed — reset backoff
+        self._last_use = time.monotonic()  # genuine activity → defer auto-undeploy
         return result
 
     async def read(self, make_coro):
@@ -632,6 +704,7 @@ class MT5Broker(MarketDataBroker):
             self._acct = None
             self._conn = None
             self._synced = False
+            self._connect_task = None
             self._stream_conn = None
             self._stream_synced = False
             symbols = list(self._tick_subs.keys())

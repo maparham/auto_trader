@@ -429,12 +429,12 @@ export function requestBacktestClear(): void {
   backtestClearRequest.set(backtestClearRequest.value + 1);
 }
 
-// Transient run messages (fetch error / short warm-up warning) published by
-// BacktestButton so the results pane can show them alongside the summary — they
-// used to render next to the toolbar button. Reset on symbol/timeframe change.
-export const backtestMessagesSignal = new Signal<{ error: string | null; warning: string | null }>({
+// Transient run error published by BacktestButton so the results pane can show
+// it alongside the summary — it used to render next to the toolbar button. Reset
+// on symbol/timeframe change. Insufficient warm-up used to ride alongside as a
+// non-blocking warning; it aborts the run now, so an error is the only message.
+export const backtestMessagesSignal = new Signal<{ error: string | null }>({
   error: null,
-  warning: null,
 });
 
 // Parameter-sweep wiring (Task 10). The modal owns the axes (session-only —

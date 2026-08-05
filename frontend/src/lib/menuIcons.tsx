@@ -218,6 +218,17 @@ export const MenuIcons = {
       <path d="M6.4 12h11.2" />
     </>,
   ),
+  // Pencil — "drawings" (the eye menu's Hide drawings row).
+  pencil: svg(<path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />),
+  // Pulse line — "indicators" (the eye menu's Hide indicators row).
+  indicator: svg(<path d="M22 12h-4l-3 9L9 3l-3 9H2" />),
+  // Briefcase — "positions" (the eye menu's Hide positions row).
+  positions: svg(
+    <>
+      <rect x="2" y="7" width="20" height="13" rx="2" />
+      <path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2" />
+    </>,
+  ),
   // Up chevron — "buy limit" (long).
   chevronUp: svg(<path d="M6 15l6-6 6 6" />),
   // Down chevron — "sell limit" (short).

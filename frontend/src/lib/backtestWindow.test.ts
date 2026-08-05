@@ -6,6 +6,10 @@ import {
   requiredWarmupBars,
   warmupBarCount,
   longestWarmupBars,
+  widenedHistoryStart,
+  widenUntilWarm,
+  warmupWalkFloor,
+  MAX_WARMUP_PASSES,
 } from "./backtestWindow";
 import type { BacktestConfig } from "./backtestConfig";
 
@@ -83,6 +87,150 @@ describe("resolveHistoryStart / minimalHistoryStart — weekend padding", () => 
     const config = cfg({ range: { mode: "bars", bars: 500, history: "bars", historyBars: 100 } });
     const naiveStart = windowFromMs - 100 * 86_400 * 1000;
     expect(resolveHistoryStart(config, windowFromMs, 86_400)).toBeLessThan(naiveStart);
+  });
+});
+
+describe("widenedHistoryStart — reaching warm-up across a session gap", () => {
+  // The US100 case this was written for: 5m bars, window opens Mon 2026-08-03
+  // 00:00Z, EMA(50) wants 50 warm-up bars. The padded ask (50*300s*1.5 = 6h15m)
+  // starts 2026-08-02 17:45Z — inside the weekend — and the weekly open at
+  // 22:00Z leaves only 24 real bars in that span.
+  const RES = 300;
+  const windowFromMs = Date.UTC(2026, 7, 3, 0, 0);
+  const weeklyOpenMs = Date.UTC(2026, 7, 2, 22, 0);
+  const fridayCloseMs = Date.UTC(2026, 6, 31, 20, 55);
+
+  it("doubles the span so each pass reaches strictly further back", () => {
+    const first = windowFromMs - 6.25 * 3_600_000;
+    const second = widenedHistoryStart(first, windowFromMs, RES);
+    const third = widenedHistoryStart(second, windowFromMs, RES);
+    expect(second).toBe(windowFromMs - 12.5 * 3_600_000);
+    expect(third).toBe(windowFromMs - 25 * 3_600_000);
+  });
+
+  it("clears the weekend gap within MAX_WARMUP_PASSES", () => {
+    // Bars only exist [.., fridayClose] and [weeklyOpen, ..]. A start still
+    // inside the gap yields the 24 bars from the weekly open; only a start at or
+    // before Friday's close can supply the remaining 26.
+    let start = windowFromMs - 6.25 * 3_600_000;
+    // The ask this replaces reaches back past the weekly open but nowhere near
+    // Friday's session, so it can only ever collect the 24 post-open bars.
+    expect(start).toBeLessThan(weeklyOpenMs);
+    expect(start).toBeGreaterThan(fridayCloseMs);
+    let passes = 0;
+    while (start > fridayCloseMs && passes < MAX_WARMUP_PASSES) {
+      start = widenedHistoryStart(start, windowFromMs, RES);
+      passes++;
+    }
+    expect(start).toBeLessThanOrEqual(fridayCloseMs);
+    expect(passes).toBeLessThan(MAX_WARMUP_PASSES);
+  });
+
+  it("never returns a start at or after the one it was given", () => {
+    // The run loop breaks on non-progress, so a degenerate input must not stall
+    // it: a zero-width or inverted lookback still steps back by a whole bar.
+    expect(widenedHistoryStart(windowFromMs, windowFromMs, RES)).toBeLessThan(windowFromMs);
+    expect(widenedHistoryStart(windowFromMs + 5_000, windowFromMs, RES)).toBeLessThan(windowFromMs);
+  });
+});
+
+describe("widenUntilWarm — the walk", () => {
+  const RES = 300;
+  const RES_MS = RES * 1000;
+  const windowFromMs = Date.UTC(2026, 7, 3, 0, 0);
+  const weeklyOpenMs = Date.UTC(2026, 7, 2, 22, 0);
+  const fridayCloseMs = Date.UTC(2026, 6, 31, 20, 55);
+  const floorMs = warmupWalkFloor(cfg(atrRisk(50)), windowFromMs, RES);
+
+  // Bars exist in two sessions with the weekend between them. A fetch returns
+  // every bar at/after `fromMs` — so an ask landing in the gap yields only the
+  // 24 post-weekly-open bars, no matter how much deeper into the gap it reaches.
+  const session = (startMs: number, endMs: number) => {
+    const out: Array<{ timestamp: number }> = [];
+    for (let t = startMs; t <= endMs; t += RES_MS) out.push({ timestamp: t });
+    return out;
+  };
+  const ALL = [
+    ...session(fridayCloseMs - 500 * RES_MS, fridayCloseMs),
+    ...session(weeklyOpenMs, windowFromMs + 100 * RES_MS),
+  ];
+  const gapFetch = (calls: number[]) => async (fromMs: number) => {
+    calls.push(fromMs);
+    return ALL.filter((b) => b.timestamp >= fromMs);
+  };
+
+  it("keeps walking past passes that add nothing, and clears the gap", () => {
+    // The regression this exists for: an early version bailed on the first
+    // no-progress pass, which is every ask still inside the weekend — it left
+    // the run on 24 bars and silently changed nothing.
+    const calls: number[] = [];
+    const start = windowFromMs - 6.25 * 3_600_000;
+    const initial = ALL.filter((b) => b.timestamp >= start);
+    expect(warmupBarCount(initial, windowFromMs)).toBe(24); // the short ask
+    return widenUntilWarm(
+      initial,
+      start,
+      { windowFromMs, resSeconds: RES, required: 50, floorMs },
+      gapFetch(calls),
+    ).then((bars) => {
+      expect(warmupBarCount(bars, windowFromMs)).toBeGreaterThanOrEqual(50);
+      expect(calls.length).toBeGreaterThan(1); // more than one pass was needed
+    });
+  });
+
+  it("stops as soon as the requirement is met", async () => {
+    const calls: number[] = [];
+    const start = windowFromMs - 6.25 * 3_600_000;
+    const initial = ALL.filter((b) => b.timestamp >= start);
+    await widenUntilWarm(
+      initial,
+      start,
+      { windowFromMs, resSeconds: RES, required: 10, floorMs },
+      gapFetch(calls),
+    );
+    expect(calls).toEqual([]); // already had 24 >= 10, never fetched
+  });
+
+  it("stops early on a completely empty fetch (broker refused the ask)", async () => {
+    const calls: number[] = [];
+    const bars = await widenUntilWarm(
+      [{ timestamp: weeklyOpenMs }],
+      windowFromMs - 6.25 * 3_600_000,
+      { windowFromMs, resSeconds: RES, required: 50, floorMs },
+      async (fromMs) => {
+        calls.push(fromMs);
+        return [];
+      },
+    );
+    expect(calls).toHaveLength(1);
+    expect(bars).toHaveLength(1); // kept the original, didn't adopt the empty
+  });
+
+  it("declines to walk when the config already reaches deeper than the floor", async () => {
+    // "full" depth starts 5 years back. Doubling that would ask for centuries;
+    // a shortfall there isn't a session gap, so the walk must not run.
+    const calls: number[] = [];
+    const fullStart = windowFromMs - 5 * 365 * DAY_MS;
+    await widenUntilWarm(
+      [],
+      fullStart,
+      { windowFromMs, resSeconds: RES, required: 50, floorMs },
+      gapFetch(calls),
+    );
+    expect(fullStart).toBeLessThan(floorMs);
+    expect(calls).toEqual([]);
+  });
+
+  it("never asks deeper than the floor", async () => {
+    const calls: number[] = [];
+    await widenUntilWarm(
+      [],
+      windowFromMs - RES_MS,
+      { windowFromMs, resSeconds: RES, required: 100_000, floorMs },
+      gapFetch(calls),
+    );
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) expect(c).toBeGreaterThanOrEqual(floorMs);
   });
 });
 

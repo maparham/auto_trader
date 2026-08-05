@@ -159,6 +159,12 @@ def get_exec(account: str) -> ExecutionBroker:
 _TRIGGER_INTERVAL = 0.5
 
 
+# How often the MT5 idle watchdog checks for a deployed-but-unused account to
+# auto-undeploy (stops MetaApi hosting billing). Coarse: undeploy is a cost
+# guard, not latency-sensitive.
+_MT5_WATCHDOG_INTERVAL = 30.0
+
+
 # Key prefix for the trades-changed push on the /ws/state channel. The frontend
 # refetches positions/orders only when it sees this — replacing the periodic poll.
 TRADES_DIRTY_PREFIX = "__trades__:"
@@ -181,6 +187,28 @@ async def _run_paper_triggers(broker: PaperExecutionBroker, account: str) -> Non
                 )
         except Exception:  # never let one bad tick kill the driver
             log.exception("paper trigger check failed")
+
+
+async def _mt5_idle_tick(broker) -> bool:
+    """One watchdog check: undeploy the MT5 account if it is deployed and has
+    been idle past its window. Returns True iff it undeployed. Never raises —
+    a bad MetaApi call must not kill the watchdog."""
+    try:
+        if await broker.deploy_state() == "on" and broker.seconds_until_idle_undeploy() == 0:
+            await broker.pause()
+            log.info("mt5: auto-undeployed after idle timeout")
+            return True
+    except Exception:
+        log.exception("mt5 idle watchdog tick failed")
+    return False
+
+
+async def _run_mt5_idle_watchdog(broker) -> None:
+    """Periodically auto-undeploy an idle MT5 account so a forgotten deployment
+    stops billing. The account is redeployed only by an explicit user action."""
+    while True:
+        await asyncio.sleep(_MT5_WATCHDOG_INTERVAL)
+        await _mt5_idle_tick(broker)
 
 
 def _parse_resolution(raw: str) -> Resolution:

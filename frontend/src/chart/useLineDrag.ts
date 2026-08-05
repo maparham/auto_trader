@@ -83,6 +83,9 @@ export interface LineDragDeps {
   setTradeSelectedFn: typeof setTradeSelected;
   // In-direction bridge: the init-effect-local tradeLinePixels() (three staying readers).
   tradeLinePixelsRef: React.MutableRefObject<() => TradeLinePx[]>;
+  // Pill rect hit-test (ChartCore component scope): a press inside a pill must grab the
+  // pill's OWN line — a spread-displaced pill can sit over another trade's line band.
+  tradePillHitTest: (clientX: number, clientY: number) => { id: string; field: TradeLineField } | null;
   // Out-direction bridges: staying onMove (tradeDrag) / onLeave (alertDrag) read these.
   tradeDragActiveRef: React.MutableRefObject<() => boolean>;
   alertDragActiveRef: React.MutableRefObject<() => boolean>;
@@ -111,6 +114,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
     setCursorMode,
     setTradeSelectedFn,
     tradeLinePixelsRef,
+    tradePillHitTest,
     tradeDragActiveRef,
     alertDragActiveRef,
   } = deps;
@@ -228,6 +232,8 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
     // runs on release and returns whether to swallow the trailing click.
     const makeLineDrag = <H extends LineHit>(spec: {
       grab: (yPix: number) => H | null;
+      // (beginHit on the returned object starts a drag from a caller-built hit,
+      // bypassing the y-band probe — used by the pill-press path below.)
       onBegin?: (hit: H) => void;
       onMove: (hit: H, level: number, chart: Chart) => void;
       onCommit: (hit: H, moved: boolean) => boolean;
@@ -236,7 +242,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
       // persist/select on a dying cell), but a begin-side-effect on a GLOBAL signal
       // would otherwise stick true forever.
       onAbort?: (hit: H) => void;
-    }): LineDrag => {
+    }): LineDrag & { beginHit: (hit: H) => void } => {
       let active: H | null = null;
       let moved = false;
       const onMove = (ev: MouseEvent) => {
@@ -283,6 +289,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
           const hit = spec.grab(yPix);
           return hit ? { d: hit.d, begin: () => start(hit) } : null;
         },
+        beginHit: (hit) => start(hit),
         isActive: () => active != null,
         dispose: () => {
           window.removeEventListener("mousemove", onMove);
@@ -392,6 +399,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
     const grabbableAlert = (yPix: number): { id: string; d: number } | null => {
       const c = chartRef.current;
       if (!c) return null;
+      if (overlays.getAlertsHidden()) return null; // hidden lines (eye menu) aren't grabbable
       let best: { id: string; d: number } | null = null;
       for (const al of overlays.getAlerts()) {
         const ay = first(
@@ -522,6 +530,24 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
       const y = e.clientY - r.top;
       const mainW = c.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (x > mainW) return; // the y-axis strip is a scale gesture, not a line grab
+      // A press INSIDE a trade pill belongs to that pill. The overlap spread can
+      // displace a pill from its line, so the pixel may sit in ANOTHER trade's ±band —
+      // never let that band steal the grab (hover/click already resolve pill-first; the
+      // drag must agree or a drag inside a pill moves a different trade's line). Grab
+      // the pill's OWN line directly when it's draggable; otherwise swallow no grab and
+      // let the click select the pill's trade.
+      const pillHit = tradePillHitTest(e.clientX, e.clientY);
+      if (pillHit) {
+        const line = tradeLinePixelsRef
+          .current()
+          .find((t) => t.id === pillHit.id && t.field === pillHit.field);
+        if (line?.draggable && line.y != null) {
+          e.preventDefault();
+          e.stopPropagation();
+          tradeDrag.beginHit({ id: line.id, field: line.field, d: 0 });
+        }
+        return;
+      }
       let winner: LineGrab | null = null;
       for (const drag of lineDrags) {
         const g = drag.tryGrab(y);

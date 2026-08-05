@@ -56,6 +56,44 @@ describe("warmupOf", () => {
     expect(warmupOf("")).toBe(0);
     expect(warmupOf("EMA(")).toBe(0);
   });
+
+  // @tf pins, mirroring warmup.py: with baseSeconds known a pin contributes
+  // ZERO base bars — its series comes from backend-sourced (and sufficiency-
+  // checked) higher-timeframe candles, never from the base history. Only terms
+  // operating on the base-aligned series count.
+  it("needs no base history for an @tf pin when baseSeconds is known", () => {
+    expect(warmupOf("EMA(50)@1H > 0", 300)).toBe(0);
+  });
+
+  it("still counts the base side of a cross against a pin", () => {
+    expect(warmupOf("crossAbove(EMA(9), EMA(50)@1H)", 300)).toBe(9);
+  });
+
+  it("passes an @tf pin through unscaled without baseSeconds (legacy callers)", () => {
+    expect(warmupOf("EMA(50)@1H > 0")).toBe(50);
+  });
+
+  it("keeps an offset OUTSIDE a pin in base bars", () => {
+    // candle@D.close[-1]: the offset shifts the base-aligned series -> 1 bar.
+    expect(warmupOf("candle@D.close[-1] > 0", 300)).toBe(1);
+  });
+
+  it("keeps a wrapper OUTSIDE a pin in base bars", () => {
+    expect(warmupOf("slope(EMA(50)@1H, 3) > 0", 300)).toBe(3);
+  });
+});
+
+describe("timeframe pins", () => {
+  it("rejects an unknown timeframe alias", () => {
+    const res = analyze("EMA(9)@BOGUS > 0");
+    expect(res.error?.code).toBe("unknown_tf");
+  });
+
+  it("accepts every catalog alias", () => {
+    for (const tf of ["5m", "15m", "30m", "1H", "4H", "D", "W"]) {
+      expect(analyze(`EMA(9)@${tf} > 0`).error).toBeNull();
+    }
+  });
 });
 
 describe("chained comparisons", () => {
@@ -80,5 +118,49 @@ describe("chained comparisons", () => {
 
   it("warms up to the largest link", () => {
     expect(warmupOf("candle.close > EMA(9) > EMA(50)")).toBe(50);
+  });
+});
+
+describe("count / predicates / barsSinceEntry", () => {
+  it("parses the canonical exit rule", () => {
+    const r = analyze("count(bearish(candle), barsSinceEntry) >= 3", { isExit: true });
+    expect(r.error).toBeNull();
+    expect(r.literals.map((l) => [l.value, l.label])).toEqual([[3, "threshold"]]);
+  });
+  it("labels the count window", () => {
+    const r = analyze("count(candle.open > candle.close, 10) >= 3");
+    expect(r.literals.map((l) => [l.value, l.label])).toEqual([[10, "count window"], [3, "threshold"]]);
+  });
+  it("rejects a non-condition first argument", () => {
+    const r = analyze("count(candle.close, 10) > 3");
+    expect(r.error?.code).toBe("count_needs_condition");
+  });
+  it("accepts a bare predicate row", () => {
+    expect(analyze("bearish(candle[-1])").error).toBeNull();
+  });
+  it("rejects a predicate used as a value", () => {
+    expect(analyze("bullish(candle) + 1 > 0").error?.code).toBe("predicate_as_value");
+  });
+  it("rejects a fielded candle in a predicate", () => {
+    expect(analyze("bullish(candle.close)").error?.code).toBe("bad_predicate_arg");
+  });
+  it("gates barsSinceEntry to exit rules", () => {
+    expect(analyze("barsSinceEntry > 5").error?.code).toBe("entry_in_entry_rule");
+    expect(analyze("barsSinceEntry > 5", { isExit: true }).error).toBeNull();
+  });
+  it("warm-up: count literal window + cond warmup", () => {
+    expect(warmupOf("count(candle.close > EMA(9), 10) >= 3")).toBe(19);
+    expect(warmupOf("count(bearish(candle), barsSinceEntry) >= 3")).toBe(0);
+    expect(warmupOf("bearish(candle[-2])")).toBe(2);
+  });
+  it("rejects entry/barsSinceEntry inside a wrapper or indicator arg", () => {
+    expect(analyze("highest(barsSinceEntry, 3) > 2", { isExit: true }).error?.code).toBe("entry_in_wrapper");
+    expect(
+      analyze("avg(count(bearish(candle), barsSinceEntry), 2) > 1", { isExit: true }).error?.code,
+    ).toBe("entry_in_wrapper");
+    expect(analyze("highest(entry, 3) > 2", { isExit: true }).error?.code).toBe("entry_in_wrapper");
+  });
+  it("still allows entry directly inside count(...)'s condition", () => {
+    expect(analyze("count(candle.close < entry, 10) >= 3", { isExit: true }).error).toBeNull();
   });
 });

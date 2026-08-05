@@ -32,7 +32,17 @@ async def _lifecycle(action: Callable[[object], Awaitable[str]]) -> dict:
 
 @router.get("/api/mt5/deploy-state")
 async def mt5_deploy_state() -> dict:
-    return await _lifecycle(lambda b: b.deploy_state())
+    try:
+        broker = deps.get_data("mt5")
+    except HTTPException:
+        return {"state": "unconfigured", "detail": None, "idle_seconds_remaining": None}
+    try:
+        state = await broker.deploy_state()
+    except Exception as exc:  # SDK error taxonomy is broad; surface verbatim
+        raise HTTPException(502, f"MetaApi error: {exc}") from None
+    # Countdown only means anything while deployed; hide it otherwise.
+    remaining = broker.seconds_until_idle_undeploy() if state == "on" else None
+    return {"state": state, "detail": None, "idle_seconds_remaining": remaining}
 
 
 @router.post("/api/mt5/deploy")

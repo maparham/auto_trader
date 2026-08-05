@@ -53,11 +53,11 @@ import {
   ScaleControls,
   PanelToggles,
   MaximizeToggle,
+  toolbarMaximizeDblClick,
 } from "./ToolbarControls";
 import SymbolSearchModal from "./SymbolSearchModal";
 import BacktestButton from "./BacktestButton";
 import ComputeHostButton from "./ComputeHostButton";
-import Mt5DeployButton from "./Mt5DeployButton";
 import BrokerSelector from "./BrokerSelector";
 import { isDataOnlyBroker, type BrokerAccount } from "./lib/trading";
 import { isSynthetic } from "./lib/syntheticRegistry";
@@ -384,7 +384,7 @@ export default function Toolbar({
   }
 
   return (
-    <header className="toolbar">
+    <header className="toolbar" onDoubleClick={toolbarMaximizeDblClick(onToggleMaximize)}>
       {/* Editable symbol name (TV-style): click to open the symbol-search modal.
           A resting chip + search icon make the clickability obvious at a glance. */}
       <SymbolChip
@@ -629,7 +629,6 @@ export default function Toolbar({
           hourly cost stays visible, with manual Start/Stop. Renders nothing on
           non-EC2 installs. Self-contained (owns its own polling + state). */}
       <ComputeHostButton />
-      <Mt5DeployButton />
 
       {/* Backtest + Live sit together here (kept off the tab bar so they survive
           maximized view): backtest a rule strategy, then arm the same strategy

@@ -45,3 +45,25 @@ def test_dropped_ordinal_ignored():
     # ordinal 5 does not exist -> substitution is a no-op, not an error
     sub = substitute(node, {5: 1.0})
     assert literals(sub)[0].value == 9.0
+
+
+def test_count_literals_labels():
+    lits = literals(parse("count(candle.open > candle.close, 10) >= 3"))
+    assert [(l.value, l.label) for l in lits] == [(10.0, "count window"), (3.0, "threshold")]
+
+
+def test_count_predicate_offset_literal():
+    lits = literals(parse("count(bearish(candle[-1]), 20) >= 2"))
+    assert [(l.value, l.label) for l in lits] == [(1.0, "bar offset"), (20.0, "count window"), (2.0, "threshold")]
+
+
+def test_predicate_row_no_spurious_literals():
+    assert literals(parse("bullish(candle)")) == []
+
+
+def test_substitute_count_window():
+    node = parse("count(candle.open > candle.close, 10) >= 3")
+    lits = literals(node)
+    window_ord = next(l.ordinal for l in lits if l.label == "count window")
+    new = substitute(node, {window_ord: 25})
+    assert new.left.window.value == 25

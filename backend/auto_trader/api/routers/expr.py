@@ -27,6 +27,7 @@ from auto_trader.strategy.expr.evaluate import compile_row, series_of
 from auto_trader.strategy.expr.literals import literals as compute_literals
 from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
+from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.validate import validate
 from auto_trader.strategy.expr.warmup import warmup_bars
 
@@ -55,13 +56,15 @@ from ..wfo_jobs import WFO_JOBS
 router = APIRouter()
 
 
-def _compile_group(rows, candles, resolution, htf, *, is_exit: bool, group: str):
-    """Parse + validate + compile every ENABLED row in a group. A parse/validate
-    error 422s with the expression span plus the group/row location so the
-    frontend can map it back to the offending editor field. Disabled rows and
-    blank rows are dropped before parse (a parked or empty draft never blocks a
-    run; an empty placeholder row is not a rule)."""
-    compiled = []
+def _parse_group(rows, *, is_exit: bool, group: str) -> list[N.Row]:
+    """Parse + validate every ENABLED row in a group. A parse/validate error 422s
+    with the expression span plus the group/row location so the frontend can map
+    it back to the offending editor field. Disabled rows and blank rows are
+    dropped before parse (a parked or empty draft never blocks a run; an empty
+    placeholder row is not a rule). Split from compilation so the route can
+    collect the rows' @tf references and fetch those candles BEFORE compiling
+    (compile_row precomputes series eagerly, so htf must be complete by then)."""
+    nodes = []
     for idx, row in enumerate(rows):
         if not row.enabled or not row.expr.strip():
             continue
@@ -73,8 +76,109 @@ def _compile_group(rows, candles, resolution, htf, *, is_exit: bool, group: str)
                 "code": e.code, "message": e.message,
                 "start": e.start, "end": e.end, "group": group, "row": idx,
             })
-        compiled.append(compile_row(node, candles, resolution, htf))
-    return compiled
+        nodes.append(node)
+    return nodes
+
+
+def _tf_inner_warmup(node: N.Node, tf: str) -> int:
+    """Deepest warm-up (in the PIN's own bars) any @`tf` pin in `node` needs."""
+    if isinstance(node, N.Tf):
+        return warmup_bars(node.base, tf_resolution(node.tf)) if node.tf == tf else 0
+    if isinstance(node, N.Chain):
+        return max((_tf_inner_warmup(p, tf) for p in node.parts), default=0)
+    if isinstance(node, (N.Compare, N.Binary)):
+        return max(_tf_inner_warmup(node.left, tf), _tf_inner_warmup(node.right, tf))
+    if isinstance(node, N.Cross):
+        return max(_tf_inner_warmup(node.a, tf), _tf_inner_warmup(node.b, tf))
+    if isinstance(node, (N.Field, N.Offset)):
+        return _tf_inner_warmup(node.base, tf)
+    if isinstance(node, N.Unary):
+        return _tf_inner_warmup(node.operand, tf)
+    if isinstance(node, N.Call):
+        return max((_tf_inner_warmup(a, tf) for a in node.args), default=0)
+    if isinstance(node, N.Predicate):
+        return _tf_inner_warmup(node.base, tf)
+    if isinstance(node, N.Count):
+        return max(_tf_inner_warmup(node.cond, tf), _tf_inner_warmup(node.window, tf))
+    return 0
+
+
+def _all_row_nodes(req: ExprBacktestRequest) -> list[N.Node]:
+    """Every enabled row of every group, parsed — for @tf collection at sweep/WFO
+    submit. Parse/validate errors are skipped, not raised: target dry-validation
+    owns 422ing malformed rows; here an unparseable row simply references no
+    timeframe."""
+    nodes: list[N.Node] = []
+    for rows, is_exit in ((req.longEntry, False), (req.longExit, True),
+                          (req.shortEntry, False), (req.shortExit, True)):
+        for row in rows:
+            if not row.enabled or not row.expr.strip():
+                continue
+            try:
+                node = parse(row.expr)
+                validate(node, is_exit=is_exit)
+            except ExprError:
+                continue
+            nodes.append(node)
+    return nodes
+
+
+async def _ensure_htf(
+    nodes: list[N.Node], req: ExprBacktestRequest, htf: dict[str, list[Candle]],
+) -> None:
+    """Fetch every @tf timeframe the rows reference that the request didn't ship,
+    then verify each one is actually SUFFICIENT to warm its deepest pin.
+
+    Shipped htfCandles win (a compute-only host must never reach a broker — its
+    proxy pre-ships the set); anything else is fetched over the request's
+    broker/priceSide so the bars match the base candles' source. The dict is
+    keyed by the CANONICAL resolution ("HOUR", not "1H").
+
+    Sufficiency, not just presence: an EMA(50)@1H seeded from 20 hourly bars
+    isn't a less-accurate EMA — it's a different series that crosses where the
+    real one doesn't, and those phantom crosses become trades (the same reason
+    the frontend hard-fails a short BASE warm-up). The pin's value at the
+    trading window's first bar comes from the last CLOSED HTF bar before it, so
+    that bar — and `inner` closed bars before it — must exist. Both fetched and
+    shipped sets are checked; a shortfall is a 422, never a silent misrun.
+
+    The fetch asks 2x the need (+ slack) in calendar time: an HTF bar count only
+    maps to a span while the market is open, and a weekend/holiday can eat most
+    of an exact ask. Proportional, unlike the coded path's flat 300-bar floor,
+    which over-asks absurdly for coarse pins (300 @W bars is ~6 years — brokers
+    just 400 on that)."""
+    tfs: set[str] = set()
+    for node in nodes:
+        tfs |= _referenced_tfs(node)
+    for tf in sorted(tfs):
+        res = tf_resolution(tf) or tf  # unknown aliases were rejected by validate()
+        tf_s = resolution_seconds(res)
+        # inner closed bars to warm the deepest pin, +1 = the closed bar whose
+        # value the window's first base bar actually reads.
+        need = max((_tf_inner_warmup(n, tf) for n in nodes), default=0) + 1
+        bars = htf.get(res) or htf.get(tf)
+        if not bars:
+            from_ts = req.candles[0].time - (need * 2 + 10) * tf_s
+            to_ts = req.candles[-1].time
+            span_bars = max(1, (to_ts - from_ts) // tf_s + 2)
+            bars = await deps._fetch_symbol_candles(
+                req.broker, req.epic, res, span_bars, from_ts, to_ts, req.priceSide,
+            )
+            if not bars:
+                raise HTTPException(422, f"no candles for timeframe '{tf}'")
+            htf[res] = bars
+        closed = sum(
+            1 for c in bars
+            if int(c.time.timestamp()) + tf_s <= req.tradeFromTime
+        )
+        if closed < need:
+            raise HTTPException(
+                422,
+                f"not enough history for timeframe '{tf}': {closed} of {need} "
+                f"closed bars before the trading window. Indicators pinned to "
+                f"@{tf} can't be computed correctly here — start the range "
+                f"later or shorten the pinned indicator.",
+            )
 
 
 @router.post("/api/expr/backtest")
@@ -98,11 +202,16 @@ async def expr_backtest(req: ExprBacktestRequest):
         tf: [candle_from_dto(c) for c in bars]
         for tf, bars in (req.htfCandles or {}).items()
     }
+    groups = [
+        (req.longEntry, False, "longEntry"), (req.longExit, True, "longExit"),
+        (req.shortEntry, False, "shortEntry"), (req.shortExit, True, "shortExit"),
+    ]
+    parsed = [_parse_group(rows, is_exit=ex, group=g) for rows, ex, g in groups]
+    # @tf rows need their higher-timeframe candles in hand before compile_row
+    # precomputes series; fetch whatever the request didn't ship.
+    await _ensure_htf([n for nodes in parsed for n in nodes], req, htf)
     strategy = ExprRuleStrategy(
-        _compile_group(req.longEntry, candles, req.resolution, htf, is_exit=False, group="longEntry"),
-        _compile_group(req.longExit, candles, req.resolution, htf, is_exit=True, group="longExit"),
-        _compile_group(req.shortEntry, candles, req.resolution, htf, is_exit=False, group="shortEntry"),
-        _compile_group(req.shortExit, candles, req.resolution, htf, is_exit=True, group="shortExit"),
+        *[[compile_row(n, candles, req.resolution, htf) for n in nodes] for nodes in parsed],
         quantity=req.costs.quantity,
         trade_from_time=req.tradeFromTime,
         long_enabled=req.longEnabled,
@@ -169,6 +278,10 @@ async def submit_expr_sweep_job(req: ExprBacktestRequest):
     except SweepValidationError as e:
         raise HTTPException(e.status_code, e.detail)
     htf_candles = htf_from_dto(req.htfCandles) if req.htfCandles is not None else {}
+    # Pool workers do zero network: fetch the rows' @tf set here so they inherit
+    # a complete dict (HTF is combo-invariant — timeframes are name tokens,
+    # never sweepable literals). Shipped htfCandles ride along untouched.
+    await _ensure_htf(_all_row_nodes(req), req, htf_candles)
     job = JOBS.submit(
         req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
         htf_candles=htf_candles,
@@ -216,6 +329,9 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest):
     except SweepValidationError as e:
         raise HTTPException(e.status_code, e.detail)
     htf_candles = htf_from_dto(req.htfCandles) if req.htfCandles is not None else {}
+    # Same as the sweep submit: workers never fetch, so the @tf set must be
+    # complete before dispatch.
+    await _ensure_htf(_all_row_nodes(req), req, htf_candles)
     job = WFO_JOBS.submit(
         req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
         htf_candles=htf_candles,
@@ -252,6 +368,14 @@ async def expr_series(req: ExprSeriesRequest):
         raise HTTPException(422, {
             "code": e.code, "message": e.message, "start": e.start, "end": e.end,
         })
+    # A bare bullish(...)/bearish(...) row is a boolean predicate with no numeric
+    # series to plot at all — reject before fetching any candles.
+    if isinstance(node, N.Predicate):
+        raise HTTPException(422, {
+            "code": "predicate_not_plottable",
+            "message": "bullish/bearish rows have no numeric series to plot.",
+            "start": node.start, "end": node.end,
+        })
     res_s = resolution_seconds(req.resolution)
     bars = max(1, (req.toTime - req.fromTime) // res_s + 2)
     candles = await deps._fetch_symbol_candles(
@@ -266,11 +390,23 @@ async def expr_series(req: ExprSeriesRequest):
         top = node.left
     else:
         top = node.a
-    values = series_of(top, candles, req.resolution, {})
+    # An @tf term needs its higher-timeframe candles (with warm-up room before
+    # the plotted window, or the pinned series is None over the visible span).
+    htf: dict[str, list[Candle]] = {}
+    for tf in _referenced_tfs(top):
+        res = tf_resolution(tf) or tf
+        tf_s = resolution_seconds(res)
+        need = _tf_inner_warmup(top, tf) + 1
+        tf_from = req.fromTime - need * tf_s
+        tf_bars = max(1, (req.toTime - tf_from) // tf_s + 2)
+        htf[res] = await deps._fetch_symbol_candles(
+            req.broker, req.epic, res, tf_bars, tf_from, req.toTime, req.priceSide,
+        )
+    values = series_of(top, candles, req.resolution, htf)
     return {
         "times": [int(c.time.timestamp()) for c in candles],
         "values": values,
-        "warmup": warmup_bars(node),
+        "warmup": warmup_bars(node, req.resolution),
     }
 
 
@@ -290,6 +426,10 @@ def _referenced_tfs(node: N.Node) -> set[str]:
         return _referenced_tfs(node.left) | _referenced_tfs(node.right)
     if isinstance(node, N.Cross):
         return _referenced_tfs(node.a) | _referenced_tfs(node.b)
+    if isinstance(node, N.Predicate):
+        return _referenced_tfs(node.base)
+    if isinstance(node, N.Count):
+        return _referenced_tfs(node.cond) | _referenced_tfs(node.window)
     return set()
 
 
@@ -320,9 +460,10 @@ async def expr_closeness(req: ExprClosenessRequest):
         tfs |= _referenced_tfs(node)
     htf: dict[str, list[Candle]] = {}
     for tf in tfs:
-        tf_bars = max(1, (req.toTime - req.fromTime) // resolution_seconds(tf) + 2)
-        htf[tf] = await deps._fetch_symbol_candles(
-            req.broker, req.epic, tf, tf_bars, req.fromTime, req.toTime, req.priceSide,
+        res = tf_resolution(tf) or tf  # canonical: '1H' -> 'HOUR' (fetch + dict key)
+        tf_bars = max(1, (req.toTime - req.fromTime) // resolution_seconds(res) + 2)
+        htf[res] = await deps._fetch_symbol_candles(
+            req.broker, req.epic, res, tf_bars, req.fromTime, req.toTime, req.priceSide,
         )
 
     # Display-bar opens for bucketing: at the base timeframe the base bars ARE the

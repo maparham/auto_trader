@@ -308,6 +308,11 @@ export interface ExprBacktestRequest {
   resolution: string;
   candles: Candle[];
   htfCandles?: Record<string, Candle[]>;
+  // @tf rows: the backend fetches the referenced higher-timeframe candles when
+  // htfCandles is absent — over THIS broker/side so they match the shipped base
+  // candles' source (defaults "capital"/"mid" backend-side; see baseReq's note).
+  broker?: string;
+  priceSide?: string;
   longEntry: ExprRow[];
   longExit: ExprRow[];
   shortEntry: ExprRow[];
@@ -654,7 +659,11 @@ export async function stopComputeHost(): Promise<{ state: ComputeHostState }> {
 // redeploy takes ~1-2 minutes. "unconfigured" (no MetaApi env vars) hides the pill.
 export type Mt5DeployState = "unconfigured" | "off" | "turning-on" | "turning-off" | "on";
 
-export async function mt5DeployState(): Promise<{ state: Mt5DeployState; detail: string | null }> {
+export async function mt5DeployState(): Promise<{
+  state: Mt5DeployState;
+  detail: string | null;
+  idle_seconds_remaining: number | null;
+}> {
   const res = await fetch(`${BASE}/api/mt5/deploy-state`);
   if (!res.ok) throw new Error(`mt5 deploy state: ${res.status}`);
   return res.json();

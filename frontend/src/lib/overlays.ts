@@ -556,6 +556,15 @@ export class OverlayManager {
     return this.drawingsHidden;
   }
 
+  // Sidebar "hide alert lines" eye — SESSION-ONLY and per cell, like drawingsHidden.
+  // Only the on-chart presentation hides (lines, axis tags, hit/snap targets);
+  // storage and the background alert engine are untouched, so hidden alerts still
+  // fire and the alerts sidebar still lists them.
+  private alertsHidden = false;
+  getAlertsHidden(): boolean {
+    return this.alertsHidden;
+  }
+
   // Apply an alert line's resting/emphasized weight. A line is emphasized (thick)
   // while it is EITHER click-selected OR hovered (from the chart or the sidebar), so
   // this single rule keeps the two states from fighting — un-hovering a selected
@@ -2156,6 +2165,29 @@ export class OverlayManager {
     }
   }
 
+  // Sidebar eye: hide/show every alert line at once (session-only; storage and the
+  // background engine are untouched — see alertsHidden). Consumers that hit-test or
+  // tag alert lines (alertHitTest, snap targets, drag grab, axis tags) gate on
+  // getAlertsHidden() themselves, so a hidden line is neither visible nor grabbable.
+  setAlertsHidden(hidden: boolean): void {
+    if (this.alertsHidden === hidden) return;
+    this.alertsHidden = hidden;
+    for (const [id, kind] of this.entries) {
+      if (kind === "alert") this.chart?.overrideOverlay({ id, visible: !hidden });
+    }
+    if (hidden) {
+      // A hidden line can't stay hovered/selected: klinecharts fires no onMouseLeave
+      // for an overlay that just went invisible, so the emphasis + suppressed
+      // crosshair would stick (same reason rehydrate clears these).
+      if (this.hoveredAlertId !== null) {
+        this.hoveredAlertId = null;
+        this.applyCrosshairForAlert();
+      }
+      this.setSelectedAlert(null);
+    }
+    this.alertsListener?.(); // ChartCore: drop/restore the DOM axis tags in lockstep
+  }
+
   // Sidebar padlock: lock every drawing (alerts and the measure ruler are not
   // drawings and stay interactive). Persisted via SavedOverlay.lock.
   lockAllDrawings(): void {
@@ -2232,7 +2264,11 @@ export class OverlayManager {
   // rebuild) and reconcileAlerts (a peer cell added it), so both render identically.
   // Returns the overlay id, or null if create() declined (e.g. no chart).
   private materializeSavedAlert(a: SavedAlert): string | null {
-    const id = this.create("alert", "priceLine", [{ value: a.level }], ALERT_LINE_STYLE);
+    // Respect the session eye toggle: an alert added/reconciled while "Hide alert
+    // lines" is on must materialize hidden, not flash visible.
+    const id = this.create("alert", "priceLine", [{ value: a.level }], ALERT_LINE_STYLE, undefined, {
+      visible: !this.alertsHidden,
+    });
     if (!id) return null;
     this.alertCfg.set(id, this.cfgFromSaved(a));
     // Carry the stored stable id (normalizeAlert backfills legacy rows). The next

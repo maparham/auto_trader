@@ -52,3 +52,51 @@ def test_offset_requires_negative_integer():
     with pytest.raises(ExprError) as exc:
         parse("EMA(9)[2] > 0")
     assert exc.value.code == "bad_offset"
+
+
+def test_parse_count_with_comparison_condition():
+    node = parse("count(candle.open > candle.close, 10) >= 3")
+    assert isinstance(node, N.Compare) and node.op == ">="
+    cnt = node.left
+    assert isinstance(cnt, N.Count)
+    assert isinstance(cnt.cond, N.Compare) and cnt.cond.op == ">"
+    assert isinstance(cnt.window, N.Num) and cnt.window.value == 10
+
+
+def test_parse_count_with_cross_condition():
+    node = parse("count(crossBelow(candle.close, EMA(9)), 20) >= 1")
+    cnt = node.left
+    assert isinstance(cnt, N.Count)
+    assert isinstance(cnt.cond, N.Cross) and cnt.cond.fn == "crossBelow"
+
+
+def test_parse_count_with_predicate_condition_and_dynamic_window():
+    node = parse("count(bearish(candle), barsSinceEntry) >= 3")
+    cnt = node.left
+    assert isinstance(cnt, N.Count)
+    assert isinstance(cnt.cond, N.Predicate) and cnt.cond.fn == "bearish"
+    assert isinstance(cnt.window, N.BarsSinceEntry)
+
+
+def test_parse_predicate_as_whole_row():
+    node = parse("bearish(candle[-1])")
+    assert isinstance(node, N.Predicate) and node.fn == "bearish"
+    assert isinstance(node.base, N.Offset) and node.base.n == 1
+
+
+def test_parse_bars_since_entry_standalone():
+    node = parse("barsSinceEntry > 12")
+    assert isinstance(node.left, N.BarsSinceEntry)
+
+
+def test_count_without_condition_errors():
+    with pytest.raises(ExprError) as ei:
+        parse("count(candle.close, 10) > 3")
+    assert ei.value.code == "count_needs_condition"
+
+
+def test_count_spans():
+    node = parse("count(bullish(candle), 5) > 2")
+    cnt = node.left
+    assert (cnt.start, cnt.end) == (0, 25)  # "count(bullish(candle), 5)"
+    assert (cnt.cond.start, cnt.cond.end) == (6, 21)  # "bullish(candle)"

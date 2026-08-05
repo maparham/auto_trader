@@ -369,8 +369,14 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     };
     // Handles — hover: only the hovered handle takes its role colour, rest grey; select:
     // all side colour, the focused one filled. Drawn after the spine so they sit on top.
-    for (const [field, y] of lines) {
-      badgeFor(field, y);
+    // The ACTIVE field's handle is drawn LAST: at breakeven the merged SL/TP shares the
+    // entry's exact y, and drawn in list order its hollow handle would overpaint the
+    // filled selected one (the fill seemed to vanish for a BE trade).
+    const handleOrder = [...lines].sort(
+      (a, b) => (a[0] === activeField ? 1 : 0) - (b[0] === activeField ? 1 : 0),
+    );
+    for (const [field, y] of lines) badgeFor(field, y);
+    for (const [field, y] of handleOrder) {
       const outline = selectMode ? SIDE : field === activeField ? roleOf(field) : GREY;
       ctx.beginPath();
       ctx.arc(TRADE_SPINE_X, y, TRADE_HANDLE_R, 0, Math.PI * 2);
@@ -677,7 +683,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       active: boolean;
       selected: boolean;
     }> = [];
-    for (const a of overlays.getAlerts()) {
+    // Eye menu "Hide alert lines": the DOM axis tags drop with the lines.
+    for (const a of overlays.getAlertsHidden() ? [] : overlays.getAlerts()) {
       const y = yOf(a.level);
       if (y != null)
         tags.push({

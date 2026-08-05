@@ -87,6 +87,16 @@
   /* Content-sized (user: minimal width) — rows set the width, no floor. */
   width: max-content; padding: 6px 0;
 }
+/* Flipped variant (DsFlyout): anchored to the trigger's bottom edge and growing
+   upward, applied when the down-anchored menu would crop at the viewport bottom
+   (the eye menu sits in the sidebar's bottom cluster). */
+.draw-sidebar .ds-flyout.up { top: auto; bottom: -4px; }
+/* Compact variant (the eye menu): rows start flush with a slim 16px-icon glyph
+   column — no reserved leading check column — and the ✓ sits at the row's right
+   edge instead (its 16px stays reserved so toggling doesn't change the width). */
+.draw-sidebar .ds-flyout.compact .ds-row { gap: 8px; padding: 0 8px; }
+.draw-sidebar .ds-flyout.compact .ds-row .check { width: 11px; margin-left: -2px; text-align: right; }
+.draw-sidebar .ds-flyout.compact .ds-glyph { width: 18px; }
 .draw-sidebar .ds-fly-section {
   padding: 8px 16px 6px; font-size: 11px; font-weight: 500; color: var(--text-faint);
   text-transform: uppercase; letter-spacing: 0.05em;
@@ -1520,8 +1530,9 @@
 }
 .bt-rule-toggle:hover,
 .bt-rule-menu-btn:hover { background: var(--hover); color: var(--text); }
-/* On a disabled row the eye is the way back on — keep it legible, not dimmed. */
-.bt-rule-disabled .bt-rule-toggle { color: var(--neg); opacity: 1; }
+/* The eye that this once painted red ("the way back on") now lives in the row's
+   ⋮ menu; the only .bt-rule-toggle buttons left are insert/pick, which have
+   nothing to do with the row being off — so they keep their normal color. */
 /* "Pick from chart": while armed, the button glows with the accent so it's clear
    the chart is waiting for an indicator click. The row's actions also stay fully
    opaque while armed (below) so the lit button never fades on mouse-out. */
@@ -1537,10 +1548,15 @@
 .bt-rule-menu-list li:hover { background: var(--hover); }
 .bt-rule-menu-danger { color: var(--neg); }
 .bt-rule-menu-danger:hover { background: color-mix(in srgb, var(--neg) 14%, transparent); }
-/* A disabled rule stays visible but reads as inactive; its menu stays usable. */
-.bt-rule-disabled .bt-operand,
-.bt-rule-disabled .bt-op-menu { opacity: 0.42; }
-.bt-rule-disabled { background: var(--surface); }
+/* A disabled rule stays visible but reads as inactive; its menu stays usable.
+   The dimming has to land on the expression editor — it replaced the operand
+   dropdowns these rules used to target, so for a while a disabled row looked
+   identical to an active one. The dashed border carries the state at a glance,
+   since a dimmed row alone is easy to miss in a stack of rules. */
+.bt-rule-disabled { background: var(--surface); border-style: dashed; }
+/* Compound so it beats .rule-expr-input.is-readonly (same specificity, other
+   file) — a disabled row's editor is read-only, so both selectors match it. */
+.bt-rule-row.bt-rule-disabled .rule-expr-input { opacity: 0.45; }
 /* Add / Paste live on one row; Paste only appears while a rule is on the
    clipboard, so the group can gain a rule copied from the other side. */
 .bt-rule-foot { display: flex; gap: 8px; }
@@ -2373,6 +2389,16 @@
   margin: 1px -4px 0 0; width: 16px; height: 16px; border-radius: 3px; flex-shrink: 0;
 }
 .toast-close:hover { background: var(--border); color: var(--text); }
+/* Repeat-fire count on a coalesced alert toast (same alert fired ×N). */
+.toast-count {
+  flex-shrink: 0; align-self: center; padding: 1px 6px; border-radius: 9px;
+  background: #f5a623; color: #1a1a1a; font-size: 11px; font-weight: 600;
+}
+/* Pulse when a coalesced toast absorbs a repeat fire (class re-added per fire). */
+.toast.bump { animation: toast-bump 0.3s ease; }
+@keyframes toast-bump {
+  50% { transform: scale(1.04); }
+}
 
 /* Transient snackbar (merge undo) — same idiom as the toasts. Sits just below
    the tab bar; when anchored, inline left/top place it under the merged chip
@@ -2510,14 +2536,40 @@
   background: var(--surface-2);
   font-family: -apple-system, system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
-  transition: box-shadow .12s, border-color .12s;
+  transition: box-shadow .12s, border-color .12s, opacity .15s;
 }
+/* While a trade is SELECTED, every other trade's pills fade back so the selected
+   group (entry + SL + TP) owns the stage — contrast ties the spine to its pills.
+   Hovering a dimmed pill restores it so it stays readable and clickable. */
+.trade-pill.dimmed { opacity: .55; }
+.trade-pill.dimmed.hovering { opacity: 1; }
+/* Leader tick: hairline tying a vertically-displaced pill (overlap spread) back to its
+   true line. Sits just left of the pill column, under the pills (z below 47). */
+.tp-leader {
+  position: absolute; width: 0; z-index: 46; pointer-events: none;
+  border-left: 1px solid var(--text-faint); opacity: .5;
+}
+.tp-leader.dimmed { opacity: .25; }
+/* The click-SELECTED trade's whole pill group carries a persistent selected look —
+   full-strength role-coloured border + a whisper of tinted fill — so when two trades'
+   pills overlap at near-identical levels, the bracket spine unambiguously reads as
+   belonging to the highlighted pills. Padding drops 1px per side to offset the thicker
+   border (border-box), keeping the content from shifting on select. */
+.trade-pill.selected {
+  border: 1.5px solid var(--pill);
+  padding: 0 3px 0 6px;
+  background: color-mix(in srgb, var(--pill) 6%, var(--surface-2));
+}
+/* The WHOLE pill group of the selected trade — and of a hovered pill's trade — rises
+   above resting pills (47), so a selected position's entry/SL/TP win overlaps against
+   neighbouring trades' pills as one unit (and hovering its TP/SL raises the group too). */
+.trade-pill.raised { z-index: 48; }
 /* Hover A — subtle lift: soft shadow + stronger border; the close button flushes red.
-   Driven by the .hovering class (added while the pill's line is hovered). Raised above
-   resting pills (47) so a hovered trade's pills clear an overlapping neighbour's. */
-.trade-pill.hovering { box-shadow: 0 3px 10px rgba(20, 26, 35, .20); border-color: var(--pill); z-index: 48; }
-/* The pill of the focused LINE (selected field, or the hovered one) wins any overlap —
-   it sits on top of every other pill so a stack of close levels stays readable. */
+   Driven by the .hovering class (added while the pill's line is hovered). Tops even a
+   raised group (48) — the pill under the cursor always reads. */
+.trade-pill.hovering { box-shadow: 0 3px 10px rgba(20, 26, 35, .20); border-color: var(--pill); z-index: 49; }
+/* The pill of the focused LINE (selected field, or the hovered one) wins overlaps
+   within its own raised group so a stack of close levels stays readable. */
 .trade-pill.focused { z-index: 49; }
 /* Eyebrow tag — TP / SL / the side word (Long, Short, Sell limit…), small + uppercase +
    letter-spaced, in the role colour. The one place hue lives besides the border. */
@@ -2565,6 +2617,13 @@
 }
 .trade-pill .tp-btn svg { width: 18px; height: 18px; display: block; stroke-width: 1.9; }
 .trade-pill .tp-btn:hover { opacity: 1; }
+/* ⓘ details trigger: quieter than the action buttons (it reveals, never mutates).
+   Neutral hover — the red tint is reserved for destructive actions. */
+/* Narrower than the 22px action buttons (its glyph is only 14px), with negative
+   margins eating into the pill's 6px gaps, so the icon doesn't open a hole in the row. */
+.trade-pill .tp-info { color: var(--text-faint); opacity: .8; width: 16px; margin: 0 -3px; }
+.trade-pill .tp-info svg { width: 14px; height: 14px; }
+.trade-pill .tp-info:hover { color: var(--text-dim); background: color-mix(in srgb, var(--text-dim) 12%, transparent); }
 .trade-pill .tp-apply { color: var(--pos); opacity: .9; }
 .trade-pill .tp-apply:hover { opacity: 1; background: color-mix(in srgb, var(--pos) 14%, transparent); }
 .trade-pill .tp-close:hover,
@@ -2689,11 +2748,12 @@
   height: 22px;
   font-variant-numeric: tabular-nums;
 }
-/* Over ANY alert line (selected or not): keep the WHOLE "+" affordance (circle + price
-   box) looking identical to a normal hover, but go non-interactive (pointer-events:none)
-   so the mousedown passes THROUGH to the canvas — selecting/dragging the line underneath —
-   instead of being swallowed by the "+" circle that protrudes into the pane. The box
-   (z-49) still reads on top of the never-hidden amber alert tag (ChartCore toggles this
+/* Over ANY alert or trade line (selected or not): keep the WHOLE "+" affordance (circle +
+   price box) looking identical to a normal hover, but go non-interactive (pointer-events:
+   none) so the mousedown passes THROUGH to the canvas — selecting/dragging the line
+   underneath — instead of being swallowed by the "+" circle that protrudes into the pane.
+   The box (z-49) still reads on top of the never-hidden amber alert tag, and — being a
+   later sibling — above a hovered trade pill at the same z (ChartCore toggles this
    class). */
 .axis-plus.passthrough { pointer-events: none; }
 .axis-plus-icon {
@@ -3203,11 +3263,9 @@
 }
 .tooltip-weights b { min-width: 30px; color: var(--text); font-weight: 600; }
 
-/* Trade-pill details popover: label/value rows on the shared .tooltip frame. Wider
-   than a text tip so the datetime + P/L values never wrap; the label column stays
-   muted, the value column reads in the theme's ink (mono for the numbers). */
-.tooltip.pill-tip { max-width: 300px; }
-.pill-tip .tooltip-title { margin-bottom: 6px; }
+/* Trade-pill ⓘ details grid: label/value rows inside the shared .tooltip frame.
+   The label column stays muted, the value column reads in the theme's ink (mono
+   for the numbers); nowrap keeps the datetime + P/L values on one line. */
 .pill-tip-grid { display: grid; grid-template-columns: auto 1fr; column-gap: 18px; row-gap: 3px; margin: 0; }
 .pill-tip-row { display: contents; }
 .pill-tip-row dt { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
@@ -3353,6 +3411,12 @@
   border: 1px solid color-mix(in srgb, #e0a82e 80%, #000);
 }
 .compute-host-btn .compute-host-stop:hover { background: rgba(255, 255, 255, 0.9); }
+/* Idle auto-undeploy countdown on the MT5 ON pill — a compact tabular-numeric
+   chip, secondary to the pill's label (inherits the pill's dark-amber text). */
+.compute-host-btn .compute-host-countdown {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px; opacity: 0.8; letter-spacing: 0.02em;
+}
 
 /* Snapshot split control: ONE control — the camera face saves instantly, the
    slim caret opens the gallery. No gap; the halves share the rounded ends so
@@ -3578,7 +3642,6 @@
   color: var(--accent);
 }
 .bt-error { color: var(--neg); font-size: 12px; }
-.bt-warning { color: var(--text-dim); font-size: 12px; cursor: help; }
 .bt-notice { color: var(--text-dim); font-size: 12px; }
 /* A run's 422 naming a declared coded-strategy param, shown under Parameters. */
 .bt-param-error { color: var(--neg); }

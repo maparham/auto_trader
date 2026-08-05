@@ -118,18 +118,11 @@ export default function BacktestPanel() {
   const baseRows = useMemo(() => (result ? tradeRows(result, resSeconds) : []), [result, resSeconds]);
   const rows = useMemo(() => sortTradeRows(baseRows, sort.key, sort.dir), [baseRows, sort.key, sort.dir]);
 
-  // Transient run messages (fetch error / short warm-up) — shown whether or not
-  // a result exists, since an errored run leaves no result to render.
+  // Transient run error — shown whether or not a result exists, since an errored
+  // run leaves no result to render.
   const msgRow =
-    messages.error || messages.warning || selectNotice ? (
+    messages.error || selectNotice ? (
       <div className="bt-results-messages">
-        {messages.warning && (
-          <Tooltip content={messages.warning}>
-            <span className="bt-warning">
-              ⚠ short warm-up
-            </span>
-          </Tooltip>
-        )}
         {messages.error && <span className="bt-error">{messages.error}</span>}
         {selectNotice && <span className="bt-notice">{selectNotice}</span>}
       </div>

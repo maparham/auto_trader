@@ -36,15 +36,25 @@ export const CANDLE_FIELDS = [
   "open", "high", "low", "close", "volume", "body", "range", "wickTop", "wickBottom",
 ] as const;
 
-export const TIMEFRAMES: Array<{ alias: string; resolution: string }> = [
-  { alias: "5m", resolution: "MINUTE_5" },
-  { alias: "15m", resolution: "MINUTE_15" },
-  { alias: "30m", resolution: "MINUTE_30" },
-  { alias: "1H", resolution: "HOUR" },
-  { alias: "4H", resolution: "HOUR_4" },
-  { alias: "D", resolution: "DAY" },
-  { alias: "W", resolution: "WEEK" },
+// Mirrors backend strategy/expr/tfs.py TF_RESOLUTIONS (the pin aliases the
+// backend accepts) — `seconds` is the nominal bar width, duplicated from
+// feed.ts RESOLUTION_SECONDS so this catalog stays dependency-free for the
+// parser's warm-up math.
+export const TIMEFRAMES: Array<{ alias: string; resolution: string; seconds: number }> = [
+  { alias: "5m", resolution: "MINUTE_5", seconds: 300 },
+  { alias: "15m", resolution: "MINUTE_15", seconds: 900 },
+  { alias: "30m", resolution: "MINUTE_30", seconds: 1800 },
+  { alias: "1H", resolution: "HOUR", seconds: 3600 },
+  { alias: "4H", resolution: "HOUR_4", seconds: 14400 },
+  { alias: "D", resolution: "DAY", seconds: 86400 },
+  { alias: "W", resolution: "WEEK", seconds: 604800 },
 ];
+
+/** Nominal bar width for a pin alias (or canonical resolution); null if unknown. */
+export function tfSeconds(tf: string): number | null {
+  const hit = TIMEFRAMES.find((t) => t.alias === tf || t.resolution === tf);
+  return hit ? hit.seconds : null;
+}
 
 // Arity + argument kind for indicators, matching registry.IndicatorSpec.
 export interface IndicatorSpec {
@@ -70,3 +80,13 @@ export const WRAPPER_ARITY: Record<string, number> = {
 };
 
 export const CROSS_FNS = ["crossAbove", "crossBelow"] as const;
+
+export const CONDITIONS: CatalogEntry[] = [
+  { name: "count", insert: "count(bearish(candle), 10)", signature: "count(cond, n)", detail: "Bars matching a condition in the last n bars" },
+  { name: "bullish", insert: "bullish(candle)", signature: "bullish(candle)", detail: "Candle closed above its open" },
+  { name: "bearish", insert: "bearish(candle)", signature: "bearish(candle)", detail: "Candle closed below its open" },
+  { name: "barsSinceEntry", insert: "barsSinceEntry", signature: "barsSinceEntry", detail: "Bars since the trade opened (exit rules only)" },
+];
+
+export const PREDICATE_FNS = ["bullish", "bearish"] as const;
+export const COUNT_FN = "count";

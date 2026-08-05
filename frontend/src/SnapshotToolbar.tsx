@@ -17,7 +17,6 @@ import { type Instrument, type Period } from "./lib/feed";
 import type { ChartController } from "./lib/chartController";
 import BrokerSelector from "./BrokerSelector";
 import ComputeHostButton from "./ComputeHostButton";
-import Mt5DeployButton from "./Mt5DeployButton";
 import type { BrokerAccount } from "./lib/trading";
 import {
   SymbolChip,
@@ -25,6 +24,7 @@ import {
   ScaleControls,
   PanelToggles,
   MaximizeToggle,
+  toolbarMaximizeDblClick,
 } from "./ToolbarControls";
 
 interface Props {
@@ -57,7 +57,7 @@ export default function SnapshotToolbar({
   }
 
   return (
-    <header className="toolbar">
+    <header className="toolbar" onDoubleClick={toolbarMaximizeDblClick(onToggleMaximize)}>
       {/* The symbol chip, non-clickable: a snapshot is OF this symbol. */}
       <SymbolChip
         symbol={symbol}
@@ -88,7 +88,6 @@ export default function SnapshotToolbar({
           toolbar mounts at a time (App renders this OR the full Toolbar), so
           there is never a second poller. */}
       <ComputeHostButton />
-      <Mt5DeployButton />
 
       <PanelToggles />
       <MaximizeToggle maximized={maximized} onToggleMaximize={onToggleMaximize} />

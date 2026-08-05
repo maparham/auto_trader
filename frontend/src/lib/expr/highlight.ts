@@ -16,7 +16,7 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { analyze, type Token } from "./parser";
-import { CROSS_FNS, INDICATOR_SPECS, TIMEFRAMES, WRAPPER_ARITY } from "./catalog";
+import { CROSS_FNS, INDICATOR_SPECS, TIMEFRAMES, WRAPPER_ARITY, PREDICATE_FNS, COUNT_FN } from "./catalog";
 
 const TF_ALIASES = new Set(TIMEFRAMES.map((t) => t.alias));
 const CROSS_SET = new Set<string>(CROSS_FNS);
@@ -45,6 +45,8 @@ function classify(tok: Token, prev: Token | undefined, value: string): string | 
   if (value in INDICATOR_SPECS) return "indicator";
   if (value in WRAPPER_ARITY) return "wrapper";
   if (CROSS_SET.has(value)) return "cross";
+  if (value === COUNT_FN) return "wrapper";
+  if ((PREDICATE_FNS as readonly string[]).includes(value)) return "cross";
   return "variable";
 }
 

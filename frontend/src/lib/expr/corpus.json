@@ -13,6 +13,7 @@
   { "expr": "EMA(9) EMA(21)", "isExit": false, "error": {"code":"expected_operator","from":7,"to":10}, "literals": [] },
   { "expr": "FOO(9) > 0", "isExit": false, "error": {"code":"unknown_name","from":0,"to":6}, "literals": [] },
   { "expr": "EMA(9)@4H@D > 0", "isExit": false, "error": {"code":"nested_tf","from":9,"to":11}, "literals": [] },
+  { "expr": "EMA(9)@BOGUS > 0", "isExit": false, "error": {"code":"unknown_tf","from":0,"to":12}, "literals": [] },
   { "expr": "entry > candle.close", "isExit": false, "error": {"code":"entry_in_entry_rule","from":0,"to":5}, "literals": [] },
   { "expr": "candle.close < entry", "isExit": true, "error": null, "literals": [] },
   { "expr": "EMA(9)@4H > 0", "isExit": false, "error": null,
@@ -39,5 +40,31 @@
   { "expr": "EMA(9).signal > 0", "isExit": false, "error": {"code":"field_on_call","from":0,"to":13}, "literals": [] },
   { "expr": "EMA(9) > crossAbove(candle.close, EMA(9))", "isExit": false, "error": {"code":"cross_not_toplevel","from":9,"to":41}, "literals": [] },
   { "expr": "EMA(9, 3) > 0", "isExit": false, "error": {"code":"bad_arity","from":0,"to":9}, "literals": [] },
-  { "expr": "candle > 0", "isExit": false, "error": {"code":"bad_candle_field","from":0,"to":6}, "literals": [] }
+  { "expr": "candle > 0", "isExit": false, "error": {"code":"bad_candle_field","from":0,"to":6}, "literals": [] },
+  { "expr": "count(candle.open > candle.close, 10) >= 3", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":10,"from":34,"to":36,"label":"count window"},
+      {"ordinal":1,"value":3,"from":41,"to":42,"label":"threshold"}
+    ] },
+  { "expr": "count(bearish(candle), barsSinceEntry) >= 3", "isExit": true, "error": null,
+    "literals": [
+      {"ordinal":0,"value":3,"from":42,"to":43,"label":"threshold"}
+    ] },
+  { "expr": "count(candle.close, 10) > 3", "isExit": false, "error": {"code":"count_needs_condition","from":6,"to":18}, "literals": [] },
+  { "expr": "bearish(candle[-1])", "isExit": false, "error": null, "literals": [
+      {"ordinal":0,"value":1,"from":16,"to":17,"label":"bar offset"}
+    ] },
+  { "expr": "bullish(candle.close)", "isExit": false, "error": {"code":"bad_predicate_arg","from":0,"to":21}, "literals": [] },
+  { "expr": "bullish(candle) + 1 > 0", "isExit": false, "error": {"code":"predicate_as_value","from":0,"to":15}, "literals": [] },
+  { "expr": "barsSinceEntry > 5", "isExit": false, "error": {"code":"entry_in_entry_rule","from":0,"to":14}, "literals": [] },
+  { "expr": "barsSinceEntry > 5", "isExit": true, "error": null, "literals": [
+      {"ordinal":0,"value":5,"from":17,"to":18,"label":"threshold"}
+    ] },
+  { "expr": "highest(barsSinceEntry, 3) > 2", "isExit": true, "error": {"code":"entry_in_wrapper","from":0,"to":26}, "literals": [] },
+  { "expr": "count(candle.close > EMA(9), 10) >= 3", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":25,"to":26,"label":"EMA length"},
+      {"ordinal":1,"value":10,"from":29,"to":31,"label":"count window"},
+      {"ordinal":2,"value":3,"from":36,"to":37,"label":"threshold"}
+    ] }
 ]

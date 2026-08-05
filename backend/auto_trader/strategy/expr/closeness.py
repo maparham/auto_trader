@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from auto_trader.core.models import Candle
 from auto_trader.indicators.core import atr_series
 from auto_trader.strategy.expr import nodes as N
-from auto_trader.strategy.expr.evaluate import series_of
+from auto_trader.strategy.expr.evaluate import _cond_matches, series_of
 
 
 def _defined(v: float | None) -> bool:
@@ -121,7 +121,7 @@ def _fold(per: list[list[float | None]], combine: str, n: int) -> list[float | N
 
 
 def row_closeness(
-    node: N.Compare | N.Cross | N.Chain,
+    node: N.Row,
     candles: Sequence[Candle],
     resolution: str,
     htf: dict[str, list[Candle]],
@@ -130,6 +130,11 @@ def row_closeness(
     if isinstance(node, N.Chain):
         per = [row_closeness(p, candles, resolution, htf, norm) for p in node.parts]
         return _fold(per, "AND", len(candles))
+    if isinstance(node, N.Predicate):
+        # A predicate is binary: closeness is 1 when it holds, else 0. There is
+        # no meaningful gradient toward "almost red".
+        m = _cond_matches(node, candles, resolution, htf)
+        return [1.0 if v else 0.0 for v in m]
     gaps = row_gap_series(node, candles, resolution, htf)
     atr = atr_series(candles, norm.atr_length) if norm.basis == "atr" else None
     scale = scale_series(gaps, norm.basis, norm.width, norm.window, atr)
@@ -137,7 +142,7 @@ def row_closeness(
 
 
 def group_closeness(
-    rows: list[N.Compare | N.Cross | N.Chain],
+    rows: list[N.Row],
     combine: str,
     candles: Sequence[Candle],
     resolution: str,
