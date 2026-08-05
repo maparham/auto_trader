@@ -318,6 +318,70 @@ describe("BacktestSettingsModal rule duplicate/copy/paste", () => {
   });
 });
 
+describe("BacktestSettingsModal insert palette", () => {
+  // The palette portals to the body, so it lives OUTSIDE the group section —
+  // these assert against the document, not `entry`.
+  function openPalette(section: HTMLElement) {
+    fireEvent.click(within(section).getAllByRole("button", { name: "Insert from palette" })[0]);
+  }
+
+  it("opens the palette modal from a rule row's +", () => {
+    renderModal();
+    openStrategy();
+    expect(document.querySelector(".rule-palette")).toBeNull();
+    openPalette(groupSection("Buy to open"));
+    const palette = document.querySelector(".rule-palette") as HTMLElement;
+    expect(palette).toBeTruthy();
+    expect(within(palette).getByText("Insert into rule 1")).toBeTruthy();
+  });
+
+  it("inserting appends to the row's expression and closes the palette", () => {
+    renderModal();
+    openStrategy();
+    openPalette(groupSection("Buy to open"));
+    const palette = document.querySelector(".rule-palette") as HTMLElement;
+    fireEvent.click(within(palette).getByRole("button", { name: /EMA\(length\)/ }));
+    expect(document.querySelector(".rule-palette")).toBeNull();
+    const row = ruleRows(groupSection("Buy to open"))[0];
+    expect(row.textContent).toContain("EMA(9)");
+  });
+
+  it("Escape closes the palette and leaves the backtest panel open", () => {
+    renderModal();
+    openStrategy();
+    openPalette(groupSection("Buy to open"));
+    expect(document.querySelector(".rule-palette")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(document.querySelector(".rule-palette")).toBeNull();
+    expect(document.querySelector(".bt-cfg-panel")).toBeTruthy();
+  });
+
+  it("deleting a row closes the palette rather than retargeting by index", () => {
+    renderModal();
+    openStrategy();
+    // Three rows with the palette open on the middle one: deleting the first
+    // leaves index 1 in range, so the render guard can't catch the shift — only
+    // removeRule clearing paletteRow keeps the insert off the wrong rule.
+    ruleAction(groupSection("Buy to open"), "Duplicate");
+    ruleAction(groupSection("Buy to open"), "Duplicate");
+    const rows = ruleRows(groupSection("Buy to open"));
+    expect(rows).toHaveLength(3);
+    fireEvent.click(within(rows[1]).getByRole("button", { name: "Insert from palette" }));
+    expect(document.querySelector(".rule-palette")).toBeTruthy();
+    ruleAction(groupSection("Buy to open"), "Remove");
+    expect(document.querySelector(".rule-palette")).toBeNull();
+  });
+
+  it("a disabled row can't open the palette", () => {
+    renderModal();
+    openStrategy();
+    const entry = groupSection("Buy to open");
+    ruleAction(entry, "Disable");
+    const plus = within(entry).getAllByRole("button", { name: "Insert from palette" })[0];
+    expect((plus as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
 describe("BacktestSettingsModal results side-by-side column", () => {
   it("moves results into a docked column and back", () => {
     renderModal();

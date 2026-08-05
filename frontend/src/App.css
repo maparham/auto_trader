@@ -1560,6 +1560,50 @@
 /* Add / Paste live on one row; Paste only appears while a rule is on the
    clipboard, so the group can gain a rule copied from the other side. */
 .bt-rule-foot { display: flex; gap: 8px; }
+
+/* Insert palette (RulePalette) — a FloatingModal off a rule row's `+`. The
+   panel surface/border/scroll come from `.floating-modal`; this block styles
+   the body: a sticky filter field over groups of chip-style insert buttons. */
+.floating-modal.rule-palette .floating-modal-body { padding: 0 0 10px; gap: 0; }
+/* Sticky so the filter stays reachable once the catalog scrolls under it. */
+.rule-palette-search {
+  position: sticky; top: 0; z-index: 1;
+  padding: 10px 12px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.rule-palette-search input {
+  width: 100%; box-sizing: border-box;
+  background: var(--input-bg); color: var(--text); font: inherit;
+  border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px;
+}
+.rule-palette-search input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rule-palette-group { padding: 8px 12px 0; }
+.rule-palette-group h3 {
+  margin: 0 0 5px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-dim);
+}
+.rule-palette-items { display: flex; flex-wrap: wrap; gap: 5px; }
+/* Same chrome as `.bt-chip` — the palette's items are the same kind of small
+   pickable token as the sweep chips, just in a modal. */
+.rule-palette-items button {
+  padding: 3px 9px;
+  font: inherit; font-size: 12px; line-height: 1.4;
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.rule-palette-items button:hover {
+  background: var(--hover);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.rule-palette-items button:active { background: var(--hover-strong); }
+.rule-palette-items button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rule-palette-empty { padding: 12px; }
 /* The AND/OR combiner and the whole-group actions (reverse operators, copy all,
    delete all) sit in the section header's extra cluster, beside the title. */
 .bt-groophead-actions { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }

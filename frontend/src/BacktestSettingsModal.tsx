@@ -3863,33 +3863,13 @@ export function RuleGroupSection({
     onAxisChange: (target: string, patch: Partial<Pick<RangeAxis, "from" | "to" | "step">>) => void;
   };
 }) {
-  // Which row's insert palette is open (one at a time), or null when none.
+  // Which row's insert palette is open (one at a time), or null when none. The
+  // palette is a portaled floating modal, so it renders once for the group off
+  // this index rather than inside the row's markup; Esc and click-away are
+  // FloatingModal's, not ours. Each group instance (entry/exit, long/short)
+  // holds its own index, but only one palette is ever up: opening one fires a
+  // mousedown outside every other panel, which closes them.
   const [paletteRow, setPaletteRow] = useState<number | null>(null);
-  // The open row's wrapper — covers the toggle, the expression input, and the
-  // palette itself, so typing/inserting doesn't count as clicking outside.
-  const paletteHostRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (paletteRow === null) return;
-    const onDown = (e: MouseEvent) => {
-      if (paletteHostRef.current?.contains(e.target as Node)) return;
-      setPaletteRow(null);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // The editor's own completion popup owns Escape while it's up; only take
-      // the key once it's gone, and keep it from reaching the modal's closer.
-      if (document.querySelector(".cm-tooltip-autocomplete")) return;
-      e.stopPropagation();
-      setPaletteRow(null);
-    };
-    document.addEventListener("mousedown", onDown, true);
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown, true);
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [paletteRow]);
 
   // Emit the group back to the parent. The stored config still types groups as
   // `RuleGroup`; the cast bridges the coexistence window (Stage C rewrites the
@@ -3927,11 +3907,16 @@ export function RuleGroupSection({
     emit([...group.rules, { expr: "", enabled: true }]);
   }
   function removeRule(i: number) {
+    // Any reshuffle invalidates `paletteRow` — it addresses a row by index, so a
+    // surviving index can silently come to mean a different rule (delete row 1
+    // with the palette open on row 2 and it would insert into the old row 3).
+    setPaletteRow(null);
     emit(group.rules.filter((_, idx) => idx !== i));
   }
   // Insert an independent copy right after the source row, so a duplicated rule
   // reads as a variation of the one above it rather than landing at the bottom.
   function duplicateRule(i: number) {
+    setPaletteRow(null); // same index-shift hazard as removeRule
     const rules = group.rules.slice();
     rules.splice(i + 1, 0, { ...rules[i] });
     emit(rules);
@@ -3992,10 +3977,7 @@ export function RuleGroupSection({
         const off = rule.enabled === false;
         return (
         <Fragment key={i}>
-        <div
-          className={`bt-rule-row${off ? " bt-rule-disabled" : ""}`}
-          ref={paletteRow === i ? paletteHostRef : undefined}
-        >
+        <div className={`bt-rule-row${off ? " bt-rule-disabled" : ""}`}>
           <div className="bt-rule-main">
             <RuleExpressionInput
               value={rule.expr ?? ""}
@@ -4009,20 +3991,22 @@ export function RuleGroupSection({
                 content={
                   off
                     ? "Enable this rule to edit it"
-                    : paletteRow === i
-                      ? "Hide the insert palette"
-                      : "Insert an indicator, candle field, or timeframe"
+                    : "Insert an indicator, candle field, or timeframe"
                 }
               >
+                {/* Open-only, never a toggle: the palette modal closes itself on
+                    a capture-phase mousedown outside its panel, which lands
+                    before this click — a toggle would close then reopen. */}
                 <button
                   type="button"
                   className={`bt-rule-toggle bt-palette-toggle${paletteRow === i ? " on" : ""}`}
-                  onClick={() => setPaletteRow(paletteRow === i ? null : i)}
+                  onClick={() => setPaletteRow(i)}
                   disabled={off}
-                  aria-label={paletteRow === i ? "Hide the insert palette" : "Insert from palette"}
+                  aria-label="Insert from palette"
+                  aria-haspopup="dialog"
                   aria-expanded={paletteRow === i}
                 >
-                  {paletteRow === i ? "−" : "+"}
+                  +
                 </button>
               </Tooltip>
               {pickIndicator && (
@@ -4066,9 +4050,6 @@ export function RuleGroupSection({
               />
             </div>
           </div>
-          {paletteRow === i && (
-            <RulePalette onInsert={(text) => insertInto(i, text)} />
-          )}
         </div>
         {sweep?.editable && rule.enabled !== false && (() => {
           // lit: targets address rows by RAW full-list index i (the expr request
@@ -4134,6 +4115,17 @@ export function RuleGroupSection({
           </Tooltip>
         ) : null}
       </div>
+      {/* One palette for the whole group — it portals to the body, so it doesn't
+          belong to any row's markup; `paletteRow` is only the insert target.
+          The row check is the backstop for a group emptied under it (clear-all);
+          the edits that shift indices clear `paletteRow` themselves. */}
+      {paletteRow !== null && group.rules[paletteRow] && (
+        <RulePalette
+          title={`Insert into rule ${paletteRow + 1}`}
+          onInsert={(text) => insertInto(paletteRow, text)}
+          onClose={() => setPaletteRow(null)}
+        />
+      )}
     </Section>
   );
 }
