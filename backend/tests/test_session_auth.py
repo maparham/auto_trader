@@ -137,3 +137,84 @@ def test_session_429_exhausted_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def _no_sleep(*_args, **_kwargs) -> None:
     return None
+
+
+# A trimmed Incapsula/Imperva WAF block page: what Capital's edge serves (as
+# text/html) when the client network is restricted. The API itself never
+# responds with HTML, so this must be classified as a blocked network path,
+# not an auth failure.
+_WAF_HTML = (
+    '<html style="height:100%"><head><META NAME="ROBOTS" CONTENT="NOINDEX">'
+    '<script src="/_Incapsula_Resource?SWJIYLWA=deadbeef"></script></head>'
+    "<body>Request unsuccessful.</body></html>"
+)
+
+
+def _waf_403() -> httpx.Response:
+    return httpx.Response(
+        403, headers={"content-type": "text/html"}, content=_WAF_HTML
+    )
+
+
+def test_session_waf_block_raises_broker_blocked() -> None:
+    """A WAF/HTML 403 on /session is a blocked network path, not an auth error."""
+    from auto_trader.core.broker_health import BrokerBlocked
+
+    broker = _make_broker(httpx.MockTransport(lambda r: _waf_403()))
+
+    async def run() -> None:
+        try:
+            with pytest.raises(BrokerBlocked):
+                await broker._ensure_session()
+        finally:
+            await broker.aclose()
+
+    asyncio.run(run())
+
+
+def test_request_waf_block_raises_broker_blocked() -> None:
+    """A WAF/HTML 403 on an ordinary API call (session still in TTL) is also
+    classified as a blocked network path — the block can start mid-session."""
+    from auto_trader.core.broker_health import BrokerBlocked
+
+    broker = _make_broker(httpx.MockTransport(lambda r: _waf_403()))
+    broker._cst = "cst-existing"
+    broker._security_token = "tok-existing"
+    broker._authed_at = datetime.now(timezone.utc)
+
+    class _NoRate:
+        async def acquire(self) -> None:
+            return None
+
+    broker._rate = _NoRate()
+
+    async def run() -> None:
+        try:
+            with pytest.raises(BrokerBlocked):
+                await broker._request("GET", "/api/v1/accounts")
+        finally:
+            await broker.aclose()
+
+    asyncio.run(run())
+
+
+def test_plain_403_is_not_broker_blocked() -> None:
+    """A real API 403 (JSON body) must stay an HTTPStatusError — only the
+    WAF's HTML page means the network path is blocked."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            headers={"content-type": "application/json"},
+            json={"errorCode": "error.invalid.details"},
+        )
+
+    broker = _make_broker(httpx.MockTransport(handler))
+
+    async def run() -> None:
+        try:
+            with pytest.raises(httpx.HTTPStatusError):
+                await broker._ensure_session()
+        finally:
+            await broker.aclose()
+
+    asyncio.run(run())

@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 
 import httpx
 
+from auto_trader.core.broker_health import BrokerBlocked
+
 # Retries for a 429 that slips through the caller's own rate limiter (shared
 # limit across our own traffic).
 _RATE_LIMIT_RETRIES = 3
@@ -37,6 +39,24 @@ _RATE_LIMIT_RETRIES = 3
 # growing backoff before giving up.
 _SESSION_MAX_RETRIES = 4
 _SESSION_RETRY_BACKOFF = 1.0  # seconds; multiplied by the attempt number
+
+
+def raise_if_waf_blocked(resp: httpx.Response) -> None:
+    """Classify an HTML error response as a blocked network path.
+
+    The broker APIs only ever answer JSON; an error status carrying `text/html`
+    is an edge/WAF interstitial (Capital.com fronts with Incapsula) or a captive
+    portal — the request never reached the API. Surfacing it as BrokerBlocked
+    lets the app tell the user their network is blocking the broker instead of
+    reporting a generic broker failure."""
+    if resp.status_code < 400:
+        return
+    if "text/html" in resp.headers.get("content-type", "").lower():
+        raise BrokerBlocked(
+            f"{resp.request.url.host}: request blocked before reaching the broker "
+            "API (WAF/HTML interstitial) — this network appears to restrict "
+            "access to the broker"
+        )
 
 
 class SessionAuthBroker:
@@ -103,6 +123,7 @@ class SessionAuthBroker:
                     await asyncio.sleep(_SESSION_RETRY_BACKOFF * (attempt + 1))
                     continue
                 break
+            raise_if_waf_blocked(resp)
             resp.raise_for_status()
             self._capture_login(resp)
             self._authed_at = datetime.now(timezone.utc)

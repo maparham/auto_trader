@@ -38,6 +38,16 @@ class BrokerTimeout(Exception):
     """A single broker call exceeded its per-call wall-clock budget."""
 
 
+class BrokerBlocked(Exception):
+    """The network path to the broker is blocked before its API (WAF/firewall).
+
+    Raised when an upstream error response carries an HTML block page (e.g.
+    Capital.com's Incapsula edge) instead of the API's JSON — the request never
+    reached the broker, which typically means a restricted internet connection.
+    Distinct from BrokerUnavailable so the UI can say "your network is blocking
+    the broker" instead of a generic outage."""
+
+
 class BrokerReconnecting(Exception):
     """The broker's own connection is wedged and being rebuilt in the background.
     Distinct from BrokerUnavailable (which is the shared circuit breaker fast-

@@ -88,6 +88,8 @@ import {
   type TradeAccount,
   type AccountSummary,
 } from "./lib/trading";
+import { BrokerBlockedError } from "./lib/http";
+import { reportBrokerBlocked, reportBrokerReachable } from "./lib/brokerBlocked";
 import {
   hydrateFromBackend,
   subscribeToBackendUpdates,
@@ -562,8 +564,15 @@ export default function App() {
     const load = () => {
       if (document.hidden) return; // pause when the tab is hidden
       fetchAccountSummary(activeAccount)
-        .then((s) => alive && setAccountSummary(s))
-        .catch(() => {/* keep last-known figures on a transient error */});
+        .then((s) => {
+          if (alive) setAccountSummary(s);
+          reportBrokerReachable();
+        })
+        .catch((e) => {
+          // Keep last-known figures on a transient error, but surface a blocked
+          // network path (WAF / restricted connection) instead of hiding it.
+          if (e instanceof BrokerBlockedError) reportBrokerBlocked(e.message);
+        });
     };
     load();
     const timer = setInterval(load, 6_000);

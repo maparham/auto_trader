@@ -8,6 +8,22 @@ export const API_BASE =
     ?.VITE_API_BASE ?? "http://localhost:8000";
 
 /**
+ * The backend marked this failure as "the user's network blocks the broker"
+ * (WAF interstitial upstream — see deps.guarded / X-Broker-Blocked). Typed so
+ * poll loops can surface a specific "restricted connection" state instead of
+ * treating it as a transient broker hiccup.
+ */
+export class BrokerBlockedError extends Error {}
+
+/** Throw BrokerBlockedError if a failed response carries the broker-blocked
+ *  marker header; otherwise return so the caller raises its usual error. */
+export async function throwIfBrokerBlocked(res: Response): Promise<void> {
+  if (res.headers.get("X-Broker-Blocked") === "1") {
+    throw new BrokerBlockedError(await errorDetail(res));
+  }
+}
+
+/**
  * Pull the FastAPI `{detail}` string from a failed response. Falls back to
  * `fallback` when the body has no string `detail`, else to status + statusText.
  */

@@ -34,7 +34,7 @@ from auto_trader.brokers._prices import (
     _to_utc,
     pick_side,
 )
-from auto_trader.brokers._session import SessionAuthBroker
+from auto_trader.brokers._session import SessionAuthBroker, raise_if_waf_blocked
 from auto_trader.config import settings
 from auto_trader.core.models import (
     Candle,
@@ -174,6 +174,7 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
                 await asyncio.sleep(0.5 * (2**attempt))
                 continue
             break
+        raise_if_waf_blocked(resp)
         resp.raise_for_status()
         return resp
 

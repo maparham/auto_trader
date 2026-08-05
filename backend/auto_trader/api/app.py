@@ -93,6 +93,9 @@ app.add_middleware(
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
+    # Lets the browser read the broker-blocked marker (see deps.guarded) so the
+    # frontend can tell "your network blocks the broker" from a generic outage.
+    expose_headers=["X-Broker-Blocked"],
 )
 
 from . import activity

@@ -11,7 +11,8 @@
 import { isCapitalBroker, onTradesDirty } from "./persist";
 import { isStrategyDeal } from "./liveTags";
 import { tradesSignal } from "./signals";
-import { API_BASE as BASE, errorDetail } from "./http";
+import { API_BASE as BASE, errorDetail, throwIfBrokerBlocked, BrokerBlockedError } from "./http";
+import { reportBrokerBlocked, reportBrokerReachable } from "./brokerBlocked";
 import { expiryToApi } from "./expiry";
 
 // A registry account key "{broker}:{env}", e.g. "capital:paper". Opaque to the
@@ -311,7 +312,10 @@ export async function fetchAccountSummary(
 ): Promise<AccountSummary | null> {
   const res = await fetch(`${BASE}/api/account?account=${encodeURIComponent(account)}`);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`account summary failed (${res.status})`);
+  if (!res.ok) {
+    await throwIfBrokerBlocked(res);
+    throw new Error(`account summary failed (${res.status})`);
+  }
   return res.json();
 }
 
@@ -356,7 +360,10 @@ export async function placeOrder(req: OrderRequest): Promise<OrderResult> {
 
 async function fetchPositions(account: TradeAccount): Promise<Position[]> {
   const res = await fetch(`${BASE}/api/positions?account=${encodeURIComponent(account)}`);
-  if (!res.ok) throw new Error(`positions failed (${res.status})`);
+  if (!res.ok) {
+    await throwIfBrokerBlocked(res);
+    throw new Error(`positions failed (${res.status})`);
+  }
   return res.json();
 }
 
@@ -375,7 +382,10 @@ export async function fetchOpenPositions(
 async function fetchWorkingOrders(account: TradeAccount): Promise<WorkingOrder[]> {
   const url = `${BASE}/api/orders/working?account=${encodeURIComponent(account)}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`working orders failed (${res.status})`);
+  if (!res.ok) {
+    await throwIfBrokerBlocked(res);
+    throw new Error(`working orders failed (${res.status})`);
+  }
   return res.json();
 }
 
@@ -488,8 +498,12 @@ async function _refresh(): Promise<void> {
     // A switch mid-flight would publish the wrong account's trades; drop a
     // response whose account is no longer active.
     if (account === _account) tradesSignal.set(toTrades(positions, orders));
-  } catch {
-    // Transient: keep the last known trades rather than clearing the chart.
+    reportBrokerReachable();
+  } catch (e) {
+    // Transient: keep the last known trades rather than clearing the chart —
+    // but a blocked network path (WAF / restricted connection) is surfaced,
+    // since silently painting last-known figures hides a dead broker.
+    if (e instanceof BrokerBlockedError) reportBrokerBlocked(e.message);
   }
 }
 

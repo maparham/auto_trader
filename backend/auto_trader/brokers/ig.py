@@ -39,7 +39,7 @@ from auto_trader.brokers._ig_dealing import (
     _market_open_body,
 )
 from auto_trader.brokers._market_hours import _market_hours_state
-from auto_trader.brokers._session import SessionAuthBroker
+from auto_trader.brokers._session import SessionAuthBroker, raise_if_waf_blocked
 from auto_trader.brokers._prices import (
     PriceSide,
     _RateLimiter,
@@ -240,6 +240,7 @@ class IGBroker(SessionAuthBroker, MarketDataBroker):
                 await asyncio.sleep(0.5 * (2**attempt))
                 continue
             break
+        raise_if_waf_blocked(resp)
         resp.raise_for_status()
         return resp
 

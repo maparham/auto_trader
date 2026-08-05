@@ -93,6 +93,14 @@ export function playPing(): void {
 const MAX_TOASTS = 5;
 const dismissers = new WeakMap<Element, () => void>();
 
+/** Dismiss the on-screen toast for `key`, if any (no-op otherwise). Lets a
+ *  condition-driven sticky toast (e.g. "broker unreachable") be cleared by the
+ *  code that detects recovery instead of waiting on the user's ×. */
+export function dismissToast(key: string): void {
+  const el = keyed.get(key);
+  if (el) dismissers.get(el)?.();
+}
+
 function container(): HTMLElement {
   let el = document.getElementById("toast-container");
   if (!el) {

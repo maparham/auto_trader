@@ -27,6 +27,7 @@ from auto_trader.brokers.ig import IGAllowanceExceeded, IGBroker
 from auto_trader.brokers.paper_exec import PaperExecutionBroker
 from auto_trader.brokers.registry import BrokerRegistry
 from auto_trader.core.broker_health import (
+    BrokerBlocked,
     BrokerHealth,
     BrokerReconnecting,
     BrokerTimeout,
@@ -79,6 +80,19 @@ BROKER_HEALTH = BrokerHealth(per_key_timeout={"mt5": 90.0, "dukascopy": 45.0})
 T = TypeVar("T")
 
 
+def broker_blocked_http(label: str, e: BrokerBlocked) -> HTTPException:
+    """The 503 for a network-path-blocked broker (WAF interstitial upstream).
+
+    Shared by guarded() and the execution routes (which bypass the breaker).
+    The X-Broker-Blocked marker header is the frontend's structural signal —
+    no string matching on detail — and is exposed via CORS in app.py."""
+    return HTTPException(
+        503,
+        f"{label}: blocked by your network (restricted internet connection) — {e}",
+        headers={"X-Broker-Blocked": "1"},
+    )
+
+
 async def guarded(
     broker_id: str, factory: Callable[[], Awaitable[T]], label: str
 ) -> T:
@@ -95,9 +109,18 @@ async def guarded(
         # wedged socket (only MT5 raises it, via its own rebuild path) is transient
         # and owns its recovery — it must not count toward tripping the SHARED
         # breaker, which would pin every other call for that broker into cooldown.
+        # BrokerBlocked is `ignore`d too: the WAF interstitial answers instantly
+        # (no held connection slot, so nothing for the breaker to protect), and
+        # keeping it out of the breaker means every poll surfaces the specific
+        # "your network is blocking the broker" 503 instead of degrading to the
+        # generic BrokerUnavailable message once the breaker opens.
         return await BROKER_HEALTH.run(
-            broker_id, factory, ignore=(IGAllowanceExceeded, BrokerReconnecting)
+            broker_id,
+            factory,
+            ignore=(IGAllowanceExceeded, BrokerReconnecting, BrokerBlocked),
         )
+    except BrokerBlocked as e:
+        raise broker_blocked_http(label, e) from e
     except IGAllowanceExceeded as e:
         raise HTTPException(
             429,
