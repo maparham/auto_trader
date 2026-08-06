@@ -76,6 +76,8 @@ import { sweepContext } from "./lib/sweepMemory";
 import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
 import type { BacktestRequest, ExprBacktestRequest, ExprRow, SweepRow } from "./api";
+import { collectExprInstances, exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
+import { liveExprInstances } from "./lib/indicators";
 
 interface Props {
   controller: ChartController | null;
@@ -269,15 +271,27 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       const fetchBars = (fromMs: number) =>
         fetchRange(epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId);
 
+      // The chart's live panes, read ONCE: a row saying `SLOPE.slope0 > 0.5`
+      // names an output and restates none of the pane's settings, so the pane is
+      // the only place both the run's WARM-UP DEPTH (warmupRefs, used by every
+      // sizing call below) and the request's `indicators` map (exprIndicators,
+      // built further down from this same list) can come from. Read before
+      // sizing, not at request-build time, or the history ask would charge a
+      // referenced pane zero bars and the run would trade an unwarmed series.
+      const live = chart ? liveExprInstances(chart) : [];
+      const warmupRefs = {
+        instances: exprInstancesFor(live),
+        warmupByRef: exprWarmupByRef(live),
+      };
       // Warm-up/history depth must size against the config the run actually
       // executes (effCfg): in coded mode that's the file's panel exit rules +
       // risk, not the dormant rules-mode groups sitting in cfg.
-      const required = requiredWarmupBars(effCfg, resSeconds);
+      const required = requiredWarmupBars(effCfg, resSeconds, warmupRefs);
       const depth = cfg.range.history ?? "minimal";
       // Temporary phase timing (perf investigation) — logged as [backtest perf].
       const tFetch0 = performance.now();
       progressStageSignal.set("downloading");
-      let historyFromMs = resolveHistoryStart(effCfg, windowFromMs, resSeconds);
+      let historyFromMs = resolveHistoryStart(effCfg, windowFromMs, resSeconds, warmupRefs);
       let bars = await fetchBars(historyFromMs);
 
       // The requested depth can exceed what the broker/account actually serves
@@ -288,7 +302,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // (the smallest, most likely-to-succeed ask) rather than only checking for
       // the empty case.
       if (depth !== "minimal" && (bars.length === 0 || warmupBarCount(bars, windowFromMs) < required)) {
-        const minimalFromMs = minimalHistoryStart(effCfg, windowFromMs, resSeconds);
+        const minimalFromMs = minimalHistoryStart(effCfg, windowFromMs, resSeconds, warmupRefs);
         const retried = await fetchBars(minimalFromMs);
         if (warmupBarCount(retried, windowFromMs) > warmupBarCount(bars, windowFromMs)) {
           bars = retried;
@@ -307,7 +321,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           windowFromMs,
           resSeconds,
           required,
-          floorMs: warmupWalkFloor(effCfg, windowFromMs, resSeconds),
+          floorMs: warmupWalkFloor(effCfg, windowFromMs, resSeconds, warmupRefs),
         },
         fetchBars,
       );
@@ -360,6 +374,20 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // coded baseReq and the rule-mode exprReq/sweep branch can reference it.
       const exprRows = (g: RuleGroup): ExprRow[] =>
         g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
+      // The chart panes these rows reference ("SLOPE.slope0"), with their LIVE
+      // settings — read off the chart rather than storage so a pane retuned a
+      // moment ago runs as it looks. Only referenced panes travel; a reference to
+      // a pane that is gone ships nothing (the editor already flags it as
+      // unknown, and inventing an entry would hide that). Both requests carry it:
+      // a coded run still posts THIS panel's exit rules as expressions.
+      const exprIndicators = chart
+        ? collectExprInstances(
+            live,
+            [effCfg.longEntry, effCfg.longExit, effCfg.shortEntry, effCfg.shortExit]
+              .flatMap(exprRows)
+              .map((r) => r.expr),
+          )
+        : undefined;
       const baseReq: BacktestRequest = {
         epic,
         resolution: runResolution,
@@ -382,6 +410,9 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // rule groups have been removed from the backtest request.
         exprLongExit: exprRows(effCfg.longExit),
         exprShortExit: exprRows(effCfg.shortExit),
+        // Coded runs post their exits as expression rows, so those rows can
+        // reference a chart pane the same way rule mode does.
+        indicators: exprIndicators,
         // `!== false` so a preset predating these flags (undefined) still trades.
         // Coded mode: longEnabled/shortEnabled are rules-mode UI; RuleStrategy
         // gates EXITS on them (rule.py). A coded run must never let a
@@ -430,6 +461,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         costs: cfg.costs,
         tradeFromTime,
         mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
+        // The chart panes these rows reference ("SLOPE.slope0"), with their LIVE
+        // settings — read off the chart rather than storage so a pane retuned a
+        // moment ago runs as it looks. Only referenced panes travel; a reference
+        // to a pane that is gone ships nothing (the editor already flags it).
+        indicators: exprIndicators,
       };
 
       // Walk-forward mode: the modal populated wfoRequestSignal (one-shot,

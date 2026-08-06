@@ -6,6 +6,10 @@
 // authored here for CodeMirror 6 highlighting and is not yet wired to a
 // generator build step. Token classes match catalog.ts:
 //   Indicator, Wrapper, Cross, CandleField, Number, Operator, Timeframe.
+// An unregistered Identifier carrying a Dot Field is a chart-instance
+// reference (SLOPE#a1b2c3.slope0); the grammar needs no rule for it beyond
+// admitting "#" into Identifier, since highlight.ts::classify does the
+// catalog lookup that tells a ref from an unknown name.
 // count/bullish/bearish/barsSinceEntry are specialized the same way (Wrapper
 // for count, Cross for bullish/bearish, plain Identifier for barsSinceEntry);
 // see catalog.ts CONDITIONS/PREDICATE_FNS/COUNT_FN and highlight.ts classify().
@@ -80,7 +84,11 @@ Offset {
   }
 
   Field { $[a-zA-Z_] $[a-zA-Z0-9_]* }
-  Identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
+
+  // "#" is legal inside (never leading) an Identifier so a chart-indicator
+  // instance id — "SLOPE#a1b2c3" — is one token, matching lexer.ts. Field is
+  // deliberately left alone: an output name never contains "#".
+  Identifier { $[a-zA-Z_] $[a-zA-Z0-9_#]* }
 
   @precedence { Number, Timeframe }
   @precedence { CandleField, Field, Identifier }

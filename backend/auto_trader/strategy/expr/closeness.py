@@ -10,6 +10,10 @@ from auto_trader.indicators.core import atr_series
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.evaluate import _cond_matches, series_of
 
+# `instances` is an OPAQUE map {instance id -> resolved indicator instance},
+# threaded straight through to series_of/_cond_matches. This package must never
+# learn what any concrete indicator is, so it is deliberately untyped here.
+
 
 def _defined(v: float | None) -> bool:
     return v is not None and not (isinstance(v, float) and math.isnan(v))
@@ -88,16 +92,17 @@ def row_gap_series(
     candles: Sequence[Candle],
     resolution: str,
     htf: dict[str, list[Candle]],
+    instances=None,
 ) -> list[float | None]:
     """Gap oriented toward firing per bar. Comparison: signed_gap(op,l,r).
     Cross: symmetric line distance abs(a - b) (proximity to touching)."""
     n = len(candles)
     if isinstance(node, N.Compare):
-        left = series_of(node.left, candles, resolution, htf)
-        right = series_of(node.right, candles, resolution, htf)
+        left = series_of(node.left, candles, resolution, htf, instances)
+        right = series_of(node.right, candles, resolution, htf, instances)
         return [signed_gap(node.op, left[i], right[i]) for i in range(n)]
-    a = series_of(node.a, candles, resolution, htf)
-    b = series_of(node.b, candles, resolution, htf)
+    a = series_of(node.a, candles, resolution, htf, instances)
+    b = series_of(node.b, candles, resolution, htf, instances)
     out: list[float | None] = []
     for i in range(n):
         if _defined(a[i]) and _defined(b[i]):
@@ -126,16 +131,17 @@ def row_closeness(
     resolution: str,
     htf: dict[str, list[Candle]],
     norm: Norm,
+    instances=None,
 ) -> list[float | None]:
     if isinstance(node, N.Chain):
-        per = [row_closeness(p, candles, resolution, htf, norm) for p in node.parts]
+        per = [row_closeness(p, candles, resolution, htf, norm, instances) for p in node.parts]
         return _fold(per, "AND", len(candles))
     if isinstance(node, N.Predicate):
         # A predicate is binary: closeness is 1 when it holds, else 0. There is
         # no meaningful gradient toward "almost red".
-        m = _cond_matches(node, candles, resolution, htf)
+        m = _cond_matches(node, candles, resolution, htf, instances)
         return [1.0 if v else 0.0 for v in m]
-    gaps = row_gap_series(node, candles, resolution, htf)
+    gaps = row_gap_series(node, candles, resolution, htf, instances)
     atr = atr_series(candles, norm.atr_length) if norm.basis == "atr" else None
     scale = scale_series(gaps, norm.basis, norm.width, norm.window, atr)
     return [ramp(gaps[i], scale[i]) for i in range(len(gaps))]
@@ -148,6 +154,7 @@ def group_closeness(
     resolution: str,
     htf: dict[str, list[Candle]],
     norm: Norm,
+    instances=None,
 ) -> list[float | None]:
     """Fold per-row closeness by the group operator, strict fuzzy logic:
     AND -> min, OR -> max. Any undefined row poisons the bar. No rows -> all
@@ -155,7 +162,7 @@ def group_closeness(
     n = len(candles)
     if not rows:
         return [None] * n
-    per = [row_closeness(r, candles, resolution, htf, norm) for r in rows]
+    per = [row_closeness(r, candles, resolution, htf, norm, instances) for r in rows]
     return _fold(per, combine, n)
 
 

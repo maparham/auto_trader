@@ -9,17 +9,31 @@ import {
   type BacktestConfig,
 } from "./backtestConfig";
 import { warmupOf } from "./expr/parser";
+import type { ExprInstance } from "./expr/catalog";
+
+/** The chart-pane half of warm-up, supplied by the caller that owns the chart
+ * (BacktestButton). A row saying `SLOPE.slope0 > 0.5` names an OUTPUT and
+ * restates none of the pane's settings, so its depth can only come from the
+ * pane itself — and this module, like the parser, must not import a concrete
+ * indicator to find it.
+ *
+ * Omitted (legacy/structured callers, and the settings modal's estimate) means
+ * every reference contributes 0, which is the pre-existing behaviour. */
+export interface WarmupRefs {
+  instances: readonly ExprInstance[];
+  warmupByRef: (instance: string, output: string) => number;
+}
 
 /** The longest warm-up (in base bars) any enabled expression row needs — @tf
  * pins scale by the timeframe ratio when `baseSeconds` is known (see warmupOf).
  * Structured (coded) configs have no `expr` rows, so this is 0 and nothing
  * changes for them. */
-function exprWarmupBars(cfg: BacktestConfig, baseSeconds?: number): number {
+function exprWarmupBars(cfg: BacktestConfig, baseSeconds?: number, refs?: WarmupRefs): number {
   let m = 0;
   for (const g of [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit]) {
     for (const r of g.rules) {
       if (r.expr == null || r.enabled === false) continue;
-      m = Math.max(m, warmupOf(r.expr, baseSeconds));
+      m = Math.max(m, warmupOf(r.expr, baseSeconds, refs?.instances, refs?.warmupByRef));
     }
   }
   return m;
@@ -28,9 +42,9 @@ function exprWarmupBars(cfg: BacktestConfig, baseSeconds?: number): number {
 /** The longest warm-up need in BASE bars. ATR risk/scaling lengths are always
  * base-timeframe; expression rows contribute their own warm-up via
  * {@link exprWarmupBars}, with @tf pins scaled to base bars by `baseSeconds`. */
-export function longestWarmupBars(cfg: BacktestConfig, baseSeconds: number): number {
-  if (!(baseSeconds > 0)) return Math.max(longestIndicatorLength(cfg), exprWarmupBars(cfg));
-  return Math.max(1, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg), exprWarmupBars(cfg, baseSeconds));
+export function longestWarmupBars(cfg: BacktestConfig, baseSeconds: number, refs?: WarmupRefs): number {
+  if (!(baseSeconds > 0)) return Math.max(longestIndicatorLength(cfg), exprWarmupBars(cfg, undefined, refs));
+  return Math.max(1, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg), exprWarmupBars(cfg, baseSeconds, refs));
 }
 
 const DAY_MS = 86_400_000;
@@ -79,8 +93,10 @@ function paddedLookbackMs(bars: number, resSeconds: number): number {
   return Math.ceil(bars * resSeconds * factor) * 1000;
 }
 
-export function minimalHistoryStart(cfg: BacktestConfig, windowFromMs: number, resSeconds: number): number {
-  return windowFromMs - paddedLookbackMs(longestWarmupBars(cfg, resSeconds), resSeconds);
+export function minimalHistoryStart(
+  cfg: BacktestConfig, windowFromMs: number, resSeconds: number, refs?: WarmupRefs,
+): number {
+  return windowFromMs - paddedLookbackMs(longestWarmupBars(cfg, resSeconds, refs), resSeconds);
 }
 
 // "Full" history is bounded, not literally epoch 0: Capital's REST history API
@@ -95,11 +111,13 @@ const FULL_HISTORY_LOOKBACK_MS = 5 * 365 * DAY_MS;
 /** How far before the window to fetch so every indicator is warm at the window's
  * first bar (D6) — full history, a user-typed bar count, or just the longest
  * indicator's length. */
-export function resolveHistoryStart(cfg: BacktestConfig, windowFromMs: number, resSeconds: number): number {
+export function resolveHistoryStart(
+  cfg: BacktestConfig, windowFromMs: number, resSeconds: number, refs?: WarmupRefs,
+): number {
   const depth = cfg.range.history ?? "minimal";
   if (depth === "full") return windowFromMs - FULL_HISTORY_LOOKBACK_MS;
   if (depth === "bars") return windowFromMs - paddedLookbackMs(cfg.range.historyBars ?? 500, resSeconds);
-  return minimalHistoryStart(cfg, windowFromMs, resSeconds);
+  return minimalHistoryStart(cfg, windowFromMs, resSeconds, refs);
 }
 
 /** How many times the run may widen the history ask before giving up. Each pass
@@ -145,8 +163,9 @@ export function warmupWalkFloor(
   cfg: BacktestConfig,
   windowFromMs: number,
   resSeconds: number,
+  refs?: WarmupRefs,
 ): number {
-  const minimalSpan = windowFromMs - minimalHistoryStart(cfg, windowFromMs, resSeconds);
+  const minimalSpan = windowFromMs - minimalHistoryStart(cfg, windowFromMs, resSeconds, refs);
   return windowFromMs - minimalSpan * 2 ** MAX_WARMUP_PASSES;
 }
 
@@ -188,7 +207,9 @@ export async function widenUntilWarm<T extends { timestamp: number }>(
  * contain before the window for the config to be honestly "warmed up" — "full"
  * has no fixed target size, but still can't honestly warm less than the
  * longest indicator needs. */
-export function requiredWarmupBars(cfg: BacktestConfig, baseSeconds?: number): number {
+export function requiredWarmupBars(
+  cfg: BacktestConfig, baseSeconds?: number, refs?: WarmupRefs,
+): number {
   const depth = cfg.range.history ?? "minimal";
   if (depth === "bars") {
     const asked = cfg.range.historyBars ?? 500;
@@ -196,9 +217,9 @@ export function requiredWarmupBars(cfg: BacktestConfig, baseSeconds?: number): n
     // bars" ask (N/ratio HTF bars won't warm it). Raise the requirement so the
     // insufficient-warmup retry refetches at the TF-scaled minimal depth and the
     // short-warm-up warning fires honestly. Base-only configs keep asking N.
-    return baseSeconds != null ? Math.max(asked, longestWarmupBars(cfg, baseSeconds)) : asked;
+    return baseSeconds != null ? Math.max(asked, longestWarmupBars(cfg, baseSeconds, refs)) : asked;
   }
-  return baseSeconds != null ? longestWarmupBars(cfg, baseSeconds) : longestIndicatorLength(cfg);
+  return baseSeconds != null ? longestWarmupBars(cfg, baseSeconds, refs) : longestIndicatorLength(cfg);
 }
 
 /** How many of the fetched bars fall strictly before the trading window — i.e.

@@ -12,6 +12,7 @@ import {
   MAX_WARMUP_PASSES,
 } from "./backtestWindow";
 import type { BacktestConfig } from "./backtestConfig";
+import { exprInstancesFor, exprWarmupByRef, type LiveInstance } from "./exprInstances";
 
 const DAY_MS = 86_400_000;
 
@@ -268,6 +269,48 @@ describe("expression-row warmup", () => {
       longEntry: { combine: "AND", rules: [{ expr: "EMA(200) > candle.close", enabled: false }] },
     });
     expect(longestWarmupBars(c, 60)).toBe(1);
+  });
+
+  // A rule naming a chart pane's output carries none of the pane's settings, so
+  // its depth is only knowable from the pane — supplied as `refs`. Without them
+  // the reference costs 0 and the run fetches no warm-up for it at all, which is
+  // exactly the state the hard-fail guard in BacktestButton exists to prevent.
+  describe("indicator references (refs)", () => {
+    const pane: LiveInstance = {
+      id: "SLOPE",
+      type: "SLOPE",
+      calcParams: [50],
+      extendData: { slopePeriod: 3, smoothing: { type: "ema", length: 10 } },
+    };
+    const refs = { instances: exprInstancesFor([pane]), warmupByRef: exprWarmupByRef([pane]) };
+    const c = cfg({
+      range: { mode: "bars", bars: 500, history: "minimal" },
+      longEntry: { combine: "AND", rules: [{ expr: "SLOPE.slope0 > 0.5", enabled: true }] },
+    });
+
+    it("charges the pane's warm-up when refs are supplied", () => {
+      expect(longestWarmupBars(c, 300, refs)).toBe(62);
+      expect(requiredWarmupBars(c, 300, refs)).toBe(62);
+    });
+
+    it("charges nothing without them (the pre-fix behaviour)", () => {
+      expect(longestWarmupBars(c, 300)).toBe(1);
+      expect(requiredWarmupBars(c, 300)).toBe(1);
+    });
+
+    it("the history ask deepens to match, so the run doesn't hard-fail on its own requirement", () => {
+      const windowFromMs = 1_700_000_000_000;
+      const withRefs = minimalHistoryStart(c, windowFromMs, 300, refs);
+      const without = minimalHistoryStart(c, windowFromMs, 300);
+      expect(windowFromMs - withRefs).toBeGreaterThan(windowFromMs - without);
+      // 62 bars x 300s x the 1.5 weekend padding.
+      expect(windowFromMs - withRefs).toBe(Math.ceil(62 * 300 * 1.5) * 1000);
+    });
+
+    it("a 'bars' history depth is raised to the reference's need", () => {
+      const asked = cfg({ ...c, range: { mode: "bars", bars: 500, history: "bars", historyBars: 10 } });
+      expect(requiredWarmupBars(asked, 300, refs)).toBe(62);
+    });
   });
 });
 

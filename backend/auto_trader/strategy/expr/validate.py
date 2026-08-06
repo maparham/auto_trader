@@ -90,7 +90,13 @@ def _candle_root(node: N.Node) -> N.Node:
 def _pinned_instance(node: N.Node,
                      instances: "dict[str, ResolvedInstance] | None") -> str | None:
     """The instance id of a ref inside `node` whose own config carries a
-    timeframe pin, or None."""
+    timeframe pin, or None.
+
+    A pane pinned in its own settings is an already-pinned series, so this is the
+    ref-shaped counterpart of `nodes.contains_tf` — the parser's nested-pin check.
+    The case list below mirrors `contains_tf` case for case on purpose: if the two
+    drift, a nested pin escapes through whichever node kind only one of them
+    recurses into. Keep them in step."""
     if isinstance(node, N.IndicatorRef):
         inst = (instances or {}).get(node.instance)
         if inst is not None and inst.spec.timeframe(inst.config):
@@ -100,6 +106,26 @@ def _pinned_instance(node: N.Node,
         return _pinned_instance(node.base, instances)
     if isinstance(node, N.Unary):
         return _pinned_instance(node.operand, instances)
+    if isinstance(node, N.Call):
+        return _first(_pinned_instance(a, instances) for a in node.args)
+    if isinstance(node, (N.Binary, N.Compare)):
+        return _first(_pinned_instance(n, instances) for n in (node.left, node.right))
+    if isinstance(node, N.Cross):
+        return _first(_pinned_instance(n, instances) for n in (node.a, node.b))
+    if isinstance(node, N.Chain):
+        return _first(_pinned_instance(p, instances) for p in node.parts)
+    if isinstance(node, N.Predicate):
+        return _pinned_instance(node.base, instances)
+    if isinstance(node, N.Count):
+        return _first(_pinned_instance(n, instances) for n in (node.cond, node.window))
+    return None
+
+
+def _first(results) -> str | None:
+    """The first non-None result, or None."""
+    for r in results:
+        if r is not None:
+            return r
     return None
 
 
@@ -132,6 +158,15 @@ def _walk(node: N.Node, *, is_exit: bool,
             # A field access on a call (e.g. EMA(9).signal): no registered
             # indicator exposes named outputs in v1, so this is always an error.
             raise ExprError("field_on_call", f"{root.name} has no named outputs.", node.start, node.end)
+        if isinstance(root, N.IndicatorRef):
+            # SLOPE.slope0.foo (or SLOPE.slope0[-1].foo): the ref already names an
+            # output, and an output is a plain series with no sub-fields. Without
+            # this the stray field would be silently discarded by the _walk below.
+            raise ExprError(
+                "field_on_indicator_ref",
+                f"{root.instance}.{root.output} has no fields.",
+                node.start, node.end,
+            )
         _walk(node.base, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, N.Tf):

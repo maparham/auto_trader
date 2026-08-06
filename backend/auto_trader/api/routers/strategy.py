@@ -35,6 +35,7 @@ from auto_trader.strategy.loader import StrategyLoadError
 
 from .. import deps
 from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse
+from ..sweep_apply import request_instances
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -58,7 +59,8 @@ def _candle(c) -> Candle:
     )
 
 
-def _compile_expr_group(rows, candles, resolution, htf, *, is_exit: bool, group: str):
+def _compile_expr_group(rows, candles, resolution, htf, *, is_exit: bool, group: str,
+                        instances=None):
     """Parse + validate + compile every ENABLED expression row in a group. Mirrors
     expr.py's _compile_group: a parse/validate error 422s with the expression span
     plus the group/row location; disabled and blank rows are dropped before
@@ -69,13 +71,13 @@ def _compile_expr_group(rows, candles, resolution, htf, *, is_exit: bool, group:
             continue
         try:
             node = parse_expr(row.expr)
-            validate_expr(node, is_exit=is_exit)
+            validate_expr(node, is_exit=is_exit, instances=instances)
         except ExprError as e:
             raise HTTPException(422, {
                 "code": e.code, "message": e.message,
                 "start": e.start, "end": e.end, "group": group, "row": idx,
             })
-        compiled.append(compile_row(node, candles, resolution, htf))
+        compiled.append(compile_row(node, candles, resolution, htf, instances))
     return compiled
 
 
@@ -144,6 +146,9 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
 
     candles = [_candle(c) for c in req.candles]
     i = len(candles) - 1
+    # Resolved ONCE per request: the coded branch below re-compiles its expr exits
+    # on every tf-retry pass, so resolving inside the helper would repeat it.
+    instances = request_instances(req)
 
     # Netted position -> at most one side held.
     pos_long = req.position.quantity if req.position and req.position.side == "buy" else 0.0
@@ -155,10 +160,10 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             for tf, bars in (req.htfCandles or {}).items()
         }
         strategy = ExprRuleStrategy(
-            _compile_expr_group(req.exprLongEntry, candles, req.resolution, htf, is_exit=False, group="longEntry"),
-            _compile_expr_group(req.exprLongExit, candles, req.resolution, htf, is_exit=True, group="longExit"),
-            _compile_expr_group(req.exprShortEntry, candles, req.resolution, htf, is_exit=False, group="shortEntry"),
-            _compile_expr_group(req.exprShortExit, candles, req.resolution, htf, is_exit=True, group="shortExit"),
+            _compile_expr_group(req.exprLongEntry, candles, req.resolution, htf, is_exit=False, group="longEntry", instances=instances),
+            _compile_expr_group(req.exprLongExit, candles, req.resolution, htf, is_exit=True, group="longExit", instances=instances),
+            _compile_expr_group(req.exprShortEntry, candles, req.resolution, htf, is_exit=False, group="shortEntry", instances=instances),
+            _compile_expr_group(req.exprShortExit, candles, req.resolution, htf, is_exit=True, group="shortExit", instances=instances),
             quantity=1.0, trade_from_time=None,
             long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
         )
@@ -226,10 +231,12 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
                 panel_risk_legs=panel_risk_legs,
             )
             long_exit = _compile_expr_group(
-                req.exprLongExit, candles, req.resolution, htf, is_exit=True, group="longExit"
+                req.exprLongExit, candles, req.resolution, htf, is_exit=True,
+                group="longExit", instances=instances,
             )
             short_exit = _compile_expr_group(
-                req.exprShortExit, candles, req.resolution, htf, is_exit=True, group="shortExit"
+                req.exprShortExit, candles, req.resolution, htf, is_exit=True,
+                group="shortExit", instances=instances,
             )
             if not warned_bse:
                 if pos_long > 0:

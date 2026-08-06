@@ -3,7 +3,9 @@
 // Overlay / auto-hide layout mode for the backtest panel: pin toggle, hidden
 // state, chart-click hide, peek-tab reveal, and chart right-offset compensation.
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act, waitFor } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
+import { diagnosticCount, forceLinting } from "@codemirror/lint";
 import { installMemStorage } from "./lib/testMemStorage";
 
 installMemStorage();
@@ -319,6 +321,9 @@ describe("chart offset compensation", () => {
       scrollByDistance: vi.fn((distance: number) => { gapBars -= distance / bar; }),
       setOffsetRightDistance: vi.fn((d: number) => { gapBars = d / bar; }),
       getOffsetRightDistance: vi.fn(() => Math.max(0, gapBars * bar)),
+      // The panel also reads the chart's indicator panes (to feed the rule
+      // editors' instance list); this stub carries none.
+      getIndicators: () => [],
       // test-only helpers, not part of the klinecharts surface
       gapBars: () => gapBars,
       gapPx: () => gapBars * bar,
@@ -505,5 +510,69 @@ describe("chart offset compensation", () => {
     mount(chart);
     expect(chart.scrollByDistance).not.toHaveBeenCalled();
     expect(chart.setOffsetRightDistance).not.toHaveBeenCalled();
+  });
+});
+
+// The rule editors lint `<instance>.<output>` against the LIVE chart's panes,
+// which the panel polls for. The panel is not modal — it outlives chart
+// lifecycles — so the poll has to survive a chart that is absent when the panel
+// opens, or the editors spend the whole session underlining valid references.
+describe("chart pane list feeding the rule editors", () => {
+  // A chart carrying one Slope pane (two lines), in the flat v10 getIndicators()
+  // shape. Nothing else in the panel touches this stub.
+  const slopeChart = () =>
+    ({
+      getIndicators: () => [
+        {
+          name: "SLOPE",
+          paneId: "pane_1",
+          calcParams: [9, 21],
+          extendData: { indType: "SLOPE" },
+        },
+      ],
+    }) as unknown as import("klinecharts").Chart;
+
+  function renderWithRule(controller: ChartController) {
+    return render(
+      <BacktestSettingsModal
+        initial={{
+          ...defaultBacktestConfig(),
+          longEntry: { combine: "AND", rules: [{ expr: "SLOPE.slope0 > 0", enabled: true }] },
+          longExit: { combine: "AND", rules: [] },
+        }}
+        epic="TEST"
+        brokerId="capital"
+        resolution="MINUTE"
+        controller={controller}
+        chartTimezone="UTC"
+        onRun={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+  }
+
+  it("recovers when the chart is absent at mount and appears on a later tick", async () => {
+    const controller = new ChartController("cell-1", "scope-1");
+    controller.chart = null; // cell has not mounted its chart yet
+    renderWithRule(controller);
+
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement)!;
+    expect(view.state.doc.toString()).toBe("SLOPE.slope0 > 0");
+    // No panes yet, so the reference reads as unknown.
+    await waitFor(() => {
+      forceLinting(view);
+      expect(diagnosticCount(view.state)).toBe(1);
+    });
+
+    // The chart arrives. Nothing re-renders the panel and the controller's
+    // identity is unchanged, so only the poll can notice.
+    controller.chart = slopeChart();
+    await waitFor(
+      () => {
+        forceLinting(view);
+        expect(diagnosticCount(view.state)).toBe(0);
+      },
+      { timeout: 4000 },
+    );
   });
 });

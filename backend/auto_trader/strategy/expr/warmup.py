@@ -72,6 +72,15 @@ def warmup_bars(node: N.Node, resolution: str | None = None,
     if isinstance(node, N.Count):
         n = int(node.window.value) if isinstance(node.window, N.Num) else 0
         return n + warmup_bars(node.cond, resolution, instances)
+    if isinstance(node, N.IndicatorRef):
+        inst = (instances or {}).get(node.instance)
+        if inst is None:
+            return 0
+        if inst.spec.timeframe(inst.config) and resolution is not None:
+            # A pinned instance is warmed from its own HTF history, exactly like
+            # an @tf pin — it costs zero BASE bars.
+            return 0
+        return inst.spec.warmup(inst.config, node.output)
     if isinstance(node, N.Call):
         if node.name in WRAPPERS:
             # wrapper window (2nd arg literal) + the inner term's warm-up

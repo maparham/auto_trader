@@ -67,3 +67,17 @@ def test_substitute_count_window():
     window_ord = next(l.ordinal for l in lits if l.label == "count window")
     new = substitute(node, {window_ord: 25})
     assert new.left.window.value == 25
+
+
+def test_underfilled_wrapper_does_not_crash():
+    """/api/expr/literals parses without validating, so a half-typed wrapper
+    reaches _collect with too few args. It must degrade to the literals it can
+    see, not IndexError into a 500. Mirrored by the frontend's
+    parser.test.ts "returns a typed error for a bare wrapper name"."""
+    # `slope.x` is a bare (zero-arg) wrapper name with a field access: no
+    # wrapper literals survive, only the row's own threshold.
+    assert [(l.value, l.label) for l in literals(parse("slope.x > 0"))] == [(0.0, "threshold")]
+    # One arg supplied, window still missing: the inner term still contributes.
+    assert [(l.value, l.label) for l in literals(parse("avg(EMA(9)) > 0"))] == [
+        (9.0, "EMA length"), (0.0, "threshold"),
+    ]

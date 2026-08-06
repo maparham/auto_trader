@@ -1,0 +1,95 @@
+[
+  {
+    "label": "plain: one line, no smoothing",
+    "calcParams": [
+      9
+    ],
+    "extendData": {
+      "slopePeriod": 3
+    },
+    "warmup": {
+      "slope0": 12
+    }
+  },
+  {
+    "label": "the review scenario: EMA(50) base, slopePeriod 3, EMA(10) slope smoothing",
+    "calcParams": [
+      50
+    ],
+    "extendData": {
+      "slopePeriod": 3,
+      "smoothing": {
+        "type": "ema",
+        "length": 10
+      }
+    },
+    "warmup": {
+      "slope0": 62
+    }
+  },
+  {
+    "label": "defaults everywhere (empty calcParams falls back to [9], slopePeriod 3)",
+    "calcParams": [],
+    "extendData": {},
+    "warmup": {
+      "slope0": 12
+    }
+  },
+  {
+    "label": "smoothing explicitly off costs nothing",
+    "calcParams": [
+      30
+    ],
+    "extendData": {
+      "slopePeriod": 5,
+      "smoothing": {
+        "type": "none",
+        "length": 20
+      }
+    },
+    "warmup": {
+      "slope0": 35
+    }
+  },
+  {
+    "label": "two lines + accel, both smoothings on",
+    "calcParams": [
+      20,
+      50
+    ],
+    "extendData": {
+      "slopePeriod": 4,
+      "smoothing": {
+        "type": "sma",
+        "length": 5
+      },
+      "showAccel": true,
+      "accelPeriod": 2,
+      "accelSmoothing": {
+        "type": "ema",
+        "length": 7
+      }
+    },
+    "warmup": {
+      "slope0": 28,
+      "slope1": 58,
+      "accel0": 36,
+      "accel1": 66
+    }
+  },
+  {
+    "label": "accel on, accel smoothing off",
+    "calcParams": [
+      14
+    ],
+    "extendData": {
+      "slopePeriod": 2,
+      "showAccel": true,
+      "accelPeriod": 6
+    },
+    "warmup": {
+      "slope0": 16,
+      "accel0": 22
+    }
+  }
+]

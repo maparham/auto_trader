@@ -21,6 +21,11 @@ import { loadScalePriceOnly, loadSnapshotMeta } from "./persist";
 export interface SelectedIndicator {
   paneId: string;
   name: string;
+  // Which of the instance's LINES the click landed on (0-based, in the pane's
+  // line order), when the caller knows. Only "pick from chart" sets and reads it
+  // — a rule references one line ("SLOPE.slope1"), where selection is per
+  // instance. Absent for a legend-row click, which names no line.
+  lineIndex?: number;
 }
 
 export class ChartController {

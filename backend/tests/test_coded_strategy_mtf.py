@@ -139,3 +139,94 @@ def test_backtest_route_fetch_retry_loop(tmp_path, monkeypatch):
         res = client.post("/api/backtest", json=req)
     assert res.status_code == 200, res.text
     assert res.json()["summary"]["n_trades"] >= 1
+
+
+# A strategy that opens on a plain base-timeframe condition and never exits on
+# its own — the panel EXIT expression row is the only thing that can close it.
+ENTRY_ONLY_STRAT = '''def on_bar(ctx):
+    if ctx.position.is_flat and ctx.close > ctx.ema(5):
+        return [ctx.buy(reason="entry")]
+    return []
+'''
+
+
+def _coded_req(base, **extra):
+    empty = {"combine": "AND", "rules": []}
+    return {
+        "epic": "TEST", "resolution": "HOUR",
+        "candles": [{"time": int(c.time.timestamp()), "open": c.open, "high": c.high,
+                     "low": c.low, "close": c.close, "volume": c.volume} for c in base],
+        "series": {},
+        "longEntry": empty, "longExit": empty, "shortEntry": empty, "shortExit": empty,
+        "costs": {"quantity": 1, "commissionPerSide": 0,
+                  "slippage": {"kind": "fixed", "value": 0}, "startingCash": 10000},
+        "tradeFromTime": int(base[0].time.timestamp()),
+        "broker": "capital", "priceSide": "mid",
+        **extra,
+    }
+
+
+def test_a_coded_panel_exit_on_a_higher_timeframe_pulls_its_candles(tmp_path, monkeypatch):
+    """The coded route's fetch loop used to be driven ONLY by the strategy's own
+    tf= calls, so a panel exit row on a higher timeframe compiled to all-None and
+    the position never closed. The row now reports the need the same way, and the
+    loop fetches for it."""
+    (tmp_path / "entry_only.py").write_text(ENTRY_ONLY_STRAT)
+    monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
+    base = hourly()
+    asked = []
+
+    async def fake_fetch(broker_id, epic, resolution, bars, from_ts, to_ts, price_side):
+        asked.append(resolution)
+        return aggregate_4h(base)
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
+
+    req = _coded_req(base, codedStrategy="entry_only.py",
+                     exprLongExit=[{"expr": "candle.close < EMA(3)@4H", "enabled": True}])
+    with TestClient(app) as client:
+        res = client.post("/api/backtest", json=req)
+    assert res.status_code == 200, res.text
+    # The whole point: the row's timeframe was fetched rather than silently
+    # evaluating to None.
+    assert asked == ["HOUR_4"], asked
+    assert res.json()["summary"]["n_trades"] >= 1
+
+
+def test_a_strategy_tf_and_an_exit_row_on_the_SAME_tf_still_run(tmp_path, monkeypatch):
+    """Regression guard for the shape of the fix: erroring on the exit row's
+    missing timeframe instead of asking for it would have broken this working
+    combination, because the strategy's own fetch happens on a LATER pass."""
+    (tmp_path / "mtf.py").write_text(MTF_STRAT)
+    monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
+    base = hourly()
+
+    async def fake_fetch(broker_id, epic, resolution, bars, from_ts, to_ts, price_side):
+        assert resolution == "HOUR_4"
+        return aggregate_4h(base)
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
+
+    req = _coded_req(base, codedStrategy="mtf.py",
+                     exprLongExit=[{"expr": "candle.close < EMA(3)@4H", "enabled": True}])
+    with TestClient(app) as client:
+        res = client.post("/api/backtest", json=req)
+    assert res.status_code == 200, res.text
+
+
+def test_a_truly_unfetchable_timeframe_is_still_a_clean_422(tmp_path, monkeypatch):
+    (tmp_path / "entry_only.py").write_text(ENTRY_ONLY_STRAT)
+    monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
+    base = hourly()
+
+    async def fake_fetch(*a, **k):
+        return []
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
+
+    req = _coded_req(base, codedStrategy="entry_only.py",
+                     exprLongExit=[{"expr": "candle.close < EMA(3)@4H", "enabled": True}])
+    with TestClient(app) as client:
+        res = client.post("/api/backtest", json=req)
+    assert res.status_code == 422
+    assert "HOUR_4" in res.text

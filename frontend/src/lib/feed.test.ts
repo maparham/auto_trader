@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { installMemStorage } from "./testMemStorage";
 installMemStorage();
 
-import { fetchAllMarkets, fetchFavorites, fetchRecent, isFeedStale, openLive } from "./feed";
+import { fetchAllMarkets, fetchFavorites, fetchRecent, isFeedStale, nominalBarHours, openLive } from "./feed";
 import { registerSynthetic } from "./syntheticRegistry";
 
 // The catalogue/favorites caches are module-level and keyed by broker; each test
@@ -221,4 +221,32 @@ describe("openLive reconnect backoff", () => {
     expect(dropAndMeasureDelay()).toBe(1000);
     h.close();
   });
+});
+
+describe("nominalBarHours", () => {
+  // These numbers are the contract with the backend: it computes bar width as
+  // resolution_seconds(res) / 3600 and evaluates every pinned rule operand at
+  // that width, so a disagreement here is a silent pane-vs-rule divergence.
+  // Mirrored by backend/tests/test_slope_pane_rule_equality.py, which asserts
+  // the same pairs against _tf_hours.
+  it("matches the backend's nominal widths", () => {
+    expect(nominalBarHours("MINUTE")).toBeCloseTo(1 / 60, 12);
+    expect(nominalBarHours("MINUTE_5")).toBeCloseTo(5 / 60, 12);
+    expect(nominalBarHours("HOUR")).toBe(1);
+    expect(nominalBarHours("HOUR_4")).toBe(4);
+    expect(nominalBarHours("DAY")).toBe(24);
+    expect(nominalBarHours("WEEK")).toBe(168);
+    expect(nominalBarHours("MONTH")).toBe(720);
+  });
+
+  it("accepts an expression pin alias too, like the backend's tf_resolution", () => {
+    expect(nominalBarHours("4H")).toBe(nominalBarHours("HOUR_4"));
+    expect(nominalBarHours("D")).toBe(nominalBarHours("DAY"));
+    expect(nominalBarHours("W")).toBe(nominalBarHours("WEEK"));
+  });
+
+  it("is null for an unknown name, so callers pick their own fallback", () => {
+    expect(nominalBarHours("NOPE")).toBeNull();
+  });
+
 });

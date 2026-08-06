@@ -1,18 +1,33 @@
 // Slope of a TV-style EMA/SMA, plotted in its own sub-pane (green up / red down
-// around a zero line). The SAME slopeWithUnits + inferBarHours + computeSlope are
-// used by the chart visual (calc/draw below) AND the rule-operand recipe path
-// (backtestSeries.computeIndicatorRecipe), so the plotted line and the rule value
-// are identical by construction. Units live on extendData so they're part of the
-// recipe hash (a %/bar and a %/hr slope on the same MA don't dedup).
-import {
-  type Indicator,
-  type IndicatorTemplate,
-  type IndicatorDrawParams,
-  type KLineData,
+// around a zero line). This module is the SOURCE OF TRUTH for the math: the rule
+// path evaluates on the backend, where backend/auto_trader/indicators/slope.py is
+// an operation-for-operation port of the functions below. The two are held equal
+// by the golden fixture backend/tests/fixtures/slope_golden.json — generated from
+// this file by slopeParityGolden.test.ts and asserted by test_slope_parity.py
+// (arithmetic) and test_slope_pane_rule_equality.py (the pane's plotted line vs
+// the same output read as a rule operand). Change the math here, regenerate the
+// fixture, and let the Python side follow. Units (and the MA kind, source,
+// periods, smoothing and accelAbsolute) live on extendData because a rule names
+// an OUTPUT and the pane's settings are the only source of truth for how that
+// output is computed. barHours is the exception: collectExprInstances ships the
+// whole extendData, so it rides along, but parse_slope_config does not read it —
+// the backend computes its own nominal width from the request's resolution. On
+// this side resolveBarHours (below) reads ext.barHours, which applySlopeBarHours
+// in indicators.ts derives from the chart's resolution; the two agree because
+// they are derived from the same resolution, not because one is sent.
+// `import type` (not `import { type ... }`): the inline form survives bundling as
+// a side-effect `import "klinecharts"`, which touches `window` at module load;
+// this form is erased outright, so this module stays node-safe for its importers.
+import type {
+  Indicator,
+  IndicatorTemplate,
+  IndicatorDrawParams,
+  KLineData,
 } from "klinecharts";
 import { maSeries, alignHtfToChart, emaGappy, normalizeMaKind, type MaKind } from "../mtf";
 import type { MaExtend } from "./ma";
 import { fullLine } from "./shared";
+import { slopeLengths } from "./slopeOutputs";
 
 export type SlopeUnit = "pctHr" | "pctBar" | "priceBar";
 
@@ -42,7 +57,9 @@ export interface SlopeExtend extends MaExtend {
   // Plot |acceleration| instead of signed acceleration on the companion pane. A
   // display transform applied when computeAccelCalc builds the pane values (after
   // any smoothing/MTF align), so magnitude reads regardless of steepening vs
-  // flattening. Does not touch the signed accel rule operand.
+  // flattening. A rule referencing SLOPE.accelN reads the SAME transformed
+  // series — the reference names the pane's output, so what a rule sees and what
+  // the pane plots are equal by construction (see test_slope_pane_rule_equality).
   accelAbsolute?: boolean;
   mtf?: MaExtend["mtf"] & {
     htfSeriesByLine?: Array<Array<number | undefined>>;
@@ -54,8 +71,18 @@ export interface SlopeExtend extends MaExtend {
 export type SlopePoint = Record<string, number | undefined>;
 
 /** Hours per bar inferred from the smallest positive gap between adjacent bar
- * timestamps. Used identically by the visual and the rule path, so %/hr matches
- * by construction regardless of timeframe regularity. Falls back to 1 hour. */
+ * timestamps. Falls back to 1 hour when fewer than two bars are loaded.
+ *
+ * This is a FALLBACK ONLY, never the canonical value: the rule path has no bars
+ * to measure and can only compute the nominal width from the resolution, so an
+ * inferred number is what makes the plotted line and the rule operand diverge.
+ * The smallest gap is 28 days for a MONTH pane (vs a nominal 30) and 23 hours
+ * for a DAY pane across a DST spring-forward (vs 24). What actually keeps the
+ * two paths equal is that both use the nominal width — resolveBarHours reads
+ * extendData.barHours (written by applySlopeBarHours from the chart's
+ * resolution) on the unpinned path, and applySlopeTimeframe uses
+ * nominalBarHours(pinned timeframe) on the pinned one. See
+ * test_slope_pane_rule_equality.py for both. */
 export function inferBarHours(candles: KLineData[]): number {
   let minMs = Infinity;
   for (let i = 1; i < candles.length; i++) {
@@ -225,11 +252,11 @@ const DASH_BY_STYLE: Record<NonNullable<SlopeThreshold["lineStyle"]>, number[]> 
   dotted: [1, 2],
 };
 
-/** MA lengths from calcParams (default [9]); empty/garbage → [9]. */
-export function slopeLengths(calcParams: unknown[] | undefined): number[] {
-  const xs = (calcParams ?? []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v !== 0);
-  return xs.length ? xs.slice(0, 5) : [9];
-}
+// slopeLengths / slopeOutputs live in the klinecharts-free leaf ./slopeOutputs so
+// exprChartToken.ts can reach them without dragging klinecharts (and its
+// window-touching module body) into a pure node-testable module. Re-exported here
+// because this is where every existing caller imports them from.
+export { slopeLengths, slopeOutputs } from "./slopeOutputs";
 
 /** Active threshold magnitude (|level|) when the guide is on and the level is a
  * usable non-zero number; otherwise null. A zero level would coincide with the
@@ -265,8 +292,9 @@ function computeSlopeCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
     }
     return p;
   };
-  // MTF: the coordinator stashes per-line slope series computed on native HTF bars
-  // (with HTF barHours) — align it to the chart bars, no lookahead. See
+  // MTF: the coordinator stashes per-line slope series computed on native HTF
+  // bars, at the PINNED timeframe's nominal bar width (the same number the rule
+  // path's pinned branch uses) — align it to the chart bars, no lookahead. See
   // mtfCoordinator.applySlopeTimeframe.
   const mtf = ext.mtf;
   if (mtf?.timeframe && mtf.htfSeriesByLine && mtf.htfStarts && mtf.htfMs) {

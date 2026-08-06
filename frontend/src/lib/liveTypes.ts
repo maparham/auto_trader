@@ -1,4 +1,5 @@
 import type { RiskConfig } from "./backtestConfig";
+import type { ExprInstancePayload } from "./exprInstances";
 import type { Candle, ParamValues } from "../api";
 
 export interface LiveAction {
@@ -45,6 +46,18 @@ export interface EvaluateRequest {
   exprLongExit?: Array<{ expr: string; enabled: boolean }>;
   exprShortEntry?: Array<{ expr: string; enabled: boolean }>;
   exprShortExit?: Array<{ expr: string; enabled: boolean }>;
+  // Chart pane settings for every `SLOPE.slope0`-style reference the rows make,
+  // keyed by instance id — the same map the backtest request carries, and the
+  // same one the backend resolves (schemas.py EvaluateRequest.indicators).
+  //
+  // A rule names an OUTPUT and restates none of the pane's parameters, so
+  // without this the backend resolves {} and `validate` raises
+  // unknown_indicator_ref: the route 422s and the cycle logs "evaluate failed"
+  // EVERY BAR — including, for an open position, the exit rules. Frozen into
+  // the armed snapshot at arm time (liveState.ArmedSnapshot.indicators), never
+  // re-read per cycle: the chart can be unmounted or retuned while armed, and a
+  // running strategy must not silently change under it.
+  indicators?: Record<string, ExprInstancePayload>;
 }
 
 export interface EvaluateResult {

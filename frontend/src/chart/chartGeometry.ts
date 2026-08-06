@@ -114,24 +114,27 @@ export function buildLineCache(chart: Chart): LineCache[] {
   return out;
 }
 
-// Nearest cached line within HIT_TOLERANCE_PX of (px,py), as pane+name — so a
-// curve click/hover identifies its indicator (sub-pane indicators included).
+// Nearest cached line within HIT_TOLERANCE_PX of (px,py), as pane+name+figure key
+// — so a curve click/hover identifies its indicator (sub-pane indicators
+// included) and, for callers that care, which of its lines was hit.
 export function hitTestCache(
   cache: LineCache[],
   px: number,
   py: number,
-): { paneId: string; name: string } | null {
-  let best: { paneId: string; name: string; d: number } | null = null;
+): { paneId: string; name: string; figKey: string } | null {
+  let best: { paneId: string; name: string; figKey: string; d: number } | null = null;
   for (const line of cache) {
     const c = line.coords;
     for (let i = 1; i < c.length; i++) {
       const d = distToSegment(px, py, c[i - 1].x, c[i - 1].y, c[i].x, c[i].y);
       if (d <= HIT_TOLERANCE_PX && (!best || d < best.d)) {
-        best = { paneId: line.paneId, name: line.name, d };
+        best = { paneId: line.paneId, name: line.name, figKey: line.figKey, d };
       }
     }
   }
-  return best ? { paneId: best.paneId, name: best.name } : null;
+  // figKey names WHICH line was hit ("slope1"), which "pick from chart" turns
+  // into the referenced output. Selection callers read paneId/name only.
+  return best ? { paneId: best.paneId, name: best.name, figKey: best.figKey } : null;
 }
 
 // Resolve the AVWAP anchor bar to a pixel point on the candle pane, or null when

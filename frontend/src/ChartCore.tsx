@@ -1479,7 +1479,16 @@ export default function ChartCore({
       if (hit && controller.indicatorPickArmed.value) {
         // "Pick from chart" is armed: publish the clicked instance for the panel
         // to turn into an expression token, rather than selecting it on the chart.
-        controller.indicatorPickResult.set({ paneId: hit.paneId, name: hit.name });
+        // The figure key names the LINE that was hit ("slope1"), so a multi-line
+        // pane references the line the user actually clicked; a figure that is
+        // not a numbered line (a Slope pane's threshold guides) carries none and
+        // falls back to the first line.
+        const lineMatch = /^slope(\d+)$/.exec(hit.figKey);
+        controller.indicatorPickResult.set({
+          paneId: hit.paneId,
+          name: hit.name,
+          ...(lineMatch ? { lineIndex: Number(lineMatch[1]) } : {}),
+        });
         return;
       }
       if (hit) {

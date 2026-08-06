@@ -26,6 +26,7 @@ import { exprLinter } from "../lib/expr/lint";
 import { literalUnderline } from "../lib/expr/literalDeco";
 import { exprHighlight } from "../lib/expr/highlight";
 import { analyze, type LiteralSpan } from "../lib/expr/parser";
+import type { ExprInstance } from "../lib/expr/catalog";
 import "./RuleExpressionInput.css";
 
 export interface RuleExpressionInputProps {
@@ -37,6 +38,11 @@ export interface RuleExpressionInputProps {
   onLiteralsChange?: (lits: LiteralSpan[]) => void;
   readOnly?: boolean;
   placeholder?: string;
+  /** The live chart's referenceable panes, for `<instance>.<output>` lint and
+   * completion. INJECTED (never imported): the pane's own settings are the
+   * source of truth, so the editor is told what exists right now. Omitted (Live
+   * panel, tests) means "no panes", and any reference reads as unknown. */
+  instances?: readonly ExprInstance[];
 }
 
 // Reject any transaction whose result spans more than one line: this keeps the
@@ -47,7 +53,9 @@ const singleLine = EditorState.transactionFilter.of((tr) =>
 );
 
 export default function RuleExpressionInput(props: RuleExpressionInputProps) {
-  const { value, onChange, isExit, onLiteralsChange, readOnly = false, placeholder } = props;
+  const {
+    value, onChange, isExit, onLiteralsChange, readOnly = false, placeholder, instances,
+  } = props;
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -57,9 +65,24 @@ export default function RuleExpressionInput(props: RuleExpressionInputProps) {
   const onChangeRef = useRef(onChange);
   const onLiteralsChangeRef = useRef(onLiteralsChange);
   const isExitRef = useRef(isExit);
+  const instancesRef = useRef(instances);
   onChangeRef.current = onChange;
   onLiteralsChangeRef.current = onLiteralsChange;
   isExitRef.current = isExit;
+  // Unlike the three above (kept as the file's existing render-time assignment),
+  // this one is written in an effect: the lint/completion closures that read it
+  // only ever run after commit, and the reconfigure effect below is declared
+  // after this one, so it always sees the new list.
+  useEffect(() => {
+    instancesRef.current = instances;
+  }, [instances]);
+
+  // Identity of the pane list as the editor cares about it (ids + outputs +
+  // pinned timeframe). The parent rebuilds the array on every chart poll, so
+  // depending on the array itself would reconfigure the linter constantly.
+  const instKey = (instances ?? [])
+    .map((i) => `${i.id}:${i.outputs.join(",")}:${i.timeframe ?? ""}`)
+    .join("|");
 
   const readOnlyComp = useRef(new Compartment());
   const linterComp = useRef(new Compartment());
@@ -72,7 +95,7 @@ export default function RuleExpressionInput(props: RuleExpressionInputProps) {
       if (!update.docChanged) return;
       const doc = update.state.doc.toString();
       onChangeRef.current(doc);
-      onLiteralsChangeRef.current?.(analyze(doc).literals);
+      onLiteralsChangeRef.current?.(analyze(doc, { instances: instancesRef.current }).literals);
     });
 
     const state = EditorState.create({
@@ -89,8 +112,16 @@ export default function RuleExpressionInput(props: RuleExpressionInputProps) {
         exprHighlight,
         literalUnderline,
         updateListener,
-        autocompletion({ override: [cmCompletionSource], activateOnTyping: true }),
-        linterComp.current.of(exprLinter(() => isExitRef.current)),
+        // cmCompletionSource takes its options as a SECOND argument, which CM6
+        // never passes — so wrap it in a closure over the live pane list rather
+        // than registering it bare, or chart panes are never offered.
+        autocompletion({
+          override: [(ctx) => cmCompletionSource(ctx, { instances: instancesRef.current })],
+          activateOnTyping: true,
+        }),
+        linterComp.current.of(
+          exprLinter(() => isExitRef.current, () => instancesRef.current),
+        ),
         readOnlyComp.current.of([
           EditorState.readOnly.of(readOnly),
           EditorView.editable.of(!readOnly),
@@ -125,15 +156,19 @@ export default function RuleExpressionInput(props: RuleExpressionInputProps) {
     }
   }, [value]);
 
-  // Reconfigure lint when `isExit` flips (the linter closure reads the ref, but
-  // reconfiguring forces an immediate re-lint rather than waiting for a change).
+  // Reconfigure lint when `isExit` flips or the chart's pane list changes (the
+  // linter closure reads the refs, but reconfiguring forces an immediate re-lint
+  // rather than leaving stale underlines until the next keystroke — adding or
+  // retuning a pane changes which references are valid).
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
-      effects: linterComp.current.reconfigure(exprLinter(() => isExitRef.current)),
+      effects: linterComp.current.reconfigure(
+        exprLinter(() => isExitRef.current, () => instancesRef.current),
+      ),
     });
-  }, [isExit]);
+  }, [isExit, instKey]);
 
   // Reconfigure read-only state on prop change.
   useEffect(() => {

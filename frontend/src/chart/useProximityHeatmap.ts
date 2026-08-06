@@ -13,6 +13,8 @@ import {
   buildClosenessRequest,
   type HeatmapView,
 } from "../lib/heatmapController";
+import { collectExprInstances } from "../lib/exprInstances";
+import { liveExprInstances } from "../lib/indicators";
 import { backtestConfigLive } from "../lib/signals";
 import { defaultBacktestConfig, type BacktestConfig } from "../lib/backtestConfig";
 import { loadBacktestLastUsed } from "../lib/persist";
@@ -107,7 +109,14 @@ export function useProximityHeatmap({ chartRef, epic, broker, priceSide, display
       return;
     }
     const seq = ++reqSeq.current;
-    fetchClosenessHeatmap(req)
+    // The rows are the same expressions the backtest runs, so a row referencing a
+    // chart pane ("SLOPE.slope0") needs that pane's live settings here too — the
+    // backend cannot evaluate the row without them. Copied rather than mutated:
+    // `req` is what the staleness check below compares against.
+    fetchClosenessHeatmap({
+      ...req,
+      indicators: collectExprInstances(liveExprInstances(c), req.rows),
+    })
       .then((resp) => {
         const cc = chartRef.current;
         const now = latest.current;

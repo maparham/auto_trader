@@ -19,6 +19,9 @@ import { cleanup, render } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import RuleExpressionInput from "./RuleExpressionInput";
 import { diagnosticsFor } from "../lib/expr/lint";
+import { diagnosticCount, forceLinting } from "@codemirror/lint";
+import { currentCompletions, startCompletion } from "@codemirror/autocomplete";
+import type { ExprInstance } from "../lib/expr/catalog";
 
 afterEach(cleanup);
 
@@ -83,5 +86,86 @@ describe("RuleExpressionInput", () => {
     expect(diags).toHaveLength(1);
     expect(diags[0].severity).toBe("error");
     expect(diags[0].message).toMatch(/Unknown name/i);
+  });
+  // --- live chart instances injected into the editor -------------------------
+  const SLOPE_PANE: ExprInstance[] = [
+    { id: "SLOPE", outputs: ["slope0", "accel0"], timeframe: null },
+  ];
+
+  it("lints an instance reference against the INJECTED chart panes", () => {
+    // With no panes injected the same text is an unknown reference — which is
+    // exactly the false underline the injection exists to remove.
+    const blind = diagnosticsFor("SLOPE.slope0 > 0", false);
+    expect(blind).toHaveLength(1);
+    expect(blind[0].source).toBe("unknown_indicator_ref");
+    expect(diagnosticsFor("SLOPE.slope0 > 0", false, SLOPE_PANE)).toEqual([]);
+    // An output the pane does not expose still errors.
+    const bad = diagnosticsFor("SLOPE.slope3 > 0", false, SLOPE_PANE);
+    expect(bad).toHaveLength(1);
+    expect(bad[0].source).toBe("unknown_indicator_output");
+  });
+
+  it("does not underline a valid pane reference in the mounted editor", async () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <RuleExpressionInput
+        value="SLOPE.slope0 > 0"
+        onChange={onChange}
+        isExit={false}
+        instances={SLOPE_PANE}
+      />,
+    );
+    const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
+    forceLinting(view);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(diagnosticCount(view.state)).toBe(0);
+  });
+
+  it("re-lints when the chart's pane list changes", async () => {
+    const onChange = vi.fn();
+    const { container, rerender } = render(
+      <RuleExpressionInput value="SLOPE.slope0 > 0" onChange={onChange} isExit={false} />,
+    );
+    const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
+    forceLinting(view);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(diagnosticCount(view.state)).toBe(1); // no panes yet: unknown ref
+    rerender(
+      <RuleExpressionInput
+        value="SLOPE.slope0 > 0"
+        onChange={onChange}
+        isExit={false}
+        instances={SLOPE_PANE}
+      />,
+    );
+    // No forceLinting here on purpose: the pane-list change must itself trigger
+    // a re-lint (the linter is reconfigured), or the stale underline lingers
+    // until the next keystroke. 250ms clears the linter's 150ms debounce.
+    await new Promise((r) => setTimeout(r, 250));
+    expect(diagnosticCount(view.state)).toBe(0);
+  });
+
+  it("offers the injected pane's outputs after a dot", async () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <RuleExpressionInput
+        value="SLOPE."
+        onChange={onChange}
+        isExit={false}
+        instances={SLOPE_PANE}
+      />,
+    );
+    const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
+    // The editor registers cmCompletionSource through a closure over the live
+    // list, so the configured source sees the panes (a bare registration would
+    // only ever offer the static catalog).
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    startCompletion(view);
+    await new Promise((r) => setTimeout(r, 60));
+    // CM6 re-sorts within a boost band, so compare as a set.
+    expect(currentCompletions(view.state).map((o) => o.label).sort()).toEqual([
+      "SLOPE.accel0",
+      "SLOPE.slope0",
+    ]);
   });
 });

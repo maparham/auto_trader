@@ -52,3 +52,10 @@
 .cm-tok-operator { color: var(--text-dim); }
 .cm-tok-timeframe { color: var(--neg, #b34); }
 .cm-tok-variable { color: var(--text); }
+/* A chart-pane instance reference (SLOPE#a1b2c3.slope0) — indicator-coloured,
+   underlined so it reads as "comes from the chart", not from the catalog. */
+.cm-tok-instance-ref {
+  color: var(--accent);
+  text-decoration: underline dotted var(--accent);
+  text-underline-offset: 3px;
+}

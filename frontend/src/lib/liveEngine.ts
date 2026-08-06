@@ -158,6 +158,11 @@ export async function runOneCycle(
     broker: coded ? brokerId : undefined,
     priceSide: coded ? "mid" : undefined,
     codedParams: coded ? codedCfg?.params : undefined,
+    // Sent in BOTH modes: a coded run posts THIS panel's exit rules as
+    // expressions, so those rows can reference a chart pane exactly like rule
+    // mode's do. Read off the frozen snapshot, not the live chart — see
+    // ArmedSnapshot.indicators.
+    indicators: snap.indicators,
   };
 
   let actions: EvaluateResult["actions"];

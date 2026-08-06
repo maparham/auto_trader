@@ -15,8 +15,17 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-import type { KLineData } from "klinecharts";
-import { slopeLineSeries, accelLineSeries, type SlopeUnit, type SlopeSmoothing } from "./slope";
+import type { Indicator, KLineData } from "klinecharts";
+import {
+  slopeLineSeries,
+  accelLineSeries,
+  SLOPE_TEMPLATE,
+  SLOPE_ACCEL_TEMPLATE,
+  type SlopeExtend,
+  type SlopePoint,
+  type SlopeUnit,
+  type SlopeSmoothing,
+} from "./slope";
 import type { MaKind, PriceSource } from "../mtf";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -174,6 +183,84 @@ describe("slope parity golden fixture", () => {
     }
     expect(anyDiffers, "clean and irregular halves are identical for every shared config — irregular barHours is not exercising anything").toBe(true);
 
+    // ---- Pane-shaped cases -------------------------------------------------
+    // The cases above prove the ARITHMETIC ports. These prove the PANE ports:
+    // they are produced by the templates' own `calc` — the exact function
+    // klinecharts calls to build the plotted values — so slopeLengths(),
+    // slopeShared() and resolveBarHours() are all in the loop, mirroring
+    // Python's parse_slope_config. Backend test: test_slope_pane_rule_equality.
+    //
+    // Deliberately non-default on every axis a config-parsing divergence could
+    // hide in: two lines (so slope0/slope1 must differ), sma (not the ema
+    // default), hl2 (not close), pctBar (not the pctHr default), slope smoothing
+    // on, accel on with a non-default period, and accelAbsolute — the transform
+    // the pane applies to its plotted values and which a rule referencing
+    // SLOPE.accelN must therefore see too.
+    //
+    // barHours is 4 (paired with PANE_RESOLUTION below), NOT 1, and that is
+    // load-bearing for the units axis: at barHours 1, pctHr and pctBar are
+    // arithmetically identical — slopeWithUnits divides by n * barHours vs n, and
+    // accelSeries by n2 * barHours vs n2 — so a units mis-parse between those two
+    // would be invisible at any config. At 4 all three unit values diverge.
+    // Nominal 4h over 1h-spaced candles is fine: resolveBarHours takes
+    // ext.barHours whenever it is finite and positive, so nothing is inferred.
+    const paneExt: SlopeExtend = {
+      maType: "sma", source: "hl2", units: "pctBar",
+      slopePeriod: 3, smoothing: { type: "ema", length: 4 },
+      showAccel: true, accelPeriod: 2, accelSmoothing: undefined, accelAbsolute: true,
+      barHours: 4,
+    };
+    // The resolution whose nominal bar width equals paneExt.barHours. Written
+    // into the fixture so the backend test evaluates at the SAME time base
+    // instead of hardcoding a string that could drift away from barHours.
+    const PANE_RESOLUTION = "HOUR_4";
+    const paneLengths = [5, 13];
+    const paneInd = { calcParams: paneLengths, extendData: paneExt } as unknown as Indicator;
+    const paneRows = (calc: typeof SLOPE_TEMPLATE.calc) =>
+      calc!(clean, paneInd) as unknown as SlopePoint[];
+    const slopeRows = paneRows(SLOPE_TEMPLATE.calc);
+    // computeAccelCalc keys its lines slope<i> too (drawSlope is reused verbatim
+    // on the companion pane) — the OUTPUT is named accel<i>. Read slope<i>, label
+    // accel<i>; reading `accel${i}` here would silently emit an all-null case.
+    const accelRows = paneRows(SLOPE_ACCEL_TEMPLATE.calc);
+    const paneCases = [
+      ...paneLengths.map((_len, i) => ({
+        output: `slope${i}`,
+        values: toNull(slopeRows.map((p) => p[`slope${i}`])),
+      })),
+      ...paneLengths.map((_len, i) => ({
+        output: `accel${i}`,
+        values: toNull(accelRows.map((p) => p[`slope${i}`])),
+      })),
+    ];
+
+    // Non-vacuous, and non-trivially so.
+    for (const c of paneCases) {
+      expect(
+        c.values.some((v) => v !== null && Number.isFinite(v)),
+        `pane case ${c.output} produced no defined values`,
+      ).toBe(true);
+    }
+    // Two lengths must actually diverge — otherwise slopeLengths could be
+    // dropping the second line and nobody would notice.
+    expect(
+      JSON.stringify(paneCases[0].values) !== JSON.stringify(paneCases[1].values),
+      "slope0 and slope1 are identical — the two lengths are not both in play",
+    ).toBe(true);
+    // The slope pane is signed; the accel pane, with accelAbsolute on, is not.
+    expect(paneCases[0].values.some((v) => v !== null && v < 0)).toBe(true);
+    expect(paneCases[2].values.every((v) => v === null || v >= 0)).toBe(true);
+    // ...and the abs transform is load-bearing: the SIGNED accel for the same
+    // line has negative values, so an accel case that skipped Math.abs would
+    // differ from what the pane plots.
+    const signedAccel0 = accelLineSeries(
+      clean, "sma", paneLengths[0], 3, 2, "pctBar", "hl2", paneExt.smoothing, undefined, 4,
+    );
+    expect(
+      signedAccel0.some((v) => v !== undefined && v < 0),
+      "signed accel never goes negative — accelAbsolute is not being exercised",
+    ).toBe(true);
+
     mkdirSync(dirname(OUT), { recursive: true });
     writeFileSync(
       OUT,
@@ -182,6 +269,14 @@ describe("slope parity golden fixture", () => {
           candles: clean.map((k) => ({ time: k.timestamp / 1000, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })),
           irregularCandles: irregular.map((k) => ({ time: k.timestamp / 1000, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })),
           cases,
+          // accelSmoothing is explicitly null (not dropped) so the fixture states
+          // "off" rather than leaving Python's parse to infer it from absence.
+          paneConfig: {
+            calcParams: paneLengths,
+            extendData: { ...paneExt, accelSmoothing: null },
+            resolution: PANE_RESOLUTION,
+          },
+          paneCases,
         },
         null,
         2,

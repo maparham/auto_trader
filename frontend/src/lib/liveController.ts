@@ -16,6 +16,7 @@ import {
 import { defaultBacktestConfig, type BacktestConfig } from "./backtestConfig";
 import { loadCodedCfg, resolveParamValues } from "./codedConfig";
 import type { KLineData } from "klinecharts";
+import { collectExprInstances, referencedInstanceIds, type LiveInstance } from "./exprInstances";
 
 type KBar = { timestamp: number; open: number; high: number; low: number; close: number; volume: number };
 
@@ -104,7 +105,33 @@ function startLoop(seedBars: KBar[]): void {
   engine = armLiveEngine({ epic, resolution, brokerId, getState: get, setState: set, seedBars });
 }
 
-export async function arm(): Promise<void> {
+/** The rule rows a run actually EXECUTES, as expression strings.
+ *
+ *  Coded mode's rows are the coded set's panel exits (loadCodedCfg), NOT the
+ *  draft's rule-mode groups, which lie dormant — the same "effective cfg"
+ *  substitution runOneCycle makes when it builds exprLongExit/exprShortExit, and
+ *  the one BacktestButton makes with effCfg. Deciding it in ONE place means the
+ *  indicators map can't be collected from a different row set than the one that
+ *  gets sent. Disabled rows are skipped: they never reach the backend. */
+function effectiveExprRows(cfg: BacktestConfig): string[] {
+  const groups =
+    cfg.mode === "coded" && cfg.codedStrategy
+      ? (() => {
+          const c = loadCodedCfg("live", cfg.codedStrategy);
+          return [c.longExit, c.shortExit];
+        })()
+      : [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit];
+  return groups.flatMap((g) => g.rules.filter((r) => r.enabled !== false).map((r) => r.expr ?? ""));
+}
+
+/** Arm the draft. `live` is the chart's panes, flattened — the panel reads them
+ *  off the chart (which this module has no handle on) and hands them in. The
+ *  ones the executed rows actually reference are frozen into the snapshot
+ *  alongside the rules. Empty/omitted for a config with no references, or when
+ *  no chart is focused. */
+export async function arm(
+  live: readonly LiveInstance[] = [],
+): Promise<void> {
   // Fail safe: refuse to arm "coded" mode with no file picked, BEFORE tearing down
   // any currently-running engine below — a refused arm must never kill a
   // legitimately armed strategy. Without this guard the cycle gate elsewhere would
@@ -149,6 +176,53 @@ export async function arm(): Promise<void> {
     }
   }
 
+  // Every chart-pane reference the EXECUTED rows make must be covered by a pane
+  // on the chart. An uncovered one is not a degraded arm: the backend resolves
+  // the reference against nothing, `validate` raises unknown_indicator_ref, and
+  // the evaluate route 422s on EVERY bar — taking the EXIT rules down with it,
+  // so an open position would have nothing able to close it. Refuse instead,
+  // naming the pane, and do it BEFORE tearing down any running engine (same
+  // rationale as the guards above).
+  const rows = effectiveExprRows(draftCfg);
+  const indicators = collectExprInstances(live, rows);
+  const missing = [...referencedInstanceIds(rows)].filter((id) => !(id in indicators)).sort();
+  if (missing.length) {
+    set(appendLog(get(), Math.floor(Date.now() / 1000),
+      `cannot arm: rule${missing.length > 1 ? "s reference" : " references"} ` +
+      `${missing.join(", ")}, which ${missing.length > 1 ? "are" : "is"} not on the chart`));
+    return;
+  }
+
+  // Same refusal, one step further in: a pane that IS on the chart but carries its
+  // own timeframe pin (extendData.mtf.timeframe) can't be evaluated live at all.
+  // `SLOPE.slope0` on a pinned pane denotes the HIGHER-timeframe series with no
+  // `@tf` in the rule text, so nothing upstream catches it — the arm-time
+  // presence check passes, and `validate` passes too (nested_tf only fires for an
+  // `@tf` stacked ON TOP of a pin). But the live evaluate route builds its HTF set
+  // solely from req.htfCandles (strategy.py), which EvaluateRequest has no field
+  // for and liveEngine never sends: the lookup misses, the operand resolves to
+  // all-None, and the rule simply never fires. That is worse than the 422 above —
+  // an exit rule that can never close a position, with a clean "armed" label over
+  // it. Refuse, naming the pane AND the timeframe so the fix is obvious (unpin the
+  // pane, or express the higher timeframe some other way).
+  //
+  // Read off `indicators` — already narrowed to the REFERENCED panes by
+  // effectiveExprRows — so a pinned pane the executed rows don't name (including
+  // one named only by coded mode's dormant rule-mode groups) never blocks an arm,
+  // and no second traversal of `live` is introduced.
+  const pinned = Object.entries(indicators)
+    .map(([id, p]) => [id, (p.extendData as { mtf?: { timeframe?: string | null } } | null)
+      ?.mtf?.timeframe] as const)
+    .filter((e): e is readonly [string, string] => !!e[1])
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  if (pinned.length) {
+    set(appendLog(get(), Math.floor(Date.now() / 1000),
+      `cannot arm: rule${pinned.length > 1 ? "s reference" : " references"} ` +
+      `${pinned.map(([id, tf]) => `${id}, which is pinned to ${tf}`).join("; ")}` +
+      ` — the live engine cannot fetch higher-timeframe candles`));
+    return;
+  }
+
   // Stop any running engine first (e.g. "Re-arm to apply"): without this, startLoop
   // overwrites `engine` and leaks the old WS + lease, and the new lease self-
   // conflicts with the still-open old one and immediately marks itself lost.
@@ -179,7 +253,12 @@ export async function arm(): Promise<void> {
           return { ...cfg, params: resolveParamValues(pickedStrategy!.params, cfg.params) };
         })()
       : undefined;
-  const armed = armSnapshot(get(), strategyId, armedAtSec, coded);
+  // Only ship a map when there is something in it, so a reference-free config
+  // is byte-identical to what it was before this existed.
+  const armed = armSnapshot(
+    get(), strategyId, armedAtSec, coded,
+    Object.keys(indicators).length ? indicators : undefined,
+  );
   set(appendLog(armed, armedAtSec, `armed ${epic} on ${account}`));
   saveArmed(epic, account, armed.snapshot);
   saveArmedAccount(epic, account);

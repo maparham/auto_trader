@@ -21,6 +21,8 @@ const {
   isInternalIndicator,
   accelCompanionId,
   addIndicatorInstance,
+  liveExprInstances,
+  exprInstancesFromChart,
 } = await import("./indicators");
 
 // In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
@@ -366,5 +368,47 @@ describe("isInternalIndicator", () => {
 describe("accelCompanionId", () => {
   it("derives a deterministic id from the parent", () => {
     expect(accelCompanionId("SLOPE#a1b2c3")).toBe("SLOPE#a1b2c3__accel");
+  });
+});
+
+describe("liveExprInstances / exprInstancesFromChart (editor + request instance list)", () => {
+  // Same minimal fake as above: v10 getIndicators() (flat, all-panes).
+  function fakeChart(
+    inds: Array<{ name: string; paneId: string; calcParams?: unknown[]; extendData?: unknown }>,
+  ) {
+    return { getIndicators: () => inds } as unknown as Chart;
+  }
+
+  it("flattens the live panes, skipping app-owned and accel companion panes", () => {
+    const chart = fakeChart([
+      { name: "SLOPE", paneId: "pane_1", calcParams: [9, 21], extendData: { indType: "SLOPE" } },
+      {
+        name: "SLOPE__accel",
+        paneId: "pane_2",
+        calcParams: [9, 21],
+        extendData: { indType: "SLOPE_ACCEL" },
+      },
+      { name: "EQUITY", paneId: "pane_3", extendData: {} },
+      { name: "EMA#a1b", paneId: "candle_pane", calcParams: [9], extendData: { indType: "EMA" } },
+    ]);
+    expect(liveExprInstances(chart)).toEqual([
+      { id: "SLOPE", type: "SLOPE", calcParams: [9, 21], extendData: { indType: "SLOPE" } },
+      { id: "EMA#a1b", type: "EMA", calcParams: [9], extendData: { indType: "EMA" } },
+    ]);
+  });
+
+  it("exposes only referenceable panes, with the outputs their settings expose", () => {
+    const chart = fakeChart([
+      {
+        name: "SLOPE",
+        paneId: "pane_1",
+        calcParams: [9, 21],
+        extendData: { indType: "SLOPE", showAccel: true },
+      },
+      { name: "EMA#a1b", paneId: "candle_pane", calcParams: [9], extendData: { indType: "EMA" } },
+    ]);
+    expect(exprInstancesFromChart(chart)).toEqual([
+      { id: "SLOPE", outputs: ["slope0", "slope1", "accel0", "accel1"], timeframe: null },
+    ]);
   });
 });

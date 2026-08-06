@@ -7,6 +7,9 @@ import { journalSignal, journalMetrics, clearJournal, type JournalTrade } from "
 import { cloneRule, type BacktestConfig, type RuleGroup, type Rule } from "./lib/backtestConfig";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import type { BrokerAccount } from "./lib/trading";
+import type { LiveInstance } from "./lib/exprInstances";
+import { liveExprInstances } from "./lib/indicators";
+import type { ChartController } from "./lib/chartController";
 import type { LiveState } from "./lib/liveState";
 import { StrategyParams } from "./components/StrategyParams";
 import { fetchStrategies, type StrategyInfo } from "./api";
@@ -25,6 +28,10 @@ interface Props {
   brokerId: string;
   accounts: BrokerAccount[];
   defaultAccount: string;
+  /** The focused chart, read ONLY at arm time, for the pane settings behind any
+   *  `SLOPE.slope0`-style reference in the rules (see armIndicators). Null when
+   *  no chart is focused — then a referencing rule can't be armed. */
+  controller?: ChartController | null;
   onClose: () => void;
 }
 
@@ -33,7 +40,7 @@ type Side = "long" | "short";
 /** The Live trading panel — a dedicated surface (never the backtest) that arms a
  *  frozen snapshot of a rule strategy against a demo/live broker account. Reuses
  *  the backtest rule editor; drives the headless engine via liveController. */
-export default function LiveTradingPanel({ epic, resolution, brokerId, accounts, defaultAccount, onClose }: Props) {
+export default function LiveTradingPanel({ epic, resolution, brokerId, accounts, defaultAccount, controller, onClose }: Props) {
   const [state, setState] = useState<LiveState>(liveStateSignal.value);
   useEffect(() => liveStateSignal.subscribe(setState), []);
   const [journal, setJournal] = useState<JournalTrade[]>(journalSignal.value);
@@ -123,10 +130,25 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
 
   const canArmRealMoney = !realMoney || confirmText.trim().toUpperCase() === "ARM";
 
+  // The chart's panes with their settings AS THEY ARE NOW — read once, here,
+  // because arm() freezes the referenced ones into the snapshot and every
+  // evaluate cycle thereafter reads that frozen copy. A rule names an output
+  // (`SLOPE.slope0`) and restates none of the pane's parameters, so without them
+  // the backend has nothing to resolve the reference against and 422s the
+  // evaluate route on every single bar. arm() decides WHICH rows count (coded
+  // mode executes the coded set's panel exits, not these rule groups), so this
+  // deliberately hands over the whole list rather than filtering here.
+  function livePanes(): LiveInstance[] {
+    const chart = controller?.chart;
+    return chart ? liveExprInstances(chart) : [];
+  }
+
   async function onArm() {
     setBusy(true);
     try {
-      await arm();
+      // arm() refuses (with a log line) if an executed row references a pane
+      // that isn't there — see the unresolvable-reference guard.
+      await arm(livePanes());
       setConfirmText("");
     } finally {
       setBusy(false);

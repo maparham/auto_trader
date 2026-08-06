@@ -20,6 +20,20 @@ import {
   WRAPPER_ARITY,
   tfSeconds,
 } from "./catalog";
+import type { ExprInstance } from "./catalog";
+
+export type { ExprInstance };
+
+/** The live instance list, keyed by id — the shape the validator and warm-up
+ * walk (mirrors the backend's `instances: dict[str, ResolvedInstance]`). */
+type InstanceMap = ReadonlyMap<string, ExprInstance>;
+
+const NO_INSTANCES: InstanceMap = new Map();
+
+function instanceMap(instances?: readonly ExprInstance[]): InstanceMap {
+  if (!instances || instances.length === 0) return NO_INSTANCES;
+  return new Map(instances.map((i) => [i.id, i]));
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -50,6 +64,10 @@ export interface AnalyzeResult {
   tokens: Token[];
   literals: LiteralSpan[];
   error: ExprError | null;
+  /** `error` as a list, for callers that render diagnostics as a collection.
+   * The pipeline is throw-based and first-error-wins (like the backend's), so
+   * this is always length 0 or 1 — it never accumulates. */
+  errors: ExprError[];
 }
 
 // Internal error carrier (mirrors backend errors.ExprError). Uses start/end to
@@ -90,11 +108,14 @@ interface ChainNode { kind: "Chain"; parts: Array<CompareNode | CrossNode>; star
 interface PredicateNode { kind: "Predicate"; fn: string; base: Node; start: number; end: number; }
 interface CountNode { kind: "Count"; cond: CompareNode | CrossNode | PredicateNode; window: Node; start: number; end: number; }
 interface BarsSinceEntryNode { kind: "BarsSinceEntry"; start: number; end: number; }
+// A configured chart-indicator instance's output, e.g. SLOPE#a1b2c3.slope0.
+// Carries NO parameters: the pane's settings are the single source of truth.
+interface IndicatorRefNode { kind: "IndicatorRef"; instance: string; output: string; start: number; end: number; }
 
 type Node =
   | NumNode | CandleNode | EntryNode | CallNode | FieldNode | OffsetNode
   | TfNode | UnaryNode | BinaryNode | CompareNode | CrossNode
-  | PredicateNode | CountNode | BarsSinceEntryNode;
+  | PredicateNode | CountNode | BarsSinceEntryNode | IndicatorRefNode;
 
 type Row = CompareNode | CrossNode | ChainNode | PredicateNode;
 
@@ -159,7 +180,11 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
     }
     if (isAlpha(c) || c === "_") {
       let j = i;
-      while (j < n && (isAlnum(src[j]) || src[j] === "_")) j += 1;
+      // "#" is legal INSIDE a name (never leading) so a chart indicator's
+      // instance id — "SLOPE#a1b2c3", minted by mintInstanceId — lexes verbatim.
+      // Only THIS continuation loop takes "#": the digit branch above stays
+      // alnum/underscore, exactly like the backend lexer, so "4H#x" is bad_char.
+      while (j < n && (isAlnum(src[j]) || src[j] === "_" || src[j] === "#")) j += 1;
       const word = src.slice(i, j);
       // A bare "x" fused to a comparison bracket is the infix cross
       // operator: x> (crosses above) / x< (crosses below).
@@ -396,6 +421,19 @@ class Parser {
         const field = this.expect("NAME");
         if (node.kind === "Candle") {
           node = { kind: "Candle", field: field.value, start: node.start, end: field.end };
+        } else if (
+          node.kind === "Call"
+          && node.args.length === 0
+          && !Object.hasOwn(INDICATOR_SPECS, node.name)
+          && !Object.hasOwn(WRAPPER_ARITY, node.name)
+          && !CROSS_SET.has(node.name)
+          && !PREDICATE_SET.has(node.name)
+        ) {
+          // A bare unknown name with a field is an indicator-instance reference.
+          // Registered names keep the Field(Call) shape so validate still
+          // reports field_on_call for EMA(9).signal. Object.hasOwn (not `in`)
+          // so inherited Object.prototype members never count as registered.
+          node = { kind: "IndicatorRef", instance: node.name, output: field.value, start: node.start, end: field.end };
         } else {
           node = { kind: "Field", base: node, name: field.value, start: node.start, end: field.end };
         }
@@ -441,26 +479,64 @@ function candleRoot(node: Node): Node {
   return node;
 }
 
-function validate(node: Row, isExit: boolean): void {
+function validate(node: Row, isExit: boolean, instances: InstanceMap): void {
   if (node.kind === "Chain") {
     for (const p of node.parts) {
       const [left, right] = partOperands(p);
-      walk(left, isExit);
-      walk(right, isExit);
+      walk(left, isExit, instances);
+      walk(right, isExit, instances);
     }
     return;
   }
   if (node.kind === "Cross") {
-    walk(node.a, isExit);
-    walk(node.b, isExit);
+    walk(node.a, isExit, instances);
+    walk(node.b, isExit, instances);
     return;
   }
   if (node.kind === "Predicate") {
     checkPredicate(node);
     return;
   }
-  walk(node.left, isExit);
-  walk(node.right, isExit);
+  walk(node.left, isExit, instances);
+  walk(node.right, isExit, instances);
+}
+
+/** The instance id of a ref inside `node` whose own config carries a timeframe
+ * pin, or null.
+ *
+ * A pane pinned in its own settings is an already-pinned series, so this is the
+ * ref-shaped counterpart of `containsTf` — the parser's nested-pin check. The
+ * case list below mirrors `containsTf` case for case on purpose: if the two
+ * drift, a nested pin escapes through whichever node kind only one of them
+ * recurses into. Keep them in step. (Like `containsTf`'s TS port, there is no
+ * Chain case: `Node` excludes Chain, which is only ever a top-level Row.) */
+function pinnedInstance(node: Node, instances: InstanceMap): string | null {
+  if (node.kind === "IndicatorRef") {
+    const inst = instances.get(node.instance);
+    return inst && inst.timeframe ? node.instance : null;
+  }
+  if (node.kind === "Field" || node.kind === "Offset" || node.kind === "Tf") {
+    return pinnedInstance(node.base, instances);
+  }
+  if (node.kind === "Unary") return pinnedInstance(node.operand, instances);
+  if (node.kind === "Call") return first(node.args.map((a) => pinnedInstance(a, instances)));
+  if (node.kind === "Binary" || node.kind === "Compare") {
+    return first([pinnedInstance(node.left, instances), pinnedInstance(node.right, instances)]);
+  }
+  if (node.kind === "Cross") {
+    return first([pinnedInstance(node.a, instances), pinnedInstance(node.b, instances)]);
+  }
+  if (node.kind === "Predicate") return pinnedInstance(node.base, instances);
+  if (node.kind === "Count") {
+    return first([pinnedInstance(node.cond, instances), pinnedInstance(node.window, instances)]);
+  }
+  return null;
+}
+
+/** The first non-null result, or null. */
+function first(results: Array<string | null>): string | null {
+  for (const r of results) if (r !== null) return r;
+  return null;
 }
 
 // A predicate's argument must bottom out in a bare `candle` (no field), wrapped
@@ -504,7 +580,7 @@ function containsEntryKind(node: Node): boolean {
   return false;
 }
 
-function walk(node: Node, isExit: boolean): void {
+function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
   switch (node.kind) {
     case "Num":
       return;
@@ -524,10 +600,19 @@ function walk(node: Node, isExit: boolean): void {
         }
         return;
       }
-      if (root.kind === "Call" && (root.name in INDICATOR_SPECS || root.name in WRAPPER_ARITY)) {
+      if (root.kind === "Call" && (Object.hasOwn(INDICATOR_SPECS, root.name) || Object.hasOwn(WRAPPER_ARITY, root.name))) {
         throw new ExprErr("field_on_call", `${root.name} has no named outputs.`, node.start, node.end);
       }
-      walk(node.base, isExit);
+      if (root.kind === "IndicatorRef") {
+        // SLOPE.slope0.foo (or SLOPE.slope0[-1].foo): the ref already names an
+        // output, and an output is a plain series with no sub-fields.
+        throw new ExprErr(
+          "field_on_indicator_ref",
+          `${root.instance}.${root.output} has no fields.`,
+          node.start, node.end,
+        );
+      }
+      walk(node.base, isExit, instances);
       return;
     }
     case "Tf":
@@ -538,17 +623,26 @@ function walk(node: Node, isExit: boolean): void {
           node.start, node.end,
         );
       }
-      walk(node.base, isExit);
+      // A pane pinned in its own settings is already a pinned series; pinning it
+      // again in the rule would be a nested pin, same as EMA(9)@1H@4H.
+      if (pinnedInstance(node.base, instances) !== null) {
+        throw new ExprErr(
+          "nested_tf",
+          "A timeframe pin cannot be nested inside another one.",
+          node.start, node.end,
+        );
+      }
+      walk(node.base, isExit, instances);
       return;
     case "Offset":
-      walk(node.base, isExit);
+      walk(node.base, isExit, instances);
       return;
     case "Unary":
-      walk(node.operand, isExit);
+      walk(node.operand, isExit, instances);
       return;
     case "Binary":
-      walk(node.left, isExit);
-      walk(node.right, isExit);
+      walk(node.left, isExit, instances);
+      walk(node.right, isExit, instances);
       return;
     case "BarsSinceEntry":
       if (!isExit) throw new ExprErr("entry_in_entry_rule", "barsSinceEntry is only available in exit rules.", node.start, node.end);
@@ -564,18 +658,36 @@ function walk(node: Node, isExit: boolean): void {
       if (cond.kind === "Predicate") {
         checkPredicate(cond);
       } else if (cond.kind === "Cross") {
-        walk(cond.a, isExit);
-        walk(cond.b, isExit);
+        walk(cond.a, isExit, instances);
+        walk(cond.b, isExit, instances);
       } else {
-        walk(cond.left, isExit);
-        walk(cond.right, isExit);
+        walk(cond.left, isExit, instances);
+        walk(cond.right, isExit, instances);
       }
-      walk(node.window, isExit);
+      walk(node.window, isExit, instances);
       return;
     }
     case "Compare":
     case "Cross":
       throw new ExprErr("cross_not_toplevel", "A comparison or cross can only be the whole row.", node.start, node.end);
+    case "IndicatorRef": {
+      const inst = instances.get(node.instance);
+      if (inst === undefined) {
+        throw new ExprErr(
+          "unknown_indicator_ref",
+          `No indicator named ${node.instance} on this chart.`,
+          node.start, node.end,
+        );
+      }
+      if (!inst.outputs.includes(node.output)) {
+        throw new ExprErr(
+          "unknown_indicator_output",
+          `${node.instance} has no output ${node.output}. Available: ${inst.outputs.join(", ")}.`,
+          node.start, node.end,
+        );
+      }
+      return;
+    }
     case "Call": {
       if (CROSS_SET.has(node.name)) {
         throw new ExprErr("cross_not_toplevel", `${node.name} can only be the whole row.`, node.start, node.end);
@@ -592,7 +704,7 @@ function walk(node: Node, isExit: boolean): void {
             node.start, node.end,
           );
         }
-        for (const a of node.args) walk(a, isExit);
+        for (const a of node.args) walk(a, isExit, instances);
         return;
       }
       if (Object.hasOwn(WRAPPER_ARITY, node.name)) {
@@ -607,8 +719,20 @@ function walk(node: Node, isExit: boolean): void {
             node.start, node.end,
           );
         }
-        for (const a of node.args) walk(a, isExit);
+        for (const a of node.args) walk(a, isExit, instances);
         return;
+      }
+      const inst = instances.get(node.name);
+      if (inst !== undefined && node.args.length === 0) {
+        // A bare pane name parses as a zero-arg call; point at an output rather
+        // than claiming the name is unknown.
+        if (inst.outputs.length > 0) {
+          throw new ExprErr(
+            "indicator_ref_needs_output",
+            `${node.name} needs an output, like ${node.name}.${inst.outputs[0]}.`,
+            node.start, node.end,
+          );
+        }
       }
       throw new ExprErr("unknown_name", `Unknown name ${node.name}.`, node.start, node.end);
     }
@@ -631,6 +755,9 @@ function render(node: Node): string {
       return formatG(node.value);
     case "Candle":
       return node.field ? `candle.${node.field}` : "candle";
+    case "IndicatorRef":
+      // Exactly as authored: the label a user reads back in the sweep axis.
+      return `${node.instance}.${node.output}`;
     case "Entry":
       return "entry";
     case "Field":
@@ -670,7 +797,10 @@ function formatG(value: number): string {
 }
 
 function hasIndicator(node: Node): boolean {
-  if (node.kind === "Call" && node.name in INDICATOR_SPECS) return true;
+  // A chart-instance output is an indicator term just like EMA(20), so a
+  // numeric factor multiplying it is a multiplier, not a bare constant.
+  if (node.kind === "IndicatorRef") return true;
+  if (node.kind === "Call" && Object.hasOwn(INDICATOR_SPECS, node.name)) return true;
   if (node.kind === "Call") return node.args.some(hasIndicator);
   if (node.kind === "Field" || node.kind === "Offset" || node.kind === "Tf") return hasIndicator(node.base);
   if (node.kind === "Unary") return hasIndicator(node.operand);
@@ -725,8 +855,13 @@ function collect(node: Node, label: string, out: Collected[]): void {
     return;
   }
   if (node.kind === "Call") {
-    if (node.name in WRAPPER_ARITY) {
-      collect(node.args[0], label, out);
+    if (Object.hasOwn(WRAPPER_ARITY, node.name)) {
+      // Arity is NOT guaranteed here: `analyze` extracts literals on the error
+      // path too, so a half-typed `slope.x` / `avg(x)` reaches this branch with
+      // fewer args than the wrapper takes. Missing args are simply skipped, so
+      // the caller gets the typed bad_arity/field_on_call error instead of a
+      // TypeError. Mirrored by the backend's literals.py::_collect.
+      if (node.args[0]) collect(node.args[0], label, out);
       if (node.args[1] && node.args[1].kind === "Num") {
         out.push({ num: node.args[1], label: `${node.name} window` });
       } else if (node.args[1]) {
@@ -734,7 +869,7 @@ function collect(node: Node, label: string, out: Collected[]): void {
       }
       return;
     }
-    if (node.name in INDICATOR_SPECS) {
+    if (Object.hasOwn(INDICATOR_SPECS, node.name)) {
       const kind = node.name === "AVWAP" ? "anchor" : "length";
       for (const a of node.args) {
         if (a.kind === "Num") {
@@ -823,33 +958,44 @@ function literalsOf(node: Row): LiteralSpan[] {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-export function analyze(src: string, opts?: { isExit?: boolean }): AnalyzeResult {
+export function analyze(
+  src: string,
+  opts?: { isExit?: boolean; instances?: readonly ExprInstance[] },
+): AnalyzeResult {
   const isExit = opts?.isExit ?? false;
+  // The live chart's panes are injected here, never imported: the pane settings
+  // are the source of truth and the editor gets the list from the chart.
+  const instances = instanceMap(opts?.instances);
   const { tokens: lexTokens, error: lexError } = tokenize(src);
   const tokens: Token[] = lexTokens
     .filter((t) => t.type !== "EOF")
     .map((t) => ({ type: t.type, from: t.start, to: t.end }));
 
   if (lexError) {
-    return { tokens, literals: [], error: toExprError(lexError) };
+    return result(tokens, [], lexError);
   }
 
   let ast: Row;
   try {
     ast = new Parser(lexTokens).parseRow();
   } catch (e) {
-    if (e instanceof ExprErr) return { tokens, literals: [], error: toExprError(e) };
+    if (e instanceof ExprErr) return result(tokens, [], e);
     throw e;
   }
 
   try {
-    validate(ast, isExit);
+    validate(ast, isExit, instances);
   } catch (e) {
-    if (e instanceof ExprErr) return { tokens, literals: literalsOf(ast), error: toExprError(e) };
+    if (e instanceof ExprErr) return result(tokens, literalsOf(ast), e);
     throw e;
   }
 
-  return { tokens, literals: literalsOf(ast), error: null };
+  return result(tokens, literalsOf(ast), null);
+}
+
+function result(tokens: Token[], literals: LiteralSpan[], err: ExprErr | null): AnalyzeResult {
+  const error = err ? toExprError(err) : null;
+  return { tokens, literals, error, errors: error ? [error] : [] };
 }
 
 function toExprError(e: ExprErr): ExprError {
@@ -862,13 +1008,20 @@ function toExprError(e: ExprErr): ExprError {
  * window plus its inner term, an offset's bar count, maxed across a
  * comparison's two sides. When `baseSeconds` is given, an @tf pin contributes
  * ZERO base bars — the pinned series is computed from its own higher-timeframe
- * candles, sourced and sufficiency-checked by the backend (_ensure_htf), never
+ * candles, which the EXPRESSION routes source and sufficiency-check
+ * (expr.py::_ensure_htf) — the coded path instead fetches a flat
+ * _HTF_WARMUP_BARS floor — never
  * derived from the base history — while terms OUTSIDE the pin (offsets,
  * wrappers on the base-aligned series) still count. Without `baseSeconds` a pin
  * passes through unscaled (legacy callers that only ever see base-timeframe
  * rows). Returns 0 for an empty or unparseable expression so a bad row never
  * blocks sizing (the lint/validate layer surfaces the error elsewhere). */
-export function warmupOf(src: string, baseSeconds?: number): number {
+export function warmupOf(
+  src: string,
+  baseSeconds?: number,
+  instances?: readonly ExprInstance[],
+  warmupByRef?: (instance: string, output: string) => number,
+): number {
   const trimmed = src.trim();
   if (!trimmed) return 0;
   const { tokens, error } = tokenize(trimmed);
@@ -879,39 +1032,57 @@ export function warmupOf(src: string, baseSeconds?: number): number {
   } catch {
     return 0;
   }
-  return warmupNode(ast, baseSeconds);
+  return warmupNode(ast, baseSeconds, { instances: instanceMap(instances), warmupByRef });
 }
 
-function warmupNode(node: Node | ChainNode, baseSeconds?: number): number {
+/** The ref-resolution half of warm-up, injected by the caller (the editor pulls
+ * an instance's own warm-up from the chart's indicator specs, which this file
+ * must not import). */
+interface WarmupRefs {
+  instances: InstanceMap;
+  warmupByRef?: (instance: string, output: string) => number;
+}
+
+const NO_REFS: WarmupRefs = { instances: NO_INSTANCES };
+
+function warmupNode(node: Node | ChainNode, baseSeconds: number | undefined, refs: WarmupRefs = NO_REFS): number {
   switch (node.kind) {
-    case "Chain": return Math.max(...node.parts.map((p) => warmupNode(p, baseSeconds)));
-    case "Compare": return Math.max(warmupNode(node.left, baseSeconds), warmupNode(node.right, baseSeconds));
-    case "Cross": return Math.max(warmupNode(node.a, baseSeconds), warmupNode(node.b, baseSeconds));
+    case "Chain": return Math.max(...node.parts.map((p) => warmupNode(p, baseSeconds, refs)));
+    case "Compare": return Math.max(warmupNode(node.left, baseSeconds, refs), warmupNode(node.right, baseSeconds, refs));
+    case "Cross": return Math.max(warmupNode(node.a, baseSeconds, refs), warmupNode(node.b, baseSeconds, refs));
     case "Num": case "Candle": case "Entry": return 0;
-    case "Field": return warmupNode(node.base, baseSeconds);
-    case "Offset": return warmupNode(node.base, baseSeconds) + node.n;
+    case "Field": return warmupNode(node.base, baseSeconds, refs);
+    case "Offset": return warmupNode(node.base, baseSeconds, refs) + node.n;
     case "Tf":
-      return baseSeconds == null || !(baseSeconds > 0) ? warmupNode(node.base) : 0;
-    case "Unary": return warmupNode(node.operand, baseSeconds);
-    case "Binary": return Math.max(warmupNode(node.left, baseSeconds), warmupNode(node.right, baseSeconds));
+      return knownBase(baseSeconds) ? 0 : warmupNode(node.base, undefined, refs);
+    case "Unary": return warmupNode(node.operand, baseSeconds, refs);
+    case "Binary": return Math.max(warmupNode(node.left, baseSeconds, refs), warmupNode(node.right, baseSeconds, refs));
     case "Predicate":
       // Pattern predicates need the detector's epsilon/lookback history;
       // bullish/bearish are single-bar and stay at 0.
       return (
         (PATTERN_FN_SET.has(node.fn) ? PATTERN_WARMUP : 0) +
-        warmupNode(node.base, baseSeconds)
+        warmupNode(node.base, baseSeconds, refs)
       );
     case "BarsSinceEntry": return 0;
     case "Count": {
       const w = node.window;
       const n = w.kind === "Num" ? Math.trunc(w.value) : 0;
-      return n + warmupNode(node.cond, baseSeconds);
+      return n + warmupNode(node.cond, baseSeconds, refs);
+    }
+    case "IndicatorRef": {
+      const inst = refs.instances.get(node.instance);
+      if (inst === undefined) return 0;
+      // An instance pinned in its own settings is warmed from its own HTF
+      // history, exactly like an @tf pin — it costs zero BASE bars.
+      if (inst.timeframe && knownBase(baseSeconds)) return 0;
+      return refs.warmupByRef ? refs.warmupByRef(node.instance, node.output) : 0;
     }
     case "Call": {
       if (Object.hasOwn(WRAPPER_ARITY, node.name)) {
         const w = node.args[1];
         const n = w && w.kind === "Num" ? Math.trunc(w.value) : 0;
-        return (node.args[0] ? warmupNode(node.args[0], baseSeconds) : 0) + n;
+        return (node.args[0] ? warmupNode(node.args[0], baseSeconds, refs) : 0) + n;
       }
       const spec = Object.hasOwn(INDICATOR_SPECS, node.name) ? INDICATOR_SPECS[node.name] : undefined;
       if (spec && spec.argKind === "length" && node.args.length > 0) {
@@ -922,4 +1093,11 @@ function warmupNode(node: Node | ChainNode, baseSeconds?: number): number {
     }
     default: return 0;
   }
+}
+
+/** True when the caller told us the base timeframe — the condition under which a
+ * pinned series (an @tf pin OR an instance pinned in its own settings) costs
+ * ZERO base bars. Shared so the two pin shapes can never disagree. */
+function knownBase(baseSeconds: number | undefined): boolean {
+  return baseSeconds != null && baseSeconds > 0;
 }

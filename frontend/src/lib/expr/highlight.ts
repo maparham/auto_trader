@@ -20,6 +20,12 @@ import { CROSS_FNS, INDICATOR_SPECS, TIMEFRAMES, WRAPPER_ARITY, PREDICATE_FNS, C
 
 const TF_ALIASES = new Set(TIMEFRAMES.map((t) => t.alias));
 const CROSS_SET = new Set<string>(CROSS_FNS);
+const PREDICATE_SET = new Set<string>(PREDICATE_FNS);
+
+// Names the parser gives their own node kind before the IndicatorRef rule can
+// fire, so `candle.close` is never a ref. (`entry`/`barsSinceEntry` take no
+// field at all, but they are listed for the same reason: they are known names.)
+const BUILTIN_VALUES = new Set(["candle", "entry", "barsSinceEntry"]);
 
 const OPERATOR_TYPES = new Set([
   "GT", "LT", "GE", "LE", "PLUS", "MINUS", "STAR", "SLASH",
@@ -34,32 +40,80 @@ const marks: Record<string, Decoration> = {
   operator: Decoration.mark({ class: "cm-tok-operator" }),
   timeframe: Decoration.mark({ class: "cm-tok-timeframe" }),
   variable: Decoration.mark({ class: "cm-tok-variable" }),
+  instanceRef: Decoration.mark({ class: "cm-tok-instance-ref" }),
 };
 
-function classify(tok: Token, prev: Token | undefined, value: string): string | null {
+/** True when `value`, followed by `next`, is a chart-instance reference —
+ * `SLOPE#a1b2c3` in `SLOPE#a1b2c3.slope0`.
+ *
+ * This is the token-level twin of the parser's IndicatorRef rule
+ * (parser.ts::parsePostfix): an unregistered bare name carrying a field. The
+ * two condition lists mirror each other on purpose — if they drift, a ref is
+ * highlighted as an unknown variable (or vice versa) even though the analyzer
+ * accepts it. Keep them in step. `next.type === "DOT"` stands in for the
+ * parser's `args.length === 0`: a NAME followed by `.` is never a call.
+ *
+ * Deliberately does NOT consult the live instance list: highlighting is
+ * syntactic, and an unknown-instance ref is reported by lint, not by colour. */
+function isInstanceRef(value: string, next: Token | undefined): boolean {
+  return (
+    next?.type === "DOT"
+    && !Object.hasOwn(INDICATOR_SPECS, value)
+    && !Object.hasOwn(WRAPPER_ARITY, value)
+    && !CROSS_SET.has(value)
+    && !PREDICATE_SET.has(value)
+    && value !== COUNT_FN
+    && !BUILTIN_VALUES.has(value)
+  );
+}
+
+function classify(
+  tok: Token,
+  prev: Token | undefined,
+  next: Token | undefined,
+  value: string,
+): string | null {
   if (tok.type === "NUMBER") return "number";
   if (tok.type === "XGT" || tok.type === "XLT") return "cross";
   if (OPERATOR_TYPES.has(tok.type)) return "operator";
   if (tok.type !== "NAME") return null;
   if (prev?.type === "AT") return TF_ALIASES.has(value) ? "timeframe" : "variable";
   if (prev?.type === "DOT") return "field";
-  if (value in INDICATOR_SPECS) return "indicator";
-  if (value in WRAPPER_ARITY) return "wrapper";
+  // Object.hasOwn (not `in`) so inherited Object.prototype members — a token
+  // literally named `toString` or `constructor` — never count as registered.
+  if (Object.hasOwn(INDICATOR_SPECS, value)) return "indicator";
+  if (Object.hasOwn(WRAPPER_ARITY, value)) return "wrapper";
   if (CROSS_SET.has(value)) return "cross";
   if (value === COUNT_FN) return "wrapper";
-  if ((PREDICATE_FNS as readonly string[]).includes(value)) return "cross";
+  if (PREDICATE_SET.has(value)) return "cross";
+  if (isInstanceRef(value, next)) return "instanceRef";
   return "variable";
+}
+
+export interface ClassifiedToken {
+  from: number;
+  to: number;
+  cls: string;
+}
+
+/** Every classified token in `doc`, in document order. Pure (no CodeMirror
+ * involved), so highlighting is unit-testable on its own. */
+export function classifyTokens(doc: string): ClassifiedToken[] {
+  const { tokens } = analyze(doc);
+  const out: ClassifiedToken[] = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i];
+    const cls = classify(tok, tokens[i - 1], tokens[i + 1], doc.slice(tok.from, tok.to));
+    if (cls) out.push({ from: tok.from, to: tok.to, cls });
+  }
+  return out;
 }
 
 function buildHighlight(view: EditorView): DecorationSet {
   const doc = view.state.doc.toString();
-  const { tokens } = analyze(doc);
   const builder = new RangeSetBuilder<Decoration>();
-  for (let i = 0; i < tokens.length; i += 1) {
-    const tok = tokens[i];
-    const value = doc.slice(tok.from, tok.to);
-    const cls = classify(tok, tokens[i - 1], value);
-    if (cls) builder.add(tok.from, tok.to, marks[cls]);
+  for (const tok of classifyTokens(doc)) {
+    builder.add(tok.from, tok.to, marks[tok.cls]);
   }
   return builder.finish();
 }

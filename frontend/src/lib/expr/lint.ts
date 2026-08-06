@@ -6,14 +6,23 @@
 import type { Diagnostic } from "@codemirror/lint";
 import { linter, type LintSource } from "@codemirror/lint";
 import { analyze } from "./parser";
+import type { ExprInstance } from "./catalog";
 
 /**
  * Diagnostics for `doc`. Pure so it can be unit-tested without mounting CM6.
  * An empty doc yields no diagnostics (nothing to complain about yet).
+ *
+ * `instances` is the LIVE chart pane list, injected by the caller (never
+ * imported — the panes are the source of truth). Omit it and every valid
+ * `SLOPE.slope0` reads as `unknown_indicator_ref`.
  */
-export function diagnosticsFor(doc: string, isExit: boolean): Diagnostic[] {
+export function diagnosticsFor(
+  doc: string,
+  isExit: boolean,
+  instances?: readonly ExprInstance[],
+): Diagnostic[] {
   if (doc.trim() === "") return [];
-  const { error } = analyze(doc, { isExit });
+  const { error } = analyze(doc, { isExit, instances });
   if (!error) return [];
   // Clamp to the doc length; a zero-width span at EOF still needs from<to to
   // render, so widen it by one when the error points past the last char.
@@ -27,9 +36,13 @@ export function diagnosticsFor(doc: string, isExit: boolean): Diagnostic[] {
   return [{ from, to, severity: "error", message: error.message, source: error.code }];
 }
 
-/** CM6 linter extension whose validity depends on the current `isExit` flag. */
-export function exprLinter(getIsExit: () => boolean) {
+/** CM6 linter extension reading the current `isExit` flag and chart pane list
+ * through getters, so neither needs the editor rebuilt when it changes. */
+export function exprLinter(
+  getIsExit: () => boolean,
+  getInstances?: () => readonly ExprInstance[] | undefined,
+) {
   const source: LintSource = (view) =>
-    diagnosticsFor(view.state.doc.toString(), getIsExit());
+    diagnosticsFor(view.state.doc.toString(), getIsExit(), getInstances?.());
   return linter(source, { delay: 150 });
 }

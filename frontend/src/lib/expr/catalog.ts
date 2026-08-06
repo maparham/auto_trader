@@ -130,3 +130,16 @@ export const PATTERN_WARMUP = 18;
 export const PATTERN_FN_SET: ReadonlySet<string> = new Set(PATTERN_NAMES);
 
 export const COUNT_FN = "count";
+
+/** A configured chart-indicator instance a rule can reference by id, e.g.
+ * `SLOPE#a1b2c3.slope0`. Mirrors the backend's `ResolvedInstance` as far as the
+ * expression layer needs it: the id the rule spells, the outputs its settings
+ * currently expose, and the timeframe its own settings pin it to (null when it
+ * follows the chart). The live list is INJECTED at call time — `analyze`'s
+ * options and `warmupOf`'s parameter — so this catalog stays static and
+ * dependency-free and the pane's settings remain the single source of truth. */
+export interface ExprInstance {
+  id: string;
+  outputs: string[];
+  timeframe: string | null;
+}

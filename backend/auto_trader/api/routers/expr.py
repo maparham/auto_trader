@@ -49,6 +49,8 @@ from ..sweep_apply import (
     apply_lit_combo,
     candle_from_dto,
     htf_from_dto,
+    request_instances,
+    referenced_tfs as _referenced_tfs,
     split_env_combo,
 )
 from ..sweep_jobs import JOBS
@@ -85,6 +87,17 @@ def _tf_inner_warmup(node: N.Node, tf: str, instances=None) -> int:
     """Deepest warm-up (in the PIN's own bars) any @`tf` pin in `node` needs."""
     if isinstance(node, N.Tf):
         return warmup_bars(node.base, tf_resolution(node.tf), instances) if node.tf == tf else 0
+    if isinstance(node, N.IndicatorRef):
+        # An instance pinned in its OWN SETTINGS is an @tf pin with no @tf in the
+        # text: it is computed on `pin`'s bars, so it needs its full warm-up in
+        # THOSE bars. Charging only the +1 the caller adds would let the
+        # sufficiency check pass on a single closed HTF bar and warm the series
+        # from nothing — a silently wrong number, not an error.
+        inst = (instances or {}).get(node.instance)
+        pin = inst.spec.timeframe(inst.config) if inst else None
+        if pin and _same_tf(pin, tf):
+            return inst.spec.warmup(inst.config, node.output)
+        return 0
     if isinstance(node, N.Chain):
         return max((_tf_inner_warmup(p, tf, instances) for p in node.parts), default=0)
     if isinstance(node, (N.Compare, N.Binary)):
@@ -104,14 +117,14 @@ def _tf_inner_warmup(node: N.Node, tf: str, instances=None) -> int:
         # referenced timeframe, so charging it unconditionally would let an
         # UNPINNED pattern row inflate an unrelated pin's ask (and spuriously
         # 422 on the `closed < need` check below).
-        pinned_here = node.fn in PATTERN_FN_NAMES and tf in _referenced_tfs(node.base)
+        pinned_here = node.fn in PATTERN_FN_NAMES and tf in _referenced_tfs(node.base, instances)
         return (PATTERN_WARMUP if pinned_here else 0) + _tf_inner_warmup(node.base, tf, instances)
     if isinstance(node, N.Count):
         return max(_tf_inner_warmup(node.cond, tf, instances), _tf_inner_warmup(node.window, tf, instances))
     return 0
 
 
-def _all_row_nodes(req: ExprBacktestRequest) -> list[N.Node]:
+def _all_row_nodes(req: ExprBacktestRequest, instances=None) -> list[N.Node]:
     """Every enabled row of every group, parsed — for @tf collection at sweep/WFO
     submit. Parse/validate errors are skipped, not raised: target dry-validation
     owns 422ing malformed rows; here an unparseable row simply references no
@@ -124,7 +137,7 @@ def _all_row_nodes(req: ExprBacktestRequest) -> list[N.Node]:
                 continue
             try:
                 node = parse(row.expr)
-                validate(node, is_exit=is_exit)
+                validate(node, is_exit=is_exit, instances=instances)
             except ExprError:
                 continue
             nodes.append(node)
@@ -133,6 +146,7 @@ def _all_row_nodes(req: ExprBacktestRequest) -> list[N.Node]:
 
 async def _ensure_htf(
     nodes: list[N.Node], req: ExprBacktestRequest, htf: dict[str, list[Candle]],
+    instances=None,
 ) -> None:
     """Fetch every @tf timeframe the rows reference that the request didn't ship,
     then verify each one is actually SUFFICIENT to warm its deepest pin.
@@ -157,13 +171,14 @@ async def _ensure_htf(
     just 400 on that)."""
     tfs: set[str] = set()
     for node in nodes:
-        tfs |= _referenced_tfs(node)
+        tfs |= _referenced_tfs(node, instances)
     for tf in sorted(tfs):
-        res = tf_resolution(tf) or tf  # unknown aliases were rejected by validate()
-        tf_s = resolution_seconds(res)
+        # An @tf token's alias was rejected by validate(); an instance's own
+        # pin was never parsed, so _tf_span is what checks THAT one.
+        tf_s, res = _tf_span(tf, instances)
         # inner closed bars to warm the deepest pin, +1 = the closed bar whose
         # value the window's first base bar actually reads.
-        need = max((_tf_inner_warmup(n, tf) for n in nodes), default=0) + 1
+        need = max((_tf_inner_warmup(n, tf, instances) for n in nodes), default=0) + 1
         bars = htf.get(res) or htf.get(tf)
         if not bars:
             from_ts = req.candles[0].time - (need * 2 + 10) * tf_s
@@ -214,12 +229,14 @@ async def expr_backtest(req: ExprBacktestRequest):
         (req.longEntry, False, "longEntry"), (req.longExit, True, "longExit"),
         (req.shortEntry, False, "shortEntry"), (req.shortExit, True, "shortExit"),
     ]
-    parsed = [_parse_group(rows, is_exit=ex, group=g, instances=None) for rows, ex, g in groups]
+    # Resolved ONCE per request, then threaded into validate/compile/warm-up.
+    instances = request_instances(req)
+    parsed = [_parse_group(rows, is_exit=ex, group=g, instances=instances) for rows, ex, g in groups]
     # @tf rows need their higher-timeframe candles in hand before compile_row
     # precomputes series; fetch whatever the request didn't ship.
-    await _ensure_htf([n for nodes in parsed for n in nodes], req, htf)
+    await _ensure_htf([n for nodes in parsed for n in nodes], req, htf, instances)
     strategy = ExprRuleStrategy(
-        *[[compile_row(n, candles, req.resolution, htf, None) for n in nodes] for nodes in parsed],
+        *[[compile_row(n, candles, req.resolution, htf, instances) for n in nodes] for nodes in parsed],
         quantity=req.costs.quantity,
         trade_from_time=req.tradeFromTime,
         long_enabled=req.longEnabled,
@@ -289,7 +306,8 @@ async def submit_expr_sweep_job(req: ExprBacktestRequest):
     # Pool workers do zero network: fetch the rows' @tf set here so they inherit
     # a complete dict (HTF is combo-invariant — timeframes are name tokens,
     # never sweepable literals). Shipped htfCandles ride along untouched.
-    await _ensure_htf(_all_row_nodes(req), req, htf_candles)
+    instances = request_instances(req)
+    await _ensure_htf(_all_row_nodes(req, instances), req, htf_candles, instances)
     job = JOBS.submit(
         req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
         htf_candles=htf_candles,
@@ -339,7 +357,8 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest):
     htf_candles = htf_from_dto(req.htfCandles) if req.htfCandles is not None else {}
     # Same as the sweep submit: workers never fetch, so the @tf set must be
     # complete before dispatch.
-    await _ensure_htf(_all_row_nodes(req), req, htf_candles)
+    instances = request_instances(req)
+    await _ensure_htf(_all_row_nodes(req, instances), req, htf_candles, instances)
     job = WFO_JOBS.submit(
         req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
         htf_candles=htf_candles,
@@ -369,9 +388,10 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest):
 
 @router.post("/api/expr/series")
 async def expr_series(req: ExprSeriesRequest):
+    instances = request_instances(req)
     try:
         node = parse(req.expr)
-        validate(node, is_exit=False)
+        validate(node, is_exit=False, instances=instances)
     except ExprError as e:
         raise HTTPException(422, {
             "code": e.code, "message": e.message, "start": e.start, "end": e.end,
@@ -401,52 +421,67 @@ async def expr_series(req: ExprSeriesRequest):
     # An @tf term needs its higher-timeframe candles (with warm-up room before
     # the plotted window, or the pinned series is None over the visible span).
     htf: dict[str, list[Candle]] = {}
-    for tf in _referenced_tfs(top):
-        res = tf_resolution(tf) or tf
-        tf_s = resolution_seconds(res)
-        need = _tf_inner_warmup(top, tf, None) + 1
+    for tf in _referenced_tfs(top, instances):
+        tf_s, res = _tf_span(tf, instances)
+        need = _tf_inner_warmup(top, tf, instances) + 1
         tf_from = req.fromTime - need * tf_s
         tf_bars = max(1, (req.toTime - tf_from) // tf_s + 2)
         htf[res] = await deps._fetch_symbol_candles(
             req.broker, req.epic, res, tf_bars, tf_from, req.toTime, req.priceSide,
         )
-    values = series_of(top, candles, req.resolution, htf, None)
+    values = series_of(top, candles, req.resolution, htf, instances)
     return {
         "times": [int(c.time.timestamp()) for c in candles],
         "values": values,
-        "warmup": warmup_bars(node, req.resolution, None),
+        "warmup": warmup_bars(node, req.resolution, instances),
     }
 
 
-def _referenced_tfs(node: N.Node) -> set[str]:
-    """All @TF timeframes referenced anywhere in a row's tree."""
-    if isinstance(node, N.Tf):
-        return {node.tf} | _referenced_tfs(node.base)
-    if isinstance(node, N.Chain):
-        return set().union(*(_referenced_tfs(p) for p in node.parts))
-    if isinstance(node, (N.Field, N.Offset)):
-        return _referenced_tfs(node.base)
-    if isinstance(node, N.Unary):
-        return _referenced_tfs(node.operand)
-    if isinstance(node, N.Call):
-        return set().union(*(_referenced_tfs(a) for a in node.args)) if node.args else set()
-    if isinstance(node, (N.Binary, N.Compare)):
-        return _referenced_tfs(node.left) | _referenced_tfs(node.right)
-    if isinstance(node, N.Cross):
-        return _referenced_tfs(node.a) | _referenced_tfs(node.b)
-    if isinstance(node, N.Predicate):
-        return _referenced_tfs(node.base)
-    if isinstance(node, N.Count):
-        return _referenced_tfs(node.cond) | _referenced_tfs(node.window)
-    return set()
+def _pin_owner(tf: str, instances) -> str | None:
+    """The instance whose OWN settings pin names `tf`, if any."""
+    return next((i for i, inst in (instances or {}).items()
+                 if inst.spec.timeframe(inst.config) == tf), None)
+
+
+def _tf_span(tf: str, instances=None) -> tuple[int, str]:
+    """(nominal bar seconds, canonical resolution) for a referenced timeframe.
+
+    An @tf TOKEN was already alias-checked by validate(). An instance's own pin
+    was NOT: it never passes through the parser, so validate() has never seen
+    it, and the chart's timeframe vocabulary is a strict superset of this
+    backend's Resolution enum (SECOND, SECOND_5/10/15/30/45, ...). Without this
+    guard such a pin reaches resolution_seconds() and 500s on an uncaught
+    ValueError. Name the offending pane so the user can fix the pane, not guess.
+    """
+    res = tf_resolution(tf) or tf
+    try:
+        return resolution_seconds(res), res
+    except (ValueError, KeyError):
+        owner = _pin_owner(tf, instances)
+        where = (f"{owner} is pinned to timeframe '{tf}'" if owner
+                 else f"timeframe '{tf}' is not supported")
+        raise HTTPException(422, {
+            "code": "unsupported_timeframe",
+            "message": f"{where}, which backtests cannot compute. Change that "
+                       f"indicator's timeframe or unpin it.",
+            "start": None, "end": None, "group": None, "row": None,
+        })
+
+
+def _same_tf(a: str, b: str) -> bool:
+    """Two timeframe spellings naming the same resolution. An instance's own pin
+    is whatever its pane settings hold ("1H"), while an @tf token may be either
+    the alias or the canonical form ("HOUR") — compare canonically."""
+    return (tf_resolution(a) or a) == (tf_resolution(b) or b)
 
 
 @router.post("/api/expr/closeness")
 async def expr_closeness(req: ExprClosenessRequest):
+    instances = request_instances(req)
     try:
         nodes = [parse(expr) for expr in req.rows]
         for node in nodes:
-            validate(node, is_exit=False)
+            validate(node, is_exit=False, instances=instances)
     except ExprError as e:
         raise HTTPException(422, {
             "code": e.code, "message": e.message, "start": e.start, "end": e.end,
@@ -465,11 +500,13 @@ async def expr_closeness(req: ExprClosenessRequest):
 
     tfs: set[str] = set()
     for node in nodes:
-        tfs |= _referenced_tfs(node)
+        tfs |= _referenced_tfs(node, instances)
     htf: dict[str, list[Candle]] = {}
     for tf in tfs:
-        res = tf_resolution(tf) or tf  # canonical: '1H' -> 'HOUR' (fetch + dict key)
-        tf_bars = max(1, (req.toTime - req.fromTime) // resolution_seconds(res) + 2)
+        # canonical: '1H' -> 'HOUR' (fetch + dict key); an instance's own pin is
+        # alias-checked here because validate() never saw it.
+        tf_s, res = _tf_span(tf, instances)
+        tf_bars = max(1, (req.toTime - req.fromTime) // tf_s + 2)
         htf[res] = await deps._fetch_symbol_candles(
             req.broker, req.epic, res, tf_bars, req.fromTime, req.toTime, req.priceSide,
         )
@@ -492,7 +529,8 @@ async def expr_closeness(req: ExprClosenessRequest):
         basis=req.norm.basis, width=req.norm.width,
         window=req.norm.window, atr_length=req.norm.atrLength,
     )
-    base_vals = group_closeness(nodes, req.combine, candles, req.baseResolution, htf, norm)
+    base_vals = group_closeness(nodes, req.combine, candles, req.baseResolution,
+                                htf, norm, instances)
     times, values = aggregate_to_display(base_times, base_vals, display_opens, req.agg)
     return {"times": times, "values": values}
 

@@ -7,6 +7,8 @@ import type { KLineData } from "klinecharts";
 import type { PriceSide } from "../theme";
 import { API_BASE as BASE, errorDetail } from "./http";
 import { getSynthetic, isSynthetic } from "./syntheticRegistry";
+// Pin aliases ("4H") only — the canonical table below is this file's own.
+import { tfSeconds } from "./expr/catalog";
 
 export interface Period {
   resolution: string; // backend Resolution value, or a SECONDS_INTERVALS key
@@ -726,6 +728,25 @@ export const RESOLUTION_SECONDS: Record<string, number> = {
   MONTH_3: 7776000,
   YEAR: 31536000,
 };
+
+/** NOMINAL hours per bar for a resolution — the width the resolution *means*,
+ * never one measured off the candles.
+ *
+ * This is the only definition of bar width a rule operand can be evaluated
+ * against: the backend computes it as `resolution_seconds(res) / 3600`
+ * (strategy/expr/evaluate.py::_tf_hours), and the two tables agree entry for
+ * entry (asserted by feed.test.ts / test_slope_pane_rule_equality.py). Anything
+ * measured from candle gaps diverges silently — a MONTH pane's smallest gap is
+ * a 28-day February (672h) against this 720h, and a DAY pane's is 23h across a
+ * DST spring-forward against 24h.
+ *
+ * Accepts a canonical resolution ("HOUR_4") or an expression pin alias ("4H"),
+ * the same pair the backend's `tf_resolution(pin) or pin` accepts. null when the
+ * name is unknown, so callers choose their own fallback. */
+export function nominalBarHours(resolution: string): number | null {
+  const secs = RESOLUTION_SECONDS[resolution] ?? tfSeconds(resolution);
+  return secs != null && secs > 0 ? secs / 3600 : null;
+}
 
 // The quick-access timeframe bar: the fixed defaults merged with the user's
 // favorite resolutions, de-duped and sorted ascending by duration. The favorite

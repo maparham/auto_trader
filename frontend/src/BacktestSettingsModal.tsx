@@ -45,6 +45,8 @@ import { WfoConfig } from "./WfoConfig";
 import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
 import { PHASE_LABEL, WfoResults } from "./WfoResults";
 import { requiredWarmupBars, resolveWindow } from "./lib/backtestWindow";
+import { exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
+import { liveExprInstances } from "./lib/indicators";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
@@ -68,9 +70,9 @@ import {
 } from "./lib/backtestConfig";
 import { SESSION_PRESETS, buildRangeChips, coverage, formatDayWindow, isActive, minToTime, resolveMask, sessionWindowInTz } from "./lib/backtestSchedule";
 import type { ChartController } from "./lib/chartController";
-import { getIndicator } from "./lib/indicators";
-import { indTypeOf } from "./lib/indicators/shared";
-import { chartIndicatorToExprToken } from "./lib/exprChartToken";
+import { exprInstancesFromChart } from "./lib/indicators";
+import { pickedIndicatorToken } from "./lib/exprPick";
+import type { ExprInstance } from "./lib/expr/catalog";
 import { toast } from "./lib/notify";
 import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
@@ -303,7 +305,10 @@ function estimateWindowBars(cfg: BacktestConfig, resSeconds: number): number {
  * however much history is loaded before it. "Full" depth has no known size
  * (it's whatever the broker will actually serve), so it's drawn as an
  * open-ended fade rather than a fabricated number. */
-function WindowTimeline({ cfg, resolution }: { cfg: BacktestConfig; resolution: string }) {
+function WindowTimeline(
+  { cfg, resolution, controller }:
+  { cfg: BacktestConfig; resolution: string; controller: ChartController | null },
+) {
   const resSeconds = RESOLUTION_SECONDS[resolution] ?? 60;
   const windowBars = estimateWindowBars(cfg, resSeconds);
   const depth = cfg.range.history ?? "minimal";
@@ -311,7 +316,13 @@ function WindowTimeline({ cfg, resolution }: { cfg: BacktestConfig; resolution: 
   // resolution into requiredWarmupBars) — expression rows carry almost all of a
   // config's warm-up, and the ATR-only longestIndicatorLength never saw them.
   // "Full" stays open-ended: it has no known size to draw.
-  const historyBars = depth === "full" ? null : requiredWarmupBars(cfg, resSeconds);
+  // The chart's panes, for any `SLOPE.slope0`-style row: a reference carries none
+  // of the pane's settings, so without these the drawn estimate reads the base
+  // floor (1) while the run actually fetches the pane's full warm-up. Same list
+  // BacktestButton sizes with, so the picture matches the run.
+  const live = controller?.chart ? liveExprInstances(controller.chart) : [];
+  const warmupRefs = { instances: exprInstancesFor(live), warmupByRef: exprWarmupByRef(live) };
+  const historyBars = depth === "full" ? null : requiredWarmupBars(cfg, resSeconds, warmupRefs);
 
   const historyShare = historyBars === null ? 0.62 : historyBars / (historyBars + windowBars);
   const windowShare = 1 - historyShare;
@@ -1485,10 +1496,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       controller.indicatorPickResult.set(null); // consume one-shot
       setExprPickArmed(null);
       controller.indicatorPickArmed.set(false);
-      const ind = controller.chart ? getIndicator(controller.chart, sel.paneId, sel.name) : null;
-      const token = ind
-        ? chartIndicatorToExprToken(indTypeOf(ind), (ind.calcParams ?? []).map(Number), ind.extendData)
-        : null;
+      // pickedIndicatorToken owns the chart-side normalisation — notably a click
+      // on a Slope's acceleration companion, a separate instance the expression
+      // language spells as an OUTPUT of its parent ("SLOPE.accel0").
+      const token = controller.chart ? pickedIndicatorToken(controller.chart, sel) : null;
       if (!token) {
         toast("That indicator has no expression equivalent.");
         return;
@@ -1517,6 +1528,33 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         },
       }
     : undefined;
+
+  // The live chart's referenceable panes, injected into every expression editor
+  // for lint + completion (`SLOPE.slope0`). Read off the CHART, not storage, so a
+  // pane the user just retuned offers the outputs it draws right now — and
+  // polled, because a pane's settings can change from its own modal with nothing
+  // to subscribe to. The identity is held stable while the list is unchanged, so
+  // the poll re-renders nothing in the common case.
+  const [exprInstances, setExprInstances] = useState<readonly ExprInstance[]>([]);
+  useEffect(() => {
+    const key = (xs: readonly ExprInstance[]) =>
+      xs.map((i) => `${i.id}:${i.outputs.join(",")}:${i.timeframe ?? ""}`).join("|");
+    // The chart is read on EVERY tick, not captured once: this panel is not
+    // modal and outlives chart lifecycles, so `controller.chart` can be null when
+    // the effect first runs (the cell has not mounted its chart yet) and can be
+    // replaced later (a tab switch disposes one and assigns another). Capturing
+    // it would leave the editors with an empty pane list for the panel's whole
+    // life — every valid `SLOPE.slope0` underlined as unknown — with no recovery.
+    const read = () =>
+      setExprInstances((prev) => {
+        const chart = controller?.chart;
+        const next = chart ? exprInstancesFromChart(chart) : [];
+        return key(prev) === key(next) ? prev : next;
+      });
+    read();
+    const t = setInterval(read, 1000);
+    return () => clearInterval(t);
+  }, [controller]);
 
   // The timeframe the run will actually use: the config override when set, else
   // the active chart timeframe (the `resolution` prop). Window math + the header
@@ -2710,7 +2748,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 />
               </label>
             )}
-            <WindowTimeline cfg={cfg} resolution={effectiveRes} />
+            <WindowTimeline cfg={cfg} resolution={effectiveRes} controller={controller} />
           </Section>
             </section>
 
@@ -2780,6 +2818,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                       onCopy={(rule) => setClipboard(cloneRule(rule))}
                       groupClipboard={groupClipboard}
                       onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
+                      instances={exprInstances}
                       isExit
                     />
                     <RiskSection
@@ -2872,6 +2911,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             groupClipboard={groupClipboard}
             onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
             exprPick={exprPick}
+            instances={exprInstances}
             sweep={{
               axes: displayAxes,
               side,
@@ -3555,6 +3595,7 @@ function SidePanel({
   groupClipboard,
   onCopyAll,
   exprPick,
+  instances,
   sweep,
 }: {
   side: "long" | "short";
@@ -3574,6 +3615,9 @@ function SidePanel({
     arm: (group: "longEntry" | "longExit" | "shortEntry" | "shortExit", row: number) => void;
     disarm: () => void;
   };
+  // The live chart's referenceable panes, passed straight through to each rule
+  // editor for lint + completion. Absent (Live panel, no chart) = no panes.
+  instances?: readonly ExprInstance[];
   // Task 9: optional per-operand-field sweep toggle for rule mode. Undefined
   // (coded mode's own RuleGroupSection use, the Live panel) renders as before.
   // `onToggleRisk` / `onKindChange` carry the SL/TP sweep toggle for the risk
@@ -3625,6 +3669,7 @@ function SidePanel({
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
           pickIndicator={sidePick(isLong ? "longEntry" : "shortEntry")}
+          instances={instances}
           sweep={sweep && { ...sweep, group: "entry" }}
         />
         <RuleGroupSection
@@ -3640,6 +3685,7 @@ function SidePanel({
           groupClipboard={groupClipboard}
           onCopyAll={onCopyAll}
           pickIndicator={sidePick(isLong ? "longExit" : "shortExit")}
+          instances={instances}
           isExit
           sweep={sweep && { ...sweep, group: "exit" }}
         />
@@ -4085,6 +4131,7 @@ export function RuleGroupSection({
   groupClipboard,
   onCopyAll,
   pickIndicator,
+  instances,
   isExit = false,
   sweep,
 }: {
@@ -4108,6 +4155,10 @@ export function RuleGroupSection({
     arm: (row: number) => void;
     disarm: () => void;
   };
+  // The live chart's referenceable panes ("SLOPE" with its current outputs), for
+  // instance-reference lint + completion in each row's editor. Injected, never
+  // imported: the pane's own settings are the source of truth.
+  instances?: readonly ExprInstance[];
   // Exit groups gate whether `entry` is a valid reference in the expression.
   isExit?: boolean;
   sweep?: {
@@ -4239,6 +4290,7 @@ export function RuleGroupSection({
               value={rule.expr ?? ""}
               onChange={(expr) => patchRule(i, { expr })}
               isExit={isExit}
+              instances={instances}
               readOnly={off}
               placeholder="e.g. EMA(9) > EMA(21)"
             />

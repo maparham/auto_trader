@@ -276,3 +276,80 @@ describe("runOneCycle", () => {
     expect(deps.evaluateStrategy).not.toHaveBeenCalled();
   });
 });
+
+describe("runOneCycle ships the armed indicators map", () => {
+  // Without this, the backend resolves {} for a `SLOPE.slope0` reference,
+  // `validate` raises unknown_indicator_ref, and the evaluate route 422s on
+  // EVERY bar — a rule that lints clean and backtests correctly is silently
+  // undeployable, and one bad row takes the exit rules down with it.
+  const PANE = {
+    SLOPE: { type: "SLOPE", calcParams: [50], extendData: { slopePeriod: 3 } },
+  };
+  const cfgWithRef = () => ({
+    ...defaultBacktestConfig(),
+    longEntry: { combine: "AND" as const, rules: [{ expr: "SLOPE.slope0 > 0.5", enabled: true }] },
+  });
+  const deps = () => ({
+    buildSeries: vi.fn().mockResolvedValue({}),
+    fetchOpenPositions: vi.fn().mockResolvedValue([]),
+    evaluateStrategy: vi.fn().mockResolvedValue({ actions: [] }),
+    placeActions: vi.fn().mockResolvedValue([]),
+  });
+  const bars = [
+    { timestamp: 1_700_000_000_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+    { timestamp: 1_700_000_060_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
+  ];
+
+  it("forwards the frozen map on the evaluate request", async () => {
+    const s = armSnapshot(
+      initialLiveState(cfgWithRef(), "capital:demo", 1), "s1", 1700, undefined, PANE,
+    );
+    const d = deps();
+    await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", d as never);
+    expect(d.evaluateStrategy.mock.calls[0][0].indicators).toEqual(PANE);
+  });
+
+  it("sends the SNAPSHOT's map, not one that changed after arming", async () => {
+    // The pane's settings are frozen at arm exactly as `coded` is: retuning the
+    // chart while armed must not silently change what a running strategy trades.
+    const s = armSnapshot(
+      initialLiveState(cfgWithRef(), "capital:demo", 1), "s1", 1700, undefined, PANE,
+    );
+    PANE.SLOPE.calcParams[0] = 9; // the user retunes the pane mid-flight
+    const d = deps();
+    await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", d as never);
+    expect(d.evaluateStrategy.mock.calls[0][0].indicators.SLOPE.calcParams).toEqual([50]);
+    PANE.SLOPE.calcParams[0] = 50; // restore for test isolation
+  });
+
+  it("forwards it for a CODED arm too, whose exits are the coded set's panel rows", async () => {
+    // The coded branch sends exprLongExit/exprShortExit from snap.coded, not from
+    // the draft's (dormant) rule groups — so a coded panel exit can reference a
+    // pane exactly like a rule-mode row, and needs the same map to resolve it.
+    const coded = {
+      params: {},
+      longExit: { combine: "AND" as const, rules: [{ expr: "SLOPE.slope0 < 0", enabled: true }] },
+      shortExit: { combine: "AND" as const, rules: [] },
+    } as never;
+    const s = armSnapshot(
+      initialLiveState(
+        { ...defaultBacktestConfig(), mode: "coded", codedStrategy: "x.py" },
+        "capital:demo", 1,
+      ),
+      "s1", 1700, coded, PANE,
+    );
+    const d = deps();
+    await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", d as never);
+    const req = d.evaluateStrategy.mock.calls[0][0];
+    expect(req.codedStrategy).toBe("x.py");
+    expect(req.exprLongExit).toEqual([{ expr: "SLOPE.slope0 < 0", enabled: true }]);
+    expect(req.indicators).toEqual(PANE);
+  });
+
+  it("a config with no references sends nothing, unchanged from before", async () => {
+    const s = armSnapshot(initialLiveState(defaultBacktestConfig(), "capital:demo", 1), "s1", 1700);
+    const d = deps();
+    await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", d as never);
+    expect(d.evaluateStrategy.mock.calls[0][0].indicators).toBeUndefined();
+  });
+});

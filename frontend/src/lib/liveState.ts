@@ -1,5 +1,6 @@
 import type { BacktestConfig } from "./backtestConfig";
 import type { CodedStrategyConfig } from "./codedConfig";
+import type { ExprInstancePayload } from "./exprInstances";
 
 export type LiveStatus = "disarmed" | "armed" | "lost-lease";
 
@@ -14,6 +15,13 @@ export interface ArmedSnapshot {
   // editing the live panel while armed can't silently change a running trade
   // (surfaced instead via codedCfgsDiffer against the snapshot in the panel).
   coded?: CodedStrategyConfig;
+  // The chart panes the frozen rows reference, with the settings they had at arm
+  // time — frozen for exactly the reason `coded` is: a rule carries no pane
+  // parameters, so retuning or removing the pane while armed would otherwise
+  // change what a running strategy trades. Absent for a config with no
+  // references (and for snapshots persisted before this existed, which is why
+  // it is optional).
+  indicators?: Record<string, ExprInstancePayload>;
 }
 
 export interface LiveLogEntry {
@@ -63,6 +71,7 @@ export function armSnapshot(
   strategyId: string,
   armedAtSec: number,
   coded?: CodedStrategyConfig,
+  indicators?: Record<string, ExprInstancePayload>,
 ): LiveState {
   const snapshot: ArmedSnapshot = {
     strategyId,
@@ -71,6 +80,7 @@ export function armSnapshot(
     quantity: state.quantity,
     armedAtSec,
     coded: coded ? structuredClone(coded) : undefined,
+    indicators: indicators ? structuredClone(indicators) : undefined,
   };
   return { ...state, status: "armed", snapshot, pendingEdits: false };
 }

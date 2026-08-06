@@ -14,6 +14,7 @@ from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.engine.backtest import BacktestEngine, BacktestResult
 from auto_trader.engine.metrics import compute_metrics, window_metrics
+from auto_trader.indicators.registry import ResolvedInstance, resolve_instances
 from auto_trader.strategy.base import Strategy
 from auto_trader.strategy.coded import (
     CodedStrategy,
@@ -26,6 +27,7 @@ from auto_trader.strategy.expr.evaluate import compile_row
 from auto_trader.strategy.expr.literals import substitute
 from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
+from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.validate import validate
 
 from .schemas import (
@@ -58,8 +60,10 @@ class SweepValidationError(Exception):
 
 
 class TimeframeNotPrefetched(Exception):
-    """A coded run referenced a timeframe not present in htf_candles. The
-    router's async wrapper fetches it and calls run_coded_sync again; workers
+    """A coded run referenced a timeframe not present in htf_candles — either
+    the strategy's own ctx.<ind>(tf=) call or one of its panel EXIT expression
+    rows (an @tf token, or a reference to a pane pinned in its own settings).
+    The router's async wrapper fetches it and calls run_coded_sync again; workers
     that pre-fetch the full set never see it."""
 
     def __init__(self, timeframe: str):
@@ -96,7 +100,51 @@ def htf_from_dto(htf: dict[str, list[CandleDTO]]) -> dict[str, list[Candle]]:
     return {tf: [candle_from_dto(c) for c in bars] for tf, bars in htf.items()}
 
 
-def _compile_expr_exits(rows, candles, resolution, htf):
+def request_instances(req) -> dict[str, ResolvedInstance]:
+    """Resolve a request's `indicators` map ONCE. Call this at the top of a
+    handler (or, in a pool worker, at the top of the per-combo build) and thread
+    the result down — never per row.
+
+    A ResolvedInstance holds the spec's callables, so it is NOT picklable and
+    must never be put on a job payload: workers rebuild the request from
+    `req_dict` (which carries the raw `indicators` map) and resolve it there."""
+    return resolve_instances(
+        {k: v.model_dump() for k, v in (req.indicators or {}).items()}
+    )
+
+
+def referenced_tfs(node: N.Node, instances=None) -> set[str]:
+    """All timeframes a row's tree needs HTF candles for: the @TF tokens in the
+    text, PLUS any referenced instance pinned in its own settings."""
+    if isinstance(node, N.Tf):
+        return {node.tf} | referenced_tfs(node.base, instances)
+    if isinstance(node, N.IndicatorRef):
+        # A pane pinned in its own SETTINGS needs HTF candles even though the
+        # expression text carries no @tf.
+        inst = (instances or {}).get(node.instance)
+        pin = inst.spec.timeframe(inst.config) if inst else None
+        return {pin} if pin else set()
+    if isinstance(node, N.Chain):
+        return set().union(*(referenced_tfs(p, instances) for p in node.parts))
+    if isinstance(node, (N.Field, N.Offset)):
+        return referenced_tfs(node.base, instances)
+    if isinstance(node, N.Unary):
+        return referenced_tfs(node.operand, instances)
+    if isinstance(node, N.Call):
+        return (set().union(*(referenced_tfs(a, instances) for a in node.args))
+                if node.args else set())
+    if isinstance(node, (N.Binary, N.Compare)):
+        return referenced_tfs(node.left, instances) | referenced_tfs(node.right, instances)
+    if isinstance(node, N.Cross):
+        return referenced_tfs(node.a, instances) | referenced_tfs(node.b, instances)
+    if isinstance(node, N.Predicate):
+        return referenced_tfs(node.base, instances)
+    if isinstance(node, N.Count):
+        return referenced_tfs(node.cond, instances) | referenced_tfs(node.window, instances)
+    return set()
+
+
+def _compile_expr_exits(rows, candles, resolution, htf, instances=None):
     """Parse+validate+compile enabled, non-blank expression exit rows. Isolation:
     a parse/validate problem raises SweepValidationError(422) so one sweep combo
     fails to its own error row (matches run_expr_sync)."""
@@ -106,10 +154,31 @@ def _compile_expr_exits(rows, candles, resolution, htf):
             continue
         try:
             node = parse(row.expr)
-            validate(node, is_exit=True)
+            validate(node, is_exit=True, instances=instances)
         except ExprError as e:
             raise SweepValidationError(422, e.message)
-        compiled.append(compile_row(node, candles, resolution, htf))
+        # A CODED run reaches here with whatever htf the request shipped, and the
+        # only thing that ever asked for more was CodedStrategy's own tf= call —
+        # never an expression row. So a panel exit needing a higher timeframe (an
+        # @tf token, or a reference to a pane pinned in its own settings) compiled
+        # to all-None and the position simply never exited, silently. The
+        # expression ROUTES avoid this with _ensure_htf; this path has no
+        # equivalent.
+        #
+        # Report it the SAME way the strategy's own tf= call does, rather than
+        # erroring outright: `_run_coded` catches TimeframeNotPrefetched, fetches
+        # that timeframe, and calls again (bounded by _MAX_TF_PASSES), so an
+        # expression row now pulls its timeframe in exactly like ctx.ema(tf=)
+        # does. Erroring here instead would BREAK a working combination — a
+        # strategy calling ctx.ema(tf="4H") alongside a panel exit on @4H gets
+        # its HOUR_4 bars from that same loop, and that fetch happens only after
+        # this point on the first pass. A timeframe that genuinely cannot be
+        # fetched still surfaces as `_run_coded`'s "no candles for timeframe" 422.
+        for tf in sorted(referenced_tfs(node, instances)):
+            res = tf_resolution(tf) or tf
+            if not (htf.get(res) or htf.get(tf)):
+                raise TimeframeNotPrefetched(res)
+        compiled.append(compile_row(node, candles, resolution, htf, instances))
     return compiled
 
 
@@ -131,6 +200,9 @@ def run_coded_sync(
         leg for leg, r in (("long", long_risk_dto), ("short", short_risk_dto))
         if r is not None and r.is_configured()
     )
+    # Once per run, not once per tf-retry pass: the coded path's panel exits are
+    # expressions and may reference a chart instance.
+    instances = request_instances(req)
     for _ in range(_MAX_TF_PASSES):
         strategy: Strategy = CodedStrategy(
             module, candles, quantity=req.costs.quantity,
@@ -139,8 +211,8 @@ def run_coded_sync(
             panel_risk_legs=panel_risk_legs,
             indicator_cache=indicator_cache,
         )
-        long_exit = _compile_expr_exits(req.exprLongExit, candles, req.resolution, htf_candles)
-        short_exit = _compile_expr_exits(req.exprShortExit, candles, req.resolution, htf_candles)
+        long_exit = _compile_expr_exits(req.exprLongExit, candles, req.resolution, htf_candles, instances)
+        short_exit = _compile_expr_exits(req.exprShortExit, candles, req.resolution, htf_candles, instances)
         if long_exit or short_exit:
             strategy = CodedWithExprExits(strategy, ExprRuleStrategy(
                 [], long_exit, [], short_exit,
@@ -196,6 +268,10 @@ def build_expr_engine(
                 "ATR-based risk stops are not available for expression "
                 "backtests in this version.",
             )
+    # Resolved ONCE per combo, above the four compile_group calls: this runs in
+    # a pool worker, which rebuilt `req` (and its raw `indicators` map) from the
+    # job payload — a ResolvedInstance itself could never have been pickled.
+    instances = request_instances(req)
     group_map = {
         ("long", "entry"): req.longEntry,
         ("long", "exit"): req.longExit,
@@ -214,10 +290,10 @@ def build_expr_engine(
             try:
                 if node is None:
                     node = parse(row.expr)
-                validate(node, is_exit=is_exit)
+                validate(node, is_exit=is_exit, instances=instances)
             except ExprError as e:
                 raise SweepValidationError(422, e.message)
-            compiled.append(compile_row(node, candles, req.resolution, htf_candles))
+            compiled.append(compile_row(node, candles, req.resolution, htf_candles, instances))
         return compiled
 
     strategy = ExprRuleStrategy(

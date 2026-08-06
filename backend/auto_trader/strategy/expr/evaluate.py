@@ -244,6 +244,30 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
                 continue  # window does not fit yet
             out[i] = float(pre[i + 1] - pre[i + 1 - k])
         return out
+    if isinstance(node, N.IndicatorRef):
+        inst = (instances or {}).get(node.instance)
+        if inst is None:
+            # validate() rejects this first; be defensive like the Tf branch so a
+            # stale row can never 500 a run.
+            return [None] * n
+        pin = inst.spec.timeframe(inst.config)
+        if pin:
+            # The pane's own timeframe is a SETTING, so the ref already means the
+            # HTF series: compute on native HTF bars and align to base, exactly
+            # as the chart does for a pinned pane. The hours-per-bar handed to
+            # the descriptor MUST come from the PINNED resolution, not the base
+            # one, or any output expressed per unit of time is silently scaled by
+            # the ratio between them.
+            tf_res = tf_resolution(pin) or pin
+            tf_candles = htf.get(tf_res) or htf.get(pin) or []
+            if not tf_candles:
+                return [None] * n
+            tf_vals = inst.spec.series(
+                inst.config, node.output, tf_candles, _tf_hours(tf_res)
+            )
+            base_ms = [int(c.time.timestamp() * 1000) for c in candles]
+            return align_htf_to_base(base_ms, tf_candles, tf_vals, resolution_seconds(tf_res) * 1000)
+        return inst.spec.series(inst.config, node.output, candles, _tf_hours(resolution))
     if isinstance(node, N.Call):
         if node.name in WRAPPER_KINDS:
             inner = series_of(node.args[0], candles, resolution, htf, instances)

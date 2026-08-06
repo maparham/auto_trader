@@ -24,6 +24,9 @@ def _render(node: N.Node) -> str:
         return f"{node.value:g}"
     if isinstance(node, N.Candle):
         return f"candle.{node.field}" if node.field else "candle"
+    if isinstance(node, N.IndicatorRef):
+        # Exactly as authored: the label a user reads back in the sweep axis.
+        return f"{node.instance}.{node.output}"
     if isinstance(node, N.Entry):
         return "entry"
     if isinstance(node, N.Field):
@@ -50,6 +53,10 @@ def _render(node: N.Node) -> str:
 
 
 def _has_indicator(node: N.Node) -> bool:
+    if isinstance(node, N.IndicatorRef):
+        # A chart-instance output is an indicator term just like EMA(20), so a
+        # numeric factor multiplying it is a multiplier, not a bare constant.
+        return True
     if isinstance(node, N.Call) and node.name in INDICATORS:
         return True
     if isinstance(node, N.Call):
@@ -105,11 +112,19 @@ def _collect(node: N.Node, label: str, out: list[tuple[N.Num, str]]) -> None:
         return
     if isinstance(node, N.Call):
         if node.name in WRAPPERS:
-            _collect(node.args[0], label, out)
-            if isinstance(node.args[1], N.Num):
-                out.append((node.args[1], f"{node.name} window"))
-            else:
-                _collect(node.args[1], "constant", out)
+            # Arity is NOT guaranteed here: /api/expr/literals computes literals
+            # from a parsed but UNVALIDATED node, so a half-typed `slope.x` or
+            # `avg(x)` reaches this branch with fewer args than the wrapper
+            # takes. Missing args are simply skipped, so the caller gets its
+            # literals (and the lint layer the typed error) instead of a 500.
+            # Mirrored by the frontend's parser.ts::collect.
+            if len(node.args) > 0:
+                _collect(node.args[0], label, out)
+            if len(node.args) > 1:
+                if isinstance(node.args[1], N.Num):
+                    out.append((node.args[1], f"{node.name} window"))
+                else:
+                    _collect(node.args[1], "constant", out)
             return
         if node.name in INDICATORS:
             kind = "anchor" if node.name == "AVWAP" else "length"

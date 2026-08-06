@@ -40,8 +40,70 @@ describe("chartIndicatorToExprToken", () => {
   });
 
   it("returns null for unsupported indicator types", () => {
-    for (const t of ["MACD", "BOLL", "KDJ", "CCI", "AVWAP", "VWAP", "SLOPE", "PIVOT_BANDS"]) {
+    for (const t of ["MACD", "BOLL", "KDJ", "CCI", "AVWAP", "VWAP", "PIVOT_BANDS"]) {
       expect(chartIndicatorToExprToken(t, [12], undefined)).toBeNull();
     }
+  });
+});
+
+describe("SLOPE instance references", () => {
+  it("emits an instance ref for a clicked slope line", () => {
+    expect(
+      chartIndicatorToExprToken("SLOPE", [9, 21], {}, { instanceId: "SLOPE", lineIndex: 1 }),
+    ).toBe("SLOPE.slope1");
+  });
+
+  it("emits an accel ref for the companion pane", () => {
+    expect(
+      chartIndicatorToExprToken("SLOPE", [9], { showAccel: true },
+        { instanceId: "SLOPE#a1b", lineIndex: 0, output: "accel" }),
+    ).toBe("SLOPE#a1b.accel0");
+  });
+
+  it("refuses an accel ref when the companion is off", () => {
+    expect(
+      chartIndicatorToExprToken("SLOPE", [9], {},
+        { instanceId: "SLOPE", lineIndex: 0, output: "accel" }),
+    ).toBeNull();
+  });
+
+  it("refuses a line index the pane does not have", () => {
+    expect(
+      chartIndicatorToExprToken("SLOPE", [9], {}, { instanceId: "SLOPE", lineIndex: 3 }),
+    ).toBeNull();
+  });
+
+  it("refuses when no instance id is supplied", () => {
+    expect(chartIndicatorToExprToken("SLOPE", [9], {})).toBeNull();
+  });
+
+  // slopeLengths slices to 5, so a sixth configured length draws no line — the
+  // backend's slope_outputs would 422 on slope5, so the bridge must refuse it.
+  it("refuses a line past the five-line cap", () => {
+    expect(
+      chartIndicatorToExprToken("SLOPE", [5, 9, 21, 50, 100, 200], {},
+        { instanceId: "SLOPE", lineIndex: 5 }),
+    ).toBeNull();
+    expect(
+      chartIndicatorToExprToken("SLOPE", [5, 9, 21, 50, 100, 200], {},
+        { instanceId: "SLOPE", lineIndex: 4 }),
+    ).toBe("SLOPE.slope4");
+  });
+
+  // Garbage calcParams normalize to the default single line, so the only token
+  // the bridge can emit is the one the backend also derives.
+  it("falls back to the default line when calcParams are unusable", () => {
+    expect(
+      chartIndicatorToExprToken("SLOPE", [0], {}, { instanceId: "SLOPE", lineIndex: 0 }),
+    ).toBe("SLOPE.slope0");
+    expect(
+      chartIndicatorToExprToken("SLOPE", [0], {}, { instanceId: "SLOPE", lineIndex: 1 }),
+    ).toBeNull();
+  });
+
+  it("defaults to line 0 when no lineIndex is given", () => {
+    expect(
+      chartIndicatorToExprToken("SLOPE", [9, 21], {}, { instanceId: "SLOPE" }),
+    ).toBe("SLOPE.slope0");
   });
 });

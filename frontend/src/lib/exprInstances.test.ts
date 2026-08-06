@@ -1,0 +1,100 @@
+import { describe, it, expect } from "vitest";
+import {
+  collectExprInstances,
+  exprInstancesFor,
+  referencedInstanceIds,
+} from "./exprInstances";
+
+const LIVE = [
+  { id: "SLOPE", type: "SLOPE", calcParams: [9, 21], extendData: { units: "pctBar" } },
+  { id: "SLOPE#a1b", type: "SLOPE", calcParams: [50], extendData: {} },
+  { id: "EMA", type: "EMA", calcParams: [9], extendData: {} },
+];
+
+describe("referencedInstanceIds", () => {
+  it("finds ids used in any row", () => {
+    expect(referencedInstanceIds(["SLOPE.slope0 > 0", "SLOPE#a1b.slope0 < 0"]))
+      .toEqual(new Set(["SLOPE", "SLOPE#a1b"]));
+  });
+
+  it("ignores registered function names", () => {
+    expect(referencedInstanceIds(["EMA(9) > candle.close"])).toEqual(new Set());
+  });
+
+  it("ignores a bare instance name with no output", () => {
+    expect(referencedInstanceIds(["SLOPE > 0"])).toEqual(new Set());
+  });
+
+  it("ignores a field read off a call result", () => {
+    // The char before the dot is ")", so the id part can never match across it.
+    expect(referencedInstanceIds(["EMA(9).signal > 0"])).toEqual(new Set());
+  });
+
+  it("ignores a decimal literal", () => {
+    expect(referencedInstanceIds(["SLOPE.slope0 > 0.5"])).toEqual(new Set(["SLOPE"]));
+  });
+
+  it("ignores a dotted name that is itself a call", () => {
+    expect(referencedInstanceIds(["SLOPE.rising(3)"])).toEqual(new Set());
+  });
+
+  it("reads through @tf and offsets", () => {
+    // Grammatical input: offsets are backwards-only ([-1] = the previous bar),
+    // and "1H" is the timeframe alias the catalog lists.
+    expect(referencedInstanceIds(["SLOPE.slope1[-1]@1H > 0"])).toEqual(new Set(["SLOPE"]));
+  });
+});
+
+describe("collectExprInstances", () => {
+  it("ships only the instances the rows reference", () => {
+    const out = collectExprInstances(LIVE, ["SLOPE.slope0 > 0"]);
+    expect(Object.keys(out)).toEqual(["SLOPE"]);
+    expect(out.SLOPE).toEqual({
+      type: "SLOPE", calcParams: [9, 21], extendData: { units: "pctBar" },
+    });
+  });
+
+  it("ships nothing when no row references an instance", () => {
+    expect(collectExprInstances(LIVE, ["EMA(9) > candle.close"])).toEqual({});
+  });
+
+  it("skips a referenced id that is not on the chart", () => {
+    // The editor already flags this as unknown_indicator_ref; the request must
+    // not invent an entry for it.
+    expect(collectExprInstances(LIVE, ["GONE.slope0 > 0"])).toEqual({});
+  });
+
+  it("defaults missing calcParams / extendData", () => {
+    const out = collectExprInstances([{ id: "SLOPE", type: "SLOPE" }], ["SLOPE.slope0 > 0"]);
+    expect(out.SLOPE).toEqual({ type: "SLOPE", calcParams: [], extendData: {} });
+  });
+});
+
+describe("exprInstancesFor (the editor's lint/completion list)", () => {
+  it("derives a Slope pane's outputs from its live settings", () => {
+    expect(exprInstancesFor([LIVE[0]])).toEqual([
+      { id: "SLOPE", outputs: ["slope0", "slope1"], timeframe: null },
+    ]);
+  });
+
+  it("adds the accel outputs to the PARENT when the companion is on", () => {
+    expect(
+      exprInstancesFor([
+        { id: "SLOPE", type: "SLOPE", calcParams: [9], extendData: { showAccel: true } },
+      ]),
+    ).toEqual([{ id: "SLOPE", outputs: ["slope0", "accel0"], timeframe: null }]);
+  });
+
+  it("carries the pane's pinned timeframe", () => {
+    expect(
+      exprInstancesFor([
+        { id: "SLOPE", type: "SLOPE", calcParams: [9], extendData: { mtf: { timeframe: "HOUR" } } },
+      ]),
+    ).toEqual([{ id: "SLOPE", outputs: ["slope0"], timeframe: "HOUR" }]);
+  });
+
+  it("drops a pane that is not referenced by instance at all", () => {
+    // An EMA is spelled EMA(9) in a rule, not EMA.something.
+    expect(exprInstancesFor([LIVE[2]])).toEqual([]);
+  });
+});

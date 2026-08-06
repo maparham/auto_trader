@@ -2013,6 +2013,7 @@ export default function App() {
             brokerId={brokerId}
             accounts={accounts}
             defaultAccount={activeAccount}
+            controller={focusedController}
             onClose={() => livePanelOpen.set(false)}
           />
         )}

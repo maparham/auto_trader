@@ -8,7 +8,7 @@
 // endpoint (see [[capital-com-api]] / charting-stack memory).
 
 import type { Chart, KLineData } from "klinecharts";
-import { fetchRangeStrict, RESOLUTION_SECONDS } from "./feed";
+import { fetchRangeStrict, RESOLUTION_SECONDS, nominalBarHours } from "./feed";
 import { maSeries, htfCoverageStartMs, normalizeMaKind, type MaKind, type MtfSeriesBase } from "./mtf";
 import { pageHistoryBack } from "./historyPaging";
 import { indTypeOf, templateMaKind, type MaExtend } from "./customIndicators";
@@ -378,10 +378,13 @@ interface SlopeConfig {
 
 /**
  * Point the Slope indicator at a higher timeframe (or back to the chart timeframe
- * when `timeframe` is null/"chart"). Slope is computed on the NATIVE HTF bars
- * (with HTF barHours via inferBarHours) BEFORE alignment, matching the rule path
- * (buildChartOperandSeries runs the recipe on native HTF candles) so visual↔rule
- * MTF parity holds. One slope series is computed per MA length and stashed on
+ * when `timeframe` is null/"chart"). Slope is computed on the NATIVE HTF bars,
+ * at the pinned timeframe's NOMINAL bar width, BEFORE alignment — step for step
+ * what the rule path does for a pinned reference (the IndicatorRef branch of
+ * strategy/expr/evaluate.py::series_of: `spec.series(..., tf_candles,
+ * _tf_hours(tf_res))`, then align_htf_to_base), so a rule reading
+ * `SLOPE.slope0` gets the line this draws. One slope series is computed per MA
+ * length and stashed on
  * extendData.mtf.htfSeriesByLine (same length/order as calcParams) —
  * computeSlopeCalc's MTF branch assumes this.
  */
@@ -440,9 +443,21 @@ export async function applySlopeTimeframe(
     () => applySlopeTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
   );
   if (!proceed) return;
-  // Slope computed on native HTF bars with HTF barHours (inferBarHours matches the
-  // rule path's computeIndicatorRecipe), BEFORE alignHtfToChart forward-fills.
-  const barHours = inferBarHours(htf);
+  // Slope computed on native HTF bars, BEFORE alignHtfToChart forward-fills.
+  //
+  // barHours is the PINNED timeframe's nominal width, not one measured off the
+  // fetched HTF bars: the rule path has no bars to measure and computes exactly
+  // this number (evaluate.py's pinned IndicatorRef branch passes
+  // `_tf_hours(tf_res)`), so measuring here would make the plotted line and the
+  // rule operand two different series. A MONTH pin's smallest gap is a 28-day
+  // February — 672h against the nominal 720h, a ~7% silent divergence — and
+  // inferBarHours falls back to 1.0 when fewer than two HTF bars have loaded,
+  // which for a DAY pin is a 24x error. `timeframe` is a canonical resolution
+  // here, but nominalBarHours accepts a pin alias too, matching the backend's
+  // `tf_resolution(pin) or pin`. The infer fallback covers only a resolution
+  // name in neither table — which fetchHtfBars above would already have paged
+  // at its own 1h default, so there is nothing better to fall back to.
+  const barHours = nominalBarHours(timeframe) ?? inferBarHours(htf);
   const byLine = config.lengths.map((len) =>
     slopeLineSeries(htf, config.maType, len, config.slopeN, config.units, config.options.source, config.smoothing, barHours),
   );

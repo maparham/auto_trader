@@ -12,12 +12,18 @@ vi.mock("klinecharts", () => ({
 
 // Controlled HTF fetch: each test swaps the implementation.
 const fetchRangeStrict = vi.fn<(...args: unknown[]) => Promise<KLineData[]>>();
+const RES_SECONDS: Record<string, number> = { MINUTE_5: 300, MINUTE_15: 900, MONTH: 2_592_000 };
 vi.mock("./feed", () => ({
   fetchRangeStrict: (...args: unknown[]) => fetchRangeStrict(...args),
-  RESOLUTION_SECONDS: { MINUTE_5: 300, MINUTE_15: 900 },
+  RESOLUTION_SECONDS: RES_SECONDS,
+  // The real one, not a stub: the pinned slope path's whole correctness is that
+  // it uses THIS number rather than measuring the fetched bars, so a stub would
+  // make the assertion below vacuous.
+  nominalBarHours: (res: string) => (RES_SECONDS[res] ? RES_SECONDS[res] / 3600 : null),
 }));
 
-const { applyMaTimeframe } = await import("./mtfCoordinator");
+const { applyMaTimeframe, applySlopeTimeframe } = await import("./mtfCoordinator");
+const { slopeLineSeries } = await import("./indicators/slope");
 
 const HTF_MS = 900_000;
 const bar = (t: number): KLineData =>
@@ -158,5 +164,73 @@ describe("applyMaTimeframe fetch-failure retry", () => {
     removeIndicator();
     await vi.advanceTimersByTimeAsync(600_000);
     expect(fetchRangeStrict.mock.calls.length).toBe(callsAfterFailure);
+  });
+});
+
+describe("applySlopeTimeframe bar width", () => {
+  // Monthly opens across a February: the SMALLEST gap is 28 days (672h), while
+  // the resolution's NOMINAL width is 30 days (720h). The rule path has no bars
+  // to measure and always computes the nominal number (evaluate.py's pinned
+  // branch passes `_tf_hours(tf_res)`), so measuring here — which is what this
+  // path used to do — makes the plotted line and the rule that reads it two
+  // different series, silently, by ~7%.
+  const MONTH_OPENS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((m) =>
+    Date.UTC(2026, m, 1),
+  );
+  const monthBar = (t: number, i: number): KLineData =>
+    ({ timestamp: t, open: 100 + i, high: 101 + i, low: 99 + i, close: 100 + i * 1.7, volume: 1000 }) as KLineData;
+  const HTF = MONTH_OPENS.map(monthBar);
+
+  const slopeCfg = {
+    maType: "sma" as const,
+    lengths: [3],
+    slopeN: 1,
+    // pctHr is the only unit bar width scales — pctBar/priceBar would pass
+    // whatever number this path picked.
+    units: "pctHr" as const,
+    options: {},
+  };
+
+  function monthChart() {
+    const overrides: Override[] = [];
+    let indicator: { extendData: object } | null = { extendData: {} };
+    const chart = {
+      getDataList: () => [monthBar(MONTH_OPENS[0], 0), monthBar(MONTH_OPENS[11], 11)],
+      getIndicators: () => (indicator ? [indicator] : []),
+      overrideIndicator: (patch: Override["patch"]) => {
+        overrides.push({ patch, paneId: patch.paneId ?? "" });
+        if (indicator) indicator = { extendData: patch.extendData ?? {} };
+      },
+    } as unknown as Chart;
+    return { chart, overrides };
+  }
+
+  it("computes the pinned slope at the timeframe's NOMINAL width, not the bars' smallest gap", async () => {
+    let served = false;
+    fetchRangeStrict.mockImplementation(() => {
+      if (served) return Promise.resolve([]);
+      served = true;
+      return Promise.resolve(HTF);
+    });
+    const { chart, overrides } = monthChart();
+    await applySlopeTimeframe(chart, "EPIC", "slope1", "pane1", slopeCfg, "MONTH");
+
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as {
+      htfSeriesByLine?: Array<Array<number | undefined>>;
+      htfStarts?: number[];
+    };
+    expect(mtf.htfStarts).toEqual(MONTH_OPENS);
+
+    const nominal = slopeLineSeries(HTF, "sma", 3, 1, "pctHr", undefined, undefined, 720);
+    const inferred = slopeLineSeries(HTF, "sma", 3, 1, "pctHr", undefined, undefined, 672);
+    expect(mtf.htfSeriesByLine![0]).toEqual(nominal);
+
+    // And the two really are different, so the assertion above isn't passing by
+    // coincidence — 720/672 - 1, about 7%.
+    const pairs = nominal
+      .map((v, i) => [v, inferred[i]] as const)
+      .filter(([a, b]) => a != null && b != null);
+    expect(pairs.length).toBeGreaterThan(5);
+    for (const [a, b] of pairs) expect(b! / a!).toBeCloseTo(720 / 672, 9);
   });
 });

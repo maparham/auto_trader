@@ -24,7 +24,44 @@ import {
   TIMEFRAMES,
   WRAPPERS,
   type CatalogEntry,
+  type ExprInstance,
 } from "./catalog";
+
+/** Options for `completionsFor`. The live chart's panes are INJECTED here,
+ * never imported: the pane's own settings are the source of truth, and
+ * `catalog.ts` stays static and dependency-free. Same contract as
+ * `analyze(src, { instances })` in parser.ts. */
+export interface CompleteOptions {
+  instances?: readonly ExprInstance[];
+}
+
+/** Chart-instance refs get their own section, ranked after the (unsectioned)
+ * static catalog, and a negative boost so they also sort last within a rank. */
+const CHART_SECTION = { name: "Chart indicators", rank: 2 };
+const CHART_BOOST = -1;
+
+// An instance id may contain "#" (mintInstanceId produces "SLOPE#a1b2c3"), so
+// ref matching needs its own patterns — the plain word regex stops at the "#".
+const REF_DOT_RE = /([A-Za-z_][A-Za-z0-9_#]*)\.([A-Za-z0-9_]*)$/;
+const REF_WORD_RE = /([A-Za-z_][A-Za-z0-9_#]*)$/;
+
+function refCompletion(inst: ExprInstance, output: string): Completion {
+  return {
+    label: `${inst.id}.${output}`,
+    type: "property",
+    detail: inst.timeframe ? `chart pane @${inst.timeframe}` : "chart pane",
+    section: CHART_SECTION,
+    boost: CHART_BOOST,
+  };
+}
+
+/** The instance whose id is exactly `base`, or undefined. */
+function instanceById(
+  instances: readonly ExprInstance[],
+  base: string,
+): ExprInstance | undefined {
+  return instances.find((i) => i.id === base);
+}
 
 // A "value word" that can start an expression fragment. Keeps `candle` and
 // `entry` alongside the catalog functions so a bare prefix offers all of them.
@@ -111,8 +148,25 @@ function toCompletion(cand: WordCandidate, boost: number): Completion {
  * Completions for the cursor context in `doc` at offset `pos`. Pure and
  * order-significant: the first element is the best-ranked candidate.
  */
-export function completionsFor(doc: string, pos: number): Completion[] {
+export function completionsFor(
+  doc: string,
+  pos: number,
+  opts?: CompleteOptions,
+): Completion[] {
   const before = doc.slice(0, pos);
+  const instances = opts?.instances ?? [];
+
+  // `<instance>.` -> that instance's outputs, and nothing else: a catalog name
+  // can never follow a dot. Checked before `candle.` so a pane whose id ends in
+  // "candle" still resolves to its own outputs.
+  const refDot = REF_DOT_RE.exec(before);
+  const dotted = refDot ? instanceById(instances, refDot[1]) : undefined;
+  if (refDot && dotted) {
+    const prefix = refDot[2].toLowerCase();
+    return dotted.outputs
+      .filter((o) => o.toLowerCase().startsWith(prefix))
+      .map((o) => refCompletion(dotted, o));
+  }
 
   // `candle.` -> fields. Match `candle` optionally followed by a partial field.
   const fieldMatch = /candle\.([A-Za-z]*)$/.exec(before);
@@ -140,6 +194,14 @@ export function completionsFor(doc: string, pos: number): Completion[] {
   const prefix = wordMatch ? wordMatch[1] : "";
   const lower = prefix.toLowerCase();
 
+  // Chart instances match on the id (which may carry a "#", so use the wider
+  // pattern), and every output of a matching pane is offered.
+  const refWord = REF_WORD_RE.exec(before);
+  const refPrefix = (refWord ? refWord[1] : "").toLowerCase();
+  const refs = instances
+    .filter((i) => i.id.toLowerCase().startsWith(refPrefix))
+    .flatMap((i) => i.outputs.map((o) => refCompletion(i, o)));
+
   const ranked = WORD_CANDIDATES
     .map((cand) => {
       let rank: number;
@@ -154,30 +216,52 @@ export function completionsFor(doc: string, pos: number): Completion[] {
     .sort((a, b) => (b.rank - a.rank) || a.cand.label.localeCompare(b.cand.label));
 
   // Boost mirrors rank so CM6's own ordering agrees with the returned order.
-  return ranked.map(({ cand, rank }) => toCompletion(cand, rank));
+  return [...ranked.map(({ cand, rank }) => toCompletion(cand, rank)), ...refs];
+}
+
+/**
+ * Where a completion accepted at `pos` should start replacing, or `null` when
+ * there is no token to complete.
+ *
+ * Kept in step with `completionsFor`'s context branches: a ref completion
+ * carries the WHOLE `<instance>.<output>` as its label, so the anchor has to
+ * cover the instance id (and its "#") too — anchoring at the plain word start
+ * would splice the label into the middle of the id.
+ */
+export function completionAnchor(
+  doc: string,
+  pos: number,
+  opts?: CompleteOptions,
+): number | null {
+  const before = doc.slice(0, pos);
+  const instances = opts?.instances ?? [];
+
+  const refDot = REF_DOT_RE.exec(before);
+  if (refDot && instanceById(instances, refDot[1])) {
+    return pos - refDot[0].length;
+  }
+  const fieldMatch = /candle\.([A-Za-z]*)$/.exec(before);
+  if (fieldMatch) return pos - fieldMatch[1].length;
+  const tfMatch = /@([A-Za-z0-9]*)$/.exec(before);
+  if (tfMatch) return pos - tfMatch[1].length;
+  const refWord = REF_WORD_RE.exec(before);
+  if (refWord) return pos - refWord[1].length;
+  return null;
 }
 
 /** CM6 completion source: anchors the result at the current word/token start. */
-export function cmCompletionSource(context: CompletionContext): CompletionResult | null {
+export function cmCompletionSource(
+  context: CompletionContext,
+  opts?: CompleteOptions,
+): CompletionResult | null {
   const pos = context.pos;
   const doc = context.state.doc.toString();
-  const before = doc.slice(0, pos);
 
-  let from = pos;
-  const fieldMatch = /candle\.([A-Za-z]*)$/.exec(before);
-  const tfMatch = /@([A-Za-z0-9]*)$/.exec(before);
-  const wordMatch = /([A-Za-z_][A-Za-z0-9_]*)$/.exec(before);
-  if (fieldMatch) {
-    from = pos - fieldMatch[1].length;
-  } else if (tfMatch) {
-    from = pos - tfMatch[1].length;
-  } else if (wordMatch) {
-    from = pos - wordMatch[1].length;
-  } else if (!context.explicit) {
-    return null;
-  }
+  const anchor = completionAnchor(doc, pos, opts);
+  if (anchor === null && !context.explicit) return null;
+  const from = anchor ?? pos;
 
-  const options = completionsFor(doc, pos);
+  const options = completionsFor(doc, pos, opts);
   if (options.length === 0) return null;
-  return { from, to: pos, options, validFor: /[A-Za-z0-9_.]*$/ };
+  return { from, to: pos, options, validFor: /[A-Za-z0-9_#.]*$/ };
 }

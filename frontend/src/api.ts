@@ -3,6 +3,7 @@
 import type { Costs, SlippageModel, RiskConfig, ScalingConfig, RecurrenceMask } from "./lib/backtestConfig";
 import { API_BASE as BASE, errorDetail } from "./lib/http";
 import type { EvaluateRequest, EvaluateResult } from "./lib/liveTypes";
+import type { ExprInstancePayload } from "./lib/exprInstances";
 
 export interface Candle {
   time: number; // unix seconds (UTC)
@@ -292,6 +293,9 @@ export interface BacktestRequest {
   // longExit/shortExit, which coded no longer reads).
   exprLongExit?: ExprRow[];
   exprShortExit?: ExprRow[];
+  // Chart-indicator panes those expression exits reference (see the same field on
+  // ExprBacktestRequest for the shape and why the rule can't carry the settings).
+  indicators?: Record<string, ExprInstancePayload>;
 }
 
 // --- expression backtest surface (/api/expr/backtest) ------------------------
@@ -326,6 +330,13 @@ export interface ExprBacktestRequest {
   costs: Costs;
   tradeFromTime: number;
   mask?: RecurrenceMask;
+  // The chart-indicator panes the rows reference, keyed by instance id. A rule
+  // names an instance's OUTPUT ("SLOPE.slope0") and restates none of its
+  // settings, so this map is how the backend learns them — and it must be the
+  // pane's LIVE config, since the run window routinely exceeds the loaded bars.
+  // Shared by /api/expr/backtest, /api/expr/sweep/jobs and
+  // /api/expr/walkforward/jobs, which all post this body.
+  indicators?: Record<string, ExprInstancePayload>;
   // Parameter/literal sweep body: mirrors the structured submitSweepJob body
   // ({ combos, windows }). Set when submitting POST /api/expr/sweep/jobs.
   sweep?: {
@@ -363,6 +374,9 @@ export interface ClosenessRequest {
   toTime: number;
   norm: ClosenessNorm;
   agg: ClosenessAgg;
+  // Same instance map as ExprBacktestRequest: the heatmap evaluates the same
+  // rows, so a row referencing a chart pane needs that pane's settings here too.
+  indicators?: Record<string, ExprInstancePayload>;
 }
 
 export async function fetchClosenessHeatmap(

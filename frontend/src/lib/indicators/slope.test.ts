@@ -10,8 +10,9 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-const { inferBarHours, resolveBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines, accelSeries, SLOPE_ACCEL_TEMPLATE, accelLineSeries } =
+const { inferBarHours, resolveBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines, accelSeries, SLOPE_ACCEL_TEMPLATE, accelLineSeries, slopeOutputs } =
   await import("./slope");
+const { nominalBarHours } = await import("../feed");
 
 const bar = (t: number, c: number): KLineData =>
   ({ timestamp: t, open: c, high: c, low: c, close: c, volume: 1 }) as KLineData;
@@ -367,5 +368,80 @@ describe("barHours resolution", () => {
 
   it("falls back to 1 hour for a window too short to infer from", () => {
     expect(resolveBarHours([], {})).toBe(1);
+  });
+});
+
+describe("slopeOutputs", () => {
+  it("tracks the configured lengths", () => {
+    expect(slopeOutputs([9, 21], {})).toEqual(["slope0", "slope1"]);
+  });
+
+  it("adds accel lines only when the companion is on", () => {
+    expect(slopeOutputs([9], { showAccel: true })).toEqual(["slope0", "accel0"]);
+  });
+
+  // Order is the substance of the mirror claim: Python slope_outputs appends the
+  // accel block after ALL slope lines, it does not interleave them.
+  it("appends the accel block after every slope line", () => {
+    expect(slopeOutputs([9, 21], { showAccel: true })).toEqual([
+      "slope0", "slope1", "accel0", "accel1",
+    ]);
+  });
+
+  it("never lists the threshold figure keys", () => {
+    const out = slopeOutputs([9], { showAccel: true, threshold: { on: true, level: 1 } });
+    expect(out).not.toContain("thHi");
+    expect(out).not.toContain("thLo");
+  });
+
+  it("defaults to a single line when calcParams are empty", () => {
+    expect(slopeOutputs([], {})).toEqual(["slope0"]);
+  });
+
+  it("defaults to a single line when calcParams are all unusable", () => {
+    expect(slopeOutputs([0, NaN], {})).toEqual(["slope0"]);
+  });
+
+  it("caps at the five lines the pane draws", () => {
+    expect(slopeOutputs([5, 9, 21, 50, 100, 200], {})).toEqual([
+      "slope0", "slope1", "slope2", "slope3", "slope4",
+    ]);
+  });
+});
+
+describe("inferBarHours is a fallback, never the pinned path's authority", () => {
+  // The regression Finding 2 fixed: applySlopeTimeframe measured bar width off
+  // the fetched HTF bars. February makes a MONTH pane's smallest gap 28 days,
+  // so the pane plotted %/hr against 672h while the rule evaluated at the
+  // nominal 720h — a silent ~7% divergence between a line and the rule that
+  // reads it. The pinned path now takes nominalBarHours(timeframe).
+  it("a month series infers 672h where the nominal width is 720h", () => {
+    const feb = [
+      { timestamp: Date.UTC(2026, 0, 1) },
+      { timestamp: Date.UTC(2026, 1, 1) }, // 31 days
+      { timestamp: Date.UTC(2026, 2, 1) }, // 28 days -> the smallest gap
+    ] as KLineData[];
+    expect(inferBarHours(feb)).toBe(672);
+    expect(nominalBarHours("MONTH")).toBe(720);
+  });
+
+  it("a DAY series whose session open springs forward infers 23h, not 24h", () => {
+    // A daily bar is stamped at its session open, which is a LOCAL time — so the
+    // UTC gap across a spring-forward is 23 hours, once a year, for every market
+    // that observes DST. One short gap is all inferBarHours needs: it takes the
+    // minimum, so the whole pane shifts to 23h for as long as that bar is loaded.
+    const dst = [
+      { timestamp: Date.UTC(2026, 2, 5, 22) },
+      { timestamp: Date.UTC(2026, 2, 6, 22) }, // 24h
+      { timestamp: Date.UTC(2026, 2, 7, 21) }, // 23h — the clock moved
+    ] as KLineData[];
+    expect(inferBarHours(dst)).toBe(23);
+    expect(nominalBarHours("DAY")).toBe(24);
+  });
+
+  it("too few bars to measure collapses to 1h — a 24x error for a DAY pin", () => {
+    expect(inferBarHours([] as KLineData[])).toBe(1);
+    expect(inferBarHours([{ timestamp: 0 }] as KLineData[])).toBe(1);
+    expect(nominalBarHours("DAY")).toBe(24);
   });
 });

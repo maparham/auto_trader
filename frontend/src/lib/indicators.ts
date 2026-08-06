@@ -30,6 +30,8 @@ import {
   type CustomIndicatorType,
 } from "./customIndicators";
 import { EQUITY_INDICATOR } from "./backtest";
+import { exprInstancesFor, type LiveInstance } from "./exprInstances";
+import type { ExprInstance } from "./expr/catalog";
 import { RESOLUTION_SECONDS } from "./feed";
 import type { SlopeExtend } from "./indicators/slope";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
@@ -856,4 +858,46 @@ export function hydrateIndicators(chart: Chart, scope: string, epic: string): In
     if (applyIndicator(chart, scope, epic, inst, { rehydrate: true })) restored.push(inst);
   }
   return restored;
+}
+
+/** The indicator instance with this id, wherever it sits. Instance ids are
+ * unique across panes, so the pane is not needed to resolve one — which is what
+ * lets a click on a Slope's accel companion reach its parent (a different pane). */
+export function getIndicatorById(chart: Chart, id: string): Indicator | null {
+  for (const inds of getIndicatorsByPane(chart)?.values() ?? []) {
+    const ind = inds.get(id);
+    if (ind) return ind as Indicator;
+  }
+  return null;
+}
+
+// --- expression layer: the live pane list -----------------------------------
+// The chart-side half of lib/exprInstances.ts (which stays klinecharts-free).
+// LIVE, not persisted: a pane the user just retuned must ship its CURRENT
+// settings, and the editor must offer the outputs it draws right now.
+
+/** Every user-owned pane flattened to { id, type, calcParams, extendData }.
+ * Skips internal panes — the app-owned equity curve, and accel companions whose
+ * outputs are referenced on their PARENT as `accel0..N`, never on an id of
+ * their own. */
+export function liveExprInstances(chart: Chart): LiveInstance[] {
+  const panes = getIndicatorsByPane(chart);
+  const out: LiveInstance[] = [];
+  for (const inds of panes?.values() ?? []) {
+    for (const ind of inds.values()) {
+      if (!ind?.name || isInternalIndicator(ind.name)) continue;
+      out.push({
+        id: ind.name,
+        type: indTypeOf(ind),
+        calcParams: (ind.calcParams ?? []).map(Number),
+        extendData: ind.extendData,
+      });
+    }
+  }
+  return out;
+}
+
+/** The rule editor's injected instance list (lint + completion) for this chart. */
+export function exprInstancesFromChart(chart: Chart): ExprInstance[] {
+  return exprInstancesFor(liveExprInstances(chart));
 }
