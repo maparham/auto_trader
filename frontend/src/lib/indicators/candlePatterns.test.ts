@@ -5,11 +5,11 @@ import {
   ANY_BULL_LINE,
   ANY_BEAR_LINE,
   detectAllPatterns,
-  patternLineSeries,
-  defaultMembers,
   computeCandlePatterns,
   epsSeries,
   type PatternBar,
+  pickLabelSlots,
+  PATTERN_PREDICATE_FNS,
 } from "./candlePatterns";
 
 const B = (open: number, high: number, low: number, close: number): PatternBar => ({ open, high, low, close });
@@ -53,12 +53,18 @@ describe("registry shape", () => {
       "bear_meeting_line", "bull_kicking", "bear_kicking", "ladder_bottom",
     ]);
   });
-  it("16 toggles, aggregate lines, member counts", () => {
+  it("16 toggles, aggregate lines, polarity split", () => {
     expect(CANDLE_PATTERN_TOGGLES.length).toBe(16);
     expect(ANY_BULL_LINE).toBe(24);
     expect(ANY_BEAR_LINE).toBe(25);
-    expect(defaultMembers("bull").length).toBe(12);
-    expect(defaultMembers("bear").length).toBe(9);
+    // The bull/bear split defines what bullPattern/bearPattern mean. The
+    // aggregates themselves live in Python (indicators/candle_patterns.py
+    // _BULL_IDS/_BEAR_IDS); the golden fixture pins each def's polarity across
+    // the two stacks, so this count and that fixture must agree.
+    const byPolarity = (p: string) => CANDLE_PATTERN_DEFS.filter((d) => d.polarity === p).length;
+    expect(byPolarity("bull")).toBe(12);
+    expect(byPolarity("bear")).toBe(9);
+    expect(byPolarity("neutral")).toBe(3);
   });
 });
 
@@ -238,32 +244,6 @@ describe("analysis parity: body-engulf ignores high/low", () => {
   });
 });
 
-describe("aggregate lines", () => {
-  it("bear_engulfing -> line 25 = 1, line 24 = 0 at that bar", () => {
-    const bars = withPad(B(98, 101, 97, 100), B(101, 102, 96, 97));
-    assertConsistent(bars);
-    const bear = patternLineSeries(bars, ANY_BEAR_LINE);
-    const bull = patternLineSeries(bars, ANY_BULL_LINE);
-    const last = bars.length - 1;
-    expect(bear[last]).toBe(1);
-    expect(bull[last]).toBe(0);
-  });
-  it("restricted members ignore other bull hits", () => {
-    // pin_bottom is a bull pattern; default any-bull = 1, but members ["bull_kicking"] = 0.
-    const bars = withPad(B(100, 100.5, 90, 99.5));
-    assertConsistent(bars);
-    const last = bars.length - 1;
-    expect(patternLineSeries(bars, ANY_BULL_LINE)[last]).toBe(1);
-    expect(patternLineSeries(bars, ANY_BULL_LINE, ["bull_kicking"])[last]).toBe(0);
-  });
-  it("line < 24 maps to a single pattern id", () => {
-    const bars = withPad(B(100, 100.5, 90, 99.5)); // pin_bottom is index 3
-    assertConsistent(bars);
-    const last = bars.length - 1;
-    expect(patternLineSeries(bars, 3)[last]).toBe(1);
-    expect(patternLineSeries(bars, 2)[last]).toBe(0); // pin_top not hit
-  });
-});
 
 describe("computeCandlePatterns (chart calc): enable filtering + canonical indices", () => {
   // pin_bottom (canonical index 3, toggle "pin_bottom") on a lone bar.
@@ -297,39 +277,6 @@ describe("computeCandlePatterns (chart calc): enable filtering + canonical indic
   });
 });
 
-describe("operand parity: template calc === patternLineSeries per line", () => {
-  // A mixed fixture that fires several patterns (bull_engulfing, pin_bottom,
-  // bear_engulfing, doji from the flat pad). Concatenated hit sequences —
-  // parity holds regardless of cross-bar interactions.
-  const mixed = withPad(
-    B(100, 101, 97, 98), B(97, 102, 96, 101), // bull_engulfing
-    B(100, 100.5, 90, 99.5),                   // pin_bottom
-    B(98, 101, 97, 100), B(101, 102, 96, 97),  // bear_engulfing
-  );
-
-  it("fires at least one enabled hit (non-vacuous)", () => {
-    const pts = computeCandlePatterns(mixed, {});
-    expect(pts.some((p) => (p.hits ?? []).length > 0)).toBe(true);
-  });
-
-  it("each canonical line matches the all-enabled template's per-bar hit set", () => {
-    const template = computeCandlePatterns(mixed, {});
-    for (let i = 0; i < CANDLE_PATTERN_DEFS.length; i++) {
-      const expected = template.map((pt) => ((pt.hits ?? []).includes(i) ? 1 : 0));
-      expect(patternLineSeries(mixed, i)).toEqual(expected);
-    }
-  });
-
-  it("aggregate lines match the polarity-OR over the template hits", () => {
-    const template = computeCandlePatterns(mixed, {});
-    const aggFor = (pol: "bull" | "bear") =>
-      template.map((pt) =>
-        (pt.hits ?? []).some((idx) => CANDLE_PATTERN_DEFS[idx].polarity === pol) ? 1 : 0,
-      );
-    expect(patternLineSeries(mixed, ANY_BULL_LINE)).toEqual(aggFor("bull"));
-    expect(patternLineSeries(mixed, ANY_BEAR_LINE)).toEqual(aggFor("bear"));
-  });
-});
 
 describe("warm-up: short arrays never crash or over-report", () => {
   it("3-bar array has no morning_star (needs 4 bars) and does not throw", () => {
@@ -396,4 +343,63 @@ describe("detectAllPatterns memoization", () => {
     expect(detectAllPatterns(a)).not.toBe(detectAllPatterns(b));
     expect(detectAllPatterns(a)).toEqual(detectAllPatterns(b));
   });
+});
+
+describe("pickLabelSlots: horizontal collision skipping", () => {
+  it("keeps every label when the spans do not touch", () => {
+    const slots = pickLabelSlots([
+      { x: 0, halfWidth: 10 },
+      { x: 40, halfWidth: 10 },
+      { x: 80, halfWidth: 10 },
+    ]);
+    expect(slots).toEqual([true, true, true]);
+  });
+
+  it("skips a label whose span overlaps the last kept one", () => {
+    const slots = pickLabelSlots([
+      { x: 0, halfWidth: 10 },
+      { x: 15, halfWidth: 10 },
+      { x: 60, halfWidth: 10 },
+    ]);
+    expect(slots).toEqual([true, false, true]);
+  });
+
+  it("measures the gap from the last KEPT label, not the last candidate", () => {
+    // 20 is skipped (overlaps 0); 30 must still be compared against 0's right
+    // edge — comparing against 20 would wrongly keep it.
+    const slots = pickLabelSlots([
+      { x: 0, halfWidth: 20 },
+      { x: 20, halfWidth: 20 },
+      { x: 30, halfWidth: 20 },
+      { x: 70, halfWidth: 20 },
+    ]);
+    expect(slots).toEqual([true, false, false, true]);
+  });
+
+  it("honours the pad between adjacent spans", () => {
+    // right edge of #1 = 10, left edge of #2 = 14 -> 4px gap.
+    const items = [{ x: 0, halfWidth: 10 }, { x: 24, halfWidth: 10 }];
+    expect(pickLabelSlots(items, 2)).toEqual([true, true]);
+    expect(pickLabelSlots(items, 6)).toEqual([true, false]);
+  });
+
+  it("returns an empty array for no items", () => {
+    expect(pickLabelSlots([])).toEqual([]);
+  });
+});
+
+describe("PATTERN_PREDICATE_FNS: the rule-operand interface", () => {
+  it("names all 24 patterns plus the two aggregates", () => {
+    expect(Object.keys(PATTERN_PREDICATE_FNS).length).toBe(26);
+    expect(PATTERN_PREDICATE_FNS.bullEngulfing).toBe(0);
+    expect(PATTERN_PREDICATE_FNS.bullPattern).toBe(ANY_BULL_LINE);
+    expect(PATTERN_PREDICATE_FNS.bearPattern).toBe(ANY_BEAR_LINE);
+  });
+
+  it("maps every def's fn to that def's canonical index", () => {
+    CANDLE_PATTERN_DEFS.forEach((def, i) => {
+      expect(PATTERN_PREDICATE_FNS[def.fn]).toBe(i);
+    });
+  });
+
 });

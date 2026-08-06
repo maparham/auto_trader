@@ -19,6 +19,7 @@ import {
   CONDITIONS,
   CROSSES,
   INDICATORS,
+  PATTERNS,
   TIMEFRAMES,
   WRAPPERS,
   type CatalogEntry,
@@ -66,6 +67,7 @@ const WORD_CANDIDATES: WordCandidate[] = [
   ...WRAPPERS.map((e) => fnCandidate(e, "wrapper")),
   ...CROSSES.map((e) => fnCandidate(e, "cross")),
   ...CONDITIONS.map((e) => fnCandidate(e, "cross")),
+  ...PATTERNS.map((e) => fnCandidate(e, "cross")),
   { label: "candle", type: "variable", detail: "Current bar", insert: "candle." },
   { label: "entry", type: "variable", detail: "Entry price (exit rules only)", insert: "entry" },
 ];

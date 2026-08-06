@@ -13,6 +13,8 @@ import {
   CROSS_FNS,
   INDICATOR_SPECS,
   PREDICATE_FNS,
+  PATTERN_FN_SET,
+  PATTERN_WARMUP,
   COUNT_FN,
   TIMEFRAMES,
   WRAPPER_ARITY,
@@ -540,7 +542,7 @@ function walk(node: Node, isExit: boolean): void {
       if (CROSS_SET.has(node.name)) {
         throw new ExprErr("cross_not_toplevel", `${node.name} can only be the whole row.`, node.start, node.end);
       }
-      if (node.name in INDICATOR_SPECS) {
+      if (Object.hasOwn(INDICATOR_SPECS, node.name)) {
         const spec = INDICATOR_SPECS[node.name];
         if (node.args.length !== spec.arity) {
           throw new ExprErr("bad_arity", `${node.name} takes ${spec.arity} argument(s).`, node.start, node.end);
@@ -555,7 +557,7 @@ function walk(node: Node, isExit: boolean): void {
         for (const a of node.args) walk(a, isExit);
         return;
       }
-      if (node.name in WRAPPER_ARITY) {
+      if (Object.hasOwn(WRAPPER_ARITY, node.name)) {
         const arity = WRAPPER_ARITY[node.name];
         if (node.args.length !== arity) {
           throw new ExprErr("bad_arity", `${node.name} takes ${arity} arguments.`, node.start, node.end);
@@ -846,7 +848,13 @@ function warmupNode(node: Node | ChainNode, baseSeconds?: number): number {
       return baseSeconds == null || !(baseSeconds > 0) ? warmupNode(node.base) : 0;
     case "Unary": return warmupNode(node.operand, baseSeconds);
     case "Binary": return Math.max(warmupNode(node.left, baseSeconds), warmupNode(node.right, baseSeconds));
-    case "Predicate": return warmupNode(node.base, baseSeconds);
+    case "Predicate":
+      // Pattern predicates need the detector's epsilon/lookback history;
+      // bullish/bearish are single-bar and stay at 0.
+      return (
+        (PATTERN_FN_SET.has(node.fn) ? PATTERN_WARMUP : 0) +
+        warmupNode(node.base, baseSeconds)
+      );
     case "BarsSinceEntry": return 0;
     case "Count": {
       const w = node.window;
@@ -854,12 +862,12 @@ function warmupNode(node: Node | ChainNode, baseSeconds?: number): number {
       return n + warmupNode(node.cond, baseSeconds);
     }
     case "Call": {
-      if (node.name in WRAPPER_ARITY) {
+      if (Object.hasOwn(WRAPPER_ARITY, node.name)) {
         const w = node.args[1];
         const n = w && w.kind === "Num" ? Math.trunc(w.value) : 0;
         return (node.args[0] ? warmupNode(node.args[0], baseSeconds) : 0) + n;
       }
-      const spec = INDICATOR_SPECS[node.name];
+      const spec = Object.hasOwn(INDICATOR_SPECS, node.name) ? INDICATOR_SPECS[node.name] : undefined;
       if (spec && spec.argKind === "length" && node.args.length > 0) {
         const a = node.args[0];
         return a && a.kind === "Num" ? Math.trunc(a.value) : 0;

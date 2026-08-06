@@ -6,7 +6,7 @@
 // all come from FloatingModal.
 
 import { useMemo, useState } from "react";
-import { CANDLE_FIELDS, INDICATORS, WRAPPERS, CROSSES, CONDITIONS, TIMEFRAMES } from "../lib/expr/catalog";
+import { CANDLE_FIELDS, INDICATORS, WRAPPERS, CROSSES, CONDITIONS, PATTERNS, TIMEFRAMES } from "../lib/expr/catalog";
 import type { CatalogEntry } from "../lib/expr/catalog";
 import FloatingModal from "./FloatingModal";
 import Tooltip from "./Tooltip";
@@ -36,6 +36,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
     ["Wrappers", WRAPPERS],
     ["Crosses", CROSSES],
     ["Conditions", CONDITIONS],
+    ["Patterns", PATTERNS],
   ] as const).map(([title, entries]: [string, CatalogEntry[]]) => ({
     title,
     items: entries.map((entry) => ({

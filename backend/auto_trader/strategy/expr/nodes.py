@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from auto_trader.strategy.expr.registry import PATTERN_FN_NAMES
+
 
 @dataclass(frozen=True, slots=True)
 class Num:
@@ -98,7 +100,7 @@ class Chain:
 
 @dataclass(frozen=True, slots=True)
 class Predicate:
-    fn: str  # "bullish" | "bearish"
+    fn: str  # "bullish" | "bearish" | a candle pattern name
     base: "Node"  # candle-rooted expression (candle, candle[-1], candle@1H, ...)
     start: int
     end: int
@@ -127,7 +129,7 @@ Node = (
 Row = Compare | Cross | Chain | Predicate
 
 CROSS_FNS = ("crossAbove", "crossBelow")
-PREDICATE_FNS = ("bullish", "bearish")
+PREDICATE_FNS = ("bullish", "bearish", *PATTERN_FN_NAMES)
 CANDLE_FIELDS = ("open", "high", "low", "close", "volume", "body", "range", "wickTop", "wickBottom")
 
 

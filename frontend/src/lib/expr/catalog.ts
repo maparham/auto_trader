@@ -3,6 +3,12 @@
 // (backend/auto_trader/strategy/expr/registry.py, nodes.py) so completion,
 // signatures, and highlighting stay in lockstep with what the backend accepts.
 
+// Pattern predicates are DERIVED from the detector's name map rather than
+// listed here, so the editor can never offer a name the detector doesn't know.
+// This is the file's only import; candlePatterns.ts pulls klinecharts as
+// TYPE-ONLY, so the catalog stays runtime-dependency-free.
+import { PATTERN_PREDICATE_FNS } from "../indicators/candlePatterns";
+
 export interface CatalogEntry {
   name: string;
   insert: string;
@@ -88,5 +94,32 @@ export const CONDITIONS: CatalogEntry[] = [
   { name: "barsSinceEntry", insert: "barsSinceEntry", signature: "barsSinceEntry", detail: "Bars since the trade opened (exit rules only)" },
 ];
 
-export const PREDICATE_FNS = ["bullish", "bearish"] as const;
+// `Object.keys` (not `in`/index lookup) so inherited Object.prototype members
+// — toString, valueOf, constructor — can never leak in as predicate names.
+const PATTERN_NAMES: readonly string[] = Object.keys(PATTERN_PREDICATE_FNS);
+
+const PATTERN_DETAIL: Record<string, string> = {
+  bullPattern: "Any bullish candlestick pattern, regardless of chart display toggles",
+  bearPattern: "Any bearish candlestick pattern, regardless of chart display toggles",
+};
+
+export const PATTERNS: CatalogEntry[] = PATTERN_NAMES.map((name) => ({
+  name,
+  insert: `${name}(candle)`,
+  signature: `${name}(candle)`,
+  detail: Object.hasOwn(PATTERN_DETAIL, name)
+    ? PATTERN_DETAIL[name]
+    : `${name} candlestick pattern`,
+}));
+
+export const PREDICATE_FNS: readonly string[] = ["bullish", "bearish", ...PATTERN_NAMES];
+
+// 14 bars for the epsilon series (0.05 * SMA14 of true range) + 4 for the
+// deepest lookback (ladderBottom needs i >= 4). Mirrored by the backend's
+// warmup.py PATTERN_WARMUP. `bullish`/`bearish` are pure single-bar tests and
+// keep a warm-up of 0, so this set holds only the pattern names.
+export const PATTERN_WARMUP = 18;
+
+export const PATTERN_FN_SET: ReadonlySet<string> = new Set(PATTERN_NAMES);
+
 export const COUNT_FN = "count";

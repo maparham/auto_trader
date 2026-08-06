@@ -74,3 +74,27 @@ def test_warmup_predicate_offset():
 
 def test_warmup_bars_since_entry_standalone():
     assert warmup_bars(parse("barsSinceEntry > 12")) == 0
+
+
+# --- candle pattern predicates -----------------------------------------------
+# A pattern needs 14 bars for the epsilon series (0.05 * SMA14 of true range) +
+# 4 for the deepest lookback (ladderBottom). Mirrored by the frontend's
+# catalog.ts PATTERN_WARMUP.
+
+
+def test_pattern_predicate_warms_up_18_bars():
+    assert warmup_bars(parse("bullEngulfing(candle)"), "MINUTE_5") == 18
+
+
+def test_pattern_warm_up_adds_the_offset():
+    assert warmup_bars(parse("bullEngulfing(candle[-3])"), "MINUTE_5") == 21
+
+
+def test_a_tf_pinned_pattern_costs_no_base_bars_beyond_the_pattern_itself():
+    """An @tf pin contributes zero BASE bars (the pinned series has its own
+    history), so only the pattern's own 18 remain."""
+    assert warmup_bars(parse("bullEngulfing(candle@4H)"), "MINUTE_5") == 18
+
+
+def test_bullish_predicate_still_warms_up_zero():
+    assert warmup_bars(parse("bullish(candle)"), "MINUTE_5") == 0

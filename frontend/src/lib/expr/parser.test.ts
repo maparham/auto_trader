@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { analyze, warmupOf } from "./parser";
+import { PATTERNS, PREDICATE_FNS } from "./catalog";
+import { PATTERN_PREDICATE_FNS } from "../indicators/candlePatterns";
 
 describe("analyze", () => {
   it("finds numeric literals with ordinals and spans", () => {
@@ -162,5 +164,87 @@ describe("count / predicates / barsSinceEntry", () => {
   });
   it("still allows entry directly inside count(...)'s condition", () => {
     expect(analyze("count(candle.close < entry, 10) >= 3", { isExit: true }).error).toBeNull();
+  });
+});
+
+// `analyze` is the public entry point; the brief's tests are written against a
+// throwing `parse`, so wrap it. The thrown message carries the error code and
+// text so `.toThrow(/…/)` can match on either.
+function parse(src: string): void {
+  const { error } = analyze(src);
+  if (error) throw new Error(`${error.code}: ${error.message}`);
+}
+
+describe("candle pattern predicates", () => {
+  it("parses every catalog pattern name as a predicate row", () => {
+    for (const name of Object.keys(PATTERN_PREDICATE_FNS)) {
+      expect(() => parse(`${name}(candle)`)).not.toThrow();
+    }
+  });
+
+  it("accepts an offset and a timeframe pin on the candle base", () => {
+    expect(() => parse("bullEngulfing(candle[-1])")).not.toThrow();
+    expect(() => parse("bearPattern(candle@4H)")).not.toThrow();
+  });
+
+  it("rejects a non-candle base", () => {
+    expect(() => parse("doji(candle.close)")).toThrow(/takes a candle/);
+  });
+
+  it("rejects an unknown pattern name", () => {
+    // A bare non-predicate call isn't a row at all, so it fails earlier; the
+    // comparison form is what reaches name validation.
+    expect(() => parse("notAPattern(candle)")).toThrow();
+    expect(analyze("notAPattern(candle) > 0").error?.code).toBe("unknown_name");
+  });
+
+  // PATTERN_PREDICATE_FNS is a plain object literal, so it inherits
+  // Object.prototype. Any validation written as `name in MAP` would wrongly
+  // accept `toString`/`valueOf`/`constructor`. Asserting the *code* (not just
+  // that it throws) is what discriminates: with the hole open these come back
+  // as `bad_arity` from the inherited-member branch.
+  it("rejects inherited Object.prototype names as predicates", () => {
+    expect(() => parse("toString(candle)")).toThrow();
+    for (const name of ["toString", "valueOf", "constructor", "hasOwnProperty"]) {
+      expect(analyze(`${name}(candle) > 0`).error?.code).toBe("unknown_name");
+    }
+  });
+
+  it("wraps in count() like any other predicate", () => {
+    expect(() => parse("count(doji(candle), 5) >= 2")).not.toThrow();
+  });
+
+  it("warms up 18 bars, plus the offset", () => {
+    expect(warmupOf("bullEngulfing(candle)")).toBe(18);
+    expect(warmupOf("bullEngulfing(candle[-3])")).toBe(21);
+  });
+
+  it("keeps its 18 bars through an @tf pin", () => {
+    // The pin contributes zero BASE bars, but the pattern's warm-up is added
+    // outside the Tf and survives as a floor charged to the BASE. It is not
+    // the pinned series' own warm-up: the backend hoists
+    // Predicate(fn, Tf(...)) -> Tf(Predicate(fn, ...)), so the base series
+    // never computes the pattern. The pin's real 18 bars of HTF history come
+    // from the backend's expr.py::_tf_inner_warmup / _ensure_htf. Mirrors the
+    // backend's
+    // test_a_tf_pinned_pattern_costs_no_base_bars_beyond_the_pattern_itself.
+    expect(warmupOf("bullEngulfing(candle@4H)", 300)).toBe(18);
+  });
+
+  it("leaves bullish/bearish warm-up at zero", () => {
+    expect(warmupOf("bullish(candle)")).toBe(0);
+  });
+
+  it("catalog entries and the detector's name map agree", () => {
+    // Absolute pin: both sides below derive from PATTERN_PREDICATE_FNS, so on
+    // their own they would agree even if the map lost half its entries.
+    // 24 pattern fns + the bullPattern/bearPattern aggregates.
+    expect(PATTERNS).toHaveLength(26);
+    expect(PATTERNS.map((e) => e.name).sort()).toEqual(
+      Object.keys(PATTERN_PREDICATE_FNS).sort(),
+    );
+    for (const name of Object.keys(PATTERN_PREDICATE_FNS)) {
+      expect((PREDICATE_FNS as readonly string[]).includes(name)).toBe(true);
+    }
   });
 });

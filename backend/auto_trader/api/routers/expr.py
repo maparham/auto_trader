@@ -29,7 +29,8 @@ from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
 from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.validate import validate
-from auto_trader.strategy.expr.warmup import warmup_bars
+from auto_trader.strategy.expr.registry import PATTERN_FN_NAMES
+from auto_trader.strategy.expr.warmup import PATTERN_WARMUP, warmup_bars
 
 from .. import deps
 from ..schemas import (
@@ -97,7 +98,14 @@ def _tf_inner_warmup(node: N.Node, tf: str) -> int:
     if isinstance(node, N.Call):
         return max((_tf_inner_warmup(a, tf) for a in node.args), default=0)
     if isinstance(node, N.Predicate):
-        return _tf_inner_warmup(node.base, tf)
+        # A pattern pinned to @`tf` needs PATTERN_WARMUP bars of THAT timeframe
+        # before its first honest value. Charge it only when this predicate is
+        # actually pinned to `tf`: callers max this across every row for every
+        # referenced timeframe, so charging it unconditionally would let an
+        # UNPINNED pattern row inflate an unrelated pin's ask (and spuriously
+        # 422 on the `closed < need` check below).
+        pinned_here = node.fn in PATTERN_FN_NAMES and tf in _referenced_tfs(node.base)
+        return (PATTERN_WARMUP if pinned_here else 0) + _tf_inner_warmup(node.base, tf)
     if isinstance(node, N.Count):
         return max(_tf_inner_warmup(node.cond, tf), _tf_inner_warmup(node.window, tf))
     return 0

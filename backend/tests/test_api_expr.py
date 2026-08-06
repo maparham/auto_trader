@@ -296,3 +296,96 @@ def test_referenced_tfs_sees_into_count_and_predicates():
 
     node = parse("count(bearish(candle@1H), 10) >= 2")
     assert _referenced_tfs(node) == {"1H"}
+
+
+# --- pinned candle patterns need HTF warm-up ---------------------------------
+# _tf_inner_warmup answers "warm-up in the PIN's own bars", and the routes max
+# it across every row for each referenced timeframe. A pattern pinned to @tf
+# needs PATTERN_WARMUP bars of THAT timeframe (below it, eps_series uses a
+# different epsilon, so _eq-tolerance patterns detect differently rather than
+# going quiet) — but the 18 must be charged ONLY to the tf the pattern is
+# actually pinned to, or an unrelated pin's ask inflates and can spuriously 422.
+
+
+def _tiw(expr: str, tf: str) -> int:
+    from auto_trader.api.routers.expr import _tf_inner_warmup
+    from auto_trader.strategy.expr.parser import parse
+
+    return _tf_inner_warmup(parse(expr), tf)
+
+
+def test_pinned_pattern_charges_its_warmup_to_the_pinned_tf():
+    assert _tiw("bullEngulfing(candle@4H)", "4H") == 18
+    # ...and through a count() window and an offset, which are base-aligned.
+    assert _tiw("count(doji(candle@4H), 10) >= 2", "4H") == 18
+
+
+def test_unpinned_pattern_charges_nothing_to_any_tf():
+    # THE regression guard: an unconditional `+ PATTERN_WARMUP` here would make
+    # an unpinned row inflate every other row's @tf ask.
+    assert _tiw("bullEngulfing(candle)", "4H") == 0
+    assert _tiw("bullEngulfing(candle[-3])", "1H") == 0
+
+
+def test_pattern_pinned_to_one_tf_does_not_inflate_another():
+    assert _tiw("bullEngulfing(candle@4H)", "1H") == 0
+
+
+def test_bullish_pinned_is_not_a_pattern_and_stays_zero():
+    assert _tiw("bullish(candle@4H)", "4H") == 0
+
+
+def test_backtest_fetches_enough_htf_for_a_pinned_pattern(monkeypatch):
+    """The fetch window must cover the pattern's 18 pin-bars, not 1."""
+    calls = []
+
+    async def fake_fetch(broker, epic, resolution, bars, from_ts, to_ts, side):
+        calls.append(from_ts)
+        return [candle_from_dto(CandleDTO(**c)) for c in _hourly_dtos()]
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
+    r = client.post("/api/expr/backtest", json=_tf_req(
+        longEntry=[{"expr": "bullEngulfing(candle@1H)"}]))
+    assert r.status_code == 200, r.text
+    # need = 18 + 1 = 19; the route asks 2x the need + 10 bars of slack.
+    assert calls == [0 - (19 * 2 + 10) * 3600]
+
+
+def test_backtest_unpinned_pattern_row_does_not_inflate_another_tfs_ask(monkeypatch):
+    """A pattern row with NO pin, alongside a pinned EMA row: the @1H ask must
+    stay at the EMA's need, not jump by 18."""
+    calls = []
+
+    async def fake_fetch(broker, epic, resolution, bars, from_ts, to_ts, side):
+        calls.append(from_ts)
+        return [candle_from_dto(CandleDTO(**c)) for c in _hourly_dtos()]
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
+    r = client.post("/api/expr/backtest", json=_tf_req(longEntry=[
+        {"expr": "bullEngulfing(candle)"},
+        {"expr": "crossAbove(EMA(3), EMA(4)@1H)"},
+    ]))
+    assert r.status_code == 200, r.text
+    # need = EMA(4)'s 4 + 1 = 5. An unconditional +18 would make this -56*3600.
+    assert calls == [0 - (5 * 2 + 10) * 3600]
+
+
+def test_series_fetches_enough_htf_for_a_pinned_pattern(monkeypatch):
+    """/api/expr/series has NO sufficiency check, so its fetch window is the
+    only thing standing between the overlay and a silently under-warmed
+    pattern. A bare predicate 422s, so count() is the reachable shape."""
+    calls = []
+
+    async def fake_fetch(broker, epic, resolution, bars, from_ts, to_ts, side):
+        calls.append((resolution, from_ts))
+        return [candle_from_dto(CandleDTO(**c)) for c in _hourly_dtos()]
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
+    r = client.post("/api/expr/series", json={
+        "epic": "TEST", "resolution": "MINUTE_5",
+        "expr": "count(bullEngulfing(candle@1H), 10) >= 2",
+        "fromTime": 0, "toTime": 3600 * 4,
+    })
+    assert r.status_code == 200, r.text
+    # base fetch, then the 1H pin reaching back need = 18 + 1 = 19 hours.
+    assert ("HOUR", 0 - 19 * 3600) in calls

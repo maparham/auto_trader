@@ -125,3 +125,27 @@ def test_entry_directly_in_count_condition_stays_valid():
     # entry directly inside count(...)'s condition is fine — it evaluates on the
     # per-bar path, not through a wrapper/indicator's array-of-values path.
     validate(parse("count(candle.close < entry, 10) >= 3"), is_exit=True)
+
+
+def test_pattern_predicate_parses_and_validates():
+    row = parse("bullEngulfing(candle)")
+    validate(row, is_exit=False)  # must not raise
+
+
+def test_pattern_predicate_accepts_offset_and_tf_pin():
+    validate(parse("bullEngulfing(candle[-1])"), is_exit=False)
+    validate(parse("bearPattern(candle@4H)"), is_exit=False)
+
+
+def test_pattern_predicate_rejects_a_non_candle_base():
+    with pytest.raises(ExprError) as exc:
+        validate(parse("doji(candle.close)"), is_exit=False)
+    assert exc.value.code == "bad_predicate_arg"
+
+
+def test_all_26_names_are_legal_predicates():
+    from auto_trader.indicators.candle_patterns import PATTERN_FNS
+    from auto_trader.strategy.expr.nodes import PREDICATE_FNS
+    for name in PATTERN_FNS:
+        assert name in PREDICATE_FNS
+    assert len(PREDICATE_FNS) == 28  # bullish, bearish, + 26

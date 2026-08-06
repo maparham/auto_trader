@@ -245,3 +245,135 @@ def test_strategy_passes_entry_index():
     # bars 2 (12->11), 3 (11->10), 4 (10->9) are all red; entry bar 1, i=4 ->
     # window of barsSinceEntry=3 covers bars 2..4 with 3 reds -> the exit fires.
     assert len(signals) == 1 and signals[0].leg == "long"
+
+
+# --- candle pattern predicates -------------------------------------------------
+#
+# `_bars` derives high = max(open, close) + 1 and low = min(open, close) - 1, so
+# an (open, close) pair fully determines the bar. `(100, 98)` then `(97, 101)`
+# is a textbook bullish engulfing: bar 2 closes up, bar 1 closed down, and bar
+# 2's body (97..101) swallows bar 1's (98..100).
+
+_ENGULF = [(100, 98), (97, 101)]
+
+
+def test_pattern_predicate_fires_on_the_engulfing_bar():
+    candles = _bars([(10, 11), (11, 12), *_ENGULF])
+    matches = _row_bools("bullEngulfing(candle)", candles, resolution="MINUTE_5")
+    assert matches[-1] is True
+    assert matches[:-1] == [False, False, False]
+
+
+def test_pattern_predicate_respects_an_offset():
+    # One quiet bar after the engulfing: `candle[-1]` shifts the detection one
+    # base bar forward, so the row fires on the bar AFTER the pattern.
+    candles = _bars([(10, 11), (11, 12), *_ENGULF, (101, 101)])
+    matches = _row_bools("bullEngulfing(candle[-1])", candles, resolution="MINUTE_5")
+    assert matches == [False, False, False, False, True]
+    # Sanity: unshifted, the same bars fire one bar earlier.
+    assert _row_bools("bullEngulfing(candle)", candles, resolution="MINUTE_5") == [
+        False, False, False, True, False]
+
+
+def test_pattern_predicate_under_a_tf_pin_aligns_from_htf_candles():
+    """The pattern is detected on the HOUR_4 series, then held across the base
+    bars that follow that HTF bar's close.
+
+    The expected base index is DERIVED from the already-verified field-alignment
+    path (`candle.close@HOUR_4`) rather than hardcoded: the pattern must become
+    true on exactly the bar where the engulfing HTF bar's own close first
+    becomes readable. `any(matches)` alone would pass with the alignment off by
+    an arbitrary number of bars.
+    """
+    base = _candles([1] * 12, resolution_s=3600)
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    htf = {"HOUR_4": [
+        Candle(time=t0, open=100, high=101, low=97, close=98, volume=1),
+        Candle(time=t0 + timedelta(seconds=14400), open=97, high=102, low=96, close=101, volume=1),
+    ]}
+    closes = series_of(parse("candle.close@HOUR_4 > 0").left, base, "HOUR", htf)
+    want = closes.index(101.0)  # first base bar reading the engulfing HTF bar
+
+    matches = _row_bools("bullEngulfing(candle@HOUR_4)", base, resolution="HOUR", htf=htf)
+    assert matches[want] is True
+    assert not any(matches[:want])           # no hindsight before the HTF close
+    assert all(matches[want:])               # held until the next HTF bar closes
+
+
+def test_hoist_reproduces_the_field_paths_wrapper_nesting():
+    """`_hoist_predicate` must rebuild Offset/Tf in the SAME order that
+    `_apply_field_to_candle` already produces for `candle@4H[-1].close`, so a
+    pinned-and-offset pattern means align-then-shift-by-base-bar exactly like
+    every other operand in the engine."""
+    from auto_trader.strategy.expr import nodes as N
+    from auto_trader.strategy.expr.evaluate import _apply_field_to_candle, _hoist_predicate
+
+    def shape(node):
+        if isinstance(node, N.Offset):
+            return ("Offset", node.n, shape(node.base))
+        if isinstance(node, N.Tf):
+            return ("Tf", node.tf, shape(node.base))
+        return ("leaf",)
+
+    for src in ("candle@4H[-1]", "candle[-1]@4H"):
+        pred = parse(f"bullEngulfing({src})")
+        field = _apply_field_to_candle(parse(f"{src}.close > 0").left.base, "close")
+        assert shape(_hoist_predicate(pred)) == shape(field), src
+
+
+def test_bull_pattern_aggregate_fires_for_a_bull_member():
+    candles = _bars([(10, 11), (11, 12), *_ENGULF])
+    assert _row_bools("bullPattern(candle)", candles, resolution="MINUTE_5")[-1] is True
+    assert _row_bools("bearPattern(candle)", candles, resolution="MINUTE_5")[-1] is False
+
+
+def test_count_over_a_pattern_predicate():
+    # open == close -> body 0 within a range of 2 -> doji on every bar.
+    candles = _bars([(10, 10)] * 6)
+    vals = series_of(parse("count(doji(candle), 5) >= 1").left, candles, "MINUTE_5", {})
+    assert vals == [None, None, None, None, 5.0, 5.0]
+
+
+def test_pattern_predicate_in_count_uses_the_per_bar_path():
+    """`count(pattern, barsSinceEntry)` has an entry-bearing window, so it is NOT
+    precomputed — every bar routes through CompiledRow._match_at. A real entry_i
+    is mandatory: with entry_i=None barsSinceEntry is undefined and Count
+    short-circuits to None before the predicate is ever consulted, which would
+    make this test pass vacuously. The entry_i=None contrast below pins that.
+    """
+    candles = _bars([(10, 11), (11, 12), *_ENGULF, (101, 102)])
+    row = compile_row(parse("count(bullEngulfing(candle), barsSinceEntry) >= 1"),
+                      candles, "MINUTE_5", {})
+    # entry at bar 1; the engulfing is bar 3, so the window covers it from bar 3 on.
+    assert [row.evaluate(i, 12.0, 1) for i in range(5)] == [
+        False, False, False, True, True]
+    # Contrast: no entry index -> barsSinceEntry undefined -> never fires. A test
+    # written only against this shape would prove nothing about _match_at.
+    assert [row.evaluate(i, 12.0, None) for i in range(5)] == [False] * 5
+
+
+def test_pattern_detector_runs_once_per_condition_node(monkeypatch):
+    """The per-bar path memoizes the pattern series per condition node; without
+    the cache the 24-condition sweep re-runs for every bar (O(n^2))."""
+    from auto_trader.strategy.expr import evaluate as ev
+
+    calls = []
+    real = ev.pattern_series
+
+    def counting(bars, fn):
+        calls.append(fn)
+        return real(bars, fn)
+
+    monkeypatch.setattr(ev, "pattern_series", counting)
+    candles = _bars([(10, 11), (11, 12), *_ENGULF, (101, 102)] * 4)
+    row = compile_row(parse("count(bullEngulfing(candle), barsSinceEntry) >= 1"),
+                      candles, "MINUTE_5", {})
+    fired = [row.evaluate(i, 12.0, 1) for i in range(len(candles))]
+    assert any(fired)
+    assert calls == ["bullEngulfing"]
+
+
+def test_bullish_and_bearish_still_work():
+    c = _bars(_ENGULF)
+    assert _row_bools("bullish(candle)", c, resolution="MINUTE_5") == [False, True]
+    assert _row_bools("bearish(candle)", c, resolution="MINUTE_5") == [True, False]

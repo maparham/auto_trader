@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
+from auto_trader.indicators.candle_patterns import PATTERN_FNS, pattern_series
 from auto_trader.indicators.core import (
     atr_series, avwap_series, ema_series, rsi_series, sma_series,
 )
@@ -94,15 +95,57 @@ def _cmp_vals(op: str, l: float | None, r: float | None) -> bool:
     return l <= r
 
 
+def _hoist_predicate(node: N.Predicate) -> N.Node:
+    """Move the candle base's postfix wrappers OUTSIDE the predicate:
+
+        Predicate(fn, Tf(Candle, "4H"))  ->  Tf(Predicate(fn, Candle), "4H")
+        Predicate(fn, Offset(Candle, 1)) ->  Offset(Predicate(fn, Candle), 1)
+
+    A pattern is a property of a BAR SERIES, not of one bar, so it must be
+    detected on whichever series the pin selects and only then shifted/aligned.
+    Hoisting hands both jobs to series_of's existing Tf and Offset branches
+    instead of duplicating alignment here, and reproduces the same wrapper
+    nesting `_apply_field_to_candle` builds for the field path. Validation has
+    already guaranteed the base bottoms out in a bare Candle through Offset/Tf
+    wrappers only.
+    """
+    wrappers: list[N.Offset | N.Tf] = []
+    base: N.Node = node.base
+    while isinstance(base, (N.Offset, N.Tf)):
+        wrappers.append(base)
+        base = base.base
+    out: N.Node = N.Predicate(node.fn, base, node.start, node.end)
+    for w in reversed(wrappers):
+        if isinstance(w, N.Offset):
+            out = N.Offset(out, w.n, w.start, w.end)
+        else:
+            out = N.Tf(out, w.tf, w.start, w.end)
+    return out
+
+
+def _pattern_bool_series(node: N.Predicate, candles: Sequence[Candle],
+                         resolution: str, htf: dict[str, list[Candle]]) -> list[bool]:
+    """Per-bar truth of a PATTERN predicate. Undefined (warm-up, or a base bar
+    before the first aligned HTF close) is a non-match, matching the
+    bullish/bearish convention."""
+    vals = series_of(_hoist_predicate(node), candles, resolution, htf)
+    return [_defined(v) and v >= 0.5 for v in vals]
+
+
 def _cond_matches(cond: "N.Compare | N.Cross | N.Predicate", candles: Sequence[Candle],
                    resolution: str, htf: dict[str, list[Candle]]) -> list[bool]:
     """Per-bar truth of an embedded condition. Undefined operands -> False
     (a warm-up bar is a non-match, it does not poison the window)."""
     n = len(candles)
     if isinstance(cond, N.Predicate):
+        if cond.fn in PATTERN_FNS:
+            return _pattern_bool_series(cond, candles, resolution, htf)
+        # nodes.PREDICATE_FNS is exactly {"bullish", "bearish"} | PATTERN_FNS, and
+        # validation rejects anything outside it, so the remainder is a clean binary.
+        bullish = cond.fn == "bullish"
         opens = series_of(_apply_field_to_candle(cond.base, "open"), candles, resolution, htf)
         closes = series_of(_apply_field_to_candle(cond.base, "close"), candles, resolution, htf)
-        if cond.fn == "bullish":
+        if bullish:
             return [_defined(opens[i]) and _defined(closes[i]) and closes[i] > opens[i] for i in range(n)]
         return [_defined(opens[i]) and _defined(closes[i]) and closes[i] < opens[i] for i in range(n)]
     if isinstance(cond, N.Cross):
@@ -167,6 +210,14 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
         return [_binop(node.op, left[i], right[i]) for i in range(n)]
     if isinstance(node, N.BarsSinceEntry):
         raise ValueError("barsSinceEntry is not a series")
+    if isinstance(node, N.Predicate):
+        # Reachable only through _pattern_bool_series' hoist: a PATTERN predicate
+        # IS a per-bar 1.0/0.0 series, which is what lets the Tf/Offset branches
+        # above align and shift it. bullish/bearish are pointwise and are handled
+        # in _cond_matches/_match_at, so they never arrive here.
+        if node.fn in PATTERN_FNS:
+            return [float(v) for v in pattern_series(candles, node.fn)]
+        raise ValueError(f"{node.fn} is not a series")
     if isinstance(node, N.Count):
         matches = _cond_matches(node.cond, candles, resolution, htf)
         pre = [0] * (n + 1)  # prefix sums: pre[j+1] = matches in bars [0, j]
@@ -238,6 +289,11 @@ class CompiledRow:
     _cache: dict[int, list[float | None]]
     _matches: dict[int, list[bool]]
     _pred_nodes: dict[int, tuple[N.Node, N.Node]]
+    # Separate from _cache: that one is keyed by sub-node identity and holds
+    # float|None arrays; this holds the bool match series of a PATTERN condition
+    # node. Without it the 24-condition detector re-runs for every bar of every
+    # count() window, making the per-bar path O(n^2).
+    _pattern_cache: dict[int, list[bool]]
 
     def _val(self, sub: N.Node, i: int, entry: float | None, entry_i: int | None = None) -> float | None:
         # entry-free sub-expressions are precomputed to arrays; entry-bearing ones
@@ -282,6 +338,15 @@ class CompiledRow:
     def _match_at(self, cond, j: int, entry: float | None, entry_i: int | None) -> bool:
         """Truth of an embedded condition at bar j (per-bar path)."""
         if isinstance(cond, N.Predicate):
+            if cond.fn in PATTERN_FNS:
+                pkey = id(cond)
+                if pkey not in self._pattern_cache:
+                    self._pattern_cache[pkey] = _pattern_bool_series(
+                        cond, self.candles, self.resolution, self.htf
+                    )
+                arr = self._pattern_cache[pkey]
+                return 0 <= j < len(arr) and arr[j]
+            bullish = cond.fn == "bullish"  # see _cond_matches: the rest is binary
             key = id(cond)
             if key not in self._pred_nodes:
                 self._pred_nodes[key] = (
@@ -293,7 +358,7 @@ class CompiledRow:
             c = self._val(c_node, j, entry, entry_i)
             if not (_defined(o) and _defined(c)):
                 return False
-            return c > o if cond.fn == "bullish" else c < o
+            return c > o if bullish else c < o
         if isinstance(cond, N.Cross):
             if j == 0:
                 return False
@@ -398,4 +463,4 @@ def compile_row(node: N.Row, candles, resolution, htf) -> CompiledRow:
         subs = [node.a, node.b]
     for sub in subs:
         _precompute(sub, candles, resolution, htf, cache)
-    return CompiledRow(node, candles, resolution, htf, warmup_bars(node, resolution), cache, {}, {})
+    return CompiledRow(node, candles, resolution, htf, warmup_bars(node, resolution), cache, {}, {}, {})

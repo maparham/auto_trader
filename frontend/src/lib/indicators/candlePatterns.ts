@@ -9,6 +9,7 @@ export interface CandlePatternDef {
   id: string;
   label: string;
   short: string;
+  fn: string; // camelCase predicate name used in rule expressions
   polarity: PatternPolarity;
   toggle: string;
 }
@@ -24,30 +25,30 @@ export interface PatternBar {
 // Canonical registry. Array index === operand `line` index and is immutable:
 // it must NEVER depend on which patterns are enabled.
 export const CANDLE_PATTERN_DEFS: readonly CandlePatternDef[] = [
-  { id: "bull_engulfing", label: "Bullish Engulfing", short: "Engulf", polarity: "bull", toggle: "engulfing" },
-  { id: "bear_engulfing", label: "Bearish Engulfing", short: "Engulf", polarity: "bear", toggle: "engulfing" },
-  { id: "pin_top", label: "Pin Top", short: "Pin", polarity: "bear", toggle: "pin_top" },
-  { id: "pin_bottom", label: "Pin Bottom", short: "Pin", polarity: "bull", toggle: "pin_bottom" },
-  { id: "doji", label: "Doji", short: "Doji", polarity: "neutral", toggle: "doji" },
-  { id: "inside", label: "Inside Bar", short: "Inside", polarity: "neutral", toggle: "inside" },
-  { id: "outside", label: "Outside Bar", short: "Outside", polarity: "neutral", toggle: "outside" },
-  { id: "bull_harami", label: "Bullish Harami", short: "Harami", polarity: "bull", toggle: "harami" },
-  { id: "bear_harami", label: "Bearish Harami", short: "Harami", polarity: "bear", toggle: "harami" },
-  { id: "piercing_line", label: "Piercing Line", short: "Pierce", polarity: "bull", toggle: "piercing" },
-  { id: "dark_cloud_cover", label: "Dark Cloud Cover", short: "Dark Cloud", polarity: "bear", toggle: "piercing" },
-  { id: "morning_star", label: "Morning Star", short: "M Star", polarity: "bull", toggle: "star" },
-  { id: "evening_star", label: "Evening Star", short: "E Star", polarity: "bear", toggle: "star" },
-  { id: "bull_belt_hold", label: "Bullish Belt Hold", short: "Belt", polarity: "bull", toggle: "belt_hold" },
-  { id: "bear_belt_hold", label: "Bearish Belt Hold", short: "Belt", polarity: "bear", toggle: "belt_hold" },
-  { id: "three_white_soldiers", label: "Three White Soldiers", short: "3 Soldiers", polarity: "bull", toggle: "soldiers" },
-  { id: "three_black_crows", label: "Three Black Crows", short: "3 Crows", polarity: "bear", toggle: "soldiers" },
-  { id: "three_stars_south", label: "Three Stars in the South", short: "3 Stars S", polarity: "bull", toggle: "stars_south" },
-  { id: "stick_sandwich", label: "Stick Sandwich", short: "Sandwich", polarity: "bull", toggle: "sandwich" },
-  { id: "bull_meeting_line", label: "Bullish Meeting Line", short: "Meet", polarity: "bull", toggle: "meeting_line" },
-  { id: "bear_meeting_line", label: "Bearish Meeting Line", short: "Meet", polarity: "bear", toggle: "meeting_line" },
-  { id: "bull_kicking", label: "Bullish Kicking", short: "Kick", polarity: "bull", toggle: "kicking" },
-  { id: "bear_kicking", label: "Bearish Kicking", short: "Kick", polarity: "bear", toggle: "kicking" },
-  { id: "ladder_bottom", label: "Ladder Bottom", short: "Ladder", polarity: "bull", toggle: "ladder" },
+  { id: "bull_engulfing", label: "Bullish Engulfing", short: "Engulf", fn: "bullEngulfing", polarity: "bull", toggle: "engulfing" },
+  { id: "bear_engulfing", label: "Bearish Engulfing", short: "Engulf", fn: "bearEngulfing", polarity: "bear", toggle: "engulfing" },
+  { id: "pin_top", label: "Pin Top", short: "Pin", fn: "pinTop", polarity: "bear", toggle: "pin_top" },
+  { id: "pin_bottom", label: "Pin Bottom", short: "Pin", fn: "pinBottom", polarity: "bull", toggle: "pin_bottom" },
+  { id: "doji", label: "Doji", short: "Doji", fn: "doji", polarity: "neutral", toggle: "doji" },
+  { id: "inside", label: "Inside Bar", short: "Inside", fn: "insideBar", polarity: "neutral", toggle: "inside" },
+  { id: "outside", label: "Outside Bar", short: "Outside", fn: "outsideBar", polarity: "neutral", toggle: "outside" },
+  { id: "bull_harami", label: "Bullish Harami", short: "Harami", fn: "bullHarami", polarity: "bull", toggle: "harami" },
+  { id: "bear_harami", label: "Bearish Harami", short: "Harami", fn: "bearHarami", polarity: "bear", toggle: "harami" },
+  { id: "piercing_line", label: "Piercing Line", short: "Pierce", fn: "piercingLine", polarity: "bull", toggle: "piercing" },
+  { id: "dark_cloud_cover", label: "Dark Cloud Cover", short: "Dark Cloud", fn: "darkCloudCover", polarity: "bear", toggle: "piercing" },
+  { id: "morning_star", label: "Morning Star", short: "M Star", fn: "morningStar", polarity: "bull", toggle: "star" },
+  { id: "evening_star", label: "Evening Star", short: "E Star", fn: "eveningStar", polarity: "bear", toggle: "star" },
+  { id: "bull_belt_hold", label: "Bullish Belt Hold", short: "Belt", fn: "bullBeltHold", polarity: "bull", toggle: "belt_hold" },
+  { id: "bear_belt_hold", label: "Bearish Belt Hold", short: "Belt", fn: "bearBeltHold", polarity: "bear", toggle: "belt_hold" },
+  { id: "three_white_soldiers", label: "Three White Soldiers", short: "3 Soldiers", fn: "threeWhiteSoldiers", polarity: "bull", toggle: "soldiers" },
+  { id: "three_black_crows", label: "Three Black Crows", short: "3 Crows", fn: "threeBlackCrows", polarity: "bear", toggle: "soldiers" },
+  { id: "three_stars_south", label: "Three Stars in the South", short: "3 Stars S", fn: "threeStarsSouth", polarity: "bull", toggle: "stars_south" },
+  { id: "stick_sandwich", label: "Stick Sandwich", short: "Sandwich", fn: "stickSandwich", polarity: "bull", toggle: "sandwich" },
+  { id: "bull_meeting_line", label: "Bullish Meeting Line", short: "Meet", fn: "bullMeetingLine", polarity: "bull", toggle: "meeting_line" },
+  { id: "bear_meeting_line", label: "Bearish Meeting Line", short: "Meet", fn: "bearMeetingLine", polarity: "bear", toggle: "meeting_line" },
+  { id: "bull_kicking", label: "Bullish Kicking", short: "Kick", fn: "bullKicking", polarity: "bull", toggle: "kicking" },
+  { id: "bear_kicking", label: "Bearish Kicking", short: "Kick", fn: "bearKicking", polarity: "bear", toggle: "kicking" },
+  { id: "ladder_bottom", label: "Ladder Bottom", short: "Ladder", fn: "ladderBottom", polarity: "bull", toggle: "ladder" },
 ];
 
 export const ANY_BULL_LINE = 24;
@@ -86,10 +87,23 @@ export const CANDLE_PATTERN_TOGGLES: ReadonlyArray<{ id: string; label: string }
   return out;
 })();
 
-/** All bull ids (polarity==="bull") or all bear ids, in canonical order. */
-export function defaultMembers(polarity: "bull" | "bear"): string[] {
-  return CANDLE_PATTERN_DEFS.filter((d) => d.polarity === polarity).map((d) => d.id);
-}
+// --- Rule-operand interface -------------------------------------------------
+// The expression catalog builds its predicate entries from this map, so the
+// names it offers can never drift from the detector. NAMES are all lib/expr/
+// needs: rules are evaluated on the BACKEND (strategy/expr/evaluate.py calling
+// indicators/candle_patterns.py), so there is deliberately no TS function here
+// that computes a pattern's series for a rule — the frontend would have no
+// caller for one.
+
+export const PATTERN_PREDICATE_FNS: Record<string, number> = (() => {
+  const out: Record<string, number> = {};
+  CANDLE_PATTERN_DEFS.forEach((def, i) => {
+    out[def.fn] = i;
+  });
+  out.bullPattern = ANY_BULL_LINE;
+  out.bearPattern = ANY_BEAR_LINE;
+  return out;
+})();
 
 // eps[i] = 0.05 * SMA14 of true range up to and including bar i; while fewer
 // than 14 TRs exist, fall back to 1e-4 * close (index data has no fixed tick).
@@ -251,30 +265,6 @@ export function detectAllPatterns(bars: readonly PatternBar[]): Array<Set<string
   return hits;
 }
 
-/**
- * 0/1 series for one canonical `line`. For line < 24: 1 where the bar's hit set
- * contains that pattern id. For lines 24 (any bull) / 25 (any bear): 1 where any
- * of `members` (default: all bull / all bear ids) hit that bar.
- */
-export function patternLineSeries(
-  bars: readonly PatternBar[],
-  line: number,
-  members?: readonly string[],
-): number[] {
-  const hits = detectAllPatterns(bars);
-  if (line === ANY_BULL_LINE || line === ANY_BEAR_LINE) {
-    const ids = members ?? defaultMembers(line === ANY_BULL_LINE ? "bull" : "bear");
-    const idSet = new Set(ids);
-    return hits.map((set) => {
-      for (const id of idSet) if (set.has(id)) return 1;
-      return 0;
-    });
-  }
-  const def = CANDLE_PATTERN_DEFS[line];
-  if (!def) return hits.map(() => 0);
-  return hits.map((set) => (set.has(def.id) ? 1 : 0));
-}
-
 // ---------------------------------------------------------------------------
 // Chart template (Task 2). Figure-less MAIN-pane overlay, modelled on
 // timeHighlight.ts: `series: 'price'`, `figures: []`, `calc` stores per-bar
@@ -317,9 +307,54 @@ const TRI_HEIGHT = 8; // triangle height
 const TRI_GAP = 4; // gap between the bar wick and the triangle
 const LABEL_FONT = "10px sans-serif";
 const LABEL_LINE_HEIGHT = 11;
-// Below this per-bar pixel spacing, labels are suppressed (triangles stay): at
-// wide zoom the text of adjacent hits overlaps into an unreadable smear.
-const MIN_LABEL_BAR_SPACE = 12;
+// Horizontal breathing room between two neighbouring labels, in pixels.
+const LABEL_PAD = 2;
+
+// Text width per label string, memoized. The draw runs on every repaint and
+// scans the WHOLE data list (not just the visible window), so on a few thousand
+// bars this would otherwise be thousands of measureText calls per frame. LABEL_FONT
+// is constant and `short` comes from a fixed set of 24, so one measurement each
+// is enough — the cache is keyed by the string alone.
+const labelWidths = new Map<string, number>();
+
+// Widest line of a stack, halved — its span is [x - halfWidth, x + halfWidth].
+// ctx.font is set before any call, so measureText reflects LABEL_FONT.
+function stackHalfWidth(ctx: CanvasRenderingContext2D, defs: CandlePatternDef[]): number {
+  let w = 0;
+  for (const def of defs) {
+    let width = labelWidths.get(def.short);
+    if (width === undefined) {
+      width = ctx.measureText(def.short).width;
+      labelWidths.set(def.short, width);
+    }
+    if (width > w) w = width;
+  }
+  return w / 2;
+}
+
+/**
+ * Greedy left-to-right label placement. `items` are the label stacks of one
+ * vertical band (below-group OR above-group — the two bands never collide with
+ * each other), in ascending x, each with the half-width of its widest line.
+ * A stack is kept when its span clears the last KEPT stack's right edge by
+ * `pad`; otherwise it is dropped whole, so a multi-line stack never paints a
+ * partial set of pattern names. Replaces the old blanket bar-space gate, which
+ * hid every label at klinecharts' default 10px/bar zoom.
+ */
+export function pickLabelSlots(
+  items: readonly { x: number; halfWidth: number }[],
+  pad: number = LABEL_PAD,
+): boolean[] {
+  const keep: boolean[] = new Array(items.length);
+  let lastRight = -Infinity;
+  for (let i = 0; i < items.length; i++) {
+    const left = items[i].x - items[i].halfWidth;
+    const ok = left >= lastRight + pad;
+    keep[i] = ok;
+    if (ok) lastRight = items[i].x + items[i].halfWidth;
+  }
+  return keep;
+}
 
 // Per-bar enabled-hit indices. A pattern is enabled when its def's TOGGLE is not
 // disabled; the stored value is the def's canonical index (immutable regardless
@@ -346,9 +381,10 @@ export function computeCandlePatterns(
 // labels stacked downward; bear + neutral hits get one down-triangle above the
 // bar high with labels stacked upward. Label color follows each hit's polarity.
 // The above-group triangle uses bearColor when any bear hit is present, else
-// neutralColor (a pure-doji bar gets no red marker). Labels are suppressed when
-// showLabels === false OR the bar spacing is below MIN_LABEL_BAR_SPACE (zoomed
-// far out); triangles always paint. Pure pixel space; returns true so
+// neutralColor (a pure-doji bar gets no red marker). Labels are suppressed only
+// when showLabels === false; at tight zoom pickLabelSlots drops whichever stacks
+// would overlap their left neighbour, so names stay readable instead of
+// vanishing wholesale. Triangles always paint. Pure pixel space; returns true so
 // klinecharts draws no figures.
 function drawCandlePatterns(
   params: IndicatorDrawParams<CandlePatternsPoint, unknown, unknown>,
@@ -358,9 +394,20 @@ function drawCandlePatterns(
   const bullColor = ext.bullColor ?? DEFAULT_BULL_COLOR;
   const bearColor = ext.bearColor ?? DEFAULT_BEAR_COLOR;
   const neutralColor = ext.neutralColor ?? DEFAULT_NEUTRAL_COLOR;
-  const showLabels = ext.showLabels !== false && chart.getBarSpace().bar >= MIN_LABEL_BAR_SPACE;
+  const showLabels = ext.showLabels !== false;
   const points = indicator.result ?? [];
   const kLineDataList = chart.getDataList();
+
+  // Label stacks queued during the triangle pass — one list per vertical band,
+  // in ascending x. Drawn after the loop so pickLabelSlots sees each band whole.
+  interface LabelStack {
+    x: number;
+    halfWidth: number;
+    y: number; // baseline anchor of the stack's first line
+    defs: CandlePatternDef[];
+  }
+  const belowLabels: LabelStack[] = [];
+  const aboveLabels: LabelStack[] = [];
 
   ctx.save();
   ctx.font = LABEL_FONT;
@@ -402,13 +449,7 @@ function drawCandlePatterns(
       ctx.closePath();
       ctx.fill();
       if (showLabels) {
-        ctx.textBaseline = "top";
-        ctx.fillStyle = bullColor;
-        let y = baseY + 2;
-        for (const def of below) {
-          ctx.fillText(def.short, x, y);
-          y += LABEL_LINE_HEIGHT;
-        }
+        belowLabels.push({ x, halfWidth: stackHalfWidth(ctx, below), y: baseY + 2, defs: below });
       }
     }
 
@@ -425,16 +466,38 @@ function drawCandlePatterns(
       ctx.closePath();
       ctx.fill();
       if (showLabels) {
-        ctx.textBaseline = "bottom";
-        let y = baseY - 2;
-        for (const def of above) {
-          ctx.fillStyle = def.polarity === "bear" ? bearColor : neutralColor;
-          ctx.fillText(def.short, x, y);
-          y -= LABEL_LINE_HEIGHT;
-        }
+        aboveLabels.push({ x, halfWidth: stackHalfWidth(ctx, above), y: baseY - 2, defs: above });
       }
     }
   }
+
+  // Bands are independent: a collision below never suppresses a label above.
+  ctx.textBaseline = "top";
+  const belowKeep = pickLabelSlots(belowLabels);
+  for (let s = 0; s < belowLabels.length; s++) {
+    if (!belowKeep[s]) continue;
+    const stack = belowLabels[s];
+    ctx.fillStyle = bullColor;
+    let y = stack.y;
+    for (const def of stack.defs) {
+      ctx.fillText(def.short, stack.x, y);
+      y += LABEL_LINE_HEIGHT;
+    }
+  }
+
+  ctx.textBaseline = "bottom";
+  const aboveKeep = pickLabelSlots(aboveLabels);
+  for (let s = 0; s < aboveLabels.length; s++) {
+    if (!aboveKeep[s]) continue;
+    const stack = aboveLabels[s];
+    let y = stack.y;
+    for (const def of stack.defs) {
+      ctx.fillStyle = def.polarity === "bear" ? bearColor : neutralColor;
+      ctx.fillText(def.short, stack.x, y);
+      y -= LABEL_LINE_HEIGHT;
+    }
+  }
+
   ctx.restore();
   return true;
 }
