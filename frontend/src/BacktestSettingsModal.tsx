@@ -78,6 +78,7 @@ import BacktestPanel from "./BacktestPanel";
 import StrategyPicker from "./StrategyPicker";
 import { RangeChip, SweepBaseValue } from "./components/RangeChip";
 import { StrategyParams } from "./components/StrategyParams";
+import PresetsTab from "./components/PresetsTab";
 import { SweepResults } from "./SweepResults";
 import { comboCount, materializePeriodAxes, mirrorRiskAxes, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepCombo, type SweepOption } from "./lib/sweep";
 import { analyze } from "./lib/expr/parser";
@@ -103,9 +104,6 @@ import {
   type CodedStrategyConfig,
 } from "./lib/codedConfig";
 import {
-  loadBacktestPresets,
-  saveBacktestPreset,
-  deleteBacktestPreset,
   saveBacktestLastUsed,
   loadBacktestSide,
   saveBacktestSide,
@@ -381,9 +379,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // True while "Pick Range" is armed on the chart (mirrors the controller signal),
   // so the button reflects the active state.
   const [pickingRange, setPickingRange] = useState(false);
-  const [presets, setPresets] = useState(() => loadBacktestPresets());
-  const [presetName, setPresetName] = useState("");
-  const [loadName, setLoadName] = useState("");
+  // Which saved preset the panel is editing. Not persisted across opens — a
+  // fresh open starts from the last-used config with no active preset.
+  const [activePreset, setActivePreset] = useState<string | null>(null);
   // The instrument cost profile behind the Costs tab: source note + refetch. Seeded
   // from the session cache so re-opening for the same epic shows the note without a
   // refetch. null until the first fetch resolves (or when it fails).
@@ -1791,23 +1789,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     setHoldout((h) => (h ? { ...h, peeks } : h));
   }
 
-  function savePreset() {
-    const name = presetName.trim();
-    if (!name) return;
-    saveBacktestPreset(name, cfg);
-    setPresets(loadBacktestPresets());
-    setPresetName("");
-  }
-  function applyPreset(name: string) {
-    const p = presets[name];
-    if (p) setCfg(applyRiskSync(p, side));
-  }
-  function removePreset(name: string) {
-    deleteBacktestPreset(name);
-    setPresets(loadBacktestPresets());
-    if (loadName === name) setLoadName("");
-  }
-
   // Stable SweepResults props: it's memoized, and a fresh onApply/onRefine
   // closure or progress object here would re-render the whole (large) results
   // tree on every keystroke in this modal.
@@ -3083,49 +3064,29 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             <section className="bt-scroll-section" ref={setRef("presets")}>
           <Section
             title="Presets"
-            info="Save the whole configuration (range, mask, rules, risk, costs) under a name to reload later, or send it to the Live panel."
+            info={[
+              "One active preset tracks the whole configuration (range, mask, rules, risk, costs); a dot marks unsaved changes, and you can save, save under a new name, or revert.",
+              "The library lists every saved strategy with the results of the last backtest recorded against it, sortable by any column.",
+              "Export writes the library to a JSON file; import merges one back in.",
+            ]}
           >
-            <div className="bt-presets">
-              <div className="al-row">
-                <span>Save as</span>
-                <input
-                  value={presetName}
-                  placeholder="Strategy name"
-                  onChange={(e) => setPresetName(e.target.value)}
-                />
-                <button className="ghost" onClick={savePreset} disabled={!presetName.trim()}>
-                  Save
-                </button>
-              </div>
-              <div className="al-row">
-                <span>Load</span>
-                <select value={loadName} onChange={(e) => setLoadName(e.target.value)}>
-                  <option value="">Choose a preset…</option>
-                  {Object.keys(presets).map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-                <button className="ghost" onClick={() => applyPreset(loadName)} disabled={!loadName}>
-                  Load
-                </button>
-                <button className="ghost" onClick={() => removePreset(loadName)} disabled={!loadName}>
-                  Delete
-                </button>
-              </div>
-              {/* Its own full-width row, deliberately not appended to the Load
-                  row: this sends the CURRENTLY configured strategy to the Live
-                  panel, not whichever preset the Load dropdown is showing. */}
-              <div className="al-row bt-presets-golive">
-                <span>Live</span>
-                <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
-                  <button className="ghost bt-golive" onClick={() => requestGoLive(cfg)}>
-                    Go live →
-                  </button>
-                </Tooltip>
-              </div>
-            </div>
+            <PresetsTab
+              cfg={cfg}
+              // Same copy-on-load risk-sync normalization the rest of the modal
+              // applies: a preset saved with sync on but the sides drifted apart
+              // must land in the panel already reconciled.
+              onLoad={(next) => setCfg(applyRiskSync(next, side))}
+              activeName={activePreset}
+              onActiveChange={setActivePreset}
+              chartSymbol={epic}
+              chartTimeframe={effectiveRes}
+              // Only a plain backtest produces the single result summary a preset
+              // can record; sweep/WFO runs produce many.
+              captureRuns={btMode === "backtest"}
+              // Sends the CURRENTLY configured strategy to the Live panel, not
+              // whichever preset happens to be highlighted in the library.
+              onGoLive={() => requestGoLive(cfg)}
+            />
           </Section>
             </section>
           </div>

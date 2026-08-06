@@ -110,6 +110,18 @@ export const tradesSignal = new Signal<TradeView[]>([]);
 // Consumers (e.g., trades panel) subscribe to render backtest-specific UI.
 export const backtestResultSignal = new Signal<StoredBacktestResult | null>(null);
 
+// Monotonic count of SINGLE backtests that actually finished, bumped by
+// BacktestButton right after it publishes the result. It exists because
+// backtestResultSignal alone cannot answer "did a run just happen?": a rehydrate
+// (timeframe/symbol switch, reload) republishes a stored result through the same
+// signal, and object identity can't tell the two apart because even a fresh run
+// publishes the JSON round-tripped copy read back out of storage (runAndRender
+// returns loadBacktestResult's value). A rehydrate never bumps this, so a
+// consumer that keys off the counter — PresetsTab, recording a preset's last run
+// — sees only genuine runs, and only ones that completed while it was mounted.
+// Sweeps and WFO return before the single-run publish and never bump it.
+export const backtestRunCompletedSignal = new Signal<number>(0);
+
 // Whether the on-chart backtest trading-period shading is shown (global display
 // preference, seeded from device-local storage at startup). backtest.ts reads
 // this to gate drawing and subscribes to redraw each chart's bands on change.

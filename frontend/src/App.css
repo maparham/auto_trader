@@ -1806,17 +1806,161 @@
 }
 .bt-scaling > .instrument-section-title { flex-basis: 100%; margin-bottom: 0; }
 
-/* Presets: Save-as and Load share one line, each taking half the row (min-width:0
-   lets the input/select shrink instead of overflowing). Wraps on a narrow modal. */
-.bt-presets { display: flex; flex-wrap: wrap; gap: 10px 24px; }
-.bt-presets > .al-row { flex: 1 1 260px; min-width: 0; }
-.bt-presets .al-row > span { width: auto; }
-/* Go live acts on the current config, not the loaded preset, so it keeps its
-   own line below the Save/Load pair rather than becoming a third column. */
-/* flex-start, not the .al-row default space-between: there is no flexible
-   input here, so the button would otherwise be flung to the panel edge
-   instead of lining up with the Save-as input and Load select above. */
-.bt-presets > .al-row.bt-presets-golive { flex: 1 1 100%; justify-content: flex-start; }
+/* Presets: an identity bar over a library table. The bar names the preset you
+   are editing and whether it diverged; the table is the strategy comparison.
+   Everything below borrows the desk vocabulary already used by the trades table
+   (.bt-panel-table): 10px uppercase column heads, --mono right-aligned figures,
+   pos/neg on P&L. The library should read as a blotter you scan, not a file
+   list you browse. */
+.bt-presets { display: flex; flex-direction: column; gap: 14px; }
+
+/* The panel's buttons are all class="ghost", but .ghost is only ever styled
+   under .toolbar and .modal-foot — so every button in this tab was rendering
+   with UA chrome. Scoped here rather than globally: a bare `.ghost` rule would
+   restyle buttons across the whole app. */
+.bt-presets .ghost {
+  padding: 4px 10px; font-size: 12px; line-height: 18px;
+  background: transparent; color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+}
+.bt-presets .ghost:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.bt-presets .ghost:disabled { opacity: .45; cursor: default; }
+.bt-presets input {
+  padding: 4px 8px; font-size: 12px; line-height: 18px;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+
+/* Identity bar */
+.bt-preset-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bt-preset-id { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.bt-preset-name {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bt-preset-name.muted { font-weight: 400; color: var(--text-dim); }
+.bt-preset-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--text-faint); align-self: center;
+}
+/* No --warn token in the palette; the fallback hex matches the one already used
+   for the "cross" token in RuleExpressionInput.css. */
+.bt-preset-dot.dirty { background: var(--warn, #c08a2a); }
+/* "edited" is a state, so it gets the same small-caps treatment as the column
+   heads rather than looking like prose next to the name. */
+.bt-preset-edited {
+  font-size: 10px; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--warn, #c08a2a);
+}
+.bt-preset-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+/* Hairline between the three preset actions and Go live: same row because all
+   four act on the current config, divided because only one leaves the panel. */
+.bt-preset-sep { width: 1px; align-self: stretch; margin: 2px 2px; background: var(--border); }
+
+.bt-preset-naming, .bt-preset-prompt { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bt-preset-naming > input { flex: 0 1 200px; min-width: 0; }
+/* The three-way load prompt is a decision, not a row of controls — the amber
+   left rail marks it as blocking without borrowing the danger red. */
+.bt-preset-prompt {
+  padding: 8px 10px; background: var(--surface-2);
+  border: 1px solid var(--border); border-left: 2px solid var(--warn, #c08a2a);
+  border-radius: 6px;
+}
+.bt-preset-prompt > span { flex: 1 1 100%; font-size: 12px; color: var(--text); }
+
+.bt-preset-library { display: flex; flex-direction: column; gap: 8px; }
+/* Filter on the left, whole-library actions pushed right — one row, because all
+   of it operates on the library rather than on a preset. */
+.bt-preset-libbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bt-preset-libbar-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+/* Capped, not full-bleed: it filters a short list, and a full-width field reads
+   as the tab's primary input when the table is. */
+.bt-preset-filter { flex: 0 1 180px; min-width: 0; }
+.bt-preset-empty { padding: 16px 0; font-size: 12px; color: var(--text-dim); }
+
+/* 7 columns + the actions cell. Name flexes; the figures size to content. */
+.bt-preset-head, .bt-preset-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1.6fr) minmax(70px, 1fr) repeat(4, minmax(52px, auto)) minmax(46px, auto) 26px;
+  align-items: center; gap: 10px;
+}
+.bt-preset-head { border-bottom: 1px solid var(--border); padding: 0 4px 5px; }
+.bt-preset-th {
+  background: none; border: 0; padding: 0; text-align: left; cursor: pointer;
+  font-size: 10px; font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.bt-preset-th:hover { color: var(--text-dim); }
+.bt-preset-th.sorted { color: var(--text); }
+/* The figure columns' heads sit over right-aligned numbers, so they align right
+   too — otherwise the label floats away from the column it names. */
+.bt-preset-th.num { text-align: right; }
+/* The header row's trailing spacer lines up with the actions column. It is a
+   bare <span>, not a sort button, so it must not inherit the pointer cursor. */
+.bt-preset-th.spacer { cursor: default; }
+
+.bt-preset-row {
+  padding: 6px 4px; border-bottom: 1px solid var(--border);
+  font-size: 12px; box-shadow: inset 2px 0 0 transparent;
+}
+.bt-preset-row:last-child { border-bottom: 0; }
+.bt-preset-row:hover { background: var(--hover); }
+/* Same active-row device as the trades table: an accent rail, not a fill, so a
+   hover can still read on top of it. */
+.bt-preset-row.active {
+  background: var(--accent-soft, rgba(41, 98, 255, .10));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.bt-preset-cell, .bt-preset-cell-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-preset-cell-name { font-weight: 500; }
+.bt-preset-cell { color: var(--text-dim); }
+.bt-preset-cell.num {
+  text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.bt-preset-cell.num.pos { color: var(--pos); }
+.bt-preset-cell.num.neg { color: var(--neg); }
+.bt-preset-mismatch { color: var(--text-faint); font-style: italic; }
+
+/* overflow: visible undoes the .bt-preset-cell ellipsis clip for this one cell.
+   The cell is the 26px containing block for .bt-preset-menu (top: 100%), so
+   inheriting `overflow: hidden` clipped the whole menu out of sight. */
+.bt-preset-cell.actions { position: relative; text-align: right; overflow: visible; }
+/* Scoped with .bt-presets so it outranks `.bt-presets .ghost`'s border — the
+   trigger is an affordance on hover, not a framed control competing with the
+   figures beside it. */
+.bt-presets .bt-preset-menu-btn {
+  padding: 0 4px; line-height: 16px; color: var(--text-faint);
+  border-color: transparent; border-radius: 4px;
+}
+.bt-presets .bt-preset-menu-btn:hover:not(:disabled) { border-color: var(--border); }
+.bt-preset-row:hover .bt-preset-menu-btn { color: var(--text-dim); }
+
+/* Borrows the .ctxmenu card recipe so a row menu looks like every other menu in
+   the app. --surface-2, not --surface: the panel body is already --surface and
+   this has to read as floating above the rows. */
+.bt-preset-menu {
+  position: absolute; right: 0; top: calc(100% + 2px); z-index: 5;
+  display: flex; flex-direction: column; align-items: stretch;
+  min-width: 116px; padding: 4px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 28px var(--shadow);
+}
+/* Flipped above the row when the scroll box's bottom edge would cut the menu
+   off — see toggleMenu(). */
+.bt-preset-menu.up { top: auto; bottom: calc(100% + 2px); }
+.bt-presets .bt-preset-menu > button {
+  padding: 6px 9px; text-align: left; white-space: nowrap;
+  background: transparent; border: 0; border-radius: 5px; color: var(--text);
+}
+.bt-presets .bt-preset-menu > button:hover {
+  background: var(--accent); color: var(--accent-text);
+}
+/* Delete is the one destructive item; it earns the danger tint on hover only,
+   so the resting menu stays quiet. */
+.bt-presets .bt-preset-menu > button.danger:hover { background: var(--danger); color: #fff; }
+
+.bt-preset-note { font-size: 11px; color: var(--text-dim); }
 @media (prefers-reduced-motion: reduce) {
   .bt-switch, .bt-switch-knob { transition: none; }
   /* The overlay's hide/reveal slide is decoration, not information — with

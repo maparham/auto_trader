@@ -110,38 +110,20 @@ export function deleteDrawingPreset(name: string, presetName: string): void {
 
 // --- backtest configs (global) ------------------------------------------------
 //
-// Same shape as the indicator-preset pair above: named presets (Save/load/Delete
-// in the settings modal) plus a last-used snapshot that auto-restores next time
-// the modal opens. GLOBAL (not per-symbol/per-cell) — a strategy you built is
-// useful on any chart.
+// Only the last-used snapshot lives here now: it auto-restores the panel next
+// time the modal opens. GLOBAL (not per-symbol/per-cell) — a strategy you built
+// is useful on any chart.
+//
+// Named presets moved to `lib/backtestPresets.ts` (v3), which wraps each config
+// in an envelope (origin symbol/timeframe, timestamps, last-run summary) the bare
+// v2 map could not carry. The v2 key `${PREFIX}.backtestPresets.v2` is ABANDONED,
+// not migrated — v2 entries have none of that metadata.
 export type SavedBacktestConfig = BacktestConfig;
 
-// v2: config shape changed from entry/exit to four groups (hedging). Old keys
-// are abandoned rather than migrated — a stale long-only config would be missing
-// the short groups, so callers fall back to defaultBacktestConfig().
-const BACKTEST_PRESETS_KEY = `${PREFIX}.backtestPresets.v2`;
+// `.v2` in the key marks the config-shape change from entry/exit to four groups
+// (hedging). Only that shape is read; anything else falls back to
+// defaultBacktestConfig().
 const BACKTEST_LAST_USED_KEY = `${PREFIX}.backtestLastUsed.v2`;
-
-export function loadBacktestPresets(): Record<string, SavedBacktestConfig> {
-  const all = load<Record<string, SavedBacktestConfig>>(BACKTEST_PRESETS_KEY, {});
-  // Fold each stored preset forward (legacy numeric slippage → model, new cost
-  // fields filled) so an old preset loads into the current shape.
-  return Object.fromEntries(
-    Object.entries(all).map(([name, cfg]) => [name, normalizeBacktestConfig(cfg)]),
-  );
-}
-export function saveBacktestPreset(name: string, cfg: SavedBacktestConfig): void {
-  const all = loadBacktestPresets();
-  all[name] = cfg;
-  save(BACKTEST_PRESETS_KEY, all);
-}
-export function deleteBacktestPreset(name: string): void {
-  const all = loadBacktestPresets();
-  if (name in all) {
-    delete all[name];
-    save(BACKTEST_PRESETS_KEY, all);
-  }
-}
 
 export function loadBacktestLastUsed(): SavedBacktestConfig | null {
   const cfg = load<SavedBacktestConfig | null>(BACKTEST_LAST_USED_KEY, null);

@@ -3,6 +3,8 @@
 // series builder and warm-up math consume. Rules author as CodeMirror
 // expressions (`Rule.expr`); the structured operand model is gone.
 
+import { riskSyncOn } from "./riskSync";
+
 export type Combine = "AND" | "OR";
 
 export type StopKind = "none" | "pct" | "price" | "atr" | "trailPct" | "trailAtr";
@@ -241,4 +243,31 @@ export function normalizeBacktestConfig(cfg: BacktestConfig): BacktestConfig {
       startingCash: c.startingCash ?? d.startingCash,
     },
   };
+}
+
+/** Stable stringify: object keys are emitted sorted at every depth, and
+ * `undefined` members are dropped, so two configs holding the same data compare
+ * equal regardless of the order React state updates happened to build them in.
+ * Arrays keep their order — rule order is meaningful. */
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
+}
+
+/** Whether two configs describe the same strategy. Backs the Presets tab's
+ * dirty indicator, so it reconciles the two places where the same strategy can
+ * be spelled two ways:
+ *   - `costs`, via normalizeBacktestConfig — a stored preset is normalized on
+ *     read while the live panel config may still carry absent cost fields;
+ *   - `riskSynced`, whose absence means ON (see riskSyncOn), so an untouched
+ *     config and one whose sync toggle was flipped on explicitly are equal.
+ * No other optional field is reconciled: for everything else, absent and
+ * present-with-the-default-value compare UNEQUAL. */
+export function backtestConfigEquals(a: BacktestConfig, b: BacktestConfig): boolean {
+  const c = (x: BacktestConfig) => canonical({ ...normalizeBacktestConfig(x), riskSynced: riskSyncOn(x) });
+  return c(a) === c(b);
 }

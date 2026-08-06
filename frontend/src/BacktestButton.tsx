@@ -43,6 +43,7 @@ import {
   backtestRunRequest,
   backtestClearRequest,
   backtestResultSignal,
+  backtestRunCompletedSignal,
   backtestMessagesSignal,
   backtestPeriodsShownSignal,
   backtestMarkersShownSignal,
@@ -638,6 +639,14 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // The summary chip is driven by the signal subscription above, so just
       // publish the result (rehydrate uses the same publish path).
       backtestResultSignal.set(res);
+      // Announce the COMPLETION separately, adjacent to the publish so the
+      // pairing stays local. Rehydrate shares the publish path above but must
+      // not look like a new run to consumers that record one (PresetsTab), and
+      // it cannot be distinguished by object identity — runAndRender returns the
+      // copy read back out of storage, so a fresh run is a distinct object from
+      // the in-memory result too. Only this site, reached solely by a completed
+      // single backtest, bumps the counter.
+      backtestRunCompletedSignal.set(backtestRunCompletedSignal.value + 1);
       // The run's range can predate the chart's currently-loaded (recent) bars —
       // runAndRender then culls those fills as out-of-window. Page history back to
       // the RUN'S OWN oldest fill (not the drawings walk: its target is the oldest

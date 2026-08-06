@@ -7,7 +7,9 @@ import {
   riskAtrLengths,
   scalingAtrLengths,
   activeGroup,
+  backtestConfigEquals,
   type BacktestConfig,
+  type RangeConfig,
   type Rule,
 } from "./backtestConfig";
 
@@ -144,5 +146,85 @@ describe("scaling ATR", () => {
     const cfg = { ...defaultBacktestConfig(),
       longScaling: { maxConcurrent: 3, spacing: { kind: "pct" as const, value: 1 } } };
     expect(scalingAtrLengths(cfg)).toEqual([]);
+  });
+});
+
+describe("backtestConfigEquals", () => {
+  it("ignores key order", () => {
+    const a = defaultBacktestConfig();
+    // Rebuild the top level with the keys reversed — same data, different order.
+    const b = Object.fromEntries(Object.entries(a).reverse()) as BacktestConfig;
+    expect(backtestConfigEquals(a, b)).toBe(true);
+  });
+
+  it("ignores key order at depth, not just the top level", () => {
+    // The case above reverses only the top level, and Object.fromEntries copies
+    // the nested objects BY REFERENCE — so `range`/`costs` are literally the
+    // same objects on both sides and it never exercises the recursion. Reverse
+    // a nested object's own keys so only a canonical() that recurses (rather
+    // than JSON.stringify-ing sub-objects wholesale) reports these equal.
+    const a = defaultBacktestConfig();
+    const b = { ...a, range: Object.fromEntries(Object.entries(a.range).reverse()) as RangeConfig };
+    expect(backtestConfigEquals(a, b)).toBe(true);
+  });
+
+  it("treats an absent optional field as its default", () => {
+    const a = defaultBacktestConfig();
+    // The per-side switches (longEnabled/…) would read better here, but
+    // normalizeBacktestConfig doesn't fill them — the only fields it defaults
+    // are the cost fields, so `costs.spread` is the one this can be shown with.
+    const b = { ...a, costs: { ...a.costs, spread: undefined } } as unknown as BacktestConfig;
+    expect(backtestConfigEquals(a, b)).toBe(true);
+  });
+
+  it("treats an absent riskSynced as ON, so a no-op sync toggle is not dirty", () => {
+    // defaultBacktestConfig() omits riskSynced (absent means ON), and the
+    // toggle writes the explicit `true`. Behaviourally identical, so the dirty
+    // dot must not light — it gates run capture.
+    const a = defaultBacktestConfig();
+    expect(a.riskSynced).toBeUndefined();
+    expect(backtestConfigEquals(a, { ...a, riskSynced: true })).toBe(true);
+    expect(backtestConfigEquals(a, { ...a, riskSynced: false })).toBe(false);
+  });
+
+  it("sees a genuine difference in the range", () => {
+    const a = defaultBacktestConfig();
+    const b = { ...defaultBacktestConfig(), range: { ...a.range, bars: 999 } };
+    expect(backtestConfigEquals(a, b)).toBe(false);
+  });
+
+  it("sees a genuine difference in costs", () => {
+    const a = defaultBacktestConfig();
+    const b = { ...defaultBacktestConfig(), costs: { ...a.costs, spread: 12.5 } };
+    expect(backtestConfigEquals(a, b)).toBe(false);
+  });
+
+  it("sees a parked side (longEnabled flipped off) as different", () => {
+    const a = defaultBacktestConfig();
+    const b = { ...defaultBacktestConfig(), longEnabled: false };
+    expect(backtestConfigEquals(a, b)).toBe(false);
+  });
+
+  it("treats a key held as undefined the same as an omitted key", () => {
+    // A stored preset round-trips through JSON.stringify, which drops
+    // undefined-valued keys; the live panel can still hold the key with an
+    // undefined value. `canonical` filters undefined members so those two
+    // shapes — same strategy, different shape — compare equal. normalize can't
+    // rescue this one: it doesn't fill the per-side switches.
+    const withoutKey = defaultBacktestConfig();
+    delete withoutKey.longEnabled; // the shape JSON.stringify would have produced
+    const withUndefined = { ...withoutKey, longEnabled: undefined };
+    expect(
+      backtestConfigEquals(withUndefined as BacktestConfig, withoutKey as BacktestConfig),
+    ).toBe(true);
+  });
+
+  it("sees reordered rules within a group as different", () => {
+    // Rule order within a group is meaningful, so `canonical` deliberately does
+    // not sort arrays — a swap must read as an edit.
+    const a = defaultBacktestConfig();
+    const rules = [{ expr: "A", enabled: true }, { expr: "B", enabled: true }];
+    const b = { ...a, longEntry: { combine: "AND" as const, rules: [...rules].reverse() } };
+    expect(backtestConfigEquals({ ...a, longEntry: { combine: "AND", rules } }, b)).toBe(false);
   });
 });

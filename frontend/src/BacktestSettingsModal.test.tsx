@@ -65,7 +65,8 @@ import BacktestSettingsModal, { resetCostProfileCache } from "./BacktestSettings
 import { defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig";
 import { SESSION_PRESETS, minToTime, sessionWindowInTz } from "./lib/backtestSchedule";
 import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
-import { saveBacktestPreset, loadBacktestLastUsed } from "./lib/persist/defaults";
+import { loadBacktestLastUsed } from "./lib/persist/defaults";
+import { putPreset, newPreset } from "./lib/backtestPresets";
 import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal } from "./lib/signals";
 import type { SweepRow } from "./api";
 import { saveSweepAxes } from "./lib/sweepMemory";
@@ -460,7 +461,7 @@ describe("time-window sweep", () => {
       ...defaultBacktestConfig(),
       range: { mode: "bars", bars: 500, history: "full", mask: { enabled: true, session: "NYSE" } },
     };
-    saveBacktestPreset("session-preset", sessionCfg);
+    putPreset(newPreset("session-preset", sessionCfg, { symbol: "TEST", timeframe: "MINUTE" }, 1000));
 
     const initial = defaultBacktestConfig();
     initial.range.mask = { enabled: true, timeOfDay: { startMin: 480, endMin: 720 }, tz: "UTC" };
@@ -474,10 +475,10 @@ describe("time-window sweep", () => {
     expect(document.querySelector(".bt-tw-sweep")).toBeTruthy();
 
     // Load the session preset: cfg.range.mask.session becomes truthy.
-    const presetSelect = [...document.querySelectorAll("select")].find((s) =>
-      [...s.options].some((o) => o.value === "session-preset"),
-    ) as HTMLSelectElement;
-    fireEvent.change(presetSelect, { target: { value: "session-preset" } });
+    const row = [...document.querySelectorAll(".bt-preset-row")].find((r) =>
+      r.textContent?.includes("session-preset"),
+    ) as HTMLElement;
+    fireEvent.click(row.querySelector(".bt-preset-menu-btn") as HTMLElement);
     fireEvent.click(screen.getByRole("button", { name: "Load" }));
 
     // Both the glyph and the editor survive the load: no session-based gate.
