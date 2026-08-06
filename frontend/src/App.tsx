@@ -56,6 +56,7 @@ import {
   bumpAlerts,
   settingsRequest,
   backtestSettingsRequest,
+  backtestPanelHiddenSignal,
   requestBacktestRun,
   confirmLineEditsSignal,
   tradeLineUiSignal,
@@ -307,7 +308,11 @@ export default function App() {
     setShowBacktestCfg(open);
     saveBacktestOpen(open);
   };
-  useEffect(() => backtestSettingsRequest.subscribe(() => openBacktestCfg(true)), []);
+  useEffect(() => backtestSettingsRequest.subscribe(() => {
+    openBacktestCfg(true);
+    // An already-open-but-hidden overlay re-reveals rather than re-opening.
+    backtestPanelHiddenSignal.set(false);
+  }), []);
   // The Live trading panel — a separate docked surface from the backtest. Driven
   // by the livePanelOpen signal; open-state is device-local (loadLiveOpen) so an
   // armed strategy's panel reopens on reload.

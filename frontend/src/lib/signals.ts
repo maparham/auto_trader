@@ -405,6 +405,11 @@ export function requestBacktestRun(): void {
 // button LOOK unavailable too.
 export const backtestRunningSignal = new Signal<boolean>(false);
 
+// True while the (unpinned) backtest overlay is slid off-screen. Lives here —
+// not in panel state — so the toolbar/App can reveal a hidden panel instead of
+// closing/reopening it. Reset by the panel on unmount.
+export const backtestPanelHiddenSignal = new Signal<boolean>(false);
+
 // The current stall-window label for the active run (backtest/sweep/WFO), or
 // null when idle or when a moving progress bar has taken over. Set in
 // BacktestButton's run handler; read by the result panels. Values are stage keys

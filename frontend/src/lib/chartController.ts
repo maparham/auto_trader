@@ -158,6 +158,18 @@ export class ChartController {
   // than reachable history, so the caller shows a notice instead of scrolling).
   coverBacktestTradeTo: ((fromTs: number) => Promise<boolean>) | null = null;
 
+  // Run a view-moving call (chart.scrollByDistance / setOffsetRightDistance)
+  // flagged as OURS, so the cell's scroll listener doesn't mistake it for a user
+  // gesture (null until mount; assigned by ChartCore). Without it, chrome that
+  // scrolls the chart from outside — the unpinned backtest panel compensating
+  // for the width it covers — silently clears the quick-range pill and, under
+  // syncTime, broadcasts the shift to every sibling cell.
+  // `layout: true` marks a move that is pure chrome compensation rather than
+  // navigation: it additionally suppresses the sibling broadcast (see the flags
+  // in ChartCore). Callers must tolerate this being null (chart not mounted yet)
+  // by making the call directly — the move still needs to happen.
+  programmaticMove: (<T>(fn: () => T, opts?: { layout?: boolean }) => T) | null = null;
+
   constructor(cellId: string, scope: string) {
     this.cellId = cellId;
     this.scope = scope;

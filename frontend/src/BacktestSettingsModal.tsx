@@ -3,8 +3,9 @@
 // (useDraggable/useCloseOnEscape/CloseButton, .modal-backdrop/.modal/.modal-head/
 // .modal-foot) — no shared wrapper, no portal.
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import type { Chart } from "klinecharts";
 import CloseButton from "./CloseButton";
 import InfoTip from "./components/InfoTip";
 import NumberField from "./components/NumberField";
@@ -36,6 +37,7 @@ import {
   requestWfoCancel,
   progressStageSignal,
   backtestConfigLive,
+  backtestPanelHiddenSignal,
 } from "./lib/signals";
 import { stageLabel } from "./lib/progressLabels";
 import { resumeSweep } from "./lib/sweepResume";
@@ -123,6 +125,8 @@ import {
   BACKTEST_RESULTS_COL_DEFAULT_WIDTH,
   loadWfoSchedule,
   saveWfoSchedule,
+  loadBacktestPanelPinned,
+  saveBacktestPanelPinned,
 } from "./lib/persist";
 
 interface Props {
@@ -1147,6 +1151,92 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // Re-clamp on load: a width saved on a wider monitor must not swallow the
   // chart when reopened on a smaller window.
   const [panelWidth, setPanelWidth] = useState<number>(() => clampWidth(loadBacktestPanelWidth()));
+  // Layout mode: pinned docks the panel beside the chart (the chart shrinks —
+  // the pre-overlay behaviour); unpinned overlays the chart and auto-hides on
+  // chart click. Device-local, like the width.
+  const [pinned, setPinnedState] = useState<boolean>(loadBacktestPanelPinned);
+  const setPinned = (on: boolean) => {
+    setPinnedState(on);
+    saveBacktestPanelPinned(on);
+  };
+  // Overlay hidden state (module signal so the toolbar can reveal, see
+  // signals.ts). Reset on unmount: a re-opened panel always starts revealed.
+  const hidden = useSyncExternalStore(
+    (cb) => backtestPanelHiddenSignal.subscribe(cb),
+    () => backtestPanelHiddenSignal.value,
+  );
+  useEffect(() => () => backtestPanelHiddenSignal.set(false), []);
+  // The unpinned overlay is portaled into App's `main.chart` rather than
+  // rendered here. Its containing block decides what it covers: parented to
+  // .workspace (this component's render site) the absolute wrapper spanned the
+  // WHOLE workspace, so it sat on top of the alerts sidebar / trade sidebar /
+  // live-trading panel whenever those were open, and the right-offset
+  // compensation above overshot by their widths. Anchored to the chart area,
+  // `right: 0` means the chart's right edge and overlayWidth is correct by
+  // construction. Pinned mode is NOT portaled: docking is a flex-order
+  // question that belongs to App (chart, alerts, trade, backtest, live), and
+  // moving the render site would reshuffle that order.
+  // Looked up from the DOM, not passed as a ref, because App renders this
+  // panel as a SIBLING of main.chart — there is no ref to thread down without
+  // rewiring the render site. The lazy initial read covers a panel opened into
+  // an already-painted app (the common case, portaling on the very first
+  // render with no remount); the mount-once layout effect covers the panel
+  // being open at first paint, where main.chart is only in the DOM by the time
+  // effects run. Once, not per-render: main.chart is rendered unconditionally
+  // by App for the app's whole lifetime, so the host can't go stale.
+  const [chartHost, setChartHost] = useState<HTMLElement | null>(() =>
+    document.querySelector<HTMLElement>("main.chart"),
+  );
+  useLayoutEffect(() => {
+    const el = document.querySelector<HTMLElement>("main.chart");
+    setChartHost((prev) => (prev === el ? prev : el));
+  }, []);
+  // Hiding while focus is inside the panel would leave the caret in a field
+  // that is sliding off-screen: for the 180ms of the transition (and after it,
+  // since .bt-hidden only flips `visibility` once the slide ends) typing would
+  // still land in an input nobody can see, and Tab would walk a hidden form.
+  // Blur back to the body so the next keystroke reaches the chart instead.
+  // Scoped to the panel subtree so it can never steal focus from elsewhere.
+  useEffect(() => {
+    if (pinned || !hidden) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest(".bt-overlay")) active.blur();
+  }, [hidden, pinned]);
+  // Chart mousedown → hide (unpinned only). Capture-phase document listener
+  // keyed on .chart-cells: only real chart-area presses hide — panel clicks,
+  // toolbar clicks, and portaled popovers never match, so nothing hover- or
+  // focus-based can accidentally dismiss the panel.
+  useEffect(() => {
+    if (pinned || hidden) return;
+    const onDown = (e: MouseEvent) => {
+      // While a run streams you're watching results land — chart clicks
+      // shouldn't dismiss them. Hide-on-click resumes when the run completes.
+      const running =
+        backtestRunningSignal.value ||
+        !!sweepStateSignal.value?.running ||
+        !!wfoStateSignal.value?.running;
+      if (running) return;
+      const t = e.target as Element | null;
+      if (t?.closest(".chart-cells")) backtestPanelHiddenSignal.set(true);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [pinned, hidden]);
+  // Pick Range is a chart drag by definition: arming it ducks the overlay out
+  // of the way; disarming (picked or cancelled) brings it back. Pinned mode
+  // needs no duck — the chart isn't covered.
+  // The reveal on disarm is deliberately UNCONDITIONAL — it overrides an
+  // earlier deliberate hide. Arming Pick Range means the user is mid-edit in
+  // the range fields this pick fills in, so dropping them back at those fields
+  // is what they asked for; leaving the panel hidden would strand the result.
+  const prevPicking = useRef(false);
+  useEffect(() => {
+    if (!pinned) {
+      if (pickingRange) backtestPanelHiddenSignal.set(true);
+      else if (prevPicking.current) backtestPanelHiddenSignal.set(false);
+    }
+    prevPicking.current = pickingRange;
+  }, [pickingRange, pinned]);
   const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -1185,6 +1275,122 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   const [resultsColWidth, setResultsColWidth] = useState<number>(() =>
     clampColWidth(loadBacktestResultsColWidth()),
   );
+  // While the overlay is visible it covers the chart's right edge — exactly
+  // where the newest candles sit. Compensate by widening the whitespace right
+  // of the last bar by the overlay's width, so the latest bars slide left into
+  // view, and give exactly that back on hide/close/pin.
+  //
+  // RELATIVE moves, not capture-base/restore-base. klinecharts'
+  // getOffsetRightDistance() returns the LIVE scroll position clamped at zero
+  // (Math.max(0, lastBarRightSideDiffBarCount * barSpace)) and
+  // setOffsetRightDistance() force-scrolls the last bar to that distance — so
+  // capturing a base on reveal and setting it back on hide teleports the chart
+  // to the newest candle whenever the user panned in between (and reads 0 for
+  // any pan into history). scrollByDistance is a pure delta, so applying and
+  // reversing it cancels out wherever the user has since scrolled to. No
+  // animationDuration — the shift must be instant, not a visible slide.
+  //
+  // The bookkeeping is in BARS, not pixels, because the store is: the scroll
+  // position is _lastBarRightSideDiffBarCount and StoreImp.scroll does
+  // `diffBarCount -= distance / barSpace`, converting at CALL time. Pay -720px
+  // at barSpace 10 (72 bars) and hand +720px back after the user zoomed to
+  // barSpace 20 and you have only returned 36 bars — a strip of whitespace
+  // that never goes away. So `appliedBarsRef` holds the gap this panel has
+  // added, in bars, and every path drives that number to a new target via the
+  // delta; cleanup drives it to zero. One number, so the width path and the
+  // teardown path can never disagree about what is owed.
+  //
+  // Compensation targets the FOCUSED cell only. In a multi-cell grid the
+  // overlay covers whatever cells sit under it, and those are knowingly left
+  // uncompensated — there is one controller here, and shifting siblings the
+  // user is not interacting with would be worse than the coverage.
+  const appliedBarsRef = useRef(0);
+  // Leave this much chart visibly uncovered by the shift. The user-facing width
+  // clamps measure the WINDOW, but the chart is narrower than that whenever the
+  // alerts (300px) / trade (268px) sidebars are open, and a side-by-side layout
+  // (720 + 560) can exceed the chart outright. Asking for a gap wider than the
+  // chart runs into klinecharts' own right-scroll limit, which clamps the apply
+  // but not the reversal — the view then drifts left by the remainder. Clamping
+  // here rather than in clampWidth/clampColWidth on purpose: those own what the
+  // user dragged and what gets persisted, this owns only how far we scroll.
+  const MIN_UNCOVERED_CHART = 120;
+  const overlayWidth = panelWidth + (sideBySide ? resultsColWidth : 0);
+  // How much the chart should currently be shifted by, or null when there is
+  // nothing sane to compute it from. clientWidth 0 means the chart is not laid
+  // out — the toolbar's Backtest button works while the trading dock is
+  // maximized, which sets .workspace display:none, and scrolling a zero-size
+  // chart just banks a nonsense offset that outlives the un-maximize.
+  const compensationPx = () => {
+    const avail = chartHost?.clientWidth ?? 0;
+    if (avail <= 0) return null;
+    return Math.min(overlayWidth, Math.max(0, avail - MIN_UNCOVERED_CHART));
+  };
+  // Move the applied gap to `targetPx` worth of bars, scrolling by the
+  // difference only. Idempotent: re-running with an unchanged target is a
+  // no-op, which is what lets the two effects below overlap harmlessly.
+  const applyCompensation = (chart: Chart, targetPx: number) => {
+    const barSpace = chart.getBarSpace().bar;
+    if (!barSpace) return; // pre-layout chart; nothing to convert against
+    const targetBars = targetPx / barSpace;
+    const deltaBars = targetBars - appliedBarsRef.current;
+    if (!deltaBars) return;
+    // Negative distance widens the right gap.
+    const scroll = () => chart.scrollByDistance(-deltaBars * barSpace);
+    // Flagged as a LAYOUT move: klinecharts fires its `onScroll` action (which
+    // setOffsetRightDistance would not), and ChartCore's listener otherwise
+    // reads it as a user gesture — dropping the quick-range pill and, under
+    // syncTime, broadcasting the shift to every sibling cell. Null before the
+    // cell has mounted its chart; the move still has to happen, so fall back.
+    if (controller?.programmaticMove) controller.programmaticMove(scroll, { layout: true });
+    else scroll();
+    appliedBarsRef.current = targetBars;
+  };
+  // Reveal / hide / pin / cell-focus change: apply synchronously, so the shift
+  // lands in the same frame the panel appears rather than a frame later.
+  useEffect(() => {
+    if (pinned || hidden) return;
+    const chart = controller?.chart;
+    if (!chart) return;
+    const target = compensationPx();
+    if (target == null) return;
+    applyCompensation(chart, target);
+    return () => {
+      // Only reverse against the chart we actually scrolled: a tab switch
+      // disposes the cell's chart and assigns a new one to the controller, and
+      // paying the gap back to a destroyed instance is at best a no-op. Either
+      // way the debt is settled, so the ref resets — a stale count would be
+      // charged to the next chart that mounts.
+      if (controller.chart === chart) applyCompensation(chart, 0);
+      appliedBarsRef.current = 0;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinned, hidden, controller, chartHost]);
+  // Width changes (the left-edge drag handle, the side-by-side toggle) go
+  // through a rAF instead. The drag fires pointermove per frame, and running
+  // the effect above's cleanup+apply per move meant two full klinecharts layout
+  // cycles and two onScroll dispatches per pixel. Coalescing to one NET delta
+  // per frame is invisible to the result — appliedBarsRef makes every pass a
+  // difference against what is already applied, not a fresh apply.
+  const compensationRafRef = useRef(0);
+  useEffect(() => {
+    if (pinned || hidden) return;
+    const chart = controller?.chart;
+    if (!chart) return;
+    compensationRafRef.current = requestAnimationFrame(() => {
+      compensationRafRef.current = 0;
+      // Re-check: a frame is long enough for the cell to have swapped charts.
+      if (controller.chart !== chart) return;
+      const target = compensationPx();
+      if (target == null) return;
+      applyCompensation(chart, target);
+    });
+    return () => {
+      if (!compensationRafRef.current) return;
+      cancelAnimationFrame(compensationRafRef.current);
+      compensationRafRef.current = 0;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlayWidth, pinned, hidden, controller, chartHost]);
   const onResultsColResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -1865,8 +2071,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     </div>
   );
 
-  return (
+  const tree = (
     <>
+    <div className={pinned ? "bt-dock" : `bt-overlay${hidden ? " bt-hidden" : ""}`}>
     {sideBySide && (
       <aside className={`bt-results-col bt-mode-${btMode}`} style={{ width: resultsColWidth }}>
         <div
@@ -1925,7 +2132,32 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           <span className="bt-cfg-title">
             Backtest — <strong>{epic}</strong> <span className="bt-cfg-res">{effectiveRes}</span>
           </span>
-          <CloseButton onClick={onClose} />
+          <span className="bt-cfg-head-actions">
+            <Tooltip
+              content={
+                pinned
+                  ? "Unpin: overlay the chart and hide on chart click"
+                  : "Pin: dock beside the chart (chart shrinks)"
+              }
+            >
+              <button
+                className={`bt-pin-btn${pinned ? " on" : ""}`}
+                aria-label={pinned ? "Unpin panel" : "Pin panel"}
+                onClick={() => setPinned(!pinned)}
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                  <path
+                    d="M9.5 1.5l5 5-2.2.6-2.5 2.5.4 3.4-2-2-4.2 4.2-1-1L7.2 10l-2-2 3.4.4 2.5-2.5.4-2.4z"
+                    fill={pinned ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </Tooltip>
+            <CloseButton onClick={onClose} />
+          </span>
         </div>
 
         <div className="bt-split" ref={splitRef}>
@@ -2993,8 +3225,22 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           />
         </div>
     </aside>
+    </div>
+    {!pinned && hidden && (
+      <button
+        className="bt-peek"
+        aria-label="Show backtest panel"
+        onClick={() => backtestPanelHiddenSignal.set(false)}
+      >
+        ◂ Backtest
+      </button>
+    )}
     </>
   );
+  // Falls back to rendering in place when there is no chart area to portal
+  // into (no App shell around us — tests, or a mount that races the chart):
+  // wrong anchor beats an invisible panel.
+  return pinned || !chartHost ? tree : createPortal(tree, chartHost);
 }
 
 // Results-column icon: a panel with a column pane on the left and an arrow

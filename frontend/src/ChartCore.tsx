@@ -368,19 +368,43 @@ export default function ChartCore({
   // data-load effect (priceSide/broker change, same pending pick) can't start a
   // second concurrent walk over the same token.
   const launchedTokenRef = useRef<RangeReq | null>(null);
-  // True while a range pick is programmatically moving the view, so the
-  // scroll/zoom listener doesn't treat it as a manual gesture and clear the pill.
+  // True while WE are moving the view (rather than the user), so the scroll/zoom
+  // listener doesn't treat it as a manual gesture and clear the quick-range pill.
   const programmaticMoveRef = useRef(false);
-  // Pan/zoom the chart to a window without the scroll/zoom listener clearing the
-  // active-range pill: flag the move as programmatic, then release on the next
-  // macrotask after klinecharts has emitted its scroll event.
-  const fitVisibleRange = (chart: Chart, fromTs: number, toTs: number) => {
+  // True while a LAYOUT-DRIVEN move is in flight (the backtest overlay's chart
+  // offset compensation). A strictly stronger suppression than
+  // programmaticMoveRef: that one only silences the pill, this one ALSO silences
+  // the date-range broadcast to sibling cells. The distinction is deliberate. A
+  // quick-range pick (fitVisibleRange) really does move the window to one the
+  // user asked for, so under syncTime the siblings SHOULD follow — that is the
+  // link working, and this change must not alter it. Chrome sliding in over the
+  // chart's right edge is not a view anyone chose: broadcasting it would shove
+  // every synced sibling sideways by THIS cell's panel width, then shove them
+  // back on hide, for a panel they can't even see.
+  const layoutMoveRef = useRef(false);
+  // Run `fn` with the scroll/zoom listener told this move is ours, releasing on
+  // the next macrotask — klinecharts emits its scroll event synchronously, but
+  // the listener's follow-ups settle by the end of the tick. `layout` opts into
+  // the stronger suppression described above. Published on the controller so
+  // outside chrome that scrolls this cell (the backtest overlay panel) can use
+  // it; also the single implementation behind fitVisibleRange, so the pill
+  // suppression can't drift between the two.
+  const programmaticMove = <T,>(fn: () => T, opts?: { layout?: boolean }): T => {
     programmaticMoveRef.current = true;
-    applyVisibleRange(chart, fromTs, toTs);
-    setTimeout(() => {
-      programmaticMoveRef.current = false;
-    }, 0);
+    if (opts?.layout) layoutMoveRef.current = true;
+    try {
+      return fn();
+    } finally {
+      setTimeout(() => {
+        programmaticMoveRef.current = false;
+        layoutMoveRef.current = false;
+      }, 0);
+    }
   };
+  // Pan/zoom the chart to a window without the scroll/zoom listener clearing the
+  // active-range pill.
+  const fitVisibleRange = (chart: Chart, fromTs: number, toTs: number) =>
+    programmaticMove(() => applyVisibleRange(chart, fromTs, toTs));
 
   // Extend any higher-timeframe EMA/MA overlay to cover the currently-loaded
   // history. The stashed HTF series is sized to the span loaded WHEN the indicator
@@ -2673,6 +2697,10 @@ export default function ChartCore({
       // scrolling to it (see coverBacktestTradeTo). Registered per-chart so the
       // panel's selection subscription — which only holds the Chart — can reach it.
       controller.coverBacktestTradeTo = (fromTs) => coverBacktestTradeTo(fromTs);
+      // Let outside chrome move this cell's view without the scroll listener
+      // reading it as a user gesture (see programmaticMove). Used by the
+      // unpinned backtest panel's offset compensation.
+      controller.programmaticMove = programmaticMove;
       registerBacktestPager(chart, (fromTs) => coverBacktestTradeTo(fromTs));
       // Hydrate this cell's saved indicators synchronously on chart-ready (they
       // recalc once data arrives). Done here — not after the async data fetch — so
@@ -2737,6 +2765,7 @@ export default function ChartCore({
       controller.focusChart = null;
       controller.coverDrawingAnchors = null;
       controller.coverBacktestTradeTo = null;
+      controller.programmaticMove = null;
       registerBacktestPager(chart, null);
       const w = window as unknown as { __charts?: Map<string, Chart> };
       w.__charts?.delete(cellId);
@@ -3354,6 +3383,12 @@ export default function ChartCore({
       // to the period-start timestamp and only becomes visible once you scroll/zoom
       // away from the left edge, which is exactly when it's useful.
       if (!programmaticMoveRef.current) setActiveRange(null);
+      // A layout move (the backtest overlay's offset compensation) is chrome
+      // sliding over this cell's right edge, not a window anyone navigated to,
+      // so it must not drive the date-range link — siblings would jump sideways
+      // by this cell's panel width and back again. Programmatic moves that ARE
+      // navigation (a quick-range pick) deliberately fall through and publish.
+      if (layoutMoveRef.current) return;
       if (!syncTimeRef.current || !isGestureCell(cellId)) return;
       // A window edge in whitespace past the last bar is extrapolated (not bailed on),
       // so panning into right-edge whitespace keeps driving the followers — they reveal

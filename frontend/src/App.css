@@ -26,10 +26,38 @@
 /* Horizontal row holding the chart and (optionally) the alerts sidebar. Takes
    all remaining vertical space below the toolbar. min-height:0 lets the chart
    flex-shrink so its inner canvas can size correctly. */
+/* No position: relative — it was here only to be the unpinned overlay's
+   containing block, and the overlay now anchors to .chart (see below). Checked
+   before removing: every other child subtree (.alerts-panel, .trade-sidebar,
+   .live-panel/.bt-cfg-panel, .bt-results-col, .chart) has no absolutely-
+   positioned descendant that was resolving against it. */
 .workspace { flex: 1; display: flex; min-height: 0; }
 /* .chart becomes a flex row: the draw sidebar + the cell grid. position:relative
    moves to .chart-cells so absolutely-positioned grid children keep working. */
-.chart { flex: 1; min-width: 0; display: flex; }
+/* position: relative makes this the containing block for the unpinned backtest
+   overlay, which portals in here so it covers the chart and NOT the alerts /
+   trade / live-trading panels beside it. Deliberately no z-index: `auto` keeps
+   this out of the stacking-context business so the overlay's z 55 still
+   compares against the in-cell pill ladder (see .bt-overlay). Descendants are
+   unaffected — .chart-cells, .chart-cell and .draw-sidebar's positioned
+   elements are already position: relative, so nothing resolved against
+   .workspace through here.
+   overflow-x: clip contains the HIDDEN overlay: .bt-hidden parks the ~720px
+   panel at translateX(100%), i.e. entirely to the right of this box, and no
+   ancestor up to <html> establishes a scroll container — so without this the
+   document grew a horizontal scrollbar every time the panel auto-hid. `clip`
+   rather than `hidden` on purpose: `hidden` would make .chart a scroll
+   container (programmatically scrollable, and it traps position:fixed
+   descendants), while `clip` only paints-clips. Critically, neither `clip` nor
+   `hidden` creates a stacking context, so the z-ladder warning three lines
+   below (never give .chart a z-index / transform / filter / opacity) still
+   holds — the overlay's z 55 keeps comparing against the in-cell pill ladder.
+   Only the x axis is clipped, and `clip` is also what makes that possible:
+   pairing overflow-x: hidden with a `visible` y computes the y to `auto`
+   (another scroll container), whereas `clip` leaves overflow-y: visible alone.
+   The one absolutely-positioned escapee inside here, .ds-flyout, opens at x≈48px
+   (right of the draw sidebar) and is nowhere near the clip edge. */
+.chart { flex: 1; min-width: 0; display: flex; position: relative; overflow-x: clip; }
 .chart-cells { flex: 1; position: relative; min-width: 0; }
 
 /* --- left drawing sidebar (TV-style) --- */
@@ -1146,6 +1174,68 @@
   font-size: 15px; line-height: 1; cursor: pointer; border-radius: 4px;
 }
 .bt-results-layout-btn:hover { background: var(--hover); border-color: var(--text-faint); }
+/* Backtest panel layout modes. Pinned: the wrapper dissolves (display:contents)
+   so both asides stay flex siblings of .chart — the pre-overlay docked layout,
+   unchanged. Unpinned: the wrapper overlays the chart's right edge inside
+   .workspace; the chart canvas never resizes. Hidden slides it off-screen but
+   keeps it mounted, preserving config/results state. */
+.bt-dock { display: contents; }
+/* z 55 / peek 54: nothing between the overlay's containing block and the
+   in-cell DOM creates a stacking context (.chart / .chart-cells / .chart-cell
+   are position:relative with z-index:auto), so the overlay competes DIRECTLY
+   with the in-cell pill ladder (ba-tag 44 … chart legend/search-glow 50 — see
+   the ladder comment at the top of this file). At the old z 30 the price tag
+   (47) and trade pills (46-49) painted straight THROUGH the panel. 55 clears
+   the in-cell max (50); the ceiling is 60, where .merge-drop and .ds-flyout
+   live — both must stay above the panel — and the portaled dropdown band
+   (100 / 2000 / 2100) above them. Keep this window: never give .chart or
+   .chart-cells a z-index (or a transform/filter/opacity), or the overlay gets
+   trapped in a new stacking context and this whole comparison inverts.
+   Band rule for anything OUTSIDE the chart: a menu anchored in the toolbar or
+   the tab bar but positioned to hang BELOW it overlaps the chart region, so it
+   overlaps this panel too and needs z >= 55 — 100 is the established value for
+   that band (.menu > .dropdown, .broker-menu). A z in the 40s/50s reads fine
+   against the in-cell ladder and then paints behind the overlay. */
+.bt-overlay {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  display: flex;
+  z-index: 55;
+  transition: transform 0.18s ease;
+  /* No box-shadow: the app is deliberately flat (same note at .cell-swap,
+     .snapshot-banner, .mi-popover, and CLAUDE.md's tooltip convention). The
+     panel's own border-left is the edge. */
+}
+.bt-overlay.bt-hidden {
+  transform: translateX(100%);
+  pointer-events: none;
+  visibility: hidden;
+  transition: transform 0.18s ease, visibility 0s 0.18s;
+}
+/* Right-pinned cluster in the config header: pin toggle + close. */
+.bt-cfg-head-actions { display: inline-flex; align-items: center; gap: 6px; }
+.bt-pin-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  cursor: pointer; border-radius: 4px;
+}
+.bt-pin-btn:hover { background: var(--hover); border-color: var(--text-faint); }
+.bt-pin-btn.on { color: var(--accent); border-color: var(--accent); }
+/* Peek tab: the only visible remnant of a hidden overlay — right edge,
+   vertically centered, brings the panel back. */
+.bt-peek {
+  position: absolute;
+  right: 0; top: 40%;
+  z-index: 54; /* one below .bt-overlay (55), same reasoning — see above. */
+  writing-mode: vertical-rl;
+  padding: 10px 4px;
+  border: 1px solid var(--border); border-right: none;
+  border-radius: 6px 0 0 6px;
+  background: var(--surface); color: var(--text-faint);
+  font-size: 11px; cursor: pointer;
+}
+.bt-peek:hover { color: var(--text); background: var(--hover); }
 /* Left-edge drag handle: grab to resize the panel, double-click to reset. */
 .bt-resize-handle {
   position: absolute;
@@ -1729,6 +1819,12 @@
 .bt-presets > .al-row.bt-presets-golive { flex: 1 1 100%; justify-content: flex-start; }
 @media (prefers-reduced-motion: reduce) {
   .bt-switch, .bt-switch-knob { transition: none; }
+  /* The overlay's hide/reveal slide is decoration, not information — with
+     motion reduced it snaps. The .bt-hidden selector is repeated because its
+     own `transition` (which delays `visibility` until the slide finishes)
+     is more specific and would otherwise keep animating. Dropping it is
+     correct here: with no slide, visibility should flip instantly. */
+  .bt-overlay, .bt-overlay.bt-hidden { transition: none; }
 }
 
 /* Costs: a 2x2 grid (was 4 stacked full-width rows) with the label stacked
@@ -3560,8 +3656,12 @@
 .env-dot.live { background: var(--danger); } /* real money */
 .broker-selector-label { font-weight: 500; color: var(--text); }
 
+/* z 100, matching .menu > .dropdown: this drops out of the tab bar and hangs
+   DOWN into the chart region, so it overlaps the unpinned backtest overlay
+   (z 55) — at its old z 50 it was painted behind the panel. See the band rule
+   in the z-ladder comment at .bt-overlay. */
 .broker-menu {
-  position: absolute; top: calc(100% + 5px); right: 0; z-index: 50;
+  position: absolute; top: calc(100% + 5px); right: 0; z-index: 100;
   min-width: 188px; padding: 4px; background: var(--surface);
   border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.45);

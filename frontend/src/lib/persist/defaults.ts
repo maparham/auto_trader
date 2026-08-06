@@ -237,6 +237,17 @@ export function saveBacktestResultsColWidth(w: number): void {
   saveLocal(BACKTEST_RESULTS_COL_WIDTH_KEY, w);
 }
 
+// Backtest panel layout mode: pinned docks the panel beside the chart (the
+// chart shrinks, pre-overlay behaviour); unpinned overlays the chart and
+// auto-hides on chart click. Device-local view preference like the width above.
+const BACKTEST_PANEL_PINNED_KEY = `${PREFIX}.backtestPanelPinned`;
+export function loadBacktestPanelPinned(): boolean {
+  return load<boolean>(BACKTEST_PANEL_PINNED_KEY, false);
+}
+export function saveBacktestPanelPinned(on: boolean): void {
+  saveLocal(BACKTEST_PANEL_PINNED_KEY, on);
+}
+
 // Whether the docked backtest config panel was open. Device-local view
 // preference (like side & split) so the panel reopens after a reload if it was
 // open — showing the already-persisted config/results, without re-running.

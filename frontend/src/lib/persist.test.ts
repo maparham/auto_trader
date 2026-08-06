@@ -928,3 +928,13 @@ describe("backtest results side-by-side prefs", () => {
     expect(P.loadBacktestResultsColWidth()).toBe(600);
   });
 });
+
+describe("backtest panel pinned", () => {
+  it("backtest panel pinned: defaults to false (overlay) and round-trips", () => {
+    expect(P.loadBacktestPanelPinned()).toBe(false);
+    P.saveBacktestPanelPinned(true);
+    expect(P.loadBacktestPanelPinned()).toBe(true);
+    P.saveBacktestPanelPinned(false);
+    expect(P.loadBacktestPanelPinned()).toBe(false);
+  });
+});
