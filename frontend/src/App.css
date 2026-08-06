@@ -1721,6 +1721,12 @@
 .bt-presets { display: flex; flex-wrap: wrap; gap: 10px 24px; }
 .bt-presets > .al-row { flex: 1 1 260px; min-width: 0; }
 .bt-presets .al-row > span { width: auto; }
+/* Go live acts on the current config, not the loaded preset, so it keeps its
+   own line below the Save/Load pair rather than becoming a third column. */
+/* flex-start, not the .al-row default space-between: there is no flexible
+   input here, so the button would otherwise be flung to the panel edge
+   instead of lining up with the Save-as input and Load select above. */
+.bt-presets > .al-row.bt-presets-golive { flex: 1 1 100%; justify-content: flex-start; }
 @media (prefers-reduced-motion: reduce) {
   .bt-switch, .bt-switch-knob { transition: none; }
 }
@@ -1984,7 +1990,7 @@
 .bt-cfg-foot { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
 /* The mode switch sits at the far-left of the footer; the slack is eaten by
    .bt-sweep-foot-info (the flexible sweep-info slot), so the run cluster
-   (Go live / Run) stays pinned on the right whatever the mode shows. */
+   (Run) stays pinned on the right whatever the mode shows. */
 .bt-cfg-foot .bt-run-cluster { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
 .bt-golive { color: var(--text-faint); }
 .bt-golive:hover { color: var(--text); }

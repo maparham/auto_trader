@@ -1694,8 +1694,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
 
   // The Cancel-sweep/Clear-results lead and the Run button normally sit in the
   // panel footer, but move to the docked column's own footer when it is open —
-  // Go live and the sweep info (counters, Search/Compute toggles) stay behind
-  // in the panel. Built once here because either footer may render them.
+  // the sweep info (counters, Search/Compute toggles) stays behind in the
+  // panel. Built once here because either footer may render them.
   const runClusterLead =
     btMode === "sweep" && sweepState ? (
       sweepState.running ? (
@@ -2811,7 +2811,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             <section className="bt-scroll-section" ref={setRef("presets")}>
           <Section
             title="Presets"
-            info="Save the whole configuration (range, mask, rules, risk, costs) under a name to reload later."
+            info="Save the whole configuration (range, mask, rules, risk, costs) under a name to reload later, or send it to the Live panel."
           >
             <div className="bt-presets">
               <div className="al-row">
@@ -2841,6 +2841,17 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 <button className="ghost" onClick={() => removePreset(loadName)} disabled={!loadName}>
                   Delete
                 </button>
+              </div>
+              {/* Its own full-width row, deliberately not appended to the Load
+                  row: this sends the CURRENTLY configured strategy to the Live
+                  panel, not whichever preset the Load dropdown is showing. */}
+              <div className="al-row bt-presets-golive">
+                <span>Live</span>
+                <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
+                  <button className="ghost bt-golive" onClick={() => requestGoLive(cfg)}>
+                    Go live →
+                  </button>
+                </Tooltip>
               </div>
             </div>
           </Section>
@@ -2976,7 +2987,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               )}
             </>}
             runClusterLead={sideBySide ? null : runClusterLead}
-            onGoLive={() => requestGoLive(cfg)}
             runLabel={runLabel}
             runDisabled={runDisabled}
             onRun={sideBySide ? undefined : runFromFooter}

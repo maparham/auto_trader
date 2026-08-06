@@ -1,5 +1,5 @@
 // The backtest modal footer: a flexible sweep-info slot on the left and a
-// right-pinned run cluster (Go live, Run). Extracted from BacktestSettingsModal
+// right-pinned run cluster (Run). Extracted from BacktestSettingsModal
 // so the footer layout lives in one place. The Backtest | Sweep | Walk-fwd mode switch
 // (`ModeSeg`) renders in the Results header row instead, but is exported from
 // here so mode UI stays alongside the rest of the run controls. The four
@@ -8,9 +8,10 @@
 // (it only applies to a single backtest), not here. `runClusterLead` is an
 // optional slot at the head of the right-pinned run cluster — the sweep view
 // puts its Cancel/Clear-results button there so it reads as a footer action.
-// `onGoLive` and `onRun` are optional so the modal can split the footer when
-// the docked results column is open: the panel keeps Go live + sweep info,
-// the column's own footer takes Cancel/Clear + Run.
+// `onRun` is optional so the modal can split the footer when the docked
+// results column is open: the panel keeps the sweep info, the column's own
+// footer takes Cancel/Clear + Run. "Go live →" is not here — it lives in the
+// Presets section of the config panel, next to save/load.
 // There is no Close button here — the header × is the only close control.
 
 import type { JSX, ReactNode } from "react";
@@ -72,7 +73,6 @@ export function RunBar(props: {
   lead?: ReactNode;
   sweepInfo: ReactNode;
   runClusterLead?: ReactNode;
-  onGoLive?: () => void;
   runLabel?: string;
   runDisabled?: boolean;
   onRun?: () => void;
@@ -81,7 +81,6 @@ export function RunBar(props: {
     lead,
     sweepInfo,
     runClusterLead,
-    onGoLive,
     runLabel,
     runDisabled,
     onRun,
@@ -98,13 +97,6 @@ export function RunBar(props: {
       <span className="bt-sweep-foot-info">{sweepInfo}</span>
       <div className="bt-run-cluster">
         {runClusterLead}
-        {onGoLive && (
-          <Tooltip content="Copy this strategy into the Live panel to trade a demo/live account">
-            <button className="ghost bt-golive" onClick={onGoLive}>
-              Go live →
-            </button>
-          </Tooltip>
-        )}
         {onRun && (
           <button className="bt-run-btn" onClick={onRun} disabled={runDisabled}>
             {runLabel}
