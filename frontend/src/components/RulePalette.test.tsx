@@ -34,6 +34,18 @@ describe("RulePalette", () => {
     }
   });
 
+  // The infix spelling is the one we want people reaching for, so it has to sit
+  // above the function forms in the Crosses group rather than below them.
+  it("lists the infix cross operators before the function forms", () => {
+    open();
+    const labels = screen.getAllByRole("button").map((b) => b.textContent ?? "");
+    const first = (needle: string) => labels.findIndex((l) => l.includes(needle));
+    expect(first("a x> b")).toBeGreaterThanOrEqual(0);
+    expect(first("a x< b")).toBeGreaterThan(first("a x> b"));
+    expect(first("crossAbove(a, b)")).toBeGreaterThan(first("a x< b"));
+    expect(first("crossBelow(a, b)")).toBeGreaterThan(first("crossAbove(a, b)"));
+  });
+
   it("filters items and hides groups with no match", async () => {
     open();
     await userEvent.type(screen.getByLabelText("Filter palette"), "cross");

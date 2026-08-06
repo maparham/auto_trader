@@ -397,7 +397,7 @@ class CompiledRow:
         if isinstance(node, N.Compare):
             return self._cmp(node, i, entry_price, entry_i)
         if isinstance(node, N.Chain):
-            return all(self._cmp(p, i, entry_price, entry_i) for p in node.parts)
+            return all(self._match_at(p, i, entry_price, entry_i) for p in node.parts)
         # Cross
         if i == 0:
             return False
@@ -463,7 +463,7 @@ def compile_row(node: N.Row, candles, resolution, htf,
         seen: set[int] = set()
         subs = []
         for p in node.parts:
-            for operand in (p.left, p.right):
+            for operand in N.part_operands(p):
                 if id(operand) not in seen:
                     seen.add(id(operand))
                     subs.append(operand)

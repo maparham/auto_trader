@@ -51,7 +51,14 @@ def tokenize(src: str) -> list[Token]:
             # mintInstanceId — lexes verbatim, with no id<->token mapping table.
             while j < n and (src[j].isalnum() or src[j] in "_#"):
                 j += 1
-            out.append(Token("NAME", src[i:j], i, j))
+            word = src[i:j]
+            # A bare "x" fused to a comparison bracket is the infix cross
+            # operator: x> (crosses above) / x< (crosses below).
+            if word == "x" and j < n and src[j] in "<>":
+                out.append(Token("XGT" if src[j] == ">" else "XLT", src[i:j + 1], i, j + 1))
+                i = j + 1
+                continue
+            out.append(Token("NAME", word, i, j))
             i = j
             continue
         if c in "<>":

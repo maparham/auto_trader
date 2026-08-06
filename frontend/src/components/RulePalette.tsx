@@ -6,7 +6,7 @@
 // all come from FloatingModal.
 
 import { useMemo, useState } from "react";
-import { CANDLE_FIELDS, INDICATORS, WRAPPERS, CROSSES, CONDITIONS, PATTERNS, TIMEFRAMES } from "../lib/expr/catalog";
+import { CANDLE_FIELDS, INDICATORS, WRAPPERS, CROSS_OPS, CROSSES, CONDITIONS, PATTERNS, TIMEFRAMES } from "../lib/expr/catalog";
 import type { CatalogEntry } from "../lib/expr/catalog";
 import FloatingModal from "./FloatingModal";
 import Tooltip from "./Tooltip";
@@ -22,6 +22,10 @@ interface Item {
   detail?: string;
 }
 
+// The infix operators lead the group — they're the preferred spelling; the
+// function forms follow for anyone who already writes them.
+const CROSS_ITEMS: CatalogEntry[] = [...CROSS_OPS, ...CROSSES];
+
 const GROUPS: { title: string; items: Item[] }[] = [
   {
     title: "Candle",
@@ -34,7 +38,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
   ...([
     ["Indicators", INDICATORS],
     ["Wrappers", WRAPPERS],
-    ["Crosses", CROSSES],
+    ["Crosses", CROSS_ITEMS],
     ["Conditions", CONDITIONS],
     ["Patterns", PATTERNS],
   ] as const).map(([title, entries]: [string, CatalogEntry[]]) => ({

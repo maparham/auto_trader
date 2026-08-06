@@ -17,6 +17,7 @@ import type { EditorView } from "@codemirror/view";
 import {
   CANDLE_FIELDS,
   CONDITIONS,
+  CROSS_OPS,
   CROSSES,
   INDICATORS,
   PATTERNS,
@@ -65,6 +66,15 @@ function fnCandidate(entry: CatalogEntry, type: string): WordCandidate {
 const WORD_CANDIDATES: WordCandidate[] = [
   ...INDICATORS.map((e) => fnCandidate(e, "indicator")),
   ...WRAPPERS.map((e) => fnCandidate(e, "wrapper")),
+  ...CROSS_OPS.map((e): WordCandidate => ({
+    label: e.name,
+    type: "cross",
+    detail: e.detail,
+    insert: e.insert,
+    // Select the placeholder operand ("EMA(50)") for overtype, like fn args.
+    argFrom: 3,
+    argTo: e.insert.length,
+  })),
   ...CROSSES.map((e) => fnCandidate(e, "cross")),
   ...CONDITIONS.map((e) => fnCandidate(e, "cross")),
   ...PATTERNS.map((e) => fnCandidate(e, "cross")),

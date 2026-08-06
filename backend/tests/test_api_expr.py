@@ -389,3 +389,22 @@ def test_series_fetches_enough_htf_for_a_pinned_pattern(monkeypatch):
     assert r.status_code == 200, r.text
     # base fetch, then the 1H pin reaching back need = 18 + 1 = 19 hours.
     assert ("HOUR", 0 - 19 * 3600) in calls
+
+
+def test_series_plots_first_operand_of_a_leading_cross_part(monkeypatch):
+    """A chain whose FIRST part is an infix cross has `.a`/`.b`, not
+    `.left`/`.right` — /series must still find the primary series to plot."""
+    async def fake_fetch(broker, epic, resolution, bars, from_ts, to_ts, side):
+        return [candle_from_dto(CandleDTO(**c)) for c in _hourly_dtos()]
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
+    r = client.post("/api/expr/series", json={
+        "epic": "TEST", "resolution": "HOUR",
+        "expr": "EMA(3) x> EMA(4) > EMA(5)",
+        "fromTime": -40 * 3600, "toTime": 0,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # EMA(3) is the plotted operand: defined from bar 2 on, and rising.
+    assert len(body["values"]) == len(body["times"])
+    assert any(v is not None for v in body["values"])

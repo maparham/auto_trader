@@ -66,5 +66,43 @@
       {"ordinal":0,"value":9,"from":25,"to":26,"label":"EMA length"},
       {"ordinal":1,"value":10,"from":29,"to":31,"label":"count window"},
       {"ordinal":2,"value":3,"from":36,"to":37,"label":"threshold"}
-    ] }
+    ] },
+  { "expr": "EMA(9) x> EMA(50)", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":4,"to":5,"label":"EMA length"},
+      {"ordinal":1,"value":50,"from":14,"to":16,"label":"EMA length"}
+    ] },
+  { "expr": "candle.close x< EMA(9)@1H", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":20,"to":21,"label":"EMA length"}
+    ] },
+  { "expr": "count(EMA(9) x> EMA(50), 10) >= 2", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":10,"to":11,"label":"EMA length"},
+      {"ordinal":1,"value":50,"from":20,"to":22,"label":"EMA length"},
+      {"ordinal":2,"value":10,"from":25,"to":27,"label":"count window"},
+      {"ordinal":3,"value":2,"from":32,"to":33,"label":"threshold"}
+    ] },
+  { "expr": "EMA(9) x> EMA(50) > EMA(200)", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":4,"to":5,"label":"EMA length"},
+      {"ordinal":1,"value":50,"from":14,"to":16,"label":"EMA length"},
+      {"ordinal":2,"value":200,"from":24,"to":27,"label":"EMA length"}
+    ] },
+  { "expr": "EMA(9) > EMA(50) x> EMA(200)", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":4,"to":5,"label":"EMA length"},
+      {"ordinal":1,"value":50,"from":13,"to":15,"label":"EMA length"},
+      {"ordinal":2,"value":200,"from":24,"to":27,"label":"EMA length"}
+    ] },
+  { "expr": "candle.close x> 5 > candle.open - 3", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":5,"from":16,"to":17,"label":"constant"},
+      {"ordinal":1,"value":3,"from":34,"to":35,"label":"threshold"}
+    ] },
+  { "expr": "EMA(9) x> EMA(50) x> EMA(200)", "isExit": false, "error": {"code":"multiple_crosses","from":10,"to":29}, "literals": [] },
+  { "expr": "EMA(9) x > EMA(50)", "isExit": false, "error": {"code":"bad_cross_op","from":7,"to":8}, "literals": [] },
+  { "expr": "X> EMA(9)", "isExit": false, "error": {"code":"bad_cross_op","from":0,"to":1}, "literals": [] },
+  { "expr": "EMA(9) > (EMA(9) x> EMA(50))", "isExit": false, "error": {"code":"cross_not_toplevel","from":17,"to":19}, "literals": [] },
+  { "expr": "50x> 60", "isExit": false, "error": {"code":"unknown_name","from":0,"to":3}, "literals": [] }
 ]

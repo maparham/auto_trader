@@ -26,3 +26,19 @@ describe("completionsFor", () => {
     expect(labels).toContain("barsSinceEntry");
   });
 });
+
+describe("infix cross completions", () => {
+  it("offers x> and x< on the x prefix, ranked first", () => {
+    const opts = completionsFor("EMA(9) x", 8);
+    const labels = opts.map((o) => o.label);
+    // prefix rank 3 beats everything; localeCompare tie-break puts x< first
+    expect(labels[0]).toBe("x<");
+    expect(labels[1]).toBe("x>");
+  });
+
+  it("keeps the infix operators in the bare-word candidate set", () => {
+    const labels = completionsFor("", 0).map((o) => o.label);
+    expect(labels).toContain("x>");
+    expect(labels).toContain("crossAbove");
+  });
+});

@@ -248,3 +248,55 @@ describe("candle pattern predicates", () => {
     }
   });
 });
+
+describe("infix cross operators", () => {
+  it("parses a lone x> row with backend-identical literals", () => {
+    const { error, literals } = analyze("EMA(9) x> EMA(50)");
+    expect(error).toBeNull();
+    expect(literals.map((l) => [l.ordinal, l.value, l.from, l.to, l.label])).toEqual([
+      [0, 9, 4, 5, "EMA length"],
+      [1, 50, 14, 16, "EMA length"],
+    ]);
+  });
+
+  it("emits XGT/XLT tokens for the highlighter", () => {
+    const { tokens } = analyze("EMA(9) x> EMA(50)");
+    expect(tokens.some((t) => t.type === "XGT" && t.from === 7 && t.to === 9)).toBe(true);
+    expect(analyze("a x< b").tokens.some((t) => t.type === "XLT")).toBe(true);
+  });
+
+  it("accepts one cross inside a chain", () => {
+    expect(analyze("EMA(9) x> EMA(50) > EMA(200)").error).toBeNull();
+    expect(analyze("EMA(9) > EMA(50) x> EMA(200)").error).toBeNull();
+  });
+
+  it("rejects two crosses in a row", () => {
+    const { error } = analyze("EMA(9) x> EMA(50) x> EMA(200)");
+    expect(error?.code).toBe("multiple_crosses");
+    expect([error?.from, error?.to]).toEqual([10, 29]);
+  });
+
+  it("rejects a nested infix cross as cross_not_toplevel", () => {
+    const { error } = analyze("EMA(9) > (EMA(9) x> EMA(50))");
+    expect(error?.code).toBe("cross_not_toplevel");
+    expect([error?.from, error?.to]).toEqual([17, 19]);
+  });
+
+  it("flags spaced and uppercase x as bad_cross_op", () => {
+    const spaced = analyze("EMA(9) x > EMA(50)");
+    expect(spaced.error?.code).toBe("bad_cross_op");
+    expect([spaced.error?.from, spaced.error?.to]).toEqual([7, 8]);
+    const upper = analyze("X> EMA(9)");
+    expect(upper.error?.code).toBe("bad_cross_op");
+    expect([upper.error?.from, upper.error?.to]).toEqual([0, 1]);
+  });
+
+  it("accepts x> inside count()", () => {
+    expect(analyze("count(EMA(9) x> EMA(50), 10) >= 2").error).toBeNull();
+  });
+
+  it("warms up across a cross part in a chain", () => {
+    expect(warmupOf("EMA(9) x> EMA(50) > EMA(200)")).toBe(200);
+    expect(warmupOf("EMA(9) x> EMA(50)")).toBe(50);
+  });
+});

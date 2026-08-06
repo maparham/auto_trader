@@ -49,10 +49,10 @@ describe("defaultBacktestConfig", () => {
   it("seeds four expression groups: long entry/exit + short entry/exit (mirror)", () => {
     const cfg = defaultBacktestConfig();
     expect(cfg.range).toEqual({ mode: "bars", bars: 500, history: "minimal" });
-    expect(cfg.longEntry.rules[0].expr).toBe("crossAbove(EMA(9), EMA(21))");
-    expect(cfg.longExit.rules[0].expr).toBe("crossBelow(EMA(9), EMA(21))");
-    expect(cfg.shortEntry.rules[0].expr).toBe("crossBelow(EMA(9), EMA(21))"); // mirror of long entry
-    expect(cfg.shortExit.rules[0].expr).toBe("crossAbove(EMA(9), EMA(21))");
+    expect(cfg.longEntry.rules[0].expr).toBe("EMA(9) x> EMA(21)");
+    expect(cfg.longExit.rules[0].expr).toBe("EMA(9) x< EMA(21)");
+    expect(cfg.shortEntry.rules[0].expr).toBe("EMA(9) x< EMA(21)"); // mirror of long entry
+    expect(cfg.shortExit.rules[0].expr).toBe("EMA(9) x> EMA(21)");
     expect(cfg.longEntry.rules[0].enabled).toBe(true);
     expect(cfg.longEnabled).toBe(true); // both sides trade by default
     expect(cfg.shortEnabled).toBe(true);

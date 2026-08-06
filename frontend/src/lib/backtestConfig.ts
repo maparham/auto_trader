@@ -193,16 +193,16 @@ export function longestIndicatorLength(cfg: BacktestConfig): number {
 export function defaultBacktestConfig(): BacktestConfig {
   // The main backtest groups edit as expressions, so each default rule seeds an
   // `{ expr, enabled }` row the CodeMirror editor shows.
-  const cross = (fn: "crossAbove" | "crossBelow"): RuleGroup => ({
+  const cross = (op: "x>" | "x<"): RuleGroup => ({
     combine: "AND",
-    rules: [{ expr: `${fn}(EMA(9), EMA(21))`, enabled: true }],
+    rules: [{ expr: `EMA(9) ${op} EMA(21)`, enabled: true }],
   });
   return {
     range: { mode: "bars", bars: 500, history: "minimal" },
-    longEntry: cross("crossAbove"),
-    longExit: cross("crossBelow"),
-    shortEntry: cross("crossBelow"),
-    shortExit: cross("crossAbove"),
+    longEntry: cross("x>"),
+    longExit: cross("x<"),
+    shortEntry: cross("x<"),
+    shortExit: cross("x>"),
     longEnabled: true,
     shortEnabled: true,
     costs: {

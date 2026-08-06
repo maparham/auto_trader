@@ -38,6 +38,7 @@ const marks: Record<string, Decoration> = {
 
 function classify(tok: Token, prev: Token | undefined, value: string): string | null {
   if (tok.type === "NUMBER") return "number";
+  if (tok.type === "XGT" || tok.type === "XLT") return "cross";
   if (OPERATOR_TYPES.has(tok.type)) return "operator";
   if (tok.type !== "NAME") return null;
   if (prev?.type === "AT") return TF_ALIASES.has(value) ? "timeframe" : "variable";

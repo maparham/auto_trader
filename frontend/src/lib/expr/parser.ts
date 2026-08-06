@@ -86,7 +86,7 @@ interface UnaryNode { kind: "Unary"; operand: Node; start: number; end: number; 
 interface BinaryNode { kind: "Binary"; op: string; left: Node; right: Node; start: number; end: number; }
 interface CompareNode { kind: "Compare"; op: string; left: Node; right: Node; start: number; end: number; }
 interface CrossNode { kind: "Cross"; fn: string; a: Node; b: Node; start: number; end: number; }
-interface ChainNode { kind: "Chain"; parts: CompareNode[]; start: number; end: number; }
+interface ChainNode { kind: "Chain"; parts: Array<CompareNode | CrossNode>; start: number; end: number; }
 interface PredicateNode { kind: "Predicate"; fn: string; base: Node; start: number; end: number; }
 interface CountNode { kind: "Count"; cond: CompareNode | CrossNode | PredicateNode; window: Node; start: number; end: number; }
 interface BarsSinceEntryNode { kind: "BarsSinceEntry"; start: number; end: number; }
@@ -108,6 +108,11 @@ function containsTf(node: Node): boolean {
   if (node.kind === "Predicate") return containsTf(node.base);
   if (node.kind === "Count") return containsTf(node.cond) || containsTf(node.window);
   return false;
+}
+
+/** A chain part's (left, right) operands regardless of its shape. */
+function partOperands(p: CompareNode | CrossNode): [Node, Node] {
+  return p.kind === "Cross" ? [p.a, p.b] : [p.left, p.right];
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +160,15 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
     if (isAlpha(c) || c === "_") {
       let j = i;
       while (j < n && (isAlnum(src[j]) || src[j] === "_")) j += 1;
-      out.push({ type: "NAME", value: src.slice(i, j), start: i, end: j });
+      const word = src.slice(i, j);
+      // A bare "x" fused to a comparison bracket is the infix cross
+      // operator: x> (crosses above) / x< (crosses below).
+      if (word === "x" && j < n && (src[j] === ">" || src[j] === "<")) {
+        out.push({ type: src[j] === ">" ? "XGT" : "XLT", value: src.slice(i, j + 1), start: i, end: j + 1 });
+        i = j + 1;
+        continue;
+      }
+      out.push({ type: "NAME", value: word, start: i, end: j });
       i = j;
       continue;
     }
@@ -184,7 +197,9 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
 // Parser (mirrors parser.py)
 // ---------------------------------------------------------------------------
 
-const CMP_TYPES = new Set(["GT", "LT", "GE", "LE"]);
+const CROSS_OF: Record<string, string> = { XGT: "crossAbove", XLT: "crossBelow" };
+const ROW_OP_TYPES = new Set(["GT", "LT", "GE", "LE", "XGT", "XLT"]);
+const BAD_CROSS_MSG = "Write the cross operator as x> or x< — lowercase, no space.";
 
 class Parser {
   private i = 0;
@@ -199,6 +214,9 @@ class Parser {
   private expect(type: string): LexToken {
     const t = this.peek();
     if (t.type !== type) {
+      if (t.type === "XGT" || t.type === "XLT") {
+        throw new ExprErr("cross_not_toplevel", "A comparison or cross can only be the whole row.", t.start, t.end);
+      }
       throw new ExprErr("unexpected_token", `Expected ${type.toLowerCase()} here.`, t.start, t.end);
     }
     return this.next();
@@ -222,19 +240,30 @@ class Parser {
       this.next();
       return left;
     }
-    if (op.type !== "GT" && op.type !== "LT" && op.type !== "GE" && op.type !== "LE") {
-      throw new ExprErr("expected_operator", "Expected a comparison operator (> < >= <=).", op.start, op.end);
+    if (!ROW_OP_TYPES.has(op.type)) {
+      if (op.type === "NAME" && (op.value === "x" || op.value === "X")) {
+        throw new ExprErr("bad_cross_op", BAD_CROSS_MSG, op.start, op.end);
+      }
+      throw new ExprErr("expected_operator", "Expected a comparison operator (> < >= <= x> x<).", op.start, op.end);
     }
     const symOf: Record<string, string> = { GT: ">", LT: "<", GE: ">=", LE: "<=" };
-    const parts: CompareNode[] = [];
+    const parts: Array<CompareNode | CrossNode> = [];
     let operand: Node = left;
-    while (CMP_TYPES.has(this.peek().type)) {
+    while (ROW_OP_TYPES.has(this.peek().type)) {
       const optok = this.next();
       const right = this.parseArith();
-      parts.push({ kind: "Compare", op: symOf[optok.type], left: operand, right, start: operand.start, end: right.end });
+      if (optok.type in CROSS_OF) {
+        parts.push({ kind: "Cross", fn: CROSS_OF[optok.type], a: operand, b: right, start: operand.start, end: right.end });
+      } else {
+        parts.push({ kind: "Compare", op: symOf[optok.type], left: operand, right, start: operand.start, end: right.end });
+      }
       operand = right;
     }
     this.expect("EOF");
+    const crosses = parts.filter((p) => p.kind === "Cross");
+    if (crosses.length > 1) {
+      throw new ExprErr("multiple_crosses", "Only one cross per row.", crosses[1].start, crosses[1].end);
+    }
     if (parts.length === 1) return parts[0];
     return { kind: "Chain", parts, start: parts[0].start, end: parts[parts.length - 1].end };
   }
@@ -318,6 +347,9 @@ class Parser {
       }
       // A bare name that is not candle/entry/call is an unknown variable; the
       // validator reports it. Model it as a zero-arg Call so spans survive.
+      if (name.value === "x" || name.value === "X") {
+        throw new ExprErr("bad_cross_op", BAD_CROSS_MSG, name.start, name.end);
+      }
       return { kind: "Call", name: name.value, args: [], start: name.start, end: name.end };
     }
     throw new ExprErr("unexpected_token", "Expected a value here.", t.start, t.end);
@@ -337,6 +369,11 @@ class Parser {
     }
     const left = this.parseArith();
     const op = this.peek();
+    if (op.type === "XGT" || op.type === "XLT") {
+      this.next();
+      const right = this.parseArith();
+      return { kind: "Cross", fn: CROSS_OF[op.type], a: left, b: right, start: left.start, end: right.end };
+    }
     if (op.type !== "GT" && op.type !== "LT" && op.type !== "GE" && op.type !== "LE") {
       if (left.kind === "Predicate") return left;
       throw new ExprErr(
@@ -407,8 +444,9 @@ function candleRoot(node: Node): Node {
 function validate(node: Row, isExit: boolean): void {
   if (node.kind === "Chain") {
     for (const p of node.parts) {
-      walk(p.left, isExit);
-      walk(p.right, isExit);
+      const [left, right] = partOperands(p);
+      walk(left, isExit);
+      walk(right, isExit);
     }
     return;
   }
@@ -740,6 +778,13 @@ function collectSide(side: Node, out: Collected[]): void {
   collect(side, "threshold", out);
 }
 
+function collectPartSide(part: CompareNode | CrossNode, side: Node, out: Collected[]): void {
+  // A cross part's numerics follow the top-level Cross rule ("constant");
+  // a compare part's follow the threshold rule.
+  if (part.kind === "Cross") collect(side, "constant", out);
+  else collectSide(side, out);
+}
+
 function literalsOf(node: Row): LiteralSpan[] {
   const out: Collected[] = [];
   if (node.kind === "Predicate") {
@@ -754,8 +799,9 @@ function literalsOf(node: Row): LiteralSpan[] {
     }));
   }
   if (node.kind === "Chain") {
-    collectSide(node.parts[0].left, out);
-    for (const p of node.parts) collectSide(p.right, out);
+    const first = node.parts[0];
+    collectPartSide(first, partOperands(first)[0], out);
+    for (const p of node.parts) collectPartSide(p, partOperands(p)[1], out);
   } else if (node.kind === "Compare") {
     collectSide(node.left, out);
     collectSide(node.right, out);

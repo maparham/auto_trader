@@ -147,9 +147,10 @@ def literals(node: N.Row) -> list[Literal]:
         out.sort(key=lambda pair: pair[0].start)
         return [Literal(k, num.value, num.start, num.end, label) for k, (num, label) in enumerate(out)]
     if isinstance(node, N.Chain):
-        _collect_side(node.parts[0].left, out)
+        first = node.parts[0]
+        _collect_part_side(first, N.part_operands(first)[0], out)
         for p in node.parts:
-            _collect_side(p.right, out)
+            _collect_part_side(p, N.part_operands(p)[1], out)
     elif isinstance(node, N.Compare):
         _collect_side(node.left, out)
         _collect_side(node.right, out)
@@ -166,6 +167,16 @@ def _collect_side(side: N.Node, out: list[tuple[N.Num, str]]) -> None:
         out.append((side, "threshold"))
         return
     _collect(side, "threshold", out)
+
+
+def _collect_part_side(part: "N.Compare | N.Cross", side: N.Node,
+                       out: list[tuple[N.Num, str]]) -> None:
+    # A cross part's numerics follow the top-level Cross rule ("constant");
+    # a compare part's follow the threshold rule.
+    if isinstance(part, N.Cross):
+        _collect(side, "constant", out)
+    else:
+        _collect_side(side, out)
 
 
 def substitute(node: N.Row, overrides: dict[int, float]) -> N.Row:

@@ -15,8 +15,9 @@ def validate(node: N.Row, *, is_exit: bool,
              instances: "dict[str, ResolvedInstance] | None" = None) -> None:
     if isinstance(node, N.Chain):
         for p in node.parts:
-            _walk(p.left, is_exit=is_exit, instances=instances)
-            _walk(p.right, is_exit=is_exit, instances=instances)
+            left, right = N.part_operands(p)
+            _walk(left, is_exit=is_exit, instances=instances)
+            _walk(right, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, N.Cross):
         _walk(node.a, is_exit=is_exit, instances=instances)

@@ -38,6 +38,13 @@ export const CROSSES: CatalogEntry[] = [
   { name: "crossBelow", insert: "crossBelow(candle.close, EMA(9))", signature: "crossBelow(a, b)", detail: "a crosses below b" },
 ];
 
+// Infix spellings of the cross conditions — the preferred form; the function
+// forms above keep working.
+export const CROSS_OPS: CatalogEntry[] = [
+  { name: "x>", insert: "x> EMA(50)", signature: "a x> b", detail: "a crosses above b" },
+  { name: "x<", insert: "x< EMA(50)", signature: "a x< b", detail: "a crosses below b" },
+];
+
 export const CANDLE_FIELDS = [
   "open", "high", "low", "close", "volume", "body", "range", "wickTop", "wickBottom",
 ] as const;

@@ -195,7 +195,7 @@ describe("BacktestSettingsModal period scheduling", () => {
   // longestIndicatorLength — expression rows are the usual source of warm-up,
   // and reporting "1 bar" for an EMA(21) config misdraws the split entirely.
   it("counts expression warm-up in the auto-shortest timeline label", () => {
-    renderModal(); // default rules: crossAbove(EMA(9), EMA(21)), history "minimal"
+    renderModal(); // default rules: EMA(9) x> EMA(21), history "minimal"
     const labels = document.querySelector(".bt-timeline-labels") as HTMLElement;
     expect(labels.textContent).toContain("21 bars warm-up");
   });

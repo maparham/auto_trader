@@ -93,7 +93,7 @@ class Cross:
 
 @dataclass(frozen=True, slots=True)
 class Chain:
-    parts: list["Compare"]
+    parts: list["Compare | Cross"]
     start: int
     end: int
 
@@ -182,3 +182,10 @@ def contains_bars_since_entry(node: Node) -> bool:
     if isinstance(node, Count):
         return contains_bars_since_entry(node.cond) or contains_bars_since_entry(node.window)
     return False
+
+
+def part_operands(part: "Compare | Cross") -> "tuple[Node, Node]":
+    """A chain part's (left, right) operands regardless of its shape."""
+    if isinstance(part, Cross):
+        return part.a, part.b
+    return part.left, part.right

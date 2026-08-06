@@ -393,7 +393,7 @@ async def expr_series(req: ExprSeriesRequest):
     # usually a constant threshold; the LHS is the indicator/candle series. For a
     # chain, plot the first link's left operand (the primary series).
     if isinstance(node, N.Chain):
-        top = node.parts[0].left
+        top = N.part_operands(node.parts[0])[0]
     elif isinstance(node, N.Compare):
         top = node.left
     else:

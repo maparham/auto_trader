@@ -5,6 +5,11 @@ from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.lexer import Token, tokenize
 from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
 
+_CMP_SYM = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<="}
+_CROSS_SYM = {"XGT": "crossAbove", "XLT": "crossBelow"}
+_ROW_OPS = ("GT", "LT", "GE", "LE", "XGT", "XLT")
+_BAD_CROSS_MSG = "Write the cross operator as x> or x< — lowercase, no space."
+
 
 class _Parser:
     def __init__(self, tokens: list[Token]):
@@ -22,6 +27,8 @@ class _Parser:
     def expect(self, type_: str) -> Token:
         t = self.peek()
         if t.type != type_:
+            if t.type in _CROSS_SYM:
+                raise ExprError("cross_not_toplevel", "A comparison or cross can only be the whole row.", t.start, t.end)
             raise ExprError("unexpected_token", f"Expected {type_.lower()} here.", t.start, t.end)
         return self.next()
 
@@ -42,17 +49,24 @@ class _Parser:
         if isinstance(left, N.Predicate) and op.type == "EOF":
             self.next()
             return left
-        if op.type not in ("GT", "LT", "GE", "LE"):
-            raise ExprError("expected_operator", "Expected a comparison operator (> < >= <=).", op.start, op.end)
-        sym_of = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<="}
-        parts: list[N.Compare] = []
+        if op.type not in _ROW_OPS:
+            if op.type == "NAME" and op.value in ("x", "X"):
+                raise ExprError("bad_cross_op", _BAD_CROSS_MSG, op.start, op.end)
+            raise ExprError("expected_operator", "Expected a comparison operator (> < >= <= x> x<).", op.start, op.end)
+        parts: list[N.Compare | N.Cross] = []
         operand = left
-        while self.peek().type in ("GT", "LT", "GE", "LE"):
+        while self.peek().type in _ROW_OPS:
             optok = self.next()
             right = self.parse_arith()
-            parts.append(N.Compare(sym_of[optok.type], operand, right, operand.start, right.end))
+            if optok.type in _CROSS_SYM:
+                parts.append(N.Cross(_CROSS_SYM[optok.type], operand, right, operand.start, right.end))
+            else:
+                parts.append(N.Compare(_CMP_SYM[optok.type], operand, right, operand.start, right.end))
             operand = right
         self.expect("EOF")
+        crosses = [p for p in parts if isinstance(p, N.Cross)]
+        if len(crosses) > 1:
+            raise ExprError("multiple_crosses", "Only one cross per row.", crosses[1].start, crosses[1].end)
         if len(parts) == 1:
             return parts[0]
         return N.Chain(parts, parts[0].start, parts[-1].end)
@@ -126,6 +140,8 @@ class _Parser:
                 return N.Call(name.value, args, name.start, close.end)
             # A bare name that is not candle/entry/call is an unknown variable; the
             # validator reports it. Model it as a zero-arg Call so spans survive.
+            if name.value in ("x", "X"):
+                raise ExprError("bad_cross_op", _BAD_CROSS_MSG, name.start, name.end)
             return N.Call(name.value, [], name.start, name.end)
         raise ExprError("unexpected_token", "Expected a value here.", t.start, t.end)
 
@@ -142,6 +158,10 @@ class _Parser:
             return N.Cross(fn.value, a, b, fn.start, close.end)
         left = self.parse_arith()
         op = self.peek()
+        if op.type in _CROSS_SYM:
+            self.next()
+            right = self.parse_arith()
+            return N.Cross(_CROSS_SYM[op.type], left, right, left.start, right.end)
         if op.type not in ("GT", "LT", "GE", "LE"):
             if isinstance(left, N.Predicate):
                 return left
@@ -150,10 +170,9 @@ class _Parser:
                 "count's first argument must be a condition, like candle.open > candle.close.",
                 left.start, left.end,
             )
-        sym_of = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<="}
         optok = self.next()
         right = self.parse_arith()
-        return N.Compare(sym_of[optok.type], left, right, left.start, right.end)
+        return N.Compare(_CMP_SYM[optok.type], left, right, left.start, right.end)
 
     def parse_postfix(self, node: N.Node) -> N.Node:
         while True:
