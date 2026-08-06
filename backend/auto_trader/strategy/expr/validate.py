@@ -1,26 +1,32 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.registry import CROSSES, INDICATORS, WRAPPERS
 from auto_trader.strategy.expr.tfs import TF_RESOLUTIONS, tf_resolution
 
+if TYPE_CHECKING:
+    from auto_trader.indicators.registry import ResolvedInstance
 
-def validate(node: N.Row, *, is_exit: bool) -> None:
+
+def validate(node: N.Row, *, is_exit: bool,
+             instances: "dict[str, ResolvedInstance] | None" = None) -> None:
     if isinstance(node, N.Chain):
         for p in node.parts:
-            _walk(p.left, is_exit=is_exit)
-            _walk(p.right, is_exit=is_exit)
+            _walk(p.left, is_exit=is_exit, instances=instances)
+            _walk(p.right, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, N.Cross):
-        _walk(node.a, is_exit=is_exit)
-        _walk(node.b, is_exit=is_exit)
+        _walk(node.a, is_exit=is_exit, instances=instances)
+        _walk(node.b, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, N.Predicate):
         _check_predicate(node)
         return
-    _walk(node.left, is_exit=is_exit)
-    _walk(node.right, is_exit=is_exit)
+    _walk(node.left, is_exit=is_exit, instances=instances)
+    _walk(node.right, is_exit=is_exit, instances=instances)
 
 
 def _check_predicate(node: N.Predicate) -> None:
@@ -80,7 +86,24 @@ def _candle_root(node: N.Node) -> N.Node:
     return node
 
 
-def _walk(node: N.Node, *, is_exit: bool) -> None:
+def _pinned_instance(node: N.Node,
+                     instances: "dict[str, ResolvedInstance] | None") -> str | None:
+    """The instance id of a ref inside `node` whose own config carries a
+    timeframe pin, or None."""
+    if isinstance(node, N.IndicatorRef):
+        inst = (instances or {}).get(node.instance)
+        if inst is not None and inst.spec.timeframe(inst.config):
+            return node.instance
+        return None
+    if isinstance(node, (N.Field, N.Offset, N.Tf)):
+        return _pinned_instance(node.base, instances)
+    if isinstance(node, N.Unary):
+        return _pinned_instance(node.operand, instances)
+    return None
+
+
+def _walk(node: N.Node, *, is_exit: bool,
+          instances: "dict[str, ResolvedInstance] | None" = None) -> None:
     if isinstance(node, N.Num):
         return
     if isinstance(node, N.Entry):
@@ -108,7 +131,7 @@ def _walk(node: N.Node, *, is_exit: bool) -> None:
             # A field access on a call (e.g. EMA(9).signal): no registered
             # indicator exposes named outputs in v1, so this is always an error.
             raise ExprError("field_on_call", f"{root.name} has no named outputs.", node.start, node.end)
-        _walk(node.base, is_exit=is_exit)
+        _walk(node.base, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, N.Tf):
         if tf_resolution(node.tf) is None:
@@ -117,17 +140,25 @@ def _walk(node: N.Node, *, is_exit: bool) -> None:
                 f"Unknown timeframe {node.tf}. Try one of: {', '.join(TF_RESOLUTIONS)}.",
                 node.start, node.end,
             )
-        _walk(node.base, is_exit=is_exit)
+        # A pane pinned in its own settings is already a pinned series; pinning
+        # it again in the rule would be a nested pin, same as EMA(9)@1H@4H.
+        if _pinned_instance(node.base, instances) is not None:
+            raise ExprError(
+                "nested_tf",
+                "A timeframe pin cannot be nested inside another one.",
+                node.start, node.end,
+            )
+        _walk(node.base, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, N.Offset):
-        _walk(node.base, is_exit=is_exit)
+        _walk(node.base, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, N.Unary):
-        _walk(node.operand, is_exit=is_exit)
+        _walk(node.operand, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, N.Binary):
-        _walk(node.left, is_exit=is_exit)
-        _walk(node.right, is_exit=is_exit)
+        _walk(node.left, is_exit=is_exit, instances=instances)
+        _walk(node.right, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, N.BarsSinceEntry):
         if not is_exit:
@@ -144,15 +175,32 @@ def _walk(node: N.Node, *, is_exit: bool) -> None:
         if isinstance(cond, N.Predicate):
             _check_predicate(cond)
         elif isinstance(cond, N.Cross):
-            _walk(cond.a, is_exit=is_exit)
-            _walk(cond.b, is_exit=is_exit)
+            _walk(cond.a, is_exit=is_exit, instances=instances)
+            _walk(cond.b, is_exit=is_exit, instances=instances)
         else:
-            _walk(cond.left, is_exit=is_exit)
-            _walk(cond.right, is_exit=is_exit)
-        _walk(node.window, is_exit=is_exit)
+            _walk(cond.left, is_exit=is_exit, instances=instances)
+            _walk(cond.right, is_exit=is_exit, instances=instances)
+        _walk(node.window, is_exit=is_exit, instances=instances)
         return
     if isinstance(node, (N.Compare, N.Cross, N.Chain)):
         raise ExprError("cross_not_toplevel", "A comparison or cross can only be the whole row.", node.start, node.end)
+    if isinstance(node, N.IndicatorRef):
+        inst = (instances or {}).get(node.instance)
+        if inst is None:
+            raise ExprError(
+                "unknown_indicator_ref",
+                f"No indicator named {node.instance} on this chart.",
+                node.start, node.end,
+            )
+        available = inst.spec.outputs(inst.config)
+        if node.output not in available:
+            raise ExprError(
+                "unknown_indicator_output",
+                f"{node.instance} has no output {node.output}. "
+                f"Available: {', '.join(available)}.",
+                node.start, node.end,
+            )
+        return
     if isinstance(node, N.Call):
         if node.name in CROSSES:
             raise ExprError("cross_not_toplevel", f"{node.name} can only be the whole row.", node.start, node.end)
@@ -167,7 +215,7 @@ def _walk(node: N.Node, *, is_exit: bool) -> None:
                     node.start, node.end,
                 )
             for a in node.args:
-                _walk(a, is_exit=is_exit)
+                _walk(a, is_exit=is_exit, instances=instances)
             return
         if node.name in WRAPPERS:
             if len(node.args) != WRAPPERS[node.name]:
@@ -179,7 +227,18 @@ def _walk(node: N.Node, *, is_exit: bool) -> None:
                     node.start, node.end,
                 )
             for a in node.args:
-                _walk(a, is_exit=is_exit)
+                _walk(a, is_exit=is_exit, instances=instances)
             return
+        inst = (instances or {}).get(node.name)
+        if inst is not None and not node.args:
+            # A bare pane name parses as a zero-arg call; point at an output
+            # rather than claiming the name is unknown.
+            outputs = inst.spec.outputs(inst.config)
+            if outputs:
+                raise ExprError(
+                    "indicator_ref_needs_output",
+                    f"{node.name} needs an output, like {node.name}.{outputs[0]}.",
+                    node.start, node.end,
+                )
         raise ExprError("unknown_name", f"Unknown name {node.name}.", node.start, node.end)
     raise ExprError("unknown_name", "Unknown expression.", node.start, node.end)

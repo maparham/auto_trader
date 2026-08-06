@@ -180,6 +180,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     const inst = addIndicatorInstance(c, scope, epicRef.current, parsed.type, {
       config: parsed.config,
       forceHidden: controller.indicatorsHidden.value,
+      resolution: period.resolution,
     });
     if (!inst) {
       toast(`Can't paste ${parsed.type}`);
@@ -193,7 +194,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     saveIndicators(scope, next);
     handle.redrawRef.current();
     toast(`Pasted ${parsed.type}`);
-  }, [controller, scope]);
+  }, [controller, scope, period.resolution]);
 
   // Ctrl/Cmd+C: copy the SELECTED indicator (if any). Returns true when it acted, so
   // the key handler only swallows the event when there's a selection to copy (else

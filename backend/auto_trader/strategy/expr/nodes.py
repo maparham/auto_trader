@@ -120,9 +120,20 @@ class BarsSinceEntry:
     end: int
 
 
+@dataclass(frozen=True, slots=True)
+class IndicatorRef:
+    """A configured chart-indicator instance's output, e.g. SLOPE#a1b2c3.slope0.
+    Carries NO parameters: the pane's settings are the single source of truth
+    and travel on the request's `indicators` map."""
+    instance: str
+    output: str
+    start: int
+    end: int
+
+
 Node = (
     Num | Candle | Entry | Call | Field | Offset | Tf | Unary | Binary | Compare | Cross | Chain
-    | Predicate | Count | BarsSinceEntry
+    | Predicate | Count | BarsSinceEntry | IndicatorRef
 )
 
 # A parsed row: what parse() returns and validate()/compile_row() accept.

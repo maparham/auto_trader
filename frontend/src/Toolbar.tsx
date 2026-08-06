@@ -227,6 +227,7 @@ export default function Toolbar({
     if (!chart || !controller || !symbol) return;
     const inst = addIndicatorInstance(chart, controller.scope, symbol.epic, type, {
       forceHidden: controller.indicatorsHidden.value,
+      resolution: period?.resolution,
     });
     if (!inst) return;
     // Adding a sub-pane indicator while the bottom panes are collapsed (double-click

@@ -34,6 +34,7 @@ export interface SlopeExtend extends MaExtend {
   colorByDirection?: boolean;
   showMa?: boolean;
   threshold?: SlopeThreshold;
+  barHours?: number;
   showAccel?: boolean;
   accelPeriod?: number;
   accelSmoothing?: SlopeSmoothing;
@@ -62,6 +63,27 @@ export function inferBarHours(candles: KLineData[]): number {
     if (d > 0 && d < minMs) minMs = d;
   }
   return Number.isFinite(minMs) ? minMs / 3_600_000 : 1;
+}
+
+/** Hours per bar for the slope's time normalization.
+ *
+ * The CANONICAL value is nominal — derived from the chart's resolution and
+ * written onto extendData by applySlopeBarHours (indicators.ts), a sweep run
+ * alongside applyIndicatorVisibility after rehydrate and on every period switch
+ * — because the backend rule path can only compute a nominal width and the two
+ * must agree bar-for-bar (see the design doc's barHours section). It is NOT
+ * written from applyIndicator itself: the chart's resolution isn't reliably
+ * known at indicator-creation time (a fresh rehydrate runs before the chart's
+ * period is set). inferBarHours remains as the fallback for a stored config
+ * written before barHours existed, AND for a freshly added Slope mid-session,
+ * which has no barHours until the next sweep — acceptable because on a
+ * normally loaded chart the inferred value already equals the nominal one. */
+export function resolveBarHours(
+  candles: KLineData[],
+  ext: { barHours?: number },
+): number {
+  const h = Number(ext.barHours);
+  return Number.isFinite(h) && h > 0 ? h : inferBarHours(candles);
 }
 
 /** Slope of `raw` over `n` bars in the chosen units. undefined for the first `n`
@@ -259,7 +281,7 @@ function computeSlopeCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
       return withThreshold(p);
     });
   }
-  const barHours = inferBarHours(candles);
+  const barHours = resolveBarHours(candles, ext);
   const lines = lengths.map((len) =>
     slopeLineSeries(candles, maType, len, n, units, source, smoothing, barHours),
   );
@@ -497,7 +519,7 @@ function computeAccelCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
       return withThreshold(p);
     });
   }
-  const barHours = inferBarHours(candles);
+  const barHours = resolveBarHours(candles, ext);
   const lines = lengths.map((len) =>
     accelLineSeries(candles, maType, len, n, n2, units, source, smoothing, ext.accelSmoothing, barHours),
   );

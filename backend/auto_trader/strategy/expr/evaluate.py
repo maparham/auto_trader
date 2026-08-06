@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
@@ -14,6 +15,9 @@ from auto_trader.indicators.mtf import align_htf_to_base, slope_of
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.warmup import warmup_bars
+
+if TYPE_CHECKING:
+    from auto_trader.indicators.registry import ResolvedInstance
 
 
 def candle_field(c: Candle, field: str) -> float | None:
@@ -124,33 +128,35 @@ def _hoist_predicate(node: N.Predicate) -> N.Node:
 
 
 def _pattern_bool_series(node: N.Predicate, candles: Sequence[Candle],
-                         resolution: str, htf: dict[str, list[Candle]]) -> list[bool]:
+                         resolution: str, htf: dict[str, list[Candle]],
+                         instances: "dict[str, ResolvedInstance] | None" = None) -> list[bool]:
     """Per-bar truth of a PATTERN predicate. Undefined (warm-up, or a base bar
     before the first aligned HTF close) is a non-match, matching the
     bullish/bearish convention."""
-    vals = series_of(_hoist_predicate(node), candles, resolution, htf)
+    vals = series_of(_hoist_predicate(node), candles, resolution, htf, instances)
     return [_defined(v) and v >= 0.5 for v in vals]
 
 
 def _cond_matches(cond: "N.Compare | N.Cross | N.Predicate", candles: Sequence[Candle],
-                   resolution: str, htf: dict[str, list[Candle]]) -> list[bool]:
+                   resolution: str, htf: dict[str, list[Candle]],
+                   instances: "dict[str, ResolvedInstance] | None" = None) -> list[bool]:
     """Per-bar truth of an embedded condition. Undefined operands -> False
     (a warm-up bar is a non-match, it does not poison the window)."""
     n = len(candles)
     if isinstance(cond, N.Predicate):
         if cond.fn in PATTERN_FNS:
-            return _pattern_bool_series(cond, candles, resolution, htf)
+            return _pattern_bool_series(cond, candles, resolution, htf, instances)
         # nodes.PREDICATE_FNS is exactly {"bullish", "bearish"} | PATTERN_FNS, and
         # validation rejects anything outside it, so the remainder is a clean binary.
         bullish = cond.fn == "bullish"
-        opens = series_of(_apply_field_to_candle(cond.base, "open"), candles, resolution, htf)
-        closes = series_of(_apply_field_to_candle(cond.base, "close"), candles, resolution, htf)
+        opens = series_of(_apply_field_to_candle(cond.base, "open"), candles, resolution, htf, instances)
+        closes = series_of(_apply_field_to_candle(cond.base, "close"), candles, resolution, htf, instances)
         if bullish:
             return [_defined(opens[i]) and _defined(closes[i]) and closes[i] > opens[i] for i in range(n)]
         return [_defined(opens[i]) and _defined(closes[i]) and closes[i] < opens[i] for i in range(n)]
     if isinstance(cond, N.Cross):
-        a = series_of(cond.a, candles, resolution, htf)
-        b = series_of(cond.b, candles, resolution, htf)
+        a = series_of(cond.a, candles, resolution, htf, instances)
+        b = series_of(cond.b, candles, resolution, htf, instances)
         out = [False] * n
         for i in range(1, n):
             if not all(_defined(v) for v in (a[i], a[i - 1], b[i], b[i - 1])):
@@ -160,13 +166,14 @@ def _cond_matches(cond: "N.Compare | N.Cross | N.Predicate", candles: Sequence[C
             else:
                 out[i] = a[i - 1] >= b[i - 1] and a[i] < b[i]
         return out
-    left = series_of(cond.left, candles, resolution, htf)
-    right = series_of(cond.right, candles, resolution, htf)
+    left = series_of(cond.left, candles, resolution, htf, instances)
+    right = series_of(cond.right, candles, resolution, htf, instances)
     return [_cmp_vals(cond.op, left[i], right[i]) for i in range(n)]
 
 
 def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
-              htf: dict[str, list[Candle]]) -> list[float | None]:
+              htf: dict[str, list[Candle]],
+              instances: "dict[str, ResolvedInstance] | None" = None) -> list[float | None]:
     """Evaluate an `entry`-free node to a per-bar array over `candles`."""
     n = len(candles)
     if isinstance(node, N.Num):
@@ -183,9 +190,9 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
             return [candle_field(c, node.name) for c in candles]
         # candle-with-postfix, e.g. candle@TF.high or candle[-1].open: the field
         # lives on the base candle expression -> rebuild a Candle at that field.
-        return series_of(_apply_field_to_candle(base, node.name), candles, resolution, htf)
+        return series_of(_apply_field_to_candle(base, node.name), candles, resolution, htf, instances)
     if isinstance(node, N.Offset):
-        base = series_of(node.base, candles, resolution, htf)
+        base = series_of(node.base, candles, resolution, htf, instances)
         return [base[i - node.n] if i >= node.n else None for i in range(n)]
     if isinstance(node, N.Tf):
         # htf is keyed by the CANONICAL resolution ("HOUR"), the pin carries the
@@ -197,16 +204,16 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
         tf_candles = htf.get(tf_res) or htf.get(node.tf) or []
         if not tf_candles:
             return [None] * n
-        tf_vals = series_of(node.base, tf_candles, tf_res, htf)
+        tf_vals = series_of(node.base, tf_candles, tf_res, htf, instances)
         base_ms = [int(c.time.timestamp() * 1000) for c in candles]
         tf_ms = resolution_seconds(tf_res) * 1000
         return align_htf_to_base(base_ms, tf_candles, tf_vals, tf_ms)
     if isinstance(node, N.Unary):
-        inner = series_of(node.operand, candles, resolution, htf)
+        inner = series_of(node.operand, candles, resolution, htf, instances)
         return [None if v is None else -v for v in inner]
     if isinstance(node, N.Binary):
-        left = series_of(node.left, candles, resolution, htf)
-        right = series_of(node.right, candles, resolution, htf)
+        left = series_of(node.left, candles, resolution, htf, instances)
+        right = series_of(node.right, candles, resolution, htf, instances)
         return [_binop(node.op, left[i], right[i]) for i in range(n)]
     if isinstance(node, N.BarsSinceEntry):
         raise ValueError("barsSinceEntry is not a series")
@@ -219,11 +226,11 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
             return [float(v) for v in pattern_series(candles, node.fn)]
         raise ValueError(f"{node.fn} is not a series")
     if isinstance(node, N.Count):
-        matches = _cond_matches(node.cond, candles, resolution, htf)
+        matches = _cond_matches(node.cond, candles, resolution, htf, instances)
         pre = [0] * (n + 1)  # prefix sums: pre[j+1] = matches in bars [0, j]
         for j in range(n):
             pre[j + 1] = pre[j] + (1 if matches[j] else 0)
-        wseries = series_of(node.window, candles, resolution, htf)
+        wseries = series_of(node.window, candles, resolution, htf, instances)
         out: list[float | None] = [None] * n
         for i in range(n):
             wv = wseries[i]
@@ -239,12 +246,12 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
         return out
     if isinstance(node, N.Call):
         if node.name in WRAPPER_KINDS:
-            inner = series_of(node.args[0], candles, resolution, htf)
-            length = int(series_of(node.args[1], candles, resolution, htf)[0] or 0)
+            inner = series_of(node.args[0], candles, resolution, htf, instances)
+            length = int(series_of(node.args[1], candles, resolution, htf, instances)[0] or 0)
             if node.name == "slope":
                 return slope_of(inner, length, _tf_hours(resolution))
             return _window(inner, length, node.name)
-        arg_vals = [float(series_of(a, candles, resolution, htf)[0] or 0) for a in node.args]
+        arg_vals = [float(series_of(a, candles, resolution, htf, instances)[0] or 0) for a in node.args]
         return _indicator_raw(node.name, arg_vals, candles)
     raise ValueError(f"cannot evaluate {type(node).__name__} as a series")
 
@@ -285,6 +292,7 @@ class CompiledRow:
     candles: Sequence[Candle]
     resolution: str
     htf: dict[str, list[Candle]]
+    instances: "dict[str, ResolvedInstance] | None"
     warmup: int
     _cache: dict[int, list[float | None]]
     _matches: dict[int, list[bool]]
@@ -331,7 +339,7 @@ class CompiledRow:
                 if self._match_at(sub.cond, j, entry, entry_i)
             ))
         # Any remaining node is entry-free -> it was precomputed; guard defensively.
-        arr = series_of(sub, self.candles, self.resolution, self.htf)
+        arr = series_of(sub, self.candles, self.resolution, self.htf, self.instances)
         self._cache[key] = arr
         return arr[i] if 0 <= i < len(arr) else None
 
@@ -342,7 +350,7 @@ class CompiledRow:
                 pkey = id(cond)
                 if pkey not in self._pattern_cache:
                     self._pattern_cache[pkey] = _pattern_bool_series(
-                        cond, self.candles, self.resolution, self.htf
+                        cond, self.candles, self.resolution, self.htf, self.instances
                     )
                 arr = self._pattern_cache[pkey]
                 return 0 <= j < len(arr) and arr[j]
@@ -381,7 +389,9 @@ class CompiledRow:
         if isinstance(node, N.Predicate):
             key = id(node)
             if key not in self._matches:
-                self._matches[key] = _cond_matches(node, self.candles, self.resolution, self.htf)
+                self._matches[key] = _cond_matches(
+                    node, self.candles, self.resolution, self.htf, self.instances
+                )
             m = self._matches[key]
             return m[i] if 0 <= i < len(m) else False
         if isinstance(node, N.Compare):
@@ -430,20 +440,22 @@ def _entry_free(node: N.Node) -> bool:
     return True
 
 
-def _precompute(node: N.Node, candles, resolution, htf, cache: dict[int, list[float | None]]) -> None:
+def _precompute(node: N.Node, candles, resolution, htf, cache: dict[int, list[float | None]],
+                instances: "dict[str, ResolvedInstance] | None" = None) -> None:
     """Precompute arrays for maximal entry-free sub-nodes (skip pure Num/Candle:
     those are cheap per bar and keep the per-bar cross path simple)."""
     if _entry_free(node) and not isinstance(node, (N.Num, N.Candle)):
-        cache[id(node)] = series_of(node, candles, resolution, htf)
+        cache[id(node)] = series_of(node, candles, resolution, htf, instances)
         return
     if isinstance(node, N.Unary):
-        _precompute(node.operand, candles, resolution, htf, cache)
+        _precompute(node.operand, candles, resolution, htf, cache, instances)
     elif isinstance(node, N.Binary):
-        _precompute(node.left, candles, resolution, htf, cache)
-        _precompute(node.right, candles, resolution, htf, cache)
+        _precompute(node.left, candles, resolution, htf, cache, instances)
+        _precompute(node.right, candles, resolution, htf, cache, instances)
 
 
-def compile_row(node: N.Row, candles, resolution, htf) -> CompiledRow:
+def compile_row(node: N.Row, candles, resolution, htf,
+                instances: "dict[str, ResolvedInstance] | None" = None) -> CompiledRow:
     cache: dict[int, list[float | None]] = {}
     if isinstance(node, N.Chain):
         # Consecutive links share their middle operand (p[i].right is p[i+1].left);
@@ -462,5 +474,6 @@ def compile_row(node: N.Row, candles, resolution, htf) -> CompiledRow:
     else:
         subs = [node.a, node.b]
     for sub in subs:
-        _precompute(sub, candles, resolution, htf, cache)
-    return CompiledRow(node, candles, resolution, htf, warmup_bars(node, resolution), cache, {}, {}, {})
+        _precompute(sub, candles, resolution, htf, cache, instances)
+    return CompiledRow(node, candles, resolution, htf, instances,
+                       warmup_bars(node, resolution, instances), cache, {}, {}, {})

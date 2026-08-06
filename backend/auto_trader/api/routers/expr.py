@@ -57,7 +57,7 @@ from ..wfo_jobs import WFO_JOBS
 router = APIRouter()
 
 
-def _parse_group(rows, *, is_exit: bool, group: str) -> list[N.Row]:
+def _parse_group(rows, *, is_exit: bool, group: str, instances=None) -> list[N.Row]:
     """Parse + validate every ENABLED row in a group. A parse/validate error 422s
     with the expression span plus the group/row location so the frontend can map
     it back to the offending editor field. Disabled rows and blank rows are
@@ -71,7 +71,7 @@ def _parse_group(rows, *, is_exit: bool, group: str) -> list[N.Row]:
             continue
         try:
             node = parse(row.expr)
-            validate(node, is_exit=is_exit)
+            validate(node, is_exit=is_exit, instances=instances)
         except ExprError as e:
             raise HTTPException(422, {
                 "code": e.code, "message": e.message,
@@ -81,22 +81,22 @@ def _parse_group(rows, *, is_exit: bool, group: str) -> list[N.Row]:
     return nodes
 
 
-def _tf_inner_warmup(node: N.Node, tf: str) -> int:
+def _tf_inner_warmup(node: N.Node, tf: str, instances=None) -> int:
     """Deepest warm-up (in the PIN's own bars) any @`tf` pin in `node` needs."""
     if isinstance(node, N.Tf):
-        return warmup_bars(node.base, tf_resolution(node.tf)) if node.tf == tf else 0
+        return warmup_bars(node.base, tf_resolution(node.tf), instances) if node.tf == tf else 0
     if isinstance(node, N.Chain):
-        return max((_tf_inner_warmup(p, tf) for p in node.parts), default=0)
+        return max((_tf_inner_warmup(p, tf, instances) for p in node.parts), default=0)
     if isinstance(node, (N.Compare, N.Binary)):
-        return max(_tf_inner_warmup(node.left, tf), _tf_inner_warmup(node.right, tf))
+        return max(_tf_inner_warmup(node.left, tf, instances), _tf_inner_warmup(node.right, tf, instances))
     if isinstance(node, N.Cross):
-        return max(_tf_inner_warmup(node.a, tf), _tf_inner_warmup(node.b, tf))
+        return max(_tf_inner_warmup(node.a, tf, instances), _tf_inner_warmup(node.b, tf, instances))
     if isinstance(node, (N.Field, N.Offset)):
-        return _tf_inner_warmup(node.base, tf)
+        return _tf_inner_warmup(node.base, tf, instances)
     if isinstance(node, N.Unary):
-        return _tf_inner_warmup(node.operand, tf)
+        return _tf_inner_warmup(node.operand, tf, instances)
     if isinstance(node, N.Call):
-        return max((_tf_inner_warmup(a, tf) for a in node.args), default=0)
+        return max((_tf_inner_warmup(a, tf, instances) for a in node.args), default=0)
     if isinstance(node, N.Predicate):
         # A pattern pinned to @`tf` needs PATTERN_WARMUP bars of THAT timeframe
         # before its first honest value. Charge it only when this predicate is
@@ -105,9 +105,9 @@ def _tf_inner_warmup(node: N.Node, tf: str) -> int:
         # UNPINNED pattern row inflate an unrelated pin's ask (and spuriously
         # 422 on the `closed < need` check below).
         pinned_here = node.fn in PATTERN_FN_NAMES and tf in _referenced_tfs(node.base)
-        return (PATTERN_WARMUP if pinned_here else 0) + _tf_inner_warmup(node.base, tf)
+        return (PATTERN_WARMUP if pinned_here else 0) + _tf_inner_warmup(node.base, tf, instances)
     if isinstance(node, N.Count):
-        return max(_tf_inner_warmup(node.cond, tf), _tf_inner_warmup(node.window, tf))
+        return max(_tf_inner_warmup(node.cond, tf, instances), _tf_inner_warmup(node.window, tf, instances))
     return 0
 
 
@@ -214,12 +214,12 @@ async def expr_backtest(req: ExprBacktestRequest):
         (req.longEntry, False, "longEntry"), (req.longExit, True, "longExit"),
         (req.shortEntry, False, "shortEntry"), (req.shortExit, True, "shortExit"),
     ]
-    parsed = [_parse_group(rows, is_exit=ex, group=g) for rows, ex, g in groups]
+    parsed = [_parse_group(rows, is_exit=ex, group=g, instances=None) for rows, ex, g in groups]
     # @tf rows need their higher-timeframe candles in hand before compile_row
     # precomputes series; fetch whatever the request didn't ship.
     await _ensure_htf([n for nodes in parsed for n in nodes], req, htf)
     strategy = ExprRuleStrategy(
-        *[[compile_row(n, candles, req.resolution, htf) for n in nodes] for nodes in parsed],
+        *[[compile_row(n, candles, req.resolution, htf, None) for n in nodes] for nodes in parsed],
         quantity=req.costs.quantity,
         trade_from_time=req.tradeFromTime,
         long_enabled=req.longEnabled,
@@ -404,17 +404,17 @@ async def expr_series(req: ExprSeriesRequest):
     for tf in _referenced_tfs(top):
         res = tf_resolution(tf) or tf
         tf_s = resolution_seconds(res)
-        need = _tf_inner_warmup(top, tf) + 1
+        need = _tf_inner_warmup(top, tf, None) + 1
         tf_from = req.fromTime - need * tf_s
         tf_bars = max(1, (req.toTime - tf_from) // tf_s + 2)
         htf[res] = await deps._fetch_symbol_candles(
             req.broker, req.epic, res, tf_bars, tf_from, req.toTime, req.priceSide,
         )
-    values = series_of(top, candles, req.resolution, htf)
+    values = series_of(top, candles, req.resolution, htf, None)
     return {
         "times": [int(c.time.timestamp()) for c in candles],
         "values": values,
-        "warmup": warmup_bars(node, req.resolution),
+        "warmup": warmup_bars(node, req.resolution, None),
     }
 
 

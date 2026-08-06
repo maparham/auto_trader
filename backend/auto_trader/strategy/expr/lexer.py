@@ -46,7 +46,10 @@ def tokenize(src: str) -> list[Token]:
             continue
         if c.isalpha() or c == "_":
             j = i
-            while j < n and (src[j].isalnum() or src[j] == "_"):
+            # "#" is legal INSIDE a name (never leading) so a chart indicator's
+            # instance id — "SLOPE#a1b2c3", minted by the frontend's
+            # mintInstanceId — lexes verbatim, with no id<->token mapping table.
+            while j < n and (src[j].isalnum() or src[j] in "_#"):
                 j += 1
             out.append(Token("NAME", src[i:j], i, j))
             i = j

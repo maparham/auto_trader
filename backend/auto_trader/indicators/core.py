@@ -138,3 +138,92 @@ def avwap_series(candles: Sequence[Candle], anchor_ms: int) -> list[float | None
             continue
         out[i] = cum_pv / cum_v
     return out
+
+
+# Price sources, ported from mtf.ts priceOf. Order matters only for the tuple's
+# use as a validation/error message list; "close" first because it is the default.
+PRICE_SOURCES: tuple[str, ...] = (
+    "close", "open", "high", "low", "hl2", "hlc3", "ohlc4", "hlcc4",
+)
+
+
+def price_of(c: Candle, src: str) -> float:
+    """mtf.ts `priceOf`. Unknown sources fall back to close, matching the TS
+    switch's `default` arm — a stored config with a stale source must not crash."""
+    if src == "open":
+        return c.open
+    if src == "high":
+        return c.high
+    if src == "low":
+        return c.low
+    if src == "hl2":
+        return (c.high + c.low) / 2
+    if src == "hlc3":
+        return (c.high + c.low + c.close) / 3
+    if src == "ohlc4":
+        return (c.open + c.high + c.low + c.close) / 4
+    if src == "hlcc4":
+        return (c.high + c.low + c.close + c.close) / 4
+    return c.close
+
+
+def vwma_series(
+    candles: Sequence[Candle], prices: Sequence[float], length: int
+) -> list[float | None]:
+    """mtf.ts `vwma`: rolling sum(price*vol)/sum(vol). The subtractive rolling
+    sums accumulate float residue, so a separate INTEGER count of
+    volume-carrying bars is the emptiness test, not `v == 0` — otherwise a tiny
+    residue would divide into garbage."""
+    out: list[float | None] = [None] * len(prices)
+    if length < 1:
+        return out
+    pv = 0.0
+    v = 0.0
+    nz = 0
+    for i in range(len(prices)):
+        vol = candles[i].volume or 0.0
+        pv += prices[i] * vol
+        v += vol
+        if vol > 0:
+            nz += 1
+        if i >= length:
+            old_vol = candles[i - length].volume or 0.0
+            pv -= prices[i - length] * old_vol
+            v -= old_vol
+            if old_vol > 0:
+                nz -= 1
+        if i >= length - 1 and nz > 0:
+            out[i] = pv / v
+    return out
+
+
+def evwma_series(
+    candles: Sequence[Candle], prices: Sequence[float], length: int
+) -> list[float | None]:
+    """mtf.ts `evwma`: LazyBear's elastic volume-weighted MA. Seeds from the
+    source PRICE at the first usable bar (not Pine's nz->0, which draws a
+    near-zero ramp). A zero-volume WINDOW is undefined and re-seeds after."""
+    out: list[float | None] = [None] * len(prices)
+    if length < 1:
+        return out
+    nbfs = 0.0
+    nz = 0
+    prev: float | None = None
+    for i in range(len(prices)):
+        vol = candles[i].volume or 0.0
+        nbfs += vol
+        if vol > 0:
+            nz += 1
+        if i >= length:
+            old_vol = candles[i - length].volume or 0.0
+            nbfs -= old_vol
+            if old_vol > 0:
+                nz -= 1
+        if i < length - 1:
+            continue
+        if nz <= 0:
+            prev = None
+            continue
+        prev = prices[i] if prev is None else (prev * (nbfs - vol) + vol * prices[i]) / nbfs
+        out[i] = prev
+    return out

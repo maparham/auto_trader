@@ -3,6 +3,7 @@ from __future__ import annotations
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.lexer import Token, tokenize
+from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
 
 
 class _Parser:
@@ -163,6 +164,18 @@ class _Parser:
                 # For candle.field, store the field in the Candle node itself
                 if isinstance(node, N.Candle):
                     node = N.Candle(field.value, node.start, field.end)
+                elif (
+                    isinstance(node, N.Call)
+                    and not node.args
+                    and node.name not in INDICATORS
+                    and node.name not in WRAPPERS
+                    and node.name not in N.CROSS_FNS
+                    and node.name not in N.PREDICATE_FNS
+                ):
+                    # A bare unknown name with a field is an indicator-instance
+                    # reference. Registered names keep the Field(Call) shape so
+                    # validate still reports field_on_call for EMA(9).signal.
+                    node = N.IndicatorRef(node.name, field.value, node.start, field.end)
                 else:
                     node = N.Field(node, field.value, node.start, field.end)
             elif t.type == "LBRACKET":

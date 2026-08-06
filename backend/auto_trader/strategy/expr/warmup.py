@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from auto_trader.indicators.candle_patterns import PATTERN_FNS
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
+
+if TYPE_CHECKING:
+    from auto_trader.indicators.registry import ResolvedInstance
 
 # Bars a candle-pattern predicate needs before its first honest value: 14 for
 # the epsilon series (0.05 * SMA14 of true range) + 4 for the deepest lookback
@@ -14,7 +19,8 @@ from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
 PATTERN_WARMUP = 18
 
 
-def warmup_bars(node: N.Node, resolution: str | None = None) -> int:
+def warmup_bars(node: N.Node, resolution: str | None = None,
+                instances: "dict[str, ResolvedInstance] | None" = None) -> int:
     """Warm-up a row needs from the BASE candle history before its first honest
     value, in base bars.
 
@@ -30,25 +36,25 @@ def warmup_bars(node: N.Node, resolution: str | None = None) -> int:
     passes through unscaled. Mirrored by the frontend (lib/expr/parser.ts
     warmupOf)."""
     if isinstance(node, N.Chain):
-        return max(warmup_bars(p, resolution) for p in node.parts)
+        return max(warmup_bars(p, resolution, instances) for p in node.parts)
     if isinstance(node, (N.Compare,)):
-        return max(warmup_bars(node.left, resolution), warmup_bars(node.right, resolution))
+        return max(warmup_bars(node.left, resolution, instances), warmup_bars(node.right, resolution, instances))
     if isinstance(node, N.Cross):
-        return max(warmup_bars(node.a, resolution), warmup_bars(node.b, resolution))
+        return max(warmup_bars(node.a, resolution, instances), warmup_bars(node.b, resolution, instances))
     if isinstance(node, (N.Num, N.Candle, N.Entry)):
         return 0
     if isinstance(node, N.Field):
-        return warmup_bars(node.base, resolution)
+        return warmup_bars(node.base, resolution, instances)
     if isinstance(node, N.Offset):
-        return warmup_bars(node.base, resolution) + node.n
+        return warmup_bars(node.base, resolution, instances) + node.n
     if isinstance(node, N.Tf):
         if resolution is None:
-            return warmup_bars(node.base, None)
+            return warmup_bars(node.base, None, instances)
         return 0
     if isinstance(node, N.Unary):
-        return warmup_bars(node.operand, resolution)
+        return warmup_bars(node.operand, resolution, instances)
     if isinstance(node, N.Binary):
-        return max(warmup_bars(node.left, resolution), warmup_bars(node.right, resolution))
+        return max(warmup_bars(node.left, resolution, instances), warmup_bars(node.right, resolution, instances))
     if isinstance(node, N.Predicate):
         # Added OUTSIDE any @tf pin, so a pinned pattern still costs 18 BASE
         # bars. That is a floor charged to the base, not the pin's own
@@ -60,17 +66,17 @@ def warmup_bars(node: N.Node, resolution: str | None = None) -> int:
         # "simplify" that away on the strength of this line — dropping it
         # reintroduces the under-warm pinned-pattern bug.
         extra = PATTERN_WARMUP if node.fn in PATTERN_FNS else 0
-        return extra + warmup_bars(node.base, resolution)
+        return extra + warmup_bars(node.base, resolution, instances)
     if isinstance(node, N.BarsSinceEntry):
         return 0
     if isinstance(node, N.Count):
         n = int(node.window.value) if isinstance(node.window, N.Num) else 0
-        return n + warmup_bars(node.cond, resolution)
+        return n + warmup_bars(node.cond, resolution, instances)
     if isinstance(node, N.Call):
         if node.name in WRAPPERS:
             # wrapper window (2nd arg literal) + the inner term's warm-up
             n = int(node.args[1].value) if isinstance(node.args[1], N.Num) else 0
-            return warmup_bars(node.args[0], resolution) + n
+            return warmup_bars(node.args[0], resolution, instances) + n
         if node.name in INDICATORS and INDICATORS[node.name].arg_kind == "length" and node.args:
             length = int(node.args[0].value) if isinstance(node.args[0], N.Num) else 0
             return length

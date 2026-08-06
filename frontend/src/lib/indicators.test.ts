@@ -14,6 +14,7 @@ vi.mock("klinecharts", () => ({
 
 const {
   applyIndicatorVisibility,
+  applySlopeBarHours,
   collapseSubPanes,
   expandSubPanes,
   INTERNAL_INDICATORS,
@@ -146,6 +147,85 @@ describe("setAllIndicatorsHidden (sidebar eye menu master switch)", () => {
     const { chart, overrides } = fakeChart(panes);
     hideAll(chart, false, "HOUR");
     expect(overrides).toEqual([{ name: "MA_1", visible: false, paneId: "candle_pane" }]);
+  });
+});
+
+describe("applySlopeBarHours (keeps a live Slope's barHours in step with resolution)", () => {
+  // Same minimal fake shape as setAllIndicatorsHidden's fakeChart above: v10
+  // getIndicators() (flat, all-panes) + overrideIndicator() (paneId folded in).
+  function fakeChart(panes: Map<string, Map<string, { name: string; extendData?: unknown }>>) {
+    const overrides: { name: string; paneId: string; extendData?: unknown }[] = [];
+    const chart = {
+      getIndicators: () =>
+        [...panes].flatMap(([paneId, inner]) =>
+          [...inner.values()].map((ind) => ({ ...ind, paneId })),
+        ),
+      overrideIndicator: (opts: { name: string; paneId: string; extendData?: unknown }) => {
+        overrides.push({
+          name: opts.name,
+          paneId: opts.paneId,
+          ...(opts.extendData !== undefined ? { extendData: opts.extendData } : {}),
+        });
+      },
+    } as unknown as Chart;
+    return { chart, overrides };
+  }
+
+  it("writes the nominal barHours (resolution seconds / 3600) onto a SLOPE instance", () => {
+    const panes = new Map([
+      ["pane_1", new Map([["SLOPE_1", { name: "SLOPE_1", extendData: { indType: "SLOPE", slopePeriod: 3 } }]])],
+    ]);
+    const { chart, overrides } = fakeChart(panes);
+    applySlopeBarHours(chart, "HOUR_4"); // 14400s / 3600 = 4h/bar
+    expect(overrides).toEqual([
+      { name: "SLOPE_1", paneId: "pane_1", extendData: { indType: "SLOPE", slopePeriod: 3, barHours: 4 } },
+    ]);
+  });
+
+  it("preserves every other extendData field on the write", () => {
+    const ext = { indType: "SLOPE", maType: "ema", units: "pctHr", threshold: { on: true, level: 2 } };
+    const panes = new Map([["pane_1", new Map([["SLOPE_1", { name: "SLOPE_1", extendData: ext }]])]]);
+    const { chart, overrides } = fakeChart(panes);
+    applySlopeBarHours(chart, "HOUR");
+    expect(overrides[0].extendData).toEqual({ ...ext, barHours: 1 });
+  });
+
+  it("also updates a SLOPE_ACCEL companion pane", () => {
+    const panes = new Map([
+      ["pane_1", new Map([["SLOPE_1", { name: "SLOPE_1", extendData: { indType: "SLOPE" } }]])],
+      ["pane_2", new Map([["SLOPE_1__accel", { name: "SLOPE_1__accel", extendData: { indType: "SLOPE_ACCEL" } }]])],
+    ]);
+    const { chart, overrides } = fakeChart(panes);
+    applySlopeBarHours(chart, "MINUTE_15"); // 900s / 3600 = 0.25h/bar
+    expect(overrides).toEqual([
+      { name: "SLOPE_1", paneId: "pane_1", extendData: { indType: "SLOPE", barHours: 0.25 } },
+      { name: "SLOPE_1__accel", paneId: "pane_2", extendData: { indType: "SLOPE_ACCEL", barHours: 0.25 } },
+    ]);
+  });
+
+  it("leaves a non-SLOPE indicator untouched", () => {
+    const panes = new Map([["candle_pane", new Map([["MA_1", { name: "MA_1", extendData: { maType: "sma" } }]])]]);
+    const { chart, overrides } = fakeChart(panes);
+    applySlopeBarHours(chart, "HOUR");
+    expect(overrides).toEqual([]);
+  });
+
+  it("skips the write when barHours is already correct (no pointless recalc)", () => {
+    const panes = new Map([
+      ["pane_1", new Map([["SLOPE_1", { name: "SLOPE_1", extendData: { indType: "SLOPE", barHours: 1 } }]])],
+    ]);
+    const { chart, overrides } = fakeChart(panes);
+    applySlopeBarHours(chart, "HOUR"); // already 1h/bar
+    expect(overrides).toEqual([]);
+  });
+
+  it("no-ops for an unrecognized resolution", () => {
+    const panes = new Map([
+      ["pane_1", new Map([["SLOPE_1", { name: "SLOPE_1", extendData: { indType: "SLOPE" } }]])],
+    ]);
+    const { chart, overrides } = fakeChart(panes);
+    applySlopeBarHours(chart, "NOT_A_RESOLUTION");
+    expect(overrides).toEqual([]);
   });
 });
 

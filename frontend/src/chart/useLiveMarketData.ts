@@ -29,7 +29,12 @@ import { toast } from "../lib/notify";
 import { loadAvwapAnchor, loadViewPos, saveViewPos } from "../lib/persist";
 import { loadSnapshotMeta, saveSnapshotMeta, type SnapshotMeta } from "../lib/persist";
 import { renderSnapshotMarker } from "../lib/snapshotMarker";
-import { applyIndicatorVisibility, forceCollapseSubPanes, getIndicatorsByPane } from "../lib/indicators";
+import {
+  applyIndicatorVisibility,
+  applySlopeBarHours,
+  forceCollapseSubPanes,
+  getIndicatorsByPane,
+} from "../lib/indicators";
 import { applyLookOnOpen } from "../lib/templates";
 import { flushTemplateCapture } from "../lib/templateAutosave";
 import { loadSettings } from "../theme";
@@ -583,6 +588,12 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // Guard: the sidebar "Hide indicators" master switch overrides this re-derive —
       // while it's on, re-assert all-hidden instead of un-hiding.
       applyIndicatorVisibility(handle.chartRef.current, period.resolution, controller.indicatorsHidden.value);
+      // Same reasoning, same call site: every live Slope's barHours must track the
+      // CURRENT resolution (nominal, never inferred) so the pane and the backend rule
+      // path agree bar-for-bar. Runs here — not from applyIndicator — because the
+      // chart's resolution isn't reliably known at indicator-creation time (a fresh
+      // rehydrate runs before this effect ever sets the chart's period).
+      applySlopeBarHours(handle.chartRef.current, period.resolution);
       // A symbol switch recreates the sub-panes at their default height, so re-assert
       // the double-click "hide bottom sub-panes" collapse if it's on. forceCollapse
       // (not collapseSubPanes) so it doesn't overwrite the captured heights with the

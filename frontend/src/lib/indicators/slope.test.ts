@@ -10,7 +10,7 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-const { inferBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines, accelSeries, SLOPE_ACCEL_TEMPLATE, accelLineSeries } =
+const { inferBarHours, resolveBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines, accelSeries, SLOPE_ACCEL_TEMPLATE, accelLineSeries } =
   await import("./slope");
 
 const bar = (t: number, c: number): KLineData =>
@@ -344,5 +344,28 @@ describe("slopeLineSeries maType", () => {
     // priceBar slope over 1 bar is just the base's first difference.
     expect(line[3]).toBeCloseTo((base[3] as number) - (base[2] as number), 10);
     expect(line[1]).toBeUndefined(); // base[0] is undefined during warm-up
+  });
+});
+
+describe("barHours resolution", () => {
+  it("prefers extendData.barHours over inferring from candle gaps", () => {
+    const candles = [0, 1, 2, 3].map((i) => ({
+      timestamp: 1700000000000 + i * 3600_000,
+      open: 10, high: 10, low: 10, close: 10 + i, volume: 1,
+    }));
+    // barHours 4 (a 4H chart) must win even though the gaps say 1h.
+    expect(resolveBarHours(candles, { barHours: 4 })).toBe(4);
+  });
+
+  it("falls back to inferring when extendData carries no barHours", () => {
+    const candles = [0, 1, 2].map((i) => ({
+      timestamp: 1700000000000 + i * 7200_000,
+      open: 10, high: 10, low: 10, close: 10, volume: 1,
+    }));
+    expect(resolveBarHours(candles, {})).toBe(2);
+  });
+
+  it("falls back to 1 hour for a window too short to infer from", () => {
+    expect(resolveBarHours([], {})).toBe(1);
   });
 });

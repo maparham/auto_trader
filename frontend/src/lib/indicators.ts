@@ -30,6 +30,7 @@ import {
   type CustomIndicatorType,
 } from "./customIndicators";
 import { EQUITY_INDICATOR } from "./backtest";
+import { RESOLUTION_SECONDS } from "./feed";
 import type { SlopeExtend } from "./indicators/slope";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
@@ -720,6 +721,38 @@ export function applyIndicatorVisibility(chart: Chart, resolution: string, allHi
   }
 }
 
+// Keep every live Slope's (and its accel companion's) barHours in step with the
+// chart's CURRENT resolution — the canonical nominal value (resolution seconds /
+// 3600), never inferred from candle gaps (see resolveBarHours in indicators/slope.ts
+// and the design doc's barHours section: the backend rule path can only compute a
+// nominal width, so the pane must match it bar-for-bar). Mirrors
+// applyIndicatorVisibility's shape: a sweep over the live chart, called by the same
+// resolution-aware caller (useLiveMarketData, after rehydrate and on every period
+// switch) rather than threaded into applyIndicator, which has no reliable resolution
+// at indicator-creation time (rehydrate runs before the chart's period is set).
+// The accel companion is swept explicitly too: syncAccelCompanion only copies the
+// parent's extendData wholesale at (re)creation time, so an already-live companion
+// would otherwise miss a barHours update until its parent is next recreated.
+export function applySlopeBarHours(chart: Chart, resolution: string): void {
+  const secs = RESOLUTION_SECONDS[resolution];
+  if (!secs) return;
+  const barHours = secs / 3600;
+  const panes = getIndicatorsByPane(chart);
+  for (const [paneId, inds] of panes ?? []) {
+    for (const ind of inds.values()) {
+      if (!ind?.name) continue;
+      const ext = (ind.extendData ?? {}) as SlopeExtend & { indType?: string };
+      if (ext.indType !== "SLOPE" && ext.indType !== "SLOPE_ACCEL") continue;
+      if (ext.barHours === barHours) continue; // already correct: skip the recalc
+      chart.overrideIndicator({
+        paneId,
+        name: ind.name,
+        extendData: { ...ext, barHours },
+      });
+    }
+  }
+}
+
 // klinecharts' default pane minHeight (PANE_MIN_HEIGHT), restored when un-collapsing.
 const PANE_MIN_HEIGHT = 30;
 // A sub-pane at/below this height (px) reads as collapsed, not user-sized — used to
@@ -768,16 +801,23 @@ export function expandSubPanes(chart: Chart, heights: Map<string, number>): void
 
 // Add a fresh instance of `type` (mints a new id). Returns the new instance, or
 // null on failure. Used by the Toolbar menu (always-add) and Paste.
+//
+// opts.resolution is OPTIONAL and purely a convenience: when the caller already has
+// the chart's current resolution in hand (both current callers do), a freshly added
+// Slope gets its barHours immediately via applySlopeBarHours instead of waiting on
+// inferBarHours until the next period-switch sweep. Omitting it is fine — see
+// resolveBarHours's fallback note.
 export function addIndicatorInstance(
   chart: Chart,
   scope: string,
   epic: string,
   type: string,
-  opts?: { config?: SavedIndicatorConfig; forceHidden?: boolean },
+  opts?: { config?: SavedIndicatorConfig; forceHidden?: boolean; resolution?: string },
 ): IndicatorInstance | null {
   const inst: IndicatorInstance = { id: mintInstanceId(chart, type), type };
   if (!applyIndicator(chart, scope, epic, inst, { config: opts?.config, forceHidden: opts?.forceHidden }))
     return null;
+  if (opts?.resolution) applySlopeBarHours(chart, opts.resolution);
   // Paste (and any caller injecting a snapshot) applies the config LIVE but it must
   // also be persisted under the freshly-minted id. Otherwise a later teardown +
   // recreate (pane reorder, or a plain reload) rehydrates with no saved config and
