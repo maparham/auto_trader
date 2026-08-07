@@ -197,6 +197,24 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Anchored VWAP",
     desc: "A VWAP measured from a bar you pick, anchoring fair value to a chosen event.",
   },
+  ATR: {
+    inputs: [
+      num(0, "Length"),
+      {
+        key: "smoothing", label: "Smoothing", type: "select",
+        source: "extend", field: "smoothing", default: "rma",
+        tip: "Moving average applied to the true range. RMA (Wilder) is TradingView's default; SMA/EMA/WMA match Pine's ta.sma/ta.ema/ta.wma.",
+        options: [
+          { value: "rma", label: "RMA" },
+          { value: "sma", label: "SMA" },
+          { value: "ema", label: "EMA" },
+          { value: "wma", label: "WMA" },
+        ],
+      },
+    ],
+    title: "Average True Range",
+    desc: "Average of the true range over the window — volatility in price units. Referenceable in backtest rules as an instance (e.g. ATR#a1b2.14).",
+  },
   // Linear Regression Channel (TV "LR"): window Length + channel Deviations
   // (calcParams), and a price Source dropdown stored on extendData.
   LR: {

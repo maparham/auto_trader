@@ -13,12 +13,19 @@
 //      source of truth for which outputs exist.
 import { normalizeSlopeUnit, slopeOutputs, slopeWarmup } from "./indicators/slopeOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
+import { atrOutputs, atrWarmup, normalizeAtrSmoothing, ATR_SMOOTHING_LABEL, type AtrExtend } from "./atr";
 import type { ExprInstance } from "./expr/catalog";
 // Display vocabularies, both from klinecharts-free modules so this stays a pure,
 // node-testable bridge: mtf.ts type-imports klinecharts only, indicatorMeta.ts
 // imports nothing at all.
 import { MA_KIND_LABEL, normalizeMaKind } from "./mtf";
 import { SLOPE_UNIT_LABEL } from "./indicatorMeta";
+
+/** The pane types a rule can reference by instance (`<id>.<output>`). The ONE
+ * list — mintInstanceId (indicators.ts) consults it to avoid minting ids that
+ * collide with expr function names. The per-type branches in `exprInstancesFor`
+ * and `exprWarmupByRef` below must stay in step with it. */
+export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set(["SLOPE", "ATR"]);
 
 /** A live chart pane, flattened to just what the expression layer reads. */
 export interface LiveInstance {
@@ -111,7 +118,10 @@ export function exprWarmupByRef(
   const byId = new Map(live.map((i) => [i.id, i]));
   return (instance, output) => {
     const inst = byId.get(instance);
-    if (!inst || inst.type !== "SLOPE") return 0;
+    if (!inst) return 0;
+    // One branch per EXPR_INSTANCE_TYPES member — keep the two in step.
+    if (inst.type === "ATR") return atrWarmup(inst.calcParams, output);
+    if (inst.type !== "SLOPE") return 0;
     return slopeWarmup(inst.calcParams, (inst.extendData ?? {}) as SlopeExtend, output);
   };
 }
@@ -135,6 +145,17 @@ function slopeRefDetail(ext: SlopeExtend): string {
 export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] {
   const out: ExprInstance[] = [];
   for (const inst of live) {
+    // One branch per EXPR_INSTANCE_TYPES member — keep the two in step.
+    if (inst.type === "ATR") {
+      const ext = (inst.extendData ?? {}) as AtrExtend;
+      out.push({
+        id: inst.id,
+        outputs: atrOutputs(inst.calcParams),
+        timeframe: null, // ATR panes are chart-timeframe only (no MTF input)
+        detail: ATR_SMOOTHING_LABEL[normalizeAtrSmoothing(ext.smoothing)],
+      });
+      continue;
+    }
     if (inst.type !== "SLOPE") continue;
     const ext = (inst.extendData ?? {}) as SlopeExtend;
     // slopeLengths falls back to [9], so a SLOPE always exposes at least one

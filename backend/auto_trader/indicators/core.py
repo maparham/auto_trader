@@ -84,13 +84,9 @@ def rsi_series(values: Sequence[float], length: int) -> list[float | None]:
     return out
 
 
-def atr_series(candles: Sequence[Candle], length: int) -> list[float | None]:
-    """atr.ts: TR[0] = high-low; first ATR = mean of first `length` TRs at index
-    length-1; then Wilder-smoothed."""
+def true_range_series(candles: Sequence[Candle]) -> list[float]:
+    """atr.ts `trueRangeSeries` (Pine ta.tr(true)): TR[0] = high-low."""
     n = len(candles)
-    out: list[float | None] = [None] * n
-    if length < 1 or n == 0:
-        return out
     tr = [0.0] * n
     for i, k in enumerate(candles):
         hl = k.high - k.low
@@ -99,6 +95,92 @@ def atr_series(candles: Sequence[Candle], length: int) -> list[float | None]:
         else:
             pc = candles[i - 1].close
             tr[i] = max(hl, abs(k.high - pc), abs(k.low - pc))
+    return tr
+
+
+def smooth_series(
+    values: Sequence[float | None],
+    type_: str,
+    length: int,
+    vol: Sequence[float] | None = None,
+) -> list[float | None]:
+    """indicators/smoothing.ts `smoothSeries`, op-for-op: TV-style MA over a
+    sparse series. ema/rma seed with the first-window SMA; sma/wma/vwma are
+    trailing windows walked BACKWARD from i (the walk order matters for FP
+    parity). "none"/unknown -> all None."""
+    n = len(values)
+    out: list[float | None] = [None] * n
+    L = max(1, int(length) or 1)
+    if type_ not in ("sma", "ema", "rma", "wma", "vwma"):
+        return out
+    if type_ in ("ema", "rma"):
+        alpha = 2 / (L + 1) if type_ == "ema" else 1 / L
+        prev: float | None = None
+        seed_sum = 0.0
+        seed_count = 0
+        for i in range(n):
+            v = values[i]
+            if v is None:
+                continue
+            if prev is None:
+                seed_sum += v
+                seed_count += 1
+                if seed_count == L:
+                    prev = seed_sum / L
+                    out[i] = prev
+            else:
+                prev = alpha * v + (1 - alpha) * prev
+                out[i] = prev
+        return out
+    for i in range(n):
+        if values[i] is None:
+            continue
+        count = 0
+        num = 0.0
+        den = 0.0
+        j = i
+        while j >= 0 and count < L:
+            v = values[j]
+            if v is None:
+                break
+            if type_ == "wma":
+                w: float = float(L - count)
+            elif type_ == "vwma":
+                w = float(vol[j]) if vol is not None and j < len(vol) else 0.0
+            else:
+                w = 1.0
+            num += v * w
+            den += w
+            count += 1
+            j -= 1
+        if count == L and den > 0:
+            out[i] = num / den
+    return out
+
+
+def atr_smoothed_series(
+    candles: Sequence[Candle], length: int, smoothing: str
+) -> list[float | None]:
+    """atr.ts `atrSeries(candles, length, smoothing)`: TV's
+    ma_function(ta.tr(true), length). "rma"/unknown is the legacy Wilder path
+    (bit-identical to atr_series)."""
+    if smoothing not in ("sma", "ema", "wma"):
+        return atr_series(candles, length)
+    n = len(candles)
+    if length < 1 or n == 0:
+        return [None] * n
+    s = smooth_series(true_range_series(candles), smoothing, length)
+    return s
+
+
+def atr_series(candles: Sequence[Candle], length: int) -> list[float | None]:
+    """atr.ts: TR[0] = high-low; first ATR = mean of first `length` TRs at index
+    length-1; then Wilder-smoothed."""
+    n = len(candles)
+    out: list[float | None] = [None] * n
+    if length < 1 or n == 0:
+        return out
+    tr = true_range_series(candles)
     if n < length:
         return out
     s = 0.0

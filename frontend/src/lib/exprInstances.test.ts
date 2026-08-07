@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   collectExprInstances,
   exprInstancesFor,
+  exprWarmupByRef,
   referencedInstanceIds,
 } from "./exprInstances";
 
@@ -96,5 +97,26 @@ describe("exprInstancesFor (the editor's lint/completion list)", () => {
   it("drops a pane that is not referenced by instance at all", () => {
     // An EMA is spelled EMA(9) in a rule, not EMA.something.
     expect(exprInstancesFor([LIVE[2]])).toEqual([]);
+  });
+});
+
+describe("ATR instances", () => {
+  const live = [
+    { id: "ATR", type: "ATR", calcParams: [14], extendData: {} },
+    { id: "ATR#b2", type: "ATR", calcParams: [21], extendData: { smoothing: "ema" } },
+  ];
+  it("exprInstancesFor lists ATR panes with their length-named output", () => {
+    const out = exprInstancesFor(live);
+    expect(out.map((i) => [i.id, i.outputs, i.timeframe, i.detail])).toEqual([
+      ["ATR", ["14"], null, "RMA"],
+      ["ATR#b2", ["21"], null, "EMA"],
+    ]);
+  });
+  it("exprWarmupByRef costs the length for the real output, 0 otherwise", () => {
+    const warm = exprWarmupByRef(live);
+    expect(warm("ATR", "14")).toBe(14);
+    expect(warm("ATR#b2", "21")).toBe(21);
+    expect(warm("ATR", "9")).toBe(0);
+    expect(warm("GONE", "14")).toBe(0);
   });
 });

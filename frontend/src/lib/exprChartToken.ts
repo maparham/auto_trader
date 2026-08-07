@@ -6,10 +6,10 @@
 // Two shapes come out of here:
 //
 //   1. CALL tokens for the editor catalog's parameterised indicators (catalog.ts
-//      INDICATORS): EMA / SMA / RSI / ATR / VOLMA / VOL. The token restates the
+//      INDICATORS): EMA / SMA / RSI / VOLMA / VOL. The token restates the
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
-//      rule — today SLOPE, as "<instanceId>.<output>" (e.g. "SLOPE.50",
+//      rule — SLOPE and ATR, as "<instanceId>.<output>" (e.g. "SLOPE.50",
 //      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
 //      the single source of truth for MA type, units and smoothing, so retuning
 //      any of those leaves every rule that references it correct with no edit.
@@ -30,6 +30,7 @@
 // type-only and erased, but it still pulls in the whole draw/calc chain). The MA
 // template kind is the same one-liner as indicators/ma.ts templateMaKind.
 import { slopeLengths, slopeOutputs } from "./indicators/slopeOutputs";
+import { atrOutputs } from "./atr";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -77,8 +78,21 @@ export function chartIndicatorToExprToken(
       // Only the value line maps; divergence outputs are a separate concern the
       // caller never reaches here (it passes the instance, not an output line).
       return hasLen ? `RSI(${len})` : null;
-    case "ATR":
+    // ATR panes carry a Smoothing setting the ATR(length) FUNCTION cannot
+    // restate (the function is RMA-only), so a clicked pane emits an instance
+    // ref and the pane stays the source of truth — same contract as SLOPE.
+    // The fallback CALL shape survives for two callers: one with no instance
+    // context at all, and the unreachable-but-possible bare "ATR" id (pre-mint
+    // fix), which cannot parse as a ref because ATR is a registered function
+    // name. Both are RMA-identical only for an unsmoothed pane, which is the
+    // default — a smoothed pane always arrives with a suffixed id.
+    case "ATR": {
+      const id = opts?.instanceId;
+      // atrOutputs falls back to 14 on a garbage length, exactly as the
+      // backend's parse_atr_config does, so the ref stays valid on both stacks.
+      if (id && id.includes("#")) return `${id}.${atrOutputs(calcParams)[0]}`;
       return hasLen ? `ATR(${len})` : null;
+    }
     case "VOLMA":
       return hasLen ? `VOLMA(${len})` : null;
     case "VOL":

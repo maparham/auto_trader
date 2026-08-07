@@ -46,6 +46,30 @@ describe("chartIndicatorToExprToken", () => {
   });
 });
 
+describe("ATR instance references", () => {
+  it("emits an instance ref when the clicked pane's id is passed", () => {
+    expect(
+      chartIndicatorToExprToken("ATR", [21], {}, { instanceId: "ATR#a1b2c3" }),
+    ).toBe("ATR#a1b2c3.21");
+  });
+
+  it("references the pane, not its smoothing — an EMA-smoothed pane emits the same ref", () => {
+    expect(
+      chartIndicatorToExprToken("ATR", [14], { smoothing: "ema" }, { instanceId: "ATR#a1b2c3" }),
+    ).toBe("ATR#a1b2c3.14");
+  });
+
+  it("garbage length falls back to the same 14 both parser stacks derive", () => {
+    expect(
+      chartIndicatorToExprToken("ATR", undefined, {}, { instanceId: "ATR#a1b2c3" }),
+    ).toBe("ATR#a1b2c3.14");
+  });
+
+  it("a bare (unsuffixed) id cannot parse as a ref, so it falls back to the ATR(length) call", () => {
+    expect(chartIndicatorToExprToken("ATR", [14], {}, { instanceId: "ATR" })).toBe("ATR(14)");
+  });
+});
+
 describe("SLOPE instance references", () => {
   it("emits an instance ref for a clicked slope line", () => {
     expect(

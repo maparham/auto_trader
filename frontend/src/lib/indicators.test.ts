@@ -23,6 +23,7 @@ const {
   addIndicatorInstance,
   liveExprInstances,
   exprInstancesFromChart,
+  mintInstanceId,
 } = await import("./indicators");
 
 // In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
@@ -368,6 +369,32 @@ describe("isInternalIndicator", () => {
 describe("accelCompanionId", () => {
   it("derives a deterministic id from the parent", () => {
     expect(accelCompanionId("SLOPE#a1b2c3")).toBe("SLOPE#a1b2c3__accel");
+  });
+});
+
+describe("mintInstanceId (bare name for the first instance, except ref/function collisions)", () => {
+  // Same minimal fake as above: v10 getIndicators() (flat, all-panes).
+  function fakeChart(inds: Array<{ name: string; paneId: string }>) {
+    return { getIndicators: () => inds } as unknown as Chart;
+  }
+
+  it("never gives an ATR pane the bare name — `ATR.14` would not parse as a ref", () => {
+    const id = mintInstanceId(fakeChart([]), "ATR");
+    expect(id).not.toBe("ATR");
+    expect(id).toMatch(/^ATR#[a-z0-9]{6}$/);
+  });
+
+  it("keeps the bare-name fast path for SLOPE (referenceable, but not a function name)", () => {
+    expect(mintInstanceId(fakeChart([]), "SLOPE")).toBe("SLOPE");
+  });
+
+  it("keeps the bare-name fast path for EMA (a function name, but not referenceable)", () => {
+    expect(mintInstanceId(fakeChart([]), "EMA")).toBe("EMA");
+  });
+
+  it("still suffixes a second instance of a bare-name type", () => {
+    const id = mintInstanceId(fakeChart([{ name: "SLOPE", paneId: "pane_1" }]), "SLOPE");
+    expect(id).toMatch(/^SLOPE#[a-z0-9]{6}$/);
   });
 });
 

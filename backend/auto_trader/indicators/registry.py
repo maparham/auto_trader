@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from auto_trader.core.models import Candle
+from auto_trader.indicators import atr as _atr
 from auto_trader.indicators import slope as _slope
 
 
@@ -30,6 +31,13 @@ class IndicatorSeriesSpec:
 
 
 SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
+    "ATR": IndicatorSeriesSpec(
+        parse_config=_atr.parse_atr_config,
+        outputs=_atr.atr_outputs,
+        series=_atr.atr_pane_series,
+        warmup=_atr.atr_warmup,
+        timeframe=lambda cfg: None,
+    ),
     "SLOPE": IndicatorSeriesSpec(
         parse_config=_slope.parse_slope_config,
         outputs=_slope.slope_outputs,

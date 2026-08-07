@@ -17,6 +17,7 @@ import { priceOf, type PriceSource } from "../mtf";
 import { hexToRgba } from "../lineStyle";
 import { fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
+import { smoothSeries, type SmoothType } from "./smoothing";
 
 export type DivergenceKind = "bullish" | "bearish" | "hiddenBullish" | "hiddenBearish";
 
@@ -51,7 +52,7 @@ interface RsiPoint {
 
 // RSI "Smoothing" moving-average type, mirroring TradingView's RSI panel options.
 // "sma_bb" = SMA + Bollinger Bands (adds the ±stdDev bands around the SMA).
-export type RsiSmoothType = "none" | "sma" | "sma_bb" | "ema" | "rma" | "wma" | "vwma";
+export type RsiSmoothType = SmoothType | "sma_bb";
 export interface RsiSmoothing {
   type: RsiSmoothType;
   length: number;
@@ -291,63 +292,6 @@ export function divergenceEventSeries(
   return dataList.map((_, i) => (out[i].divs?.some((d) => d.kind === kind) ? 1 : 0));
 }
 
-// A moving average over a sparse series (undefined entries are "not ready yet", as
-// in the RSI's warm-up). Each output index needs `length` consecutive DEFINED inputs
-// ending at it; otherwise undefined. Mirrors TradingView's ta.* over an na-prefixed
-// series. `vol` is required for "vwma" (volume-weighted). "rma" is Wilder's smoothing.
-function smoothSeries(
-  src: Array<number | undefined>,
-  type: RsiSmoothType,
-  length: number,
-  vol?: number[],
-): Array<number | undefined> {
-  const n = src.length;
-  const out: Array<number | undefined> = new Array(n).fill(undefined);
-  const L = Math.max(1, Math.floor(length) || 1);
-  if (type === "none") return out;
-  if (type === "ema" || type === "rma") {
-    // EMA/RMA recurse from the first L-window SMA seed over defined values.
-    const alpha = type === "ema" ? 2 / (L + 1) : 1 / L;
-    let prev: number | undefined;
-    let seedSum = 0;
-    let seedCount = 0;
-    for (let i = 0; i < n; i++) {
-      const v = src[i];
-      if (v === undefined) continue;
-      if (prev === undefined) {
-        seedSum += v;
-        seedCount++;
-        if (seedCount === L) {
-          prev = seedSum / L;
-          out[i] = prev;
-        }
-      } else {
-        prev = alpha * v + (1 - alpha) * prev;
-        out[i] = prev;
-      }
-    }
-    return out;
-  }
-  // SMA / WMA / VWMA: a trailing window of the last L defined values.
-  for (let i = 0; i < n; i++) {
-    if (src[i] === undefined) continue;
-    // Walk back L defined values (they're contiguous once RSI is warm).
-    let count = 0;
-    let num = 0;
-    let den = 0;
-    for (let j = i; j >= 0 && count < L; j--) {
-      const v = src[j];
-      if (v === undefined) break;
-      const w = type === "wma" ? L - count : type === "vwma" ? (vol?.[j] ?? 0) : 1;
-      num += v * w;
-      den += w;
-      count++;
-    }
-    if (count === L && den > 0) out[i] = num / den;
-  }
-  return out;
-}
-
 // Wilder's RSI (RMA of gains/losses), seeded with the SMA of the first `length`
 // changes — identical to TradingView's ta.rsi. The RSI is computed on `ext.source`
 // (default close). When smoothing is set, an MA of the RSI (+ optional Bollinger
@@ -393,7 +337,7 @@ export function computeRsi(dataList: KLineData[], length: number, ext: RsiExtend
   // Optional smoothing MA of the RSI (+ Bollinger Bands for "sma_bb").
   const sm: RsiSmoothing = { ...RSI_SMOOTHING_DEFAULTS, ...(ext.smoothing ?? {}) };
   if (sm.type !== "none") {
-    const maType: RsiSmoothType = sm.type === "sma_bb" ? "sma" : sm.type;
+    const maType: SmoothType = sm.type === "sma_bb" ? "sma" : sm.type;
     const vol = sm.type === "vwma" ? dataList.map((k) => k.volume ?? 0) : undefined;
     const ma = smoothSeries(rsi, maType, sm.length, vol);
     for (let i = 0; i < n; i++) if (ma[i] !== undefined) out[i].ma = ma[i];

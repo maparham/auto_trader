@@ -30,8 +30,8 @@ import {
   type CustomIndicatorType,
 } from "./customIndicators";
 import { EQUITY_INDICATOR } from "./backtest";
-import { exprInstancesFor, type LiveInstance } from "./exprInstances";
-import type { ExprInstance } from "./expr/catalog";
+import { exprInstancesFor, EXPR_INSTANCE_TYPES, type LiveInstance } from "./exprInstances";
+import { INDICATOR_SPECS, type ExprInstance } from "./expr/catalog";
 import { RESOLUTION_SECONDS } from "./feed";
 import type { SlopeExtend } from "./indicators/slope";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
@@ -311,11 +311,21 @@ export function reorderSubPanes(
 // instance (so storage stays byte-identical for single-instance users and the
 // migration that maps old name → {id:name,type:name} lines up); later instances get
 // a "#<rand>" suffix. The id must be a valid, unique klinecharts indicator name.
+// The one exception is a type that is both instance-referenceable and an expr
+// function name (see refCollision below) — it always gets the suffix.
 export function mintInstanceId(chart: Chart, type: string): string {
   const taken = new Set<string>();
   const panes = getIndicatorsByPane(chart);
   for (const inds of panes?.values() ?? []) for (const n of inds.keys()) taken.add(n);
-  if (!taken.has(type)) return type; // first instance keeps the clean name
+  // A type that is BOTH instance-referenceable in rules AND a registered expr
+  // FUNCTION name (today: ATR) never gets the bare name: `ATR.14` cannot parse
+  // as a ref (the name resolves to the function), so a pane named "ATR" would
+  // be unreferenceable and the completion popup would suggest unparseable refs.
+  // Always minting "ATR#<rand>" keeps every pane referenceable. EMA/RSI etc.
+  // keep the bare-name fast path — they are not instance-referenceable, and
+  // their bare names are load-bearing for stored-chart compatibility.
+  const refCollision = EXPR_INSTANCE_TYPES.has(type) && Object.hasOwn(INDICATOR_SPECS, type);
+  if (!refCollision && !taken.has(type)) return type; // first instance keeps the clean name
   let id: string;
   do {
     id = `${type}#${Math.random().toString(36).slice(2, 8)}`;

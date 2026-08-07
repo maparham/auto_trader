@@ -110,6 +110,9 @@ describe("indicator parity golden fixture", () => {
       SMA_14: toNull(maSeries(candles, "sma", 14, {}).base),
       RSI_14: toNull(computeRsi(candles, 14, {}).map((p) => p.val ?? null)),
       ATR_14: toNull(atrSeries(candles, 14)),
+      ATR_14_SMA: toNull(atrSeries(candles, 14, "sma")),
+      ATR_14_EMA: toNull(atrSeries(candles, 14, "ema")),
+      ATR_14_WMA: toNull(atrSeries(candles, 14, "wma")),
       VOLMA_20: toNull(sma(candles.map((k) => k.volume ?? 0), 20)),
       VOL: toNull(candles.map((k) => k.volume ?? null)),
       AVWAP: toNull(vwapFrom(candles, start, {}).map((p) => p.vwap ?? null)),
@@ -135,7 +138,8 @@ describe("indicator parity golden fixture", () => {
     }
     // Sanity: RSI in [0,100] wherever defined; ATR positive.
     for (const v of series.RSI_14) if (v !== null) expect(v).toBeGreaterThanOrEqual(0);
-    for (const v of series.ATR_14) if (v !== null) expect(v).toBeGreaterThan(0);
+    for (const key of ["ATR_14", "ATR_14_SMA", "ATR_14_EMA", "ATR_14_WMA"] as const)
+      for (const v of series[key]) if (v !== null) expect(v).toBeGreaterThan(0);
 
     mkdirSync(dirname(OUT), { recursive: true });
     writeFileSync(OUT, JSON.stringify(fixture));

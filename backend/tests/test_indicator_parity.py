@@ -13,6 +13,7 @@ import pytest
 from auto_trader.core.models import Candle
 from auto_trader.indicators.core import (
     atr_series,
+    atr_smoothed_series,
     avwap_series,
     ema_series,
     rsi_series,
@@ -75,6 +76,11 @@ def test_rsi(golden):
 def test_atr(golden):
     candles, _, series = golden
     assert_series_equal(atr_series(candles, 14), series["ATR_14"], "ATR_14")
+    for smoothing in ("sma", "ema", "wma"):
+        key = f"ATR_14_{smoothing.upper()}"
+        assert_series_equal(atr_smoothed_series(candles, 14, smoothing), series[key], key)
+    # rma delegates to the legacy path bit-for-bit
+    assert atr_smoothed_series(candles, 14, "rma") == atr_series(candles, 14)
 
 
 def test_volma(golden):

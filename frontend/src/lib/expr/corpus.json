@@ -151,6 +151,14 @@
   { "expr": "SLOPE.50 > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":8},
     "instances": {"SLOPE": {"type":"SLOPE","calcParams":[9,21],"extendData":{}}},
     "literals": [] },
+  { "expr": "ATR#a1.14 > 5", "isExit": false, "error": null,
+    "instances": {"ATR#a1": {"type":"ATR","calcParams":[14],"extendData":{"smoothing":"ema"}}},
+    "literals": [
+      {"ordinal":0,"value":5,"from":12,"to":13,"label":"threshold"}
+    ] },
+  { "expr": "ATR#a1.20 > 5", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":9},
+    "instances": {"ATR#a1": {"type":"ATR","calcParams":[14],"extendData":{}}},
+    "literals": [] },
 
   { "expr": "2 + .5 > 0", "isExit": false, "error": null,
     "literals": [
