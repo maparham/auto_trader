@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from auto_trader.strategy.expr.errors import BAD_CROSS_MSG, ExprError
+from auto_trader.strategy.expr.errors import BAD_CROSS_MSG, BAD_EQ_MSG, ExprError
 
 _SINGLE = {
     "(": "LPAREN", ")": "RPAREN", ",": "COMMA", "+": "PLUS", "-": "MINUS",
@@ -120,6 +120,15 @@ def tokenize(src: str) -> list[Token]:
                 out.append(Token("GT" if c == ">" else "LT", c, i, i + 1))
                 i += 1
             continue
+        if c == "=":
+            # ">=" and "<=" are consumed by the "<>" branch above, so a "=" here
+            # is either "==" or a lone "=" — and a lone "=" is always a mistyped
+            # equality, never anything else in this grammar.
+            if i + 1 < n and src[i + 1] == "=":
+                out.append(Token("EQ", "==", i, i + 2))
+                i += 2
+                continue
+            raise ExprError("bad_eq_op", BAD_EQ_MSG, i, i + 1)
         if c in _SINGLE:
             out.append(Token(_SINGLE[c], c, i, i + 1))
             i += 1

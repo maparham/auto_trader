@@ -5,9 +5,14 @@ from auto_trader.strategy.expr.errors import BAD_CROSS_MSG, ExprError
 from auto_trader.strategy.expr.lexer import Token, tokenize
 from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
 
-_CMP_SYM = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<="}
+_CMP_SYM = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<=", "EQ": "=="}
 _CROSS_SYM = {"XGT": "crossAbove", "XLT": "crossBelow"}
-_ROW_OPS = ("GT", "LT", "GE", "LE", "XGT", "XLT")
+# One source of truth for the comparison set. parse_row accepts these plus the
+# cross operators; parse_condition (count's first argument) accepts these alone.
+# Keeping them derived means a new operator cannot land in one and miss the
+# other, which would make `a == b` legal at top level but not inside count().
+_CMP_OPS = ("GT", "LT", "GE", "LE", "EQ")
+_ROW_OPS = _CMP_OPS + ("XGT", "XLT")
 # Re-exported under the module-private name the parser has always used; the
 # string itself lives in errors.py so the lexer's x>= branch shares it byte
 # for byte.
@@ -60,7 +65,7 @@ class _Parser:
         if op.type not in _ROW_OPS:
             if op.type == "NAME" and op.value in ("x", "X"):
                 raise ExprError("bad_cross_op", _BAD_CROSS_MSG, op.start, op.end)
-            raise ExprError("expected_operator", "Expected a comparison operator (> < >= <= x> x<).", op.start, op.end)
+            raise ExprError("expected_operator", "Expected a comparison operator (> < >= <= == x> x<).", op.start, op.end)
         parts: list[N.Compare | N.Cross] = []
         operand = left
         while self.peek().type in _ROW_OPS:
@@ -174,7 +179,7 @@ class _Parser:
             self.next()
             right = self.parse_arith()
             return N.Cross(_CROSS_SYM[op.type], left, right, left.start, right.end)
-        if op.type not in ("GT", "LT", "GE", "LE"):
+        if op.type not in _CMP_OPS:
             if isinstance(left, N.Predicate):
                 return left
             raise ExprError(

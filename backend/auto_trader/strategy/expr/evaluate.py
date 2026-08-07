@@ -96,7 +96,19 @@ def _cmp_vals(op: str, l: float | None, r: float | None) -> bool:
         return l < r
     if op == ">=":
         return l >= r
-    return l <= r
+    if op == "<=":
+        return l <= r
+    if op == "==":
+        # Exact, deliberately: count(...) and barsSinceEntry are integral, and
+        # "exactly n of the last m bars" is the whole point of the operator. On
+        # float series == is almost never true bar to bar, and that is fine —
+        # there its value is as a proximity-heatmap query (closeness.signed_gap
+        # gives it -abs(l - r)), not as a firing condition. Do not add a
+        # tolerance here; that would silently change what count() == n means.
+        return l == r
+    # No bare fallthrough: an unknown op used to be silently treated as "<=",
+    # which returns plausible booleans and passes every parser-level test.
+    raise ValueError(f"unsupported comparison op: {op}")
 
 
 def _hoist_predicate(node: N.Predicate) -> N.Node:

@@ -30,3 +30,41 @@ def test_bad_char_raises_with_span():
         tokenize("EMA(9) ~ 1")
     assert exc.value.code == "bad_char"
     assert (exc.value.start, exc.value.end) == (7, 8)
+
+
+def test_tokenizes_equality_with_spans():
+    assert _types("count(candle.close > candle.open, 5) == 3")[-4:] == [
+        ("RPAREN", ")", 35, 36),
+        ("EQ", "==", 37, 39),
+        ("NUMBER", "3", 40, 41),
+        ("EOF", "", 41, 41),
+    ]
+
+
+def test_bare_equals_is_a_targeted_error_not_bad_char():
+    with pytest.raises(ExprError) as exc:
+        tokenize("EMA(9) = 1")
+    assert exc.value.code == "bad_eq_op"
+    assert exc.value.message == "Use == for equality."
+    assert (exc.value.start, exc.value.end) == (7, 8)
+
+
+def test_trailing_bare_equals_reports_at_the_equals():
+    with pytest.raises(ExprError) as exc:
+        tokenize("EMA(9) =")
+    assert exc.value.code == "bad_eq_op"
+    assert (exc.value.start, exc.value.end) == (7, 8)
+
+
+def test_ge_and_le_still_lex_as_before():
+    # The new "=" branch must not intercept the second character of >= or <=.
+    assert [t.type for t in tokenize("1 >= 2")] == ["NUMBER", "GE", "NUMBER", "EOF"]
+    assert [t.type for t in tokenize("1 <= 2")] == ["NUMBER", "LE", "NUMBER", "EOF"]
+
+
+def test_equals_never_fuses_with_a_leading_x():
+    # "=" must not join the x> / x< cross-operator fusion branch: there is no
+    # cross-equality, so "x" here is just an unknown variable the parser will
+    # report. Guards the constraint that a future refactor would silently break.
+    assert [t.type for t in tokenize("x == 3")] == ["NAME", "EQ", "NUMBER", "EOF"]
+    assert [t.type for t in tokenize("x==3")] == ["NAME", "EQ", "NUMBER", "EOF"]

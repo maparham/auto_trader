@@ -509,6 +509,38 @@ describe("infix cross operators", () => {
   });
 });
 
+describe("== equality operator", () => {
+  it("lexes == as EQ", () => {
+    const src = "count(candle.close > candle.open, 5) == 3";
+    const { tokens, error } = analyze(src);
+    expect(error).toBeNull();
+    expect(tokens.map((t) => [t.type, src.slice(t.from, t.to)])).toContainEqual(["EQ", "=="]);
+  });
+
+  it("rejects a bare = with the equality message", () => {
+    const { error } = analyze("EMA(9) = 1");
+    expect(error?.code).toBe("bad_eq_op");
+    expect(error?.message).toBe("Use == for equality.");
+    expect([error?.from, error?.to]).toEqual([7, 8]);
+  });
+
+  it("parses == at top level and inside count", () => {
+    expect(analyze("count(candle.close > candle.open, 5) == 3").error).toBeNull();
+    expect(analyze("count(EMA(9) == EMA(21), 20) > 0").error).toBeNull();
+    // Pins SYM_OF's EQ -> "==" mapping: Compare.op reaches the user through
+    // render() in the literal label, so a missing entry renders "undefined"
+    // in the sweep axis rather than failing loudly.
+    const r = analyze("2 * count(1 == 2, 3) > 1", {});
+    expect(r.literals[0].label).toBe("multiplier of count(1 == 2, 3)");
+  });
+
+  it("lists == in the expected-operator message", () => {
+    const { error } = analyze("EMA(9) EMA(21)");
+    expect(error?.code).toBe("expected_operator");
+    expect(error?.message).toBe("Expected a comparison operator (> < >= <= == x> x<).");
+  });
+});
+
 // --- the lexer's dot rule ------------------------------------------------------
 //
 // `SLOPE.9` only reaches the parser because tokenize stopped treating a "." that

@@ -38,3 +38,9 @@ def test_original_failing_rule_now_parses_and_validates():
     node = parse("candle.close>EMA(9)>EMA(50)")
     validate(node, is_exit=False)  # no raise
     assert isinstance(node, N.Chain)
+
+
+def test_chain_mixing_equality_and_inequality():
+    node = parse("count(candle.close > candle.open, 5) == 3 > 1")
+    assert isinstance(node, N.Chain)
+    assert [p.op for p in node.parts] == ["==", ">"]

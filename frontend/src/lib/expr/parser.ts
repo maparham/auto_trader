@@ -244,6 +244,17 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
       }
       continue;
     }
+    if (c === "=") {
+      // ">=" and "<=" are consumed by the "<>" branch above, so a "=" here is
+      // either "==" or a lone "=" — and a lone "=" is always a mistyped
+      // equality, never anything else in this grammar. Mirrors lexer.py.
+      if (i + 1 < n && src[i + 1] === "=") {
+        out.push({ type: "EQ", value: "==", start: i, end: i + 2 });
+        i += 2;
+        continue;
+      }
+      return { tokens: out, error: new ExprErr("bad_eq_op", BAD_EQ_MSG, i, i + 1) };
+    }
     if (c in SINGLE) {
       out.push({ type: SINGLE[c], value: c, start: i, end: i + 1 });
       i += 1;
@@ -260,8 +271,16 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
 // ---------------------------------------------------------------------------
 
 const CROSS_OF: Record<string, string> = { XGT: "crossAbove", XLT: "crossBelow" };
-const ROW_OP_TYPES = new Set(["GT", "LT", "GE", "LE", "XGT", "XLT"]);
+// One source of truth for the comparison set, mirroring parser.py's _CMP_OPS /
+// _ROW_OPS: parseRow accepts these plus the crosses, parseCondition (count's
+// first argument) accepts these alone. Derived so a new operator cannot land in
+// one and miss the other.
+const CMP_OP_TYPES = ["GT", "LT", "GE", "LE", "EQ"] as const;
+const CMP_OP_TYPE_SET: ReadonlySet<string> = new Set<string>(CMP_OP_TYPES);
+const ROW_OP_TYPES: ReadonlySet<string> = new Set<string>([...CMP_OP_TYPES, "XGT", "XLT"]);
+const SYM_OF: Record<string, string> = { GT: ">", LT: "<", GE: ">=", LE: "<=", EQ: "==" };
 const BAD_CROSS_MSG = "Write the cross operator as x> or x< — lowercase, no space.";
+const BAD_EQ_MSG = "Use == for equality.";
 
 class Parser {
   private i = 0;
@@ -312,9 +331,8 @@ class Parser {
       if (op.type === "NAME" && (op.value === "x" || op.value === "X")) {
         throw new ExprErr("bad_cross_op", BAD_CROSS_MSG, op.start, op.end);
       }
-      throw new ExprErr("expected_operator", "Expected a comparison operator (> < >= <= x> x<).", op.start, op.end);
+      throw new ExprErr("expected_operator", "Expected a comparison operator (> < >= <= == x> x<).", op.start, op.end);
     }
-    const symOf: Record<string, string> = { GT: ">", LT: "<", GE: ">=", LE: "<=" };
     const parts: Array<CompareNode | CrossNode> = [];
     let operand: Node = left;
     while (ROW_OP_TYPES.has(this.peek().type)) {
@@ -323,7 +341,7 @@ class Parser {
       if (optok.type in CROSS_OF) {
         parts.push({ kind: "Cross", fn: CROSS_OF[optok.type], a: operand, b: right, start: operand.start, end: right.end });
       } else {
-        parts.push({ kind: "Compare", op: symOf[optok.type], left: operand, right, start: operand.start, end: right.end });
+        parts.push({ kind: "Compare", op: SYM_OF[optok.type], left: operand, right, start: operand.start, end: right.end });
       }
       operand = right;
     }
@@ -449,7 +467,7 @@ class Parser {
       const right = this.parseArith();
       return { kind: "Cross", fn: CROSS_OF[op.type], a: left, b: right, start: left.start, end: right.end };
     }
-    if (op.type !== "GT" && op.type !== "LT" && op.type !== "GE" && op.type !== "LE") {
+    if (!CMP_OP_TYPE_SET.has(op.type)) {
       if (left.kind === "Predicate") return left;
       throw new ExprErr(
         "count_needs_condition",
@@ -457,10 +475,9 @@ class Parser {
         left.start, left.end,
       );
     }
-    const symOf: Record<string, string> = { GT: ">", LT: "<", GE: ">=", LE: "<=" };
     const optok = this.next();
     const right = this.parseArith();
-    return { kind: "Compare", op: symOf[optok.type], left, right, start: left.start, end: right.end };
+    return { kind: "Compare", op: SYM_OF[optok.type], left, right, start: left.start, end: right.end };
   }
 
   private parsePostfix(node: Node): Node {

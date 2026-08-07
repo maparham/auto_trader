@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from auto_trader.core.models import Candle
-from auto_trader.strategy.expr.evaluate import compile_row, series_of
+from auto_trader.strategy.expr.evaluate import _cmp_vals, compile_row, series_of
 from auto_trader.strategy.expr.parser import parse
 
 
@@ -377,3 +377,44 @@ def test_bullish_and_bearish_still_work():
     c = _bars(_ENGULF)
     assert _row_bools("bullish(candle)", c, resolution="MINUTE_5") == [False, True]
     assert _row_bools("bearish(candle)", c, resolution="MINUTE_5") == [True, False]
+
+
+# --- equality operator tests --------------------------------------------------
+
+
+def test_equality_holds_when_both_sides_are_defined_and_equal():
+    assert _cmp_vals("==", 2.5, 2.5) is True
+    assert _cmp_vals("==", 2.5, 2.6) is False
+    assert _cmp_vals("==", 2.6, 2.5) is False   # distinguishes == from >=
+
+
+def test_equality_is_false_when_an_operand_is_undefined():
+    assert _cmp_vals("==", None, 1.0) is False
+    assert _cmp_vals("==", 1.0, None) is False
+    # NaN is filtered by _defined, so this is False rather than IEEE's answer.
+    # Deliberate: an undefined operand equals nothing. Do not "fix" this.
+    assert _cmp_vals("==", float("nan"), float("nan")) is False
+
+
+def test_cmp_vals_rejects_an_unknown_operator():
+    # Guards the fallthrough: an op the function does not know must raise, not
+    # quietly behave like "<=".
+    with pytest.raises(ValueError):
+        _cmp_vals("!=", 1.0, 2.0)
+
+
+def test_cmp_vals_le_still_works():
+    assert _cmp_vals("<=", 1.0, 2.0) is True
+    assert _cmp_vals("<=", 2.0, 2.0) is True
+    assert _cmp_vals("<=", 3.0, 2.0) is False
+
+
+def test_count_equality_fires_only_on_the_exact_count():
+    # _bars takes (open, close) pairs; a bar is bullish when close > open.
+    # bullish:  T       T       F       F       T
+    c = _bars([(1, 2), (2, 3), (3, 2), (2, 1), (1, 2)])
+    # count over the last 3 bars is undefined until the window fits (bars 0-1),
+    # then: bar2 -> 2, bar3 -> 1, bar4 -> 1. So "== 2" fires on bar 2 alone.
+    assert _row_bools("count(candle.close > candle.open, 3) == 2", c) == [
+        False, False, True, False, False,
+    ]

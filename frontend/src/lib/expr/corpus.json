@@ -150,5 +150,25 @@
     "literals": [
       {"ordinal":0,"value":0.5,"from":0,"to":2,"label":"threshold"},
       {"ordinal":1,"value":0,"from":5,"to":6,"label":"threshold"}
+    ] },
+  { "expr": "count(candle.close > candle.open, 5) == 3", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":5,"from":34,"to":35,"label":"count window"},
+      {"ordinal":1,"value":3,"from":40,"to":41,"label":"threshold"}
+    ] },
+  { "expr": "count(EMA(9) == EMA(21), 20) > 0", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":10,"to":11,"label":"EMA length"},
+      {"ordinal":1,"value":21,"from":20,"to":22,"label":"EMA length"},
+      {"ordinal":2,"value":20,"from":25,"to":27,"label":"count window"},
+      {"ordinal":3,"value":0,"from":31,"to":32,"label":"threshold"}
+    ] },
+  { "expr": "EMA(9) = 1", "isExit": false, "error": {"code":"bad_eq_op","from":7,"to":8}, "literals": [] },
+  { "expr": "x == 3", "isExit": false, "error": {"code":"unknown_name","from":0,"to":1}, "literals": [] },
+  { "expr": "1 < EMA(9) == 2", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":1,"from":0,"to":1,"label":"threshold"},
+      {"ordinal":1,"value":9,"from":8,"to":9,"label":"EMA length"},
+      {"ordinal":2,"value":2,"from":14,"to":15,"label":"threshold"}
     ] }
 ]

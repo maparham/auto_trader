@@ -68,4 +68,10 @@ describe("classifyTokens", () => {
     // ...and one with a field is a plain instance ref, not an indicator.
     expect(classes("toString.x > 1")[0]).toEqual(["toString", "instanceRef"]);
   });
+
+  it("highlights == as an operator", () => {
+    expect(classes("count(candle.close > candle.open, 5) == 3")).toContainEqual(
+      ["==", "operator"]
+    );
+  });
 });

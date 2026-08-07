@@ -27,6 +27,11 @@ def signed_gap(op: str, left: float | None, right: float | None) -> float | None
         return left - right
     if op in ("<", "<="):
         return right - left
+    if op == "==":
+        # Symmetric and non-positive: 0 exactly when the operands are equal,
+        # falling away on both sides, so ramp() warms toward 1 as they converge.
+        # Same form row_gap_series uses for Cross (distance to touching).
+        return -abs(left - right)
     raise ValueError(f"unsupported comparison op: {op}")
 
 

@@ -24,9 +24,15 @@ def test_signed_gap_orientation():
     # "<": fires when left < right, so gap = right - left
     assert signed_gap("<", 99, 100) == 1
     assert signed_gap("<=", 100, 100) == 0
+    # "==": symmetric, zero exactly when equal and negative either side of it,
+    # so ramp() warms toward 1 as the operands converge (same shape as Cross).
+    assert signed_gap("==", 100, 100) == 0
+    assert signed_gap("==", 101, 100) == -1
+    assert signed_gap("==", 99, 100) == -1
     # any None -> None
     assert signed_gap(">", None, 100) is None
     assert signed_gap(">", 100, None) is None
+    assert signed_gap("==", None, 100) is None
 
 
 def test_ramp_shape():
@@ -243,3 +249,10 @@ def test_chain_closeness_is_min_of_link_closeness():
             assert out[i] is None
         else:
             assert out[i] == min(c1[i], c2[i])
+
+
+def test_row_gap_series_handles_an_equality_row():
+    # Regression guard for the closeness route: an == rule must not raise.
+    c = [_c(x, i) for i, x in enumerate([1, 2, 3])]
+    gaps = row_gap_series(parse("candle.close == 2"), c, "MINUTE", {})
+    assert gaps == [-1.0, 0.0, -1.0]

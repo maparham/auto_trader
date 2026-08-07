@@ -20,3 +20,8 @@ class ExprError(Exception):
 # position) so every spelling of a mistyped cross operator gets the SAME copy.
 # Kept here, not in parser.py, because lexer.py cannot import from parser.py.
 BAD_CROSS_MSG = "Write the cross operator as x> or x< — lowercase, no space."
+
+# A "=" has no other role in this grammar, so every "=" that is not part of "=="
+# is a mistyped equality. Kept here rather than in parser.py for the same reason
+# as BAD_CROSS_MSG: lexer.py cannot import from parser.py.
+BAD_EQ_MSG = "Use == for equality."

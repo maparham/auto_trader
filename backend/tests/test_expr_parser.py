@@ -100,3 +100,24 @@ def test_count_spans():
     cnt = node.left
     assert (cnt.start, cnt.end) == (0, 25)  # "count(bullish(candle), 5)"
     assert (cnt.cond.start, cnt.cond.end) == (6, 21)  # "bullish(candle)"
+
+
+def test_equality_at_top_level():
+    top = parse("count(candle.close > candle.open, 5) == 3")
+    assert isinstance(top, N.Compare) and top.op == "=="
+    assert isinstance(top.left, N.Count)
+    assert isinstance(top.right, N.Num) and top.right.value == 3
+
+
+def test_equality_inside_count_condition():
+    # The other reading of "count needs equality": equality as the counted condition.
+    top = parse("count(EMA(9) == EMA(21), 20) > 0")
+    assert isinstance(top.left, N.Count)
+    assert isinstance(top.left.cond, N.Compare) and top.left.cond.op == "=="
+
+
+def test_expected_operator_copy_lists_equality():
+    with pytest.raises(ExprError) as exc:
+        parse("EMA(9) EMA(21)")
+    assert exc.value.code == "expected_operator"
+    assert exc.value.message == "Expected a comparison operator (> < >= <= == x> x<)."

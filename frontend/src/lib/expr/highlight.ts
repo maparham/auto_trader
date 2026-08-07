@@ -28,7 +28,7 @@ const PREDICATE_SET = new Set<string>(PREDICATE_FNS);
 const BUILTIN_VALUES = new Set(["candle", "entry", "barsSinceEntry"]);
 
 const OPERATOR_TYPES = new Set([
-  "GT", "LT", "GE", "LE", "PLUS", "MINUS", "STAR", "SLASH",
+  "GT", "LT", "GE", "LE", "EQ", "PLUS", "MINUS", "STAR", "SLASH",
 ]);
 
 const marks: Record<string, Decoration> = {
