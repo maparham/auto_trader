@@ -59,6 +59,26 @@ describe("infix cross completions", () => {
     ).toBe("EMA(50)");
   });
 
+  it("offers the boolean keywords after a complete condition", () => {
+    // Trailing space -> no word prefix -> every candidate is offered; the
+    // point is that and/or/not are IN the candidate set at all.
+    const labels = completionsFor("candle.close > EMA(9) ", 22).map((o) => o.label);
+    expect(labels).toContain("AND");
+    expect(labels).toContain("OR");
+    expect(labels).toContain("NOT");
+  });
+
+  it("ranks AND first on the bare prefix 'an' (case-insensitive)", () => {
+    const opts = completionsFor("an", 2);
+    expect(opts[0].label).toBe("AND");
+    expect(opts[0].detail).toBe("Both conditions must hold");
+  });
+
+  it("inserts a boolean keyword with a trailing space and no selection", () => {
+    const cand = completionsFor("an", 2).find((c) => c.label === "AND")!;
+    expect(cand.apply).toBe("AND ");
+  });
+
   it("keeps the infix operators in the bare-word candidate set", () => {
     const labels = completionsFor("", 0).map((o) => o.label);
     expect(labels).toContain("x>");

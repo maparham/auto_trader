@@ -46,6 +46,13 @@ export interface EvaluateRequest {
   exprLongExit?: Array<{ expr: string; enabled: boolean }>;
   exprShortEntry?: Array<{ expr: string; enabled: boolean }>;
   exprShortExit?: Array<{ expr: string; enabled: boolean }>;
+  // Per-group AND/OR for the rows above — the panel's section-header switch.
+  // Omitted = AND (the backend's default). Coded mode only sends the exit pair,
+  // since its entries come from the .py file.
+  exprLongEntryCombine?: "AND" | "OR";
+  exprLongExitCombine?: "AND" | "OR";
+  exprShortEntryCombine?: "AND" | "OR";
+  exprShortExitCombine?: "AND" | "OR";
   // Chart pane settings for every `SLOPE.9`-style reference the rows make,
   // keyed by instance id — the same map the backtest request carries, and the
   // same one the backend resolves (schemas.py EvaluateRequest.indicators).

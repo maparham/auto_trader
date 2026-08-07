@@ -241,6 +241,20 @@ def test_expr_series_bare_predicate_row_422s():
     assert r.json()["detail"]["code"] == "predicate_not_plottable"
 
 
+def test_expr_series_boolean_row_422s():
+    # An and/or/not row has no single operand to plot — must 422, not blow up on
+    # `node.a` (AttributeError -> 500) in the operand picker below.
+    for expr in ("candle.close > 5 and candle.close > 1",
+                 "candle.close > 5 or candle.close > 1",
+                 "not candle.close > 5"):
+        r = client.post("/api/expr/series", json={
+            "epic": "TEST", "resolution": "HOUR", "expr": expr,
+            "fromTime": 0, "toTime": 3600,
+        })
+        assert r.status_code == 422, expr
+        assert r.json()["detail"]["code"] == "boolean_not_plottable"
+
+
 # --- count()/bullish()/bearish()/barsSinceEntry --------------------------
 
 
@@ -398,6 +412,21 @@ def test_referenced_tfs_sees_into_count_and_predicates():
     assert _referenced_tfs(node) == {"1H"}
 
 
+def test_referenced_tfs_sees_into_boolean_rows():
+    # A @tf pin inside an and/or/not branch is invisible to HTF collection unless
+    # referenced_tfs walks BoolOp/Not — _ensure_htf then never fetches those
+    # candles and the pinned series degrades to all-None (silent Kleene unknown).
+    from auto_trader.api.routers.expr import _referenced_tfs
+    from auto_trader.strategy.expr.parser import parse
+
+    assert _referenced_tfs(parse("EMA(50)@1H > 0 and candle.close > 0")) == {"1H"}
+    assert _referenced_tfs(parse("candle.close > 0 or EMA(50)@1H > 0")) == {"1H"}
+    assert _referenced_tfs(parse("not EMA(50)@1H > 0")) == {"1H"}
+    assert _referenced_tfs(
+        parse("count(EMA(50)@1H > 0 and candle.close > 0, 10) >= 2")
+    ) == {"1H"}
+
+
 # --- pinned candle patterns need HTF warm-up ---------------------------------
 # _tf_inner_warmup answers "warm-up in the PIN's own bars", and the routes max
 # it across every row for each referenced timeframe. A pattern pinned to @tf
@@ -412,6 +441,18 @@ def _tiw(expr: str, tf: str) -> int:
     from auto_trader.strategy.expr.parser import parse
 
     return _tf_inner_warmup(parse(expr), tf)
+
+
+def test_tf_inner_warmup_sees_into_boolean_rows():
+    # Same defect as _referenced_tfs above, one layer on: a pin inside an
+    # and/or/not branch must charge its own warm-up, or the route fetches one
+    # bar of HTF and warms the series from nothing.
+    solo = _tiw("EMA(50)@1H > 0", "1H")
+    assert solo > 0
+    assert _tiw("EMA(50)@1H > 0 and candle.close > 0", "1H") == solo
+    assert _tiw("candle.close > 0 or EMA(50)@1H > 0", "1H") == solo
+    assert _tiw("not EMA(50)@1H > 0", "1H") == solo
+    assert _tiw("count(EMA(50)@1H > 0 and candle.close > 0, 10) >= 2", "1H") == solo
 
 
 def test_pinned_pattern_charges_its_warmup_to_the_pinned_tf():
@@ -508,3 +549,34 @@ def test_series_plots_first_operand_of_a_leading_cross_part(monkeypatch):
     # EMA(3) is the plotted operand: defined from bar 2 on, and rising.
     assert len(body["values"]) == len(body["times"])
     assert any(v is not None for v in body["values"])
+
+
+# --- per-group AND/OR combine -------------------------------------------------
+
+
+def _split_entry_req(**over):
+    """Two long-entry rows where only the second can ever pass."""
+    return _base_req(
+        longEntry=[{"expr": "candle.close > 100"}, {"expr": "candle.close > 0"}],
+        **over,
+    )
+
+
+def test_expr_backtest_or_combine_lets_one_passing_row_fire():
+    r = client.post("/api/expr/backtest", json=_split_entry_req(longEntryCombine="OR"))
+    assert r.status_code == 200, r.text
+    assert len(r.json()["trades"]) >= 1
+
+
+def test_expr_backtest_default_combine_is_and():
+    # Same rules, omitted combine -> AND -> the impossible row blocks every entry.
+    r = client.post("/api/expr/backtest", json=_split_entry_req())
+    assert r.status_code == 200, r.text
+    assert r.json()["trades"] == []
+
+
+def test_expr_backtest_rejects_a_non_canonical_combine():
+    # "or" lowercase would fold as AND while labelling the reason "or" — the
+    # Literal type rejects it at the DTO boundary instead.
+    r = client.post("/api/expr/backtest", json=_split_entry_req(longEntryCombine="or"))
+    assert r.status_code == 422

@@ -66,7 +66,7 @@ describe("runOneCycle", () => {
   it("non-coded (expression) mode sends exprMode + expr rows, no structured groups and no series", async () => {
     const cfg = {
       ...defaultBacktestConfig(), mode: "rules" as const,
-      longEntry: { combine: "AND" as const, rules: [{ expr: "candle.close > candle.open", enabled: true } as unknown as Rule] },
+      longEntry: { combine: "OR" as const, rules: [{ expr: "candle.close > candle.open", enabled: true } as unknown as Rule] },
       longExit: { combine: "AND" as const, rules: [] },
       shortEntry: { combine: "AND" as const, rules: [] },
       shortExit: { combine: "AND" as const, rules: [] },
@@ -92,6 +92,9 @@ describe("runOneCycle", () => {
     const req = deps.evaluateStrategy.mock.calls[0][0];
     expect(req.exprMode).toBe(true);
     expect(req.exprLongEntry).toEqual([{ expr: "candle.close > candle.open", enabled: true }]);
+    // Each group's AND/OR switch rides along with its rows.
+    expect(req.exprLongEntryCombine).toBe("OR");
+    expect(req.exprLongExitCombine).toBe("AND");
     expect(req.codedStrategy).toBeUndefined();
     expect(req.series).toEqual({});
     // The structured rule-group fields were removed from the evaluate request.
@@ -328,7 +331,7 @@ describe("runOneCycle ships the armed indicators map", () => {
     // pane exactly like a rule-mode row, and needs the same map to resolve it.
     const coded = {
       params: {},
-      longExit: { combine: "AND" as const, rules: [{ expr: "SLOPE.50 < 0", enabled: true }] },
+      longExit: { combine: "OR" as const, rules: [{ expr: "SLOPE.50 < 0", enabled: true }] },
       shortExit: { combine: "AND" as const, rules: [] },
     } as never;
     const s = armSnapshot(
@@ -343,6 +346,10 @@ describe("runOneCycle ships the armed indicators map", () => {
     const req = d.evaluateStrategy.mock.calls[0][0];
     expect(req.codedStrategy).toBe("x.py");
     expect(req.exprLongExit).toEqual([{ expr: "SLOPE.50 < 0", enabled: true }]);
+    // A coded arm's exit combiner comes from the coded panel's group, and its
+    // entries have no groups at all — so no entry combiner is sent.
+    expect(req.exprLongExitCombine).toBe("OR");
+    expect(req.exprLongEntryCombine).toBeUndefined();
     expect(req.indicators).toEqual(PANE);
   });
 

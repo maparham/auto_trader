@@ -58,6 +58,39 @@ describe("classifyTokens", () => {
     expect(classes("candle.close > 1")[0]).toEqual(["candle", "variable"]);
   });
 
+  // The boolean keywords lex as their own token types (AND/OR/NOT), so they
+  // never reach the NAME branch — they need their own class or they go
+  // undecorated. The lowercase and the all-uppercase spellings both specialize;
+  // a mixed-case `And` stays a name.
+  it("classifies the boolean keywords", () => {
+    expect(classifyTokens("a > 1 and b > 2")).toContainEqual({
+      from: 6, to: 9, cls: "logic",
+    });
+    expect(classes("a > 1 and b > 2")).toEqual([
+      ["a", "variable"],
+      [">", "operator"],
+      ["1", "number"],
+      ["and", "logic"],
+      ["b", "variable"],
+      [">", "operator"],
+      ["2", "number"],
+    ]);
+    expect(classes("a > 1 or not b > 2")).toEqual([
+      ["a", "variable"],
+      [">", "operator"],
+      ["1", "number"],
+      ["or", "logic"],
+      ["not", "logic"],
+      ["b", "variable"],
+      [">", "operator"],
+      ["2", "number"],
+    ]);
+    // The all-uppercase spelling is the same keyword token, so it colors the
+    // same; only a MIXED-case word is an ordinary (unknown) name.
+    expect(classes("a > 1 AND b > 2")[3]).toEqual(["AND", "logic"]);
+    expect(classes("a > 1 And b > 2")[3]).toEqual(["And", "variable"]);
+  });
+
   // Regression: INDICATOR_SPECS / WRAPPER_ARITY are plain object literals, so a
   // bare `in` also finds inherited Object.prototype members. `toString` and
   // `constructor` are ordinary unknown names and must classify as variables.

@@ -37,6 +37,10 @@ def warmup_bars(node: N.Node, resolution: str | None = None,
     warmupOf)."""
     if isinstance(node, N.Chain):
         return max(warmup_bars(p, resolution, instances) for p in node.parts)
+    if isinstance(node, N.BoolOp):
+        return max(warmup_bars(p, resolution, instances) for p in node.parts)
+    if isinstance(node, N.Not):
+        return warmup_bars(node.operand, resolution, instances)
     if isinstance(node, (N.Compare,)):
         return max(warmup_bars(node.left, resolution, instances), warmup_bars(node.right, resolution, instances))
     if isinstance(node, N.Cross):

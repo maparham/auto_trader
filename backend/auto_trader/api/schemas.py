@@ -282,6 +282,9 @@ class BacktestRequest(BaseModel):
     # the coded module's, so no expr entry fields are needed.
     exprLongExit: list[ExprRowDTO] = []
     exprShortExit: list[ExprRowDTO] = []
+    # how this group's rows combine: "AND" (default) | "OR"
+    exprLongExitCombine: Literal["AND", "OR"] = "AND"
+    exprShortExitCombine: Literal["AND", "OR"] = "AND"
     # Per-side master switches: a disabled side never trades even if its rule
     # groups are populated (the user keeps the rules while the side is parked).
     # Default on so an omitted flag means "trade this side" (backward-safe).
@@ -616,6 +619,11 @@ class EvaluateRequest(BaseModel):
     exprLongExit: list[ExprRowDTO] = []
     exprShortEntry: list[ExprRowDTO] = []
     exprShortExit: list[ExprRowDTO] = []
+    # how this group's rows combine: "AND" (default) | "OR"
+    exprLongEntryCombine: Literal["AND", "OR"] = "AND"
+    exprLongExitCombine: Literal["AND", "OR"] = "AND"
+    exprShortEntryCombine: Literal["AND", "OR"] = "AND"
+    exprShortExitCombine: Literal["AND", "OR"] = "AND"
     htfCandles: dict[str, list[CandleDTO]] | None = None
     # Chart indicator instance settings, keyed by instance id. A rule names an
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
@@ -699,6 +707,11 @@ class ExprBacktestRequest(BaseModel):
     longExit: list[ExprRowDTO] = []
     shortEntry: list[ExprRowDTO] = []
     shortExit: list[ExprRowDTO] = []
+    # how this group's rows combine: "AND" (default) | "OR"
+    longEntryCombine: Literal["AND", "OR"] = "AND"
+    longExitCombine: Literal["AND", "OR"] = "AND"
+    shortEntryCombine: Literal["AND", "OR"] = "AND"
+    shortExitCombine: Literal["AND", "OR"] = "AND"
     longEnabled: bool = True
     shortEnabled: bool = True
     longRisk: RiskConfigDTO | None = None
@@ -748,7 +761,7 @@ class ExprClosenessRequest(BaseModel):
     broker: str = "capital"
     priceSide: str = "mid"
     rows: list[str]
-    combine: str = "AND"        # "AND" | "OR"
+    combine: Literal["AND", "OR"] = "AND"
     baseResolution: str
     displayResolution: str
     fromTime: int

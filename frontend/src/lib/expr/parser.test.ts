@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { analyze, warmupOf } from "./parser";
+import { analyze, warmupOf, parseRowForTests } from "./parser";
 import { PATTERNS, PREDICATE_FNS } from "./catalog";
 import { PATTERN_PREDICATE_FNS } from "../indicators/candlePatterns";
 
@@ -398,6 +398,14 @@ describe("indicator references", () => {
     it("Cross (inside a count condition)", () => {
       expect(code("count(SLOPE#p1n.50 x> EMA(9), 10) @4H >= 1")).toBe("nested_tf");
     });
+    it("BoolOp (inside a count condition)", () => {
+      // The only way a boolean node lands INSIDE another node's subtree is
+      // count(); without the BoolOp arm the pinned ref is invisible here.
+      expect(code("count(SLOPE#p1n.50 > 0 and candle.close > 0, 10) @4H >= 1")).toBe("nested_tf");
+    });
+    it("Not (inside a count condition)", () => {
+      expect(code("count(not SLOPE#p1n.50 > 0, 10) @4H >= 1")).toBe("nested_tf");
+    });
     it("Predicate (inside a count condition)", () => {
       // Reachable because the pin check precedes the predicate's own arg check.
       expect(code("count(bullish(SLOPE#p1n.50), 10) @4H >= 1")).toBe("nested_tf");
@@ -452,16 +460,36 @@ describe("infix cross operators", () => {
     expect(analyze("EMA(9) > EMA(50) x> EMA(200)").error).toBeNull();
   });
 
-  it("rejects two crosses in a row", () => {
-    const { error } = analyze("EMA(9) x> EMA(50) x> EMA(200)");
-    expect(error?.code).toBe("multiple_crosses");
-    expect([error?.from, error?.to]).toEqual([10, 29]);
+  // multiple_crosses is gone: the boolean layer replaced the "one cross per
+  // row" rule (a user who wants two crosses now writes `a x> b and c x> d`),
+  // and a chain of crosses is simply a chain. Mirrors the backend parser,
+  // whose _ROW_OPS loop no longer counts crosses.
+  it("accepts two crosses in a row as a plain chain", () => {
+    const { error, literals } = analyze("EMA(9) x> EMA(50) x< EMA(20)");
+    expect(error).toBeNull();
+    expect(literals.map((l) => l.value)).toEqual([9, 50, 20]);
   });
 
+  // A parenthesized infix cross now PARSES (the paren body is a full orExpr);
+  // it is validate that rejects it in value position, over the whole
+  // paren-expression span. Mirrors the backend's cross_not_toplevel arm in
+  // validate.py's CONDITION_KINDS check.
   it("rejects a nested infix cross as cross_not_toplevel", () => {
     const { error } = analyze("EMA(9) > (EMA(9) x> EMA(50))");
     expect(error?.code).toBe("cross_not_toplevel");
-    expect([error?.from, error?.to]).toEqual([17, 19]);
+    expect([error?.from, error?.to]).toEqual([9, 28]);
+    expect(error?.message).toBe("A comparison or cross can't be used as a value.");
+  });
+
+  // Keeps `expect()`'s XGT/XLT branch pinned now that the parenthesized form
+  // above no longer reaches it: a cross inside a call argument still hits it,
+  // because the argument is parsed as arith and the ")" the grammar wants is
+  // met by an "x>" instead.
+  it("rejects an infix cross inside a call argument at parse time", () => {
+    const { error } = analyze("slope(EMA(9) x> EMA(50), 3) > 0");
+    expect(error?.code).toBe("cross_not_toplevel");
+    expect([error?.from, error?.to]).toEqual([13, 15]);
+    expect(error?.message).toBe("A comparison or cross can't be used as a value.");
   });
 
   it("flags spaced and uppercase x as bad_cross_op", () => {
@@ -600,5 +628,163 @@ describe("a NUMBER output is accepted only where an indicator ref is built", () 
   it("accepts it for an unregistered instance name, through offset and pin", () => {
     const instances = [{ id: "SLOPE", outputs: ["9"], timeframe: null }];
     expect(analyze("SLOPE.9[-2] @1H > 0", { instances }).error).toBeNull();
+  });
+});
+
+// --- boolean operators ---------------------------------------------------------
+//
+// The and/or/not layer, mirrored case for case from the backend
+// (lexer.py::_KEYWORDS, parser.py::parse_or/parse_and/parse_not, validate.py's
+// BoolOp/Not recursion, warmup.py, literals.py::_collect_row). Every span and
+// code below was read off the Python before being written here.
+describe("boolean operators", () => {
+  it("accepts an or of two comparisons and numbers its literals in source order", () => {
+    const { error, literals } = analyze("RSI(14) > 70 or RSI(14) < 30");
+    expect(error).toBeNull();
+    expect(literals.map((l) => [l.ordinal, l.value])).toEqual([
+      [0, 14], [1, 70], [2, 14], [3, 30],
+    ]);
+    expect(literals.map((l) => l.label)).toEqual([
+      "RSI length", "threshold", "RSI length", "threshold",
+    ]);
+  });
+
+  it("accepts not on a predicate row", () => {
+    expect(analyze("not bullish(candle)").error).toBeNull();
+  });
+
+  it("accepts a parenthesized group combined with and", () => {
+    const src = "(candle.close > EMA(9) or bullish(candle)) and RSI(14) < 70";
+    const { error, literals } = analyze(src);
+    expect(error).toBeNull();
+    expect(literals.map((l) => [l.value, l.from, l.to])).toEqual([
+      [9, 20, 21], [14, 51, 53], [70, 57, 59],
+    ]);
+  });
+
+  it("rejects a non-condition operand of and, pointing at the offending part", () => {
+    const { error } = analyze("candle.close and EMA(9)");
+    expect(error?.code).toBe("expected_condition");
+    expect([error?.from, error?.to]).toEqual([0, 12]);
+    expect(error?.message).toBe("and, or and not need a condition, like candle.close > EMA(9).");
+  });
+
+  it("rejects a non-condition operand of not, spanning the operand", () => {
+    // The ERROR span is the operand (what the user must fix); the Not node's
+    // own span still opens at the `not` keyword.
+    const { error } = analyze("not candle.close");
+    expect(error?.code).toBe("expected_condition");
+    expect([error?.from, error?.to]).toEqual([4, 16]);
+  });
+
+  it("rejects a parenthesized condition used as a value", () => {
+    const { error } = analyze("(candle.close > EMA(9))[-1]");
+    expect(error?.code).toBe("bool_as_value");
+    expect([error?.from, error?.to]).toEqual([23, 24]);
+    expect(error?.message).toBe("A condition can't be used as a value here.");
+  });
+
+  it("reports a boolean node in value position as cross_not_toplevel", () => {
+    // validate.py's CONDITION_KINDS arm, not unknown_name: the multiplied group
+    // parses as a BoolOp and is rejected over its whole span.
+    const { error } = analyze("2 * (EMA(9) > 1 and EMA(2) > 1) > 0");
+    expect(error?.code).toBe("cross_not_toplevel");
+    expect([error?.from, error?.to]).toEqual([4, 31]);
+    expect(error?.message).toBe("A comparison or cross can't be used as a value.");
+  });
+
+  it("binds not tighter than the comparison it contains", () => {
+    // `not` takes a whole conditionUnit, so this is not(EMA... > 1), and the 1
+    // is still the comparison's threshold.
+    const { error, literals } = analyze("not candle.close > 1");
+    expect(error).toBeNull();
+    expect(literals.map((l) => [l.value, l.label])).toEqual([[1, "threshold"]]);
+  });
+
+  it("still reports expected_operator for two adjacent values", () => {
+    const { error } = analyze("EMA(9) EMA(21)");
+    expect(error?.code).toBe("expected_operator");
+    expect([error?.from, error?.to]).toEqual([7, 10]);
+  });
+
+  it("takes the lowercase and the all-uppercase keyword spellings", () => {
+    expect(analyze("EMA(9) > 1 OR EMA(2) > 1").error).toBeNull();
+    expect(analyze("EMA(9) > 1 AND NOT bullish(candle)").error).toBeNull();
+  });
+
+  it("keeps a MIXED-case spelling a plain name", () => {
+    // "And"/"Or"/"Not" are plain names, so they reach the unknown-name check.
+    expect(analyze("And > 1").error?.code).toBe("unknown_name");
+    expect(analyze("EMA(9) > 1 Or EMA(2) > 1").error?.code).toBe("unexpected_token");
+    expect(analyze("Not bullish(candle)").error?.code).toBe("expected_operator");
+  });
+
+  it("takes count's condition as a full boolean expression", () => {
+    expect(analyze("count(candle.close > EMA(9) or bullish(candle), 10) >= 3").error).toBeNull();
+    const { error, literals } = analyze("count(candle.close > EMA(9) and bullish(candle), 10) >= 3");
+    expect(error).toBeNull();
+    expect(literals.map((l) => [l.value, l.label])).toEqual([
+      [9, "EMA length"], [10, "count window"], [3, "threshold"],
+    ]);
+  });
+
+  it("still rejects a non-condition count argument", () => {
+    expect(analyze("count(candle.close, 10) > 3").error?.code).toBe("count_needs_condition");
+  });
+
+  it("sees entry-based values through a boolean count condition", () => {
+    // containsEntryKind's BoolOp arm: without it the wrapper guard misses the
+    // barsSinceEntry buried under the `and`.
+    const { error } = analyze(
+      "highest(count(bullish(candle) and barsSinceEntry > 1, 3), 2) > 0",
+      { isExit: true },
+    );
+    expect(error?.code).toBe("entry_in_wrapper");
+    expect([error?.from, error?.to]).toEqual([0, 60]);
+  });
+
+  it("warms up to the largest part of an or, and passes not through", () => {
+    expect(warmupOf("EMA(50) > 0 or EMA(9) > 0")).toBe(50);
+    expect(warmupOf("not EMA(21) > 0")).toBe(21);
+  });
+});
+
+// The shared corpus pins error codes, spans and literals — none of which change
+// if `and`/`or` associated the wrong way, so a precedence divergence from the
+// backend would pass every other gate. These mirror the backend's
+// test_expr_parser_bool.py (test_precedence_and_binds_tighter_than_or,
+// test_chained_same_op_flattens, test_not_wraps_the_whole_comparison).
+describe("boolean AST shape", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const parse = (src: string): any => parseRowForTests(src);
+
+  it("binds and tighter than or", () => {
+    const row = parse("candle.close > 1 or candle.close > 2 and candle.close > 3");
+    expect(row.kind).toBe("BoolOp");
+    expect(row.op).toBe("or");
+    expect(row.parts).toHaveLength(2);
+    expect(row.parts[0].kind).toBe("Compare");
+    expect(row.parts[1].kind).toBe("BoolOp");
+    expect(row.parts[1].op).toBe("and");
+    expect(row.parts[1].parts).toHaveLength(2);
+  });
+
+  it("flattens a same-operator chain instead of nesting pairs", () => {
+    const row = parse("candle.close > 1 and candle.close > 2 and candle.close > 3");
+    expect(row.kind).toBe("BoolOp");
+    expect(row.op).toBe("and");
+    expect(row.parts).toHaveLength(3);
+    expect(row.parts.map((p: { kind: string }) => p.kind)).toEqual([
+      "Compare", "Compare", "Compare",
+    ]);
+  });
+
+  it("binds not tighter than and, over the whole comparison", () => {
+    const row = parse("not candle.close > 1 and candle.close > 2");
+    expect(row.kind).toBe("BoolOp");
+    expect(row.op).toBe("and");
+    expect(row.parts[0].kind).toBe("Not");
+    expect(row.parts[0].operand.kind).toBe("Compare");
+    expect(row.parts[1].kind).toBe("Compare");
   });
 });

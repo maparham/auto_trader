@@ -5,7 +5,7 @@
 // intentionally permissive and never the source of truth for diagnostics. It is
 // authored here for CodeMirror 6 highlighting and is not yet wired to a
 // generator build step. Token classes match catalog.ts:
-//   Indicator, Wrapper, Cross, CandleField, Number, Operator, Timeframe.
+//   Indicator, Wrapper, Cross, CandleField, Number, Operator, Timeframe, Logic.
 // An unregistered Identifier carrying a Dot Field is a chart-instance
 // reference (SLOPE#a1b2c3.9); the grammar needs no rule for it beyond
 // admitting "#" into Identifier, since highlight.ts::classify does the
@@ -13,10 +13,33 @@
 // count/bullish/bearish/barsSinceEntry are specialized the same way (Wrapper
 // for count, Cross for bullish/bearish, plain Identifier for barsSinceEntry);
 // see catalog.ts CONDITIONS/PREDICATE_FNS/COUNT_FN and highlight.ts classify().
+//
+// The boolean layer (and/or/not) sits ABOVE comparison, loosest first:
+// or < and < not < comparison. `and`/`or` are left-associative, `not` is
+// prefix and right-recursive, and parens (via `primary`) group. The keywords
+// are case-SENSITIVE specializations of Identifier: the lowercase and the
+// ALL-uppercase spellings become AND/OR/NOT; a mixed-case `Not` stays a plain
+// identifier and is reported as unknown_name by parser.ts (see its KEYWORDS
+// map).
 
 @top Row { expression }
 
-expression {
+expression { orExpr }
+
+orExpr {
+  andExpr (Or andExpr)*
+}
+
+andExpr {
+  notExpr (And notExpr)*
+}
+
+notExpr {
+  Not notExpr
+  | crossCall
+}
+
+crossCall {
   Cross "(" expression "," expression ")"
   | comparison
 }
@@ -103,7 +126,14 @@ Offset {
   Wrapper,
   Cross,
   Candle[@name=Candle],
-  Entry[@name=Entry]
+  Entry[@name=Entry],
+  // Lowercase or ALL-uppercase, and nothing between — specialize is
+  // case-sensitive, so each keyword needs BOTH spellings listed, which is
+  // exactly the lexer's rule. All three carry the `logic` highlight class
+  // (highlight.ts LOGIC_TYPES -> cm-tok-logic).
+  And[@name=And],
+  Or[@name=Or],
+  Not[@name=Not]
 }
 
 @skip { space }

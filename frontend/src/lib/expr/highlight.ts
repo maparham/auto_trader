@@ -40,8 +40,16 @@ const marks: Record<string, Decoration> = {
   operator: Decoration.mark({ class: "cm-tok-operator" }),
   timeframe: Decoration.mark({ class: "cm-tok-timeframe" }),
   variable: Decoration.mark({ class: "cm-tok-variable" }),
+  logic: Decoration.mark({ class: "cm-tok-logic" }),
   instanceRef: Decoration.mark({ class: "cm-tok-instance-ref" }),
 };
+
+// The boolean keywords. The lexer specializes `and`/`or`/`not` — lowercase or
+// ALL-uppercase — into their own token types, so they never reach the NAME
+// branch below; without this set they classify as null and paint as plain text.
+// Keyed off the TOKEN TYPE, which is the same for both spellings, so the
+// highlighter never has to care which one the user typed.
+const LOGIC_TYPES = new Set(["AND", "OR", "NOT"]);
 
 /** True when `value`, followed by `next`, is a chart-instance reference —
  * `SLOPE#a1b2c3` in `SLOPE#a1b2c3.9`.
@@ -81,6 +89,7 @@ function classify(
   if (tok.type === "NUMBER") return prev?.type === "DOT" ? "field" : "number";
   if (tok.type === "XGT" || tok.type === "XLT") return "cross";
   if (OPERATOR_TYPES.has(tok.type)) return "operator";
+  if (LOGIC_TYPES.has(tok.type)) return "logic";
   if (tok.type !== "NAME") return null;
   if (prev?.type === "AT") return TF_ALIASES.has(value) ? "timeframe" : "variable";
   if (prev?.type === "DOT") return "field";

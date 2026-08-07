@@ -336,7 +336,7 @@ def test_count_over_a_pattern_predicate():
 
 def test_pattern_predicate_in_count_uses_the_per_bar_path():
     """`count(pattern, barsSinceEntry)` has an entry-bearing window, so it is NOT
-    precomputed — every bar routes through CompiledRow._match_at. A real entry_i
+    precomputed — every bar routes through CompiledRow._match3. A real entry_i
     is mandatory: with entry_i=None barsSinceEntry is undefined and Count
     short-circuits to None before the predicate is ever consulted, which would
     make this test pass vacuously. The entry_i=None contrast below pins that.
@@ -348,7 +348,7 @@ def test_pattern_predicate_in_count_uses_the_per_bar_path():
     assert [row.evaluate(i, 12.0, 1) for i in range(5)] == [
         False, False, False, True, True]
     # Contrast: no entry index -> barsSinceEntry undefined -> never fires. A test
-    # written only against this shape would prove nothing about _match_at.
+    # written only against this shape would prove nothing about _match3.
     assert [row.evaluate(i, 12.0, None) for i in range(5)] == [False] * 5
 
 

@@ -106,24 +106,34 @@ interface CompareNode { kind: "Compare"; op: string; left: Node; right: Node; st
 interface CrossNode { kind: "Cross"; fn: string; a: Node; b: Node; start: number; end: number; }
 interface ChainNode { kind: "Chain"; parts: Array<CompareNode | CrossNode>; start: number; end: number; }
 interface PredicateNode { kind: "Predicate"; fn: string; base: Node; start: number; end: number; }
-interface CountNode { kind: "Count"; cond: CompareNode | CrossNode | PredicateNode; window: Node; start: number; end: number; }
+interface CountNode { kind: "Count"; cond: Node; window: Node; start: number; end: number; }
 interface BarsSinceEntryNode { kind: "BarsSinceEntry"; start: number; end: number; }
 // A configured chart-indicator instance's output, e.g. SLOPE#a1b2c3.9.
 // Carries NO parameters: the pane's settings are the single source of truth.
 interface IndicatorRefNode { kind: "IndicatorRef"; instance: string; output: string; start: number; end: number; }
+interface BoolOpNode { kind: "BoolOp"; op: "and" | "or"; parts: Node[]; start: number; end: number; }
+interface NotNode { kind: "Not"; operand: Node; start: number; end: number; }
 
 type Node =
   | NumNode | CandleNode | EntryNode | CallNode | FieldNode | OffsetNode
-  | TfNode | UnaryNode | BinaryNode | CompareNode | CrossNode
-  | PredicateNode | CountNode | BarsSinceEntryNode | IndicatorRefNode;
+  | TfNode | UnaryNode | BinaryNode | CompareNode | CrossNode | ChainNode
+  | PredicateNode | CountNode | BarsSinceEntryNode | IndicatorRefNode
+  | BoolOpNode | NotNode;
 
-type Row = CompareNode | CrossNode | ChainNode | PredicateNode;
+// A parsed row: what parseRow returns and validate/literalsOf accept.
+type Row = CompareNode | CrossNode | ChainNode | PredicateNode | BoolOpNode | NotNode;
 
-// Mirrors nodes.py contains_tf case for case, INCLUDING the Chain case: no
-// caller reaches it (a Chain is only ever a top-level Row, and the only call
-// site — parsePostfix's "@" branch — never holds one), but the mirror is kept
-// literal so a future caller cannot find a hole here that the backend closes.
-function containsTf(node: Node | ChainNode): boolean {
+/** The node kinds that ARE conditions (usable as a row, an and/or/not operand,
+ * or count's first argument) as opposed to numeric values. Mirrors
+ * nodes.py::CONDITION_KINDS. */
+export const CONDITION_KINDS: ReadonlySet<string> = new Set([
+  "Compare", "Cross", "Chain", "Predicate", "BoolOp", "Not",
+]);
+
+const isCondition = (n: Node): boolean => CONDITION_KINDS.has(n.kind);
+
+// Mirrors nodes.py contains_tf case for case.
+function containsTf(node: Node): boolean {
   if (node.kind === "Tf") return true;
   if (node.kind === "Field" || node.kind === "Offset") return containsTf(node.base);
   if (node.kind === "Unary") return containsTf(node.operand);
@@ -133,6 +143,8 @@ function containsTf(node: Node | ChainNode): boolean {
   if (node.kind === "Chain") return node.parts.some(containsTf);
   if (node.kind === "Predicate") return containsTf(node.base);
   if (node.kind === "Count") return containsTf(node.cond) || containsTf(node.window);
+  if (node.kind === "BoolOp") return node.parts.some(containsTf);
+  if (node.kind === "Not") return containsTf(node.operand);
   return false;
 }
 
@@ -158,6 +170,19 @@ const isAlpha = (c: string) => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
 const isAlnum = (c: string) => isDigit(c) || isAlpha(c);
 
 const NO_LEADING_DOT_NUMBER: ReadonlySet<string> = new Set(["NAME", "RPAREN", "RBRACKET"]);
+
+// Reserved boolean keywords. Exactly the lowercase and the ALL-uppercase
+// spellings are reserved; a mixed-case "And"/"Not" stays a plain name
+// (-> unknown_name). The token type is the same for both spellings, so
+// highlighting and completion never have to look at the value. A Map,
+// not an object literal: a `Record` lookup would inherit Object.prototype, so
+// `toString`/`constructor`/`valueOf` would lex as keyword token types instead
+// of NAMEs (the same hole `Object.hasOwn` closes elsewhere in this file). This
+// is the prototype-safe spelling of the backend's `_KEYWORDS.get(word, "NAME")`.
+const KEYWORDS: ReadonlyMap<string, string> = new Map([
+  ["and", "AND"], ["or", "OR"], ["not", "NOT"],
+  ["AND", "AND"], ["OR", "OR"], ["NOT", "NOT"],
+]);
 
 // Returns tokens up to (and including EOF), or the tokens collected so far plus
 // a bad_char error if an unexpected character is hit.
@@ -230,7 +255,7 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
         i = j + 1;
         continue;
       }
-      out.push({ type: "NAME", value: word, start: i, end: j });
+      out.push({ type: KEYWORDS.get(word) ?? "NAME", value: word, start: i, end: j });
       i = j;
       continue;
     }
@@ -272,11 +297,10 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
 
 const CROSS_OF: Record<string, string> = { XGT: "crossAbove", XLT: "crossBelow" };
 // One source of truth for the comparison set, mirroring parser.py's _CMP_OPS /
-// _ROW_OPS: parseRow accepts these plus the crosses, parseCondition (count's
-// first argument) accepts these alone. Derived so a new operator cannot land in
-// one and miss the other.
+// _ROW_OPS: every condition — a row, an and/or/not operand, count's first
+// argument — goes through parseConditionUnit, which accepts these plus the
+// crosses. Derived so a new operator cannot land in one place and miss another.
 const CMP_OP_TYPES = ["GT", "LT", "GE", "LE", "EQ"] as const;
-const CMP_OP_TYPE_SET: ReadonlySet<string> = new Set<string>(CMP_OP_TYPES);
 const ROW_OP_TYPES: ReadonlySet<string> = new Set<string>([...CMP_OP_TYPES, "XGT", "XLT"]);
 const SYM_OF: Record<string, string> = { GT: ">", LT: "<", GE: ">=", LE: "<=", EQ: "==" };
 const BAD_CROSS_MSG = "Write the cross operator as x> or x< — lowercase, no space.";
@@ -296,7 +320,7 @@ class Parser {
     const t = this.peek();
     if (t.type !== type) {
       if (t.type === "XGT" || t.type === "XLT") {
-        throw new ExprErr("cross_not_toplevel", "A comparison or cross can only be the whole row.", t.start, t.end);
+        throw new ExprErr("cross_not_toplevel", "A comparison or cross can't be used as a value.", t.start, t.end);
       }
       // A leftover bare "x" where the grammar wanted something else (most often
       // a trailing "EMA(9) x> EMA(50) x") is a half-typed cross operator, not a
@@ -309,7 +333,59 @@ class Parser {
     return this.next();
   }
 
+  // row := orExpr EOF
   parseRow(): Row {
+    const node = this.parseOr();
+    if (!isCondition(node)) this.raiseExpectedOperator();
+    this.expect("EOF");
+    return node as Row;
+  }
+
+  // orExpr := andExpr ("or" andExpr)*
+  private parseOr(): Node {
+    const left = this.parseAnd();
+    if (this.peek().type !== "OR") return left;
+    const parts: Node[] = [left];
+    while (this.peek().type === "OR") {
+      this.next();
+      parts.push(this.parseAnd());
+    }
+    for (const p of parts) this.requireCondition(p);
+    return { kind: "BoolOp", op: "or", parts, start: parts[0].start, end: parts[parts.length - 1].end };
+  }
+
+  // andExpr := notExpr ("and" notExpr)*
+  private parseAnd(): Node {
+    const left = this.parseNot();
+    if (this.peek().type !== "AND") return left;
+    const parts: Node[] = [left];
+    while (this.peek().type === "AND") {
+      this.next();
+      parts.push(this.parseNot());
+    }
+    for (const p of parts) this.requireCondition(p);
+    return { kind: "BoolOp", op: "and", parts, start: parts[0].start, end: parts[parts.length - 1].end };
+  }
+
+  // notExpr := "not" notExpr | conditionUnit
+  private parseNot(): Node {
+    const t = this.peek();
+    if (t.type === "NOT") {
+      this.next();
+      const operand = this.parseNot();
+      // The error span is the operand's own span (what the user must fix); the
+      // Not node's span still opens at the `not` keyword.
+      this.requireCondition(operand);
+      return { kind: "Not", operand, start: t.start, end: operand.end };
+    }
+    return this.parseConditionUnit();
+  }
+
+  // conditionUnit := crossfn "(" arith "," arith ")" | arith (cmpop arith)*
+  // Returns a bare arith Node when no comparison follows — the caller decides
+  // whether that is legal (a paren group) or an error (a row, an and/or/not
+  // operand, count's condition).
+  private parseConditionUnit(): Node {
     const t = this.peek();
     if (t.type === "NAME" && CROSS_SET.has(t.value) && this.toks[this.i + 1].type === "LPAREN") {
       const fn = this.next();
@@ -318,40 +394,42 @@ class Parser {
       this.expect("COMMA");
       const b = this.parseArith();
       const close = this.expect("RPAREN");
-      this.expect("EOF");
       return { kind: "Cross", fn: fn.value, a, b, start: fn.start, end: close.end };
     }
     const left = this.parseArith();
-    const op = this.peek();
-    if (left.kind === "Predicate" && op.type === "EOF") {
-      this.next();
-      return left;
-    }
-    if (!ROW_OP_TYPES.has(op.type)) {
-      if (op.type === "NAME" && (op.value === "x" || op.value === "X")) {
-        throw new ExprErr("bad_cross_op", BAD_CROSS_MSG, op.start, op.end);
-      }
-      throw new ExprErr("expected_operator", "Expected a comparison operator (> < >= <= == x> x<).", op.start, op.end);
-    }
+    if (!ROW_OP_TYPES.has(this.peek().type)) return left;
     const parts: Array<CompareNode | CrossNode> = [];
     let operand: Node = left;
     while (ROW_OP_TYPES.has(this.peek().type)) {
       const optok = this.next();
       const right = this.parseArith();
-      if (optok.type in CROSS_OF) {
+      if (Object.hasOwn(CROSS_OF, optok.type)) {
         parts.push({ kind: "Cross", fn: CROSS_OF[optok.type], a: operand, b: right, start: operand.start, end: right.end });
       } else {
         parts.push({ kind: "Compare", op: SYM_OF[optok.type], left: operand, right, start: operand.start, end: right.end });
       }
       operand = right;
     }
-    this.expect("EOF");
-    const crosses = parts.filter((p) => p.kind === "Cross");
-    if (crosses.length > 1) {
-      throw new ExprErr("multiple_crosses", "Only one cross per row.", crosses[1].start, crosses[1].end);
-    }
     if (parts.length === 1) return parts[0];
     return { kind: "Chain", parts, start: parts[0].start, end: parts[parts.length - 1].end };
+  }
+
+  private requireCondition(node: Node): void {
+    if (!isCondition(node)) {
+      throw new ExprErr(
+        "expected_condition",
+        "and, or and not need a condition, like candle.close > EMA(9).",
+        node.start, node.end,
+      );
+    }
+  }
+
+  private raiseExpectedOperator(): never {
+    const op = this.peek();
+    if (op.type === "NAME" && (op.value === "x" || op.value === "X")) {
+      throw new ExprErr("bad_cross_op", BAD_CROSS_MSG, op.start, op.end);
+    }
+    throw new ExprErr("expected_operator", "Expected a comparison operator (> < >= <= == x> x<).", op.start, op.end);
   }
 
   private parseArith(): Node {
@@ -393,8 +471,12 @@ class Parser {
     }
     if (t.type === "LPAREN") {
       this.next();
-      const inner = this.parseArith();
+      const inner = this.parseOr();
       const close = this.expect("RPAREN");
+      if (isCondition(inner) && ["DOT", "LBRACKET", "AT"].includes(this.peek().type)) {
+        const bad = this.peek();
+        throw new ExprErr("bool_as_value", "A condition can't be used as a value here.", bad.start, bad.end);
+      }
       // A parenthesized group is a transparent wrapper: keep the inner node but
       // widen its span so postfix/offset spans read naturally.
       return { ...inner, start: t.start, end: close.end };
@@ -412,7 +494,14 @@ class Parser {
       }
       if (name.value === COUNT_FN && this.peek().type === "LPAREN") {
         this.next();
-        const cond = this.parseCondition();
+        const cond = this.parseOr();
+        if (!isCondition(cond)) {
+          throw new ExprErr(
+            "count_needs_condition",
+            "count's first argument must be a condition, like candle.open > candle.close.",
+            cond.start, cond.end,
+          );
+        }
         this.expect("COMMA");
         const window = this.parseArith();
         const close = this.expect("RPAREN");
@@ -446,38 +535,6 @@ class Parser {
       return { kind: "Call", name: name.value, args: [], start: name.start, end: name.end };
     }
     throw new ExprErr("unexpected_token", "Expected a value here.", t.start, t.end);
-  }
-
-  // condition := cross "(" arith "," arith ")" | arith cmpop arith | predicate
-  private parseCondition(): CompareNode | CrossNode | PredicateNode {
-    const t = this.peek();
-    if (t.type === "NAME" && CROSS_SET.has(t.value) && this.toks[this.i + 1].type === "LPAREN") {
-      const fn = this.next();
-      this.expect("LPAREN");
-      const a = this.parseArith();
-      this.expect("COMMA");
-      const b = this.parseArith();
-      const close = this.expect("RPAREN");
-      return { kind: "Cross", fn: fn.value, a, b, start: fn.start, end: close.end };
-    }
-    const left = this.parseArith();
-    const op = this.peek();
-    if (op.type === "XGT" || op.type === "XLT") {
-      this.next();
-      const right = this.parseArith();
-      return { kind: "Cross", fn: CROSS_OF[op.type], a: left, b: right, start: left.start, end: right.end };
-    }
-    if (!CMP_OP_TYPE_SET.has(op.type)) {
-      if (left.kind === "Predicate") return left;
-      throw new ExprErr(
-        "count_needs_condition",
-        "count's first argument must be a condition, like candle.open > candle.close.",
-        left.start, left.end,
-      );
-    }
-    const optok = this.next();
-    const right = this.parseArith();
-    return { kind: "Compare", op: SYM_OF[optok.type], left, right, start: left.start, end: right.end };
   }
 
   private parsePostfix(node: Node): Node {
@@ -551,6 +608,14 @@ function candleRoot(node: Node): Node {
 }
 
 function validate(node: Row, isExit: boolean, instances: InstanceMap): void {
+  if (node.kind === "BoolOp") {
+    for (const p of node.parts) validate(p as Row, isExit, instances);
+    return;
+  }
+  if (node.kind === "Not") {
+    validate(node.operand as Row, isExit, instances);
+    return;
+  }
   if (node.kind === "Chain") {
     for (const p of node.parts) {
       const [left, right] = partOperands(p);
@@ -579,9 +644,7 @@ function validate(node: Row, isExit: boolean, instances: InstanceMap): void {
  * ref-shaped counterpart of `containsTf` — the parser's nested-pin check. The
  * case list below mirrors `containsTf` case for case on purpose: if the two
  * drift, a nested pin escapes through whichever node kind only one of them
- * recurses into. Keep them in step. (`containsTf` also carries a Chain case for
- * mirror fidelity; there is none here because `Node` excludes Chain, which is
- * only ever a top-level Row and never reaches this walk.) */
+ * recurses into. Keep them in step. */
 function pinnedInstance(node: Node, instances: InstanceMap): string | null {
   if (node.kind === "IndicatorRef") {
     const inst = instances.get(node.instance);
@@ -598,10 +661,13 @@ function pinnedInstance(node: Node, instances: InstanceMap): string | null {
   if (node.kind === "Cross") {
     return first([pinnedInstance(node.a, instances), pinnedInstance(node.b, instances)]);
   }
+  if (node.kind === "Chain") return first(node.parts.map((p) => pinnedInstance(p, instances)));
   if (node.kind === "Predicate") return pinnedInstance(node.base, instances);
   if (node.kind === "Count") {
     return first([pinnedInstance(node.cond, instances), pinnedInstance(node.window, instances)]);
   }
+  if (node.kind === "BoolOp") return first(node.parts.map((p) => pinnedInstance(p, instances)));
+  if (node.kind === "Not") return pinnedInstance(node.operand, instances);
   return null;
 }
 
@@ -638,16 +704,17 @@ function checkPredicate(node: PredicateNode): void {
 // barsSinceEntry) — used to keep those out of wrappers/indicators, which are
 // expected to compute over a plain series and would otherwise crash trying to
 // evaluate an entry-scoped operand with no active position. Mirrors
-// containsTf's shape minus its (unreachable) Chain case: Node excludes Chain,
-// which is only ever a top-level Row, never nested inside another node's
-// subtree, so nothing here can be handed one.
+// containsTf's shape (validate.py::_contains_entry_kind).
 function containsEntryKind(node: Node): boolean {
   if (node.kind === "Entry" || node.kind === "BarsSinceEntry") return true;
   if (node.kind === "Field" || node.kind === "Offset" || node.kind === "Tf") return containsEntryKind(node.base);
   if (node.kind === "Unary") return containsEntryKind(node.operand);
   if (node.kind === "Binary" || node.kind === "Compare") return containsEntryKind(node.left) || containsEntryKind(node.right);
   if (node.kind === "Cross") return containsEntryKind(node.a) || containsEntryKind(node.b);
+  if (node.kind === "Chain") return node.parts.some(containsEntryKind);
   if (node.kind === "Predicate") return containsEntryKind(node.base);
+  if (node.kind === "BoolOp") return node.parts.some(containsEntryKind);
+  if (node.kind === "Not") return containsEntryKind(node.operand);
   if (node.kind === "Count") return containsEntryKind(node.cond) || containsEntryKind(node.window);
   if (node.kind === "Call") return node.args.some(containsEntryKind);
   return false;
@@ -726,23 +793,22 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
         `${node.fn}(...) is a condition — use it as a whole row or inside count(...).`,
         node.start, node.end,
       );
-    case "Count": {
-      const cond = node.cond;
-      if (cond.kind === "Predicate") {
-        checkPredicate(cond);
-      } else if (cond.kind === "Cross") {
-        walk(cond.a, isExit, instances);
-        walk(cond.b, isExit, instances);
-      } else {
-        walk(cond.left, isExit, instances);
-        walk(cond.right, isExit, instances);
-      }
+    case "Count":
+      // count's condition is any condition node (CONDITION_KINDS), so hand it
+      // back to validate() rather than open-coding the per-kind cases here.
+      validate(node.cond as Row, isExit, instances);
       walk(node.window, isExit, instances);
       return;
-    }
     case "Compare":
     case "Cross":
-      throw new ExprErr("cross_not_toplevel", "A comparison or cross can only be the whole row.", node.start, node.end);
+    case "Chain":
+    case "BoolOp":
+    case "Not":
+      // A condition reached in VALUE position (a comparison operand, an
+      // arithmetic operand, a call argument). Predicate is handled above with
+      // its own copy; everything else — Compare/Cross/Chain and now BoolOp/Not
+      // — shares this one message with the parser's own value-position guard.
+      throw new ExprErr("cross_not_toplevel", "A comparison or cross can't be used as a value.", node.start, node.end);
     case "IndicatorRef": {
       const inst = instances.get(node.instance);
       if (inst === undefined) {
@@ -763,7 +829,7 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
     }
     case "Call": {
       if (CROSS_SET.has(node.name)) {
-        throw new ExprErr("cross_not_toplevel", `${node.name} can only be the whole row.`, node.start, node.end);
+        throw new ExprErr("cross_not_toplevel", `${node.name} can't be used as a value.`, node.start, node.end);
       }
       if (Object.hasOwn(INDICATOR_SPECS, node.name)) {
         const spec = INDICATOR_SPECS[node.name];
@@ -959,22 +1025,36 @@ function collect(node: Node, label: string, out: Collected[]): void {
     return;
   }
   if (node.kind === "Count") {
-    const cond = node.cond;
-    if (cond.kind === "Predicate") {
-      collect(cond.base, "constant", out);
-    } else if (cond.kind === "Cross") {
-      collect(cond.a, "constant", out);
-      collect(cond.b, "constant", out);
-    } else {
-      collect(cond.left, "constant", out);
-      collect(cond.right, "constant", out);
-    }
+    collectCountCond(node.cond, out);
     if (node.window.kind === "Num") {
       out.push({ num: node.window, label: "count window" });
     } else {
       collect(node.window, "constant", out);
     }
     return;
+  }
+}
+
+/** Collect literals from a condition used in count(), preserving the "constant"
+ * label. Recursively handles BoolOp/Not while delegating other condition types.
+ * Mirrors literals.py::_collect_count_cond. */
+function collectCountCond(cond: Node, out: Collected[]): void {
+  if (cond.kind === "Predicate") {
+    collect(cond.base, "constant", out);
+  } else if (cond.kind === "Cross") {
+    collect(cond.a, "constant", out);
+    collect(cond.b, "constant", out);
+  } else if (cond.kind === "BoolOp") {
+    for (const p of cond.parts) collectCountCond(p, out);
+  } else if (cond.kind === "Not") {
+    collectCountCond(cond.operand, out);
+  } else if (cond.kind === "Chain") {
+    const head = cond.parts[0];
+    collectPartSide(head, partOperands(head)[0], out);
+    for (const p of cond.parts) collectPartSide(p, partOperands(p)[1], out);
+  } else if (cond.kind === "Compare") {
+    collect(cond.left, "constant", out);
+    collect(cond.right, "constant", out);
   }
 }
 
@@ -993,30 +1073,42 @@ function collectPartSide(part: CompareNode | CrossNode, side: Node, out: Collect
   else collectSide(side, out);
 }
 
-function literalsOf(node: Row): LiteralSpan[] {
-  const out: Collected[] = [];
+/** The Row-kind dispatch, recursing through BoolOp/Not so a boolean row's parts
+ * keep the labels they would carry on their own. Mirrors
+ * literals.py::_collect_row. */
+function collectRow(node: Node, out: Collected[]): void {
+  if (node.kind === "BoolOp") {
+    for (const p of node.parts) collectRow(p, out);
+    return;
+  }
+  if (node.kind === "Not") {
+    collectRow(node.operand, out);
+    return;
+  }
   if (node.kind === "Predicate") {
     collect(node.base, "constant", out);
-    out.sort((x, y) => x.num.start - y.num.start);
-    return out.map((c, ordinal) => ({
-      ordinal,
-      value: c.num.value,
-      from: c.num.start,
-      to: c.num.end,
-      label: c.label,
-    }));
+    return;
   }
   if (node.kind === "Chain") {
-    const first = node.parts[0];
-    collectPartSide(first, partOperands(first)[0], out);
+    const head = node.parts[0];
+    collectPartSide(head, partOperands(head)[0], out);
     for (const p of node.parts) collectPartSide(p, partOperands(p)[1], out);
-  } else if (node.kind === "Compare") {
+    return;
+  }
+  if (node.kind === "Compare") {
     collectSide(node.left, out);
     collectSide(node.right, out);
-  } else {
+    return;
+  }
+  if (node.kind === "Cross") {
     collect(node.a, "constant", out);
     collect(node.b, "constant", out);
   }
+}
+
+function literalsOf(node: Row): LiteralSpan[] {
+  const out: Collected[] = [];
+  collectRow(node, out);
   out.sort((x, y) => x.num.start - y.num.start);
   return out.map((c, ordinal) => ({
     ordinal,
@@ -1064,6 +1156,15 @@ export function analyze(
   }
 
   return result(tokens, literalsOf(ast), null);
+}
+
+/** Test-only: exposes the AST for shape assertions; not part of the editor API.
+ * Parse only — no `validate`, so a shape test can use bare names. The node
+ * types stay unexported: callers cast, and only structure is pinned. */
+export function parseRowForTests(src: string): unknown {
+  const { tokens, error } = tokenize(src);
+  if (error) throw error;
+  return new Parser(tokens).parseRow();
 }
 
 function result(tokens: Token[], literals: LiteralSpan[], err: ExprErr | null): AnalyzeResult {
@@ -1118,9 +1219,11 @@ interface WarmupRefs {
 
 const NO_REFS: WarmupRefs = { instances: NO_INSTANCES };
 
-function warmupNode(node: Node | ChainNode, baseSeconds: number | undefined, refs: WarmupRefs = NO_REFS): number {
+function warmupNode(node: Node, baseSeconds: number | undefined, refs: WarmupRefs = NO_REFS): number {
   switch (node.kind) {
     case "Chain": return Math.max(...node.parts.map((p) => warmupNode(p, baseSeconds, refs)));
+    case "BoolOp": return Math.max(...node.parts.map((p) => warmupNode(p, baseSeconds, refs)));
+    case "Not": return warmupNode(node.operand, baseSeconds, refs);
     case "Compare": return Math.max(warmupNode(node.left, baseSeconds, refs), warmupNode(node.right, baseSeconds, refs));
     case "Cross": return Math.max(warmupNode(node.a, baseSeconds, refs), warmupNode(node.b, baseSeconds, refs));
     case "Num": case "Candle": case "Entry": return 0;

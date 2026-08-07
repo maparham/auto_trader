@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bisect
+import dataclasses
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -8,11 +9,17 @@ from dataclasses import dataclass
 from auto_trader.core.models import Candle
 from auto_trader.indicators.core import atr_series
 from auto_trader.strategy.expr import nodes as N
-from auto_trader.strategy.expr.evaluate import _cond_matches, series_of
+from auto_trader.strategy.expr.evaluate import _cond_matches, _cond_matches3, series_of
 
 # `instances` is an OPAQUE map {instance id -> resolved indicator instance},
 # threaded straight through to series_of/_cond_matches. This package must never
 # learn what any concrete indicator is, so it is deliberately untyped here.
+
+
+# Negation of a comparison flips its operator: not (a > b) == a <= b. `==` is
+# deliberately absent: the language has no `!=`, so a negated equality has no
+# flipped operator and its callers must fall back rather than index blindly.
+_NEG_OP = {">": "<=", ">=": "<", "<": ">=", "<=": ">"}
 
 
 def _defined(v: float | None) -> bool:
@@ -138,9 +145,17 @@ def row_closeness(
     norm: Norm,
     instances=None,
 ) -> list[float | None]:
+    """Per-bar closeness of a row to firing. Chain/BoolOp fold their parts by
+    fuzzy logic (AND -> min, OR -> max); `not` delegates to _not_closeness;
+    a Predicate is binary; a Compare/Cross is the normalized gap ramp."""
     if isinstance(node, N.Chain):
         per = [row_closeness(p, candles, resolution, htf, norm, instances) for p in node.parts]
         return _fold(per, "AND", len(candles))
+    if isinstance(node, N.BoolOp):
+        per = [row_closeness(p, candles, resolution, htf, norm, instances) for p in node.parts]
+        return _fold(per, "AND" if node.op == "and" else "OR", len(candles))
+    if isinstance(node, N.Not):
+        return _not_closeness(node.operand, candles, resolution, htf, norm, instances)
     if isinstance(node, N.Predicate):
         # A predicate is binary: closeness is 1 when it holds, else 0. There is
         # no meaningful gradient toward "almost red".
@@ -150,6 +165,40 @@ def row_closeness(
     atr = atr_series(candles, norm.atr_length) if norm.basis == "atr" else None
     scale = scale_series(gaps, norm.basis, norm.width, norm.window, atr)
     return [ramp(gaps[i], scale[i]) for i in range(len(gaps))]
+
+
+def _not_closeness(inner, candles, resolution, htf, norm, instances):
+    """Closeness of a negated condition. Compare: the flipped-operator gap ramp
+    (except `==`, which has no flipped operator — it takes the binary path).
+    Boolean nodes: De Morgan recursion. Cross/Predicate are binary events with
+    no gradient toward NOT happening: 1 when the inner condition does not hold,
+    else 0. Chain: not(a and b) = not a or not b."""
+    n = len(candles)
+    if isinstance(inner, N.Not):
+        return row_closeness(inner.operand, candles, resolution, htf, norm, instances)
+    if isinstance(inner, N.BoolOp):
+        flipped = "OR" if inner.op == "and" else "AND"
+        per = [_not_closeness(p, candles, resolution, htf, norm, instances) for p in inner.parts]
+        return _fold(per, flipped, n)
+    if isinstance(inner, N.Chain):
+        per = [_not_closeness(p, candles, resolution, htf, norm, instances) for p in inner.parts]
+        return _fold(per, "OR", n)
+    if isinstance(inner, N.Compare):
+        # `.get`, not `[]`: `==` has no negated operator because the language has
+        # no `!=`, so there is no flipped gap to ramp. Fall through to the binary
+        # complement below instead of KeyError-ing — "not equal" is an event with
+        # no gradient toward it, exactly like a Cross.
+        neg = _NEG_OP.get(inner.op)
+        if neg is not None:
+            flipped_cmp = dataclasses.replace(inner, op=neg)
+            return row_closeness(flipped_cmp, candles, resolution, htf, norm, instances)
+    # Cross | Predicate | `not (a == b)`: binary complement, off the THREE-valued
+    # truth. Only a definite False earns a 1.0; unknown stays a 0, like the
+    # Predicate branch of row_closeness treats non-matches. Using the two-valued
+    # _cond_matches here would fold unknown into False and paint every warm-up
+    # bar fully hot.
+    m = _cond_matches3(inner, candles, resolution, htf, instances)
+    return [1.0 if v is False else 0.0 for v in m]
 
 
 def group_closeness(

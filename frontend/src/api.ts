@@ -293,6 +293,11 @@ export interface BacktestRequest {
   // longExit/shortExit, which coded no longer reads).
   exprLongExit?: ExprRow[];
   exprShortExit?: ExprRow[];
+  // How those exit rows combine — the panel's per-group AND/OR switch. Omitted
+  // means AND (the backend's default), so a preset predating the field runs as
+  // it always did.
+  exprLongExitCombine?: "AND" | "OR";
+  exprShortExitCombine?: "AND" | "OR";
   // Chart-indicator panes those expression exits reference (see the same field on
   // ExprBacktestRequest for the shape and why the rule can't carry the settings).
   indicators?: Record<string, ExprInstancePayload>;
@@ -321,6 +326,12 @@ export interface ExprBacktestRequest {
   longExit: ExprRow[];
   shortEntry: ExprRow[];
   shortExit: ExprRow[];
+  // Per-group AND/OR (the section-header switch): whether every row in the group
+  // must be true or just one. Omitted = AND, matching the backend's default.
+  longEntryCombine?: "AND" | "OR";
+  longExitCombine?: "AND" | "OR";
+  shortEntryCombine?: "AND" | "OR";
+  shortExitCombine?: "AND" | "OR";
   longEnabled: boolean;
   shortEnabled: boolean;
   longRisk?: RiskConfig;

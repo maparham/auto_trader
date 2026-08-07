@@ -124,8 +124,10 @@ def referenced_tfs(node: N.Node, instances=None) -> set[str]:
         inst = (instances or {}).get(node.instance)
         pin = inst.spec.timeframe(inst.config) if inst else None
         return {pin} if pin else set()
-    if isinstance(node, N.Chain):
+    if isinstance(node, (N.Chain, N.BoolOp)):
         return set().union(*(referenced_tfs(p, instances) for p in node.parts))
+    if isinstance(node, N.Not):
+        return referenced_tfs(node.operand, instances)
     if isinstance(node, (N.Field, N.Offset)):
         return referenced_tfs(node.base, instances)
     if isinstance(node, N.Unary):
@@ -218,6 +220,8 @@ def run_coded_sync(
                 [], long_exit, [], short_exit,
                 quantity=req.costs.quantity,
                 long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
+                long_exit_combine=req.exprLongExitCombine,
+                short_exit_combine=req.exprShortExitCombine,
             ))
         engine = BacktestEngine(
             strategy,
@@ -305,6 +309,10 @@ def build_expr_engine(
         trade_from_time=req.tradeFromTime,
         long_enabled=req.longEnabled,
         short_enabled=req.shortEnabled,
+        long_entry_combine=req.longEntryCombine,
+        long_exit_combine=req.longExitCombine,
+        short_entry_combine=req.shortEntryCombine,
+        short_exit_combine=req.shortExitCombine,
     )
     engine = BacktestEngine(
         strategy,

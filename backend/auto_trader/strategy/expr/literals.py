@@ -139,14 +139,7 @@ def _collect(node: N.Node, label: str, out: list[tuple[N.Num, str]]) -> None:
         return
     if isinstance(node, N.Count):
         cond = node.cond
-        if isinstance(cond, N.Predicate):
-            _collect(cond.base, "constant", out)
-        elif isinstance(cond, N.Cross):
-            _collect(cond.a, "constant", out)
-            _collect(cond.b, "constant", out)
-        else:
-            _collect(cond.left, "constant", out)
-            _collect(cond.right, "constant", out)
+        _collect_count_cond(cond, out)
         if isinstance(node.window, N.Num):
             out.append((node.window, "count window"))
         else:
@@ -155,25 +148,65 @@ def _collect(node: N.Node, label: str, out: list[tuple[N.Num, str]]) -> None:
     return
 
 
-def literals(node: N.Row) -> list[Literal]:
-    out: list[tuple[N.Num, str]] = []
+def _collect_count_cond(cond: N.Node, out: list[tuple[N.Num, str]]) -> None:
+    """Collect literals from a condition used in count(), preserving "constant" label.
+    Recursively handles BoolOp/Not while delegating other condition types."""
+    if isinstance(cond, N.Predicate):
+        _collect(cond.base, "constant", out)
+    elif isinstance(cond, N.Cross):
+        _collect(cond.a, "constant", out)
+        _collect(cond.b, "constant", out)
+    elif isinstance(cond, N.BoolOp):
+        for p in cond.parts:
+            _collect_count_cond(p, out)
+    elif isinstance(cond, N.Not):
+        _collect_count_cond(cond.operand, out)
+    elif isinstance(cond, N.Chain):
+        first = cond.parts[0]
+        _collect_part_side(first, N.part_operands(first)[0], out)
+        for p in cond.parts:
+            _collect_part_side(p, N.part_operands(p)[1], out)
+    else:  # Compare or other
+        _collect(cond.left, "constant", out)
+        _collect(cond.right, "constant", out)
+
+
+def _collect_row(node: N.Node, out: list[tuple[N.Num, str]]) -> None:
+    if isinstance(node, N.BoolOp):
+        for p in node.parts:
+            _collect_row(p, out)
+        return
+    if isinstance(node, N.Not):
+        _collect_row(node.operand, out)
+        return
     if isinstance(node, N.Predicate):
         _collect(node.base, "constant", out)
-        out.sort(key=lambda pair: pair[0].start)
-        return [Literal(k, num.value, num.start, num.end, label) for k, (num, label) in enumerate(out)]
+        return
     if isinstance(node, N.Chain):
         first = node.parts[0]
         _collect_part_side(first, N.part_operands(first)[0], out)
         for p in node.parts:
             _collect_part_side(p, N.part_operands(p)[1], out)
-    elif isinstance(node, N.Compare):
+        return
+    if isinstance(node, N.Compare):
         _collect_side(node.left, out)
         _collect_side(node.right, out)
-    else:
+        return
+    if isinstance(node, N.Cross):
         _collect(node.a, "constant", out)
         _collect(node.b, "constant", out)
+        return
+
+
+def compute_literals(node: N.Row) -> list[Literal]:
+    out: list[tuple[N.Num, str]] = []
+    _collect_row(node, out)
     out.sort(key=lambda pair: pair[0].start)
     return [Literal(k, num.value, num.start, num.end, label) for k, (num, label) in enumerate(out)]
+
+
+def literals(node: N.Row) -> list[Literal]:
+    return compute_literals(node)
 
 
 def _collect_side(side: N.Node, out: list[tuple[N.Num, str]]) -> None:
@@ -197,7 +230,7 @@ def _collect_part_side(part: "N.Compare | N.Cross", side: N.Node,
 def substitute(node: N.Row, overrides: dict[int, float]) -> N.Row:
     if not overrides:
         return node
-    lits = literals(node)
+    lits = compute_literals(node)
     by_pos = {lit.start: overrides[lit.ordinal] for lit in lits if lit.ordinal in overrides}
 
     def rewrite(n: N.Node) -> N.Node:
@@ -233,6 +266,10 @@ def substitute(node: N.Row, overrides: dict[int, float]) -> N.Row:
             return dataclasses.replace(n, a=rewrite(n.a), b=rewrite(n.b))
         if isinstance(n, N.Chain):
             return dataclasses.replace(n, parts=[rewrite(p) for p in n.parts])
+        if isinstance(n, N.BoolOp):
+            return dataclasses.replace(n, parts=[rewrite(p) for p in n.parts])
+        if isinstance(n, N.Not):
+            return dataclasses.replace(n, operand=rewrite(n.operand))
         return n
 
     return rewrite(node)  # type: ignore[return-value]

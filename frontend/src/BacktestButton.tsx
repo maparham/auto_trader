@@ -411,6 +411,9 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // rule groups have been removed from the backtest request.
         exprLongExit: exprRows(effCfg.longExit),
         exprShortExit: exprRows(effCfg.shortExit),
+        // The exit groups' AND/OR switch rides along with their rows.
+        exprLongExitCombine: effCfg.longExit.combine,
+        exprShortExitCombine: effCfg.shortExit.combine,
         // Coded runs post their exits as expression rows, so those rows can
         // reference a chart pane the same way rule mode does.
         indicators: exprIndicators,
@@ -453,6 +456,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         longExit: exprRows(effCfg.longExit),
         shortEntry: exprRows(effCfg.shortEntry),
         shortExit: exprRows(effCfg.shortExit),
+        // Each group's AND/OR switch — undefined (a preset predating the field)
+        // drops the key and the backend defaults to AND.
+        longEntryCombine: effCfg.longEntry.combine,
+        longExitCombine: effCfg.longExit.combine,
+        shortEntryCombine: effCfg.shortEntry.combine,
+        shortExitCombine: effCfg.shortExit.combine,
         longEnabled: cfg.longEnabled !== false,
         shortEnabled: cfg.shortEnabled !== false,
         longRisk: sendableRisk(effCfg.longRisk),

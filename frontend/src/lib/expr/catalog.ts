@@ -45,6 +45,19 @@ export const CROSS_OPS: CatalogEntry[] = [
   { name: "x<", insert: "x< EMA(50)", signature: "a x< b", detail: "a crosses below b" },
 ];
 
+// Boolean operators between conditions: `not` binds tightest, then `and`, then
+// `or`; parens group. The lexer specializes the lowercase and the ALL-uppercase
+// spellings and nothing else (parser.ts KEYWORDS), so a mixed-case `And` stays
+// a plain name. The completion/palette display — and therefore what accepting
+// a suggestion inserts — is the uppercase form.
+// Each insert carries a trailing space: the operator is always followed by
+// another condition the user goes on to type.
+export const LOGIC: CatalogEntry[] = [
+  { name: "AND", insert: "AND ", signature: "cond AND cond", detail: "Both conditions must hold" },
+  { name: "OR", insert: "OR ", signature: "cond OR cond", detail: "Either condition may hold" },
+  { name: "NOT", insert: "NOT ", signature: "NOT cond", detail: "The condition must not hold" },
+];
+
 export const CANDLE_FIELDS = [
   "open", "high", "low", "close", "volume", "body", "range", "wickTop", "wickBottom",
 ] as const;

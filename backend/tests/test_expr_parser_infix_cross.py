@@ -3,6 +3,7 @@ import pytest
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import BAD_CROSS_MSG, ExprError
 from auto_trader.strategy.expr.parser import parse
+from auto_trader.strategy.expr.validate import validate
 
 
 def test_lone_infix_cross_above_is_bare_cross_node():
@@ -43,12 +44,11 @@ def test_mixed_chain_cross_last():
     assert row.parts[0].right is row.parts[1].a
 
 
-def test_multiple_crosses_rejected():
-    with pytest.raises(ExprError) as exc:
-        parse("EMA(9) x> EMA(50) x> EMA(200)")
-    assert exc.value.code == "multiple_crosses"
-    # span of the second cross part: its left operand start .. right operand end
-    assert (exc.value.start, exc.value.end) == (10, 29)
+def test_multiple_crosses_now_chain():
+    # multiple_crosses is deleted: a chain may hold any number of crosses.
+    row = parse("EMA(9) x> EMA(50) x> EMA(200)")
+    assert isinstance(row, N.Chain)
+    assert [type(p) for p in row.parts] == [N.Cross, N.Cross]
 
 
 def test_infix_cross_inside_count():
@@ -60,12 +60,15 @@ def test_infix_cross_inside_count():
     assert cnt.cond.fn == "crossAbove"
 
 
-def test_nested_infix_cross_is_cross_not_toplevel():
+def test_nested_infix_cross_parses_and_validate_rejects_it():
+    # Parens now open the full boolean level, so a parenthesized cross parses;
+    # rejecting it as a *value* moved from the parser to the validator.
+    row = parse("EMA(9) > (EMA(9) x> EMA(50))")
+    assert isinstance(row, N.Compare)
+    assert isinstance(row.right, N.Cross)
     with pytest.raises(ExprError) as exc:
-        parse("EMA(9) > (EMA(9) x> EMA(50))")
+        validate(row, is_exit=False)
     assert exc.value.code == "cross_not_toplevel"
-    # span of the offending x> token
-    assert (exc.value.start, exc.value.end) == (17, 19)
 
 
 def test_spaced_x_is_bad_cross_op():

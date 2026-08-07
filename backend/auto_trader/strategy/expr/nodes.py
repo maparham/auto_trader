@@ -108,7 +108,7 @@ class Predicate:
 
 @dataclass(frozen=True, slots=True)
 class Count:
-    cond: "Compare | Cross | Predicate"
+    cond: "Node"  # a condition (CONDITION_KINDS)
     window: "Node"
     start: int
     end: int
@@ -131,13 +131,32 @@ class IndicatorRef:
     end: int
 
 
+@dataclass(frozen=True, slots=True)
+class BoolOp:
+    op: str  # "and" | "or"
+    parts: list["Node"]  # each a condition (CONDITION_KINDS)
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class Not:
+    operand: "Node"  # a condition (CONDITION_KINDS)
+    start: int
+    end: int
+
+
 Node = (
     Num | Candle | Entry | Call | Field | Offset | Tf | Unary | Binary | Compare | Cross | Chain
-    | Predicate | Count | BarsSinceEntry | IndicatorRef
+    | Predicate | Count | BarsSinceEntry | IndicatorRef | BoolOp | Not
 )
 
 # A parsed row: what parse() returns and validate()/compile_row() accept.
-Row = Compare | Cross | Chain | Predicate
+Row = Compare | Cross | Chain | Predicate | BoolOp | Not
+
+# The node kinds that ARE conditions (usable as a row, an and/or/not operand,
+# or count's first argument) as opposed to numeric values.
+CONDITION_KINDS = (Compare, Cross, Chain, Predicate, BoolOp, Not)
 
 CROSS_FNS = ("crossAbove", "crossBelow")
 PREDICATE_FNS = ("bullish", "bearish", *PATTERN_FN_NAMES)
@@ -161,6 +180,10 @@ def contains_tf(node: Node) -> bool:
         return contains_tf(node.base)
     if isinstance(node, Count):
         return contains_tf(node.cond) or contains_tf(node.window)
+    if isinstance(node, BoolOp):
+        return any(contains_tf(p) for p in node.parts)
+    if isinstance(node, Not):
+        return contains_tf(node.operand)
     return False
 
 
@@ -194,6 +217,14 @@ def first_tf(node: Node) -> str | None:
         return first_tf(node.base)
     if isinstance(node, Count):
         return first_tf(node.cond) or first_tf(node.window)
+    if isinstance(node, BoolOp):
+        for p in node.parts:
+            tf = first_tf(p)
+            if tf is not None:
+                return tf
+        return None
+    if isinstance(node, Not):
+        return first_tf(node.operand)
     return None
 
 
@@ -216,6 +247,10 @@ def contains_series(node: Node) -> bool:
         return any(contains_series(p) for p in node.parts)
     if isinstance(node, Predicate):
         return contains_series(node.base)
+    if isinstance(node, BoolOp):
+        return any(contains_series(p) for p in node.parts)
+    if isinstance(node, Not):
+        return contains_series(node.operand)
     return False
 
 
@@ -236,6 +271,10 @@ def contains_bars_since_entry(node: Node) -> bool:
         return contains_bars_since_entry(node.base)
     if isinstance(node, Count):
         return contains_bars_since_entry(node.cond) or contains_bars_since_entry(node.window)
+    if isinstance(node, BoolOp):
+        return any(contains_bars_since_entry(p) for p in node.parts)
+    if isinstance(node, Not):
+        return contains_bars_since_entry(node.operand)
     return False
 
 

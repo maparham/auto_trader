@@ -20,6 +20,7 @@ import {
   CROSS_OPS,
   CROSSES,
   INDICATORS,
+  LOGIC,
   PATTERNS,
   TIMEFRAMES,
   WRAPPERS,
@@ -123,6 +124,10 @@ const WORD_CANDIDATES: WordCandidate[] = [
   ...CROSSES.map((e) => fnCandidate(e, "cross")),
   ...CONDITIONS.map((e) => fnCandidate(e, "cross")),
   ...PATTERNS.map((e) => fnCandidate(e, "cross")),
+  // The boolean keywords rank by prefix like any other word — no context
+  // narrowing in v1. Their inserts carry no "(", so `fnCandidate` leaves
+  // argFrom/argTo undefined and `applyFor` inserts the plain string.
+  ...LOGIC.map((e) => fnCandidate(e, "logic")),
   { label: "candle", type: "variable", detail: "Current bar", insert: "candle." },
   { label: "entry", type: "variable", detail: "Entry price (exit rules only)", insert: "entry" },
 ];

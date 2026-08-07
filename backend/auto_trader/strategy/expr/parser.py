@@ -7,10 +7,10 @@ from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
 
 _CMP_SYM = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<=", "EQ": "=="}
 _CROSS_SYM = {"XGT": "crossAbove", "XLT": "crossBelow"}
-# One source of truth for the comparison set. parse_row accepts these plus the
-# cross operators; parse_condition (count's first argument) accepts these alone.
-# Keeping them derived means a new operator cannot land in one and miss the
-# other, which would make `a == b` legal at top level but not inside count().
+# One source of truth for the comparison set. Every condition — a row, an
+# and/or/not operand, count's first argument — goes through parse_condition_unit,
+# which accepts these plus the cross operators. Keeping the set derived means a
+# new operator cannot land in one place and miss another.
 _CMP_OPS = ("GT", "LT", "GE", "LE", "EQ")
 _ROW_OPS = _CMP_OPS + ("XGT", "XLT")
 # Re-exported under the module-private name the parser has always used; the
@@ -36,7 +36,7 @@ class _Parser:
         t = self.peek()
         if t.type != type_:
             if t.type in _CROSS_SYM:
-                raise ExprError("cross_not_toplevel", "A comparison or cross can only be the whole row.", t.start, t.end)
+                raise ExprError("cross_not_toplevel", "A comparison or cross can't be used as a value.", t.start, t.end)
             # A leftover bare "x" where the grammar wanted something else (most
             # often a trailing "EMA(9) x> EMA(50) x") is a half-typed cross
             # operator, not a generic surprise token.
@@ -45,8 +45,57 @@ class _Parser:
             raise ExprError("unexpected_token", f"Expected {type_.lower()} here.", t.start, t.end)
         return self.next()
 
-    # row := crossfn "(" arith "," arith ")" | arith (cmpop arith)+
+    # row := orExpr EOF
     def parse_row(self) -> N.Row:
+        node = self.parse_or()
+        if not isinstance(node, N.CONDITION_KINDS):
+            self._raise_expected_operator()
+        self.expect("EOF")
+        return node
+
+    # orExpr := andExpr ("or" andExpr)*
+    def parse_or(self) -> N.Node:
+        left = self.parse_and()
+        if self.peek().type != "OR":
+            return left
+        parts = [left]
+        while self.peek().type == "OR":
+            self.next()
+            parts.append(self.parse_and())
+        for p in parts:
+            self._require_condition(p)
+        return N.BoolOp("or", parts, parts[0].start, parts[-1].end)
+
+    # andExpr := notExpr ("and" notExpr)*
+    def parse_and(self) -> N.Node:
+        left = self.parse_not()
+        if self.peek().type != "AND":
+            return left
+        parts = [left]
+        while self.peek().type == "AND":
+            self.next()
+            parts.append(self.parse_not())
+        for p in parts:
+            self._require_condition(p)
+        return N.BoolOp("and", parts, parts[0].start, parts[-1].end)
+
+    # notExpr := "not" notExpr | conditionUnit
+    def parse_not(self) -> N.Node:
+        t = self.peek()
+        if t.type == "NOT":
+            self.next()
+            operand = self.parse_not()
+            # The error span is the operand's own span (what the user must fix);
+            # the Not node's span still opens at the `not` keyword.
+            self._require_condition(operand)
+            return N.Not(operand, t.start, operand.end)
+        return self.parse_condition_unit()
+
+    # conditionUnit := crossfn "(" arith "," arith ")" | arith (cmpop arith)*
+    # Returns a bare arith Node when no comparison follows — the caller decides
+    # whether that is legal (a paren group) or an error (a row, an and/or/not
+    # operand, count's condition).
+    def parse_condition_unit(self) -> N.Node:
         t = self.peek()
         if t.type == "NAME" and t.value in N.CROSS_FNS and self.toks[self.i + 1].type == "LPAREN":
             fn = self.next()
@@ -55,17 +104,10 @@ class _Parser:
             self.expect("COMMA")
             b = self.parse_arith()
             close = self.expect("RPAREN")
-            self.expect("EOF")
             return N.Cross(fn.value, a, b, fn.start, close.end)
         left = self.parse_arith()
-        op = self.peek()
-        if isinstance(left, N.Predicate) and op.type == "EOF":
-            self.next()
+        if self.peek().type not in _ROW_OPS:
             return left
-        if op.type not in _ROW_OPS:
-            if op.type == "NAME" and op.value in ("x", "X"):
-                raise ExprError("bad_cross_op", _BAD_CROSS_MSG, op.start, op.end)
-            raise ExprError("expected_operator", "Expected a comparison operator (> < >= <= == x> x<).", op.start, op.end)
         parts: list[N.Compare | N.Cross] = []
         operand = left
         while self.peek().type in _ROW_OPS:
@@ -76,13 +118,23 @@ class _Parser:
             else:
                 parts.append(N.Compare(_CMP_SYM[optok.type], operand, right, operand.start, right.end))
             operand = right
-        self.expect("EOF")
-        crosses = [p for p in parts if isinstance(p, N.Cross)]
-        if len(crosses) > 1:
-            raise ExprError("multiple_crosses", "Only one cross per row.", crosses[1].start, crosses[1].end)
         if len(parts) == 1:
             return parts[0]
         return N.Chain(parts, parts[0].start, parts[-1].end)
+
+    def _require_condition(self, node: N.Node) -> None:
+        if not isinstance(node, N.CONDITION_KINDS):
+            raise ExprError(
+                "expected_condition",
+                "and, or and not need a condition, like candle.close > EMA(9).",
+                node.start, node.end,
+            )
+
+    def _raise_expected_operator(self) -> None:
+        op = self.peek()
+        if op.type == "NAME" and op.value in ("x", "X"):
+            raise ExprError("bad_cross_op", _BAD_CROSS_MSG, op.start, op.end)
+        raise ExprError("expected_operator", "Expected a comparison operator (> < >= <= == x> x<).", op.start, op.end)
 
     def parse_arith(self) -> N.Node:
         node = self.parse_term()
@@ -116,8 +168,11 @@ class _Parser:
             return N.Num(float(t.value), t.start, t.end)
         if t.type == "LPAREN":
             self.next()
-            inner = self.parse_arith()
+            inner = self.parse_or()
             close = self.expect("RPAREN")
+            if isinstance(inner, N.CONDITION_KINDS) and self.peek().type in ("DOT", "LBRACKET", "AT"):
+                bad = self.peek()
+                raise ExprError("bool_as_value", "A condition can't be used as a value here.", bad.start, bad.end)
             # A parenthesized group is a transparent wrapper: keep the inner node
             # but widen its span so postfix/offset spans read naturally.
             return _respan(inner, t.start, close.end)
@@ -136,7 +191,13 @@ class _Parser:
                 return N.Predicate(name.value, arg, name.start, close.end)
             if name.value == "count" and self.peek().type == "LPAREN":
                 self.next()
-                cond = self.parse_condition()
+                cond = self.parse_or()
+                if not isinstance(cond, N.CONDITION_KINDS):
+                    raise ExprError(
+                        "count_needs_condition",
+                        "count's first argument must be a condition, like candle.open > candle.close.",
+                        cond.start, cond.end,
+                    )
                 self.expect("COMMA")
                 window = self.parse_arith()
                 close = self.expect("RPAREN")
@@ -161,35 +222,6 @@ class _Parser:
                 raise ExprError("bad_cross_op", _BAD_CROSS_MSG, name.start, name.end)
             return N.Call(name.value, [], name.start, name.end)
         raise ExprError("unexpected_token", "Expected a value here.", t.start, t.end)
-
-    # condition := cross "(" arith "," arith ")" | arith cmpop arith | predicate
-    def parse_condition(self) -> N.Compare | N.Cross | N.Predicate:
-        t = self.peek()
-        if t.type == "NAME" and t.value in N.CROSS_FNS and self.toks[self.i + 1].type == "LPAREN":
-            fn = self.next()
-            self.expect("LPAREN")
-            a = self.parse_arith()
-            self.expect("COMMA")
-            b = self.parse_arith()
-            close = self.expect("RPAREN")
-            return N.Cross(fn.value, a, b, fn.start, close.end)
-        left = self.parse_arith()
-        op = self.peek()
-        if op.type in _CROSS_SYM:
-            self.next()
-            right = self.parse_arith()
-            return N.Cross(_CROSS_SYM[op.type], left, right, left.start, right.end)
-        if op.type not in _CMP_OPS:
-            if isinstance(left, N.Predicate):
-                return left
-            raise ExprError(
-                "count_needs_condition",
-                "count's first argument must be a condition, like candle.open > candle.close.",
-                left.start, left.end,
-            )
-        optok = self.next()
-        right = self.parse_arith()
-        return N.Compare(_CMP_SYM[optok.type], left, right, left.start, right.end)
 
     def parse_postfix(self, node: N.Node) -> N.Node:
         while True:

@@ -44,6 +44,15 @@ class Token:
 # decimal 0.9; with it, `2 + .5` and a leading `.5` keep lexing as before.
 _NO_LEADING_DOT_NUMBER = frozenset({"NAME", "RPAREN", "RBRACKET"})
 
+# Reserved boolean keywords. Exactly the lowercase and the ALL-uppercase
+# spellings are reserved; a mixed-case "And"/"Not" stays a plain name
+# (-> unknown_name). The token type is the same for both spellings, so
+# highlighting and completion never have to look at the value.
+_KEYWORDS = {
+    "and": "AND", "or": "OR", "not": "NOT",
+    "AND": "AND", "OR": "OR", "NOT": "NOT",
+}
+
 
 def tokenize(src: str) -> list[Token]:
     out: list[Token] = []
@@ -109,7 +118,7 @@ def tokenize(src: str) -> list[Token]:
                 out.append(Token("XGT" if src[j] == ">" else "XLT", src[i:j + 1], i, j + 1))
                 i = j + 1
                 continue
-            out.append(Token("NAME", word, i, j))
+            out.append(Token(_KEYWORDS.get(word, "NAME"), word, i, j))
             i = j
             continue
         if c in "<>":

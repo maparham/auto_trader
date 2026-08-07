@@ -143,6 +143,13 @@ export async function runOneCycle(
     exprLongExit: coded ? exprRows(codedCfg?.longExit ?? emptyGroup) : exprRows(cfg.longExit),
     exprShortEntry: coded ? undefined : exprRows(cfg.shortEntry),
     exprShortExit: coded ? exprRows(codedCfg?.shortExit ?? emptyGroup) : exprRows(cfg.shortExit),
+    // Each group's AND/OR switch travels with its rows, off the same source the
+    // rows came from — so a coded run's exit combiner is the coded panel's, not
+    // the rule-mode config's.
+    exprLongEntryCombine: coded ? undefined : cfg.longEntry.combine,
+    exprLongExitCombine: coded ? (codedCfg?.longExit ?? emptyGroup).combine : cfg.longExit.combine,
+    exprShortEntryCombine: coded ? undefined : cfg.shortEntry.combine,
+    exprShortExitCombine: coded ? (codedCfg?.shortExit ?? emptyGroup).combine : cfg.shortExit.combine,
     // longEnabled/shortEnabled are rules-mode UI; RuleStrategy gates EXITS on
     // them (rule.py). A coded run must never let a rules-mode toggle silently
     // disable that side's panel exit rules while the .py file still opens

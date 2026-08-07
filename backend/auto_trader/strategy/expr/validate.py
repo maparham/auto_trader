@@ -13,6 +13,13 @@ if TYPE_CHECKING:
 
 def validate(node: N.Row, *, is_exit: bool,
              instances: "dict[str, ResolvedInstance] | None" = None) -> None:
+    if isinstance(node, N.BoolOp):
+        for p in node.parts:
+            validate(p, is_exit=is_exit, instances=instances)
+        return
+    if isinstance(node, N.Not):
+        validate(node.operand, is_exit=is_exit, instances=instances)
+        return
     if isinstance(node, N.Chain):
         for p in node.parts:
             left, right = N.part_operands(p)
@@ -71,6 +78,10 @@ def _contains_entry_kind(node: N.Node) -> bool:
         return _contains_entry_kind(node.base)
     if isinstance(node, N.Count):
         return _contains_entry_kind(node.cond) or _contains_entry_kind(node.window)
+    if isinstance(node, N.BoolOp):
+        return any(_contains_entry_kind(p) for p in node.parts)
+    if isinstance(node, N.Not):
+        return _contains_entry_kind(node.operand)
     if isinstance(node, N.Call):
         return any(_contains_entry_kind(a) for a in node.args)
     return False
@@ -118,6 +129,10 @@ def _pinned_instance(node: N.Node,
         return _pinned_instance(node.base, instances)
     if isinstance(node, N.Count):
         return _first(_pinned_instance(n, instances) for n in (node.cond, node.window))
+    if isinstance(node, N.BoolOp):
+        return _first(_pinned_instance(p, instances) for p in node.parts)
+    if isinstance(node, N.Not):
+        return _pinned_instance(node.operand, instances)
     return None
 
 
@@ -207,19 +222,17 @@ def _walk(node: N.Node, *, is_exit: bool,
             node.start, node.end,
         )
     if isinstance(node, N.Count):
-        cond = node.cond
-        if isinstance(cond, N.Predicate):
-            _check_predicate(cond)
-        elif isinstance(cond, N.Cross):
-            _walk(cond.a, is_exit=is_exit, instances=instances)
-            _walk(cond.b, is_exit=is_exit, instances=instances)
-        else:
-            _walk(cond.left, is_exit=is_exit, instances=instances)
-            _walk(cond.right, is_exit=is_exit, instances=instances)
+        # count's condition is any condition node (N.CONDITION_KINDS), so hand it
+        # back to validate() rather than open-coding the per-kind cases here.
+        validate(node.cond, is_exit=is_exit, instances=instances)
         _walk(node.window, is_exit=is_exit, instances=instances)
         return
-    if isinstance(node, (N.Compare, N.Cross, N.Chain)):
-        raise ExprError("cross_not_toplevel", "A comparison or cross can only be the whole row.", node.start, node.end)
+    if isinstance(node, N.CONDITION_KINDS):
+        # A condition reached in VALUE position (a comparison operand, an
+        # arithmetic operand, a call argument). Predicate is handled above with
+        # its own copy; everything else — Compare/Cross/Chain and now BoolOp/Not
+        # — shares this one message with the parser's own value-position guard.
+        raise ExprError("cross_not_toplevel", "A comparison or cross can't be used as a value.", node.start, node.end)
     if isinstance(node, N.IndicatorRef):
         inst = (instances or {}).get(node.instance)
         if inst is None:
@@ -239,7 +252,7 @@ def _walk(node: N.Node, *, is_exit: bool,
         return
     if isinstance(node, N.Call):
         if node.name in CROSSES:
-            raise ExprError("cross_not_toplevel", f"{node.name} can only be the whole row.", node.start, node.end)
+            raise ExprError("cross_not_toplevel", f"{node.name} can't be used as a value.", node.start, node.end)
         if node.name in INDICATORS:
             spec = INDICATORS[node.name]
             if len(node.args) != spec.arity:

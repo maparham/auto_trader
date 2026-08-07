@@ -100,8 +100,10 @@ def _tf_inner_warmup(node: N.Node, tf: str, instances=None) -> int:
         if pin and _same_tf(pin, tf):
             return inst.spec.warmup(inst.config, node.output)
         return 0
-    if isinstance(node, N.Chain):
+    if isinstance(node, (N.Chain, N.BoolOp)):
         return max((_tf_inner_warmup(p, tf, instances) for p in node.parts), default=0)
+    if isinstance(node, N.Not):
+        return _tf_inner_warmup(node.operand, tf, instances)
     if isinstance(node, (N.Compare, N.Binary)):
         return max(_tf_inner_warmup(node.left, tf, instances), _tf_inner_warmup(node.right, tf, instances))
     if isinstance(node, N.Cross):
@@ -244,6 +246,10 @@ async def expr_backtest(req: ExprBacktestRequest):
         trade_from_time=req.tradeFromTime,
         long_enabled=req.longEnabled,
         short_enabled=req.shortEnabled,
+        long_entry_combine=req.longEntryCombine,
+        long_exit_combine=req.longExitCombine,
+        short_entry_combine=req.shortEntryCombine,
+        short_exit_combine=req.shortExitCombine,
     )
     engine = BacktestEngine(
         strategy,
@@ -405,6 +411,14 @@ async def expr_series(req: ExprSeriesRequest):
         raise HTTPException(422, {
             "code": "predicate_not_plottable",
             "message": "bullish/bearish rows have no numeric series to plot.",
+            "start": node.start, "end": node.end,
+        })
+    # An and/or/not row combines conditions; there is no single operand to plot
+    # (the picker below would reach for `node.a` and 500 on a public endpoint).
+    if isinstance(node, (N.BoolOp, N.Not)):
+        raise HTTPException(422, {
+            "code": "boolean_not_plottable",
+            "message": "An and/or/not row has no single series to plot.",
             "start": node.start, "end": node.end,
         })
     res_s = resolution_seconds(req.resolution)

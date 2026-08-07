@@ -3619,7 +3619,7 @@ function SidePanel({
       <div className={`bt-side-rules${enabled ? "" : " bt-parked"}`} inert={!enabled}>
         <RuleGroupSection
           title={isLong ? "Buy to open" : "Sell to open"}
-          info={`Conditions that open a ${side} position. Multiple rules combine with the AND/OR switch.`}
+          info={`Conditions that open a ${side} position. From two rules up, the AND/OR switch beside this title sets whether all of them must pass or just one.`}
           group={entry}
           onChange={(g) => setGroup(isLong ? "longEntry" : "shortEntry", g)}
           emptyHint={`No ${side}-entry rules, so this strategy won't open any ${side} positions.`}
@@ -3635,7 +3635,7 @@ function SidePanel({
         />
         <RuleGroupSection
           title={isLong ? "Sell to close" : "Buy to close"}
-          info={`Conditions that close an open ${side} position. A stop or target can close it first.`}
+          info={`Conditions that close an open ${side} position. A stop or target can close it first. From two rules up, the AND/OR switch beside this title sets whether all of them must pass or just one.`}
           group={exit}
           onChange={(g) => setGroup(isLong ? "longExit" : "shortExit", g)}
           emptyHint={`No ${side}-exit rules, so an open ${side} holds until the trading window ends.`}
@@ -4210,6 +4210,33 @@ export function RuleGroupSection({
       extra={
         group.rules.length > 0 ? (
           <div className="bt-groophead-actions">
+            {/* Nothing to combine below two rules, so the switch stays out of the
+                way until a second rule shows up. A group that predates the field
+                (combine undefined) reads as AND — the backend's default too. */}
+            {group.rules.length >= 2 && (
+              <div className="seg bt-combine-seg" role="radiogroup" aria-label="Combine rules with">
+                {(["AND", "OR"] as const).map((c) => (
+                  <Tooltip
+                    key={c}
+                    content={
+                      c === "AND"
+                        ? "Fire only when every rule in this group is true."
+                        : "Fire when any rule in this group is true."
+                    }
+                  >
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={(group.combine ?? "AND") === c}
+                      className={(group.combine ?? "AND") === c ? "seg-on" : ""}
+                      onClick={() => onChange({ ...group, combine: c } as RuleGroup)}
+                    >
+                      {c}
+                    </button>
+                  </Tooltip>
+                ))}
+              </div>
+            )}
             <Tooltip content="Copy all rules in this group">
               <button
                 className="bt-rule-toggle bt-copyall"

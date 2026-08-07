@@ -166,6 +166,10 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
             _compile_expr_group(req.exprShortExit, candles, req.resolution, htf, is_exit=True, group="shortExit", instances=instances),
             quantity=1.0, trade_from_time=None,
             long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
+            long_entry_combine=req.exprLongEntryCombine,
+            long_exit_combine=req.exprLongExitCombine,
+            short_entry_combine=req.exprShortEntryCombine,
+            short_exit_combine=req.exprShortExitCombine,
         )
     elif req.codedStrategy is not None:
         try:
@@ -253,6 +257,8 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
                     [], long_exit, [], short_exit,
                     quantity=1.0,
                     long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
+                    long_exit_combine=req.exprLongExitCombine,
+                    short_exit_combine=req.exprShortExitCombine,
                 ))
             try:
                 signals = strategy.on_bar(ctx)
