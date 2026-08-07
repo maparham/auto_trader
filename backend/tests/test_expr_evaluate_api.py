@@ -85,12 +85,38 @@ def test_expr_evaluate_bad_expr_422():
     assert d["group"] == "longEntry" and d["row"] == 0
 
 
-def test_expr_evaluate_atr_risk_422():
+def _atr_bars(n):
+    """n bars that alternate down/up so the last one closes above its open (the
+    entry condition) and every bar has a real range for the ATR."""
+    bars = [(10.0, 9.0) if k % 2 else (9.0, 10.0) for k in range(n)]
+    bars[-1] = (9.0, 10.0)
+    return bars
+
+
+def test_expr_evaluate_atr_stop_populates_the_bracket():
+    # Expr mode posts no series, so the route computes ATR_3 from the candles.
+    # This used to 422 with "ATR-based risk stops are not available".
+    atr_risk = {"stop": {"kind": "atr", "mult": 2.0, "length": 3},
+                "target": {"kind": "none"}}
+    r = client.post("/api/strategy/evaluate", json=_base(
+        candles=_candles(_atr_bars(10)), longRisk=atr_risk))
+    assert r.status_code == 200
+    actions = r.json()["actions"]
+    assert len(actions) == 1 and actions[0]["kind"] == "open"
+    # The ATR is ~1.0 here, so a 2x stop sits well below the close, not at None.
+    assert actions[0]["stop_level"] is not None
+    assert actions[0]["stop_level"] < 10.0
+
+
+def test_expr_evaluate_atr_stop_undefined_at_decision_bar_422():
+    # Live is judged at the DECISION bar: an ATR that isn't defined there would
+    # open a real position with no stop, so it 422s.
     atr_risk = {"stop": {"kind": "atr", "mult": 2.0, "length": 14},
                 "target": {"kind": "none"}}
-    r = client.post("/api/strategy/evaluate", json=_base(longRisk=atr_risk))
+    r = client.post("/api/strategy/evaluate", json=_base(
+        candles=_candles(_atr_bars(10)), longRisk=atr_risk))
     assert r.status_code == 422
-    assert "ATR-based risk stops" in r.json()["detail"]
+    assert "ATR(14)" in r.json()["detail"]
 
 
 def test_expr_evaluate_with_coded_is_422():

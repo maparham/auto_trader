@@ -78,14 +78,160 @@ def test_expr_backtest_blank_enabled_row_is_skipped():
     assert r.status_code == 200
 
 
-def test_expr_backtest_atr_risk_rejected():
-    # An ATR-kind stop has no series on the expr surface (series={}); running it
-    # would yield a silent stop-less trade, so the handler 422s instead.
-    atr_risk = {"stop": {"kind": "atr", "mult": 2.0, "length": 14},
+# --- ATR panel risk ----------------------------------------------------------
+# The expr wire format carries no `series`, so the route computes the ATR_{n}
+# series an atr/trailAtr stop, target, or scaling spacing executes against. These
+# used to 422 with atr_risk_unsupported.
+
+
+# Bars 0..9 are warm-up (before tradeFromTime), matching what the real client
+# posts: lib/backtestWindow.ts sizes its history fetch by riskAtrLengths, so an
+# ATR stop always has its warm-up bars in hand before the window opens.
+_ATR_WARMUP_BARS = 10
+_ATR_TRADE_FROM = 3600 * _ATR_WARMUP_BARS
+
+
+def _atr_stop_candles():
+    """20 quiet bars (range 1.0 each) then a spike down. ATR is 1.0 across the
+    quiet stretch, so a 2x ATR stop from a fill near 10 sits at ~8 and the final
+    bar's low of 5 takes it out."""
+    bars = [{"time": 3600 * k, "open": 10.0, "high": 10.5, "low": 9.5,
+             "close": 10.0, "volume": 100.0} for k in range(20)]
+    bars[12]["close"] = 11.0     # crossAbove(close, 10.5) -> entry on bar 13
+    bars[12]["high"] = 11.0
+    bars[-1].update(open=10.0, high=10.0, low=5.0, close=5.5)
+    return bars
+
+
+def _atr_req(**over):
+    over.setdefault("tradeFromTime", _ATR_TRADE_FROM)
+    over.setdefault("candles", _atr_stop_candles())
+    return _base_req(
+        longEntry=[{"expr": "crossAbove(candle.close, 10.5)"}],
+        longExit=[],
+        **over,
+    )
+
+
+def test_expr_backtest_atr_stop_runs_and_fires():
+    atr_risk = {"stop": {"kind": "atr", "mult": 2.0, "length": 3},
                 "target": {"kind": "none"}}
-    r = client.post("/api/expr/backtest", json=_base_req(longRisk=atr_risk))
+    r = client.post("/api/expr/backtest", json=_atr_req(longRisk=atr_risk))
+    assert r.status_code == 200
+    trades = r.json()["trades"]
+    assert trades, "ATR stop run produced no trades"
+    # The spike bar takes the stop out — not the range-end flatten.
+    assert any("stop" in t["reason"].lower() for t in trades), trades
+    assert all(t["stop_initial"] is not None for t in trades), trades
+
+
+def test_expr_backtest_without_atr_stop_survives_the_spike():
+    # Control for the test above: same candles, no stop -> the position is still
+    # open at range end. Proves the stop above is what closed the trade.
+    r = client.post("/api/expr/backtest", json=_atr_req())
+    assert r.status_code == 200
+    trades = r.json()["trades"]
+    assert all("stop" not in t["reason"].lower() for t in trades), trades
+
+
+def test_expr_backtest_atr_target_fires():
+    # Same candles but with a rally after the entry bar, so a 1x ATR target above
+    # the fill is actually reachable — a 200 alone would not show the target got
+    # a real ATR value.
+    bars = _atr_stop_candles()
+    for k in range(14, 20):
+        bars[k].update(open=10.0, high=13.0, low=10.0, close=12.5)
+    atr_risk = {"stop": {"kind": "none"},
+                "target": {"kind": "atr", "mult": 1.0, "length": 3}}
+    r = client.post("/api/expr/backtest", json=_atr_req(candles=bars, longRisk=atr_risk))
+    assert r.status_code == 200
+    trades = r.json()["trades"]
+    assert trades, "no trades — the fixture stopped exercising the target"
+    assert all(t["target"] is not None for t in trades), trades
+    assert any("target" in t["reason"].lower() for t in trades), trades
+
+
+def test_expr_backtest_trail_atr_stop_runs():
+    atr_risk = {"stop": {"kind": "trailAtr", "mult": 2.0, "length": 3},
+                "target": {"kind": "none"}}
+    r = client.post("/api/expr/backtest", json=_atr_req(longRisk=atr_risk))
+    assert r.status_code == 200
+
+
+def test_expr_backtest_atr_stop_short_warmup_422():
+    # ATR(500) over 20 candles is undefined at every bar: running it would open a
+    # position with no stop at all, which is exactly what the old guard existed
+    # to prevent. 422 rather than degrade silently.
+    atr_risk = {"stop": {"kind": "atr", "mult": 2.0, "length": 500},
+                "target": {"kind": "none"}}
+    r = client.post("/api/expr/backtest", json=_atr_req(longRisk=atr_risk))
     assert r.status_code == 422
-    assert r.json()["detail"]["code"] == "atr_risk_unsupported"
+    d = r.json()["detail"]
+    assert d["code"] == "atr_warmup"
+    assert "ATR(500)" in d["message"]
+
+
+def test_expr_backtest_atr_warmup_boundary():
+    # atr_series defines its first value at index length-1, and bar 10 is the
+    # first tradeable one, so ATR(11) is exactly warm there and ATR(12) is not.
+    def run(length):
+        return client.post("/api/expr/backtest", json=_atr_req(
+            longRisk={"stop": {"kind": "atr", "mult": 2.0, "length": length},
+                      "target": {"kind": "none"}}))
+
+    assert run(11).status_code == 200
+    assert run(12).status_code == 422
+
+
+def test_expr_backtest_atr_warmup_measured_at_first_tradeable_bar():
+    # Not bar 0: the same ATR(11) that is warm with a window starting at bar 10
+    # 422s when the whole range is tradeable, because bar 0 has no ATR and an
+    # entry there would carry stop_initial=None for the position's whole life.
+    atr_risk = {"stop": {"kind": "atr", "mult": 2.0, "length": 11},
+                "target": {"kind": "none"}}
+    assert client.post("/api/expr/backtest", json=_atr_req(
+        longRisk=atr_risk)).status_code == 200
+    assert client.post("/api/expr/backtest", json=_atr_req(
+        longRisk=atr_risk, tradeFromTime=0)).status_code == 422
+
+
+def _scale_in_req(**over):
+    """A repeatedly-true entry with maxConcurrent > 1, so the spacing gate is
+    actually consulted on every bar after the first fill. The single-cross entry
+    _atr_req uses would never open a second position, leaving the gate untouched."""
+    over.setdefault("tradeFromTime", _ATR_TRADE_FROM)
+    return _base_req(
+        candles=_atr_stop_candles(),
+        longEntry=[{"expr": "candle.close > 0"}],  # every bar
+        longExit=[],
+        **over,
+    )
+
+
+def _entry_count(**over):
+    r = client.post("/api/expr/backtest", json=_scale_in_req(**over))
+    assert r.status_code == 200, r.text
+    return len(r.json()["trades"])
+
+
+def test_expr_backtest_atr_scaling_spacing_gates_entries():
+    # Scaling spacing of kind atr reads the same ATR_{n} map. Before this it was
+    # unguarded AND unpopulated: the gate read None and stopped gating, silently.
+    # A wide ATR spacing must therefore admit FEWER positions than no spacing at
+    # all — equal counts would mean the series still isn't reaching the gate.
+    ungated = _entry_count(longScaling={"maxConcurrent": 3, "spacing": None})
+    gated = _entry_count(longScaling={
+        "maxConcurrent": 3, "spacing": {"kind": "atr", "mult": 50.0, "length": 3}})
+    assert ungated > 1, "fixture opened no second position — the gate is untested"
+    assert gated < ungated, (gated, ungated)
+
+
+def test_expr_backtest_atr_scaling_spacing_short_warmup_422():
+    r = client.post("/api/expr/backtest", json=_atr_req(
+        longScaling={"maxConcurrent": 3,
+                     "spacing": {"kind": "atr", "mult": 1.0, "length": 500}}))
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "atr_warmup"
 
 
 def test_expr_backtest_fixed_risk_still_runs():

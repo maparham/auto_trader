@@ -19,6 +19,14 @@ def _candles(closes):
             for k, c in enumerate(closes)]
 
 
+def _ranged_candles(closes):
+    """Like _candles but each bar has a real high/low range, so ATR is non-zero
+    (the flat bars _candles builds give ATR 0, which makes every ATR-stop combo
+    identical)."""
+    return [{"time": 3600 * k, "open": c, "high": c + 0.5, "low": c - 0.5,
+             "close": c, "volume": 100.0} for k, c in enumerate(closes)]
+
+
 # A rise-then-fall wave so an EMA-based entry opens a long that later exits.
 _WAVE = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1]
 
@@ -95,3 +103,39 @@ def test_expr_sweep_risk_target():
     for row in rows:
         assert row["error"] is None, row["error"]
         assert row["metrics"] is not None
+
+
+def test_expr_sweep_atr_risk_runs_in_the_worker():
+    # ATR stops used to 422 at build_expr_engine ("not available for expression
+    # backtests"). The worker now builds ATR_{n} from its own candles; the mult
+    # sweep must reach it and produce distinct results.
+    atr_risk = {"stop": {"kind": "atr", "mult": 1.0, "length": 3},
+                "target": {"kind": "none"}}
+    combos = [{"risk:long.stop.mult": 0.5}, {"risk:long.stop.mult": 20.0}]
+    # No exit rule: the stop is the only thing that can close the position, so a
+    # difference in results can only come from the swept mult.
+    rows = run_expr_sweep_via_jobs(_base_req(
+        candles=_ranged_candles(_WAVE), longExit=[], longRisk=atr_risk,
+        tradeFromTime=3600 * 5,  # bars 0-4 are ATR warm-up, as the real client posts
+        sweep={"combos": combos}))
+    assert len(rows) == 2
+    for row in rows:
+        assert row["error"] is None, row["error"]
+        assert row["metrics"] is not None
+    # A 0.5x ATR stop is hit far more often than a 20x one, so the patched DTO
+    # genuinely reached the engine rather than being ignored.
+    assert rows[0]["metrics"]["net_pnl"] != rows[1]["metrics"]["net_pnl"]
+
+
+def test_expr_sweep_atr_risk_short_warmup_errors_the_row():
+    # Submit's dry-validation covers combo shape, not candle warm-up, so an
+    # unwarmable ATR surfaces as a per-row error from the worker (the same way
+    # any other build-time SweepValidationError does) rather than a stop-less run.
+    # 20 candles can never warm ATR(500).
+    atr_risk = {"stop": {"kind": "atr", "mult": 1.0, "length": 500},
+                "target": {"kind": "none"}}
+    rows = run_expr_sweep_via_jobs(_base_req(
+        longRisk=atr_risk, sweep={"combos": [{"risk:long.stop.mult": 2.0}]}))
+    assert len(rows) == 1
+    assert rows[0]["error"] is not None
+    assert "ATR(500)" in rows[0]["error"]

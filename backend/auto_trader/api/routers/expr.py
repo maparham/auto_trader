@@ -33,6 +33,11 @@ from auto_trader.strategy.expr.registry import PATTERN_FN_NAMES
 from auto_trader.strategy.expr.warmup import PATTERN_WARMUP, warmup_bars
 
 from .. import deps
+from ..risk_series import (
+    AtrWarmupError,
+    build_atr_risk_series,
+    first_tradeable_index,
+)
 from ..schemas import (
     ExprBacktestRequest,
     ExprClosenessRequest,
@@ -212,19 +217,24 @@ async def _ensure_htf(
 async def expr_backtest(req: ExprBacktestRequest):
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
-    # I4 (expr): the expr surface runs the engine with series={} and has no way to
-    # populate an ATR_{length} risk series in v1. An ATR-kind stop/target would
-    # find no series, _atr_at returns None, and the position runs with no stop —
-    # silently. Fail loud instead, mirroring the structured handler's I4 guard.
-    for risk in (req.longRisk, req.shortRisk):
-        if risk is not None and risk.atr_series_names():
-            raise HTTPException(422, {
-                "code": "atr_risk_unsupported",
-                "message": "ATR-based risk stops are not available for expression "
-                           "backtests in this version.",
-                "start": None, "end": None, "group": None, "row": None,
-            })
     candles = [candle_from_dto(c) for c in req.candles]
+    # I4 (expr): panel risk of kind atr/trailAtr and atr scaling spacing execute
+    # against series["ATR_{length}"]. The expr wire format has no series field, so
+    # we compute them here — without this the engine reads None and the position
+    # runs stop-less, silently (which is what the old atr_risk_unsupported 422
+    # was standing in for).
+    try:
+        atr_risk = build_atr_risk_series(
+            candles,
+            (req.longRisk, req.shortRisk),
+            (req.longScaling, req.shortScaling),
+            first_tradeable_index(candles, req.tradeFromTime),
+        )
+    except AtrWarmupError as e:
+        raise HTTPException(422, {
+            "code": "atr_warmup", "message": e.message,
+            "start": None, "end": None, "group": None, "row": None,
+        })
     htf: dict[str, list[Candle]] = {
         tf: [candle_from_dto(c) for c in bars]
         for tf, bars in (req.htfCandles or {}).items()
@@ -266,7 +276,7 @@ async def expr_backtest(req: ExprBacktestRequest):
         short_risk=req.shortRisk.to_risk() if req.shortRisk else None,
         long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
         short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
-        series={},
+        series=atr_risk,
         mask=req.mask.to_mask() if req.mask else None,
     )
     result = engine.run(candles)

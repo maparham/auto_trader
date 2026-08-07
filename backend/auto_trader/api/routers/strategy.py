@@ -34,6 +34,7 @@ from auto_trader.strategy import loader
 from auto_trader.strategy.loader import StrategyLoadError
 
 from .. import deps
+from ..risk_series import AtrWarmupError, build_atr_risk_series
 from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse
 from ..sweep_apply import request_instances
 
@@ -119,17 +120,7 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
     if req.exprMode and req.codedStrategy is not None:
         raise HTTPException(422, "exprMode and codedStrategy are mutually exclusive.")
 
-    if req.exprMode:
-        # Expr live decision runs with series={} (natives computed from candles); an
-        # ATR-kind risk stop/target has no series to read, so reject it (mirrors the
-        # expr backtest I4 guard) rather than running a live position with no stop.
-        for risk in (req.longRisk, req.shortRisk):
-            if risk is not None and risk.atr_series_names():
-                raise HTTPException(
-                    422,
-                    "ATR-based risk stops are not available for expression rules in this version.",
-                )
-    else:
+    if not req.exprMode:
         # Coded run: series-shaped checks a pure rule run gets, mirrored here
         # because coded runs skip the rule-mode validation block above (coded
         # ignores the entry groups; only panel exit rules + panel risk apply).
@@ -146,6 +137,22 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
 
     candles = [_candle(c) for c in req.candles]
     i = len(candles) - 1
+    # Expr mode posts no series (natives are computed from candles), so ATR-kind
+    # panel risk / scaling spacing gets its ATR_{length} series built here — the
+    # decision bar is the one that must have a value, or the live position would
+    # be opened with no stop at all. Coded runs keep posting their own.
+    if req.exprMode:
+        try:
+            risk_series = build_atr_risk_series(
+                candles,
+                (req.longRisk, req.shortRisk),
+                (),  # EvaluateRequest carries no scaling config (one live decision)
+                i,
+            )
+        except AtrWarmupError as e:
+            raise HTTPException(422, e.message)
+    else:
+        risk_series = req.series
     # Resolved ONCE per request: the coded branch below re-compiles its expr exits
     # on every tf-retry pass, so resolving inside the helper would repeat it.
     instances = request_instances(req)
@@ -311,10 +318,10 @@ async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
                 stop, tp = sig.stop_level, sig.target_level
             elif risk is not None:
                 stop = stop_level(
-                    risk.stop.to_spec(), close, sig.leg, _atr(risk.stop, req.series, i), close
+                    risk.stop.to_spec(), close, sig.leg, _atr(risk.stop, risk_series, i), close
                 )
                 tp = target_level(
-                    risk.target.to_spec(), close, sig.leg, _atr(risk.target, req.series, i)
+                    risk.target.to_spec(), close, sig.leg, _atr(risk.target, risk_series, i)
                 )
             open_action = ActionDTO(
                 kind="open", leg=sig.leg, side=sig.side.value, reason=sig.reason,

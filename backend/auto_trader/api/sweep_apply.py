@@ -30,6 +30,11 @@ from auto_trader.strategy.expr.strategy import ExprRuleStrategy
 from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.validate import validate
 
+from .risk_series import (
+    AtrWarmupError,
+    build_atr_risk_series,
+    first_tradeable_index,
+)
 from .schemas import (
     BacktestRequest,
     CandleDTO,
@@ -261,17 +266,19 @@ def build_expr_engine(
     (its CompiledRows cache the indicator series, so windows reuse them). Same
     validation/config as run_expr_sync; raises SweepValidationError(422) the
     same way."""
-    # I4 (expr): the expr surface runs the engine with series={} and cannot
-    # populate an ATR_{length} risk series, so an ATR stop/target would run
-    # stop-less. Fail loud, mirroring expr_backtest's guard. Check the combo's
-    # patched risk DTOs (risk: targets can't change kind, so this matches req).
-    for risk in (long_risk, short_risk):
-        if risk is not None and risk.atr_series_names():
-            raise SweepValidationError(
-                422,
-                "ATR-based risk stops are not available for expression "
-                "backtests in this version.",
-            )
+    # I4 (expr): ATR-kind panel risk / scaling spacing execute against
+    # series["ATR_{length}"], which the expr wire format never carries — compute
+    # them here or the engine reads None and runs stop-less. Built from the
+    # combo's PATCHED risk DTOs, not req's (a risk: target may have moved
+    # value/mult; .length is not sweepable, so one build per combo is enough).
+    try:
+        atr_risk = build_atr_risk_series(
+            candles, (long_risk, short_risk),
+            (req.longScaling, req.shortScaling),
+            first_tradeable_index(candles, req.tradeFromTime),
+        )
+    except AtrWarmupError as e:
+        raise SweepValidationError(422, e.message)
     # Resolved ONCE per combo, above the four compile_group calls: this runs in
     # a pool worker, which rebuilt `req` (and its raw `indicators` map) from the
     # job payload — a ResolvedInstance itself could never have been pickled.
@@ -329,7 +336,7 @@ def build_expr_engine(
         short_risk=short_risk.to_risk() if short_risk else None,
         long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
         short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
-        series={},
+        series=atr_risk,
         mask=req.mask.to_mask() if req.mask else None,
     )
     return engine, strategy

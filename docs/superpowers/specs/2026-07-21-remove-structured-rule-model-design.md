@@ -36,6 +36,11 @@ higher-timeframe (`tf=`) fetch loop, and posted `series`. Routing coded through
 `atr_risk_unsupported` and runs `series={}`). So we keep the coded machinery and
 swap **only the exit evaluator**.
 
+> **Superseded (2026-08-08):** the `atr_risk_unsupported` rejection is gone. The
+> expr surface now computes its own `ATR_{length}` risk/scaling series from the
+> posted candles — see `docs/superpowers/specs/2026-08-08-atr-risk-in-expr-design.md`
+> and `backend/auto_trader/api/risk_series.py`. The rest of this section stands.
+
 ### Backend
 
 - Add `CodedWithExprExits(Strategy)` in `strategy/coded.py`, parallel to

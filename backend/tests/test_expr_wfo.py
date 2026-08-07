@@ -110,6 +110,82 @@ def test_expr_wfo_rejects_period_target_in_combo():
     assert "period" in r.json()["detail"]
 
 
+# --- ATR panel risk ----------------------------------------------------------
+# WFO exact mode compiles each combo ONCE via build_expr_engine and replays it
+# over gated sub-windows, so the ATR_{n} series is built once per combo and every
+# fold indexes the same array. Before ATR risk was supported on this surface,
+# build_expr_engine raised for every combo and each fold became an error row.
+
+_ATR_WARMUP_BARS = 10
+_ATR_RISK = {"stop": {"kind": "atr", "mult": 0.5, "length": 3},
+             "target": {"kind": "none"}}
+
+
+def _ranged_candles(closes):
+    """Bars with a real high/low range, so ATR is non-zero (the flat bars
+    _candles builds give ATR 0, which makes an ATR stop meaningless)."""
+    return [{"time": 3600 * k, "open": c, "high": c + 0.5, "low": c - 0.5,
+             "close": c, "volume": 100.0} for k, c in enumerate(closes)]
+
+
+def _atr_wfo_req(risk, **over):
+    return _base_req(
+        candles=_ranged_candles(_WAVE),
+        walkforward=_WFO,
+        longRisk=risk,
+        # Leading bars are ATR warm-up, as the real client posts them.
+        tradeFromTime=3600 * _ATR_WARMUP_BARS,
+        **over,
+    )
+
+
+def _run_wfo(risk, **over):
+    sub = client.post("/api/expr/walkforward/jobs", json=_atr_wfo_req(risk, **over))
+    assert sub.status_code == 200, sub.text
+    st = _poll_to_done(sub.json()["jobId"])
+    assert st["phase"] == "done" and st["error"] is None
+    return st["result"]
+
+
+def _fold_trade_counts(result):
+    return [(f["oos_metrics"] or {}).get("n_trades")
+            for f in result["schemes"][0]["folds"]]
+
+
+def test_expr_wfo_atr_risk_runs_every_fold(tmp_wfo_store):
+    # No exit rule: the ATR stop is the only thing that can close a position, so
+    # the fold metrics are a direct readout of whether it reached the engine.
+    # (With the default `candle.close < entry` exit, that rule always fires first
+    # and the stop makes no difference — the comparison below would be vacuous.)
+    result = _run_wfo(_ATR_RISK, longExit=[])
+    # The discriminator for the old guard: build_expr_engine raised for every
+    # combo, so `failed` equalled the whole grid.
+    assert result["grid_errors"]["failed"] == 0, result["grid_errors"]
+    assert result["schemes"] and result["schemes"][0]["folds"]
+
+    # Non-vacuity: the tight ATR stop must actually change the folds. Equal
+    # counts would mean the series never reached the engine and every position
+    # ran stop-less — the silent failure this whole path exists to prevent.
+    unstopped = _run_wfo(None, longExit=[])
+    stopped_counts = _fold_trade_counts(result)
+    assert stopped_counts != _fold_trade_counts(unstopped)
+    # Stopped-out positions re-enter, so the stop strictly adds trades.
+    assert max(n for n in stopped_counts if n is not None) > 1
+
+
+def test_expr_wfo_atr_risk_short_warmup_fails_the_grid(tmp_wfo_store):
+    # 160 candles can never warm ATR(500), so the warm-up check fires inside the
+    # WFO worker too rather than letting every fold trade stop-less.
+    long_atr = {"stop": {"kind": "atr", "mult": 2.0, "length": 500},
+                "target": {"kind": "none"}}
+    sub = client.post("/api/expr/walkforward/jobs", json=_atr_wfo_req(long_atr))
+    assert sub.status_code == 200, sub.text
+    st = _poll_to_done(sub.json()["jobId"])
+    result = st["result"]
+    assert result["grid_errors"]["failed"] > 0, result["grid_errors"]
+    assert "ATR(500)" in str(result["grid_errors"])
+
+
 def test_expr_wfo_blank_rows_do_not_break(tmp_wfo_store):
     # An empty placeholder short-entry row (what the UI ships for an unauthored
     # side) is not a rule: the job still submits and completes.
