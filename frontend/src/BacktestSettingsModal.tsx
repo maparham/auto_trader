@@ -2877,7 +2877,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               >
                 <span className="bt-switch-knob" />
               </button>
-              <span className={`bt-arm-state${sideEnabled ? " on" : ""}`} aria-hidden="true">{sideEnabled ? "Trading" : "Parked"}</span>
+              <span className={`bt-arm-state${sideEnabled ? " on" : ""}`} aria-hidden="true">{sideEnabled ? "On" : "Off"}</span>
             </div>
           </div>
           <SidePanel
