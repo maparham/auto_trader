@@ -264,3 +264,6 @@ cost_profiles.db-shm
 
 # Vitest on-disk cache (regenerated per run)
 node_modules/.vite/
+
+# git worktrees for isolated feature work
+.worktrees/
