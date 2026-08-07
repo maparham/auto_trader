@@ -1,7 +1,7 @@
 import pytest
 
 from auto_trader.strategy.expr import nodes as N
-from auto_trader.strategy.expr.errors import ExprError
+from auto_trader.strategy.expr.errors import BAD_CROSS_MSG, ExprError
 from auto_trader.strategy.expr.parser import parse
 
 
@@ -88,3 +88,48 @@ def test_part_operands_accessor():
     l1, r1 = N.part_operands(row.parts[1])
     assert (l0, r0) == (row.parts[0].a, row.parts[0].b)
     assert (l1, r1) == (row.parts[1].left, row.parts[1].right)
+
+
+def test_trailing_bare_x_is_bad_cross_op():
+    # "... x" with nothing after it used to fail expect("EOF") generically.
+    with pytest.raises(ExprError) as exc:
+        parse("EMA(9) x> EMA(50) x")
+    assert exc.value.code == "bad_cross_op"
+    assert exc.value.message == BAD_CROSS_MSG
+    assert (exc.value.start, exc.value.end) == (18, 19)
+
+
+def test_trailing_uppercase_x_is_bad_cross_op():
+    with pytest.raises(ExprError) as exc:
+        parse("EMA(9) > EMA(50) X")
+    assert exc.value.code == "bad_cross_op"
+    assert (exc.value.start, exc.value.end) == (17, 18)
+
+
+def test_bare_x_operand_not_before_a_bracket_is_an_unknown_name():
+    # A bare "x" used as a value has nothing to do with cross operators, so it
+    # must reach the validator as an unknown name instead of being second-guessed.
+    row = parse("count(candle.close > 2, x) >= 1")
+    window = row.left.window
+    assert isinstance(window, N.Call)
+    assert (window.name, window.args) == ("x", [])
+    assert (window.start, window.end) == (24, 25)
+
+
+def test_bare_x_operand_before_a_bracket_is_still_bad_cross_op():
+    with pytest.raises(ExprError) as exc:
+        parse("EMA(9) > X> EMA(50)")
+    assert exc.value.code == "bad_cross_op"
+    assert (exc.value.start, exc.value.end) == (9, 10)
+
+
+def test_x_ge_reaches_the_parser_as_bad_cross_op():
+    with pytest.raises(ExprError) as exc:
+        parse("EMA(9) x>= 2")
+    assert exc.value.code == "bad_cross_op"
+    assert (exc.value.start, exc.value.end) == (7, 10)
+
+
+def test_no_space_fuse_parses_as_a_cross():
+    row = parse("EMA(9)x>EMA(50)")
+    assert isinstance(row, N.Cross) and row.fn == "crossAbove"

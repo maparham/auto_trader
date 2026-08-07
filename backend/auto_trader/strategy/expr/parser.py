@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from auto_trader.strategy.expr import nodes as N
-from auto_trader.strategy.expr.errors import ExprError
+from auto_trader.strategy.expr.errors import BAD_CROSS_MSG, ExprError
 from auto_trader.strategy.expr.lexer import Token, tokenize
 from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
 
 _CMP_SYM = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<="}
 _CROSS_SYM = {"XGT": "crossAbove", "XLT": "crossBelow"}
 _ROW_OPS = ("GT", "LT", "GE", "LE", "XGT", "XLT")
-_BAD_CROSS_MSG = "Write the cross operator as x> or x< — lowercase, no space."
+# Re-exported under the module-private name the parser has always used; the
+# string itself lives in errors.py so the lexer's x>= branch shares it byte
+# for byte.
+_BAD_CROSS_MSG = BAD_CROSS_MSG
 
 
 class _Parser:
@@ -29,6 +32,11 @@ class _Parser:
         if t.type != type_:
             if t.type in _CROSS_SYM:
                 raise ExprError("cross_not_toplevel", "A comparison or cross can only be the whole row.", t.start, t.end)
+            # A leftover bare "x" where the grammar wanted something else (most
+            # often a trailing "EMA(9) x> EMA(50) x") is a half-typed cross
+            # operator, not a generic surprise token.
+            if t.type == "NAME" and t.value in ("x", "X"):
+                raise ExprError("bad_cross_op", _BAD_CROSS_MSG, t.start, t.end)
             raise ExprError("unexpected_token", f"Expected {type_.lower()} here.", t.start, t.end)
         return self.next()
 
@@ -140,7 +148,11 @@ class _Parser:
                 return N.Call(name.value, args, name.start, close.end)
             # A bare name that is not candle/entry/call is an unknown variable; the
             # validator reports it. Model it as a zero-arg Call so spans survive.
-            if name.value in ("x", "X"):
+            # ... unless it is the "X> b" spelling of the cross operator: only a
+            # bare x/X sitting immediately on a comparison bracket earns the
+            # cross-operator hint. A plain "x" elsewhere (e.g. count(..., x)) is
+            # just an unknown variable and must be reported as one.
+            if name.value in ("x", "X") and self.peek().type in ("GT", "LT"):
                 raise ExprError("bad_cross_op", _BAD_CROSS_MSG, name.start, name.end)
             return N.Call(name.value, [], name.start, name.end)
         raise ExprError("unexpected_token", "Expected a value here.", t.start, t.end)

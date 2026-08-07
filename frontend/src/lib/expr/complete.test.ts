@@ -37,6 +37,28 @@ describe("infix cross completions", () => {
     expect(labels[1]).toBe("x>");
   });
 
+  it("selects the placeholder operand of the inserted operator", () => {
+    // Regression pin for the anchor: it is derived from the operator's own
+    // length, so accepting "x>" always lands the selection on "EMA(50)".
+    const from = completionAnchor("EMA(9) x", 8)!;
+    const cand = completionsFor("EMA(9) x", 8).find((c) => c.label === "x>")!;
+    let spec: {
+      changes: { from: number; to: number; insert: string };
+      selection: { anchor: number; head: number };
+    } | undefined;
+    const view = { dispatch: (s: typeof spec) => { spec = s; } };
+    // `apply` is a CM6 dispatch callback; drive it with a stub view rather than
+    // standing up a live EditorView just to read back the selection.
+    (cand.apply as (v: unknown, c: unknown, f: number, t: number) => void)(view, cand, from, 8);
+    expect(spec!.changes.insert).toBe("x> EMA(50)");
+    expect(
+      spec!.changes.insert.slice(
+        spec!.selection.anchor - from,
+        spec!.selection.head - from,
+      ),
+    ).toBe("EMA(50)");
+  });
+
   it("keeps the infix operators in the bare-word candidate set", () => {
     const labels = completionsFor("", 0).map((o) => o.label);
     expect(labels).toContain("x>");

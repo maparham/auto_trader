@@ -105,6 +105,15 @@
   { "expr": "X> EMA(9)", "isExit": false, "error": {"code":"bad_cross_op","from":0,"to":1}, "literals": [] },
   { "expr": "EMA(9) > (EMA(9) x> EMA(50))", "isExit": false, "error": {"code":"cross_not_toplevel","from":17,"to":19}, "literals": [] },
   { "expr": "50x> 60", "isExit": false, "error": {"code":"unknown_name","from":0,"to":3}, "literals": [] },
+  { "expr": "EMA(9) x>= 2", "isExit": false, "error": {"code":"bad_cross_op","from":7,"to":10}, "literals": [] },
+  { "expr": "EMA(9)x>EMA(50)", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":9,"from":4,"to":5,"label":"EMA length"},
+      {"ordinal":1,"value":50,"from":12,"to":14,"label":"EMA length"}
+    ] },
+  { "expr": "EMA(9) x> EMA(50) x", "isExit": false, "error": {"code":"bad_cross_op","from":18,"to":19}, "literals": [] },
+  { "expr": "count(candle.close > 2, x) >= 1", "isExit": false, "error": {"code":"unknown_name","from":24,"to":25}, "literals": [] },
+  { "expr": "count(EMA(9) x> EMA(50) x< 2, 10) >= 1", "isExit": false, "error": {"code":"cross_not_toplevel","from":24,"to":26}, "literals": [] },
 
   { "expr": "SLOPE.slope0 > 0.5", "isExit": false, "error": null,
     "instances": {"SLOPE": {"type":"SLOPE","calcParams":[9,21],"extendData":{"showAccel":true,"slopePeriod":3}}},

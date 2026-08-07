@@ -108,8 +108,9 @@ const WORD_CANDIDATES: WordCandidate[] = [
     type: "cross",
     detail: e.detail,
     insert: e.insert,
-    // Select the placeholder operand ("EMA(50)") for overtype, like fn args.
-    argFrom: 3,
+    // Select the placeholder operand ("EMA(50)") for overtype, like fn args:
+    // the operand starts one space past the operator, whatever its length.
+    argFrom: e.name.length + 1,
     argTo: e.insert.length,
   })),
   ...CROSSES.map((e) => fnCandidate(e, "cross")),

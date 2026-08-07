@@ -14,3 +14,9 @@ class ExprError(Exception):
         self.message = message
         self.start = start
         self.end = end
+
+
+# Shared by the lexer (x>= / x<=) and the parser (bare x in operand or trailing
+# position) so every spelling of a mistyped cross operator gets the SAME copy.
+# Kept here, not in parser.py, because lexer.py cannot import from parser.py.
+BAD_CROSS_MSG = "Write the cross operator as x> or x< — lowercase, no space."

@@ -473,6 +473,32 @@ describe("infix cross operators", () => {
     expect([upper.error?.from, upper.error?.to]).toEqual([0, 1]);
   });
 
+  it("flags x>= as bad_cross_op over the whole operator", () => {
+    const { error } = analyze("EMA(9) x>= 2");
+    expect(error?.code).toBe("bad_cross_op");
+    expect([error?.from, error?.to]).toEqual([7, 10]);
+    // The copy is shared with every other spelling (byte-identical to the
+    // backend's errors.BAD_CROSS_MSG).
+    expect(error?.message).toBe("Write the cross operator as x> or x< — lowercase, no space.");
+  });
+
+  it("flags a trailing bare x as bad_cross_op", () => {
+    const { error } = analyze("EMA(9) x> EMA(50) x");
+    expect(error?.code).toBe("bad_cross_op");
+    expect([error?.from, error?.to]).toEqual([18, 19]);
+  });
+
+  it("leaves a bare x operand to the unknown-name check", () => {
+    // Not followed by a comparison bracket, so it is a variable, not a cross.
+    const { error } = analyze("count(candle.close > 2, x) >= 1");
+    expect(error?.code).toBe("unknown_name");
+    expect([error?.from, error?.to]).toEqual([24, 25]);
+  });
+
+  it("still parses the no-space fuse EMA(9)x>EMA(50)", () => {
+    expect(analyze("EMA(9)x>EMA(50)").error).toBeNull();
+  });
+
   it("accepts x> inside count()", () => {
     expect(analyze("count(EMA(9) x> EMA(50), 10) >= 2").error).toBeNull();
   });

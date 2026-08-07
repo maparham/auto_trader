@@ -119,13 +119,18 @@ type Node =
 
 type Row = CompareNode | CrossNode | ChainNode | PredicateNode;
 
-function containsTf(node: Node): boolean {
+// Mirrors nodes.py contains_tf case for case, INCLUDING the Chain case: no
+// caller reaches it (a Chain is only ever a top-level Row, and the only call
+// site — parsePostfix's "@" branch — never holds one), but the mirror is kept
+// literal so a future caller cannot find a hole here that the backend closes.
+function containsTf(node: Node | ChainNode): boolean {
   if (node.kind === "Tf") return true;
   if (node.kind === "Field" || node.kind === "Offset") return containsTf(node.base);
   if (node.kind === "Unary") return containsTf(node.operand);
   if (node.kind === "Call") return node.args.some(containsTf);
   if (node.kind === "Binary" || node.kind === "Compare") return containsTf(node.left) || containsTf(node.right);
   if (node.kind === "Cross") return containsTf(node.a) || containsTf(node.b);
+  if (node.kind === "Chain") return node.parts.some(containsTf);
   if (node.kind === "Predicate") return containsTf(node.base);
   if (node.kind === "Count") return containsTf(node.cond) || containsTf(node.window);
   return false;
@@ -189,6 +194,12 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
       // A bare "x" fused to a comparison bracket is the infix cross
       // operator: x> (crosses above) / x< (crosses below).
       if (word === "x" && j < n && (src[j] === ">" || src[j] === "<")) {
+        // "x>=" / "x<=" is a near-miss for the operator, not a fused bracket
+        // plus a stray "="; report the whole thing with the cross-operator copy
+        // instead of bad_char on the "=".
+        if (j + 1 < n && src[j + 1] === "=") {
+          return { tokens: out, error: new ExprErr("bad_cross_op", BAD_CROSS_MSG, i, j + 2) };
+        }
         out.push({ type: src[j] === ">" ? "XGT" : "XLT", value: src.slice(i, j + 1), start: i, end: j + 1 });
         i = j + 1;
         continue;
@@ -241,6 +252,12 @@ class Parser {
     if (t.type !== type) {
       if (t.type === "XGT" || t.type === "XLT") {
         throw new ExprErr("cross_not_toplevel", "A comparison or cross can only be the whole row.", t.start, t.end);
+      }
+      // A leftover bare "x" where the grammar wanted something else (most often
+      // a trailing "EMA(9) x> EMA(50) x") is a half-typed cross operator, not a
+      // generic surprise token.
+      if (t.type === "NAME" && (t.value === "x" || t.value === "X")) {
+        throw new ExprErr("bad_cross_op", BAD_CROSS_MSG, t.start, t.end);
       }
       throw new ExprErr("unexpected_token", `Expected ${type.toLowerCase()} here.`, t.start, t.end);
     }
@@ -372,7 +389,14 @@ class Parser {
       }
       // A bare name that is not candle/entry/call is an unknown variable; the
       // validator reports it. Model it as a zero-arg Call so spans survive.
-      if (name.value === "x" || name.value === "X") {
+      // ... unless it is the "X> b" spelling of the cross operator: only a bare
+      // x/X sitting immediately on a comparison bracket earns the cross-operator
+      // hint. A plain "x" elsewhere (e.g. count(..., x)) is just an unknown
+      // variable and must be reported as one.
+      if (
+        (name.value === "x" || name.value === "X")
+        && (this.peek().type === "GT" || this.peek().type === "LT")
+      ) {
         throw new ExprErr("bad_cross_op", BAD_CROSS_MSG, name.start, name.end);
       }
       return { kind: "Call", name: name.value, args: [], start: name.start, end: name.end };
@@ -508,8 +532,9 @@ function validate(node: Row, isExit: boolean, instances: InstanceMap): void {
  * ref-shaped counterpart of `containsTf` — the parser's nested-pin check. The
  * case list below mirrors `containsTf` case for case on purpose: if the two
  * drift, a nested pin escapes through whichever node kind only one of them
- * recurses into. Keep them in step. (Like `containsTf`'s TS port, there is no
- * Chain case: `Node` excludes Chain, which is only ever a top-level Row.) */
+ * recurses into. Keep them in step. (`containsTf` also carries a Chain case for
+ * mirror fidelity; there is none here because `Node` excludes Chain, which is
+ * only ever a top-level Row and never reaches this walk.) */
 function pinnedInstance(node: Node, instances: InstanceMap): string | null {
   if (node.kind === "IndicatorRef") {
     const inst = instances.get(node.instance);
@@ -566,8 +591,9 @@ function checkPredicate(node: PredicateNode): void {
 // barsSinceEntry) — used to keep those out of wrappers/indicators, which are
 // expected to compute over a plain series and would otherwise crash trying to
 // evaluate an entry-scoped operand with no active position. Mirrors
-// containsTf's shape; Node excludes Chain (Chain is only ever a top-level Row,
-// never nested inside another node's subtree), so there is no Chain case here.
+// containsTf's shape minus its (unreachable) Chain case: Node excludes Chain,
+// which is only ever a top-level Row, never nested inside another node's
+// subtree, so nothing here can be handed one.
 function containsEntryKind(node: Node): boolean {
   if (node.kind === "Entry" || node.kind === "BarsSinceEntry") return true;
   if (node.kind === "Field" || node.kind === "Offset" || node.kind === "Tf") return containsEntryKind(node.base);
