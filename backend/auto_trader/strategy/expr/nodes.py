@@ -164,6 +164,61 @@ def contains_tf(node: Node) -> bool:
     return False
 
 
+def first_tf(node: Node) -> str | None:
+    """The first @tf pin alias in the subtree (reading order), or None. An
+    operand pinned anywhere runs on that timeframe, so term attribution
+    (RuleTerm.*_tf) takes the pin over the run's base resolution."""
+    if isinstance(node, Tf):
+        return node.tf
+    if isinstance(node, (Field, Offset)):
+        return first_tf(node.base)
+    if isinstance(node, Unary):
+        return first_tf(node.operand)
+    if isinstance(node, Call):
+        for a in node.args:
+            tf = first_tf(a)
+            if tf is not None:
+                return tf
+        return None
+    if isinstance(node, (Binary, Compare)):
+        return first_tf(node.left) or first_tf(node.right)
+    if isinstance(node, Cross):
+        return first_tf(node.a) or first_tf(node.b)
+    if isinstance(node, Chain):
+        for p in node.parts:
+            tf = first_tf(p)
+            if tf is not None:
+                return tf
+        return None
+    if isinstance(node, Predicate):
+        return first_tf(node.base)
+    if isinstance(node, Count):
+        return first_tf(node.cond) or first_tf(node.window)
+    return None
+
+
+def contains_series(node: Node) -> bool:
+    """True when the subtree computes an indicator/series (a Call like EMA(9),
+    slope(...), count(...), or a chart-pane IndicatorRef) — the operand kinds
+    that run ON a timeframe. Price/const/entry operands stay timeframe-less
+    (mirrors the structured engine's _operand_timeframe)."""
+    if isinstance(node, (Call, IndicatorRef, Count)):
+        return True
+    if isinstance(node, (Field, Offset, Tf)):
+        return contains_series(node.base)
+    if isinstance(node, Unary):
+        return contains_series(node.operand)
+    if isinstance(node, (Binary, Compare)):
+        return contains_series(node.left) or contains_series(node.right)
+    if isinstance(node, Cross):
+        return contains_series(node.a) or contains_series(node.b)
+    if isinstance(node, Chain):
+        return any(contains_series(p) for p in node.parts)
+    if isinstance(node, Predicate):
+        return contains_series(node.base)
+    return False
+
+
 def contains_bars_since_entry(node: Node) -> bool:
     if isinstance(node, BarsSinceEntry):
         return True

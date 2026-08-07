@@ -290,6 +290,106 @@ def test_expr_backtest_count_needs_third_red():
     assert trades[0]["reason"] == "range end"
 
 
+# --- fill provenance: reason strings + captured terms ---------------------
+#
+# The structured rule engine stamped every rule-based Signal with the firing
+# rows' text (reason) and captured comparisons (terms); the chart's signal-candle
+# carets and the trades table's Reason column read exactly those. The expr
+# strategy must do the same or both silently vanish (regression: markers/reasons
+# disappeared when the structured engine was deleted).
+
+
+def test_expr_backtest_entry_fill_carries_reason_and_terms():
+    r = client.post("/api/expr/backtest", json=_base_req(
+        candles=_candles([1, 2, 3, 2, 1, 1]),
+    ))
+    assert r.status_code == 200
+    body = r.json()
+    entry = next(m for m in body["markers"] if m["side"] == "buy")
+    assert entry["reason"] == "crossAbove(candle.close, 2)"
+    assert entry["combine"] == "AND"
+    assert len(entry["terms"]) == 1
+    t = entry["terms"][0]
+    assert t["left"] == "candle.close" and t["right"] == "2"
+    assert t["op"] == "crossesAbove"
+    # Values as-of the signal bar (close 3 crossing the 2 threshold).
+    assert t["lval"] == 3.0 and t["rval"] == 2.0
+    # Price/const operands are timeframe-less.
+    assert t["leftTf"] is None and t["rightTf"] is None
+
+
+def test_expr_backtest_rule_exit_reason_reaches_trade_and_fill():
+    r = client.post("/api/expr/backtest", json=_base_req(
+        candles=_candles([1, 2, 3, 2, 1, 1]),
+    ))
+    assert r.status_code == 200
+    body = r.json()
+    trades = body["trades"]
+    assert len(trades) == 1
+    assert trades[0]["reason"] == "candle.close < entry"
+    exit_fill = next(m for m in body["markers"] if m["side"] == "sell")
+    assert exit_fill["reason"] == "candle.close < entry"
+    [term] = exit_fill["terms"]
+    assert term["left"] == "candle.close" and term["op"] == "<" and term["right"] == "entry"
+    assert term["lval"] == 1.0 and term["rval"] == 2.0  # close 1 vs entry price 2
+
+
+def test_expr_backtest_multi_row_group_joins_reasons_and_concats_terms():
+    bars = [(101, 102), (102, 104), (104, 103), (103, 102), (102, 101), (101, 100), (100, 100)]
+    r = client.post("/api/expr/backtest", json=_base_req(
+        candles=_oc_candles(bars),
+        longEntry=[{"expr": "crossAbove(candle.close, 103)"}],
+        longExit=[{"expr": "count(bearish(candle), barsSinceEntry) >= 3"},
+                  {"expr": "candle.close < entry"}],
+    ))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["trades"][0]["reason"] == (
+        "count(bearish(candle), barsSinceEntry) >= 3 AND candle.close < entry"
+    )
+    exit_fill = next(m for m in body["markers"] if m["side"] == "sell")
+    assert [t["left"] for t in exit_fill["terms"]] == [
+        "count(bearish(candle), barsSinceEntry)", "candle.close",
+    ]
+
+
+def test_expr_terms_tf_attribution_unit():
+    """Term timeframe attribution: a @tf pin anywhere in the operand wins (as its
+    canonical resolution); an unpinned indicator operand runs on the base
+    resolution; price/const/entry operands are timeframe-less."""
+    from auto_trader.strategy.expr.evaluate import compile_row
+    from auto_trader.strategy.expr.parser import parse
+
+    candles = [candle_from_dto(CandleDTO(**c)) for c in _candles([1.0] * 30)]
+    hourly = candles
+    src = "EMA(3) > candle.close@1H"
+    row = compile_row(parse(src), candles, "MINUTE_5", {"HOUR": hourly}, source=src)
+    [term] = row.terms_at(len(candles) - 1, None, None)
+    assert term.left_label == "EMA(3)" and term.left_tf == "MINUTE_5"
+    assert term.right_label == "candle.close@1H" and term.right_tf == "HOUR"
+
+    src2 = "candle.close < entry"
+    row2 = compile_row(parse(src2), candles, "MINUTE_5", {}, source=src2)
+    [term2] = row2.terms_at(len(candles) - 1, 2.0, None)
+    assert term2.left_tf is None and term2.right_tf is None
+    assert term2.right_val == 2.0
+
+
+def test_expr_terms_predicate_row_single_operand_term():
+    """A predicate row (bullish/bearish/pattern) has no left/right comparison —
+    it captures a single-operand term (op "") the popover renders as label-only."""
+    from auto_trader.strategy.expr.evaluate import compile_row
+    from auto_trader.strategy.expr.parser import parse
+
+    bars = [(101, 102), (102, 104)]
+    candles = [candle_from_dto(CandleDTO(**c)) for c in _oc_candles(bars)]
+    src = "bullish(candle)"
+    row = compile_row(parse(src), candles, "MINUTE_5", {}, source=src)
+    [term] = row.terms_at(1, None, None)
+    assert term.left_label == "bullish(candle)" and term.op == ""
+    assert term.right_label == ""
+
+
 def test_referenced_tfs_sees_into_count_and_predicates():
     from auto_trader.api.routers.expr import _referenced_tfs
     from auto_trader.strategy.expr.parser import parse

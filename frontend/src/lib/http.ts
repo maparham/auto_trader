@@ -23,14 +23,28 @@ export async function throwIfBrokerBlocked(res: Response): Promise<void> {
   }
 }
 
+/** "longExit" → "long exit", for prefixing expr rule errors with their group. */
+function groupLabel(group: string): string {
+  return group.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+
 /**
- * Pull the FastAPI `{detail}` string from a failed response. Falls back to
- * `fallback` when the body has no string `detail`, else to status + statusText.
+ * Pull the FastAPI `{detail}` from a failed response. Handles the plain string
+ * form and the /api/expr structured form ({code, message, start, end, group,
+ * row}), where the message is prefixed with the offending rule's location.
+ * Falls back to `fallback` when neither fits, else to status + statusText.
  */
 export async function errorDetail(res: Response, fallback?: string): Promise<string> {
   try {
     const body = await res.json();
     if (body && typeof body.detail === "string") return body.detail;
+    if (body && typeof body.detail?.message === "string") {
+      const { message, group, row } = body.detail;
+      if (typeof group === "string" && typeof row === "number") {
+        return `${groupLabel(group)} rule ${row + 1}: ${message}`;
+      }
+      return message;
+    }
   } catch {
     /* non-JSON body — fall through */
   }

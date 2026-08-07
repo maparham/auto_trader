@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from auto_trader.core.candle_aggregate import resolution_seconds
-from auto_trader.core.models import Candle
+from auto_trader.core.models import Candle, RuleTerm
 from auto_trader.indicators.candle_patterns import PATTERN_FNS, pattern_series
 from auto_trader.indicators.core import (
     atr_series, avwap_series, ema_series, rsi_series, sma_series,
@@ -326,6 +326,10 @@ class CompiledRow:
     # node. Without it the 24-condition detector re-runs for every bar of every
     # count() window, making the per-bar path O(n^2).
     _pattern_cache: dict[int, list[bool]]
+    # The row's expression text, exactly as parsed — node start/end spans index
+    # into it, so operand labels for RuleTerm capture are source slices. "" when
+    # the caller has no display need (sweep workers), which disables terms_at.
+    source: str = ""
 
     def _val(self, sub: N.Node, i: int, entry: float | None, entry_i: int | None = None) -> float | None:
         # entry-free sub-expressions are precomputed to arrays; entry-bearing ones
@@ -435,6 +439,68 @@ class CompiledRow:
             return lprev <= rprev and lnow > rnow
         return lprev >= rprev and lnow < rnow
 
+    # --- fill provenance ------------------------------------------------------
+    # The wire op names the frontend prettifies (signalGlyphs.opSymbol): raw
+    # comparison ops pass through verbatim, crosses use the structured engine's
+    # spelling so they render as "crosses ↑ / ↓".
+    _CROSS_OP = {"crossAbove": "crossesAbove", "crossBelow": "crossesBelow"}
+
+    def _label(self, sub: N.Node) -> str:
+        return self.source[sub.start:sub.end]
+
+    def _operand_tf(self, sub: N.Node) -> str | None:
+        """The operand's effective timeframe as a Resolution string: a @tf pin
+        anywhere in it wins; an unpinned indicator/series operand runs on the
+        run's base resolution; price/const/entry operands are timeframe-less
+        (mirrors the structured engine's _operand_timeframe)."""
+        tf = N.first_tf(sub)
+        if tf is not None:
+            return tf_resolution(tf) or tf
+        return self.resolution if N.contains_series(sub) else None
+
+    def _term(self, left: N.Node, op: str, right: N.Node, i: int,
+              entry: float | None, entry_i: int | None) -> RuleTerm:
+        return RuleTerm(
+            left_label=self._label(left),
+            left_val=self._val(left, i, entry, entry_i),
+            op=op,
+            right_label=self._label(right),
+            right_val=self._val(right, i, entry, entry_i),
+            left_tf=self._operand_tf(left),
+            right_tf=self._operand_tf(right),
+        )
+
+    def terms_at(self, i: int, entry: float | None, entry_i: int | None = None
+                 ) -> tuple[RuleTerm, ...]:
+        """Capture this row's exact comparison(s) at the firing bar `i` — the
+        values the engine itself compared, threaded onto the resulting Fill so
+        the chart can show *why* the trade fired without recomputing. Call only
+        when the row passed at `i` (mirrors the structured engine's `_terms`,
+        which captured passing rules only). Empty without a `source` (labels
+        are source slices, and a run that can't label terms shouldn't emit
+        misleading ones)."""
+        if not self.source:
+            return ()
+        node = self.node
+        if isinstance(node, N.Compare):
+            return (self._term(node.left, node.op, node.right, i, entry, entry_i),)
+        if isinstance(node, N.Cross):
+            return (self._term(node.a, self._CROSS_OP[node.fn], node.b, i, entry, entry_i),)
+        if isinstance(node, N.Chain):
+            return tuple(
+                self._term(p.left, p.op, p.right, i, entry, entry_i)
+                if isinstance(p, N.Compare)
+                else self._term(p.a, self._CROSS_OP[p.fn], p.b, i, entry, entry_i)
+                for p in node.parts
+            )
+        # Predicate: no left/right comparison — a single-operand term (op "")
+        # the popover renders as label-only.
+        return (RuleTerm(
+            left_label=self._label(node), left_val=None, op="",
+            right_label="", right_val=None,
+            left_tf=self._operand_tf(node), right_tf=None,
+        ),)
+
 
 def _entry_free(node: N.Node) -> bool:
     if isinstance(node, N.Entry):
@@ -479,7 +545,8 @@ def _precompute(node: N.Node, candles, resolution, htf, cache: dict[int, list[fl
 
 
 def compile_row(node: N.Row, candles, resolution, htf,
-                instances: "dict[str, ResolvedInstance] | None" = None) -> CompiledRow:
+                instances: "dict[str, ResolvedInstance] | None" = None,
+                *, source: str = "") -> CompiledRow:
     cache: dict[int, list[float | None]] = {}
     if isinstance(node, N.Chain):
         # Consecutive links share their middle operand (p[i].right is p[i+1].left);
@@ -500,4 +567,5 @@ def compile_row(node: N.Row, candles, resolution, htf,
     for sub in subs:
         _precompute(sub, candles, resolution, htf, cache, instances)
     return CompiledRow(node, candles, resolution, htf, instances,
-                       warmup_bars(node, resolution, instances), cache, {}, {}, {})
+                       warmup_bars(node, resolution, instances), cache, {}, {}, {},
+                       source=source)

@@ -77,7 +77,7 @@ def _compile_expr_group(rows, candles, resolution, htf, *, is_exit: bool, group:
                 "code": e.code, "message": e.message,
                 "start": e.start, "end": e.end, "group": group, "row": idx,
             })
-        compiled.append(compile_row(node, candles, resolution, htf, instances))
+        compiled.append(compile_row(node, candles, resolution, htf, instances, source=row.expr))
     return compiled
 
 

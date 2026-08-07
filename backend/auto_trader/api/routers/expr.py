@@ -59,11 +59,13 @@ from ..wfo_jobs import WFO_JOBS
 router = APIRouter()
 
 
-def _parse_group(rows, *, is_exit: bool, group: str, instances=None) -> list[N.Row]:
-    """Parse + validate every ENABLED row in a group. A parse/validate error 422s
-    with the expression span plus the group/row location so the frontend can map
-    it back to the offending editor field. Disabled rows and blank rows are
-    dropped before parse (a parked or empty draft never blocks a run; an empty
+def _parse_group(rows, *, is_exit: bool, group: str, instances=None) -> list[tuple[N.Row, str]]:
+    """Parse + validate every ENABLED row in a group, returning (node, source)
+    pairs — the source text feeds compile_row so fills can label their captured
+    terms (node spans index into it). A parse/validate error 422s with the
+    expression span plus the group/row location so the frontend can map it back
+    to the offending editor field. Disabled rows and blank rows are dropped
+    before parse (a parked or empty draft never blocks a run; an empty
     placeholder row is not a rule). Split from compilation so the route can
     collect the rows' @tf references and fetch those candles BEFORE compiling
     (compile_row precomputes series eagerly, so htf must be complete by then)."""
@@ -79,7 +81,7 @@ def _parse_group(rows, *, is_exit: bool, group: str, instances=None) -> list[N.R
                 "code": e.code, "message": e.message,
                 "start": e.start, "end": e.end, "group": group, "row": idx,
             })
-        nodes.append(node)
+        nodes.append((node, row.expr))
     return nodes
 
 
@@ -234,9 +236,10 @@ async def expr_backtest(req: ExprBacktestRequest):
     parsed = [_parse_group(rows, is_exit=ex, group=g, instances=instances) for rows, ex, g in groups]
     # @tf rows need their higher-timeframe candles in hand before compile_row
     # precomputes series; fetch whatever the request didn't ship.
-    await _ensure_htf([n for nodes in parsed for n in nodes], req, htf, instances)
+    await _ensure_htf([n for nodes in parsed for n, _ in nodes], req, htf, instances)
     strategy = ExprRuleStrategy(
-        *[[compile_row(n, candles, req.resolution, htf, instances) for n in nodes] for nodes in parsed],
+        *[[compile_row(n, candles, req.resolution, htf, instances, source=src)
+           for n, src in nodes] for nodes in parsed],
         quantity=req.costs.quantity,
         trade_from_time=req.tradeFromTime,
         long_enabled=req.longEnabled,
