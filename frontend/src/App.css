@@ -1156,15 +1156,9 @@
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
 }
-/* Horizontal insets the stacked region gets from .bt-results-region .bt-results;
-   applied on the body here so sweep content is inset too. */
+/* Stacked, the results take their horizontal inset from .bt-body; the column has
+   no such pane, so it pads here — on the body, so sweep content is inset too. */
 .bt-results-col-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 0 16px 12px; }
-/* Header row that carries the stacked-region "move to column" button beside the
-   collapse toggle. */
-.bt-results-head-row { display: flex; align-items: center; justify-content: space-between; }
-/* Right-pinned cluster in the results header: the Backtest | Sweep mode switch
-   plus the dock/undock layout button. */
-.bt-results-head-actions { display: inline-flex; align-items: center; gap: 8px; }
 /* Left cluster in the docked column's header: dock-back button + title. */
 .bt-results-head-left { display: inline-flex; align-items: center; gap: 8px; }
 .bt-results-layout-btn {
@@ -1257,19 +1251,43 @@
 }
 .bt-cfg-title { font-size: 13px; }
 .bt-cfg-res { color: var(--text-faint); font-variant-numeric: tabular-nums; }
-/* The panel body between head and footer is a vertical split: a settings region
-   (horizontal tab bar + scrolling content) on top, and an always-present,
-   collapsible results region on the bottom, divided by a draggable handle. */
-.bt-split { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.bt-settings-region { display: flex; flex-direction: column; flex: 1 1 0; min-height: 140px; }
-/* Horizontal tab bar across the top of the settings region. */
+/* The panel body between head and footer: a tab bar over a single scrolling
+   region. Settings and results are sections of that one scroll pane, not
+   separate boxes sharing the height. */
+.bt-panel-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.bt-settings-region { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+/* `hidden` alone loses to the display above. Both panes are hidden rather than
+   unmounted — the settings keep the section refs the scrollspy needs, and the
+   preset library keeps its fetched rows. */
+.bt-settings-region[hidden] { display: none; }
+/* Presets: the one pane you switch to rather than scroll into, so it scrolls on
+   its own and matches .bt-body's insets to sit where the settings sat. */
+.bt-presets-region {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 16px 16px;
+}
+.bt-presets-region[hidden] { display: none; }
+/* Horizontal tab bar above the scrolling region — a sibling of it, not a child,
+   since it is also how you leave the results. The run-mode seg rides at its
+   right end (see .bt-htabs .bt-mode-seg below). */
 .bt-htabs {
   display: flex;
+  align-items: center;
   gap: 2px;
   flex-shrink: 0;
   padding: 8px 12px 0;
   border-bottom: 1px solid var(--border);
 }
+/* Right-pinned run-mode switch. Nudged up off the tab underline so it sits on
+   the tab labels' optical centre rather than on the bar's bottom edge. The row
+   does not wrap (a wrapped seg would strand the active tab's underline mid-bar),
+   so the seg is allowed to shrink and clip instead of overflowing the panel —
+   badges give way first, since their content is the unbounded part. */
+.bt-htabs .bt-mode-seg { margin-left: auto; margin-bottom: 5px; flex-shrink: 1; min-width: 0; }
+.bt-htabs .bt-mode-seg button { min-width: 0; white-space: nowrap; overflow: hidden; }
+.bt-htabs .bt-mode-badge { flex-shrink: 4; min-width: 0; overflow: hidden; }
 .bt-htabs button {
   background: transparent;
   border: none;
@@ -1287,52 +1305,18 @@
   font-weight: 600;
   border-bottom-color: var(--accent);
 }
-/* Draggable divider between the settings and results regions. */
-.bt-split-divider {
-  flex: 0 0 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: row-resize;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-  touch-action: none;
-}
-.bt-split-divider:hover { background: var(--hover); }
-.bt-split-grip { width: 34px; height: 3px; border-radius: 2px; background: var(--border); }
-.bt-split-divider:hover .bt-split-grip { background: var(--text-faint); }
-/* Results region: fixed default height (overridden inline once the user drags);
-   collapses to just its toggle bar. Full panel width — no left rail beside it. */
-.bt-results-region {
-  flex: 0 0 40%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-top: 1px solid var(--border);
-}
-.bt-results-region.collapsed { flex: 0 0 auto; border-top: 1px solid var(--border); }
-/* Top-level results-region header: echoes the settings-side section titles
-   (.bt-section-title — 11px small-caps, text-faint) so both sides of the panel
-   read with one header treatment. */
-.bt-results-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  background: transparent;
-  border: none;
-  color: var(--text-faint);
-  padding: 8px 16px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-}
-.bt-results-toggle:hover { color: var(--text); }
-.bt-results-chevron { transition: transform 0.15s ease; font-size: 11px; }
-.bt-results-chevron.collapsed { transform: rotate(-90deg); }
-/* Horizontal insets that .bt-body used to provide when results lived inside it. */
-.bt-results-region .bt-results { padding: 0 16px 12px; }
+/* Results: the last section of the panel's scroll pane, reached by scrolling on
+   from Presets and handed the whole pane height rather than wedged into what is
+   left below the settings. The height is DEFINITE, not just a min: the results
+   bodies below hang their own scroll areas off it (the trades/sweep/WFO tables
+   scroll internally so their sticky headers stay pinned), and those collapse
+   into plain unbounded growth — headers scrolling away with them — the moment
+   this box is free to grow with its content. */
+.bt-results-region { height: 100%; padding-top: 6px; }
+/* Back inside .bt-body, which supplies the horizontal inset — only the trailing
+   breathing room is this rule's to give, or the results sit a step in from the
+   settings they scroll out of. */
+.bt-results-region .bt-results { padding: 0 0 12px; }
 /* The summary line + clear (moved here from the toolbar) and transient run
    messages, sitting above the Overview/Trades toggle. */
 .bt-results-summary {

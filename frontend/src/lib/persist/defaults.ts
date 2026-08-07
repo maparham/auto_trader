@@ -170,23 +170,8 @@ export function saveWfoSchedule<T>(cfg: T): void {
   saveLocal(WFO_SCHEDULE_KEY, cfg);
 }
 
-// The settings/results vertical split in the backtest panel: the results-region
-// height (px) and whether it's collapsed. Device-local view preference, like the
-// side above — persists the layout you dragged to across re-opens and reloads.
-const BACKTEST_SPLIT_KEY = `${PREFIX}.backtestSplit`;
-export interface BacktestSplit {
-  resultsHeight: number;
-  collapsed: boolean;
-}
-export function loadBacktestSplit(): BacktestSplit {
-  return load<BacktestSplit>(BACKTEST_SPLIT_KEY, { resultsHeight: 0, collapsed: false });
-}
-export function saveBacktestSplit(split: BacktestSplit): void {
-  saveLocal(BACKTEST_SPLIT_KEY, split);
-}
-
 // Backtest panel width (px), dragged via its left-edge handle. Device-local
-// view preference like the split above.
+// view preference.
 const BACKTEST_PANEL_WIDTH_KEY = `${PREFIX}.backtestPanelWidth`;
 export const BACKTEST_PANEL_DEFAULT_WIDTH = 720;
 export function loadBacktestPanelWidth(): number {

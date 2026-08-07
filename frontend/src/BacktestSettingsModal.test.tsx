@@ -130,6 +130,20 @@ function enterBacktestMode() {
 function enterWfoMode() {
   fireEvent.click(within(modeSeg()).getByRole("button", { name: /Walk-fwd/ }));
 }
+// Results are a tab of their own, so anything asserting on the results DOM has
+// to open it first. Scoped to the .bt-htabs nav — "Results" also appears as the
+// docked column's heading.
+function openResults() {
+  const nav = document.querySelector(".bt-htabs") as HTMLElement;
+  fireEvent.click(within(nav).getByRole("button", { name: "Results" }));
+}
+// Presets is its own pane, hidden until selected — and `hidden` takes the whole
+// subtree out of the accessibility tree, so role-based queries cannot see the
+// library at all until this runs.
+function openPresets() {
+  const nav = document.querySelector(".bt-htabs") as HTMLElement;
+  fireEvent.click(within(nav).getByRole("button", { name: "Presets" }));
+}
 
 describe("BacktestSettingsModal period scheduling", () => {
   it("shows month suggestion chips when the Month tab is active", () => {
@@ -226,6 +240,34 @@ describe("BacktestSettingsModal period scheduling", () => {
     const labels = document.querySelector(".bt-timeline-labels") as HTMLElement;
     expect(labels.textContent).toContain("as much history as the broker has");
     expect(document.querySelector(".bt-timeline-history.open-ended")).toBeTruthy();
+  });
+});
+
+describe("BacktestSettingsModal panel tabs", () => {
+  it("scrolls between the settings tabs but swaps the body out for Presets", () => {
+    renderModal();
+    const nav = document.querySelector(".bt-htabs") as HTMLElement;
+    const labels = [...nav.querySelectorAll(":scope > button")].map((b) => b.textContent);
+    expect(labels).toEqual(["Period", "Strategy", "Costs", "Results", "Presets"]);
+
+    // The scroll pane holds every tab except Presets, which is its own region.
+    const pane = document.querySelector(".bt-body") as HTMLElement;
+    const presets = document.querySelector(".bt-presets-region") as HTMLElement;
+    expect(pane.contains(presets)).toBe(false);
+    expect(pane.querySelectorAll(".bt-scroll-section")).toHaveLength(4);
+
+    // Presets swaps the panes; the settings are hidden, not unmounted, so the
+    // section refs the scrollspy and the tab jumps need survive the trip.
+    expect(presets.hidden).toBe(true);
+    openPresets();
+    expect(presets.hidden).toBe(false);
+    expect((document.querySelector(".bt-settings-region") as HTMLElement).hidden).toBe(true);
+    expect(document.querySelector(".bt-body")).toBeTruthy();
+
+    // And back: a settings tab returns the body to the scroll pane.
+    openStrategy();
+    expect(presets.hidden).toBe(true);
+    expect((document.querySelector(".bt-settings-region") as HTMLElement).hidden).toBe(false);
   });
 });
 
@@ -386,16 +428,20 @@ describe("BacktestSettingsModal insert palette", () => {
 describe("BacktestSettingsModal results side-by-side column", () => {
   it("moves results into a docked column and back", () => {
     renderModal();
-    // Default: results are stacked inside the config panel, no column.
-    expect(document.querySelector(".bt-results-region")).toBeTruthy();
+    // Default: results are the last section of the config panel's scroll pane.
+    const region = () => document.querySelector(".bt-results-region") as HTMLElement | null;
+    expect(region()).toBeTruthy();
     expect(document.querySelector(".bt-results-col")).toBeNull();
 
     // Turn on side-by-side via the footer toggle (the single opener).
     fireEvent.click(screen.getByLabelText("Show results in a side column"));
     const col = document.querySelector(".bt-results-col");
     expect(col).toBeTruthy();
-    // The results content lives in the column now, not the stacked region.
-    expect(document.querySelector(".bt-results-region")).toBeNull();
+    // The results content lives in the column now, not the stacked region — and
+    // with nothing left to show, the Results tab is gone from the nav.
+    expect(region()).toBeNull();
+    const nav = document.querySelector(".bt-htabs") as HTMLElement;
+    expect(within(nav).queryByRole("button", { name: "Results" })).toBeNull();
     expect(within(col as HTMLElement).getByText(/Run a backtest to see results/)).toBeTruthy();
 
     // Dock back. Two closers exist while docked (column header + footer toggle).
@@ -403,7 +449,28 @@ describe("BacktestSettingsModal results side-by-side column", () => {
     expect(closers.length).toBe(2);
     fireEvent.click(closers[0]);
     expect(document.querySelector(".bt-results-col")).toBeNull();
-    expect(document.querySelector(".bt-results-region")).toBeTruthy();
+    // Back into the scroll pane, tab and all.
+    expect(within(nav).getByRole("button", { name: "Results" })).toBeTruthy();
+    expect(region()).toBeTruthy();
+  });
+
+  it("hands the tab highlight back when Results is open and the column takes over", () => {
+    renderModal();
+    const nav = () => document.querySelector(".bt-htabs") as HTMLElement;
+    const activeTab = () =>
+      [...nav().querySelectorAll(":scope > button")]
+        .filter((b) => b.className.includes("on"))
+        .map((b) => b.textContent);
+    openResults();
+    expect(activeTab()).toEqual(["Results"]);
+
+    // The Results tab leaves with the results. Something must still be selected —
+    // otherwise the nav highlights a tab that is no longer rendered.
+    fireEvent.click(screen.getByLabelText("Show results in a side column"));
+    expect(within(nav()).queryByRole("button", { name: "Results" })).toBeNull();
+    // Costs, not Presets: Presets is its own pane, so Costs is the last section
+    // the scroll pane clamps into once the results unmount.
+    expect(activeTab()).toEqual(["Costs"]);
   });
 });
 
@@ -475,6 +542,7 @@ describe("time-window sweep", () => {
     expect(document.querySelector(".bt-tw-sweep")).toBeTruthy();
 
     // Load the session preset: cfg.range.mask.session becomes truthy.
+    openPresets();
     const row = [...document.querySelectorAll(".bt-preset-row")].find((r) =>
       r.textContent?.includes("session-preset"),
     ) as HTMLElement;
@@ -738,6 +806,7 @@ describe("rules-mode combo apply", () => {
       { combo, metrics: { net_pnl: 1, n_trades: 1, win_rate: 0.5, max_drawdown: 0, profit_factor: 1, avg_win_loss_ratio: 1, return_pct: 1 }, error: null, windows: null },
     ];
     act(() => sweepStateSignal.set({ rows, done: 1, total: 1, running: false }));
+    openResults();
     fireEvent.click(document.querySelector(".sweep-row") as HTMLElement);
     expect(onRun).toHaveBeenCalledTimes(1);
     return onRun.mock.calls[0][0] as BacktestConfig;

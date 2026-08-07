@@ -17,7 +17,6 @@ import { msToLocalInput, localInputToMs } from "./lib/alertUi";
 import {
   requestGoLive,
   requestConfirm,
-  backtestClearRequest,
   backtestRunningSignal,
   backtestDurationSignal,
   sweepDurationSignal,
@@ -43,7 +42,7 @@ import { stageLabel } from "./lib/progressLabels";
 import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
 import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
-import { PHASE_LABEL, WfoResults } from "./WfoResults";
+import { WfoResults } from "./WfoResults";
 import { requiredWarmupBars, resolveWindow } from "./lib/backtestWindow";
 import { exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
 import { liveExprInstances } from "./lib/indicators";
@@ -107,8 +106,6 @@ import {
   saveBacktestLastUsed,
   loadBacktestSide,
   saveBacktestSide,
-  loadBacktestSplit,
-  saveBacktestSplit,
   loadBacktestPanelWidth,
   saveBacktestPanelWidth,
   BACKTEST_PANEL_DEFAULT_WIDTH,
@@ -157,13 +154,22 @@ const RANGE_MODES: { value: RangeMode; label: string }[] = [
   { value: "custom", label: "Custom" },
 ];
 
-type BacktestTab = "period" | "strategy" | "costs" | "presets";
-const BACKTEST_TABS: { value: BacktestTab; label: string }[] = [
+// SCROLL_TABS are anchors into one continuous pane, results included: the
+// results are its last section, sized to fill the pane so landing on them gives
+// the whole height rather than a strip squeezed under the settings. The results
+// tab is dropped when they live in their own side column — no section to scroll
+// to. Presets is deliberately NOT in that pane: it is a library of other
+// configurations rather than a part of the one being edited, so it gets its own
+// pane that you switch to and cannot drift into by scrolling.
+type ScrollTab = "period" | "strategy" | "costs" | "results";
+type BacktestTab = ScrollTab | "presets";
+const SCROLL_TABS: { value: ScrollTab; label: string }[] = [
   { value: "period", label: "Period" },
   { value: "strategy", label: "Strategy" },
   { value: "costs", label: "Costs" },
-  { value: "presets", label: "Presets" },
+  { value: "results", label: "Results" },
 ];
+const PRESETS_TAB = { value: "presets", label: "Presets" } as const;
 
 // Which suggestion-chip unit each range tab shows (Bars/Custom show none).
 const CHIP_UNIT: Partial<Record<RangeMode, "day" | "week" | "month" | "year">> = {
@@ -1064,22 +1070,12 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   useEffect(() => sweepDurationSignal.subscribe(setSweepDurationMs), []);
   const [wfoDurationMs, setWfoDurationMs] = useState(wfoDurationSignal.value);
   useEffect(() => wfoDurationSignal.subscribe(setWfoDurationMs), []);
-  // Settings (top) / results (bottom) vertical split. resultsHeight 0 means
-  // "unset" — the CSS default flex-basis governs until the user drags. Persisted
-  // device-local so the layout survives re-opens and reloads.
-  const splitRef = useRef<HTMLDivElement | null>(null);
-  const dragging = useRef(false);
-  const [split, setSplit] = useState(loadBacktestSplit);
-  useEffect(() => {
-    saveBacktestSplit(split);
-  }, [split]);
-  const toggleResults = () => setSplit((s) => ({ ...s, collapsed: !s.collapsed }));
-
   // Refresh the shared per-epic reopen picker whenever the sweep results section
   // becomes visible, the epic changes, or a sweep lands server-side (archivedTick
   // re-fires so a just-finished sweep appears without a reopen). No auto-reopen —
   // which result is SHOWN is bound per tab+cell by the restore effect below.
-  const sweepSectionOpen = btMode === "sweep" && !split.collapsed;
+  // The results section is always rendered, so sweep mode alone is the gate.
+  const sweepSectionOpen = btMode === "sweep";
   useEffect(() => {
     if (!sweepSectionOpen) return;
     refreshPastSweeps();
@@ -1126,32 +1122,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, epic, sweepSectionOpen]);
-  // Clearing the results (the pane's ✕, via backtestClearRequest) collapses the
-  // now-empty results section — the mirror of run() expanding it. Subscribing here
-  // keeps the split state (owned by this modal) in sync with the clear the panel
-  // triggers. Guarded so it only collapses when currently expanded.
-  useEffect(
-    () =>
-      backtestClearRequest.subscribe(() => setSplit((s) => (s.collapsed ? s : { ...s, collapsed: true }))),
-    [],
-  );
-  function startResize(e: React.PointerEvent) {
-    if (!splitRef.current) return;
-    e.preventDefault();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    dragging.current = true;
-  }
-  function onResize(e: React.PointerEvent) {
-    if (!dragging.current || !splitRef.current) return;
-    const rect = splitRef.current.getBoundingClientRect();
-    const h = Math.max(140, Math.min(rect.height - 180, rect.bottom - e.clientY));
-    setSplit((s) => ({ ...s, resultsHeight: h }));
-  }
-  function endResize(e: React.PointerEvent) {
-    if (!dragging.current) return;
-    dragging.current = false;
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-  }
   // Panel width (px), dragged via the left-edge handle. Device-local view
   // preference like the split above. Clamped so the panel never eats the whole
   // viewport (keeps at least the chart's ~380px) nor shrinks below its min.
@@ -1272,11 +1242,18 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     el.addEventListener("pointercancel", onUp);
   };
 
-  // Results layout: stacked (default) vs a docked column beside the panel.
+  // Results layout: stacked (default) vs a docked column beside the panel. Stacked,
+  // the results are the last section of the panel's own scroll pane; in column
+  // mode they move out and their tab goes with them.
   const [sideBySide, setSideBySide] = useState<boolean>(loadBacktestResultsSideBySide);
   const setResultsSideBySide = (on: boolean) => {
     setSideBySide(on);
     saveBacktestResultsSideBySide(on);
+    // The Results tab leaves with the results, so a selection still pointing at
+    // it would highlight nothing. Costs is where the pane lands: it becomes the
+    // last scrolling section, and the scroll clamps into it once the results
+    // unmount.
+    if (on) setTab((t) => (t === "results" ? "costs" : t));
   };
   // Keep the chart at least ~200px even with the config panel + this column both docked.
   const clampColWidth = (w: number) =>
@@ -1423,37 +1400,58 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     el.addEventListener("pointercancel", onUp);
   };
 
-  // Inline height for the results region: unset/collapsed use CSS defaults.
-  const resultsStyle: CSSProperties =
-    split.collapsed || split.resultsHeight <= 0
-      ? {}
-      : { flex: `0 0 ${split.resultsHeight}px` };
-
-  // Continuous scroll: all four sections live in one scroll pane (bodyRef). The
-  // tab bar jumps to a section and highlights whichever is currently at the top
-  // (scrollspy). setRef registers each section; suppressSpyUntil silences the
-  // spy during the smooth jump so it lands on the clicked tab, not the ones it
-  // scrolls past.
+  // Continuous scroll: every SCROLL_TABS section lives in one scroll pane
+  // (bodyRef). The tab bar jumps to a section and highlights whichever is
+  // currently at the top (scrollspy). setRef registers each section;
+  // suppressSpyUntil silences the spy during the smooth jump so it lands on the
+  // clicked tab, not the ones it scrolls past. `results` is null while the
+  // results are in the side column, which is exactly when its tab is not
+  // rendered either. Presets has no entry here — it is its own pane.
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  const sectionRefs = useRef<Record<BacktestTab, HTMLElement | null>>({
+  const sectionRefs = useRef<Record<ScrollTab, HTMLElement | null>>({
     period: null,
     strategy: null,
     costs: null,
-    presets: null,
+    results: null,
   });
   const suppressSpyUntil = useRef(0);
-  const setRef = (t: BacktestTab) => (el: HTMLElement | null) => {
+  const setRef = (t: ScrollTab) => (el: HTMLElement | null) => {
     sectionRefs.current[t] = el;
   };
-  function jumpToTab(t: BacktestTab) {
-    setTab(t);
+  function scrollToSection(t: ScrollTab, smooth: boolean) {
     const el = sectionRefs.current[t];
     const c = bodyRef.current;
     if (!el || !c) return;
     suppressSpyUntil.current = Date.now() + 700;
     const top = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
-    c.scrollTo?.({ top, behavior: "smooth" });
+    // "instant", not "auto" — "auto" defers to .bt-body's own
+    // `scroll-behavior: smooth`, which is the animation we mean to skip.
+    c.scrollTo?.({ top, behavior: smooth ? "smooth" : "instant" });
   }
+  // A jump made while the Presets pane holds the body has to wait: the scroll
+  // pane is still display:none, so its sections have no geometry and the jump
+  // would silently land at the top. The layout effect below runs it against the
+  // commit that reveals the pane.
+  const pendingJump = useRef<ScrollTab | null>(null);
+  // `smooth: false` for jumps fired right after kicking off a run: the animated
+  // scroll is main-thread work and gets dropped when the chart is mid-redraw,
+  // stranding the pane a few pixels down instead of at the results. A click has
+  // no such contention and keeps the animation.
+  function jumpToTab(t: BacktestTab, smooth = true) {
+    const fromPresets = tab === "presets";
+    setTab(t);
+    if (t === "presets") return;
+    // Revealing the pane and scrolling in one paint would flash the top of the
+    // settings; deferred jumps are always instant for that reason.
+    if (fromPresets) pendingJump.current = t;
+    else scrollToSection(t, smooth);
+  }
+  useLayoutEffect(() => {
+    if (tab === "presets" || !pendingJump.current) return;
+    const t = pendingJump.current;
+    pendingJump.current = null;
+    scrollToSection(t, false);
+  });
   function onBodyScroll() {
     if (Date.now() < suppressSpyUntil.current) return;
     const c = bodyRef.current;
@@ -1461,8 +1459,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     // The active tab is the last section whose top has passed just below the
     // pane's top edge (a small 24px lead-in feels natural).
     const ctop = c.getBoundingClientRect().top;
-    let current: BacktestTab = BACKTEST_TABS[0].value;
-    for (const t of BACKTEST_TABS) {
+    let current: ScrollTab = SCROLL_TABS[0].value;
+    for (const t of SCROLL_TABS) {
       const el = sectionRefs.current[t.value];
       if (el && el.getBoundingClientRect().top - ctop <= 24) current = t.value;
     }
@@ -1702,15 +1700,17 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   }
 
   // Docked panel: running does NOT close it, so you can tweak and re-run
-  // against the chart beside it. The header ✕ is the only close. Results live in
-  // the always-visible bottom pane, so there's no tab to jump to — but a run
-  // must expand the results pane if the user had collapsed it.
+  // against the chart beside it. The header ✕ is the only close. Every caller is
+  // an explicit user run (the footer button, a sweep-row apply, a holdout
+  // evaluation), so scrolling down to the results is what was asked for —
+  // nothing finishing in the background can move the pane mid-edit. In column
+  // mode the results are already on screen and there is no section to jump to.
   // Optional override lets a caller that just computed a new cfg via setCfg
   // (a setState, not synchronous) run against that value immediately instead
   // of the stale `cfg` still in this closure — see applyRuleSweepCombo.
   function run(override?: BacktestConfig) {
     onRun(withChartTz(override ?? cfg, chartTimezone));
-    setSplit((s) => (s.collapsed ? { ...s, collapsed: false } : s));
+    if (!sideBySide) jumpToTab("results", false);
   }
   // Footer "Run backtest": publish the CURRENT sweep axes right before firing —
   // separate from applySweepCombo's own run(), which explicitly clears the
@@ -1897,9 +1897,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     </>
   );
 
-  // The Backtest | Sweep switch lives in the Results header (docked row or
-  // side column head) rather than the footer, so it sits with the view it
-  // flips. Built once here because both layouts render it.
+  // The Backtest | Sweep | Walk-fwd switch sits at the right end of the panel's
+  // tab bar. It gates what the whole panel configures (not just the results
+  // view), so it belongs on the top-level nav row and stays in one place
+  // regardless of whether results are docked below or in a side column.
   const modeSeg = (
     <ModeSeg
       mode={btMode}
@@ -1910,7 +1911,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         <span className="bt-mode-badge">{sweepCombos}</span>
       ) : null}
       wfoBadge={wfoState?.running ? (
-        <span className="bt-mode-badge">{PHASE_LABEL[wfoState.phase] ?? wfoState.phase} {wfoState.done}/{wfoState.total}</span>
+        // Progress only — the phase name would push the seg past the tab bar's
+        // right edge on a narrow panel. WfoResults spells the phase out.
+        <span className="bt-mode-badge">{wfoState.done}/{wfoState.total}</span>
       ) : wfoComboTotal > 0 ? (
         <span className="bt-mode-badge">{wfoComboTotal}x{wfoCfg.trainSpans.length}</span>
       ) : null}
@@ -2121,7 +2124,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             </Tooltip>
             <span className="bt-cfg-title">Results</span>
           </span>
-          <span className="bt-results-head-actions">{modeSeg}</span>
         </div>
         <div className="bt-results-col-body">{resultsBody}</div>
         <div className="modal-foot bt-cfg-foot">
@@ -2179,10 +2181,14 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           </span>
         </div>
 
-        <div className="bt-split" ref={splitRef}>
-        <div className="bt-settings-region">
+        <div className="bt-panel-body">
+          {/* Presets sits last, after the scroll anchors, because it is the one
+              tab that swaps the body out rather than scrolling within it. */}
           <nav className="bt-htabs">
-            {BACKTEST_TABS.map((t) => (
+            {[
+              ...SCROLL_TABS.filter((t) => t.value !== "results" || !sideBySide),
+              PRESETS_TAB,
+            ].map((t) => (
               <button
                 key={t.value}
                 className={tab === t.value ? "on" : ""}
@@ -2191,7 +2197,11 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 {t.label}
               </button>
             ))}
+            {modeSeg}
           </nav>
+        {/* Hidden rather than unmounted: the section refs the scrollspy and the
+            tab jumps depend on must survive a trip through Presets. */}
+        <div className="bt-settings-region" hidden={tab === "presets"}>
           <div className="bt-body" ref={bodyRef} onScroll={onBodyScroll}>
             <section className="bt-scroll-section" ref={setRef("period")}>
                 {btMode === "walkforward" ? (
@@ -3061,7 +3071,23 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           </Section>
             </section>
 
-            <section className="bt-scroll-section" ref={setRef("presets")}>
+            {/* Results: the pane's last section, so scrolling past Costs runs
+                straight into them. Sized to fill the pane (see .bt-results-region)
+                so landing here gives the whole height, not a strip. */}
+            {!sideBySide && (
+              <section className="bt-scroll-section bt-results-region" ref={setRef("results")}>
+                {resultsBody}
+              </section>
+            )}
+          </div>
+        </div>
+
+        {/* Presets: its own pane, not a section of the scroll above. It lists
+            OTHER saved configurations rather than any part of the one being
+            edited, so scrolling out of the settings and into it by accident
+            would be a category error. Kept mounted so the library does not
+            refetch and lose its sort/filter on every visit. */}
+        <div className="bt-presets-region" hidden={tab !== "presets"}>
           <Section
             title="Presets"
             info={[
@@ -3088,37 +3114,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               onGoLive={() => requestGoLive(cfg)}
             />
           </Section>
-            </section>
-          </div>
         </div>
-
-        {!sideBySide && !split.collapsed && (
-          <div
-            className="bt-split-divider"
-            role="separator"
-            aria-orientation="horizontal"
-            onPointerDown={startResize}
-            onPointerMove={onResize}
-            onPointerUp={endResize}
-          >
-            <span className="bt-split-grip" aria-hidden="true" />
-          </div>
-        )}
-
-        {!sideBySide && (
-          <div className={`bt-results-region${split.collapsed ? " collapsed" : ""}`} style={resultsStyle}>
-            <div className="bt-results-head-row">
-              <button className="bt-results-toggle" onClick={toggleResults} aria-expanded={!split.collapsed}>
-                <span className={`bt-results-chevron${split.collapsed ? " collapsed" : ""}`} aria-hidden="true">
-                  ▾
-                </span>
-                Results
-              </button>
-              <span className="bt-results-head-actions">{modeSeg}</span>
-            </div>
-            {!split.collapsed && resultsBody}
-          </div>
-        )}
         </div>
 
         <div className="modal-foot bt-cfg-foot">
