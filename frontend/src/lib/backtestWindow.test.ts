@@ -285,7 +285,7 @@ describe("expression-row warmup", () => {
     const refs = { instances: exprInstancesFor([pane]), warmupByRef: exprWarmupByRef([pane]) };
     const c = cfg({
       range: { mode: "bars", bars: 500, history: "minimal" },
-      longEntry: { combine: "AND", rules: [{ expr: "SLOPE.slope0 > 0.5", enabled: true }] },
+      longEntry: { combine: "AND", rules: [{ expr: "SLOPE.50 > 0.5", enabled: true }] },
     });
 
     it("charges the pane's warm-up when refs are supplied", () => {

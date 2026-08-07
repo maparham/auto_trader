@@ -278,7 +278,7 @@ describe("runOneCycle", () => {
 });
 
 describe("runOneCycle ships the armed indicators map", () => {
-  // Without this, the backend resolves {} for a `SLOPE.slope0` reference,
+  // Without this, the backend resolves {} for a `SLOPE.50` reference,
   // `validate` raises unknown_indicator_ref, and the evaluate route 422s on
   // EVERY bar — a rule that lints clean and backtests correctly is silently
   // undeployable, and one bad row takes the exit rules down with it.
@@ -287,7 +287,7 @@ describe("runOneCycle ships the armed indicators map", () => {
   };
   const cfgWithRef = () => ({
     ...defaultBacktestConfig(),
-    longEntry: { combine: "AND" as const, rules: [{ expr: "SLOPE.slope0 > 0.5", enabled: true }] },
+    longEntry: { combine: "AND" as const, rules: [{ expr: "SLOPE.50 > 0.5", enabled: true }] },
   });
   const deps = () => ({
     buildSeries: vi.fn().mockResolvedValue({}),
@@ -328,7 +328,7 @@ describe("runOneCycle ships the armed indicators map", () => {
     // pane exactly like a rule-mode row, and needs the same map to resolve it.
     const coded = {
       params: {},
-      longExit: { combine: "AND" as const, rules: [{ expr: "SLOPE.slope0 < 0", enabled: true }] },
+      longExit: { combine: "AND" as const, rules: [{ expr: "SLOPE.50 < 0", enabled: true }] },
       shortExit: { combine: "AND" as const, rules: [] },
     } as never;
     const s = armSnapshot(
@@ -342,7 +342,7 @@ describe("runOneCycle ships the armed indicators map", () => {
     await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", d as never);
     const req = d.evaluateStrategy.mock.calls[0][0];
     expect(req.codedStrategy).toBe("x.py");
-    expect(req.exprLongExit).toEqual([{ expr: "SLOPE.slope0 < 0", enabled: true }]);
+    expect(req.exprLongExit).toEqual([{ expr: "SLOPE.50 < 0", enabled: true }]);
     expect(req.indicators).toEqual(PANE);
   });
 

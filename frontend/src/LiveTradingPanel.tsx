@@ -29,7 +29,7 @@ interface Props {
   accounts: BrokerAccount[];
   defaultAccount: string;
   /** The focused chart, read ONLY at arm time, for the pane settings behind any
-   *  `SLOPE.slope0`-style reference in the rules (see armIndicators). Null when
+   *  `SLOPE.9`-style reference in the rules (see armIndicators). Null when
    *  no chart is focused — then a referencing rule can't be armed. */
   controller?: ChartController | null;
   onClose: () => void;
@@ -133,7 +133,7 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
   // The chart's panes with their settings AS THEY ARE NOW — read once, here,
   // because arm() freezes the referenced ones into the snapshot and every
   // evaluate cycle thereafter reads that frozen copy. A rule names an output
-  // (`SLOPE.slope0`) and restates none of the pane's parameters, so without them
+  // (`SLOPE.9`) and restates none of the pane's parameters, so without them
   // the backend has nothing to resolve the reference against and 422s the
   // evaluate route on every single bar. arm() decides WHICH rows count (coded
   // mode executes the coded set's panel exits, not these rule groups), so this

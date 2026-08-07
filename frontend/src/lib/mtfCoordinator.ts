@@ -24,6 +24,8 @@ import {
   smoothSeries,
   inferBarHours,
   slopeLengths,
+  normalizeSlopeUnit,
+  slopePeriodOf,
   type SlopeUnit,
   type SlopeExtend,
   type SlopeSmoothing,
@@ -383,7 +385,7 @@ interface SlopeConfig {
  * what the rule path does for a pinned reference (the IndicatorRef branch of
  * strategy/expr/evaluate.py::series_of: `spec.series(..., tf_candles,
  * _tf_hours(tf_res))`, then align_htf_to_base), so a rule reading
- * `SLOPE.slope0` gets the line this draws. One slope series is computed per MA
+ * `SLOPE.9` gets the line this draws. One slope series is computed per MA
  * length and stashed on
  * extendData.mtf.htfSeriesByLine (same length/order as calcParams) —
  * computeSlopeCalc's MTF branch assumes this.
@@ -421,7 +423,7 @@ export async function applySlopeTimeframe(
   // smoothing windows) so the HTF left edge is populated for every line.
   const smLen = config.smoothing && config.smoothing.type !== "none" ? Number(config.smoothing.length) || 0 : 0;
   const aSmLen = ext.accelSmoothing && ext.accelSmoothing.type !== "none" ? Number(ext.accelSmoothing.length) || 0 : 0;
-  const n2 = Number(ext.accelPeriod) || 3;
+  const n2 = slopePeriodOf(ext.accelPeriod, 3);
   const { htf, htfMs, failed } = await fetchHtfBars(
     chart,
     epic,
@@ -595,7 +597,7 @@ export async function refreshMtfIndicators(
       } else if (type === "SLOPE") {
         const ext = ind.extendData ?? {};
         const lengths = slopeLengths(ind.calcParams);
-        const slopeN = Number(ext.slopePeriod) || 3;
+        const slopeN = slopePeriodOf(ext.slopePeriod, 3);
         const smLen = ext.smoothing && ext.smoothing.type !== "none" ? Number(ext.smoothing.length) || 0 : 0;
         // Match applySlopeTimeframe's reach-back: when the accel companion is on,
         // the HTF series must warm the extra accel period + accel smoothing too, or
@@ -604,7 +606,7 @@ export async function refreshMtfIndicators(
           ext.accelSmoothing && ext.accelSmoothing.type !== "none"
             ? Number(ext.accelSmoothing.length) || 0
             : 0;
-        const accelWarm = ext.showAccel ? (Number(ext.accelPeriod) || 3) + aSmLen : 0;
+        const accelWarm = ext.showAccel ? slopePeriodOf(ext.accelPeriod, 3) + aSmLen : 0;
         if (covered(Math.max(...lengths) + slopeN + smLen + accelWarm)) return;
         jobs.push(
           applySlopeTimeframe(
@@ -616,7 +618,7 @@ export async function refreshMtfIndicators(
               maType: normalizeMaKind(ext.maType),
               lengths,
               slopeN,
-              units: ext.units ?? "pctHr",
+              units: normalizeSlopeUnit(ext.units),
               smoothing: ext.smoothing,
               options: { source: ext.source, offset: ext.offset },
             },

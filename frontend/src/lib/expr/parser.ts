@@ -108,7 +108,7 @@ interface ChainNode { kind: "Chain"; parts: Array<CompareNode | CrossNode>; star
 interface PredicateNode { kind: "Predicate"; fn: string; base: Node; start: number; end: number; }
 interface CountNode { kind: "Count"; cond: CompareNode | CrossNode | PredicateNode; window: Node; start: number; end: number; }
 interface BarsSinceEntryNode { kind: "BarsSinceEntry"; start: number; end: number; }
-// A configured chart-indicator instance's output, e.g. SLOPE#a1b2c3.slope0.
+// A configured chart-indicator instance's output, e.g. SLOPE#a1b2c3.9.
 // Carries NO parameters: the pane's settings are the single source of truth.
 interface IndicatorRefNode { kind: "IndicatorRef"; instance: string; output: string; start: number; end: number; }
 
@@ -157,6 +157,8 @@ const isDigit = (c: string) => c >= "0" && c <= "9";
 const isAlpha = (c: string) => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
 const isAlnum = (c: string) => isDigit(c) || isAlpha(c);
 
+const NO_LEADING_DOT_NUMBER: ReadonlySet<string> = new Set(["NAME", "RPAREN", "RBRACKET"]);
+
 // Returns tokens up to (and including EOF), or the tokens collected so far plus
 // a bad_char error if an unexpected character is hit.
 function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
@@ -166,7 +168,31 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
   while (i < n) {
     const c = src[i];
     if (isSpace(c)) { i += 1; continue; }
-    if (isDigit(c) || (c === "." && i + 1 < n && isDigit(src[i + 1]))) {
+    // A "." starts a decimal literal (.5) only when nothing that can be
+    // FOLLOWED by a field access was just emitted. After a NAME, a ")" or a
+    // "]", the "." is always postfix field access — there is no valid
+    // expression in this grammar where a name, ")" or "]" is directly followed
+    // by a number. Without this, SLOPE.9 lexes as NAME + NUMBER(.9), swallowing
+    // the output name as the decimal 0.9; with it, `2 + .5` and a leading `.5`
+    // keep lexing as before. Mirrors lexer.py's _NO_LEADING_DOT_NUMBER.
+    const startsDecimal =
+      c === "."
+      && i + 1 < n
+      && isDigit(src[i + 1])
+      && !NO_LEADING_DOT_NUMBER.has(out[out.length - 1]?.type ?? "");
+    if (isDigit(c) || startsDecimal) {
+      // Straight after a ".", a digit run is an OUTPUT NAME (a pane's lengths
+      // name its outputs), so it takes digits and nothing else. Without this
+      // the timeframe fusion below swallows the rest: `X.9.foo` would lex as
+      // one NAME "9.foo" instead of NUMBER(9) DOT NAME(foo), hiding the stray
+      // field behind a confusing unknown-output error.
+      if (out[out.length - 1]?.type === "DOT") {
+        let j = i;
+        while (j < n && isDigit(src[j])) j += 1;
+        out.push({ type: "NUMBER", value: src.slice(i, j), start: i, end: j });
+        i = j;
+        continue;
+      }
       let j = i;
       let seenDot = false;
       while (j < n && (isDigit(src[j]) || (src[j] === "." && !seenDot))) {
@@ -442,21 +468,25 @@ class Parser {
       const t = this.peek();
       if (t.type === "DOT") {
         this.next();
-        const field = this.expect("NAME");
-        if (node.kind === "Candle") {
-          node = { kind: "Candle", field: field.value, start: node.start, end: field.end };
-        } else if (
+        // A bare unknown zero-arg name with a field is an indicator-instance
+        // reference. Registered names keep the Field(Call) shape so validate
+        // still reports field_on_call for EMA(9).signal. Object.hasOwn (not
+        // `in`) so inherited Object.prototype members never count as registered.
+        const isRef =
           node.kind === "Call"
           && node.args.length === 0
           && !Object.hasOwn(INDICATOR_SPECS, node.name)
           && !Object.hasOwn(WRAPPER_ARITY, node.name)
           && !CROSS_SET.has(node.name)
-          && !PREDICATE_SET.has(node.name)
-        ) {
-          // A bare unknown name with a field is an indicator-instance reference.
-          // Registered names keep the Field(Call) shape so validate still
-          // reports field_on_call for EMA(9).signal. Object.hasOwn (not `in`)
-          // so inherited Object.prototype members never count as registered.
+          && !PREDICATE_SET.has(node.name);
+        // Decided BEFORE the token is consumed: only an instance reference may
+        // name its output with a NUMBER, because only there is a bare number a
+        // name (a pane's outputs are named by its MA lengths). Everywhere else
+        // `.` still demands a NAME, so candle.9 and EMA(9).9 stay errors.
+        const field = isRef && this.peek().type === "NUMBER" ? this.next() : this.expect("NAME");
+        if (node.kind === "Candle") {
+          node = { kind: "Candle", field: field.value, start: node.start, end: field.end };
+        } else if (isRef && node.kind === "Call") {
           node = { kind: "IndicatorRef", instance: node.name, output: field.value, start: node.start, end: field.end };
         } else {
           node = { kind: "Field", base: node, name: field.value, start: node.start, end: field.end };
@@ -630,7 +660,7 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
         throw new ExprErr("field_on_call", `${root.name} has no named outputs.`, node.start, node.end);
       }
       if (root.kind === "IndicatorRef") {
-        // SLOPE.slope0.foo (or SLOPE.slope0[-1].foo): the ref already names an
+        // SLOPE.9.foo (or SLOPE.9[-1].foo): the ref already names an
         // output, and an output is a plain series with no sub-fields.
         throw new ExprErr(
           "field_on_indicator_ref",

@@ -132,7 +132,7 @@ export const PATTERN_FN_SET: ReadonlySet<string> = new Set(PATTERN_NAMES);
 export const COUNT_FN = "count";
 
 /** A configured chart-indicator instance a rule can reference by id, e.g.
- * `SLOPE#a1b2c3.slope0`. Mirrors the backend's `ResolvedInstance` as far as the
+ * `SLOPE#a1b2c3.9`. Mirrors the backend's `ResolvedInstance` as far as the
  * expression layer needs it: the id the rule spells, the outputs its settings
  * currently expose, and the timeframe its own settings pin it to (null when it
  * follows the chart). The live list is INJECTED at call time — `analyze`'s
@@ -142,4 +142,10 @@ export interface ExprInstance {
   id: string;
   outputs: string[];
   timeframe: string | null;
+  /** Human summary of the pane's settings for the completion popup, e.g.
+   * "SMA · % / hour". The OUTPUT names already carry the MA lengths, so this
+   * says what they can't: which kind of average, in which units. Built by the
+   * injector (lib/exprInstances.ts) because only it knows the concrete
+   * indicator; a plain string here keeps this catalog indicator-free. */
+  detail?: string;
 }

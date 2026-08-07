@@ -9,12 +9,15 @@
 //      INDICATORS): EMA / SMA / RSI / ATR / VOLMA / VOL. The token restates the
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
-//      rule — today SLOPE, as "<instanceId>.<output>" (e.g. "SLOPE.slope1",
-//      "SLOPE#a1b.accel0"). The rule names the clicked LINE only; the pane stays
-//      the single source of truth for MA type, length, units and smoothing, so
-//      retuning the pane leaves every rule that references it correct with no
-//      edit. The output name must be one the backend's slope_outputs also
-//      derives, or the run 422s — hence the slopeOutputs membership check.
+//      rule — today SLOPE, as "<instanceId>.<output>" (e.g. "SLOPE.50",
+//      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
+//      the single source of truth for MA type, units and smoothing, so retuning
+//      any of those leaves every rule that references it correct with no edit.
+//      The LENGTH is different: it is what NAMES the line, so retuning 9 to 21
+//      makes the rule fail loudly with unknown_indicator_output rather than
+//      silently re-point at a different line. The output name must be one the
+//      backend's slope_outputs also derives, or the run 422s — hence the
+//      slopeOutputs membership check.
 //
 // AVWAP is intentionally excluded — its chart anchor is a bar timestamp, which
 // has no clean AVWAP(anchor) expression mapping. Everything unsupported
@@ -26,7 +29,7 @@
 // than from indicators/slope (a much larger module: its klinecharts import is now
 // type-only and erased, but it still pulls in the whole draw/calc chain). The MA
 // template kind is the same one-liner as indicators/ma.ts templateMaKind.
-import { slopeOutputs } from "./indicators/slopeOutputs";
+import { slopeLengths, slopeOutputs } from "./indicators/slopeOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -81,16 +84,23 @@ export function chartIndicatorToExprToken(
     case "VOL":
       return "VOL"; // bar volume, arity 0
     // The SLOPE pane's settings stay in the pane: the token references the
-    // clicked LINE, never its parameters, so changing the pane's length or units
-    // leaves every rule that uses it correct with no edit.
+    // clicked LINE, so changing the pane's units, MA kind or smoothing leaves
+    // every rule that uses it correct with no edit. The length is the exception
+    // — it is the line's NAME, and retuning it is meant to break the rule.
     case "SLOPE": {
       if (!opts?.instanceId) return null;
       const ext = (extendData ?? {}) as SlopeExtend;
-      const kind = opts.output === "accel" ? "accel" : "slope";
-      const output = `${kind}${opts.lineIndex ?? 0}`;
-      // Refuses a line the pane does not draw (index past slopeLengths' 5-line
-      // cap or past the configured count) and an accel ref when the companion
-      // is off — both are outputs the backend would reject.
+      // Outputs are named by the pane's MA LENGTH, so the clicked line index is
+      // resolved to its length here rather than spelled as an ordinal. Two
+      // lines configured to the same length share one name — they are the same
+      // series, so either click inserts the same correct token.
+      const length = slopeLengths(calcParams)[opts.lineIndex ?? 0];
+      if (length === undefined) return null;
+      const output = opts.output === "accel" ? `accel${length}` : `${length}`;
+      // The undefined check above already refused a line the pane does not draw
+      // (an index past slopeLengths' 5-line cap or past the configured count);
+      // this one refuses an accel ref while the companion is off. Both are
+      // outputs the backend's slope_outputs would reject.
       if (!slopeOutputs(calcParams, ext).includes(output)) return null;
       return `${opts.instanceId}.${output}`;
     }

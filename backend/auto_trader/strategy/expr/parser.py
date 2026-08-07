@@ -191,21 +191,31 @@ class _Parser:
             t = self.peek()
             if t.type == "DOT":
                 self.next()
-                field = self.expect("NAME")
-                # For candle.field, store the field in the Candle node itself
-                if isinstance(node, N.Candle):
-                    node = N.Candle(field.value, node.start, field.end)
-                elif (
+                # A bare unknown zero-arg name with a field is an
+                # indicator-instance reference. Registered names keep the
+                # Field(Call) shape so validate still reports field_on_call for
+                # EMA(9).signal.
+                is_ref = (
                     isinstance(node, N.Call)
                     and not node.args
                     and node.name not in INDICATORS
                     and node.name not in WRAPPERS
                     and node.name not in N.CROSS_FNS
                     and node.name not in N.PREDICATE_FNS
-                ):
-                    # A bare unknown name with a field is an indicator-instance
-                    # reference. Registered names keep the Field(Call) shape so
-                    # validate still reports field_on_call for EMA(9).signal.
+                )
+                # Decided BEFORE the token is consumed: only an instance
+                # reference may name its output with a NUMBER, because only
+                # there is a bare number a name (a pane's outputs are named by
+                # its MA lengths). Everywhere else `.` still demands a NAME, so
+                # candle.9 and EMA(9).9 stay the errors they were.
+                if is_ref and self.peek().type == "NUMBER":
+                    field = self.next()
+                else:
+                    field = self.expect("NAME")
+                # For candle.field, store the field in the Candle node itself
+                if isinstance(node, N.Candle):
+                    node = N.Candle(field.value, node.start, field.end)
+                elif is_ref:
                     node = N.IndicatorRef(node.name, field.value, node.start, field.end)
                 else:
                     node = N.Field(node, field.value, node.start, field.end)

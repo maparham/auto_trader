@@ -12,7 +12,7 @@ import { warmupOf } from "./expr/parser";
 import type { ExprInstance } from "./expr/catalog";
 
 /** The chart-pane half of warm-up, supplied by the caller that owns the chart
- * (BacktestButton). A row saying `SLOPE.slope0 > 0.5` names an OUTPUT and
+ * (BacktestButton). A row saying `SLOPE.9 > 0.5` names an OUTPUT and
  * restates none of the pane's settings, so its depth can only come from the
  * pane itself — and this module, like the parser, must not import a concrete
  * indicator to find it.

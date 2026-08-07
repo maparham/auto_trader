@@ -272,7 +272,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       const fetchBars = (fromMs: number) =>
         fetchRange(epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId);
 
-      // The chart's live panes, read ONCE: a row saying `SLOPE.slope0 > 0.5`
+      // The chart's live panes, read ONCE: a row saying `SLOPE.9 > 0.5`
       // names an output and restates none of the pane's settings, so the pane is
       // the only place both the run's WARM-UP DEPTH (warmupRefs, used by every
       // sizing call below) and the request's `indicators` map (exprIndicators,
@@ -375,7 +375,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // coded baseReq and the rule-mode exprReq/sweep branch can reference it.
       const exprRows = (g: RuleGroup): ExprRow[] =>
         g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
-      // The chart panes these rows reference ("SLOPE.slope0"), with their LIVE
+      // The chart panes these rows reference ("SLOPE.9"), with their LIVE
       // settings — read off the chart rather than storage so a pane retuned a
       // moment ago runs as it looks. Only referenced panes travel; a reference to
       // a pane that is gone ships nothing (the editor already flags it as
@@ -462,7 +462,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         costs: cfg.costs,
         tradeFromTime,
         mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
-        // The chart panes these rows reference ("SLOPE.slope0"), with their LIVE
+        // The chart panes these rows reference ("SLOPE.9"), with their LIVE
         // settings — read off the chart rather than storage so a pane retuned a
         // moment ago runs as it looks. Only referenced panes travel; a reference
         // to a pane that is gone ships nothing (the editor already flags it).

@@ -44,7 +44,7 @@ const marks: Record<string, Decoration> = {
 };
 
 /** True when `value`, followed by `next`, is a chart-instance reference —
- * `SLOPE#a1b2c3` in `SLOPE#a1b2c3.slope0`.
+ * `SLOPE#a1b2c3` in `SLOPE#a1b2c3.9`.
  *
  * This is the token-level twin of the parser's IndicatorRef rule
  * (parser.ts::parsePostfix): an unregistered bare name carrying a field. The
@@ -73,7 +73,12 @@ function classify(
   next: Token | undefined,
   value: string,
 ): string | null {
-  if (tok.type === "NUMBER") return "number";
+  // A chart pane's outputs are named by its MA lengths (SLOPE.9), so a NUMBER
+  // straight after a "." is a field name, not a numeric literal. Narrowed to
+  // NUMBER rather than hoisting the whole `prev is DOT` test above the type
+  // checks: mid-typing, a "." can be followed by an operator, and that must
+  // still paint as an operator.
+  if (tok.type === "NUMBER") return prev?.type === "DOT" ? "field" : "number";
   if (tok.type === "XGT" || tok.type === "XLT") return "cross";
   if (OPERATOR_TYPES.has(tok.type)) return "operator";
   if (tok.type !== "NAME") return null;

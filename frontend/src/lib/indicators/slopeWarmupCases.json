@@ -8,7 +8,7 @@
       "slopePeriod": 3
     },
     "warmup": {
-      "slope0": 12
+      "9": 12
     }
   },
   {
@@ -24,7 +24,7 @@
       }
     },
     "warmup": {
-      "slope0": 62
+      "50": 62
     }
   },
   {
@@ -32,7 +32,7 @@
     "calcParams": [],
     "extendData": {},
     "warmup": {
-      "slope0": 12
+      "9": 12
     }
   },
   {
@@ -48,7 +48,7 @@
       }
     },
     "warmup": {
-      "slope0": 35
+      "30": 35
     }
   },
   {
@@ -71,10 +71,10 @@
       }
     },
     "warmup": {
-      "slope0": 28,
-      "slope1": 58,
-      "accel0": 36,
-      "accel1": 66
+      "20": 28,
+      "50": 58,
+      "accel20": 36,
+      "accel50": 66
     }
   },
   {
@@ -88,8 +88,27 @@
       "accelPeriod": 6
     },
     "warmup": {
-      "slope0": 16,
-      "accel0": 22
+      "14": 16,
+      "accel14": 22
+    }
+  },
+  {
+    "label": "duplicate lengths collapse to one output name, first wins",
+    "calcParams": [
+      9,
+      9,
+      21
+    ],
+    "extendData": {
+      "slopePeriod": 3,
+      "showAccel": true,
+      "accelPeriod": 2
+    },
+    "warmup": {
+      "9": 12,
+      "21": 24,
+      "accel9": 14,
+      "accel21": 26
     }
   }
 ]

@@ -195,7 +195,7 @@ export async function arm(
 
   // Same refusal, one step further in: a pane that IS on the chart but carries its
   // own timeframe pin (extendData.mtf.timeframe) can't be evaluated live at all.
-  // `SLOPE.slope0` on a pinned pane denotes the HIGHER-timeframe series with no
+  // `SLOPE.9` on a pinned pane denotes the HIGHER-timeframe series with no
   // `@tf` in the rule text, so nothing upstream catches it — the arm-time
   // presence check passes, and `validate` passes too (nested_tf only fires for an
   // `@tf` stacked ON TOP of a pin). But the live evaluate route builds its HTF set

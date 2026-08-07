@@ -25,7 +25,7 @@ PAYLOAD = {"SLOPE": {"type": "SLOPE", "calcParams": [5],
 INSTANCES = resolve_instances(PAYLOAD)
 
 # The same pane, but PINNED to 1H in its own settings. The rule text is
-# identical — the pin is a setting, not syntax — so `SLOPE.slope0` here already
+# identical — the pin is a setting, not syntax — so `SLOPE.5` here already
 # denotes the 1H series.
 #
 # The frontend writes extendData.mtf.timeframe as a CANONICAL resolution
@@ -47,7 +47,7 @@ def expr(src):
 
 def test_a_ref_evaluates_to_the_indicator_module_series():
     candles = mk(40)
-    got = series_of(expr("SLOPE.slope0 > 0"), candles, "HOUR", {}, INSTANCES)
+    got = series_of(expr("SLOPE.5 > 0"), candles, "HOUR", {}, INSTANCES)
     cfg = parse_slope_config([5], {"slopePeriod": 3, "showAccel": True, "accelPeriod": 2})
     want = slope_line_series(candles, cfg, 5, 1.0)
     assert got == want
@@ -55,8 +55,8 @@ def test_a_ref_evaluates_to_the_indicator_module_series():
 
 def test_bar_hours_come_from_the_resolution_not_the_candle_gaps():
     candles = mk(40)
-    hourly = series_of(expr("SLOPE.slope0 > 0"), candles, "HOUR", {}, INSTANCES)
-    four_hourly = series_of(expr("SLOPE.slope0 > 0"), candles, "HOUR_4", {}, INSTANCES)
+    hourly = series_of(expr("SLOPE.5 > 0"), candles, "HOUR", {}, INSTANCES)
+    four_hourly = series_of(expr("SLOPE.5 > 0"), candles, "HOUR_4", {}, INSTANCES)
     # Same candles, different nominal width -> pctHr values scale by 4.
     i = next(i for i, v in enumerate(hourly) if v not in (None, 0.0))
     assert four_hourly[i] == pytest.approx(hourly[i] / 4)
@@ -64,28 +64,28 @@ def test_bar_hours_come_from_the_resolution_not_the_candle_gaps():
 
 def test_an_offset_shifts_a_ref():
     candles = mk(40)
-    plain = series_of(expr("SLOPE.slope0 > 0"), candles, "HOUR", {}, INSTANCES)
-    shifted = series_of(expr("SLOPE.slope0[-2] > 0"), candles, "HOUR", {}, INSTANCES)
+    plain = series_of(expr("SLOPE.5 > 0"), candles, "HOUR", {}, INSTANCES)
+    shifted = series_of(expr("SLOPE.5[-2] > 0"), candles, "HOUR", {}, INSTANCES)
     assert shifted[5] == plain[3]
 
 
 def test_a_missing_instance_evaluates_to_all_none_rather_than_crashing():
     # validate() is the gate; series_of must still be defensive, like the Tf branch.
-    out = series_of(expr("GONE.slope0 > 0"), mk(10), "HOUR", {}, INSTANCES)
+    out = series_of(expr("GONE.5 > 0"), mk(10), "HOUR", {}, INSTANCES)
     assert out == [None] * 10
 
 
 def test_warmup_comes_from_the_instance_config():
     # length 5 + slopePeriod 3
-    assert warmup_bars(expr("SLOPE.slope0 > 0"), "HOUR", INSTANCES) == 8
+    assert warmup_bars(expr("SLOPE.5 > 0"), "HOUR", INSTANCES) == 8
     # + accelPeriod 2
-    assert warmup_bars(expr("SLOPE.accel0 > 0"), "HOUR", INSTANCES) == 10
+    assert warmup_bars(expr("SLOPE.accel5 > 0"), "HOUR", INSTANCES) == 10
     # offsets still stack on top
-    assert warmup_bars(expr("SLOPE.slope0[-4] > 0"), "HOUR", INSTANCES) == 12
+    assert warmup_bars(expr("SLOPE.5[-4] > 0"), "HOUR", INSTANCES) == 12
 
 
 def test_warmup_of_an_unknown_ref_is_zero():
-    assert warmup_bars(expr("GONE.slope0 > 0"), "HOUR", INSTANCES) == 0
+    assert warmup_bars(expr("GONE.5 > 0"), "HOUR", INSTANCES) == 0
 
 
 # --- Pinned instances -------------------------------------------------------
@@ -94,13 +94,13 @@ def test_warmup_of_an_unknown_ref_is_zero():
 
 @pytest.mark.parametrize("pin", PIN_SPELLINGS)
 def test_a_pinned_instance_uses_its_own_timeframes_candles_and_bar_hours(pin):
-    """The pin is a SETTING: `SLOPE.slope0` on a 1H-pinned pane means the 1H
+    """The pin is a SETTING: `SLOPE.5` on a 1H-pinned pane means the 1H
     series, computed on 1H candles with bar_hours=1.0 and aligned down — NOT the
     base series, and NOT the 1H candles with the BASE resolution's bar_hours
     (which would silently scale every pctHr value by 4 here)."""
     base = mk(40)
     tf_candles = mk(40)
-    got = series_of(expr("SLOPE.slope0 > 0"), base, "HOUR_4",
+    got = series_of(expr("SLOPE.5 > 0"), base, "HOUR_4",
                     {"HOUR": tf_candles}, _pinned(pin))
 
     cfg = parse_slope_config([5], {"slopePeriod": 3, "mtf": {"timeframe": pin}})
@@ -119,17 +119,17 @@ def test_a_pinned_instance_uses_its_own_timeframes_candles_and_bar_hours(pin):
 
 
 def test_a_pinned_instance_with_no_htf_candles_degrades_to_all_none():
-    assert series_of(expr("SLOPE.slope0 > 0"), mk(10), "HOUR_4", {}, PINNED) == [None] * 10
+    assert series_of(expr("SLOPE.5 > 0"), mk(10), "HOUR_4", {}, PINNED) == [None] * 10
 
 
 def test_a_pinned_instance_costs_zero_base_warmup_bars():
     # Same rule text, same config apart from the pin: unpinned charges the
     # instance's own warm-up, pinned charges 0 because it is warmed from its own
     # HTF history (sourced + sufficiency-checked by the routes), like an @tf pin.
-    assert warmup_bars(expr("SLOPE.slope0 > 0"), "HOUR", INSTANCES) == 8
-    assert warmup_bars(expr("SLOPE.slope0 > 0"), "HOUR", PINNED) == 0
+    assert warmup_bars(expr("SLOPE.5 > 0"), "HOUR", INSTANCES) == 8
+    assert warmup_bars(expr("SLOPE.5 > 0"), "HOUR", PINNED) == 0
     # Terms OUTSIDE the pin still count in base bars.
-    assert warmup_bars(expr("SLOPE.slope0[-4] > 0"), "HOUR", PINNED) == 4
+    assert warmup_bars(expr("SLOPE.5[-4] > 0"), "HOUR", PINNED) == 4
 
 
 # --- Instance-map forwarding ------------------------------------------------
@@ -140,11 +140,11 @@ def test_the_instance_map_reaches_a_deeply_nested_ref_not_just_a_toplevel_one():
     reference evaluates to all-None — a wrong backtest number, not a crash. The
     signature-shaped guard in test_expr_instances_threading.py cannot see this.
 
-    `slope(SLOPE.slope0[-1], 3) @1H` nests the ref under Tf -> Call -> Offset,
+    `slope(SLOPE.5[-1], 3) @1H` nests the ref under Tf -> Call -> Offset,
     i.e. three separate forwarding hops through four node types."""
     base = mk(40)
     tf_candles = mk(40)
-    got = series_of(expr("slope(SLOPE.slope0[-1], 3) @1H > 0"), base,
+    got = series_of(expr("slope(SLOPE.5[-1], 3) @1H > 0"), base,
                     "MINUTE_15", {"HOUR": tf_candles}, INSTANCES)
 
     cfg = parse_slope_config([5], {"slopePeriod": 3, "showAccel": True, "accelPeriod": 2})

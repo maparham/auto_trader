@@ -5,7 +5,7 @@
 // The one thing that needs normalising is the Slope pane's ACCELERATION
 // companion. It is a separate klinecharts instance — type "SLOPE_ACCEL", id
 // "<parent>__accel", config copied from its parent — but the expression language
-// has no such instance: acceleration is an OUTPUT of the parent ("SLOPE.accel0").
+// has no such instance: acceleration is an OUTPUT of the parent ("SLOPE.accel9").
 // So a click there is rewritten to the PARENT (its id, its live settings, which
 // are the source of truth the copy is derived from) with output "accel". Without
 // this the whole acceleration path is unreachable from the UI even though every

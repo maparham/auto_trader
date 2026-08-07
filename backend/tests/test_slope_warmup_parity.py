@@ -54,4 +54,4 @@ def test_the_review_scenario():
         [50], {"slopePeriod": 3, "smoothing": {"type": "ema", "length": 10}}
     )
     # 50 (MA length) + 3 (slope period) + 9 (EMA(10) smoothing costs length-1).
-    assert slope_warmup(cfg, "slope0") == 62
+    assert slope_warmup(cfg, "50") == 62

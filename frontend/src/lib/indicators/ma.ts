@@ -9,7 +9,10 @@ import {
   type KLineData,
   type SmoothLineStyle,
 } from "klinecharts";
-import { maSeries, alignHtfToChart, normalizeMaKind, type MaOptions, type MaKind } from "../mtf";
+import {
+  maSeries, alignHtfToChart, normalizeMaKind, MA_KIND_LABEL,
+  type MaOptions, type MaKind,
+} from "../mtf";
 import { fullLine } from "./shared";
 
 interface MaPoint {
@@ -45,13 +48,11 @@ export interface MaExtend extends MaOptions {
   envelope?: boolean;
 }
 
-/** Settings/legend label for each MA kind. */
-export const MA_KIND_LABEL: Record<MaKind, string> = {
-  ema: "EMA",
-  sma: "SMA",
-  vwma: "VWMA",
-  evwma: "EVWMA",
-};
+// MA_KIND_LABEL now lives beside MaKind/normalizeMaKind in ../mtf, which has no
+// RUNTIME klinecharts import, so klinecharts-free callers (the expression
+// layer's instance list) can reuse the one label vocabulary. Re-exported here
+// because this module is where every existing importer looks for it.
+export { MA_KIND_LABEL };
 
 /** The MA kind an EMA/MA menu type computes when extendData.maType is unset.
  * The ONE mapping from indicator type to default kind; every site that used to

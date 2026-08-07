@@ -314,7 +314,7 @@ function WindowTimeline(
   // resolution into requiredWarmupBars) — expression rows carry almost all of a
   // config's warm-up, and the ATR-only longestIndicatorLength never saw them.
   // "Full" stays open-ended: it has no known size to draw.
-  // The chart's panes, for any `SLOPE.slope0`-style row: a reference carries none
+  // The chart's panes, for any `SLOPE.9`-style row: a reference carries none
   // of the pane's settings, so without these the drawn estimate reads the base
   // floor (1) while the run actually fetches the pane's full warm-up. Same list
   // BacktestButton sizes with, so the picture matches the run.
@@ -1496,7 +1496,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       controller.indicatorPickArmed.set(false);
       // pickedIndicatorToken owns the chart-side normalisation — notably a click
       // on a Slope's acceleration companion, a separate instance the expression
-      // language spells as an OUTPUT of its parent ("SLOPE.accel0").
+      // language spells as an OUTPUT of its parent ("SLOPE.accel9").
       const token = controller.chart ? pickedIndicatorToken(controller.chart, sel) : null;
       if (!token) {
         toast("That indicator has no expression equivalent.");
@@ -1528,7 +1528,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     : undefined;
 
   // The live chart's referenceable panes, injected into every expression editor
-  // for lint + completion (`SLOPE.slope0`). Read off the CHART, not storage, so a
+  // for lint + completion (`SLOPE.9`). Read off the CHART, not storage, so a
   // pane the user just retuned offers the outputs it draws right now — and
   // polled, because a pane's settings can change from its own modal with nothing
   // to subscribe to. The identity is held stable while the list is unchanged, so
@@ -1542,7 +1542,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     // the effect first runs (the cell has not mounted its chart yet) and can be
     // replaced later (a tab switch disposes one and assigns another). Capturing
     // it would leave the editors with an empty pane list for the panel's whole
-    // life — every valid `SLOPE.slope0` underlined as unknown — with no recovery.
+    // life — every valid `SLOPE.9` underlined as unknown — with no recovery.
     const read = () =>
       setExprInstances((prev) => {
         const chart = controller?.chart;

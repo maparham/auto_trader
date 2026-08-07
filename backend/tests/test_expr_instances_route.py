@@ -1,6 +1,6 @@
 """Transport: a chart indicator instance's SETTINGS ride on the request.
 
-A rule names an OUTPUT (`SLOPE.slope0`); the pane's parameters travel separately
+A rule names an OUTPUT (`SLOPE.5`); the pane's parameters travel separately
 in the request's `indicators` map. These tests pin down that the map actually
 reaches validate/compile/warm-up on EVERY surface that runs an expression — the
 backtest route, the sweep/WFO submit paths, the live evaluate route, the
@@ -79,8 +79,8 @@ async def test_a_rule_referencing_a_shipped_instance_runs():
     r = await _post("/api/expr/backtest", {
         **BASE,
         "indicators": {"SLOPE": SLOPE_INSTANCE},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
-        "longExit": [{"expr": "SLOPE.slope0 < 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
+        "longExit": [{"expr": "SLOPE.5 < 0"}],
     })
     assert r.status_code == 200, r.text
     # A ref that evaluated to all-None would never fire; the map must reach compile.
@@ -91,7 +91,7 @@ async def test_a_rule_referencing_a_shipped_instance_runs():
 async def test_a_rule_referencing_a_missing_instance_is_a_422_not_a_500():
     r = await _post("/api/expr/backtest", {
         **BASE,
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
     })
     assert r.status_code == 422
     assert "unknown_indicator_ref" in r.text
@@ -105,7 +105,7 @@ async def test_an_unregistered_pane_in_the_map_does_not_error():
         "indicators": {"SLOPE": SLOPE_INSTANCE,
                        "MACD": {"type": "MACD", "calcParams": [12, 26, 9]},
                        "BOLL": {"calcParams": [20, 2]}},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
     })
     assert r.status_code == 200, r.text
 
@@ -117,7 +117,7 @@ async def test_a_pinned_instance_runs_off_shipped_htf_candles():
     r = await _post("/api/expr/backtest", {
         **BASE,
         "indicators": {"SLOPE": PINNED_INSTANCE},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
         "htfCandles": {"HOUR": _candles(200)},
     })
     assert r.status_code == 200, r.text
@@ -132,7 +132,7 @@ async def test_a_pinned_instances_pin_is_checked_for_htf_sufficiency():
     r = await _post("/api/expr/backtest", {
         **BASE,
         "indicators": {"SLOPE": PINNED_INSTANCE},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
         "htfCandles": {"HOUR": _candles(3)},
     })
     assert r.status_code == 422, r.text
@@ -144,7 +144,7 @@ def test_referenced_tfs_includes_a_pinned_instances_own_timeframe():
     from auto_trader.indicators.registry import resolve_instances
     from auto_trader.strategy.expr.parser import parse
 
-    node = parse("SLOPE.slope0 > 0")
+    node = parse("SLOPE.5 > 0")
     instances = resolve_instances({"SLOPE": PINNED_INSTANCE})
     assert _referenced_tfs(node, instances) == {"1H"}
     assert _referenced_tfs(node) == set()
@@ -157,7 +157,7 @@ def test_tf_inner_warmup_charges_a_pinned_instances_own_warmup():
     from auto_trader.indicators.registry import resolve_instances
     from auto_trader.strategy.expr.parser import parse
 
-    node = parse("SLOPE.slope0 > 0")
+    node = parse("SLOPE.5 > 0")
     instances = resolve_instances({"SLOPE": PINNED_INSTANCE})
     assert _tf_inner_warmup(node, "1H", instances) == 5 + 3  # length + slopePeriod
     assert _tf_inner_warmup(node, "HOUR", instances) == 8    # canonical or alias
@@ -173,7 +173,7 @@ async def test_the_sweep_submit_path_sees_a_pinned_instances_timeframe():
     r = await _post("/api/expr/sweep/jobs", {
         **BASE,
         "indicators": {"SLOPE": PINNED_INSTANCE},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
         "htfCandles": {"HOUR": _candles(3)},
         "sweep": {"combos": [{"lit:long.entry.0.0": 0.1}]},
     })
@@ -186,7 +186,7 @@ async def test_the_walkforward_submit_path_sees_a_pinned_instances_timeframe():
     r = await _post("/api/expr/walkforward/jobs", {
         **BASE,
         "indicators": {"SLOPE": PINNED_INSTANCE},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
         "htfCandles": {"HOUR": _candles(3)},
         "walkforward": {
             "combos": [{"lit:long.entry.0.0": 0.1}],
@@ -208,8 +208,8 @@ def test_the_sweep_engine_builder_compiles_a_shipped_instance():
     req = ExprBacktestRequest.model_validate({
         **BASE,
         "indicators": {"SLOPE": SLOPE_INSTANCE},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
-        "longExit": [{"expr": "SLOPE.slope0 < 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
+        "longExit": [{"expr": "SLOPE.5 < 0"}],
     })
     candles = _core_candles(200)
     engine, strategy = build_expr_engine(req, candles, {}, {}, None, None)
@@ -224,7 +224,7 @@ def test_the_coded_paths_expr_exits_compile_a_shipped_instance():
 
     candles = _core_candles(200)
     instances = resolve_instances({"SLOPE": SLOPE_INSTANCE})
-    rows = [ExprRowDTO(expr="SLOPE.slope0 > 0")]
+    rows = [ExprRowDTO(expr="SLOPE.5 > 0")]
     compiled = _compile_expr_exits(rows, candles, "HOUR", {}, instances)
     assert any(compiled[0].evaluate(i, None) for i in range(len(candles))), \
         "the exit row evaluated to all-None"
@@ -247,7 +247,7 @@ def test_a_coded_exit_rule_on_a_pinned_pane_asks_for_its_candles():
               "extendData": {**SLOPE_INSTANCE["extendData"], "mtf": {"timeframe": "HOUR_4"}}}
     instances = resolve_instances({"SLOPE": pinned})
     with pytest.raises(TimeframeNotPrefetched) as e:
-        _compile_expr_exits([ExprRowDTO(expr="SLOPE.slope0 > 0")], candles, "HOUR", {}, instances)
+        _compile_expr_exits([ExprRowDTO(expr="SLOPE.5 > 0")], candles, "HOUR", {}, instances)
     # The CANONICAL resolution, which is what _run_coded feeds to the fetch.
     assert e.value.timeframe == "HOUR_4"
 
@@ -284,7 +284,7 @@ def test_an_unpinned_reference_needs_no_htf_at_all():
 
     instances = resolve_instances({"SLOPE": SLOPE_INSTANCE})
     compiled = _compile_expr_exits(
-        [ExprRowDTO(expr="SLOPE.slope0 > 0")], _core_candles(200), "HOUR", {}, instances)
+        [ExprRowDTO(expr="SLOPE.5 > 0")], _core_candles(200), "HOUR", {}, instances)
     assert len(compiled) == 1
 
 
@@ -296,7 +296,7 @@ async def test_the_live_evaluate_route_accepts_a_shipped_instance():
         "epic": "TEST", "resolution": "HOUR", "candles": _candles(200),
         "series": {}, "exprMode": True,
         "indicators": {"SLOPE": SLOPE_INSTANCE},
-        "exprLongEntry": [{"expr": "SLOPE.slope0 > -999999"}],
+        "exprLongEntry": [{"expr": "SLOPE.5 > -999999"}],
     })
     assert r.status_code == 200, r.text
     # An all-None ref never satisfies "> -1e9", so an action proves the map landed.
@@ -318,7 +318,7 @@ async def test_the_closeness_route_evaluates_a_shipped_instance(monkeypatch):
 
     r = await _post("/api/expr/closeness", {
         "epic": "TEST", "broker": "capital", "priceSide": "mid",
-        "rows": ["SLOPE.slope0 > 0"], "combine": "AND",
+        "rows": ["SLOPE.5 > 0"], "combine": "AND",
         "baseResolution": "HOUR", "displayResolution": "HOUR",
         "fromTime": T0, "toTime": T0 + 199 * HOUR,
         "indicators": {"SLOPE": SLOPE_INSTANCE},
@@ -344,7 +344,7 @@ async def test_the_series_route_plots_a_shipped_instance(monkeypatch):
     monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
 
     r = await _post("/api/expr/series", {
-        "epic": "TEST", "resolution": "HOUR", "expr": "SLOPE.slope0 > 0",
+        "epic": "TEST", "resolution": "HOUR", "expr": "SLOPE.5 > 0",
         "fromTime": T0, "toTime": T0 + 199 * HOUR,
         "indicators": {"SLOPE": SLOPE_INSTANCE},
     })
@@ -364,7 +364,7 @@ async def test_a_pin_reaches_htf_sourcing_in_either_spelling(pin):
         "indicators": {"SLOPE": {"type": "SLOPE", "calcParams": [5],
                                  "extendData": {"slopePeriod": 3,
                                                 "mtf": {"timeframe": pin}}}},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
         "htfCandles": {"HOUR": _candles(3)},
     })
     assert r.status_code == 422, r.text
@@ -376,7 +376,7 @@ async def test_a_canonical_pin_runs_off_shipped_htf_candles():
     r = await _post("/api/expr/backtest", {
         **BASE,
         "indicators": {"SLOPE": CANON_PINNED_INSTANCE},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
         "htfCandles": {"HOUR": _candles(200)},
     })
     assert r.status_code == 200, r.text
@@ -391,7 +391,7 @@ async def test_a_malformed_pin_422s_on_the_backtest_route():
     r = await _post("/api/expr/backtest", {
         **BASE,
         "indicators": {"SLOPE": BAD_PINNED_INSTANCE},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
         "htfCandles": {"HOUR": _candles(200)},
     })
     assert r.status_code == 422, r.text
@@ -412,7 +412,7 @@ async def test_a_malformed_pin_422s_on_the_series_route(monkeypatch):
     monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)
 
     r = await _post("/api/expr/series", {
-        "epic": "TEST", "resolution": "HOUR", "expr": "SLOPE.slope0 > 0",
+        "epic": "TEST", "resolution": "HOUR", "expr": "SLOPE.5 > 0",
         "fromTime": T0, "toTime": T0 + 199 * HOUR,
         "indicators": {"SLOPE": BAD_PINNED_INSTANCE},
     })
@@ -434,7 +434,7 @@ async def test_a_malformed_pin_422s_on_the_closeness_route(monkeypatch):
 
     r = await _post("/api/expr/closeness", {
         "epic": "TEST", "broker": "capital", "priceSide": "mid",
-        "rows": ["SLOPE.slope0 > 0"], "combine": "AND",
+        "rows": ["SLOPE.5 > 0"], "combine": "AND",
         "baseResolution": "HOUR", "displayResolution": "HOUR",
         "fromTime": T0, "toTime": T0 + 199 * HOUR,
         "indicators": {"SLOPE": BAD_PINNED_INSTANCE},
@@ -455,7 +455,7 @@ def test_the_instance_map_survives_the_job_payload_round_trip():
     req = ExprBacktestRequest.model_validate({
         **BASE,
         "indicators": {"SLOPE": PINNED_INSTANCE},
-        "longEntry": [{"expr": "SLOPE.slope0 > 0"}],
+        "longEntry": [{"expr": "SLOPE.5 > 0"}],
     })
     # Exactly the payload submit_expr_sweep_job / submit_expr_wfo_job build.
     req_dict = req.model_dump(mode="json", exclude={"htfCandles"})
@@ -476,8 +476,8 @@ def test_literal_labels_render_an_indicator_ref():
     from auto_trader.strategy.expr.literals import _render, literals
     from auto_trader.strategy.expr.parser import parse
 
-    node = parse("slope(SLOPE.slope0, 5) > 0.5")
-    assert _render(parse("SLOPE.slope0 > 0").left) == "SLOPE.slope0"
+    node = parse("slope(SLOPE.5, 5) > 0.5")
+    assert _render(parse("SLOPE.5 > 0").left) == "SLOPE.5"
     labels = {lit.value: lit.label for lit in literals(node)}
     assert labels[5.0] == "slope window"
     assert labels[0.5] == "threshold"
@@ -487,5 +487,5 @@ def test_a_multiplier_of_an_indicator_ref_is_labelled_as_one():
     from auto_trader.strategy.expr.literals import literals
     from auto_trader.strategy.expr.parser import parse
 
-    lits = literals(parse("2 * SLOPE.slope0 > 0.5"))
-    assert lits[0].label == "multiplier of SLOPE.slope0"
+    lits = literals(parse("2 * SLOPE.5 > 0.5"))
+    assert lits[0].label == "multiplier of SLOPE.5"

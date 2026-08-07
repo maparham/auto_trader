@@ -22,7 +22,7 @@ def test_resolve_parses_each_instance_config():
     assert inst.type == "SLOPE"
     assert inst.config.lengths == (21,)
     assert inst.config.units == "pctBar"
-    assert inst.spec.outputs(inst.config) == ("slope0",)
+    assert inst.spec.outputs(inst.config) == ("21",)
 
 
 def test_resolve_infers_the_type_from_the_id_when_absent():

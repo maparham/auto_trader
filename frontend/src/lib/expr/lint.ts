@@ -14,7 +14,7 @@ import type { ExprInstance } from "./catalog";
  *
  * `instances` is the LIVE chart pane list, injected by the caller (never
  * imported — the panes are the source of truth). Omit it and every valid
- * `SLOPE.slope0` reads as `unknown_indicator_ref`.
+ * `SLOPE.9` reads as `unknown_indicator_ref`.
  */
 export function diagnosticsFor(
   doc: string,

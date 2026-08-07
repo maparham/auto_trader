@@ -110,7 +110,7 @@ export function useProximityHeatmap({ chartRef, epic, broker, priceSide, display
     }
     const seq = ++reqSeq.current;
     // The rows are the same expressions the backtest runs, so a row referencing a
-    // chart pane ("SLOPE.slope0") needs that pane's live settings here too — the
+    // chart pane ("SLOPE.9") needs that pane's live settings here too — the
     // backend cannot evaluate the row without them. Copied rather than mutated:
     // `req` is what the staleness check below compares against.
     fetchClosenessHeatmap({

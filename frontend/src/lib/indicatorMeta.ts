@@ -90,6 +90,18 @@ export const SMOOTHING_TYPES: Array<{ value: string; label: string }> = [
   { value: "ema", label: "EMA" },
 ];
 
+/** The ONE spelling of each SLOPE unit. The settings dropdown below is built
+ * from it, and the expression editor's completion detail reads it directly, so
+ * a pane's units read identically in both places. */
+export const SLOPE_UNIT_LABEL: Record<string, string> = {
+  pctHr: "% / hour",
+  pctBar: "% / bar",
+  priceBar: "Price / bar",
+};
+
+const SLOPE_UNIT_OPTIONS: Array<{ value: string; label: string }> =
+  Object.entries(SLOPE_UNIT_LABEL).map(([value, label]) => ({ value, label }));
+
 const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   CANDLE_PATTERNS: {
     inputs: [],
@@ -300,11 +312,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         key: "units", label: "Units", type: "select",
         source: "extend", field: "units", default: "pctHr",
         tip: "Slope scale. % / hour is time-normalized and comparable across timeframes; % / bar and price / bar are per bar.",
-        options: [
-          { value: "pctHr", label: "% / hour" },
-          { value: "pctBar", label: "% / bar" },
-          { value: "priceBar", label: "Price / bar" },
-        ],
+        options: SLOPE_UNIT_OPTIONS,
       },
       {
         key: "source", label: "Source", type: "select",

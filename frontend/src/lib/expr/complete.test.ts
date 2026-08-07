@@ -68,13 +68,13 @@ describe("infix cross completions", () => {
 
 describe("chart indicator instance references", () => {
   const instances: ExprInstance[] = [
-    { id: "SLOPE", outputs: ["slope0", "accel0"], timeframe: null },
+    { id: "SLOPE", outputs: ["9", "accel9"], timeframe: null, detail: "SMA · % / hour" },
   ];
 
   it("completes instance references from the live chart", () => {
     const opts = completionsFor("SLO", 3, { instances }).map((c) => c.label);
-    expect(opts).toContain("SLOPE.slope0");
-    expect(opts).toContain("SLOPE.accel0");
+    expect(opts).toContain("SLOPE.9");
+    expect(opts).toContain("SLOPE.accel9");
   });
 
   it("offers no instance references when the chart has none", () => {
@@ -86,28 +86,44 @@ describe("chart indicator instance references", () => {
     const opts = completionsFor("slo", 3, { instances });
     // `slope` (the wrapper) is a catalog prefix match and must outrank a ref.
     expect(opts[0].label).toBe("slope");
-    const ref = opts.find((c) => c.label === "SLOPE.slope0");
+    const ref = opts.find((c) => c.label === "SLOPE.9");
     expect(ref?.section).toEqual({ name: "Chart indicators", rank: 2 });
     expect(ref!.boost!).toBeLessThan(0);
   });
 
   it("filters outputs after the dot, keeping the whole ref as the label", () => {
     const opts = completionsFor("SLOPE.acc", 9, { instances }).map((c) => c.label);
-    expect(opts).toEqual(["SLOPE.accel0"]);
+    expect(opts).toEqual(["SLOPE.accel9"]);
+  });
+
+  // The label already carries the LENGTH, so the detail spends itself on what
+  // the label cannot show: the MA kind and the units, in the same words the
+  // chart legend and the settings modal use.
+  it("shows the pane's MA kind and units as the detail, not a constant string", () => {
+    const opts = completionsFor("SLOPE.", 6, { instances });
+    expect(opts.map((c) => c.detail)).toEqual(["SMA · % / hour", "SMA · % / hour"]);
+  });
+
+  it("keeps a pinned pane's timeframe visible alongside the settings summary", () => {
+    const pinned: ExprInstance[] = [
+      { id: "SLOPE", outputs: ["9"], timeframe: "4H", detail: "EMA · Price / bar" },
+    ];
+    const opts = completionsFor("SLOPE.", 6, { instances: pinned });
+    expect(opts.map((c) => c.detail)).toEqual(["EMA · Price / bar @4H"]);
   });
 
   it("offers a #-bearing instance id", () => {
     const withHash: ExprInstance[] = [
-      { id: "SLOPE#a1b2c3", outputs: ["slope0"], timeframe: "4H" },
+      { id: "SLOPE#a1b2c3", outputs: ["9"], timeframe: "4H", detail: "EMA · % / bar" },
     ];
     const opts = completionsFor("SLOPE#a1b2c3.", 13, { instances: withHash });
-    expect(opts.map((c) => c.label)).toEqual(["SLOPE#a1b2c3.slope0"]);
+    expect(opts.map((c) => c.label)).toEqual(["SLOPE#a1b2c3.9"]);
   });
 });
 
 describe("completionAnchor", () => {
   const instances: ExprInstance[] = [
-    { id: "SLOPE#a1b2c3", outputs: ["slope0"], timeframe: null },
+    { id: "SLOPE#a1b2c3", outputs: ["9"], timeframe: null },
   ];
 
   it("anchors a dotted ref at the start of the instance id", () => {

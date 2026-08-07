@@ -7,7 +7,7 @@
 // generator build step. Token classes match catalog.ts:
 //   Indicator, Wrapper, Cross, CandleField, Number, Operator, Timeframe.
 // An unregistered Identifier carrying a Dot Field is a chart-instance
-// reference (SLOPE#a1b2c3.slope0); the grammar needs no rule for it beyond
+// reference (SLOPE#a1b2c3.9); the grammar needs no rule for it beyond
 // admitting "#" into Identifier, since highlight.ts::classify does the
 // catalog lookup that tells a ref from an unknown name.
 // count/bullish/bearish/barsSinceEntry are specialized the same way (Wrapper

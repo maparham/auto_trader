@@ -49,7 +49,14 @@ function refCompletion(inst: ExprInstance, output: string): Completion {
   return {
     label: `${inst.id}.${output}`,
     type: "property",
-    detail: inst.timeframe ? `chart pane @${inst.timeframe}` : "chart pane",
+    // The pane's own summary ("SMA · % / hour"), plus its pin when it has one.
+    // Was the constant "chart pane" on every row, which said nothing the
+    // section header didn't; the label now carries the length, so the detail
+    // spends itself on the settings the label can't show. Falls back to the
+    // An injector that supplies no detail keeps the old "chart pane" wording,
+    // so a future referenceable pane type degrades rather than showing blank.
+    detail: [inst.detail ?? "chart pane", inst.timeframe && `@${inst.timeframe}`]
+      .filter(Boolean).join(" "),
     section: CHART_SECTION,
     boost: CHART_BOOST,
   };

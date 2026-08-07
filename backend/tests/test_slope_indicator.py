@@ -95,11 +95,11 @@ def test_non_positive_accel_period_is_refused_not_lookahead():
 # --- outputs / config --------------------------------------------------------
 
 def test_outputs_track_the_configured_lengths():
-    assert slope_outputs(cfg(lengths=(9, 21))) == ("slope0", "slope1")
+    assert slope_outputs(cfg(lengths=(9, 21))) == ("9", "21")
 
 
 def test_outputs_include_accel_only_when_enabled():
-    assert slope_outputs(cfg(lengths=(9,), show_accel=True)) == ("slope0", "accel0")
+    assert slope_outputs(cfg(lengths=(9,), show_accel=True)) == ("9", "accel9")
 
 
 def test_outputs_never_include_the_threshold_figure_keys():
@@ -135,24 +135,24 @@ def test_slope_series_rejects_an_unknown_output():
 
 
 def test_slope_series_produces_defined_values_after_warmup():
-    out = slope_series(cfg(lengths=(3,), slope_period=2), "slope0", mk(20), 1.0)
+    out = slope_series(cfg(lengths=(3,), slope_period=2), "3", mk(20), 1.0)
     assert len(out) == 20
     assert out[-1] is not None
 
 
 def test_accel_absolute_makes_the_accel_output_non_negative():
     candles = mk(40)
-    signed = slope_series(cfg(lengths=(3,), show_accel=True), "accel0", candles, 1.0)
+    signed = slope_series(cfg(lengths=(3,), show_accel=True), "accel3", candles, 1.0)
     absolute = slope_series(
-        cfg(lengths=(3,), show_accel=True, accel_absolute=True), "accel0", candles, 1.0
+        cfg(lengths=(3,), show_accel=True, accel_absolute=True), "accel3", candles, 1.0
     )
     assert all(v is None or v >= 0 for v in absolute)
     assert [None if v is None else abs(v) for v in signed] == absolute
 
 
 def test_warmup_sums_the_pipeline_lengths():
-    assert slope_warmup(cfg(lengths=(9,), slope_period=3), "slope0") == 12
-    assert slope_warmup(cfg(lengths=(9,), slope_period=3, smoothing=("sma", 5)), "slope0") == 16
+    assert slope_warmup(cfg(lengths=(9,), slope_period=3), "9") == 12
+    assert slope_warmup(cfg(lengths=(9,), slope_period=3, smoothing=("sma", 5)), "9") == 16
     assert slope_warmup(
-        cfg(lengths=(9,), slope_period=3, show_accel=True, accel_period=4), "accel0"
+        cfg(lengths=(9,), slope_period=3, show_accel=True, accel_period=4), "accel9"
     ) == 16

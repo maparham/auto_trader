@@ -29,14 +29,27 @@ describe("classifyTokens", () => {
   });
 
   it("marks a chart-instance reference distinctly from an unknown name", () => {
-    expect(classes("SLOPE#a1b2c3.slope0 > 0.5")).toEqual([
+    expect(classes("SLOPE#a1b2c3.accel9 > 0.5")).toEqual([
       ["SLOPE#a1b2c3", "instanceRef"],
-      ["slope0", "field"],
+      ["accel9", "field"],
       [">", "operator"],
       ["0.5", "number"],
     ]);
     // A bare unknown name with no field is still just a variable.
     expect(classes("nope > 1")[0]).toEqual(["nope", "variable"]);
+  });
+
+  // A pane's outputs are named by its MA lengths, so the token after the dot
+  // LEXES as a number but IS a field name — painting it as a numeric literal
+  // would misread the ref. The trailing 0.5 proves a real literal still paints
+  // as a number in the same expression.
+  it("paints a length-named output as a field, not as a number", () => {
+    expect(classes("SLOPE.9 > 0.5")).toEqual([
+      ["SLOPE", "instanceRef"],
+      ["9", "field"],
+      [">", "operator"],
+      ["0.5", "number"],
+    ]);
   });
 
   it("does not treat a registered name followed by a dot as a ref", () => {

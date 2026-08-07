@@ -13,7 +13,7 @@ const LIVE = [
 
 describe("referencedInstanceIds", () => {
   it("finds ids used in any row", () => {
-    expect(referencedInstanceIds(["SLOPE.slope0 > 0", "SLOPE#a1b.slope0 < 0"]))
+    expect(referencedInstanceIds(["SLOPE.9 > 0", "SLOPE#a1b.50 < 0"]))
       .toEqual(new Set(["SLOPE", "SLOPE#a1b"]));
   });
 
@@ -31,7 +31,7 @@ describe("referencedInstanceIds", () => {
   });
 
   it("ignores a decimal literal", () => {
-    expect(referencedInstanceIds(["SLOPE.slope0 > 0.5"])).toEqual(new Set(["SLOPE"]));
+    expect(referencedInstanceIds(["SLOPE.9 > 0.5"])).toEqual(new Set(["SLOPE"]));
   });
 
   it("ignores a dotted name that is itself a call", () => {
@@ -41,13 +41,13 @@ describe("referencedInstanceIds", () => {
   it("reads through @tf and offsets", () => {
     // Grammatical input: offsets are backwards-only ([-1] = the previous bar),
     // and "1H" is the timeframe alias the catalog lists.
-    expect(referencedInstanceIds(["SLOPE.slope1[-1]@1H > 0"])).toEqual(new Set(["SLOPE"]));
+    expect(referencedInstanceIds(["SLOPE.21[-1]@1H > 0"])).toEqual(new Set(["SLOPE"]));
   });
 });
 
 describe("collectExprInstances", () => {
   it("ships only the instances the rows reference", () => {
-    const out = collectExprInstances(LIVE, ["SLOPE.slope0 > 0"]);
+    const out = collectExprInstances(LIVE, ["SLOPE.9 > 0"]);
     expect(Object.keys(out)).toEqual(["SLOPE"]);
     expect(out.SLOPE).toEqual({
       type: "SLOPE", calcParams: [9, 21], extendData: { units: "pctBar" },
@@ -61,11 +61,11 @@ describe("collectExprInstances", () => {
   it("skips a referenced id that is not on the chart", () => {
     // The editor already flags this as unknown_indicator_ref; the request must
     // not invent an entry for it.
-    expect(collectExprInstances(LIVE, ["GONE.slope0 > 0"])).toEqual({});
+    expect(collectExprInstances(LIVE, ["GONE.9 > 0"])).toEqual({});
   });
 
   it("defaults missing calcParams / extendData", () => {
-    const out = collectExprInstances([{ id: "SLOPE", type: "SLOPE" }], ["SLOPE.slope0 > 0"]);
+    const out = collectExprInstances([{ id: "SLOPE", type: "SLOPE" }], ["SLOPE.9 > 0"]);
     expect(out.SLOPE).toEqual({ type: "SLOPE", calcParams: [], extendData: {} });
   });
 });
@@ -73,7 +73,7 @@ describe("collectExprInstances", () => {
 describe("exprInstancesFor (the editor's lint/completion list)", () => {
   it("derives a Slope pane's outputs from its live settings", () => {
     expect(exprInstancesFor([LIVE[0]])).toEqual([
-      { id: "SLOPE", outputs: ["slope0", "slope1"], timeframe: null },
+      { id: "SLOPE", outputs: ["9", "21"], timeframe: null, detail: "EMA · % / bar" },
     ]);
   });
 
@@ -82,7 +82,7 @@ describe("exprInstancesFor (the editor's lint/completion list)", () => {
       exprInstancesFor([
         { id: "SLOPE", type: "SLOPE", calcParams: [9], extendData: { showAccel: true } },
       ]),
-    ).toEqual([{ id: "SLOPE", outputs: ["slope0", "accel0"], timeframe: null }]);
+    ).toEqual([{ id: "SLOPE", outputs: ["9", "accel9"], timeframe: null, detail: "EMA · % / hour" }]);
   });
 
   it("carries the pane's pinned timeframe", () => {
@@ -90,7 +90,7 @@ describe("exprInstancesFor (the editor's lint/completion list)", () => {
       exprInstancesFor([
         { id: "SLOPE", type: "SLOPE", calcParams: [9], extendData: { mtf: { timeframe: "HOUR" } } },
       ]),
-    ).toEqual([{ id: "SLOPE", outputs: ["slope0"], timeframe: "HOUR" }]);
+    ).toEqual([{ id: "SLOPE", outputs: ["9"], timeframe: "HOUR", detail: "EMA · % / hour" }]);
   });
 
   it("drops a pane that is not referenced by instance at all", () => {

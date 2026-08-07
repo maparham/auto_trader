@@ -122,7 +122,7 @@ class BarsSinceEntry:
 
 @dataclass(frozen=True, slots=True)
 class IndicatorRef:
-    """A configured chart-indicator instance's output, e.g. SLOPE#a1b2c3.slope0.
+    """A configured chart-indicator instance's output, e.g. SLOPE#a1b2c3.9.
     Carries NO parameters: the pane's settings are the single source of truth
     and travel on the request's `indicators` map."""
     instance: str

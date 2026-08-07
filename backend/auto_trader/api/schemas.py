@@ -324,7 +324,7 @@ class BacktestRequest(BaseModel):
     # the set itself, as before.
     htfCandles: dict[str, list[CandleDTO]] | None = None
     # Chart indicator instance settings, keyed by instance id. A rule names an
-    # OUTPUT (SLOPE.slope0) and never restates the pane's parameters, so they
+    # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
 
@@ -619,7 +619,7 @@ class EvaluateRequest(BaseModel):
     exprShortExit: list[ExprRowDTO] = []
     htfCandles: dict[str, list[CandleDTO]] | None = None
     # Chart indicator instance settings, keyed by instance id. A rule names an
-    # OUTPUT (SLOPE.slope0) and never restates the pane's parameters, so they
+    # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
 
@@ -674,7 +674,7 @@ class ExprRowDTO(BaseModel):
 
 class IndicatorInstanceDTO(BaseModel):
     """A chart indicator instance's settings, keyed by its instance id. Rules
-    reference an instance's OUTPUT (SLOPE.slope0) and never restate its
+    reference an instance's OUTPUT (SLOPE.9) and never restate its
     parameters, so this map is how the backend learns them.
 
     The chart ships EVERY pane it carries, including types the backend has no
@@ -718,7 +718,7 @@ class ExprBacktestRequest(BaseModel):
     # request; combos use lit:/risk: targets, never rule:/param:).
     walkforward: "WalkForwardDTO | None" = None
     # Chart indicator instance settings, keyed by instance id. A rule names an
-    # OUTPUT (SLOPE.slope0) and never restates the pane's parameters, so they
+    # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
 
@@ -732,7 +732,7 @@ class ExprSeriesRequest(BaseModel):
     broker: str = "capital"
     priceSide: str = "mid"
     # Chart indicator instance settings, keyed by instance id. A rule names an
-    # OUTPUT (SLOPE.slope0) and never restates the pane's parameters, so they
+    # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
 
@@ -757,7 +757,7 @@ class ExprClosenessRequest(BaseModel):
     norm: NormSpec = NormSpec()
     agg: str = "max"            # "max" | "avg" | "last"
     # Chart indicator instance settings, keyed by instance id. A rule names an
-    # OUTPUT (SLOPE.slope0) and never restates the pane's parameters, so they
+    # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
 
@@ -765,6 +765,6 @@ class ExprClosenessRequest(BaseModel):
 class ExprLiteralsRequest(BaseModel):
     expr: str
     # Chart indicator instance settings, keyed by instance id. A rule names an
-    # OUTPUT (SLOPE.slope0) and never restates the pane's parameters, so they
+    # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}

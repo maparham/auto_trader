@@ -33,7 +33,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "slope_golden.json"
 
 
 @pytest.fixture(scope="module")
-def pane():
+def golden():
     data = json.loads(FIXTURE.read_text())
     candles = [
         Candle(
@@ -43,7 +43,15 @@ def pane():
         )
         for c in data["candles"]
     ]
-    return candles, data["paneConfig"], data["paneCases"]
+    return candles, data["panes"]
+
+
+@pytest.fixture(scope="module")
+def pane(golden):
+    """The FIRST pane — the rich integer-valued config the vacuity assertions
+    below describe. The equality test itself runs every pane."""
+    candles, panes = golden
+    return candles, panes[0]["config"], panes[0]["cases"]
 
 
 def _instances(config):
@@ -53,28 +61,39 @@ def _instances(config):
     })
 
 
-def test_every_pane_line_equals_its_rule_operand(pane):
-    candles, config, cases = pane
-    instances = _instances(config)
-    assert cases, "fixture has no pane cases — regenerate it"
-    for case in cases:
-        src = f"SLOPE.{case['output']} > 0"
-        row = parse(src)
-        validate(row, is_exit=False, instances=instances)   # must not raise
-        actual = series_of(row.left, candles, config["resolution"], {}, instances)
-        expected = case["values"]
-        # zip() truncates to the shorter side, so a Python series that stopped
-        # early would compare only its own length and pass. Pin the length.
-        assert len(actual) == len(expected), (
-            f"{case['output']}: {len(actual)} values, fixture has {len(expected)}"
-        )
-        for i, (a, e) in enumerate(zip(actual, expected)):
-            if e is None:
-                assert a is None, f"{case['output']}[{i}]: expected None, got {a}"
-            else:
-                assert a is not None and math.isclose(a, e, rel_tol=1e-12, abs_tol=1e-12), (
-                    f"{case['output']}[{i}]: {a} != {e}"
-                )
+def test_every_pane_line_equals_its_rule_operand(golden):
+    candles, panes = golden
+    assert panes, "fixture has no panes — regenerate it"
+    # The "fractional-and-stale" pane is the one that catches a COERCION
+    # divergence: every number the pane parses is int()-truncated on this side,
+    # and JS indexes an array by a fractional offset to undefined (a blank pane)
+    # rather than truncating. The pane must be normalised to the same integers
+    # before the math runs, or a decimal typed into Slope Period plots nothing
+    # while the rule referencing it computes real values.
+    assert {p["name"] for p in panes} >= {"canonical", "fractional-and-stale"}
+    for pane_ in panes:
+        config, cases = pane_["config"], pane_["cases"]
+        instances = _instances(config)
+        assert cases, f"{pane_['name']}: no pane cases — regenerate the fixture"
+        for case in cases:
+            label = f"{pane_['name']}/{case['output']}"
+            src = f"SLOPE.{case['output']} > 0"
+            row = parse(src)
+            validate(row, is_exit=False, instances=instances)   # must not raise
+            actual = series_of(row.left, candles, config["resolution"], {}, instances)
+            expected = case["values"]
+            # zip() truncates to the shorter side, so a Python series that stopped
+            # early would compare only its own length and pass. Pin the length.
+            assert len(actual) == len(expected), (
+                f"{label}: {len(actual)} values, fixture has {len(expected)}"
+            )
+            for i, (a, e) in enumerate(zip(actual, expected)):
+                if e is None:
+                    assert a is None, f"{label}[{i}]: expected None, got {a}"
+                else:
+                    assert a is not None and math.isclose(a, e, rel_tol=1e-12, abs_tol=1e-12), (
+                        f"{label}[{i}]: {a} != {e}"
+                    )
 
 
 def test_the_comparison_is_not_vacuous(pane):
@@ -87,7 +106,7 @@ def test_the_comparison_is_not_vacuous(pane):
         node = parse(f"SLOPE.{case['output']} > 0").left
         by_output[case["output"]] = series_of(node, candles, config["resolution"], {}, instances)
 
-    assert set(by_output) == {"slope0", "slope1", "accel0", "accel1"}, (
+    assert set(by_output) == {"5", "13", "accel5", "accel13"}, (
         "the pane must be multi-line with accel on — regenerate the fixture"
     )
     for output, values in by_output.items():
@@ -95,13 +114,13 @@ def test_the_comparison_is_not_vacuous(pane):
         assert len(defined) > 20, f"{output}: only {len(defined)} defined values"
 
     # Two different MA lengths must actually produce two different lines.
-    assert by_output["slope0"] != by_output["slope1"]
+    assert by_output["5"] != by_output["13"]
     # The slope pane is signed; the accel pane, with accelAbsolute on, is not —
-    # so a rule reading SLOPE.accelN is demonstrably reading the TRANSFORMED
+    # so a rule reading SLOPE.accel<length> is demonstrably reading the TRANSFORMED
     # series the pane plots, not the raw signed acceleration.
-    assert min(v for v in by_output["slope0"] if v is not None) < 0
-    assert all(v >= 0 for v in by_output["accel0"] if v is not None)
-    assert all(v >= 0 for v in by_output["accel1"] if v is not None)
+    assert min(v for v in by_output["5"] if v is not None) < 0
+    assert all(v >= 0 for v in by_output["accel5"] if v is not None)
+    assert all(v >= 0 for v in by_output["accel13"] if v is not None)
 
 
 # --- the PINNED path -----------------------------------------------------------
@@ -164,7 +183,7 @@ def _pinned_setup():
 
 
 def _ref_series(base, instances, resolution="DAY", htf_key="MONTH", htf=None):
-    row = parse("SLOPE.slope0 > 0")
+    row = parse("SLOPE.3 > 0")
     validate(row, is_exit=False, instances=instances)
     return series_of(row.left, base, resolution, {htf_key: htf}, instances)
 

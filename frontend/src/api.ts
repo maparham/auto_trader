@@ -331,7 +331,7 @@ export interface ExprBacktestRequest {
   tradeFromTime: number;
   mask?: RecurrenceMask;
   // The chart-indicator panes the rows reference, keyed by instance id. A rule
-  // names an instance's OUTPUT ("SLOPE.slope0") and restates none of its
+  // names an instance's OUTPUT ("SLOPE.9") and restates none of its
   // settings, so this map is how the backend learns them — and it must be the
   // pane's LIVE config, since the run window routinely exceeds the loaded bars.
   // Shared by /api/expr/backtest, /api/expr/sweep/jobs and

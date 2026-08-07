@@ -89,18 +89,18 @@ describe("RuleExpressionInput", () => {
   });
   // --- live chart instances injected into the editor -------------------------
   const SLOPE_PANE: ExprInstance[] = [
-    { id: "SLOPE", outputs: ["slope0", "accel0"], timeframe: null },
+    { id: "SLOPE", outputs: ["9", "accel9"], timeframe: null },
   ];
 
   it("lints an instance reference against the INJECTED chart panes", () => {
     // With no panes injected the same text is an unknown reference — which is
     // exactly the false underline the injection exists to remove.
-    const blind = diagnosticsFor("SLOPE.slope0 > 0", false);
+    const blind = diagnosticsFor("SLOPE.9 > 0", false);
     expect(blind).toHaveLength(1);
     expect(blind[0].source).toBe("unknown_indicator_ref");
-    expect(diagnosticsFor("SLOPE.slope0 > 0", false, SLOPE_PANE)).toEqual([]);
+    expect(diagnosticsFor("SLOPE.9 > 0", false, SLOPE_PANE)).toEqual([]);
     // An output the pane does not expose still errors.
-    const bad = diagnosticsFor("SLOPE.slope3 > 0", false, SLOPE_PANE);
+    const bad = diagnosticsFor("SLOPE.13 > 0", false, SLOPE_PANE);
     expect(bad).toHaveLength(1);
     expect(bad[0].source).toBe("unknown_indicator_output");
   });
@@ -109,7 +109,7 @@ describe("RuleExpressionInput", () => {
     const onChange = vi.fn();
     const { container } = render(
       <RuleExpressionInput
-        value="SLOPE.slope0 > 0"
+        value="SLOPE.9 > 0"
         onChange={onChange}
         isExit={false}
         instances={SLOPE_PANE}
@@ -124,7 +124,7 @@ describe("RuleExpressionInput", () => {
   it("re-lints when the chart's pane list changes", async () => {
     const onChange = vi.fn();
     const { container, rerender } = render(
-      <RuleExpressionInput value="SLOPE.slope0 > 0" onChange={onChange} isExit={false} />,
+      <RuleExpressionInput value="SLOPE.9 > 0" onChange={onChange} isExit={false} />,
     );
     const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
     forceLinting(view);
@@ -132,7 +132,7 @@ describe("RuleExpressionInput", () => {
     expect(diagnosticCount(view.state)).toBe(1); // no panes yet: unknown ref
     rerender(
       <RuleExpressionInput
-        value="SLOPE.slope0 > 0"
+        value="SLOPE.9 > 0"
         onChange={onChange}
         isExit={false}
         instances={SLOPE_PANE}
@@ -164,8 +164,8 @@ describe("RuleExpressionInput", () => {
     await new Promise((r) => setTimeout(r, 60));
     // CM6 re-sorts within a boost band, so compare as a set.
     expect(currentCompletions(view.state).map((o) => o.label).sort()).toEqual([
-      "SLOPE.accel0",
-      "SLOPE.slope0",
+      "SLOPE.9",
+      "SLOPE.accel9",
     ]);
   });
 });

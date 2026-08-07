@@ -408,7 +408,7 @@ describe("liveExprInstances / exprInstancesFromChart (editor + request instance 
       { name: "EMA#a1b", paneId: "candle_pane", calcParams: [9], extendData: { indType: "EMA" } },
     ]);
     expect(exprInstancesFromChart(chart)).toEqual([
-      { id: "SLOPE", outputs: ["slope0", "slope1", "accel0", "accel1"], timeframe: null },
+      { id: "SLOPE", outputs: ["9", "21", "accel9", "accel21"], timeframe: null, detail: "EMA · % / hour" },
     ]);
   });
 });

@@ -36,20 +36,20 @@ describe("pickedIndicatorToken", () => {
   it("references the clicked slope line", () => {
     const chart = fakeChart([SLOPE, ACCEL]);
     expect(pickedIndicatorToken(chart, { paneId: "pane_1", name: "SLOPE#a1b", lineIndex: 1 }))
-      .toBe("SLOPE#a1b.slope1");
+      .toBe("SLOPE#a1b.21");
   });
 
   it("defaults to the first line when the click carries no line", () => {
     const chart = fakeChart([SLOPE, ACCEL]);
     expect(pickedIndicatorToken(chart, { paneId: "pane_1", name: "SLOPE#a1b" }))
-      .toBe("SLOPE#a1b.slope0");
+      .toBe("SLOPE#a1b.9");
   });
 
   it("maps an acceleration pane click onto its PARENT with an accel output", () => {
     const chart = fakeChart([SLOPE, ACCEL]);
     expect(
       pickedIndicatorToken(chart, { paneId: "pane_2", name: "SLOPE#a1b__accel", lineIndex: 1 }),
-    ).toBe("SLOPE#a1b.accel1");
+    ).toBe("SLOPE#a1b.accel21");
   });
 
   it("reads the PARENT's settings, not the companion's copy", () => {
@@ -58,7 +58,7 @@ describe("pickedIndicatorToken", () => {
     const chart = fakeChart([SLOPE, { ...ACCEL, calcParams: [9] }]);
     expect(
       pickedIndicatorToken(chart, { paneId: "pane_2", name: "SLOPE#a1b__accel", lineIndex: 1 }),
-    ).toBe("SLOPE#a1b.accel1");
+    ).toBe("SLOPE#a1b.accel21");
   });
 
   it("refuses an orphaned companion whose parent is gone", () => {

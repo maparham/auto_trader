@@ -105,13 +105,34 @@ def parse_slope_config(calc_params: object, extend_data: object) -> SlopeConfig:
     )
 
 
+def output_lengths(cfg: SlopeConfig) -> dict[str, int]:
+    """output name -> the MA length it selects, in pane order.
+
+    Outputs are named by LENGTH, not by ordinal: the pane's `[9, 50]` exposes
+    `9` and `50`. A rule SELECTS a line the pane already defines; it does not
+    restate a parameter, so the pane stays the single source of truth. The point
+    is loud failure — retune that line from 9 to 21 and every rule naming `9`
+    fails with unknown_indicator_output listing the lengths that now exist,
+    instead of silently re-pointing at a different line.
+
+    Duplicate lengths collapse to one name, FIRST WINS (dict insertion order).
+    Two lines of the same length are the same series, so one name is complete
+    information; the pane still DRAWS whatever it is configured to draw — the
+    dedupe lives in the output namespace only, never in `cfg.lengths`.
+
+    Note a negative length keeps its sign here (`-9`), which no rule can spell:
+    `.` followed by `-` is not a field access. Left alone deliberately — the
+    plotted line is what it is, and filtering here would hide it."""
+    return {str(n): n for n in cfg.lengths}
+
+
 def slope_outputs(cfg: SlopeConfig) -> tuple[str, ...]:
     """The pane's DATA outputs. Excludes thHi/thLo: those are figure keys the
     pane emits only to drive its y-axis auto-scale, not values a rule may read."""
-    lines = tuple(f"slope{i}" for i in range(len(cfg.lengths)))
+    lines = tuple(output_lengths(cfg))
     if not cfg.show_accel:
         return lines
-    return lines + tuple(f"accel{i}" for i in range(len(cfg.lengths)))
+    return lines + tuple(f"accel{name}" for name in lines)
 
 
 def ma_base(
@@ -241,14 +262,31 @@ def accel_line_series(
     return out
 
 
+def _resolve_output(cfg: SlopeConfig, output: str) -> tuple[int, bool]:
+    """(MA length, is_accel) for one of this config's outputs; KeyError otherwise.
+
+    The single place an output name is turned back into a length — slope_series
+    and slope_warmup both come through here so they cannot drift apart.
+
+    Looks the name up in the table rather than stripping a prefix and coercing
+    what is left: `accel` counts as a prefix only when the remainder is itself
+    a configured length AND the companion is on, so `accel<anything else>`
+    raises here instead of resolving to some line by accident."""
+    lengths = output_lengths(cfg)
+    if output in lengths:
+        return lengths[output], False
+    if cfg.show_accel and output.startswith("accel"):
+        rest = output.removeprefix("accel")
+        if rest in lengths:
+            return lengths[rest], True
+    raise KeyError(output)
+
+
 def slope_series(
     cfg: SlopeConfig, output: str, candles: Sequence[Candle], bar_hours: float
 ) -> list[float | None]:
-    if output not in slope_outputs(cfg):
-        raise KeyError(output)
-    idx = int(output.removeprefix("accel").removeprefix("slope"))
-    length = cfg.lengths[idx]
-    if output.startswith("accel"):
+    length, is_accel = _resolve_output(cfg, output)
+    if is_accel:
         return accel_line_series(candles, cfg, length, bar_hours)
     return slope_line_series(candles, cfg, length, bar_hours)
 
@@ -258,10 +296,8 @@ def _smoothing_warmup(s: Smoothing) -> int:
 
 
 def slope_warmup(cfg: SlopeConfig, output: str) -> int:
-    if output not in slope_outputs(cfg):
-        raise KeyError(output)
-    idx = int(output.removeprefix("accel").removeprefix("slope"))
-    n = cfg.lengths[idx] + cfg.slope_period + _smoothing_warmup(cfg.smoothing)
-    if output.startswith("accel"):
+    length, is_accel = _resolve_output(cfg, output)
+    n = length + cfg.slope_period + _smoothing_warmup(cfg.smoothing)
+    if is_accel:
         n += cfg.accel_period + _smoothing_warmup(cfg.accel_smoothing)
     return n

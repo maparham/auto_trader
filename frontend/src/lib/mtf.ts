@@ -97,6 +97,16 @@ export type MaKind = "ema" | "sma" | "vwma" | "evwma";
 
 const MA_KINDS = new Set<MaKind>(["ema", "sma", "vwma", "evwma"]);
 
+/** Settings/legend label for each MA kind. Lives here rather than in
+ * indicators/ma.ts so klinecharts-free callers can reuse it: ma.ts imports
+ * klinecharts for real, this module only `import type`s it. */
+export const MA_KIND_LABEL: Record<MaKind, string> = {
+  ema: "EMA",
+  sma: "SMA",
+  vwma: "VWMA",
+  evwma: "EVWMA",
+};
+
 /** Coerce a stored/unknown maType to a valid kind. Centralized so no call site
  * silently drops the volume-weighted kinds with a binary sma/ema ternary. */
 export function normalizeMaKind(v: unknown, fallback: MaKind = "ema"): MaKind {

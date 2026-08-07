@@ -10,7 +10,7 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-const { inferBarHours, resolveBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines, accelSeries, SLOPE_ACCEL_TEMPLATE, accelLineSeries, slopeOutputs } =
+const { inferBarHours, resolveBarHours, slopeWithUnits, computeSlope, SLOPE_TEMPLATE, smoothSeries, slopeLineSeries, slopeMaLines, accelSeries, SLOPE_ACCEL_TEMPLATE, accelLineSeries, slopeOutputs, slopeLengths } =
   await import("./slope");
 const { nominalBarHours } = await import("../feed");
 
@@ -373,18 +373,18 @@ describe("barHours resolution", () => {
 
 describe("slopeOutputs", () => {
   it("tracks the configured lengths", () => {
-    expect(slopeOutputs([9, 21], {})).toEqual(["slope0", "slope1"]);
+    expect(slopeOutputs([9, 21], {})).toEqual(["9", "21"]);
   });
 
   it("adds accel lines only when the companion is on", () => {
-    expect(slopeOutputs([9], { showAccel: true })).toEqual(["slope0", "accel0"]);
+    expect(slopeOutputs([9], { showAccel: true })).toEqual(["9", "accel9"]);
   });
 
   // Order is the substance of the mirror claim: Python slope_outputs appends the
   // accel block after ALL slope lines, it does not interleave them.
   it("appends the accel block after every slope line", () => {
     expect(slopeOutputs([9, 21], { showAccel: true })).toEqual([
-      "slope0", "slope1", "accel0", "accel1",
+      "9", "21", "accel9", "accel21",
     ]);
   });
 
@@ -395,16 +395,34 @@ describe("slopeOutputs", () => {
   });
 
   it("defaults to a single line when calcParams are empty", () => {
-    expect(slopeOutputs([], {})).toEqual(["slope0"]);
+    expect(slopeOutputs([], {})).toEqual(["9"]);   // slopeLengths falls back to [9]
   });
 
   it("defaults to a single line when calcParams are all unusable", () => {
-    expect(slopeOutputs([0, NaN], {})).toEqual(["slope0"]);
+    expect(slopeOutputs([0, NaN], {})).toEqual(["9"]);
+  });
+
+  // Duplicates collapse in the OUTPUT NAMESPACE only — the pane still draws
+  // both lines. Two lines of the same length are the same series, so one name
+  // is complete information, and Python's `{str(n): n for n in lengths}` keeps
+  // the first occurrence's position the same way a JS Map does.
+  it("collapses duplicate lengths to one output name, first wins", () => {
+    expect(slopeOutputs([9, 9, 21], { showAccel: true }))
+      .toEqual(["9", "21", "accel9", "accel21"]);
+    // ...while the pane's LINES are untouched: still three of them.
+    expect(slopeLengths([9, 9, 21])).toEqual([9, 9, 21]);
+  });
+
+  // A fractional length truncates on BOTH stacks (Math.trunc here, int() in
+  // Python `_lengths_of`), so the output name is the truncated integer and the
+  // two runtimes cannot disagree about what a rule may spell.
+  it("names a fractional length by its truncated value", () => {
+    expect(slopeOutputs([9.5, 21.9], {})).toEqual(["9", "21"]);
   });
 
   it("caps at the five lines the pane draws", () => {
     expect(slopeOutputs([5, 9, 21, 50, 100, 200], {})).toEqual([
-      "slope0", "slope1", "slope2", "slope3", "slope4",
+      "5", "9", "21", "50", "100",
     ]);
   });
 });

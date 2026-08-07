@@ -36,6 +36,15 @@ class Token:
     end: int
 
 
+# A "." starts a decimal literal (.5) only when nothing that can be FOLLOWED by
+# a field access was just emitted. After a NAME, a ")" or a "]", the "." is
+# always postfix field access — there is no valid expression in this grammar
+# where a name, ")" or "]" is directly followed by a number. Without this,
+# `SLOPE.9` lexes as NAME + NUMBER(.9), swallowing the output name as the
+# decimal 0.9; with it, `2 + .5` and a leading `.5` keep lexing as before.
+_NO_LEADING_DOT_NUMBER = frozenset({"NAME", "RPAREN", "RBRACKET"})
+
+
 def tokenize(src: str) -> list[Token]:
     out: list[Token] = []
     i, n = 0, len(src)
@@ -44,7 +53,26 @@ def tokenize(src: str) -> list[Token]:
         if c.isspace():
             i += 1
             continue
-        if _is_digit(c) or (c == "." and i + 1 < n and _is_digit(src[i + 1])):
+        starts_decimal = (
+            c == "."
+            and i + 1 < n
+            and _is_digit(src[i + 1])
+            and (not out or out[-1].type not in _NO_LEADING_DOT_NUMBER)
+        )
+        if _is_digit(c) or starts_decimal:
+            # Straight after a ".", a digit run is an OUTPUT NAME (a pane's
+            # lengths name its outputs), so it takes digits and nothing else.
+            # Without this the timeframe fusion below swallows the rest:
+            # `X.9.foo` would lex as one NAME "9.foo" instead of
+            # NUMBER(9) DOT NAME(foo), hiding the stray field behind a
+            # confusing unknown-output error.
+            if out and out[-1].type == "DOT":
+                j = i
+                while j < n and _is_digit(src[j]):
+                    j += 1
+                out.append(Token("NUMBER", src[i:j], i, j))
+                i = j
+                continue
             j = i
             seen_dot = False
             while j < n and (_is_digit(src[j]) or (src[j] == "." and not seen_dot)):

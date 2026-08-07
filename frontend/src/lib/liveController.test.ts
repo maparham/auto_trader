@@ -96,7 +96,7 @@ describe("arm() coded param resolution (I3)", () => {
 
 describe("arm() indicator references", () => {
   const PANE = { id: "SLOPE", type: "SLOPE", calcParams: [50], extendData: {} };
-  const refRow = { expr: "SLOPE.slope0 > 0.5", enabled: true };
+  const refRow = { expr: "SLOPE.50 > 0.5", enabled: true };
   const cfgWithRef = () => ({
     ...defaultBacktestConfig(),
     longEntry: { combine: "AND" as const, rules: [refRow] },
@@ -132,7 +132,7 @@ describe("arm() indicator references", () => {
     expect(liveStateSignal.value.log.at(-1)?.text).toContain("not on the chart");
   });
 
-  // A pinned pane resolves `SLOPE.slope0` to its HIGHER-timeframe series with no
+  // A pinned pane resolves `SLOPE.50` to its HIGHER-timeframe series with no
   // `@tf` in the rule text, and the live evaluate route has no way to source those
   // bars (it reads req.htfCandles, which the live engine never sends). Arming
   // would produce an all-None operand and a rule that never fires — silently.

@@ -27,7 +27,7 @@ import type {
 import { maSeries, alignHtfToChart, emaGappy, normalizeMaKind, type MaKind } from "../mtf";
 import type { MaExtend } from "./ma";
 import { fullLine } from "./shared";
-import { slopeLengths } from "./slopeOutputs";
+import { normalizeSlopeUnit, slopeLengths, slopePeriodOf } from "./slopeOutputs";
 
 export type SlopeUnit = "pctHr" | "pctBar" | "priceBar";
 
@@ -157,18 +157,29 @@ export function smoothSeries(
   values: Array<number | undefined>,
   s?: SlopeSmoothing,
 ): Array<number | undefined> {
-  if (!s || s.type === "none" || s.length <= 1) return values;
-  if (s.type === "ema") return emaGappy(values, s.length);
+  // Python's `_smoothing_of` is the parse this mirrors, and it is stricter than
+  // a `type !== "none"` test in two ways this has to match. Only "sma"/"ema"
+  // count — every other spelling (a stale "wma", a missing type) is OFF, where
+  // falling through to the SMA branch below would smooth a series Python leaves
+  // raw. And the window is int()-truncated, so a fractional length must truncate
+  // too: `values[i - 4.5]` is undefined, blanking the whole line, while Python
+  // computes a clean SMA(4). smoothSeries is the one choke point every caller
+  // (both panes, slopeMaLines, the MTF coordinator) passes through, so the
+  // coercion lives here rather than at each site that reads ext.smoothing.
+  if (!s || (s.type !== "sma" && s.type !== "ema")) return values;
+  const length = Math.trunc(Number(s.length));
+  if (!(length > 1)) return values;
+  if (s.type === "ema") return emaGappy(values, length);
   // SMA over a gappy series: window of the last `length` values, all must be defined.
   return values.map((_, i) => {
-    if (i < s.length - 1) return undefined;
+    if (i < length - 1) return undefined;
     let sum = 0;
-    for (let j = i - s.length + 1; j <= i; j++) {
+    for (let j = i - length + 1; j <= i; j++) {
       const v = values[j];
       if (v === undefined) return undefined;
       sum += v;
     }
-    return sum / s.length;
+    return sum / length;
   });
 }
 
@@ -256,7 +267,7 @@ const DASH_BY_STYLE: Record<NonNullable<SlopeThreshold["lineStyle"]>, number[]> 
 // exprChartToken.ts can reach them without dragging klinecharts (and its
 // window-touching module body) into a pure node-testable module. Re-exported here
 // because this is where every existing caller imports them from.
-export { slopeLengths, slopeOutputs } from "./slopeOutputs";
+export { slopeLengths, slopeOutputs, normalizeSlopeUnit, slopePeriodOf } from "./slopeOutputs";
 
 /** Active threshold magnitude (|level|) when the guide is on and the level is a
  * usable non-zero number; otherwise null. A zero level would coincide with the
@@ -268,11 +279,19 @@ export function slopeThresholdLevel(ext: SlopeExtend): number | null {
   return Number.isFinite(m) && m > 0 ? m : null;
 }
 
+// The pane's stored settings, coerced. This is the TS half of Python's
+// parse_slope_config and must coerce identically: whole-bar periods (the number
+// inputs write Number(e.target.value) unrounded, and a fractional period indexes
+// the series by a fractional offset — undefined, i.e. a blank pane — where
+// Python truncates and computes real values), and a real SlopeUnit (an
+// unrecognised one falls through slopeWithUnits as pctBar here but is coerced to
+// pctHr there). Pinned by the "fractional-and-stale" pane in
+// slopeParityGolden.test.ts / test_slope_pane_rule_equality.py.
 function slopeShared(ext: SlopeExtend) {
   return {
     maType: normalizeMaKind(ext.maType),
-    n: Number(ext.slopePeriod) || 3,
-    units: (ext.units ?? "pctHr") as SlopeUnit,
+    n: slopePeriodOf(ext.slopePeriod, 3),
+    units: normalizeSlopeUnit(ext.units),
     source: ext.source,
     smoothing: ext.smoothing,
   };
@@ -517,7 +536,7 @@ function computeAccelCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
   const ext = (ind.extendData ?? {}) as SlopeExtend;
   const lengths = slopeLengths(ind.calcParams);
   const { maType, n, units, source, smoothing } = slopeShared(ext);
-  const n2 = Number(ext.accelPeriod) || 3;
+  const n2 = slopePeriodOf(ext.accelPeriod, 3);
   // Plot |accel| when requested: a display transform on the final pane values
   // (undefined stays undefined). With magnitudes always ≥ 0 the pane reads as a
   // "how hard is it accelerating" line regardless of steepening vs flattening.

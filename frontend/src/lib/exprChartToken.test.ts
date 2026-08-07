@@ -50,14 +50,14 @@ describe("SLOPE instance references", () => {
   it("emits an instance ref for a clicked slope line", () => {
     expect(
       chartIndicatorToExprToken("SLOPE", [9, 21], {}, { instanceId: "SLOPE", lineIndex: 1 }),
-    ).toBe("SLOPE.slope1");
+    ).toBe("SLOPE.21");
   });
 
   it("emits an accel ref for the companion pane", () => {
     expect(
       chartIndicatorToExprToken("SLOPE", [9], { showAccel: true },
         { instanceId: "SLOPE#a1b", lineIndex: 0, output: "accel" }),
-    ).toBe("SLOPE#a1b.accel0");
+    ).toBe("SLOPE#a1b.accel9");
   });
 
   it("refuses an accel ref when the companion is off", () => {
@@ -78,16 +78,16 @@ describe("SLOPE instance references", () => {
   });
 
   // slopeLengths slices to 5, so a sixth configured length draws no line — the
-  // backend's slope_outputs would 422 on slope5, so the bridge must refuse it.
+  // backend's slope_outputs would 422 on the 200 line, so the bridge must refuse it.
   it("refuses a line past the five-line cap", () => {
     expect(
       chartIndicatorToExprToken("SLOPE", [5, 9, 21, 50, 100, 200], {},
-        { instanceId: "SLOPE", lineIndex: 5 }),
+        { instanceId: "SLOPE", lineIndex: 5 }),      // the 200 line, sliced off
     ).toBeNull();
     expect(
       chartIndicatorToExprToken("SLOPE", [5, 9, 21, 50, 100, 200], {},
         { instanceId: "SLOPE", lineIndex: 4 }),
-    ).toBe("SLOPE.slope4");
+    ).toBe("SLOPE.100");
   });
 
   // Garbage calcParams normalize to the default single line, so the only token
@@ -95,7 +95,7 @@ describe("SLOPE instance references", () => {
   it("falls back to the default line when calcParams are unusable", () => {
     expect(
       chartIndicatorToExprToken("SLOPE", [0], {}, { instanceId: "SLOPE", lineIndex: 0 }),
-    ).toBe("SLOPE.slope0");
+    ).toBe("SLOPE.9");
     expect(
       chartIndicatorToExprToken("SLOPE", [0], {}, { instanceId: "SLOPE", lineIndex: 1 }),
     ).toBeNull();
@@ -104,6 +104,6 @@ describe("SLOPE instance references", () => {
   it("defaults to line 0 when no lineIndex is given", () => {
     expect(
       chartIndicatorToExprToken("SLOPE", [9, 21], {}, { instanceId: "SLOPE" }),
-    ).toBe("SLOPE.slope0");
+    ).toBe("SLOPE.9");
   });
 });

@@ -537,7 +537,7 @@ describe("chart pane list feeding the rule editors", () => {
       <BacktestSettingsModal
         initial={{
           ...defaultBacktestConfig(),
-          longEntry: { combine: "AND", rules: [{ expr: "SLOPE.slope0 > 0", enabled: true }] },
+          longEntry: { combine: "AND", rules: [{ expr: "SLOPE.9 > 0", enabled: true }] },
           longExit: { combine: "AND", rules: [] },
         }}
         epic="TEST"
@@ -557,7 +557,7 @@ describe("chart pane list feeding the rule editors", () => {
     renderWithRule(controller);
 
     const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement)!;
-    expect(view.state.doc.toString()).toBe("SLOPE.slope0 > 0");
+    expect(view.state.doc.toString()).toBe("SLOPE.9 > 0");
     // No panes yet, so the reference reads as unknown.
     await waitFor(() => {
       forceLinting(view);

@@ -250,25 +250,25 @@ describe("candle pattern predicates", () => {
 });
 
 const INSTANCES = [
-  { id: "SLOPE", outputs: ["slope0", "slope1", "accel0"], timeframe: null },
-  { id: "SLOPE#p1n", outputs: ["slope0"], timeframe: "1H" },
+  { id: "SLOPE", outputs: ["9", "21", "accel9"], timeframe: null },
+  { id: "SLOPE#p1n", outputs: ["50"], timeframe: "1H" },
 ];
 
 describe("indicator references", () => {
   it("accepts a ref to a known instance and output", () => {
-    expect(analyze("SLOPE.slope0 > 0.5", { instances: INSTANCES }).errors).toEqual([]);
-    expect(analyze("SLOPE#p1n.slope0 > 0", { instances: INSTANCES }).errors).toEqual([]);
+    expect(analyze("SLOPE.9 > 0.5", { instances: INSTANCES }).errors).toEqual([]);
+    expect(analyze("SLOPE#p1n.50 > 0", { instances: INSTANCES }).errors).toEqual([]);
   });
 
   it("reports a missing instance with its own code", () => {
-    const [err] = analyze("NOPE.slope0 > 0", { instances: INSTANCES }).errors;
+    const [err] = analyze("NOPE.9 > 0", { instances: INSTANCES }).errors;
     expect(err.code).toBe("unknown_indicator_ref");
   });
 
   it("reports an unknown output and lists what is available", () => {
-    const [err] = analyze("SLOPE.slope9 > 0", { instances: INSTANCES }).errors;
+    const [err] = analyze("SLOPE.13 > 0", { instances: INSTANCES }).errors;
     expect(err.code).toBe("unknown_indicator_output");
-    expect(err.message).toContain("slope0");
+    expect(err.message).toContain("9");
   });
 
   it("asks for an output when only the instance is named", () => {
@@ -277,12 +277,12 @@ describe("indicator references", () => {
   });
 
   it("rejects pinning an instance that is already pinned in its settings", () => {
-    const [err] = analyze("SLOPE#p1n.slope0 @4H > 0", { instances: INSTANCES }).errors;
+    const [err] = analyze("SLOPE#p1n.50 @4H > 0", { instances: INSTANCES }).errors;
     expect(err.code).toBe("nested_tf");
   });
 
   it("allows pinning an unpinned instance", () => {
-    expect(analyze("SLOPE.slope0 @4H > 0", { instances: INSTANCES }).errors).toEqual([]);
+    expect(analyze("SLOPE.9 @4H > 0", { instances: INSTANCES }).errors).toEqual([]);
   });
 
   it("still reports field_on_call for a registered indicator", () => {
@@ -291,18 +291,18 @@ describe("indicator references", () => {
   });
 
   it("lexes # inside a name but not as a leading character", () => {
-    expect(analyze("SLOPE#p1n.slope0 > 0", { instances: INSTANCES }).errors).toEqual([]);
+    expect(analyze("SLOPE#p1n.50 > 0", { instances: INSTANCES }).errors).toEqual([]);
     expect(analyze("#SLOPE > 0", { instances: INSTANCES }).errors[0].code).toBe("bad_char");
   });
 
   it("takes warm-up from the caller's lookup, plus offsets", () => {
     const warmupByRef = () => 8;
-    expect(warmupOf("SLOPE.slope0 > 0", 3600, INSTANCES, warmupByRef)).toBe(8);
-    expect(warmupOf("SLOPE.slope0[-4] > 0", 3600, INSTANCES, warmupByRef)).toBe(12);
+    expect(warmupOf("SLOPE.9 > 0", 3600, INSTANCES, warmupByRef)).toBe(8);
+    expect(warmupOf("SLOPE.9[-4] > 0", 3600, INSTANCES, warmupByRef)).toBe(12);
   });
 
   it("charges zero base bars for an instance pinned in its own settings", () => {
-    expect(warmupOf("SLOPE#p1n.slope0 > 0", 3600, INSTANCES, () => 8)).toBe(0);
+    expect(warmupOf("SLOPE#p1n.50 > 0", 3600, INSTANCES, () => 8)).toBe(0);
   });
 
   // --- beyond the brief: the four exclusion categories parse_postfix checks,
@@ -323,9 +323,9 @@ describe("indicator references", () => {
   });
 
   it("rejects a field hung off a ref's output", () => {
-    expect(analyze("SLOPE.slope0.foo > 0", { instances: INSTANCES }).errors[0].code)
+    expect(analyze("SLOPE.9.foo > 0", { instances: INSTANCES }).errors[0].code)
       .toBe("field_on_indicator_ref");
-    expect(analyze("SLOPE.slope0[-1].foo > 0", { instances: INSTANCES }).errors[0].code)
+    expect(analyze("SLOPE.9[-1].foo > 0", { instances: INSTANCES }).errors[0].code)
       .toBe("field_on_indicator_ref");
   });
 
@@ -335,22 +335,22 @@ describe("indicator references", () => {
   });
 
   it("checks the timeframe alias before the nested-pin rule", () => {
-    expect(analyze("SLOPE#p1n.slope0 @BOGUS > 0", { instances: INSTANCES }).errors[0].code)
+    expect(analyze("SLOPE#p1n.50 @BOGUS > 0", { instances: INSTANCES }).errors[0].code)
       .toBe("unknown_tf");
   });
 
   it("validates refs nested inside wrappers and count()", () => {
-    expect(analyze("slope(SLOPE.slope0, 3) > 0", { instances: INSTANCES }).errors).toEqual([]);
-    expect(analyze("count(SLOPE.slope0 > 0, 10) >= 1", { instances: INSTANCES }).errors).toEqual([]);
-    expect(analyze("slope(NOPE.slope0, 3) > 0", { instances: INSTANCES }).errors[0].code)
+    expect(analyze("slope(SLOPE.9, 3) > 0", { instances: INSTANCES }).errors).toEqual([]);
+    expect(analyze("count(SLOPE.9 > 0, 10) >= 1", { instances: INSTANCES }).errors).toEqual([]);
+    expect(analyze("slope(NOPE.9, 3) > 0", { instances: INSTANCES }).errors[0].code)
       .toBe("unknown_indicator_ref");
-    expect(analyze("count(NOPE.slope0 > 0, 10) >= 1", { instances: INSTANCES }).errors[0].code)
+    expect(analyze("count(NOPE.9 > 0, 10) >= 1", { instances: INSTANCES }).errors[0].code)
       .toBe("unknown_indicator_ref");
-    expect(analyze("-SLOPE.slope0 + 1 > 0", { instances: INSTANCES }).errors).toEqual([]);
+    expect(analyze("-SLOPE.9 + 1 > 0", { instances: INSTANCES }).errors).toEqual([]);
   });
 
   it("reports a ref with no instance list at all", () => {
-    expect(analyze("SLOPE.slope0 > 0").errors[0].code).toBe("unknown_indicator_ref");
+    expect(analyze("SLOPE.9 > 0").errors[0].code).toBe("unknown_indicator_ref");
   });
 
   it("still rejects # as a leading name character in the digit branch too", () => {
@@ -359,8 +359,8 @@ describe("indicator references", () => {
   });
 
   it("labels a numeric factor on a ref as a multiplier", () => {
-    const { literals } = analyze("2 * SLOPE.slope0 > 0", { instances: INSTANCES });
-    expect(literals.map((l) => l.label)).toEqual(["multiplier of SLOPE.slope0", "threshold"]);
+    const { literals } = analyze("2 * SLOPE.9 > 0", { instances: INSTANCES });
+    expect(literals.map((l) => l.label)).toEqual(["multiplier of SLOPE.9", "threshold"]);
   });
 
   // `pinnedInstance` mirrors `containsTf` case for case (backend
@@ -371,42 +371,42 @@ describe("indicator references", () => {
     const code = (src: string) => analyze(src, { instances: INSTANCES }).errors[0]?.code;
 
     it("Call args", () => {
-      expect(code("slope(SLOPE#p1n.slope0, 3) @4H > 0")).toBe("nested_tf");
+      expect(code("slope(SLOPE#p1n.50, 3) @4H > 0")).toBe("nested_tf");
     });
     it("Binary", () => {
-      expect(code("(SLOPE#p1n.slope0 + 1) @4H > 0")).toBe("nested_tf");
+      expect(code("(SLOPE#p1n.50 + 1) @4H > 0")).toBe("nested_tf");
     });
     it("Unary", () => {
-      expect(code("(-SLOPE#p1n.slope0) @4H > 0")).toBe("nested_tf");
+      expect(code("(-SLOPE#p1n.50) @4H > 0")).toBe("nested_tf");
     });
     it("Offset", () => {
-      expect(code("SLOPE#p1n.slope0[-1] @4H > 0")).toBe("nested_tf");
+      expect(code("SLOPE#p1n.50[-1] @4H > 0")).toBe("nested_tf");
     });
     it("Field", () => {
       // The nested-pin check runs before walk(base), so nested_tf wins over the
       // field_on_indicator_ref this expression would otherwise report.
-      expect(code("SLOPE#p1n.slope0.foo @4H > 0")).toBe("nested_tf");
+      expect(code("SLOPE#p1n.50.foo @4H > 0")).toBe("nested_tf");
     });
     it("Count window", () => {
-      expect(code("count(candle.open > candle.close, SLOPE#p1n.slope0) @4H >= 1")).toBe("nested_tf");
+      expect(code("count(candle.open > candle.close, SLOPE#p1n.50) @4H >= 1")).toBe("nested_tf");
     });
     it("Compare (inside a count condition)", () => {
       // Compare is only ever a row or a count condition, so this necessarily
       // goes through the Count arm too.
-      expect(code("count(SLOPE#p1n.slope0 > 0, 10) @4H >= 1")).toBe("nested_tf");
+      expect(code("count(SLOPE#p1n.50 > 0, 10) @4H >= 1")).toBe("nested_tf");
     });
     it("Cross (inside a count condition)", () => {
-      expect(code("count(SLOPE#p1n.slope0 x> EMA(9), 10) @4H >= 1")).toBe("nested_tf");
+      expect(code("count(SLOPE#p1n.50 x> EMA(9), 10) @4H >= 1")).toBe("nested_tf");
     });
     it("Predicate (inside a count condition)", () => {
       // Reachable because the pin check precedes the predicate's own arg check.
-      expect(code("count(bullish(SLOPE#p1n.slope0), 10) @4H >= 1")).toBe("nested_tf");
+      expect(code("count(bullish(SLOPE#p1n.50), 10) @4H >= 1")).toBe("nested_tf");
     });
     // No row for the Tf arm (or Chain): reaching pinnedInstance's Tf arm needs a
     // Tf under a Tf, which the parser's own containsTf rejects at parse time —
-    // `slope(SLOPE#p1n.slope0 @4H, 3) > 0` reaches the IndicatorRef arm instead.
+    // `slope(SLOPE#p1n.50 @4H, 3) > 0` reaches the IndicatorRef arm instead.
     it("still catches a pin on a pinned instance nested in a wrapper arg", () => {
-      expect(code("slope(SLOPE#p1n.slope0 @4H, 3) > 0")).toBe("nested_tf");
+      expect(code("slope(SLOPE#p1n.50 @4H, 3) > 0")).toBe("nested_tf");
     });
   });
 
@@ -426,8 +426,8 @@ describe("indicator references", () => {
   });
 
   it("charges zero warm-up for a ref with no lookup supplied", () => {
-    expect(warmupOf("SLOPE.slope0 > 0", 3600, INSTANCES)).toBe(0);
-    expect(warmupOf("SLOPE.slope0 > 0")).toBe(0);
+    expect(warmupOf("SLOPE.9 > 0", 3600, INSTANCES)).toBe(0);
+    expect(warmupOf("SLOPE.9 > 0")).toBe(0);
   });
 });
 
@@ -506,5 +506,67 @@ describe("infix cross operators", () => {
   it("warms up across a cross part in a chain", () => {
     expect(warmupOf("EMA(9) x> EMA(50) > EMA(200)")).toBe(200);
     expect(warmupOf("EMA(9) x> EMA(50)")).toBe(50);
+  });
+});
+
+// --- the lexer's dot rule ------------------------------------------------------
+//
+// `SLOPE.9` only reaches the parser because tokenize stopped treating a "." that
+// follows a NAME / ")" / "]" as the start of a decimal literal. These pin both
+// halves of that rule: the new spelling works, and the leading-dot decimals that
+// always worked still do. Mirrored term for term by
+// backend/tests/test_indicator_ref_parse.py, and corpus.json runs all three
+// expressions through BOTH stacks.
+describe("a dot starts a decimal only where no field can follow", () => {
+  const typesOf = (src: string) => analyze(src).tokens.map((t) => t.type);
+  const spansOf = (src: string) =>
+    analyze(src).tokens.map((t) => [t.type, src.slice(t.from, t.to)]);
+
+  it("reads the dot after a name as field access, not as the decimal 0.9", () => {
+    expect(spansOf("SLOPE.9 > 0")).toEqual([
+      ["NAME", "SLOPE"], ["DOT", "."], ["NUMBER", "9"], ["GT", ">"], ["NUMBER", "0"],
+    ]);
+  });
+
+  it("still reads a decimal after an operator", () => {
+    expect(spansOf("2 + .5")).toEqual([["NUMBER", "2"], ["PLUS", "+"], ["NUMBER", ".5"]]);
+  });
+
+  it("still reads a leading decimal", () => {
+    expect(spansOf(".5 > 0")).toEqual([["NUMBER", ".5"], ["GT", ">"], ["NUMBER", "0"]]);
+  });
+
+  it("treats a dot after a closing bracket as field access too", () => {
+    expect(typesOf("SLOPE.9[-1] > 0")).toEqual([
+      "NAME", "DOT", "NUMBER", "LBRACKET", "MINUS", "NUMBER", "RBRACKET", "GT", "NUMBER",
+    ]);
+  });
+
+  it("does not let a numeric output swallow a following field", () => {
+    // The timeframe fusion ("1.5H" is one NAME) must not apply straight after a
+    // ".", or `SLOPE.9.foo` would lex as a single NAME "9.foo".
+    expect(typesOf("SLOPE.9.foo")).toEqual(["NAME", "DOT", "NUMBER", "DOT", "NAME"]);
+    expect(spansOf("EMA(9)@1.5H > 0")).toContainEqual(["NAME", "1.5H"]);   // still fused
+  });
+});
+
+describe("a NUMBER output is accepted only where an indicator ref is built", () => {
+  // The four-category exclusion set plus `candle`: only a bare UNREGISTERED
+  // zero-arg name may take a number as its field, because only there is a
+  // number a name (a pane's outputs are named by its MA lengths).
+  it.each([
+    ["candle.9 > 0"],      // Candle root
+    ["EMA(9).9 > 0"],      // a call WITH args
+    ["VOL.9 > 0"],         // a registered zero-arg indicator
+    ["slope.9 > 0"],       // a registered wrapper name
+    ["doji.9 > 0"],        // a registered predicate name
+    ["crossAbove.9 > 0"],  // a registered cross fn name
+  ])("rejects %s", (src) => {
+    expect(analyze(src).error?.code).toBe("unexpected_token");
+  });
+
+  it("accepts it for an unregistered instance name, through offset and pin", () => {
+    const instances = [{ id: "SLOPE", outputs: ["9"], timeframe: null }];
+    expect(analyze("SLOPE.9[-2] @1H > 0", { instances }).error).toBeNull();
   });
 });

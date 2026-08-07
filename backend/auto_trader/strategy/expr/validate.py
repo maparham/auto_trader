@@ -159,7 +159,7 @@ def _walk(node: N.Node, *, is_exit: bool,
             # indicator exposes named outputs in v1, so this is always an error.
             raise ExprError("field_on_call", f"{root.name} has no named outputs.", node.start, node.end)
         if isinstance(root, N.IndicatorRef):
-            # SLOPE.slope0.foo (or SLOPE.slope0[-1].foo): the ref already names an
+            # SLOPE.9.foo (or SLOPE.9[-1].foo): the ref already names an
             # output, and an output is a plain series with no sub-fields. Without
             # this the stray field would be silently discarded by the _walk below.
             raise ExprError(

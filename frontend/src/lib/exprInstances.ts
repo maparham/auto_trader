@@ -5,15 +5,20 @@
 //
 //   1. OUT to the backend — `collectExprInstances(live, rows)` collects the panes
 //      the rows actually reference, for the request's `indicators` map. Rules name
-//      an instance's OUTPUT (`SLOPE.slope0`) and carry none of its settings, so the
+//      an instance's OUTPUT (`SLOPE.9`) and carry none of its settings, so the
 //      backend needs the config to recompute over any window (a backtest window
 //      routinely exceeds the chart's loaded candles).
 //   2. IN to the editor — `exprInstancesFor(live)` is the injected list `analyze`
 //      and the completion source read, so a pane's own settings stay the single
 //      source of truth for which outputs exist.
-import { slopeOutputs, slopeWarmup } from "./indicators/slopeOutputs";
+import { normalizeSlopeUnit, slopeOutputs, slopeWarmup } from "./indicators/slopeOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import type { ExprInstance } from "./expr/catalog";
+// Display vocabularies, both from klinecharts-free modules so this stays a pure,
+// node-testable bridge: mtf.ts type-imports klinecharts only, indicatorMeta.ts
+// imports nothing at all.
+import { MA_KIND_LABEL, normalizeMaKind } from "./mtf";
+import { SLOPE_UNIT_LABEL } from "./indicatorMeta";
 
 /** A live chart pane, flattened to just what the expression layer reads. */
 export interface LiveInstance {
@@ -33,11 +38,14 @@ export interface ExprInstancePayload {
 // <instanceId>.<output> — the id may carry the "#<rand>" uniqueness suffix that
 // mintInstanceId adds to a second-or-later instance of a type. The trailing
 // "\b(?!\s*\()" drops a dotted CALL (the \b first, so the output name can't
-// backtrack to a shorter match and slip past the lookahead), and requiring a
-// letter/underscore immediately before the dot means a decimal literal (`0.5`)
-// and a field read off a call result (`EMA(9).signal`, whose preceding char is
-// ")") can never match.
-const REF = /\b([A-Za-z_][A-Za-z0-9_]*(?:#[A-Za-z0-9_]+)?)\.([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()/g;
+// backtrack to a shorter match and slip past the lookahead).
+//
+// The OUTPUT group takes digits, because a SLOPE pane's outputs are named by
+// its MA lengths (`SLOPE.9`, `SLOPE.accel50`). What keeps a decimal literal
+// (`0.5`) out is the INSTANCE group's leading `[A-Za-z_]` — a bare number can
+// never start a match — and a field read off a call result (`EMA(9).signal`)
+// stays out because the char before its dot is ")", which no group accepts.
+const REF = /\b([A-Za-z_][A-Za-z0-9_]*(?:#[A-Za-z0-9_]+)?)\.([A-Za-z0-9_]+)\b(?!\s*\()/g;
 
 export function referencedInstanceIds(rows: string[]): Set<string> {
   const out = new Set<string>();
@@ -79,7 +87,7 @@ export function collectExprInstances(
  * CURRENT settings expose and the timeframe it is pinned to (null = follows the
  * chart). Only panes a rule can name by INSTANCE are listed — an EMA is spelled
  * `EMA(9)` in a rule, not as an instance ref, and the accel companion's outputs
- * belong to its parent (`accel0..N`), not to a pane of its own.
+ * belong to its parent (`accel<length>`), not to a pane of its own.
  */
 /**
  * The `warmupByRef` callback `warmupOf` (expr/parser.ts) injects: how many bars
@@ -108,17 +116,34 @@ export function exprWarmupByRef(
   };
 }
 
+/** What the completion popup shows beside a SLOPE ref, e.g. "SMA · % / hour".
+ *
+ * The label itself is now `SLOPE.9`, so the LENGTH is already on screen and
+ * repeating it here would be noise; what a reader still cannot see is which
+ * moving average the pane uses and what the number is measured in. Both
+ * vocabularies are the ones already on screen elsewhere — MA_KIND_LABEL is the
+ * chart legend's, SLOPE_UNIT_LABEL is the settings modal's Units dropdown — so
+ * the popup can't drift into a second spelling of the same setting.
+ *
+ * The pinned timeframe is NOT here: complete.ts appends it, so an unpinned pane
+ * and a pinned one differ only by the suffix. */
+function slopeRefDetail(ext: SlopeExtend): string {
+  const kind = MA_KIND_LABEL[normalizeMaKind(ext.maType)];
+  return `${kind} · ${SLOPE_UNIT_LABEL[normalizeSlopeUnit(ext.units)]}`;
+}
+
 export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] {
   const out: ExprInstance[] = [];
   for (const inst of live) {
     if (inst.type !== "SLOPE") continue;
     const ext = (inst.extendData ?? {}) as SlopeExtend;
-    // slopeLengths falls back to [9], so a SLOPE always exposes at least
-    // slope0 — no empty-output guard is needed for the one type handled here.
+    // slopeLengths falls back to [9], so a SLOPE always exposes at least one
+    // output — no empty-output guard is needed for the one type handled here.
     out.push({
       id: inst.id,
       outputs: slopeOutputs(inst.calcParams, ext),
       timeframe: ext.mtf?.timeframe ?? null,
+      detail: slopeRefDetail(ext),
     });
   }
   return out;

@@ -19,6 +19,7 @@ import type { Indicator, KLineData } from "klinecharts";
 import {
   slopeLineSeries,
   accelLineSeries,
+  slopeLengths,
   SLOPE_TEMPLATE,
   SLOPE_ACCEL_TEMPLATE,
   type SlopeExtend,
@@ -191,11 +192,11 @@ describe("slope parity golden fixture", () => {
     // Python's parse_slope_config. Backend test: test_slope_pane_rule_equality.
     //
     // Deliberately non-default on every axis a config-parsing divergence could
-    // hide in: two lines (so slope0/slope1 must differ), sma (not the ema
+    // hide in: two lines (so the two length outputs must differ), sma (not the ema
     // default), hl2 (not close), pctBar (not the pctHr default), slope smoothing
     // on, accel on with a non-default period, and accelAbsolute — the transform
     // the pane applies to its plotted values and which a rule referencing
-    // SLOPE.accelN must therefore see too.
+    // SLOPE.accel<length> must therefore see too.
     //
     // barHours is 4 (paired with PANE_RESOLUTION below), NOT 1, and that is
     // load-bearing for the units axis: at barHours 1, pctHr and pctBar are
@@ -215,27 +216,69 @@ describe("slope parity golden fixture", () => {
     // instead of hardcoding a string that could drift away from barHours.
     const PANE_RESOLUTION = "HOUR_4";
     const paneLengths = [5, 13];
-    const paneInd = { calcParams: paneLengths, extendData: paneExt } as unknown as Indicator;
-    const paneRows = (calc: typeof SLOPE_TEMPLATE.calc) =>
-      calc!(clean, paneInd) as unknown as SlopePoint[];
-    const slopeRows = paneRows(SLOPE_TEMPLATE.calc);
-    // computeAccelCalc keys its lines slope<i> too (drawSlope is reused verbatim
-    // on the companion pane) — the OUTPUT is named accel<i>. Read slope<i>, label
-    // accel<i>; reading `accel${i}` here would silently emit an all-null case.
-    const accelRows = paneRows(SLOPE_ACCEL_TEMPLATE.calc);
-    const paneCases = [
-      ...paneLengths.map((_len, i) => ({
-        output: `slope${i}`,
-        values: toNull(slopeRows.map((p) => p[`slope${i}`])),
-      })),
-      ...paneLengths.map((_len, i) => ({
-        output: `accel${i}`,
-        values: toNull(accelRows.map((p) => p[`slope${i}`])),
-      })),
-    ];
 
-    // Non-vacuous, and non-trivially so.
-    for (const c of paneCases) {
+    /** Every output of one pane config, produced by the templates' own `calc`. */
+    const casesForPane = (calcParams: number[], ext: SlopeExtend) => {
+      const ind = { calcParams, extendData: ext } as unknown as Indicator;
+      const rows = (calc: typeof SLOPE_TEMPLATE.calc) =>
+        calc!(clean, ind) as unknown as SlopePoint[];
+      const slopeRows = rows(SLOPE_TEMPLATE.calc);
+      // computeAccelCalc keys its lines slope<i> too (drawSlope is reused verbatim
+      // on the companion pane) — the OUTPUT is named accel<length>. Read the
+      // slope<i> FIGURE key, label it by length; reading `accel${i}` here would
+      // silently emit an all-null case.
+      //
+      // Figure keys stay ordinal (`slope<i>`) because they are klinecharts
+      // plumbing; only the RULE-facing output names are lengths. So the index
+      // and the label are deliberately two different things here.
+      const accelRows = rows(SLOPE_ACCEL_TEMPLATE.calc);
+      const lines = slopeLengths(calcParams);
+      return [
+        ...lines.map((len, i) => ({
+          output: `${len}`,
+          values: toNull(slopeRows.map((p) => p[`slope${i}`])),
+        })),
+        ...(ext.showAccel
+          ? lines.map((len, i) => ({
+              output: `accel${len}`,
+              values: toNull(accelRows.map((p) => p[`slope${i}`])),
+            }))
+          : []),
+      ];
+    };
+
+    const paneCases = casesForPane(paneLengths, paneExt);
+
+    // ---- A pane whose stored settings are FRACTIONAL and STALE ---------------
+    // Every number the pane parses is coerced with int() on the Python side
+    // (_lengths_of / parse_slope_config / _smoothing_of), and the number inputs
+    // in IndicatorSettings write Number(e.target.value) with no rounding — so a
+    // typed "3.5" reaches both runtimes verbatim. JS array indexing by a
+    // fractional offset yields undefined (a blank pane) or NaN where Python's
+    // truncation yields real values, which is a pane-vs-rule divergence the
+    // integer-valued config above cannot see.
+    //
+    // The two string fields are stale rather than fractional: a `units` or
+    // smoothing `type` written by an older build must land on the same fallback
+    // on both sides. Python coerces an unrecognised unit to pctHr and treats an
+    // unrecognised smoothing type as OFF; the TS side has to agree.
+    const stalePaneExt = {
+      maType: "ema", source: "close",
+      units: "pctDay",                              // not a SlopeUnit -> pctHr
+      slopePeriod: 3.5,                             // -> 3
+      smoothing: { type: "ema", length: 4.5 },      // -> ema(4)
+      showAccel: true, accelPeriod: 2.5,            // -> 2
+      accelSmoothing: { type: "wma", length: 4 },   // not sma/ema -> off
+      accelAbsolute: false,
+      barHours: 4,
+    } as unknown as SlopeExtend;
+    const stalePaneLengths = [5.5, 13.5];           // -> [5, 13]
+    const stalePaneCases = casesForPane(stalePaneLengths, stalePaneExt);
+
+    // Non-vacuous, and non-trivially so. The stale pane is included: its whole
+    // point is that a fractional setting must still PLOT — an all-null pane
+    // would match an all-null rule operand and prove nothing.
+    for (const c of [...paneCases, ...stalePaneCases]) {
       expect(
         c.values.some((v) => v !== null && Number.isFinite(v)),
         `pane case ${c.output} produced no defined values`,
@@ -245,7 +288,7 @@ describe("slope parity golden fixture", () => {
     // dropping the second line and nobody would notice.
     expect(
       JSON.stringify(paneCases[0].values) !== JSON.stringify(paneCases[1].values),
-      "slope0 and slope1 are identical — the two lengths are not both in play",
+      "the two length outputs are identical — the two lengths are not both in play",
     ).toBe(true);
     // The slope pane is signed; the accel pane, with accelAbsolute on, is not.
     expect(paneCases[0].values.some((v) => v !== null && v < 0)).toBe(true);
@@ -269,14 +312,32 @@ describe("slope parity golden fixture", () => {
           candles: clean.map((k) => ({ time: k.timestamp / 1000, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })),
           irregularCandles: irregular.map((k) => ({ time: k.timestamp / 1000, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })),
           cases,
-          // accelSmoothing is explicitly null (not dropped) so the fixture states
-          // "off" rather than leaving Python's parse to infer it from absence.
-          paneConfig: {
-            calcParams: paneLengths,
-            extendData: { ...paneExt, accelSmoothing: null },
-            resolution: PANE_RESOLUTION,
-          },
-          paneCases,
+          // One entry per pane config. The FIRST is the rich integer-valued pane
+          // the vacuity assertions in test_slope_pane_rule_equality.py describe;
+          // later entries add axes that one cannot reach.
+          panes: [
+            {
+              name: "canonical",
+              // accelSmoothing is explicitly null (not dropped) so the fixture
+              // states "off" rather than leaving Python's parse to infer it
+              // from absence.
+              config: {
+                calcParams: paneLengths,
+                extendData: { ...paneExt, accelSmoothing: null },
+                resolution: PANE_RESOLUTION,
+              },
+              cases: paneCases,
+            },
+            {
+              name: "fractional-and-stale",
+              config: {
+                calcParams: stalePaneLengths,
+                extendData: stalePaneExt,
+                resolution: PANE_RESOLUTION,
+              },
+              cases: stalePaneCases,
+            },
+          ],
         },
         null,
         2,

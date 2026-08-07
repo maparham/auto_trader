@@ -26,7 +26,12 @@ interface WarmupCase {
   warmup: Record<string, number>;
 }
 
-const CASES = cases as WarmupCase[];
+// Double cast because TS infers the JSON's `warmup` objects as a union of
+// LITERAL key sets ({"9": number, "50"?: undefined, ...}), and now that the
+// outputs are length-named no two cases share a key set, so the union no longer
+// "sufficiently overlaps" Record<string, number>. The runtime shape is
+// unchanged and the assertions below check it case by case.
+const CASES = cases as unknown as WarmupCase[];
 
 describe("slopeWarmup matches the Python authority", () => {
   for (const c of CASES) {
@@ -50,10 +55,10 @@ describe("slopeWarmup matches the Python authority", () => {
   });
 
   it("an output this config does not expose costs 0, not NaN", () => {
-    // accel is off here, so `accel0` is an unknown reference — the lint layer's
+    // accel is off here, so `accel9` is an unknown reference — the lint layer's
     // error to report. Inflating the history ask over it would hard-fail the run
     // for the wrong reason.
-    expect(slopeWarmup([9], {} as SlopeExtend, "accel0")).toBe(0);
+    expect(slopeWarmup([9], {} as SlopeExtend, "accel9")).toBe(0);
     expect(slopeWarmup([9], {} as SlopeExtend, "slope7")).toBe(0);
   });
 });
@@ -72,16 +77,16 @@ describe("warmupOf charges an indicator reference its pane's warm-up", () => {
 
   it("an unpinned pane costs its full warm-up in BASE bars", () => {
     const [instances, warmupByRef] = refs();
-    expect(warmupOf("SLOPE.slope0 > 0.5", 300, instances, warmupByRef)).toBe(62);
+    expect(warmupOf("SLOPE.50 > 0.5", 300, instances, warmupByRef)).toBe(62);
   });
 
   it("without the refs it is still 0 — the pre-fix behaviour", () => {
-    expect(warmupOf("SLOPE.slope0 > 0.5", 300)).toBe(0);
+    expect(warmupOf("SLOPE.50 > 0.5", 300)).toBe(0);
   });
 
   it("an offset outside the reference adds to it", () => {
     const [instances, warmupByRef] = refs();
-    expect(warmupOf("SLOPE.slope0[-2] > 0.5", 300, instances, warmupByRef)).toBe(64);
+    expect(warmupOf("SLOPE.50[-2] > 0.5", 300, instances, warmupByRef)).toBe(64);
   });
 
   it("a PINNED pane costs 0 base bars — it warms from its own HTF history", () => {
@@ -90,12 +95,12 @@ describe("warmupOf charges an indicator reference its pane's warm-up", () => {
       extendData: { ...(pane.extendData as object), mtf: { timeframe: "HOUR_4" } },
     };
     expect(
-      warmupOf("SLOPE.slope0 > 0.5", 300, exprInstancesFor([pinned]), exprWarmupByRef([pinned])),
+      warmupOf("SLOPE.50 > 0.5", 300, exprInstancesFor([pinned]), exprWarmupByRef([pinned])),
     ).toBe(0);
   });
 
   it("an unknown instance costs 0", () => {
     const [instances, warmupByRef] = refs();
-    expect(warmupOf("NOPE.slope0 > 0.5", 300, instances, warmupByRef)).toBe(0);
+    expect(warmupOf("NOPE.50 > 0.5", 300, instances, warmupByRef)).toBe(0);
   });
 });

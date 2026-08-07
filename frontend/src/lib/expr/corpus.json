@@ -115,25 +115,40 @@
   { "expr": "count(candle.close > 2, x) >= 1", "isExit": false, "error": {"code":"unknown_name","from":24,"to":25}, "literals": [] },
   { "expr": "count(EMA(9) x> EMA(50) x< 2, 10) >= 1", "isExit": false, "error": {"code":"cross_not_toplevel","from":24,"to":26}, "literals": [] },
 
-  { "expr": "SLOPE.slope0 > 0.5", "isExit": false, "error": null,
+  { "expr": "SLOPE.9 > 0.5", "isExit": false, "error": null,
     "instances": {"SLOPE": {"type":"SLOPE","calcParams":[9,21],"extendData":{"showAccel":true,"slopePeriod":3}}},
+    "literals": [
+      {"ordinal":0,"value":0.5,"from":10,"to":13,"label":"threshold"}
+    ] },
+  { "expr": "SLOPE#ab12.9 > 0.5", "isExit": false, "error": null,
+    "instances": {"SLOPE#ab12": {"type":"SLOPE","calcParams":[9],"extendData":{}}},
     "literals": [
       {"ordinal":0,"value":0.5,"from":15,"to":18,"label":"threshold"}
     ] },
-  { "expr": "SLOPE#ab12.slope0 > 0.5", "isExit": false, "error": null,
-    "instances": {"SLOPE#ab12": {"type":"SLOPE","calcParams":[9],"extendData":{}}},
-    "literals": [
-      {"ordinal":0,"value":0.5,"from":20,"to":23,"label":"threshold"}
-    ] },
-  { "expr": "SLOPE.accel1 x> 0", "isExit": false, "error": null,
+  { "expr": "SLOPE.accel21 x> 0", "isExit": false, "error": null,
     "instances": {"SLOPE": {"type":"SLOPE","calcParams":[9,21],"extendData":{"showAccel":true}}},
     "literals": [
-      {"ordinal":0,"value":0,"from":16,"to":17,"label":"constant"}
+      {"ordinal":0,"value":0,"from":17,"to":18,"label":"constant"}
     ] },
-  { "expr": "SLOPEP.slope0@4H > 0", "isExit": false, "error": {"code":"nested_tf","from":0,"to":16},
+  { "expr": "SLOPEP.9@4H > 0", "isExit": false, "error": {"code":"nested_tf","from":0,"to":11},
     "instances": {"SLOPEP": {"type":"SLOPE","calcParams":[9],"extendData":{"mtf":{"timeframe":"HOUR_4"}}}},
     "literals": [] },
   { "expr": "SLOPE.bogus > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":11},
     "instances": {"SLOPE": {"type":"SLOPE","calcParams":[9],"extendData":{}}},
-    "literals": [] }
+    "literals": [] },
+  { "expr": "SLOPE.50 > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":8},
+    "instances": {"SLOPE": {"type":"SLOPE","calcParams":[9,21],"extendData":{}}},
+    "literals": [] },
+
+  { "expr": "2 + .5 > 0", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":2,"from":0,"to":1,"label":"threshold"},
+      {"ordinal":1,"value":0.5,"from":4,"to":6,"label":"threshold"},
+      {"ordinal":2,"value":0,"from":9,"to":10,"label":"threshold"}
+    ] },
+  { "expr": ".5 > 0", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":0.5,"from":0,"to":2,"label":"threshold"},
+      {"ordinal":1,"value":0,"from":5,"to":6,"label":"threshold"}
+    ] }
 ]
