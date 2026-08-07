@@ -40,7 +40,6 @@ class CandleCacheStatsDTO(BaseModel):
 
 
 class CandleCacheGlobalStatsDTO(BaseModel):
-    total_bars: int
     total_hits: int
     total_misses: int
     db_size_bytes: int

@@ -80,9 +80,27 @@ def test_global_stats_sums_across_series(tmp_path):
     other_key = ("capital", "GBPUSD", "MINUTE", "mid")
     cache._store_closed(KEY, [_c(100, 1.0)], cutoff_ts=10_000)
     cache._store_closed(other_key, [_c(100, 1.0), _c(160, 2.0)], cutoff_ts=10_000)
+    cache._record_hit(KEY)
+    cache._record_hit(other_key)
+    cache._record_miss(other_key)
     gstats = cache.global_stats()
-    assert gstats["total_bars"] == 3
+    assert gstats["total_hits"] == 2
+    assert gstats["total_misses"] == 1
     assert gstats["db_size_bytes"] > 0
+
+
+def test_global_stats_scans_no_table(tmp_path, monkeypatch):
+    """The popover's 6s budget only holds because global_stats() never queries.
+    A row-scan here (e.g. a reinstated `SELECT COUNT(*) FROM bars`) took ~14s on a
+    real ~750MB db, which zeroed every field in the UI. Guard the O(1) property."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(100, 1.0)], cutoff_ts=10_000)
+
+    def _boom():
+        raise AssertionError("global_stats() must not open a db connection")
+
+    monkeypatch.setattr(cache, "_connect", _boom)
+    assert cache.global_stats()["db_size_bytes"] > 0
 
 
 class FakeFetcher:

@@ -301,14 +301,12 @@ class CandleCache:
         }
 
     def global_stats(self) -> dict:
-        """Cache-wide introspection (all series) for the cache-stats popover."""
-        conn = self._connect()
-        try:
-            (total_bars,) = conn.execute("SELECT COUNT(*) FROM bars").fetchone()
-        finally:
-            conn.close()
+        """Cache-wide introspection (all series) for the cache-stats popover.
+        Deliberately touches no table: a `SELECT COUNT(*) FROM bars` here scanned
+        millions of rows (~14s once the db reached ~750MB, worse under concurrent
+        writes), blowing the frontend's 6s budget and zeroing the whole popover.
+        Everything below is O(1) — in-memory counters plus a stat() on the file."""
         return {
-            "total_bars": total_bars,
             "total_hits": sum(self._hits.values()),
             "total_misses": sum(self._misses.values()),
             "db_size_bytes": os.path.getsize(self._db_path) if os.path.exists(self._db_path) else 0,

@@ -341,7 +341,6 @@ export interface CandleCacheStats {
 }
 
 export interface CandleCacheGlobalStats {
-  totalBars: number;
   totalHits: number;
   totalMisses: number;
   dbSizeBytes: number;
@@ -397,13 +396,11 @@ export async function fetchCandleCacheGlobalStats(): Promise<CandleCacheGlobalSt
     );
     if (!res.ok) return null;
     const d = (await res.json()) as {
-      total_bars: number;
       total_hits: number;
       total_misses: number;
       db_size_bytes: number;
     };
     return {
-      totalBars: d.total_bars,
       totalHits: d.total_hits,
       totalMisses: d.total_misses,
       dbSizeBytes: d.db_size_bytes,

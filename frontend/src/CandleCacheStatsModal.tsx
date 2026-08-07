@@ -135,10 +135,6 @@ export default function CandleCacheStatsModal({
                 <div className="instrument-section-title">Cache overall</div>
                 <dl className="instrument-grid">
                   <div className="instrument-row">
-                    <dt>Total bars</dt>
-                    <dd>{global?.totalBars ?? 0}</dd>
-                  </div>
-                  <div className="instrument-row">
                     <dt>Hit rate</dt>
                     <dd>{hitRate(global?.totalHits ?? 0, global?.totalMisses ?? 0)}</dd>
                   </div>

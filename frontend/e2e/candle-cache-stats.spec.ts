@@ -26,7 +26,6 @@ test("cache-stats badge opens a popover with per-series and global stats", async
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        total_bars: 50_000,
         total_hits: 900,
         total_misses: 100,
         db_size_bytes: 2_500_000,
