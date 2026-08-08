@@ -1249,7 +1249,14 @@
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
-.bt-cfg-title { font-size: 13px; }
+/* The title line leads with the run-mode seg (it names the panel's mode), so
+   it lays out as a row. The row does not wrap; the seg shrinks and clips
+   instead of overflowing a narrow panel — badges give way first, since their
+   content is the unbounded part. */
+.bt-cfg-title { font-size: 13px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bt-cfg-title .bt-mode-seg { flex-shrink: 1; min-width: 0; }
+.bt-cfg-title .bt-mode-seg button { min-width: 0; white-space: nowrap; overflow: hidden; }
+.bt-cfg-title .bt-mode-badge { flex-shrink: 4; min-width: 0; overflow: hidden; }
 .bt-cfg-res { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 /* The panel body between head and footer: a tab bar over a single scrolling
    region. Settings and results are sections of that one scroll pane, not
@@ -1270,8 +1277,8 @@
 }
 .bt-presets-region[hidden] { display: none; }
 /* Horizontal tab bar above the scrolling region — a sibling of it, not a child,
-   since it is also how you leave the results. The run-mode seg rides at its
-   right end (see .bt-htabs .bt-mode-seg below). */
+   since it is also how you leave the results. The run-mode seg lives in the
+   panel header (see .bt-cfg-title above), not here. */
 .bt-htabs {
   display: flex;
   align-items: center;
@@ -1280,14 +1287,6 @@
   padding: 8px 12px 0;
   border-bottom: 1px solid var(--border);
 }
-/* Right-pinned run-mode switch. Nudged up off the tab underline so it sits on
-   the tab labels' optical centre rather than on the bar's bottom edge. The row
-   does not wrap (a wrapped seg would strand the active tab's underline mid-bar),
-   so the seg is allowed to shrink and clip instead of overflowing the panel —
-   badges give way first, since their content is the unbounded part. */
-.bt-htabs .bt-mode-seg { margin-left: auto; margin-bottom: 5px; flex-shrink: 1; min-width: 0; }
-.bt-htabs .bt-mode-seg button { min-width: 0; white-space: nowrap; overflow: hidden; }
-.bt-htabs .bt-mode-badge { flex-shrink: 4; min-width: 0; overflow: hidden; }
 .bt-htabs button {
   background: transparent;
   border: none;

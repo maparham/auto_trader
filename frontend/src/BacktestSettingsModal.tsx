@@ -1897,10 +1897,11 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     </>
   );
 
-  // The Backtest | Sweep | Walk-fwd switch sits at the right end of the panel's
-  // tab bar. It gates what the whole panel configures (not just the results
-  // view), so it belongs on the top-level nav row and stays in one place
-  // regardless of whether results are docked below or in a side column.
+  // The Backtest | Sweep | Walk-fwd switch leads the panel's header line,
+  // standing in for a static panel name. It gates what the whole panel
+  // configures (not just the results view), so it sits above the section tabs
+  // rather than among them — two tab systems sharing the nav row could show
+  // two "active tabs" at once (e.g. Presets + Walk-fwd).
   const modeSeg = (
     <ModeSeg
       mode={btMode}
@@ -2151,7 +2152,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         />
         <div className="bt-cfg-head">
           <span className="bt-cfg-title">
-            Backtest — <strong>{epic}</strong> <span className="bt-cfg-res">{effectiveRes}</span>
+            {modeSeg} — <strong>{epic}</strong> <span className="bt-cfg-res">{effectiveRes}</span>
           </span>
           <span className="bt-cfg-head-actions">
             <Tooltip
@@ -2197,7 +2198,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 {t.label}
               </button>
             ))}
-            {modeSeg}
           </nav>
         {/* Hidden rather than unmounted: the section refs the scrollspy and the
             tab jumps depend on must survive a trip through Presets. */}
@@ -3117,6 +3117,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         </div>
         </div>
 
+        {/* Presets swaps the body out for its library, which has its own
+            actions (Save/Go live) — a mode-bound Run button and sweep hints
+            down here would act on something the pane isn't showing. */}
+        {tab !== "presets" && (
         <div className="modal-foot bt-cfg-foot">
           <RunBar
             lead={
@@ -3221,6 +3225,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             onRun={sideBySide ? undefined : runFromFooter}
           />
         </div>
+        )}
     </aside>
     </div>
     {!pinned && hidden && (

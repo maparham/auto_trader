@@ -1138,3 +1138,27 @@ describe("BacktestSettingsModal walk-forward Period layout", () => {
     expect(screen.getByText("Train")).toBeTruthy();
   });
 });
+
+// The Backtest | Sweep | Walk-fwd switch is panel-scoped (it changes what the
+// whole panel configures), so it lives in the header line, not among the
+// section tabs — two tab systems in one row read as one and could show two
+// "active tabs" at once (e.g. Presets + Walk-fwd).
+describe("BacktestSettingsModal mode switch placement", () => {
+  it("renders the run-mode switch in the panel header, not the tab bar", () => {
+    renderModal();
+    expect(document.querySelector(".bt-cfg-head .bt-mode-seg")).toBeTruthy();
+    expect(document.querySelector(".bt-htabs .bt-mode-seg")).toBeNull();
+  });
+
+  it("hides the footer run bar while the Presets pane is open", () => {
+    renderModal();
+    expect(document.querySelector(".bt-run-btn")).toBeTruthy();
+    openPresets();
+    // Presets has its own actions (Save/Go live); a mode-bound Run button down
+    // here would act on something the pane isn't showing.
+    expect(document.querySelector(".bt-run-btn")).toBeNull();
+    const nav = document.querySelector(".bt-htabs") as HTMLElement;
+    fireEvent.click(within(nav).getByRole("button", { name: "Period" }));
+    expect(document.querySelector(".bt-run-btn")).toBeTruthy();
+  });
+});
