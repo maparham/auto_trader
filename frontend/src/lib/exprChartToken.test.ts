@@ -65,7 +65,14 @@ describe("ATR instance references", () => {
     ).toBe("ATR#a1b2c3.14");
   });
 
-  it("a bare (unsuffixed) id cannot parse as a ref, so it falls back to the ATR(length) call", () => {
+  it("a numbered id (the current minting scheme) emits an instance ref", () => {
+    expect(chartIndicatorToExprToken("ATR", [21], {}, { instanceId: "ATR1" })).toBe("ATR1.21");
+    expect(
+      chartIndicatorToExprToken("ATR", [14], { smoothing: "sma" }, { instanceId: "ATR2" }),
+    ).toBe("ATR2.14");
+  });
+
+  it("a bare type-name id cannot parse as a ref, so it falls back to the ATR(length) call", () => {
     expect(chartIndicatorToExprToken("ATR", [14], {}, { instanceId: "ATR" })).toBe("ATR(14)");
   });
 });

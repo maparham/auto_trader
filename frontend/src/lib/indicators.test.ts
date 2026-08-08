@@ -379,9 +379,19 @@ describe("mintInstanceId (bare name for the first instance, except ref/function 
   }
 
   it("never gives an ATR pane the bare name — `ATR.14` would not parse as a ref", () => {
-    const id = mintInstanceId(fakeChart([]), "ATR");
-    expect(id).not.toBe("ATR");
-    expect(id).toMatch(/^ATR#[a-z0-9]{6}$/);
+    expect(mintInstanceId(fakeChart([]), "ATR")).toBe("ATR1");
+  });
+
+  it("numbers later ATR panes sequentially, filling the first gap", () => {
+    expect(mintInstanceId(fakeChart([{ name: "ATR1", paneId: "pane_1" }]), "ATR")).toBe("ATR2");
+    expect(
+      mintInstanceId(
+        fakeChart([{ name: "ATR1", paneId: "pane_1" }, { name: "ATR2", paneId: "pane_2" }]),
+        "ATR",
+      ),
+    ).toBe("ATR3");
+    // A deleted ATR1 frees its number for the next pane.
+    expect(mintInstanceId(fakeChart([{ name: "ATR2", paneId: "pane_2" }]), "ATR")).toBe("ATR1");
   });
 
   it("keeps the bare-name fast path for SLOPE (referenceable, but not a function name)", () => {
@@ -392,9 +402,22 @@ describe("mintInstanceId (bare name for the first instance, except ref/function 
     expect(mintInstanceId(fakeChart([]), "EMA")).toBe("EMA");
   });
 
-  it("still suffixes a second instance of a bare-name type", () => {
-    const id = mintInstanceId(fakeChart([{ name: "SLOPE", paneId: "pane_1" }]), "SLOPE");
-    expect(id).toMatch(/^SLOPE#[a-z0-9]{6}$/);
+  it("numbers a second instance of a bare-name type from 2 (the bare name IS number 1)", () => {
+    expect(mintInstanceId(fakeChart([{ name: "SLOPE", paneId: "pane_1" }]), "SLOPE")).toBe(
+      "SLOPE2",
+    );
+    expect(
+      mintInstanceId(
+        fakeChart([{ name: "SLOPE", paneId: "pane_1" }, { name: "SLOPE2", paneId: "pane_2" }]),
+        "SLOPE",
+      ),
+    ).toBe("SLOPE3");
+  });
+
+  it("legacy #-suffixed panes coexist with the numbered scheme", () => {
+    expect(
+      mintInstanceId(fakeChart([{ name: "ATR#oek8ei", paneId: "pane_1" }]), "ATR"),
+    ).toBe("ATR1");
   });
 });
 

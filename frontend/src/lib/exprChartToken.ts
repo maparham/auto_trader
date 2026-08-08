@@ -85,12 +85,13 @@ export function chartIndicatorToExprToken(
     // context at all, and the unreachable-but-possible bare "ATR" id (pre-mint
     // fix), which cannot parse as a ref because ATR is a registered function
     // name. Both are RMA-identical only for an unsmoothed pane, which is the
-    // default — a smoothed pane always arrives with a suffixed id.
+    // default — a smoothed pane always arrives with a distinct id ("ATR1" or a
+    // legacy "ATR#<rand>"), and any id other than the bare type name parses.
     case "ATR": {
       const id = opts?.instanceId;
       // atrOutputs falls back to 14 on a garbage length, exactly as the
       // backend's parse_atr_config does, so the ref stays valid on both stacks.
-      if (id && id.includes("#")) return `${id}.${atrOutputs(calcParams)[0]}`;
+      if (id && id !== indType) return `${id}.${atrOutputs(calcParams)[0]}`;
       return hasLen ? `ATR(${len})` : null;
     }
     case "VOLMA":

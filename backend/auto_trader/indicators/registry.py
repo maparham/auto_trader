@@ -56,8 +56,11 @@ class ResolvedInstance:
 
 
 def instance_type_of(instance_id: str) -> str:
-    """`mintInstanceId` (frontend indicators.ts) names the first instance after
-    its type and suffixes later ones with "#<rand>"."""
+    """Best-effort fallback for a payload that omits `type` (the frontend's
+    collectExprInstances never does). `mintInstanceId` (frontend indicators.ts)
+    names the first instance after its type; later instances get a sequential
+    number ("SLOPE2", "ATR1") which this split cannot decode — only legacy
+    "#<rand>" ids from earlier builds are recoverable here."""
     return instance_id.split("#", 1)[0]
 
 

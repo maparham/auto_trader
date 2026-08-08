@@ -309,10 +309,16 @@ export function reorderSubPanes(
 
 // Mint a unique instance id for a type. The bare type name is used for the FIRST
 // instance (so storage stays byte-identical for single-instance users and the
-// migration that maps old name → {id:name,type:name} lines up); later instances get
-// a "#<rand>" suffix. The id must be a valid, unique klinecharts indicator name.
+// migration that maps old name → {id:name,type:name} lines up); later instances
+// get a sequential number ("SLOPE2", "SLOPE3" — the bare name IS number 1),
+// filling the lowest free slot so a deleted pane's number is reused. The id must
+// be a valid, unique klinecharts indicator name; both expression parsers accept
+// a plain alphanumeric id, so no "#" separator is needed (legacy "TYPE#<rand>"
+// ids from earlier builds still load and still parse — the ref grammar keeps
+// the optional # branch).
 // The one exception is a type that is both instance-referenceable and an expr
-// function name (see refCollision below) — it always gets the suffix.
+// function name (see refCollision below) — it never gets the bare name, so its
+// numbering starts at 1 ("ATR1", "ATR2").
 export function mintInstanceId(chart: Chart, type: string): string {
   const taken = new Set<string>();
   const panes = getIndicatorsByPane(chart);
@@ -321,16 +327,16 @@ export function mintInstanceId(chart: Chart, type: string): string {
   // FUNCTION name (today: ATR) never gets the bare name: `ATR.14` cannot parse
   // as a ref (the name resolves to the function), so a pane named "ATR" would
   // be unreferenceable and the completion popup would suggest unparseable refs.
-  // Always minting "ATR#<rand>" keeps every pane referenceable. EMA/RSI etc.
-  // keep the bare-name fast path — they are not instance-referenceable, and
-  // their bare names are load-bearing for stored-chart compatibility.
+  // "ATR1" has no such collision — a digit-bearing name can never be a
+  // registered function. EMA/RSI etc. keep the bare-name fast path — they are
+  // not instance-referenceable, and their bare names are load-bearing for
+  // stored-chart compatibility.
   const refCollision = EXPR_INSTANCE_TYPES.has(type) && Object.hasOwn(INDICATOR_SPECS, type);
   if (!refCollision && !taken.has(type)) return type; // first instance keeps the clean name
-  let id: string;
-  do {
-    id = `${type}#${Math.random().toString(36).slice(2, 8)}`;
-  } while (taken.has(id));
-  return id;
+  for (let n = refCollision ? 1 : 2; ; n++) {
+    const id = `${type}${n}`;
+    if (!taken.has(id)) return id;
+  }
 }
 
 // Pull a registerable template off a LIVE indicator instance of `type`. klinecharts

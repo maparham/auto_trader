@@ -213,7 +213,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     title: "Average True Range",
-    desc: "Average of the true range over the window — volatility in price units. Referenceable in backtest rules as an instance (e.g. ATR#a1b2.14).",
+    desc: "Average of the true range over the window — volatility in price units. Referenceable in backtest rules as an instance (e.g. ATR1.14).",
   },
   // Linear Regression Channel (TV "LR"): window Length + channel Deviations
   // (calcParams), and a price Source dropdown stored on extendData.
