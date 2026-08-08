@@ -37,6 +37,9 @@ import type { SavedOverlay } from "./persist";
 //                     way lineHidden does (computeRsi, L1420); the band LEVELS
 //                     only position the canvas-drawn shading (drawRsiBand/
 //                     drawRsiZoneFill) and never feed the RSI or divergence math
+//  - pctSource      : ATR's legend ATR% price source (AtrExtend). It parametrizes
+//                     the legend-only atrPct readout, never the plotted ATR line
+//                     or any rule output — same category as hideLegendValue
 //
 // NOT denylisted: RsiExtend.divergence (RsiDivergenceConfig, customIndicators.ts
 // L1143-1156) — `on` plus the lookback/range/kind fields directly parametrize
@@ -51,6 +54,7 @@ const NON_IDENTIFYING_EXTEND_KEYS = new Set([
   "hideLegendValue",
   "lineHidden",
   "style",
+  "pctSource",
 ]);
 
 // The identity-relevant slice of extendData with deterministically-ordered keys.

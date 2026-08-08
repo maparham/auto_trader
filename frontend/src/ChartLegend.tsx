@@ -259,9 +259,11 @@ export default function ChartLegend({
           const span = figureValuesRef.current.get(`${name}|${fig.key}`);
           if (!span) continue;
           const v = row?.[fig.key];
+          // Optional unit suffix a figure can carry (e.g. ATR%'s "%").
+          const suffix = (fig as { suffix?: string }).suffix ?? "";
           span.textContent =
             typeof v === "number" && Number.isFinite(v)
-              ? fmtNum(v, ind.precision ?? prec)
+              ? fmtNum(v, ind.precision ?? prec) + suffix
               : "n/a";
         }
       }

@@ -8,6 +8,7 @@
 
 import type { KLineData } from "klinecharts";
 import { smoothSeries } from "./indicators/smoothing";
+import type { PriceSource } from "./mtf";
 
 export type AtrSmoothing = "rma" | "sma" | "ema" | "wma";
 
@@ -76,10 +77,20 @@ export function atrSeries(
   return out;
 }
 
-/** Per-instance config carried on extendData (settings modal Smoothing select). */
+/** Per-instance config carried on extendData (settings modal Smoothing select).
+ * pctSource picks the bar price the legend's ATR% readout divides by. */
 export interface AtrExtend {
   smoothing?: AtrSmoothing;
+  pctSource?: PriceSource;
   hideLegendValue?: boolean;
+}
+
+/** Coerce a stored/unknown ATR% price source to a real one; default close. */
+export function normalizeAtrPctSource(v: unknown): PriceSource {
+  return v === "open" || v === "high" || v === "low" || v === "close" ||
+    v === "hl2" || v === "hlc3" || v === "ohlc4" || v === "hlcc4"
+    ? v
+    : "close";
 }
 
 /** calcParams[0] truncated like Python int(); garbage/0 → 14. Mirrors

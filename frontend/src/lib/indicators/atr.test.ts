@@ -32,7 +32,31 @@ describe("ATR_TEMPLATE", () => {
   it("is a sub-pane single-line template with TV defaults", () => {
     expect(ATR_TEMPLATE.series).toBe("normal");
     expect(ATR_TEMPLATE.calcParams).toEqual([14]);
-    expect(ATR_TEMPLATE.figures?.map((f) => f.key)).toEqual(["atr"]);
+    expect(ATR_TEMPLATE.figures?.map((f) => f.key)).toEqual(["atr", "atrPct"]);
+    // atrPct is a legend-only readout: no `type`, so klinecharts plots nothing.
+    expect(ATR_TEMPLATE.figures?.find((f) => f.key === "atrPct")?.type).toBeUndefined();
+  });
+  it("computes ATR% against the chosen price source", () => {
+    const data = candles(40);
+    const calc = ATR_TEMPLATE.calc as (
+      d: KLineData[],
+      i: Indicator,
+    ) => Array<{ atr?: number; atrPct?: number }>;
+    const byClose = calc(data, fakeInd([14], {}));
+    const byHigh = calc(data, fakeInd([14], { pctSource: "high" }));
+    const series = atrSeries(data, 14);
+    for (let i = 0; i < data.length; i++) {
+      const v = series[i];
+      if (v == null) {
+        expect(byClose[i].atrPct).toBeUndefined();
+        continue;
+      }
+      expect(byClose[i].atrPct).toBeCloseTo((v / data[i].close) * 100, 10);
+      expect(byHigh[i].atrPct).toBeCloseTo((v / data[i].high) * 100, 10);
+    }
+    // Garbage source falls back to close.
+    const junk = calc(data, fakeInd([14], { pctSource: "median" }));
+    expect(junk.map((p) => p.atrPct)).toEqual(byClose.map((p) => p.atrPct));
   });
   it("calc maps atrSeries under the pane's settings", () => {
     const data = candles(40);

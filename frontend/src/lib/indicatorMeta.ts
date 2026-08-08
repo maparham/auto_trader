@@ -211,6 +211,12 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
           { value: "wma", label: "WMA" },
         ],
       },
+      {
+        key: "pctSource", label: "% Source", type: "select",
+        source: "extend", field: "pctSource", default: "close",
+        tip: "Bar price the legend's ATR% readout is measured against (ATR ÷ price × 100).",
+        options: PRICE_SOURCES,
+      },
     ],
     title: "Average True Range",
     desc: "Average of the true range over the window — volatility in price units. Referenceable in backtest rules as an instance (e.g. ATR1.14).",
