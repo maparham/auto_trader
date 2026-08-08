@@ -324,18 +324,17 @@ export function fitBacktestTrades(chart: Chart, result: StoredBacktestResult): v
   applyVisibleRangeKeepStart(chart, from, to, start);
 }
 
-// Backtest fill marker (arrow + label). A hand-rolled clone of klinecharts'
-// built-in `simpleAnnotation` — IDENTICAL geometry — with ONE deliberate
-// difference: the figures do NOT set `ignoreEvent: true`. The built-in hardcodes
-// `ignoreEvent: true` on its line/arrow/text, which klinecharts' _createFigureEvents
-// reads to strip ALL mouse events at the dispatch layer, so an overlay-level
-// onClick/onMouseEnter/onMouseLeave could never fire (that's the bug this fixes).
+// Backtest fill marker (arrow + label). A hand-rolled take on klinecharts'
+// built-in `simpleAnnotation` (minus its long stem line, which read as visual
+// noise near the wicks) with ONE other deliberate difference: the figures do
+// NOT set `ignoreEvent: true`. The built-in hardcodes `ignoreEvent: true` on
+// its figures, which klinecharts' _createFigureEvents reads to strip ALL mouse
+// events at the dispatch layer, so an overlay-level onClick/onMouseEnter/
+// onMouseLeave could never fire (that's the bug this fixes).
 // Leaving ignoreEvent unset lets figure hits route to the overlay handlers
 // (see drawFigures -> _createFigureEvents -> onMouseEnter/onClick).
-// Appearance is preserved because per-figure styles are omitted, so each figure
-// inherits `defaultStyles[type]` merged with the overlay-level `styles` we pass
-// at createOverlay — the same merge the built-in relied on (only the vertical
-// line is side-colored; arrow + text use theme defaults).
+// Per-figure styles are omitted, so arrow + text inherit `defaultStyles[type]`
+// merged with any overlay-level `styles` passed at createOverlay.
 // Exported so the live trade-marker drawer (tradeMarkers.ts) reuses this exact
 // overlay glyph rather than defining a parallel one — same arrow/pill geometry,
 // same extendData contract (label / win / placement).
@@ -406,28 +405,24 @@ const markerOverlay: OverlayTemplate = {
       ];
     }
 
-    // Backtest fills: the classic stem + arrow + always-on label pill.
-    const startY = coordinates[0].y + dir * 6;
-    const lineEndY = startY + dir * 50;
-    const arrowEndY = lineEndY + dir * 5;
+    // Backtest fills: a compact arrow + always-on label pill hugging the fill.
+    // (Historically these hung off a 50px stem, which read as a stray vertical
+    // line near the candle wicks — the arrow alone points at the fill price.)
+    const arrowTipY = coordinates[0].y + dir * 6;
+    const arrowEndY = arrowTipY + dir * 6;
     // The label renders as a filled pill via klinecharts' default overlay text
     // style (white text on a blue background). Override just the fill/border to
     // the win/loss color so a losing trade's marker reads red, a winner green.
     const pillColor = win == null ? undefined : win ? BUY_COLOR : SELL_COLOR;
-    // The long/short direction now rides INSIDE the label pill (markerPillLabel
+    // The long/short direction rides INSIDE the label pill (markerPillLabel
     // prefixes an entry with ▲/▼), so it reads on every timeframe — the coarser
-    // aggregate view has only the DOM pill, no stem/arrowhead. The stem arrowhead
-    // here is back to its plain original: it just points at the fill price.
+    // aggregate view has only the DOM pill, no arrowhead.
     return [
-      {
-        type: "line",
-        attrs: { coordinates: [{ x: startX, y: startY }, { x: startX, y: lineEndY }] },
-      },
       {
         type: "polygon",
         attrs: {
           coordinates: [
-            { x: startX, y: lineEndY },
+            { x: startX, y: arrowTipY },
             { x: startX - 4, y: arrowEndY },
             { x: startX + 4, y: arrowEndY },
           ],
@@ -1232,7 +1227,6 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
           win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
           placement: bar ? markerPlacement(m.price, bar.high, bar.low) : "above",
         } satisfies MarkerExtra,
-        styles: { line: { color: m.side === "buy" ? BUY_COLOR : SELL_COLOR, style: 'solid' } },
         // v10 deletes an overlay on right-click unless the handler calls
         // e.preventDefault() (lock:true does NOT protect it) — without this a
         // right-click on a fill marker silently removed it until the next reconcile.
