@@ -410,9 +410,10 @@ class CandleCache:
                 # (same bar count per broker call), so a mean is a fair estimate.
                 eta = elapsed / done_chunks * max(0, total_chunks - done_chunks)
                 log.info(
-                    "backfill %s %d/%d (%d%%) at %s, %d bars, %.1fs elapsed, ~%.0fs left",
+                    "backfill %s %d/%d (%d%% done, %d%% left) at %s, %d bars, %.1fs elapsed, ~%.0fs left",
                     _key_label(key), done_chunks, total_chunks,
-                    done_chunks * 100 // total_chunks, _stamp(chunk_from_ts),
+                    done_chunks * 100 // total_chunks,
+                    100 - done_chunks * 100 // total_chunks, _stamp(chunk_from_ts),
                     bars_in, elapsed, eta,
                 )
         if total_chunks > 1 and fetched_any:
