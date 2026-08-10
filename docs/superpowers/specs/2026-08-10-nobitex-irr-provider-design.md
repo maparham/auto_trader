@@ -45,8 +45,9 @@ volume and a genuine bid/ask.
   ascending.
 - `get_recent_candles`: now-window sized `count × res × 1.2 + 1 day`, tail
   `count` (24/7 market — modest padding suffices).
-- `get_quote`: `/market/stats` bestBuy/bestSell ×10 → real (bid, ask). This
-  broker CAN price paper trading, unlike oanor/dukascopy/yfinance.
+- `get_quote`: `/market/stats` bestBuy/bestSell → real (bid, ask), already in
+  rial (only UDF candles need the ×10). This broker CAN price paper trading,
+  unlike oanor/dukascopy/yfinance.
 - Catalogue: curated list of major IRT pairs (USDT, BTC, ETH, TRX, XRP, DOGE,
   SOL, TON, SHIB…) with display names + precision 0 (rial); uncurated epics
   pass through verbatim (yfinance precedent). `pricePrecision: 0`.

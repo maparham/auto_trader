@@ -103,3 +103,115 @@ def _chunks(start_ts: int, end_ts: int, res_seconds: int, max_bars: int = _MAX_B
         e = min(s + span, end_ts)
         yield s, e
         s = e
+
+
+async def _api_get(client: httpx.AsyncClient, path: str, params: dict) -> dict:
+    """One GET → parsed JSON. Module-level so tests monkeypatch it. HTTP errors
+    propagate into the caller's circuit breaker — a failed fetch must never
+    read as "no data" or the cache would mark the range covered-empty."""
+    resp = await client.get(path, params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
+class NobitexBroker(MarketDataBroker):
+    """Read-only crypto/IRR candles + live orderbook quote from Nobitex.
+    Data-only (no executor, no stream); prices in rial; price_side ignored for
+    history (trade data = mid) but get_quote is a true (bid, ask)."""
+
+    supports_streaming = False
+
+    def __init__(self, base_url: str = _BASE_URL) -> None:
+        self._client = httpx.AsyncClient(base_url=base_url, timeout=20.0)
+        self._throttle = asyncio.Lock()
+        self._last_request = 0.0
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def _get(self, path: str, params: dict) -> dict:
+        async with self._throttle:
+            wait = self._last_request + _MIN_REQUEST_INTERVAL - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                return await _api_get(self._client, path, params)
+            finally:
+                self._last_request = time.monotonic()
+
+    async def _fetch_series(
+        self,
+        epic: str,
+        resolution: Resolution,
+        start: datetime,
+        end: datetime,
+    ) -> list[Candle]:
+        """Chunked UDF fetch of a native resolution, deduped across seams."""
+        udf_res = _RESOLUTIONS[resolution]
+        out: list[Candle] = []
+        seen: set[datetime] = set()
+        for s, e in _chunks(int(start.timestamp()), int(end.timestamp()), resolution.seconds):
+            payload = await self._get(
+                "/market/udf/history",
+                {"symbol": epic, "resolution": udf_res, "from": s, "to": e},
+            )
+            for c in _udf_to_candles(payload, resolution):
+                if c.time not in seen:
+                    seen.add(c.time)
+                    out.append(c)
+        out.sort(key=lambda c: c.time)
+        return out
+
+    async def get_candles(
+        self,
+        epic: str,
+        resolution: Resolution,
+        start: datetime,
+        end: datetime,
+        price_side: str = "mid",
+    ) -> list[Candle]:
+        if resolution is Resolution.WEEK:
+            # No weekly upstream: fetch the dailies covering the window (one
+            # week of margin on the left edge so the first bucket is complete)
+            # and fold, then slice.
+            daily = await self._fetch_series(
+                epic, Resolution.DAY, start - timedelta(days=7), end
+            )
+            weekly = fold_days_to_weeks(daily)
+            return [c for c in weekly if start <= c.time <= end]
+        if resolution not in _RESOLUTIONS:
+            return []
+        candles = await self._fetch_series(epic, resolution, start, end)
+        return [c for c in candles if start <= c.time <= end]
+
+    async def get_recent_candles(
+        self,
+        epic: str,
+        resolution: Resolution,
+        count: int,
+        price_side: str = "mid",
+    ) -> list[Candle]:
+        """24/7 market: a window of count×width plus modest padding suffices
+        (padding absorbs the dropped forming bar and rare exchange downtime)."""
+        if count <= 0 or (resolution is not Resolution.WEEK and resolution not in _RESOLUTIONS):
+            return []
+        now = datetime.now(timezone.utc)
+        span = timedelta(seconds=int(resolution.seconds * count * 1.2)) + timedelta(days=1)
+        candles = await self.get_candles(epic, resolution, now - span, now, price_side)
+        return candles[-count:]
+
+    async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
+        """Live orderbook top from /market/stats — already in RIAL (only the
+        UDF candle endpoint speaks toman). Real spread: paper trading can
+        price fills off this broker."""
+        base = epic[:-3].lower() if epic.upper().endswith("IRT") else epic.lower()
+        payload = await self._get(
+            "/market/stats", {"srcCurrency": base, "dstCurrency": "rls"}
+        )
+        stats = (payload.get("stats") or {}).get(f"{base}-rls") or {}
+        try:
+            bid = float(stats["bestBuy"])
+            ask = float(stats["bestSell"])
+        except (KeyError, TypeError, ValueError):
+            return (None, None)
+        return (bid, ask)
