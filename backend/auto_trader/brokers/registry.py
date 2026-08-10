@@ -52,6 +52,14 @@ class BrokerRegistry:
             raise HTTPException(422, f"unknown account: {key}")
         return broker
 
+    def default_data_id(self) -> str:
+        """The broker a request that names none lands on: capital when registered
+        (the historical default), else the first registered data broker (always
+        non-empty — dukascopy/yfinance register unconditionally)."""
+        if "capital" in self.data:
+            return "capital"
+        return sorted(self.data)[0]
+
     def describe(self) -> dict:
         """Selector payload for the frontend. env/is_real_money come straight off
         each executor, so a new account shows up here with no extra wiring."""
@@ -117,7 +125,11 @@ def build_registry() -> BrokerRegistry:
     # Yahoo Finance: decades of daily history + US stocks/ETFs/crypto. No
     # credentials, always available. Data-only, same shape as dukascopy.
     yfinance.register(registry)
-    capital.register(registry)  # demo feed: capital data + capital:paper + capital:demo
+    # Capital demo feed: capital data + capital:paper + capital:demo. Only when the
+    # demo credentials are present, so a credential-free deployment never advertises
+    # a feed whose every upstream call would 401.
+    if settings.has():
+        capital.register(registry)
     # Live feed: capital-live data + capital-live:paper + capital-live:live. Only when
     # the live credentials are present, so a half-configured account never shows a
     # dead tab.

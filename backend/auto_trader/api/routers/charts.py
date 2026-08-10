@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auto_trader.brokers.capital_stream import SECONDS_INTERVALS
 from auto_trader.core.candle_aggregate import DERIVED, is_derived
@@ -13,7 +13,7 @@ from auto_trader.core.models import Candle, Resolution
 from auto_trader.core.synthetic import SyntheticError, combine, symbols, parse
 
 from .. import deps
-from ..deps import _parse_resolution
+from ..deps import _parse_resolution, broker_query
 from ..schemas import (
     CandleCacheGlobalStatsDTO,
     CandleCacheStatsDTO,
@@ -32,7 +32,7 @@ async def candles(
     from_ts: int | None = Query(None, description="window start, unix seconds"),
     to_ts: int | None = Query(None, description="window end, unix seconds"),
     price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
-    broker_id: str = Query("capital", alias="broker"),
+    broker_id: str = Depends(broker_query),
 ) -> list[CandleDTO]:
     """Candles for an epic. With from_ts/to_ts -> that date window (used by the
     chart's scroll-back). Without -> most-recent `bars` (weekend-proof).
@@ -60,7 +60,7 @@ async def candles_synthetic(
     from_ts: int | None = Query(None),
     to_ts: int | None = Query(None),
     price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
-    broker_id: str = Query("capital", alias="broker"),
+    broker_id: str = Depends(broker_query),
 ) -> list[CandleDTO]:
     """Candles for a synthetic (arithmetic-combination) chart. Stateless: the raw
     expression is parsed here, each symbol is fetched via the shared candle path
@@ -94,7 +94,7 @@ async def candle_cache_stats(
     epic: str = Query(...),
     resolution: str = Query(...),
     price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
-    broker_id: str = Query("capital", alias="broker"),
+    broker_id: str = Depends(broker_query),
 ) -> CandleCacheStatsDTO:
     """Read-only cache introspection for the chart's cache-stats badge/popover.
     Never touches the broker or mutates cache state."""

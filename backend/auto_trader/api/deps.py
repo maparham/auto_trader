@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import TypeVar
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Query
 
 from auto_trader.api.guard import COMPUTE_ONLY_ENV
 
@@ -59,6 +59,20 @@ def get_data(broker_id: str) -> MarketDataBroker:
     """The market-data broker for a broker id ("capital"). 404 if unknown."""
     assert _registry is not None, "registry not initialised"
     return _registry.get_data(broker_id)
+
+
+def default_broker_id() -> str:
+    """The data broker a request that names none lands on (capital when
+    registered, else the first registered broker — see default_data_id)."""
+    assert _registry is not None, "registry not initialised"
+    return _registry.default_data_id()
+
+
+def broker_query(broker: str = Query("")) -> str:
+    """The ?broker= param as a route dependency. Empty/absent resolves to the
+    default registered broker, so a deployment without capital creds (where the
+    old literal "capital" default would 404) still serves bare requests."""
+    return broker or default_broker_id()
 
 
 # Per-broker circuit breaker shared by every data-broker route. Keeps one down or
@@ -254,6 +268,9 @@ async def _fetch_symbol_candles(
     same HTTPExceptions as before for bad brokers/windows/IG-derived; does NOT
     raise the native-path "no data at all" 404 — that decision stays with the
     caller (a symbol's emptiness may or may not be fatal depending on context)."""
+    # Resolve an unnamed broker BEFORE anything keys off broker_id (breaker,
+    # candle cache, tick store) so an empty id never becomes a cache key.
+    broker_id = broker_id or default_broker_id()
     _reject_symbol_fetch_on_compute_host(epic, resolution)
     if resolution in SECONDS_INTERVALS:
         return await TICK_STORE.bars(broker_id, epic, SECONDS_INTERVALS[resolution], bars)

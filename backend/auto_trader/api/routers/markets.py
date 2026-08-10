@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import deps
-from ..deps import get_data, guarded
+from ..deps import broker_query, get_data, guarded
 from ..schemas import MarketDTO
 
 router = APIRouter()
@@ -26,7 +26,7 @@ async def brokers() -> dict:
 
 @router.get("/api/markets", response_model=list[MarketDTO])
 async def markets(
-    q: str = Query(""), broker_id: str = Query("capital", alias="broker")
+    q: str = Query(""), broker_id: str = Depends(broker_query)
 ) -> list[MarketDTO]:
     # Keyword search. The symbol-search modal uses this while the user types; its
     # default/category browsing comes from /api/markets/all (filtered client-side).
@@ -37,7 +37,7 @@ async def markets(
 
 @router.get("/api/markets/all", response_model=list[MarketDTO])
 async def all_markets(
-    broker_id: str = Query("capital", alias="broker"),
+    broker_id: str = Depends(broker_query),
 ) -> list[MarketDTO]:
     # The full instrument catalogue (~4000), one upstream call. The modal caches
     # this and filters by instrumentType for its category chips.
@@ -48,7 +48,7 @@ async def all_markets(
 
 @router.get("/api/market/{epic}")
 async def market_meta(
-    epic: str, broker_id: str = Query("capital", alias="broker")
+    epic: str, broker_id: str = Depends(broker_query)
 ) -> dict[str, object]:
     # Display precision + open/closed status for one epic, from the platform's own
     # single-market snapshot (one upstream call). The chart calls this on load so a
@@ -71,7 +71,7 @@ async def market_meta(
 
 @router.get("/api/market/{epic}/details")
 async def market_details(
-    epic: str, broker_id: str = Query("capital", alias="broker")
+    epic: str, broker_id: str = Depends(broker_query)
 ) -> dict[str, object]:
     # Full broker-provided instrument detail (instrument + dealingRules + snapshot),
     # passed through verbatim for the chart's instrument-details modal. Fetched once
@@ -86,7 +86,7 @@ async def market_details(
 
 @router.get("/api/favorites", response_model=list[MarketDTO])
 async def favorites(
-    broker_id: str = Query("capital", alias="broker"),
+    broker_id: str = Depends(broker_query),
 ) -> list[MarketDTO]:
     # The account's FAVORITES watchlist — the modal's opening view.
     broker = get_data(broker_id)
@@ -96,7 +96,7 @@ async def favorites(
 
 @router.put("/api/favorites/{epic}", status_code=204)
 async def add_favorite(
-    epic: str, broker_id: str = Query("capital", alias="broker")
+    epic: str, broker_id: str = Depends(broker_query)
 ) -> None:
     # Add an epic to the FAVORITES watchlist (creates the list on first add).
     broker = get_data(broker_id)
@@ -108,7 +108,7 @@ async def add_favorite(
 
 @router.delete("/api/favorites/{epic}", status_code=204)
 async def remove_favorite(
-    epic: str, broker_id: str = Query("capital", alias="broker")
+    epic: str, broker_id: str = Depends(broker_query)
 ) -> None:
     # Remove an epic from the FAVORITES watchlist.
     broker = get_data(broker_id)

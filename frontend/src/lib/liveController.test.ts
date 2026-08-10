@@ -22,6 +22,7 @@ vi.mock("../api", async (importOriginal) => {
 });
 
 vi.mock("./feed", () => ({
+  DEFAULT_BROKER: "capital",
   fetchRecent: vi.fn().mockResolvedValue([
     { timestamp: 1_700_000_000_000, open: 10, high: 10, low: 10, close: 10, volume: 0 },
   ]),

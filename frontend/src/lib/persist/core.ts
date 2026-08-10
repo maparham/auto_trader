@@ -3,6 +3,7 @@
 // updates, and per-cell scope helpers. Everything else in the persist/ folder
 // builds on these.
 
+import { defaultBrokerId } from "../brokerDefaults";
 import { API_BASE } from "../http";
 
 export const PREFIX = "auto-trader";
@@ -52,7 +53,9 @@ function brokerFromActiveAccount(): string {
     }
   }
   if (acct) return acct.split(":")[0];
-  return "capital"; // feed.ts DEFAULT_BROKER; literal to avoid an import cycle
+  // No persisted account (first-ever visit): the same fallback as feed.ts's
+  // DEFAULT_BROKER. brokerDefaults is dependency-free, so no import cycle.
+  return defaultBrokerId();
 }
 // Lazily initialized (NOT at module eval time): App.tsx's one-time key migration
 // (capital:live -> capital-live:live) also runs at its own module's top level, and

@@ -8,6 +8,7 @@
 // keyed on a trade (lines, pending edits) uses the unified `id` (deal_id for a
 // position, order_id for a resting order).
 
+import { BROKERS_CACHE_KEY, defaultAccount } from "./brokerDefaults";
 import { isCapitalBroker, onTradesDirty } from "./persist";
 import { isStrategyDeal } from "./liveTags";
 import { tradesSignal } from "./signals";
@@ -18,7 +19,9 @@ import { expiryToApi } from "./expiry";
 // A registry account key "{broker}:{env}", e.g. "capital:paper". Opaque to the
 // frontend — it comes from GET /api/brokers and routes orders/positions.
 export type TradeAccount = string;
-export const DEFAULT_ACCOUNT: TradeAccount = "capital:paper";
+// capital:paper when the backend has it; on a capital-less deployment (demo
+// host) the first registered account from the last-good broker cache instead.
+export const DEFAULT_ACCOUNT: TradeAccount = defaultAccount();
 
 // The broker id half of a "{broker}:{env}" account key. The single place that knows
 // the key shape — callers holding a BrokerAccount object should read its `.broker`
@@ -179,7 +182,6 @@ export interface BrokerInfo {
 // hanging requests can make this one-shot fetch time out. We therefore (a) bound
 // it with an abort timeout and (b) cache the last-good list so a transient failure
 // still renders the selector instead of showing "no accounts".
-const BROKERS_CACHE_KEY = "brokersCache";
 const BROKERS_TIMEOUT_MS = 6_000;
 
 /** Last-good broker list from a previous successful fetch, or null. Lets the

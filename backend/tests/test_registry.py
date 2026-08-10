@@ -21,13 +21,17 @@ from auto_trader.brokers.registry import BrokerRegistry, build_registry
 
 @pytest.fixture(autouse=True)
 def _no_ig(monkeypatch):
-    """Default: pretend IG, Capital-live, MT5 and oanor are unconfigured so the base
-    assertions are deterministic regardless of the local .env. Tests that want them
-    opt back in explicitly. Capital-live is cleared via the underlying creds (not a
-    has_live() override) so tests can still exercise the real has_live() gating."""
+    """Default: pretend IG, Capital-live, MT5 and oanor are unconfigured — and the
+    Capital demo account IS configured — so the base assertions are deterministic
+    regardless of the local .env. Tests that want a different mix opt in/out
+    explicitly. Capital creds are set via the underlying fields (not a has()
+    override) so tests still exercise the real credential gating."""
     monkeypatch.setattr(IGSettings, "has", lambda self, side: False)
     monkeypatch.setattr(MTSettings, "has", lambda self: False)
     monkeypatch.setattr(OanorSettings, "has", lambda self: False)
+    monkeypatch.setattr(settings, "api_key", "k", raising=False)
+    monkeypatch.setattr(settings, "identifier", "i", raising=False)
+    monkeypatch.setattr(settings, "password", "p", raising=False)
     monkeypatch.setattr(settings, "live_api_key", "", raising=False)
     monkeypatch.setattr(settings, "live_password", "", raising=False)
 
@@ -69,6 +73,28 @@ def test_build_registry_ships_capital_and_paper() -> None:
         "dataOnly": True,
     }
     assert "dataOnly" not in keys["capital:paper"]
+
+
+def test_no_capital_creds_skips_capital_entirely(monkeypatch):
+    """With no CAPITAL_* demo credentials the capital feed must not register at
+    all — no data broker, no paper/demo executors — so a credential-free demo
+    deployment never advertises a broker whose every upstream call would 401."""
+    monkeypatch.setattr(settings, "api_key", "", raising=False)
+    monkeypatch.setattr(settings, "identifier", "", raising=False)
+    monkeypatch.setattr(settings, "password", "", raising=False)
+
+    described = build_registry().describe()
+    assert described["data"] == ["dukascopy", "yfinance"]
+    assert all(not e["key"].startswith("capital") for e in described["exec"])
+
+
+def test_settings_has_requires_all_demo_creds(monkeypatch):
+    monkeypatch.setattr(settings, "api_key", "k", raising=False)
+    monkeypatch.setattr(settings, "identifier", "i", raising=False)
+    monkeypatch.setattr(settings, "password", "", raising=False)
+    assert settings.has() is False
+    monkeypatch.setattr(settings, "password", "p", raising=False)
+    assert settings.has() is True
 
 
 def test_capital_demo_and_live_feeds(monkeypatch):
@@ -157,6 +183,28 @@ def test_describe_labels_reflect_broker_reported_names(monkeypatch) -> None:
     assert reg.describe()["labels"] == {}
     reg.data["mt5"].display_name = "Ava Trade Ltd (demo)"
     assert reg.describe()["labels"] == {"mt5": "Ava Trade Ltd (demo)"}
+
+
+def test_default_data_id_prefers_capital_when_registered() -> None:
+    assert build_registry().default_data_id() == "capital"
+
+
+def test_default_data_id_falls_back_when_capital_absent(monkeypatch) -> None:
+    """Without capital creds the historical default broker doesn't exist; requests
+    that name no broker must land on a registered one instead of 404ing."""
+    monkeypatch.setattr(settings, "api_key", "", raising=False)
+    assert build_registry().default_data_id() == "dukascopy"
+
+
+def test_broker_query_resolves_empty_to_default(monkeypatch) -> None:
+    """Routes take ?broker= via deps.broker_query: absent/empty lands on the
+    default registered broker, an explicit id passes through untouched."""
+    from auto_trader.api import deps
+
+    monkeypatch.setattr(settings, "api_key", "", raising=False)
+    monkeypatch.setattr(deps, "_registry", build_registry())
+    assert deps.broker_query("") == "dukascopy"
+    assert deps.broker_query("yfinance") == "yfinance"
 
 
 def test_get_data_unknown_broker_is_404() -> None:

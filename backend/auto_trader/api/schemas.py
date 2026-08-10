@@ -309,7 +309,7 @@ class BacktestRequest(BaseModel):
     # unset/omitted params fall back to their declared defaults.
     codedParams: dict[str, int | float | bool | str] | None = None
     # Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
-    broker: str = "capital"
+    broker: str = ""  # empty = server default broker (deps.default_broker_id)
     priceSide: str = "mid"
     # Parameter/risk sweep: when set, POST /api/backtest/sweep/jobs runs one
     # combo per entry instead of the single codedParams/longRisk/shortRisk on
@@ -609,7 +609,7 @@ class EvaluateRequest(BaseModel):
     # unset/omitted params fall back to their declared defaults.
     codedParams: dict[str, int | float | bool | str] | None = None
     # Broker/price side for backend-side HTF fetches (coded strategies' tf= calls).
-    broker: str = "capital"
+    broker: str = ""  # empty = server default broker (deps.default_broker_id)
     priceSide: str = "mid"
     # Expression mode: when True the structured rule groups are ignored and the
     # expr* groups below drive the live decision (parallel to /api/expr/backtest).
@@ -701,7 +701,7 @@ class ExprBacktestRequest(BaseModel):
     # candles' source, like the structured request's fields); shipped bars win
     # so a compute-only host never reaches a broker.
     htfCandles: dict[str, list[CandleDTO]] | None = None
-    broker: str = "capital"
+    broker: str = ""  # empty = server default broker (deps.default_broker_id)
     priceSide: str = "mid"
     longEntry: list[ExprRowDTO] = []
     longExit: list[ExprRowDTO] = []
@@ -741,7 +741,7 @@ class ExprSeriesRequest(BaseModel):
     expr: str
     fromTime: int
     toTime: int
-    broker: str = "capital"
+    broker: str = ""  # empty = server default broker (deps.default_broker_id)
     priceSide: str = "mid"
     # Chart indicator instance settings, keyed by instance id. A rule names an
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
@@ -758,7 +758,7 @@ class NormSpec(BaseModel):
 
 class ExprClosenessRequest(BaseModel):
     epic: str
-    broker: str = "capital"
+    broker: str = ""  # empty = server default broker (deps.default_broker_id)
     priceSide: str = "mid"
     rows: list[str]
     combine: Literal["AND", "OR"] = "AND"

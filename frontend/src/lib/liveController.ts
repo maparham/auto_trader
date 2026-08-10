@@ -3,7 +3,7 @@
  *  arm/disarm gestures. The panel subscribes to `liveStateSignal` and calls
  *  these; the headless loop (liveEngine) does the per-bar work. */
 import { Signal } from "./signals";
-import { fetchRecent } from "./feed";
+import { DEFAULT_BROKER, fetchRecent } from "./feed";
 import { fetchStrategies } from "../api";
 import {
   armLiveEngine, saveArmed, loadArmed, saveArmedAccount, loadArmedAccount,
@@ -28,7 +28,7 @@ export const liveStateSignal = new Signal<LiveState>(
 
 let engine: LiveEngineHandle | null = null;
 // The epic/resolution/broker the panel is currently pointed at.
-let target = { epic: "", resolution: "MINUTE", brokerId: "capital" };
+let target = { epic: "", resolution: "MINUTE", brokerId: DEFAULT_BROKER };
 // The (epic, account) the RUNNING engine was armed on. Distinct from `target`,
 // which follows the panel — using this for disarm/persistence means re-pointing
 // the panel can't clear the wrong epic's saved snapshot.

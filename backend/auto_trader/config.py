@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     live_password: str = ""
     live_identifier: str = ""
 
+    def has(self) -> bool:
+        """True only when the demo account is fully credentialed (gates
+        registration of the whole capital feed, like IGSettings.has)."""
+        return bool(self.api_key and self.identifier and self.password)
+
     def has_live(self) -> bool:
         """True only when the live dealing account is fully credentialed."""
         return bool(self.live_api_key and self.live_password and (self.live_identifier or self.identifier))

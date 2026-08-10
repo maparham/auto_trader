@@ -5,6 +5,7 @@
 
 import type { KLineData } from "klinecharts";
 import type { PriceSide } from "../theme";
+import { defaultBrokerId } from "./brokerDefaults";
 import { API_BASE as BASE, errorDetail } from "./http";
 import { getSynthetic, isSynthetic } from "./syntheticRegistry";
 // Pin aliases ("4H") only — the canonical table below is this file's own.
@@ -184,9 +185,10 @@ function toKLine(c: RawCandle): KLineData {
 }
 
 // Every market call carries the active broker id (epics are broker-specific).
-// Defaults to "capital" so existing call sites keep working; the chart and
-// symbol-search modal pass the user's active broker explicitly.
-export const DEFAULT_BROKER = "capital";
+// The chart and symbol-search modal pass the user's active broker explicitly;
+// this default only covers call sites that name none. Capital when the backend
+// has it, else the first registered broker (see brokerDefaults).
+export const DEFAULT_BROKER = defaultBrokerId();
 
 // Keyword search against the broker (used while the user types). Category
 // browsing instead filters the cached full catalogue (fetchAllMarkets).

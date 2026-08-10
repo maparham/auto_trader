@@ -67,7 +67,7 @@ async def ws_candles(websocket: WebSocket) -> None:
     await websocket.accept()
     epic = websocket.query_params.get("epic", "")
     res_raw = websocket.query_params.get("resolution", Resolution.MINUTE.value)
-    broker_id = websocket.query_params.get("broker", "capital")
+    broker_id = websocket.query_params.get("broker") or deps.default_broker_id()
     # Bid (sell) / mid / ask (buy) — global chart setting; unknown values fall
     # back to mid in pick_side, so a bad param can't break the stream.
     price_side = websocket.query_params.get("priceSide", "mid")
