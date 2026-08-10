@@ -74,6 +74,12 @@ def _indicator_raw(name: str, args_vals: list[float], candles: Sequence[Candle])
         return rsi_series(closes, int(args_vals[0]))
     if name == "ATR":
         return atr_series(candles, int(args_vals[0]))
+    if name == "ATR%":
+        # The legend's ATR% readout at its defaults: RMA ATR over the bar close.
+        return [
+            (a / c.close) * 100.0 if a is not None and c.close > 0 else None
+            for a, c in zip(atr_series(candles, int(args_vals[0])), candles)
+        ]
     if name == "VOLMA":
         return sma_series([c.volume for c in candles], int(args_vals[0]))
     if name == "VOL":

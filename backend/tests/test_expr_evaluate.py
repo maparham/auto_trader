@@ -418,3 +418,15 @@ def test_count_equality_fires_only_on_the_exact_count():
     assert _row_bools("count(candle.close > candle.open, 3) == 2", c) == [
         False, False, True, False, False,
     ]
+
+
+def test_atr_percent_is_atr_over_close_times_100():
+    candles = _bars([(1.0, 2.0), (2.0, 3.0), (3.0, 2.5), (2.5, 4.0), (4.0, 3.0)])
+    from auto_trader.strategy.expr.evaluate import _indicator_raw
+    atr = _indicator_raw("ATR", [2.0], candles)
+    atrp = _indicator_raw("ATR%", [2.0], candles)
+    for a, p, c in zip(atr, atrp, candles):
+        if a is None:
+            assert p is None
+        else:
+            assert p == pytest.approx(a / c.close * 100)
