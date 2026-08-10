@@ -104,7 +104,9 @@ def tokenize(src: str) -> list[Token]:
             # "#" is legal INSIDE a name (never leading) so a chart indicator's
             # instance id — "SLOPE#a1b2c3", minted by the frontend's
             # mintInstanceId — lexes verbatim, with no id<->token mapping table.
-            while j < n and (_is_alnum(src[j]) or src[j] in "_#"):
+            # "%" rides the same rule so "ATR%" is one name; there is no modulo
+            # operator, so a "%" anywhere else stays bad_char.
+            while j < n and (_is_alnum(src[j]) or src[j] in "_#%"):
                 j += 1
             word = src[i:j]
             # A bare "x" fused to a comparison bracket is the infix cross

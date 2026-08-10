@@ -68,3 +68,19 @@ def test_equals_never_fuses_with_a_leading_x():
     # report. Guards the constraint that a future refactor would silently break.
     assert [t.type for t in tokenize("x == 3")] == ["NAME", "EQ", "NUMBER", "EOF"]
     assert [t.type for t in tokenize("x==3")] == ["NAME", "EQ", "NUMBER", "EOF"]
+
+
+def test_percent_is_a_name_character():
+    assert _types("ATR%(14)") == [
+        ("NAME", "ATR%", 0, 4),
+        ("LPAREN", "(", 4, 5),
+        ("NUMBER", "14", 5, 7),
+        ("RPAREN", ")", 7, 8),
+        ("EOF", "", 8, 8),
+    ]
+
+
+def test_leading_percent_is_bad_char():
+    with pytest.raises(ExprError) as exc:
+        tokenize("% > 1")
+    assert exc.value.code == "bad_char"

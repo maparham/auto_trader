@@ -16,6 +16,7 @@ INDICATORS: dict[str, IndicatorSpec] = {
     "SMA": IndicatorSpec(1, "length"),
     "RSI": IndicatorSpec(1, "length"),
     "ATR": IndicatorSpec(1, "length"),
+    "ATR%": IndicatorSpec(1, "length"),
     "VOLMA": IndicatorSpec(1, "length"),
     "VOL": IndicatorSpec(0, "length"),
     "AVWAP": IndicatorSpec(1, "anchor"),

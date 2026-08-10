@@ -121,3 +121,7 @@ def test_expected_operator_copy_lists_equality():
         parse("EMA(9) EMA(21)")
     assert exc.value.code == "expected_operator"
     assert exc.value.message == "Expected a comparison operator (> < >= <= == x> x<)."
+
+
+def test_atr_percent_parses_as_indicator_call():
+    parse("ATR%(14) < 0.8")  # must not raise
