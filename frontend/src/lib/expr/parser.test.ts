@@ -41,6 +41,11 @@ describe("analyze", () => {
   it("keeps a leading % a lex error", () => {
     expect(analyze("% > 1").error?.code).toBe("bad_char");
   });
+
+  it("accepts body% as a candle field", () => {
+    expect(analyze("candle.body% > 0.5").error).toBeNull();
+    expect(analyze("candle[-1].body% > 0.5").error).toBeNull();
+  });
 });
 
 describe("warmupOf", () => {

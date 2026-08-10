@@ -32,7 +32,9 @@ def candle_field(c: Candle, field: str) -> float | None:
     if field == "volume":
         return c.volume
     if field == "body":
-        return abs(c.close - c.open)
+        return c.close - c.open
+    if field == "body%":
+        return (c.close - c.open) / c.open * 100 if c.open != 0 else None
     if field == "range":
         return c.high - c.low
     if field == "wickTop":

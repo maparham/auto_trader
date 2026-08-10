@@ -48,9 +48,11 @@ allowed. Whitespace insignificant. Names case-sensitive.
 
 ### Variables
 
-- `candle.open .high .low .close .volume .body .range .wickTop .wickBottom`
-  — anatomy fields keep the shipped definitions (body = |close−open|,
-  range = high−low, wickTop = high−max(o,c), wickBottom = min(o,c)−low).
+- `candle.open .high .low .close .volume .body .body% .range .wickTop .wickBottom`
+  — anatomy fields (body = close−open, signed: negative on bearish candles;
+  body% = (close−open)/open×100, null when open is 0; range = high−low,
+  wickTop = high−max(o,c), wickBottom = min(o,c)−low). body was |close−open|
+  until 2026-08-10, when it became signed by request.
 - `candle` alone is invalid; a field is required.
 - `entry` — average entry price; valid only in exit rules (parse error in entry
   rules).

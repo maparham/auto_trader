@@ -160,7 +160,7 @@ CONDITION_KINDS = (Compare, Cross, Chain, Predicate, BoolOp, Not)
 
 CROSS_FNS = ("crossAbove", "crossBelow")
 PREDICATE_FNS = ("bullish", "bearish", *PATTERN_FN_NAMES)
-CANDLE_FIELDS = ("open", "high", "low", "close", "volume", "body", "range", "wickTop", "wickBottom")
+CANDLE_FIELDS = ("open", "high", "low", "close", "volume", "body", "body%", "range", "wickTop", "wickBottom")
 
 
 def contains_tf(node: Node) -> bool:

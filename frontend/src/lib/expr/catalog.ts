@@ -60,7 +60,7 @@ export const LOGIC: CatalogEntry[] = [
 ];
 
 export const CANDLE_FIELDS = [
-  "open", "high", "low", "close", "volume", "body", "range", "wickTop", "wickBottom",
+  "open", "high", "low", "close", "volume", "body", "body%", "range", "wickTop", "wickBottom",
 ] as const;
 
 // Mirrors backend strategy/expr/tfs.py TF_RESOLUTIONS (the pin aliases the

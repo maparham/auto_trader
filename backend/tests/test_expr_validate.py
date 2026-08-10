@@ -149,3 +149,8 @@ def test_all_26_names_are_legal_predicates():
     for name in PATTERN_FNS:
         assert name in PREDICATE_FNS
     assert len(PREDICATE_FNS) == 28  # bullish, bearish, + 26
+
+
+def test_body_pct_is_a_valid_candle_field():
+    validate(parse("candle.body% > 0"), is_exit=False)
+    validate(parse("candle[-1].body% > 0"), is_exit=False)

@@ -430,3 +430,21 @@ def test_atr_percent_is_atr_over_close_times_100():
             assert p is None
         else:
             assert p == pytest.approx(a / c.close * 100)
+
+
+def test_candle_body_is_signed():
+    # bullish +3, bearish -4, doji 0 — body keeps the candle's direction.
+    bars = _bars([(100, 103), (103, 99), (99, 99)])
+    assert series_of(parse("candle.body > 0").left, bars, "MINUTE_5", {}) == [3.0, -4.0, 0.0]
+
+
+def test_candle_body_pct_is_signed_percent_of_open():
+    # (close - open) / open * 100; a zero open has no defined percentage.
+    bars = _bars([(100, 103), (200, 190), (0, 5)])
+    assert series_of(parse("candle.body% > 0").left, bars, "MINUTE_5", {}) == [3.0, -5.0, None]
+
+
+def test_candle_body_pct_through_offset():
+    # the offset path funnels through the same field lookup: bar 1 reads bar 0.
+    bars = _bars([(100, 103), (200, 190)])
+    assert series_of(parse("candle[-1].body% > 0").left, bars, "MINUTE_5", {}) == [None, 3.0]
