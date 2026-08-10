@@ -254,6 +254,18 @@ class _Parser:
                     node = N.Candle(field.value, node.start, field.end)
                 elif is_ref:
                     node = N.IndicatorRef(node.name, field.value, node.start, field.end)
+                    # A digits-named output may carry ONE dotted sub-name
+                    # ("ATR1.14.pct"): fuse it into the output so downstream
+                    # layers stay string-keyed. A fused output is no longer
+                    # all-digits, so a further ".x" falls through to Field
+                    # (-> field_on_indicator_ref), and an offset in between
+                    # breaks the chain the same way.
+                    if (field.value.isdigit() and self.peek().type == "DOT"
+                            and self.toks[self.i + 1].type == "NAME"):
+                        self.next()
+                        sub = self.next()
+                        node = N.IndicatorRef(node.instance, f"{node.output}.{sub.value}",
+                                              node.start, sub.end)
                 else:
                     node = N.Field(node, field.value, node.start, field.end)
             elif t.type == "LBRACKET":
