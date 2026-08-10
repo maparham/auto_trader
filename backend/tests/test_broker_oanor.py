@@ -162,6 +162,20 @@ def test_build_registry_gates_on_key(monkeypatch):
     assert "oanor" in build_registry().data
 
 
+def test_probe_analyze_history_gaps_and_dups():
+    from scripts.oanor_probe import analyze_history
+
+    rows = [_row("2026/06/10"), _row("2026/06/09"), _row("2026/06/09"),
+            _row("2026/06/05"), _row("2026/06/04", o=0)]
+    report = analyze_history(rows)
+    assert report["count"] == 5
+    assert report["first"] == "2026-06-04" and report["last"] == "2026-06-10"
+    assert report["gap_days"] == 3      # 06-06, 06-07, 06-08 missing
+    assert report["max_gap"] == 3
+    assert report["dup_dates"] == ["2026-06-09"]
+    assert report["zero_rows"] == 1
+
+
 _SYMBOLS_PAYLOAD = {"status": "ok", "success": True, "data": {
     "count": 3, "source": "tgju.org", "symbols": [
         {"name": "US Dollar", "unit": "IRR", "symbol": "usd", "category": "currency"},
