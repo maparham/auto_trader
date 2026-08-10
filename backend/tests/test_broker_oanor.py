@@ -55,3 +55,98 @@ def test_rows_to_candles_drops_zero_and_missing_ohlc():
     ]
     candles = _rows_to_candles(rows, now=now)
     assert [c.time.day for c in candles] == [7]
+
+
+def _history_payload(dates):
+    return {"status": "ok", "success": True,
+            "data": {"symbol": "usd", "name": "US Dollar", "unit": "IRR",
+                     "source": "tgju.org", "count": len(dates),
+                     "history": [_row(d) for d in dates]}}
+
+
+def _patch_api(monkeypatch, payloads):
+    """Replace the HTTP seam; records (path, params) calls, pops payloads FIFO."""
+    from auto_trader.brokers import oanor
+
+    calls = []
+
+    async def fake_api_get(client, path, params):
+        calls.append((path, dict(params)))
+        return payloads.pop(0)
+
+    monkeypatch.setattr(oanor, "_api_get", fake_api_get)
+    return calls
+
+
+@pytest.fixture
+def broker():
+    from auto_trader.brokers.oanor import OanorBroker
+
+    return OanorBroker(api_key="oanor_test_key")
+
+
+def test_get_candles_daily_slices_window(monkeypatch, broker):
+    calls = _patch_api(monkeypatch, [_history_payload(
+        ["2026/06/10", "2026/06/09", "2026/06/08", "2026/06/07"])])
+    start = datetime(2026, 6, 8, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 9, tzinfo=timezone.utc)
+    candles = asyncio.run(broker.get_candles("usd", Resolution.DAY, start, end))
+    assert [c.time.day for c in candles] == [8, 9]
+    assert calls == [("/v1/history", {"symbol": "usd", "limit": 365})]
+
+
+def test_get_candles_week_folds_daily(monkeypatch, broker):
+    # Mon 2026-05-04 .. Sun 2026-05-17: two complete ISO weeks
+    days = [f"2026/05/{d:02d}" for d in range(4, 18)]
+    _patch_api(monkeypatch, [_history_payload(list(reversed(days)))])
+    start = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    candles = asyncio.run(broker.get_candles("usd", Resolution.WEEK, start, end))
+    assert len(candles) == 2
+    assert all(c.time.weekday() == 0 for c in candles)  # week opens on Monday
+
+
+def test_get_candles_intraday_returns_empty(monkeypatch, broker):
+    calls = _patch_api(monkeypatch, [])
+    out = asyncio.run(broker.get_candles(
+        "usd", Resolution.HOUR,
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 2, tzinfo=timezone.utc)))
+    assert out == [] and calls == []  # no wasted API call
+
+
+def test_get_recent_candles_tails_count(monkeypatch, broker):
+    _patch_api(monkeypatch, [_history_payload(
+        ["2026/06/09", "2026/06/08", "2026/06/07", "2026/06/06"])])
+    candles = asyncio.run(broker.get_recent_candles("usd", Resolution.DAY, 2))
+    assert [c.time.day for c in candles] == [8, 9]
+
+
+def test_get_quote_returns_close_as_mid(monkeypatch, broker):
+    payload = {"status": "ok", "success": True,
+               "data": {"symbol": "usd", "close": 1758050, "open": 1785100,
+                        "high": 1785200, "low": 1757800, "date": "2026/06/10"}}
+    calls = _patch_api(monkeypatch, [payload])
+    assert asyncio.run(broker.get_quote("usd")) == (1758050.0, 1758050.0)
+    assert calls == [("/v1/price", {"symbol": "usd"})]
+
+
+def test_get_quote_malformed_payload_is_none_none(monkeypatch, broker):
+    _patch_api(monkeypatch, [{"status": "ok", "data": {}}])
+    assert asyncio.run(broker.get_quote("usd")) == (None, None)
+
+
+def test_http_errors_propagate(monkeypatch, broker):
+    from auto_trader.brokers import oanor
+
+    async def boom(client, path, params):
+        raise httpx.HTTPStatusError(
+            "429", request=httpx.Request("GET", "https://x"),
+            response=httpx.Response(429))
+
+    monkeypatch.setattr(oanor, "_api_get", boom)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(broker.get_candles(
+            "usd", Resolution.DAY,
+            datetime(2026, 6, 1, tzinfo=timezone.utc),
+            datetime(2026, 6, 2, tzinfo=timezone.utc)))

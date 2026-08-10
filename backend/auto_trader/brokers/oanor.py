@@ -26,7 +26,6 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from auto_trader.brokers.base import MarketDataBroker
-from auto_trader.core.candle_aggregate import BucketRule, bucket_end, fold
 from auto_trader.core.models import Candle, Resolution
 
 _BASE_URL = "https://api.oanor.com/irr-api"
@@ -34,7 +33,7 @@ _MAX_ROWS = 365  # upstream hard cap on /v1/history limit
 _MIN_REQUEST_INTERVAL = 0.6  # free tier allows 2 req/s; stay politely under
 _SYMBOLS_TTL = 3600.0  # catalogue changes rarely; cache /v1/symbols in-process
 _DAY = timedelta(days=1)
-_WEEK_RULE = BucketRule(Resolution.DAY, "week", 1)
+_WEEK = timedelta(days=7)
 
 
 def _parse_date(s: str) -> datetime:
@@ -67,3 +66,115 @@ def _rows_to_candles(rows: list[dict], now: datetime | None = None) -> list[Cand
         out.append(Candle(time=t, open=o, high=h, low=low, close=c, volume=0.0))
     out.sort(key=lambda c: c.time)
     return out
+
+
+def _fold_weekly(daily: list[Candle], now: datetime | None = None) -> list[Candle]:
+    """Ascending daily bars → ISO weeks opening Monday-UTC-midnight. The
+    still-forming trailing week is dropped — only closed bars may reach the
+    cache. (candle_aggregate's "week" rule can't do this: it groups existing
+    WEEK bars into 2W/3W buckets, it doesn't build weeks from days.)"""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    out: list[Candle] = []
+    week_open: datetime | None = None
+    o = h = low = c = 0.0
+    for bar in daily:
+        wo = bar.time - timedelta(days=bar.time.weekday())
+        if wo != week_open:
+            if week_open is not None:
+                out.append(Candle(time=week_open, open=o, high=h, low=low, close=c))
+            week_open = wo
+            o, h, low, c = bar.open, bar.high, bar.low, bar.close
+        else:
+            h = max(h, bar.high)
+            low = min(low, bar.low)
+            c = bar.close
+    if week_open is not None:
+        out.append(Candle(time=week_open, open=o, high=h, low=low, close=c))
+    return [w for w in out if w.time + _WEEK <= now]
+
+
+async def _api_get(client: httpx.AsyncClient, path: str, params: dict) -> dict:
+    """One authenticated GET → parsed JSON. Module-level so tests monkeypatch it.
+    HTTP errors (429 rate cap, 5xx) propagate into the caller's circuit
+    breaker — a partial/failed fetch must never read as "no data" or the cache
+    would mark the range covered-empty."""
+    resp = await client.get(path, params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
+class OanorBroker(MarketDataBroker):
+    """Read-only daily IRR bazaar candles + latest price from oanor. Data-only:
+    no stream, no executor. price_side ignored (single bazaar rate = mid)."""
+
+    supports_streaming = False
+
+    def __init__(self, api_key: str, base_url: str = _BASE_URL) -> None:
+        self._client = httpx.AsyncClient(
+            base_url=base_url,
+            headers={"x-oanor-key": api_key},
+            timeout=15.0,
+        )
+        # Serialize requests and space them under the free tier's 2 req/s cap.
+        self._throttle = asyncio.Lock()
+        self._last_request = 0.0
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def _get(self, path: str, params: dict) -> dict:
+        async with self._throttle:
+            wait = self._last_request + _MIN_REQUEST_INTERVAL - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                return await _api_get(self._client, path, params)
+            finally:
+                self._last_request = time.monotonic()
+
+    async def _fetch_daily(self, epic: str) -> list[Candle]:
+        payload = await self._get("/v1/history", {"symbol": epic, "limit": _MAX_ROWS})
+        rows = (payload.get("data") or {}).get("history") or []
+        return _rows_to_candles(rows)
+
+    async def get_candles(
+        self,
+        epic: str,
+        resolution: Resolution,
+        start: datetime,
+        end: datetime,
+        price_side: str = "mid",
+    ) -> list[Candle]:
+        if resolution not in (Resolution.DAY, Resolution.WEEK):
+            return []  # daily feed: nothing finer exists upstream
+        daily = await self._fetch_daily(epic)
+        series = _fold_weekly(daily) if resolution is Resolution.WEEK else daily
+        return [c for c in series if start <= c.time <= end]
+
+    async def get_recent_candles(
+        self,
+        epic: str,
+        resolution: Resolution,
+        count: int,
+        price_side: str = "mid",
+    ) -> list[Candle]:
+        """One /v1/history call already returns the full available depth, so
+        'recent N' is just the tail of the same fetch."""
+        if count <= 0 or resolution not in (Resolution.DAY, Resolution.WEEK):
+            return []
+        now = datetime.now(timezone.utc)
+        candles = await self.get_candles(
+            epic, resolution, datetime(1970, 1, 1, tzinfo=timezone.utc), now, price_side
+        )
+        return candles[-count:]
+
+    async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
+        """Latest bazaar price as (close, close): the feed publishes one rate,
+        no bid/ask spread. Lets watchlists show a live-ish IRR level; fills
+        simulated off it carry no spread cost."""
+        payload = await self._get("/v1/price", {"symbol": epic})
+        close = (payload.get("data") or {}).get("close")
+        if not close:
+            return (None, None)
+        return (float(close), float(close))
