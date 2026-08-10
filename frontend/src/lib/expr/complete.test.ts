@@ -125,6 +125,18 @@ describe("chart indicator instance references", () => {
     expect(opts).toEqual(["SLOPE.accel9"]);
   });
 
+  it("completes a dotted pct output prefix", () => {
+    const atr: ExprInstance[] = [
+      { id: "ATR1", outputs: ["14", "14.pct"], timeframe: null, detail: "RMA" },
+    ];
+    const labels = (doc: string) =>
+      completionsFor(doc, doc.length, { instances: atr }).map((c) => c.label);
+    expect(labels("ATR1.")).toEqual(expect.arrayContaining(["ATR1.14", "ATR1.14.pct"]));
+    expect(labels("ATR1.14.p")).toContain("ATR1.14.pct");
+    // The anchor must cover the whole typed ref so accepting REPLACES it.
+    expect(completionAnchor("ATR1.14.p", 9, { instances: atr })).toBe(0);
+  });
+
   // The label already carries the LENGTH, so the detail spends itself on what
   // the label cannot show: the MA kind and the units, in the same words the
   // chart legend and the settings modal use.
