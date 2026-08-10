@@ -136,6 +136,41 @@ def test_get_quote_malformed_payload_is_none_none(monkeypatch, broker):
     assert asyncio.run(broker.get_quote("usd")) == (None, None)
 
 
+_SYMBOLS_PAYLOAD = {"status": "ok", "success": True, "data": {
+    "count": 3, "source": "tgju.org", "symbols": [
+        {"name": "US Dollar", "unit": "IRR", "symbol": "usd", "category": "currency"},
+        {"name": "Gold Ounce (global)", "unit": "USD", "symbol": "ounce", "category": "gold"},
+        {"name": "Emami Coin", "unit": "IRR", "symbol": "coin_emami", "category": "gold"},
+    ]}}
+
+
+def test_all_markets_from_symbols_endpoint(monkeypatch, broker):
+    calls = _patch_api(monkeypatch, [_SYMBOLS_PAYLOAD])
+    rows = asyncio.run(broker.all_markets())
+    assert [r["epic"] for r in rows] == ["usd", "ounce", "coin_emami"]
+    usd = rows[0]
+    assert usd["name"] == "US Dollar" and usd["type"] == "currency"
+    assert usd["status"] == "TRADEABLE"
+    assert usd["pricePrecision"] == 0        # IRR prices are integers
+    assert rows[1]["pricePrecision"] == 2    # ounce is USD-denominated, decimal
+    # second call served from the in-process cache — one HTTP hit total
+    asyncio.run(broker.all_markets())
+    assert len(calls) == 1
+
+
+def test_search_markets_filters_catalogue(monkeypatch, broker):
+    _patch_api(monkeypatch, [_SYMBOLS_PAYLOAD])
+    rows = asyncio.run(broker.search_markets("coin"))
+    assert [r["epic"] for r in rows] == ["coin_emami"]
+
+
+def test_market_meta_and_detail(monkeypatch, broker):
+    _patch_api(monkeypatch, [_SYMBOLS_PAYLOAD])
+    meta = asyncio.run(broker.get_market_meta("usd"))
+    assert meta is not None and meta["pricePrecision"] == 0
+    assert asyncio.run(broker.get_market_detail("nope")) is None
+
+
 def test_http_errors_propagate(monkeypatch, broker):
     from auto_trader.brokers import oanor
 

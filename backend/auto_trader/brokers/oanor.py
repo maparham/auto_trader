@@ -119,6 +119,8 @@ class OanorBroker(MarketDataBroker):
         # Serialize requests and space them under the free tier's 2 req/s cap.
         self._throttle = asyncio.Lock()
         self._last_request = 0.0
+        self._symbols_cache: list[dict] | None = None
+        self._symbols_cached_at = 0.0
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -178,3 +180,47 @@ class OanorBroker(MarketDataBroker):
         if not close:
             return (None, None)
         return (float(close), float(close))
+
+    @staticmethod
+    def _market_row(sym: dict) -> dict:
+        # IRR prices are integers; the global gold ounce is USD with decimals.
+        precision = 0 if sym.get("unit") == "IRR" else 2
+        return {
+            "epic": sym["symbol"],
+            "name": sym.get("name") or sym["symbol"],
+            "status": "TRADEABLE",  # history is always fetchable; no session gate
+            "type": sym.get("category") or "currency",
+            # `pricePrecision` is the key the /api/market route + frontend read;
+            # "precision" would be silently dropped.
+            "pricePrecision": precision,
+            "note": "",
+        }
+
+    async def _symbols(self) -> list[dict]:
+        now = time.monotonic()
+        if self._symbols_cache is None or now - self._symbols_cached_at > _SYMBOLS_TTL:
+            payload = await self._get("/v1/symbols", {})
+            raw = (payload.get("data") or {}).get("symbols") or []
+            self._symbols_cache = [self._market_row(s) for s in raw if s.get("symbol")]
+            self._symbols_cached_at = now
+        return self._symbols_cache
+
+    async def all_markets(self) -> list[dict]:
+        return list(await self._symbols())
+
+    async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
+        ql = query.strip().lower()
+        rows = [
+            r for r in await self._symbols()
+            if ql in r["epic"].lower() or ql in r["name"].lower()
+        ]
+        return rows[:limit]
+
+    async def get_market_meta(self, epic: str) -> dict | None:
+        for row in await self._symbols():
+            if row["epic"] == epic:
+                return row
+        return None
+
+    async def get_market_detail(self, epic: str) -> dict | None:
+        return await self.get_market_meta(epic)
