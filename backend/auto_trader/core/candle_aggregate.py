@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from auto_trader.core.models import Candle, Resolution
@@ -156,6 +156,35 @@ def base_count_for(rule: BucketRule, n: int) -> int:
     else:  # year
         per = 366
     return min(_MAX_BASE, n * per)
+
+
+def fold_days_to_weeks(daily: list[Candle], now: datetime | None = None) -> list[Candle]:
+    """Ascending daily bars → ISO weeks opening Monday-UTC-midnight, volume
+    summed. The still-forming trailing week is dropped — only closed bars may
+    reach the cache. Used by daily-native brokers (oanor, nobitex) to serve
+    WEEK; the "week" BucketRule above can't do this — it groups existing WEEK
+    bars into 2W/3W buckets, it doesn't build weeks from days."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    out: list[Candle] = []
+    week_open: datetime | None = None
+    o = h = low = c = v = 0.0
+    for bar in daily:
+        wo = bar.time - timedelta(days=bar.time.weekday())
+        if wo != week_open:
+            if week_open is not None:
+                out.append(Candle(time=week_open, open=o, high=h, low=low, close=c, volume=v))
+            week_open = wo
+            o, h, low, c, v = bar.open, bar.high, bar.low, bar.close, bar.volume
+        else:
+            h = max(h, bar.high)
+            low = min(low, bar.low)
+            c = bar.close
+            v += bar.volume
+    if week_open is not None:
+        out.append(Candle(time=week_open, open=o, high=h, low=low, close=c, volume=v))
+    week = timedelta(days=7)
+    return [w for w in out if w.time + week <= now]
 
 
 async def aggregate_candle_stream(
