@@ -99,6 +99,8 @@ const BROKER_LABELS: Record<string, string> = {
   "ig-live": "IG (live)",
   // Read-only deep-history source (Dukascopy). Charts/backtests only, no dealing.
   dukascopy: "Dukascopy (history)",
+  // Read-only Iranian bazaar rates + gold (oanor.com). Charts/backtests only.
+  oanor: "oanor (IRR bazaar)",
 };
 // Broker-reported display names from /api/brokers (e.g. mt5 → "Ava Trade Ltd
 // (demo)", read from MetaApi account information). They win over the static map

@@ -136,6 +136,32 @@ def test_get_quote_malformed_payload_is_none_none(monkeypatch, broker):
     assert asyncio.run(broker.get_quote("usd")) == (None, None)
 
 
+def test_register_adds_data_only_broker():
+    from auto_trader.brokers.oanor import OanorBroker, register
+    from auto_trader.brokers.registry import BrokerRegistry
+
+    registry = BrokerRegistry()
+    broker = register(registry, api_key="k")
+    assert isinstance(broker, OanorBroker)
+    assert registry.get_data("oanor") is broker
+    assert broker.broker_id == "oanor"
+    # data-only: synthetic pseudo-account, flagged dataOnly, no real executor
+    desc = registry.describe()
+    row = next(a for a in desc["exec"] if a["broker"] == "oanor")
+    assert row.get("dataOnly") is True
+
+
+def test_build_registry_gates_on_key(monkeypatch):
+    from auto_trader.brokers.registry import build_registry
+    from auto_trader.config import oanor_settings
+
+    monkeypatch.setattr(oanor_settings, "api_key", "", raising=False)
+    assert "oanor" not in build_registry().data
+
+    monkeypatch.setattr(oanor_settings, "api_key", "k", raising=False)
+    assert "oanor" in build_registry().data
+
+
 _SYMBOLS_PAYLOAD = {"status": "ok", "success": True, "data": {
     "count": 3, "source": "tgju.org", "symbols": [
         {"name": "US Dollar", "unit": "IRR", "symbol": "usd", "category": "currency"},

@@ -224,3 +224,11 @@ class OanorBroker(MarketDataBroker):
 
     async def get_market_detail(self, epic: str) -> dict | None:
         return await self.get_market_meta(epic)
+
+
+def register(registry, *, api_key: str, base_url: str = _BASE_URL) -> OanorBroker:
+    """Register the read-only oanor IRR data broker. Data-only: no executor, so
+    it appears as a chart/backtest source but not a tradeable account."""
+    broker = OanorBroker(api_key, base_url)
+    registry.add_data("oanor", broker)
+    return broker
