@@ -156,6 +156,30 @@ def test_get_quote_missing_market_none(monkeypatch, broker):
     assert asyncio.run(broker.get_quote("NOPEIRT")) == (None, None)
 
 
+def test_all_markets_curated(broker):
+    rows = asyncio.run(broker.all_markets())
+    epics = [r["epic"] for r in rows]
+    assert "USDTIRT" in epics and "BTCIRT" in epics
+    usdt = next(r for r in rows if r["epic"] == "USDTIRT")
+    assert usdt["status"] == "TRADEABLE"
+    assert usdt["pricePrecision"] == 0  # rial integers
+    assert usdt["type"] == "crypto"
+
+
+def test_search_markets_filters(broker):
+    rows = asyncio.run(broker.search_markets("usdt"))
+    assert [r["epic"] for r in rows] == ["USDTIRT"]
+
+
+def test_meta_curated_and_verbatim(broker):
+    meta = asyncio.run(broker.get_market_meta("USDTIRT"))
+    assert meta is not None and "Tether" in meta["name"]
+    # uncurated epics pass through so any Nobitex UDF symbol charts without a map entry
+    other = asyncio.run(broker.get_market_meta("PEPEIRT"))
+    assert other is not None and other["epic"] == "PEPEIRT"
+    assert asyncio.run(broker.get_market_detail("USDTIRT")) == meta
+
+
 def test_http_errors_propagate(monkeypatch, broker):
     from auto_trader.brokers import nobitex
 

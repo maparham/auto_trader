@@ -45,6 +45,24 @@ _TOMAN_TO_RIAL = 10.0
 # extraction robust to the pre-2023 DST era (+4:30 anchors) in deep history.
 _TEHRAN_DATE_SHIFT = timedelta(hours=3, minutes=30) + timedelta(hours=6)
 
+# Curated catalogue: the liquid IRT pairs worth surfacing in the picker.
+# Uncurated epics pass through verbatim (any Nobitex UDF symbol fetches
+# without a map entry — yfinance precedent). Rial prices are integers, so
+# pricePrecision 0 across the board.
+_INSTRUMENT_LIST: list[tuple[str, str]] = [
+    ("USDTIRT", "Tether (USDT/IRR)"),
+    ("BTCIRT", "Bitcoin (BTC/IRR)"),
+    ("ETHIRT", "Ethereum (ETH/IRR)"),
+    ("XRPIRT", "Ripple (XRP/IRR)"),
+    ("DOGEIRT", "Dogecoin (DOGE/IRR)"),
+    ("TRXIRT", "Tron (TRX/IRR)"),
+    ("SOLIRT", "Solana (SOL/IRR)"),
+    ("TONIRT", "Toncoin (TON/IRR)"),
+    ("ADAIRT", "Cardano (ADA/IRR)"),
+    ("LTCIRT", "Litecoin (LTC/IRR)"),
+]
+_INSTRUMENTS: dict[str, str] = dict(_INSTRUMENT_LIST)
+
 _RESOLUTIONS: dict[Resolution, str] = {
     Resolution.MINUTE: "1",
     Resolution.MINUTE_5: "5",
@@ -215,3 +233,37 @@ class NobitexBroker(MarketDataBroker):
         except (KeyError, TypeError, ValueError):
             return (None, None)
         return (bid, ask)
+
+    @staticmethod
+    def _market_row(epic: str, name: str) -> dict:
+        return {
+            "epic": epic,
+            "name": name,
+            "status": "TRADEABLE",  # 24/7 market, no session gate
+            "type": "crypto",
+            # `pricePrecision` is the key the /api/market route + frontend read.
+            "pricePrecision": 0,  # rial prices are integers
+            "note": "",
+        }
+
+    async def all_markets(self) -> list[dict]:
+        return [self._market_row(e, n) for e, n in _INSTRUMENT_LIST]
+
+    async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
+        ql = query.strip().lower()
+        rows = [
+            self._market_row(e, n)
+            for e, n in _INSTRUMENT_LIST
+            if ql in e.lower() or ql in n.lower()
+        ]
+        return rows[:limit]
+
+    async def get_market_meta(self, epic: str) -> dict | None:
+        name = _INSTRUMENTS.get(epic)
+        if name is not None:
+            return self._market_row(epic, name)
+        # Uncurated epic: minimal row so charts open without a catalogue entry.
+        return self._market_row(epic, epic)
+
+    async def get_market_detail(self, epic: str) -> dict | None:
+        return await self.get_market_meta(epic)
