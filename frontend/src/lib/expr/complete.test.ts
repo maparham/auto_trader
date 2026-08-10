@@ -26,6 +26,15 @@ describe("completionsFor", () => {
     const labels = completionsFor("bars", 4).map((o) => o.label);
     expect(labels).toContain("barsSinceEntry");
   });
+  it("offers ATR% for the prefix ATR and keeps matching after the %", () => {
+    expect(completionsFor("ATR", 3).map((o) => o.label)).toEqual(
+      expect.arrayContaining(["ATR", "ATR%"]),
+    );
+    // Typing the % must keep the word anchored at 0 (replace, not append) and
+    // rank the now-exact ATR% first instead of dropping to the empty prefix.
+    expect(completionAnchor("ATR%", 4)).toBe(0);
+    expect(completionsFor("ATR%", 4)[0].label).toBe("ATR%");
+  });
 });
 
 describe("infix cross completions", () => {

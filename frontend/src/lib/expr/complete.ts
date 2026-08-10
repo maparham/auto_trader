@@ -44,7 +44,9 @@ const CHART_BOOST = -1;
 // An instance id may contain "#" (mintInstanceId produces "SLOPE#a1b2c3"), so
 // ref matching needs its own patterns — the plain word regex stops at the "#".
 const REF_DOT_RE = /([A-Za-z_][A-Za-z0-9_#]*)\.([A-Za-z0-9_]*)$/;
-const REF_WORD_RE = /([A-Za-z_][A-Za-z0-9_#]*)$/;
+// "%" joins "#" here so a half-typed "ATR%" stays one anchored word — instance
+// ids never contain "%", so the ref filter just finds no panes for it.
+const REF_WORD_RE = /([A-Za-z_][A-Za-z0-9_#%]*)$/;
 
 function refCompletion(inst: ExprInstance, output: string): Completion {
   return {
@@ -203,7 +205,7 @@ export function completionsFor(
   }
 
   // Bare word: rank catalog names by how well they match the current prefix.
-  const wordMatch = /([A-Za-z_][A-Za-z0-9_]*)$/.exec(before);
+  const wordMatch = /([A-Za-z_][A-Za-z0-9_%]*)$/.exec(before);
   const prefix = wordMatch ? wordMatch[1] : "";
   const lower = prefix.toLowerCase();
 
@@ -276,5 +278,5 @@ export function cmCompletionSource(
 
   const options = completionsFor(doc, pos, opts);
   if (options.length === 0) return null;
-  return { from, to: pos, options, validFor: /[A-Za-z0-9_#.]*$/ };
+  return { from, to: pos, options, validFor: /[A-Za-z0-9_#.%]*$/ };
 }
