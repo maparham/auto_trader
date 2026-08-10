@@ -103,13 +103,13 @@ describe("exprInstancesFor (the editor's lint/completion list)", () => {
 describe("ATR instances", () => {
   const live = [
     { id: "ATR", type: "ATR", calcParams: [14], extendData: {} },
-    { id: "ATR#b2", type: "ATR", calcParams: [21], extendData: { smoothing: "ema" } },
+    { id: "ATR#b2", type: "ATR", calcParams: [21], extendData: { smoothing: "ema", pctSource: "hl2" } },
   ];
   it("exprInstancesFor lists ATR panes with their length-named output", () => {
     const out = exprInstancesFor(live);
     expect(out.map((i) => [i.id, i.outputs, i.timeframe, i.detail])).toEqual([
-      ["ATR", ["14", "14.to%"], null, "RMA"],
-      ["ATR#b2", ["21", "21.to%"], null, "EMA"],
+      ["ATR", ["14", "14.to%"], null, "RMA · % of close"],
+      ["ATR#b2", ["21", "21.to%"], null, "EMA · % of hl2"],
     ]);
   });
   it("exprWarmupByRef costs the length for the real output, 0 otherwise", () => {

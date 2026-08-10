@@ -75,6 +75,29 @@ describe("ATR instance references", () => {
   it("a bare type-name id cannot parse as a ref, so it falls back to the ATR(length) call", () => {
     expect(chartIndicatorToExprToken("ATR", [14], {}, { instanceId: "ATR" })).toBe("ATR(14)");
   });
+
+  it("the ATR% figure emits the pct output ref", () => {
+    expect(
+      chartIndicatorToExprToken("ATR", [21], {}, { instanceId: "ATR1", figureKey: "atrPct" }),
+    ).toBe("ATR1.21.to%");
+  });
+
+  it("the ATR% figure falls back to the ATR%(length) call without a ref-able id", () => {
+    expect(chartIndicatorToExprToken("ATR", [14], {}, { figureKey: "atrPct" })).toBe("ATR%(14)");
+    expect(
+      chartIndicatorToExprToken("ATR", [14], {}, { instanceId: "ATR", figureKey: "atrPct" }),
+    ).toBe("ATR%(14)");
+  });
+
+  it("other figure keys keep the value output", () => {
+    expect(
+      chartIndicatorToExprToken("ATR", [21], {}, { instanceId: "ATR1", figureKey: "atr" }),
+    ).toBe("ATR1.21");
+  });
+
+  it("non-ATR types ignore figureKey", () => {
+    expect(chartIndicatorToExprToken("RSI", [14], undefined, { figureKey: "atrPct" })).toBe("RSI(14)");
+  });
 });
 
 describe("SLOPE instance references", () => {

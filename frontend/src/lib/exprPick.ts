@@ -22,6 +22,9 @@ export interface PickedIndicator {
   paneId: string;
   name: string;
   lineIndex?: number;
+  /** The legend figure the click landed on (e.g. ATR's "atrPct" readout);
+   * absent for curve hits and plain row clicks. */
+  figureKey?: string;
 }
 
 export function pickedIndicatorToken(chart: Chart, sel: PickedIndicator): string | null {
@@ -36,6 +39,6 @@ export function pickedIndicatorToken(chart: Chart, sel: PickedIndicator): string
     isAccel ? "SLOPE" : indTypeOf(src),
     (src.calcParams ?? []).map(Number),
     src.extendData,
-    { instanceId, lineIndex: sel.lineIndex, output: isAccel ? "accel" : "slope" },
+    { instanceId, lineIndex: sel.lineIndex, output: isAccel ? "accel" : "slope", figureKey: sel.figureKey },
   );
 }

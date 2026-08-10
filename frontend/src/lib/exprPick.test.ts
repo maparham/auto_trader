@@ -82,4 +82,14 @@ describe("pickedIndicatorToken", () => {
   it("returns null for an indicator that is no longer on the chart", () => {
     expect(pickedIndicatorToken(fakeChart([]), { paneId: "pane_1", name: "SLOPE" })).toBeNull();
   });
+
+  it("passes the clicked figure through, so the ATR% figure picks the pct output", () => {
+    const chart = fakeChart([
+      { name: "ATR1", paneId: "pane_3", calcParams: [14], extendData: { indType: "ATR" } },
+    ]);
+    expect(pickedIndicatorToken(chart, { paneId: "pane_3", name: "ATR1", figureKey: "atrPct" }))
+      .toBe("ATR1.14.to%");
+    expect(pickedIndicatorToken(chart, { paneId: "pane_3", name: "ATR1" }))
+      .toBe("ATR1.14");
+  });
 });

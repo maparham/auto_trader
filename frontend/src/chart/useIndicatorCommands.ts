@@ -110,12 +110,17 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // until the next 1s tick).
     handle.redrawRef.current();
   }, [controller, scope, indicatorRemoved]);
-  const onLegendSelectRow = useCallback((name: string) => {
+  const onLegendSelectRow = useCallback((name: string, figureKey?: string) => {
     const paneId = paneIdOf(name);
     if (controller.indicatorPickArmed.value) {
       // "Pick from chart" is armed: publish the clicked instance for the panel
-      // instead of selecting it (mirrors the curve-hit path in ChartCore).
-      controller.indicatorPickResult.set({ paneId, name });
+      // instead of selecting it (mirrors the curve-hit path in ChartCore). The
+      // figure key, when the click landed on a legend readout (ATR%), picks
+      // that figure's output; unarmed clicks ignore it — a figure click is
+      // just a row click for selection purposes.
+      controller.indicatorPickResult.set({
+        paneId, name, ...(figureKey ? { figureKey } : {}),
+      });
       return;
     }
     const cur = selectedIndicator.value;

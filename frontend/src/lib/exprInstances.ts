@@ -13,7 +13,7 @@
 //      source of truth for which outputs exist.
 import { normalizeSlopeUnit, slopeOutputs, slopeWarmup } from "./indicators/slopeOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
-import { atrOutputs, atrWarmup, normalizeAtrSmoothing, ATR_SMOOTHING_LABEL, type AtrExtend } from "./atr";
+import { atrOutputs, atrWarmup, normalizeAtrSmoothing, normalizeAtrPctSource, ATR_SMOOTHING_LABEL, type AtrExtend } from "./atr";
 import type { ExprInstance } from "./expr/catalog";
 // Display vocabularies, both from klinecharts-free modules so this stays a pure,
 // node-testable bridge: mtf.ts type-imports klinecharts only, indicatorMeta.ts
@@ -152,7 +152,9 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         id: inst.id,
         outputs: atrOutputs(inst.calcParams),
         timeframe: null, // ATR panes are chart-timeframe only (no MTF input)
-        detail: ATR_SMOOTHING_LABEL[normalizeAtrSmoothing(ext.smoothing)],
+        // Smoothing plus the .to% output's divisor price — the SLOPE detail
+        // convention: the popup says what the output names cannot.
+        detail: `${ATR_SMOOTHING_LABEL[normalizeAtrSmoothing(ext.smoothing)]} · % of ${normalizeAtrPctSource(ext.pctSource)}`,
       });
       continue;
     }

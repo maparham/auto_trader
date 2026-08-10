@@ -47,6 +47,11 @@ export interface ExprChartTokenOptions {
   /** Which companion series the click landed on; the acceleration pane is a
    * separate pane over the same instance. */
   output?: "slope" | "accel";
+  /** The legend FIGURE the click landed on (LegendFigure.key), for panes whose
+   * legend shows more than the plotted line — today only ATR's "atrPct"
+   * readout, which picks the pane's `.to%` output. Absent for curve hits and
+   * plain row clicks; unknown keys behave like absence. */
+  figureKey?: string;
 }
 
 export function chartIndicatorToExprToken(
@@ -89,10 +94,16 @@ export function chartIndicatorToExprToken(
     // legacy "ATR#<rand>"), and any id other than the bare type name parses.
     case "ATR": {
       const id = opts?.instanceId;
+      // The legend's ATR% readout picks the pct output; anything else (the
+      // value figure, a curve hit, a row click) picks the value line.
+      const outIdx = opts?.figureKey === "atrPct" ? 1 : 0;
       // atrOutputs falls back to 14 on a garbage length, exactly as the
       // backend's parse_atr_config does, so the ref stays valid on both stacks.
-      if (id && id !== indType) return `${id}.${atrOutputs(calcParams)[0]}`;
-      return hasLen ? `ATR(${len})` : null;
+      if (id && id !== indType) return `${id}.${atrOutputs(calcParams)[outIdx]}`;
+      // Same defaults-identical fallback story as ATR(len): right for an
+      // unconfigured pane, and a configured one always has a ref-able id.
+      if (!hasLen) return null;
+      return outIdx === 1 ? `ATR%(${len})` : `ATR(${len})`;
     }
     case "VOLMA":
       return hasLen ? `VOLMA(${len})` : null;

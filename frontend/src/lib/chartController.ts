@@ -26,6 +26,10 @@ export interface SelectedIndicator {
   // — a rule references one line ("SLOPE.50"), where selection is per
   // instance. Absent for a legend-row click, which names no line.
   lineIndex?: number;
+  // The legend FIGURE the click landed on (LegendFigure.key), when the row's
+  // legend shows more than the plotted line — ATR's "atrPct" readout picks the
+  // pane's .to% output. Only "pick from chart" sets and reads it.
+  figureKey?: string;
 }
 
 export class ChartController {

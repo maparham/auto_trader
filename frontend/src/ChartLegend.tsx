@@ -117,7 +117,7 @@ export interface Props {
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
   // Click a row body to select the indicator (TradingView-style), like a curve click.
-  onSelectRow: (name: string) => void;
+  onSelectRow: (name: string, figureKey?: string) => void;
   // Click the ⓘ button to open the instrument-details modal (TradingView-style).
   // Open the market-info popover, anchored at the ⓘ button (viewport coords).
   onOpenDetails: (x: number, y: number) => void;
@@ -491,7 +491,7 @@ function IndicatorRow({
   highlighted: boolean;
   figureValuesRef: RefObject<Map<string, HTMLSpanElement>>;
   setRowHover: (name: string | null) => void;
-  onSelectRow: (name: string) => void;
+  onSelectRow: (name: string, figureKey?: string) => void;
   onToggleVisible: (name: string) => void;
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
@@ -528,7 +528,19 @@ function IndicatorRow({
       {!row.hideValue &&
         row.figures.map((fig) =>
           fig.title ? (
-            <span className="cl-fig" key={fig.key} style={{ color: fig.color }}>
+            <span
+              className="cl-fig"
+              key={fig.key}
+              style={{ color: fig.color }}
+              // Names the clicked FIGURE so an armed pick can target a legend
+              // readout (ATR% -> the pane's .to% output). stopPropagation keeps
+              // the row's own onClick from firing a second, figure-less pick;
+              // unarmed, the handler treats this exactly like a row click.
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectRow(row.name, fig.key);
+              }}
+            >
               <span className="cl-fig-title">{fig.title}</span>
               <span
                 className="cl-fig-val"
@@ -655,7 +667,7 @@ function SubPaneLegend({
   highlightedName: string | null;
   figureValuesRef: RefObject<Map<string, HTMLSpanElement>>;
   setRowHover: (name: string | null) => void;
-  onSelectRow: (name: string) => void;
+  onSelectRow: (name: string, figureKey?: string) => void;
   onToggleVisible: (name: string) => void;
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
