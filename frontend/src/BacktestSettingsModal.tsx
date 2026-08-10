@@ -3353,6 +3353,7 @@ export function RiskSection({
   // buttons light for that one axis, and its chip renders wherever the field
   // renders, so both sides show the same synced range.
   const sweepSide = sync?.on ? "long" : sweep?.side;
+  const [riskCollapsed, toggleRisk] = useSectionCollapse("Stop & take profit");
   const swept = (field: "stop" | "target", prop: "value" | "mult") =>
     sweep?.axes.some((a) => a.target === `risk:${sweepSide}.${field}.${prop}`) ?? false;
   const sweepBtn = (field: "stop" | "target", prop: "value" | "mult", current: number) =>
@@ -3369,8 +3370,11 @@ export function RiskSection({
     );
 
   return (
-    <div className="bt-risk">
-      <SectionTitle
+    <div className={`bt-risk${riskCollapsed ? " collapsed" : ""}`}>
+      <SectionCollapseHead
+        title="Stop & take profit"
+        collapsed={riskCollapsed}
+        onToggle={toggleRisk}
         info={sync?.on
           ? "Price-level exits. The trade ends on whichever triggers first: stop, target, or a close rule. Synced: edits here apply to both long and short."
           : "Price-level exits for this side. The trade ends on whichever triggers first: stop, target, or a close rule."}
@@ -3380,9 +3384,8 @@ export function RiskSection({
             Same for long &amp; short
           </label>
         )}
-      >
-        Stop &amp; take profit
-      </SectionTitle>
+      />
+      {!riskCollapsed && <>
       <div className="bt-risk-row">
         <span className="bt-risk-label">Stop</span>
         <select value={risk.stop.kind} onChange={(e) => setStopKind(e.target.value as StopKind)}>
@@ -3487,14 +3490,15 @@ export function RiskSection({
         {risk.target.kind === "price" &&
           num(risk.target.value, (n) => onChange({ ...risk, target: { ...risk.target, value: n } }))}
       </div>
+      </>}
     </div>
   );
 }
 
-// Max-concurrent-positions + min-spacing controls for one side. Collapsed by
-// default (a <details>) so the common single-position case stays out of the
-// way; off by default via DEFAULT_SCALING (maxConcurrent: 1, no spacing) so
-// existing presets behave exactly as before.
+// Max-concurrent-positions + min-spacing controls for one side. Collapsible
+// (persisted like every other section) so it can stay out of the way in the
+// common single-position case; off by default via DEFAULT_SCALING
+// (maxConcurrent: 1, no spacing) so existing presets behave exactly as before.
 function ScalingSection({
   scaling,
   onChange,
@@ -3503,16 +3507,21 @@ function ScalingSection({
   onChange: (s: ScalingConfig) => void;
 }) {
   const spacingKind = scaling.spacing?.kind ?? "none";
+  const [collapsed, toggle] = useSectionCollapse("Scaling & management");
   const setSpacingKind = (k: "none" | "pct" | "atr") => {
     if (k === "none") return onChange({ ...scaling, spacing: undefined });
     if (k === "pct") return onChange({ ...scaling, spacing: { kind: "pct", value: scaling.spacing?.value ?? 1 } });
     onChange({ ...scaling, spacing: { kind: "atr", mult: scaling.spacing?.mult ?? 1, length: scaling.spacing?.length ?? 14 } });
   };
   return (
-    <div className="bt-scaling">
-      <SectionTitle info="Allow more than one open position on this side, and set the minimum price spacing between successive entries.">
-        Scaling &amp; management
-      </SectionTitle>
+    <div className={`bt-scaling${collapsed ? " collapsed" : ""}`}>
+      <SectionCollapseHead
+        title="Scaling & management"
+        collapsed={collapsed}
+        onToggle={toggle}
+        info="Allow more than one open position on this side, and set the minimum price spacing between successive entries."
+      />
+      {!collapsed && <>
       <div className="bt-risk-row">
         <span className="bt-risk-label">Max positions</span>
         <input type="number" min={1} step="1" className="bt-num" value={scaling.maxConcurrent}
@@ -3536,6 +3545,7 @@ function ScalingSection({
             onChange={(e) => onChange({ ...scaling, spacing: { ...scaling.spacing!, kind: "atr", length: Math.max(1, Math.round(Number(cleanNumInput(e.currentTarget)))) } })} />
         </>}
       </div>
+      </>}
     </div>
   );
 }
@@ -3677,19 +3687,6 @@ function SidePanel({
   );
 }
 
-// A section heading with an optional ⓘ that explains what the section does.
-// Shared by <Section> and the risk/scaling blocks so every heading tips the
-// same way.
-function SectionTitle({ info, extra, children }: { info?: string | Array<string | ReactNode>; extra?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="instrument-section-title bt-section-title">
-      <span>{children}</span>
-      {info && <InfoTip text={info} />}
-      {extra}
-    </div>
-  );
-}
-
 // Remember which sections the user collapsed, keyed by section title, across
 // reloads. A shared blob so one key holds every section's state.
 const SECTION_COLLAPSE_KEY = "bt-section-collapsed";
@@ -3702,10 +3699,11 @@ function loadCollapsedSections(): Record<string, boolean> {
   }
 }
 
-// A collapsible settings section. The chevron + title is a toggle button; the ⓘ
-// sits outside it (nesting InfoTip's own <button> inside would be invalid HTML)
-// and swallows its own click, so tapping it never collapses the section.
-function Section({ title, info, extra, children }: { title: string; info?: string | Array<string | ReactNode>; extra?: ReactNode; children: ReactNode }) {
+// Collapse state for one titled section, persisted in the shared blob. Shared
+// by <Section> and the risk/scaling blocks, so e.g. collapsing "Stop & take
+// profit" on the long side starts the short side (and future modals) collapsed
+// too — same key, same title.
+function useSectionCollapse(title: string) {
   const [collapsed, setCollapsed] = useState<boolean>(() => loadCollapsedSections()[title] ?? false);
   const toggle = () => {
     setCollapsed((c) => {
@@ -3718,20 +3716,41 @@ function Section({ title, info, extra, children }: { title: string; info?: strin
       return next;
     });
   };
+  return [collapsed, toggle] as const;
+}
+
+// Header for a collapsible section. The chevron + title is a toggle button; the
+// ⓘ sits outside it (nesting InfoTip's own <button> inside would be invalid
+// HTML) and swallows its own click, so tapping it never collapses the section.
+function SectionCollapseHead({ title, info, extra, collapsed, onToggle }: {
+  title: string;
+  info?: string | Array<string | ReactNode>;
+  extra?: ReactNode;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="bt-section-head">
+      <button type="button" className="bt-section-toggle" onClick={onToggle} aria-expanded={!collapsed}>
+        <span className={`bt-section-chevron${collapsed ? " collapsed" : ""}`} aria-hidden="true">
+          ▾
+        </span>
+        <span className="instrument-section-title bt-section-title">
+          <span>{title}</span>
+        </span>
+      </button>
+      {info && <InfoTip text={info} />}
+      {extra}
+    </div>
+  );
+}
+
+// A collapsible settings section.
+function Section({ title, info, extra, children }: { title: string; info?: string | Array<string | ReactNode>; extra?: ReactNode; children: ReactNode }) {
+  const [collapsed, toggle] = useSectionCollapse(title);
   return (
     <div className={`bt-section${collapsed ? " collapsed" : ""}`}>
-      <div className="bt-section-head">
-        <button type="button" className="bt-section-toggle" onClick={toggle} aria-expanded={!collapsed}>
-          <span className={`bt-section-chevron${collapsed ? " collapsed" : ""}`} aria-hidden="true">
-            ▾
-          </span>
-          <span className="instrument-section-title bt-section-title">
-            <span>{title}</span>
-          </span>
-        </button>
-        {info && <InfoTip text={info} />}
-        {extra}
-      </div>
+      <SectionCollapseHead title={title} info={info} extra={extra} collapsed={collapsed} onToggle={toggle} />
       {!collapsed && children}
     </div>
   );

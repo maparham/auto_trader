@@ -1770,8 +1770,11 @@
   padding: 12px 0; border-top: 1px solid var(--border);
 }
 /* Title spans the top; Stop and Target then share the next line side by side,
-   wrapping back to two lines only if a populated (e.g. ATR) row gets too wide. */
-.bt-risk > .instrument-section-title { flex-basis: 100%; margin-bottom: 0; }
+   wrapping back to two lines only if a populated (e.g. ATR) row gets too wide.
+   The collapsible header (chevron button + ⓘ + sync checkbox) takes the same
+   full-width slot; collapsed leaves just that header line. */
+.bt-risk > .instrument-section-title,
+.bt-risk > .bt-section-head { flex-basis: 100%; margin-bottom: 0; }
 .bt-risk-row { display: flex; align-items: center; gap: 8px; }
 .bt-risk-row select { flex: 0 0 auto; min-width: 0; }
 .bt-risk-row span { color: var(--text-dim); font-size: 12px; }
@@ -1779,15 +1782,16 @@
 .bt-num { width: 64px; flex: 0 0 auto; min-width: 0; }
 
 /* Scaling & management — max concurrent positions + min spacing, per side.
-   A <details> so it stays collapsed (the common single-position case) unless
-   opened; reuses .bt-risk-row/.bt-risk-label/.bt-num from the section above. */
-/* Always visible; title spans the top, then Max positions and Min spacing share
-   the next line side by side (wrapping only if spacing's ATR inputs get wide). */
+   Collapsible like .bt-risk; reuses .bt-risk-row/.bt-risk-label/.bt-num from
+   the section above. Title spans the top, then Max positions and Min spacing
+   share the next line side by side (wrapping only if spacing's ATR inputs get
+   wide). */
 .bt-scaling {
   display: flex; flex-flow: row wrap; align-items: center; gap: 8px 24px;
   padding: 12px 0; border-top: 1px solid var(--border);
 }
-.bt-scaling > .instrument-section-title { flex-basis: 100%; margin-bottom: 0; }
+.bt-scaling > .instrument-section-title,
+.bt-scaling > .bt-section-head { flex-basis: 100%; margin-bottom: 0; }
 
 /* Presets: an identity bar over a library table. The bar names the preset you
    are editing and whether it diverged; the table is the strategy comparison.
@@ -2086,7 +2090,12 @@
 .bt-heatstrip > span { flex: 1 1 0; min-width: 0; }
 .bt-heatstrip > span.on { background: var(--accent, #2b7); }
 .bt-heatstrip > span.off { background: var(--muted-bg, #e5e7eb); }
-/* Custom backtest range: From/To side by side on one line instead of stacked. */
+/* Custom backtest range: From/To side by side on one line instead of stacked.
+   datetime-local inputs can't shrink below their intrinsic width, so on narrow
+   panels the row wraps (To drops to its own line) rather than letting the From
+   input overflow its field and collide with the To label. */
+.bt-range-row { flex-wrap: wrap; }
+.bt-range-row .bt-range-field { flex: 1 1 auto; }
 .bt-range-field { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .bt-range-field > span { color: var(--text-dim); flex-shrink: 0; }
 /* Session / Timezone / From / To all share one row. Labels stack ABOVE each
