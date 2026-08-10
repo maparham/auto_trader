@@ -60,8 +60,25 @@ export const LOGIC: CatalogEntry[] = [
 ];
 
 export const CANDLE_FIELDS = [
-  "open", "high", "low", "close", "volume", "body", "body%", "range", "wickTop", "wickBottom",
+  "open", "high", "low", "close", "volume", "body", "body%", "range", "range%", "wickTop", "wickBottom",
 ] as const;
+
+// One-line tooltip per candle field. The anatomy definitions mirror backend
+// strategy/expr/evaluate.py candle_field — body is SIGNED (negative on a
+// bearish bar), body% is its percent-of-open form.
+export const CANDLE_FIELD_DETAILS: Record<(typeof CANDLE_FIELDS)[number], string> = {
+  open: "Opening price of the bar",
+  high: "Highest price of the bar",
+  low: "Lowest price of the bar",
+  close: "Closing price of the bar",
+  volume: "Traded volume of the bar",
+  body: "close − open, signed: negative on a bearish bar",
+  "body%": "Signed percent move: (close − open) / open × 100",
+  range: "high − low, signed: negative on a bearish bar",
+  "range%": "Signed range as a percent of high: (high − low) / high × 100",
+  wickTop: "Upper wick: high − max(open, close)",
+  wickBottom: "Lower wick: min(open, close) − low",
+};
 
 // Mirrors backend strategy/expr/tfs.py TF_RESOLUTIONS (the pin aliases the
 // backend accepts) — `seconds` is the nominal bar width, duplicated from

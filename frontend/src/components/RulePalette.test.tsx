@@ -61,6 +61,23 @@ describe("RulePalette", () => {
     expect(screen.queryByRole("button", { name: /SMA\(length\)/ })).toBeNull();
   });
 
+  // Candle chips carry a short detail each; the palette feeds an item's detail
+  // to both the tooltip and the filter, so matching on it proves it's attached.
+  it("gives candle fields tooltip details, searchable like any description", async () => {
+    open();
+    await userEvent.type(screen.getByLabelText("Filter palette"), "opening price");
+    expect(screen.getByText("Candle")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "open" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "close" })).toBeNull();
+  });
+
+  it("describes body and body% as signed", async () => {
+    open();
+    await userEvent.type(screen.getByLabelText("Filter palette"), "signed");
+    expect(screen.getByRole("button", { name: "body" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "body%" })).toBeTruthy();
+  });
+
   it("inserts the first visible match on Enter", async () => {
     const { onInsert, onClose } = open();
     const filter = screen.getByLabelText("Filter palette");

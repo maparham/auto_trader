@@ -6,7 +6,7 @@
 // all come from FloatingModal.
 
 import { useMemo, useState } from "react";
-import { CANDLE_FIELDS, INDICATORS, WRAPPERS, CROSS_OPS, CROSSES, CONDITIONS, LOGIC, PATTERNS, TIMEFRAMES } from "../lib/expr/catalog";
+import { CANDLE_FIELDS, CANDLE_FIELD_DETAILS, INDICATORS, WRAPPERS, CROSS_OPS, CROSSES, CONDITIONS, LOGIC, PATTERNS, TIMEFRAMES } from "../lib/expr/catalog";
 import type { CatalogEntry } from "../lib/expr/catalog";
 import FloatingModal from "./FloatingModal";
 import Tooltip from "./Tooltip";
@@ -33,6 +33,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
       key: `candle.${field}`,
       label: field,
       insert: `candle.${field}`,
+      detail: CANDLE_FIELD_DETAILS[field],
     })),
   },
   ...([

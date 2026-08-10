@@ -36,7 +36,14 @@ def candle_field(c: Candle, field: str) -> float | None:
     if field == "body%":
         return (c.close - c.open) / c.open * 100 if c.open != 0 else None
     if field == "range":
-        return c.high - c.low
+        # Signed by direction; a doji (close == open) keeps its magnitude
+        # positive rather than collapsing to 0 like body does.
+        return (c.high - c.low) if c.close >= c.open else -(c.high - c.low)
+    if field == "range%":
+        if c.high == 0:
+            return None
+        pct = (c.high - c.low) / c.high * 100
+        return pct if c.close >= c.open else -pct
     if field == "wickTop":
         return c.high - max(c.open, c.close)
     if field == "wickBottom":

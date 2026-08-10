@@ -16,6 +16,7 @@ import type {
 import type { EditorView } from "@codemirror/view";
 import {
   CANDLE_FIELDS,
+  CANDLE_FIELD_DETAILS,
   CONDITIONS,
   CROSS_OPS,
   CROSSES,
@@ -193,6 +194,7 @@ export function completionsFor(
     return CANDLE_FIELDS.filter((f) => f.toLowerCase().startsWith(prefix)).map((f) => ({
       label: f,
       type: "property",
+      detail: CANDLE_FIELD_DETAILS[f],
     }));
   }
 

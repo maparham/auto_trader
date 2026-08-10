@@ -448,3 +448,17 @@ def test_candle_body_pct_through_offset():
     # the offset path funnels through the same field lookup: bar 1 reads bar 0.
     bars = _bars([(100, 103), (200, 190)])
     assert series_of(parse("candle[-1].body% > 0").left, bars, "MINUTE_5", {}) == [None, 3.0]
+
+
+def test_candle_range_is_signed_by_direction():
+    # _bars pads high/low by 1 around open/close, so range = |close-open| + 2.
+    # bullish -> +5, bearish -> -6, doji keeps its magnitude positive.
+    bars = _bars([(100, 103), (103, 99), (99, 99)])
+    assert series_of(parse("candle.range > 0").left, bars, "MINUTE_5", {}) == [5.0, -6.0, 2.0]
+
+
+def test_candle_range_pct_is_signed_percent_of_high():
+    # (high - low) / high * 100, negated on bearish bars.
+    bars = _bars([(100, 103), (103, 99)])  # highs 104, 104; lows 99, 98
+    vals = series_of(parse("candle.range% > 0").left, bars, "MINUTE_5", {})
+    assert vals == [pytest.approx(5 / 104 * 100), pytest.approx(-6 / 104 * 100)]

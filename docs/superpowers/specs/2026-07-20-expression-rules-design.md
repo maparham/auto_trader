@@ -48,11 +48,14 @@ allowed. Whitespace insignificant. Names case-sensitive.
 
 ### Variables
 
-- `candle.open .high .low .close .volume .body .body% .range .wickTop .wickBottom`
+- `candle.open .high .low .close .volume .body .body% .range .range% .wickTop .wickBottom`
   — anatomy fields (body = close−open, signed: negative on bearish candles;
-  body% = (close−open)/open×100, null when open is 0; range = high−low,
-  wickTop = high−max(o,c), wickBottom = min(o,c)−low). body was |close−open|
-  until 2026-08-10, when it became signed by request.
+  body% = (close−open)/open×100, null when open is 0; range = ±(high−low),
+  signed by direction, positive on a doji since close ≥ open; range% =
+  ±(high−low)/high×100 with the same sign rule, null when high is 0;
+  wickTop = high−max(o,c), wickBottom = min(o,c)−low). body and range were
+  unsigned until 2026-08-10, when they became signed by request. The %
+  fields are true percentages (×100), not ratios.
 - `candle` alone is invalid; a field is required.
 - `entry` — average entry price; valid only in exit rules (parse error in entry
   rules).

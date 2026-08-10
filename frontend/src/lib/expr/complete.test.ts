@@ -9,6 +9,11 @@ describe("completionsFor", () => {
     expect(opts).toContain("wickTop");
     expect(opts).not.toContain("EMA");
   });
+  it("carries a detail on each candle field, like every other entry kind", () => {
+    const opts = completionsFor("candle.", 7);
+    expect(opts.every((o) => o.detail)).toBe(true);
+    expect(opts.find((o) => o.label === "body")?.detail).toMatch(/signed/);
+  });
   it("suggests timeframes after '@'", () => {
     const opts = completionsFor("EMA(9)@", 7).map((o) => o.label);
     expect(opts).toContain("4H");

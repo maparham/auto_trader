@@ -299,5 +299,9 @@
   { "expr": "candle.body% > 0.5", "isExit": false, "error": null,
     "literals": [
       {"ordinal":0,"value":0.5,"from":15,"to":18,"label":"threshold"}
+    ] },
+  { "expr": "candle.range% > 2", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":2,"from":16,"to":17,"label":"threshold"}
     ] }
 ]
