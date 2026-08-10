@@ -180,6 +180,24 @@ def test_meta_curated_and_verbatim(broker):
     assert asyncio.run(broker.get_market_detail("USDTIRT")) == meta
 
 
+def test_register_adds_data_only_broker():
+    from auto_trader.brokers.nobitex import NobitexBroker, register
+    from auto_trader.brokers.registry import BrokerRegistry
+
+    registry = BrokerRegistry()
+    b = register(registry)
+    assert isinstance(b, NobitexBroker)
+    assert registry.get_data("nobitex") is b and b.broker_id == "nobitex"
+    row = next(a for a in registry.describe()["exec"] if a["broker"] == "nobitex")
+    assert row.get("dataOnly") is True
+
+
+def test_build_registry_includes_nobitex():
+    from auto_trader.brokers.registry import build_registry
+
+    assert "nobitex" in build_registry().data
+
+
 def test_http_errors_propagate(monkeypatch, broker):
     from auto_trader.brokers import nobitex
 

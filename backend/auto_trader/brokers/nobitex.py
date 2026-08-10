@@ -267,3 +267,13 @@ class NobitexBroker(MarketDataBroker):
 
     async def get_market_detail(self, epic: str) -> dict | None:
         return await self.get_market_meta(epic)
+
+
+def register(registry) -> NobitexBroker:
+    """Register the read-only Nobitex data broker. No credentials, always
+    available. Data-only: no executor, so it appears as a chart/backtest source
+    but not a tradeable account (its real bid/ask does let paper trading price
+    off it, unlike the other data-only sources)."""
+    broker = NobitexBroker()
+    registry.add_data("nobitex", broker)
+    return broker
