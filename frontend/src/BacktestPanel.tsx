@@ -397,23 +397,24 @@ function TradesTable({
 
   const { start, end, padTop, padBottom } = rowWindow(scrollTop, viewportH, rowH, rows.length, OVERSCAN);
 
-  // Keep the highlighted row in view. When the highlight comes from this list's
-  // own hover the row is already rendered and visible, so this is a no-op; when
-  // it comes from a chart marker the row may not even be in the DOM — scroll
-  // the container to its computed offset and let the window catch up.
-  const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
+  // Keep the SELECTED (clicked) row in view — hover-driven highlight must not
+  // move the list. When the click came from this list's own row it's already
+  // visible, so this is a no-op; when it came from a chart marker the row may
+  // not even be in the DOM — scroll the container to its computed offset and
+  // let the window catch up.
+  const selectedRowRef = useRef<HTMLTableRowElement | null>(null);
   useEffect(() => {
-    if (highlighted == null) return;
-    if (highlightedRowRef.current) {
-      highlightedRowRef.current.scrollIntoView({ block: "nearest" });
+    if (selected == null) return;
+    if (selectedRowRef.current) {
+      selectedRowRef.current.scrollIntoView({ block: "nearest" });
       return;
     }
     const wrap = wrapRef.current;
-    const idx = rows.findIndex((r) => r.i === highlighted);
+    const idx = rows.findIndex((r) => r.i === selected);
     if (!wrap || idx < 0 || rowH <= 0) return;
     wrap.scrollTop = Math.max(0, idx * rowH - wrap.clientHeight / 2);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [highlighted]);
+  }, [selected]);
 
   return (
     <div
@@ -449,7 +450,7 @@ function TradesTable({
             <tr
               key={row.i}
               data-trade-index={row.i}
-              ref={row.i === highlighted ? highlightedRowRef : undefined}
+              ref={row.i === selected ? selectedRowRef : undefined}
               className={`bt-trade-row${row.i === highlighted ? " highlighted" : ""}${row.i === selected ? " selected" : ""}`}
               onMouseEnter={() => highlightTradeSignal.set(row.i)}
               onMouseLeave={() => highlightTradeSignal.set(null)}
