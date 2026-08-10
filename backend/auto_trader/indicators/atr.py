@@ -9,15 +9,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from auto_trader.core.models import Candle
-from auto_trader.indicators.core import atr_series, atr_smoothed_series
+from auto_trader.indicators.core import atr_series, atr_smoothed_series, price_of
 
 SMOOTHINGS = ("rma", "sma", "ema", "wma")
+# lib/atr.ts normalizeAtrPctSource — the legal ATR% divisor prices.
+PCT_SOURCES = ("open", "high", "low", "close", "hl2", "hlc3", "ohlc4", "hlcc4")
 
 
 @dataclass(frozen=True, slots=True)
 class AtrConfig:
     length: int
     smoothing: str
+    pct_source: str
 
 
 def parse_atr_config(calc_params: object, extend_data: object) -> AtrConfig:
@@ -35,29 +38,42 @@ def parse_atr_config(calc_params: object, extend_data: object) -> AtrConfig:
             length = 14
     ext = extend_data if isinstance(extend_data, dict) else {}
     smoothing = ext.get("smoothing")
+    pct_source = ext.get("pctSource")
     return AtrConfig(
         length=length,
         smoothing=smoothing if smoothing in SMOOTHINGS else "rma",
+        pct_source=pct_source if pct_source in PCT_SOURCES else "close",
     )
 
 
 def atr_outputs(cfg: AtrConfig) -> tuple[str, ...]:
-    """The single output, named by LENGTH (`ATR#id.14`) — the SLOPE convention:
-    retune the length and rules naming the old one fail loudly with
-    unknown_indicator_output instead of silently re-pointing."""
-    return (str(cfg.length),)
+    """Outputs named by LENGTH (`ATR#id.14`, `ATR#id.14.pct`) — the SLOPE
+    convention: retune the length and rules naming the old one fail loudly
+    with unknown_indicator_output instead of silently re-pointing. The pct
+    output rides the same rule, so both rename together. Value line first:
+    the chart click-to-insert token emits outputs[0]."""
+    return (str(cfg.length), f"{cfg.length}.pct")
 
 
 def atr_pane_series(
     cfg: AtrConfig, output: str, candles: Sequence[Candle], bar_hours: float
 ) -> list[float | None]:
     if cfg.smoothing == "rma":
-        return atr_series(candles, cfg.length)
-    return atr_smoothed_series(candles, cfg.length, cfg.smoothing)
+        base = atr_series(candles, cfg.length)
+    else:
+        base = atr_smoothed_series(candles, cfg.length, cfg.smoothing)
+    if output != f"{cfg.length}.pct":
+        return base
+    # The legend's ATR% readout: pane-smoothed ATR over the pane's % Source.
+    out: list[float | None] = []
+    for a, c in zip(base, candles):
+        p = price_of(c, cfg.pct_source)
+        out.append((a / p) * 100.0 if a is not None and p > 0 else None)
+    return out
 
 
 def atr_warmup(cfg: AtrConfig, output: str) -> int:
     """= length, matching expr-level ATR(n) (warmup.py arg_kind "length");
     0 for an output this config does not expose — the unknown ref is the
     validation layer's error to report."""
-    return cfg.length if output == str(cfg.length) else 0
+    return cfg.length if output in (str(cfg.length), f"{cfg.length}.pct") else 0

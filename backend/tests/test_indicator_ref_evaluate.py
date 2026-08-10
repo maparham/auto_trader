@@ -158,3 +158,56 @@ def test_the_instance_map_reaches_a_deeply_nested_ref_not_just_a_toplevel_one():
     assert any(v is not None for v in got)
     # ...and equality catches a forward that arrives but carries the wrong series.
     assert got == want
+
+
+ATR_PAYLOAD = {"ATR1": {"type": "ATR", "calcParams": [5],
+                        "extendData": {"smoothing": "ema", "pctSource": "hl2"}}}
+
+
+def test_atr_pct_output_honors_smoothing_and_pct_source():
+    from auto_trader.indicators.atr import atr_pane_series, parse_atr_config
+    from auto_trader.indicators.core import atr_smoothed_series, price_of
+    candles = mk(40)
+    cfg = parse_atr_config([5], {"smoothing": "ema", "pctSource": "hl2"})
+    assert cfg.pct_source == "hl2"
+    got = atr_pane_series(cfg, "5.pct", candles, 1.0)
+    base = atr_smoothed_series(candles, 5, "ema")
+    for g, a, c in zip(got, base, candles):
+        if a is None:
+            assert g is None
+        else:
+            assert g == pytest.approx(a / ((c.high + c.low) / 2) * 100)
+
+
+def test_atr_pct_source_defaults_to_close_on_garbage():
+    from auto_trader.indicators.atr import parse_atr_config
+    assert parse_atr_config([5], {"pctSource": "bogus"}).pct_source == "close"
+    assert parse_atr_config([5], None).pct_source == "close"
+
+
+def test_price_of_composite_sources():
+    from auto_trader.indicators.core import price_of
+    c = Candle(time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+               open=10.0, high=20.0, low=8.0, close=14.0, volume=1.0)
+    assert price_of(c, "open") == 10.0
+    assert price_of(c, "high") == 20.0
+    assert price_of(c, "low") == 8.0
+    assert price_of(c, "close") == 14.0
+    assert price_of(c, "hl2") == 14.0
+    assert price_of(c, "hlc3") == pytest.approx((20 + 8 + 14) / 3)
+    assert price_of(c, "ohlc4") == pytest.approx((10 + 20 + 8 + 14) / 4)
+    assert price_of(c, "hlcc4") == pytest.approx((20 + 8 + 14 + 14) / 4)
+    assert price_of(c, "junk") == 14.0
+
+
+def test_atr_ref_pct_end_to_end_and_warmup():
+    from auto_trader.indicators.atr import atr_warmup, parse_atr_config
+    candles = mk(40)
+    instances = resolve_instances(ATR_PAYLOAD)
+    got = series_of(expr("ATR1.5.pct > 1"), candles, "HOUR", {}, instances)
+    assert len(got) == len(candles)
+    assert any(v is not None for v in got)
+    cfg = parse_atr_config([5], {})
+    assert atr_warmup(cfg, "5") == 5
+    assert atr_warmup(cfg, "5.pct") == 5
+    assert atr_warmup(cfg, "bogus") == 0
