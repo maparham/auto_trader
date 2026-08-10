@@ -565,7 +565,7 @@ class Parser {
         } else if (isRef && node.kind === "Call") {
           node = { kind: "IndicatorRef", instance: node.name, output: field.value, start: node.start, end: field.end };
           // A digits-named output may carry ONE dotted sub-name
-          // ("ATR1.14.pct"): fuse it into the output so downstream layers stay
+          // ("ATR1.14.to%"): fuse it into the output so downstream layers stay
           // string-keyed. A fused output is no longer all-digits, so a further
           // ".x" falls through to Field (-> field_on_indicator_ref), and an
           // offset in between breaks the chain the same way. Mirrors parser.py.

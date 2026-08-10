@@ -201,11 +201,14 @@ def test_price_of_composite_sources():
 
 
 def test_atr_ref_pct_end_to_end_and_warmup():
-    from auto_trader.indicators.atr import atr_warmup, parse_atr_config
+    from auto_trader.indicators.atr import atr_pane_series, atr_warmup, parse_atr_config
     candles = mk(40)
     instances = resolve_instances(ATR_PAYLOAD)
     got = series_of(expr("ATR1.5.to% > 1"), candles, "HOUR", {}, instances)
-    assert len(got) == len(candles)
+    # Bar-for-bar against the indicator module: pins that evaluate's dispatch
+    # passes the fused "5.to%" output string through unmangled.
+    cfg_hl2 = parse_atr_config([5], {"smoothing": "ema", "pctSource": "hl2"})
+    assert got == atr_pane_series(cfg_hl2, "5.to%", candles, 1.0)
     assert any(v is not None for v in got)
     cfg = parse_atr_config([5], {})
     assert atr_warmup(cfg, "5") == 5

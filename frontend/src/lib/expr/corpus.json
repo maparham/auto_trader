@@ -279,6 +279,7 @@
       {"ordinal":2,"value":1,"from":19,"to":20,"label":"threshold"}
     ] },
   { "expr": "% > 1", "isExit": false, "error": {"code":"bad_char","from":0,"to":1}, "literals": [] },
+  { "expr": "4H% > 1", "isExit": false, "error": {"code":"bad_char","from":2,"to":3}, "literals": [] },
   { "expr": "FOO%(9) > 0", "isExit": false, "error": {"code":"unknown_name","from":0,"to":7}, "literals": [] },
   { "expr": "ATR1.14.to% > 1", "isExit": false, "error": null,
     "instances": {"ATR1": {"type":"ATR","calcParams":[14],"extendData":{"smoothing":"ema","pctSource":"hl2"}}},
