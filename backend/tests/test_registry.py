@@ -15,18 +15,19 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from auto_trader.config import IGSettings, MTSettings, Settings, settings
+from auto_trader.config import IGSettings, MTSettings, OanorSettings, Settings, settings
 from auto_trader.brokers.registry import BrokerRegistry, build_registry
 
 
 @pytest.fixture(autouse=True)
 def _no_ig(monkeypatch):
-    """Default: pretend IG, Capital-live and MT5 are unconfigured so the base
+    """Default: pretend IG, Capital-live, MT5 and oanor are unconfigured so the base
     assertions are deterministic regardless of the local .env. Tests that want them
     opt back in explicitly. Capital-live is cleared via the underlying creds (not a
     has_live() override) so tests can still exercise the real has_live() gating."""
     monkeypatch.setattr(IGSettings, "has", lambda self, side: False)
     monkeypatch.setattr(MTSettings, "has", lambda self: False)
+    monkeypatch.setattr(OanorSettings, "has", lambda self: False)
     monkeypatch.setattr(settings, "live_api_key", "", raising=False)
     monkeypatch.setattr(settings, "live_password", "", raising=False)
 

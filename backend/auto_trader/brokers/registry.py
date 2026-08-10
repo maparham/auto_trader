@@ -104,8 +104,8 @@ class BrokerRegistry:
 def build_registry() -> BrokerRegistry:
     """Wire every broker the app ships with. Adding a broker is one block here:
     register its data broker, then register the executors that price off it."""
-    from auto_trader.brokers import capital, dukascopy, ig, mt5, yfinance
-    from auto_trader.config import ig_settings, mt5_settings
+    from auto_trader.brokers import capital, dukascopy, ig, mt5, oanor, yfinance
+    from auto_trader.config import ig_settings, mt5_settings, oanor_settings
 
     from auto_trader.config import settings
 
@@ -136,5 +136,14 @@ def build_registry() -> BrokerRegistry:
             token=mt5_settings.token,
             account_id=mt5_settings.account_id,
             region=mt5_settings.region,
+        )
+    # oanor: Iranian free-market (bazaar) rial/gold daily history + latest price.
+    # Data-only, like dukascopy/yfinance, but needs an API key — registered only
+    # when OANOR_API_KEY is set, so an absent key never shows a dead entry.
+    if oanor_settings.has():
+        oanor.register(
+            registry,
+            api_key=oanor_settings.api_key,
+            base_url=oanor_settings.base_url,
         )
     return registry
