@@ -29,6 +29,18 @@ describe("analyze", () => {
     expect(analyze("entry > candle.close", { isExit: false }).error?.code).toBe("entry_in_entry_rule");
     expect(analyze("candle.close < entry", { isExit: true }).error).toBeNull();
   });
+
+  it("parses ATR% as an indicator call with a length literal", () => {
+    const { literals, error } = analyze("ATR%(14) < 0.8");
+    expect(error).toBeNull();
+    expect(literals.map((l) => [l.value, l.label])).toEqual([
+      [14, "ATR% length"], [0.8, "threshold"],
+    ]);
+  });
+
+  it("keeps a leading % a lex error", () => {
+    expect(analyze("% > 1").error?.code).toBe("bad_char");
+  });
 });
 
 describe("warmupOf", () => {

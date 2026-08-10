@@ -238,9 +238,11 @@ function tokenize(src: string): { tokens: LexToken[]; error: ExprErr | null } {
       let j = i;
       // "#" is legal INSIDE a name (never leading) so a chart indicator's
       // instance id — "SLOPE#a1b2c3", minted by mintInstanceId — lexes verbatim.
-      // Only THIS continuation loop takes "#": the digit branch above stays
-      // alnum/underscore, exactly like the backend lexer, so "4H#x" is bad_char.
-      while (j < n && (isAlnum(src[j]) || src[j] === "_" || src[j] === "#")) j += 1;
+      // "%" rides the same rule so "ATR%" is one name; there is no modulo
+      // operator, so a "%" anywhere else stays bad_char. Only THIS continuation
+      // loop takes "#"/"%": the digit branch above stays alnum/underscore,
+      // exactly like the backend lexer, so "4H#x" is bad_char.
+      while (j < n && (isAlnum(src[j]) || src[j] === "_" || src[j] === "#" || src[j] === "%")) j += 1;
       const word = src.slice(i, j);
       // A bare "x" fused to a comparison bracket is the infix cross
       // operator: x> (crosses above) / x< (crosses below).
