@@ -564,6 +564,16 @@ class Parser {
           node = { kind: "Candle", field: field.value, start: node.start, end: field.end };
         } else if (isRef && node.kind === "Call") {
           node = { kind: "IndicatorRef", instance: node.name, output: field.value, start: node.start, end: field.end };
+          // A digits-named output may carry ONE dotted sub-name
+          // ("ATR1.14.pct"): fuse it into the output so downstream layers stay
+          // string-keyed. A fused output is no longer all-digits, so a further
+          // ".x" falls through to Field (-> field_on_indicator_ref), and an
+          // offset in between breaks the chain the same way. Mirrors parser.py.
+          if (/^[0-9]+$/.test(field.value) && this.peek().type === "DOT" && this.toks[this.i + 1].type === "NAME") {
+            this.next();
+            const sub = this.next();
+            node = { kind: "IndicatorRef", instance: node.instance, output: `${node.output}.${sub.value}`, start: node.start, end: sub.end };
+          }
         } else {
           node = { kind: "Field", base: node, name: field.value, start: node.start, end: field.end };
         }

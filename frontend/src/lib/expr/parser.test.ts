@@ -334,10 +334,15 @@ describe("indicator references", () => {
       .toBe("unknown_indicator_ref");
   });
 
-  it("rejects a field hung off a ref's output", () => {
+  it("fuses one dotted sub-name and rejects deeper chains", () => {
+    // SLOPE.9.foo fuses to output "9.foo" — an unknown output now, not a field.
     expect(analyze("SLOPE.9.foo > 0", { instances: INSTANCES }).errors[0].code)
-      .toBe("field_on_indicator_ref");
+      .toBe("unknown_indicator_output");
+    // An offset breaks the chain: the field hangs off the Offset, not the ref.
     expect(analyze("SLOPE.9[-1].foo > 0", { instances: INSTANCES }).errors[0].code)
+      .toBe("field_on_indicator_ref");
+    // A fused output takes no second level.
+    expect(analyze("SLOPE.9.foo.x > 0", { instances: INSTANCES }).errors[0].code)
       .toBe("field_on_indicator_ref");
   });
 
