@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rules can reference an ATR pane's ATR% as `ATR1.14.pct`, honoring the pane's Smoothing and % Source settings.
+**Goal:** Rules can reference an ATR pane's ATR% as `ATR1.14.to%`, honoring the pane's Smoothing and % Source settings.
 
-**Architecture:** One grammar change mirrored in both parser stacks (fuse `.NAME` onto an all-digits ref output), then purely registry-driven extension: the ATR instance modules (`frontend/src/lib/atr.ts`, `backend/auto_trader/indicators/atr.py`) grow a second output `"<len>.pct"`; generic layers (lint, completion lists, warmup, backend `IndicatorSeriesSpec` dispatch) pick it up. Backend also gains `price_of` (port of `mtf.ts::priceOf`) and pctSource parsing.
+**Architecture:** One grammar change mirrored in both parser stacks (fuse `.NAME` onto an all-digits ref output), then purely registry-driven extension: the ATR instance modules (`frontend/src/lib/atr.ts`, `backend/auto_trader/indicators/atr.py`) grow a second output `"<len>.to%"`; generic layers (lint, completion lists, warmup, backend `IndicatorSeriesSpec` dispatch) pick it up. Backend also gains `price_of` (port of `mtf.ts::priceOf`) and pctSource parsing.
 
 **Tech Stack:** TypeScript + vitest (`cd frontend && npx vitest run <paths>`), Python + pytest (`cd backend && python -m pytest <paths> -q`).
 
@@ -26,7 +26,7 @@
 - Test: `backend/tests/test_indicator_ref_parse.py`
 
 **Interfaces:**
-- Produces: `parse("ATR1.14.pct > 1")` yields `N.IndicatorRef("ATR1", "14.pct")` with end span covering `pct`. `parse("ATR1.14.pct.x > 1")` yields `Field(IndicatorRef)` (validate later reports `field_on_indicator_ref`).
+- Produces: `parse("ATR1.14.to% > 1")` yields `N.IndicatorRef("ATR1", "14.to%")` with end span covering `pct`. `parse("ATR1.14.to%.x > 1")` yields `Field(IndicatorRef)` (validate later reports `field_on_indicator_ref`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -34,29 +34,29 @@ Append to `backend/tests/test_indicator_ref_parse.py` (check its imports first; 
 
 ```python
 def test_dotted_name_after_digits_output_fuses_into_the_ref():
-    node = parse("ATR1.14.pct > 1").left
+    node = parse("ATR1.14.to% > 1").left
     assert isinstance(node, N.IndicatorRef)
     assert node.instance == "ATR1"
-    assert node.output == "14.pct"
+    assert node.output == "14.to%"
     assert (node.start, node.end) == (0, 11)
 
 
 def test_second_chain_level_does_not_fuse():
-    node = parse("ATR1.14.pct.x > 1").left
+    node = parse("ATR1.14.to%.x > 1").left
     assert isinstance(node, N.Field)
     assert isinstance(node.base, N.IndicatorRef)
-    assert node.base.output == "14.pct"
+    assert node.base.output == "14.to%"
 
 
 def test_offset_breaks_the_fusion_chain():
-    node = parse("ATR1.14[-1].pct > 1").left
+    node = parse("ATR1.14[-1].to% > 1").left
     assert isinstance(node, N.Field)  # Field(Offset(IndicatorRef))
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cd backend && python -m pytest tests/test_indicator_ref_parse.py -q -k "fuse or chain"`
-Expected: first test FAILS (today `ATR1.14.pct` parses as `Field(IndicatorRef)`, output `"14"`); the other two may already pass.
+Expected: first test FAILS (today `ATR1.14.to%` parses as `Field(IndicatorRef)`, output `"14"`); the other two may already pass.
 
 - [ ] **Step 3: Implement**
 
@@ -66,7 +66,7 @@ In `parser.py`, in the DOT branch of the postfix loop, after the existing `node 
                 elif is_ref:
                     node = N.IndicatorRef(node.name, field.value, node.start, field.end)
                     # A digits-named output may carry ONE dotted sub-name
-                    # ("ATR1.14.pct"): fuse it into the output so downstream
+                    # ("ATR1.14.to%"): fuse it into the output so downstream
                     # layers stay string-keyed. A fused output is no longer
                     # all-digits, so a further ".x" falls through to Field
                     # (-> field_on_indicator_ref), and offsets in between
@@ -101,7 +101,7 @@ git commit -m "feat(expr): backend parser fuses .name onto digits ref outputs"
 
 **Interfaces:**
 - Consumes: nothing (stacks independent until corpus).
-- Produces: `analyze("ATR1.14.pct > 1", {instances})` errors only if the instance lacks that output; the `SLOPE.9.foo` test flips to `unknown_indicator_output`.
+- Produces: `analyze("ATR1.14.to% > 1", {instances})` errors only if the instance lacks that output; the `SLOPE.9.foo` test flips to `unknown_indicator_output`.
 
 - [ ] **Step 1: Update/write the tests**
 
@@ -136,7 +136,7 @@ In `parsePostfix`, the IndicatorRef-building arm becomes:
         } else if (isRef && node.kind === "Call") {
           node = { kind: "IndicatorRef", instance: node.name, output: field.value, start: node.start, end: field.end };
           // A digits-named output may carry ONE dotted sub-name
-          // ("ATR1.14.pct"): fuse it into the output so downstream layers stay
+          // ("ATR1.14.to%"): fuse it into the output so downstream layers stay
           // string-keyed. A fused output is no longer all-digits, so a further
           // ".x" falls through to Field (-> field_on_indicator_ref), and
           // offsets in between break the chain the same way. Mirrors parser.py.
@@ -173,7 +173,7 @@ git commit -m "feat(expr): frontend parser fuses .name onto digits ref outputs"
 
 **Interfaces:**
 - Consumes: Task 1's grammar (for the end-to-end `series_of` test).
-- Produces: `price_of(candle, source) -> float`; `AtrConfig(length, smoothing, pct_source)`; `atr_outputs(cfg) == (str(len), f"{len}.pct")`; `atr_pane_series(cfg, f"{len}.pct", candles, bar_hours)`; `atr_warmup(cfg, f"{len}.pct") == cfg.length`.
+- Produces: `price_of(candle, source) -> float`; `AtrConfig(length, smoothing, pct_source)`; `atr_outputs(cfg) == (str(len), f"{len}.to%")`; `atr_pane_series(cfg, f"{len}.to%", candles, bar_hours)`; `atr_warmup(cfg, f"{len}.to%") == cfg.length`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -190,7 +190,7 @@ def test_atr_pct_output_honors_smoothing_and_pct_source():
     candles = mk(40)
     cfg = parse_atr_config([5], {"smoothing": "ema", "pctSource": "hl2"})
     assert cfg.pct_source == "hl2"
-    got = atr_pane_series(cfg, "5.pct", candles, 1.0)
+    got = atr_pane_series(cfg, "5.to%", candles, 1.0)
     base = atr_smoothed_series(candles, 5, "ema")
     for g, a, c in zip(got, base, candles):
         if a is None:
@@ -224,19 +224,19 @@ def test_atr_ref_pct_end_to_end_and_warmup():
     from auto_trader.indicators.atr import atr_warmup, parse_atr_config
     candles = mk(40)
     instances = resolve_instances(ATR_PAYLOAD)
-    got = series_of(expr("ATR1.5.pct > 1"), candles, "HOUR", {}, instances)
+    got = series_of(expr("ATR1.5.to% > 1"), candles, "HOUR", {}, instances)
     assert len(got) == len(candles)
     assert any(v is not None for v in got)
     cfg = parse_atr_config([5], {})
     assert atr_warmup(cfg, "5") == 5
-    assert atr_warmup(cfg, "5.pct") == 5
+    assert atr_warmup(cfg, "5.to%") == 5
     assert atr_warmup(cfg, "bogus") == 0
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cd backend && python -m pytest tests/test_indicator_ref_evaluate.py -q -k "atr_pct or price_of or atr_ref"`
-Expected: FAIL — `price_of` doesn't exist; `AtrConfig` has no `pct_source`; `"5.pct"` is not a known output.
+Expected: FAIL — `price_of` doesn't exist; `AtrConfig` has no `pct_source`; `"5.to%"` is not a known output.
 
 - [ ] **Step 3: Implement**
 
@@ -290,7 +290,7 @@ In `parse_atr_config`, add to the return (after the smoothing line; reuse the ex
 
 ```python
 def atr_outputs(cfg: AtrConfig) -> tuple[str, ...]:
-    return (str(cfg.length), f"{cfg.length}.pct")
+    return (str(cfg.length), f"{cfg.length}.to%")
 ```
 
 `atr_pane_series`:
@@ -303,7 +303,7 @@ def atr_pane_series(
         base = atr_series(candles, cfg.length)
     else:
         base = atr_smoothed_series(candles, cfg.length, cfg.smoothing)
-    if output != f"{cfg.length}.pct":
+    if output != f"{cfg.length}.to%":
         return base
     # The legend's ATR% readout: pane-smoothed ATR over the pane's % Source.
     out: list[float | None] = []
@@ -319,7 +319,7 @@ def atr_pane_series(
 
 ```python
 def atr_warmup(cfg: AtrConfig, output: str) -> int:
-    return cfg.length if output in (str(cfg.length), f"{cfg.length}.pct") else 0
+    return cfg.length if output in (str(cfg.length), f"{cfg.length}.to%") else 0
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -343,7 +343,7 @@ git commit -m "feat(indicators): ATR pane exposes a pct output honoring smoothin
 
 **Interfaces:**
 - Consumes: `ExprInstance.outputs` plumbing (already generic in `exprInstances.ts`).
-- Produces: `atrOutputs([14]) == ["14", "14.pct"]`; `atrWarmup([14], "14.pct") == 14`; typing `ATR1.14.p` still offers the `14.pct` output.
+- Produces: `atrOutputs([14]) == ["14", "14.to%"]`; `atrWarmup([14], "14.to%") == 14`; typing `ATR1.14.p` still offers the `14.to%` output.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -351,8 +351,8 @@ In the file found above (assume `frontend/src/lib/indicators/atr.test.ts`; follo
 
 ```ts
   it("exposes the pct output alongside the value output", () => {
-    expect(atrOutputs([14])).toEqual(["14", "14.pct"]);
-    expect(atrWarmup([14], "14.pct")).toBe(14);
+    expect(atrOutputs([14])).toEqual(["14", "14.to%"]);
+    expect(atrWarmup([14], "14.to%")).toBe(14);
     expect(atrWarmup([14], "14")).toBe(14);
     expect(atrWarmup([14], "bogus")).toBe(0);
   });
@@ -362,11 +362,11 @@ In `complete.test.ts` — find how existing instance-ref completion tests build 
 
 ```ts
   it("completes a dotted pct output prefix", () => {
-    const instances = [{ id: "ATR1", outputs: ["14", "14.pct"], timeframe: null, detail: "RMA" }];
+    const instances = [{ id: "ATR1", outputs: ["14", "14.to%"], timeframe: null, detail: "RMA" }];
     const labels = (doc: string) =>
       completionsFor(doc, doc.length, { instances }).map((o) => o.label);
-    expect(labels("ATR1.")).toEqual(expect.arrayContaining(["14", "14.pct"]));
-    expect(labels("ATR1.14.p")).toContain("14.pct");
+    expect(labels("ATR1.")).toEqual(expect.arrayContaining(["14", "14.to%"]));
+    expect(labels("ATR1.14.p")).toContain("14.to%");
     expect(completionAnchor("ATR1.14.p", 9, { instances })).toBe(5);
   });
 ```
@@ -385,24 +385,24 @@ Expected: both new tests FAIL (`atrOutputs` returns one name; `REF_DOT_RE` can't
 ```ts
 export function atrOutputs(calcParams: unknown[] | undefined): string[] {
   const length = atrLength(calcParams);
-  return [String(length), `${length}.pct`];
+  return [String(length), `${length}.to%`];
 }
 
 export function atrWarmup(calcParams: unknown[] | undefined, output: string): number {
   const length = atrLength(calcParams);
-  return output === String(length) || output === `${length}.pct` ? length : 0;
+  return output === String(length) || output === `${length}.to%` ? length : 0;
 }
 ```
 
 `complete.ts` — let the output part of a typed ref prefix carry dots (comment why):
 
 ```ts
-// The output part may itself contain a dot ("14.pct"), so the tail class
+// The output part may itself contain a dot ("14.to%"), so the tail class
 // includes "." — the instance-id part still cannot, keeping the split stable.
 const REF_DOT_RE = /([A-Za-z_][A-Za-z0-9_#%]*)\.([A-Za-z0-9_.]*)$/;
 ```
 
-Check the two `REF_DOT_RE` consumers (`completionAnchor` line ~252 and the options builder): both treat group 1 as the instance id and group 2 as the typed output prefix; with the greedy id class unchanged, `"ATR1.14.p"` now matches id `"ATR1"`, prefix `"14.p"` — confirm the options builder filters `outputs` by `startsWith(prefix)` so `"14.pct"` survives.
+Check the two `REF_DOT_RE` consumers (`completionAnchor` line ~252 and the options builder): both treat group 1 as the instance id and group 2 as the typed output prefix; with the greedy id class unchanged, `"ATR1.14.p"` now matches id `"ATR1"`, prefix `"14.p"` — confirm the options builder filters `outputs` by `startsWith(prefix)` so `"14.to%"` survives.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -430,7 +430,7 @@ git commit -m "feat(expr): ATR pane pct output in ref outputs and completion"
 Follow the existing SLOPE-instance entry shape (`instances` key). Append:
 
 ```json
-  { "expr": "ATR1.14.pct > 1", "isExit": false, "error": null,
+  { "expr": "ATR1.14.to% > 1", "isExit": false, "error": null,
     "instances": {"ATR1": {"type":"ATR","calcParams":[14],"extendData":{"smoothing":"ema","pctSource":"hl2"}}},
     "literals": [
       {"ordinal":0,"value":1,"from":16,"to":17,"label":"threshold"}
@@ -438,7 +438,7 @@ Follow the existing SLOPE-instance entry shape (`instances` key). Append:
   { "expr": "ATR1.14.bogus > 1", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":13},
     "instances": {"ATR1": {"type":"ATR","calcParams":[14],"extendData":{}}},
     "literals": [] },
-  { "expr": "ATR1.14.pct.x > 1", "isExit": false, "error": {"code":"field_on_indicator_ref","from":0,"to":13},
+  { "expr": "ATR1.14.to%.x > 1", "isExit": false, "error": {"code":"field_on_indicator_ref","from":0,"to":13},
     "instances": {"ATR1": {"type":"ATR","calcParams":[14],"extendData":{}}},
     "literals": [] }
 ```

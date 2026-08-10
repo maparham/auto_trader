@@ -170,7 +170,7 @@ def test_atr_pct_output_honors_smoothing_and_pct_source():
     candles = mk(40)
     cfg = parse_atr_config([5], {"smoothing": "ema", "pctSource": "hl2"})
     assert cfg.pct_source == "hl2"
-    got = atr_pane_series(cfg, "5.pct", candles, 1.0)
+    got = atr_pane_series(cfg, "5.to%", candles, 1.0)
     base = atr_smoothed_series(candles, 5, "ema")
     for g, a, c in zip(got, base, candles):
         if a is None:
@@ -204,10 +204,10 @@ def test_atr_ref_pct_end_to_end_and_warmup():
     from auto_trader.indicators.atr import atr_warmup, parse_atr_config
     candles = mk(40)
     instances = resolve_instances(ATR_PAYLOAD)
-    got = series_of(expr("ATR1.5.pct > 1"), candles, "HOUR", {}, instances)
+    got = series_of(expr("ATR1.5.to% > 1"), candles, "HOUR", {}, instances)
     assert len(got) == len(candles)
     assert any(v is not None for v in got)
     cfg = parse_atr_config([5], {})
     assert atr_warmup(cfg, "5") == 5
-    assert atr_warmup(cfg, "5.pct") == 5
+    assert atr_warmup(cfg, "5.to%") == 5
     assert atr_warmup(cfg, "bogus") == 0

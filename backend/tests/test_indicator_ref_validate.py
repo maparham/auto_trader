@@ -83,14 +83,22 @@ def test_a_field_on_a_registered_call_still_reports_field_on_call():
     assert e.value.code == "field_on_call"
 
 
-@pytest.mark.parametrize("src", ["SLOPE.9.foo > 0", "SLOPE.9[-1].foo > 0"])
-def test_an_output_has_no_sub_fields(src):
+def test_an_output_has_no_sub_fields_past_an_offset():
     # Without the guard the stray .foo is silently discarded, which would be a
     # loosening: before indicator refs existed this raised unknown_name.
     with pytest.raises(ExprError) as e:
-        check(src)
+        check("SLOPE.9[-1].foo > 0")
     assert e.value.code == "field_on_indicator_ref"
     assert "SLOPE.9" in e.value.message
+
+
+def test_a_dotted_sub_name_fuses_into_an_unknown_output():
+    # SLOPE.9.foo fuses to output "9.foo" (the ATR1.14.to% grammar), so the
+    # stray .foo now reads as an output this pane does not expose.
+    with pytest.raises(ExprError) as e:
+        check("SLOPE.9.foo > 0")
+    assert e.value.code == "unknown_indicator_output"
+    assert "9.foo" in e.value.message
 
 
 @pytest.mark.parametrize("src", [

@@ -108,8 +108,8 @@ describe("ATR instances", () => {
   it("exprInstancesFor lists ATR panes with their length-named output", () => {
     const out = exprInstancesFor(live);
     expect(out.map((i) => [i.id, i.outputs, i.timeframe, i.detail])).toEqual([
-      ["ATR", ["14", "14.pct"], null, "RMA"],
-      ["ATR#b2", ["21", "21.pct"], null, "EMA"],
+      ["ATR", ["14", "14.to%"], null, "RMA"],
+      ["ATR#b2", ["21", "21.to%"], null, "EMA"],
     ]);
   });
   it("exprWarmupByRef costs the length for the real output, 0 otherwise", () => {

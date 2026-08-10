@@ -127,14 +127,17 @@ describe("chart indicator instance references", () => {
 
   it("completes a dotted pct output prefix", () => {
     const atr: ExprInstance[] = [
-      { id: "ATR1", outputs: ["14", "14.pct"], timeframe: null, detail: "RMA" },
+      { id: "ATR1", outputs: ["14", "14.to%"], timeframe: null, detail: "RMA" },
     ];
     const labels = (doc: string) =>
       completionsFor(doc, doc.length, { instances: atr }).map((c) => c.label);
-    expect(labels("ATR1.")).toEqual(expect.arrayContaining(["ATR1.14", "ATR1.14.pct"]));
-    expect(labels("ATR1.14.p")).toContain("ATR1.14.pct");
+    expect(labels("ATR1.")).toEqual(expect.arrayContaining(["ATR1.14", "ATR1.14.to%"]));
+    expect(labels("ATR1.14.t")).toContain("ATR1.14.to%");
+    // The typed % must stay part of the match, not break it.
+    expect(labels("ATR1.14.to%")).toContain("ATR1.14.to%");
     // The anchor must cover the whole typed ref so accepting REPLACES it.
-    expect(completionAnchor("ATR1.14.p", 9, { instances: atr })).toBe(0);
+    expect(completionAnchor("ATR1.14.t", 9, { instances: atr })).toBe(0);
+    expect(completionAnchor("ATR1.14.to%", 11, { instances: atr })).toBe(0);
   });
 
   // The label already carries the LENGTH, so the detail spends itself on what

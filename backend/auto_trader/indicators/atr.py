@@ -47,12 +47,12 @@ def parse_atr_config(calc_params: object, extend_data: object) -> AtrConfig:
 
 
 def atr_outputs(cfg: AtrConfig) -> tuple[str, ...]:
-    """Outputs named by LENGTH (`ATR#id.14`, `ATR#id.14.pct`) — the SLOPE
+    """Outputs named by LENGTH (`ATR#id.14`, `ATR#id.14.to%`) — the SLOPE
     convention: retune the length and rules naming the old one fail loudly
     with unknown_indicator_output instead of silently re-pointing. The pct
     output rides the same rule, so both rename together. Value line first:
     the chart click-to-insert token emits outputs[0]."""
-    return (str(cfg.length), f"{cfg.length}.pct")
+    return (str(cfg.length), f"{cfg.length}.to%")
 
 
 def atr_pane_series(
@@ -62,7 +62,7 @@ def atr_pane_series(
         base = atr_series(candles, cfg.length)
     else:
         base = atr_smoothed_series(candles, cfg.length, cfg.smoothing)
-    if output != f"{cfg.length}.pct":
+    if output != f"{cfg.length}.to%":
         return base
     # The legend's ATR% readout: pane-smoothed ATR over the pane's % Source.
     out: list[float | None] = []
@@ -76,4 +76,4 @@ def atr_warmup(cfg: AtrConfig, output: str) -> int:
     """= length, matching expr-level ATR(n) (warmup.py arg_kind "length");
     0 for an output this config does not expose — the unknown ref is the
     validation layer's error to report."""
-    return cfg.length if output in (str(cfg.length), f"{cfg.length}.pct") else 0
+    return cfg.length if output in (str(cfg.length), f"{cfg.length}.to%") else 0

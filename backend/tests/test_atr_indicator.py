@@ -32,36 +32,36 @@ def golden():
 
 
 def test_parse_defaults_and_fallbacks():
-    assert parse_atr_config(None, None) == AtrConfig(length=14, smoothing="rma")
-    assert parse_atr_config([], {}) == AtrConfig(length=14, smoothing="rma")
-    assert parse_atr_config(["garbage"], {"smoothing": "vwma"}) == AtrConfig(14, "rma")
-    assert parse_atr_config([21.9], {"smoothing": "ema"}) == AtrConfig(21, "ema")
+    assert parse_atr_config(None, None) == AtrConfig(length=14, smoothing="rma", pct_source="close")
+    assert parse_atr_config([], {}) == AtrConfig(length=14, smoothing="rma", pct_source="close")
+    assert parse_atr_config(["garbage"], {"smoothing": "vwma"}) == AtrConfig(14, "rma", "close")
+    assert parse_atr_config([21.9], {"smoothing": "ema"}) == AtrConfig(21, "ema", "close")
     # Zero falls back to 14
-    assert parse_atr_config([0], {}) == AtrConfig(14, "rma")
+    assert parse_atr_config([0], {}) == AtrConfig(14, "rma", "close")
     # Negative stays negative
-    assert parse_atr_config([-5], {}) == AtrConfig(-5, "rma")
+    assert parse_atr_config([-5], {}) == AtrConfig(-5, "rma", "close")
     # Non-finite values (inf, -inf, nan) fall back to 14
-    assert parse_atr_config([float("inf")], {}) == AtrConfig(14, "rma")
-    assert parse_atr_config([float("-inf")], {}) == AtrConfig(14, "rma")
-    assert parse_atr_config([float("nan")], {}) == AtrConfig(14, "rma")
+    assert parse_atr_config([float("inf")], {}) == AtrConfig(14, "rma", "close")
+    assert parse_atr_config([float("-inf")], {}) == AtrConfig(14, "rma", "close")
+    assert parse_atr_config([float("nan")], {}) == AtrConfig(14, "rma", "close")
 
 
 def test_outputs_named_by_length():
-    assert atr_outputs(AtrConfig(14, "rma")) == ("14",)
-    assert atr_outputs(AtrConfig(21, "wma")) == ("21",)
+    assert atr_outputs(AtrConfig(14, "rma", "close")) == ("14", "14.to%")
+    assert atr_outputs(AtrConfig(21, "wma", "close")) == ("21", "21.to%")
 
 
 def test_warmup_is_the_length():
-    cfg = AtrConfig(21, "ema")
+    cfg = AtrConfig(21, "ema", "close")
     assert atr_warmup(cfg, "21") == 21
     assert atr_warmup(cfg, "bogus") == 0
 
 
 def test_series_matches_core(golden):
     candles, _, _ = golden
-    rma = atr_pane_series(AtrConfig(14, "rma"), "14", candles, 1.0)
+    rma = atr_pane_series(AtrConfig(14, "rma", "close"), "14", candles, 1.0)
     assert rma == atr_series(candles, 14)
-    ema = atr_pane_series(AtrConfig(14, "ema"), "14", candles, 1.0)
+    ema = atr_pane_series(AtrConfig(14, "ema", "close"), "14", candles, 1.0)
     assert ema == atr_smoothed_series(candles, 14, "ema")
 
 
@@ -72,6 +72,6 @@ def test_registered_and_resolvable():
     )
     inst = resolved["ATR#x1"]
     assert inst.type == "ATR"
-    assert inst.config == AtrConfig(21, "sma")
-    assert spec.outputs(inst.config) == ("21",)
+    assert inst.config == AtrConfig(21, "sma", "close")
+    assert spec.outputs(inst.config) == ("21", "21.to%")
     assert spec.timeframe(inst.config) is None

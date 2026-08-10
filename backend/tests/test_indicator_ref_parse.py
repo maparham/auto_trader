@@ -167,20 +167,20 @@ def test_a_numeric_output_still_parses_after_offset_and_pin():
 
 
 def test_dotted_name_after_digits_output_fuses_into_the_ref():
-    node = parse("ATR1.14.pct > 1").left
+    node = parse("ATR1.14.to% > 1").left
     assert isinstance(node, N.IndicatorRef)
     assert node.instance == "ATR1"
-    assert node.output == "14.pct"
+    assert node.output == "14.to%"
     assert (node.start, node.end) == (0, 11)
 
 
 def test_second_chain_level_does_not_fuse():
-    node = parse("ATR1.14.pct.x > 1").left
+    node = parse("ATR1.14.to%.x > 1").left
     assert isinstance(node, N.Field)
     assert isinstance(node.base, N.IndicatorRef)
-    assert node.base.output == "14.pct"
+    assert node.base.output == "14.to%"
 
 
 def test_offset_breaks_the_fusion_chain():
-    node = parse("ATR1.14[-1].pct > 1").left
+    node = parse("ATR1.14[-1].to% > 1").left
     assert isinstance(node, N.Field)  # Field(Offset(IndicatorRef))

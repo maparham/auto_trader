@@ -43,9 +43,10 @@ const CHART_BOOST = -1;
 
 // An instance id may contain "#" (mintInstanceId produces "SLOPE#a1b2c3"), so
 // ref matching needs its own patterns — the plain word regex stops at the "#".
-// The output part may itself contain a dot ("14.pct"), so its class includes
-// "." — the instance-id part still cannot, keeping the id/output split stable.
-const REF_DOT_RE = /([A-Za-z_][A-Za-z0-9_#]*)\.([A-Za-z0-9_.]*)$/;
+// The output part may itself contain a dot and a percent ("14.to%"), so its
+// class includes "."/"%" — the instance-id part still cannot contain either,
+// keeping the id/output split stable.
+const REF_DOT_RE = /([A-Za-z_][A-Za-z0-9_#]*)\.([A-Za-z0-9_.%]*)$/;
 // "%" joins "#" here so a half-typed "ATR%" stays one anchored word — instance
 // ids never contain "%", so the ref filter just finds no panes for it.
 const REF_WORD_RE = /([A-Za-z_][A-Za-z0-9_#%]*)$/;

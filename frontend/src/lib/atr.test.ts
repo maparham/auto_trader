@@ -71,9 +71,9 @@ describe("atr smoothing", () => {
     expect(atrLength(undefined)).toBe(14);
     expect(atrLength(["garbage"])).toBe(14);
     expect(atrLength([5.7])).toBe(5); // truncated like Python int()
-    expect(atrOutputs([21])).toEqual(["21", "21.pct"]);
+    expect(atrOutputs([21])).toEqual(["21", "21.to%"]);
     expect(atrWarmup([21], "21")).toBe(21);
-    expect(atrWarmup([21], "21.pct")).toBe(21);
+    expect(atrWarmup([21], "21.to%")).toBe(21);
     expect(atrWarmup([21], "bogus")).toBe(0);
     expect(normalizeAtrSmoothing("ema")).toBe("ema");
     expect(normalizeAtrSmoothing("vwma")).toBe("rma"); // not an ATR option

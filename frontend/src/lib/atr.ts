@@ -99,14 +99,14 @@ export function atrLength(calcParams: unknown[] | undefined): number {
   return Math.trunc(Number(calcParams?.[0])) || 14;
 }
 
-/** The pane's DATA outputs, named by LENGTH (`ATR#id.14`, `ATR#id.14.pct`),
+/** The pane's DATA outputs, named by LENGTH (`ATR#id.14`, `ATR#id.14.to%`),
  * mirroring the SLOPE convention: a rule SELECTS the line the pane defines,
  * and retuning the length loudly breaks rules naming the old one
  * (unknown_indicator_output). The pct output rides the same rule, so both
  * rename together. Value line first: click-to-insert emits outputs[0]. */
 export function atrOutputs(calcParams: unknown[] | undefined): string[] {
   const length = atrLength(calcParams);
-  return [String(length), `${length}.pct`];
+  return [String(length), `${length}.to%`];
 }
 
 /** Warm-up bars for an output; 0 for a name this config does not expose (an
@@ -115,5 +115,5 @@ export function atrOutputs(calcParams: unknown[] | undefined): string[] {
  * "length"). Mirrors Python indicators/atr.py::atr_warmup. */
 export function atrWarmup(calcParams: unknown[] | undefined, output: string): number {
   const length = atrLength(calcParams);
-  return output === String(length) || output === `${length}.pct` ? length : 0;
+  return output === String(length) || output === `${length}.to%` ? length : 0;
 }
