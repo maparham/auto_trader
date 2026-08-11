@@ -84,7 +84,7 @@ def test_no_capital_creds_skips_capital_entirely(monkeypatch):
     monkeypatch.setattr(settings, "password", "", raising=False)
 
     described = build_registry().describe()
-    assert described["data"] == ["dukascopy", "yfinance"]
+    assert described["data"] == ["dukascopy", "nobitex", "yfinance"]
     assert all(not e["key"].startswith("capital") for e in described["exec"])
 
 
