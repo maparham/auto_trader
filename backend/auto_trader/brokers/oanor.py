@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from auto_trader.brokers.base import MarketDataBroker
+from auto_trader.core.candle_aggregate import fold_days_to_weeks
 from auto_trader.core.models import Candle, Resolution
 
 _BASE_URL = "https://api.oanor.com/irr-api"
@@ -33,7 +34,6 @@ _MAX_ROWS = 365  # upstream hard cap on /v1/history limit
 _MIN_REQUEST_INTERVAL = 0.6  # free tier allows 2 req/s; stay politely under
 _SYMBOLS_TTL = 3600.0  # catalogue changes rarely; cache /v1/symbols in-process
 _DAY = timedelta(days=1)
-_WEEK = timedelta(days=7)
 
 
 def _parse_date(s: str) -> datetime:
@@ -66,32 +66,6 @@ def _rows_to_candles(rows: list[dict], now: datetime | None = None) -> list[Cand
         out.append(Candle(time=t, open=o, high=h, low=low, close=c, volume=0.0))
     out.sort(key=lambda c: c.time)
     return out
-
-
-def _fold_weekly(daily: list[Candle], now: datetime | None = None) -> list[Candle]:
-    """Ascending daily bars → ISO weeks opening Monday-UTC-midnight. The
-    still-forming trailing week is dropped — only closed bars may reach the
-    cache. (candle_aggregate's "week" rule can't do this: it groups existing
-    WEEK bars into 2W/3W buckets, it doesn't build weeks from days.)"""
-    if now is None:
-        now = datetime.now(timezone.utc)
-    out: list[Candle] = []
-    week_open: datetime | None = None
-    o = h = low = c = 0.0
-    for bar in daily:
-        wo = bar.time - timedelta(days=bar.time.weekday())
-        if wo != week_open:
-            if week_open is not None:
-                out.append(Candle(time=week_open, open=o, high=h, low=low, close=c))
-            week_open = wo
-            o, h, low, c = bar.open, bar.high, bar.low, bar.close
-        else:
-            h = max(h, bar.high)
-            low = min(low, bar.low)
-            c = bar.close
-    if week_open is not None:
-        out.append(Candle(time=week_open, open=o, high=h, low=low, close=c))
-    return [w for w in out if w.time + _WEEK <= now]
 
 
 async def _api_get(client: httpx.AsyncClient, path: str, params: dict) -> dict:
@@ -151,7 +125,7 @@ class OanorBroker(MarketDataBroker):
         if resolution not in (Resolution.DAY, Resolution.WEEK):
             return []  # daily feed: nothing finer exists upstream
         daily = await self._fetch_daily(epic)
-        series = _fold_weekly(daily) if resolution is Resolution.WEEK else daily
+        series = fold_days_to_weeks(daily) if resolution is Resolution.WEEK else daily
         return [c for c in series if start <= c.time <= end]
 
     async def get_recent_candles(

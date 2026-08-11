@@ -104,6 +104,8 @@ const BROKER_LABELS: Record<string, string> = {
   dukascopy: "Dukascopy (history)",
   // Read-only Iranian bazaar rates + gold (oanor.com). Charts/backtests only.
   oanor: "oanor (IRR bazaar)",
+  // Read-only Nobitex crypto/IRR pairs (USDT/IRR = live rial-dollar proxy).
+  nobitex: "Nobitex (IRR crypto)",
 };
 // Broker-reported display names from /api/brokers (e.g. mt5 → "Ava Trade Ltd
 // (demo)", read from MetaApi account information). They win over the static map

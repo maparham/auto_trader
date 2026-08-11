@@ -89,7 +89,7 @@ def broker_query(broker: str = Query("")) -> str:
 # Dukascopy downloads and decodes day tick files, so even a small cold minute-window
 # fetch routinely exceeds 8s; like MT5 the cost is paid once and then the candle
 # cache serves it.
-BROKER_HEALTH = BrokerHealth(per_key_timeout={"mt5": 90.0, "dukascopy": 45.0, "oanor": 20.0})
+BROKER_HEALTH = BrokerHealth(per_key_timeout={"mt5": 90.0, "dukascopy": 45.0, "oanor": 20.0, "nobitex": 30.0})
 
 T = TypeVar("T")
 
