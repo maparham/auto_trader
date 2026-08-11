@@ -189,11 +189,17 @@ class NobitexBroker(MarketDataBroker):
         price_side: str = "mid",
     ) -> list[Candle]:
         if resolution is Resolution.WEEK:
-            # No weekly upstream: fetch the dailies covering the window (one
-            # week of margin on the left edge so the first bucket is complete)
-            # and fold, then slice.
+            # No weekly upstream: fetch the dailies covering the window and
+            # fold, then slice. Pad BOTH edges by a week (yfinance-4h
+            # precedent) so edge buckets fold from complete weeks — a window
+            # ending mid-week (cache backfill ranges do) would otherwise emit
+            # a truncated final week as a wrong "closed" bar. The genuinely
+            # forming trailing week is dropped inside the fold.
             daily = await self._fetch_series(
-                epic, Resolution.DAY, start - timedelta(days=7), end
+                epic,
+                Resolution.DAY,
+                start - timedelta(days=7),
+                end + timedelta(days=7),
             )
             weekly = fold_days_to_weeks(daily)
             return [c for c in weekly if start <= c.time <= end]

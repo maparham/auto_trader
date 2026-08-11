@@ -130,6 +130,32 @@ def test_get_candles_week_folds_restamped_dailies(monkeypatch, broker):
     assert candles[0].volume == 7.5 * 7  # weekly volume summed
 
 
+def test_get_candles_week_window_ending_midweek_folds_full_week(monkeypatch, broker):
+    """A historical window ending mid-week (cache backfill ranges do) must not
+    emit a truncated final week: the fetch pads past `end` so the bucket folds
+    from all seven days."""
+    # Tehran-date dailies Mon 2026-05-04 .. Sun 2026-05-10, closes 1..7
+    days = [datetime(2026, 5, d, 20, 30, tzinfo=timezone.utc) for d in range(3, 10)]
+    payload_all = _udf([int(d.timestamp()) for d in days],
+                       closes=[186000.0 + i for i in range(7)])
+
+    def responder(path, params):
+        # honor from/to like the real API: only rows inside the request window
+        keep = [i for i, d in enumerate(days)
+                if params["from"] <= int(d.timestamp()) <= params["to"]]
+        return _udf([payload_all["t"][i] for i in keep],
+                    closes=[payload_all["c"][i] for i in keep])
+
+    _patch_api(monkeypatch, responder)
+    end = datetime(2026, 5, 6, tzinfo=timezone.utc)  # Wednesday, mid-week
+    candles = asyncio.run(broker.get_candles(
+        "USDTIRT", Resolution.WEEK,
+        datetime(2026, 5, 4, tzinfo=timezone.utc), end))
+    assert len(candles) == 1
+    # full week folded: close is Sunday's, not Wednesday's
+    assert candles[0].close == (186000.0 + 6) * 10
+
+
 def test_get_recent_candles_tails(monkeypatch, broker):
     now = datetime.now(timezone.utc)
     ts = [int((now - timedelta(hours=h)).replace(minute=0, second=0, microsecond=0)
