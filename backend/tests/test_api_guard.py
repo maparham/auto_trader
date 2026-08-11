@@ -69,3 +69,25 @@ def test_token_required_non_ascii_header(monkeypatch):
     )
     assert r.status_code == 401
     assert "detail" in r.json()
+
+
+def test_cors_origins_default_is_dev_only(monkeypatch):
+    """Without CORS_ORIGINS the allowlist is exactly the Vite dev origins."""
+    from auto_trader.api.guard import cors_origins
+
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    assert cors_origins() == ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
+def test_cors_origins_env_extends_allowlist(monkeypatch):
+    """CORS_ORIGINS adds deployment origins (comma-separated, whitespace and
+    trailing-slash tolerant — a trailing slash would never match an Origin
+    header, so it's stripped rather than silently breaking CORS)."""
+    from auto_trader.api.guard import cors_origins
+
+    monkeypatch.setenv(
+        "CORS_ORIGINS", "https://demo.pages.dev, https://trader.rahkar.pro/"
+    )
+    origins = cors_origins()
+    assert origins[:2] == ["http://localhost:5173", "http://127.0.0.1:5173"]
+    assert origins[2:] == ["https://demo.pages.dev", "https://trader.rahkar.pro"]

@@ -28,7 +28,7 @@ from auto_trader.brokers.registry import build_registry
 from auto_trader.core.tick_store import TICK_STORE
 
 from . import deps
-from .guard import install_guards
+from .guard import cors_origins, install_guards
 from .routers import backtest, charts, compute, costs, expr, markets, mt5, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
@@ -96,10 +96,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Auto Trader API", version="0.1.0", lifespan=lifespan)
 
-# Vite dev server origins.
+# Vite dev origins + any CORS_ORIGINS deployment origins (read once at startup).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
     # Lets the browser read the broker-blocked marker (see deps.guarded) so the

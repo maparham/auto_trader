@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request
 from starlette.responses import JSONResponse
 
 API_TOKEN_ENV = "API_TOKEN"  # the token value
+CORS_ORIGINS_ENV = "CORS_ORIGINS"  # comma-separated extra allowed origins
 REQUIRE_TOKEN_ENV = "REQUIRE_API_TOKEN"  # "1" enables the gate
 COMPUTE_ONLY_ENV = "COMPUTE_ONLY"  # "1" blocks dealing
 
@@ -29,6 +30,19 @@ DEALING_PATHS: tuple[tuple[str, str], ...] = (
     ("PUT", "/api/orders/working/"),
     ("DELETE", "/api/orders/working/"),
 )
+
+
+def cors_origins() -> list[str]:
+    """The CORS allowlist: the Vite dev origins plus any comma-separated
+    CORS_ORIGINS entries (a deployment adds its frontend origin here, e.g.
+    a Cloudflare Pages host). Trailing slashes are stripped — an Origin
+    header never carries one, so leaving it would silently never match."""
+    extra = [
+        origin.strip().rstrip("/")
+        for origin in os.environ.get(CORS_ORIGINS_ENV, "").split(",")
+        if origin.strip()
+    ]
+    return ["http://localhost:5173", "http://127.0.0.1:5173"] + extra
 
 
 def install_guards(app: FastAPI) -> None:
