@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { literalAxisLabel, patchExprLiterals, reanchorRanges, sweepLiteralTarget } from "./sweepLiterals";
+import { literalAxisLabel, omitParkedLitAxes, patchExprLiterals, reanchorRanges, sweepLiteralTarget } from "./sweepLiterals";
 
 describe("sweep literals", () => {
   it("builds a lit: target path", () => {
@@ -121,5 +121,34 @@ describe("patchExprLiterals", () => {
   });
   it("leaves an unparseable expression untouched", () => {
     expect(patchExprLiterals("EMA(50 >", [{ ordinal: 0, value: 9 }])).toBe("EMA(50 >");
+  });
+});
+
+describe("omitParkedLitAxes", () => {
+  const axis = (target: string) =>
+    ({ kind: "range", target, label: target, from: 1, to: 9, step: 1 }) as const;
+  it("drops lit: axes whose rule row is disabled, keeps the rest", () => {
+    const axes = [
+      axis("lit:long.entry.3.0"),
+      axis("lit:short.entry.0.0"),
+      axis("risk:long.stop.value"),
+    ];
+    expect(omitParkedLitAxes(axes, new Set(["long.entry.3"])).map((a) => a.target)).toEqual([
+      "lit:short.entry.0.0",
+      "risk:long.stop.value",
+    ]);
+  });
+  it("drops every ordinal of a disabled row", () => {
+    const axes = [axis("lit:short.entry.2.0"), axis("lit:short.entry.2.1")];
+    expect(omitParkedLitAxes(axes, new Set(["short.entry.2"]))).toEqual([]);
+  });
+  it("does not confuse row 1 with row 11", () => {
+    const axes = [axis("lit:long.entry.11.0")];
+    expect(omitParkedLitAxes(axes, new Set(["long.entry.1"]))).toEqual(axes);
+  });
+  it("is identity (same array) when nothing is parked", () => {
+    const axes = [axis("lit:long.entry.0.0")];
+    expect(omitParkedLitAxes(axes, new Set())).toBe(axes);
+    expect(omitParkedLitAxes(axes, new Set(["short.exit.9"]))).toBe(axes);
   });
 });

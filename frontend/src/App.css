@@ -5073,6 +5073,9 @@ span.bt-leg-short { color: var(--neg); }
 
 /* Sweep axis from/to/step row — replaces the swept param's single NumberField */
 .sweep-axis-row { padding-left: 8px; }
+/* Parked lit: axis (its rule is disabled): visible + editable but greyed, since
+   it's excluded from the combo count and the run until the rule comes back. */
+.bt-lit-parked { opacity: 0.55; }
 .bt-op-sweep-row .bt-chip-row { flex-wrap: wrap; }
 .bt-tw-sweep .bt-tw-options { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .bt-tw-option button { margin-left: 4px; border: none; background: none; cursor: pointer; }

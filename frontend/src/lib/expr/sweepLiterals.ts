@@ -182,6 +182,22 @@ export function reanchorRanges(
   return { kept, dropped };
 }
 
+/** Filters out `lit:` axes whose addressed rule row is currently DISABLED.
+ * Parked axes stay in storage and in the editor (re-enabling the rule restores
+ * them as-is), but they must not reach the combo count or the submitted grid:
+ * a disabled rule never evaluates, so every swept value would run an identical
+ * backtest — one stale 60-value axis silently multiplies the whole grid by 60.
+ * `disabledRows` holds `${side}.${group}.${rowIdx}` keys (full-list indices,
+ * like the targets themselves). Non-`lit:` axes always pass through. */
+export function omitParkedLitAxes(axes: SweepAxis[], disabledRows: ReadonlySet<string>): SweepAxis[] {
+  if (disabledRows.size === 0) return axes;
+  const kept = axes.filter((a) => {
+    const m = /^lit:((?:long|short)\.(?:entry|exit)\.\d+)\.\d+$/.exec(a.target);
+    return !m || !disabledRows.has(m[1]);
+  });
+  return kept.length === axes.length ? axes : kept;
+}
+
 /** Drop every `lit:` axis whose addressed literal no longer exists (row removed,
  *  or the expression edited so that ordinal is gone). Non-`lit:` axes pass through
  *  untouched. `groups` maps each (side, group) to its CURRENT expression row strings

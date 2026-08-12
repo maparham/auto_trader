@@ -82,7 +82,7 @@ import PresetsTab from "./components/PresetsTab";
 import { SweepResults } from "./SweepResults";
 import { comboCount, materializePeriodAxes, mirrorRiskAxes, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepCombo, type SweepOption } from "./lib/sweep";
 import { analyze } from "./lib/expr/parser";
-import { patchExprLiterals, pruneLitAxes, sweepLiteralTarget } from "./lib/expr/sweepLiterals";
+import { omitParkedLitAxes, patchExprLiterals, pruneLitAxes, sweepLiteralTarget } from "./lib/expr/sweepLiterals";
 import { refineAxesAround, sampleCombos } from "./lib/sweepSearch";
 import { useStableCallback } from "./lib/useStableCallback";
 import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLabels";
@@ -608,6 +608,30 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // run actually uses) and the inline from/to/step editors hide. The real
   // sweepAxes survive untouched for the next flip back to Sweep mode.
   const displayAxes = sweepEditable ? sweepAxes : [];
+  // `lit:` axes on DISABLED rules are parked: kept in sweepAxes (and shown
+  // greyed on their rule row) so re-enabling the rule restores them, but
+  // excluded from everything a run consumes — combo count, grid submission,
+  // WFO payload — because a disabled rule never evaluates and each swept value
+  // would just re-run the identical backtest.
+  const disabledRuleRows = useMemo(() => {
+    const src = cfg.mode === "coded" ? codedCfg : cfg;
+    const out = new Set<string>();
+    for (const [side, group, key] of [
+      ["long", "entry", "longEntry"],
+      ["long", "exit", "longExit"],
+      ["short", "entry", "shortEntry"],
+      ["short", "exit", "shortExit"],
+    ] as const) {
+      (((src as any)?.[key]?.rules ?? []) as { enabled?: boolean }[]).forEach((r, i) => {
+        if (r.enabled === false) out.add(`${side}.${group}.${i}`);
+      });
+    }
+    return out;
+  }, [cfg, codedCfg]);
+  const activeSweepAxes = useMemo(
+    () => omitParkedLitAxes(sweepAxes, disabledRuleRows),
+    [sweepAxes, disabledRuleRows],
+  );
   const toggleSweepAxis = (target: string, spec: ParamSpec) => {
     if (!sweepEditable) return;
     setSweepAxes((axes) => {
@@ -772,7 +796,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   const setPeriodN = (n: number) =>
     setSweepAxes((axes) => axes.map((a) =>
       a.kind === "period" ? { ...a, n: Math.max(2, Math.min(50, Math.round(n) || 2)) } : a));
-  const sweepCombos = comboCount(sweepAxes);
+  const sweepCombos = comboCount(activeSweepAxes);
   // Random search submits at most `randomN` combos (sampleCombos dedupes, so it
   // never exceeds the grid), so the footer count/estimate/warn track the actual
   // sample size, not the full grid. Grid mode runs the whole grid.
@@ -804,13 +828,13 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     let usable: SweepAxis[] = [];
     let dropped: string[] = [];
     try {
-      ({ usable, dropped } = wfoAxesFromSweepAxes(sweepAxes));
-      const { comboTotal } = buildWalkForwardPayload(sweepAxes, wfoCfg);
+      ({ usable, dropped } = wfoAxesFromSweepAxes(activeSweepAxes));
+      const { comboTotal } = buildWalkForwardPayload(activeSweepAxes, wfoCfg);
       return { wfoComboTotal: comboTotal, wfoDroppedAxes: dropped, wfoUsableAxes: usable };
     } catch {
       return { wfoComboTotal: 0, wfoDroppedAxes: dropped, wfoUsableAxes: usable };
     }
-  }, [sweepAxes, wfoCfg]);
+  }, [activeSweepAxes, wfoCfg]);
   const [wfoError, setWfoError] = useState<string | null>(null);
   const [wfoSchemeIndex, setWfoSchemeIndex] = useState(0);
   // Live-job fold-table fetch for the folds drill-in; archive-backed loading
@@ -1743,7 +1767,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       // sweep, so no extra clamp is needed here. Risk axes mirror the same way
       // the sweep branch mirrors them.
       try {
-        const { payload } = buildWalkForwardPayload(mirrorRiskAxes(sweepAxes), wfoCfg);
+        const { payload } = buildWalkForwardPayload(mirrorRiskAxes(activeSweepAxes), wfoCfg);
         setWfoError(null);
         setWfoArchiveOpen(null);
         setWfoSchemeIndex(0); // a fresh run starts on the primary scheme, not a stale pick
@@ -1764,14 +1788,14 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       run();
       return;
     }
-    if (sweepAxes.length === 0) return; // button is disabled; belt and braces
+    if (activeSweepAxes.length === 0) return; // button is disabled; belt and braces
     // A fresh sweep replaces the on-screen results, so any reopened-archive
     // selection is now stale — clear it so the picker doesn't mislabel the run.
     setPickedSweep("");
     // Synced SL/TP: stamp risk axes with their short-side mirror so the sweep
     // moves both legs together (the axes themselves stay long-side only).
     const synced = cfg.mode === "coded" ? riskSyncOn(codedCfg) : riskSyncOn(cfg);
-    const mirrored = synced ? mirrorRiskAxes(sweepAxes) : sweepAxes;
+    const mirrored = synced ? mirrorRiskAxes(activeSweepAxes) : activeSweepAxes;
     // Period axes materialize against the range as configured RIGHT NOW, so an
     // edit between toggle and run can never sweep stale windows.
     const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
@@ -1928,7 +1952,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       onSelectMode={selectMode}
       modeBadge={sweepState?.running ? (
         <span className="bt-mode-badge">{sweepState.done}/{sweepState.total}</span>
-      ) : btMode === "backtest" && sweepAxes.length > 0 && isFinite(sweepCombos) ? (
+      ) : btMode === "backtest" && activeSweepAxes.length > 0 && isFinite(sweepCombos) ? (
         <span className="bt-mode-badge">{sweepCombos}</span>
       ) : null}
       wfoBadge={wfoState?.running ? (
@@ -2002,7 +2026,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         : "Run backtest";
   const runDisabled =
     runInFlight ||
-    (btMode === "sweep" && sweepAxes.length === 0) ||
+    (btMode === "sweep" && activeSweepAxes.length === 0) ||
     (btMode === "walkforward" &&
       (wfoComboTotal === 0 || wfoCfg.trainSpans.length === 0 || !!wfoState?.running));
 
@@ -3162,10 +3186,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   Holdout: last {holdout.pct}% reserved
                 </span>
               )}
-              {btMode === "sweep" && sweepAxes.length === 0 && (
+              {btMode === "sweep" && activeSweepAxes.length === 0 && (
                 <span className="sweep-counter">Turn on a field's sweep toggle to run</span>
               )}
-              {btMode === "walkforward" && sweepAxes.length === 0 && (
+              {btMode === "walkforward" && activeSweepAxes.length === 0 && (
                 <span className="sweep-counter">Turn on a field's sweep toggle to define the grid</span>
               )}
               {btMode === "walkforward" && wfoError && (
@@ -3173,7 +3197,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               )}
               {/* No per-axis breakdown or "runs sampled" counter here: the
                   footer shows ONLY the total combo count (user decision). */}
-              {btMode === "sweep" && sweepAxes.length > 0 && (
+              {btMode === "sweep" && activeSweepAxes.length > 0 && (
                 <span className={`bt-sweep-estimate${effectiveWarn ? " bt-sweep-warn" : ""}`}>
                   {/* The number carries the weight; the unit stays quiet. The
                       space keeps textContent reading "275 combos". */}
@@ -3185,7 +3209,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   shows it while the column is open, so skip it here then. */}
               {!sideBySide && durationInfo}
               {pastSweepsPicker}
-              {btMode === "sweep" && sweepAxes.length > 0 && (
+              {btMode === "sweep" && activeSweepAxes.length > 0 && (
                 <span className="bt-search-toggle">
                   <Tooltip content={[
                     "Grid: run every combination of the ranges.",
@@ -3216,7 +3240,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   )}
                 </span>
               )}
-              {(btMode === "sweep" || btMode === "walkforward") && sweepAxes.length > 0 && remoteCompute && (
+              {(btMode === "sweep" || btMode === "walkforward") && activeSweepAxes.length > 0 && remoteCompute && (
                 <span className="bt-compute-toggle">
                   <Tooltip content={[
                     "Local: run the job on this machine.",
@@ -4401,21 +4425,30 @@ export function RuleGroupSection({
             </div>
           </div>
         </div>
-        {sweep?.editable && rule.enabled !== false && (() => {
+        {sweep?.editable && (() => {
           // lit: targets address rows by RAW full-list index i (the expr request
           // ships every row, disabled included), NOT activeRuleIndex(i).
           const { literals } = analyze(rule.expr ?? "", { isExit });
           if (!literals.length) return null;
+          // A disabled rule's configured axes stay visible but PARKED: greyed,
+          // still editable/removable, excluded from the combo count and the run
+          // (a rule that never evaluates would sweep identical backtests). No
+          // add-axis chips on a disabled row, and no row at all without axes.
+          const parked = rule.enabled === false;
+          const items = literals.map((lit) => {
+            const target = sweepLiteralTarget(sweep.side, sweep.group, i, lit.ordinal);
+            const axis = sweep.axes.find(
+              (a) => a.target === target && a.kind === "range",
+            ) as RangeAxis | undefined;
+            return { lit, target, axis };
+          }).filter((it) => !parked || it.axis);
+          if (!items.length) return null;
           return (
-            <div className="sp-row sweep-axis-row bt-lit-sweep-row">
-              <span className="sp-label">sweep</span>
+            <div className={`sp-row sweep-axis-row bt-lit-sweep-row${parked ? " bt-lit-parked" : ""}`}>
+              <span className="sp-label">{parked ? "sweep (off with rule)" : "sweep"}</span>
               <span className="bt-chip-row">
-                {literals.map((lit) => {
-                  const target = sweepLiteralTarget(sweep.side, sweep.group, i, lit.ordinal);
-                  const axis = sweep.axes.find(
-                    (a) => a.target === target && a.kind === "range",
-                  ) as RangeAxis | undefined;
-                  return axis ? (
+                {items.map(({ lit, target, axis }) =>
+                  axis ? (
                     <span key={lit.ordinal} className="bt-lit-axis">
                       <span className="sp-label">{lit.label}</span>
                       <RangeChip
@@ -4434,8 +4467,8 @@ export function RuleGroupSection({
                     >
                       {lit.label} {lit.value}
                     </button>
-                  );
-                })}
+                  ),
+                )}
               </span>
             </div>
           );
