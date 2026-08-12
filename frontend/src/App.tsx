@@ -300,17 +300,25 @@ export default function App() {
   }, [settings.trading.confirmLineEdits]);
   // Toolbar gear + chart context menu request the Settings modal via a signal.
   useEffect(() => settingsRequest.subscribe(() => setShowSettings(true)), []);
-  // The toolbar Backtest button opens the docked config panel via a signal.
+  // The toolbar Backtest button toggles the docked config panel via a signal.
   // Open-state is device-local so the panel reopens after a reload if it was
   // open (loadBacktestOpen), showing the persisted config/results without re-running.
   const [showBacktestCfg, setShowBacktestCfg] = useState(loadBacktestOpen);
+  const showBacktestCfgRef = useRef(showBacktestCfg);
+  showBacktestCfgRef.current = showBacktestCfg;
   const openBacktestCfg = (open: boolean) => {
     setShowBacktestCfg(open);
     saveBacktestOpen(open);
   };
   useEffect(() => backtestSettingsRequest.subscribe(() => {
+    // Toggle — but an open-yet-hidden overlay (chart interaction / range pick
+    // tucked it away) re-reveals instead of closing: the panel isn't on screen,
+    // so to the user this click is "open", not "close".
+    if (showBacktestCfgRef.current && !backtestPanelHiddenSignal.value) {
+      openBacktestCfg(false);
+      return;
+    }
     openBacktestCfg(true);
-    // An already-open-but-hidden overlay re-reveals rather than re-opening.
     backtestPanelHiddenSignal.set(false);
   }), []);
   // The Live trading panel — a separate docked surface from the backtest. Driven
