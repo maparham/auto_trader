@@ -612,7 +612,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // greyed on their rule row) so re-enabling the rule restores them, but
   // excluded from everything a run consumes — combo count, grid submission,
   // WFO payload — because a disabled rule never evaluates and each swept value
-  // would just re-run the identical backtest.
+  // would just re-run the identical backtest. A side whose trade toggle is off
+  // parks every rule on that side the same way: an unarmed side never opens
+  // positions, so none of its rules evaluate either. (The side flags live on
+  // cfg in both modes; codedCfg has none of its own.)
   const disabledRuleRows = useMemo(() => {
     const src = cfg.mode === "coded" ? codedCfg : cfg;
     const out = new Set<string>();
@@ -622,8 +625,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       ["short", "entry", "shortEntry"],
       ["short", "exit", "shortExit"],
     ] as const) {
+      const sideOff = (side === "long" ? cfg.longEnabled : cfg.shortEnabled) === false;
       (((src as any)?.[key]?.rules ?? []) as { enabled?: boolean }[]).forEach((r, i) => {
-        if (r.enabled === false) out.add(`${side}.${group}.${i}`);
+        if (sideOff || r.enabled === false) out.add(`${side}.${group}.${i}`);
       });
     }
     return out;

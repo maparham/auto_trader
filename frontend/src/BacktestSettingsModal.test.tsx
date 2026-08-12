@@ -619,6 +619,41 @@ describe("parked side", () => {
   });
 });
 
+describe("parked side sweep axes", () => {
+  afterEach(() => {
+    sweepAxesSignal.set([]);
+  });
+
+  // A side whose trade toggle is off never opens positions, so its rules never
+  // evaluate — sweeping their literals just re-runs identical backtests. The
+  // combo count (and the submitted grid) must exclude those axes, exactly like
+  // axes on an individually disabled rule.
+  it("excludes lit axes on a disabled side from the combo count", () => {
+    // Default config: long entry "EMA(9) x> EMA(21)", short entry "EMA(9) x< EMA(21)",
+    // so ordinals 0/1 exist on row 0 of both sides. 3 long values x 5 short values.
+    saveSweepAxes("rules", [
+      { kind: "range", target: "lit:long.entry.0.0", label: "long EMA", from: 1, to: 3, step: 1 },
+      { kind: "range", target: "lit:short.entry.0.0", label: "short EMA", from: 1, to: 5, step: 1 },
+    ]);
+    const initial = defaultBacktestConfig();
+    initial.shortEnabled = false;
+    renderModal(initial);
+    enterSweepMode();
+    // Only the long axis counts: 3 combos, not 3 x 5 = 15.
+    expect(document.querySelector(".bt-sweep-estimate")!.textContent).toBe("3 combos");
+  });
+
+  it("counts both sides' lit axes when both sides are armed", () => {
+    saveSweepAxes("rules", [
+      { kind: "range", target: "lit:long.entry.0.0", label: "long EMA", from: 1, to: 3, step: 1 },
+      { kind: "range", target: "lit:short.entry.0.0", label: "short EMA", from: 1, to: 5, step: 1 },
+    ]);
+    renderModal();
+    enterSweepMode();
+    expect(document.querySelector(".bt-sweep-estimate")!.textContent).toBe("15 combos");
+  });
+});
+
 describe("coded mode: params, risk, and exit-rule sections", () => {
   const strategies = [
     {
