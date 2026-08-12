@@ -82,7 +82,7 @@ import PresetsTab from "./components/PresetsTab";
 import { SweepResults } from "./SweepResults";
 import { comboCount, materializePeriodAxes, mirrorRiskAxes, SWEEP_WARN_COMBOS, type RangeAxis, type SweepAxis, type SweepCombo, type SweepOption } from "./lib/sweep";
 import { analyze } from "./lib/expr/parser";
-import { pruneLitAxes, sweepLiteralTarget } from "./lib/expr/sweepLiterals";
+import { patchExprLiterals, pruneLitAxes, sweepLiteralTarget } from "./lib/expr/sweepLiterals";
 import { refineAxesAround, sampleCombos } from "./lib/sweepSearch";
 import { useStableCallback } from "./lib/useStableCallback";
 import { sweepAxisLabel, withSweepLabels, type LabelConfig } from "./lib/sweepLabels";
@@ -906,9 +906,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     if (wfoStateSignal.value?.running) wfoStateSignal.set(null);
   }, []);
 
-  // Rule mode's own combo-apply — patches the operand/count a `rule:` axis
-  // targets back onto cfg's rule groups. Kept separate from the coded branch
-  // below (different config shape: RuleGroup arrays on `cfg`, not `codedCfg`).
+  // Rule mode's own combo-apply — patches `lit:` axes back into the addressed
+  // rule expressions on cfg's rule groups (plus timeWindow/period/risk axes).
+  // Kept separate from the coded branch below (different config shape:
+  // RuleGroup arrays on `cfg`, not `codedCfg`).
   function applyRuleSweepCombo(combo: Record<string, number | boolean | string>) {
     if (sweepStateSignal.value?.running) return;
     let next = cfg;
@@ -937,6 +938,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     if (typeof pFrom === "number" && typeof pTo === "number") {
       next = { ...next, range: { ...next.range, mode: "custom", fromMs: pFrom * 1000, toMs: pTo * 1000 } };
     }
+    // lit: expression-literal axes, grouped per rule row so multi-literal
+    // rows splice in one pass (spans shift after each substitution).
+    const litPatches = new Map<string, { ordinal: number; value: number }[]>();
     for (const [key, value] of Object.entries(combo)) {
       if (typeof value !== "number") continue;
       // SL/TP axes patch the per-side risk DTO, same shape as the coded branch.
@@ -951,8 +955,41 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         };
         continue;
       }
-      // lit: expression-literal axes are not patched onto a structured operand
-      // here (there is no structured operand to patch).
+      const lit = /^lit:(long|short)\.(entry|exit)\.(\d+)\.(\d+)$/.exec(key);
+      if (lit) {
+        const [, lside, lgroup, rowIdx, ordinal] = lit;
+        const rowKey = `${lside}.${lgroup}.${rowIdx}`;
+        const patches = litPatches.get(rowKey) ?? [];
+        patches.push({ ordinal: Number(ordinal), value });
+        litPatches.set(rowKey, patches);
+      }
+    }
+    // Rewrite each addressed rule's expression with the swept literal values.
+    // rowIdx is the FULL-list index (disabled rows included), matching the
+    // groups as stored on cfg. A row that vanished since the sweep ran is
+    // skipped; patchExprLiterals itself tolerates edited/unparseable rows.
+    // Known accepted gap (same as the risk:/param: paths): a rule edited since
+    // the sweep that still has the same literal count applies silently onto
+    // literals whose meaning may have changed — sweep state doesn't snapshot
+    // the original expressions, so there's nothing to diff against.
+    for (const [rowKey, patches] of litPatches) {
+      const [lside, lgroup, rowIdxStr] = rowKey.split(".");
+      const groupKey = (lside === "long"
+        ? lgroup === "entry" ? "longEntry" : "longExit"
+        : lgroup === "entry" ? "shortEntry" : "shortExit") as
+        "longEntry" | "longExit" | "shortEntry" | "shortExit";
+      const rowIdx = Number(rowIdxStr);
+      const rule = next[groupKey].rules[rowIdx];
+      if (!rule?.expr) continue;
+      const patched = patchExprLiterals(rule.expr, patches);
+      if (patched === rule.expr) continue;
+      next = {
+        ...next,
+        [groupKey]: {
+          ...next[groupKey],
+          rules: next[groupKey].rules.map((r, i) => (i === rowIdx ? { ...r, expr: patched } : r)),
+        },
+      };
     }
     // Synced risk axes are canonicalized to long; copy the applied values across
     // to short (no-op when unsynced or already equal).

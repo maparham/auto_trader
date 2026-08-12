@@ -6,7 +6,7 @@
 
 import { type RiskConfig, type RuleGroup } from "./backtestConfig";
 import type { SweepAxis } from "./sweep";
-import { literalLabel } from "./expr/sweepLiterals";
+import { literalAxisLabel } from "./expr/sweepLiterals";
 
 // The slice of a config this resolver reads. BacktestConfig (rules mode) and
 // CodedStrategyConfig (coded mode) both satisfy it; entry groups are absent in
@@ -32,13 +32,15 @@ function groupFor(cfg: LabelConfig, side: string, group: string): RuleGroup | un
 function litLabel(target: string, cfg: LabelConfig): string | null {
   // "lit:<side>.<group>.<rowIdx>.<ordinal>". rowIdx is the FULL-list row index
   // (the expression request ships every row), NOT the enabled-only index that
-  // rule:/op: use. Resolves the literal's context label ("EMA length"); returns
-  // null when the row or that ordinal no longer exists so a stale axis is pruned.
+  // rule:/op: use. Resolves to the rule with the swept literal as "x"
+  // ("SLOPE.14>x" — the axis names the rule it varies, not a bare "threshold");
+  // returns null when the row or that ordinal no longer exists so a stale axis
+  // is pruned.
   const [, side, group, idxStr, ordStr] = target.split(/[:.]/);
   const g = groupFor(cfg, side, group);
   const row = g?.rules[Number(idxStr)];
   if (!row || row.expr == null) return null;
-  return literalLabel(row.expr, Number(ordStr)) || null;
+  return literalAxisLabel(row.expr, Number(ordStr)) || null;
 }
 
 function riskLabel(target: string, cfg: LabelConfig): string | null {
@@ -74,9 +76,10 @@ export function sweepAxisLabel(target: string, cfg: LabelConfig): string | null 
 }
 
 // Side + rule number prefix ("Long 1", "Short exit 2") to disambiguate two
-// axes that share a base label; null for non-rule targets.
+// axes that share a base label — rule:/op:/lit: targets all encode
+// side.group.rowIdx in the same positions; null for other targets.
 function prefixFor(target: string): string | null {
-  if (!target.startsWith("rule:") && !target.startsWith("op:")) return null;
+  if (!target.startsWith("rule:") && !target.startsWith("op:") && !target.startsWith("lit:")) return null;
   const [, side, group, idxStr] = target.split(/[:.]/);
   return `${cap(side)}${group === "exit" ? " exit" : ""} ${Number(idxStr) + 1}`;
 }

@@ -23,21 +23,107 @@ export function sweepLiteralTarget(
   return `lit:${side}.${group}.${rowIdx}.${ordinal}`;
 }
 
-/** Returns the context label for a literal within an expression.
- * Reuses the label logic from analyze() (which mirrors the backend's
- * literal-extraction algorithm). Returns an empty string if the expression
- * cannot be parsed or the ordinal is out of range.
+/** Results-panel label for a `lit:` axis: the rule's expression with the swept
+ * literal replaced by "x" — "SLOPE.14>x" says what the axis varies where the
+ * literal's bare context label ("threshold") or the raw target path doesn't.
+ * Same semantic-error tolerance as patchExprLiterals below (a bare analyze()
+ * has no chart-indicator context, but literal spans survive semantic errors);
+ * "" when the expression doesn't lex/parse or the ordinal no longer exists. */
+export function literalAxisLabel(expr: string, ordinal: number): string {
+  const { literals } = analyze(expr);
+  const lit = literals.find((l) => l.ordinal === ordinal);
+  if (!lit) return "";
+  return expr.slice(0, lit.from) + "x" + expr.slice(lit.to);
+}
+
+/** Rewrites an expression's numeric literals in place: each patch addresses a
+ * literal by ordinal (the `lit:` target's last segment) and substitutes the
+ * swept value at that literal's source span. Splices run right-to-left so
+ * earlier spans stay valid. An unparseable expression, or an ordinal that no
+ * longer exists (rule edited since the sweep ran), is left untouched — same
+ * tolerance as pruneLitAxes.
  *
- * Examples:
- *   literalLabel("EMA(50) > 30", 0) => "EMA length"
- *   literalLabel("EMA(50) > 30", 1) => "threshold"
- */
-export function literalLabel(expr: string, ordinal: number): string {
-  const result = analyze(expr);
-  if (result.error || ordinal < 0 || ordinal >= result.literals.length) {
-    return "";
+ * `analyze`'s error is deliberately NOT checked: a bare analyze() has no
+ * chart-indicator context, so a valid rule like "SLOPE.14>0.1" reports
+ * unknown_indicator_ref — a SEMANTIC error whose literal spans are still
+ * extracted and correct. Lex/parse failures return empty literals, so the
+ * ordinal lookup already no-ops those.
+ *
+ * Values print like sweep.ts's fmtAxisValue (duplicated here because sweep.ts
+ * imports this module — importing back would be a cycle): float-noise
+ * near-zeros flush to 0, 12 significant digits otherwise — EXCEPT that
+ * exponent notation is expanded to plain decimal, because the expression
+ * lexer has no exponent syntax ("5e-7" would lex as an unknown name). */
+// Token types that END a value: a "-" right after one of these is binary
+// subtraction, after anything else (operator, comparison, "(", ",", start of
+// the row) it's a unary minus on the literal that follows. "[" is excluded
+// from unary treatment separately: the "-" in an offset "[-2]" is offset
+// syntax, not a negation the backend's substitute() would preserve.
+const VALUE_END_TOKENS: ReadonlySet<string> = new Set(["NUMBER", "NAME", "RPAREN", "RBRACKET"]);
+
+// "1e+21" / "5e-7" → plain decimal digits (the lexer can't read exponents).
+function expandExponent(s: string): string {
+  const m = /^(-?)(\d+)(?:\.(\d+))?e([+-]?\d+)$/i.exec(s);
+  if (!m) return s;
+  const [, sign, int, frac = "", expStr] = m;
+  const digits = int + frac;
+  const point = int.length + Number(expStr);
+  if (point <= 0) return `${sign}0.${"0".repeat(-point)}${digits}`;
+  if (point >= digits.length) return `${sign}${digits}${"0".repeat(point - digits.length)}`;
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
+}
+
+export function patchExprLiterals(
+  expr: string,
+  patches: { ordinal: number; value: number }[],
+): string {
+  const { literals, tokens, error: baseError } = analyze(expr);
+  const fmt = (v: number) =>
+    expandExponent(String(Math.abs(v) < 1e-12 ? 0 : Number(v.toPrecision(12))));
+  let out = expr;
+  const spans = patches
+    .map((p) => ({ lit: literals.find((l) => l.ordinal === p.ordinal), value: p.value }))
+    .filter((p): p is { lit: LiteralSpan; value: number } => p.lit !== undefined)
+    .sort((a, b) => b.lit.from - a.lit.from);
+  for (const { lit, value } of spans) {
+    // The span must be a real NUMBER token: a bar-offset literal's span is
+    // SYNTHESIZED from the Offset node's end (parser literalsOf), and with
+    // whitespace inside the brackets ("[ -2 ]") it points at the wrong
+    // characters — splicing there would corrupt the expression mid-token.
+    const litIdx = tokens.findIndex(
+      (t) => t.from === lit.from && t.to === lit.to && t.type === "NUMBER",
+    );
+    if (litIdx < 0) continue;
+    // A literal under a unary minus keeps that minus at run time (the backend's
+    // substitute() replaces only the Num node under the Unary), so a negative
+    // value would naively splice to "--0.8". Fold instead: replace the minus
+    // AND the literal with the positive magnitude, so -(-1) reads as the "1"
+    // it evaluates to. Binary subtraction ("a - 0.4") must NOT fold — there the
+    // negative value parenthesizes ("a - (-0.8)"). Neither does an offset's
+    // bracket minus ("[-2]"): it's syntax, and a negative offset value has no
+    // valid text form, so that splice fails the re-parse check below instead.
+    const prev = litIdx > 0 ? tokens[litIdx - 1] : undefined;
+    const prev2 = litIdx > 1 ? tokens[litIdx - 2] : undefined;
+    const underUnaryMinus =
+      prev?.type === "MINUS" &&
+      (!prev2 || (!VALUE_END_TOKENS.has(prev2.type) && prev2.type !== "LBRACKET"));
+    let next: string;
+    if (value < 0 && underUnaryMinus) {
+      next = out.slice(0, prev.from) + fmt(-value) + out.slice(lit.to);
+    } else {
+      let text = fmt(value);
+      if (value < 0 && out.slice(0, lit.from).trimEnd().endsWith("-")) text = `(${text})`;
+      next = out.slice(0, lit.from) + text + out.slice(lit.to);
+    }
+    // Never write a patch that makes the expression WORSE than it started:
+    // accept the splice only if it analyzes clean or with the same error code
+    // the original already had (e.g. unknown_indicator_ref on chart-registered
+    // series). Anything else — like a negative bar offset, which has no valid
+    // text form — reverts to a per-patch no-op.
+    const nextError = analyze(next).error;
+    if (nextError === null || nextError.code === baseError?.code) out = next;
   }
-  return result.literals[ordinal].label;
+  return out;
 }
 
 /** Re-anchors ranges after an expression edit: returns ranges whose ordinals

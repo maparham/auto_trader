@@ -32,10 +32,15 @@ describe("sweepAxisLabel (expression literal axes)", () => {
   const exprRow = (expr: string) =>
     ({ expr, enabled: true } as unknown as RuleGroup["rules"][number]);
 
-  it("labels a lit: axis by the literal's context (full-list index)", () => {
+  it("labels a lit: axis as the rule with the swept literal as x (full-list index)", () => {
     const cfg: LabelConfig = { longEntry: group(exprRow("EMA(50) > 30")) };
-    expect(sweepAxisLabel("lit:long.entry.0.0", cfg)).toBe("EMA length");
-    expect(sweepAxisLabel("lit:long.entry.0.1", cfg)).toBe("threshold");
+    expect(sweepAxisLabel("lit:long.entry.0.0", cfg)).toBe("EMA(x) > 30");
+    expect(sweepAxisLabel("lit:long.entry.0.1", cfg)).toBe("EMA(50) > x");
+  });
+
+  it("labels a rule referencing a chart indicator (semantic analyze error)", () => {
+    const cfg: LabelConfig = { longEntry: group(exprRow("SLOPE.14>0.1")) };
+    expect(sweepAxisLabel("lit:long.entry.0.0", cfg)).toBe("SLOPE.14>x");
   });
 
   it("returns null for a lit: axis whose ordinal no longer exists", () => {
