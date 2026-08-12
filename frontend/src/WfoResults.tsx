@@ -85,6 +85,36 @@ export const SCORE_TIP = [
 const WFE_TIP =
   "Out-of-sample return relative to in-sample, annualized. Above ~0.5 is strong; negative means train gains did not carry forward";
 
+// Fold-table column tips. IS = in-sample (the fold's train window, the span
+// right before the test window); OOS = out-of-sample (the unseen test window).
+const FOLD_TIPS = {
+  window: "Dates of the fold's out-of-sample test window. The train window is the span immediately before it.",
+  params: "Winning parameter combo, picked on the fold's train window by the objective.",
+  is_obj: (metric: string) =>
+    `In-sample ${metric}: the winner's ${metric} on the train window it was optimized on.`,
+  oos_return: "Return of the winning combo on the unseen test window.",
+  oos_trades: "Trade count in the test window. Folds with fewer than 5 trades are greyed out; their results are noise.",
+  wfe: "Walk-forward efficiency for this fold: annualized test return divided by annualized train return.",
+} as const;
+
+// Train-span matrix tips: one row per training scheme, all numbers per scheme.
+const MATRIX_TIPS = {
+  train: "Train window length of this scheme.",
+  score: "Robustness score (0-100) of this scheme; see the scorecard tip for the blend.",
+  wfe: "Median walk-forward efficiency across this scheme's folds.",
+  folds: "Share of this scheme's test windows that ended positive.",
+  sharpe: "Sharpe ratio of this scheme's stitched out-of-sample equity.",
+  dd: "Largest peak-to-trough drop of this scheme's stitched out-of-sample equity.",
+  stability: "Steadiness of the winning parameters from fold to fold; 1 means the same pick every fold.",
+} as const;
+
+// Streaming-table tips (winner rows landing while the job runs).
+const STREAM_TIPS = {
+  fold: "Fold key: scheme index / fold index, in chronological fold order.",
+  params: "Winning parameter combo from the fold's train window.",
+  oos_net: "The winner's net P&L on the fold's out-of-sample test window.",
+} as const;
+
 // Fold-table endpoints 404 an hour after the job clears from the runner; the
 // drill-in surfaces this fixed copy rather than the raw fetch error.
 const FOLD_EXPIRY_COPY = "Fold tables expire with the job; reopen from the archive";
@@ -179,7 +209,7 @@ export const WfoResults = memo(function WfoResults(props: {
     { label: "OOS max DD", value: rb.oos_max_drawdown_pct == null ? "–" : `${fmt(rb.oos_max_drawdown_pct, 1)}%`,
       tip: "Largest peak-to-trough drop of the stitched out-of-sample equity." },
     { label: "Stability", value: fmt(rb.param_stability),
-      tip: "How steady the winning parameters stay from fold to fold. 1 means the same pick every fold." },
+      tip: "Steadiness of the winning parameters from fold to fold. 1 means the same pick every fold." },
     { label: "OOS trades", value: fmt(rb.oos_trades_total, 0),
       tip: "Total trades across all test windows." },
   ];
@@ -217,7 +247,11 @@ export const WfoResults = memo(function WfoResults(props: {
       {state.running && !result && state.foldRows.length > 0 && (
         <table className="sweep-table wfo-folds-table">
           <thead>
-            <tr><th>Fold</th><th>Params</th><th>OOS net</th></tr>
+            <tr>
+              <th><Tooltip content={STREAM_TIPS.fold}><span>Fold</span></Tooltip></th>
+              <th><Tooltip content={STREAM_TIPS.params}><span>Params</span></Tooltip></th>
+              <th><Tooltip content={STREAM_TIPS.oos_net}><span>OOS net</span></Tooltip></th>
+            </tr>
           </thead>
           <tbody>
             {state.foldRows.map((r) => (
@@ -304,8 +338,13 @@ export const WfoResults = memo(function WfoResults(props: {
             <table className="sweep-table wfo-matrix">
               <thead>
                 <tr>
-                  <th>Train</th><th>Score</th><th>WFE</th><th>Folds+</th>
-                  <th>Sharpe</th><th>DD</th><th>Stability</th>
+                  <th><Tooltip content={MATRIX_TIPS.train}><span>Train</span></Tooltip></th>
+                  <th><Tooltip content={MATRIX_TIPS.score}><span>Score</span></Tooltip></th>
+                  <th><Tooltip content={MATRIX_TIPS.wfe}><span>WFE</span></Tooltip></th>
+                  <th><Tooltip content={MATRIX_TIPS.folds}><span>Folds+</span></Tooltip></th>
+                  <th><Tooltip content={MATRIX_TIPS.sharpe}><span>Sharpe</span></Tooltip></th>
+                  <th><Tooltip content={MATRIX_TIPS.dd}><span>DD</span></Tooltip></th>
+                  <th><Tooltip content={MATRIX_TIPS.stability}><span>Stability</span></Tooltip></th>
                 </tr>
               </thead>
               <tbody>
@@ -331,12 +370,32 @@ export const WfoResults = memo(function WfoResults(props: {
           <table className="sweep-table wfo-folds-table">
             <thead>
               <tr>
-                <th><SweepSortHeader<FoldCol> label="Window" col="window" sort={sort} onSort={toggleSort} /></th>
-                <th>Params</th>
-                <th><SweepSortHeader<FoldCol> label={`IS ${metric}`} col="is_obj" sort={sort} onSort={toggleSort} /></th>
-                <th><SweepSortHeader<FoldCol> label="OOS ret %" col="oos_return" sort={sort} onSort={toggleSort} /></th>
-                <th><SweepSortHeader<FoldCol> label="OOS trades" col="oos_trades" sort={sort} onSort={toggleSort} /></th>
-                <th><SweepSortHeader<FoldCol> label="WFE" col="wfe" sort={sort} onSort={toggleSort} /></th>
+                <th>
+                  <Tooltip content={FOLD_TIPS.window}>
+                    <span><SweepSortHeader<FoldCol> label="Test window" col="window" sort={sort} onSort={toggleSort} /></span>
+                  </Tooltip>
+                </th>
+                <th><Tooltip content={FOLD_TIPS.params}><span>Params</span></Tooltip></th>
+                <th>
+                  <Tooltip content={FOLD_TIPS.is_obj(metric)}>
+                    <span><SweepSortHeader<FoldCol> label={`IS ${metric}`} col="is_obj" sort={sort} onSort={toggleSort} /></span>
+                  </Tooltip>
+                </th>
+                <th>
+                  <Tooltip content={FOLD_TIPS.oos_return}>
+                    <span><SweepSortHeader<FoldCol> label="OOS ret %" col="oos_return" sort={sort} onSort={toggleSort} /></span>
+                  </Tooltip>
+                </th>
+                <th>
+                  <Tooltip content={FOLD_TIPS.oos_trades}>
+                    <span><SweepSortHeader<FoldCol> label="OOS trades" col="oos_trades" sort={sort} onSort={toggleSort} /></span>
+                  </Tooltip>
+                </th>
+                <th>
+                  <Tooltip content={FOLD_TIPS.wfe}>
+                    <span><SweepSortHeader<FoldCol> label="WFE" col="wfe" sort={sort} onSort={toggleSort} /></span>
+                  </Tooltip>
+                </th>
                 <th />
               </tr>
             </thead>

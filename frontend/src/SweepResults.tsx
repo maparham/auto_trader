@@ -41,12 +41,18 @@ type MetricKey =
 // the window-robustness aggregates that live in the collapsible group. `info`
 // is the tooltip copy Task 5 surfaces on those columns.
 const METRIC_COLS: { key: MetricKey; label: string; abbr: string; robust?: boolean; info?: string }[] = [
-  { key: "net_pnl", label: "Net P/L", abbr: "P/L" },
-  { key: "return_pct", label: "Return %", abbr: "Ret" },
-  { key: "n_trades", label: "Trades", abbr: "N" },
-  { key: "win_rate", label: "Win rate", abbr: "Win" },
-  { key: "avg_win_loss_ratio", label: "RR", abbr: "RR" },
-  { key: "max_drawdown", label: "Drawdown", abbr: "DD" },
+  { key: "net_pnl", label: "Net P/L", abbr: "P/L",
+    info: "Net profit or loss over the period, in account currency." },
+  { key: "return_pct", label: "Return %", abbr: "Ret",
+    info: "Net P&L as a percent of the starting balance." },
+  { key: "n_trades", label: "Trades", abbr: "N",
+    info: "Count of closed trades. Results on fewer than ~30 trades carry little statistical weight." },
+  { key: "win_rate", label: "Win rate", abbr: "Win",
+    info: "Share of trades closed in profit." },
+  { key: "avg_win_loss_ratio", label: "RR", abbr: "RR",
+    info: "Reward-to-risk: average winning trade divided by average losing trade." },
+  { key: "max_drawdown", label: "Drawdown", abbr: "DD",
+    info: "Largest peak-to-trough equity drop over the period, as an amount (smaller is better)." },
   { key: "profit_factor", label: "Profit factor", abbr: "PF",
     info: "Gross profit divided by gross loss; above 1 is profitable." },
   { key: "sharpe", label: "Sharpe", abbr: "Sh",
@@ -60,7 +66,7 @@ const METRIC_COLS: { key: MetricKey; label: string; abbr: string; robust?: boole
   { key: "median_window_pnl", label: "Med wnd", abbr: "Med", robust: true,
     info: "Median window P&L. The typical window's result, immune to one outlier week." },
   { key: "pct_windows_profitable", label: "Wnd+", abbr: "W+", robust: true,
-    info: "Windows profitable. How many of the N windows ended positive. 4/4 means every period made money." },
+    info: "Windows profitable. Count of the N sub-windows that ended positive. 4/4 means every period made money." },
   { key: "mean_window_pnl_minus_std", label: "Mean-σ", abbr: "Mσ", robust: true,
     info: "Mean window P&L minus one standard deviation. Rewards steady combos, punishes ones that swing between big wins and big losses." },
 ];
@@ -488,7 +494,7 @@ export const SweepResults = memo(function SweepResults(props: {
                   </th>
                 ))
               ) : (
-                <th>Combo</th>
+                <th><Tooltip content="The swept parameter combination for the row."><span>Combo</span></Tooltip></th>
               )}
               {baseCols.map((c) => (
                 <th key={c.key} className="sweep-c-num">
