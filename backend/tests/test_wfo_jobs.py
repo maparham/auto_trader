@@ -122,6 +122,62 @@ class _BlockingPool(_SyncPool):
         return f
 
 
+class _FakeProc:
+    def __init__(self):
+        self.killed = False
+
+    def kill(self):
+        self.killed = True
+
+
+class _KillTrackingPool(_BlockingPool):
+    """Mimics the CPython detail the reap depends on: shutdown() nulls the
+    `_processes` dict (concurrent/futures/process.py), so a snapshot taken
+    after shutdown sees nothing to kill."""
+    last = None  # class attr: the test grabs the instance the manager built
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.procs = {i: _FakeProc() for i in range(2)}
+        self._processes = dict(self.procs)  # `procs` survives the shutdown null
+        _KillTrackingPool.last = self
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        self._processes = None
+
+
+def test_cancel_kills_stuck_workers(tmp_path):
+    """Workers stuck in a combo past the grace period must be killed, not left
+    computing. Regression: the kill loop read `pool._processes` AFTER shutdown
+    had nulled it, so it killed nothing."""
+    import threading
+    from tests.wfo_fixtures import make_req_dict, write_strategy, T0, H
+    write_strategy(tmp_path)
+    _BlockingPool.gate = threading.Event()  # never set: combos stay in flight
+    day = 24 * H
+    folds = [{"train_from": T0, "train_to": T0 + 10 * day,
+              "test_from": T0 + 10 * day, "test_to": T0 + 13 * day}]
+    mgr = wfo_jobs.WfoJobManager(pool_factory=_KillTrackingPool, grace_seconds=0.2)
+    job = mgr.submit(
+        req_dict=make_req_dict(19 * 24), htf_candles={},
+        strategies_dir=str(tmp_path),
+        schemes=[{"train_span": "10d", "folds": folds,
+                  "min_train_trades": 0, "min_test_trades": 0}],
+        axes=[{"kind": "range", "targets": ["param:fast"], "values": [3, 5, 8]}],
+        objective={"metric": "net_pnl", "composite": None, "min_trades": 0,
+                   "selection": "best"},
+        schedule_meta={}, epic="TEST", timeframe="HOUR",
+        combos=[{"param:fast": 3}, {"param:fast": 5}, {"param:fast": 8}],
+    )
+    time.sleep(0.1)                 # let the grid phase start
+    assert mgr.cancel(job.job_id)
+    _wait(job)
+    procs = _KillTrackingPool.last.procs
+    _BlockingPool.gate.set()        # unstick the leftover threads
+    assert all(p.killed for p in procs.values()), \
+        "stuck workers were not killed on cancel"
+
+
 def test_cancel_mid_grid(tmp_path):
     import threading
     from tests.wfo_fixtures import make_req_dict, write_strategy, T0, H

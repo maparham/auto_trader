@@ -278,17 +278,22 @@ class WfoJobManager:
                     stream(row)
                 self._record(job, row_lock, t0)
             if job.cancelled:
+                # Snapshot BEFORE shutdown: shutdown() nulls the pool's
+                # `_processes` dict, so reading it afterwards kills nothing
+                # and cancelled workers burn CPU to combo completion.
+                procs = list((getattr(pool, "_processes", None) or {}).values())
                 pool.shutdown(wait=False, cancel_futures=True)
-                self._reap(pool, futures, seen, results, job, row_lock, t0, stream)
+                self._reap(procs, futures, seen, results, job, row_lock, t0, stream)
                 break
         return results
 
-    def _reap(self, pool, futures: list, seen: set, results: list, job: WfoJob,
+    def _reap(self, procs: list, futures: list, seen: set, results: list, job: WfoJob,
               row_lock: threading.Lock, t0: float, stream) -> None:
         """After a cancel: harvest futures that finished before/while we stopped,
         wait up to `grace` for in-flight ones, then kill any survivors so the
         thread cannot hang on a slow combo. `seen` are futures already recorded
-        by the main loop, so we do not double-count them."""
+        by the main loop, so we do not double-count them. `procs` is the worker
+        process list snapshotted before pool.shutdown() (which nulls it)."""
         deadline = time.monotonic() + self._grace_seconds
         pending = [f for f in futures if f not in seen]
         while pending and time.monotonic() < deadline:
@@ -307,12 +312,9 @@ class WfoJobManager:
             pending = still
             if pending:
                 time.sleep(0.05)
-        # Kill any workers still running an in-flight combo. `_processes` is a
-        # private ProcessPoolExecutor attr: acceptable for a single-user tool,
-        # and there is no public API to force-terminate stuck workers. Snapshot
-        # first because the dict mutates as processes exit.
-        procs = getattr(pool, "_processes", None) or {}
-        for p in list(procs.values()):
+        # Kill any workers still running an in-flight combo so a cancelled job
+        # stops burning CPU immediately instead of at combo completion.
+        for p in procs:
             try:
                 p.kill()
             except Exception:  # noqa: BLE001  process may already be gone

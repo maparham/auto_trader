@@ -62,6 +62,36 @@ def test_cancel_stops_and_keeps_partial(strat_dir, tmp_path):
     assert job.cancelled is True and 0 < job.done < job.total
 
 
+def test_cancel_kills_inflight_worker_processes(tmp_path):
+    """A cancel must SIGKILL workers stuck in a long combo once the grace
+    period expires. Regression: ProcessPoolExecutor.shutdown() nulls its
+    `_processes` dict, so reading it AFTER shutdown killed nothing and a
+    cancelled sweep/WFO kept burning CPU until every in-flight combo finished."""
+    import multiprocessing
+
+    (tmp_path / "sweep.py").write_text(
+        STRAT.replace("return []", "import time; time.sleep(60); return []"))
+    mgr = SweepJobManager(grace_seconds=0.5)
+    job = submit(mgr, str(tmp_path), [{"param:n": i} for i in range(3, 7)])
+    # Wait for the pool's workers to spawn (slow on macOS spawn start method).
+    t0 = time.time()
+    while len(multiprocessing.active_children()) < 2 and time.time() - t0 < 30:
+        time.sleep(0.05)
+    procs = multiprocessing.active_children()
+    assert len(procs) >= 2, "workers never spawned"
+    assert mgr.cancel(job.job_id) is True
+    wait(job, timeout=15)
+    # Workers were mid-sleep(60): only a kill can end them this soon.
+    deadline = time.time() + 10
+    while any(p.is_alive() for p in procs) and time.time() < deadline:
+        time.sleep(0.05)
+    alive = [p.pid for p in procs if p.is_alive()]
+    for p in procs:  # cleanup so a failure can't leak 60s sleepers into CI
+        if p.is_alive():
+            p.kill()
+    assert not alive, f"worker processes survived cancel: {alive}"
+
+
 def test_get_and_list_and_unknown_cancel(strat_dir):
     mgr = SweepJobManager()
     job = submit(mgr, strat_dir, COMBOS)
