@@ -31,6 +31,7 @@ import {
 } from "./customIndicators";
 import { EQUITY_INDICATOR } from "./backtest";
 import { exprInstancesFor, EXPR_INSTANCE_TYPES, type LiveInstance } from "./exprInstances";
+import { sameInstanceConfig, type InstanceAppearance, type PortableInstancePayload } from "./ruleClipboard";
 import { INDICATOR_SPECS, type ExprInstance } from "./expr/catalog";
 import { RESOLUTION_SECONDS } from "./feed";
 import type { SlopeExtend } from "./indicators/slope";
@@ -843,6 +844,98 @@ export function addIndicatorInstance(
   // the save-after-apply the template/snapshot paths do (templates.ts, snapshots.ts).
   if (opts?.config) saveIndicatorConfig(scope, inst.id, opts.config);
   return inst;
+}
+
+// Recreate the panes a pasted rule set references (lib/ruleClipboard.ts payload):
+// for each copied id, reuse ANY live pane that already matches its settings
+// (so pasting the same clipboard twice is idempotent rather than piling up
+// duplicates), recreate it under its own id when that id is free, or mint a
+// fresh id when the id is taken by a differently-configured pane. Returns the
+// old→new id map (identity for recreated panes) so the caller can rewrite the
+// pasted expressions, plus the instances actually added (for
+// controller.indicators + persistence). A pane that fails to apply gets no map
+// entry — its refs stay as copied and the editor lints them as unknown, the
+// same as any missing pane.
+export function importExprInstances(
+  chart: Chart,
+  scope: string,
+  epic: string,
+  indicators: Record<string, PortableInstancePayload>,
+  opts?: { resolution?: string; forceHidden?: boolean },
+): { idMap: Record<string, string>; added: IndicatorInstance[] } {
+  const idMap: Record<string, string> = {};
+  const added: IndicatorInstance[] = [];
+  for (const [id, payload] of Object.entries(indicators)) {
+    const config: SavedIndicatorConfig = {
+      calcParams: payload.calcParams,
+      extendData: payload.extendData as Record<string, unknown>,
+      visible: payload.visible,
+      styles: payload.styles,
+    };
+    // Reuse any pane whose authored settings already match — re-read LIVE each
+    // iteration so a pane created earlier in this loop counts too. Prefer the
+    // copied id itself when several match, keeping the expressions verbatim.
+    const matches = liveExprInstances(chart).filter((li) => sameInstanceConfig(li, payload));
+    const match = matches.find((li) => li.id === id) ?? matches[0];
+    if (match) {
+      idMap[id] = match.id;
+      continue;
+    }
+    if (!getIndicatorById(chart, id)) {
+      // The id is free: recreate the pane under the COPIED id so the pasted
+      // expressions keep working verbatim (same contract as hydrateIndicators
+      // re-applying saved ids).
+      const inst: IndicatorInstance = { id, type: payload.type };
+      if (!applyIndicator(chart, scope, epic, inst, { config, forceHidden: opts?.forceHidden }))
+        continue;
+      if (opts?.resolution) applySlopeBarHours(chart, opts.resolution);
+      saveIndicatorConfig(scope, id, config); // survive teardown/reload, as addIndicatorInstance does
+      idMap[id] = id;
+      added.push(inst);
+      continue;
+    }
+    // The id is taken by a differently-configured pane — leave it alone and add
+    // the copy under a freshly minted id (the caller rewrites the refs).
+    const inst = addIndicatorInstance(chart, scope, epic, payload.type, {
+      config,
+      forceHidden: opts?.forceHidden,
+      resolution: opts?.resolution,
+    });
+    if (inst) {
+      idMap[id] = inst.id;
+      added.push(inst);
+    }
+  }
+  return { idMap, added };
+}
+
+/** The display dressing (visible flag + per-line styles) of each live pane in
+ * `ids`, in the SavedIndicatorConfig shape — what the rule clipboard folds into
+ * its envelope so a recreated pane keeps the user's colors and hidden state.
+ * Mirrors what copyIndicator ships for a standalone indicator copy. */
+export function captureIndicatorAppearance(
+  chart: Chart,
+  ids: Iterable<string>,
+): Record<string, InstanceAppearance> {
+  const out: Record<string, InstanceAppearance> = {};
+  for (const id of ids) {
+    const ind = getIndicatorById(chart, id);
+    if (!ind) continue;
+    out[id] = {
+      visible: ind.visible,
+      styles: ind.styles?.lines
+        ? {
+            lines: ind.styles.lines.map((l) => ({
+              color: l.color,
+              size: l.size,
+              style: l.style as string | undefined,
+              dashedValue: l.dashedValue,
+            })),
+          }
+        : undefined,
+    };
+  }
+  return out;
 }
 
 // Remove an instance by its id across whichever pane holds it (the candle pane for

@@ -1690,6 +1690,10 @@
 .bt-section-head:hover .bt-groophead-actions > .bt-rule-toggle,
 .bt-groophead-actions > .bt-rule-toggle:focus-visible { opacity: 1; }
 .bt-reverse-ops { white-space: nowrap; }
+/* Copy-all's post-click "copied" flash (✓, positive color). Full opacity even
+   off-hover so the flash survives the mouse leaving the section header. */
+.bt-groophead-actions > .bt-copyall.bt-copied,
+.bt-copyall.bt-copied:hover { color: var(--pos); opacity: 1; background: transparent; }
 .bt-pasteall { display: inline-flex; align-items: center; gap: 4px; }
 /* A rule group with zero rules is never true — for "Buy when" that means the
    backtest can never open a position at all, which reads as "nothing happens"

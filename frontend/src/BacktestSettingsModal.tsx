@@ -46,6 +46,7 @@ import { WfoResults } from "./WfoResults";
 import { requiredWarmupBars, resolveWindow } from "./lib/backtestWindow";
 import { exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
 import { liveExprInstances } from "./lib/indicators";
+import { useRuleClipboard } from "./lib/useRuleClipboard";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
@@ -1466,13 +1467,11 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     }
     setTab((prev) => (prev === current ? prev : current));
   }
-  // A single copied rule, shared across all four groups so a rule can be pasted
-  // between entry/exit and — the point of this — between the long and short
-  // sides. Null until the user copies one; cleared only by copying another.
-  const [clipboard, setClipboard] = useState<Rule | null>(null);
-  // A copied set of whole-group rules, shared across all four groups the same way
-  // — so every rule in one side/leg can be pasted into another at once.
-  const [groupClipboard, setGroupClipboard] = useState<Rule[] | null>(null);
+  // The rule clipboard, shared across all four groups so rules can be pasted
+  // between entry/exit and between the long and short sides — and, because copy
+  // writes a self-contained envelope (rules + referenced pane configs) to the
+  // system clipboard, across windows and app instances too.
+  const { copyRules, pasteRules } = useRuleClipboard({ controller, epic, resolution, brokerId });
 
   // "Pick from chart" (expression editor): a rule row arms the chart, the user
   // clicks an on-chart indicator, and its expression token (e.g. "EMA(9)") is
@@ -2805,10 +2804,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                       emptyHint={`No ${s}-exit rules, so an open ${s} holds until the trading window ends.`}
                       defaultAvwapAnchor={defaultAvwapAnchor}
                       baseResolution={effectiveRes}
-                      clipboard={clipboard}
-                      onCopy={(rule) => setClipboard(cloneRule(rule))}
-                      groupClipboard={groupClipboard}
-                      onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
+                      onCopy={copyRules}
+                      onPaste={pasteRules}
                       instances={exprInstances}
                       isExit
                     />
@@ -2897,10 +2894,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             setGroup={setGroup}
             defaultAvwapAnchor={defaultAvwapAnchor}
             baseResolution={effectiveRes}
-            clipboard={clipboard}
-            onCopy={(rule) => setClipboard(cloneRule(rule))}
-            groupClipboard={groupClipboard}
-            onCopyAll={(rules) => setGroupClipboard(rules.map(cloneRule))}
+            onCopy={copyRules}
+            onPaste={pasteRules}
             exprPick={exprPick}
             instances={exprInstances}
             sweep={{
@@ -3562,10 +3557,8 @@ function SidePanel({
   setGroup,
   defaultAvwapAnchor,
   baseResolution,
-  clipboard,
   onCopy,
-  groupClipboard,
-  onCopyAll,
+  onPaste,
   exprPick,
   instances,
   sweep,
@@ -3576,10 +3569,8 @@ function SidePanel({
   setGroup: (which: "longEntry" | "longExit" | "shortEntry" | "shortExit", g: RuleGroup) => void;
   defaultAvwapAnchor: number;
   baseResolution: string;
-  clipboard: Rule | null;
-  onCopy: (rule: Rule) => void;
-  groupClipboard: Rule[] | null;
-  onCopyAll: (rules: Rule[]) => void;
+  onCopy: (rules: Rule[]) => void;
+  onPaste: () => Promise<Rule[] | null>;
   // "Pick from chart" arming, coordinated by the parent so only one row is armed
   // at a time. Absent with no chart (Live panel) — the button doesn't render.
   exprPick?: {
@@ -3636,10 +3627,8 @@ function SidePanel({
           emptyHint={`No ${side}-entry rules, so this strategy won't open any ${side} positions.`}
           defaultAvwapAnchor={defaultAvwapAnchor}
           baseResolution={baseResolution}
-          clipboard={clipboard}
           onCopy={onCopy}
-          groupClipboard={groupClipboard}
-          onCopyAll={onCopyAll}
+          onPaste={onPaste}
           pickIndicator={sidePick(isLong ? "longEntry" : "shortEntry")}
           instances={instances}
           sweep={sweep && { ...sweep, group: "entry" }}
@@ -3652,10 +3641,8 @@ function SidePanel({
           emptyHint={`No ${side}-exit rules, so an open ${side} holds until the trading window ends.`}
           defaultAvwapAnchor={defaultAvwapAnchor}
           baseResolution={baseResolution}
-          clipboard={clipboard}
           onCopy={onCopy}
-          groupClipboard={groupClipboard}
-          onCopyAll={onCopyAll}
+          onPaste={onPaste}
           pickIndicator={sidePick(isLong ? "longExit" : "shortExit")}
           instances={instances}
           isExit
@@ -3872,6 +3859,15 @@ function CopyAllIcon() {
     <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6">
       <rect x="9" y="9" width="11" height="11" rx="2" strokeLinejoin="round" />
       <path d="M5 15 H4.5 A1.5 1.5 0 0 1 3 13.5 V4.5 A1.5 1.5 0 0 1 4.5 3 h9 A1.5 1.5 0 0 1 15 4.5 V5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// The ✓ the copy-all button swaps to while its "copied" flash is up.
+function CheckSmallIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.5 12.5 10 17.5 19.5 6.5" />
     </svg>
   );
 }
@@ -4107,10 +4103,8 @@ export function RuleGroupSection({
   group,
   onChange,
   emptyHint,
-  clipboard,
   onCopy,
-  groupClipboard,
-  onCopyAll,
+  onPaste,
   pickIndicator,
   instances,
   isExit = false,
@@ -4125,10 +4119,10 @@ export function RuleGroupSection({
   // expression editor does not read them.
   defaultAvwapAnchor?: number;
   baseResolution?: string;
-  clipboard?: Rule | null;
-  onCopy?: (rule: Rule) => void;
-  groupClipboard?: Rule[] | null;
-  onCopyAll?: (rules: Rule[]) => void;
+  // The rule clipboard (useRuleClipboard): one copy handler for a single rule
+  // ([r]) and a whole group alike, one paste resolver for what to append.
+  onCopy?: (rules: Rule[]) => void;
+  onPaste?: () => Promise<Rule[] | null>;
   // "Pick from chart" for THIS group: armedRow is the row armed
   // in this group (or null), arm/disarm toggle it. Absent with no chart.
   pickIndicator?: {
@@ -4162,7 +4156,12 @@ export function RuleGroupSection({
   // Emit the group back to the parent. The stored config still types groups as
   // `RuleGroup`; the cast bridges the coexistence window (Stage C rewrites the
   // config's rule model to the expression shape, dropping the cast).
-  const emit = (rules: ExprRow[]) => onChange({ ...group, rules } as RuleGroup);
+  // Emitting off a ref rather than the render's `group` matters for the async
+  // paste: the clipboard read can sit behind a permission prompt while the user
+  // edits the group, and a pre-await snapshot would overwrite those edits.
+  const groupRef = useRef(group);
+  groupRef.current = group;
+  const emit = (rules: ExprRow[]) => onChange({ ...groupRef.current, rules } as RuleGroup);
 
   // Wipe every rule in this group, gated behind a confirm (unlike the per-row
   // delete, which is cheap to undo by re-adding one rule).
@@ -4174,15 +4173,28 @@ export function RuleGroupSection({
       onConfirm: () => emit([]),
     });
   }
-  // Copy the whole group's rules, and paste a copied set (appending independent
-  // clones so they can land in another side/leg without sharing references).
+  // Copy the whole group's rules. The copy lands on the clipboard, so the click
+  // has no visible effect of its own — flash the button into a ✓ so it doesn't
+  // read as a dead control.
+  const [copiedAll, setCopiedAll] = useState(false);
+  const copiedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
   function copyAll() {
-    onCopyAll?.(group.rules as Rule[]);
+    onCopy?.(group.rules as Rule[]);
+    setCopiedAll(true);
+    window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopiedAll(false), 1200);
   }
-  function pasteAll() {
-    if (groupClipboard?.length) {
-      emit([...group.rules, ...groupClipboard.map(cloneRule)]);
+  // Paste appends whatever the clipboard resolves to — one rule or a whole
+  // group, copied in this window or another app instance (the resolver also
+  // recreates any chart panes the pasted expressions reference).
+  async function paste() {
+    const rules = (await onPaste?.()) ?? null;
+    if (!rules?.length) {
+      toast("Nothing to paste — copy a rule first");
+      return;
     }
+    emit([...groupRef.current.rules, ...rules.map(cloneRule)]);
   }
   // Write one field of a single row back, cloning the row so unrelated rows keep
   // their identity. Expr rows are flat, so a spread is a full copy.
@@ -4208,11 +4220,6 @@ export function RuleGroupSection({
     const rules = group.rules.slice();
     rules.splice(i + 1, 0, { ...rules[i] });
     emit(rules);
-  }
-  // Paste appends — the clipboard rule may come from another group entirely, so
-  // there's no "source row" here to sit beneath.
-  function pasteRule() {
-    if (clipboard) emit([...group.rules, cloneRule(clipboard)]);
   }
   // Palette insert (Stage A): append the picked token to the row's expression.
   // A cursor-aware insert is a later refinement; append keeps the wiring simple.
@@ -4257,13 +4264,13 @@ export function RuleGroupSection({
                 ))}
               </div>
             )}
-            <Tooltip content="Copy all rules in this group">
+            <Tooltip content={copiedAll ? "Copied" : "Copy all rules in this group"}>
               <button
-                className="bt-rule-toggle bt-copyall"
+                className={"bt-rule-toggle bt-copyall" + (copiedAll ? " bt-copied" : "")}
                 onClick={copyAll}
                 aria-label="Copy all rules"
               >
-                <CopyAllIcon />
+                {copiedAll ? <CheckSmallIcon /> : <CopyAllIcon />}
               </button>
             </Tooltip>
             <Tooltip content="Delete all rules in this group">
@@ -4352,7 +4359,7 @@ export function RuleGroupSection({
               <RuleMenu
                 enabled={!off}
                 onDuplicate={() => duplicateRule(i)}
-                onCopy={() => onCopy?.(r)}
+                onCopy={() => onCopy?.([r as Rule])}
                 onToggleEnabled={() => {
                   // Turning a row off closes anything it had open, so the frozen
                   // row can't be left with a live palette or an armed picker.
@@ -4413,23 +4420,18 @@ export function RuleGroupSection({
         <button className="ghost" onClick={addRule}>
           + Add rule
         </button>
-        {clipboard && (
-          <Tooltip content="Paste the copied rule here">
-            <button className="ghost" onClick={pasteRule}>
-              Paste rule
+        {onPaste && (
+          <Tooltip
+            content={[
+              "Paste the copied rule(s) into this group.",
+              "Works across windows and tabs — chart indicators the rules use come along with their settings.",
+            ]}
+          >
+            <button className="ghost bt-pasteall" onClick={() => void paste()}>
+              <CopyAllIcon /> Paste
             </button>
           </Tooltip>
         )}
-        {groupClipboard?.length ? (
-          <Tooltip content={`Paste all ${groupClipboard.length} copied rule${groupClipboard.length > 1 ? "s" : ""} here`}>
-            <button
-              className="ghost bt-pasteall"
-              onClick={pasteAll}
-            >
-              <CopyAllIcon /> Paste all
-            </button>
-          </Tooltip>
-        ) : null}
       </div>
       {/* One palette for the whole group — it portals to the body, so it doesn't
           belong to any row's markup; `paletteRow` is only the insert target.

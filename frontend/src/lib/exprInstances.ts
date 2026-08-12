@@ -54,6 +54,19 @@ export interface ExprInstancePayload {
 // stays out because the char before its dot is ")", which no group accepts.
 const REF = /\b([A-Za-z_][A-Za-z0-9_]*(?:#[A-Za-z0-9_]+)?)\.([A-Za-z0-9_]+)\b(?!\s*\()/g;
 
+/**
+ * Rewrite `<instance>.<output>` references per `idMap` (old id → new id),
+ * leaving everything else — calls, `candle.*`, unmapped ids — untouched. Used
+ * when pasting copied rules recreates their indicator panes under fresh ids
+ * (the copied id was taken by a differently-configured pane on this chart).
+ */
+export function rewriteInstanceRefs(expr: string, idMap: Readonly<Record<string, string>>): string {
+  return expr.replace(REF, (whole, id: string, output: string) => {
+    const next = id === "candle" ? undefined : idMap[id];
+    return next && next !== id ? `${next}.${output}` : whole;
+  });
+}
+
 export function referencedInstanceIds(rows: string[]): Set<string> {
   const out = new Set<string>();
   for (const row of rows) {

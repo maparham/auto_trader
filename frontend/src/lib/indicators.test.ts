@@ -21,6 +21,7 @@ const {
   isInternalIndicator,
   accelCompanionId,
   addIndicatorInstance,
+  importExprInstances,
   liveExprInstances,
   exprInstancesFromChart,
   mintInstanceId,
@@ -460,5 +461,124 @@ describe("liveExprInstances / exprInstancesFromChart (editor + request instance 
     expect(exprInstancesFromChart(chart)).toEqual([
       { id: "SLOPE", outputs: ["9", "21", "accel9", "accel21"], timeframe: null, detail: "EMA · % / hour" },
     ]);
+  });
+});
+
+describe("importExprInstances (rule-clipboard paste: recreate referenced panes)", () => {
+  // A stateful chart fake: createIndicator records the instance so later
+  // getIndicators / liveExprInstances / mintInstanceId calls see it — enough to
+  // exercise the reuse / recreate / mint-on-conflict branches for real.
+  function statefulChart(
+    initial: Array<{ name: string; type: string; calcParams?: number[]; extendData?: Record<string, unknown> }>,
+  ) {
+    let seq = 0;
+    type FakeInd = {
+      paneId: string;
+      name: string;
+      calcParams?: number[];
+      extendData?: Record<string, unknown>;
+      visible?: boolean;
+    };
+    const inds: FakeInd[] = initial.map((i) => ({
+      paneId: `pane_${++seq}`,
+      name: i.name,
+      calcParams: i.calcParams,
+      extendData: { ...i.extendData, indType: i.type },
+    }));
+    const chart = {
+      getIndicators: (q?: { paneId?: string; name?: string }) =>
+        inds.filter(
+          (i) => (!q?.paneId || i.paneId === q.paneId) && (!q?.name || i.name === q.name),
+        ),
+      createIndicator: (value: FakeInd & { paneId?: string }) => {
+        const paneId = value.paneId ?? `pane_${++seq}`;
+        inds.push({
+          paneId,
+          name: value.name,
+          calcParams: value.calcParams,
+          extendData: value.extendData,
+          visible: value.visible,
+        });
+        return paneId;
+      },
+      overrideIndicator: () => {},
+      setPaneOptions: () => {},
+      overrideYAxis: () => {},
+    } as unknown as Chart;
+    return { chart, inds };
+  }
+
+  it("reuses an identically-configured pane instead of duplicating it", () => {
+    localStorage.clear();
+    const { chart, inds } = statefulChart([
+      { name: "SLOPE", type: "SLOPE", calcParams: [30], extendData: { units: "deg" } },
+    ]);
+    const { idMap, added } = importExprInstances(chart, "tab.i", "US100", {
+      SLOPE: { type: "SLOPE", calcParams: [30], extendData: { units: "deg" } },
+    });
+    expect(idMap).toEqual({ SLOPE: "SLOPE" });
+    expect(added).toEqual([]);
+    expect(inds).toHaveLength(1);
+  });
+
+  it("recreates a missing pane under the copied id and persists its config", () => {
+    localStorage.clear();
+    const { chart, inds } = statefulChart([]);
+    const { idMap, added } = importExprInstances(chart, "tab.i", "US100", {
+      SLOPE2: { type: "SLOPE", calcParams: [30], extendData: { units: "deg" }, visible: false },
+    });
+    expect(idMap).toEqual({ SLOPE2: "SLOPE2" });
+    expect(added).toEqual([{ id: "SLOPE2", type: "SLOPE" }]);
+    const created = inds.find((i) => i.name === "SLOPE2")!;
+    expect(created.calcParams).toEqual([30]);
+    expect(created.visible).toBe(false); // shipped appearance applied
+    // Persisted under the copied id so the pane survives teardown/reload.
+    expect(persist.loadIndicatorConfigs("tab.i").SLOPE2).toMatchObject({
+      calcParams: [30],
+      visible: false,
+    });
+  });
+
+  it("mints a fresh id on conflict, and a repeat paste reuses it (idempotent)", () => {
+    localStorage.clear();
+    const { chart, inds } = statefulChart([
+      { name: "SLOPE", type: "SLOPE", calcParams: [9], extendData: { units: "pctBar" } },
+    ]);
+    const payload = {
+      SLOPE: { type: "SLOPE", calcParams: [30], extendData: { units: "deg" } },
+    };
+    const first = importExprInstances(chart, "tab.i", "US100", payload);
+    expect(first.idMap.SLOPE).toBe("SLOPE2"); // minted — "SLOPE" is a different pane
+    expect(first.added).toHaveLength(1);
+    expect(inds).toHaveLength(2);
+
+    // Pasting the same clipboard again must not pile up SLOPE3, SLOPE4, …
+    const second = importExprInstances(chart, "tab.i", "US100", payload);
+    expect(second.idMap.SLOPE).toBe("SLOPE2");
+    expect(second.added).toEqual([]);
+    expect(inds).toHaveLength(2);
+  });
+
+  it("matching ignores runtime/display state (barHours, MTF stash, visibility)", () => {
+    localStorage.clear();
+    const { chart, inds } = statefulChart([
+      {
+        name: "SLOPE",
+        type: "SLOPE",
+        calcParams: [9],
+        extendData: {
+          units: "deg",
+          barHours: 4,
+          userVisible: false,
+          mtf: { timeframe: "HOUR", htfStarts: [1, 2], htfSeriesByLine: [[1]] },
+        },
+      },
+    ]);
+    const { idMap, added } = importExprInstances(chart, "tab.i", "US100", {
+      SLOPE: { type: "SLOPE", calcParams: [9], extendData: { units: "deg", mtf: { timeframe: "HOUR" } } },
+    });
+    expect(idMap).toEqual({ SLOPE: "SLOPE" });
+    expect(added).toEqual([]);
+    expect(inds).toHaveLength(1);
   });
 });

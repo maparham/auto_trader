@@ -4,6 +4,7 @@ import {
   exprInstancesFor,
   exprWarmupByRef,
   referencedInstanceIds,
+  rewriteInstanceRefs,
 } from "./exprInstances";
 
 const LIVE = [
@@ -118,5 +119,20 @@ describe("ATR instances", () => {
     expect(warm("ATR#b2", "21")).toBe(21);
     expect(warm("ATR", "9")).toBe(0);
     expect(warm("GONE", "14")).toBe(0);
+  });
+});
+
+describe("rewriteInstanceRefs", () => {
+  it("rewrites mapped instance refs, leaving output and the rest of the expression intact", () => {
+    expect(rewriteInstanceRefs("SLOPE.9 > 0 and SLOPE.accel9 < 1", { SLOPE: "SLOPE2" }))
+      .toBe("SLOPE2.9 > 0 and SLOPE2.accel9 < 1");
+    expect(rewriteInstanceRefs("ATR1.to14 > 0.5", { ATR1: "ATR3" })).toBe("ATR3.to14 > 0.5");
+  });
+  it("leaves unmapped ids, candle fields, calls and decimals untouched", () => {
+    const expr = "candle.close > EMA(9) + 0.5 and SLOPE#a1b.50 > 0";
+    expect(rewriteInstanceRefs(expr, { OTHER: "X", candle: "nope" })).toBe(expr);
+  });
+  it("identity mappings are a no-op", () => {
+    expect(rewriteInstanceRefs("SLOPE.9 > 0", { SLOPE: "SLOPE" })).toBe("SLOPE.9 > 0");
   });
 });

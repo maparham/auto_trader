@@ -327,26 +327,59 @@ describe("BacktestSettingsModal rule duplicate/copy/paste", () => {
     expect(ruleRows(entry)).toHaveLength(2);
   });
 
-  it("copy then paste appends the rule to a group on the other side", () => {
+  it("copy then paste appends the rule to a group on the other side", async () => {
     renderModal();
     openStrategy();
-    // Copy the long-entry rule via its row menu.
+    // Copy the long-entry rule via its row menu (no navigator.clipboard in
+    // jsdom, so this exercises the local-fallback path).
     ruleAction(groupSection("Buy to open"), "Copy");
 
     // Switch to the short side and paste into its entry group.
     fireEvent.click(screen.getByRole("button", { name: /Short/ }));
     const shortEntry = groupSection("Sell to open");
     expect(ruleRows(shortEntry)).toHaveLength(1);
-    fireEvent.click(within(shortEntry).getByRole("button", { name: "Paste rule" }));
-    expect(ruleRows(shortEntry)).toHaveLength(2);
+    fireEvent.click(within(shortEntry).getByRole("button", { name: "Paste" }));
+    await waitFor(() => expect(ruleRows(shortEntry)).toHaveLength(2));
   });
 
-  it("hides Paste until a rule has been copied", () => {
+  it("paste with nothing copied leaves the group unchanged", async () => {
     renderModal();
     openStrategy();
-    expect(screen.queryByRole("button", { name: "Paste rule" })).toBeNull();
-    ruleAction(groupSection("Buy to open"), "Copy");
-    expect(screen.getAllByRole("button", { name: "Paste rule" }).length).toBeGreaterThan(0);
+    const entry = groupSection("Buy to open");
+    // Paste is always offered (the system clipboard can hold rules copied by
+    // another app instance, which nothing local can know about)…
+    fireEvent.click(within(entry).getByRole("button", { name: "Paste" }));
+    // …but with nothing copied anywhere it appends nothing.
+    await waitFor(() => expect(ruleRows(entry)).toHaveLength(1));
+  });
+
+  it("round-trips through the system clipboard across app instances", async () => {
+    // A fresh render is a separate app instance: no shared React state, only
+    // the (mocked) OS clipboard in between.
+    let clipText = "";
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: {
+        writeText: (t: string) => ((clipText = t), Promise.resolve()),
+        readText: () => Promise.resolve(clipText),
+      },
+    });
+    try {
+      renderModal();
+      openStrategy();
+      ruleAction(groupSection("Buy to open"), "Copy");
+      await waitFor(() => expect(clipText).toContain("__autoTraderRules"));
+      cleanup();
+
+      renderModal();
+      openStrategy();
+      const entry = groupSection("Buy to open");
+      expect(ruleRows(entry)).toHaveLength(1);
+      fireEvent.click(within(entry).getByRole("button", { name: "Paste" }));
+      await waitFor(() => expect(ruleRows(entry)).toHaveLength(2));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("disabling a rule keeps it but marks the row disabled", () => {

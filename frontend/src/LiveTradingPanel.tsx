@@ -4,7 +4,8 @@ import { RuleGroupSection, RiskSection, EMPTY_RISK } from "./BacktestSettingsMod
 import { liveStateSignal, initLive, setDraft, setAccount, setQuantity, arm, disarm, resume } from "./lib/liveController";
 import { goLiveRequest } from "./lib/signals";
 import { journalSignal, journalMetrics, clearJournal, type JournalTrade } from "./lib/liveJournal";
-import { cloneRule, type BacktestConfig, type RuleGroup, type Rule } from "./lib/backtestConfig";
+import { type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
+import { useRuleClipboard } from "./lib/useRuleClipboard";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
 import type { BrokerAccount } from "./lib/trading";
 import type { LiveInstance } from "./lib/exprInstances";
@@ -73,8 +74,10 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
   );
 
   const [side, setSide] = useState<Side>("long");
-  const [clipboard, setClipboard] = useState<Rule | null>(null);
-  const [groupClipboard, setGroupClipboard] = useState<Rule[] | null>(null);
+  // The portable rule clipboard (system clipboard + local fallback) — shared
+  // format with the backtest modal, so rules copy between the two panels and
+  // across app instances, bringing referenced chart panes along.
+  const { copyRules, pasteRules } = useRuleClipboard({ controller, epic, resolution, brokerId });
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -249,10 +252,8 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
                         emptyHint={`No ${s}-exit rules — an open ${s} holds until the trading window ends.`}
                         defaultAvwapAnchor={Date.now()}
                         baseResolution={resolution}
-                        clipboard={clipboard}
-                        onCopy={(r) => setClipboard(cloneRule(r))}
-                        groupClipboard={groupClipboard}
-                        onCopyAll={(rs) => setGroupClipboard(rs.map(cloneRule))}
+                        onCopy={copyRules}
+                        onPaste={pasteRules}
                         isExit
                       />
                       <RiskSection
@@ -288,10 +289,8 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
               emptyHint={`No ${side}-entry rules — this strategy won't open any ${side} positions.`}
               defaultAvwapAnchor={Date.now()}
               baseResolution={resolution}
-              clipboard={clipboard}
-              onCopy={(r) => setClipboard(cloneRule(r))}
-              groupClipboard={groupClipboard}
-              onCopyAll={(rs) => setGroupClipboard(rs.map(cloneRule))}
+              onCopy={copyRules}
+              onPaste={pasteRules}
             />
             <RuleGroupSection
               title={isLong ? "Sell to close" : "Buy to close"}
@@ -301,10 +300,8 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
               emptyHint={`No ${side}-exit rules — an open ${side} holds until the stop/target hits.`}
               defaultAvwapAnchor={Date.now()}
               baseResolution={resolution}
-              clipboard={clipboard}
-              onCopy={(r) => setClipboard(cloneRule(r))}
-              groupClipboard={groupClipboard}
-              onCopyAll={(rs) => setGroupClipboard(rs.map(cloneRule))}
+              onCopy={copyRules}
+              onPaste={pasteRules}
             />
             <RiskSection
               risk={risk}
