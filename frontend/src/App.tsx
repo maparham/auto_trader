@@ -133,6 +133,7 @@ import {
   canMergeTabs,
   unmergeScopes,
   loadSnapshotMeta,
+  pushRecentSymbol,
   type ChartTab,
   type LayoutKind,
   type Workspace,
@@ -1353,6 +1354,16 @@ export default function App() {
     requestSymbolSearch();
   };
 
+  // Tab-bar search catalogue fallback picked a symbol no open tab holds: open
+  // it directly in a new tab (no symbol-search modal detour) on the default
+  // interval, and record it as recently opened like any other pick.
+  const openSymbolTab = (s: Instrument) => {
+    pushRecentSymbol(s.epic);
+    const t = makeTab(s, DEFAULT_PERIOD);
+    setTabs((ts) => [...ts, t]);
+    setActiveId(t.id);
+  };
+
   // Detach a cell into its own NEW one-cell tab: same symbol/interval, and a full
   // copy of the cell's scope content (drawings/indicators/config) into the new
   // tab's primary scope. Alerts are global per instrument — nothing to copy.
@@ -1811,6 +1822,8 @@ export default function App() {
         onDragActive={setDragTabId}
         searchQuery={tabSearchQuery}
         onSearchQuery={setTabSearchQuery}
+        brokerId={brokerId}
+        onOpenSymbol={openSymbolTab}
         trailing={
           <>
             <LayoutManager

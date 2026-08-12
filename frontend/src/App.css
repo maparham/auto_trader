@@ -353,6 +353,38 @@
 .tab-bar-search {
   display: flex; align-items: center; flex: none;
   min-height: 34px; padding-left: 6px;
+  position: relative; /* anchors the catalogue-fallback dropdown */
+}
+/* Catalogue-fallback dropdown under the search input: the query matched no open
+   tab, so it lists full-catalogue symbols to open as a new tab. Same surface
+   grammar as .ctxmenu; right-anchored so it can't run off the window edge from
+   its end-of-strip slot. */
+.tab-search-dropdown {
+  position: absolute; top: 100%; right: 0; z-index: 1000;
+  width: max-content; min-width: 220px; max-width: 320px; padding: 6px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 28px var(--shadow); font-size: 12px;
+}
+.tab-search-dropdown-head {
+  padding: 4px 8px 6px; color: var(--text-dim);
+}
+.tab-search-dropdown-label {
+  padding: 2px 8px 4px; color: var(--text-faint);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  border-top: 1px solid var(--border);
+}
+.tab-search-dropdown-empty {
+  padding: 4px 8px 6px; color: var(--text-faint);
+}
+.tab-search-dropdown-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 5px 8px; border: 0; border-radius: 6px; cursor: pointer;
+  background: none; color: var(--text); font-size: 12px; text-align: left;
+}
+.tab-search-dropdown-row.on { background: var(--hover); }
+.tab-search-dropdown-epic { font-weight: 600; white-space: nowrap; }
+.tab-search-dropdown-name {
+  color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Pill/card tabs: each tab is a self-contained rounded chip with its own
    surface + border, separated by the .tab-bar-tabs gap, so adjacent tabs read

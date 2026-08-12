@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChartTab } from "./persist";
-import { matchingCellIds, matchingTabIds } from "./tabSearch";
+import type { Instrument } from "./feed";
+import { catalogueMatches, matchingCellIds, matchingTabIds } from "./tabSearch";
 
 function cell(id: string, epic: string, name: string) {
   return {
@@ -55,5 +56,47 @@ describe("matchingTabIds", () => {
 
   it("empty query matches no tabs", () => {
     expect(matchingTabIds(tabs, "")).toEqual(new Set());
+  });
+});
+
+describe("catalogueMatches", () => {
+  const inst = (epic: string, name: string): Instrument => ({
+    epic,
+    name,
+    status: "TRADEABLE",
+  });
+  const all: Instrument[] = [
+    inst("BTCUSD", "Bitcoin"),
+    inst("BTCEUR", "Bitcoin / EUR"),
+    inst("ETHBTC", "Ether / Bitcoin"),
+    inst("GOLD", "Gold Spot"),
+  ];
+
+  it("matches epic and name substrings case-insensitively", () => {
+    expect(catalogueMatches(all, "btc").map((m) => m.epic)).toEqual([
+      "BTCUSD",
+      "BTCEUR",
+      "ETHBTC",
+    ]);
+    expect(catalogueMatches(all, "bitcoin").map((m) => m.epic)).toEqual([
+      "BTCUSD",
+      "BTCEUR",
+      "ETHBTC",
+    ]);
+  });
+
+  it("empty and whitespace queries match nothing", () => {
+    expect(catalogueMatches(all, "")).toEqual([]);
+    expect(catalogueMatches(all, "  ")).toEqual([]);
+  });
+
+  it("caps results at the limit (default 8)", () => {
+    const many = Array.from({ length: 20 }, (_, i) => inst(`SYM${i}`, `Thing ${i}`));
+    expect(catalogueMatches(many, "sym")).toHaveLength(8);
+    expect(catalogueMatches(many, "sym", 3)).toHaveLength(3);
+  });
+
+  it("no match returns empty", () => {
+    expect(catalogueMatches(all, "oil")).toEqual([]);
   });
 });

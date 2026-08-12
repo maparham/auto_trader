@@ -12,7 +12,8 @@ import Tooltip from "./components/Tooltip";
 import ContextMenu from "./ContextMenu";
 import MergeTabsMenu from "./MergeTabsMenu";
 import { isSynthetic } from "./lib/syntheticRegistry";
-import { matchingTabIds } from "./lib/tabSearch";
+import { catalogueMatches, matchingTabIds } from "./lib/tabSearch";
+import { fetchAllMarkets, type Instrument } from "./lib/feed";
 
 // Must match .tab-bar-tabs { gap } in App.css — the flow simulation that
 // slides chips apart uses it to predict where each chip lands.
@@ -128,6 +129,11 @@ interface Props {
   // open/collapsed state of the input is local to this component.
   searchQuery: string;
   onSearchQuery: (q: string) => void;
+  // Full-catalogue fallback (spec 2026-08-12-tab-search-catalogue-fallback):
+  // when the query matches no OPEN tab, a dropdown offers catalogue symbols;
+  // picking one opens it as a new tab. The catalogue is broker-specific.
+  brokerId: string;
+  onOpenSymbol: (s: Instrument) => void;
 }
 
 export default function TabBar({
@@ -145,6 +151,8 @@ export default function TabBar({
   trailing,
   searchQuery,
   onSearchQuery,
+  brokerId,
+  onOpenSymbol,
 }: Props) {
   const searchHits = matchingTabIds(tabs, searchQuery);
   // Drag-to-reorder state. The dragged tab is tracked by ID, not index (see
@@ -250,6 +258,42 @@ export default function TabBar({
     setSearchOpen(false);
     onSearchQuery("");
   }, [onSearchQuery]);
+
+  // Broker catalogue for the no-open-tab-matches fallback. Loaded when the
+  // search opens (fetchAllMarkets is session-cached per broker, so repeat opens
+  // are free); reloaded if the broker changes while the search is open.
+  const [catalogue, setCatalogue] = useState<Instrument[]>([]);
+  const [catalogueLoading, setCatalogueLoading] = useState(false);
+  useEffect(() => {
+    if (!searchOpen) return;
+    let alive = true;
+    setCatalogueLoading(true);
+    void fetchAllMarkets(brokerId).then((all) => {
+      if (!alive) return;
+      setCatalogue(all);
+      setCatalogueLoading(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [searchOpen, brokerId]);
+
+  // The fallback dropdown shows only when the query matches NO open tab.
+  const fallbackOpen =
+    searchOpen && searchQuery.trim() !== "" && searchHits.size === 0;
+  const fallbackHits = fallbackOpen ? catalogueMatches(catalogue, searchQuery) : [];
+  // Keyboard highlight in the dropdown; re-anchored to the top on every query
+  // change (the list under the cursor is new).
+  const [fallbackIdx, setFallbackIdx] = useState(0);
+  useEffect(() => setFallbackIdx(0), [searchQuery]);
+
+  const pickFallback = useCallback(
+    (s: Instrument) => {
+      onOpenSymbol(s);
+      closeSearch();
+    },
+    [onOpenSymbol, closeSearch],
+  );
 
   // Outside-click closes the search — but a click anywhere INSIDE the tab bar
   // (a tab chip, the input itself) keeps it open, so the user can hop between
@@ -551,6 +595,18 @@ export default function TabBar({
             onChange={(e) => onSearchQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") closeSearch();
+              if (!fallbackOpen || fallbackHits.length === 0) return;
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setFallbackIdx((i) => Math.min(i + 1, fallbackHits.length - 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setFallbackIdx((i) => Math.max(i - 1, 0));
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                const hit = fallbackHits[fallbackIdx] ?? fallbackHits[0];
+                if (hit != null) pickFallback(hit);
+              }
             }}
             autoFocus
           />
@@ -568,6 +624,42 @@ export default function TabBar({
               </svg>
             </button>
           </Tooltip>
+        )}
+        {/* Catalogue fallback: no open tab matched, so offer the full symbol
+            list. Inside .tab-bar-search (and so .tab-bar) on purpose: the
+            outside-click closer above treats clicks here as in-search. */}
+        {fallbackOpen && (
+          <div className="tab-search-dropdown" role="listbox" aria-label="All symbols">
+            <div className="tab-search-dropdown-head">No open tab matches</div>
+            {catalogueLoading && catalogue.length === 0 ? (
+              <div className="tab-search-dropdown-empty">Loading…</div>
+            ) : fallbackHits.length === 0 ? (
+              <div className="tab-search-dropdown-empty">
+                No symbols match “{searchQuery.trim()}”.
+              </div>
+            ) : (
+              <>
+                <div className="tab-search-dropdown-label">All symbols</div>
+                {fallbackHits.map((m, i) => (
+                  <button
+                    key={m.epic}
+                    type="button"
+                    role="option"
+                    aria-selected={i === fallbackIdx}
+                    className={
+                      "tab-search-dropdown-row" + (i === fallbackIdx ? " on" : "")
+                    }
+                    onMouseEnter={() => setFallbackIdx(i)}
+                    onClick={() => pickFallback(m)}
+                  >
+                    <SymbolIcon epic={m.epic} type={m.type} className="ss-icon" />
+                    <span className="tab-search-dropdown-epic">{m.epic}</span>
+                    <span className="tab-search-dropdown-name">{m.name}</span>
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
         )}
       </div>
       {trailing && <div className="tab-bar-actions">{trailing}</div>}
