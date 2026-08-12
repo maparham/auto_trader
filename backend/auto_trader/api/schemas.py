@@ -39,6 +39,17 @@ class CandleCacheStatsDTO(BaseModel):
     last_fetch_ts: float | None
 
 
+class BackfillProgressDTO(BaseModel):
+    """One in-flight candle-cache backfill, for the backtest progress UI."""
+    label: str
+    doneChunks: int
+    totalChunks: int
+    bars: int
+    elapsedS: float
+    etaS: float | None
+    at: str
+
+
 class CandleCacheGlobalStatsDTO(BaseModel):
     total_hits: int
     total_misses: int
@@ -329,6 +340,9 @@ class BacktestRequest(BaseModel):
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
+    # Optional client-generated id for GET /api/backtest/progress/{id} polling.
+    # Cosmetic: absent means no progress reporting for this run.
+    progressId: str | None = None
 
 
 class SweepDTO(BaseModel):
@@ -733,6 +747,9 @@ class ExprBacktestRequest(BaseModel):
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
+    # Optional client-generated id for GET /api/backtest/progress/{id} polling.
+    # Cosmetic: absent means no progress reporting for this run.
+    progressId: str | None = None
 
 
 class ExprSeriesRequest(BaseModel):

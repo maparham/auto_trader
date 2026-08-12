@@ -18,6 +18,7 @@ import {
   backtestMarkersShownSignal,
   backtestEquityShownSignal,
   backtestRunningSignal,
+  backtestProgressSignal,
   requestBacktestClear,
 } from "./lib/signals";
 import { saveBacktestPeriodsShown, saveBacktestMarkersShown, saveBacktestEquityShown } from "./lib/persist";
@@ -51,6 +52,12 @@ const defaultDir = (key: keyof TradeRow): SortDir => (TEXT_KEYS.includes(key) ? 
 const fmtPrice = (n: number): string => n.toFixed(2);
 const fmtPnl = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
 const fmtPct = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}%`;
+// Progress ETA — sub-90s reads in seconds (a "~1m left" that sits there for 80s
+// looks stuck), longer spans round to whole minutes.
+const fmtEta = (s: number): string => {
+  const m = Math.round(s / 60);
+  return s < 90 ? `~${Math.max(1, Math.round(s))}s left` : `~${m}m left`;
+};
 const toneOf = (n: number): string => (n > 0 ? "pos" : n < 0 ? "neg" : "");
 
 export default function BacktestPanel() {
@@ -60,6 +67,10 @@ export default function BacktestPanel() {
   const messages = useSyncExternalStore(subscribeMessages, () => backtestMessagesSignal.value);
   const selectNotice = useSyncExternalStore(subscribeSelectNotice, () => backtestSelectNoticeSignal.value);
   const running = useSyncExternalStore(subscribeRunning, () => backtestRunningSignal.value);
+  const progress = useSyncExternalStore(
+    (cb) => backtestProgressSignal.subscribe(cb),
+    () => backtestProgressSignal.value,
+  );
   const periodsShown = useSyncExternalStore(
     (cb) => backtestPeriodsShownSignal.subscribe(cb),
     () => backtestPeriodsShownSignal.value,
@@ -133,7 +144,24 @@ export default function BacktestPanel() {
       <div className="bt-results">
         {msgRow}
         <div className="bt-results-empty">
-          {running ? "Backtest running…" : "Run a backtest to see results here."}
+          {running && progress ? (
+            <span className="bt-progress">
+              <span>
+                {progress.phase === "download"
+                  ? `Downloading ${progress.label} (${progress.pct != null ? `${progress.pct}%` : "…"}${progress.etaS != null ? `, ${fmtEta(progress.etaS)}` : ""})`
+                  : `Simulating (${progress.pct ?? 0}%${progress.etaS != null ? `, ${fmtEta(progress.etaS)}` : ""})`}
+              </span>
+              {progress.pct != null && (
+                <span className="bt-progress-track">
+                  <span className="bt-progress-fill" style={{ width: `${progress.pct}%` }} />
+                </span>
+              )}
+            </span>
+          ) : running ? (
+            "Backtest running…"
+          ) : (
+            "Run a backtest to see results here."
+          )}
         </div>
       </div>
     );

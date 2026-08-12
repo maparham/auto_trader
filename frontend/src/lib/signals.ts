@@ -417,6 +417,18 @@ export function requestBacktestRun(): void {
 // button LOOK unavailable too.
 export const backtestRunningSignal = new Signal<boolean>(false);
 
+// Live progress for the in-flight run: the download phase mirrors the server's
+// candle-cache backfill walk, the simulate phase the engine's bar loop. Owned
+// by lib/backtestProgress.ts's poller; BacktestPanel renders it. Null when no
+// run is in flight or no progress info is available (progress is cosmetic).
+export type BacktestProgress = {
+  phase: "download" | "simulate";
+  label: string;
+  pct: number | null;
+  etaS: number | null;
+};
+export const backtestProgressSignal = new Signal<BacktestProgress | null>(null);
+
 // True while the (unpinned) backtest overlay is slid off-screen. Lives here —
 // not in panel state — so the toolbar/App can reveal a hidden panel instead of
 // closing/reopening it. Reset by the panel on unmount.

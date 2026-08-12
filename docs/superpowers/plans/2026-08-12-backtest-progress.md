@@ -16,7 +16,9 @@
 - Frontend tests: run from `frontend/` with `npx vitest run src/<file>`. The frontend baseline has 5–7 known failures on main — only gate on the files you touch.
 - Progress is cosmetic: every failure path must degrade to "no progress shown", never to a failed run. Registries are cleaned in `finally`; readers GC entries older than 60 s.
 - No `Date.now()`-dependent flakiness in tests: pass/patch clocks where the code allows.
-- Do not touch the 5 pre-existing modified files (`frontend/src/BacktestSettingsModal.tsx`, `sweepLiterals.*`, `sweepLabels.*`) — another session owns them. Commit only files this plan creates/modifies. `git add` specific paths, never `-A`.
+- Do not touch the 5 files another session owns (`frontend/src/BacktestSettingsModal.tsx`, `sweepLiterals.*`, `sweepLabels.*`). Commit only files this plan creates/modifies. `git add` specific paths, never `-A`.
+- No em dashes ("—") in end-user copy (established project copy rule; code/comments/commits are fine).
+- Related existing feature (do not duplicate or remove): `progressStageSignal` + `lib/progressLabels.ts` show a coarse stall-window label ("Downloading candles" / "Running backtest") in the settings modal. The new percent/ETA line in `BacktestPanel` is additive and independent of it.
 
 ---
 
@@ -958,15 +960,14 @@ describe("BacktestPanel progress line", () => {
       phase: "download", label: "dukascopy/US100/MINUTE_5/bid", pct: 21, etaS: 186,
     });
     render(<BacktestPanel />);
-    expect(screen.getByText(/Downloading dukascopy\/US100\/MINUTE_5\/bid — 21%/)).toBeTruthy();
-    expect(screen.getByText(/~3m left/)).toBeTruthy();
+    expect(screen.getByText(/Downloading dukascopy\/US100\/MINUTE_5\/bid \(21%, ~3m left\)/)).toBeTruthy();
   });
 
   it("shows simulate progress", () => {
     backtestRunningSignal.set(true);
     backtestProgressSignal.set({ phase: "simulate", label: "simulate", pct: 64, etaS: null });
     render(<BacktestPanel />);
-    expect(screen.getByText(/Simulating — 64%/)).toBeTruthy();
+    expect(screen.getByText(/Simulating \(64%\)/)).toBeTruthy();
   });
 
   it("falls back to the static line without progress info", () => {
@@ -1010,9 +1011,8 @@ Replace the running branch of the empty state (line ~136):
             <span className="bt-progress">
               <span>
                 {progress.phase === "download"
-                  ? `Downloading ${progress.label}${progress.pct != null ? ` — ${progress.pct}%` : ""}`
-                  : `Simulating — ${progress.pct ?? 0}%`}
-                {progress.etaS != null && `, ${fmtEta(progress.etaS)}`}
+                  ? `Downloading ${progress.label} (${progress.pct != null ? `${progress.pct}%` : "…"}${progress.etaS != null ? `, ${fmtEta(progress.etaS)}` : ""})`
+                  : `Simulating (${progress.pct ?? 0}%${progress.etaS != null ? `, ${fmtEta(progress.etaS)}` : ""})`}
               </span>
               {progress.pct != null && (
                 <span className="bt-progress-track">
@@ -1028,7 +1028,7 @@ Replace the running branch of the empty state (line ~136):
         </div>
 ```
 
-Note the ETA test expects `~3m left` for 186 s — `Math.round(186/60) = 3`. ✓
+Note the ETA test expects `~3m left` for 186 s — `Math.round(186/60) = 3`. ✓ End-user copy must contain no em dashes ("—"): the parenthesized forms above are the required format.
 
 `App.css`, after `.bt-results-empty` (line ~4638):
 

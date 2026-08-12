@@ -46,6 +46,26 @@ def _stamp(ts: int) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
 
 
+# Active multi-chunk backfills, keyed by CandleKey — the UI's "downloading data"
+# progress source, the in-flight counterpart to the backfill log lines below.
+# Written only inside _window()'s walk (same gating as those logs: multi-chunk
+# walks only) and always removed in the finally, so a crashed walk can't strand
+# an entry past the reader's 60s staleness cut. The finally (not a plain pop
+# after the loop) is what covers CancelledError — a client disconnecting mid-
+# backfill unwinds straight through `await fetch_range(...)`, and the walk's
+# `except Exception` does not catch it.
+_ACTIVE_BACKFILLS: dict[CandleKey, dict] = {}
+_BACKFILL_STALE_S = 60.0
+
+
+def active_backfills(now: float | None = None) -> list[dict]:
+    """Snapshot of in-flight multi-chunk backfills for the progress endpoint."""
+    cutoff = (now if now is not None else time.time()) - _BACKFILL_STALE_S
+    # Copy the values first: the reader runs on a different thread than the walk
+    # that pops entries, and iterating the live dict could hit a resize mid-loop.
+    return [dict(e) for e in list(_ACTIVE_BACKFILLS.values()) if e["updated_at"] >= cutoff]
+
+
 def _bucket_start(now_s: float, res_seconds: int) -> int:
     """Open time (unix s) of the bucket containing now_s — the forming bar's open.
     Bars with ts < this are closed; the bar at/after it is still forming."""
@@ -387,41 +407,60 @@ class CandleCache:
                 _key_label(key), _stamp(from_ts), _stamp(int(fetch_end.timestamp())),
                 total_chunks, chunk_bars,
             )
-        while start < cursor:
-            chunk_from_ts = max(from_ts, int(cursor.timestamp()) - chunk_secs)
-            chunk_from = datetime.fromtimestamp(chunk_from_ts, tz=timezone.utc)
-            try:
-                chunk = await fetch_range(chunk_from, cursor)
-            except Exception as e:  # noqa: BLE001 — a slow/failed broker call stops the walk
-                err = e
-                break
-            fetched_any = True
-            await asyncio.to_thread(self._store_closed, key, chunk, cutoff)
-            # Skip the write when there's no valid closed span (an entirely-future
-            # window), which would otherwise record an inverted oldest>newest row.
-            if hi >= chunk_from_ts:
-                await asyncio.to_thread(self._extend_coverage, key, chunk_from_ts, hi)
-            cursor = chunk_from
-            done_chunks += 1
-            bars_in += len(chunk)
-            if total_chunks > 1:
-                elapsed = time.monotonic() - started
-                # ETA from the mean chunk time so far: chunk cost is roughly flat
-                # (same bar count per broker call), so a mean is a fair estimate.
-                eta = elapsed / done_chunks * max(0, total_chunks - done_chunks)
+            # Same gating as the logs, and the same fields — this is the live view
+            # of them. `updated_at` is wall-clock time.time(), never the injected
+            # `now`: `now` is bar-time fiction (tests pass now=10_000) while this
+            # value is what the HTTP reader compares against for staleness.
+            _ACTIVE_BACKFILLS[key] = {
+                "label": _key_label(key), "done_chunks": 0,
+                "total_chunks": total_chunks, "bars": 0, "elapsed_s": 0.0,
+                "eta_s": None, "at": "", "updated_at": time.time(),
+            }
+        try:
+            while start < cursor:
+                chunk_from_ts = max(from_ts, int(cursor.timestamp()) - chunk_secs)
+                chunk_from = datetime.fromtimestamp(chunk_from_ts, tz=timezone.utc)
+                try:
+                    chunk = await fetch_range(chunk_from, cursor)
+                except Exception as e:  # noqa: BLE001 — a slow/failed broker call stops the walk
+                    err = e
+                    break
+                fetched_any = True
+                await asyncio.to_thread(self._store_closed, key, chunk, cutoff)
+                # Skip the write when there's no valid closed span (an entirely-future
+                # window), which would otherwise record an inverted oldest>newest row.
+                if hi >= chunk_from_ts:
+                    await asyncio.to_thread(self._extend_coverage, key, chunk_from_ts, hi)
+                cursor = chunk_from
+                done_chunks += 1
+                bars_in += len(chunk)
+                if total_chunks > 1:
+                    elapsed = time.monotonic() - started
+                    # ETA from the mean chunk time so far: chunk cost is roughly flat
+                    # (same bar count per broker call), so a mean is a fair estimate.
+                    eta = elapsed / done_chunks * max(0, total_chunks - done_chunks)
+                    log.info(
+                        "backfill %s %d/%d (%d%% done, %d%% left) at %s, %d bars, %.1fs elapsed, ~%.0fs left",
+                        _key_label(key), done_chunks, total_chunks,
+                        done_chunks * 100 // total_chunks,
+                        100 - done_chunks * 100 // total_chunks, _stamp(chunk_from_ts),
+                        bars_in, elapsed, eta,
+                    )
+                    entry = _ACTIVE_BACKFILLS.get(key)
+                    if entry is not None:
+                        entry.update(
+                            done_chunks=done_chunks, bars=bars_in,
+                            elapsed_s=elapsed, eta_s=eta,
+                            at=_stamp(chunk_from_ts), updated_at=time.time(),
+                        )
+            if total_chunks > 1 and fetched_any:
                 log.info(
-                    "backfill %s %d/%d (%d%% done, %d%% left) at %s, %d bars, %.1fs elapsed, ~%.0fs left",
-                    _key_label(key), done_chunks, total_chunks,
-                    done_chunks * 100 // total_chunks,
-                    100 - done_chunks * 100 // total_chunks, _stamp(chunk_from_ts),
-                    bars_in, elapsed, eta,
+                    "backfill %s %s after %d/%d chunks, %d bars, %.1fs",
+                    _key_label(key), "stopped (fetch failed)" if err is not None else "done",
+                    done_chunks, total_chunks, bars_in, time.monotonic() - started,
                 )
-        if total_chunks > 1 and fetched_any:
-            log.info(
-                "backfill %s %s after %d/%d chunks, %d bars, %.1fs",
-                _key_label(key), "stopped (fetch failed)" if err is not None else "done",
-                done_chunks, total_chunks, bars_in, time.monotonic() - started,
-            )
+        finally:
+            _ACTIVE_BACKFILLS.pop(key, None)
         if fetched_any:
             self._record_miss(key)
             self._record_last_fetch(key, now if now is not None else time.time())

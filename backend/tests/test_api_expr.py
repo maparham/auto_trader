@@ -4,14 +4,18 @@ The structured /api/backtest is untouched; this exercises the parallel expr
 surface end to end (parse/validate -> compile -> engine run -> shared serializer).
 """
 
+import asyncio
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from auto_trader.api import deps
 from auto_trader.api.app import app
-from auto_trader.api.schemas import CandleDTO
+from auto_trader.api.routers import expr
+from auto_trader.api.schemas import CandleDTO, ExprBacktestRequest
 from auto_trader.api.sweep_apply import candle_from_dto
+from auto_trader.core import progress as pr
 from auto_trader.core.models import Candle
 
 client = TestClient(app)
@@ -726,3 +730,41 @@ def test_expr_backtest_rejects_a_non_canonical_combine():
     # Literal type rejects it at the DTO boundary instead.
     r = client.post("/api/expr/backtest", json=_split_entry_req(longEntryCombine="or"))
     assert r.status_code == 422
+
+
+@pytest.fixture(autouse=True)
+def _drop_stray_progress_entries():
+    """Cleanup insurance for the id the progress test registers. Teardown, NOT
+    an in-test finally: it must run AFTER the assertions so the handler's own
+    `finally: clear_progress(...)` is what the clear-on-finish assertion tests."""
+    yield
+    pr.clear_progress("expr-prog")
+
+
+def test_expr_backtest_with_progress_id_updates_then_clears(monkeypatch):
+    # Direct call (per test_api_backtest_progress.py) so the registry can be
+    # spied on in-process while the run is in flight.
+    req = ExprBacktestRequest(**_base_req(progressId="expr-prog"))
+    snapshots: list[dict] = []
+    real_update = pr.update_progress
+
+    def spying_update(pid, done, total, now=None):
+        real_update(pid, done, total, now=now)
+        snapshots.append(pr.get_progress(pid))
+
+    monkeypatch.setattr(pr, "update_progress", spying_update)
+    asyncio.run(expr.expr_backtest(req))
+    assert snapshots, "engine progress never reached the registry"
+    assert all(s["stage"] == "simulate" for s in snapshots)
+    dones = [s["done"] for s in snapshots]
+    assert dones == sorted(dones), "progress must advance monotonically"
+    assert snapshots[-1]["done"] == snapshots[-1]["total"] > 0
+    assert pr.get_progress("expr-prog") is None  # cleared in finally
+
+
+def test_expr_backtest_without_progress_id_touches_no_registry(monkeypatch):
+    """Zero behavior change when the client ships no id: nothing is registered."""
+    calls: list[tuple] = []
+    monkeypatch.setattr(pr, "set_progress", lambda *a, **k: calls.append((a, k)))
+    asyncio.run(expr.expr_backtest(ExprBacktestRequest(**_base_req())))
+    assert calls == []

@@ -816,3 +816,69 @@ def test_backfill_error_does_not_set_floor(tmp_path):
     )
     assert status == "error"
     assert cache._backfill_reached_floor(KEY) is False  # resumes next session
+
+
+# --- Active-backfill registry -------------------------------------------------
+# The module-level registry window() publishes to while a multi-chunk walk runs;
+# it's what the progress endpoint reads so a minutes-long download is visible
+# while it happens (uvicorn only logs the request once it finishes).
+
+
+def test_active_backfills_empty_when_idle(tmp_path):
+    from auto_trader.core import candle_cache as cc
+    assert cc.active_backfills() == []
+
+
+def test_window_multi_chunk_publishes_and_clears_progress(tmp_path):
+    from auto_trader.core import candle_cache as cc
+
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(0, 601, 60)]
+    seen: list[list[dict]] = []
+
+    async def spying_fetch(from_dt, to_dt):
+        # Snapshot the registry mid-walk: entry present with sane fields.
+        seen.append(cc.active_backfills())
+        s, e = int(from_dt.timestamp()), int(to_dt.timestamp())
+        return [b for b in src if s <= int(b.time.timestamp()) <= e]
+
+    # chunk_bars small enough that the window needs >1 chunk
+    asyncio.run(cache.window(KEY, 60, _dt(0), _dt(600), spying_fetch,
+                             now=10_000, chunk_bars=3))
+    mid = [s for s in seen if s]
+    assert mid, "registry never showed an active backfill"
+    entry = mid[0][0]
+    assert entry["total_chunks"] > 1
+    assert entry["label"]  # _key_label(KEY)
+    assert 0 <= entry["done_chunks"] <= entry["total_chunks"]
+    # cleared after the walk finishes
+    assert cc.active_backfills() == []
+
+
+def test_window_failed_fetch_clears_progress(tmp_path):
+    from auto_trader.core import candle_cache as cc
+
+    cache = CandleCache(str(tmp_path / "c.db"))
+
+    async def failing_fetch(from_dt, to_dt):
+        raise RuntimeError("broker down")
+
+    try:
+        asyncio.run(cache.window(KEY, 60, _dt(0), _dt(600), failing_fetch,
+                                 now=10_000, chunk_bars=3))
+    except RuntimeError:
+        pass
+    assert cc.active_backfills() == []
+
+
+def test_active_backfills_drops_stale_entries(tmp_path):
+    from auto_trader.core import candle_cache as cc
+    cc._ACTIVE_BACKFILLS["stale-key"] = {
+        "label": "x", "done_chunks": 1, "total_chunks": 5, "bars": 10,
+        "elapsed_s": 1.0, "eta_s": 4.0, "at": "", "updated_at": 100.0,
+    }
+    try:
+        assert cc.active_backfills(now=200.0) == []          # >60s old: dropped
+        assert len(cc.active_backfills(now=120.0)) == 1      # fresh enough
+    finally:
+        cc._ACTIVE_BACKFILLS.clear()

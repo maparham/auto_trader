@@ -9,12 +9,15 @@ can underline the offending characters.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+from typing import Callable
 
 from fastapi import APIRouter, HTTPException
 
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
+from auto_trader.core import progress as pr
 from auto_trader.engine.backtest import BacktestEngine
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.closeness import (
@@ -279,7 +282,23 @@ async def expr_backtest(req: ExprBacktestRequest):
         series=atr_risk,
         mask=req.mask.to_mask() if req.mask else None,
     )
-    result = engine.run(candles)
+    # Cosmetic progress reporting: the frontend polls
+    # GET /api/backtest/progress/{id} while this POST is in flight. Registered
+    # only once the run is about to start, so the validation 422s above (which
+    # the finally below doesn't cover) can't leak an entry.
+    on_progress: Callable[[int, int], None] | None = None
+    if req.progressId:
+        pid = req.progressId
+        pr.set_progress(pid, stage="simulate")
+        on_progress = lambda done, total: pr.update_progress(pid, done, total)
+    try:
+        # to_thread: the engine is CPU-bound sync; on the loop thread it would
+        # starve every other request — including the progress polls this
+        # callback exists to feed.
+        result = await asyncio.to_thread(engine.run, candles, on_progress=on_progress)
+    finally:
+        if req.progressId:
+            pr.clear_progress(req.progressId)
     # Imported lazily to avoid a router import cycle (backtest.py imports many
     # things at module load; expr.py is registered alongside it).
     from ..routers.backtest import _result_to_response

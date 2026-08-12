@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import datetime as dt
 import logging
 import time
 import uuid
 from types import ModuleType
+from typing import Callable
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
+from auto_trader.core import progress as pr
 from auto_trader.core.run_store import RUN_STORE
 from auto_trader.core.sweep_store import SWEEP_STORE
 from auto_trader.core.wfo_store import WFO_STORE
@@ -85,6 +88,7 @@ async def _run_coded(
     req: BacktestRequest, candles: list[Candle], module: ModuleType,
     resolved_params: dict, long_risk_dto: RiskConfigDTO | None,
     short_risk_dto: RiskConfigDTO | None, htf_candles: dict[str, list[Candle]],
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[BacktestResult, Strategy]:
     """Thin async wrapper: run the pure `run_coded_sync` core, fetching each
     timeframe it reports missing and calling again (mutating htf_candles so
@@ -94,9 +98,13 @@ async def _run_coded(
     request 422s; a sweep isolates it to one row)."""
     for _ in range(_MAX_TF_PASSES):
         try:
-            return run_coded_sync(
-                req, candles, module, resolved_params,
+            # to_thread: the engine is CPU-bound sync; on the loop thread it
+            # would starve every other request — including the progress polls
+            # this callback exists to feed.
+            return await asyncio.to_thread(
+                run_coded_sync, req, candles, module, resolved_params,
                 long_risk_dto, short_risk_dto, htf_candles,
+                on_progress=on_progress,
             )
         except TimeframeNotPrefetched as need:
             warmup_from = (
@@ -163,155 +171,177 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     except ValueError as e:
         raise HTTPException(422, str(e))
     htf_candles: dict[str, list[Candle]] = {}
+
+    # Cosmetic progress reporting: the frontend polls
+    # GET /api/backtest/progress/{id} while this POST is in flight. Registered
+    # only once the run is about to start, so the validation 422s above (which
+    # the finally below doesn't cover) can't leak an entry.
+    on_progress: Callable[[int, int], None] | None = None
+    if req.progressId:
+        pid = req.progressId
+        pr.set_progress(pid, stage="simulate")
+        on_progress = lambda done, total: pr.update_progress(pid, done, total)
     try:
-        result, strategy = await _run_coded(
-            req, candles, module, resolved_params, req.longRisk, req.shortRisk, htf_candles,
-        )
-    except StrategyRuntimeError as e:
-        raise HTTPException(422, str(e))
-
-    # Fills/trades need no >= tradeFromTime filter here: RuleStrategy gates every
-    # entry to tradeFromTime-or-later (rule.py), a fill only lands on a LATER
-    # bar's open, and an exit can only follow a gated entry — so every fill and
-    # trade already satisfies the window by construction. Equity is the one
-    # collection that isn't: the engine appends a point for every bar, including
-    # warm-up, so it's the only result that still needs trimming here.
-    window = [c for c in req.candles if c.time >= req.tradeFromTime]
-
-    # Post-run enrichment over the FULL candle list (not `window`): a trade's
-    # signal bar can sit in the warm-up span before tradeFromTime.
-    enrich_trades(result.trades, candles)
-
-    # Resolve the sub-bar exit time of intra-bar stop/target exits from the run's
-    # own 1-minute candles. Display only; best-effort (a fetch failure or missing
-    # minute data just leaves exit_time_exact None).
-    run_s = resolution_seconds(req.resolution)
-
-    async def _load_minutes(from_s: int, to_s: int) -> list[Candle]:
-        return await deps._fetch_symbol_candles(
-            req.broker, req.epic, "MINUTE", (to_s - from_s) // 60 + 2, from_s, to_s,
-            req.priceSide,
-        )
-
-    try:
-        await attach_exit_times(result.trades, run_tf_seconds=run_s, load_minutes=_load_minutes)
-    except Exception:
-        logger.warning("exit-time resolution failed; continuing without it", exc_info=True)
-
-    try:
-        enrich_trades_whatif(result.trades, candles)
-    except Exception:
-        logger.warning("what-if enrichment failed; continuing without it",
-                       exc_info=True)
-
-    # Cost sensitivity (single runs only): re-run the engine at 0x/2x/3x costs.
-    # The 1x point is the run we already have. Slippage and per-side commission
-    # scale together; breakeven_multiple interpolates the zero crossing.
-    cost_sensitivity = None
-    if req.costSensitivity and req.sweep is None:
-        multiples = [0.0, 1.0, 2.0, 3.0]
-        # Nothing to scale (zero assumed costs) or no trades: every multiple
-        # lands on the same net, so skip the re-runs entirely.
-        # atrMult only bites when the slippage model is in "atr" mode, mirroring
-        # the engine wiring (slippage_atr_mult=... if kind == "atr" else 0.0). A
-        # stale atrMult on a "fixed" model contributes nothing, so it must not
-        # make an otherwise-zero cost profile look non-zero.
-        eff_atr_mult = req.costs.slippage.atrMult if req.costs.slippage.kind == "atr" else 0.0
-        zero_costs = (
-            req.costs.slippage.value == 0 and eff_atr_mult == 0
-            and req.costs.commissionPerSide == 0 and req.costs.spread == 0
-            and req.costs.finLongDailyPct == 0 and req.costs.finShortDailyPct == 0
-        )
-        if zero_costs or result.n_trades == 0:
-            nets: list[float] = [result.net_pnl] * 4
-        else:
-            nets = []
-            for m in multiples:
-                if m == 1.0:
-                    nets.append(result.net_pnl)
-                    continue
-                scaled = req.model_copy(update={
-                    "costs": req.costs.model_copy(update={
-                        "slippage": req.costs.slippage.model_copy(update={
-                            "value": req.costs.slippage.value * m,
-                            "atrMult": req.costs.slippage.atrMult * m,
-                        }),
-                        "commissionPerSide": req.costs.commissionPerSide * m,
-                        "spread": req.costs.spread * m,
-                        "finLongDailyPct": req.costs.finLongDailyPct * m,
-                        "finShortDailyPct": req.costs.finShortDailyPct * m,
-                    }),
-                })
-                r, _ = await _run_coded(scaled, candles, module, resolved_params,
-                                        req.longRisk, req.shortRisk, dict(htf_candles))
-                nets.append(r.net_pnl)
-        cost_sensitivity = {
-            "multiples": multiples,
-            "net_pnl": [round(n, 5) for n in nets],
-            "breakeven_multiple": breakeven_multiple(multiples, nets),
-        }
-
-    trades_dto = _trades_to_dto(result)
-    summary = result.summary()
-    metrics = compute_metrics(
-        result.trades, result.equity, result.net_pnl,
-        req.costs.startingCash, resolution_seconds(req.resolution),
-        financing_total=result.financing_total,
-    )
-
-    # Aggregate analytics from the DTO dicts, computed BEFORE the store write so a
-    # store failure still returns analysis (with run_id=None). Sweep child runs are
-    # NOT persisted: the sweep drives the engine via _run_coded directly
-    # and never calls this handler, so this block only runs for normal runs.
-    trade_dicts = [t.model_dump() for t in trades_dto]
-    analysis = compute_analysis(trade_dicts)
-
-    # Re-derivable market data stays out of the store — epic/timeframe/range
-    # columns suffice to re-fetch it, and the raw candles + indicator series are
-    # bulky. A sweep-shaped request should never reach this single-run handler,
-    # but if one does, don't persist it as a normal run.
-    request_dump = req.model_dump()
-    for bulky in ("candles", "series", "sweep"):
-        request_dump.pop(bulky, None)
-
-    run_id: str | None = None if req.sweep is not None else uuid.uuid4().hex
-    if run_id is not None:
         try:
-            await RUN_STORE.insert({
-                "id": run_id,
-                "created_at": int(time.time()),
-                "epic": req.epic,
-                "timeframe": req.resolution,
-                "range_from": int(candles[0].time.timestamp()),
-                "range_to": int(candles[-1].time.timestamp()),
-                "strategy_kind": "coded" if req.codedStrategy is not None else "rules",
-                "strategy_name": req.codedStrategy,
-                "request": request_dump,
-                "summary": {**summary, **metrics},
-                "trades": trade_dicts,
-            })
-        except Exception:
-            logger.warning("run-store write failed; continuing without run_id", exc_info=True)
-            run_id = None
+            result, strategy = await _run_coded(
+                req, candles, module, resolved_params, req.longRisk, req.shortRisk, htf_candles,
+                on_progress=on_progress,
+            )
+        except StrategyRuntimeError as e:
+            raise HTTPException(422, str(e))
 
-    return _result_to_response(
-        result,
-        epic=req.epic,
-        resolution=req.resolution,
-        candles_window=window,
-        trade_from_time=req.tradeFromTime,
-        starting_cash=req.costs.startingCash,
-        commission_per_side=req.costs.commissionPerSide,
-        file_brackets_overridden=(
-            strategy.file_brackets_overridden if req.codedStrategy is not None else False
-        ),
-        run_id=run_id,
-        analysis=analysis,
-        cost_sensitivity=cost_sensitivity,
-        trades_dto=trades_dto,
-        summary=summary,
-        metrics=metrics,
-    )
+        # Fills/trades need no >= tradeFromTime filter here: RuleStrategy gates every
+        # entry to tradeFromTime-or-later (rule.py), a fill only lands on a LATER
+        # bar's open, and an exit can only follow a gated entry — so every fill and
+        # trade already satisfies the window by construction. Equity is the one
+        # collection that isn't: the engine appends a point for every bar, including
+        # warm-up, so it's the only result that still needs trimming here.
+        window = [c for c in req.candles if c.time >= req.tradeFromTime]
+
+        # Post-run enrichment over the FULL candle list (not `window`): a trade's
+        # signal bar can sit in the warm-up span before tradeFromTime.
+        enrich_trades(result.trades, candles)
+
+        # Resolve the sub-bar exit time of intra-bar stop/target exits from the run's
+        # own 1-minute candles. Display only; best-effort (a fetch failure or missing
+        # minute data just leaves exit_time_exact None).
+        run_s = resolution_seconds(req.resolution)
+
+        async def _load_minutes(from_s: int, to_s: int) -> list[Candle]:
+            return await deps._fetch_symbol_candles(
+                req.broker, req.epic, "MINUTE", (to_s - from_s) // 60 + 2, from_s, to_s,
+                req.priceSide,
+            )
+
+        try:
+            await attach_exit_times(result.trades, run_tf_seconds=run_s, load_minutes=_load_minutes)
+        except Exception:
+            logger.warning("exit-time resolution failed; continuing without it", exc_info=True)
+
+        try:
+            enrich_trades_whatif(result.trades, candles)
+        except Exception:
+            logger.warning("what-if enrichment failed; continuing without it",
+                           exc_info=True)
+
+        # Cost sensitivity (single runs only): re-run the engine at 0x/2x/3x costs.
+        # The 1x point is the run we already have. Slippage and per-side commission
+        # scale together; breakeven_multiple interpolates the zero crossing.
+        cost_sensitivity = None
+        if req.costSensitivity and req.sweep is None:
+            multiples = [0.0, 1.0, 2.0, 3.0]
+            # Nothing to scale (zero assumed costs) or no trades: every multiple
+            # lands on the same net, so skip the re-runs entirely.
+            # atrMult only bites when the slippage model is in "atr" mode, mirroring
+            # the engine wiring (slippage_atr_mult=... if kind == "atr" else 0.0). A
+            # stale atrMult on a "fixed" model contributes nothing, so it must not
+            # make an otherwise-zero cost profile look non-zero.
+            eff_atr_mult = req.costs.slippage.atrMult if req.costs.slippage.kind == "atr" else 0.0
+            zero_costs = (
+                req.costs.slippage.value == 0 and eff_atr_mult == 0
+                and req.costs.commissionPerSide == 0 and req.costs.spread == 0
+                and req.costs.finLongDailyPct == 0 and req.costs.finShortDailyPct == 0
+            )
+            if zero_costs or result.n_trades == 0:
+                nets: list[float] = [result.net_pnl] * 4
+            else:
+                # Re-runs are engine passes too: relabel the stage so it stays
+                # distinguishable in the wire payload (GET /api/backtest/progress/{id}).
+                if req.progressId:
+                    pr.set_progress(req.progressId, stage="cost-sensitivity")
+                nets = []
+                for m in multiples:
+                    if m == 1.0:
+                        nets.append(result.net_pnl)
+                        continue
+                    scaled = req.model_copy(update={
+                        "costs": req.costs.model_copy(update={
+                            "slippage": req.costs.slippage.model_copy(update={
+                                "value": req.costs.slippage.value * m,
+                                "atrMult": req.costs.slippage.atrMult * m,
+                            }),
+                            "commissionPerSide": req.costs.commissionPerSide * m,
+                            "spread": req.costs.spread * m,
+                            "finLongDailyPct": req.costs.finLongDailyPct * m,
+                            "finShortDailyPct": req.costs.finShortDailyPct * m,
+                        }),
+                    })
+                    r, _ = await _run_coded(scaled, candles, module, resolved_params,
+                                            req.longRisk, req.shortRisk, dict(htf_candles),
+                                            on_progress=on_progress)
+                    nets.append(r.net_pnl)
+            cost_sensitivity = {
+                "multiples": multiples,
+                "net_pnl": [round(n, 5) for n in nets],
+                "breakeven_multiple": breakeven_multiple(multiples, nets),
+            }
+
+        trades_dto = _trades_to_dto(result)
+        summary = result.summary()
+        metrics = compute_metrics(
+            result.trades, result.equity, result.net_pnl,
+            req.costs.startingCash, resolution_seconds(req.resolution),
+            financing_total=result.financing_total,
+        )
+
+        # Aggregate analytics from the DTO dicts, computed BEFORE the store write so a
+        # store failure still returns analysis (with run_id=None). Sweep child runs are
+        # NOT persisted: the sweep drives the engine via _run_coded directly
+        # and never calls this handler, so this block only runs for normal runs.
+        trade_dicts = [t.model_dump() for t in trades_dto]
+        analysis = compute_analysis(trade_dicts)
+
+        # Re-derivable market data stays out of the store — epic/timeframe/range
+        # columns suffice to re-fetch it, and the raw candles + indicator series are
+        # bulky. A sweep-shaped request should never reach this single-run handler,
+        # but if one does, don't persist it as a normal run.
+        request_dump = req.model_dump()
+        for bulky in ("candles", "series", "sweep"):
+            request_dump.pop(bulky, None)
+        # Per-run ephemeral: the client's progress id means nothing to a stored run.
+        request_dump.pop("progressId", None)
+
+        run_id: str | None = None if req.sweep is not None else uuid.uuid4().hex
+        if run_id is not None:
+            try:
+                await RUN_STORE.insert({
+                    "id": run_id,
+                    "created_at": int(time.time()),
+                    "epic": req.epic,
+                    "timeframe": req.resolution,
+                    "range_from": int(candles[0].time.timestamp()),
+                    "range_to": int(candles[-1].time.timestamp()),
+                    "strategy_kind": "coded" if req.codedStrategy is not None else "rules",
+                    "strategy_name": req.codedStrategy,
+                    "request": request_dump,
+                    "summary": {**summary, **metrics},
+                    "trades": trade_dicts,
+                })
+            except Exception:
+                logger.warning("run-store write failed; continuing without run_id", exc_info=True)
+                run_id = None
+
+        return _result_to_response(
+            result,
+            epic=req.epic,
+            resolution=req.resolution,
+            candles_window=window,
+            trade_from_time=req.tradeFromTime,
+            starting_cash=req.costs.startingCash,
+            commission_per_side=req.costs.commissionPerSide,
+            file_brackets_overridden=(
+                strategy.file_brackets_overridden if req.codedStrategy is not None else False
+            ),
+            run_id=run_id,
+            analysis=analysis,
+            cost_sensitivity=cost_sensitivity,
+            trades_dto=trades_dto,
+            summary=summary,
+            metrics=metrics,
+        )
+    finally:
+        if req.progressId:
+            pr.clear_progress(req.progressId)
 
 
 def _trades_to_dto(result: BacktestResult) -> list[TradeDTO]:
@@ -425,6 +455,16 @@ def _result_to_response(
 # --- runs read API: list/get/delete persisted runs (see run_store.py) --------
 # `GET /runs` is declared BEFORE `GET /runs/{run_id}` so the literal `/runs`
 # path can't be shadowed by the path-param route.
+
+
+@router.get("/api/backtest/progress/{progress_id}")
+async def backtest_progress(progress_id: str) -> dict:
+    """Simulate-phase progress for an in-flight POST /api/backtest run. 404
+    once the run finishes (the handler clears its entry in a finally)."""
+    entry = pr.get_progress(progress_id)
+    if entry is None:
+        raise HTTPException(404, "no such run")
+    return entry
 
 
 @router.get("/api/backtest/runs")

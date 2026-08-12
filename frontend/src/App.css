@@ -4636,6 +4636,10 @@
    tab and scrolls internally. */
 .bt-results { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .bt-results-empty { padding: 16px 4px; color: var(--text-faint); font-size: 12px; }
+/* Live run progress: the phase line stacked over a thin determinate bar. */
+.bt-progress { display: flex; flex-direction: column; gap: 6px; }
+.bt-progress-track { display: block; height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.bt-progress-fill { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
 .bt-results-head {
   display: flex; align-items: center; gap: 12px; flex-shrink: 0;
   padding: 6px 0 10px; border-bottom: 1px solid var(--border); margin-bottom: 8px;

@@ -301,6 +301,7 @@ export interface BacktestRequest {
   // Chart-indicator panes those expression exits reference (see the same field on
   // ExprBacktestRequest for the shape and why the rule can't carry the settings).
   indicators?: Record<string, ExprInstancePayload>;
+  progressId?: string; // opt into the live-progress side-channel (see fetchBacktestProgress)
 }
 
 // --- expression backtest surface (/api/expr/backtest) ------------------------
@@ -354,6 +355,7 @@ export interface ExprBacktestRequest {
     combos: Array<Record<string, number | boolean | string>>;
     windows?: number[] | null;
   };
+  progressId?: string; // opt into the live-progress side-channel (see fetchBacktestProgress)
 }
 
 export async function runExprBacktest(req: ExprBacktestRequest): Promise<BacktestResult> {
@@ -930,4 +932,34 @@ export async function deleteWfoArchive(id: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(await errorDetail(res, `walk-forward delete failed (${res.status})`));
+}
+
+// --- backtest progress side-channel ------------------------------------------
+// Both fetchers are best-effort: progress is cosmetic, so ANY failure (network,
+// 404, non-JSON) resolves to an empty/null result rather than throwing.
+export type BackfillProgress = {
+  label: string; doneChunks: number; totalChunks: number;
+  bars: number; elapsedS: number; etaS: number | null; at: string;
+};
+
+export async function fetchActiveBackfills(): Promise<BackfillProgress[]> {
+  try {
+    const res = await fetch(`${BASE}/api/candle-cache/backfill/active`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchBacktestProgress(
+  id: string,
+): Promise<{ stage: string; done: number; total: number } | null> {
+  try {
+    const res = await fetch(`${BASE}/api/backtest/progress/${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
 }

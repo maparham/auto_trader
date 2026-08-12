@@ -76,6 +76,7 @@ import { toast } from "./lib/notify";
 import { sweepContext } from "./lib/sweepMemory";
 import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
+import { startBacktestProgressPoller } from "./lib/backtestProgress";
 import type { BacktestRequest, ExprBacktestRequest, ExprRow, SweepRow } from "./api";
 import { collectExprInstances, exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
 import { liveExprInstances } from "./lib/indicators";
@@ -166,6 +167,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     // modal's disabled "Run backtest" can never strand: the finally below always
     // resets it, even if this component were unmounted mid-run.
     backtestRunningSignal.set(true);
+    // Progress side-channel: the poller feeds backtestProgressSignal (panel
+    // renders it); progressId ties the POST to GET /api/backtest/progress/{id}.
+    // Declared outside the try so the finally below can always stop it.
+    const progressId = crypto.randomUUID();
+    const stopProgress = startBacktestProgressPoller(progressId);
     setError(null);
     // Captured once up front: the modal publishes the axes (empty in Backtest
     // mode) right before bumping the run request, and nothing may change them
@@ -634,7 +640,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // use their own routing.
       const res = await runAndRender(
         chart,
-        coded ? baseReq : exprReq,
+        // progressId rides only on the SINGLE-RUN body: baseReq/exprReq are
+        // shared with the sweep and walk-forward submissions above, which run on
+        // job workers with their own status polling — one shared id there would
+        // cross-talk. Spread here so those literals stay untouched.
+        coded ? { ...baseReq, progressId } : { ...exprReq, progressId },
         controller!.scope,
         // Displayed TF, so runAndRender picks native/aggregate/none correctly when
         // the run's base TF (runResolution) differs from what the chart shows.
@@ -681,6 +691,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       setError(e instanceof Error ? e.message : "backtest failed");
     } finally {
       setRunning(false);
+      stopProgress();
       backtestRunningSignal.set(false);
       progressStageSignal.set(null);
     }

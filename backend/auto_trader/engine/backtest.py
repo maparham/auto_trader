@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Callable
 
 from auto_trader.core.models import BarStats, Candle, Fill, Side, Signal, Trade
 from auto_trader.engine.risk import RiskConfig, is_trailing, stop_level, target_level
@@ -127,17 +128,25 @@ class BacktestEngine:
         self.long_scaling = long_scaling or ScalingConfig()
         self.short_scaling = short_scaling or ScalingConfig()
 
-    def run(self, candles: list[Candle], *, stop_index: int | None = None) -> BacktestResult:
+    def run(
+        self, candles: list[Candle], *, stop_index: int | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> BacktestResult:
         """Run the engine over `candles`. When `stop_index` is set, process only
         bars 0..stop_index (inclusive) and force-close open positions at that bar,
         exactly as if `candles[:stop_index + 1]` had been passed. Because every
         indicator series is causal, passing the FULL candle list with a stop lets
         a caller reuse series computed once across many sub-window runs (WFO exact
-        mode) instead of recomputing them per window."""
+        mode) instead of recomputing them per window. `on_progress(done, total)` is
+        invoked every ~1% of bars for UI progress reporting."""
         result = BacktestResult()
         ctx = Context()
 
         end = (len(candles) - 1) if stop_index is None else stop_index
+
+        total = end + 1
+        # Progress cadence: ~1% steps. Cosmetic; must stay cheap on huge runs.
+        progress_step = max(1, total // 100)
 
         self._slip_atr = self._wilder_atr14(candles) if self.slippage_atr_mult > 0 else []
 
@@ -273,6 +282,9 @@ class BacktestEngine:
             ctx.short_entry_time = shorts[0].open_time if shorts else None
             if i < end:  # the run's last bar has no next-open to fill on
                 pending = list(self.strategy.on_bar(ctx))
+
+            if on_progress is not None and ((i + 1) % progress_step == 0 or i == end):
+                on_progress(i + 1, total)
 
         # Book any still-open positions at the last close via the normal exit path
         # (reason "range end") so every position produces a Trade row rather than a

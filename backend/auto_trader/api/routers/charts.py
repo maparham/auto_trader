@@ -8,13 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auto_trader.brokers.capital_stream import SECONDS_INTERVALS
 from auto_trader.core.candle_aggregate import DERIVED, is_derived
-from auto_trader.core.candle_cache import CANDLE_CACHE
+from auto_trader.core.candle_cache import CANDLE_CACHE, active_backfills
 from auto_trader.core.models import Candle, Resolution
 from auto_trader.core.synthetic import SyntheticError, combine, symbols, parse
 
 from .. import deps
 from ..deps import _parse_resolution, broker_query
 from ..schemas import (
+    BackfillProgressDTO,
     CandleCacheGlobalStatsDTO,
     CandleCacheStatsDTO,
     CandleDTO,
@@ -125,3 +126,18 @@ async def candle_cache_global_stats() -> CandleCacheGlobalStatsDTO:
     """Cache-wide introspection (all series) for the cache-stats popover."""
     stats = await asyncio.to_thread(CANDLE_CACHE.global_stats)
     return CandleCacheGlobalStatsDTO(**stats)
+
+
+@router.get("/api/candle-cache/backfill/active", response_model=list[BackfillProgressDTO])
+async def active_backfill_progress() -> list[BackfillProgressDTO]:
+    """In-flight multi-chunk backfills (the 'downloading data' phase of a
+    backtest run). Cosmetic, best-effort: entries appear only for multi-chunk
+    walks and vanish when the walk ends."""
+    return [
+        BackfillProgressDTO(
+            label=e["label"], doneChunks=e["done_chunks"],
+            totalChunks=e["total_chunks"], bars=e["bars"],
+            elapsedS=e["elapsed_s"], etaS=e["eta_s"], at=e["at"],
+        )
+        for e in active_backfills()
+    ]

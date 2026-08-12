@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from types import ModuleType
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from auto_trader.core.candle_aggregate import resolution_seconds
@@ -195,6 +196,7 @@ def run_coded_sync(
     short_risk_dto: RiskConfigDTO | None, htf_candles: dict[str, list[Candle]],
     indicator_cache: dict | None = None,
     stop_index: int | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[BacktestResult, Strategy]:
     """One coded engine run over the already-fetched `htf_candles`: risk DTOs
     are passed explicitly (the sweep patches them per combo). When the strategy
@@ -245,7 +247,7 @@ def run_coded_sync(
             mask=req.mask.to_mask() if req.mask else None,
         )
         try:
-            result = engine.run(candles, stop_index=stop_index)
+            result = engine.run(candles, stop_index=stop_index, on_progress=on_progress)
             return result, strategy
         except NeedTimeframe as need:
             if need.timeframe not in htf_candles:
