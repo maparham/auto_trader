@@ -70,6 +70,26 @@ describe("runWalkForward", () => {
     await assertion;
     expect(cancel).toHaveBeenCalledWith("j1", "local");
   });
+
+  it("retries the cancel POST when it fails transiently", async () => {
+    vi.spyOn(api, "submitWfoJob").mockResolvedValue({ jobId: "j1", total: 4, schemes: [] });
+    vi.spyOn(api, "pollWfoJob").mockImplementation(
+      () => new Promise((r) => setTimeout(() => r({ ...DONE, phase: "grid", running: true, result: null, foldRows: [] }), 100)),
+    );
+    const cancel = vi.spyOn(api, "cancelWfoJob")
+      .mockRejectedValueOnce(new Error("502"))
+      .mockResolvedValueOnce(undefined);
+    const ctl = new AbortController();
+    const p = runWalkForward(REQ, WF, { signal: ctl.signal, onState: () => {} });
+    const assertion = expect(p).rejects.toThrow(/aborted/);
+    await vi.advanceTimersByTimeAsync(WFO_POLL_MS);
+    ctl.abort();
+    await vi.advanceTimersByTimeAsync(WFO_POLL_MS * 2);
+    await assertion;
+    // First attempt failed with a transient error; a retry follows after backoff.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(cancel).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("resumeWfo", () => {

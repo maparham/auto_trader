@@ -15,6 +15,7 @@ import {
   type WfoSchedule,
   type WfoObjective,
 } from "../api";
+import { cancelWithRetry } from "./cancelRetry";
 import { axisValues, enumerateCombos, type SweepAxis } from "./sweep";
 import { wfoStateSignal, wfoCancelRequest, wfoCancelServer, type WfoRunState } from "./signals";
 
@@ -262,7 +263,7 @@ async function pollWfoToCompletion(
   for (;;) {
     await sleep(WFO_POLL_MS, opts.signal);
     if (opts.signal?.aborted) {
-      if (shouldCancelServer()) cancelWfoJob(jobId, target).catch(() => {});
+      if (shouldCancelServer()) void cancelWithRetry(() => cancelWfoJob(jobId, target));
       throw new Error("walk-forward aborted");
     }
     let status: WfoJobStatus;

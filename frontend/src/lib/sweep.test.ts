@@ -154,6 +154,21 @@ describe("runSweep", () => {
     expect(cancel).toHaveBeenCalledWith("j1", "local");
   });
 
+  it("retries the cancel POST when it fails transiently", async () => {
+    const cancel = mockJob([[row(1)], [row(2)], [row(3)]]);
+    cancel.mockRejectedValueOnce(new Error("502")).mockResolvedValueOnce(undefined);
+    const ctl = new AbortController();
+    const p = runSweep({} as never, [axis("param:n", 1, 3, 1)], {
+      onRows: () => ctl.abort(), signal: ctl.signal,
+    });
+    const assertion = expect(p).rejects.toThrow(/aborted/i);
+    await vi.advanceTimersByTimeAsync(700 * 3);
+    await assertion;
+    // First attempt failed with a transient error; a retry follows after backoff.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(cancel).toHaveBeenCalledTimes(2);
+  });
+
   it("does not cancel the server job on a detach abort (shouldCancelServer false)", async () => {
     const cancel = mockJob([[row(1)], [row(2)], [row(3)]]);
     const ctl = new AbortController();

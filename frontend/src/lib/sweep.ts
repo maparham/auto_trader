@@ -15,6 +15,7 @@ import {
   type SweepTarget,
 } from "../api";
 import { formatPeriodDateRange } from "./backtestPeriods";
+import { cancelWithRetry } from "./cancelRetry";
 import { clearSweepJob, rememberSweepJob } from "./sweepResume";
 import type { SweepRunState } from "./signals";
 
@@ -260,7 +261,7 @@ export async function pollToCompletion(
   for (;;) {
     await sleep(SWEEP_POLL_MS, opts.signal);
     if (opts.signal?.aborted) {
-      if (shouldCancelServer()) cancelSweepJob(jobId, target).catch(() => {});
+      if (shouldCancelServer()) void cancelWithRetry(() => cancelSweepJob(jobId, target));
       throw new Error("sweep aborted");
     }
     let status: SweepJobStatus;
