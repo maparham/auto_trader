@@ -92,7 +92,6 @@ import {
 } from "./lib/sweepMemory";
 import { loadHoldout, saveHoldoutPct, recordPeek, splitHoldout } from "./lib/holdout";
 import { applyRiskSync, riskPatch, riskSyncOn } from "./lib/riskSync";
-import { formatPeriodRange } from "./lib/backtestPeriods";
 import { fmtRunDuration } from "./lib/duration";
 import { fetchStrategies, computeStatus, listSweepArchives, getSweepArchive, deleteSweepArchive, getCostProfile, putCostProfile, refetchCostProfile, getWfoFoldTable, getWfoArchiveTables, type StrategyInfo, type ParamSpec, type SweepArchiveSummary, type CostProfile, type SweepRow, type WfoResult } from "./api";
 import { WfoArchive } from "./WfoArchive";
@@ -152,7 +151,6 @@ const RANGE_MODES: { value: RangeMode; label: string }[] = [
   { value: "lastWeek", label: "Week" },
   { value: "lastMonth", label: "Month" },
   { value: "lastYear", label: "Year" },
-  { value: "custom", label: "Custom" },
 ];
 
 // SCROLL_TABS are anchors into one continuous pane, results included: the
@@ -172,7 +170,7 @@ const SCROLL_TABS: { value: ScrollTab; label: string }[] = [
 ];
 const PRESETS_TAB = { value: "presets", label: "Presets" } as const;
 
-// Which suggestion-chip unit each range tab shows (Bars/Custom show none).
+// Which suggestion-chip unit each range tab shows (Bars shows none).
 const CHIP_UNIT: Partial<Record<RangeMode, "day" | "week" | "month" | "year">> = {
   lastDay: "day",
   lastWeek: "week",
@@ -278,20 +276,6 @@ function blockNegKeys(e: ReactKeyboardEvent<HTMLInputElement>) {
 // `commit` is 0-arg because the caller already knows the clamped value to write.
 function clampPosOnBlur(el: HTMLInputElement, floor: number, commit: (n: number) => void) {
   if (!(Number(el.value) > 0)) commit(floor);
-}
-
-// The actual calendar span implied by the current range choice, so "Month" etc.
-// aren't left abstract — shown relative to now for the fixed presets ("Bars"
-// depends on the resolution too, since a bar count only maps to a duration once
-// you know the timeframe).
-function rangeDateLabel(cfg: BacktestConfig, resSeconds: number): string {
-  const r = cfg.range;
-  if (r.mode === "custom" && !(r.fromMs && r.toMs && r.toMs > r.fromMs)) {
-    return "Pick a from and to date";
-  }
-  // resolveWindow already applies a chip's absolute fromMs/toMs anchor.
-  const { fromMs, toMs } = resolveWindow(cfg, resSeconds, Date.now());
-  return formatPeriodRange(fromMs, toMs);
 }
 
 function estimateWindowBars(cfg: BacktestConfig, resSeconds: number): number {
@@ -1985,12 +1969,14 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     (btMode === "walkforward" &&
       (wfoComboTotal === 0 || wfoCfg.trainSpans.length === 0 || !!wfoState?.running));
 
-  // Resolved window drives the always-on From/To display in WFO mode, where the
-  // range can be a rolling relative mode (fromMs/toMs unset). In non-WFO custom
-  // mode we keep the raw value so an unpicked range shows blank inputs.
+  // The From/To fields are always visible and always show the actual window the
+  // run would use: an explicit anchor (chip click, manual edit, chart pick) when
+  // set, otherwise the rolling window the relative mode resolves to right now.
   const resolvedWindow = resolveWindow(cfg, resSeconds, Date.now());
-  const pickerFromMs = btMode === "walkforward" ? resolvedWindow.fromMs : cfg.range.fromMs;
-  const pickerToMs = btMode === "walkforward" ? resolvedWindow.toMs : cfg.range.toMs;
+  const pickerFromMs =
+    btMode === "walkforward" ? resolvedWindow.fromMs : cfg.range.fromMs ?? resolvedWindow.fromMs;
+  const pickerToMs =
+    btMode === "walkforward" ? resolvedWindow.toMs : cfg.range.toMs ?? resolvedWindow.toMs;
 
   const timeframeSelect = (
     <label className="bt-tf-inline">
@@ -2050,7 +2036,12 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         <input
           type="datetime-local"
           value={pickerFromMs ? msToLocalInput(pickerFromMs) : ""}
-          onChange={(e) => setRange({ mode: "custom", fromMs: localInputToMs(e.target.value) ?? undefined })}
+          onChange={(e) =>
+            // Editing a field freezes the window: anchor the other side at its
+            // currently displayed (possibly rolling-resolved) value so it
+            // doesn't jump when the mode falls back to custom.
+            setRange({ mode: "custom", fromMs: localInputToMs(e.target.value) ?? undefined, toMs: pickerToMs })
+          }
         />
       </label>
       <label className="bt-range-field">
@@ -2058,7 +2049,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         <input
           type="datetime-local"
           value={pickerToMs ? msToLocalInput(pickerToMs) : ""}
-          onChange={(e) => setRange({ mode: "custom", toMs: localInputToMs(e.target.value) ?? undefined })}
+          onChange={(e) =>
+            setRange({ mode: "custom", toMs: localInputToMs(e.target.value) ?? undefined, fromMs: pickerFromMs })
+          }
         />
       </label>
       <Tooltip
@@ -2379,7 +2372,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 ) : (
                 <Section
                   title="Time range"
-                  info="The span of history the backtest trades over. Pick a relative window (last day/week/month/year), a calendar period via the chips, or a custom from/to."
+                  info="The span of history the backtest trades over. Pick a relative window (last day/week/month/year) or a calendar period via the chips; either just fills the From/To, which you can always edit directly."
                 >
             <div className="bt-range-mode-row">
               <div className="seg">
@@ -2431,7 +2424,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               </label>
               {holdoutSelect}
             </div>
-            {CHIP_UNIT[cfg.range.mode] ? (
+            {CHIP_UNIT[cfg.range.mode] && (
               <div className="bt-chip-row bt-range-chip-row">
                 {buildRangeChips(CHIP_UNIT[cfg.range.mode]!, Date.now(), chartTimezone).map((chip) => {
                   const on = cfg.range.fromMs === chip.fromMs && cfg.range.toMs === chip.toMs;
@@ -2445,11 +2438,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                     </button>
                   );
                 })}
-                <span className="al-note bt-range-subtitle bt-range-inline">{rangeDateLabel(cfg, resSeconds)}</span>
               </div>
-            ) : (
-              <div className="al-note bt-range-subtitle">{rangeDateLabel(cfg, resSeconds)}</div>
             )}
+            {rangePicker}
             {periodAxis?.kind === "period" && (
               <div className="sp-row sweep-axis-row bt-period-sweep">
                 <span className="sp-label">Period sweep</span>
@@ -2479,7 +2470,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 />
               </label>
             )}
-            {cfg.range.mode === "custom" && rangePicker}
             {/* Holdout ("lockbox") reserves the last part of the range as an
                 out-of-sample tail. The picker itself lives up in the Time range
                 header (next to Timeframe/Windows); here we only surface the

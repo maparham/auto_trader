@@ -2041,14 +2041,7 @@
 }
 .bt-past-sweeps-del:hover { color: var(--danger, #e5484d); background: var(--hover-bg, rgba(127,127,127,0.12)); }
 .al-note { color: var(--text-faint); font-size: 12px; }
-/* The resolved period ("1 May – 1 Jun 2026") — the headline result of the range
-   picker, so full-strength text, not the faint note colour it inherits. */
-.bt-range-subtitle { margin-top: 8px; color: var(--text); font-size: 13px; font-weight: 600; }
-/* When range chips are shown, the resolved-period string rides the same wrapping
-   row as the month/day cards, pushed to the far right of its line, instead of
-   dropping to a line of its own. */
 .bt-range-chip-row { align-items: center; }
-.bt-range-inline { margin-top: 0; margin-left: auto; white-space: nowrap; }
 /* Mask enable toggle: a plain checkbox + label, not the value-input row layout
    (which stretches the checkbox via flex:1 and clamps the label to 90px). */
 .bt-mask-toggle { justify-content: flex-start; gap: 8px; }
@@ -2094,12 +2087,19 @@
 .bt-heatstrip > span { flex: 1 1 0; min-width: 0; }
 .bt-heatstrip > span.on { background: var(--accent, #2b7); }
 .bt-heatstrip > span.off { background: var(--muted-bg, #e5e7eb); }
-/* Custom backtest range: From/To side by side on one line instead of stacked.
-   datetime-local inputs can't shrink below their intrinsic width, so on narrow
-   panels the row wraps (To drops to its own line) rather than letting the From
-   input overflow its field and collide with the To label. */
-.bt-range-row { flex-wrap: wrap; }
-.bt-range-row .bt-range-field { flex: 1 1 auto; }
+/* Backtest range: From/To + pick button share one row. datetime-local can
+   neither shrink nor be stretched gracefully (shrinking overlaps its calendar
+   icon; .al-row's flex:1 stretch leaves dead space before it), so the inputs
+   get a compact fixed footprint — smaller mono font, tight padding, intrinsic
+   width, no grow/shrink — sized to fit the ~520px settings pane, and the row
+   packs left instead of space-between. */
+.bt-range-row { justify-content: flex-start; gap: 8px; }
+.bt-range-row .bt-range-field { flex: 0 0 auto; gap: 6px; }
+.bt-range-row .bt-range-field input {
+  flex: none; width: auto;
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 12px; padding: 5px 6px;
+}
 .bt-range-field { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .bt-range-field > span { color: var(--text-dim); flex-shrink: 0; }
 /* Session / Timezone / From / To all share one row. Labels stack ABOVE each
