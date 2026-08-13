@@ -101,6 +101,21 @@ def test_backtest_run_with_progress_id_updates_then_clears(strategies, monkeypat
     assert pr.get_progress("prog-test") is None  # cleared in finally
 
 
+def test_backtest_resets_stage_before_exit_time_resolution(strategies, monkeypatch):
+    """The exit-time minute fetch can trigger a long candle backfill; the entry
+    must be reset (total=0) first so the frontend poller falls through to the
+    backfill row instead of showing a frozen 'Simulating (100%)'."""
+    req = base_request("test.py", make_candles(), progressId="prog-test")
+    seen: list[dict | None] = []
+
+    async def spying_attach(trades, *, run_tf_seconds, load_minutes):
+        seen.append(pr.get_progress("prog-test"))
+
+    monkeypatch.setattr(bt, "attach_exit_times", spying_attach)
+    asyncio.run(bt.backtest(req))
+    assert seen == [{"stage": "exit-times", "done": 0, "total": 0}]
+
+
 def test_backtest_without_progress_id_touches_no_registry(strategies, monkeypatch):
     """Zero behavior change when the client ships no id: nothing is registered."""
     calls: list[tuple] = []

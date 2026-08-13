@@ -205,6 +205,12 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         # Resolve the sub-bar exit time of intra-bar stop/target exits from the run's
         # own 1-minute candles. Display only; best-effort (a fetch failure or missing
         # minute data just leaves exit_time_exact None).
+        # Reset the progress entry (total=0) first: this fetch can trigger a
+        # multi-second candle-cache backfill, and while the entry still reads
+        # simulate at done==total the frontend poller keeps showing
+        # "Simulating (100%)" instead of falling through to the backfill row.
+        if req.progressId:
+            pr.set_progress(req.progressId, stage="exit-times")
         run_s = resolution_seconds(req.resolution)
 
         async def _load_minutes(from_s: int, to_s: int) -> list[Candle]:
