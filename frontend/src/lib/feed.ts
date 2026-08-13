@@ -534,6 +534,7 @@ export async function fetchRangeStrict(
   toSec: number,
   priceSide: PriceSide = "mid",
   brokerId: string = DEFAULT_BROKER,
+  signal?: AbortSignal,
 ): Promise<KLineData[]> {
   const syn = getSynthetic(epic);
   const qs = syn
@@ -553,7 +554,7 @@ export async function fetchRangeStrict(
         priceSide,
         broker: brokerId,
       });
-  const res = await fetch(`${BASE}/api/candles${syn ? "/synthetic" : ""}?${qs}`);
+  const res = await fetch(`${BASE}/api/candles${syn ? "/synthetic" : ""}?${qs}`, { signal });
   if (!res.ok) throw new CandlesFetchError(res.status);
   return ((await res.json()) as RawCandle[]).map(toKLine);
 }
@@ -567,9 +568,10 @@ export async function fetchRange(
   toSec: number,
   priceSide: PriceSide = "mid",
   brokerId: string = DEFAULT_BROKER,
+  signal?: AbortSignal,
 ): Promise<KLineData[]> {
   try {
-    return await fetchRangeStrict(epic, resolution, fromSec, toSec, priceSide, brokerId);
+    return await fetchRangeStrict(epic, resolution, fromSec, toSec, priceSide, brokerId, signal);
   } catch (e) {
     if (e instanceof CandlesFetchError) return [];
     throw e;

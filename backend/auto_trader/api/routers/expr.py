@@ -219,13 +219,17 @@ async def _ensure_htf(
             )
 
 
-async def _compiled_run(r: ExprBacktestRequest):
+async def _compiled_run(
+    r: ExprBacktestRequest,
+    on_progress: Callable[[int, int], None] | None = None,
+):
     """Parse r's rule groups, compile, and run the engine over r's candles.
 
     Returns (BacktestResult, metrics dict). The main path and the baseline
     companion runs both go through here, so the two can never drift. Progress
-    is reported only when `r.progressId` is set — baseline requests strip it,
-    so they are progress-free by construction.
+    and cancel are the CALLER's concern (expr_backtest owns the registry entry
+    for the whole request, main pass + baselines): a `BacktestCancelled` raised
+    by the callback propagates out of here unmapped.
     """
     candles = [candle_from_dto(c) for c in r.candles]
     # I4 (expr): panel risk of kind atr/trailAtr and atr scaling spacing execute
@@ -289,23 +293,10 @@ async def _compiled_run(r: ExprBacktestRequest):
         series=atr_risk,
         mask=r.mask.to_mask() if r.mask else None,
     )
-    # Cosmetic progress reporting: the frontend polls
-    # GET /api/backtest/progress/{id} while this POST is in flight. Registered
-    # only once the run is about to start, so the validation 422s above (which
-    # the finally below doesn't cover) can't leak an entry.
-    on_progress: Callable[[int, int], None] | None = None
-    if r.progressId:
-        pid = r.progressId
-        pr.set_progress(pid, stage="simulate")
-        on_progress = lambda done, total: pr.update_progress(pid, done, total)
-    try:
-        # to_thread: the engine is CPU-bound sync; on the loop thread it would
-        # starve every other request — including the progress polls this
-        # callback exists to feed.
-        result = await asyncio.to_thread(engine.run, candles, on_progress=on_progress)
-    finally:
-        if r.progressId:
-            pr.clear_progress(r.progressId)
+    # to_thread: the engine is CPU-bound sync; on the loop thread it would
+    # starve every other request — including the progress polls the caller's
+    # callback exists to feed.
+    result = await asyncio.to_thread(engine.run, candles, on_progress=on_progress)
     # compute_metrics carries return_pct/sharpe/drawdown but NOT the headline
     # net_pnl / n_trades / win_rate — those live on the run summary. Baseline
     # consumers want both in one blob, so merge (the main path ignores this dict
@@ -321,40 +312,74 @@ async def _compiled_run(r: ExprBacktestRequest):
 async def expr_backtest(req: ExprBacktestRequest):
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
-    result, _metrics = await _compiled_run(req)
-    # Imported lazily to avoid a router import cycle (backtest.py imports many
-    # things at module load; expr.py is registered alongside it).
-    from ..routers.backtest import _result_to_response
-    window = [c for c in req.candles if c.time >= req.tradeFromTime]
-    response = _result_to_response(
-        result,
-        epic=req.epic,
-        resolution=req.resolution,
-        candles_window=window,
-        trade_from_time=req.tradeFromTime,
-        starting_cash=req.costs.startingCash,
-        commission_per_side=req.costs.commissionPerSide,
-    )
-    # Companion runs: the same candles/costs with synthesized entry rules, so the
-    # frontend can show what the signal added over "always in" and over the raw
-    # market. Sequential (each is a full engine run) and best-effort — a baseline
-    # that blows up reports None rather than failing the real run.
-    baselines_out = None
-    if req.baselines:
-        from auto_trader.api.baselines import hold_request, null_request
-        synth = {"null": null_request, "hold": hold_request}
-        baselines_out = {"null": None, "hold": None}
-        for kind in req.baselines:
-            try:
-                _res, m = await _compiled_run(synth[kind](req))
-                baselines_out[kind] = m
-            except Exception:  # noqa: BLE001  a baseline must never fail the run
-                # Swallowed by design, but not silently: without this the only
-                # symptom of a broken baseline is a null in the response.
-                log.warning("baseline run %r failed", kind, exc_info=True)
-                baselines_out[kind] = None
-    response.baselines = baselines_out
-    return response
+    # Progress + cancel lifecycle for the WHOLE request lives here, not in
+    # _compiled_run: registered before _compiled_run's HTF prefetch (that await
+    # is the one multi-second suspension before the engine starts, and a cancel
+    # landing during it must find an entry to flag instead of 404ing), and
+    # cleared only after the baseline passes, which reuse the same callback so
+    # a cancel reaches them too. The finally covers _compiled_run's validation
+    # 422s, so no entry can leak.
+    on_progress: Callable[[int, int], None] | None = None
+    if req.progressId:
+        pid = req.progressId
+        pr.set_progress(pid, stage="simulate")
+
+        def on_progress(done: int, total: int) -> None:
+            # Cooperative cancel: POST /api/backtest/cancel/{id} flips the
+            # entry's flag; the next engine progress beat lands here and aborts.
+            if pr.is_cancelled(pid):
+                raise pr.BacktestCancelled()
+            pr.update_progress(pid, done, total)
+    try:
+        result, _metrics = await _compiled_run(req, on_progress=on_progress)
+        # Imported lazily to avoid a router import cycle (backtest.py imports many
+        # things at module load; expr.py is registered alongside it).
+        from ..routers.backtest import _result_to_response
+        window = [c for c in req.candles if c.time >= req.tradeFromTime]
+        response = _result_to_response(
+            result,
+            epic=req.epic,
+            resolution=req.resolution,
+            candles_window=window,
+            trade_from_time=req.tradeFromTime,
+            starting_cash=req.costs.startingCash,
+            commission_per_side=req.costs.commissionPerSide,
+        )
+        # Companion runs: the same candles/costs with synthesized entry rules, so
+        # the frontend can show what the signal added over "always in" and over
+        # the raw market. Sequential (each is a full engine run) and best-effort —
+        # a baseline that blows up reports None rather than failing the real run.
+        baselines_out = None
+        if req.baselines:
+            from auto_trader.api.baselines import hold_request, null_request
+            synth = {"null": null_request, "hold": hold_request}
+            baselines_out = {"null": None, "hold": None}
+            # Relabel so the wire payload stays honest: these beats are baseline
+            # passes, not the main simulate (mirrors the coded handler's
+            # exit-times / cost-sensitivity stage relabels).
+            if req.progressId:
+                pr.set_progress(req.progressId, stage="baselines")
+            for kind in req.baselines:
+                try:
+                    _res, m = await _compiled_run(synth[kind](req), on_progress=on_progress)
+                    baselines_out[kind] = m
+                except pr.BacktestCancelled:
+                    # A user cancel outranks best-effort: stop the remaining
+                    # passes instead of burning through them.
+                    raise
+                except Exception:  # noqa: BLE001  a baseline must never fail the run
+                    # Swallowed by design, but not silently: without this the only
+                    # symptom of a broken baseline is a null in the response.
+                    log.warning("baseline run %r failed", kind, exc_info=True)
+                    baselines_out[kind] = None
+        response.baselines = baselines_out
+        return response
+    except pr.BacktestCancelled:
+        # Client asked to stop; 499 is distinct from any engine/validation error.
+        raise HTTPException(499, "backtest cancelled")
+    finally:
+        if req.progressId:
+            pr.clear_progress(req.progressId)
 
 
 @router.post("/api/expr/sweep/jobs", response_model=SweepJobSubmitResponse)

@@ -25,6 +25,7 @@ import {
   sweepAxesSignal,
   holdoutEvalSignal,
   sweepStateSignal,
+  requestBacktestCancel,
   requestSweepCancel,
   sweepTargetSignal,
   saveSweepTarget,
@@ -1994,6 +1995,13 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
           Clear results
         </button>
       )
+    ) : btMode === "backtest" && runInFlight && !sweepState?.running && !wfoState?.running ? (
+      // Single runs have no resumable server job, so unlike the sweep/WFO
+      // cancels there is no detach variant: cancel always aborts the fetch
+      // AND stops the server engine (BacktestButton owns both).
+      <button className="ghost" onClick={requestBacktestCancel}>
+        Cancel backtest
+      </button>
     ) : null;
   // Last completed run's wall-clock duration (session-only, final number only —
   // hidden while a run is in flight). Per mode so a backtest never shows the

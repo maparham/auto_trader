@@ -67,7 +67,7 @@ import { SESSION_PRESETS, minToTime, sessionWindowInTz } from "./lib/backtestSch
 import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
 import { loadBacktestLastUsed } from "./lib/persist/defaults";
 import { putPreset, newPreset } from "./lib/backtestPresets";
-import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal } from "./lib/signals";
+import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal, backtestRunningSignal, backtestCancelRequest } from "./lib/signals";
 import type { SweepRow } from "./api";
 import { saveSweepAxes } from "./lib/sweepMemory";
 
@@ -1143,6 +1143,33 @@ describe("clear sweep results", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
     expect(sweepStateSignal.value).toBeNull();
     expect(document.querySelector(".sweep-panel")).toBeNull();
+  });
+});
+
+describe("cancel backtest", () => {
+  afterEach(() => act(() => backtestRunningSignal.set(false)));
+
+  it("shows Cancel backtest while a run is in flight; clicking it requests a cancel", () => {
+    renderModal();
+    expect(screen.queryByRole("button", { name: "Cancel backtest" })).toBeNull();
+    act(() => backtestRunningSignal.set(true));
+    const before = backtestCancelRequest.value;
+    fireEvent.click(screen.getByRole("button", { name: "Cancel backtest" }));
+    expect(backtestCancelRequest.value).toBe(before + 1);
+    act(() => backtestRunningSignal.set(false));
+    expect(screen.queryByRole("button", { name: "Cancel backtest" })).toBeNull();
+  });
+
+  it("does not offer Cancel backtest when the in-flight run is a sweep", () => {
+    renderModal();
+    // A sweep also sets backtestRunningSignal; viewed from the Backtest tab it
+    // must not grow a Cancel-backtest button that couldn't stop it.
+    act(() => {
+      backtestRunningSignal.set(true);
+      sweepStateSignal.set({ rows: [], done: 0, total: 2, running: true });
+    });
+    expect(screen.queryByRole("button", { name: "Cancel backtest" })).toBeNull();
+    act(() => sweepStateSignal.set(null));
   });
 });
 

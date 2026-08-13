@@ -385,11 +385,12 @@ export interface ExprBacktestRequest {
   progressId?: string; // opt into the live-progress side-channel (see fetchBacktestProgress)
 }
 
-export async function runExprBacktest(req: ExprBacktestRequest): Promise<BacktestResult> {
+export async function runExprBacktest(req: ExprBacktestRequest, signal?: AbortSignal): Promise<BacktestResult> {
   const res = await fetch(`${BASE}/api/expr/backtest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
+    signal,
   });
   if (!res.ok) throw new Error(await errorDetail(res, `request failed (${res.status})`));
   return res.json();
@@ -431,7 +432,7 @@ export async function fetchClosenessHeatmap(
   return res.json();
 }
 
-export async function runBacktest(req: BacktestRequest): Promise<BacktestResult> {
+export async function runBacktest(req: BacktestRequest, signal?: AbortSignal): Promise<BacktestResult> {
   // Temporary phase timing (perf investigation): split serialize / backend / parse.
   const t0 = performance.now();
   const body = JSON.stringify(req);
@@ -440,6 +441,7 @@ export async function runBacktest(req: BacktestRequest): Promise<BacktestResult>
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body,
+    signal,
   });
   const t2 = performance.now();
   if (!res.ok) throw new Error(await errorDetail(res, `request failed (${res.status})`));
@@ -651,6 +653,17 @@ export async function pollSweepJob(
   );
   if (!res.ok) throw new Error(await errorDetail(res, `sweep poll failed (${res.status})`));
   return res.json();
+}
+
+// Best-effort cancel of an in-flight single backtest (structured or expr),
+// keyed by the run's progressId. The engine stops at its next progress beat
+// and the POST /api/backtest returns 499. A 404 means the run already
+// finished (its progress entry is cleared in a finally) — not an error.
+export async function cancelBacktestRun(progressId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/backtest/cancel/${progressId}`, { method: "POST" });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(await errorDetail(res, `backtest cancel failed (${res.status})`));
+  }
 }
 
 // Ask the backend to stop a running job (best effort).

@@ -20,7 +20,8 @@ import type { PriceSide } from "./theme";
 import { defaultBacktestConfig, type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
 import { resolveMask } from "./lib/backtestSchedule";
 import { loadCodedCfg, resolveParamValues, sendableRisk } from "./lib/codedConfig";
-import { BASELINE_KINDS, fetchStrategies, saveSweepArchive } from "./api";
+import { BASELINE_KINDS, cancelBacktestRun, fetchStrategies, saveSweepArchive } from "./api";
+import { cancelWithRetry } from "./lib/cancelRetry";
 import {
   resolveWindow,
   resolveHistoryStart,
@@ -49,6 +50,7 @@ import {
   backtestMarkersShownSignal,
   backtestEquityShownSignal,
   backtestRunningSignal,
+  backtestCancelRequest,
   progressStageSignal,
   backtestDurationSignal,
   sweepDurationSignal,
@@ -172,6 +174,17 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     // Declared outside the try so the finally below can always stop it.
     const progressId = crypto.randomUUID();
     const stopProgress = startBacktestProgressPoller(progressId);
+    // Cancel plumbing for the single-run path (the modal's "Cancel backtest",
+    // Backtest mode only — sweep/WFO cancels have their own controllers in
+    // their branches below). Aborting kills whichever fetch is in flight
+    // (candle download or the run POST); the server-side engine is stopped
+    // best-effort via its progressId. cancelBacktestRun swallows the 404 of a
+    // run that already finished, so a late cancel is harmless.
+    const runCtl = new AbortController();
+    const unsubRunCancel = backtestCancelRequest.subscribe(() => {
+      runCtl.abort();
+      void cancelWithRetry(() => cancelBacktestRun(progressId));
+    });
     setError(null);
     // Captured once up front: the modal publishes the axes (empty in Backtest
     // mode) right before bumping the run request, and nothing may change them
@@ -276,7 +289,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       }
       const toSec = Math.floor(windowToMs / 1000);
       const fetchBars = (fromMs: number) =>
-        fetchRange(epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId);
+        fetchRange(epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId, runCtl.signal);
 
       // The chart's live panes, read ONCE: a row saying `SLOPE.9 > 0.5`
       // names an output and restates none of the pane's settings, so the pane is
@@ -671,6 +684,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           toMs: windowToMs,
           mask: cfg.range.mask?.enabled ? resolveMask(cfg.range.mask) : undefined,
         },
+        runCtl.signal,
       );
       // The summary chip is driven by the signal subscription above, so just
       // publish the result (rehydrate uses the same publish path).
@@ -705,8 +719,14 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       backtestDurationSignal.set(performance.now() - runStart);
       saveBacktestLastUsed(cfg);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "backtest failed");
+      // A user Cancel and a real failure reject the same promise — check the
+      // controller's own signal (not the error) to tell them apart, so Cancel
+      // never renders as an error (mirrors the sweep branch's catch).
+      if (!runCtl.signal.aborted) {
+        setError(e instanceof Error ? e.message : "backtest failed");
+      }
     } finally {
+      unsubRunCancel();
       setRunning(false);
       stopProgress();
       backtestRunningSignal.set(false);

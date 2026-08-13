@@ -526,6 +526,15 @@ export const sweepStateSignal = new Signal<SweepRunState | null>(null);
 // holds the AbortController for the in-flight sweep and aborts it on the next
 // tick after this changes.
 export const sweepCancelRequest = new Signal<number>(0);
+// Bumped by the modal's "Cancel backtest" button (Backtest mode only).
+// BacktestButton holds the run's AbortController: it aborts the in-flight
+// fetch (download or POST) and best-effort cancels the server engine via
+// POST /api/backtest/cancel/{progressId}. No detach variant — a single run
+// has no resumable server job, so cancel always means stop.
+export const backtestCancelRequest = new Signal<number>(0);
+export function requestBacktestCancel(): void {
+  backtestCancelRequest.set(backtestCancelRequest.value + 1);
+}
 // Whether the pending abort should ALSO kill the server-side job. A closed modal
 // (detach) sets this false so the job keeps running and a reload can re-attach;
 // the explicit "Cancel sweep" button sets it true to stop the job outright.

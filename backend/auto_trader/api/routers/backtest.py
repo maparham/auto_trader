@@ -180,7 +180,13 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     if req.progressId:
         pid = req.progressId
         pr.set_progress(pid, stage="simulate")
-        on_progress = lambda done, total: pr.update_progress(pid, done, total)
+
+        def on_progress(done: int, total: int) -> None:
+            # Cooperative cancel: POST /api/backtest/cancel/{id} flips the
+            # entry's flag; the next engine progress beat lands here and aborts.
+            if pr.is_cancelled(pid):
+                raise pr.BacktestCancelled()
+            pr.update_progress(pid, done, total)
     try:
         try:
             result, strategy = await _run_coded(
@@ -345,6 +351,10 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             summary=summary,
             metrics=metrics,
         )
+    except pr.BacktestCancelled:
+        # Client asked to stop (POST /api/backtest/cancel/{id}); 499 mirrors
+        # nginx's "client closed request" and is distinct from any engine error.
+        raise HTTPException(499, "backtest cancelled")
     finally:
         if req.progressId:
             pr.clear_progress(req.progressId)
@@ -471,6 +481,16 @@ async def backtest_progress(progress_id: str) -> dict:
     if entry is None:
         raise HTTPException(404, "no such run")
     return entry
+
+
+@router.post("/api/backtest/cancel/{progress_id}")
+async def cancel_backtest(progress_id: str) -> dict:
+    """Cooperatively cancel an in-flight POST /api/backtest (or expr) run. The
+    engine observes the flag at its next progress beat and the POST returns
+    499. 404 once the run has finished (its entry is cleared in a finally)."""
+    if not pr.request_cancel(progress_id):
+        raise HTTPException(404, "no such run")
+    return {"ok": True}
 
 
 @router.get("/api/backtest/runs")

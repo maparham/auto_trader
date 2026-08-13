@@ -1070,10 +1070,11 @@ export async function runAndRender(
   scope: string,
   displayResolution: string,
   period?: BacktestPeriod,
+  signal?: AbortSignal,
 ): Promise<StoredBacktestResult> {
   // Temporary phase timing (perf investigation).
   const t0 = performance.now();
-  const result = isExprRequest(req) ? await runExprBacktest(req) : await runBacktest(req);
+  const result = isExprRequest(req) ? await runExprBacktest(req, signal) : await runBacktest(req, signal);
   const t1 = performance.now();
   // Drops the previous run's markers/equity/highlight/selection zone AND
   // detaches its highlight/selection subscriptions + resets
