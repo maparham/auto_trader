@@ -108,4 +108,72 @@ describe("WfoResults", () => {
     fireEvent.click(document.querySelectorAll(".wfo-fold-row")[0]);
     await screen.findByText(/reopen from the archive/i);
   });
+
+  // --- baseline comparison: excess over the null baseline ------------------
+  // Folds: [0] normal +2.5, [1] no-winner, [2] low-sample -1.2, [3] errored.
+  const excessState = (): WfoRunState => {
+    const s = scheme("3m");
+    s.folds = [
+      fold(0, { excess_return_pct: 2.5 }),
+      fold(1, { combo: null, error: null }),
+      fold(2, { low_sample: true, excess_return_pct: -1.2 }),
+      fold(3, { error: "boom", excess_return_pct: null }),
+    ];
+    s.robustness = { ...s.robustness, median_fold_excess_pct: 0.65, pct_folds_beating_null: 0.57 };
+    return doneState([s]);
+  };
+  const renderResults = (st: WfoRunState) =>
+    render(<WfoResults state={st} onApplyCombo={() => {}} onLoadFoldTable={() => Promise.resolve([])}
+      axes={[]} schemeIndex={0} onSchemeIndex={() => {}} />);
+
+  it("renders the Excess % column with sign coloring", () => {
+    renderResults(excessState());
+    expect(screen.getByText("Excess %")).toBeTruthy();
+    expect(screen.getByText("+2.5%")).toBeTruthy();
+    expect(screen.getByText("-1.2%")).toBeTruthy();
+    const rows = document.querySelectorAll(".wfo-fold-row");
+    expect(rows[0].querySelector("td.pos")).toBeTruthy();
+    expect(rows[2].querySelector("td.neg")).toBeTruthy();
+    // Errored fold keeps the row rectangular: window + failed + 5 dashes + apply.
+    expect(rows[3].querySelectorAll("td").length).toBe(8);
+  });
+
+  it("tones an exactly-zero excess neutral and drops the + prefix", () => {
+    const s = scheme("3m");
+    s.folds = [fold(0, { excess_return_pct: 0 })];
+    renderResults(doneState([s]));
+    const cell = document.querySelectorAll(".wfo-fold-row")[0].querySelectorAll("td")[4];
+    expect(cell.className).toBe("");
+    expect(cell.textContent).toBe("0%");
+  });
+
+  it("renders the excess scorecard tiles", () => {
+    renderResults(excessState());
+    expect(screen.getByText("Median excess")).toBeTruthy();
+    expect(screen.getByText("Folds > null")).toBeTruthy();
+    expect(screen.getByText("57%")).toBeTruthy();
+    expect(screen.getByText("0.7%")).toBeTruthy();
+  });
+
+  it("renders dashes when baseline data is absent (old archive)", () => {
+    renderResults(doneState());
+    expect(screen.getByText("Excess %")).toBeTruthy();
+    // Column still present; the normal fold row carries an empty excess cell.
+    const rows = document.querySelectorAll(".wfo-fold-row");
+    expect(rows[0].querySelectorAll("td").length).toBe(8);
+    // Column order: window, params, IS, OOS ret, Excess, OOS trades, WFE, apply.
+    expect(rows[0].querySelectorAll("td")[4].textContent).toBe("–");
+    // Tiles fall back to the en dash, not "undefined".
+    expect(screen.getAllByText("–").length).toBeGreaterThan(0);
+  });
+
+  it("fmt does not render a negative zero", () => {
+    const st = doneState();
+    st.result!.schemes[0].robustness = {
+      ...st.result!.schemes[0].robustness, median_fold_excess_pct: -0.04,
+    };
+    renderResults(st);
+    expect(screen.queryByText("-0%")).toBeNull();
+    expect(screen.getByText("0%")).toBeTruthy();
+  });
 });

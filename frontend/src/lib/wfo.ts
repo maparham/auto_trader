@@ -1,6 +1,7 @@
 // Walk-forward optimization config, payload builder, and persistence.
 
 import {
+  BASELINE_KINDS,
   cancelWfoJob,
   pollWfoJob,
   submitWfoJob,
@@ -151,6 +152,11 @@ export function buildWalkForwardPayload(
     objective,
     matrixTrainSpans: matrixTrainSpans.length > 0 ? matrixTrainSpans : undefined,
     evalMode: cfg.evalMode,
+    // Always on (product decision): every fold is scored against the null and
+    // hold baselines so Excess % is there without a per-run opt-in. One payload
+    // object feeds both the expr and the structured walk-forward submissions;
+    // the structured route accepts and ignores the field.
+    baselines: BASELINE_KINDS,
   };
 
   return { payload, comboTotal: combos.length, dropped };

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 from typing import Callable
 
 from fastapi import APIRouter, HTTPException
@@ -19,6 +20,7 @@ from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.core import progress as pr
 from auto_trader.engine.backtest import BacktestEngine
+from auto_trader.engine.metrics import compute_metrics
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.closeness import (
     Norm,
@@ -65,6 +67,7 @@ from ..sweep_jobs import JOBS
 from ..wfo_jobs import WFO_JOBS
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 
 def _parse_group(rows, *, is_exit: bool, group: str, instances=None) -> list[tuple[N.Row, str]]:
@@ -216,11 +219,15 @@ async def _ensure_htf(
             )
 
 
-@router.post("/api/expr/backtest")
-async def expr_backtest(req: ExprBacktestRequest):
-    if not req.candles:
-        raise HTTPException(422, "candles must not be empty")
-    candles = [candle_from_dto(c) for c in req.candles]
+async def _compiled_run(r: ExprBacktestRequest):
+    """Parse r's rule groups, compile, and run the engine over r's candles.
+
+    Returns (BacktestResult, metrics dict). The main path and the baseline
+    companion runs both go through here, so the two can never drift. Progress
+    is reported only when `r.progressId` is set — baseline requests strip it,
+    so they are progress-free by construction.
+    """
+    candles = [candle_from_dto(c) for c in r.candles]
     # I4 (expr): panel risk of kind atr/trailAtr and atr scaling spacing execute
     # against series["ATR_{length}"]. The expr wire format has no series field, so
     # we compute them here — without this the engine reads None and the position
@@ -229,9 +236,9 @@ async def expr_backtest(req: ExprBacktestRequest):
     try:
         atr_risk = build_atr_risk_series(
             candles,
-            (req.longRisk, req.shortRisk),
-            (req.longScaling, req.shortScaling),
-            first_tradeable_index(candles, req.tradeFromTime),
+            (r.longRisk, r.shortRisk),
+            (r.longScaling, r.shortScaling),
+            first_tradeable_index(candles, r.tradeFromTime),
         )
     except AtrWarmupError as e:
         raise HTTPException(422, {
@@ -240,55 +247,55 @@ async def expr_backtest(req: ExprBacktestRequest):
         })
     htf: dict[str, list[Candle]] = {
         tf: [candle_from_dto(c) for c in bars]
-        for tf, bars in (req.htfCandles or {}).items()
+        for tf, bars in (r.htfCandles or {}).items()
     }
     groups = [
-        (req.longEntry, False, "longEntry"), (req.longExit, True, "longExit"),
-        (req.shortEntry, False, "shortEntry"), (req.shortExit, True, "shortExit"),
+        (r.longEntry, False, "longEntry"), (r.longExit, True, "longExit"),
+        (r.shortEntry, False, "shortEntry"), (r.shortExit, True, "shortExit"),
     ]
     # Resolved ONCE per request, then threaded into validate/compile/warm-up.
-    instances = request_instances(req)
+    instances = request_instances(r)
     parsed = [_parse_group(rows, is_exit=ex, group=g, instances=instances) for rows, ex, g in groups]
     # @tf rows need their higher-timeframe candles in hand before compile_row
     # precomputes series; fetch whatever the request didn't ship.
-    await _ensure_htf([n for nodes in parsed for n, _ in nodes], req, htf, instances)
+    await _ensure_htf([n for nodes in parsed for n, _ in nodes], r, htf, instances)
     strategy = ExprRuleStrategy(
-        *[[compile_row(n, candles, req.resolution, htf, instances, source=src)
+        *[[compile_row(n, candles, r.resolution, htf, instances, source=src)
            for n, src in nodes] for nodes in parsed],
-        quantity=req.costs.quantity,
-        trade_from_time=req.tradeFromTime,
-        long_enabled=req.longEnabled,
-        short_enabled=req.shortEnabled,
-        long_entry_combine=req.longEntryCombine,
-        long_exit_combine=req.longExitCombine,
-        short_entry_combine=req.shortEntryCombine,
-        short_exit_combine=req.shortExitCombine,
+        quantity=r.costs.quantity,
+        trade_from_time=r.tradeFromTime,
+        long_enabled=r.longEnabled,
+        short_enabled=r.shortEnabled,
+        long_entry_combine=r.longEntryCombine,
+        long_exit_combine=r.longExitCombine,
+        short_entry_combine=r.shortEntryCombine,
+        short_exit_combine=r.shortExitCombine,
     )
     engine = BacktestEngine(
         strategy,
-        starting_cash=req.costs.startingCash,
-        commission_per_side=req.costs.commissionPerSide,
-        slippage=req.costs.slippage.value,
+        starting_cash=r.costs.startingCash,
+        commission_per_side=r.costs.commissionPerSide,
+        slippage=r.costs.slippage.value,
         slippage_atr_mult=(
-            req.costs.slippage.atrMult if req.costs.slippage.kind == "atr" else 0.0
+            r.costs.slippage.atrMult if r.costs.slippage.kind == "atr" else 0.0
         ),
-        spread=req.costs.spread,
-        fin_long_daily_pct=req.costs.finLongDailyPct,
-        fin_short_daily_pct=req.costs.finShortDailyPct,
-        long_risk=req.longRisk.to_risk() if req.longRisk else None,
-        short_risk=req.shortRisk.to_risk() if req.shortRisk else None,
-        long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
-        short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
+        spread=r.costs.spread,
+        fin_long_daily_pct=r.costs.finLongDailyPct,
+        fin_short_daily_pct=r.costs.finShortDailyPct,
+        long_risk=r.longRisk.to_risk() if r.longRisk else None,
+        short_risk=r.shortRisk.to_risk() if r.shortRisk else None,
+        long_scaling=r.longScaling.to_scaling() if r.longScaling else None,
+        short_scaling=r.shortScaling.to_scaling() if r.shortScaling else None,
         series=atr_risk,
-        mask=req.mask.to_mask() if req.mask else None,
+        mask=r.mask.to_mask() if r.mask else None,
     )
     # Cosmetic progress reporting: the frontend polls
     # GET /api/backtest/progress/{id} while this POST is in flight. Registered
     # only once the run is about to start, so the validation 422s above (which
     # the finally below doesn't cover) can't leak an entry.
     on_progress: Callable[[int, int], None] | None = None
-    if req.progressId:
-        pid = req.progressId
+    if r.progressId:
+        pid = r.progressId
         pr.set_progress(pid, stage="simulate")
         on_progress = lambda done, total: pr.update_progress(pid, done, total)
     try:
@@ -297,13 +304,29 @@ async def expr_backtest(req: ExprBacktestRequest):
         # callback exists to feed.
         result = await asyncio.to_thread(engine.run, candles, on_progress=on_progress)
     finally:
-        if req.progressId:
-            pr.clear_progress(req.progressId)
+        if r.progressId:
+            pr.clear_progress(r.progressId)
+    # compute_metrics carries return_pct/sharpe/drawdown but NOT the headline
+    # net_pnl / n_trades / win_rate — those live on the run summary. Baseline
+    # consumers want both in one blob, so merge (the main path ignores this dict
+    # and re-derives its own inside _result_to_response, unchanged).
+    metrics = compute_metrics(
+        result.trades, result.equity, result.net_pnl, r.costs.startingCash,
+        resolution_seconds(r.resolution), financing_total=result.financing_total,
+    ) | result.summary()
+    return result, metrics
+
+
+@router.post("/api/expr/backtest")
+async def expr_backtest(req: ExprBacktestRequest):
+    if not req.candles:
+        raise HTTPException(422, "candles must not be empty")
+    result, _metrics = await _compiled_run(req)
     # Imported lazily to avoid a router import cycle (backtest.py imports many
     # things at module load; expr.py is registered alongside it).
     from ..routers.backtest import _result_to_response
     window = [c for c in req.candles if c.time >= req.tradeFromTime]
-    return _result_to_response(
+    response = _result_to_response(
         result,
         epic=req.epic,
         resolution=req.resolution,
@@ -312,6 +335,26 @@ async def expr_backtest(req: ExprBacktestRequest):
         starting_cash=req.costs.startingCash,
         commission_per_side=req.costs.commissionPerSide,
     )
+    # Companion runs: the same candles/costs with synthesized entry rules, so the
+    # frontend can show what the signal added over "always in" and over the raw
+    # market. Sequential (each is a full engine run) and best-effort — a baseline
+    # that blows up reports None rather than failing the real run.
+    baselines_out = None
+    if req.baselines:
+        from auto_trader.api.baselines import hold_request, null_request
+        synth = {"null": null_request, "hold": hold_request}
+        baselines_out = {"null": None, "hold": None}
+        for kind in req.baselines:
+            try:
+                _res, m = await _compiled_run(synth[kind](req))
+                baselines_out[kind] = m
+            except Exception:  # noqa: BLE001  a baseline must never fail the run
+                # Swallowed by design, but not silently: without this the only
+                # symptom of a broken baseline is a null in the response.
+                log.warning("baseline run %r failed", kind, exc_info=True)
+                baselines_out[kind] = None
+    response.baselines = baselines_out
+    return response
 
 
 @router.post("/api/expr/sweep/jobs", response_model=SweepJobSubmitResponse)
@@ -413,6 +456,7 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest):
         timeframe=req.resolution,
         expr=True,
         eval_mode=wf.evalMode,
+        baselines=wf.baselines,
         on_complete=_persist_wfo(req),
     )
     return WfoJobSubmitResponse(

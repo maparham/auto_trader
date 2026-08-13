@@ -212,6 +212,25 @@ export interface BacktestAnalysis extends LegAnalysis {
   rolling?: { window: number; points: { t: number; expectancy: number }[] } | null;
 }
 
+// --- baseline comparison -----------------------------------------------------
+// Two reference strategies the backend re-runs over the same window/costs so a
+// result can be read against an always-in run and a bought-and-held one:
+// "null" replaces entries with 1==1 on the enabled sides, all other settings
+// identical (always in, same structure); "hold" opens one position per enabled
+// side from window start to end, no stops, exits or session windows.
+// Each blob is the full compute_metrics payload MERGED with
+// summary(), so it carries net_pnl /
+// n_trades / win_rate alongside return_pct / sharpe / max_drawdown_pct. Either
+// side is null when that baseline could not be synthesized for the run.
+export type BaselineKind = "null" | "hold";
+/** What every baseline-aware request asks for (both baselines, always on). */
+export const BASELINE_KINDS: BaselineKind[] = ["null", "hold"];
+export type BaselineMetrics = Record<string, number | null>;
+export interface Baselines {
+  null: BaselineMetrics | null;
+  hold: BaselineMetrics | null;
+}
+
 export interface BacktestResult {
   epic: string;
   resolution: string;
@@ -267,6 +286,10 @@ export interface BacktestResult {
     net_pnl: number[];
     breakeven_multiple: number | null;
   } | null;
+  // Reference baselines over the same window/costs. Absent on cached payloads
+  // predating the feature and on surfaces that don't request them (see
+  // ExprBacktestRequest.baselines).
+  baselines?: Baselines | null;
 }
 
 export interface BacktestRequest {
@@ -355,6 +378,10 @@ export interface ExprBacktestRequest {
     combos: Array<Record<string, number | boolean | string>>;
     windows?: number[] | null;
   };
+  // Opt into the reference baselines on the result (BacktestResult.baselines).
+  // Single runs only: sweep/walk-forward submissions share this same body and
+  // must not carry it (the sweep endpoint ignores it).
+  baselines?: BaselineKind[] | null;
   progressId?: string; // opt into the live-progress side-channel (see fetchBacktestProgress)
 }
 
@@ -805,6 +832,10 @@ export interface WalkForwardPayload {
   // "exact" scores each train window as a real flat-start run (default);
   // "fast" is the one-run-sliced approximation. Omitted defaults to exact.
   evalMode?: "exact" | "fast";
+  // Reference baselines to re-run per fold (see BacktestResult.baselines).
+  // Honoured by the expr walk-forward route; the structured route accepts and
+  // ignores it. Always on for walk-forward — see buildWalkForwardPayload.
+  baselines?: BaselineKind[];
 }
 
 export interface WfoFoldRow {       // streamed winner row (job status foldRows)
@@ -822,6 +853,13 @@ export interface WfoFold {          // result payload, snake_case
   wfe: number | null;
   low_sample: boolean;
   error: string | null;
+  // Baselines re-run over this fold's TEST window (same shape as
+  // BacktestResult.baselines' sides), and the fold's OOS return_pct minus the
+  // null baseline's. Null when the baseline could not be synthesized; absent on
+  // archived results predating the feature.
+  null_metrics?: BaselineMetrics | null;
+  hold_metrics?: BaselineMetrics | null;
+  excess_return_pct?: number | null;
 }
 
 export interface WfoScheme {
@@ -838,7 +876,14 @@ export interface WfoScheme {
     overall: number | null;
     adjacency: number | null;
   };
-  robustness: Record<string, number | null>; // wfe_median, robustness_score, ...
+  // wfe_median, robustness_score, ... plus the baseline aggregates (median of
+  // the folds' excess_return_pct, and the share of folds beating the null
+  // baseline). Both null when no fold produced an excess; absent on archived
+  // results predating the feature.
+  robustness: Record<string, number | null> & {
+    median_fold_excess_pct?: number | null;
+    pct_folds_beating_null?: number | null;
+  };
 }
 
 export interface WfoResult {

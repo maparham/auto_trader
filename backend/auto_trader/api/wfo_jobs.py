@@ -20,7 +20,9 @@ from dataclasses import dataclass, field
 from auto_trader.api import wfo_worker
 from auto_trader.api.sweep_jobs import SWEEP_WORKERS
 from auto_trader.api.wfo_select import plateau_breadth, select_fold
-from auto_trader.api.wfo_stitch import aggregate, annualized_rate, fold_wfe, stitch
+from auto_trader.api.wfo_stitch import (
+    aggregate, annualized_rate, fold_excess, fold_wfe, stitch,
+)
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.engine.stability import parameter_stability
 
@@ -78,9 +80,16 @@ class WfoJobManager:
         workers: int | None = None,
         expr: bool = False,
         eval_mode: str = "exact",
+        baselines: list[str] | None = None,
         on_complete=None,
     ) -> WfoJob:
-        total = len(combos) + sum(len(sc["folds"]) for sc in schemes)
+        # Baselines are an expr-only companion run per fold; `_run` gates its
+        # dispatch on the SAME expression, so the progress total can never drift
+        # from the futures actually submitted. De-duplicated because `_run`
+        # de-dupes (key, kind) too -- a repeated kind runs once.
+        n_baselines = len(set(baselines)) if (baselines and expr) else 0
+        n_folds = sum(len(sc["folds"]) for sc in schemes)
+        total = len(combos) + n_folds * (1 + n_baselines)
         job = WfoJob(
             job_id=uuid.uuid4().hex,
             epic=epic,
@@ -102,6 +111,7 @@ class WfoJobManager:
             "workers": workers,
             "expr": expr,
             "eval_mode": eval_mode,
+            "baselines": baselines,
             "on_complete": on_complete,
         }
         t = threading.Thread(target=self._run, args=(job, kw), daemon=True)
@@ -216,21 +226,52 @@ class WfoJobManager:
                                 "key": key, "combo": rows[best_i]["combo"],
                                 "test_from": f["test_from"], "test_to": f["test_to"],
                             })
+                # Same gate as submit()'s total: baselines are expr-only.
+                wf_baselines = kw.get("baselines") if kw.get("expr", False) else None
+                baseline_payloads: list[dict] = []
+                if wf_baselines:
+                    seen_bl: set[tuple] = set()
+                    for p in test_payloads:
+                        for kind in wf_baselines:
+                            k = (p["key"], kind)
+                            if k in seen_bl:
+                                continue
+                            seen_bl.add(k)
+                            baseline_payloads.append({
+                                "key": p["key"], "kind": kind,
+                                "test_from": p["test_from"],
+                                "test_to": p["test_to"],
+                            })
+                # Both batches are submitted before either is drained, so the
+                # pool works them concurrently; they are harvested in turn.
+                test_futures = [pool.submit(wfo_worker.run_test, p)
+                                for p in test_payloads]
+                baseline_futures = [pool.submit(wfo_worker.run_baseline, p)
+                                    for p in baseline_payloads]
                 test_rows = self._drain(
-                    pool,
-                    [pool.submit(wfo_worker.run_test, p) for p in test_payloads],
-                    job, t0,
+                    pool, test_futures, job, t0,
                     stream=lambda r: job.fold_rows.append(
                         {"key": r["key"], "combo": r["combo"],
                          "oos_metrics": r["metrics"], "error": r["error"]}))
+                # Must precede the baseline drain: a cancel kills the worker
+                # processes, and fut.result() on a killed worker raises
+                # BrokenProcessPool, which would turn a clean cancel into an error.
                 if job.cancelled:
                     return
+                baseline_rows = self._drain(pool, baseline_futures, job, t0)
+                if job.cancelled:
+                    return
+                baselines_by_key: dict[str, dict[str, dict]] = {}
+                for r in baseline_rows:
+                    if r and r.get("key") and r.get("kind"):
+                        baselines_by_key.setdefault(r["key"], {})[r["kind"]] = r
                 # --- phase 3: aggregate ---
                 job.phase = "aggregate"
                 job.done = job.total  # folds with no eligible winner finish early
                 job.result = self._aggregate(
                     kw, schemes, selections,
-                    {r["key"]: r for r in test_rows if r}, grid_rows)
+                    {r["key"]: r for r in test_rows if r}, grid_rows,
+                    baselines_by_key)
                 job.phase = "done"
                 cb = kw.get("on_complete")
                 if cb is not None and not job.cancelled:
@@ -239,7 +280,9 @@ class WfoJobManager:
                 job.error = str(e)
             finally:
                 if pool is not None:
-                    pool.shutdown(wait=False)
+                    # cancel_futures: a cancel landing between drains can leave
+                    # queued baseline futures to run in orphaned workers.
+                    pool.shutdown(wait=False, cancel_futures=True)
                 # Emitted BEFORE running flips so a log consumer polling on
                 # running=False always finds the line already written.
                 logger.info("wfo job %s done in %.1fs (phase=%s)",
@@ -321,7 +364,9 @@ class WfoJobManager:
                 pass
 
     def _aggregate(self, kw: dict, schemes: list[dict], selections: dict,
-                   tests_by_key: dict, grid_rows: list[dict]) -> dict:
+                   tests_by_key: dict, grid_rows: list[dict],
+                   baselines_by_key: dict | None = None) -> dict:
+        baselines_by_key = baselines_by_key or {}
         res_s = resolution_seconds(kw["req_dict"]["resolution"])
         cash = kw["req_dict"]["costs"]["startingCash"]
         out_schemes = []
@@ -339,6 +384,8 @@ class WfoJobManager:
                     "test_from": f["test_from"], "test_to": f["test_to"],
                     "combo": None, "is_metrics": None, "oos_metrics": None,
                     "wfe": None, "low_sample": False,
+                    "null_metrics": None, "hold_metrics": None,
+                    "excess_return_pct": None,
                     "error": test["error"] if test else None,
                 }
                 tables.append(([r["combo"] for r in sel["rows"]], sel["values"]))
@@ -348,6 +395,12 @@ class WfoJobManager:
                     entry["is_metrics"] = row["metrics"]
                 if test and test["metrics"] is not None and entry["is_metrics"]:
                     entry["oos_metrics"] = test["metrics"]
+                    base = baselines_by_key.get(key, {})
+                    nrow, hrow = base.get("null"), base.get("hold")
+                    entry["null_metrics"] = nrow["metrics"] if nrow else None
+                    entry["hold_metrics"] = hrow["metrics"] if hrow else None
+                    entry["excess_return_pct"] = fold_excess(
+                        entry["oos_metrics"], entry["null_metrics"])
                     tr_s = f["train_to"] - f["train_from"]
                     te_s = f["test_to"] - f["test_from"]
                     entry["wfe"] = fold_wfe(entry["is_metrics"], test["metrics"],

@@ -56,3 +56,43 @@ def test_aggregate_block():
     assert out["low_sample_folds"] == 1
     assert out["n_folds"] == 3
     assert 0 <= out["robustness_score"] <= 100
+
+
+def test_fold_excess_subtracts_null_return():
+    from auto_trader.api.wfo_stitch import fold_excess
+
+    assert fold_excess({"return_pct": 5.0}, {"return_pct": 3.0}) == 2.0
+    assert fold_excess({"return_pct": -1.0}, {"return_pct": 2.5}) == -3.5
+
+
+def test_fold_excess_none_when_either_missing():
+    from auto_trader.api.wfo_stitch import fold_excess
+
+    assert fold_excess(None, {"return_pct": 3.0}) is None
+    assert fold_excess({"return_pct": 5.0}, None) is None
+    assert fold_excess({"return_pct": None}, {"return_pct": 3.0}) is None
+    assert fold_excess({"return_pct": 5.0}, {"return_pct": None}) is None
+
+
+def test_aggregate_excess_fields():
+    folds = [
+        {"oos_metrics": {"return_pct": 5.0, "net_pnl": 5.0}, "wfe": None,
+         "excess_return_pct": 2.0},
+        {"oos_metrics": {"return_pct": -1.0, "net_pnl": -1.0}, "wfe": None,
+         "excess_return_pct": -3.0},
+        {"oos_metrics": {"return_pct": 1.0, "net_pnl": 1.0}, "wfe": None,
+         "excess_return_pct": 4.0},
+        {"oos_metrics": None, "wfe": None, "excess_return_pct": None},
+    ]
+    from auto_trader.api.wfo_stitch import aggregate
+    block = aggregate(folds, {}, {}, None, oos_trades_total=0)
+    assert block["median_fold_excess_pct"] == 2.0   # median of [2, -3, 4]
+    assert block["pct_folds_beating_null"] == round(2 / 3, 4)  # None fold excluded
+
+
+def test_aggregate_excess_fields_all_missing():
+    folds = [{"oos_metrics": None, "wfe": None, "excess_return_pct": None}]
+    from auto_trader.api.wfo_stitch import aggregate
+    block = aggregate(folds, {}, {}, None, oos_trades_total=0)
+    assert block["median_fold_excess_pct"] is None
+    assert block["pct_folds_beating_null"] is None

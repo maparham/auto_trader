@@ -27,7 +27,10 @@ export const PHASE_LABEL: Record<string, string> = {
 function fmt(v: number | null | undefined, digits = 2): string {
   if (v == null || !isFinite(v)) return "–";
   const s = v.toFixed(digits);
-  return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
+  // Strip trailing zeros only when there is a fractional part (fmt(100, 0)
+  // must stay "100"), then fold a rounded-away "-0" back to "0".
+  const t = s.includes(".") ? s.replace(/\.?0+$/, "") : s;
+  return t === "-0" ? "0" : t;
 }
 function fmtPct01(v: number | null | undefined): string {
   return v == null || !isFinite(v) ? "–" : `${Math.round(v * 100)}%`;
@@ -58,13 +61,14 @@ export function driftPath(values: Array<number | string | null>): string {
   return d;
 }
 
-type FoldCol = "window" | "is_obj" | "oos_return" | "oos_trades" | "wfe";
+type FoldCol = "window" | "is_obj" | "oos_return" | "excess" | "oos_trades" | "wfe";
 
 function foldColValue(f: WfoFold, col: FoldCol, metric: string): number | null {
   switch (col) {
     case "window": return f.test_from;
     case "is_obj": return f.is_metrics?.[metric] ?? null;
     case "oos_return": return f.oos_metrics?.return_pct ?? null;
+    case "excess": return f.excess_return_pct ?? null;
     case "oos_trades": return f.oos_metrics?.n_trades ?? null;
     case "wfe": return f.wfe;
   }
@@ -93,6 +97,7 @@ const FOLD_TIPS = {
   is_obj: (metric: string) =>
     `In-sample ${metric}: the winner's ${metric} on the train window it was optimized on.`,
   oos_return: "Return of the winning combo on the unseen test window.",
+  excess: "Fold return minus the null baseline's return over the same test window (1==1 entries, base strategy settings). Positive means the strategy beat always-in.",
   oos_trades: "Trade count in the test window. Folds with fewer than 5 trades are greyed out; their results are noise.",
   wfe: "Walk-forward efficiency for this fold: annualized test return divided by annualized train return.",
 } as const;
@@ -204,6 +209,11 @@ export const WfoResults = memo(function WfoResults(props: {
       tone: rb.wfe_median != null ? (rb.wfe_median >= 0.5 ? " pos" : rb.wfe_median < 0 ? " neg" : "") : "" },
     { label: "Folds profitable", value: fmtPct01(rb.pct_folds_profitable),
       tip: "Share of test windows that ended positive." },
+    { label: "Median excess", value: rb.median_fold_excess_pct == null ? "–" : `${fmt(rb.median_fold_excess_pct, 1)}%`,
+      tip: "Median across folds of the fold's return minus the null baseline's return (1==1 entries, base strategy settings). Positive means the strategy typically beat always-in.",
+      tone: rb.median_fold_excess_pct != null ? (rb.median_fold_excess_pct > 0 ? " pos" : rb.median_fold_excess_pct < 0 ? " neg" : "") : "" },
+    { label: "Folds > null", value: fmtPct01(rb.pct_folds_beating_null),
+      tip: "Share of folds whose return beat the null baseline (1==1 entries, base strategy settings) on the same test window." },
     { label: "OOS Sharpe", value: fmt(rb.oos_sharpe),
       tip: "Sharpe ratio of the stitched out-of-sample equity." },
     { label: "OOS max DD", value: rb.oos_max_drawdown_pct == null ? "–" : `${fmt(rb.oos_max_drawdown_pct, 1)}%`,
@@ -387,6 +397,11 @@ export const WfoResults = memo(function WfoResults(props: {
                   </Tooltip>
                 </th>
                 <th>
+                  <Tooltip content={FOLD_TIPS.excess}>
+                    <span><SweepSortHeader<FoldCol> label="Excess %" col="excess" sort={sort} onSort={toggleSort} /></span>
+                  </Tooltip>
+                </th>
+                <th>
                   <Tooltip content={FOLD_TIPS.oos_trades}>
                     <span><SweepSortHeader<FoldCol> label="OOS trades" col="oos_trades" sort={sort} onSort={toggleSort} /></span>
                   </Tooltip>
@@ -413,17 +428,24 @@ export const WfoResults = memo(function WfoResults(props: {
                     >
                       <td>{window}</td>
                       {noWinner ? (
-                        <td colSpan={5} className="wfo-dim">no eligible winner</td>
+                        <td colSpan={6} className="wfo-dim">no eligible winner</td>
                       ) : f.error !== null ? (
                         <>
                           <td><Tooltip content={f.error}><span>failed</span></Tooltip></td>
-                          <td>–</td><td>–</td><td>–</td><td>–</td>
+                          <td>–</td><td>–</td><td>–</td><td>–</td><td>–</td>
                         </>
                       ) : (
                         <>
                           <td>{f.combo ? comboText(f.combo) : "–"}</td>
                           <td>{fmt(f.is_metrics?.[metric] ?? null)}</td>
                           <td>{f.oos_metrics?.return_pct == null ? "–" : `${fmt(f.oos_metrics.return_pct, 1)}%`}</td>
+                          {/* Exactly 0 is neither a win nor a loss: neutral tone, no "+" prefix
+                              (matches the Median excess tile). */}
+                          <td className={f.excess_return_pct == null ? ""
+                            : f.excess_return_pct > 0 ? "pos" : f.excess_return_pct < 0 ? "neg" : ""}>
+                            {f.excess_return_pct == null ? "–"
+                              : `${f.excess_return_pct > 0 ? "+" : ""}${fmt(f.excess_return_pct, 1)}%`}
+                          </td>
                           <td>{fmt(f.oos_metrics?.n_trades ?? null, 0)}</td>
                           <td>{fmt(f.wfe)}</td>
                         </>
@@ -442,7 +464,7 @@ export const WfoResults = memo(function WfoResults(props: {
                     </tr>
                     {open && (
                       <tr className="wfo-fold-drill">
-                        <td colSpan={7}>
+                        <td colSpan={8}>
                           {expanded!.error ? (
                             <div className="wfo-error">{expanded!.error}</div>
                           ) : expanded!.rows === null ? (

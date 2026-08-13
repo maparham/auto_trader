@@ -159,6 +159,12 @@ class BacktestResponse(BaseModel):
     # Cost-sensitivity summary (single runs that opted in). Shaped
     # {"multiples": [0, 1, 2, 3], "net_pnl": [...], "breakeven_multiple": float | None}.
     cost_sensitivity: dict | None = None
+    # {"null": metrics|None, "hold": metrics|None} when the request asked for
+    # baselines; None otherwise. Each blob is a compute_metrics dict MERGED with
+    # the run's summary(), so net_pnl/n_trades/win_rate ARE present here —
+    # unlike the main run's `metrics` field above, which is compute_metrics
+    # alone and carries no net_pnl (that one lives on `summary`).
+    baselines: dict | None = None
 
 
 class SlippageDTO(BaseModel):
@@ -411,6 +417,9 @@ class WalkForwardDTO(BaseModel):
     # the one-run-sliced-N-ways approximation. Legacy "auto"/"sliced" normalize
     # to fast so older clients keep working.
     evalMode: Literal["exact", "fast"] = "exact"
+    # Baseline companion runs per fold test window (expr WFO only): "null" =
+    # 1==1 entries, same structure; "hold" = enter-and-hold. Display-only.
+    baselines: list[Literal["null", "hold"]] | None = None
 
     @field_validator("evalMode", mode="before")
     @classmethod
@@ -750,6 +759,11 @@ class ExprBacktestRequest(BaseModel):
     # Optional client-generated id for GET /api/backtest/progress/{id} polling.
     # Cosmetic: absent means no progress reporting for this run.
     progressId: str | None = None
+    # Baseline companion runs (expr runs only). "null" = entries replaced by
+    # 1==1, everything else identical; "hold" = 1==1 entries with exits, risk,
+    # scaling, and mask stripped (enter once, hold to window end). The response
+    # carries each requested baseline's metrics in `baselines`.
+    baselines: list[Literal["null", "hold"]] | None = None
 
 
 class ExprSeriesRequest(BaseModel):

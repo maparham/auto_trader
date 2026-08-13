@@ -6,18 +6,24 @@ from __future__ import annotations
 
 import bisect
 
+from auto_trader.api import baselines as baselines_mod
 from auto_trader.api import sweep_worker
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.engine.metrics import slice_window_metrics
 
 _TRAIN_WINDOWS: list[list[int]] | None = None
 _EQUITY_CAP = 500
+# kind -> synthesized baseline request, built once per worker. Cleared by
+# worker_init: an in-process pool (tests) reuses this module across jobs, so a
+# stale entry would silently run the previous job's request.
+_BASELINE_REQS: dict[str, object] = {}
 
 
 def worker_init(req_dict, htf_candles, strategies_dir, train_windows, expr_sweep=False) -> None:
     global _TRAIN_WINDOWS
     sweep_worker.worker_init(req_dict, htf_candles, strategies_dir, None, expr_sweep)
     _TRAIN_WINDOWS = train_windows
+    _BASELINE_REQS.clear()
 
 
 def run_grid_combo(combo: dict) -> dict:
@@ -147,3 +153,33 @@ def run_test(payload: dict) -> dict:
     except Exception as e:  # noqa: BLE001
         return {"key": payload.get("key"), "combo": combo, "metrics": None,
                 "trades": None, "equity": None, "error": str(e)}
+
+
+def run_baseline(payload: dict) -> dict:
+    """Flat-start baseline run over one fold's test window, via the same period
+    env-combo gating as run_test. The synthesized request (null = 1==1 entries,
+    hold = enter-and-hold) is built once per kind per worker and cached. Only
+    ever dispatched for expr jobs, so `s.req` is an ExprBacktestRequest, which
+    is what the baselines module takes. Never raises."""
+    s = sweep_worker._STATE
+    assert s is not None, "worker_init not called"
+    kind = payload["kind"]
+    test_from, test_to = payload["test_from"], payload["test_to"]
+    try:
+        req = _BASELINE_REQS.get(kind)
+        if req is None:
+            synth = (baselines_mod.null_request if kind == "null"
+                     else baselines_mod.hold_request)
+            req = synth(s.req)
+            _BASELINE_REQS[kind] = req
+        combo = {"period:from": test_from, "period:to": test_to}
+        result = sweep_worker.execute_combo(s, req, combo)
+        res_s = resolution_seconds(s.req.resolution)
+        cash = s.req.costs.startingCash
+        metrics = slice_window_metrics(
+            result.trades, result.equity, test_from, test_to, cash, res_s)
+        return {"key": payload["key"], "kind": kind, "metrics": metrics,
+                "error": None}
+    except Exception as e:  # noqa: BLE001
+        return {"key": payload.get("key"), "kind": payload.get("kind"),
+                "metrics": None, "error": str(e)}

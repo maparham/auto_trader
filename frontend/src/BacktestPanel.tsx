@@ -26,6 +26,7 @@ import { metricGroups, METRIC_INFO, legTable, tradeRows, sortTradeRows, rowWindo
 import { metricTipLines } from "./components/metricScaleTip";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
+import type { BaselineMetrics } from "./api";
 import { RESOLUTION_SECONDS } from "./lib/feed";
 import { formatExpiryShort } from "./lib/alertUi";
 import BacktestAnalysisPanel from "./BacktestAnalysisPanel";
@@ -354,6 +355,68 @@ export default function BacktestPanel() {
                 )}
               </section>
             ))}
+            {result.baselines && (result.baselines.null || result.baselines.hold) && (
+              <section className="bt-panel-group">
+                <h4 className="bt-panel-group-title">
+                  Baselines
+                  <InfoTip
+                    title="Baselines"
+                    text={[
+                      "Reference runs over the same window, sizing and costs.",
+                      "Null signal: entries replaced by an always-true condition; stops, sizing, sessions and costs unchanged. The strategy's edge over it is what the signal adds.",
+                      "Enter & hold: one position per enabled side, held for the whole window, no stops and no session windows, same costs.",
+                    ]}
+                  />
+                </h4>
+                <div className="bt-leg-wrap">
+                  <table className="bt-baselines">
+                    <thead>
+                      <tr>
+                        <th className="bt-baselines-rowhead" aria-hidden="true" />
+                        <th className="bt-baselines-col">Net P&L</th>
+                        <th className="bt-baselines-col">Return %</th>
+                        <th className="bt-baselines-col">Sharpe</th>
+                        <th className="bt-baselines-col">Max DD</th>
+                        <th className="bt-baselines-col">Strategy Δ net</th>
+                        <th className="bt-baselines-col">Strategy Δ ret</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {([["Null signal", result.baselines.null], ["Enter & hold", result.baselines.hold]] as [string, BaselineMetrics | null][])
+                        .filter((pair): pair is [string, BaselineMetrics] => pair[1] != null)
+                        .map(([label, m]) => {
+                          // The main run's net P&L lives on summary, not metrics.
+                          const delta = m.net_pnl == null ? null : s.net_pnl - m.net_pnl;
+                          // Return % is the reverse: it lives on metrics (same source as the
+                          // overview's own Return % stat), not on summary.
+                          const dRet = m.return_pct == null ? null : result.metrics.return_pct - m.return_pct;
+                          return (
+                            <tr key={label}>
+                              <th className="bt-baselines-rowhead" scope="row">{label}</th>
+                              <td className={`bt-baselines-cell${m.net_pnl == null ? "" : ` ${toneOf(m.net_pnl)}`}`}>
+                                {m.net_pnl == null ? "–" : fmtPnl(m.net_pnl)}
+                              </td>
+                              <td className="bt-baselines-cell">
+                                {m.return_pct == null ? "–" : `${m.return_pct.toFixed(2)}%`}
+                              </td>
+                              <td className="bt-baselines-cell">{m.sharpe == null ? "–" : m.sharpe.toFixed(2)}</td>
+                              <td className="bt-baselines-cell">
+                                {m.max_drawdown_pct == null ? "–" : `${m.max_drawdown_pct.toFixed(2)}%`}
+                              </td>
+                              <td className={`bt-baselines-cell${delta == null ? "" : ` ${toneOf(delta)}`}`}>
+                                {delta == null ? "–" : fmtPnl(delta)}
+                              </td>
+                              <td className={`bt-baselines-cell${dRet == null ? "" : ` ${toneOf(dRet)}`}`}>
+                                {dRet == null ? "–" : `${dRet >= 0 ? "+" : ""}${dRet.toFixed(2)}%`}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
             {result.cost_sensitivity && (
               <div className="bt-cost-sense">
                 {result.cost_sensitivity.breakeven_multiple === null

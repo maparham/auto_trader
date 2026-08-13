@@ -27,6 +27,17 @@ def fold_wfe(is_metrics: dict, oos_metrics: dict,
     return round(oos_rate / is_rate, 4)
 
 
+def fold_excess(oos_metrics: dict | None, null_metrics: dict | None) -> float | None:
+    """Strategy return minus the null baseline's return over the same test
+    window. None when either side is missing: no comparison, not zero."""
+    if not oos_metrics or not null_metrics:
+        return None
+    a, b = oos_metrics.get("return_pct"), null_metrics.get("return_pct")
+    if a is None or b is None:
+        return None
+    return round(a - b, 4)
+
+
 def stitch(fold_tests: list[dict], starting_cash: float, res_seconds: int) -> dict:
     equity: list[list[float]] = []
     scaled: list[list[float]] = []
@@ -65,6 +76,8 @@ def aggregate(folds: list[dict], stitched_metrics: dict, stability: dict,
     rets = [r for r in rets if r is not None]
     nets = [f["oos_metrics"].get("net_pnl") or 0.0 for f in folds
             if f.get("oos_metrics")]
+    excesses = [f.get("excess_return_pct") for f in folds]
+    excesses = [e for e in excesses if e is not None]
     n = len(folds)
     block = {
         "wfe_median": round(median(wfes), 4) if wfes else None,
@@ -73,6 +86,9 @@ def aggregate(folds: list[dict], stitched_metrics: dict, stability: dict,
             sum(1 for x in nets if x > 0) / n, 4) if n else None,
         "median_fold_return_pct": round(median(rets), 4) if rets else None,
         "worst_fold_return_pct": round(min(rets), 4) if rets else None,
+        "median_fold_excess_pct": round(median(excesses), 4) if excesses else None,
+        "pct_folds_beating_null": round(
+            sum(1 for e in excesses if e > 0) / len(excesses), 4) if excesses else None,
         "oos_sharpe": stitched_metrics.get("sharpe"),
         "oos_max_drawdown_pct": stitched_metrics.get("max_drawdown_pct"),
         "oos_profit_factor": stitched_metrics.get("profit_factor"),

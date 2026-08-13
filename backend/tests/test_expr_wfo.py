@@ -97,6 +97,60 @@ def test_expr_wfo_runs_and_completes(tmp_wfo_store):
     assert any(a["id"] == body["jobId"] for a in arch)
 
 
+def test_expr_wfo_baselines_per_fold(tmp_wfo_store):
+    wfo = {**_WFO, "baselines": ["null", "hold"]}
+    sub = client.post("/api/expr/walkforward/jobs", json=_base_req(walkforward=wfo))
+    assert sub.status_code == 200, sub.text
+    body = sub.json()
+    n_folds = len(body["schemes"][0]["folds"])
+    # Progress accounting: one test run + one run per baseline kind, per fold.
+    assert body["total"] == len(_WFO["combos"]) + n_folds * (1 + 2)
+    st = _poll_to_done(body["jobId"])
+    assert st["phase"] == "done" and st["error"] is None
+    assert st["done"] == st["total"]
+    result = st["result"]
+    folds = result["schemes"][0]["folds"]
+    assert folds, "no folds produced"
+    # Every fold that has oos_metrics also has baseline metrics and an excess.
+    scored = [f for f in folds if f["oos_metrics"] is not None]
+    assert scored, "no scored folds"
+    for f in scored:
+        assert f["null_metrics"] is not None
+        assert f["hold_metrics"] is not None
+        assert f["excess_return_pct"] == round(
+            f["oos_metrics"]["return_pct"] - f["null_metrics"]["return_pct"], 4)
+    # The two kinds are genuinely different runs, not the same request twice
+    # (which is what a broken kind dispatch would produce). Only "at least one"
+    # fold: a window where the strategy's exit never fires makes null and hold
+    # legitimately identical.
+    assert any(f["null_metrics"] != f["hold_metrics"] for f in scored)
+    # Orientation: the assertion above survives an INVERTED kind -> synthesizer
+    # mapping (swapping two unequal dicts leaves them unequal), so pin the one
+    # asymmetry between them. Hold strips the exits, so each enabled side enters
+    # once and rides to the window end; null keeps them and therefore re-enters.
+    # More null trades than hold can only hold if the fields are the right way round.
+    assert any(f["null_metrics"]["n_trades"] > f["hold_metrics"]["n_trades"]
+               for f in scored)
+    assert all(f["null_metrics"]["n_trades"] >= f["hold_metrics"]["n_trades"]
+               for f in scored)
+    rb = result["schemes"][0]["robustness"]
+    assert "median_fold_excess_pct" in rb
+    assert "pct_folds_beating_null" in rb
+
+
+def test_expr_wfo_without_baselines_fields_none(tmp_wfo_store):
+    sub = client.post("/api/expr/walkforward/jobs", json=_base_req(walkforward=_WFO))
+    assert sub.status_code == 200, sub.text
+    body = sub.json()
+    n_folds = len(body["schemes"][0]["folds"])
+    assert body["total"] == len(_WFO["combos"]) + n_folds
+    st = _poll_to_done(body["jobId"])
+    assert st["phase"] == "done" and st["error"] is None
+    f = st["result"]["schemes"][0]["folds"][0]
+    assert f.get("null_metrics") is None and f.get("hold_metrics") is None
+    assert f.get("excess_return_pct") is None
+
+
 def test_expr_wfo_requires_combos():
     # No walkforward block at all -> 422.
     r = client.post("/api/expr/walkforward/jobs", json=_base_req())

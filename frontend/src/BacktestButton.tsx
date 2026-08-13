@@ -20,7 +20,7 @@ import type { PriceSide } from "./theme";
 import { defaultBacktestConfig, type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
 import { resolveMask } from "./lib/backtestSchedule";
 import { loadCodedCfg, resolveParamValues, sendableRisk } from "./lib/codedConfig";
-import { fetchStrategies, saveSweepArchive } from "./api";
+import { BASELINE_KINDS, fetchStrategies, saveSweepArchive } from "./api";
 import {
   resolveWindow,
   resolveHistoryStart,
@@ -657,7 +657,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // shared with the sweep and walk-forward submissions above, which run on
         // job workers with their own status polling — one shared id there would
         // cross-talk. Spread here so those literals stay untouched.
-        coded ? { ...baseReq, progressId } : { ...exprReq, progressId },
+        //
+        // baselines rides the same way, and for the same reason: the null/hold
+        // reference runs belong to a single expr run only. The sweep branch
+        // above shares exprReq and its per-combo jobs must not carry the field.
+        coded ? { ...baseReq, progressId } : { ...exprReq, progressId, baselines: BASELINE_KINDS },
         controller!.scope,
         // Displayed TF, so runAndRender picks native/aggregate/none correctly when
         // the run's base TF (runResolution) differs from what the chart shows.

@@ -4879,6 +4879,35 @@ span.bt-leg-short { color: var(--neg); }
 .bt-leg-cell.pos { color: var(--pos); }
 .bt-leg-cell.neg { color: var(--neg); }
 
+/* BASELINES group: the null-signal and buy & hold reference runs, one row each,
+   with the strategy's net-P&L delta in the last column. Same table idiom as the
+   leg breakdown above (hairline rows, right-aligned mono numerics). */
+.bt-baselines {
+  width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.bt-baselines th, .bt-baselines td { white-space: nowrap; }
+.bt-baselines thead tr { border-bottom: 1px solid var(--border); }
+.bt-baselines-col {
+  text-align: right; padding: 0 0 7px 16px; vertical-align: bottom;
+  font-size: 9px; font-weight: 500; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.bt-baselines thead th.bt-baselines-rowhead { padding: 0 0 7px; }
+.bt-baselines tbody th.bt-baselines-rowhead {
+  position: sticky; left: 0; z-index: 1; background: var(--surface);
+  text-align: left; padding: 7px 12px 7px 0;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.bt-baselines-cell {
+  padding: 7px 0 7px 16px; text-align: right;
+  font-family: var(--mono); font-weight: 600; color: var(--text);
+}
+.bt-baselines tbody tr + tr .bt-baselines-cell,
+.bt-baselines tbody tr + tr .bt-baselines-rowhead { border-top: 1px solid var(--border); }
+.bt-baselines-cell.pos { color: var(--pos); }
+.bt-baselines-cell.neg { color: var(--neg); }
+
 /* Trades: the scrollable table wrapper — this is the flex-scroll boundary. */
 .bt-panel-trades-wrap { flex: 1; overflow: auto; min-height: 0; }
 .bt-panel-table {
@@ -5373,6 +5402,11 @@ span.bt-leg-short { color: var(--neg); }
 .wfo-fold-row { cursor: pointer; }
 .wfo-fold-row:hover { background: var(--hover); }
 .wfo-fold-row.sweep-error { color: var(--text-faint); font-style: italic; }
+/* Excess-over-baseline cell: sign coloring. Scoped to the fold row because
+   .pos/.neg are not global utilities in this stylesheet; low-sample rows keep
+   their grey-out, since those numbers are noise either way. */
+.wfo-fold-row:not(.sweep-error) td.pos { color: var(--pos); }
+.wfo-fold-row:not(.sweep-error) td.neg { color: var(--neg); }
 .wfo-fold-open td { border-bottom: none; }
 .wfo-fold-drill td { padding: 4px 10px 10px; font-size: 12px; color: var(--text-dim); }
 .wfo-dim { color: var(--text-faint); font-style: italic; }
