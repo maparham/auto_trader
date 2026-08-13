@@ -83,4 +83,4 @@ def test_load_syntax_error_raises(tmp_path):
 def test_default_dir_has_the_example():
     assert STRATEGIES_DIR.name == "strategies"
     names = [i.filename for i in list_strategies()]
-    assert "ema_cross.py" in names
+    assert "sim_consensus.py" in names
