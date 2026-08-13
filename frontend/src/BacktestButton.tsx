@@ -348,6 +348,19 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // the bars honestly, so reaching here means they aren't available.
       const warmup = warmupBarCount(bars, windowFromMs);
       if (warmup < required) {
+        // Zero warm-up bars with data in the window means the broker's history
+        // for this epic/resolution simply starts after the requested From date
+        // (the widening walk already asked deeper and got nothing). Deeper
+        // depth or shorter indicators can't help there, so don't suggest them.
+        if (warmup === 0 && bars.length > 0) {
+          const firstBar = new Date(bars[0].timestamp).toISOString().slice(0, 10);
+          setError(
+            `no history before the window: ${epic} ${runResolution} data starts ` +
+              `${firstBar}, after the range's From date. Move the range start past ` +
+              `that date (or switch to a data source with deeper history).`,
+          );
+          return;
+        }
         setError(
           `not enough history: ${warmup} of ${required} warm-up bars before the window. ` +
             `Indicators can't be computed correctly here — start the range later, ` +
