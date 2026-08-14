@@ -423,6 +423,9 @@ export const backtestRunningSignal = new Signal<boolean>(false);
 // run is in flight or no progress info is available (progress is cosmetic).
 export type BacktestProgress = {
   phase: "download" | "simulate";
+  // Display-ready in both phases: the backfill's own label for download, the
+  // poller's stage translation ("Simulating", "Running cost sensitivity", …)
+  // for simulate. Consumers render it verbatim.
   label: string;
   pct: number | null;
   etaS: number | null;

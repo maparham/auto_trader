@@ -150,7 +150,7 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
               <span>
                 {progress.phase === "download"
                   ? `Downloading ${progress.label} (${progress.pct != null ? `${progress.pct}%` : "…"}${progress.etaS != null ? `, ${fmtEta(progress.etaS)}` : ""})`
-                  : `Simulating (${progress.pct ?? 0}%${progress.etaS != null ? `, ${fmtEta(progress.etaS)}` : ""})`}
+                  : `${progress.label} (${progress.pct ?? 0}%${progress.etaS != null ? `, ${fmtEta(progress.etaS)}` : ""})`}
               </span>
               {progress.pct != null && (
                 <span className="bt-progress-track">

@@ -36,9 +36,16 @@ describe("BacktestPanel progress line", () => {
 
   it("shows simulate progress", () => {
     backtestRunningSignal.set(true);
-    backtestProgressSignal.set({ phase: "simulate", label: "simulate", pct: 64, etaS: null });
+    backtestProgressSignal.set({ phase: "simulate", label: "Simulating", pct: 64, etaS: null });
     render(<BacktestPanel />);
     expect(screen.getByText(/Simulating \(64%\)/)).toBeTruthy();
+  });
+
+  it("renders the poller's per-pass label as-is (extra engine passes)", () => {
+    backtestRunningSignal.set(true);
+    backtestProgressSignal.set({ phase: "simulate", label: "Running cost sensitivity", pct: 40, etaS: null });
+    render(<BacktestPanel />);
+    expect(screen.getByText(/Running cost sensitivity \(40%\)/)).toBeTruthy();
   });
 
   it("falls back to the static line without progress info", () => {
