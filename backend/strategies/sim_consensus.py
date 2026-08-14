@@ -20,21 +20,40 @@ meta = {
 }
 
 
+import bisect
+
+
+def _sim_chain(candles, stop_frac: float, target_frac: float):
+    """Deterministic replay of the whole simulated-long chain: parallel lists
+    of completion bar index and outcome (True = win), in completion order.
+    Causal by construction — the chain only ever walks forward — so slicing at
+    the current bar index (bisect) yields exactly what that bar may know."""
+    completed_at: list[int] = []
+    outcomes: list[bool] = []
+    entry = candles[0].close
+    for i in range(1, len(candles)):
+        hit_target = candles[i].high >= entry * (1 + target_frac)
+        hit_stop = candles[i].low <= entry * (1 - stop_frac)
+        if hit_target or hit_stop:
+            completed_at.append(i)
+            outcomes.append(hit_target and not hit_stop)  # both in one bar = loss
+            entry = candles[i].close
+    return completed_at, outcomes
+
+
 def on_bar(ctx):
-    highs, lows, closes = ctx.highs, ctx.lows, ctx.closes
     stop_frac = ctx.param("sim_stop_pct") / 100
     target_frac = ctx.param("sim_target_pct") / 100
 
-    # Deterministic replay of the simulated-long chain over the full history
-    # (the stateless contract forbids carrying state between bars).
-    outcomes = []  # True = win, in completion order
-    entry = closes[0]
-    for i in range(1, len(closes)):
-        hit_target = highs[i] >= entry * (1 + target_frac)
-        hit_stop = lows[i] <= entry * (1 - stop_frac)
-        if hit_target or hit_stop:
-            outcomes.append(hit_target and not hit_stop)  # both in one bar = loss
-            entry = closes[i]
+    # The chain replay is one memoized O(n) pass over the run (a per-bar replay
+    # was O(n²) — minutes of wall-clock on minute-resolution histories); each
+    # bar then reads its causal prefix of the completed outcomes.
+    completed_at, all_outcomes = ctx.memo(
+        f"sim_chain:{stop_frac}:{target_frac}",
+        lambda candles: _sim_chain(candles, stop_frac, target_frac),
+    )
+    n_done = bisect.bisect_right(completed_at, len(ctx.closes) - 1)
+    outcomes = all_outcomes[:n_done]
 
     if not ctx.position.is_flat or len(outcomes) < 3:
         return []

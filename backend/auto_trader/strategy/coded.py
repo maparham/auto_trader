@@ -316,6 +316,22 @@ class StrategyContext:
             raise StrategyRuntimeError(f"unknown slope source '{indicator}'")
         return self._values_for(key, tf, values_fn)[self._i]
 
+    def memo(self, key: str, compute):
+        """Cache an arbitrary computation over the FULL candle list, evaluated
+        once per run — the same memoization channel the indicator methods use.
+        For sequential replays (a simulated-trade chain, a cumulative scan)
+        that would otherwise cost O(n) work on every bar.
+
+        `compute(candles)` receives the run's full candle list, INCLUDING bars
+        after the current one — the result must be causally indexable (derive
+        what the current bar may see from `len(ctx.closes) - 1`, exactly like
+        the precomputed indicator series). Vary `key` with every param the
+        computation reads: the cache can be shared across sweep combos."""
+        cache_key = f"memo:{key}"
+        if cache_key not in self._cache:
+            self._cache[cache_key] = compute(self._candles)
+        return self._cache[cache_key]
+
     def param(self, name: str):
         """A panel-tunable value declared in meta["params"] (panel value if
         set, else the declared default)."""

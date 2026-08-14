@@ -35,6 +35,23 @@ BOTH = (100, 101.5, 98.5, 100)   # tags both levels inside one bar
 FLAT = (100, 100.5, 99.5, 100)   # resolves nothing
 
 
+def test_sim_chain_replays_once_not_per_bar():
+    # The simulated-long chain is memoized via ctx.memo: one O(n) pass per run
+    # instead of a full replay every bar (which made minute-resolution runs of
+    # this strategy effectively hang).
+    prices = [WIN, LOSS, WIN, FLAT] * 10
+    candles = bars(prices)
+    module = load_strategy("sim_consensus.py")
+    calls = []
+    orig = module._sim_chain
+    module._sim_chain = lambda *a, **k: (calls.append(1), orig(*a, **k))[1]
+    try:
+        BacktestEngine(CodedStrategy(module, candles, quantity=1.0)).run(candles)
+    finally:
+        module._sim_chain = orig
+    assert len(calls) == 1
+
+
 def test_meta_declares_name_and_pct_params():
     module = load_strategy("sim_consensus.py")
     meta = module.meta

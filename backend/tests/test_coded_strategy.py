@@ -40,6 +40,22 @@ def run_engine(fn, candles, hedged=False, quantity=1.0):
     return BacktestEngine(strat).run(candles)
 
 
+def test_ctx_memo_computes_once_per_run():
+    """ctx.memo caches an arbitrary causal computation over the full candle
+    list — the same memoization channel the indicator methods use — so a
+    strategy that needs a sequential replay pays for it once, not per bar."""
+    candles = make_candles()
+    calls = []
+
+    def on_bar(ctx):
+        total = ctx.memo("sum_closes", lambda cs: (calls.append(1), sum(c.close for c in cs))[1])
+        assert total == sum(c.close for c in candles)
+        return []
+
+    run_engine(on_bar, candles)
+    assert len(calls) == 1
+
+
 def test_ctx_price_history_and_indicators():
     candles = make_candles()
     seen = {}
