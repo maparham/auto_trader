@@ -265,3 +265,33 @@ def test_confirm_bars_delays_entry():
     r3, _ = run(tape, {**FAST_OVERRIDES, "confirm_bars": 3, "breakout_window": 12})
     assert r1.trades and r3.trades
     assert r3.trades[0].entry_time > r1.trades[0].entry_time
+
+
+def test_chart_regions_marks_unresolved_squeezes():
+    # The consolidation-only tape squeezes but never breaks out: chart_regions
+    # must still surface the squeeze window(s) so the chart can shade them.
+    module = load_strategy("bb_regime_breakout.py")
+    candles = bars_from_closes(consolidation_only())
+    params = resolve_params(module, FAST_OVERRIDES)
+    regions = module.chart_regions(candles, params)
+    assert regions, "expected at least one squeeze region"
+    times = [c.time.timestamp() for c in candles]
+    for r in regions:
+        assert r["label"] == "squeeze"
+        assert r["top"] > r["bottom"]
+        assert times[0] <= r["from_time"] < r["to_time"] <= times[-1]
+    # The squeeze lives in the contracting/quiet stretch (bars 40+), not the
+    # wide chop that sets the width baseline.
+    assert all(r["from_time"] >= times[40] for r in regions)
+
+
+def test_chart_regions_steady_trend_has_none():
+    module = load_strategy("bb_regime_breakout.py")
+    candles = bars_from_closes([100 + 0.5 * i for i in range(120)])
+    params = resolve_params(module, FAST_OVERRIDES)
+    # A smooth trend's band width keeps changing with the window, but the
+    # trailing-percentile squeeze test is relative: some bars will qualify.
+    # The gate that makes a squeeze REAL is the sideways range cap — regions
+    # must respect max_range_pct like the entry logic does.
+    tight = module.chart_regions(candles, {**params, "max_range_pct": 0.01})
+    assert tight == []

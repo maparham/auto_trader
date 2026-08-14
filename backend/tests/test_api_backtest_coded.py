@@ -248,3 +248,47 @@ def test_coded_trade_zones_serialized(strategies, tmp_path, monkeypatch):
     res2 = client.post("/api/backtest", json=base_request("test.py", candles))
     assert res2.status_code == 200
     assert all(t["zones"] == [] for t in res2.json()["trades"])
+
+
+REGIONS_STRAT = '''
+def on_bar(ctx):
+    return []
+
+def chart_regions(candles, params):
+    return [{
+        "from_time": candles[0].time.timestamp(),
+        "to_time": candles[5].time.timestamp(),
+        "top": 111.0, "bottom": 99.0, "label": "squeeze",
+    }]
+'''
+
+BROKEN_REGIONS_STRAT = '''
+def on_bar(ctx):
+    return []
+
+def chart_regions(candles, params):
+    raise RuntimeError("viz exploded")
+'''
+
+
+def test_coded_chart_regions_serialized(strategies, tmp_path, monkeypatch):
+    (tmp_path / "regions.py").write_text(REGIONS_STRAT)
+    candles = make_candles(30)
+    res = client.post("/api/backtest", json=base_request("regions.py", candles))
+    assert res.status_code == 200
+    regions = res.json()["regions"]
+    assert regions == [{
+        "from_time": candles[0]["time"], "to_time": candles[5]["time"],
+        "top": 111.0, "bottom": 99.0, "label": "squeeze",
+    }]
+    # Strategies without the hook report an empty list.
+    res2 = client.post("/api/backtest", json=base_request("test.py", candles))
+    assert res2.status_code == 200
+    assert res2.json()["regions"] == []
+
+
+def test_coded_broken_chart_regions_does_not_kill_the_run(strategies, tmp_path, monkeypatch):
+    (tmp_path / "brokenviz.py").write_text(BROKEN_REGIONS_STRAT)
+    res = client.post("/api/backtest", json=base_request("brokenviz.py", make_candles(30)))
+    assert res.status_code == 200  # viz is decoration; the run must survive
+    assert res.json()["regions"] == []

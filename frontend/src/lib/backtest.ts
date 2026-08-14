@@ -879,7 +879,12 @@ const strategyZoneOverlay: OverlayTemplate = {
         ignoreEvent: true,
       },
     ];
-    if (label) figures.push(pillFigure(x + 4, y - 10, label, PERIOD_COLOR, "left"));
+    // Label only when the rect is wide enough to carry it — on a zoomed-out
+    // view a run's many squeeze windows would otherwise stack dozens of
+    // clipped pills; the shading alone marks the narrow ones.
+    if (label && Math.abs(c1.x - c0.x) >= 48) {
+      figures.push(pillFigure(x + 4, y - 10, label, PERIOD_COLOR, "left"));
+    }
     return figures;
   },
 };
@@ -957,37 +962,61 @@ function ensurePeriodOverlayRegistered(): void {
   registerOverlay(periodOverlay);
 }
 
-/** Remove this chart's period-band overlays and reset the bookkeeping. */
+/** Remove this chart's period-band AND strategy-region overlays (one lifecycle:
+ * both are run-scoped shading, cleared and redrawn together) and reset the
+ * bookkeeping. */
 function clearPeriodBands(chart: Chart, artifacts: BacktestArtifacts): void {
   for (const id of artifacts.periodBandIds) chart.removeOverlay({ id });
   artifacts.periodBandIds = [];
 }
 
-/** Draw the trading-period bands for the CURRENT loaded bars, if the global
- * toggle is on and the result carries a period. Caller clears any prior bands
- * first. Independent of markerMode — periods are pure time spans, valid on every
- * timeframe. */
+/** Draw the trading-period bands and the strategy's viz regions (chart_regions
+ * hook — e.g. BB Regime's squeeze windows) for the CURRENT loaded bars, if the
+ * global shading toggle is on. Caller clears any prior bands first. Independent
+ * of markerMode — both are pure time spans, valid on every timeframe. Region
+ * ids share periodBandIds so every clear/redraw call site treats them as one. */
 function drawPeriodBands(chart: Chart, artifacts: BacktestArtifacts, result: StoredBacktestResult): void {
   if (!backtestPeriodsShownSignal.value) return;
-  const period = result.period;
-  if (!period) return;
   const data = chart.getDataList() ?? [];
   if (data.length === 0) return;
-  const barTimes = data.map((k) => k.timestamp);
-  const bands = computePeriodBands(period, barTimes);
-  if (bands.length === 0) return;
-  ensurePeriodOverlayRegistered();
-  const yVal = data[0].close; // a valid in-range price so the point projects (y is unused)
-  for (const b of bands) {
-    const id = chart.createOverlay({
-      name: PERIOD_OVERLAY,
-      lock: true,
-      points: [
-        { timestamp: b.fromMs, value: yVal },
-        { timestamp: b.toMs, value: yVal },
-      ],
-    });
-    if (typeof id === "string") artifacts.periodBandIds.push(id);
+  const period = result.period;
+  if (period) {
+    const barTimes = data.map((k) => k.timestamp);
+    const bands = computePeriodBands(period, barTimes);
+    if (bands.length > 0) {
+      ensurePeriodOverlayRegistered();
+      const yVal = data[0].close; // a valid in-range price so the point projects (y is unused)
+      for (const b of bands) {
+        const id = chart.createOverlay({
+          name: PERIOD_OVERLAY,
+          lock: true,
+          points: [
+            { timestamp: b.fromMs, value: yVal },
+            { timestamp: b.toMs, value: yVal },
+          ],
+        });
+        if (typeof id === "string") artifacts.periodBandIds.push(id);
+      }
+    }
+  }
+  if (result.regions?.length) {
+    ensureStrategyZoneOverlayRegistered();
+    const firstTs = data[0].timestamp;
+    const lastTs = data[data.length - 1].timestamp;
+    for (const r of result.regions) {
+      const span = strategyZoneSpan(r, firstTs, lastTs);
+      if (!span) continue;
+      const id = chart.createOverlay({
+        name: STRATEGY_ZONE_OVERLAY,
+        lock: true,
+        points: [
+          { timestamp: span.fromTs, value: r.top },
+          { timestamp: span.toTs, value: r.bottom },
+        ],
+        extendData: { label: r.label },
+      });
+      if (typeof id === "string") artifacts.periodBandIds.push(id);
+    }
   }
 }
 

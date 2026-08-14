@@ -180,6 +180,10 @@ class BacktestResponse(BaseModel):
     # unlike the main run's `metrics` field above, which is compute_metrics
     # alone and carries no net_pnl (that one lives on `summary`).
     baselines: dict | None = None
+    # Strategy-declared viz regions (a coded module's chart_regions hook —
+    # e.g. BB Regime's squeeze windows, resolved or not), run-scoped rather
+    # than per-trade. Empty for strategies without the hook.
+    regions: list[TradeZoneDTO] = []
 
 
 class SlippageDTO(BaseModel):

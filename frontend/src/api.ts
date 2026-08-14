@@ -313,6 +313,10 @@ export interface BacktestResult {
   // predating the feature and on surfaces that don't request them (see
   // ExprBacktestRequest.baselines).
   baselines?: Baselines | null;
+  // Strategy-declared viz regions (a coded module's chart_regions hook — e.g.
+  // BB Regime's squeeze windows, resolved or not), run-scoped rather than
+  // per-trade. Absent on older cached payloads and non-declaring strategies.
+  regions?: TradeZone[];
 }
 
 export interface BacktestRequest {

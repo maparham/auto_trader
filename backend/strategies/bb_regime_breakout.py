@@ -74,6 +74,60 @@ def _bandwidth(closes: np.ndarray, period: int, dev: float) -> np.ndarray:
         return np.where(mid > 0, 2.0 * dev * sd / mid, np.inf)
 
 
+def chart_regions(candles, params) -> list[dict]:
+    """Post-run chart viz hook: every squeeze window — consecutive bars whose
+    band width sits in the squeeze percentile of its trailing lookback AND whose
+    trailing price range stays sideways (max_range_pct, same gate as entries) —
+    including squeezes that never resolved into a breakout. Times are unix
+    seconds; top/bottom bound the window's own bars. Vectorized full-series
+    pass, run once after a backtest (never per bar)."""
+    p = params
+    closes = np.array([c.close for c in candles], dtype=np.float64)
+    highs = np.array([c.high for c in candles], dtype=np.float64)
+    lows = np.array([c.low for c in candles], dtype=np.float64)
+    period, look, rl = p["bb_period"], p["squeeze_lookback"], p["range_lookback"]
+    n = len(closes)
+    if n < period + look:
+        return []
+    bw = _bandwidth(closes, period, p["bb_dev"])  # bw[k] = width AT bar period-1+k
+    # Trailing percentile of the width over `look` widths ending at each bar.
+    win = np.lib.stride_tricks.sliding_window_view(bw, look)
+    thr = np.percentile(win, p["squeeze_pctile"], axis=1)
+    squeeze = win[:, -1] <= thr  # squeeze[j] is bar period-1+look-1+j
+    base = period + look - 2
+
+    # Sideways gate per bar: trailing range over `rl` bars under max_range_pct.
+    def _sideways(i: int) -> tuple[float, float] | None:
+        r0 = i - rl + 1
+        if r0 < 0:
+            return None
+        rh, rlo = float(highs[r0: i + 1].max()), float(lows[r0: i + 1].min())
+        mid = (rh + rlo) / 2
+        if mid <= 0 or (rh - rlo) / mid * 100.0 > p["max_range_pct"]:
+            return None
+        return rh, rlo
+
+    regions: list[dict] = []
+    j = 0
+    while j < len(squeeze):
+        if not (squeeze[j] and _sideways(base + j)):
+            j += 1
+            continue
+        start = j
+        while j + 1 < len(squeeze) and squeeze[j + 1] and _sideways(base + j + 1):
+            j += 1
+        first, last = base + start, base + j
+        regions.append({
+            "from_time": candles[first].time.timestamp(),
+            "to_time": candles[last].time.timestamp(),
+            "top": float(highs[first: last + 1].max()),
+            "bottom": float(lows[first: last + 1].min()),
+            "label": "squeeze",
+        })
+        j += 1
+    return regions
+
+
 def _signal(i: int, closes, highs, lows, bw, bw_start: int, p) -> tuple[str, float, float, int] | None:
     """Evaluate the full breakout condition at bar i. Returns (leg, range_high,
     range_low, squeeze_bar) when a confirmed regime-transition breakout exists,

@@ -432,6 +432,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             trades_dto=trades_dto,
             summary=summary,
             metrics=metrics,
+            regions=_chart_regions_dto(module, candles, resolved_params),
         )
         response.baselines = baselines_out
         return response
@@ -484,6 +485,27 @@ def _trades_to_dto(result: BacktestResult) -> list[TradeDTO]:
     ]
 
 
+def _chart_regions_dto(module: ModuleType, candles: list[Candle], params: dict) -> list[TradeZoneDTO]:
+    """Run a coded module's optional chart_regions viz hook (full-series, once
+    per run). Viz is decoration: a missing hook yields [], and a raising hook is
+    logged and swallowed — it must never fail the run."""
+    hook = getattr(module, "chart_regions", None)
+    if not callable(hook):
+        return []
+    try:
+        return [
+            TradeZoneDTO(
+                from_time=int(r["from_time"]), to_time=int(r["to_time"]),
+                top=float(r["top"]), bottom=float(r["bottom"]),
+                label=str(r.get("label", "")),
+            )
+            for r in hook(candles, params)
+        ]
+    except Exception:  # noqa: BLE001  viz never fails the run
+        logger.warning("chart_regions hook failed", exc_info=True)
+        return []
+
+
 def _result_to_response(
     result: BacktestResult,
     *,
@@ -500,6 +522,7 @@ def _result_to_response(
     trades_dto: list[TradeDTO] | None = None,
     summary: dict | None = None,
     metrics: dict | None = None,
+    regions: list[TradeZoneDTO] | None = None,
 ) -> BacktestResponse:
     """Serialize a BacktestResult into a BacktestResponse. Shared by the
     structured `/api/backtest` handler and the expression `/api/expr/backtest`
@@ -556,6 +579,7 @@ def _result_to_response(
         run_id=run_id,
         analysis=analysis,
         cost_sensitivity=cost_sensitivity,
+        regions=regions or [],
     )
 
 
