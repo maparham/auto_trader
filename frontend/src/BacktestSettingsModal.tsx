@@ -102,6 +102,7 @@ import {
   saveCodedCfg,
   defaultCodedCfg,
   resolveParamValues,
+  rewriteCodedExitRefs,
   type CodedStrategyConfig,
 } from "./lib/codedConfig";
 import {
@@ -3199,12 +3200,16 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   exprs, live, captureIndicatorAppearance(chart, live.map((i) => i.id)),
                 );
               }}
-              applyExprInstances={(instances, c) =>
-                rewriteConfigInstanceRefs(
-                  c,
-                  applyPortableInstances({ controller, epic, resolution, brokerId }, instances),
-                )
-              }
+              applyExprInstances={(instances, c) => {
+                const idMap = applyPortableInstances(
+                  { controller, epic, resolution, brokerId }, instances,
+                );
+                // The coded store's exits were just restored by the preset
+                // (restoreCodedParams runs before this callback) and can name
+                // the same panes — their refs must follow renamed ids too.
+                if (c.codedStrategy) rewriteCodedExitRefs("backtest", c.codedStrategy, idMap);
+                return rewriteConfigInstanceRefs(c, idMap);
+              }}
             />
           </Section>
         </div>

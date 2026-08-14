@@ -6,6 +6,7 @@
 import type { ParamSpec, ParamValues } from "../api";
 import type { RiskConfig, RuleGroup } from "./backtestConfig";
 import { load, save } from "./persist/core";
+import { rewriteRulesInstanceRefs } from "./ruleClipboard";
 import { backtestStrategySetupChanged } from "./signals";
 
 export interface CodedStrategyConfig {
@@ -42,6 +43,26 @@ export function saveCodedCfg(set: CodedSetName, filename: string, cfg: CodedStra
   // The chart's strategy-overlay sync tracks backtest param writes from every
   // surface (modal, preset restore, sweep apply) through this one choke point.
   if (set === "backtest") backtestStrategySetupChanged.set(backtestStrategySetupChanged.value + 1);
+}
+
+/** Rewrite the exit groups' pane instance refs per `idMap` (old pane id → the
+ * id that actually landed on the chart). A preset load can recreate a
+ * referenced pane under a fresh id (the saved id was taken by a
+ * differently-configured pane); the store's exit rules must follow, or they
+ * keep naming a pane that isn't theirs. Empty map is a no-op — no phantom
+ * save, no signal bump. */
+export function rewriteCodedExitRefs(
+  set: CodedSetName,
+  filename: string,
+  idMap: Readonly<Record<string, string>>,
+): void {
+  if (!Object.keys(idMap).length) return;
+  const stored = loadCodedCfg(set, filename);
+  saveCodedCfg(set, filename, {
+    ...stored,
+    longExit: { ...stored.longExit, rules: rewriteRulesInstanceRefs(stored.longExit.rules, idMap) },
+    shortExit: { ...stored.shortExit, rules: rewriteRulesInstanceRefs(stored.shortExit.rules, idMap) },
+  });
 }
 
 /** Stored values overlaid on the schema's defaults; anything stale (unknown

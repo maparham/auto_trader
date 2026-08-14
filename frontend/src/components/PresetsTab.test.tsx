@@ -115,6 +115,64 @@ describe("PresetsTab coded param snapshot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load" }));
     expect(loadCodedCfg("backtest", "bb.py").params).toEqual({ bb_dev: 3 });
   });
+
+  // A coded run consumes the store's panel EXITS and risk too (BacktestButton's
+  // effCfg), so params alone don't reproduce it — the preset must carry the
+  // whole store entry.
+  const exitGroup = (expr: string) => ({ combine: "AND" as const, rules: [{ expr, enabled: true }] });
+  const fullStore = () => ({
+    ...defaultCodedCfg(),
+    params: { bb_dev: 1.5 },
+    longExit: exitGroup("ATR1.to14 > 1"),
+    riskSynced: false,
+  });
+
+  it("Save as… snapshots the whole coded store, exits included", () => {
+    saveCodedCfg("backtest", "bb.py", fullStore());
+    setup({ cfg: codedBase() });
+    saveAs("Tuned");
+    expect(loadPresets().Tuned.codedCfg).toEqual(fullStore());
+    // codedParams still written alongside, so older builds load the params.
+    expect(loadPresets().Tuned.codedParams).toEqual({ bb_dev: 1.5 });
+  });
+
+  it("Load writes the exit groups back into the panel store", () => {
+    saveCodedCfg("backtest", "bb.py", codedCfg({ bb_dev: 3 }));
+    putPreset({
+      ...newPreset("Tuned", codedBase(), { symbol: "T", timeframe: "M" }, 1),
+      codedCfg: fullStore(),
+    });
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Tuned" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(loadCodedCfg("backtest", "bb.py")).toEqual(fullStore());
+  });
+
+  it("a legacy codedParams-only preset restores params and leaves exits alone", () => {
+    saveCodedCfg("backtest", "bb.py", fullStore());
+    putPreset({
+      ...newPreset("Old", codedBase(), { symbol: "T", timeframe: "M" }, 1),
+      codedParams: { bb_dev: 9 },
+    });
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Old" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    const store = loadCodedCfg("backtest", "bb.py");
+    expect(store.params).toEqual({ bb_dev: 9 });
+    expect(store.longExit).toEqual(exitGroup("ATR1.to14 > 1"));
+  });
+
+  it("exit drift marks the preset edited, and Save captures the new exits", () => {
+    saveCodedCfg("backtest", "bb.py", fullStore());
+    setup({ cfg: codedBase() });
+    saveAs("Tuned");
+    cleanup();
+    saveCodedCfg("backtest", "bb.py", { ...fullStore(), longExit: exitGroup("ATR1.to14 > 2") });
+    setup({ cfg: codedBase(), activeName: "Tuned" });
+    expect(screen.getByText("edited")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(loadPresets().Tuned.codedCfg?.longExit).toEqual(exitGroup("ATR1.to14 > 2"));
+  });
 });
 
 // Rules can reference chart panes by instance (`SLOPE#a1.9`) and restate none
@@ -195,7 +253,7 @@ describe("PresetsTab expr instance snapshot", () => {
       longExit: { combine: "AND", rules: [{ expr: "ATR1.to14 > 1", enabled: true }] },
     });
     const captureExprInstances = vi.fn(() => ({ ATR1: PAYLOAD }));
-    const cfg: BacktestConfig = { ...refCfg(), codedStrategy: "bb.py" };
+    const cfg: BacktestConfig = { ...refCfg(), mode: "coded", codedStrategy: "bb.py" };
     setup({ cfg, captureExprInstances });
     saveAs("Coded");
     const exprs = captureExprInstances.mock.calls[0][0];
@@ -203,6 +261,25 @@ describe("PresetsTab expr instance snapshot", () => {
     // The cfg's own entry rules are NOT part of a coded run.
     expect(exprs).not.toContain("SLOPE#a1.9 > 0");
     expect(loadPresets().Coded.exprInstances).toEqual({ ATR1: PAYLOAD });
+  });
+
+  // codedStrategy is the remembered FILE SELECTION and stays set after
+  // switching back to rules mode — only cfg.mode says which rows a run ships
+  // (BacktestButton keys effCfg on it). A rules-mode save must capture the
+  // cfg's rule groups even while a coded file is still selected.
+  it("rules mode with a coded file selected still captures the rule groups", () => {
+    saveCodedCfg("backtest", "bb.py", {
+      ...defaultCodedCfg(),
+      longExit: { combine: "AND", rules: [{ expr: "ATR1.to14 > 1", enabled: true }] },
+    });
+    const captureExprInstances = vi.fn(() => ({ "SLOPE#a1": PAYLOAD }));
+    const cfg: BacktestConfig = { ...refCfg(), mode: "rules", codedStrategy: "bb.py" };
+    setup({ cfg, captureExprInstances });
+    saveAs("Rules");
+    const exprs = captureExprInstances.mock.calls[0][0];
+    expect(exprs).toContain("SLOPE#a1.9 > 0");
+    expect(exprs).not.toContain("ATR1.to14 > 1");
+    expect(loadPresets().Rules.exprInstances).toEqual({ "SLOPE#a1": PAYLOAD });
   });
 
   it("Load recreates the panes and loads the rewritten config", () => {

@@ -9,9 +9,10 @@
 import { PREFIX, load, save } from "./persist/core";
 import {
   normalizeBacktestConfig, RULE_GROUP_KEYS,
-  type BacktestConfig, type RangeConfig, type RuleGroup,
+  type BacktestConfig, type RangeConfig, type RiskConfig, type Rule, type RuleGroup,
 } from "./backtestConfig";
 import { sanitizePortableInstances, type PortableInstancePayload } from "./ruleClipboard";
+import type { CodedStrategyConfig } from "./codedConfig";
 
 /** The summary of one completed single backtest, as shown in the library table. */
 export type PresetRun = {
@@ -42,6 +43,13 @@ export type BacktestPreset = {
    *  Absent on rule-mode presets and on presets saved before the field existed
    *  (loading those leaves the store untouched). */
   codedParams?: Record<string, number | boolean | string>;
+  /** Snapshot of the WHOLE per-file coded store entry (params + panel exit
+   *  rule groups + risk) taken at save time. Supersedes codedParams: a coded
+   *  run consumes the store's exits and risk too (BacktestButton's effCfg), so
+   *  params alone don't reproduce it. codedParams is still written alongside
+   *  so a file exported here loads its params in builds that predate this
+   *  field; loading prefers codedCfg when present. */
+  codedCfg?: CodedStrategyConfig;
   /** Snapshot of the chart panes the rules reference by instance (`SLOPE#a1.9`),
    *  taken at save time — same portable shape the rule clipboard ships, for the
    *  same reason: the expression names an instance's OUTPUT and restates none of
@@ -187,6 +195,44 @@ function cleanCodedParams(v: unknown): BacktestPreset["codedParams"] {
   return Object.keys(out).length ? out : undefined;
 }
 
+/** A rule group from outside the app: `rules` must be a list (the panel maps
+ *  over it unguarded), junk entries inside it cost the entry (a rule IS its
+ *  expression, same as the clipboard's rule sanitizing). */
+function cleanRuleGroup(v: unknown): RuleGroup | undefined {
+  if (!isPlainObject(v) || !Array.isArray(v.rules)) return undefined;
+  const rules: Rule[] = [];
+  for (const r of v.rules) {
+    if (!isPlainObject(r) || !isStr(r.expr)) continue;
+    rules.push({
+      expr: r.expr,
+      ...(typeof r.enabled === "boolean" ? { enabled: r.enabled } : {}),
+      ...(isNum(r.count) ? { count: r.count } : {}),
+    });
+  }
+  return { combine: (isStr(v.combine) ? v.combine : "AND") as RuleGroup["combine"], rules };
+}
+
+/** All-or-nothing on the exit groups (they are the point of the snapshot — a
+ *  codedCfg without usable exits is no more useful than none), field-by-field
+ *  on the rest. Risk configs pass through as plain objects: every downstream
+ *  read normalizes them (normalizeRisk), same guarded-read call isConfigShaped
+ *  makes for the cfg's optional fields. */
+function cleanCodedCfg(v: unknown): BacktestPreset["codedCfg"] {
+  if (!isPlainObject(v)) return undefined;
+  const longExit = cleanRuleGroup(v.longExit);
+  const shortExit = cleanRuleGroup(v.shortExit);
+  if (!longExit || !shortExit) return undefined;
+  const out: CodedStrategyConfig = {
+    params: cleanCodedParams(v.params) ?? {},
+    longExit,
+    shortExit,
+  };
+  if (isPlainObject(v.longRisk)) out.longRisk = v.longRisk as unknown as RiskConfig;
+  if (isPlainObject(v.shortRisk)) out.shortRisk = v.shortRisk as unknown as RiskConfig;
+  if (typeof v.riskSynced === "boolean") out.riskSynced = v.riskSynced;
+  return out;
+}
+
 /** Same call as codedParams: a malformed entry costs the entry, not the preset.
  *  Delegates to the clipboard's sanitizer — the field IS the clipboard payload
  *  shape — and collapses empty to absent so "has instances" stays a plain
@@ -230,6 +276,7 @@ export function parsePresets(json: string): { presets: BacktestPreset[]; rejecte
       // plain truthiness test everywhere.
       note: isStr(entry.note) && entry.note.trim() ? entry.note : undefined,
       codedParams: cleanCodedParams(entry.codedParams),
+      codedCfg: cleanCodedCfg(entry.codedCfg),
       exprInstances: cleanExprInstances(entry.exprInstances),
     });
   }

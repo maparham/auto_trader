@@ -193,9 +193,10 @@ function sanitizeStyles(styles: unknown): { styles: SavedIndicatorConfig["styles
   };
 }
 
-// Order-insensitive deep equality over JSON-shaped values. Small and recursive;
-// clipboard payloads are tiny.
-function deepEq(a: unknown, b: unknown): boolean {
+/** Key-order-insensitive deep equality over JSON-shaped values. Small and
+ * recursive; the payloads compared through it (pane configs, coded-store
+ * snapshots) are tiny. */
+export function deepEq(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
   if (Array.isArray(a) || Array.isArray(b)) {

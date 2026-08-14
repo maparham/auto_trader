@@ -224,6 +224,51 @@ describe("backtestPresets serialization", () => {
   });
 });
 
+describe("preset codedCfg", () => {
+  const codedCfg = () => ({
+    params: { bb_dev: 1.5, gated: true },
+    longExit: { combine: "AND", rules: [{ expr: "ATR1.to14 > 1", enabled: true }] },
+    shortExit: { combine: "OR", rules: [] },
+    longRisk: { sl: { mode: "atr", value: 2 } },
+    riskSynced: false,
+  });
+
+  it("round-trips a full coded-store snapshot through put/load and export/import", () => {
+    putPreset({ ...make("Coded"), codedCfg: codedCfg() });
+    expect(loadPresets().Coded.codedCfg).toEqual(codedCfg());
+    const { presets, rejected } = parsePresets(serializePresets([loadPresets().Coded]));
+    expect(rejected).toBe(0);
+    expect(presets[0].codedCfg).toEqual(codedCfg());
+  });
+
+  it("drops a codedCfg whose exit groups are malformed, keeping the preset", () => {
+    const file = JSON.parse(serializePresets([make("A")]));
+    file.presets[0].codedCfg = { ...codedCfg(), longExit: { combine: "AND", rules: "none" } };
+    const { presets, rejected } = parsePresets(JSON.stringify(file));
+    expect(rejected).toBe(0);
+    expect(presets[0].name).toBe("A");
+    expect(presets[0].codedCfg).toBeUndefined();
+  });
+
+  it("drops junk rule entries inside an imported exit group", () => {
+    const file = JSON.parse(serializePresets([make("A")]));
+    file.presets[0].codedCfg = {
+      ...codedCfg(),
+      longExit: { combine: "AND", rules: [{ expr: "x > 0" }, { expr: 42 }, null] },
+    };
+    const { presets } = parsePresets(JSON.stringify(file));
+    expect(presets[0].codedCfg?.longExit.rules).toEqual([{ expr: "x > 0" }]);
+  });
+
+  it("drops a non-object codedCfg, keeping the preset", () => {
+    const file = JSON.parse(serializePresets([make("A")]));
+    file.presets[0].codedCfg = "banana";
+    const { presets, rejected } = parsePresets(JSON.stringify(file));
+    expect(rejected).toBe(0);
+    expect(presets[0].codedCfg).toBeUndefined();
+  });
+});
+
 describe("preset exprInstances", () => {
   const SLOPE = {
     type: "SLOPE",

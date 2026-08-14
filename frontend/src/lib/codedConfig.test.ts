@@ -4,7 +4,8 @@ import { installMemStorage } from "./testMemStorage";
 installMemStorage();
 
 import {
-  codedCfgsDiffer, loadCodedCfg, resolveParamValues, saveCodedCfg, sendableRisk,
+  codedCfgsDiffer, loadCodedCfg, resolveParamValues, rewriteCodedExitRefs,
+  saveCodedCfg, sendableRisk,
 } from "./codedConfig";
 import type { ParamSpec } from "../api";
 
@@ -34,6 +35,37 @@ describe("codedConfig store", () => {
     const base = loadCodedCfg("backtest", "a.py");
     saveCodedCfg("backtest", "a.py", { ...base, params: { ema_fast: 12 } });
     expect(loadCodedCfg("backtest", "b.py").params).toEqual({});
+  });
+});
+
+// A preset load can recreate a referenced pane under a fresh id (the saved id
+// was taken by a differently-configured pane); the store's exit rules must
+// follow, or they keep naming a pane that isn't theirs.
+describe("rewriteCodedExitRefs", () => {
+  it("rewrites instance refs in both exit groups, leaving everything else alone", () => {
+    const base = loadCodedCfg("backtest", "s.py");
+    saveCodedCfg("backtest", "s.py", {
+      ...base,
+      params: { ema_fast: 12 },
+      longExit: { combine: "AND", rules: [{ expr: "SLOPE#a1.9 > 0", enabled: true }] },
+      shortExit: { combine: "OR", rules: [{ expr: "ATR1.to14 > 1" }, { expr: "EMA(9) > 0" }] },
+    });
+    rewriteCodedExitRefs("backtest", "s.py", { "SLOPE#a1": "SLOPE#b2", ATR1: "ATR" });
+    const cfg = loadCodedCfg("backtest", "s.py");
+    expect(cfg.longExit.rules[0]).toEqual({ expr: "SLOPE#b2.9 > 0", enabled: true });
+    expect(cfg.shortExit.rules.map((r) => r.expr)).toEqual(["ATR.to14 > 1", "EMA(9) > 0"]);
+    expect(cfg.params).toEqual({ ema_fast: 12 });
+  });
+
+  it("an empty id map leaves the store untouched", () => {
+    const base = loadCodedCfg("backtest", "s.py");
+    saveCodedCfg("backtest", "s.py", {
+      ...base,
+      longExit: { combine: "AND", rules: [{ expr: "SLOPE.9 > 0" }] },
+    });
+    const before = loadCodedCfg("backtest", "s.py");
+    rewriteCodedExitRefs("backtest", "s.py", {});
+    expect(loadCodedCfg("backtest", "s.py")).toEqual(before);
   });
 });
 
