@@ -32,6 +32,11 @@ class StrategyInfo:
     description: str
     hedged: bool
     params: tuple[dict, ...] = ()
+    # meta["chart_overlays"]: chart indicators the UI keeps in sync with the
+    # strategy's params, e.g. {"indicator": "BOLL", "calc_params": ["bb_period",
+    # "bb_dev"]} — each calc_params entry names a param whose value feeds the
+    # indicator, in the indicator's own calcParams order.
+    chart_overlays: tuple[dict, ...] = ()
     error: str | None = None
 
 
@@ -49,7 +54,22 @@ def _describe(module: ModuleType, filename: str) -> StrategyInfo:
         description=str(meta.get("description") or doc),
         hedged=bool(meta.get("hedged", False)),
         params=tuple(params),
+        chart_overlays=tuple(_chart_overlays(meta)),
     )
+
+
+def _chart_overlays(meta: dict) -> list[dict]:
+    """Well-formed meta["chart_overlays"] entries; anything malformed is dropped
+    (the strategy still runs fine without its chart overlay)."""
+    raw = meta.get("chart_overlays")
+    if not isinstance(raw, list):
+        return []
+    return [
+        {"indicator": o["indicator"], "calc_params": [str(p) for p in o["calc_params"]]}
+        for o in raw
+        if isinstance(o, dict) and isinstance(o.get("indicator"), str)
+        and isinstance(o.get("calc_params"), list)
+    ]
 
 
 def load_strategy(filename: str, directory: Path | None = None) -> ModuleType:

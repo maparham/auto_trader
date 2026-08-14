@@ -52,6 +52,46 @@ export type StoredBacktestResult = Omit<BacktestResult, "candles"> & {
 
 const backtestKey = (scope: string, epic: string) => ns(scope, `backtest.${epic}`);
 
+// Match `key` against one of `scopes`' `<kind>.<epic>` keys. Scopes are matched
+// by their full `${PREFIX}.${scope}.${kind}.` prefix, so a tab scope never
+// swallows its cell scopes' keys (`tab.A` vs `tab.A.cell.b`).
+function matchScopedEpicKey(
+  key: string,
+  scopes: readonly string[],
+  kind: string,
+): { scope: string; epic: string } | null {
+  for (const scope of scopes) {
+    const prefix = `${PREFIX}.${scope}.${kind}.`;
+    if (key.startsWith(prefix)) {
+      const epic = key.slice(prefix.length);
+      if (epic) return { scope, epic };
+    }
+  }
+  return null;
+}
+
+/** If `key` is one of `scopes`' persisted-backtest keys, name the cell (scope)
+ * and epic it addresses; null otherwise. Lets App treat a cross-tab backtest
+ * push as an in-place rehydrate of that one cell instead of a whole-grid
+ * remount. */
+export function matchBacktestKey(
+  key: string,
+  scopes: readonly string[],
+): { scope: string; epic: string } | null {
+  return matchScopedEpicKey(key, scopes, "backtest");
+}
+
+/** Same shape-match for the sweep archive pointer (`<scope>.sweep.<epic>`).
+ * Lets App skip the whole-grid remount for a cross-tab sweep-pointer push: the
+ * pointer's only consumers live in the backtest settings modal (outside the
+ * remount-keyed grid subtree), so a remount is pure cost there. */
+export function matchSweepPointerKey(
+  key: string,
+  scopes: readonly string[],
+): { scope: string; epic: string } | null {
+  return matchScopedEpicKey(key, scopes, "sweep");
+}
+
 export function loadBacktestResult(scope: string, epic: string): StoredBacktestResult | null {
   const key = backtestKey(scope, epic);
   const stored = load<StoredBacktestResult | null>(key, null);

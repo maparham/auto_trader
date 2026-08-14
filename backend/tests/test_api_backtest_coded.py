@@ -216,3 +216,35 @@ def test_coded_with_exit_rules_wrong_length_series_422(strategies):
     res = client.post("/api/backtest", json=req)
     assert res.status_code == 422
     assert "series 'SIG' length" in res.json()["detail"]
+
+
+ZONE_STRAT = '''
+def on_bar(ctx):
+    if ctx.position.is_flat and len(ctx.closes) >= 12 and len(ctx.closes) % 10 == 0:
+        i = len(ctx.closes) - 1
+        z = ctx.zone(i - 5, i, top=ctx.close + 2, bottom=ctx.close - 2, label="range")
+        return [ctx.buy(sl=ctx.close * 0.9, tp=ctx.close * 1.1, reason="in", zones=[z])]
+    if ctx.position.is_long and ctx.bars_since_entry >= 3:
+        return [ctx.close_long(reason="out")]
+    return []
+'''
+
+
+def test_coded_trade_zones_serialized(strategies, tmp_path, monkeypatch):
+    # A strategy-attached zone rides the trade onto the wire: unix-second
+    # times spanning the declared bars, top/bottom/label verbatim.
+    (tmp_path / "zoned.py").write_text(ZONE_STRAT)
+    candles = make_candles(40)
+    res = client.post("/api/backtest", json=base_request("zoned.py", candles))
+    assert res.status_code == 200
+    trades = res.json()["trades"]
+    assert trades, "expected at least one round-trip"
+    z = trades[0]["zones"][0]
+    assert z["label"] == "range"
+    assert z["top"] > z["bottom"]
+    assert isinstance(z["from_time"], int) and isinstance(z["to_time"], int)
+    assert z["to_time"] - z["from_time"] == 5 * 3600  # 5 bars of HOUR data
+    # Plain strategies keep an empty list (field present, no zones).
+    res2 = client.post("/api/backtest", json=base_request("test.py", candles))
+    assert res2.status_code == 200
+    assert all(t["zones"] == [] for t in res2.json()["trades"])

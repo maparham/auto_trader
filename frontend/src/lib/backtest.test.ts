@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { test, expect } from "vitest";
-import { overlayEndTs, isExprRequest } from "./backtest";
+import { overlayEndTs, isExprRequest, strategyZoneSpan } from "./backtest";
 import type { BacktestRequest, ExprBacktestRequest } from "../api";
 
 const bars1m = Array.from({ length: 61 }, (_, i) => ({ timestamp: 3_600_000 + i * 60_000 }));
@@ -64,4 +64,18 @@ test("isExprRequest routes an expr request to the expr backtest", () => {
     tradeFromTime: 0,
   } as unknown as ExprBacktestRequest;
   expect(isExprRequest(expr)).toBe(true);
+});
+
+test("strategyZoneSpan passes a zone overlapping the loaded window", () => {
+  // zone times are unix SECONDS (wire shape); window bounds are ms.
+  const z = { from_time: 3600, to_time: 7200, top: 110, bottom: 100, label: "range" };
+  expect(strategyZoneSpan(z, 3_600_000, 10_000_000)).toEqual({ fromTs: 3_600_000, toTs: 7_200_000 });
+  // Straddling the left edge still draws (klinecharts clamps the off-window point).
+  expect(strategyZoneSpan(z, 5_000_000, 10_000_000)).toEqual({ fromTs: 3_600_000, toTs: 7_200_000 });
+});
+
+test("strategyZoneSpan rejects a zone entirely outside the loaded window", () => {
+  const z = { from_time: 3600, to_time: 7200, top: 110, bottom: 100, label: "" };
+  expect(strategyZoneSpan(z, 8_000_000, 10_000_000)).toBeNull();
+  expect(strategyZoneSpan(z, 1_000_000, 2_000_000)).toBeNull();
 });

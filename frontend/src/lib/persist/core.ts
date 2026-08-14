@@ -521,6 +521,13 @@ export function subscribeToBackendUpdates(
         return;
       }
       if (msg.origin === CLIENT_ID) return; // ignore our own echo
+      // NOTE: a push whose bytes match localStorage must STILL notify. Two tabs
+      // in the same browser share localStorage, so a sibling tab's save() has
+      // already written these exact bytes before its push arrives — the
+      // notification is the ONLY signal telling this tab to re-sync its React
+      // state/overlays to storage. Suppressing "unchanged" pushes here silently
+      // disables same-browser cross-tab sync (and the next persist() stomps the
+      // sibling's edit — the cross-tab data-loss bug this handler exists to fix).
       if ("deleted" in msg && msg.deleted) {
         localStorage.removeItem(msg.key);
         remoteEcho.set(msg.key, "\0deleted");

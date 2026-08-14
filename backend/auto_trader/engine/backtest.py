@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable
 
-from auto_trader.core.models import BarStats, Candle, Fill, Side, Signal, Trade
+from auto_trader.core.models import BarStats, Candle, Fill, Side, Signal, Trade, TradeZone
 from auto_trader.engine.risk import RiskConfig, is_trailing, stop_level, target_level
 from auto_trader.engine.scaling import ScalingConfig, spacing_ok
 from auto_trader.engine.schedule import RecurrenceMask, is_active
@@ -68,6 +68,9 @@ class Position:
     # Overnight financing accrued while this position was open (positive = cost),
     # drawn down proportionally into each Trade as the position is reduced.
     financing: float = 0.0
+    # Chart zones from the opening signal, copied onto every Trade this
+    # position produces (partial closes each carry the full set).
+    zones: tuple[TradeZone, ...] = ()
 
 
 @dataclass(slots=True)
@@ -228,7 +231,7 @@ class BacktestEngine:
                     )
                     realized -= self.commission
                     self._open(positions, side, risk, fill_price, bar.time, sig.reason, sig.quantity, i,
-                               stop=sig.stop_level, target=sig.target_level)
+                               stop=sig.stop_level, target=sig.target_level, zones=sig.zones)
                     if side == "long":
                         last_long_open = fill_price
                     else:
@@ -373,12 +376,13 @@ class BacktestEngine:
         return arr[i] if i < len(arr) else None
 
     def _open(self, positions, side, risk, fill_price, bar_time, reason, qty, i,
-              stop=None, target=None):
+              stop=None, target=None, zones=()):
         """Open a NEW independent position; seed its stop/target/extreme from the
         fill price. Per-signal `stop`/`target` (coded strategies) override the
         side-level risk config for THIS position. (Pyramiding/merge is a later
         phase.)"""
-        p = Position(qty=qty, entry=fill_price, open_time=bar_time, open_reason=reason)
+        p = Position(qty=qty, entry=fill_price, open_time=bar_time, open_reason=reason,
+                     zones=tuple(zones))
         p.adv_extreme = fill_price
         p.fav_extreme = fill_price
         if stop is not None or target is not None:
@@ -461,6 +465,7 @@ class BacktestEngine:
                 bars_to_mfe=p.bar_stats.bars_to_mfe,
                 bars_to_mae=p.bar_stats.bars_to_mae,
                 entry_crossings=p.bar_stats.entry_crossings,
+                zones=p.zones,
             )
         )
         p.qty -= closing

@@ -49,6 +49,7 @@ from ..schemas import (
     SweepRowDTO,
     TermDTO,
     TradeDTO,
+    TradeZoneDTO,
     WfoJobStatusResponse,
     WfoJobSubmitResponse,
     axis_dicts,
@@ -442,6 +443,13 @@ def _trades_to_dto(result: BacktestResult) -> list[TradeDTO]:
             entry_crossings=t.entry_crossings,
             whatif=t.whatif,
             financing=t.financing,
+            zones=[
+                TradeZoneDTO(
+                    from_time=_ts(z.from_time), to_time=_ts(z.to_time),
+                    top=z.top, bottom=z.bottom, label=z.label,
+                )
+                for z in t.zones
+            ],
         )
         for t in result.trades
     ]

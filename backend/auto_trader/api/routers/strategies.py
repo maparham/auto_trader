@@ -22,7 +22,7 @@ async def strategies() -> list[StrategyInfoDTO]:
         StrategyInfoDTO(
             filename=i.filename, name=i.name, description=i.description,
             hedged=i.hedged, params=[ParamSpecDTO(**p) for p in i.params],
-            error=i.error,
+            chart_overlays=list(i.chart_overlays), error=i.error,
         )
         for i in loader.list_strategies(loader.STRATEGIES_DIR)
     ]

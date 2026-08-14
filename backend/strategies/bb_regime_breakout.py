@@ -58,6 +58,9 @@ meta = {
         {"name": "min_er", "label": "Min efficiency ratio", "type": "float", "default": 0.0, "min": 0.0, "max": 1.0,
          "help": "Skip entries while |net move| / path traveled over the lookback is below this. 0 disables the gate."},
     ],
+    # The UI keeps a BOLL chart overlay in sync with these params so the band
+    # the strategy trades on is visible on the candles.
+    "chart_overlays": [{"indicator": "BOLL", "calc_params": ["bb_period", "bb_dev"]}],
 }
 
 
@@ -71,10 +74,10 @@ def _bandwidth(closes: np.ndarray, period: int, dev: float) -> np.ndarray:
         return np.where(mid > 0, 2.0 * dev * sd / mid, np.inf)
 
 
-def _signal(i: int, closes, highs, lows, bw, bw_start: int, p) -> tuple[str, float, float] | None:
+def _signal(i: int, closes, highs, lows, bw, bw_start: int, p) -> tuple[str, float, float, int] | None:
     """Evaluate the full breakout condition at bar i. Returns (leg, range_high,
-    range_low) when a confirmed regime-transition breakout exists, else None.
-    bw[k] is the band width at bar bw_start + k."""
+    range_low, squeeze_bar) when a confirmed regime-transition breakout exists,
+    else None. bw[k] is the band width at bar bw_start + k."""
     confirm, window = p["confirm_bars"], p["breakout_window"]
 
     # Most recent squeeze bar at least confirm_bars back: width at or below the
@@ -115,9 +118,9 @@ def _signal(i: int, closes, highs, lows, bw, bw_start: int, p) -> tuple[str, flo
     # Directional break: all confirming closes beyond the range edge.
     tail = closes[i - confirm + 1: i + 1]
     if np.all(tail > rh):
-        return ("long", rh, rl)
+        return ("long", rh, rl, j)
     if np.all(tail < rl):
-        return ("short", rh, rl)
+        return ("short", rh, rl, j)
     return None
 
 
@@ -161,7 +164,7 @@ def on_bar(ctx):
 
     # Level-triggered while flat: the breakout window bounds chasing (and any
     # re-entry after a stop-out); once it expires the signal dies on its own.
-    leg, rh, rl = sig
+    leg, rh, rl, j = sig
 
     # Flip guard: a stop-out whose reversal immediately "breaks out" the other
     # way is the whipsaw chain — block only the OPPOSITE direction for a while,
@@ -174,15 +177,20 @@ def on_bar(ctx):
             return []
     frac, height = p["stop_range_frac"], rh - rl
     note = {"range_high": rh, "range_low": rl, "band_width": float(bw[i - bw_start])}
+    # The broken consolidation range as a chart zone: range lookback ending at
+    # the squeeze bar, extended to the breakout bar so the shading meets the entry.
+    zones = [ctx.zone(j - p["range_lookback"] + 1, i, rh, rl, label="consolidation range")]
     if leg == "long":
         # ctx.close > rh >= stop, so the bracket is always on the right side.
         stop = rh - frac * height
         return [ctx.buy(
             sl=stop, tp=ctx.close + p["target_r"] * (ctx.close - stop),
             reason=f"band expansion + break above range high {rh:.5g}", note=note,
+            zones=zones,
         )]
     stop = rl + frac * height
     return [ctx.sell(
         sl=stop, tp=ctx.close - p["target_r"] * (stop - ctx.close),
         reason=f"band expansion + break below range low {rl:.5g}", note=note,
+        zones=zones,
     )]

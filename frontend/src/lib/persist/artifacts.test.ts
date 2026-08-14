@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { installMemStorage } from "../testMemStorage";
 
 installMemStorage();
-const { saveBacktestResult, loadBacktestResult, loadSweepResultId, saveSweepResultId, clearSweepResultId } =
+const { saveBacktestResult, loadBacktestResult, loadSweepResultId, saveSweepResultId, clearSweepResultId, matchBacktestKey, matchSweepPointerKey } =
   await import("./artifacts");
 const { save } = await import("./core");
 const { EQUITY_PERSIST_CAP } = await import("../equityDownsample");
@@ -112,5 +112,40 @@ describe("sweep result pointer (per scope + epic)", () => {
     saveSweepResultId("tab.A", "US100", "sw-1");
     clearSweepResultId("tab.A", "US100");
     expect(loadSweepResultId("tab.A", "US100")).toBeNull();
+  });
+});
+
+describe("matchBacktestKey", () => {
+  it("matches a visible scope's backtest key and extracts the epic", () => {
+    expect(matchBacktestKey("auto-trader.tab.A.backtest.US100", ["tab.A"])).toEqual({
+      scope: "tab.A",
+      epic: "US100",
+    });
+    expect(
+      matchBacktestKey("auto-trader.tab.A.cell.b.backtest.EURUSD", ["tab.A", "tab.A.cell.b"]),
+    ).toEqual({ scope: "tab.A.cell.b", epic: "EURUSD" });
+  });
+
+  it("does not cross-match between a tab scope and its cell scopes", () => {
+    // The cell key starts with the tab scope's prefix but not its backtest
+    // prefix — it must resolve to the cell scope only.
+    expect(matchBacktestKey("auto-trader.tab.A.cell.b.backtest.US100", ["tab.A"])).toBeNull();
+  });
+
+  it("returns null for non-backtest content keys and empty epics", () => {
+    expect(matchBacktestKey("auto-trader.tab.A.drawings.US100", ["tab.A"])).toBeNull();
+    expect(matchBacktestKey("auto-trader.tab.A.backtest.", ["tab.A"])).toBeNull();
+    expect(matchBacktestKey("auto-trader.tab.B.backtest.US100", ["tab.A"])).toBeNull();
+  });
+});
+
+describe("matchSweepPointerKey", () => {
+  it("matches a visible scope's sweep pointer key, and nothing else", () => {
+    expect(matchSweepPointerKey("auto-trader.tab.A.sweep.US100", ["tab.A"])).toEqual({
+      scope: "tab.A",
+      epic: "US100",
+    });
+    expect(matchSweepPointerKey("auto-trader.tab.A.backtest.US100", ["tab.A"])).toBeNull();
+    expect(matchSweepPointerKey("auto-trader.tab.B.sweep.US100", ["tab.A"])).toBeNull();
   });
 });

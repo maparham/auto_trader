@@ -6,6 +6,7 @@
 import type { ParamSpec, ParamValues } from "../api";
 import type { RiskConfig, RuleGroup } from "./backtestConfig";
 import { load, save } from "./persist/core";
+import { backtestStrategySetupChanged } from "./signals";
 
 export interface CodedStrategyConfig {
   params: ParamValues;
@@ -38,6 +39,9 @@ export function loadCodedCfg(set: CodedSetName, filename: string): CodedStrategy
 
 export function saveCodedCfg(set: CodedSetName, filename: string, cfg: CodedStrategyConfig): void {
   save(KEY(set, filename), cfg);
+  // The chart's strategy-overlay sync tracks backtest param writes from every
+  // surface (modal, preset restore, sweep apply) through this one choke point.
+  if (set === "backtest") backtestStrategySetupChanged.set(backtestStrategySetupChanged.value + 1);
 }
 
 /** Stored values overlaid on the schema's defaults; anything stale (unknown

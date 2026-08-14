@@ -42,6 +42,17 @@ export interface Marker {
   combine?: string | null; // firing group's "AND"/"OR" (how to read the passing-only terms)
 }
 
+// A time×price rectangle the strategy attached to the entry (the structure that
+// justified the trade, e.g. a broken consolidation range). Times are unix
+// seconds (bar times); shaded on the chart when the trade is highlighted.
+export interface TradeZone {
+  from_time: number;
+  to_time: number;
+  top: number;
+  bottom: number;
+  label: string;
+}
+
 interface Trade {
   side: string;
   quantity: number;
@@ -68,6 +79,8 @@ interface Trade {
   mfe_r: number | null;
   context: Record<string, string | number | null> | null;
   whatif?: Record<string, unknown> | null;
+  // Chart zones from the opening signal; absent/empty for strategies without any.
+  zones?: TradeZone[];
 }
 
 export interface EquityPoint {
@@ -536,6 +549,14 @@ export interface ParamSpec {
 
 export type ParamValues = Record<string, number | boolean | string>;
 
+// A chart indicator the UI keeps in sync with a coded strategy's params:
+// each calc_params entry names a strategy param whose value feeds the
+// indicator, in the indicator's own calcParams order.
+export interface ChartOverlaySpec {
+  indicator: string;
+  calc_params: string[];
+}
+
 export interface StrategyInfo {
   filename: string;
   name: string;
@@ -543,6 +564,7 @@ export interface StrategyInfo {
   hedged: boolean;
   error: string | null;
   params: ParamSpec[];
+  chart_overlays?: ChartOverlaySpec[];
 }
 
 export async function fetchStrategies(): Promise<StrategyInfo[]> {

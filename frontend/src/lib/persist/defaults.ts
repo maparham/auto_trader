@@ -4,6 +4,7 @@
 
 import { normalizeBacktestConfig, type BacktestConfig } from "../backtestConfig";
 import { PREFIX, root, load, save, saveLocal, mirrorDelete } from "./core";
+import { backtestStrategySetupChanged } from "../signals";
 import type {
   IndicatorInstance,
   SavedOverlay,
@@ -134,6 +135,9 @@ export function loadBacktestLastUsed(): SavedBacktestConfig | null {
 }
 export function saveBacktestLastUsed(cfg: SavedBacktestConfig): void {
   save(BACKTEST_LAST_USED_KEY, cfg);
+  // Notify the chart's strategy-overlay sync: this is how mode/strategy writes
+  // from outside the panel (agent bridge backtest.config.set) reach the band.
+  backtestStrategySetupChanged.set(backtestStrategySetupChanged.value + 1);
 }
 
 // The Long/Short tab the backtest modal last showed. Device-local (a per-browser

@@ -36,7 +36,7 @@ import {
   wfoBandsShownSignal,
   wfoEquityCompoundedSignal,
 } from "./signals";
-import type { WfoScheme } from "../api";
+import type { WfoScheme, TradeZone as TradeZoneWire } from "../api";
 import { buildSignalGlyphs, isEntryFill } from "./signalGlyphs";
 import { tradeZones } from "./tradeZones";
 import { minPositiveGap } from "./barInterval";
@@ -845,6 +845,68 @@ function ensureZoneOverlayRegistered(): void {
   registerOverlay(tradeZoneOverlay);
 }
 
+const STRATEGY_ZONE_OVERLAY = "strategyZone";
+
+// A strategy-attached trade zone (api.ts TradeZone — e.g. BB Regime's broken
+// consolidation range): a shaded time×price rect with a small label pill, drawn
+// only while its trade is stickily selected. Two points carry the geometry:
+// 0 (from_time, top), 1 (to_time, bottom). Same read-only discipline as the
+// risk/reward zone above (lock on create, every figure ignoreEvent).
+const strategyZoneOverlay: OverlayTemplate = {
+  name: STRATEGY_ZONE_OVERLAY,
+  totalStep: 2,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: ({ overlay, coordinates }) => {
+    if (coordinates.length < 2) return [];
+    const [c0, c1] = coordinates;
+    const x = Math.min(c0.x, c1.x);
+    const y = Math.min(c0.y, c1.y);
+    const label = typeof (overlay.extendData as { label?: unknown })?.label === "string"
+      ? (overlay.extendData as { label: string }).label
+      : "";
+    const figures: OverlayFigure[] = [
+      {
+        type: "rect",
+        attrs: { x, y, width: Math.abs(c1.x - c0.x), height: Math.abs(c1.y - c0.y) },
+        styles: {
+          style: 'stroke_fill',
+          color: `${PERIOD_COLOR}1f`,
+          borderColor: `${PERIOD_COLOR}66`,
+          borderSize: 1,
+        },
+        ignoreEvent: true,
+      },
+    ];
+    if (label) figures.push(pillFigure(x + 4, y - 10, label, PERIOD_COLOR, "left"));
+    return figures;
+  },
+};
+
+let strategyZoneOverlayRegistered = false;
+function ensureStrategyZoneOverlayRegistered(): void {
+  if (strategyZoneOverlayRegistered) return;
+  strategyZoneOverlayRegistered = true;
+  registerOverlay(strategyZoneOverlay);
+}
+
+/** The ms time span to draw a strategy zone over, or null when the zone lies
+ * entirely outside the loaded bar window [firstTs, lastTs] — klinecharts would
+ * clamp every point onto the edge bar and draw a degenerate sliver (same guard
+ * as the risk/reward zone). A PARTIAL overlap still draws: clamping only one
+ * edge reads fine. */
+export function strategyZoneSpan(
+  z: TradeZoneWire,
+  firstTs: number,
+  lastTs: number,
+): { fromTs: number; toTs: number } | null {
+  const fromTs = z.from_time * 1000;
+  const toTs = z.to_time * 1000;
+  if (toTs < firstTs || fromTs > lastTs) return null;
+  return { fromTs, toTs };
+}
+
 const PERIOD_OVERLAY = "backtestPeriod";
 
 // The trading-period band: a faint full-pane-height rect in the price pane, and
@@ -993,6 +1055,27 @@ function drawSelectionZone(
     } satisfies ZoneExtra,
   });
   if (typeof id === "string") artifacts.selectionOverlayIds.push(id);
+  // Strategy-attached zones (e.g. the consolidation range a breakout broke out
+  // of): one shaded rect each, cleared with the selection like the R/R zone.
+  if (t.zones?.length) {
+    ensureStrategyZoneOverlayRegistered();
+    const firstTs = data && data.length > 0 ? data[0].timestamp : -Infinity;
+    const lastTs = data && data.length > 0 ? data[data.length - 1].timestamp : Infinity;
+    for (const z of t.zones) {
+      const span = strategyZoneSpan(z, firstTs, lastTs);
+      if (!span) continue;
+      const zid = chart.createOverlay({
+        name: STRATEGY_ZONE_OVERLAY,
+        lock: true,
+        points: [
+          { timestamp: span.fromTs, value: z.top },
+          { timestamp: span.toTs, value: z.bottom },
+        ],
+        extendData: { label: z.label },
+      });
+      if (typeof zid === "string") artifacts.selectionOverlayIds.push(zid);
+    }
+  }
   // `scroll` is false when the selection came from clicking an on-chart marker
   // — the user is already looking at the trade, so the view must not move.
   if (scroll) scrollChartToTrade(chart, entryTs, exitPointTs);

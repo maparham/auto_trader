@@ -86,6 +86,18 @@ class MarkerDTO(BaseModel):
     combine: str | None = None
 
 
+class TradeZoneDTO(BaseModel):
+    """A time×price rectangle a strategy attached to the entry (core TradeZone):
+    the structure that justified the trade, shaded on the chart when the trade
+    is highlighted. Times are unix seconds (bar times)."""
+
+    from_time: int
+    to_time: int
+    top: float
+    bottom: float
+    label: str = ""
+
+
 class TradeDTO(BaseModel):
     side: str
     quantity: float
@@ -125,6 +137,8 @@ class TradeDTO(BaseModel):
     # Overnight financing allocated to this trade (positive = cost). Default 0.0
     # so zeroed financing and older stored runs stay valid.
     financing: float = 0.0
+    # Chart zones from the opening signal (empty for strategies that attach none).
+    zones: list[TradeZoneDTO] = []
 
 
 class EquityDTO(BaseModel):
@@ -690,6 +704,9 @@ class StrategyInfoDTO(BaseModel):
     description: str
     hedged: bool
     params: list[ParamSpecDTO] = []
+    # Chart indicators the UI keeps in sync with the strategy's params:
+    # {"indicator": <chart indicator name>, "calc_params": [<param name>, ...]}.
+    chart_overlays: list[dict] = []
     error: str | None = None
 
 

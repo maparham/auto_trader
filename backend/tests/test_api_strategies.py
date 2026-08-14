@@ -71,6 +71,31 @@ def test_strategies_list_includes_params(tmp_path, monkeypatch):
     }]
 
 
+OVERLAY_STRAT = '''
+meta = {"name": "O", "params": [
+    {"name": "bb_period", "type": "int", "default": 20, "min": 2, "max": 200},
+    {"name": "bb_dev", "type": "float", "default": 3.0, "min": 0.5, "max": 6.0},
+], "chart_overlays": [
+    {"indicator": "BOLL", "calc_params": ["bb_period", "bb_dev"]},
+]}
+def on_bar(ctx):
+    return []
+'''
+
+
+def test_strategies_list_includes_chart_overlays(tmp_path, monkeypatch):
+    (tmp_path / "o.py").write_text(OVERLAY_STRAT)
+    (tmp_path / "plain.py").write_text(PARAMS_STRAT.replace('"P"', '"Q"'))
+    monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)
+    body = client.get("/api/strategies").json()
+    o = next(s for s in body if s["filename"] == "o.py")
+    assert o["chart_overlays"] == [
+        {"indicator": "BOLL", "calc_params": ["bb_period", "bb_dev"]},
+    ]
+    plain = next(s for s in body if s["filename"] == "plain.py")
+    assert plain["chart_overlays"] == []
+
+
 def test_bad_params_schema_is_a_load_error(tmp_path, monkeypatch):
     (tmp_path / "bp.py").write_text(BAD_PARAMS_STRAT)
     monkeypatch.setattr(loader, "STRATEGIES_DIR", tmp_path)

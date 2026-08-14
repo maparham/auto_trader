@@ -78,6 +78,33 @@ def test_meta_declares_params():
     assert by_name["flip_guard_bars"]["default"] == 0  # guard disabled by default
 
 
+def test_meta_declares_boll_chart_overlay():
+    module = load_strategy("bb_regime_breakout.py")
+    assert module.meta["chart_overlays"] == [
+        {"indicator": "BOLL", "calc_params": ["bb_period", "bb_dev"]},
+    ]
+
+
+def test_breakout_trade_carries_consolidation_range_zone():
+    # The entry's zone is the broken consolidation range: top/bottom are the
+    # range edges the bracket is anchored to, the time span runs from the range
+    # start to the breakout bar (entry fills on the NEXT bar's open).
+    result, candles = run(bars_from_closes(squeeze_then_breakout(+1)), FAST_OVERRIDES)
+    t = result.trades[0]
+    assert len(t.zones) == 1
+    z = t.zones[0]
+    assert z.label == "consolidation range"
+    assert z.top > z.bottom
+    # Bracket geometry ties the zone to the range: stop sits at the range low
+    # (stop_range_frac=1.0 default).
+    assert abs(z.bottom - t.stop_initial) < 1e-9
+    assert z.from_time < z.to_time < t.entry_time
+    # The span covers the configured range lookback ending at the squeeze bar.
+    times = [c.time for c in candles]
+    n_bars = times.index(z.to_time) - times.index(z.from_time)
+    assert n_bars >= FAST_OVERRIDES["range_lookback"] - 1
+
+
 def test_consolidation_without_breakout_never_enters():
     # Mean-reversion chop inside the range: no regime transition, no trades
     # (the strategy must not trade the middle of the range).

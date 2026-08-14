@@ -694,6 +694,13 @@ export function requestGoLive(cfg: BacktestConfig): void {
 // config. This is view wiring only; the panel remains the source of truth.
 export const backtestConfigLive = new Signal<BacktestConfig | null>(null);
 
+// Bumped whenever the persisted backtest strategy setup changes outside React
+// state — saveBacktestLastUsed (panel close, agent bridge backtest.config.set)
+// and saveCodedCfg's "backtest" set (param edits, preset restores). The chart's
+// strategy-overlay sync (useStrategyOverlaySync) listens so the managed band
+// retunes no matter which surface wrote the change.
+export const backtestStrategySetupChanged = new Signal<number>(0);
+
 // Request to open the per-indicator settings modal (TradingView-style gear). Set
 // by the indicator legend's gear icon (ChartCore's OnTooltipIconClick handler);
 // the modal (in App) reads/writes the live indicator via overrideIndicator.

@@ -77,6 +77,19 @@ class RuleTerm:
 
 
 @dataclass(frozen=True, slots=True)
+class TradeZone:
+    """A time×price rectangle a strategy attaches to an entry — the structure
+    that justified the trade (e.g. the consolidation range a breakout broke out
+    of). Times are bar times; the UI shades it when the trade is highlighted."""
+
+    from_time: datetime
+    to_time: datetime
+    top: float
+    bottom: float
+    label: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Signal:
     """A strategy's intent at a given bar. quantity in instrument units.
 
@@ -105,6 +118,9 @@ class Signal:
     # run's default quantity. Live forwards explicit sizing to the order; a
     # default-sized signal instead uses the panel's configured quantity.
     quantity_explicit: bool = False
+    # Chart zones attached to an OPENING signal (coded strategies): the engine
+    # carries them onto the resulting position's trades.
+    zones: tuple[TradeZone, ...] = ()
 
 
 @dataclass(slots=True)
@@ -245,6 +261,9 @@ class Trade:
     # Per-trade counterfactual results (see engine.whatif): exit-rule replay,
     # target replay, fill-delay cost, limit-entry replay. None until enriched.
     whatif: dict | None = None
+    # Chart zones from the opening signal (see TradeZone); empty for rule-based
+    # strategies and coded entries that attach none.
+    zones: tuple[TradeZone, ...] = ()
 
 
 @dataclass(slots=True)

@@ -24,7 +24,7 @@ from types import ModuleType
 import numpy as np
 
 from auto_trader.core.candle_aggregate import resolution_seconds
-from auto_trader.core.models import Candle, RuleTerm, Side, Signal
+from auto_trader.core.models import Candle, RuleTerm, Side, Signal, TradeZone
 from auto_trader.indicators.core import (
     atr_series,
     avwap_series,
@@ -62,6 +62,9 @@ class Action:
     target: float | None = None
     reason: str = ""
     note: dict | None = None
+    # Chart zones for an OPEN (see TradeZone / ctx.zone): the structure that
+    # justified the entry, shaded by the UI when the trade is highlighted.
+    zones: tuple[TradeZone, ...] = ()
 
 
 class PositionView:
@@ -344,13 +347,29 @@ class StrategyContext:
             ) from None
 
     # --- actions ------------------------------------------------------------
+    def zone(self, from_bar: int, to_bar: int, top: float, bottom: float,
+             label: str = "") -> TradeZone:
+        """A time×price rectangle over bars [from_bar..to_bar] (indices into
+        the same history ctx.closes exposes). Attach to an entry via
+        ctx.buy(zones=[...]) — the UI shades it when the trade is highlighted."""
+        lo, hi = sorted((float(top), float(bottom)))
+        return TradeZone(
+            from_time=self._candles[from_bar].time,
+            to_time=self._candles[to_bar].time,
+            top=hi, bottom=lo, label=label,
+        )
+
     def buy(self, qty: float | None = None, sl: float | None = None,
-            tp: float | None = None, reason: str = "", note: dict | None = None) -> Action:
-        return Action("open", "long", qty=qty, stop=sl, target=tp, reason=reason, note=note)
+            tp: float | None = None, reason: str = "", note: dict | None = None,
+            zones: list[TradeZone] | None = None) -> Action:
+        return Action("open", "long", qty=qty, stop=sl, target=tp, reason=reason,
+                      note=note, zones=tuple(zones or ()))
 
     def sell(self, qty: float | None = None, sl: float | None = None,
-             tp: float | None = None, reason: str = "", note: dict | None = None) -> Action:
-        return Action("open", "short", qty=qty, stop=sl, target=tp, reason=reason, note=note)
+             tp: float | None = None, reason: str = "", note: dict | None = None,
+             zones: list[TradeZone] | None = None) -> Action:
+        return Action("open", "short", qty=qty, stop=sl, target=tp, reason=reason,
+                      note=note, zones=tuple(zones or ()))
 
     def close_long(self, reason: str = "", note: dict | None = None) -> Action:
         return Action("close", "long", reason=reason, note=note)
@@ -485,6 +504,7 @@ class CodedStrategy(Strategy):
                     terms=_note_terms(a.note),
                     stop_level=stop, target_level=target,
                     quantity_explicit=a.qty is not None,
+                    zones=a.zones,
                 ))
                 opened_this_bar = True
                 opened[a.leg] = True

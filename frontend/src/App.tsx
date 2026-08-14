@@ -34,7 +34,7 @@ import SnapshotGallery from "./SnapshotGallery";
 import { writeSnapshotToScope } from "./lib/snapshots";
 import { saveSnapshotOfChart } from "./lib/snapshotSave";
 import { registerCustomIndicators } from "./lib/customIndicators";
-import { registerBacktestIndicators } from "./lib/backtest";
+import { registerBacktestIndicators, rehydrateBacktest } from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
 import { installMagnetModifierKeys } from "./lib/magnet";
 import { matchingCellIds } from "./lib/tabSearch";
@@ -102,6 +102,8 @@ import {
   load,
   saveLocal,
   parseAlertsStateKey,
+  matchBacktestKey,
+  matchSweepPointerKey,
   purgeTabScope,
   purgeScope,
   primaryCellScope,
@@ -147,6 +149,7 @@ import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
 import { loadSettings, saveSettings, chartColors, type Settings } from "./theme";
 import { browserTimezone } from "./chart/chartPainters";
+import { useStrategyOverlaySync } from "./chart/useStrategyOverlaySync";
 import TabBar from "./TabBar";
 import Tooltip from "./components/Tooltip";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
@@ -676,10 +679,6 @@ export default function App() {
   // it to localStorage before calling back), so we compare the resolved workspace:
   // remount only when our visible tabs actually changed.
   const onBackendPush = (key: string) => {
-    const r = resolveStartup();
-    const sameView =
-      r.activeLayoutId === activeLayoutIdRef.current &&
-      JSON.stringify(r.ws.tabs) === JSON.stringify(workspaceRef.current.tabs);
     // A per-cell CONTENT change (an alert, drawing, or indicator on a cell we're ALSO
     // showing) never alters the tabs array, so the sameView check below treats it as
     // "not our view" and skips it — leaving our on-chart overlays stale until our next
@@ -688,14 +687,46 @@ export default function App() {
     // keys explicitly so the mounted cells re-sync to storage:
     //  - alerts are global-per-epic and reconcile IN PLACE off the alerts signal
     //    (every mounted same-epic cell); no remount needed.
+    //  - backtest results / sweep pointers have their own in-place handling — the
+    //    two early returns below, BEFORE the resolveStartup + tabs-stringify work
+    //    those paths would only throw away (neither key can carry a layout or
+    //    settings change).
     //  - drawings/indicators/avwap are per-cell-scope and have no in-place reconcile,
     //    so remount the grid (rehydrate re-reads storage) when the changed key belongs
     //    to a cell that's currently on screen.
     if (parseAlertsStateKey(key)) bumpAlerts();
-    const visibleScopes =
-      workspaceRef.current.tabs
-        .find((t) => t.id === workspaceRef.current.activeTabId)
-        ?.cells.map((c) => c.scope) ?? [];
+    const activeTab = workspaceRef.current.tabs.find(
+      (t) => t.id === workspaceRef.current.activeTabId,
+    );
+    const visibleScopes = activeTab?.cells.map((c) => c.scope) ?? [];
+    // A backtest result written by another tab on a cell we're showing: backtest
+    // artifacts have a proper in-place restore (rehydrateBacktest), so use it on
+    // that one cell instead of the whole-grid remount below. The remount disposes
+    // every chart (a visible reload + seconds of bar refetch), blanks the shared
+    // results panel until rehydrate, and its own mount-time writes echo back to
+    // the tab that RAN the backtest and remount it too — the post-run flicker.
+    // A cell showing a different epic (or not yet mounted) skips the redraw: the
+    // stored result is already updated and rehydrates on its next mount/switch.
+    const bt = matchBacktestKey(key, visibleScopes);
+    if (bt) {
+      const cell = activeTab?.cells.find((c) => c.scope === bt.scope);
+      const ready = cell ? readyRef.current.get(cell.id) : undefined;
+      if (cell && ready && cell.symbol.epic === bt.epic) {
+        rehydrateBacktest(ready.chart, bt.scope, bt.epic, cell.period.resolution);
+      }
+      return;
+    }
+    // A sweep archive pointer written by another tab on a cell we're showing: its
+    // only consumers live in BacktestSettingsModal, which sits OUTSIDE the
+    // hydrateEpoch-keyed grid subtree — a remount disposes every chart yet still
+    // doesn't refresh the modal, so it's pure cost. The pointer is already in
+    // localStorage; the modal reads it on its next restore (cell/epic switch or
+    // section reopen), exactly as it would have after the remount.
+    if (matchSweepPointerKey(key, visibleScopes)) return;
+    const r = resolveStartup();
+    const sameView =
+      r.activeLayoutId === activeLayoutIdRef.current &&
+      JSON.stringify(r.ws.tabs) === JSON.stringify(workspaceRef.current.tabs);
     const isVisibleCellContent = visibleScopes.some((s) => key.startsWith(`${PREFIX}.${s}.`));
     if (!sameView) {
       reseedFromLocal(); // also syncs settings
@@ -1832,6 +1863,11 @@ export default function App() {
   }, [active?.id, active?.layout]);
 
   const focusedController = focused?.controller ?? null;
+
+  // Strategy-declared chart overlays (e.g. BB Regime's BOLL band) on the
+  // focused cell, synced to the backtest strategy setup from ANY writer —
+  // panel edits, preset restores, or the agent bridge with the panel closed.
+  useStrategyOverlaySync(focusedController, symbol?.epic ?? null);
 
   // Whether the FOCUSED cell is a read-only snapshot view. The controller's
   // readOnly flag is the sentinel (seeded at cell mount, cleared by Unlock, which
