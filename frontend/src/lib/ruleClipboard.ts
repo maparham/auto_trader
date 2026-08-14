@@ -7,9 +7,10 @@
 // of truth (see exprInstances.ts). So a self-contained copy must ship those
 // panes' full configs alongside the rules; `indicators` is exactly the map a
 // backtest request ships for the same reason, collected the same way.
-import { cloneRule, type Rule } from "./backtestConfig";
+import { cloneRule, RULE_GROUP_KEYS, type BacktestConfig, type Rule } from "./backtestConfig";
 import {
   collectExprInstances,
+  rewriteInstanceRefs,
   type ExprInstancePayload,
   type LiveInstance,
 } from "./exprInstances";
@@ -60,22 +61,58 @@ export function portableExtend(extendData: unknown): Record<string, unknown> {
   return out;
 }
 
-/** The system-clipboard text for `rules`: the rules plus the full config of
- * every live pane they reference (nothing else — an unreferenced pane is not
- * part of the strategy, and a referenced-but-missing one is already a lint
- * error on the source side). `appearance` (per live pane id, from
- * captureIndicatorAppearance) folds each referenced pane's display dressing in. */
+/** The portable id→payload map for the panes `exprs` reference: full config of
+ * every referenced live pane (nothing else — an unreferenced pane is not part
+ * of the strategy, and a referenced-but-missing one is already a lint error on
+ * the source side), runtime state stripped, `appearance` (per live pane id,
+ * from captureIndicatorAppearance) folded in. Shared by the rule clipboard and
+ * the preset snapshot — the two self-contained carriers of a strategy. */
+export function collectPortableInstances(
+  exprs: readonly string[],
+  live: readonly LiveInstance[],
+  appearance?: Readonly<Record<string, InstanceAppearance>>,
+): Record<string, PortableInstancePayload> {
+  const collected = collectExprInstances(live, [...exprs]);
+  const indicators: Record<string, PortableInstancePayload> = {};
+  for (const [id, p] of Object.entries(collected)) {
+    indicators[id] = { ...p, extendData: portableExtend(p.extendData), ...appearance?.[id] };
+  }
+  return indicators;
+}
+
+/** `rules` with their instance refs rewritten per `idMap` — the rule-level
+ * rewrite both a paste and a preset load apply after recreating panes. */
+export function rewriteRulesInstanceRefs(
+  rules: readonly Rule[],
+  idMap: Readonly<Record<string, string>>,
+): Rule[] {
+  return rules.map((r) => (r.expr ? { ...r, expr: rewriteInstanceRefs(r.expr, idMap) } : r));
+}
+
+/** `cfg` with every rule group's instance refs rewritten per `idMap` (old pane
+ * id → the id that actually landed on the chart). What a preset load applies
+ * after recreating the panes, mirroring the per-rule rewrite a paste does. */
+export function rewriteConfigInstanceRefs(
+  cfg: BacktestConfig,
+  idMap: Readonly<Record<string, string>>,
+): BacktestConfig {
+  if (!Object.keys(idMap).length) return cfg;
+  const out = { ...cfg };
+  for (const key of RULE_GROUP_KEYS) {
+    out[key] = { ...cfg[key], rules: rewriteRulesInstanceRefs(cfg[key].rules, idMap) };
+  }
+  return out;
+}
+
+/** The system-clipboard text for `rules`: the rules plus the portable configs
+ * of the panes they reference. */
 export function encodeRuleClipboard(
   rules: readonly Rule[],
   live: readonly LiveInstance[],
   appearance?: Readonly<Record<string, InstanceAppearance>>,
 ): string {
   const cloned = rules.map(cloneRule);
-  const collected = collectExprInstances(live, cloned.map((r) => r.expr ?? ""));
-  const indicators: Record<string, PortableInstancePayload> = {};
-  for (const [id, p] of Object.entries(collected)) {
-    indicators[id] = { ...p, extendData: portableExtend(p.extendData), ...appearance?.[id] };
-  }
+  const indicators = collectPortableInstances(cloned.map((r) => r.expr ?? ""), live, appearance);
   return JSON.stringify({ __autoTraderRules: 1, rules: cloned, indicators }, null, 2);
 }
 
@@ -104,27 +141,33 @@ export function decodeRuleClipboard(text: string): RuleClipboardPayload | null {
     });
   }
   if (!rules.length) return null;
+  return { rules, indicators: sanitizePortableInstances(p.indicators) };
+}
+
+/** Field-by-field sanitising of an id→payload map from outside the app (the
+ * system clipboard, an imported preset file). Entries without a type are junk
+ * and dropped; malformed optional fields cost the field, not the entry. */
+export function sanitizePortableInstances(v: unknown): Record<string, PortableInstancePayload> {
   const indicators: Record<string, PortableInstancePayload> = {};
-  if (typeof p.indicators === "object" && p.indicators !== null) {
-    for (const [id, v] of Object.entries(p.indicators as Record<string, unknown>)) {
-      if (typeof v !== "object" || v === null) continue;
-      const { type, calcParams, extendData, visible, styles } = v as Record<string, unknown>;
-      if (typeof type !== "string" || !type) continue;
-      indicators[id] = {
-        type,
-        calcParams: Array.isArray(calcParams)
-          ? calcParams.map(Number).filter((n) => Number.isFinite(n))
-          : [],
-        extendData:
-          typeof extendData === "object" && extendData !== null
-            ? portableExtend(extendData)
-            : {},
-        ...(typeof visible === "boolean" ? { visible } : {}),
-        ...(sanitizeStyles(styles) ?? {}),
-      };
-    }
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return indicators;
+  for (const [id, entry] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { type, calcParams, extendData, visible, styles } = entry as Record<string, unknown>;
+    if (typeof type !== "string" || !type) continue;
+    indicators[id] = {
+      type,
+      calcParams: Array.isArray(calcParams)
+        ? calcParams.map(Number).filter((n) => Number.isFinite(n))
+        : [],
+      extendData:
+        typeof extendData === "object" && extendData !== null
+          ? portableExtend(extendData)
+          : {},
+      ...(typeof visible === "boolean" ? { visible } : {}),
+      ...(sanitizeStyles(styles) ?? {}),
+    };
   }
-  return { rules, indicators };
+  return indicators;
 }
 
 // Keep only the line-style fields SavedIndicatorConfig persists; anything

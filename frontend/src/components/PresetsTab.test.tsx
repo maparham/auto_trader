@@ -117,6 +117,120 @@ describe("PresetsTab coded param snapshot", () => {
   });
 });
 
+// Rules can reference chart panes by instance (`SLOPE#a1.9`) and restate none
+// of their settings — the pane is the source of truth. A reproducible preset
+// must snapshot those panes on save and recreate them on load; the chart-side
+// halves are injected as callbacks because this tab has no chart access.
+describe("PresetsTab expr instance snapshot", () => {
+  const PAYLOAD = { type: "SLOPE", calcParams: [9], extendData: { units: "pctBar" } };
+  // A cfg whose rules reference a pane by instance — the case the snapshot exists for.
+  const refCfg = (expr = "SLOPE#a1.9 > 0"): BacktestConfig => ({
+    ...defaultBacktestConfig(),
+    longEntry: { combine: "all", rules: [{ expr, enabled: true }] },
+  });
+
+  it("Save as… snapshots the referenced panes via the injected capture", () => {
+    const captureExprInstances = vi.fn(() => ({ "SLOPE#a1": PAYLOAD }));
+    setup({ cfg: refCfg(), captureExprInstances });
+    saveAs("Refs");
+    // The capture receives the EFFECTIVE expression rows, not the raw cfg.
+    expect(captureExprInstances.mock.calls[0][0]).toContain("SLOPE#a1.9 > 0");
+    expect(loadPresets().Refs.exprInstances).toEqual({ "SLOPE#a1": PAYLOAD });
+  });
+
+  it("Save refreshes the snapshot on the active preset", () => {
+    putPreset(newPreset("Refs", defaultBacktestConfig(), { symbol: "T", timeframe: "M" }, 1));
+    const captureExprInstances = vi.fn(() => ({ "SLOPE#a1": PAYLOAD }));
+    setup({ cfg: refCfg(), activeName: "Refs", captureExprInstances });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(loadPresets().Refs.exprInstances).toEqual({ "SLOPE#a1": PAYLOAD });
+  });
+
+  it("a config with no instance refs stores no snapshot", () => {
+    const captureExprInstances = vi.fn(() => ({ "SLOPE#a1": PAYLOAD }));
+    setup({ captureExprInstances });
+    saveAs("Plain");
+    expect(loadPresets().Plain.exprInstances).toBeUndefined();
+  });
+
+  // The chart is transient state: the modal outlives chart lifecycles, and a
+  // pane can be deleted from THIS chart while the preset still needs it. An
+  // unanswerable capture must never destroy a stored snapshot.
+  it("Save keeps the stored snapshot when there is no chart to ask", () => {
+    putPreset({
+      ...newPreset("Refs", refCfg(), { symbol: "T", timeframe: "M" }, 1),
+      exprInstances: { "SLOPE#a1": PAYLOAD },
+    });
+    const captureExprInstances = vi.fn(() => undefined);
+    setup({ cfg: { ...refCfg(), longEnabled: false }, activeName: "Refs", captureExprInstances });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(loadPresets().Refs.exprInstances).toEqual({ "SLOPE#a1": PAYLOAD });
+  });
+
+  it("Save keeps the previous entry for a referenced pane missing from this chart", () => {
+    const FRESH = { type: "ATR", calcParams: [14], extendData: {} };
+    putPreset({
+      ...newPreset("Refs", refCfg(), { symbol: "T", timeframe: "M" }, 1),
+      exprInstances: { "SLOPE#a1": PAYLOAD, STALE: FRESH },
+    });
+    // Chart answers, but only ATR1 is live: SLOPE#a1 keeps its stored snapshot,
+    // and STALE (no longer referenced by any rule) is dropped.
+    const captureExprInstances = vi.fn(() => ({ ATR1: FRESH }));
+    const cfg: BacktestConfig = {
+      ...refCfg(),
+      shortExit: { combine: "all", rules: [{ expr: "ATR1.to14 > 1" }] },
+      longEnabled: false,
+    };
+    setup({ cfg, activeName: "Refs", captureExprInstances });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(loadPresets().Refs.exprInstances).toEqual({ "SLOPE#a1": PAYLOAD, ATR1: FRESH });
+  });
+
+  // Coded mode runs the coded store's panel exits, not the cfg's rule groups
+  // (BacktestButton's effCfg substitution) — the capture must walk the same
+  // rows the run ships or panel-exit pane refs are never snapshotted.
+  it("coded mode captures the panes the panel exits reference", () => {
+    saveCodedCfg("backtest", "bb.py", {
+      ...defaultCodedCfg(),
+      longExit: { combine: "AND", rules: [{ expr: "ATR1.to14 > 1", enabled: true }] },
+    });
+    const captureExprInstances = vi.fn(() => ({ ATR1: PAYLOAD }));
+    const cfg: BacktestConfig = { ...refCfg(), codedStrategy: "bb.py" };
+    setup({ cfg, captureExprInstances });
+    saveAs("Coded");
+    const exprs = captureExprInstances.mock.calls[0][0];
+    expect(exprs).toContain("ATR1.to14 > 1");
+    // The cfg's own entry rules are NOT part of a coded run.
+    expect(exprs).not.toContain("SLOPE#a1.9 > 0");
+    expect(loadPresets().Coded.exprInstances).toEqual({ ATR1: PAYLOAD });
+  });
+
+  it("Load recreates the panes and loads the rewritten config", () => {
+    const stored = defaultBacktestConfig();
+    putPreset({
+      ...newPreset("Refs", stored, { symbol: "T", timeframe: "M" }, 1),
+      exprInstances: { "SLOPE#a1": PAYLOAD },
+    });
+    const rewritten = dirtyCfg();
+    const applyExprInstances = vi.fn(() => rewritten);
+    const { onLoad } = setup({ applyExprInstances });
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Refs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(applyExprInstances).toHaveBeenCalledWith({ "SLOPE#a1": PAYLOAD }, stored);
+    expect(onLoad).toHaveBeenCalledWith(rewritten);
+  });
+
+  it("loading a preset without a snapshot never calls the apply callback", () => {
+    putPreset(newPreset("Old", defaultBacktestConfig(), { symbol: "T", timeframe: "M" }, 1));
+    const applyExprInstances = vi.fn(() => dirtyCfg());
+    const { onLoad } = setup({ applyExprInstances });
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Old" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(applyExprInstances).not.toHaveBeenCalled();
+    expect(onLoad).toHaveBeenCalledWith(defaultBacktestConfig());
+  });
+});
+
 describe("PresetsTab identity bar", () => {
   it("shows 'Unsaved strategy' with Save and Revert disabled", () => {
     setup();

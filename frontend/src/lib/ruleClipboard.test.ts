@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { decodeRuleClipboard, encodeRuleClipboard, sameInstanceConfig } from "./ruleClipboard";
+import {
+  collectPortableInstances,
+  decodeRuleClipboard,
+  encodeRuleClipboard,
+  rewriteConfigInstanceRefs,
+  sameInstanceConfig,
+} from "./ruleClipboard";
+import { defaultBacktestConfig } from "./backtestConfig";
 
 const LIVE = [
   { id: "SLOPE", type: "SLOPE", calcParams: [9, 21], extendData: { units: "pctBar", barHours: 1 } },
@@ -106,6 +113,54 @@ describe("runtime state is stripped from the envelope", () => {
     expect(out!.indicators.ATR1.visible).toBe(false);
     expect(out!.indicators.ATR1.styles).toEqual({ lines: [{ color: "#f00", size: 2 }] });
     expect(Object.keys(out!.indicators)).toEqual(["ATR1"]);
+  });
+});
+
+describe("collectPortableInstances", () => {
+  it("collects exactly the referenced panes, runtime-stripped, with appearance folded in", () => {
+    const appearance = {
+      SLOPE: { visible: false, styles: { lines: [{ color: "#0f0" }] } },
+      EMA: { visible: true },
+    };
+    const out = collectPortableInstances(["SLOPE.9 > 0", "EMA(9) > 0"], LIVE, appearance);
+    expect(out).toEqual({
+      SLOPE: {
+        type: "SLOPE",
+        calcParams: [9, 21],
+        extendData: { units: "pctBar" }, // barHours stripped
+        visible: false,
+        styles: { lines: [{ color: "#0f0" }] },
+      },
+    });
+  });
+
+  it("returns an empty map when no expression references an instance", () => {
+    expect(collectPortableInstances(["EMA(9) > SMA(21)"], LIVE)).toEqual({});
+  });
+});
+
+describe("rewriteConfigInstanceRefs", () => {
+  it("rewrites instance refs across all four rule groups, leaving the rest of the cfg alone", () => {
+    const cfg = {
+      ...defaultBacktestConfig(),
+      longEntry: { combine: "all", rules: [{ expr: "SLOPE#a1.9 > 0", enabled: true }] },
+      shortExit: { combine: "all", rules: [{ expr: "ATR1.to14 > 1" }, { expr: "EMA(9) > 0" }] },
+    };
+    const out = rewriteConfigInstanceRefs(cfg, { "SLOPE#a1": "SLOPE#b2", ATR1: "ATR" });
+    expect(out.longEntry.rules[0]).toEqual({ expr: "SLOPE#b2.9 > 0", enabled: true });
+    expect(out.shortExit.rules.map((r) => r.expr)).toEqual(["ATR.to14 > 1", "EMA(9) > 0"]);
+    expect(out.longExit).toEqual(cfg.longExit);
+    expect(out.costs).toEqual(cfg.costs);
+    // The input cfg is not mutated.
+    expect(cfg.longEntry.rules[0].expr).toBe("SLOPE#a1.9 > 0");
+  });
+
+  it("an empty id map returns the cfg unchanged", () => {
+    const cfg = {
+      ...defaultBacktestConfig(),
+      longEntry: { combine: "all", rules: [{ expr: "SLOPE.9 > 0" }] },
+    };
+    expect(rewriteConfigInstanceRefs(cfg, {})).toEqual(cfg);
   });
 });
 

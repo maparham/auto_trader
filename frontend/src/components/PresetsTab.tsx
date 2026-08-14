@@ -12,7 +12,8 @@
 // header belongs to the overlay/auto-hide work.
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Tooltip from "./Tooltip";
-import { backtestConfigEquals, type BacktestConfig } from "../lib/backtestConfig";
+import { backtestConfigEquals, RULE_GROUP_KEYS, type BacktestConfig } from "../lib/backtestConfig";
+import { referencedInstanceIds } from "../lib/exprInstances";
 import { backtestResultSignal, backtestRunCompletedSignal } from "../lib/signals";
 import {
   loadPresets, putPreset, renamePreset, deletePreset, newPreset,
@@ -20,6 +21,7 @@ import {
   type BacktestPreset,
 } from "../lib/backtestPresets";
 import { loadCodedCfg, saveCodedCfg } from "../lib/codedConfig";
+import type { PortableInstancePayload } from "../lib/ruleClipboard";
 
 function shallowEq(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
   const ka = Object.keys(a);
@@ -105,10 +107,23 @@ export type PresetsTabProps = {
   chartTimeframe: string;
   captureRuns: boolean;
   onGoLive: () => void;
+  /** Chart-side snapshot of the panes `exprs` reference by instance
+   *  (`SLOPE#a1.9`) — injected because this tab has no chart access. Undefined
+   *  means "no chart to ask" (the modal outlives chart lifecycles), which is
+   *  different from an empty answer: an unanswerable capture must never
+   *  overwrite a stored snapshot. */
+  captureExprInstances?: (exprs: string[]) => Record<string, PortableInstancePayload> | undefined;
+  /** The restore half: recreate `instances` on the chart and return `cfg` with
+   *  its rule refs rewritten to the pane ids that actually landed. */
+  applyExprInstances?: (
+    instances: Record<string, PortableInstancePayload>,
+    cfg: BacktestConfig,
+  ) => BacktestConfig;
 };
 
 export default function PresetsTab({
   cfg, onLoad, activeName, onActiveChange, chartSymbol, chartTimeframe, captureRuns, onGoLive,
+  captureExprInstances, applyExprInstances,
 }: PresetsTabProps) {
   const [presets, setPresets] = useState<Record<string, BacktestPreset>>(() => loadPresets());
   // One-line result of the last import, so a partially-bad file says what it
@@ -198,6 +213,37 @@ export default function PresetsTab({
   // codedParams and keep the cfg-only dirty semantics.
   const snapCodedParams = () =>
     cfg.codedStrategy ? { ...loadCodedCfg("backtest", cfg.codedStrategy).params } : undefined;
+  // Same shape of problem as codedParams, chart edition: the panes the rules
+  // reference live on the chart, outside cfg.
+  //
+  // The rows that matter are the ones the RUN ships: a coded run substitutes
+  // the coded store's panel exits for the rule groups and ignores the cfg's
+  // entries entirely (BacktestButton's effCfg), so capturing the raw groups
+  // would snapshot panes a coded run never reads and miss the ones it does.
+  const effectiveExprs = (): string[] => {
+    const coded = cfg.codedStrategy ? loadCodedCfg("backtest", cfg.codedStrategy) : null;
+    const groups = coded
+      ? [coded.longExit, coded.shortExit]
+      : RULE_GROUP_KEYS.map((k) => cfg[k]);
+    return groups.flatMap((g) => g.rules.map((r) => r.expr ?? ""));
+  };
+  /** The snapshot to store, given the preset's previous one. No refs clears it;
+   *  no chart to ask keeps it whole; a referenced pane missing from THIS chart
+   *  keeps its previous entry (fresh captures win) — the chart is transient
+   *  state, and a save must never destroy settings only the snapshot still has. */
+  const snapExprInstances = (prev?: BacktestPreset["exprInstances"]) => {
+    const exprs = effectiveExprs();
+    const referenced = referencedInstanceIds(exprs);
+    if (!referenced.size) return undefined;
+    const captured = captureExprInstances?.(exprs);
+    if (!captured) return prev;
+    const out = { ...captured };
+    for (const id of referenced) {
+      const kept = prev?.[id];
+      if (!(id in out) && kept) out[id] = kept;
+    }
+    return Object.keys(out).length ? out : undefined;
+  };
   const codedParamsDirty =
     !!active?.codedParams && !!cfg.codedStrategy &&
     !shallowEq(loadCodedCfg("backtest", cfg.codedStrategy).params, active.codedParams);
@@ -281,6 +327,7 @@ export default function PresetsTab({
   function save() {
     if (!active) return;
     putPreset({ ...active, cfg, codedParams: snapCodedParams(),
+                exprInstances: snapExprInstances(active.exprInstances),
                 updatedAt: Date.now(), lastRun: runFor(active, cfg) });
     refresh();
     // Save from an open naming row would otherwise leave the row hanging.
@@ -295,8 +342,10 @@ export default function PresetsTab({
     putPreset(
       existing
         ? { ...existing, cfg, codedParams: snapCodedParams(),
+            exprInstances: snapExprInstances(existing.exprInstances),
             updatedAt: Date.now(), origin, lastRun: runFor(existing, cfg) }
-        : { ...newPreset(name, cfg, origin, Date.now()), codedParams: snapCodedParams() },
+        : { ...newPreset(name, cfg, origin, Date.now()),
+            codedParams: snapCodedParams(), exprInstances: snapExprInstances() },
     );
     refresh();
     closeNaming();
@@ -410,8 +459,15 @@ export default function PresetsTab({
     // Storage first, state as fallback: Save & load wrote the fresh snapshot a
     // moment ago while `presets` here is still the pre-save copy — mirroring
     // the `next` override for cfg.
-    restoreCodedParams(presetAt(loadPresets(), name) ?? p);
-    onLoad(next ?? p.cfg);
+    const stored = presetAt(loadPresets(), name) ?? p;
+    restoreCodedParams(stored);
+    let cfgToLoad = next ?? p.cfg;
+    // Recreate the panes the rules reference BEFORE handing the cfg over — the
+    // rewritten refs must point at panes that already exist, or the editor
+    // lints them as unknown and a run ships no settings for them.
+    if (stored.exprInstances && applyExprInstances)
+      cfgToLoad = applyExprInstances(stored.exprInstances, cfgToLoad);
+    onLoad(cfgToLoad);
     onActiveChange(name);
   }
 

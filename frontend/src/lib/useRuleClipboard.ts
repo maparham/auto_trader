@@ -12,7 +12,6 @@
 import { useState } from "react";
 import { cloneRule, type Rule } from "./backtestConfig";
 import type { ChartController } from "./chartController";
-import { rewriteInstanceRefs } from "./exprInstances";
 import {
   captureIndicatorAppearance,
   importExprInstances,
@@ -22,7 +21,51 @@ import {
 import { refreshMtfIndicators } from "./mtfCoordinator";
 import { toast } from "./notify";
 import { saveIndicators } from "./persist";
-import { decodeRuleClipboard, encodeRuleClipboard } from "./ruleClipboard";
+import {
+  decodeRuleClipboard,
+  encodeRuleClipboard,
+  rewriteRulesInstanceRefs,
+  type PortableInstancePayload,
+} from "./ruleClipboard";
+
+/** Recreate `indicators` (a portable id→payload map) on the cell's chart —
+ * reusing exact matches, minting fresh ids on conflicts — and return the
+ * old→new id map for rewriting the expressions that referenced them. Shared by
+ * rule paste and preset load. No chart (or a locked snapshot) returns an empty
+ * map: rewriting with it is the identity, and a missing ref lints as unknown. */
+export function applyPortableInstances(
+  opts: {
+    controller?: ChartController | null;
+    epic: string;
+    resolution: string;
+    brokerId?: string;
+  },
+  indicators: Record<string, PortableInstancePayload>,
+): Record<string, string> {
+  const { controller, epic, resolution, brokerId } = opts;
+  if (!Object.keys(indicators).length || !controller?.chart || controller.readOnly.value)
+    return {};
+  const { idMap, added } = importExprInstances(controller.chart, controller.scope, epic, indicators, {
+    resolution,
+    forceHidden: controller.indicatorsHidden.value,
+  });
+  if (added.length) {
+    const next = [...controller.indicators.value, ...added];
+    controller.indicators.set(next);
+    saveIndicators(controller.scope, next);
+    // Recreating a sub-pane indicator un-collapses the sub-pane band, mirroring
+    // the toolbar add and the indicator paste.
+    if (controller.subPanesHidden.value && added.some((i) => isSubPaneIndicator(i.type)))
+      controller.subPanesHidden.set(false);
+    // The payload ships mtf.timeframe but never the HTF series (that stash
+    // belongs to the source chart's epic) — fetch it now, exactly like the
+    // reload path, so a recreated pinned pane renders its own timeframe. No-op
+    // when nothing added is pinned.
+    void refreshMtfIndicators(controller.chart, epic, brokerId).catch(() => {});
+    toast(`Added ${added.map((i) => i.id).join(", ")} to the chart`);
+  }
+  return idMap;
+}
 
 export interface RuleClipboardApi {
   /** Copy `rules` (one or a whole group) — system clipboard + local fallback. */
@@ -66,34 +109,8 @@ export function useRuleClipboard(opts: {
     const payload = decodeRuleClipboard(text);
     if (!payload) return fallback ? fallback.map(cloneRule) : null;
 
-    const ids = Object.keys(payload.indicators);
-    if (!ids.length || !controller?.chart || controller.readOnly.value) {
-      // Nothing to recreate (or nowhere to put it — no chart, or a locked
-      // snapshot). Rules still paste; a missing ref lints as unknown.
-      return payload.rules;
-    }
-    const { idMap, added } = importExprInstances(controller.chart, controller.scope, epic, payload.indicators, {
-      resolution,
-      forceHidden: controller.indicatorsHidden.value,
-    });
-    if (added.length) {
-      const next = [...controller.indicators.value, ...added];
-      controller.indicators.set(next);
-      saveIndicators(controller.scope, next);
-      // Pasting a sub-pane indicator un-collapses the sub-pane band, mirroring
-      // the toolbar add and the indicator paste.
-      if (controller.subPanesHidden.value && added.some((i) => isSubPaneIndicator(i.type)))
-        controller.subPanesHidden.set(false);
-      // The envelope ships mtf.timeframe but never the HTF series (that stash
-      // belongs to the source chart's epic) — fetch it now, exactly like the
-      // reload path, so a pasted pinned pane renders its own timeframe. No-op
-      // when nothing added is pinned.
-      void refreshMtfIndicators(controller.chart, epic, brokerId).catch(() => {});
-      toast(`Added ${added.map((i) => i.id).join(", ")} to the chart`);
-    }
-    return payload.rules.map((r) =>
-      r.expr ? { ...r, expr: rewriteInstanceRefs(r.expr, idMap) } : r,
-    );
+    const idMap = applyPortableInstances({ controller, epic, resolution, brokerId }, payload.indicators);
+    return rewriteRulesInstanceRefs(payload.rules, idMap);
   };
 
   return { copyRules, pasteRules };

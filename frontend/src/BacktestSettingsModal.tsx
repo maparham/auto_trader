@@ -46,8 +46,9 @@ import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_C
 import { WfoResults } from "./WfoResults";
 import { requiredWarmupBars, resolveWindow } from "./lib/backtestWindow";
 import { exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
-import { liveExprInstances } from "./lib/indicators";
-import { useRuleClipboard } from "./lib/useRuleClipboard";
+import { captureIndicatorAppearance, liveExprInstances } from "./lib/indicators";
+import { collectPortableInstances, rewriteConfigInstanceRefs } from "./lib/ruleClipboard";
+import { applyPortableInstances, useRuleClipboard } from "./lib/useRuleClipboard";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
 import {
@@ -3183,6 +3184,27 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               // Sends the CURRENTLY configured strategy to the Live panel, not
               // whichever preset happens to be highlighted in the library.
               onGoLive={() => requestGoLive(cfg)}
+              // The chart-side halves of the preset's pane snapshot: capture
+              // reads the referenced panes' LIVE settings (same map a run
+              // ships), apply recreates them on this cell and rewrites the
+              // rule refs to the ids that landed — the paste flow, reused.
+              // No chart is `undefined`, not `{}`: "can't answer" must be
+              // distinguishable from "no panes referenced", or a save while
+              // the chart is torn down would wipe the stored snapshot.
+              captureExprInstances={(exprs) => {
+                const chart = controller?.chart;
+                if (!chart) return undefined;
+                const live = liveExprInstances(chart);
+                return collectPortableInstances(
+                  exprs, live, captureIndicatorAppearance(chart, live.map((i) => i.id)),
+                );
+              }}
+              applyExprInstances={(instances, c) =>
+                rewriteConfigInstanceRefs(
+                  c,
+                  applyPortableInstances({ controller, epic, resolution, brokerId }, instances),
+                )
+              }
             />
           </Section>
         </div>

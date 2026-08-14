@@ -40,6 +40,11 @@ export interface RuleGroup {
   rules: Rule[];
 }
 
+/** The four rule-group keys of a BacktestConfig, in run order. THE one list —
+ * preset validation, instance-ref rewriting, and pane capture all walk it, so
+ * a new group added here reaches all three without hand-syncing. */
+export const RULE_GROUP_KEYS = ["longEntry", "longExit", "shortEntry", "shortExit"] as const;
+
 /** A fresh, independent copy of a rule — used to duplicate a rule within a group
  * or paste one copied from another side. Expression rows are flat value objects,
  * so a shallow spread is a full copy. */

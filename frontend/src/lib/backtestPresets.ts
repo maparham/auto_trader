@@ -8,9 +8,10 @@
 // same call v2 made about v1. Nothing here ever reads the v2 key.
 import { PREFIX, load, save } from "./persist/core";
 import {
-  normalizeBacktestConfig,
+  normalizeBacktestConfig, RULE_GROUP_KEYS,
   type BacktestConfig, type RangeConfig, type RuleGroup,
 } from "./backtestConfig";
+import { sanitizePortableInstances, type PortableInstancePayload } from "./ruleClipboard";
 
 /** The summary of one completed single backtest, as shown in the library table. */
 export type PresetRun = {
@@ -41,6 +42,15 @@ export type BacktestPreset = {
    *  Absent on rule-mode presets and on presets saved before the field existed
    *  (loading those leaves the store untouched). */
   codedParams?: Record<string, number | boolean | string>;
+  /** Snapshot of the chart panes the rules reference by instance (`SLOPE#a1.9`),
+   *  taken at save time — same portable shape the rule clipboard ships, for the
+   *  same reason: the expression names an instance's OUTPUT and restates none of
+   *  its settings, so without this a preset loaded on another chart (or after
+   *  retuning the pane) runs against different settings or none at all. Loading
+   *  recreates these panes and rewrites the rule refs to the ids that landed.
+   *  Absent on presets with no instance refs and on presets saved before the
+   *  field existed. */
+  exprInstances?: Record<string, PortableInstancePayload>;
 };
 
 const KEY = `${PREFIX}.backtestPresets.v3`;
@@ -106,8 +116,6 @@ export function serializePresets(list: BacktestPreset[]): string {
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
-
-const RULE_GROUP_KEYS = ["longEntry", "longExit", "shortEntry", "shortExit"] as const;
 
 /** Structural check on the parts of a config the panel dereferences WITHOUT
  *  guarding — `cfg.range.mode` and each rule group's `rules` array. Unlike the
@@ -179,6 +187,15 @@ function cleanCodedParams(v: unknown): BacktestPreset["codedParams"] {
   return Object.keys(out).length ? out : undefined;
 }
 
+/** Same call as codedParams: a malformed entry costs the entry, not the preset.
+ *  Delegates to the clipboard's sanitizer — the field IS the clipboard payload
+ *  shape — and collapses empty to absent so "has instances" stays a plain
+ *  truthiness test. */
+function cleanExprInstances(v: unknown): BacktestPreset["exprInstances"] {
+  const out = sanitizePortableInstances(v);
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** Parse an exported file, keeping every usable entry and counting the rest.
  * Never throws: import must tell the user what it dropped rather than failing
  * the whole file (or, worse, silently). Malformed JSON counts as one rejection. */
@@ -213,6 +230,7 @@ export function parsePresets(json: string): { presets: BacktestPreset[]; rejecte
       // plain truthiness test everywhere.
       note: isStr(entry.note) && entry.note.trim() ? entry.note : undefined,
       codedParams: cleanCodedParams(entry.codedParams),
+      exprInstances: cleanExprInstances(entry.exprInstances),
     });
   }
   return { presets, rejected };

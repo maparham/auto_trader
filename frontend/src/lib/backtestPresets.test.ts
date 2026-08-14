@@ -224,6 +224,60 @@ describe("backtestPresets serialization", () => {
   });
 });
 
+describe("preset exprInstances", () => {
+  const SLOPE = {
+    type: "SLOPE",
+    calcParams: [9, 21],
+    extendData: { maType: "sma", units: "pctPerHour", mtf: { timeframe: "HOUR" } },
+    visible: false,
+    styles: { lines: [{ color: "#f00", size: 2 }] },
+  };
+
+  it("round-trips exprInstances through put/load and export/import", () => {
+    putPreset({ ...make("Refs"), exprInstances: { "SLOPE#a1": SLOPE } });
+    expect(loadPresets().Refs.exprInstances).toEqual({ "SLOPE#a1": SLOPE });
+    const { presets, rejected } = parsePresets(serializePresets([loadPresets().Refs]));
+    expect(rejected).toBe(0);
+    expect(presets[0].exprInstances).toEqual({ "SLOPE#a1": SLOPE });
+  });
+
+  it("sanitises imported exprInstances instead of trusting them", () => {
+    const file = JSON.parse(serializePresets([make("A")]));
+    file.presets[0].exprInstances = {
+      "SLOPE#a1": {
+        type: "SLOPE",
+        calcParams: [9, "junk"],
+        extendData: { maType: "ema", barHours: 1.5 },
+        styles: "nope",
+        bogus: true,
+      },
+      noType: { calcParams: [4] },
+      junk: 42,
+    };
+    const { presets, rejected } = parsePresets(JSON.stringify(file));
+    expect(rejected).toBe(0);
+    expect(presets[0].exprInstances).toEqual({
+      "SLOPE#a1": { type: "SLOPE", calcParams: [9], extendData: { maType: "ema" } },
+    });
+  });
+
+  it("drops a non-object exprInstances field, keeping the preset", () => {
+    const file = JSON.parse(serializePresets([make("A")]));
+    file.presets[0].exprInstances = [1, 2];
+    const { presets, rejected } = parsePresets(JSON.stringify(file));
+    expect(rejected).toBe(0);
+    expect(presets[0].name).toBe("A");
+    expect(presets[0].exprInstances).toBeUndefined();
+  });
+
+  it("collapses an empty exprInstances map to absent", () => {
+    const file = JSON.parse(serializePresets([make("A")]));
+    file.presets[0].exprInstances = {};
+    const { presets } = parsePresets(JSON.stringify(file));
+    expect(presets[0].exprInstances).toBeUndefined();
+  });
+});
+
 describe("preset notes", () => {
   it("round-trips a note through put/load and export/import", () => {
     putPreset({ ...make("Doc"), note: "WFO tuned\nsecond line" });
