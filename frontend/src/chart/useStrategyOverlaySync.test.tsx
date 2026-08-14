@@ -27,6 +27,8 @@ vi.mock("../api", async () => {
 });
 
 import { useStrategyOverlaySync, resetStrategyMetaCache } from "./useStrategyOverlaySync";
+import { liveStateSignal } from "../lib/liveController";
+import { armSnapshot, initialLiveState } from "../lib/liveState";
 import { ChartController } from "../lib/chartController";
 import { fakeChart } from "../lib/testFakeChart";
 import { syncStrategyOverlays } from "../lib/strategyOverlays";
@@ -42,6 +44,7 @@ beforeEach(() => {
   mockStrategies.mockReset();
   resetStrategyMetaCache();
   backtestConfigLive.set(null);
+  liveStateSignal.set(initialLiveState(defaultBacktestConfig(), "acct", 1));
 });
 
 const spec = (name: string, def: number): ParamSpec => ({
@@ -149,6 +152,29 @@ describe("useStrategyOverlaySync", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(bolls(live)).toHaveLength(1);
+  });
+
+  // While a live coded strategy is ARMED, the band shows what the engine
+  // actually trades: the frozen snapshot's params — not the backtest panel's
+  // selection. Disarming falls back to the backtest source.
+  it("armed live strategy wins over the backtest selection, disarm falls back", async () => {
+    mockStrategies.mockResolvedValue([BB_STRAT]);
+    saveBacktestLastUsed(CODED_CFG); // backtest tuned to defaults (20, 3.0)
+    const { live, controller } = setup("tab.hook-armed");
+    render(<Harness controller={controller} />);
+    await waitFor(() => expect(bolls(live)[0]?.calcParams).toEqual([20, 3.0]));
+
+    const armedDraft = { ...CODED_CFG };
+    liveStateSignal.set(armSnapshot(
+      initialLiveState(armedDraft, "acct", 1), "BB Regime Breakout", 0,
+      { ...defaultCodedCfg(), params: { bb_period: 34, bb_dev: 2.0 } },
+    ));
+
+    await waitFor(() => expect(bolls(live)[0]?.calcParams).toEqual([34, 2.0]));
+    expect(bolls(live)).toHaveLength(1);
+
+    liveStateSignal.set(initialLiveState(defaultBacktestConfig(), "acct", 1));
+    await waitFor(() => expect(bolls(live)[0]?.calcParams).toEqual([20, 3.0]));
   });
 
   it("keeps an existing band when the strategy list fetch fails", async () => {

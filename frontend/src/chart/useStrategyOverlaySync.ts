@@ -3,15 +3,18 @@
 // panel's lifecycle: the band retunes whether params change in the panel, via a
 // preset restore, or through the agent bridge's backtest.config.set with the
 // panel closed. Config source mirrors useProximityHeatmap: the panel's live
-// config while it is open, the persisted last-used config otherwise. Strategy
+// config while it is open, the persisted last-used config otherwise — except
+// while a live coded strategy is ARMED, when its frozen snapshot wins (the
+// band shows what the engine actually trades; see source() below). Strategy
 // meta (chart_overlays + param schema) comes from /api/strategies, cached at
 // module level; while the list is unavailable (fetch in flight or failed) the
 // sync SKIPS rather than treating it as "no overlays desired" — removing the
 // managed band would wipe its saved config.
 import { useEffect } from "react";
-import { fetchStrategies, type StrategyInfo } from "../api";
+import { fetchStrategies, type StrategyInfo, type ParamValues } from "../api";
 import type { ChartController } from "../lib/chartController";
 import { backtestConfigLive, backtestStrategySetupChanged } from "../lib/signals";
+import { liveStateSignal } from "../lib/liveController";
 import { defaultBacktestConfig } from "../lib/backtestConfig";
 import { loadBacktestLastUsed } from "../lib/persist";
 import { loadCodedCfg } from "../lib/codedConfig";
@@ -50,14 +53,11 @@ export function useStrategyOverlaySync(controller: ChartController | null, epic:
     if (!controller || !epic) return;
     let disposed = false;
 
-    const apply = (strategy: StrategyInfo | null, coded: boolean) => {
+    const apply = (strategy: StrategyInfo | null, params: ParamValues | undefined, coded: boolean) => {
       const chart = controller.chart;
       if (disposed || !chart) return;
       if (coded && !strategy) return; // meta unavailable — keep the band as-is
       const overlays = coded ? (strategy?.chart_overlays ?? []) : [];
-      const params = coded && strategy
-        ? loadCodedCfg("backtest", strategy.filename).params
-        : undefined;
       const desired = overlays.flatMap((o) => {
         const calcParams = resolveOverlayCalcParams(o, params, strategy?.params ?? []);
         return calcParams ? [{ indicator: o.indicator, calcParams }] : [];
@@ -66,19 +66,35 @@ export function useStrategyOverlaySync(controller: ChartController | null, epic:
       if (next !== controller.indicators.value) controller.indicators.set(next);
     };
 
-    const sync = () => {
+    // Which strategy setup owns the band. An ARMED live coded strategy wins:
+    // the band then shows what the engine actually trades — the FROZEN
+    // snapshot's params, not the live panel's editable draft (which can drift
+    // while armed) and not the backtest selection. Otherwise the backtest
+    // panel's setup applies (live while open, persisted otherwise).
+    const source = (): { filename: string; params: ParamValues | undefined } | null => {
+      const live = liveStateSignal.value;
+      const snap = live.status === "armed" ? live.snapshot : null;
+      if (snap && snap.cfg.mode === "coded" && snap.cfg.codedStrategy) {
+        return { filename: snap.cfg.codedStrategy, params: snap.coded?.params };
+      }
       const cfg = backtestConfigLive.value ?? loadBacktestLastUsed() ?? defaultBacktestConfig();
-      const coded = cfg.mode === "coded" && !!cfg.codedStrategy;
-      if (!coded) return apply(null, false);
-      const meta = metaFor(cfg.codedStrategy!);
-      if (meta instanceof Promise) void meta.then((s) => apply(s, true));
-      else apply(meta, true);
+      if (cfg.mode !== "coded" || !cfg.codedStrategy) return null;
+      return { filename: cfg.codedStrategy, params: loadCodedCfg("backtest", cfg.codedStrategy).params };
+    };
+
+    const sync = () => {
+      const src = source();
+      if (!src) return apply(null, undefined, false);
+      const meta = metaFor(src.filename);
+      if (meta instanceof Promise) void meta.then((s) => apply(s, src.params, true));
+      else apply(meta, src.params, true);
     };
 
     sync();
     const unsubs = [
       backtestConfigLive.subscribe(sync),
       backtestStrategySetupChanged.subscribe(sync),
+      liveStateSignal.subscribe(sync),
     ];
     return () => {
       disposed = true;
