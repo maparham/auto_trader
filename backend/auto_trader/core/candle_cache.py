@@ -365,17 +365,44 @@ class CandleCache:
         (or the whole window when cold), store closed bars, mark covered, serve."""
         from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
         cov = await asyncio.to_thread(self._coverage, key)
-        # A cache hit needs the window fully inside coverage. We only backfill BELOW
-        # oldest; fetching a gap ABOVE newest (the live edge) is out of scope for v1 —
-        # recent()/the stream own the live edge — so we never push the newest
-        # watermark past the closed cutoff here (see the coverage cap below).
+        # A cache hit needs the window fully inside coverage. Misses fill BELOW
+        # oldest (scroll-back) and ABOVE newest (forward walks) — but the newest
+        # watermark never passes the closed cutoff: the forming bar belongs to
+        # recent()/the stream and must stay re-fetchable.
         if cov is not None and cov[0] <= from_ts and cov[1] >= to_ts:
             self._record_hit(key)
             return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+        cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
+        chunk_secs = res_seconds * max(1, chunk_bars)
+        fetched_any = False
+        err: Exception | None = None
+        # Fill any gap ABOVE newest first (an API client walking history
+        # forward, or a window straddling the live edge — historically this
+        # returned an empty 200 with no fetch at all). Chunks walk BOTTOM-UP
+        # from the newest watermark so a mid-gap failure leaves coverage
+        # contiguous and the retry resumes from the last landed chunk. The walk
+        # never passes the closed-bar cutoff, so the forming bar stays
+        # re-fetchable (same rule as a cold fill's coverage cap).
+        if cov is not None and min(to_ts, cutoff) > cov[1]:
+            top = min(to_ts, cutoff)
+            cur = cov[1]
+            while cur < top:
+                chunk_to = min(top, cur + chunk_secs)
+                try:
+                    chunk = await fetch_range(
+                        datetime.fromtimestamp(cur, tz=timezone.utc),
+                        datetime.fromtimestamp(chunk_to, tz=timezone.utc))
+                except Exception as e:  # noqa: BLE001 — same contract as the walk below
+                    err = e
+                    break
+                fetched_any = True
+                await asyncio.to_thread(self._store_closed, key, chunk, cutoff)
+                await asyncio.to_thread(self._extend_coverage, key, cov[1], chunk_to)
+                cur = chunk_to
+            cov = (cov[0], max(cov[1], cur))
         # Backfill from `start` up to the current oldest (gap-free), or the whole
         # window when cold. End the fetch at oldest so we don't re-pull covered bars.
         fetch_end = datetime.fromtimestamp(cov[0], tz=timezone.utc) if cov else end
-        cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
         # Cap the NEWEST watermark. A cold fill pulled every closed bar up to `cutoff`,
         # but the forming bar (>= cutoff) was filtered out by _store_closed and must
         # stay re-fetchable; a warm fill only backfilled below oldest, so newest stays
@@ -387,9 +414,6 @@ class CandleCache:
         # covered as it lands — even an empty one (closed market), so we don't re-fetch
         # the hole. A chunk that raises (slow/failed source) stops the walk: coverage
         # stays contiguous down to the last success and the next request resumes there.
-        chunk_secs = res_seconds * max(1, chunk_bars)
-        fetched_any = False
-        err: Exception | None = None
         cursor = fetch_end
         # Progress logging. A multi-chunk backfill (a backtest's warm-up ask, a deep
         # scroll-back) can run for minutes inside ONE http request, and uvicorn only
@@ -417,7 +441,9 @@ class CandleCache:
                 "eta_s": None, "at": "", "updated_at": time.time(),
             }
         try:
-            while start < cursor:
+            # err from a failed forward fill skips the downward walk entirely:
+            # surface the failure (or the partial cache) promptly.
+            while err is None and start < cursor:
                 chunk_from_ts = max(from_ts, int(cursor.timestamp()) - chunk_secs)
                 chunk_from = datetime.fromtimestamp(chunk_from_ts, tz=timezone.utc)
                 try:

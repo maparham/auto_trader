@@ -291,6 +291,74 @@ def test_window_raises_when_partial_backfill_does_not_reach_window(tmp_path):
     assert cov is not None and 1300 < cov[0] < 2500 and cov[1] == 3000, cov
 
 
+def test_window_fills_gap_above_newest(tmp_path):
+    """A window ABOVE the newest watermark (an API client walking history
+    forward) must fetch the forward gap, not silently return whatever's cached
+    (historically: nothing — an empty 200 indistinguishable from no-data)."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (100, 160)])
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(160), f0.range, now=10_000))
+    assert cache._coverage(KEY) == (100, 160)
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280, 340)]
+    f = FakeFetcher(src)
+    out = asyncio.run(cache.window(KEY, 60, _dt(220), _dt(340), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in out] == [220, 280, 340]
+    # One contiguous segment grown upward through the gap — no hole.
+    assert cache._coverage(KEY) == (100, 340)
+    # And a re-request is a pure cache hit.
+    f.range_calls.clear()
+    again = asyncio.run(cache.window(KEY, 60, _dt(220), _dt(340), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in again] == [220, 280, 340]
+    assert f.range_calls == []
+
+
+def test_window_straddling_both_gaps_fills_below_and_above(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (160, 220)])
+    asyncio.run(cache.window(KEY, 60, _dt(160), _dt(220), f0.range, now=10_000))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    f = FakeFetcher(src)
+    out = asyncio.run(cache.window(KEY, 60, _dt(100), _dt(280), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160, 220, 280]
+    assert cache._coverage(KEY) == (100, 280)
+
+
+def test_window_above_gap_never_extends_past_cutoff(tmp_path):
+    """The forward fill must not push the newest watermark past the closed-bar
+    cutoff: the forming bar stays re-fetchable (same rule as a cold fill)."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (100, 160)])
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(160), f0.range, now=10_000))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    f = FakeFetcher(src)
+    # now=300 -> cutoff=bucket_start(300, 60)=300; request reaches past it.
+    asyncio.run(cache.window(KEY, 60, _dt(220), _dt(400), f.range, now=300))
+    cov = cache._coverage(KEY)
+    assert cov is not None and cov[1] <= 300, cov
+
+
+def test_window_above_gap_chunk_failure_keeps_coverage_contiguous(tmp_path):
+    """A mid-gap failure while filling UPWARD must leave coverage claiming only
+    what actually landed (contiguous with the old newest), so the retry resumes
+    instead of a hole being marked covered."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(1000, 3100, 100)]
+    asyncio.run(cache.window(KEY, 100, _dt(1000), _dt(1500), ChunkRecordingFetcher(src).range, now=10_000))
+    assert cache._coverage(KEY) == (1000, 1500)
+    # Forward gap [1500, 3000]; only the first 2 bottom chunks (3 bars each) land.
+    f = ChunkRecordingFetcher(src, fail_after=2)
+    asyncio.run(cache.window(KEY, 100, _dt(1600), _dt(3000), f.range, now=10_000, chunk_bars=3))
+    cov = cache._coverage(KEY)
+    assert cov is not None and cov[0] == 1000 and 1500 < cov[1] < 3000, cov
+    got = cache._read_window(KEY, 1000, cov[1])
+    assert [int(c.time.timestamp()) for c in got] == list(range(1000, cov[1] + 1, 100))
+    # Retry with a healthy fetcher resumes from the new newest and completes.
+    ok = ChunkRecordingFetcher(src)
+    asyncio.run(cache.window(KEY, 100, _dt(1600), _dt(3000), ok.range, now=10_000, chunk_bars=3))
+    assert cache._coverage(KEY) == (1000, 3000)
+    assert all(s >= cov[1] for s, _e in ok.range_calls), ok.range_calls
+
+
 def test_recent_cold_fetches_full_and_returns_with_forming(tmp_path):
     cache = CandleCache(str(tmp_path / "c.db"))
     # ts 280 is the forming bar (>= cutoff 240); 100/160/220 are closed.
