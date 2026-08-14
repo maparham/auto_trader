@@ -206,3 +206,22 @@ describe("backtestPresets serialization", () => {
     expect(presets[0].lastRun).toBeUndefined();
   });
 });
+
+describe("preset notes", () => {
+  it("round-trips a note through put/load and export/import", () => {
+    putPreset({ ...make("Doc"), note: "WFO tuned\nsecond line" });
+    expect(loadPresets().Doc.note).toBe("WFO tuned\nsecond line");
+    const { presets, rejected } = parsePresets(serializePresets([loadPresets().Doc]));
+    expect(rejected).toBe(0);
+    expect(presets[0].note).toBe("WFO tuned\nsecond line");
+  });
+
+  it("drops a malformed or blank imported note, keeping the preset", () => {
+    const file = JSON.parse(serializePresets([make("A"), make("B")]));
+    file.presets[0].note = 42;
+    file.presets[1].note = "   ";
+    const { presets, rejected } = parsePresets(JSON.stringify(file));
+    expect(rejected).toBe(0);
+    expect(presets.map((p) => p.note)).toEqual([undefined, undefined]);
+  });
+});

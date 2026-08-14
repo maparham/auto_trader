@@ -10,7 +10,7 @@
 //
 // Preset identity deliberately lives here and not in the panel header — the
 // header belongs to the overlay/auto-hide work.
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Tooltip from "./Tooltip";
 import { backtestConfigEquals, type BacktestConfig } from "../lib/backtestConfig";
 import { backtestResultSignal, backtestRunCompletedSignal } from "../lib/signals";
@@ -162,6 +162,10 @@ export default function PresetsTab({
   // A load blocked on unsaved edits: the target preset, awaiting the user's
   // three-way answer. Null when no such prompt is up.
   const [pendingLoad, setPendingLoad] = useState<string | null>(null);
+  // Inline note editor, one preset at a time — same no-window.prompt rule as
+  // naming. The draft lives here (not per-row) because only one editor is open.
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [draftNote, setDraftNote] = useState("");
 
   // presetAt, not presets[activeName]: activeName is parent-owned and can dangle
   // (the preset was deleted or renamed away). If it dangles on a prototype member
@@ -392,6 +396,25 @@ export default function PresetsTab({
     setMenuFor(null);
   }
 
+  function startNote(name: string) {
+    setMenuFor(null);
+    setNoteFor(name);
+    setDraftNote(presetAt(presets, name)?.note ?? "");
+  }
+
+  function commitNote() {
+    const name = noteFor;
+    setNoteFor(null);
+    setDraftNote("");
+    const p = name ? presetAt(presets, name) : undefined;
+    if (!p) return; // deleted out from under the open editor
+    const note = draftNote.trim() ? draftNote : undefined;
+    // `updatedAt` unchanged on purpose: like a rename, annotating a preset is
+    // not an edit of the strategy, and Modified is the table's default sort.
+    putPreset({ ...p, note });
+    refresh();
+  }
+
   function startRename(name: string) {
     setMenuFor(null);
     setNamingMode("rename");
@@ -432,6 +455,8 @@ export default function PresetsTab({
     // than waiting for the user to click a button that can no longer do
     // anything.
     if (pendingLoad === name) setPendingLoad(null);
+    // An open note editor for the deleted preset would save into nothing.
+    if (noteFor === name) { setNoteFor(null); setDraftNote(""); }
     // Otherwise the parent keeps pointing at a preset that no longer exists and
     // the identity bar silently degrades to "Unsaved strategy".
     if (activeName === name) onActiveChange(null);
@@ -588,9 +613,8 @@ export default function PresetsTab({
               const mismatch =
                 !!p.origin &&
                 (p.origin.symbol !== chartSymbol || p.origin.timeframe !== chartTimeframe);
-              return (
+              const row = (
                 <div
-                  key={p.name}
                   className={`bt-preset-row${p.name === activeName ? " active" : ""}`}
                 >
                   <span className="bt-preset-cell-name">{p.name}</span>
@@ -623,12 +647,47 @@ export default function PresetsTab({
                         <button className="ghost" onClick={() => requestLoad(p.name)}>Load</button>
                         <button className="ghost" onClick={() => duplicate(p.name)}>Duplicate</button>
                         <button className="ghost" onClick={() => startRename(p.name)}>Rename</button>
+                        <button className="ghost" onClick={() => startNote(p.name)}>Note…</button>
                         <button className="ghost" onClick={() => exportOne(p.name)}>Export</button>
                         <button className="ghost danger" onClick={() => remove(p.name)}>Delete</button>
                       </span>
                     )}
                   </span>
                 </div>
+              );
+              return (
+                <Fragment key={p.name}>
+                  {/* The note IS the tooltip: annotated rows explain themselves
+                      on hover, bare rows stay inert. */}
+                  {p.note ? (
+                    <Tooltip content={p.note.split("\n").filter((l) => l.trim())}>
+                      {row}
+                    </Tooltip>
+                  ) : (
+                    row
+                  )}
+                  {noteFor === p.name && (
+                    <div className="bt-preset-noterow">
+                      <textarea
+                        autoFocus
+                        value={draftNote}
+                        placeholder="Note"
+                        rows={3}
+                        onChange={(e) => setDraftNote(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") { setNoteFor(null); setDraftNote(""); }
+                        }}
+                      />
+                      <button className="ghost" onClick={commitNote}>Save note</button>
+                      <button
+                        className="ghost"
+                        onClick={() => { setNoteFor(null); setDraftNote(""); }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </Fragment>
               );
             })}
           </div>

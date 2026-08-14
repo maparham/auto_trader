@@ -956,3 +956,56 @@ describe("PresetsTab run capture", () => {
     expect(loadPresets().Momentum.lastRun).toBeUndefined();
   });
 });
+
+describe("PresetsTab notes", () => {
+  const ORIGIN = { symbol: "TEST", timeframe: "MINUTE" };
+  const withNote = (name: string, note?: string) => ({
+    ...newPreset(name, defaultBacktestConfig(), ORIGIN, 1000),
+    ...(note ? { note } : {}),
+  });
+
+  it("shows the note in a tooltip when hovering a row that has one", () => {
+    vi.useFakeTimers();
+    putPreset(withNote("Doc", "tuned on 2026 walk-forward"));
+    putPreset(withNote("Bare"));
+    setup();
+    act(() => { vi.advanceTimersByTime(600); }); // expire any tooltip grace window
+
+    fireEvent.mouseEnter(screen.getByText("Doc").closest(".bt-preset-row")!);
+    act(() => { vi.advanceTimersByTime(150); });
+    expect(screen.getByRole("tooltip").textContent).toContain("tuned on 2026 walk-forward");
+    fireEvent.mouseLeave(screen.getByText("Doc").closest(".bt-preset-row")!);
+
+    // A row without a note stays tooltip-free.
+    fireEvent.mouseEnter(screen.getByText("Bare").closest(".bt-preset-row")!);
+    act(() => { vi.advanceTimersByTime(600); });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("edits a note inline from the row menu, never via window.prompt", () => {
+    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue(null);
+    putPreset(withNote("Doc"));
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Doc" }));
+    fireEvent.click(screen.getByRole("button", { name: "Note…" }));
+    fireEvent.change(screen.getByPlaceholderText("Note"), { target: { value: "robust on 5m" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save note" }));
+    expect(loadPresets().Doc.note).toBe("robust on 5m");
+    expect(promptSpy).not.toHaveBeenCalled();
+    promptSpy.mockRestore();
+  });
+
+  it("saving a blank note clears it and keeps updatedAt untouched", () => {
+    putPreset(withNote("Doc", "old text"));
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Doc" }));
+    fireEvent.click(screen.getByRole("button", { name: "Note…" }));
+    // Prefilled with the stored note so editing starts from what's there.
+    expect((screen.getByPlaceholderText("Note") as HTMLTextAreaElement).value).toBe("old text");
+    fireEvent.change(screen.getByPlaceholderText("Note"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save note" }));
+    expect(loadPresets().Doc.note).toBeUndefined();
+    expect(loadPresets().Doc.updatedAt).toBe(1000);
+  });
+});

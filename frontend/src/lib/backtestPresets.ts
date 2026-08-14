@@ -33,6 +33,8 @@ export type BacktestPreset = {
    *  hand-edited file may not carry one. */
   origin?: { symbol: string; timeframe: string };
   lastRun?: PresetRun;
+  /** Free-text annotation shown as the row's hover tooltip. Absent, never "". */
+  note?: string;
 };
 
 const KEY = `${PREFIX}.backtestPresets.v3`;
@@ -187,6 +189,10 @@ export function parsePresets(json: string): { presets: BacktestPreset[]; rejecte
       // shape is enforced — not in every reader downstream.
       origin: cleanOrigin(entry.origin),
       lastRun: cleanRun(entry.lastRun),
+      // Same call as origin/lastRun: a bad note costs the note, not the preset.
+      // Blank collapses to absent so the tooltip's "has a note" check stays a
+      // plain truthiness test everywhere.
+      note: isStr(entry.note) && entry.note.trim() ? entry.note : undefined,
     });
   }
   return { presets, rejected };

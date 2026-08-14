@@ -1891,6 +1891,11 @@
 }
 .bt-preset-prompt > span { flex: 1 1 100%; font-size: 12px; color: var(--text); }
 
+/* Inline note editor, rendered directly under its preset's row: the textarea
+   takes the row's full width so a few sentences stay readable while editing. */
+.bt-preset-noterow { display: flex; align-items: flex-start; gap: 6px; padding: 4px 6px; }
+.bt-preset-noterow > textarea { flex: 1 1 auto; min-width: 0; resize: vertical; font: inherit; }
+
 .bt-preset-library { display: flex; flex-direction: column; gap: 8px; }
 /* Filter on the left, whole-library actions pushed right — one row, because all
    of it operates on the library rather than on a preset. */
