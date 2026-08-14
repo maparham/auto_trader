@@ -7,6 +7,7 @@ from __future__ import annotations
 import bisect
 
 from auto_trader.api import baselines as baselines_mod
+from auto_trader.api import sweep_apply as sa
 from auto_trader.api import sweep_worker
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.engine.metrics import slice_window_metrics
@@ -16,7 +17,7 @@ _EQUITY_CAP = 500
 # kind -> synthesized baseline request, built once per worker. Cleared by
 # worker_init: an in-process pool (tests) reuses this module across jobs, so a
 # stale entry would silently run the previous job's request.
-_BASELINE_REQS: dict[str, object] = {}
+_BASELINE_REQS: dict[tuple, object] = {}
 
 
 def worker_init(req_dict, htf_candles, strategies_dir, train_windows, expr_sweep=False) -> None:
@@ -158,22 +159,38 @@ def run_test(payload: dict) -> dict:
 def run_baseline(payload: dict) -> dict:
     """Flat-start baseline run over one fold's test window, via the same period
     env-combo gating as run_test. The synthesized request (null = 1==1 entries,
-    hold = enter-and-hold) is built once per kind per worker and cached. Only
-    ever dispatched for expr jobs, so `s.req` is an ExprBacktestRequest, which
-    is what the baselines module takes. Never raises."""
+    hold = enter-and-hold) is built once per (kind, sides) per worker and
+    cached. Expr jobs synthesize from `s.req` directly; coded jobs convert it
+    with expr_request_from_structured first, with the enabled flags set to the
+    sides the fold's winner actually traded (payload long/short_enabled — see
+    the dispatch site in wfo_jobs for why). Never raises."""
     s = sweep_worker._STATE
     assert s is not None, "worker_init not called"
     kind = payload["kind"]
     test_from, test_to = payload["test_from"], payload["test_to"]
     try:
-        req = _BASELINE_REQS.get(kind)
+        cache_key = (kind, payload.get("long_enabled"), payload.get("short_enabled"))
+        req = _BASELINE_REQS.get(cache_key)
         if req is None:
+            base = s.req
+            if not getattr(s, "expr", False):
+                base = baselines_mod.expr_request_from_structured(s.req).model_copy(
+                    update={"longEnabled": payload["long_enabled"],
+                            "shortEnabled": payload["short_enabled"]})
             synth = (baselines_mod.null_request if kind == "null"
                      else baselines_mod.hold_request)
-            req = synth(s.req)
-            _BASELINE_REQS[kind] = req
+            req = synth(base)
+            _BASELINE_REQS[cache_key] = req
         combo = {"period:from": test_from, "period:to": test_to}
-        result = sweep_worker.execute_combo(s, req, combo)
+        if getattr(s, "expr", False):
+            result = sweep_worker.execute_combo(s, req, combo)
+        else:
+            # The worker state is coded-mode, so execute_combo would route an
+            # expr request down the coded path — run the expr pipeline directly
+            # with the same period env-combo gating.
+            env, _rest = sa.split_env_combo(combo)
+            patched, candles = sa.apply_env_combo(req, s.candles, env)
+            result = sa.run_expr_sync(patched, candles, dict(s.htf), {}, None, None)
         res_s = resolution_seconds(s.req.resolution)
         cash = s.req.costs.startingCash
         metrics = slice_window_metrics(

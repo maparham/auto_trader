@@ -1010,6 +1010,7 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
         epic=req.epic,
         timeframe=req.resolution,
         eval_mode=wf.evalMode,
+        baselines=wf.baselines,
         on_complete=_persist_wfo(req),
     )
     # Build the response from OUR pre-submit scheme copy, selecting only the 4

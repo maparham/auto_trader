@@ -76,6 +76,39 @@ def test_submit_rejects_period_combo(sync_wfo_manager):
     assert "period" in r.json()["detail"]
 
 
+def test_coded_wfo_baselines_per_fold(sync_wfo_manager):
+    # Baselines were expr-only; a coded job must run them too (converted to the
+    # same expr null/hold requests the coded single-run path synthesizes).
+    req = make_req_dict(100 * 24)
+    req["walkforward"] = {**WFO, "baselines": ["null", "hold"]}
+    sub = client.post("/api/backtest/walkforward/jobs", json=req)
+    assert sub.status_code == 200, sub.text
+    body = sub.json()
+    n_folds = len(body["schemes"][0]["folds"])
+    # Progress accounting: one test run + one run per baseline kind, per fold.
+    assert body["total"] == len(WFO["combos"]) + n_folds * (1 + 2)
+    for _ in range(200):
+        st = client.get(f"/api/backtest/walkforward/jobs/{body['jobId']}").json()
+        if not st["running"]:
+            break
+        time.sleep(0.05)
+    assert st["phase"] == "done" and st["error"] is None
+    folds = st["result"]["schemes"][0]["folds"]
+    # Folds whose winner actually traded get baselines; the strategy is
+    # long-only, so its null baseline is long-only too (not a both-sides hedge).
+    scored = [f for f in folds
+              if f["oos_metrics"] is not None and f["oos_metrics"]["n_trades"] > 0]
+    assert scored, "no scored folds with trades"
+    for f in scored:
+        assert f["null_metrics"] is not None
+        assert f["hold_metrics"] is not None
+        assert f["excess_return_pct"] == round(
+            f["oos_metrics"]["return_pct"] - f["null_metrics"]["return_pct"], 4)
+    rb = st["result"]["schemes"][0]["robustness"]
+    assert rb["pct_folds_beating_null"] is not None
+    assert rb["median_fold_excess_pct"] is not None
+
+
 def test_job_lifecycle_and_archive(sync_wfo_manager):
     req = make_req_dict(100 * 24)
     req["walkforward"] = WFO

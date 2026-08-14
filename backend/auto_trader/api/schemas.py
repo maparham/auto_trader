@@ -422,8 +422,10 @@ class WalkForwardDTO(BaseModel):
     # the one-run-sliced-N-ways approximation. Legacy "auto"/"sliced" normalize
     # to fast so older clients keep working.
     evalMode: Literal["exact", "fast"] = "exact"
-    # Baseline companion runs per fold test window (expr WFO only): "null" =
-    # 1==1 entries, same structure; "hold" = enter-and-hold. Display-only.
+    # Baseline companion runs per fold test window (expr and coded WFO):
+    # "null" = 1==1 entries, same structure; "hold" = enter-and-hold. Coded
+    # jobs synthesize the expr baseline on the sides each fold's winner
+    # actually traded. Display-only.
     baselines: list[Literal["null", "hold"]] | None = None
 
     @field_validator("evalMode", mode="before")

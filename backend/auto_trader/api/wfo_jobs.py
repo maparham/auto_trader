@@ -83,11 +83,12 @@ class WfoJobManager:
         baselines: list[str] | None = None,
         on_complete=None,
     ) -> WfoJob:
-        # Baselines are an expr-only companion run per fold; `_run` gates its
-        # dispatch on the SAME expression, so the progress total can never drift
-        # from the futures actually submitted. De-duplicated because `_run`
-        # de-dupes (key, kind) too -- a repeated kind runs once.
-        n_baselines = len(set(baselines)) if (baselines and expr) else 0
+        # Baselines run per fold for expr AND coded jobs (coded requests are
+        # converted to expr null/hold in the worker). De-duplicated because
+        # `_run` de-dupes (key, kind) too -- a repeated kind runs once. Coded
+        # folds whose winner never traded skip their baselines; the aggregate
+        # phase forces done=total, so the shortfall never stalls progress.
+        n_baselines = len(set(baselines)) if baselines else 0
         n_folds = sum(len(sc["folds"]) for sc in schemes)
         total = len(combos) + n_folds * (1 + n_baselines)
         job = WfoJob(
@@ -226,38 +227,52 @@ class WfoJobManager:
                                 "key": key, "combo": rows[best_i]["combo"],
                                 "test_from": f["test_from"], "test_to": f["test_to"],
                             })
-                # Same gate as submit()'s total: baselines are expr-only.
-                wf_baselines = kw.get("baselines") if kw.get("expr", False) else None
-                baseline_payloads: list[dict] = []
-                if wf_baselines:
-                    seen_bl: set[tuple] = set()
-                    for p in test_payloads:
-                        for kind in wf_baselines:
-                            k = (p["key"], kind)
-                            if k in seen_bl:
-                                continue
-                            seen_bl.add(k)
-                            baseline_payloads.append({
-                                "key": p["key"], "kind": kind,
-                                "test_from": p["test_from"],
-                                "test_to": p["test_to"],
-                            })
-                # Both batches are submitted before either is drained, so the
-                # pool works them concurrently; they are harvested in turn.
                 test_futures = [pool.submit(wfo_worker.run_test, p)
                                 for p in test_payloads]
-                baseline_futures = [pool.submit(wfo_worker.run_baseline, p)
-                                    for p in baseline_payloads]
                 test_rows = self._drain(
                     pool, test_futures, job, t0,
                     stream=lambda r: job.fold_rows.append(
                         {"key": r["key"], "combo": r["combo"],
                          "oos_metrics": r["metrics"], "error": r["error"]}))
-                # Must precede the baseline drain: a cancel kills the worker
-                # processes, and fut.result() on a killed worker raises
-                # BrokenProcessPool, which would turn a clean cancel into an error.
+                # A cancel between drains would make fut.result() on a killed
+                # worker raise BrokenProcessPool, turning a clean cancel into an
+                # error — bail before touching baselines.
                 if job.cancelled:
                     return
+                # Baselines are dispatched AFTER the test drain (not
+                # concurrently) because a coded fold's baseline mirrors the
+                # sides its winner actually traded — the coded request
+                # hardwires both enabled flags true, and a `1==1` entry on both
+                # sides hedges to ~0, flattering every strategy (same rule as
+                # the single-run coded baselines). A fold whose winner never
+                # traded gets no baseline at all, matching that path too. Expr
+                # folds keep their request's own side flags.
+                wf_baselines = kw.get("baselines")
+                baseline_payloads: list[dict] = []
+                if wf_baselines:
+                    expr_job = kw.get("expr", False)
+                    rows_by_key = {r["key"]: r for r in test_rows if r}
+                    seen_bl: set[tuple] = set()
+                    for p in test_payloads:
+                        payload = {"key": p["key"],
+                                   "test_from": p["test_from"],
+                                   "test_to": p["test_to"]}
+                        if not expr_job:
+                            trades = (rows_by_key.get(p["key"]) or {}).get("trades") or []
+                            long_traded = any(t["side"] == "buy" for t in trades)
+                            short_traded = any(t["side"] == "sell" for t in trades)
+                            if not (long_traded or short_traded):
+                                continue
+                            payload["long_enabled"] = long_traded
+                            payload["short_enabled"] = short_traded
+                        for kind in wf_baselines:
+                            k = (p["key"], kind)
+                            if k in seen_bl:
+                                continue
+                            seen_bl.add(k)
+                            baseline_payloads.append({**payload, "kind": kind})
+                baseline_futures = [pool.submit(wfo_worker.run_baseline, p)
+                                    for p in baseline_payloads]
                 baseline_rows = self._drain(pool, baseline_futures, job, t0)
                 if job.cancelled:
                     return
