@@ -94,6 +94,22 @@ class PositionView:
         return self._long if self._long > 0 else self._short
 
 
+class LastExitView:
+    """Read-only facts about the most recently closed trade (either side).
+    Backtest-only for now: live requests carry no last-trade info, so live
+    runs never see one (ctx.last_exit is None there)."""
+
+    def __init__(self, leg: str, time: datetime, reason: str, bars_ago: int) -> None:
+        self.leg = leg  # "long" | "short"
+        self.time = time
+        self.reason = reason  # "stop" / "target" / "trail" / rule reason
+        self.bars_ago = bars_ago  # 0 = closed on the current bar
+
+    @property
+    def was_stop(self) -> bool:
+        return self.reason == "stop"
+
+
 class StrategyContext:
     """The façade user code talks to at each bar. Indicator methods return the
     current CLOSED bar's value (None during warm-up); history arrays cover bars
@@ -173,6 +189,10 @@ class StrategyContext:
         t = self.position.entry_time
         if t is None:
             return None
+        return self._bars_since(t)
+
+    def _bars_since(self, t: datetime) -> int | None:
+        """Bars between the current bar and the last bar with time <= t."""
         hist = self._ctx.history
         if not hist:
             return None
@@ -185,6 +205,18 @@ class StrategyContext:
             else:
                 break
         return self._i - idx
+
+    @property
+    def last_exit(self) -> LastExitView | None:
+        """The most recently closed trade, or None before the first close
+        (always None on the live route — see LastExitView)."""
+        leg, t = self._ctx.last_exit_leg, self._ctx.last_exit_time
+        if leg is None or t is None:
+            return None
+        bars_ago = self._bars_since(t)
+        if bars_ago is None:
+            return None
+        return LastExitView(leg, t, self._ctx.last_exit_reason, bars_ago)
 
     # --- indicators (memoized full-series compute, current-bar read) -------
     def _values_for(self, key: str, tf: str | None, values_fn) -> list[float | None]:

@@ -280,6 +280,12 @@ class BacktestEngine:
             ctx.short_entry_price = shorts[0].entry if shorts else None
             ctx.long_entry_time = longs[0].open_time if longs else None
             ctx.short_entry_time = shorts[0].open_time if shorts else None
+            # Most recent closed trade so far (trades append chronologically).
+            if result.trades:
+                last_trade = result.trades[-1]
+                ctx.last_exit_leg = last_trade.leg
+                ctx.last_exit_time = last_trade.exit_time
+                ctx.last_exit_reason = last_trade.reason_out
             if i < end:  # the run's last bar has no next-open to fill on
                 pending = list(self.strategy.on_bar(ctx))
 

@@ -140,5 +140,25 @@ export const bbRegimeBreakout: StrategyGuide = {
         </>
       ),
     },
+    {
+      heading: "The regime kill switch (optional)",
+      body: (
+        <>
+          <p>
+            Breakout entries suffer most in grinding markets, where price travels a long
+            path but goes nowhere. The optional kill switch measures this with the Kaufman
+            efficiency ratio over the ER lookback: the net move divided by the total path
+            traveled, near 1 in a clean trend and near 0 in chop. While the ratio sits
+            below the minimum efficiency ratio, new entries are skipped; everything else
+            is unchanged.
+          </p>
+          <p>
+            At the default of 0 the gate is disabled and the strategy behaves exactly as
+            described above. Both knobs are sweepable, so an optimizer (or a walk-forward
+            fold) can decide whether a given market rewards turning it on.
+          </p>
+        </>
+      ),
+    },
   ],
 };

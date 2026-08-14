@@ -33,6 +33,14 @@ class Context:
         self.short_entry_price: float | None = None
         self.long_entry_time: datetime | None = None
         self.short_entry_time: datetime | None = None
+        # Most recently CLOSED trade (either side), or None before the first
+        # close. Lets a strategy react to its own outcomes (e.g. stand down
+        # after a stop-out). The backtest engine fills these; the live route
+        # currently has no last-trade knowledge in its request, so live runs
+        # see None and any logic keyed off them stays inert there.
+        self.last_exit_leg: str | None = None  # "long" | "short"
+        self.last_exit_time: datetime | None = None
+        self.last_exit_reason: str = ""
 
     @property
     def bar(self) -> Candle:

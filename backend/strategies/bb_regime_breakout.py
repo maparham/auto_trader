@@ -16,7 +16,15 @@ consolidation-to-trend transition.
   closes the move is never chased).
 • Stop anchored to the prior range: stop_range_frac slides it from the broken
   edge (0.0) to the far edge of the range (1.0). Target is target_r times the
-  risk beyond entry."""
+  risk beyond entry.
+• Optional regime kill-switch: entries require the Kaufman efficiency ratio
+  (net move over path traveled) across er_lookback bars to reach min_er, so
+  grinding chop markets are sat out. min_er 0 disables the gate.
+• Optional flip guard: after a stop-out, entries in the OPPOSITE direction are
+  skipped for flip_guard_bars bars — a failed break whose reversal also "breaks
+  out" is the classic whipsaw chain. Same-direction re-entries stay allowed.
+  flip_guard_bars 0 disables it (and live runs have no last-trade info yet, so
+  the guard is backtest-only for now)."""
 
 import numpy as np
 
@@ -42,6 +50,13 @@ meta = {
         {"name": "stop_range_frac", "label": "Stop depth (range frac)", "type": "float", "default": 1.0, "min": 0.0, "max": 1.5,
          "help": "0 = stop at the broken edge, 1 = at the far edge of the range."},
         {"name": "target_r", "label": "Target (R multiple)", "type": "float", "default": 2.0, "min": 0.1, "max": 50.0},
+        {"name": "flip_guard_bars", "label": "Flip guard (bars)", "type": "int", "default": 0, "min": 0, "max": 1000, "step": 1,
+         "help": "After a stop-out, skip entries in the OPPOSITE direction for this many bars (0 = off). "
+                 "Same-direction re-entries stay allowed. Backtest-only: live runs have no last-trade info yet."},
+        {"name": "er_lookback", "label": "Regime ER lookback (bars)", "type": "int", "default": 288, "min": 3, "max": 10000, "step": 1,
+         "help": "Bars the efficiency-ratio regime gate is measured over (288 = one day of 5m bars)."},
+        {"name": "min_er", "label": "Min efficiency ratio", "type": "float", "default": 0.0, "min": 0.0, "max": 1.0,
+         "help": "Skip entries while |net move| / path traveled over the lookback is below this. 0 disables the gate."},
     ],
 }
 
@@ -111,6 +126,7 @@ def on_bar(ctx):
         "bb_period", "bb_dev", "squeeze_lookback", "squeeze_pctile",
         "range_lookback", "max_range_pct", "breakout_window", "confirm_bars",
         "min_expansion_pct", "stop_range_frac", "target_r",
+        "flip_guard_bars", "er_lookback", "min_er",
     )}
     closes, highs, lows = ctx.closes, ctx.highs, ctx.lows
     i = len(closes) - 1
@@ -120,6 +136,19 @@ def on_bar(ctx):
     span = p["squeeze_lookback"] + p["breakout_window"] + p["confirm_bars"] + 2
     if i + 1 < period + span or not ctx.position.is_flat:
         return []
+
+    # Regime kill-switch: in a grinding market the net move is a small fraction
+    # of the path traveled, and breakouts revert. Gate entries on the Kaufman
+    # efficiency ratio over a long lookback; min_er 0 leaves it off.
+    if p["min_er"] > 0:
+        n = p["er_lookback"]
+        if i < n:
+            return []
+        seg = closes[i - n: i + 1]
+        path = float(np.abs(np.diff(seg)).sum())
+        er = abs(float(seg[-1]) - float(seg[0])) / path if path > 0 else 1.0
+        if er < p["min_er"]:
+            return []
 
     # Band width over just the tail this bar can see (constant work per bar).
     bw_start = i - span - period + 1
@@ -133,6 +162,16 @@ def on_bar(ctx):
     # Level-triggered while flat: the breakout window bounds chasing (and any
     # re-entry after a stop-out); once it expires the signal dies on its own.
     leg, rh, rl = sig
+
+    # Flip guard: a stop-out whose reversal immediately "breaks out" the other
+    # way is the whipsaw chain — block only the OPPOSITE direction for a while,
+    # so a genuine resumption of the original break can still re-enter.
+    guard = p["flip_guard_bars"]
+    if guard > 0:
+        ex = ctx.last_exit
+        if (ex is not None and ex.was_stop and ex.leg != leg
+                and ex.bars_ago < guard):
+            return []
     frac, height = p["stop_range_frac"], rh - rl
     note = {"range_high": rh, "range_low": rl, "band_width": float(bw[i - bw_start])}
     if leg == "long":

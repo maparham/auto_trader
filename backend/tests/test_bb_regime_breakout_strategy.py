@@ -62,6 +62,8 @@ def consolidation_only() -> list[float]:
 def test_meta_declares_params():
     module = load_strategy("bb_regime_breakout.py")
     by_name = {p["name"]: p for p in module.meta["params"]}
+    assert by_name["er_lookback"]["default"] == 288
+    assert by_name["min_er"]["default"] == 0.0  # gate disabled by default
     assert by_name["bb_period"]["default"] == 20
     assert by_name["bb_dev"]["default"] == 3.0
     assert by_name["squeeze_lookback"]["default"] == 60
@@ -73,6 +75,7 @@ def test_meta_declares_params():
     assert by_name["min_expansion_pct"]["default"] == 10.0
     assert by_name["stop_range_frac"]["default"] == 1.0
     assert by_name["target_r"]["default"] == 2.0
+    assert by_name["flip_guard_bars"]["default"] == 0  # guard disabled by default
 
 
 def test_consolidation_without_breakout_never_enters():
@@ -162,6 +165,25 @@ def test_confirm_exceeding_window_still_trades():
     assert len(result.trades) >= 1
 
 
+def test_efficiency_gate_blocks_breakouts_out_of_choppy_tape():
+    # The squeeze tape is pure chop before the break: over a 40-bar lookback the
+    # net move is tiny relative to the path traveled, so a demanding efficiency
+    # floor must veto the entry while min_er=0 (the default) still trades.
+    tape = bars_from_closes(squeeze_then_breakout(+1))
+    gated, _ = run(tape, {**FAST_OVERRIDES, "er_lookback": 40, "min_er": 0.5})
+    assert gated.trades == []
+    ungated, _ = run(tape, {**FAST_OVERRIDES, "er_lookback": 40, "min_er": 0.0})
+    assert len(ungated.trades) >= 1
+
+
+def test_efficiency_gate_lets_directional_tape_through():
+    # Same squeeze, but measured over a short lookback that sits mostly in the
+    # accelerating breakout leg: efficiency is high, so the gate passes.
+    tape = bars_from_closes(squeeze_then_breakout(+1))
+    result, _ = run(tape, {**FAST_OVERRIDES, "er_lookback": 3, "min_er": 0.5})
+    assert len(result.trades) >= 1
+
+
 def test_reentry_after_stopout_while_breakout_persists():
     # Tight stop at the broken edge: the first attempt stops out intrabar while
     # the breakout condition keeps holding. The strategy must be able to try
@@ -170,6 +192,43 @@ def test_reentry_after_stopout_while_breakout_persists():
     result, _ = run(tape, {**FAST_OVERRIDES, "stop_range_frac": 0.0,
                            "max_range_pct": 12.0})
     assert len(result.trades) >= 2
+
+
+def failed_break_then_reversal() -> list[float]:
+    """Squeeze, false upside break (enters long), then a collapse through the
+    range low: the long stops out and a short breakout signal appears while
+    still inside the breakout window — the whipsaw the flip guard targets."""
+    closes = oscillation(100.0, 4.0, 40)
+    closes += [100.0 + amp * np.sin(2 * np.pi * k / 8)
+               for k, amp in enumerate(np.linspace(3.0, 0.4, 40))]
+    last = closes[-1]
+    closes += [last + 2.0 * k for k in range(1, 4)]      # false break up
+    top = closes[-1]
+    closes += [top - 2.5 * k for k in range(1, 8)]       # collapse through the range
+    closes += [closes[-1] - 0.5 * k for k in range(1, 8)]  # drift on down
+    return closes
+
+
+def test_flip_guard_blocks_opposite_entry_after_stopout():
+    tape = bars_from_closes(failed_break_then_reversal())
+    ungated, _ = run(tape, {**FAST_OVERRIDES, "max_range_pct": 12.0})
+    # Sanity: the whipsaw exists — a long that stops out, then a short.
+    assert any(t.leg == "long" for t in ungated.trades)
+    assert any(t.leg == "short" for t in ungated.trades)
+    gated, _ = run(tape, {**FAST_OVERRIDES, "max_range_pct": 12.0,
+                          "flip_guard_bars": 30})
+    assert any(t.leg == "long" for t in gated.trades)
+    assert not any(t.leg == "short" for t in gated.trades)
+
+
+def test_flip_guard_keeps_same_direction_reentry():
+    # Same tape as the re-entry test: repeated LONG attempts after stop-outs
+    # must survive the guard — it only blocks the opposite direction.
+    tape = bars_from_closes(squeeze_then_breakout(+1), spread=3.0)
+    result, _ = run(tape, {**FAST_OVERRIDES, "stop_range_frac": 0.0,
+                           "max_range_pct": 12.0, "flip_guard_bars": 30})
+    assert len(result.trades) >= 2
+    assert all(t.leg == "long" for t in result.trades)
 
 
 def test_confirm_bars_delays_entry():

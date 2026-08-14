@@ -85,6 +85,16 @@ describe("strategy guide", () => {
     );
   });
 
+  it("explains the efficiency-ratio kill switch", () => {
+    renderPicker([makeStrategy({})]);
+    fireEvent.click(screen.getByRole("button", { name: /guide/i }));
+
+    const dialog = screen.getByRole("dialog", { name: /BB Regime Breakout/ });
+    expect(dialog.textContent).toContain("kill switch");
+    expect(dialog.textContent).toContain("efficiency ratio");
+    expect(dialog.textContent).toContain("disabled");
+  });
+
   it("closes on Escape", () => {
     renderPicker([makeStrategy({})]);
     fireEvent.click(screen.getByRole("button", { name: /guide/i }));
