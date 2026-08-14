@@ -11,6 +11,7 @@ import {
   loadPresets, putPreset, newPreset, serializePresets, parsePresets, type PresetRun,
 } from "../lib/backtestPresets";
 import { backtestResultSignal, backtestRunCompletedSignal } from "../lib/signals";
+import { defaultCodedCfg, loadCodedCfg, saveCodedCfg } from "../lib/codedConfig";
 
 afterEach(cleanup);
 beforeEach(() => localStorage.clear());
@@ -64,6 +65,56 @@ const aRun = (): PresetRun => ({
   trades: 3,
   winRate: 0.5,
   maxDd: 2,
+});
+
+// The coded-strategy panel params live in a per-file store OUTSIDE the preset
+// cfg (lib/codedConfig). A preset that names a coded strategy must snapshot
+// them on save and write them back on load — otherwise "load preset" silently
+// runs whatever params the shared panel store happens to hold.
+describe("PresetsTab coded param snapshot", () => {
+  const codedCfg = (params: Record<string, number>) => ({ ...defaultCodedCfg(), params });
+  const codedBase = (): BacktestConfig => ({ ...defaultBacktestConfig(), codedStrategy: "bb.py" });
+
+  it("Save as… snapshots the selected strategy's panel params", () => {
+    saveCodedCfg("backtest", "bb.py", codedCfg({ bb_dev: 1.5 }));
+    setup({ cfg: codedBase() });
+    saveAs("Tuned");
+    expect(loadPresets().Tuned.codedParams).toEqual({ bb_dev: 1.5 });
+  });
+
+  it("param drift marks the preset edited, and Save captures the new values", () => {
+    saveCodedCfg("backtest", "bb.py", codedCfg({ bb_dev: 1.5 }));
+    setup({ cfg: codedBase() });
+    saveAs("Tuned");
+    cleanup();
+    saveCodedCfg("backtest", "bb.py", codedCfg({ bb_dev: 2.5 }));
+    setup({ cfg: codedBase(), activeName: "Tuned" });
+    expect(screen.getByText("edited")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(loadPresets().Tuned.codedParams).toEqual({ bb_dev: 2.5 });
+  });
+
+  it("Load writes the snapshot back into the strategy's panel store", () => {
+    saveCodedCfg("backtest", "bb.py", codedCfg({ bb_dev: 3 }));
+    putPreset({
+      ...newPreset("Tuned", codedBase(), { symbol: "T", timeframe: "M" }, 1),
+      codedParams: { bb_dev: 1.5 },
+    });
+    const { onLoad } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Tuned" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(onLoad).toHaveBeenCalled();
+    expect(loadCodedCfg("backtest", "bb.py").params).toEqual({ bb_dev: 1.5 });
+  });
+
+  it("loading a legacy preset without a snapshot leaves the panel store alone", () => {
+    saveCodedCfg("backtest", "bb.py", codedCfg({ bb_dev: 3 }));
+    putPreset(newPreset("Old", codedBase(), { symbol: "T", timeframe: "M" }, 1));
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Old" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(loadCodedCfg("backtest", "bb.py").params).toEqual({ bb_dev: 3 });
+  });
 });
 
 describe("PresetsTab identity bar", () => {

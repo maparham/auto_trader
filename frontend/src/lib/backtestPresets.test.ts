@@ -107,6 +107,23 @@ describe("backtestPresets serialization", () => {
     expect(presets[0]).toEqual(p);
   });
 
+  it("round-trips codedParams through export and import", () => {
+    const p = { ...make("Tuned"), codedParams: { bb_dev: 1.5, gated: true, mode: "fast" } };
+    const { presets, rejected } = parsePresets(serializePresets([p]));
+    expect(rejected).toBe(0);
+    expect(presets[0].codedParams).toEqual({ bb_dev: 1.5, gated: true, mode: "fast" });
+  });
+
+  it("cleans malformed codedParams instead of dropping the preset", () => {
+    const good = { ...make("A"), codedParams: { ok: 1, bad: { nested: true }, alsoOk: "x" } };
+    const arr = { ...make("B"), codedParams: [1, 2] };
+    const json = serializePresets([good, arr] as never);
+    const { presets, rejected } = parsePresets(json);
+    expect(rejected).toBe(0);
+    expect(presets[0].codedParams).toEqual({ ok: 1, alsoOk: "x" });
+    expect(presets[1].codedParams).toBeUndefined();
+  });
+
   it("counts entries it cannot use instead of throwing", () => {
     const good = make("Good");
     const json = JSON.stringify({ version: 3, presets: [good, { name: "Bad" }, 42] });

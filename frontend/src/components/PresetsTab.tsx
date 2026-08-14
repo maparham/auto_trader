@@ -19,6 +19,12 @@ import {
   serializePresets, parsePresets,
   type BacktestPreset,
 } from "../lib/backtestPresets";
+import { loadCodedCfg, saveCodedCfg } from "../lib/codedConfig";
+
+function shallowEq(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+}
 
 type SortKey = "name" | "origin" | "netPnl" | "trades" | "winRate" | "maxDd" | "updatedAt";
 type SortDir = "asc" | "desc";
@@ -172,7 +178,16 @@ export default function PresetsTab({
   // name, a plain read yields a function, `active` goes truthy, and the dirty
   // check below dereferences `.cfg` on it.
   const active = activeName ? presetAt(presets, activeName) : undefined;
-  const dirty = !!active && !backtestConfigEquals(cfg, active.cfg);
+  // The coded strategy's panel params live in a per-file store OUTSIDE cfg
+  // (lib/codedConfig), so they need their own snapshot on save and their own
+  // half of the dirty check. Presets saved before the snapshot existed have no
+  // codedParams and keep the cfg-only dirty semantics.
+  const snapCodedParams = () =>
+    cfg.codedStrategy ? { ...loadCodedCfg("backtest", cfg.codedStrategy).params } : undefined;
+  const codedParamsDirty =
+    !!active?.codedParams && !!cfg.codedStrategy &&
+    !shallowEq(loadCodedCfg("backtest", cfg.codedStrategy).params, active.codedParams);
+  const dirty = !!active && (!backtestConfigEquals(cfg, active.cfg) || codedParamsDirty);
   const origin = { symbol: chartSymbol, timeframe: chartTimeframe };
 
   // A stored lastRun summarizes the last CLEAN run of the stored cfg, so it must
@@ -251,7 +266,8 @@ export default function PresetsTab({
 
   function save() {
     if (!active) return;
-    putPreset({ ...active, cfg, updatedAt: Date.now(), lastRun: runFor(active, cfg) });
+    putPreset({ ...active, cfg, codedParams: snapCodedParams(),
+                updatedAt: Date.now(), lastRun: runFor(active, cfg) });
     refresh();
     // Save from an open naming row would otherwise leave the row hanging.
     closeNaming();
@@ -264,8 +280,9 @@ export default function PresetsTab({
     if (existing && !window.confirm(`Replace the saved preset "${name}"?`)) return;
     putPreset(
       existing
-        ? { ...existing, cfg, updatedAt: Date.now(), origin, lastRun: runFor(existing, cfg) }
-        : newPreset(name, cfg, origin, Date.now()),
+        ? { ...existing, cfg, codedParams: snapCodedParams(),
+            updatedAt: Date.now(), origin, lastRun: runFor(existing, cfg) }
+        : { ...newPreset(name, cfg, origin, Date.now()), codedParams: snapCodedParams() },
     );
     refresh();
     closeNaming();
@@ -275,6 +292,7 @@ export default function PresetsTab({
   function revert() {
     if (!active || !dirty) return;
     if (!window.confirm(`Discard your changes to "${active.name}"?`)) return;
+    restoreCodedParams(active);
     onLoad(active.cfg);
   }
 
@@ -375,8 +393,23 @@ export default function PresetsTab({
     setMenuFor(null);
     const p = presets[name];
     if (!p) return;
+    // Storage first, state as fallback: Save & load wrote the fresh snapshot a
+    // moment ago while `presets` here is still the pre-save copy — mirroring
+    // the `next` override for cfg.
+    restoreCodedParams(presetAt(loadPresets(), name) ?? p);
     onLoad(next ?? p.cfg);
     onActiveChange(name);
+  }
+
+  // Write the preset's coded-param snapshot back into the per-file store BEFORE
+  // onLoad — the modal re-reads that store as part of applying the config. A
+  // preset without a snapshot (rule-mode, or saved before the field existed)
+  // leaves the store untouched.
+  function restoreCodedParams(p: BacktestPreset) {
+    const file = p.cfg.codedStrategy;
+    if (!file || !p.codedParams) return;
+    const stored = loadCodedCfg("backtest", file);
+    saveCodedCfg("backtest", file, { ...stored, params: { ...p.codedParams } });
   }
 
   function requestLoad(name: string) {

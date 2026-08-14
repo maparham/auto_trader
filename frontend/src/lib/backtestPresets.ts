@@ -35,6 +35,12 @@ export type BacktestPreset = {
   lastRun?: PresetRun;
   /** Free-text annotation shown as the row's hover tooltip. Absent, never "". */
   note?: string;
+  /** Snapshot of the coded strategy's panel params (lib/codedConfig) taken at
+   *  save time. Those params live in a per-file store shared across presets, so
+   *  without this a loaded preset would run whatever the store last held.
+   *  Absent on rule-mode presets and on presets saved before the field existed
+   *  (loading those leaves the store untouched). */
+  codedParams?: Record<string, number | boolean | string>;
 };
 
 const KEY = `${PREFIX}.backtestPresets.v3`;
@@ -160,6 +166,19 @@ function cleanRun(v: unknown): PresetRun | undefined {
   };
 }
 
+/** Entry-level cleaning: keep scalar values, drop the rest. A hand-edited file
+ *  with one nested object in it shouldn't cost the other params (they are the
+ *  tuned values — the point of the snapshot), and a non-object shape is no
+ *  snapshot at all. */
+function cleanCodedParams(v: unknown): BacktestPreset["codedParams"] {
+  if (!isPlainObject(v)) return undefined;
+  const out: NonNullable<BacktestPreset["codedParams"]> = {};
+  for (const [k, val] of Object.entries(v)) {
+    if (isNum(val) || isStr(val) || typeof val === "boolean") out[k] = val;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** Parse an exported file, keeping every usable entry and counting the rest.
  * Never throws: import must tell the user what it dropped rather than failing
  * the whole file (or, worse, silently). Malformed JSON counts as one rejection. */
@@ -193,6 +212,7 @@ export function parsePresets(json: string): { presets: BacktestPreset[]; rejecte
       // Blank collapses to absent so the tooltip's "has a note" check stays a
       // plain truthiness test everywhere.
       note: isStr(entry.note) && entry.note.trim() ? entry.note : undefined,
+      codedParams: cleanCodedParams(entry.codedParams),
     });
   }
   return { presets, rejected };

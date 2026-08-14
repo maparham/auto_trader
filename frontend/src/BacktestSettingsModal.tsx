@@ -3163,7 +3163,16 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
               // Same copy-on-load risk-sync normalization the rest of the modal
               // applies: a preset saved with sync on but the sides drifted apart
               // must land in the panel already reconciled.
-              onLoad={(next) => setCfg(applyRiskSync(next, side))}
+              onLoad={(next) => {
+                setCfg(applyRiskSync(next, side));
+                // A preset load may have just written its coded-param snapshot
+                // into the per-file store; the [cfg.codedStrategy] effect won't
+                // fire when the filename is unchanged, so re-read here.
+                setCodedCfg(applyRiskSync(
+                  next.codedStrategy ? loadCodedCfg("backtest", next.codedStrategy) : defaultCodedCfg(),
+                  "long",
+                ));
+              }}
               activeName={activePreset}
               onActiveChange={setActivePreset}
               chartSymbol={epic}
