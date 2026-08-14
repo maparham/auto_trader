@@ -672,9 +672,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // cross-talk. Spread here so those literals stay untouched.
         //
         // baselines rides the same way, and for the same reason: the null/hold
-        // reference runs belong to a single expr run only. The sweep branch
-        // above shares exprReq and its per-combo jobs must not carry the field.
-        coded ? { ...baseReq, progressId } : { ...exprReq, progressId, baselines: BASELINE_KINDS },
+        // reference runs belong to a single run only, coded or expression. The
+        // sweep and walk-forward branches above share baseReq/exprReq and their
+        // per-combo/per-fold jobs must not carry the field.
+        coded
+          ? { ...baseReq, progressId, baselines: BASELINE_KINDS }
+          : { ...exprReq, progressId, baselines: BASELINE_KINDS },
         controller!.scope,
         // Displayed TF, so runAndRender picks native/aggregate/none correctly when
         // the run's base TF (runResolution) differs from what the chart shows.

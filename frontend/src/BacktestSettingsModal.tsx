@@ -1867,7 +1867,11 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       {stageLabel(stage) && (
         <div className="sweep-progress"><span>{stageLabel(stage)}</span></div>
       )}
-      {btMode === "backtest" && <BacktestPanel />}
+      {/* codedRun only steers tooltip copy (the Baselines tip gains a Built-in
+          caveat line). BacktestResult carries no coded marker to derive it from,
+          and BacktestButton doesn't render the panel, so it reads the live
+          strategy mode here rather than travelling with the result. */}
+      {btMode === "backtest" && <BacktestPanel codedRun={cfg.mode === "coded"} />}
       {/* Kept mounted whenever results exist, hidden with CSS when the mode
           isn't sweep: flipping Backtest↔Sweep would otherwise unmount and
           remount this whole tree, re-running the full derived cascade (plateau,

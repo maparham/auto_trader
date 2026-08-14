@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from auto_trader.core.candle_aggregate import resolution_seconds
-from auto_trader.core.models import Candle
+from auto_trader.core.models import Candle, Side
 from auto_trader.core import progress as pr
 from auto_trader.core.run_store import RUN_STORE
 from auto_trader.core.sweep_store import SWEEP_STORE
@@ -333,7 +333,59 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                 logger.warning("run-store write failed; continuing without run_id", exc_info=True)
                 run_id = None
 
-        return _result_to_response(
+        # Baseline companion runs (coded single runs only). The coded request
+        # becomes an expr request, then null/hold synthesize from it and run
+        # through the same compiled_run the expr route uses, so the two can't
+        # drift. Imports are function-local: this is the only caller in the
+        # module. A baseline is display-only, so a failure logs and leaves that
+        # kind None rather than failing the user's actual backtest.
+        baselines_out = None
+        if req.baselines and req.codedStrategy:
+            from auto_trader.api.baselines import (
+                expr_request_from_structured, hold_request, null_request)
+            from auto_trader.api.expr_exec import compiled_run
+            # Each baseline is a full engine pass: relabel the stage so the
+            # poller doesn't sit on the previous phase for their duration
+            # (same reason as the exit-times / cost-sensitivity relabels).
+            if req.progressId:
+                pr.set_progress(req.progressId, stage="baselines")
+            baselines_out = {"null": None, "hold": None}
+            # Which sides to synthesize on. NOT req.long/shortEnabled: the
+            # frontend hardwires both true on every coded run (an exit-gating
+            # workaround), so the request's flags say nothing about the
+            # strategy's sides. A `1==1` entry on both sides would be always-in
+            # long AND short at once, hedging to ~0 (negative with costs)
+            # whatever the market did, which flatters every strategy. The sides
+            # the main run actually traded are the honest answer. Engine truth:
+            # Trade.side is BUY for a long leg, SELL for a short one
+            # (engine/backtest.py), and serializes as "buy"/"sell" at the DTO.
+            long_traded = any(t.side is Side.BUY for t in result.trades)
+            short_traded = any(t.side is Side.SELL for t in result.trades)
+            # No trades at all: no signal to compare against, and a both-sides
+            # baseline would be a meaningless hedge — leave both kinds None so
+            # the overview section hides rather than showing a fake ~0 row.
+            if long_traded or short_traded:
+                base_expr = expr_request_from_structured(req).model_copy(update={
+                    "longEnabled": long_traded, "shortEnabled": short_traded,
+                })
+                synth = {"null": null_request, "hold": hold_request}
+                for kind in req.baselines:
+                    try:
+                        # Same on_progress as the main pass, so a user cancel
+                        # reaches the baseline passes too (mirrors the expr
+                        # route).
+                        _res, blob = await compiled_run(
+                            synth[kind](base_expr), on_progress=on_progress,
+                        )
+                        baselines_out[kind] = blob
+                    except pr.BacktestCancelled:
+                        # A user cancel outranks best-effort: stop the
+                        # remaining passes instead of burning through them.
+                        raise
+                    except Exception:  # noqa: BLE001  a baseline never fails the run
+                        logger.warning("coded baseline run %r failed", kind, exc_info=True)
+
+        response = _result_to_response(
             result,
             epic=req.epic,
             resolution=req.resolution,
@@ -351,6 +403,8 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             summary=summary,
             metrics=metrics,
         )
+        response.baselines = baselines_out
+        return response
     except pr.BacktestCancelled:
         # Client asked to stop (POST /api/backtest/cancel/{id}); 499 mirrors
         # nginx's "client closed request" and is distinct from any engine error.

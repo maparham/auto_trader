@@ -4,7 +4,7 @@
 // sources: net comes from result.summary (result.metrics has no net_pnl) and
 // return comes from result.metrics (result.summary has no return_pct).
 import { describe, it, expect, afterEach, beforeAll } from "vitest";
-import { render, screen, cleanup, act } from "@testing-library/react";
+import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 
 import { installMemStorage } from "./lib/testMemStorage";
 
@@ -63,9 +63,9 @@ function resultWith(over: Partial<BacktestResult>): BacktestResult {
   return { ...BASE, ...over };
 }
 
-function renderPanel(result: BacktestResult) {
+function renderPanel(result: BacktestResult, props: { codedRun?: boolean } = {}) {
   act(() => backtestResultSignal.set(result));
-  render(<BacktestPanel />);
+  render(<BacktestPanel {...props} />);
 }
 
 // max_drawdown_pct is a positive magnitude on the wire (backend
@@ -122,5 +122,23 @@ describe("BacktestPanel Baselines section", () => {
     expect(screen.getByText("Null signal")).toBeTruthy();
     expect(screen.queryByText("Enter & hold")).toBeNull();
     expect(screen.getAllByText("–").length).toBeGreaterThan(0);
+  });
+
+  // The InfoTip trigger is InfoTip's own button (aria-label "About Baselines")
+  // and the bubble opens on a 100ms hover delay, so every assertion below has to
+  // await the bubble — a synchronous query would pass vacuously.
+  it("adds the Built-in caveat line to the Baselines tip for coded runs", async () => {
+    renderPanel(resultWith({ baselines: BASELINES }), { codedRun: true });
+    fireEvent.mouseEnter(screen.getByLabelText(/about baselines/i));
+    expect(await screen.findByText(/logic inside the strategy file is not mirrored/i)).toBeTruthy();
+  });
+
+  it("omits the Built-in caveat for expression runs", async () => {
+    renderPanel(resultWith({ baselines: BASELINES }));
+    fireEvent.mouseEnter(screen.getByLabelText(/about baselines/i));
+    // Await a line the tip always carries, so the absence assertion below is
+    // made against an OPEN bubble rather than one that has not opened yet.
+    expect(await screen.findByText(/Reference runs over the same window/i)).toBeTruthy();
+    expect(screen.queryByText(/logic inside the strategy file/i)).toBeNull();
   });
 });

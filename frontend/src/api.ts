@@ -324,6 +324,10 @@ export interface BacktestRequest {
   // Chart-indicator panes those expression exits reference (see the same field on
   // ExprBacktestRequest for the shape and why the rule can't carry the settings).
   indicators?: Record<string, ExprInstancePayload>;
+  // Opt into the reference baselines on the result (BacktestResult.baselines).
+  // Single runs only, exactly as on ExprBacktestRequest: sweep and walk-forward
+  // submissions share this same body and must not carry it.
+  baselines?: BaselineKind[] | null;
   progressId?: string; // opt into the live-progress side-channel (see fetchBacktestProgress)
 }
 

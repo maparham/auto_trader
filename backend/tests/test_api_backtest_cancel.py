@@ -14,6 +14,7 @@ import pytest
 from fastapi import HTTPException
 
 import auto_trader.strategy.loader as loader
+from auto_trader.api import expr_exec
 from auto_trader.api.routers import backtest as bt
 from auto_trader.api.routers import expr as expr_router
 from auto_trader.api.schemas import BacktestRequest, ExprBacktestRequest
@@ -184,12 +185,14 @@ def test_expr_progress_registered_before_htf_prefetch(monkeypatch):
     arriving then must find an entry to flag instead of 404ing into the void."""
     req = expr_request(progressId="expr-reg")
     seen: list[bool] = []
-    real_ensure = expr_router._ensure_htf
+    # The compile-and-run pipeline (and its _ensure_htf call site) lives in
+    # expr_exec, so the patch must land there, not on the router module.
+    real_ensure = expr_exec._ensure_htf
 
     async def spying_ensure(nodes, r, htf, instances):
         seen.append(pr.get_progress("expr-reg") is not None)
         return await real_ensure(nodes, r, htf, instances)
 
-    monkeypatch.setattr(expr_router, "_ensure_htf", spying_ensure)
+    monkeypatch.setattr(expr_exec, "_ensure_htf", spying_ensure)
     asyncio.run(expr_router.expr_backtest(req))
     assert seen == [True]

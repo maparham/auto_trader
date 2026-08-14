@@ -61,7 +61,7 @@ const fmtEta = (s: number): string => {
 };
 const toneOf = (n: number): string => (n > 0 ? "pos" : n < 0 ? "neg" : "");
 
-export default function BacktestPanel() {
+export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
   const result = useSyncExternalStore(subscribeResult, () => backtestResultSignal.value);
   const highlighted = useSyncExternalStore(subscribeHighlight, () => highlightTradeSignal.value);
   const selected = useSyncExternalStore(subscribeSelected, () => selectedTradeSignal.value);
@@ -365,6 +365,12 @@ export default function BacktestPanel() {
                       "Reference runs over the same window, sizing and costs.",
                       "Null signal: entries replaced by an always-true condition; stops, sizing, sessions and costs unchanged. The strategy's edge over it is what the signal adds.",
                       "Enter & hold: one position per enabled side, held for the whole window, no stops and no session windows, same costs.",
+                      // Coded runs only: the synthesized null baseline is built from
+                      // the panel's exits/risk, so anything the strategy file does
+                      // internally (its own stops, targets, filters) is not in it.
+                      ...(codedRun
+                        ? ["For Built-in strategies, the null baseline uses the panel's exits and risk; logic inside the strategy file is not mirrored."]
+                        : []),
                     ]}
                   />
                 </h4>

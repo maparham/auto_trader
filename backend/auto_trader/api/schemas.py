@@ -349,6 +349,11 @@ class BacktestRequest(BaseModel):
     # Optional client-generated id for GET /api/backtest/progress/{id} polling.
     # Cosmetic: absent means no progress reporting for this run.
     progressId: str | None = None
+    # Baseline companion runs (coded single runs only on this route): "null" =
+    # 1==1 entries + the PANEL's exits/risk (code-internal logic not
+    # mirrored); "hold" = enter-and-hold. Rules-mode requests and
+    # sweep/walkforward jobs ignore the field.
+    baselines: list[Literal["null", "hold"]] | None = None
 
 
 class SweepDTO(BaseModel):

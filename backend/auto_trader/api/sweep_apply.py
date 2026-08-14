@@ -170,7 +170,7 @@ def _compile_expr_exits(rows, candles, resolution, htf, instances=None):
         # never an expression row. So a panel exit needing a higher timeframe (an
         # @tf token, or a reference to a pane pinned in its own settings) compiled
         # to all-None and the position simply never exited, silently. The
-        # expression ROUTES avoid this with _ensure_htf; this path has no
+        # expression ROUTES avoid this with api/expr_exec.py::_ensure_htf; this path has no
         # equivalent.
         #
         # Report it the SAME way the strategy's own tf= call does, rather than

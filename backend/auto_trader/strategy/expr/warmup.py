@@ -27,7 +27,7 @@ def warmup_bars(node: N.Node, resolution: str | None = None,
     `resolution` is the base timeframe the row runs on. When given, an @tf pin
     contributes ZERO base bars: the pinned series is computed from its own
     higher-timeframe candles — sourced and sufficiency-checked by the routes
-    (expr.py::_ensure_htf), never derived from the base history — so demanding
+    (api/expr_exec.py::_ensure_htf), never derived from the base history — so demanding
     scaled base bars for it would only inflate the base ask (EMA(200)@4H on 5m
     would demand ~9,650 base bars a broker may not even serve) without making
     anything warmer. Terms OUTSIDE the pin (offsets, wrappers) still count in
@@ -66,7 +66,7 @@ def warmup_bars(node: N.Node, resolution: str | None = None,
         # Predicate(fn, Tf(...)) -> Tf(Predicate(fn, ...)), so the base series
         # never computes the pattern at all. The 18 bars a pinned pattern
         # really needs are HTF bars, and they are supplied by
-        # api/routers/expr.py::_tf_inner_warmup feeding _ensure_htf. Do not
+        # api/expr_exec.py::_tf_inner_warmup feeding _ensure_htf. Do not
         # "simplify" that away on the strength of this line — dropping it
         # reintroduces the under-warm pinned-pattern bug.
         extra = PATTERN_WARMUP if node.fn in PATTERN_FNS else 0
