@@ -29,7 +29,8 @@ from auto_trader.core.tick_store import TICK_STORE
 
 from . import deps
 from .guard import cors_origins, install_guards
-from .routers import backtest, charts, compute, costs, expr, markets, mt5, state, strategy, stream, trading, strategies
+from .mcp_server import mcp_http_app, mcp_session
+from .routers import agent, backtest, charts, compute, costs, expr, markets, mt5, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +81,10 @@ async def lifespan(app: FastAPI):
     except HTTPException:
         mt5_watchdog = None
     try:
-        yield
+        # The MCP endpoint is mounted, so its own lifespan never runs — drive its
+        # streamable-HTTP session manager from here for the app's lifetime.
+        async with mcp_session():
+            yield
     finally:
         watchdogs = [t for t in (mt5_watchdog,) if t is not None]
         for task in (flusher, *triggers, *watchdogs):
@@ -123,8 +127,23 @@ async def _track_activity(request, call_next):
 # unless the corresponding env flags are set, which happens only on the remote host.
 install_guards(app)
 
-for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5):
+for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, agent):
     app.include_router(_module.router)
+
+# MCP endpoint for the Agent UI Bridge. Mounted LAST so it never shadows API
+# routes; the guard middleware wraps mounts too, so REQUIRE_API_TOKEN covers it.
+app.mount("/mcp", mcp_http_app())
+
+
+@app.middleware("http")
+async def _mcp_exact_path(request, call_next):
+    # A Starlette mount only matches paths *under* it, so bare /mcp would get a
+    # 307 to /mcp/. Agents configure the URL as http://host:8000/mcp, and not
+    # every client re-sends a POST body across a redirect — rewrite the path so
+    # the mount serves it directly.
+    if request.scope.get("path") == "/mcp":
+        request.scope["path"] = "/mcp/"
+    return await call_next(request)
 
 
 # Re-exports so the direct-call unit tests (which drive handlers as

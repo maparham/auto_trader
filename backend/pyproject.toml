@@ -17,6 +17,7 @@ dependencies = [
     "dukascopy-python>=4.0.1",
     "yfinance>=1.5.1",
     "boto3>=1.43.51",
+    "mcp>=2.0",
 ]
 
 [project.optional-dependencies]

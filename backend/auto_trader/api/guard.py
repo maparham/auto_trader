@@ -45,10 +45,36 @@ def cors_origins() -> list[str]:
     return ["http://localhost:5173", "http://127.0.0.1:5173"] + extra
 
 
+def token_ok(authorization: str | None) -> bool:
+    """True if `authorization` is exactly `Bearer <API_TOKEN>`.
+
+    Fails closed when API_TOKEN is empty/unset. Encodes strictly so a header
+    carrying a code point outside latin-1 raises UnicodeEncodeError (a
+    ValueError), which we turn into a rejection rather than silently dropping
+    the bad bytes. Shared by the http middleware below and the /ws/agent-ui
+    route, which the middleware never sees (it is http-only).
+
+    Callers must check REQUIRE_API_TOKEN themselves: this only answers whether
+    the header matches, not whether the gate is on.
+    """
+    token = os.environ.get(API_TOKEN_ENV, "")
+    if not token:
+        return False
+    expected = f"Bearer {token}"
+    try:
+        return hmac.compare_digest(
+            (authorization or "").encode("latin-1", "strict"),
+            expected.encode("latin-1", "strict"),
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def install_guards(app: FastAPI) -> None:
     """Register one http middleware that reads env at REQUEST time.
 
-    This middleware runs OUTERMOST (added after CORS so it wraps everything).
+    This middleware is added after CORS so it wraps it (app.py later adds the
+    /mcp path-rewrite middleware, which is outer still).
     401/403 responses carry no CORS headers and browser preflights are gated;
     this is fine because the remote host is only ever called server-to-server
     by the local backend proxy.
@@ -58,28 +84,7 @@ def install_guards(app: FastAPI) -> None:
     async def _guard(request: Request, call_next):
         # Token gate first, then compute-only.
         if os.environ.get(REQUIRE_TOKEN_ENV) == "1":
-            token = os.environ.get(API_TOKEN_ENV, "")
-            # Fail closed: if token is empty/unset, always return 401
-            if not token:
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "missing or invalid API token"},
-                )
-            expected = f"Bearer {token}"
-            provided = request.headers.get("authorization", "")
-            # Encode strictly so a header carrying a code point outside latin-1
-            # raises UnicodeEncodeError (a ValueError), which the except below
-            # turns into a 401 rather than silently dropping the bad bytes.
-            try:
-                if not hmac.compare_digest(
-                    provided.encode("latin-1", "strict"),
-                    expected.encode("latin-1", "strict"),
-                ):
-                    return JSONResponse(
-                        status_code=401,
-                        content={"detail": "missing or invalid API token"},
-                    )
-            except (TypeError, ValueError):
+            if not token_ok(request.headers.get("authorization", "")):
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "missing or invalid API token"},

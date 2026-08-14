@@ -19,6 +19,9 @@ import IndicatorSettings from "./IndicatorSettings";
 import DrawingSettings from "./DrawingSettings";
 import AlertsSidebar, { type AlertNavTarget, type VisibleCell } from "./AlertsSidebar";
 import ConfirmDialog from "./ConfirmDialog";
+import AgentConfirmHost from "./agent/AgentConfirmHost";
+import { initAgentBridge } from "./agent";
+import { registerAction } from "./agent/registry";
 import SaveDefaultTemplateModal from "./SaveDefaultTemplateModal";
 import BacktestClusterPopover from "./BacktestClusterPopover";
 import TradeExitClusterPopover from "./TradeExitClusterPopover";
@@ -56,6 +59,7 @@ import {
   bumpAlerts,
   settingsRequest,
   backtestSettingsRequest,
+  openBacktestSettings,
   backtestPanelHiddenSignal,
   requestBacktestRun,
   confirmLineEditsSignal,
@@ -166,6 +170,12 @@ registerPositionLine();
 // colors/moods are light washes; capping their opacity in dark lets them lift the
 // dark background toward the color instead of replacing it (see the theme effect).
 const DARK_CHART_BG_CAP = 0.15;
+
+// Agent UI Bridge: the app-level actions close over App's handlers, so they're
+// registered from a mount effect rather than agent/index.ts. Module flag guards
+// StrictMode's double effect run; a Vite HMR reload of THIS module resets it and
+// registerAction throws on a duplicate name, hence the try/catch at the call site.
+let appAgentActionsRegistered = false;
 
 const DEFAULT_SYMBOL: Instrument = {
   epic: "US100",
@@ -295,6 +305,9 @@ export default function App() {
   const [maximizedCellId, setMaximizedCellId] = useState<string | null>(null);
   // Tab chip currently being dragged (chart-drop merge gesture), or null.
   const [dragTabId, setDragTabId] = useState<string | null>(null);
+  // Agent UI Bridge: register the agent-callable actions and (when enabled)
+  // connect to the relay. Idempotent, so StrictMode's double invoke is a no-op.
+  useEffect(() => { initAgentBridge(); }, []);
   // Mirror confirmLineEdits onto a signal so the chart (no settings prop) can read it.
   useEffect(() => {
     confirmLineEditsSignal.set(settings.trading.confirmLineEdits);
@@ -854,6 +867,63 @@ export default function App() {
     setActiveId(t.id);
     return { cellId: t.cells[0].id };
   };
+
+  // Agent bridge: actions that need App's handlers (tabs, symbol jump). The
+  // registration effect runs once, so it must not close over the first render's
+  // tabs — it reads through refs re-assigned every render (same idiom as
+  // alertNavHandler / showBacktestCfgRef).
+  const jumpToEpicRef = useRef(jumpToEpic);
+  jumpToEpicRef.current = jumpToEpic;
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  useEffect(() => {
+    if (appAgentActionsRegistered) return;
+    appAgentActionsRegistered = true;
+    try {
+      registerAction({
+        name: "market.select",
+        description: "Focus (or open) a chart tab showing this epic",
+        kind: "write",
+        params: {
+          type: "object",
+          properties: {
+            epic: { type: "string" },
+            precision: { type: "number", description: "price precision guess, default 2" },
+          },
+          required: ["epic"],
+        },
+        handler: async (args) =>
+          jumpToEpicRef.current(args.epic as string, (args.precision as number) ?? 2),
+      });
+      registerAction({
+        name: "tab.list",
+        description: "Open chart tabs with the epics they show and which one is active",
+        kind: "read",
+        params: { type: "object", properties: {} },
+        handler: async () =>
+          tabsRef.current.map((t) => ({
+            id: t.id,
+            layout: t.layout,
+            active: t.id === activeIdRef.current,
+            activeCellId: t.activeCellId,
+            cells: t.cells.map((c) => ({ id: c.id, epic: c.symbol.epic, period: c.period })),
+          })),
+      });
+      registerAction({
+        name: "panel.backtest.open",
+        description: "Open the backtest settings panel",
+        kind: "write",
+        params: { type: "object", properties: {} },
+        handler: async () => { openBacktestSettings(); return { opened: true }; },
+      });
+    } catch (e) {
+      // A duplicate-name throw here (HMR reload of this module) must not take
+      // the app down on mount.
+      console.debug("agent: app actions already registered (HMR?)", e);
+    }
+  }, []);
 
   // Open (or reuse) the chart for an alert and select its line. The select is
   // deferred via pendingSelectRef (see resolvePendingSelect) — resolvePendingSelect
@@ -2222,6 +2292,8 @@ export default function App() {
           onClose={() => confirmRequest.set(null)}
         />
       )}
+
+      <AgentConfirmHost />
 
       {saveDefaultReq && (
         <SaveDefaultTemplateModal
