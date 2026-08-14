@@ -165,6 +165,20 @@ export default function PresetsTab({
     setMenuUp(bottom - btn.getBoundingClientRect().bottom < MENU_H);
     setMenuFor(name);
   }
+  // Close the open row menu on any outside mousedown (same idiom as Toolbar's
+  // dropdowns). Clicks on the menu itself or any ⋯ button stay "inside": the
+  // menu's items need their onClick to land before unmount, and the buttons
+  // already toggle/switch the menu in their own handlers.
+  useEffect(() => {
+    if (!menuFor) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Element | null;
+      if (t?.closest(".bt-preset-menu, .bt-preset-menu-btn")) return;
+      setMenuFor(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuFor]);
   // A load blocked on unsaved edits: the target preset, awaiting the user's
   // three-way answer. Null when no such prompt is up.
   const [pendingLoad, setPendingLoad] = useState<string | null>(null);

@@ -854,6 +854,24 @@ describe("PresetsTab export", () => {
     // menu hangs open over a download the user cannot see happening.
     expect(document.querySelector(".bt-preset-menu")).toBeNull();
   });
+
+  it("row menu closes on a click anywhere outside it", () => {
+    seedPreset("Momentum");
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Momentum" }));
+    expect(document.querySelector(".bt-preset-menu")).not.toBeNull();
+    fireEvent.mouseDown(document.body);
+    expect(document.querySelector(".bt-preset-menu")).toBeNull();
+  });
+
+  it("row menu survives a mousedown inside itself", () => {
+    seedPreset("Momentum");
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Momentum" }));
+    const menu = document.querySelector(".bt-preset-menu") as HTMLElement;
+    fireEvent.mouseDown(menu.querySelector("button") as HTMLElement);
+    expect(document.querySelector(".bt-preset-menu")).not.toBeNull();
+  });
 });
 
 // A completed single backtest = publish the result, then bump the completion
