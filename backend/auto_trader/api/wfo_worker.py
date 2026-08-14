@@ -156,45 +156,85 @@ def run_test(payload: dict) -> dict:
                 "trades": None, "equity": None, "error": str(e)}
 
 
+def _baseline_req(s, kind: str, leg: str | None, payload: dict):
+    """Synthesized request for one baseline pass, cached per worker. Expr jobs
+    synthesize from `s.req` directly; coded jobs convert it with
+    expr_request_from_structured first (null/hold) or set the request's
+    internal reverse flag (reversed — the coded module's real signals can't be
+    expressed as an expr request)."""
+    cache_key = (kind, leg, payload.get("long_enabled"), payload.get("short_enabled"))
+    req = _BASELINE_REQS.get(cache_key)
+    if req is None:
+        if kind == "reversed" and not getattr(s, "expr", False):
+            req = s.req.model_copy(update={
+                "reverse": True, "sweep": None, "walkforward": None,
+                "progressId": None, "baselines": None})
+        else:
+            base = s.req
+            if not getattr(s, "expr", False):
+                base = baselines_mod.expr_request_from_structured(s.req)
+            if leg is not None:
+                base = baselines_mod.side_request(base, leg)
+            synth = {"null": baselines_mod.null_request,
+                     "hold": baselines_mod.hold_request,
+                     "reversed": baselines_mod.reversed_request}[kind]
+            req = synth(base)
+        _BASELINE_REQS[cache_key] = req
+    return req
+
+
+def _run_baseline_req(s, req, combo, kind: str):
+    """One engine pass for a synthesized baseline request."""
+    if getattr(s, "expr", False) or kind == "reversed":
+        # execute_combo routes by the worker state's mode, which matches
+        # the request here: expr jobs carry expr baseline requests, and the
+        # coded reversed request goes down the coded path (with s.module).
+        return sweep_worker.execute_combo(s, req, combo)
+    # The worker state is coded-mode, so execute_combo would route an
+    # expr request down the coded path — run the expr pipeline directly
+    # with the same period env-combo gating.
+    env, _rest = sa.split_env_combo(combo)
+    patched, candles = sa.apply_env_combo(req, s.candles, env)
+    return sa.run_expr_sync(patched, candles, dict(s.htf), {}, None, None)
+
+
 def run_baseline(payload: dict) -> dict:
-    """Flat-start baseline run over one fold's test window, via the same period
-    env-combo gating as run_test. The synthesized request (null = 1==1 entries,
-    hold = enter-and-hold) is built once per (kind, sides) per worker and
-    cached. Expr jobs synthesize from `s.req` directly; coded jobs convert it
-    with expr_request_from_structured first, with the enabled flags set to the
-    sides the fold's winner actually traded (payload long/short_enabled — see
-    the dispatch site in wfo_jobs for why). Never raises."""
+    """Flat-start baseline run(s) over one fold's test window, via the same
+    period env-combo gating as run_test. Null and hold run once per active side
+    (a both-sides 1==1 baseline is a hedge worth exactly minus the costs — see
+    baselines.py) and report metrics as {"long": m|None, "short": m|None};
+    reversed is a single whole-strategy run reporting a flat metrics dict.
+    Active sides: the request's enabled flags for expr jobs, the sides the
+    fold's winner actually traded for coded jobs (payload long/short_enabled —
+    see the dispatch site in wfo_jobs for why). Never raises."""
     s = sweep_worker._STATE
     assert s is not None, "worker_init not called"
     kind = payload["kind"]
     test_from, test_to = payload["test_from"], payload["test_to"]
     try:
-        cache_key = (kind, payload.get("long_enabled"), payload.get("short_enabled"))
-        req = _BASELINE_REQS.get(cache_key)
-        if req is None:
-            base = s.req
-            if not getattr(s, "expr", False):
-                base = baselines_mod.expr_request_from_structured(s.req).model_copy(
-                    update={"longEnabled": payload["long_enabled"],
-                            "shortEnabled": payload["short_enabled"]})
-            synth = (baselines_mod.null_request if kind == "null"
-                     else baselines_mod.hold_request)
-            req = synth(base)
-            _BASELINE_REQS[cache_key] = req
         combo = {"period:from": test_from, "period:to": test_to}
-        if getattr(s, "expr", False):
-            result = sweep_worker.execute_combo(s, req, combo)
-        else:
-            # The worker state is coded-mode, so execute_combo would route an
-            # expr request down the coded path — run the expr pipeline directly
-            # with the same period env-combo gating.
-            env, _rest = sa.split_env_combo(combo)
-            patched, candles = sa.apply_env_combo(req, s.candles, env)
-            result = sa.run_expr_sync(patched, candles, dict(s.htf), {}, None, None)
         res_s = resolution_seconds(s.req.resolution)
         cash = s.req.costs.startingCash
-        metrics = slice_window_metrics(
-            result.trades, result.equity, test_from, test_to, cash, res_s)
+
+        def window_metrics(result):
+            return slice_window_metrics(
+                result.trades, result.equity, test_from, test_to, cash, res_s)
+
+        if kind == "reversed":
+            req = _baseline_req(s, kind, None, payload)
+            metrics = window_metrics(_run_baseline_req(s, req, combo, kind))
+        else:
+            if getattr(s, "expr", False):
+                long_on, short_on = s.req.longEnabled, s.req.shortEnabled
+            else:
+                long_on = payload["long_enabled"]
+                short_on = payload["short_enabled"]
+            metrics = {"long": None, "short": None}
+            for leg, on in (("long", long_on), ("short", short_on)):
+                if not on:
+                    continue
+                req = _baseline_req(s, kind, leg, payload)
+                metrics[leg] = window_metrics(_run_baseline_req(s, req, combo, kind))
         return {"key": payload["key"], "kind": kind, "metrics": metrics,
                 "error": None}
     except Exception as e:  # noqa: BLE001

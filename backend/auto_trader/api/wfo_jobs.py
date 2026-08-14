@@ -399,7 +399,9 @@ class WfoJobManager:
                     "test_from": f["test_from"], "test_to": f["test_to"],
                     "combo": None, "is_metrics": None, "oos_metrics": None,
                     "wfe": None, "low_sample": False,
-                    "null_metrics": None, "hold_metrics": None,
+                    "null_long_metrics": None, "null_short_metrics": None,
+                    "hold_long_metrics": None, "hold_short_metrics": None,
+                    "reversed_metrics": None,
                     "excess_return_pct": None,
                     "error": test["error"] if test else None,
                 }
@@ -411,11 +413,26 @@ class WfoJobManager:
                 if test and test["metrics"] is not None and entry["is_metrics"]:
                     entry["oos_metrics"] = test["metrics"]
                     base = baselines_by_key.get(key, {})
-                    nrow, hrow = base.get("null"), base.get("hold")
-                    entry["null_metrics"] = nrow["metrics"] if nrow else None
-                    entry["hold_metrics"] = hrow["metrics"] if hrow else None
+                    # Null/hold workers report per-side metrics ({"long": m|None,
+                    # "short": m|None}); flatten to one field per side.
+                    for kind in ("null", "hold"):
+                        row = base.get(kind)
+                        sides = (row["metrics"] or {}) if row else {}
+                        entry[f"{kind}_long_metrics"] = sides.get("long")
+                        entry[f"{kind}_short_metrics"] = sides.get("short")
+                    rrow = base.get("reversed")
+                    entry["reversed_metrics"] = rrow["metrics"] if rrow else None
+                    # Excess vs the null reference: the engine's legs are
+                    # independent buckets, so the per-side null returns SUM to
+                    # exactly what the old combined (hedged) null run reported —
+                    # the metric's value and meaning are unchanged.
+                    null_rets = [m["return_pct"]
+                                 for m in (entry["null_long_metrics"],
+                                           entry["null_short_metrics"])
+                                 if m and m.get("return_pct") is not None]
                     entry["excess_return_pct"] = fold_excess(
-                        entry["oos_metrics"], entry["null_metrics"])
+                        entry["oos_metrics"],
+                        {"return_pct": sum(null_rets)} if null_rets else None)
                     tr_s = f["train_to"] - f["train_from"]
                     te_s = f["test_to"] - f["test_from"]
                     entry["wfe"] = fold_wfe(entry["is_metrics"], test["metrics"],

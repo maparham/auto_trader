@@ -5,6 +5,8 @@ from auto_trader.api.baselines import (
     expr_request_from_structured,
     hold_request,
     null_request,
+    reversed_request,
+    side_request,
 )
 from auto_trader.api.schemas import BacktestRequest, ExprBacktestRequest
 
@@ -62,10 +64,53 @@ def test_hold_strips_exits_risk_scaling_mask():
     assert out.sweep is None and out.walkforward is None
 
 
+def test_side_request_limits_to_one_side():
+    """Per-side baseline synthesis: side_request flips the enabled flags so a
+    null/hold variant runs one side alone (a both-sides 1==1 baseline is a
+    hedge worth exactly minus the costs — meaningless as a market reference)."""
+    req = _req(shortEnabled=True)
+    long_only = side_request(req, "long")
+    assert long_only.longEnabled is True and long_only.shortEnabled is False
+    short_only = side_request(req, "short")
+    assert short_only.longEnabled is False and short_only.shortEnabled is True
+    # Composes with the synthesizers: a long-limited null fills only the long side.
+    out = null_request(long_only)
+    assert [r.expr for r in out.longEntry] == ["1==1"]
+    assert [r.expr for r in out.shortEntry] == ["EMA(9) x< EMA(21)"]
+    # Input untouched.
+    assert req.longEnabled is True and req.shortEnabled is True
+
+
+def test_reversed_swaps_sides_wholesale():
+    req = _req(
+        shortExit=[{"expr": "candle.close > entry"}],
+        longEntryCombine="OR", shortExitCombine="OR",
+        longScaling={"maxAdds": 2, "sizing": "equal",
+                     "spacing": {"kind": "pct", "value": 1.0}},
+    )
+    out = reversed_request(req)
+    # Entries, exits, and combines cross sides.
+    assert [r.expr for r in out.shortEntry] == ["EMA(9) x> EMA(21)"]
+    assert [r.expr for r in out.longEntry] == ["EMA(9) x< EMA(21)"]
+    assert [r.expr for r in out.shortExit] == ["candle.close < entry"]
+    assert [r.expr for r in out.longExit] == ["candle.close > entry"]
+    assert out.shortEntryCombine == "OR" and out.longEntryCombine == "AND"
+    assert out.longExitCombine == "OR" and out.shortExitCombine == "AND"
+    # Risk and scaling ride along with their side's rules.
+    assert out.shortRisk is not None and out.longRisk is None
+    assert out.shortScaling is not None and out.longScaling is None
+    # A long-only strategy reversed is short-only.
+    assert out.shortEnabled is True and out.longEnabled is False
+    # Mask/costs untouched; single run like the other baselines.
+    assert out.mask is not None
+    assert out.sweep is None and out.walkforward is None and out.progressId is None
+
+
 def test_input_not_mutated():
     req = _req()
     null_request(req)
     hold_request(req)
+    reversed_request(req)
     assert [r.expr for r in req.longEntry] == ["EMA(9) x> EMA(21)"]
     assert req.longRisk is not None and req.mask is not None
 

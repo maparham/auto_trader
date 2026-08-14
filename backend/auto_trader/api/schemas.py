@@ -173,7 +173,8 @@ class BacktestResponse(BaseModel):
     # Cost-sensitivity summary (single runs that opted in). Shaped
     # {"multiples": [0, 1, 2, 3], "net_pnl": [...], "breakeven_multiple": float | None}.
     cost_sensitivity: dict | None = None
-    # {"null": metrics|None, "hold": metrics|None} when the request asked for
+    # {"null_long": metrics|None, "null_short": ..., "hold_long": ...,
+    # "hold_short": ..., "reversed": ...} when the request asked for
     # baselines; None otherwise. Each blob is a compute_metrics dict MERGED with
     # the run's summary(), so net_pnl/n_trades/win_rate ARE present here —
     # unlike the main run's `metrics` field above, which is compute_metrics
@@ -367,7 +368,13 @@ class BacktestRequest(BaseModel):
     # 1==1 entries + the PANEL's exits/risk (code-internal logic not
     # mirrored); "hold" = enter-and-hold. Rules-mode requests and
     # sweep/walkforward jobs ignore the field.
-    baselines: list[Literal["null", "hold"]] | None = None
+    baselines: list[Literal["null", "hold", "reversed"]] | None = None
+    # Internal (never set by the UI): run the coded strategy mirror-imaged —
+    # every signal's leg/side flipped, side-level risk/scaling swapped at the
+    # engine. Synthesized by the "reversed" baseline passes; riding the request
+    # lets the single-run route and the WFO worker share one code path
+    # (run_coded_sync honors it).
+    reverse: bool = False
 
 
 class SweepDTO(BaseModel):
@@ -440,7 +447,7 @@ class WalkForwardDTO(BaseModel):
     # "null" = 1==1 entries, same structure; "hold" = enter-and-hold. Coded
     # jobs synthesize the expr baseline on the sides each fold's winner
     # actually traded. Display-only.
-    baselines: list[Literal["null", "hold"]] | None = None
+    baselines: list[Literal["null", "hold", "reversed"]] | None = None
 
     @field_validator("evalMode", mode="before")
     @classmethod
@@ -787,7 +794,7 @@ class ExprBacktestRequest(BaseModel):
     # 1==1, everything else identical; "hold" = 1==1 entries with exits, risk,
     # scaling, and mask stripped (enter once, hold to window end). The response
     # carries each requested baseline's metrics in `baselines`.
-    baselines: list[Literal["null", "hold"]] | None = None
+    baselines: list[Literal["null", "hold", "reversed"]] | None = None
 
 
 class ExprSeriesRequest(BaseModel):

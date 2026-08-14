@@ -355,7 +355,7 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
                 )}
               </section>
             ))}
-            {result.baselines && (result.baselines.null || result.baselines.hold) && (
+            {result.baselines && Object.values(result.baselines).some(Boolean) && (
               <section className="bt-panel-group">
                 <h4 className="bt-panel-group-title">
                   Baselines
@@ -363,8 +363,9 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
                     title="Baselines"
                     text={[
                       "Reference runs over the same window, sizing and costs.",
-                      "Null signal: entries replaced by an always-true condition; stops, sizing, sessions and costs unchanged. The strategy's edge over it is what the signal adds.",
-                      "Enter & hold: one position per enabled side, held for the whole window, no stops and no session windows, same costs.",
+                      "Null signal: entries replaced by an always-true condition; stops, sizing, sessions and costs unchanged. The strategy's edge over it is what the signal adds. One row per side the strategy trades (a both-sides always-in run would hedge to exactly minus the costs).",
+                      "Enter & hold: one position held for the whole window, no stops and no session windows, same costs. One row per traded side, so it shows the raw market each way.",
+                      "Reversed signals: the mirror-image strategy (every long decision taken short and vice versa, each side's exits and risk riding along). If it beats the real run, the signal points the wrong way.",
                       // Coded runs only: the synthesized null baseline is built from
                       // the panel's exits/risk, so anything the strategy file does
                       // internally (its own stops, targets, filters) is not in it.
@@ -388,7 +389,13 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {([["Null signal", result.baselines.null], ["Enter & hold", result.baselines.hold]] as [string, BaselineMetrics | null][])
+                      {([
+                        ["Null signal (long)", result.baselines.null_long ?? null],
+                        ["Null signal (short)", result.baselines.null_short ?? null],
+                        ["Enter & hold (long)", result.baselines.hold_long ?? null],
+                        ["Enter & hold (short)", result.baselines.hold_short ?? null],
+                        ["Reversed signals", result.baselines.reversed ?? null],
+                      ] as [string, BaselineMetrics | null][])
                         .filter((pair): pair is [string, BaselineMetrics] => pair[1] != null)
                         .map(([label, m]) => {
                           // The main run's net P&L lives on summary, not metrics.

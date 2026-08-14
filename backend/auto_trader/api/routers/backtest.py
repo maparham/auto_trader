@@ -343,14 +343,15 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         baselines_out = None
         if req.baselines and req.codedStrategy:
             from auto_trader.api.baselines import (
-                expr_request_from_structured, hold_request, null_request)
+                EMPTY_BASELINES, baseline_runs, expr_request_from_structured,
+                hold_request, null_request, side_request)
             from auto_trader.api.expr_exec import compiled_run
             # Each baseline is a full engine pass: relabel the stage so the
             # poller doesn't sit on the previous phase for their duration
             # (same reason as the exit-times / cost-sensitivity relabels).
             if req.progressId:
                 pr.set_progress(req.progressId, stage="baselines")
-            baselines_out = {"null": None, "hold": None}
+            baselines_out = dict(EMPTY_BASELINES)
             # Which sides to synthesize on. NOT req.long/shortEnabled: the
             # frontend hardwires both true on every coded run (an exit-gating
             # workaround), so the request's flags say nothing about the
@@ -366,25 +367,53 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             # baseline would be a meaningless hedge — leave both kinds None so
             # the overview section hides rather than showing a fake ~0 row.
             if long_traded or short_traded:
-                base_expr = expr_request_from_structured(req).model_copy(update={
-                    "longEnabled": long_traded, "shortEnabled": short_traded,
-                })
+                base_expr = expr_request_from_structured(req)
                 synth = {"null": null_request, "hold": hold_request}
-                for kind in req.baselines:
+                # Null/hold run once per TRADED side (slot "null_long", ...):
+                # a both-sides 1==1 baseline is a long+short hedge worth
+                # exactly minus the costs, useless as a reference (see
+                # baselines.py). Reversed is one whole-strategy run.
+                for slot, kind, leg in baseline_runs(
+                        req.baselines, long_traded, short_traded):
                     try:
-                        # Same on_progress as the main pass, so a user cancel
-                        # reaches the baseline passes too (mirrors the expr
-                        # route).
-                        _res, blob = await compiled_run(
-                            synth[kind](base_expr), on_progress=on_progress,
-                        )
-                        baselines_out[kind] = blob
+                        if kind == "reversed":
+                            # Reversal needs the strategy's real signals, which
+                            # live in its Python on_bar — no expr synthesis can
+                            # express them. Re-run the coded engine with the
+                            # request's internal reverse flag instead
+                            # (run_coded_sync flips legs and swaps side
+                            # configs), then merge metrics the same way
+                            # compiled_run does for the other kinds.
+                            rev_req = req.model_copy(update={
+                                "reverse": True, "sweep": None,
+                                "progressId": None, "baselines": None,
+                            })
+                            rev, _ = await _run_coded(
+                                rev_req, candles, module, resolved_params,
+                                req.longRisk, req.shortRisk, dict(htf_candles),
+                                on_progress=on_progress,
+                            )
+                            blob = compute_metrics(
+                                rev.trades, rev.equity, rev.net_pnl,
+                                req.costs.startingCash,
+                                resolution_seconds(req.resolution),
+                                financing_total=rev.financing_total,
+                            ) | rev.summary()
+                        else:
+                            # Same on_progress as the main pass, so a user
+                            # cancel reaches the baseline passes too (mirrors
+                            # the expr route).
+                            _res, blob = await compiled_run(
+                                synth[kind](side_request(base_expr, leg)),
+                                on_progress=on_progress,
+                            )
+                        baselines_out[slot] = blob
                     except pr.BacktestCancelled:
                         # A user cancel outranks best-effort: stop the
                         # remaining passes instead of burning through them.
                         raise
                     except Exception:  # noqa: BLE001  a baseline never fails the run
-                        logger.warning("coded baseline run %r failed", kind, exc_info=True)
+                        logger.warning("coded baseline run %r failed", slot, exc_info=True)
 
         response = _result_to_response(
             result,

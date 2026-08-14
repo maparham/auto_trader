@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// Overview tab's Baselines section: the null-signal and buy & hold reference
-// runs, plus each one's Δ against the strategy. The two deltas read different
-// sources: net comes from result.summary (result.metrics has no net_pnl) and
-// return comes from result.metrics (result.summary has no return_pct).
+// Overview tab's Baselines section: the per-side null-signal and buy & hold
+// reference runs plus the reversed run, and each one's Δ against the strategy.
+// The two deltas read different sources: net comes from result.summary
+// (result.metrics has no net_pnl) and return comes from result.metrics
+// (result.summary has no return_pct).
 import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 
@@ -71,18 +72,34 @@ function renderPanel(result: BacktestResult, props: { codedRun?: boolean } = {})
 // max_drawdown_pct is a positive magnitude on the wire (backend
 // tests/test_metrics.py asserts 5.0 for a 5% drop), same as result.metrics.
 const BASELINES: Baselines = {
-  null: { net_pnl: 11966.73, return_pct: 398.89, sharpe: 1.06, max_drawdown_pct: 60.97 },
-  hold: { net_pnl: 9000, return_pct: 300, sharpe: 0.9, max_drawdown_pct: 55 },
+  null_long: { net_pnl: 11966.73, return_pct: 398.89, sharpe: 1.06, max_drawdown_pct: 60.97 },
+  null_short: null,
+  hold_long: { net_pnl: 9000, return_pct: 300, sharpe: 0.9, max_drawdown_pct: 55 },
+  hold_short: { net_pnl: -8100, return_pct: -270, sharpe: -0.8, max_drawdown_pct: 70 },
+  reversed: { net_pnl: -4200, return_pct: -140, sharpe: -0.7, max_drawdown_pct: 80 },
 };
 
 describe("BacktestPanel Baselines section", () => {
   it("renders the Baselines section when the result carries baselines", () => {
     renderPanel(resultWith({ baselines: BASELINES }));
     expect(screen.getByText("Baselines", { selector: "h4" })).toBeTruthy();
-    expect(screen.getByText("Null signal")).toBeTruthy();
-    expect(screen.getByText("Enter & hold")).toBeTruthy();
+    // One row per side that ran; the never-run null_short row is absent.
+    expect(screen.getByText("Null signal (long)")).toBeTruthy();
+    expect(screen.queryByText("Null signal (short)")).toBeNull();
+    expect(screen.getByText("Enter & hold (long)")).toBeTruthy();
+    expect(screen.getByText("Enter & hold (short)")).toBeTruthy();
+    expect(screen.getByText("Reversed signals")).toBeTruthy();
     expect(screen.getByText("398.89%")).toBeTruthy();
     expect(screen.getByText("60.97%")).toBeTruthy();
+    expect(screen.getByText("-270.00%")).toBeTruthy();
+    expect(screen.getByText("-140.00%")).toBeTruthy();
+  });
+
+  it("renders the section when only the reversed companion run succeeded", () => {
+    renderPanel(resultWith({ baselines: { reversed: BASELINES.reversed } }));
+    expect(screen.getByText("Baselines", { selector: "h4" })).toBeTruthy();
+    expect(screen.getByText("Reversed signals")).toBeTruthy();
+    expect(screen.queryByText(/Null signal/)).toBeNull();
   });
 
   it("hides the Baselines section when absent", () => {
@@ -92,13 +109,15 @@ describe("BacktestPanel Baselines section", () => {
 
   it("hides the Baselines section when both companion runs failed", () => {
     // The real wire shape when neither baseline could be synthesized.
-    renderPanel(resultWith({ baselines: { null: null, hold: null } }));
+    renderPanel(resultWith({ baselines: {
+      null_long: null, null_short: null, hold_long: null, hold_short: null, reversed: null,
+    } }));
     expect(screen.queryByText("Baselines", { selector: "h4" })).toBeNull();
   });
 
   it("marks the row labels as row headers, like the leg breakdown table", () => {
     renderPanel(resultWith({ baselines: BASELINES }));
-    const label = screen.getByText("Null signal");
+    const label = screen.getByText("Null signal (long)");
     expect(label.tagName).toBe("TH");
     expect(label.getAttribute("scope")).toBe("row");
     // The corner cell carries no label and must not be announced.
@@ -112,15 +131,15 @@ describe("BacktestPanel Baselines section", () => {
     expect(screen.getByText("+533.27")).toBeTruthy();
     expect(screen.getByText("+3500.00")).toBeTruthy();
     // And the return delta, off result.metrics.return_pct (416.67): minus
-    // 398.89 for the null signal, minus 300 for buy & hold.
+    // 398.89 for the long null signal, minus 300 for the long buy & hold.
     expect(screen.getByText("+17.78%")).toBeTruthy();
     expect(screen.getByText("+116.67%")).toBeTruthy();
   });
 
   it("shows a placeholder delta when a baseline carries no net P&L", () => {
-    renderPanel(resultWith({ baselines: { null: { return_pct: 10, net_pnl: null }, hold: null } }));
-    expect(screen.getByText("Null signal")).toBeTruthy();
-    expect(screen.queryByText("Enter & hold")).toBeNull();
+    renderPanel(resultWith({ baselines: { null_long: { return_pct: 10, net_pnl: null } } }));
+    expect(screen.getByText("Null signal (long)")).toBeTruthy();
+    expect(screen.queryByText(/Enter & hold/)).toBeNull();
     expect(screen.getAllByText("–").length).toBeGreaterThan(0);
   });
 

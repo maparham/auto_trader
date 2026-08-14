@@ -30,6 +30,7 @@ from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
 from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.validate import validate
+from auto_trader.strategy.reversed import ReversedStrategy
 
 from .risk_series import (
     AtrWarmupError,
@@ -230,6 +231,20 @@ def run_coded_sync(
                 long_exit_combine=req.exprLongExitCombine,
                 short_exit_combine=req.exprShortExitCombine,
             ))
+        # Reversed baseline: wrap the WHOLE stack (coded module + panel expr
+        # exits) so everything above the wrapper keeps reasoning in original
+        # long/short space (panel_risk_legs and the exit compilation included);
+        # only the engine sees flipped legs. The side-level configs the engine
+        # applies swap below, so a flipped leg keeps the risk/scaling that
+        # governed it in the original run. Costs (incl. per-side financing)
+        # deliberately do NOT swap: the reversed run really holds the other
+        # side and pays that side's carry.
+        eng_long_risk, eng_short_risk = long_risk_dto, short_risk_dto
+        eng_long_scaling, eng_short_scaling = req.longScaling, req.shortScaling
+        if getattr(req, "reverse", False):
+            strategy = ReversedStrategy(strategy)
+            eng_long_risk, eng_short_risk = short_risk_dto, long_risk_dto
+            eng_long_scaling, eng_short_scaling = req.shortScaling, req.longScaling
         engine = BacktestEngine(
             strategy,
             starting_cash=req.costs.startingCash,
@@ -239,10 +254,10 @@ def run_coded_sync(
             spread=req.costs.spread,
             fin_long_daily_pct=req.costs.finLongDailyPct,
             fin_short_daily_pct=req.costs.finShortDailyPct,
-            long_risk=long_risk_dto.to_risk() if long_risk_dto else None,
-            short_risk=short_risk_dto.to_risk() if short_risk_dto else None,
-            long_scaling=req.longScaling.to_scaling() if req.longScaling else None,
-            short_scaling=req.shortScaling.to_scaling() if req.shortScaling else None,
+            long_risk=eng_long_risk.to_risk() if eng_long_risk else None,
+            short_risk=eng_short_risk.to_risk() if eng_short_risk else None,
+            long_scaling=eng_long_scaling.to_scaling() if eng_long_scaling else None,
+            short_scaling=eng_short_scaling.to_scaling() if eng_short_scaling else None,
             series=req.series,
             mask=req.mask.to_mask() if req.mask else None,
         )

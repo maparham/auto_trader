@@ -1,6 +1,7 @@
-"""POST /api/expr/backtest with baselines=["null","hold"]: the response embeds
-each baseline's full metrics dict; omitting the field keeps the response
-unchanged (None)."""
+"""POST /api/expr/backtest with baselines: the response embeds each baseline's
+full metrics dict, null and hold split PER SIDE (a both-sides always-in run is
+a hedge worth exactly minus the costs, so each enabled side runs alone);
+omitting the field keeps the response unchanged (None)."""
 from fastapi.testclient import TestClient
 
 from auto_trader.api.app import app
@@ -42,19 +43,52 @@ def test_baselines_null_and_hold_returned():
                     json=_base_req(baselines=["null", "hold"]))
     assert r.status_code == 200
     b = r.json()["baselines"]
-    for kind in ("null", "hold"):
+    for kind in ("null_long", "hold_long"):
         m = b[kind]
         assert m is not None
         assert "net_pnl" in m and "return_pct" in m and "sharpe" in m
-    # Rising market: the hold baseline is profitable.
-    assert b["hold"]["net_pnl"] > 0
+    # The request is long-only, so no short-side baselines run.
+    assert b["null_short"] is None and b["hold_short"] is None
+    # Rising market: the long hold baseline is profitable.
+    assert b["hold_long"]["net_pnl"] > 0
+
+
+def test_baselines_split_per_side_when_both_enabled():
+    """Both sides enabled: null and hold each run once per side, so the hold
+    rows show the actual market both ways instead of a hedged ~zero. Rising
+    market: long hold profits, short hold loses about the mirror amount."""
+    r = client.post("/api/expr/backtest", json=_base_req(
+        shortEnabled=True, baselines=["null", "hold"]))
+    assert r.status_code == 200
+    b = r.json()["baselines"]
+    for k in ("null_long", "null_short", "hold_long", "hold_short"):
+        assert b[k] is not None, k
+    assert b["hold_long"]["net_pnl"] > 0 > b["hold_short"]["net_pnl"]
+    assert b["hold_long"]["n_trades"] == 1 and b["hold_short"]["n_trades"] == 1
 
 
 def test_baselines_null_only():
     r = client.post("/api/expr/backtest", json=_base_req(baselines=["null"]))
     assert r.status_code == 200
     b = r.json()["baselines"]
-    assert b["null"] is not None and b["hold"] is None
+    assert b["null_long"] is not None
+    assert b["hold_long"] is None and b["hold_short"] is None
+
+
+def test_reversed_baseline_mirrors_the_run():
+    """Long-only strategy in a steadily rising market: the real run makes
+    money going long; the reversed baseline takes the same decisions short
+    and loses. If reversal were a no-op the two would match."""
+    r = client.post("/api/expr/backtest",
+                    json=_base_req(baselines=["reversed"]))
+    assert r.status_code == 200
+    b = r.json()["baselines"]
+    m = b["reversed"]
+    assert m is not None
+    assert "net_pnl" in m and "return_pct" in m and "sharpe" in m
+    assert b["null_long"] is None and b["hold_long"] is None
+    main_net = r.json()["summary"]["net_pnl"]
+    assert main_net > 0 and m["net_pnl"] < 0
 
 
 def test_null_and_hold_diverge_under_risk():
@@ -70,6 +104,6 @@ def test_null_and_hold_diverge_under_risk():
                     json=_base_req(longRisk=risk, baselines=["null", "hold"]))
     assert r.status_code == 200
     b = r.json()["baselines"]
-    assert b["hold"]["n_trades"] == 1
-    assert b["null"]["n_trades"] > 1
-    assert b["null"] != b["hold"]
+    assert b["hold_long"]["n_trades"] == 1
+    assert b["null_long"]["n_trades"] > 1
+    assert b["null_long"] != b["hold_long"]

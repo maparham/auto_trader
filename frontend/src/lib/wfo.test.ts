@@ -69,9 +69,9 @@ describe("buildWalkForwardPayload", () => {
     expect(exact.payload.evalMode).toBe("exact");
   });
 
-  it("includes baselines [null, hold] in the walk-forward payload", () => {
+  it("includes all baseline kinds in the walk-forward payload", () => {
     const { payload } = buildWalkForwardPayload([range, list], DEFAULT_WFO_CONFIG);
-    expect(payload.baselines).toEqual(["null", "hold"]);
+    expect(payload.baselines).toEqual(["null", "hold", "reversed"]);
   });
 
   it("throws on no usable axes / no train span", () => {

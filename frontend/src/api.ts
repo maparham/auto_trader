@@ -226,22 +226,32 @@ export interface BacktestAnalysis extends LegAnalysis {
 }
 
 // --- baseline comparison -----------------------------------------------------
-// Two reference strategies the backend re-runs over the same window/costs so a
-// result can be read against an always-in run and a bought-and-held one:
-// "null" replaces entries with 1==1 on the enabled sides, all other settings
-// identical (always in, same structure); "hold" opens one position per enabled
-// side from window start to end, no stops, exits or session windows.
+// Reference strategies the backend re-runs over the same window/costs so a
+// result can be read against them:
+// "null" replaces entries with 1==1, all other settings identical (always in,
+// same structure); "hold" opens one position from window start to end, no
+// stops, exits or session windows. Both run ONCE PER ACTIVE SIDE
+// (null_long, hold_short, ...): a both-sides always-in run is a long+short
+// hedge worth exactly minus the costs, useless as a market reference.
+// "reversed" is the mirror-image strategy (every long decision taken short and
+// vice versa, each side's risk/exits riding along) — if it beats the real run,
+// the signal is anti-predictive.
 // Each blob is the full compute_metrics payload MERGED with
 // summary(), so it carries net_pnl /
-// n_trades / win_rate alongside return_pct / sharpe / max_drawdown_pct. Either
-// side is null when that baseline could not be synthesized for the run.
-export type BaselineKind = "null" | "hold";
-/** What every baseline-aware request asks for (both baselines, always on). */
-export const BASELINE_KINDS: BaselineKind[] = ["null", "hold"];
+// n_trades / win_rate alongside return_pct / sharpe / max_drawdown_pct. Any
+// slot is null when that baseline could not be synthesized for the run (or
+// that side never ran).
+export type BaselineKind = "null" | "hold" | "reversed";
+/** What every baseline-aware request asks for (all kinds, always on); the
+ * backend expands null/hold into per-side runs. */
+export const BASELINE_KINDS: BaselineKind[] = ["null", "hold", "reversed"];
 export type BaselineMetrics = Record<string, number | null>;
 export interface Baselines {
-  null: BaselineMetrics | null;
-  hold: BaselineMetrics | null;
+  null_long?: BaselineMetrics | null;
+  null_short?: BaselineMetrics | null;
+  hold_long?: BaselineMetrics | null;
+  hold_short?: BaselineMetrics | null;
+  reversed?: BaselineMetrics | null;
 }
 
 export interface BacktestResult {
@@ -896,6 +906,12 @@ export interface WfoFold {          // result payload, snake_case
   // BacktestResult.baselines' sides), and the fold's OOS return_pct minus the
   // null baseline's. Null when the baseline could not be synthesized; absent on
   // archived results predating the feature.
+  null_long_metrics?: BaselineMetrics | null;
+  null_short_metrics?: BaselineMetrics | null;
+  hold_long_metrics?: BaselineMetrics | null;
+  hold_short_metrics?: BaselineMetrics | null;
+  reversed_metrics?: BaselineMetrics | null;
+  // Combined-null fields from archives predating the per-side split.
   null_metrics?: BaselineMetrics | null;
   hold_metrics?: BaselineMetrics | null;
   excess_return_pct?: number | null;

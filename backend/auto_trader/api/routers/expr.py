@@ -134,18 +134,26 @@ async def expr_backtest(req: ExprBacktestRequest):
         # a baseline that blows up reports None rather than failing the real run.
         baselines_out = None
         if req.baselines:
-            from auto_trader.api.baselines import hold_request, null_request
-            synth = {"null": null_request, "hold": hold_request}
-            baselines_out = {"null": None, "hold": None}
+            from auto_trader.api.baselines import (
+                EMPTY_BASELINES, baseline_runs, hold_request, null_request,
+                reversed_request, side_request)
+            synth = {"null": null_request, "hold": hold_request,
+                     "reversed": reversed_request}
+            baselines_out = dict(EMPTY_BASELINES)
             # Relabel so the wire payload stays honest: these beats are baseline
             # passes, not the main simulate (mirrors the coded handler's
             # exit-times / cost-sensitivity stage relabels).
             if req.progressId:
                 pr.set_progress(req.progressId, stage="baselines")
-            for kind in req.baselines:
+            # Null/hold run once per ENABLED side (slot "null_long", ...): a
+            # both-sides 1==1 baseline is a long+short hedge worth exactly
+            # minus the costs, useless as a reference (see baselines.py).
+            for slot, kind, leg in baseline_runs(
+                    req.baselines, req.longEnabled, req.shortEnabled):
                 try:
-                    _res, m = await compiled_run(synth[kind](req), on_progress=on_progress)
-                    baselines_out[kind] = m
+                    breq = synth[kind](req if leg is None else side_request(req, leg))
+                    _res, m = await compiled_run(breq, on_progress=on_progress)
+                    baselines_out[slot] = m
                 except pr.BacktestCancelled:
                     # A user cancel outranks best-effort: stop the remaining
                     # passes instead of burning through them.
@@ -153,8 +161,8 @@ async def expr_backtest(req: ExprBacktestRequest):
                 except Exception:  # noqa: BLE001  a baseline must never fail the run
                     # Swallowed by design, but not silently: without this the only
                     # symptom of a broken baseline is a null in the response.
-                    log.warning("baseline run %r failed", kind, exc_info=True)
-                    baselines_out[kind] = None
+                    log.warning("baseline run %r failed", slot, exc_info=True)
+                    baselines_out[slot] = None
         response.baselines = baselines_out
         return response
     except pr.BacktestCancelled:

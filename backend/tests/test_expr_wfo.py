@@ -111,31 +111,55 @@ def test_expr_wfo_baselines_per_fold(tmp_wfo_store):
     result = st["result"]
     folds = result["schemes"][0]["folds"]
     assert folds, "no folds produced"
-    # Every fold that has oos_metrics also has baseline metrics and an excess.
+    # Every fold that has oos_metrics also has per-side baseline metrics (both
+    # request sides are enabled here) and an excess against the summed null.
     scored = [f for f in folds if f["oos_metrics"] is not None]
     assert scored, "no scored folds"
     for f in scored:
-        assert f["null_metrics"] is not None
-        assert f["hold_metrics"] is not None
+        for k in ("null_long_metrics", "null_short_metrics",
+                  "hold_long_metrics", "hold_short_metrics"):
+            assert f[k] is not None, k
+        null_ret = (f["null_long_metrics"]["return_pct"]
+                    + f["null_short_metrics"]["return_pct"])
         assert f["excess_return_pct"] == round(
-            f["oos_metrics"]["return_pct"] - f["null_metrics"]["return_pct"], 4)
+            f["oos_metrics"]["return_pct"] - null_ret, 4)
     # The two kinds are genuinely different runs, not the same request twice
     # (which is what a broken kind dispatch would produce). Only "at least one"
     # fold: a window where the strategy's exit never fires makes null and hold
     # legitimately identical.
-    assert any(f["null_metrics"] != f["hold_metrics"] for f in scored)
+    assert any(f["null_long_metrics"] != f["hold_long_metrics"] for f in scored)
     # Orientation: the assertion above survives an INVERTED kind -> synthesizer
     # mapping (swapping two unequal dicts leaves them unequal), so pin the one
-    # asymmetry between them. Hold strips the exits, so each enabled side enters
-    # once and rides to the window end; null keeps them and therefore re-enters.
-    # More null trades than hold can only hold if the fields are the right way round.
-    assert any(f["null_metrics"]["n_trades"] > f["hold_metrics"]["n_trades"]
+    # asymmetry between them. Hold strips the exits, so the side enters once and
+    # rides to the window end; null keeps them and therefore re-enters. More
+    # null trades than hold can only hold if the fields are the right way round.
+    assert any(f["null_long_metrics"]["n_trades"] > f["hold_long_metrics"]["n_trades"]
                for f in scored)
-    assert all(f["null_metrics"]["n_trades"] >= f["hold_metrics"]["n_trades"]
+    assert all(f["null_long_metrics"]["n_trades"] >= f["hold_long_metrics"]["n_trades"]
                for f in scored)
     rb = result["schemes"][0]["robustness"]
     assert "median_fold_excess_pct" in rb
     assert "pct_folds_beating_null" in rb
+
+
+def test_expr_wfo_reversed_baseline_per_fold(tmp_wfo_store):
+    wfo = {**_WFO, "baselines": ["reversed"]}
+    sub = client.post("/api/expr/walkforward/jobs", json=_base_req(walkforward=wfo))
+    assert sub.status_code == 200, sub.text
+    body = sub.json()
+    n_folds = len(body["schemes"][0]["folds"])
+    assert body["total"] == len(_WFO["combos"]) + n_folds * (1 + 1)
+    st = _poll_to_done(body["jobId"])
+    assert st["phase"] == "done" and st["error"] is None
+    folds = st["result"]["schemes"][0]["folds"]
+    scored = [f for f in folds if f["oos_metrics"] is not None]
+    assert scored, "no scored folds"
+    for f in scored:
+        assert f["reversed_metrics"] is not None
+        assert f["null_long_metrics"] is None and f["hold_long_metrics"] is None
+    # The long-only strategy reversed trades the short side; a dispatch that
+    # ran the request unflipped would reproduce the base run everywhere.
+    assert any(f["reversed_metrics"] != f["oos_metrics"] for f in scored)
 
 
 def test_expr_wfo_without_baselines_fields_none(tmp_wfo_store):
@@ -147,7 +171,7 @@ def test_expr_wfo_without_baselines_fields_none(tmp_wfo_store):
     st = _poll_to_done(body["jobId"])
     assert st["phase"] == "done" and st["error"] is None
     f = st["result"]["schemes"][0]["folds"][0]
-    assert f.get("null_metrics") is None and f.get("hold_metrics") is None
+    assert f.get("null_long_metrics") is None and f.get("hold_long_metrics") is None
     assert f.get("excess_return_pct") is None
 
 
