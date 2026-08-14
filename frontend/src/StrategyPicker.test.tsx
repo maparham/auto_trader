@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import StrategyPicker from "./StrategyPicker";
 import * as api from "./api";
 
@@ -12,7 +12,6 @@ const LIST: api.StrategyInfo[] = [
 
 beforeEach(() => {
   vi.spyOn(api, "fetchStrategies").mockResolvedValue(LIST);
-  vi.spyOn(api, "fetchStrategySource").mockResolvedValue("def on_bar(ctx):\n    return []");
 });
 afterEach(() => {
   cleanup();
@@ -51,9 +50,39 @@ describe("StrategyPicker", () => {
     expect(screen.getByText("boom")).toBeTruthy();
   });
 
-  it("view source fetches and renders the file read-only", async () => {
+  it("has no View source control", () => {
     render(<StrategyPicker value="ema_cross.py" onChange={() => {}} list={LIST} loadError={null} onReload={() => {}} />);
-    fireEvent.click(screen.getByRole("button", { name: /view source/i }));
-    await waitFor(() => expect(screen.getByText(/def on_bar/)).toBeTruthy());
+    expect(screen.queryByText(/view source/i)).toBeNull();
+  });
+
+  it("formats a bulleted docstring into a lead paragraph and a list", () => {
+    const bulleted: api.StrategyInfo = {
+      filename: "bb.py",
+      name: "BB",
+      description:
+        "Trend breakout on Bollinger Bands.\nBand width classifies the regime.\n\n• Consolidation: band width in the bottom percentile,\n  staying relatively sideways.\n• No trades inside the range; only a confirmed break matters.",
+      hedged: false,
+      error: null,
+      params: [],
+    };
+    render(<StrategyPicker value="bb.py" onChange={() => {}} list={[bulleted]} loadError={null} onReload={() => {}} />);
+
+    // Wrapped lines are joined; the lead renders as prose, bullets as list items.
+    expect(
+      screen.getByText("Trend breakout on Bollinger Bands. Band width classifies the regime."),
+    ).toBeTruthy();
+    const items = screen.getAllByRole("listitem");
+    expect(items.length).toBe(2);
+    expect(items[0].textContent).toBe(
+      "Consolidation: band width in the bottom percentile, staying relatively sideways.",
+    );
+    // The raw "•" glyphs are gone (the list styling owns the markers).
+    expect(items[0].textContent).not.toContain("•");
+  });
+
+  it("renders a plain description without bullets as a single paragraph", () => {
+    render(<StrategyPicker value="ema_cross.py" onChange={() => {}} list={LIST} loadError={null} onReload={() => {}} />);
+    expect(screen.getByText("EMA9/21 crossover.")).toBeTruthy();
+    expect(screen.queryByRole("listitem")).toBeNull();
   });
 });
