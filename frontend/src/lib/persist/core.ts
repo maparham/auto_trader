@@ -275,8 +275,10 @@ export function load<T>(key: string, fallback: T): T {
 // silently, which hid backtest-too-large data loss behind a later rehydrate.
 export function save<T>(key: string, value: T): boolean {
   let serialized: string;
+  let prev: string | null;
   try {
     serialized = JSON.stringify(value);
+    prev = localStorage.getItem(key);
     localStorage.setItem(key, serialized);
   } catch (err) {
     console.warn(
@@ -286,6 +288,22 @@ export function save<T>(key: string, value: T): boolean {
       err,
     );
     return false;
+  }
+  // A byte-identical re-write has nothing to announce: hydrate fully reconciles
+  // localStorage to the backend snapshot (upsert + delete-absent + empty-backend
+  // seeding), so the backend already holds these bytes. Mirroring them anyway is
+  // what turned every mount-time re-save into a broadcast that remounted sibling
+  // tabs (the open-a-second-tab remount storm). Skipping is receiver-safe —
+  // unlike suppressing on the receiving side, the sibling's storage and UI were
+  // never out of date, because no push happens at all. Trade-off: a mirror
+  // dropped by a transient network error is no longer retried by identical
+  // re-saves; mirrors are explicitly best-effort, and the next real change heals.
+  if (prev === serialized) {
+    // Still consume a matching pending remote echo, exactly as mirrorSet would
+    // have when this re-save reached it — a lingering entry would later swallow
+    // the mirror of a genuine local revert to this same value.
+    if (remoteEcho.get(key) === serialized) remoteEcho.delete(key);
+    return true;
   }
   mirrorSet(key, serialized); // best-effort backend mirror (fire-and-forget)
   return true;

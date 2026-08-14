@@ -114,6 +114,69 @@ describe("subscribeToBackendUpdates", () => {
   });
 });
 
+describe("save() mirror skipping (no-op writes)", () => {
+  // Reuses the FakeWS double above. Fresh module instance per test: hydrate
+  // flips the module-level mirrorEnabled, which must not leak into the shared
+  // core instance the other tests use.
+  class FakeWS2 {
+    static last: FakeWS2 | null = null;
+    onopen: (() => void) | null = null;
+    onmessage: ((ev: { data: string }) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor() {
+      FakeWS2.last = this;
+    }
+    close() {}
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+    FakeWS2.last = null;
+  });
+
+  it("mirrors byte-changed writes only; an unchanged write still consumes a pending remote echo", async () => {
+    localStorage.clear();
+    const puts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, opts?: { method?: string; body?: string }) => {
+        if (opts?.method === "PUT") puts.push(opts.body ?? "");
+        return { ok: true, json: async () => ({}) };
+      }),
+    );
+    vi.stubGlobal("WebSocket", FakeWS2);
+    vi.resetModules();
+    const core = await import("./core");
+    await core.hydrateFromBackend(); // empty snapshot + empty storage → just enables mirroring
+    const unsub = core.subscribeToBackendUpdates(() => {});
+    const K = "auto-trader.tab.A.viewpos.US100";
+
+    core.save(K, { a: 1 });
+    expect(puts.length).toBe(1); // genuine new value mirrors
+    core.save(K, { a: 1 });
+    expect(puts.length).toBe(1); // byte-identical re-save (mount-time save) does NOT re-mirror
+
+    // Remote push applies {a:2} to localStorage and records the echo.
+    FakeWS2.last!.onmessage!({
+      data: JSON.stringify({ key: K, value: { a: 2 }, origin: "other-tab" }),
+    });
+    core.save(K, { a: 2 }); // the React save effect re-firing after the push
+    expect(puts.length).toBe(1); // unchanged → skipped, and the echo entry is consumed
+
+    core.save(K, { a: 3 });
+    expect(puts.length).toBe(2); // genuine local edit mirrors
+    core.save(K, { a: 2 });
+    // Revert to the previously-pushed value must mirror too — if the echo entry
+    // from the push above lingered (not consumed by the skipped save), mirrorSet
+    // would swallow this as "the echo" and the revert would never propagate.
+    expect(puts.length).toBe(3);
+
+    unsub();
+  });
+});
+
 describe("persistBroker init reads the per-tab session account first", () => {
   beforeEach(() => {
     sessionStorage.clear();
