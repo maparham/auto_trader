@@ -61,7 +61,17 @@ export function driftPath(values: Array<number | string | null>): string {
   return d;
 }
 
-type FoldCol = "window" | "is_obj" | "oos_return" | "excess" | "oos_trades" | "wfe";
+type FoldCol = "window" | "is_obj" | "oos_return" | "excess" | "hold" | "reversed" | "oos_trades" | "wfe";
+
+// The fold's enter-and-hold return: the long side when it ran (its return IS
+// the market's move that window), else the short side, else the combined
+// value archives recorded before the per-side split.
+function foldHoldReturn(f: WfoFold): number | null {
+  return f.hold_long_metrics?.return_pct
+    ?? f.hold_short_metrics?.return_pct
+    ?? f.hold_metrics?.return_pct
+    ?? null;
+}
 
 function foldColValue(f: WfoFold, col: FoldCol, metric: string): number | null {
   switch (col) {
@@ -69,6 +79,8 @@ function foldColValue(f: WfoFold, col: FoldCol, metric: string): number | null {
     case "is_obj": return f.is_metrics?.[metric] ?? null;
     case "oos_return": return f.oos_metrics?.return_pct ?? null;
     case "excess": return f.excess_return_pct ?? null;
+    case "hold": return foldHoldReturn(f);
+    case "reversed": return f.reversed_metrics?.return_pct ?? null;
     case "oos_trades": return f.oos_metrics?.n_trades ?? null;
     case "wfe": return f.wfe;
   }
@@ -97,7 +109,9 @@ const FOLD_TIPS = {
   is_obj: (metric: string) =>
     `In-sample ${metric}: the winner's ${metric} on the train window it was optimized on.`,
   oos_return: "Return of the winning combo on the unseen test window.",
-  excess: "Fold return minus the null baseline's return over the same test window (1==1 entries, base strategy settings). Positive means the strategy beat always-in.",
+  excess: "Fold return minus the null baseline's return over the same test window (1==1 entries per traded side, base strategy settings, sides summed). Positive means the strategy beat always-in.",
+  hold: "Enter-and-hold return over the fold's test window (long side when it ran, so this is what the market itself did; a short-only strategy shows the short side, its mirror). Compare with OOS ret %: folds where the strategy loses to plain hold.",
+  reversed: "The mirror-image strategy's return on this fold (every decision taken the other way). Highlighted red when it BEATS the fold's OOS return: on that window the signal pointed the wrong way.",
   oos_trades: "Trade count in the test window. Folds with fewer than 5 trades are greyed out; their results are noise.",
   wfe: "Walk-forward efficiency for this fold: annualized test return divided by annualized train return.",
 } as const;
@@ -402,6 +416,16 @@ export const WfoResults = memo(function WfoResults(props: {
                   </Tooltip>
                 </th>
                 <th>
+                  <Tooltip content={FOLD_TIPS.hold}>
+                    <span><SweepSortHeader<FoldCol> label="Hold %" col="hold" sort={sort} onSort={toggleSort} /></span>
+                  </Tooltip>
+                </th>
+                <th>
+                  <Tooltip content={FOLD_TIPS.reversed}>
+                    <span><SweepSortHeader<FoldCol> label="Rev %" col="reversed" sort={sort} onSort={toggleSort} /></span>
+                  </Tooltip>
+                </th>
+                <th>
                   <Tooltip content={FOLD_TIPS.oos_trades}>
                     <span><SweepSortHeader<FoldCol> label="OOS trades" col="oos_trades" sort={sort} onSort={toggleSort} /></span>
                   </Tooltip>
@@ -428,11 +452,11 @@ export const WfoResults = memo(function WfoResults(props: {
                     >
                       <td>{window}</td>
                       {noWinner ? (
-                        <td colSpan={6} className="wfo-dim">no eligible winner</td>
+                        <td colSpan={8} className="wfo-dim">no eligible winner</td>
                       ) : f.error !== null ? (
                         <>
                           <td><Tooltip content={f.error}><span>failed</span></Tooltip></td>
-                          <td>–</td><td>–</td><td>–</td><td>–</td><td>–</td>
+                          <td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td>
                         </>
                       ) : (
                         <>
@@ -445,6 +469,18 @@ export const WfoResults = memo(function WfoResults(props: {
                             : f.excess_return_pct > 0 ? "pos" : f.excess_return_pct < 0 ? "neg" : ""}>
                             {f.excess_return_pct == null ? "–"
                               : `${f.excess_return_pct > 0 ? "+" : ""}${fmt(f.excess_return_pct, 1)}%`}
+                          </td>
+                          <td>{foldHoldReturn(f) == null ? "–" : `${fmt(foldHoldReturn(f), 1)}%`}</td>
+                          {/* Red only when the mirror strategy BEAT this fold's
+                              real run — the signal pointed the wrong way there. */}
+                          <td className={
+                            f.reversed_metrics?.return_pct != null
+                              && f.oos_metrics?.return_pct != null
+                              && f.reversed_metrics.return_pct > f.oos_metrics.return_pct
+                              ? "neg" : ""
+                          }>
+                            {f.reversed_metrics?.return_pct == null ? "–"
+                              : `${fmt(f.reversed_metrics.return_pct, 1)}%`}
                           </td>
                           <td>{fmt(f.oos_metrics?.n_trades ?? null, 0)}</td>
                           <td>{fmt(f.wfe)}</td>
@@ -464,7 +500,7 @@ export const WfoResults = memo(function WfoResults(props: {
                     </tr>
                     {open && (
                       <tr className="wfo-fold-drill">
-                        <td colSpan={8}>
+                        <td colSpan={10}>
                           {expanded!.error ? (
                             <div className="wfo-error">{expanded!.error}</div>
                           ) : expanded!.rows === null ? (

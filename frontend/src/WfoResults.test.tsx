@@ -134,8 +134,8 @@ describe("WfoResults", () => {
     const rows = document.querySelectorAll(".wfo-fold-row");
     expect(rows[0].querySelector("td.pos")).toBeTruthy();
     expect(rows[2].querySelector("td.neg")).toBeTruthy();
-    // Errored fold keeps the row rectangular: window + failed + 5 dashes + apply.
-    expect(rows[3].querySelectorAll("td").length).toBe(8);
+    // Errored fold keeps the row rectangular: window + failed + 7 dashes + apply.
+    expect(rows[3].querySelectorAll("td").length).toBe(10);
   });
 
   it("tones an exactly-zero excess neutral and drops the + prefix", () => {
@@ -160,11 +160,42 @@ describe("WfoResults", () => {
     expect(screen.getByText("Excess %")).toBeTruthy();
     // Column still present; the normal fold row carries an empty excess cell.
     const rows = document.querySelectorAll(".wfo-fold-row");
-    expect(rows[0].querySelectorAll("td").length).toBe(8);
-    // Column order: window, params, IS, OOS ret, Excess, OOS trades, WFE, apply.
+    expect(rows[0].querySelectorAll("td").length).toBe(10);
+    // Column order: window, params, IS, OOS ret, Excess, Hold, Rev, trades, WFE, apply.
     expect(rows[0].querySelectorAll("td")[4].textContent).toBe("–");
+    expect(rows[0].querySelectorAll("td")[5].textContent).toBe("–");
+    expect(rows[0].querySelectorAll("td")[6].textContent).toBe("–");
     // Tiles fall back to the en dash, not "undefined".
     expect(screen.getAllByText("–").length).toBeGreaterThan(0);
+  });
+
+  it("renders per-fold Hold % and Rev % baseline columns", () => {
+    const s = scheme("3m");
+    s.folds = [
+      fold(0, { hold_long_metrics: { return_pct: 4.25 }, reversed_metrics: { return_pct: -3.1 } }),
+      // Short-only strategy: the hold column falls back to the short side.
+      fold(1, { hold_long_metrics: null, hold_short_metrics: { return_pct: -1.8 } }),
+    ];
+    renderResults(doneState([s]));
+    expect(screen.getByText("Hold %")).toBeTruthy();
+    expect(screen.getByText("Rev %")).toBeTruthy();
+    expect(screen.getByText("4.3%")).toBeTruthy();
+    expect(screen.getByText("-1.8%")).toBeTruthy();
+    expect(screen.getByText("-3.1%")).toBeTruthy();
+  });
+
+  it("flags a fold whose reversed run beats the strategy", () => {
+    const s = scheme("3m");
+    // oos return_pct is 2.5 (fold builder): reversed 5.5 beats it -> warning
+    // tone; reversed 1.0 does not -> plain cell.
+    s.folds = [
+      fold(0, { reversed_metrics: { return_pct: 5.5 } }),
+      fold(1, { reversed_metrics: { return_pct: 1.0 } }),
+    ];
+    renderResults(doneState([s]));
+    const rows = document.querySelectorAll(".wfo-fold-row");
+    expect(rows[0].querySelectorAll("td")[6].className).toContain("neg");
+    expect(rows[1].querySelectorAll("td")[6].className).toBe("");
   });
 
   it("fmt does not render a negative zero", () => {
