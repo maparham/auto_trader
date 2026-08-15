@@ -127,6 +127,13 @@ export const backtestRunCompletedSignal = new Signal<number>(0);
 // this to gate drawing and subscribes to redraw each chart's bands on change.
 export const backtestPeriodsShownSignal = new Signal<boolean>(true);
 
+// Whether strategy-declared viz regions (a coded module's chart_regions hook,
+// e.g. BB Regime's squeeze windows) are shaded on the chart. Separate from the
+// trading-period shading above so a run's many squeeze boxes can be hidden
+// without losing the period bands. Same lifecycle: backtest.ts gates drawing
+// on it and redraws on change; seeded from device-local storage at startup.
+export const backtestRegionsShownSignal = new Signal<boolean>(true);
+
 // Whether the on-chart trade markers (per-fill arrows + signal carets + aggregate
 // pills) are drawn (global display preference, seeded from device-local storage at
 // startup, default on). backtest.ts gates drawMarkers on this and subscribes to

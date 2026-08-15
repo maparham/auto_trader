@@ -35,6 +35,7 @@ import {
   loadBacktestLastUsed,
   saveBacktestLastUsed,
   loadBacktestPeriodsShown,
+  loadBacktestRegionsShown,
   loadBacktestMarkersShown,
   loadBacktestEquityShown,
   saveSweepResultId,
@@ -47,6 +48,7 @@ import {
   backtestRunCompletedSignal,
   backtestMessagesSignal,
   backtestPeriodsShownSignal,
+  backtestRegionsShownSignal,
   backtestMarkersShownSignal,
   backtestEquityShownSignal,
   backtestRunningSignal,
@@ -147,6 +149,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
   // (the component is mounted for the whole app session).
   useEffect(() => {
     backtestPeriodsShownSignal.set(loadBacktestPeriodsShown());
+    backtestRegionsShownSignal.set(loadBacktestRegionsShown());
     backtestMarkersShownSignal.set(loadBacktestMarkersShown());
     backtestEquityShownSignal.set(loadBacktestEquityShown());
   }, []);

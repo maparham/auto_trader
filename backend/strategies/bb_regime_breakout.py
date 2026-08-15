@@ -74,13 +74,29 @@ def _bandwidth(closes: np.ndarray, period: int, dev: float) -> np.ndarray:
         return np.where(mid > 0, 2.0 * dev * sd / mid, np.inf)
 
 
+def _sideways_range(highs, lows, i: int, p) -> tuple[float, float] | None:
+    """THE consolidation gate, shared by _signal (entries) and chart_regions
+    (shading) so the two can never drift: the trailing range_lookback bars
+    ending at bar i, if their height stays under max_range_pct of the midpoint.
+    Returns (range_high, range_low) or None."""
+    r0 = i - p["range_lookback"] + 1
+    if r0 < 0:
+        return None
+    rh = float(highs[r0: i + 1].max())
+    rl = float(lows[r0: i + 1].min())
+    mid = (rh + rl) / 2
+    if mid <= 0 or (rh - rl) / mid * 100.0 > p["max_range_pct"]:
+        return None
+    return rh, rl
+
+
 def chart_regions(candles, params) -> list[dict]:
     """Post-run chart viz hook: every squeeze window — consecutive bars whose
     band width sits in the squeeze percentile of its trailing lookback AND whose
-    trailing price range stays sideways (max_range_pct, same gate as entries) —
-    including squeezes that never resolved into a breakout. Times are unix
-    seconds; top/bottom bound the window's own bars. Vectorized full-series
-    pass, run once after a backtest (never per bar)."""
+    trailing price range stays sideways (_sideways_range, the SAME gate entries
+    use) — including squeezes that never resolved into a breakout. Times are
+    unix seconds; top/bottom bound the window's own bars. Vectorized
+    full-series pass, run once after a backtest (never per bar)."""
     p = params
     closes = np.array([c.close for c in candles], dtype=np.float64)
     highs = np.array([c.high for c in candles], dtype=np.float64)
@@ -96,16 +112,18 @@ def chart_regions(candles, params) -> list[dict]:
     squeeze = win[:, -1] <= thr  # squeeze[j] is bar period-1+look-1+j
     base = period + look - 2
 
-    # Sideways gate per bar: trailing range over `rl` bars under max_range_pct.
-    def _sideways(i: int) -> tuple[float, float] | None:
-        r0 = i - rl + 1
-        if r0 < 0:
-            return None
-        rh, rlo = float(highs[r0: i + 1].max()), float(lows[r0: i + 1].min())
-        mid = (rh + rlo) / 2
-        if mid <= 0 or (rh - rlo) / mid * 100.0 > p["max_range_pct"]:
-            return None
-        return rh, rlo
+    # _sideways_range, vectorized: rolling range over `rl` bars vs max_range_pct.
+    # sideways[i] (i >= rl-1) mirrors _sideways_range(highs, lows, i, p) is not None.
+    rmax = np.lib.stride_tricks.sliding_window_view(highs, rl).max(axis=1)
+    rmin = np.lib.stride_tricks.sliding_window_view(lows, rl).min(axis=1)
+    mid = (rmax + rmin) / 2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        height_ok = np.where(mid > 0, (rmax - rmin) / mid * 100.0, np.inf)
+    ok = height_ok <= p["max_range_pct"]  # ok[k] gates the range ENDING at bar k+rl-1
+
+    def _sideways(i: int) -> bool:
+        k = i - rl + 1
+        return bool(ok[k]) if k >= 0 else False
 
     regions: list[dict] = []
     j = 0
@@ -152,15 +170,12 @@ def _signal(i: int, closes, highs, lows, bw, bw_start: int, p) -> tuple[str, flo
     if j is None:
         return None
 
-    # The consolidation range ending at the squeeze bar, and its sideways gate.
-    r0 = j - p["range_lookback"] + 1
-    if r0 < 0:
+    # The consolidation range ending at the squeeze bar, and its sideways gate
+    # (shared with chart_regions via _sideways_range — one predicate, no drift).
+    rng = _sideways_range(highs, lows, j, p)
+    if rng is None:
         return None
-    rh = float(highs[r0: j + 1].max())
-    rl = float(lows[r0: j + 1].min())
-    mid = (rh + rl) / 2
-    if mid <= 0 or (rh - rl) / mid * 100.0 > p["max_range_pct"]:
-        return None
+    rh, rl = rng
 
     # Regime transition: band width expanding out of the squeeze.
     bw_i, bw_j = bw[i - bw_start], bw[j - bw_start]

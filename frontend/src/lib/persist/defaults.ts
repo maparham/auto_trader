@@ -250,6 +250,16 @@ export function saveBacktestPeriodsShown(shown: boolean): void {
   saveLocal(BACKTEST_PERIODS_SHOWN_KEY, shown);
 }
 
+// Whether strategy-declared viz regions (chart_regions hook — e.g. squeeze
+// windows) are shaded on the chart. Device-local view preference, default on.
+const BACKTEST_REGIONS_SHOWN_KEY = `${PREFIX}.backtestRegionsShown`;
+export function loadBacktestRegionsShown(): boolean {
+  return load<boolean>(BACKTEST_REGIONS_SHOWN_KEY, true);
+}
+export function saveBacktestRegionsShown(shown: boolean): void {
+  saveLocal(BACKTEST_REGIONS_SHOWN_KEY, shown);
+}
+
 // Whether the trade markers (per-fill arrows + signal carets + aggregate pills)
 // are drawn on the chart. Device-local view preference, default on. Off skips the
 // bulk of on-chart render cost for rapid backtesting; the equity curve, period

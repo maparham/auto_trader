@@ -15,13 +15,14 @@ import {
   backtestMessagesSignal,
   backtestSelectNoticeSignal,
   backtestPeriodsShownSignal,
+  backtestRegionsShownSignal,
   backtestMarkersShownSignal,
   backtestEquityShownSignal,
   backtestRunningSignal,
   backtestProgressSignal,
   requestBacktestClear,
 } from "./lib/signals";
-import { saveBacktestPeriodsShown, saveBacktestMarkersShown, saveBacktestEquityShown } from "./lib/persist";
+import { saveBacktestPeriodsShown, saveBacktestRegionsShown, saveBacktestMarkersShown, saveBacktestEquityShown } from "./lib/persist";
 import { metricGroups, METRIC_INFO, legTable, tradeRows, sortTradeRows, rowWindow, type TradeRow, type LegTable } from "./lib/backtestPanelData";
 import { metricTipLines } from "./components/metricScaleTip";
 import InfoTip from "./components/InfoTip";
@@ -80,6 +81,15 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
     const next = !backtestPeriodsShownSignal.value;
     backtestPeriodsShownSignal.set(next);
     saveBacktestPeriodsShown(next);
+  };
+  const regionsShown = useSyncExternalStore(
+    (cb) => backtestRegionsShownSignal.subscribe(cb),
+    () => backtestRegionsShownSignal.value,
+  );
+  const toggleBacktestRegions = () => {
+    const next = !backtestRegionsShownSignal.value;
+    backtestRegionsShownSignal.set(next);
+    saveBacktestRegionsShown(next);
   };
   const markersShown = useSyncExternalStore(
     (cb) => backtestMarkersShownSignal.subscribe(cb),
@@ -266,6 +276,15 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
               >
                 <span className="check">{periodsShown ? "✓" : ""}</span>
                 <span>Trading periods</span>
+              </li>
+              <li
+                className={regionsShown ? "on" : ""}
+                role="menuitemcheckbox"
+                aria-checked={regionsShown}
+                onClick={toggleBacktestRegions}
+              >
+                <span className="check">{regionsShown ? "✓" : ""}</span>
+                <span>Strategy regions</span>
               </li>
               <li
                 className={equityShown ? "on" : ""}

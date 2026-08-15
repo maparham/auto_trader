@@ -29,6 +29,7 @@ import {
   backtestClusterHoverSignal,
   backtestSignalHoverSignal,
   backtestPeriodsShownSignal,
+  backtestRegionsShownSignal,
   backtestMarkersShownSignal,
   backtestEquityShownSignal,
   backtestSelectNoticeSignal,
@@ -976,11 +977,13 @@ function clearPeriodBands(chart: Chart, artifacts: BacktestArtifacts): void {
  * of markerMode — both are pure time spans, valid on every timeframe. Region
  * ids share periodBandIds so every clear/redraw call site treats them as one. */
 function drawPeriodBands(chart: Chart, artifacts: BacktestArtifacts, result: StoredBacktestResult): void {
-  if (!backtestPeriodsShownSignal.value) return;
+  const periodsOn = backtestPeriodsShownSignal.value;
+  const regionsOn = backtestRegionsShownSignal.value;
+  if (!periodsOn && !regionsOn) return;
   const data = chart.getDataList() ?? [];
   if (data.length === 0) return;
   const period = result.period;
-  if (period) {
+  if (periodsOn && period) {
     const barTimes = data.map((k) => k.timestamp);
     const bands = computePeriodBands(period, barTimes);
     if (bands.length > 0) {
@@ -999,7 +1002,7 @@ function drawPeriodBands(chart: Chart, artifacts: BacktestArtifacts, result: Sto
       }
     }
   }
-  if (result.regions?.length) {
+  if (regionsOn && result.regions?.length) {
     ensureStrategyZoneOverlayRegistered();
     const firstTs = data[0].timestamp;
     const lastTs = data[data.length - 1].timestamp;
@@ -1657,10 +1660,16 @@ export function renderArtifacts(
   // to the toggle on a timeframe where markers aren't drawn.
   clearPeriodBands(chart, artifacts);
   drawPeriodBands(chart, artifacts, result);
-  const unsubPeriods = backtestPeriodsShownSignal.subscribe(() => {
+  const redrawBands = () => {
     clearPeriodBands(chart, artifacts);
     drawPeriodBands(chart, artifacts, result);
-  });
+  };
+  const unsubPeriodsOnly = backtestPeriodsShownSignal.subscribe(redrawBands);
+  const unsubRegions = backtestRegionsShownSignal.subscribe(redrawBands);
+  const unsubPeriods = () => {
+    unsubPeriodsOnly();
+    unsubRegions();
+  };
 
   if (markerMode === "none") {
     artifacts.unsub = () => {

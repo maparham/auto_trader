@@ -91,10 +91,23 @@ export function useStrategyOverlaySync(controller: ChartController | null, epic:
     };
 
     sync();
+    // liveStateSignal fires on every engine log tick and Live-panel draft
+    // keystroke; only arm/disarm or a snapshot swap can change the overlay
+    // source, so gate the resync on (status, snapshot) actually changing —
+    // otherwise every mounted cell pays storage reads per tick.
+    let lastStatus = liveStateSignal.value.status;
+    let lastSnapshot = liveStateSignal.value.snapshot;
+    const onLiveState = () => {
+      const { status, snapshot } = liveStateSignal.value;
+      if (status === lastStatus && snapshot === lastSnapshot) return;
+      lastStatus = status;
+      lastSnapshot = snapshot;
+      sync();
+    };
     const unsubs = [
       backtestConfigLive.subscribe(sync),
       backtestStrategySetupChanged.subscribe(sync),
-      liveStateSignal.subscribe(sync),
+      liveStateSignal.subscribe(onLiveState),
     ];
     return () => {
       disposed = true;

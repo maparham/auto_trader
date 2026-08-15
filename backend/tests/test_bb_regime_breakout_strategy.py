@@ -295,3 +295,21 @@ def test_chart_regions_steady_trend_has_none():
     # must respect max_range_pct like the entry logic does.
     tight = module.chart_regions(candles, {**params, "max_range_pct": 0.01})
     assert tight == []
+
+
+def test_chart_regions_gate_matches_signal_gate():
+    # chart_regions' vectorized sideways gate and _signal's entry gate must be
+    # THE SAME predicate: every shaded squeeze bar must pass the shared
+    # per-bar gate, on a tape mixing chop, squeeze and trend.
+    module = load_strategy("bb_regime_breakout.py")
+    candles = bars_from_closes(squeeze_then_breakout(+1) + consolidation_only())
+    params = resolve_params(module, FAST_OVERRIDES)
+    highs = np.array([c.high for c in candles])
+    lows = np.array([c.low for c in candles])
+    times = [c.time.timestamp() for c in candles]
+    regions = module.chart_regions(candles, params)
+    assert regions
+    for r in regions:
+        first, last = times.index(r["from_time"]), times.index(r["to_time"])
+        for i in range(first, last + 1):
+            assert module._sideways_range(highs, lows, i, params) is not None, i

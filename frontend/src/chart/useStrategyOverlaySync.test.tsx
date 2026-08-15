@@ -28,7 +28,7 @@ vi.mock("../api", async () => {
 
 import { useStrategyOverlaySync, resetStrategyMetaCache } from "./useStrategyOverlaySync";
 import { liveStateSignal } from "../lib/liveController";
-import { armSnapshot, initialLiveState } from "../lib/liveState";
+import { armSnapshot, initialLiveState, appendLog } from "../lib/liveState";
 import { ChartController } from "../lib/chartController";
 import { fakeChart } from "../lib/testFakeChart";
 import { syncStrategyOverlays } from "../lib/strategyOverlays";
@@ -175,6 +175,37 @@ describe("useStrategyOverlaySync", () => {
 
     liveStateSignal.set(initialLiveState(defaultBacktestConfig(), "acct", 1));
     await waitFor(() => expect(bolls(live)[0]?.calcParams).toEqual([20, 3.0]));
+  });
+
+  // liveStateSignal fires on every engine log tick and draft keystroke; the
+  // sync must only re-resolve its source when (status, snapshot) actually
+  // changed — not pay storage reads per tick, per mounted cell.
+  it("ignores live-state mutations that keep status and snapshot unchanged", async () => {
+    mockStrategies.mockResolvedValue([BB_STRAT]);
+    saveBacktestLastUsed(CODED_CFG);
+    const { chart, live, controller } = setup("tab.hook-livetick");
+    render(<Harness controller={controller} />);
+    await waitFor(() => expect(bolls(live)).toHaveLength(1));
+
+    let calls = 0;
+    const orig = chart.getIndicators.bind(chart);
+    (chart as { getIndicators: typeof chart.getIndicators }).getIndicators = (...a) => {
+      calls += 1;
+      return orig(...a);
+    };
+    for (let i = 0; i < 5; i += 1) {
+      liveStateSignal.set(appendLog(liveStateSignal.value, i, `tick ${i}`));
+    }
+    expect(calls).toBe(0); // no sync ran: same status, same snapshot
+
+    liveStateSignal.set(armSnapshot(
+      liveStateSignal.value.draft === CODED_CFG
+        ? liveStateSignal.value
+        : { ...liveStateSignal.value, draft: CODED_CFG },
+      "BB Regime Breakout", 0,
+      { ...defaultCodedCfg(), params: { bb_period: 40, bb_dev: 2.0 } },
+    ));
+    await waitFor(() => expect(bolls(live)[0]?.calcParams).toEqual([40, 2.0]));
   });
 
   it("keeps an existing band when the strategy list fetch fails", async () => {

@@ -161,3 +161,24 @@ describe("BacktestPanel Baselines section", () => {
     expect(screen.queryByText(/logic inside the strategy file/i)).toBeNull();
   });
 });
+
+describe("Display menu: strategy regions toggle", () => {
+  it("flips the regions signal and persists the preference", async () => {
+    const { backtestRegionsShownSignal } = await import("./lib/signals");
+    const { loadBacktestRegionsShown } = await import("./lib/persist");
+    backtestRegionsShownSignal.set(true);
+    renderPanel(resultWith({}));
+
+    fireEvent.click(screen.getByRole("button", { name: /Display/ }));
+    const item = screen.getByRole("menuitemcheckbox", { name: /Strategy regions/ });
+    expect(item.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(item);
+    expect(backtestRegionsShownSignal.value).toBe(false);
+    expect(loadBacktestRegionsShown()).toBe(false);
+
+    fireEvent.click(item);
+    expect(backtestRegionsShownSignal.value).toBe(true);
+    expect(loadBacktestRegionsShown()).toBe(true);
+  });
+});
