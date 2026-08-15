@@ -762,6 +762,28 @@ def test_expr_backtest_with_progress_id_updates_then_clears(monkeypatch):
     assert pr.get_progress("expr-prog") is None  # cleared in finally
 
 
+def test_expr_baseline_passes_never_rewind_the_wire_fraction(monkeypatch):
+    """Baselines are several engine passes under one stage label; the wire
+    payload must aggregate them into one 0→100% climb instead of restarting
+    at 0 per pass (the UI bar would visibly rewind under an unchanged label)."""
+    req = ExprBacktestRequest(**_base_req(
+        progressId="expr-prog", baselines=["null", "hold", "reversed"]))
+    snapshots: list[dict] = []
+    real_update = pr.update_progress
+
+    def spying_update(pid, done, total, now=None):
+        real_update(pid, done, total, now=now)
+        snapshots.append(pr.get_progress(pid))
+
+    monkeypatch.setattr(pr, "update_progress", spying_update)
+    asyncio.run(expr.expr_backtest(req))
+    fracs = [s["done"] / s["total"] for s in snapshots
+             if s["stage"] == "baselines" and s["total"]]
+    assert fracs, "baseline passes never reported progress"
+    assert fracs == sorted(fracs), f"baselines fraction rewound: {fracs}"
+    assert fracs[-1] == 1.0
+
+
 def test_expr_backtest_without_progress_id_touches_no_registry(monkeypatch):
     """Zero behavior change when the client ships no id: nothing is registered."""
     calls: list[tuple] = []

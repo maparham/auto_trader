@@ -2,7 +2,7 @@
 // The empty state's running line: with live progress in hand it names the
 // phase, percentage and ETA; without it, the static "Backtest running…" text.
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 
 import { installMemStorage } from "./lib/testMemStorage";
 
@@ -46,6 +46,30 @@ describe("BacktestPanel progress line", () => {
     backtestProgressSignal.set({ phase: "simulate", label: "Running cost sensitivity", pct: 40, etaS: null });
     render(<BacktestPanel />);
     expect(screen.getByText(/Running cost sensitivity \(40%\)/)).toBeTruthy();
+  });
+
+  it("snaps instead of animating backwards when a new stage resets the bar", () => {
+    backtestRunningSignal.set(true);
+    backtestProgressSignal.set({ phase: "simulate", label: "Simulating", pct: 96, etaS: null });
+    const { container } = render(<BacktestPanel />);
+    act(() => {
+      backtestProgressSignal.set({ phase: "simulate", label: "Running baselines", pct: 3, etaS: null });
+    });
+    const fill = container.querySelector(".bt-progress-fill") as HTMLElement;
+    expect(fill.style.width).toBe("3%");
+    expect(fill.style.transition).toBe("none");
+  });
+
+  it("keeps the width transition while the bar advances", () => {
+    backtestRunningSignal.set(true);
+    backtestProgressSignal.set({ phase: "simulate", label: "Simulating", pct: 10, etaS: null });
+    const { container } = render(<BacktestPanel />);
+    act(() => {
+      backtestProgressSignal.set({ phase: "simulate", label: "Simulating", pct: 40, etaS: null });
+    });
+    const fill = container.querySelector(".bt-progress-fill") as HTMLElement;
+    expect(fill.style.width).toBe("40%");
+    expect(fill.style.transition).toBe("");
   });
 
   it("falls back to the static line without progress info", () => {

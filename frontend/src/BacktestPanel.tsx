@@ -73,6 +73,16 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
     (cb) => backtestProgressSignal.subscribe(cb),
     () => backtestProgressSignal.value,
   );
+  // The fill's width transition must not run backwards: a stage rollover
+  // (Simulating 100% → Running baselines 0%) would otherwise animate the bar
+  // rewinding for 300ms. Track the last rendered pct and snap on any drop —
+  // paired with the label change, the reset then reads as a NEW bar starting.
+  const lastPctRef = useRef<number | null>(null);
+  const pct = progress?.pct ?? null;
+  const pctRewound = pct != null && lastPctRef.current != null && pct < lastPctRef.current;
+  useEffect(() => {
+    lastPctRef.current = pct;
+  }, [pct]);
   const periodsShown = useSyncExternalStore(
     (cb) => backtestPeriodsShownSignal.subscribe(cb),
     () => backtestPeriodsShownSignal.value,
@@ -164,7 +174,10 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
               </span>
               {progress.pct != null && (
                 <span className="bt-progress-track">
-                  <span className="bt-progress-fill" style={{ width: `${progress.pct}%` }} />
+                  <span
+                    className="bt-progress-fill"
+                    style={{ width: `${progress.pct}%`, transition: pctRewound ? "none" : undefined }}
+                  />
                 </span>
               )}
             </span>

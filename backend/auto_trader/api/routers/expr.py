@@ -103,6 +103,12 @@ async def expr_backtest(req: ExprBacktestRequest):
     # a cancel reaches them too. The finally covers compiled_run's validation
     # 422s, so no entry can leak.
     on_progress: Callable[[int, int], None] | None = None
+    # Mutable [index, count] of the current engine pass within the active
+    # stage. The baselines stage runs several passes and advances it so the
+    # wire fraction aggregates them into one 0→100% climb — a bar restarting
+    # at 0 under an unchanged stage label reads as going backwards (mirrors
+    # the coded handler's pass_span).
+    pass_span = [0, 1]
     if req.progressId:
         pid = req.progressId
         pr.set_progress(pid, stage="simulate")
@@ -112,7 +118,8 @@ async def expr_backtest(req: ExprBacktestRequest):
             # entry's flag; the next engine progress beat lands here and aborts.
             if pr.is_cancelled(pid):
                 raise pr.BacktestCancelled()
-            pr.update_progress(pid, done, total)
+            i, n = pass_span
+            pr.update_progress(pid, i * total + done, n * total)
     try:
         result, _metrics = await compiled_run(req, on_progress=on_progress)
         # Imported lazily to avoid a router import cycle (backtest.py imports many
@@ -148,8 +155,10 @@ async def expr_backtest(req: ExprBacktestRequest):
             # Null/hold run once per ENABLED side (slot "null_long", ...): a
             # both-sides 1==1 baseline is a long+short hedge worth exactly
             # minus the costs, useless as a reference (see baselines.py).
-            for slot, kind, leg in baseline_runs(
-                    req.baselines, req.longEnabled, req.shortEnabled):
+            runs = baseline_runs(req.baselines, req.longEnabled, req.shortEnabled)
+            pass_span[:] = [0, len(runs)]
+            for pass_idx, (slot, kind, leg) in enumerate(runs):
+                pass_span[0] = pass_idx
                 try:
                     breq = synth[kind](req if leg is None else side_request(req, leg))
                     _res, m = await compiled_run(breq, on_progress=on_progress)

@@ -116,6 +116,36 @@ def test_backtest_resets_stage_before_exit_time_resolution(strategies, monkeypat
     assert seen == [{"stage": "exit-times", "done": 0, "total": 0}]
 
 
+def test_multi_pass_stages_never_rewind_the_wire_fraction(strategies, monkeypatch):
+    """cost-sensitivity and baselines each run several engine passes under one
+    stage label. If every pass restarts its counter at 0, the UI bar visibly
+    rewinds under an unchanged label — so the wire payload must aggregate the
+    passes: within a stage, done/total may never decrease."""
+    req = base_request(
+        "test.py", make_candles(), progressId="prog-test",
+        costs={"quantity": 1, "commissionPerSide": 1,
+               "slippage": {"kind": "fixed", "value": 0}, "startingCash": 10000},
+        baselines=["null", "hold", "reversed"], costSensitivity=True,
+    )
+    snapshots: list[dict] = []
+    real_update = pr.update_progress
+
+    def spying_update(pid, done, total, now=None):
+        real_update(pid, done, total, now=now)
+        snapshots.append(pr.get_progress(pid))
+
+    monkeypatch.setattr(pr, "update_progress", spying_update)
+    asyncio.run(bt.backtest(req))
+
+    stages = {s["stage"] for s in snapshots}
+    assert {"cost-sensitivity", "baselines"} <= stages, stages
+    for stage in stages:
+        fracs = [s["done"] / s["total"]
+                 for s in snapshots if s["stage"] == stage and s["total"]]
+        assert fracs == sorted(fracs), f"{stage} fraction rewound: {fracs}"
+        assert fracs and fracs[-1] == 1.0, f"{stage} never reached 100%: {fracs[-3:]}"
+
+
 def test_backtest_without_progress_id_touches_no_registry(strategies, monkeypatch):
     """Zero behavior change when the client ships no id: nothing is registered."""
     calls: list[tuple] = []

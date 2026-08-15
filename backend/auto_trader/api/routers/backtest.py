@@ -178,6 +178,11 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     # only once the run is about to start, so the validation 422s above (which
     # the finally below doesn't cover) can't leak an entry.
     on_progress: Callable[[int, int], None] | None = None
+    # Mutable [index, count] of the current engine pass within the active
+    # stage. Multi-pass stages (cost-sensitivity, baselines) advance it so the
+    # wire fraction aggregates their passes into one 0→100% climb — a bar that
+    # restarts at 0 under an unchanged stage label reads as going backwards.
+    pass_span = [0, 1]
     if req.progressId:
         pid = req.progressId
         pr.set_progress(pid, stage="simulate")
@@ -187,7 +192,8 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             # entry's flag; the next engine progress beat lands here and aborts.
             if pr.is_cancelled(pid):
                 raise pr.BacktestCancelled()
-            pr.update_progress(pid, done, total)
+            i, n = pass_span
+            pr.update_progress(pid, i * total + done, n * total)
     try:
         try:
             result, strategy = await _run_coded(
@@ -263,6 +269,9 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                 if req.progressId:
                     pr.set_progress(req.progressId, stage="cost-sensitivity")
                 nets = []
+                # 1.0x reuses the main result, so only the other multiples are
+                # engine passes — they define this stage's pass count.
+                pass_span[:] = [0, sum(1 for m in multiples if m != 1.0)]
                 for m in multiples:
                     if m == 1.0:
                         nets.append(result.net_pnl)
@@ -283,6 +292,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                                             req.longRisk, req.shortRisk, dict(htf_candles),
                                             on_progress=on_progress)
                     nets.append(r.net_pnl)
+                    pass_span[0] += 1
             cost_sensitivity = {
                 "multiples": multiples,
                 "net_pnl": [round(n, 5) for n in nets],
@@ -373,8 +383,10 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                 # a both-sides 1==1 baseline is a long+short hedge worth
                 # exactly minus the costs, useless as a reference (see
                 # baselines.py). Reversed is one whole-strategy run.
-                for slot, kind, leg in baseline_runs(
-                        req.baselines, long_traded, short_traded):
+                runs = baseline_runs(req.baselines, long_traded, short_traded)
+                pass_span[:] = [0, len(runs)]
+                for pass_idx, (slot, kind, leg) in enumerate(runs):
+                    pass_span[0] = pass_idx
                     try:
                         if kind == "reversed":
                             # Reversal needs the strategy's real signals, which
