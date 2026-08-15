@@ -47,6 +47,10 @@ def _configure_logging() -> None:
     for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
         for handler in logging.getLogger(name).handlers:
             handler.setFormatter(fmt)
+    # httpx logs every outbound request at INFO ("HTTP Request: GET ..."), which
+    # floods the console during candle backfills and MetaApi polling. Broker-level
+    # request visibility stays available by lowering this back to INFO/DEBUG.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     app_log = logging.getLogger("auto_trader")
     if not app_log.handlers:
         handler = logging.StreamHandler()
