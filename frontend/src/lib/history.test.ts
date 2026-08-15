@@ -133,6 +133,26 @@ describe("registry, capture, suppression", () => {
     expect(mgr.canRedo).toBe(false);
   });
 
+  it("clearHistoryForKey clears only the longest-scope match when scopes nest", () => {
+    // `tab.T` (primary cell) is a string prefix of `tab.T.cell.c` (sub-cell):
+    // a sub-cell push must not wipe the primary cell's stacks, and vice versa.
+    const primary = new HistoryManager("tab.T");
+    registerHistory("tab.T", primary);
+    try {
+      primary.push("auto-trader.tab.T.indicators", ["x"], ["y"], 1000);
+      mgr.push(KEY, ["a"], ["b"], 1000);
+      clearHistoryForKey(KEY); // sub-cell key
+      expect(mgr.canUndo).toBe(false);
+      expect(primary.canUndo).toBe(true);
+      mgr.push(KEY, ["a"], ["b"], 99000);
+      clearHistoryForKey("auto-trader.tab.T.indicators"); // primary-cell key
+      expect(primary.canUndo).toBe(false);
+      expect(mgr.canUndo).toBe(true);
+    } finally {
+      unregisterHistory("tab.T", primary);
+    }
+  });
+
   it("unregisterHistory only removes the registered instance", () => {
     const other = new HistoryManager(SCOPE);
     unregisterHistory(SCOPE, other); // not the registered one: no-op

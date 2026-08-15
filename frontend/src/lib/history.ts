@@ -48,8 +48,10 @@ export function withHistorySuppressed<T>(fn: () => T): T {
 
 // --- registry ----------------------------------------------------------------
 // scope -> the live cell's manager. Captures for unregistered scopes are
-// no-ops, which is what keeps mount-time template auto-apply, migrations, and
-// background-scope writes out of the stacks.
+// no-ops, which keeps migrations and background-scope writes out of the stacks.
+// Template applies are NOT protected by this — the cell registers at controller
+// construction, before the async mount-time auto-apply runs — so templates.ts
+// wraps its apply paths in withHistorySuppressed; that wrapper is the guard.
 const registry = new Map<string, HistoryManager>();
 export function registerHistory(scope: string, mgr: HistoryManager): void {
   registry.set(scope, mgr);
@@ -59,10 +61,19 @@ export function unregisterHistory(scope: string, mgr: HistoryManager): void {
 }
 // Remote push invalidation (App.onBackendPush): another tab/device edited this
 // key, so the owning cell's history would undo over their change. Clear it.
+// Scopes nest (`tab.T` is a tab's primary cell, `tab.T.cell.C` a sub-cell), so
+// a bare prefix test would let a sub-cell's key clear the primary cell's stacks
+// too. Clear only the longest-scope match — the cell that actually owns the key.
 export function clearHistoryForKey(key: string): void {
+  let owner: HistoryManager | null = null;
+  let ownerLen = -1;
   for (const [scope, mgr] of registry) {
-    if (key.startsWith(`${PREFIX}.${scope}.`)) mgr.clear();
+    if (key.startsWith(`${PREFIX}.${scope}.`) && scope.length > ownerLen) {
+      owner = mgr;
+      ownerLen = scope.length;
+    }
   }
+  owner?.clear();
 }
 
 // Called by lib/persist/artifacts.ts immediately BEFORE save(key, after) —

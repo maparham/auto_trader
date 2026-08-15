@@ -542,6 +542,37 @@ describe("replaceSymbolTemplate", () => {
   });
 });
 
+describe("template applies never enter undo history", () => {
+  // Template applies are programmatic writes on a LIVE, registered cell (the
+  // controller registers its HistoryManager at construction, before the async
+  // mount-time auto-apply runs) — so the withHistorySuppressed wrapper inside
+  // applySymbolTemplate/replaceSymbolTemplate is the only thing keeping a
+  // just-applied template from being Ctrl+Z-stripped. This test fails if that
+  // wrapper is removed.
+  it("applySymbolTemplate on a registered scope records no undo step", async () => {
+    const H = await import("./history");
+    const mgr = new H.HistoryManager(SCOPE);
+    H.registerHistory(SCOPE, mgr);
+    try {
+      T.applySymbolTemplate(stubChart, stubController, SCOPE, EPIC, {
+        epic: EPIC,
+        indicators: [{ id: "RSI", type: "RSI" }],
+        indicatorConfigs: {},
+        drawings: [{ name: "trend", points: [{ value: 1 }] }],
+        avwapAnchors: {},
+        savedAt: 1,
+      });
+      // The apply DID write storage…
+      expect(P.loadIndicators(SCOPE)).toHaveLength(1);
+      expect(P.loadDrawings(SCOPE, EPIC)).toHaveLength(1);
+      // …but none of it is undoable.
+      expect(mgr.canUndo).toBe(false);
+    } finally {
+      H.unregisterHistory(SCOPE, mgr);
+    }
+  });
+});
+
 describe("captureDefaultTemplate includeIds", () => {
   it("captures only the selected instance ids", () => {
     P.saveIndicators(SCOPE, [
