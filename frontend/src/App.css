@@ -4686,6 +4686,29 @@
   margin-left: auto;
 }
 
+/* Continuous results pane: Overview / Trades / Analysis stacked in one scroll
+   column (mirrors the config pane's Period→Costs scroll-tabs); the strip above
+   jumps to a section and scrollspies. */
+.bt-results-scroll {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+.bt-results-section { flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; }
+.bt-results-section + .bt-results-section {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+/* Trades is pinned to the pane height: the windowed table needs a definite
+   scroll viewport of its own (sticky header, spacer rows) — free to grow it
+   would mount every row and the header would scroll away. */
+.bt-results-section-fill { height: 100%; }
+/* Landing on the last section pins its top at the pane top even when short,
+   so the scrollspy can hand it the highlight. */
+.bt-results-section-last { min-height: 100%; }
+/* Inside the continuous column these flow with the pane instead of scrolling
+   themselves. */
+.bt-results-scroll .bt-panel-overview,
+.bt-results-scroll .bt-analysis { overflow-y: visible; }
+
 /* Overview: a grouped tearsheet — three sections (Performance / Trades / Risk),
    each a column-aligned grid of borderless label/value stats. The grouping is
    the hierarchy the old flat 16-card grid was missing; the panel above already

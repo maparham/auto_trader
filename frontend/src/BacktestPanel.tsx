@@ -44,6 +44,7 @@ const subscribeSelectNotice = (cb: () => void) => backtestSelectNoticeSignal.sub
 const subscribeRunning = (cb: () => void) => backtestRunningSignal.subscribe(cb);
 
 type Tab = "overview" | "trades" | "analysis";
+const TABS: Tab[] = ["overview", "trades", "analysis"];
 type SortDir = "asc" | "desc";
 
 // Text columns read more naturally A→Z on first click; numeric/time columns
@@ -142,6 +143,45 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
   }, [displayOpen]);
   const [tab, setTab] = useState<Tab>("overview");
   const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
+
+  // Continuous scroll: Overview / Trades / Analysis are stacked sections in one
+  // scroll pane, mirroring the config pane's Period→Costs scroll-tabs. The strip
+  // jumps to a section and highlights whichever is at the top (scrollspy);
+  // suppressSpyUntil silences the spy during the smooth jump so it lands on the
+  // clicked tab, not the ones it scrolls past.
+  const scrollBodyRef = useRef<HTMLDivElement | null>(null);
+  const sectionRefs = useRef<Record<Tab, HTMLElement | null>>({
+    overview: null,
+    trades: null,
+    analysis: null,
+  });
+  const suppressSpyUntil = useRef(0);
+  const setSectionRef = (t: Tab) => (el: HTMLElement | null) => {
+    sectionRefs.current[t] = el;
+  };
+  const jumpToTab = (t: Tab) => {
+    setTab(t);
+    const el = sectionRefs.current[t];
+    const c = scrollBodyRef.current;
+    if (!el || !c) return;
+    suppressSpyUntil.current = Date.now() + 700;
+    const top = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+    c.scrollTo?.({ top, behavior: "smooth" });
+  };
+  const onBodyScroll = () => {
+    if (Date.now() < suppressSpyUntil.current) return;
+    const c = scrollBodyRef.current;
+    if (!c) return;
+    // The active tab is the last section whose top has passed just below the
+    // pane's top edge (a small 24px lead-in feels natural).
+    const ctop = c.getBoundingClientRect().top;
+    let current: Tab = TABS[0];
+    for (const t of TABS) {
+      const el = sectionRefs.current[t];
+      if (el && el.getBoundingClientRect().top - ctop <= 24) current = t;
+    }
+    setTab((prev) => (prev === current ? prev : current));
+  };
 
   // Row building and sorting are memoized so panel re-renders (row hover sets
   // highlightTradeSignal on every mouseenter) don't rebuild and re-sort the
@@ -335,7 +375,7 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
             className={tab === "overview" ? "seg-on" : ""}
             role="tab"
             aria-selected={tab === "overview"}
-            onClick={() => setTab("overview")}
+            onClick={() => jumpToTab("overview")}
           >
             Overview
           </button>
@@ -343,7 +383,7 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
             className={tab === "trades" ? "seg-on" : ""}
             role="tab"
             aria-selected={tab === "trades"}
-            onClick={() => setTab("trades")}
+            onClick={() => jumpToTab("trades")}
           >
             Trades
           </button>
@@ -351,7 +391,7 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
             className={tab === "analysis" ? "seg-on" : ""}
             role="tab"
             aria-selected={tab === "analysis"}
-            onClick={() => setTab("analysis")}
+            onClick={() => jumpToTab("analysis")}
           >
             Analysis
           </button>
@@ -361,10 +401,8 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
         </span>
       </div>
 
-      {(
-        tab === "analysis" ? (
-          <BacktestAnalysisPanel analysis={result?.analysis} barSeconds={resSeconds} />
-        ) : tab === "overview" ? (
+      <div className="bt-results-scroll" ref={scrollBodyRef} onScroll={onBodyScroll}>
+        <section className="bt-results-section" ref={setSectionRef("overview")}>
           <div className="bt-panel-overview">
             {metricGroups(result).map((g) => (
               <section className="bt-panel-group" key={g.title}>
@@ -395,10 +433,7 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
                     title="Baselines"
                     text={[
                       "Reference runs over the same window, sizing and costs.",
-                      "Null signal: entries replaced by an always-true condition; stops, sizing, sessions and costs unchanged. The strategy's edge over it is what the signal adds. One row per side the strategy trades (a both-sides always-in run would hedge to exactly minus the costs).",
-                      "Enter & hold: one position held for the whole window, no stops and no session windows, same costs. One row per traded side, so it shows the raw market each way.",
-                      "Reversed signals: the mirror-image strategy (every long decision taken short and vice versa, each side's exits and risk riding along). If it beats the real run, the signal points the wrong way.",
-                      "Losses flipped to wins: the strategy's own entry times, with direction and exit chosen by hindsight (exit never later than the real one), through the same costs. The gap to the real run is what direction and exit timing left on the table.",
+                      "Each row has its own ⓘ explaining that baseline; Strategy Δ is the real run minus it.",
                       // Coded runs only: the synthesized null baseline is built from
                       // the panel's exits/risk, so anything the strategy file does
                       // internally (its own stops, targets, filters) is not in it.
@@ -491,10 +526,19 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
               </div>
             )}
           </div>
-        ) : (
+        </section>
+        {/* Pinned to the pane height so the windowed table keeps its own scroll
+            viewport (sticky header, spacer rows); reaching its bottom chains
+            the wheel on into Analysis. */}
+        <section className="bt-results-section bt-results-section-fill" ref={setSectionRef("trades")}>
           <TradesTable rows={rows} sort={sort} onSort={toggleSort} highlighted={highlighted} selected={selected} />
-        )
-      )}
+        </section>
+        {/* min-height 100%: landing on Analysis pins its top at the pane top
+            even when its content is short, so the scrollspy can reach it. */}
+        <section className="bt-results-section bt-results-section-last" ref={setSectionRef("analysis")}>
+          <BacktestAnalysisPanel analysis={result?.analysis} barSeconds={resSeconds} />
+        </section>
+      </div>
     </div>
   );
 }
