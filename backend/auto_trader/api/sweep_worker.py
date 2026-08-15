@@ -9,6 +9,7 @@ bare worker process.
 """
 from __future__ import annotations
 
+import bisect
 from pathlib import Path
 from types import ModuleType
 
@@ -77,9 +78,23 @@ def worker_init(
     _STATE = s
 
 
-def execute_combo(s: _State, req: BacktestRequest, combo: dict) -> BacktestResult:
+def start_at(candles: list[Candle], ts: float | None) -> int | None:
+    """Index of the first candle at or after `ts` (mirrors the engine's
+    trade_from gate), for fast-forwarding a flat-start run. None when no gate."""
+    if ts is None:
+        return None
+    return bisect.bisect_left(candles, ts, key=lambda c: c.time.timestamp())
+
+
+def execute_combo(s: _State, req: BacktestRequest, combo: dict,
+                  start_index: int | None = None) -> BacktestResult:
     """Apply one combo (env split + strategy patch) and run the engine over the
-    worker's candles. Raises on any problem; callers own error-row semantics."""
+    worker's candles. Raises on any problem; callers own error-row semantics.
+
+    `start_index` (opt-in) fast-forwards a flat-start gated run — see
+    BacktestEngine.run. Callers must only pass it when they slice metrics to
+    the gated window (WFO test/baseline runs): the skipped prefix emits no
+    equity points, which would change whole-range metrics otherwise."""
     env, rest = sa.split_env_combo(combo)
     patched, candles = sa.apply_env_combo(req, s.candles, env)
     if getattr(s, "expr", False):
@@ -89,12 +104,13 @@ def execute_combo(s: _State, req: BacktestRequest, combo: dict) -> BacktestResul
         _params, long_risk, short_risk = sa.apply_combo(
             patched, {k: v for k, v in rest.items() if k.startswith("risk:")})
         return sa.run_expr_sync(
-            patched, candles, dict(s.htf), overrides, long_risk, short_risk)
+            patched, candles, dict(s.htf), overrides, long_risk, short_risk,
+            start_index=start_index)
     params, long_risk, short_risk = sa.apply_combo(patched, rest)
     resolved = resolve_params(s.module, params)
     result, _ = sa.run_coded_sync(
         patched, candles, s.module, resolved, long_risk, short_risk, dict(s.htf),
-        indicator_cache=indicator_cache_for(candles),
+        indicator_cache=indicator_cache_for(candles), start_index=start_index,
     )
     return result
 
@@ -131,9 +147,12 @@ def build_combo_session(s: _State, req: BacktestRequest, combo: dict) -> ComboSe
 
         def run_window(trade_from, stop_index):
             # ExprRuleStrategy is stateless except trade_from_time; mutate it and
-            # replay over the same candles (compiled rows keep their series cache).
+            # replay over the same candles (compiled rows keep their series
+            # cache). Entries gate at trade_from and the run starts flat, so the
+            # prefix is dead time — fast-forward straight to the gate.
             strategy.trade_from_time = trade_from
-            return engine.run(candles, stop_index=stop_index)
+            return engine.run(candles, start_index=start_at(candles, trade_from),
+                              stop_index=stop_index)
 
         return ComboSession(full, candles, run_window)
 
@@ -148,10 +167,14 @@ def build_combo_session(s: _State, req: BacktestRequest, combo: dict) -> ComboSe
         # Coded strategies carry per-run mutable state, so rebuild the strategy
         # per window but share the indicator cache (keyed by the full candle
         # list) so the expensive series are computed once, not per window.
+        # Entries gate at trade_from and the run starts flat, so fast-forward
+        # straight to the gate (module on_bar is a pure per-bar function — the
+        # live rolling-window contract already forbids cross-bar module state).
         req_w = patched.model_copy(update={"tradeFromTime": trade_from})
         res, _ = sa.run_coded_sync(
             req_w, candles, s.module, resolved, long_risk, short_risk, dict(s.htf),
-            indicator_cache=cache, stop_index=stop_index)
+            indicator_cache=cache, start_index=start_at(candles, trade_from),
+            stop_index=stop_index)
         return res
 
     return ComboSession(full, candles, run_window)

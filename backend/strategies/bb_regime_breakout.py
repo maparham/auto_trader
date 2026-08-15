@@ -146,42 +146,83 @@ def chart_regions(candles, params) -> list[dict]:
     return regions
 
 
-def _signal(i: int, closes, highs, lows, bw, bw_start: int, p) -> tuple[str, float, float, int] | None:
-    """Evaluate the full breakout condition at bar i. Returns (leg, range_high,
-    range_low, squeeze_bar) when a confirmed regime-transition breakout exists,
-    else None. bw[k] is the band width at bar bw_start + k."""
+def _squeeze_series(candles, period: int, dev: float, look: int, pctile: float) -> dict:
+    """Full-series band width and squeeze flags, computed ONCE per run (memoized
+    via ctx.memo). `bw[b]` is the band width AT bar b (NaN through warm-up);
+    `squeeze[b]` is the per-bar squeeze gate — width at or below the squeeze
+    percentile of its trailing `look` widths — exactly the predicate _signal
+    evaluated per bar (same windows, same values, same np.percentile), just
+    evaluated for every bar in one vectorized pass like chart_regions."""
+    closes = np.array([c.close for c in candles], dtype=np.float64)
+    n = len(closes)
+    bw = np.full(n, np.nan)
+    squeeze = np.zeros(n, dtype=bool)
+    if n >= period:
+        bw[period - 1:] = _bandwidth(closes, period, dev)
+    if n >= period + look - 1:
+        win = np.lib.stride_tricks.sliding_window_view(bw[period - 1:], look)
+        thr = np.percentile(win, pctile, axis=1)
+        squeeze[period + look - 2:] = win[:, -1] <= thr
+    return {"bw": bw, "squeeze": squeeze}
+
+
+def _range_series(candles, rl: int, max_pct: float) -> dict:
+    """Full-series consolidation ranges, computed ONCE per run (memoized).
+    `high[b]`/`low[b]` are the trailing `rl`-bar range ending at b; `ok[b]` is
+    the sideways height gate — the same predicate as _sideways_range, evaluated
+    for every bar in one vectorized pass (mirrors chart_regions)."""
+    highs = np.array([c.high for c in candles], dtype=np.float64)
+    lows = np.array([c.low for c in candles], dtype=np.float64)
+    n = len(highs)
+    rmax = np.full(n, np.nan)
+    rmin = np.full(n, np.nan)
+    ok = np.zeros(n, dtype=bool)
+    if n >= rl:
+        rmax[rl - 1:] = np.lib.stride_tricks.sliding_window_view(highs, rl).max(axis=1)
+        rmin[rl - 1:] = np.lib.stride_tricks.sliding_window_view(lows, rl).min(axis=1)
+        mid = (rmax[rl - 1:] + rmin[rl - 1:]) / 2
+        with np.errstate(divide="ignore", invalid="ignore"):
+            height = np.where(mid > 0, (rmax[rl - 1:] - rmin[rl - 1:]) / mid * 100.0, np.inf)
+        ok[rl - 1:] = height <= max_pct
+    return {"high": rmax, "low": rmin, "ok": ok}
+
+
+def _signal(i: int, closes, bw, squeeze, ranges, p) -> tuple[str, float, float, int] | None:
+    """Evaluate the full breakout condition at bar i against the memoized
+    series. Returns (leg, range_high, range_low, squeeze_bar) when a confirmed
+    regime-transition breakout exists, else None. `bw`/`squeeze`/`ranges` are
+    full-list bar-indexed (see _squeeze_series/_range_series)."""
     confirm, window = p["confirm_bars"], p["breakout_window"]
 
-    # Most recent squeeze bar at least confirm_bars back: width at or below the
-    # squeeze percentile of its trailing lookback. The loop's lower bound IS
-    # the breakout window, anchored to the first confirming close (bar
+    # Most recent squeeze bar at least confirm_bars back. The loop's lower
+    # bound IS the breakout window, anchored to the first confirming close (bar
     # i-confirm+1) — so a long confirmation can never make every squeeze bar
-    # unreachable.
+    # unreachable. Bounds kept identical to the per-bar implementation (which
+    # scanned a tail starting at bw_start = i - span).
     look = p["squeeze_lookback"]
+    span = look + window + confirm + 2
+    bw_start = i - span
     j = None
     for cand in range(i - confirm, max(i - confirm - window, bw_start + look - 2), -1):
-        k = cand - bw_start
-        if k - look + 1 < 0:
+        if cand - bw_start - look + 1 < 0:
             break
-        hist = bw[k - look + 1: k + 1]
-        if bw[k] <= np.percentile(hist, p["squeeze_pctile"]):
+        if squeeze[cand]:
             j = cand
             break
     if j is None:
         return None
 
     # The consolidation range ending at the squeeze bar, and its sideways gate
-    # (shared with chart_regions via _sideways_range — one predicate, no drift).
-    rng = _sideways_range(highs, lows, j, p)
-    if rng is None:
+    # (the memoized twin of _sideways_range — one predicate, no drift).
+    if j - p["range_lookback"] + 1 < 0 or not ranges["ok"][j]:
         return None
-    rh, rl = rng
+    rh, rl = float(ranges["high"][j]), float(ranges["low"][j])
 
     # Regime transition: band width expanding out of the squeeze.
-    bw_i, bw_j = bw[i - bw_start], bw[j - bw_start]
+    bw_i, bw_j = bw[i], bw[j]
     if not (np.isfinite(bw_i) and np.isfinite(bw_j)):
         return None
-    if bw_i < bw_j * (1 + p["min_expansion_pct"] / 100.0) or bw_i <= bw[i - 1 - bw_start]:
+    if bw_i < bw_j * (1 + p["min_expansion_pct"] / 100.0) or bw_i <= bw[i - 1]:
         return None
 
     # Directional break: all confirming closes beyond the range edge.
@@ -222,12 +263,19 @@ def on_bar(ctx):
         if er < p["min_er"]:
             return []
 
-    # Band width over just the tail this bar can see (constant work per bar).
-    bw_start = i - span - period + 1
-    bw = _bandwidth(closes[bw_start:], period, p["bb_dev"])
-    bw_start += period - 1  # bw[k] is the width AT bar bw_start + k
+    # Band width / squeeze flags / consolidation ranges over the FULL run,
+    # computed once and memoized (keys carry every param they read — the cache
+    # is shared across sweep combos). Per bar this is pure array lookups.
+    sq = ctx.memo(
+        f"bbrb:squeeze:{period}:{p['bb_dev']}:{p['squeeze_lookback']}:{p['squeeze_pctile']}",
+        lambda candles: _squeeze_series(
+            candles, period, p["bb_dev"], p["squeeze_lookback"], p["squeeze_pctile"]))
+    ranges = ctx.memo(
+        f"bbrb:range:{p['range_lookback']}:{p['max_range_pct']}",
+        lambda candles: _range_series(candles, p["range_lookback"], p["max_range_pct"]))
+    bw = sq["bw"]
 
-    sig = _signal(i, closes, highs, lows, bw, bw_start, p)
+    sig = _signal(i, closes, bw, sq["squeeze"], ranges, p)
     if sig is None:
         return []
 
@@ -245,7 +293,7 @@ def on_bar(ctx):
                 and ex.bars_ago < guard):
             return []
     frac, height = p["stop_range_frac"], rh - rl
-    note = {"range_high": rh, "range_low": rl, "band_width": float(bw[i - bw_start])}
+    note = {"range_high": rh, "range_low": rl, "band_width": float(bw[i])}
     # The broken consolidation range as a chart zone: range lookback ending at
     # the squeeze bar, extended to the breakout bar so the shading meets the entry.
     zones = [ctx.zone(j - p["range_lookback"] + 1, i, rh, rl, label="consolidation range")]

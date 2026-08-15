@@ -90,6 +90,7 @@ async def _run_coded(
     resolved_params: dict, long_risk_dto: RiskConfigDTO | None,
     short_risk_dto: RiskConfigDTO | None, htf_candles: dict[str, list[Candle]],
     on_progress: Callable[[int, int], None] | None = None,
+    indicator_cache: dict | None = None,
 ) -> tuple[BacktestResult, Strategy]:
     """Thin async wrapper: run the pure `run_coded_sync` core, fetching each
     timeframe it reports missing and calling again (mutating htf_candles so
@@ -105,7 +106,7 @@ async def _run_coded(
             return await asyncio.to_thread(
                 run_coded_sync, req, candles, module, resolved_params,
                 long_risk_dto, short_risk_dto, htf_candles,
-                on_progress=on_progress,
+                indicator_cache=indicator_cache, on_progress=on_progress,
             )
         except TimeframeNotPrefetched as need:
             warmup_from = (
@@ -288,9 +289,15 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                             "finShortDailyPct": req.costs.finShortDailyPct * m,
                         }),
                     })
+                    # Costs don't feed any indicator/memo series, so the main
+                    # run's cache is fully reusable across the scaled re-runs.
+                    # getattr: the returned strategy may be a wrapper
+                    # (CodedWithExprExits/ReversedStrategy) without a cache.
                     r, _ = await _run_coded(scaled, candles, module, resolved_params,
                                             req.longRisk, req.shortRisk, dict(htf_candles),
-                                            on_progress=on_progress)
+                                            on_progress=on_progress,
+                                            indicator_cache=getattr(
+                                                strategy, "indicator_cache", None))
                     nets.append(r.net_pnl)
                     pass_span[0] += 1
             cost_sensitivity = {

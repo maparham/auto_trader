@@ -313,3 +313,30 @@ def test_chart_regions_gate_matches_signal_gate():
         first, last = times.index(r["from_time"]), times.index(r["to_time"])
         for i in range(first, last + 1):
             assert module._sideways_range(highs, lows, i, params) is not None, i
+
+
+def test_characterization_regime_walk_trades():
+    """Pinned end-to-end behavior on a seeded random walk with alternating
+    volatility regimes (squeezes and breakouts on both sides, ER gate and flip
+    guard active). Snapshotted from the per-bar implementation; the memoized
+    (vectorized-once) implementation must reproduce it exactly."""
+    rng = np.random.default_rng(7)
+    closes = [100.0]
+    for seg in range(12):
+        vol = 0.15 if seg % 2 else 1.2
+        drift = rng.choice([-0.2, 0.0, 0.2])
+        for _ in range(60):
+            closes.append(closes[-1] + drift * (seg % 2) + rng.normal(0, vol))
+    res, _ = run(bars_from_closes(closes),
+                 {"squeeze_lookback": 30, "range_lookback": 15,
+                  "breakout_window": 12, "max_range_pct": 6.0,
+                  "min_expansion_pct": 5.0, "flip_guard_bars": 3,
+                  "er_lookback": 50, "min_er": 0.05})
+    sig = [(t.entry_time.isoformat(), t.exit_time.isoformat(), t.side.value,
+            round(t.pnl, 6), t.reason_out) for t in res.trades]
+    assert sig == [
+        ('2026-01-03T17:00:00+00:00', '2026-01-06T05:00:00+00:00', 'buy', -6.440007, 'stop'),
+        ('2026-01-06T09:00:00+00:00', '2026-01-17T22:00:00+00:00', 'sell', 12.803196, 'target'),
+        ('2026-01-24T22:00:00+00:00', '2026-01-26T03:00:00+00:00', 'sell', 3.09327, 'target'),
+        ('2026-01-26T04:00:00+00:00', '2026-01-26T22:00:00+00:00', 'sell', -7.5373, 'stop'),
+    ]

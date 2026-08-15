@@ -126,7 +126,12 @@ def run_test(payload: dict) -> dict:
     test_from, test_to = payload["test_from"], payload["test_to"]
     try:
         run_combo = {**combo, "period:from": test_from, "period:to": test_to}
-        result = sweep_worker.execute_combo(s, s.req, run_combo)
+        # Flat-start run gated at test_from with metrics sliced to the window:
+        # fast-forward past the dead prefix (start_at index survives the
+        # period:to truncation — that only cuts the tail).
+        result = sweep_worker.execute_combo(
+            s, s.req, run_combo,
+            start_index=sweep_worker.start_at(s.candles, test_from))
         res_s = resolution_seconds(s.req.resolution)
         cash = s.req.costs.startingCash
         metrics = slice_window_metrics(
@@ -184,18 +189,22 @@ def _baseline_req(s, kind: str, leg: str | None, payload: dict):
 
 
 def _run_baseline_req(s, req, combo, kind: str):
-    """One engine pass for a synthesized baseline request."""
+    """One engine pass for a synthesized baseline request. Baselines are
+    flat-start runs gated at the combo's period:from with metrics sliced to the
+    test window, so fast-forward past the dead prefix like run_test does."""
+    start = sweep_worker.start_at(s.candles, combo.get("period:from"))
     if getattr(s, "expr", False) or kind == "reversed":
         # execute_combo routes by the worker state's mode, which matches
         # the request here: expr jobs carry expr baseline requests, and the
         # coded reversed request goes down the coded path (with s.module).
-        return sweep_worker.execute_combo(s, req, combo)
+        return sweep_worker.execute_combo(s, req, combo, start_index=start)
     # The worker state is coded-mode, so execute_combo would route an
     # expr request down the coded path — run the expr pipeline directly
     # with the same period env-combo gating.
     env, _rest = sa.split_env_combo(combo)
     patched, candles = sa.apply_env_combo(req, s.candles, env)
-    return sa.run_expr_sync(patched, candles, dict(s.htf), {}, None, None)
+    return sa.run_expr_sync(patched, candles, dict(s.htf), {}, None, None,
+                            start_index=start)
 
 
 def run_baseline(payload: dict) -> dict:

@@ -16,6 +16,7 @@ Contract (see the coded-strategies spec):
 
 from __future__ import annotations
 
+import bisect
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
@@ -199,15 +200,8 @@ class StrategyContext:
         hist = self._ctx.history
         if not hist:
             return None
-        if t <= hist[0].time:
-            return self._i
-        idx = 0
-        for j, bar in enumerate(hist):
-            if bar.time <= t:
-                idx = j
-            else:
-                break
-        return self._i - idx
+        idx = bisect.bisect_right(hist, t, key=lambda c: c.time) - 1
+        return self._i - max(0, idx)
 
     @property
     def last_exit(self) -> LastExitView | None:

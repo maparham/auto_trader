@@ -132,7 +132,8 @@ class BacktestEngine:
         self.short_scaling = short_scaling or ScalingConfig()
 
     def run(
-        self, candles: list[Candle], *, stop_index: int | None = None,
+        self, candles: list[Candle], *, start_index: int | None = None,
+        stop_index: int | None = None,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> BacktestResult:
         """Run the engine over `candles`. When `stop_index` is set, process only
@@ -141,11 +142,23 @@ class BacktestEngine:
         indicator series is causal, passing the FULL candle list with a stop lets
         a caller reuse series computed once across many sub-window runs (WFO exact
         mode) instead of recomputing them per window. `on_progress(done, total)` is
-        invoked every ~1% of bars for UI progress reporting."""
+        invoked every ~1% of bars for UI progress reporting.
+
+        `start_index` fast-forwards a flat-start run: bars 0..start_index-1 are
+        skipped entirely (the strategy is not called on them) but stay visible as
+        seeded history, so bar indices — and any series computed over the full
+        list — remain aligned. ONLY valid when the strategy cannot signal before
+        `start_index` (e.g. entries gated at a trade_from inside the window) and
+        carries no cross-bar internal state: then the skipped prefix is provably
+        dead time (no signals -> no positions -> flat equity) and the result
+        matches the full run from `start_index` on, minus the flat equity
+        prefix."""
         result = BacktestResult()
         ctx = Context()
 
         end = (len(candles) - 1) if stop_index is None else stop_index
+        start = 0 if start_index is None else max(0, start_index)
+        ctx.history.extend(candles[:start])
 
         total = end + 1
         # Progress cadence: ~1% steps. Cosmetic; must stay cheap on huge runs.
@@ -162,9 +175,8 @@ class BacktestEngine:
         last_long_open: float | None = None
         last_short_open: float | None = None
 
-        for i, bar in enumerate(candles):
-            if i > end:
-                break
+        for i in range(start, end + 1):
+            bar = candles[i]
             # 0) Overnight financing: charge every rollover instant crossed since
             # the previous bar, BEFORE any fill/close on this bar. A position that
             # closes on this bar still held through the night that just ended, so

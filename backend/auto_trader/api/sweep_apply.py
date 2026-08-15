@@ -196,6 +196,7 @@ def run_coded_sync(
     resolved_params: dict, long_risk_dto: RiskConfigDTO | None,
     short_risk_dto: RiskConfigDTO | None, htf_candles: dict[str, list[Candle]],
     indicator_cache: dict | None = None,
+    start_index: int | None = None,
     stop_index: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[BacktestResult, Strategy]:
@@ -262,7 +263,8 @@ def run_coded_sync(
             mask=req.mask.to_mask() if req.mask else None,
         )
         try:
-            result = engine.run(candles, stop_index=stop_index, on_progress=on_progress)
+            result = engine.run(candles, start_index=start_index,
+                                stop_index=stop_index, on_progress=on_progress)
             return result, strategy
         except NeedTimeframe as need:
             if need.timeframe not in htf_candles:
@@ -364,12 +366,13 @@ def run_expr_sync(
     htf_candles: dict[str, list[Candle]],
     overrides: dict[tuple[str, str, int], "N.Row"],
     long_risk: RiskConfigDTO | None, short_risk: RiskConfigDTO | None,
+    start_index: int | None = None,
 ) -> BacktestResult:
     """One expression engine run for a sweep combo (build + run). See
     build_expr_engine for the compile step."""
     engine, _strategy = build_expr_engine(
         req, candles, htf_candles, overrides, long_risk, short_risk)
-    return engine.run(candles)
+    return engine.run(candles, start_index=start_index)
 
 
 # --- parameter/risk sweep combo application ----------------------------------

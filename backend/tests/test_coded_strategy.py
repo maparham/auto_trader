@@ -318,3 +318,22 @@ def test_ctx_param_unknown_name_raises():
     mod = module_from(lambda ctx: [] if ctx.param("nope") else [])
     with pytest.raises(StrategyRuntimeError, match="nope"):
         BacktestEngine(CodedStrategy(mod, candles, quantity=1.0)).run(candles)
+
+
+def test_bars_since_semantics():
+    """_bars_since(t) = current bar minus the LAST bar with time <= t, clamped
+    to the full span when t precedes all history. Pinned before swapping the
+    linear scan for bisect (it burned ~60% of a flip-guard run)."""
+    candles = make_candles(10)
+    ctx = Context()
+    ctx.history.extend(candles)
+    strat = CodedStrategy(module_from(lambda c: []), candles, quantity=1.0)
+    from auto_trader.strategy.coded import StrategyContext
+    sctx = StrategyContext(ctx, candles, strat._arrays, 9, {}, strat)
+    t0 = candles[0].time
+    assert sctx._bars_since(t0 - timedelta(hours=1)) == 9   # before all bars
+    assert sctx._bars_since(t0) == 9                        # exactly first bar
+    assert sctx._bars_since(candles[4].time) == 5           # exact interior match
+    assert sctx._bars_since(candles[4].time + timedelta(minutes=30)) == 5  # between bars
+    assert sctx._bars_since(candles[9].time) == 0           # current bar
+    assert sctx._bars_since(candles[9].time + timedelta(hours=5)) == 0  # future
