@@ -85,9 +85,20 @@ def _host_state(start: bool = False, stop: bool = False) -> dict:
     instance_id = cfg.compute_ec2_instance_id
     if not instance_id:
         return {"state": "unconfigured", "detail": None, "activeJobs": 0}
+    # A stale COMPUTE_EC2_INSTANCE_ID (instance terminated) is a config problem,
+    # not a server error: recently terminated ids raise InvalidInstanceID.NotFound,
+    # older ones are purged and come back as zero reservations. Both map to
+    # "unconfigured" (the frontend hides the pill) with the id in `detail`.
+    vanished = {
+        "state": "unconfigured",
+        "detail": f"instance {instance_id} not found (terminated?)",
+        "activeJobs": 0,
+    }
     try:
         ec2 = _ec2_client(cfg.compute_ec2_region)
         desc = ec2.describe_instances(InstanceIds=[instance_id])
+        if not desc["Reservations"]:
+            return vanished
         ec2_state = desc["Reservations"][0]["Instances"][0]["State"]["Name"]
         if start and ec2_state in ("stopped", "stopping"):
             ec2.start_instances(InstanceIds=[instance_id])
@@ -99,6 +110,8 @@ def _host_state(start: bool = False, stop: bool = False) -> dict:
             resp = ec2.stop_instances(InstanceIds=[instance_id])
             ec2_state = resp["StoppingInstances"][0]["CurrentState"]["Name"]
     except Exception as exc:  # boto3's error taxonomy is broad; surface verbatim
+        if getattr(exc, "response", {}).get("Error", {}).get("Code") == "InvalidInstanceID.NotFound":
+            return vanished
         raise HTTPException(502, f"EC2 error: {exc}") from None
     if ec2_state in ("stopped", "stopping"):
         return {"state": "stopped", "detail": None, "activeJobs": 0}

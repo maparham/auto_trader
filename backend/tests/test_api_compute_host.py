@@ -56,6 +56,40 @@ def test_host_ready(monkeypatch):
     assert body["activeJobs"] == 2
 
 
+def test_host_instance_vanished_empty_reservations(monkeypatch):
+    # A terminated instance is purged by AWS after a while: describe_instances
+    # then returns zero reservations. That's a stale config, not a server error.
+    monkeypatch.setenv("COMPUTE_EC2_INSTANCE_ID", "i-abc")
+    monkeypatch.setenv("COMPUTE_EC2_REGION", "eu-central-1")
+    ec2 = MagicMock()
+    ec2.describe_instances.return_value = {"Reservations": []}
+    with patch("auto_trader.api.routers.compute._ec2_client", return_value=ec2):
+        res = client.get("/api/compute/host")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["state"] == "unconfigured"
+    assert "i-abc" in body["detail"]
+
+
+def test_host_instance_vanished_not_found_error(monkeypatch):
+    # A recently terminated / mistyped id raises InvalidInstanceID.NotFound.
+    from botocore.exceptions import ClientError
+
+    monkeypatch.setenv("COMPUTE_EC2_INSTANCE_ID", "i-abc")
+    monkeypatch.setenv("COMPUTE_EC2_REGION", "eu-central-1")
+    ec2 = MagicMock()
+    ec2.describe_instances.side_effect = ClientError(
+        {"Error": {"Code": "InvalidInstanceID.NotFound", "Message": "i-abc not found"}},
+        "DescribeInstances",
+    )
+    with patch("auto_trader.api.routers.compute._ec2_client", return_value=ec2):
+        res = client.get("/api/compute/host")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["state"] == "unconfigured"
+    assert "i-abc" in body["detail"]
+
+
 def test_start_calls_boto(monkeypatch):
     monkeypatch.setenv("COMPUTE_EC2_INSTANCE_ID", "i-abc")
     monkeypatch.setenv("COMPUTE_EC2_REGION", "eu-central-1")
