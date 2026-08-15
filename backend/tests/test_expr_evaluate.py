@@ -462,3 +462,21 @@ def test_candle_range_pct_is_signed_percent_of_high():
     bars = _bars([(100, 103), (103, 99)])  # highs 104, 104; lows 99, 98
     vals = series_of(parse("candle.range% > 0").left, bars, "MINUTE_5", {})
     assert vals == [pytest.approx(5 / 104 * 100), pytest.approx(-6 / 104 * 100)]
+
+
+def test_constant_rows_detected_and_fast_pathed():
+    """Rows built from literals only (the baselines' `1==1`) are bar- and
+    entry-independent: compile_row marks them is_const and evaluate returns the
+    same truth at every bar. Anything touching a candle, series, entry or
+    pattern is NOT constant."""
+    c = _candles([1, 2, 3, 2, 1])
+    for src, expected in (("1==1", True), ("1==2", False),
+                          ("2>1 and 3>2", True), ("not 1==1", False),
+                          ("1+1 == 2", True)):
+        row = compile_row(parse(src), c, "HOUR", {})
+        assert row.is_const is True, src
+        assert [row.evaluate(i, None) for i in range(len(c))] == [expected] * len(c), src
+    for src in ("candle.close > 0", "EMA(2) > 2", "barsSinceEntry > 2",
+                "entry < 5", "bullish(candle)", "crossAbove(EMA(2), 2)"):
+        row = compile_row(parse(src), c, "HOUR", {})
+        assert row.is_const is False, src

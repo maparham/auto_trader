@@ -405,6 +405,10 @@ class CompiledRow:
     # into it, so operand labels for RuleTerm capture are source slices. "" when
     # the caller has no display need (sweep workers), which disables terms_at.
     source: str = ""
+    # Bar-/entry-independent row (N.is_constant — e.g. the baselines' `1==1`):
+    # evaluate answers once and reuses it instead of walking the tree per bar.
+    is_const: bool = False
+    _const_val: "bool | None" = None
 
     def _val(self, sub: N.Node, i: int, entry: float | None, entry_i: int | None = None) -> float | None:
         # entry-free sub-expressions are precomputed to arrays; entry-bearing ones
@@ -494,6 +498,10 @@ class CompiledRow:
         return _cmp3(cond.op, self._val(cond.left, j, entry, entry_i), self._val(cond.right, j, entry, entry_i))
 
     def evaluate(self, i: int, entry_price: float | None, entry_i: int | None = None) -> bool:
+        if self.is_const:
+            if self._const_val is None:
+                self._const_val = self._match3(self.node, i, entry_price, entry_i) is True
+            return self._const_val
         return self._match3(self.node, i, entry_price, entry_i) is True
 
     # --- fill provenance ------------------------------------------------------
@@ -689,4 +697,4 @@ def compile_row(node: N.Row, candles, resolution, htf,
         _precompute(sub, candles, resolution, htf, cache, instances)
     return CompiledRow(node, candles, resolution, htf, instances,
                        warmup_bars(node, resolution, instances), cache, {}, {},
-                       source=source)
+                       source=source, is_const=N.is_constant(node))

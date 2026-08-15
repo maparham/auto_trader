@@ -398,6 +398,7 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
                       "Null signal: entries replaced by an always-true condition; stops, sizing, sessions and costs unchanged. The strategy's edge over it is what the signal adds. One row per side the strategy trades (a both-sides always-in run would hedge to exactly minus the costs).",
                       "Enter & hold: one position held for the whole window, no stops and no session windows, same costs. One row per traded side, so it shows the raw market each way.",
                       "Reversed signals: the mirror-image strategy (every long decision taken short and vice versa, each side's exits and risk riding along). If it beats the real run, the signal points the wrong way.",
+                      "Losses flipped to wins: the strategy's own entry times, with direction and exit chosen by hindsight (exit never later than the real one), through the same costs. The gap to the real run is what direction and exit timing left on the table.",
                       // Coded runs only: the synthesized null baseline is built from
                       // the panel's exits/risk, so anything the strategy file does
                       // internally (its own stops, targets, filters) is not in it.
@@ -422,14 +423,27 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
                     </thead>
                     <tbody>
                       {([
-                        ["Null signal (long)", result.baselines.null_long ?? null],
-                        ["Null signal (short)", result.baselines.null_short ?? null],
-                        ["Enter & hold (long)", result.baselines.hold_long ?? null],
-                        ["Enter & hold (short)", result.baselines.hold_short ?? null],
-                        ["Reversed signals", result.baselines.reversed ?? null],
-                      ] as [string, BaselineMetrics | null][])
-                        .filter((pair): pair is [string, BaselineMetrics] => pair[1] != null)
-                        .map(([label, m]) => {
+                        ["Null signal (long)",
+                          "Long entries replaced by an always-true condition; exits, risk and costs unchanged. Your edge over this row is what the entry signal adds.",
+                          result.baselines.null_long ?? null],
+                        ["Null signal (short)",
+                          "Short entries replaced by an always-true condition; exits, risk and costs unchanged. Your edge over this row is what the entry signal adds.",
+                          result.baselines.null_short ?? null],
+                        ["Enter & hold (long)",
+                          "One long position held for the whole window, no stops or session windows, same costs: the raw market, bought.",
+                          result.baselines.hold_long ?? null],
+                        ["Enter & hold (short)",
+                          "One short position held for the whole window, no stops or session windows, same costs: the raw market, sold.",
+                          result.baselines.hold_short ?? null],
+                        ["Reversed signals",
+                          "Signals executed the opposite way: long instead of short and vice versa.",
+                          result.baselines.reversed ?? null],
+                        ["Losses flipped to wins",
+                          "Same entry times, with direction and exit picked by hindsight.",
+                          result.baselines.oracle_entries ?? null],
+                      ] as [string, string, BaselineMetrics | null][])
+                        .filter((row): row is [string, string, BaselineMetrics] => row[2] != null)
+                        .map(([label, tip, m]) => {
                           // The main run's net P&L lives on summary, not metrics.
                           const delta = m.net_pnl == null ? null : s.net_pnl - m.net_pnl;
                           // Return % is the reverse: it lives on metrics (same source as the
@@ -437,7 +451,12 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
                           const dRet = m.return_pct == null ? null : result.metrics.return_pct - m.return_pct;
                           return (
                             <tr key={label}>
-                              <th className="bt-baselines-rowhead" scope="row">{label}</th>
+                              <th className="bt-baselines-rowhead" scope="row">
+                                <span className="bt-baselines-rowlabel">
+                                  <span>{label}</span>
+                                  <InfoTip title={label} text={tip} />
+                                </span>
+                              </th>
                               <td className={`bt-baselines-cell${m.net_pnl == null ? "" : ` ${toneOf(m.net_pnl)}`}`}>
                                 {m.net_pnl == null ? "–" : fmtPnl(m.net_pnl)}
                               </td>

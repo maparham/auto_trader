@@ -4904,6 +4904,11 @@ span.bt-leg-short { color: var(--neg); }
   font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-dim);
 }
+/* Row name plus its trailing ⓘ on one line; the icon keeps its size while the
+   name carries the head cell's uppercase tracking. */
+.bt-baselines-rowlabel { display: inline-flex; align-items: center; gap: 4px; }
+.bt-baselines-rowlabel .ind-info { flex-shrink: 0; }
+.bt-baselines-rowlabel .ind-info svg { width: 11px; height: 11px; }
 .bt-baselines-cell {
   padding: 7px 0 7px 16px; text-align: right;
   font-family: var(--mono); font-weight: 600; color: var(--text);

@@ -71,23 +71,64 @@ EMPTY_BASELINES: dict = {
     "null_long": None, "null_short": None,
     "hold_long": None, "hold_short": None,
     "reversed": None,
+    "oracle_entries": None,
 }
+
+# Kinds that are one whole run rather than a per-side pair: reversed flips the
+# strategy wholesale; oracle_entries mixes directions by design (the planner
+# corrects each trade's leg with hindsight), so a hedge can't arise from either.
+_SINGLE_RUN_KINDS = frozenset({"reversed", "oracle_entries"})
 
 
 def baseline_runs(kinds, long_on: bool, short_on: bool) -> list[tuple[str, str, str | None]]:
     """Expand requested kinds into concrete engine passes as
     (slot, kind, leg): null/hold run once per active side ("null_long", ...);
-    reversed is one run (leg None) — it flips the strategy wholesale, so a
-    hedge can't arise from it. De-dupes repeated kinds."""
+    reversed/oracle_entries are one run each (leg None). De-dupes
+    repeated kinds."""
     out: list[tuple[str, str, str | None]] = []
     for kind in dict.fromkeys(kinds):
-        if kind == "reversed":
-            out.append(("reversed", kind, None))
+        if kind in _SINGLE_RUN_KINDS:
+            out.append((kind, kind, None))
         else:
             for leg, on in (("long", long_on), ("short", short_on)):
                 if on:
                     out.append((f"{kind}_{leg}", kind, leg))
     return out
+
+
+def oracle_blob(
+    candles, trades, costs, *, res_seconds: int, on_progress=None,
+) -> dict:
+    """Plan and replay the oracle_entries baseline, returning the same
+    metrics-blob shape as the other baselines (compute_metrics merged with
+    summary()).
+
+    The plan reuses the run's own trade entries with direction and exit
+    corrected by hindsight (see engine/oracle.py). `candles` are core Candle
+    objects; `trades` the main run's engine trades. Replaying through the real
+    engine keeps the cost model, equity curve, and metrics identical to every
+    other baseline."""
+    from auto_trader.engine.metrics import compute_metrics
+    from auto_trader.engine.oracle import plan_corrected, replay_planned
+
+    slip = costs.slippage.value
+    plans = plan_corrected(
+        trades, candles, commission_per_side=costs.commissionPerSide,
+        spread=costs.spread, slippage=slip)
+    res = replay_planned(
+        plans, candles,
+        starting_cash=costs.startingCash,
+        commission_per_side=costs.commissionPerSide,
+        spread=costs.spread, slippage=slip,
+        slippage_atr_mult=costs.slippage.atrMult if costs.slippage.kind == "atr" else 0.0,
+        fin_long_daily_pct=costs.finLongDailyPct,
+        fin_short_daily_pct=costs.finShortDailyPct,
+        on_progress=on_progress,
+    )
+    return compute_metrics(
+        res.trades, res.equity, res.net_pnl, costs.startingCash, res_seconds,
+        financing_total=res.financing_total,
+    ) | res.summary()
 
 
 def side_request(req: ExprBacktestRequest, leg: str) -> ExprBacktestRequest:

@@ -361,7 +361,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         if req.baselines and req.codedStrategy:
             from auto_trader.api.baselines import (
                 EMPTY_BASELINES, baseline_runs, expr_request_from_structured,
-                hold_request, null_request, side_request)
+                hold_request, null_request, oracle_blob, side_request)
             from auto_trader.api.expr_exec import compiled_run
             # Each baseline is a full engine pass: relabel the stage so the
             # poller doesn't sit on the previous phase for their duration
@@ -411,6 +411,11 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                                 rev_req, candles, module, resolved_params,
                                 req.longRisk, req.shortRisk, dict(htf_candles),
                                 on_progress=on_progress,
+                                # Reversal flips legs, not series: the main
+                                # run's cache is exact (getattr: wrappers
+                                # expose no cache).
+                                indicator_cache=getattr(
+                                    strategy, "indicator_cache", None),
                             )
                             blob = compute_metrics(
                                 rev.trades, rev.equity, rev.net_pnl,
@@ -418,6 +423,15 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                                 resolution_seconds(req.resolution),
                                 financing_total=rev.financing_total,
                             ) | rev.summary()
+                        elif kind == "oracle_entries":
+                            # Hindsight-corrected replay of the run's own
+                            # entries (engine/oracle.py), through the real
+                            # engine under the same cost model.
+                            blob = oracle_blob(
+                                candles, result.trades, req.costs,
+                                res_seconds=resolution_seconds(req.resolution),
+                                on_progress=on_progress,
+                            )
                         else:
                             # Same on_progress as the main pass, so a user
                             # cancel reaches the baseline passes too (mirrors
@@ -425,6 +439,10 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                             _res, blob = await compiled_run(
                                 synth[kind](side_request(base_expr, leg)),
                                 on_progress=on_progress,
+                                # Baseline requests share req's candle DTOs
+                                # (model_copy is shallow), so the main run's
+                                # converted list is exact.
+                                candles=candles,
                             )
                         baselines_out[slot] = blob
                     except pr.BacktestCancelled:

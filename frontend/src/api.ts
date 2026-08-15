@@ -241,10 +241,19 @@ export interface BacktestAnalysis extends LegAnalysis {
 // n_trades / win_rate alongside return_pct / sharpe / max_drawdown_pct. Any
 // slot is null when that baseline could not be synthesized for the run (or
 // that side never ran).
-export type BaselineKind = "null" | "hold" | "reversed";
-/** What every baseline-aware request asks for (all kinds, always on); the
+// "oracle_entries" reuses the run's own entry times with direction and exit
+// corrected by hindsight (exit never later than the real one), replayed
+// through the same engine and cost model. A single run, not a per-side pair.
+export type BaselineKind = "null" | "hold" | "reversed" | "oracle_entries";
+/** What every baseline-aware single run asks for (all kinds, always on); the
  * backend expands null/hold into per-side runs. */
-export const BASELINE_KINDS: BaselineKind[] = ["null", "hold", "reversed"];
+export const BASELINE_KINDS: BaselineKind[] = [
+  "null", "hold", "reversed", "oracle_entries",
+];
+/** WFO folds keep the classic kinds: the WFO baseline worker has no oracle
+ * planner (per-fold plans are follow-up work), and an unknown kind there
+ * degrades to an error row. */
+export const WFO_BASELINE_KINDS: BaselineKind[] = ["null", "hold", "reversed"];
 export type BaselineMetrics = Record<string, number | null>;
 export interface Baselines {
   null_long?: BaselineMetrics | null;
@@ -252,6 +261,7 @@ export interface Baselines {
   hold_long?: BaselineMetrics | null;
   hold_short?: BaselineMetrics | null;
   reversed?: BaselineMetrics | null;
+  oracle_entries?: BaselineMetrics | null;
 }
 
 export interface BacktestResult {

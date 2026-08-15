@@ -1,7 +1,7 @@
 // Walk-forward optimization config, payload builder, and persistence.
 
 import {
-  BASELINE_KINDS,
+  WFO_BASELINE_KINDS,
   cancelWfoJob,
   pollWfoJob,
   submitWfoJob,
@@ -156,7 +156,7 @@ export function buildWalkForwardPayload(
     // hold baselines so Excess % is there without a per-run opt-in. One payload
     // object feeds both the expr and the structured walk-forward submissions;
     // the structured route accepts and ignores the field.
-    baselines: BASELINE_KINDS,
+    baselines: WFO_BASELINE_KINDS,
   };
 
   return { payload, comboTotal: combos.length, dropped };

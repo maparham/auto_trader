@@ -209,7 +209,7 @@ def test_no_trades_skips_baseline_synthesis(strategies):
     ))
     assert r.status_code == 200, r.text
     assert r.json()["summary"]["n_trades"] == 0
-    assert r.json()["baselines"] == {"null_long": None, "null_short": None, "hold_long": None, "hold_short": None, "reversed": None}
+    assert r.json()["baselines"] == {"null_long": None, "null_short": None, "hold_long": None, "hold_short": None, "reversed": None, "oracle_entries": None}
 
 
 def test_rules_mode_structured_request_accepts_baselines_field():
@@ -237,7 +237,7 @@ def test_baseline_failure_leaves_kind_none(strategies, monkeypatch):
     r = client.post("/api/backtest", json=coded_req(baselines=["null", "hold"]))
     assert r.status_code == 200, r.text
     assert r.json()["summary"]["n_trades"] >= 1
-    assert r.json()["baselines"] == {"null_long": None, "null_short": None, "hold_long": None, "hold_short": None, "reversed": None}
+    assert r.json()["baselines"] == {"null_long": None, "null_short": None, "hold_long": None, "hold_short": None, "reversed": None, "oracle_entries": None}
 
 
 def test_both_sides_strategy_gets_per_side_holds(strategies):

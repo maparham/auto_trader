@@ -254,6 +254,32 @@ def contains_series(node: Node) -> bool:
     return False
 
 
+def _constant_value(node: Node) -> bool:
+    """True when the subtree is a literal numeric expression (Num combined by
+    arithmetic only) — the same value at every bar, for any entry."""
+    if isinstance(node, Num):
+        return True
+    if isinstance(node, Unary):
+        return _constant_value(node.operand)
+    if isinstance(node, Binary):
+        return _constant_value(node.left) and _constant_value(node.right)
+    return False
+
+
+def is_constant(node: Node) -> bool:
+    """True when the condition's truth is bar- and entry-independent: literal
+    comparisons combined by and/or/not/chains only (the baselines' `1==1`).
+    Anything touching a candle, series, entry, pattern or cross is not
+    constant. Lets evaluate() answer once instead of per bar."""
+    if isinstance(node, Not):
+        return is_constant(node.operand)
+    if isinstance(node, (BoolOp, Chain)):
+        return all(is_constant(p) for p in node.parts)
+    if isinstance(node, Compare):
+        return _constant_value(node.left) and _constant_value(node.right)
+    return False
+
+
 def contains_bars_since_entry(node: Node) -> bool:
     if isinstance(node, BarsSinceEntry):
         return True

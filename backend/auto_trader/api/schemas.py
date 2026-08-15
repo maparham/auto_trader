@@ -372,7 +372,7 @@ class BacktestRequest(BaseModel):
     # 1==1 entries + the PANEL's exits/risk (code-internal logic not
     # mirrored); "hold" = enter-and-hold. Rules-mode requests and
     # sweep/walkforward jobs ignore the field.
-    baselines: list[Literal["null", "hold", "reversed"]] | None = None
+    baselines: list[Literal["null", "hold", "reversed", "oracle_entries"]] | None = None
     # Internal (never set by the UI): run the coded strategy mirror-imaged —
     # every signal's leg/side flipped, side-level risk/scaling swapped at the
     # engine. Synthesized by the "reversed" baseline passes; riding the request
@@ -451,7 +451,7 @@ class WalkForwardDTO(BaseModel):
     # "null" = 1==1 entries, same structure; "hold" = enter-and-hold. Coded
     # jobs synthesize the expr baseline on the sides each fold's winner
     # actually traded. Display-only.
-    baselines: list[Literal["null", "hold", "reversed"]] | None = None
+    baselines: list[Literal["null", "hold", "reversed", "oracle_entries"]] | None = None
 
     @field_validator("evalMode", mode="before")
     @classmethod
@@ -798,7 +798,7 @@ class ExprBacktestRequest(BaseModel):
     # 1==1, everything else identical; "hold" = 1==1 entries with exits, risk,
     # scaling, and mask stripped (enter once, hold to window end). The response
     # carries each requested baseline's metrics in `baselines`.
-    baselines: list[Literal["null", "hold", "reversed"]] | None = None
+    baselines: list[Literal["null", "hold", "reversed", "oracle_entries"]] | None = None
 
 
 class ExprSeriesRequest(BaseModel):

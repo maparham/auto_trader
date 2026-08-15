@@ -117,12 +117,21 @@ describe("BacktestPanel Baselines section", () => {
 
   it("marks the row labels as row headers, like the leg breakdown table", () => {
     renderPanel(resultWith({ baselines: BASELINES }));
-    const label = screen.getByText("Null signal (long)");
-    expect(label.tagName).toBe("TH");
-    expect(label.getAttribute("scope")).toBe("row");
+    // The label sits beside its ⓘ trigger inside the header cell.
+    const th = screen.getByText("Null signal (long)").closest("th");
+    expect(th).toBeTruthy();
+    expect(th!.getAttribute("scope")).toBe("row");
     // The corner cell carries no label and must not be announced.
     const corner = document.querySelector(".bt-baselines thead th.bt-baselines-rowhead");
     expect(corner?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  // Each row carries its own InfoTip ⓘ (aria-label "About <row name>"); the
+  // bubble opens on a 100ms delay, so await it — a sync query passes vacuously.
+  it("shows a per-row tooltip on the baseline's info icon", async () => {
+    renderPanel(resultWith({ baselines: BASELINES }));
+    fireEvent.mouseEnter(screen.getByLabelText("About Reversed signals"));
+    expect(await screen.findByText(/long instead of short and vice versa/i)).toBeTruthy();
   });
 
   it("deltas each baseline against the strategy's summary net P&L", () => {
@@ -134,6 +143,15 @@ describe("BacktestPanel Baselines section", () => {
     // 398.89 for the long null signal, minus 300 for the long buy & hold.
     expect(screen.getByText("+17.78%")).toBeTruthy();
     expect(screen.getByText("+116.67%")).toBeTruthy();
+  });
+
+  it("renders the hindsight-corrected entries row", () => {
+    renderPanel(resultWith({ baselines: {
+      ...BASELINES,
+      oracle_entries: { net_pnl: 20000, return_pct: 666.67, sharpe: 3.2, max_drawdown_pct: 5.0 },
+    } }));
+    expect(screen.getByText("Losses flipped to wins")).toBeTruthy();
+    expect(screen.getByText("666.67%")).toBeTruthy();
   });
 
   it("shows a placeholder delta when a baseline carries no net P&L", () => {

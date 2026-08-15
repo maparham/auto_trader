@@ -143,7 +143,8 @@ async def expr_backtest(req: ExprBacktestRequest):
         if req.baselines:
             from auto_trader.api.baselines import (
                 EMPTY_BASELINES, baseline_runs, hold_request, null_request,
-                reversed_request, side_request)
+                oracle_blob, reversed_request, side_request)
+            from auto_trader.api.sweep_apply import candle_from_dto
             synth = {"null": null_request, "hold": hold_request,
                      "reversed": reversed_request}
             baselines_out = dict(EMPTY_BASELINES)
@@ -157,11 +158,26 @@ async def expr_backtest(req: ExprBacktestRequest):
             # minus the costs, useless as a reference (see baselines.py).
             runs = baseline_runs(req.baselines, req.longEnabled, req.shortEnabled)
             pass_span[:] = [0, len(runs)]
+            # One DTO conversion shared by every baseline pass (the synthesized
+            # requests share req's candle DTOs — model_copy is shallow).
+            conv_candles = [candle_from_dto(c) for c in req.candles]
             for pass_idx, (slot, kind, leg) in enumerate(runs):
                 pass_span[0] = pass_idx
                 try:
+                    if kind == "oracle_entries":
+                        # Hindsight-corrected replay of the run's own entries
+                        # (engine/oracle.py), through the real engine over the
+                        # same candles and cost model.
+                        baselines_out[slot] = oracle_blob(
+                            conv_candles,
+                            result.trades, req.costs,
+                            res_seconds=resolution_seconds(req.resolution),
+                            on_progress=on_progress,
+                        )
+                        continue
                     breq = synth[kind](req if leg is None else side_request(req, leg))
-                    _res, m = await compiled_run(breq, on_progress=on_progress)
+                    _res, m = await compiled_run(breq, on_progress=on_progress,
+                                                 candles=conv_candles)
                     baselines_out[slot] = m
                 except pr.BacktestCancelled:
                     # A user cancel outranks best-effort: stop the remaining

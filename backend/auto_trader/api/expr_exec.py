@@ -214,6 +214,7 @@ async def compiled_run(
     r: ExprBacktestRequest,
     *,
     on_progress: Callable[[int, int], None] | None = None,
+    candles: list[Candle] | None = None,
 ) -> tuple[BacktestResult, dict]:
     """Parse r's rule groups, compile, and run the engine over r's candles.
 
@@ -222,8 +223,13 @@ async def compiled_run(
     and cancel are the CALLER's concern (the route owns the registry entry
     for the whole request, main pass + baselines): a `BacktestCancelled`
     raised by the callback propagates out of here unmapped.
+
+    `candles` short-circuits the DTO conversion when the caller already holds
+    the converted list for r.candles (baseline passes reuse the main run's) —
+    ~0.15s per pass on a 90k-bar request, nothing else changes.
     """
-    candles = [candle_from_dto(c) for c in r.candles]
+    if candles is None:
+        candles = [candle_from_dto(c) for c in r.candles]
     # I4 (expr): panel risk of kind atr/trailAtr and atr scaling spacing execute
     # against series["ATR_{length}"]. The expr wire format has no series field, so
     # we compute them here — without this the engine reads None and the position
