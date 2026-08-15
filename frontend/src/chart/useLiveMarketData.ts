@@ -898,6 +898,14 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       '<path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />' +
       '<circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" /></svg>';
     host.appendChild(pin);
+    // Vertical guide through the anchored bar, ending where the time axis (and
+    // the pin glyph) begins.
+    const line = document.createElement("div");
+    line.className = "center-pin-line";
+    line.style.cssText =
+      "position:absolute;top:0;width:0;border-left:1px dashed #2962ff;" +
+      "opacity:0.4;pointer-events:none;z-index:40;display:none;";
+    host.appendChild(line);
     let raf: number | null = null;
     const reposition = () => {
       raf = null;
@@ -906,16 +914,21 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       const ts = loadSettings().preserveCenterOnTfChange ? readCenterBarTs(c) : null;
       if (ts == null) {
         pin.style.display = "none";
+        line.style.display = "none";
         return;
       }
       const p = c.convertToPixel([{ timestamp: ts }], { paneId: "candle_pane", absolute: true });
       const x = (Array.isArray(p) ? p[0] : p)?.x;
       if (x == null || !isFinite(x)) {
         pin.style.display = "none";
+        line.style.display = "none";
         return;
       }
       pin.style.display = "block";
       pin.style.left = `${Math.round(x) - 7}px`;
+      line.style.display = "block";
+      line.style.left = `${Math.round(x)}px`;
+      line.style.bottom = `${c.getSize("x_axis_pane", "root")?.height ?? 0}px`;
     };
     // rAF-coalesced, except when the browser tab is hidden — rAF never fires
     // there (same gotcha as notify.ts) and the pin would wake up stale.
@@ -939,6 +952,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       c?.unsubscribeAction("onScroll", schedule);
       c?.unsubscribeAction("onZoom", schedule);
       pin.remove();
+      line.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
