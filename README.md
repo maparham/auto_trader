@@ -63,7 +63,7 @@ Smoke-test the data path, then run the server:
 
 ```bash
 python scripts/check_capital.py     # smoke test: auth + pull 5m candles
-uvicorn auto_trader.api.app:app --reload --port 8000
+uvicorn auto_trader.api.app:app --reload --reload-dir auto_trader --port 8000
 pytest                              # engine correctness tests
 ```
 

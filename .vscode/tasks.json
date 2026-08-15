@@ -4,7 +4,7 @@
     {
       "label": "Backend: uvicorn",
       "type": "shell",
-      "command": ".venv/bin/uvicorn auto_trader.api.app:app --reload --port 8000",
+      "command": ".venv/bin/uvicorn auto_trader.api.app:app --reload --reload-dir auto_trader --port 8000",
       "options": {
         "cwd": "${workspaceFolder}/backend"
       },
