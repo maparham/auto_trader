@@ -5,6 +5,7 @@ import {
   exprWarmupByRef,
   referencedInstanceIds,
   rewriteInstanceRefs,
+  synthesizeExprInstances,
 } from "./exprInstances";
 
 const LIVE = [
@@ -134,5 +135,41 @@ describe("rewriteInstanceRefs", () => {
   });
   it("identity mappings are a no-op", () => {
     expect(rewriteInstanceRefs("SLOPE.9 > 0", { SLOPE: "SLOPE" })).toBe("SLOPE.9 > 0");
+  });
+});
+
+describe("synthesizeExprInstances (legacy presets with no pane snapshot)", () => {
+  it("builds a SLOPE payload with the referenced lengths as calcParams", () => {
+    expect(synthesizeExprInstances(["SLOPE.9 > 0", "SLOPE.21 < 0"], new Set()))
+      .toEqual({ SLOPE: { type: "SLOPE", calcParams: [9, 21], extendData: {} } });
+  });
+
+  it("an accel ref adds its length and turns the companion on", () => {
+    expect(synthesizeExprInstances(["SLOPE.accel50 > 0"], new Set()))
+      .toEqual({ SLOPE: { type: "SLOPE", calcParams: [50], extendData: { showAccel: true } } });
+  });
+
+  it("infers the type from suffixed and numbered ids", () => {
+    expect(synthesizeExprInstances(["SLOPE#a1b.9 > 0", "ATR1.21 > 5"], new Set())).toEqual({
+      "SLOPE#a1b": { type: "SLOPE", calcParams: [9], extendData: {} },
+      ATR1: { type: "ATR", calcParams: [21], extendData: {} },
+    });
+  });
+
+  it("falls back to the type defaults when no output names a length", () => {
+    expect(synthesizeExprInstances(["SLOPE.accelfoo > 0"], new Set()))
+      .toEqual({ SLOPE: { type: "SLOPE", calcParams: [9], extendData: {} } });
+  });
+
+  it("skips excluded ids, unknown types and candle", () => {
+    expect(synthesizeExprInstances(
+      ["SLOPE.9 > 0", "FOO.9 > 0", "candle.close > 0", "ATR1.14 > 1"],
+      new Set(["SLOPE"]),
+    )).toEqual({ ATR1: { type: "ATR", calcParams: [14], extendData: {} } });
+  });
+
+  it("dedupes repeated lengths and keeps reference order", () => {
+    expect(synthesizeExprInstances(["SLOPE.21 > 0 and SLOPE.9 > 0 and SLOPE.accel21 < 1"], new Set()))
+      .toEqual({ SLOPE: { type: "SLOPE", calcParams: [21, 9], extendData: { showAccel: true } } });
   });
 });

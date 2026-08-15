@@ -79,6 +79,72 @@ export function referencedInstanceIds(rows: string[]): Set<string> {
   return out;
 }
 
+/** The pane type an instance id names, or null for an id no pane type mints.
+ * mintInstanceId builds ids as `<TYPE>`, `<TYPE><n>` (numbered later
+ * instances / the ATR function-name collision) or legacy `<TYPE>#<rand>`, so
+ * stripping the `#` suffix and any trailing digits recovers the type. */
+function instanceTypeOfId(id: string): string | null {
+  const base = id.split("#", 1)[0].replace(/\d+$/, "");
+  return EXPR_INSTANCE_TYPES.has(base) ? base : null;
+}
+
+/**
+ * Best-effort pane payloads for referenced instances that have NO stored
+ * snapshot — presets saved before the snapshot existed. The refs themselves
+ * are the only record left, and they carry more than the id: outputs are named
+ * by MA length (`SLOPE.9`, `SLOPE.accel50`, `ATR1.14`), so the lengths a rule
+ * reads — and whether the accel companion must be on — are recoverable. Every
+ * other setting takes the pane type's defaults: a default pane that computes
+ * the referenced series beats a load that lints every rule as unknown.
+ *
+ * `exclude` is the ids the stored snapshot already covers (exact settings
+ * always beat inference). An id whose type no pane mints is skipped — the
+ * editor lints it as unknown, and inventing a pane for it would hide that.
+ */
+export function synthesizeExprInstances(
+  rows: string[],
+  exclude: ReadonlySet<string>,
+): Record<string, ExprInstancePayload> {
+  const outputsById = new Map<string, Set<string>>();
+  for (const row of rows) {
+    for (const m of row.matchAll(REF)) {
+      if (m[1] === "candle" || exclude.has(m[1])) continue;
+      let set = outputsById.get(m[1]);
+      if (!set) outputsById.set(m[1], (set = new Set()));
+      set.add(m[2]);
+    }
+  }
+  const out: Record<string, ExprInstancePayload> = {};
+  for (const [id, outputs] of outputsById) {
+    const type = instanceTypeOfId(id);
+    if (!type) continue;
+    // Length-named outputs, in reference order. `accel<length>` selects the
+    // same MA line as its parent but requires the companion toggle.
+    const lengths: number[] = [];
+    let accel = false;
+    for (const output of outputs) {
+      let name = output;
+      if (type === "SLOPE" && /^accel\d+$/.test(output)) {
+        accel = true;
+        name = output.slice("accel".length);
+      }
+      if (!/^\d+$/.test(name)) continue;
+      const n = Number(name);
+      if (n > 0 && !lengths.includes(n)) lengths.push(n);
+    }
+    // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
+    // kept, as there), atrLength's 14 (single-length pane).
+    const calcParams =
+      type === "ATR" ? [lengths[0] ?? 14] : lengths.length ? lengths.slice(0, 5) : [9];
+    out[id] = {
+      type,
+      calcParams,
+      extendData: type === "SLOPE" && accel ? { showAccel: true } : {},
+    };
+  }
+  return out;
+}
+
 /**
  * The `indicators` map for a request whose rule rows are `rows`: every live pane
  * a row references, and nothing else. A referenced id that is NOT on the chart is

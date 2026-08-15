@@ -13,7 +13,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Tooltip from "./Tooltip";
 import { backtestConfigEquals, RULE_GROUP_KEYS, type BacktestConfig } from "../lib/backtestConfig";
-import { referencedInstanceIds } from "../lib/exprInstances";
+import { referencedInstanceIds, synthesizeExprInstances } from "../lib/exprInstances";
 import { backtestResultSignal, backtestRunCompletedSignal } from "../lib/signals";
 import {
   loadPresets, putPreset, renamePreset, deletePreset, newPreset,
@@ -220,16 +220,16 @@ export default function PresetsTab({
   // the coded store's panel exits for the rule groups and ignores the cfg's
   // entries entirely (BacktestButton's effCfg), so capturing the raw groups
   // would snapshot panes a coded run never reads and miss the ones it does.
-  const effectiveExprs = (): string[] => {
+  const effectiveExprs = (c: BacktestConfig = cfg): string[] => {
     // Keyed on MODE, not on codedStrategy: the file selection is remembered
     // across a switch back to rules mode, but only cfg.mode says which rows a
     // run ships (BacktestButton keys effCfg the same way).
-    const coded = cfg.mode === "coded" && cfg.codedStrategy
-      ? loadCodedCfg("backtest", cfg.codedStrategy)
+    const coded = c.mode === "coded" && c.codedStrategy
+      ? loadCodedCfg("backtest", c.codedStrategy)
       : null;
     const groups = coded
       ? [coded.longExit, coded.shortExit]
-      : RULE_GROUP_KEYS.map((k) => cfg[k]);
+      : RULE_GROUP_KEYS.map((k) => c[k]);
     return groups.flatMap((g) => g.rules.map((r) => r.expr ?? ""));
   };
   /** The snapshot to store, given the preset's previous one. No refs clears it;
@@ -481,9 +481,24 @@ export default function PresetsTab({
     let cfgToLoad = next ?? p.cfg;
     // Recreate the panes the rules reference BEFORE handing the cfg over — the
     // rewritten refs must point at panes that already exist, or the editor
-    // lints them as unknown and a run ships no settings for them.
-    if (stored.exprInstances && applyExprInstances)
-      cfgToLoad = applyExprInstances(stored.exprInstances, cfgToLoad);
+    // lints them as unknown and a run ships no settings for them. Referenced
+    // ids the snapshot doesn't cover (legacy presets predate it) get default
+    // panes synthesized from the refs themselves — the run then has real
+    // panes to read instead of linting every rule as unknown. The synthesis
+    // walks the rows the RUN ships (effectiveExprs' substitution), reading
+    // the coded store restoreCodedParams just rewrote.
+    if (applyExprInstances) {
+      const snapshot = stored.exprInstances ?? {};
+      const instances = {
+        ...synthesizeExprInstances(
+          effectiveExprs(cfgToLoad),
+          new Set(Object.keys(snapshot)),
+        ),
+        ...snapshot,
+      };
+      if (Object.keys(instances).length)
+        cfgToLoad = applyExprInstances(instances, cfgToLoad);
+    }
     onLoad(cfgToLoad);
     onActiveChange(name);
   }

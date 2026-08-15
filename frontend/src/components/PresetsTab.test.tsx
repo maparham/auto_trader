@@ -297,7 +297,7 @@ describe("PresetsTab expr instance snapshot", () => {
     expect(onLoad).toHaveBeenCalledWith(rewritten);
   });
 
-  it("loading a preset without a snapshot never calls the apply callback", () => {
+  it("loading a preset with no instance refs never calls the apply callback", () => {
     putPreset(newPreset("Old", defaultBacktestConfig(), { symbol: "T", timeframe: "M" }, 1));
     const applyExprInstances = vi.fn(() => dirtyCfg());
     const { onLoad } = setup({ applyExprInstances });
@@ -305,6 +305,41 @@ describe("PresetsTab expr instance snapshot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load" }));
     expect(applyExprInstances).not.toHaveBeenCalled();
     expect(onLoad).toHaveBeenCalledWith(defaultBacktestConfig());
+  });
+
+  // A preset saved before the snapshot existed still references panes; the
+  // refs themselves say enough (type + lengths) to recreate default panes
+  // instead of loading rules that lint as unknown.
+  it("loading a legacy refs preset synthesizes default panes from the refs", () => {
+    const stored = refCfg("SLOPE#a1.9 > 0 and SLOPE#a1.accel21 > 0");
+    putPreset(newPreset("Legacy", stored, { symbol: "T", timeframe: "M" }, 1));
+    const applyExprInstances = vi.fn((_i, c: BacktestConfig) => c);
+    setup({ applyExprInstances });
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Legacy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(applyExprInstances).toHaveBeenCalledWith(
+      { "SLOPE#a1": { type: "SLOPE", calcParams: [9, 21], extendData: { showAccel: true } } },
+      stored,
+    );
+  });
+
+  it("the stored snapshot wins over synthesis for the ids it covers", () => {
+    const stored = { ...refCfg(), shortEntry: { combine: "all" as const, rules: [{ expr: "ATR1.14 > 1" }] } };
+    putPreset({
+      ...newPreset("Mixed", stored, { symbol: "T", timeframe: "M" }, 1),
+      exprInstances: { "SLOPE#a1": PAYLOAD },
+    });
+    const applyExprInstances = vi.fn((_i, c: BacktestConfig) => c);
+    setup({ applyExprInstances });
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Mixed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(applyExprInstances).toHaveBeenCalledWith(
+      {
+        "SLOPE#a1": PAYLOAD,
+        ATR1: { type: "ATR", calcParams: [14], extendData: {} },
+      },
+      stored,
+    );
   });
 });
 
