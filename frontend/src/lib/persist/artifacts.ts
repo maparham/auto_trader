@@ -10,6 +10,7 @@ import type { BacktestPeriod } from "../backtestPeriods";
 import { PREFIX, ns, root, load, save, saveLocal, removeKeyEverywhere } from "./core";
 import { emitLayoutChanged } from "./layoutEvents";
 import { downsampleEquity, EQUITY_PERSIST_CAP } from "../equityDownsample";
+import { historyCapture } from "../history";
 
 // --- drawings (overlays the user drew) ---------------------------------------
 
@@ -31,6 +32,7 @@ export function loadDrawings(scope: string, epic: string): SavedOverlay[] {
   return load<SavedOverlay[]>(drawingsKey(scope, epic), []);
 }
 export function saveDrawings(scope: string, epic: string, list: SavedOverlay[]): void {
+  historyCapture(scope, drawingsKey(scope, epic), list);
   save(drawingsKey(scope, epic), list);
   emitLayoutChanged(scope);
 }
@@ -178,6 +180,7 @@ export function loadIndicators(scope: string): IndicatorInstance[] {
   );
 }
 export function saveIndicators(scope: string, list: IndicatorInstance[]): void {
+  historyCapture(scope, indicatorsKey(scope), list);
   save(indicatorsKey(scope), list);
   emitLayoutChanged(scope);
 }
@@ -372,6 +375,7 @@ export function loadIndicatorConfigs(scope: string): Record<string, SavedIndicat
 export function saveIndicatorConfig(scope: string, id: string, cfg: SavedIndicatorConfig): void {
   const all = loadIndicatorConfigs(scope);
   all[id] = cfg;
+  historyCapture(scope, indicatorCfgKey(scope), all);
   save(indicatorCfgKey(scope), all);
   emitLayoutChanged(scope);
 }
@@ -386,6 +390,7 @@ export function saveIndicatorVisible(scope: string, id: string, visible: boolean
   const all = loadIndicatorConfigs(scope);
   const prev = all[id];
   all[id] = { ...prev, visible, extendData: { ...prev?.extendData, userVisible: visible } };
+  historyCapture(scope, indicatorCfgKey(scope), all);
   save(indicatorCfgKey(scope), all);
   emitLayoutChanged(scope);
 }
@@ -401,6 +406,7 @@ export function patchIndicatorExtend(
   const all = loadIndicatorConfigs(scope);
   const prev = all[id];
   all[id] = { ...prev, extendData: { ...prev?.extendData, ...patch } };
+  historyCapture(scope, indicatorCfgKey(scope), all);
   save(indicatorCfgKey(scope), all);
   emitLayoutChanged(scope);
 }
@@ -411,6 +417,7 @@ export function deleteIndicatorConfig(scope: string, id: string): void {
   const all = loadIndicatorConfigs(scope);
   if (id in all) {
     delete all[id];
+    historyCapture(scope, indicatorCfgKey(scope), all);
     save(indicatorCfgKey(scope), all);
     emitLayoutChanged(scope);
   }
@@ -433,6 +440,7 @@ export function loadAvwapAnchor(scope: string, epic: string, id: string): number
   return 0;
 }
 export function saveAvwapAnchor(scope: string, epic: string, id: string, anchorMs: number): void {
+  historyCapture(scope, avwapKey(scope, epic, id), anchorMs);
   save(avwapKey(scope, epic, id), anchorMs);
   emitLayoutChanged(scope);
 }

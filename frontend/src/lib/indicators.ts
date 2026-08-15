@@ -52,6 +52,7 @@ import {
   type IndicatorInstance,
   type SavedIndicatorConfig,
 } from "./persist";
+import type { ChartController } from "./chartController";
 
 // v10 replaced v9's chart.getIndicatorByPaneId(paneId, name) with a flat
 // filter-based getIndicators({ paneId, name }). This helper restores the single
@@ -407,6 +408,10 @@ function registerInstanceTemplate(chart: Chart, type: string, id: string): boole
     return true;
   }
   if (id === type) return getSupportedIndicators().includes(type);
+  // A template registered earlier this session (the instance is being torn down
+  // and rebuilt, e.g. by undo's syncIndicatorsFromStorage) needs no live donor:
+  // re-registration would only overwrite it with an identical clone.
+  if (getSupportedIndicators().includes(id)) return true;
   const tmpl = cloneTemplateFromLive(chart, type);
   if (!tmpl) return false;
   registerIndicator({ ...tmpl, name: id } as IndicatorTemplate);
@@ -967,6 +972,71 @@ export function hydrateIndicators(chart: Chart, scope: string, epic: string): In
     if (applyIndicator(chart, scope, epic, inst, { rehydrate: true })) restored.push(inst);
   }
   return restored;
+}
+
+/** Pure half of syncIndicatorsFromStorage: which live instances to drop, which to
+ *  build (either new or rebuild on config change), and which to keep as-is.
+ *  Splitting build from keep avoids unnecessary pane height/order resets and
+ *  restores the sidebar hide-all state correctly. */
+export function diffIndicatorSync(
+  storedIds: string[],
+  liveIds: string[],
+  rebuildIds: ReadonlySet<string>,
+): { remove: string[]; build: string[]; keep: string[] } {
+  const stored = new Set(storedIds);
+  const live = new Set(liveIds);
+  return {
+    remove: liveIds.filter((id) => !stored.has(id)),
+    build: storedIds.filter((id) => !live.has(id) || rebuildIds.has(id)),
+    keep: storedIds.filter((id) => live.has(id) && !rebuildIds.has(id)),
+  };
+}
+
+/** Reconcile the live chart to the (just-restored) stored indicator state, in
+ *  place — the undo path must never take App's setHydrateEpoch grid remount.
+ *  Callers run inside withHistorySuppressed: removeIndicatorById persists a
+ *  config delete, and the rebuild's own writes must not re-enter history.
+ *  Kept instances preserve pane order and heights; rebuilt instances preserve
+ *  their configs. After rebuild, visibility and hide-all state are re-asserted. */
+export function syncIndicatorsFromStorage(
+  chart: Chart,
+  controller: ChartController,
+  scope: string,
+  epic: string,
+  resolution: string,
+  rebuildIds: ReadonlySet<string>,
+): void {
+  const stored = loadIndicators(scope);
+  const live = controller.indicators.value;
+  const { remove, build, keep } = diffIndicatorSync(
+    stored.map((s) => s.id),
+    live.map((l) => l.id),
+    rebuildIds,
+  );
+  for (const id of remove) removeIndicatorById(chart, scope, id);
+  const next: IndicatorInstance[] = [];
+  for (const inst of stored) {
+    if (keep.includes(inst.id)) {
+      // Kept as-is: no teardown, no rebuild, pane order/height preserved.
+      next.push(inst);
+    } else if (build.includes(inst.id)) {
+      // Tear down any live pane for this id first (removeIndicator, NOT
+      // removeIndicatorById — the restored config must survive), then rebuild
+      // from storage exactly like a reload.
+      const panes = getIndicatorsByPane(chart);
+      for (const [paneId, inds] of panes ?? []) {
+        if (inds.has(inst.id)) {
+          chart.removeIndicator({ paneId, name: inst.id });
+          break;
+        }
+      }
+      if (applyIndicator(chart, scope, epic, inst, { rehydrate: true })) next.push(inst);
+    }
+  }
+  controller.indicators.set(next);
+  // Re-assert visibility and hide-all state after rebuilds, so the sidebar
+  // hide-all switch persists across undo.
+  applyIndicatorVisibility(chart, resolution, controller.indicatorsHidden.value);
 }
 
 /** The indicator instance with this id, wherever it sits. Instance ids are

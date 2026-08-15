@@ -13,6 +13,7 @@ import { OverlayManager } from "./overlays";
 import { Signal } from "./signals";
 import type { IndicatorInstance } from "./persist";
 import { loadScalePriceOnly, loadSnapshotMeta } from "./persist";
+import { HistoryManager, registerHistory } from "./history";
 
 // The selected indicator (TradingView-style): clicking an indicator's curve or its
 // legend row selects it (hollow handles appear); clicking empty chart space
@@ -179,11 +180,20 @@ export class ChartController {
   // by making the call directly — the move still needs to happen.
   programmaticMove: (<T>(fn: () => T, opts?: { layout?: boolean }) => T) | null = null;
 
+  // This cell's undo/redo stacks (Ctrl+Z / Ctrl+Shift+Z on the focused cell).
+  // Assigned in the constructor — `scope` isn't available during field init.
+  // Registered there too so captures reach it from the persistence choke points;
+  // ChartCore unregisters it on unmount.
+  readonly history: HistoryManager;
+
   constructor(cellId: string, scope: string) {
     this.cellId = cellId;
     this.scope = scope;
     this.overlays.setScope(scope);
     this.readOnly.set(loadSnapshotMeta(scope) != null);
     this.scalePriceOnly.set(loadScalePriceOnly(scope));
+    this.history = new HistoryManager(scope);
+    // Snapshot cells are frozen study copies: no mutations, no history.
+    if (!this.readOnly.value) registerHistory(scope, this.history);
   }
 }

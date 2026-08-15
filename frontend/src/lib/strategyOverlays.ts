@@ -20,6 +20,7 @@ import {
   saveIndicatorConfig,
   saveIndicators,
 } from "./persist";
+import { withHistorySuppressed } from "./history";
 
 export type { ChartOverlaySpec };
 
@@ -59,48 +60,50 @@ export function syncStrategyOverlays(
   current: IndicatorInstance[],
   desired: DesiredOverlay[],
 ): IndicatorInstance[] {
-  const configs = loadIndicatorConfigs(scope);
-  const isManaged = (inst: IndicatorInstance) =>
-    configs[inst.id]?.extendData?.strategyOverlay === true;
+  return withHistorySuppressed(() => {
+    const configs = loadIndicatorConfigs(scope);
+    const isManaged = (inst: IndicatorInstance) =>
+      configs[inst.id]?.extendData?.strategyOverlay === true;
 
-  const managedByType = new Map<string, IndicatorInstance>();
-  for (const inst of current) if (isManaged(inst)) managedByType.set(inst.type, inst);
+    const managedByType = new Map<string, IndicatorInstance>();
+    for (const inst of current) if (isManaged(inst)) managedByType.set(inst.type, inst);
 
-  let next = current;
-  const wantedTypes = new Set(desired.map((d) => d.indicator));
+    let next = current;
+    const wantedTypes = new Set(desired.map((d) => d.indicator));
 
-  // Drop managed instances whose type is no longer desired.
-  for (const inst of current) {
-    if (!isManaged(inst) || wantedTypes.has(inst.type)) continue;
-    removeIndicatorById(chart, scope, inst.id);
-    managedByType.delete(inst.type);
-    next = next.filter((i) => i.id !== inst.id);
-  }
+    // Drop managed instances whose type is no longer desired.
+    for (const inst of current) {
+      if (!isManaged(inst) || wantedTypes.has(inst.type)) continue;
+      removeIndicatorById(chart, scope, inst.id);
+      managedByType.delete(inst.type);
+      next = next.filter((i) => i.id !== inst.id);
+    }
 
-  for (const d of desired) {
-    const existing = managedByType.get(d.indicator);
-    if (existing) {
-      // Retune in place — overrideIndicator against the pane it lives on.
-      const live = getIndicatorById(chart, existing.id);
-      if (live) {
-        chart.overrideIndicator({
-          paneId: live.paneId,
-          name: existing.id,
+    for (const d of desired) {
+      const existing = managedByType.get(d.indicator);
+      if (existing) {
+        // Retune in place — overrideIndicator against the pane it lives on.
+        const live = getIndicatorById(chart, existing.id);
+        if (live) {
+          chart.overrideIndicator({
+            paneId: live.paneId,
+            name: existing.id,
+            calcParams: d.calcParams,
+          });
+        }
+        saveIndicatorConfig(scope, existing.id, {
+          ...configs[existing.id],
           calcParams: d.calcParams,
         });
+        continue;
       }
-      saveIndicatorConfig(scope, existing.id, {
-        ...configs[existing.id],
-        calcParams: d.calcParams,
+      const inst = addIndicatorInstance(chart, scope, epic, d.indicator, {
+        config: { calcParams: d.calcParams, extendData: { strategyOverlay: true } },
       });
-      continue;
+      if (inst) next = [...next, inst];
     }
-    const inst = addIndicatorInstance(chart, scope, epic, d.indicator, {
-      config: { calcParams: d.calcParams, extendData: { strategyOverlay: true } },
-    });
-    if (inst) next = [...next, inst];
-  }
 
-  if (next !== current) saveIndicators(scope, next);
-  return next;
+    if (next !== current) saveIndicators(scope, next);
+    return next;
+  });
 }

@@ -45,6 +45,7 @@ import {
   type IndicatorIdentity,
 } from "./templateSignatures";
 import { withLayoutEventsSuppressed } from "./persist/layoutEvents";
+import { withHistorySuppressed } from "./history";
 
 // Snapshot a cell's current layout for `epic` into a template. Reads the persisted
 // per-cell stores (authoritative), plus each AVWAP instance's separately-stored
@@ -147,56 +148,58 @@ export function applySymbolTemplate(
   // Suppress layout-change events for the whole merge: apply mints NEW instance
   // ids, so letting these writes fire would make auto-save capture a re-id'd copy
   // and churn the stored template on every apply/auto-apply.
-  withLayoutEventsSuppressed(() => {
-  // --- indicators: add what's missing, never touch what exists ---------------
-  const existing = loadIndicators(scope);
-  const existingCfgs = loadIndicatorConfigs(scope);
-  const have = new Set(
-    existing.map((inst) =>
-      savedIndicatorSignature(inst, existingCfgs[inst.id], loadAvwapAnchor(scope, epic, inst.id)),
-    ),
-  );
+  withHistorySuppressed(() => {
+    withLayoutEventsSuppressed(() => {
+    // --- indicators: add what's missing, never touch what exists ---------------
+    const existing = loadIndicators(scope);
+    const existingCfgs = loadIndicatorConfigs(scope);
+    const have = new Set(
+      existing.map((inst) =>
+        savedIndicatorSignature(inst, existingCfgs[inst.id], loadAvwapAnchor(scope, epic, inst.id)),
+      ),
+    );
 
-  const added: IndicatorInstance[] = [];
-  for (const inst of t.indicators) {
-    const sig = savedIndicatorSignature(inst, t.indicatorConfigs[inst.id], t.avwapAnchors[inst.id]);
-    if (have.has(sig)) continue; // an equivalent indicator is already on the chart
-    have.add(sig); // two identical template rows still add only once
-    // Fresh id in the target cell — the template's id may collide with an
-    // existing instance (ids are the bare type name or a random suffix).
-    const addedInst = addTemplateIndicator(chart, controller, scope, epic, t, inst);
-    if (addedInst) added.push(addedInst);
-  }
-  if (added.length > 0) {
-    const full = [...existing, ...added];
-    saveIndicators(scope, full);
-    controller.indicators.set(full);
-    // A template that brings in any sub-pane indicator auto-expands collapsed bottom
-    // panes (mirrors a manual add) so the applied layout is actually visible.
-    if (controller.subPanesHidden.value && added.some((a) => isSubPaneIndicator(a.type)))
-      controller.subPanesHidden.set(false);
-  }
+    const added: IndicatorInstance[] = [];
+    for (const inst of t.indicators) {
+      const sig = savedIndicatorSignature(inst, t.indicatorConfigs[inst.id], t.avwapAnchors[inst.id]);
+      if (have.has(sig)) continue; // an equivalent indicator is already on the chart
+      have.add(sig); // two identical template rows still add only once
+      // Fresh id in the target cell — the template's id may collide with an
+      // existing instance (ids are the bare type name or a random suffix).
+      const addedInst = addTemplateIndicator(chart, controller, scope, epic, t, inst);
+      if (addedInst) added.push(addedInst);
+    }
+    if (added.length > 0) {
+      const full = [...existing, ...added];
+      saveIndicators(scope, full);
+      controller.indicators.set(full);
+      // A template that brings in any sub-pane indicator auto-expands collapsed bottom
+      // panes (mirrors a manual add) so the applied layout is actually visible.
+      if (controller.subPanesHidden.value && added.some((a) => isSubPaneIndicator(a.type)))
+        controller.subPanesHidden.set(false);
+    }
 
-  // --- drawings: union by geometry, never remove ------------------------------
-  const existingDrawings = loadDrawings(scope, epic);
-  const haveDrawings = new Set(existingDrawings.map(drawingSignature));
-  const newDrawings = t.drawings.filter((d) => {
-    const sig = drawingSignature(d);
-    if (haveDrawings.has(sig)) return false;
-    haveDrawings.add(sig);
-    return true;
-  });
-  if (newDrawings.length > 0) {
-    saveDrawings(scope, epic, [...existingDrawings, ...newDrawings]);
-    // Rebuild the live overlays from the union we just wrote. Skipped when
-    // nothing was added — a rehydrate re-mints overlay ids and drops selection,
-    // so a no-op Apply must not churn the chart.
-    controller.overlays.rehydrate();
-    // A template drawing can be anchored before the loaded history window —
-    // page the older bars in (ChartCore's coverage walk) or it renders clamped
-    // to the first loaded bar with the wrong slope.
-    controller.coverDrawingAnchors?.();
-  }
+    // --- drawings: union by geometry, never remove ------------------------------
+    const existingDrawings = loadDrawings(scope, epic);
+    const haveDrawings = new Set(existingDrawings.map(drawingSignature));
+    const newDrawings = t.drawings.filter((d) => {
+      const sig = drawingSignature(d);
+      if (haveDrawings.has(sig)) return false;
+      haveDrawings.add(sig);
+      return true;
+    });
+    if (newDrawings.length > 0) {
+      saveDrawings(scope, epic, [...existingDrawings, ...newDrawings]);
+      // Rebuild the live overlays from the union we just wrote. Skipped when
+      // nothing was added — a rehydrate re-mints overlay ids and drops selection,
+      // so a no-op Apply must not churn the chart.
+      controller.overlays.rehydrate();
+      // A template drawing can be anchored before the loaded history window —
+      // page the older bars in (ChartCore's coverage walk) or it renders clamped
+      // to the first loaded bar with the wrong slope.
+      controller.coverDrawingAnchors?.();
+    }
+    });
   });
 }
 
@@ -216,57 +219,59 @@ export function replaceSymbolTemplate(
   epic: string,
   t: SymbolTemplate,
 ): void {
-  withLayoutEventsSuppressed(() => {
-    // --- indicators: keep matched, remove extra, add missing -----------------
-    const existing = loadIndicators(scope);
-    const existingCfgs = loadIndicatorConfigs(scope);
-    // Multiset of wanted looks: signature -> template instances not yet matched
-    // (two identical template rows need two live instances).
-    const want = new Map<string, IndicatorInstance[]>();
-    for (const inst of t.indicators) {
-      const sig = savedIndicatorSignature(inst, t.indicatorConfigs[inst.id], t.avwapAnchors[inst.id]);
-      const q = want.get(sig) ?? [];
-      q.push(inst);
-      want.set(sig, q);
-    }
-    const kept: IndicatorInstance[] = [];
-    for (const inst of existing) {
-      const sig = savedIndicatorSignature(inst, existingCfgs[inst.id], loadAvwapAnchor(scope, epic, inst.id));
-      const q = want.get(sig);
-      if (q && q.length > 0) {
-        q.shift();
-        kept.push(inst);
-      } else {
-        removeIndicatorById(chart, scope, inst.id);
-        // Don't leave a placed anchor behind under a dead id for this epic.
-        if (inst.type === "AVWAP") saveAvwapAnchor(scope, epic, inst.id, 0);
+  withHistorySuppressed(() => {
+    withLayoutEventsSuppressed(() => {
+      // --- indicators: keep matched, remove extra, add missing -----------------
+      const existing = loadIndicators(scope);
+      const existingCfgs = loadIndicatorConfigs(scope);
+      // Multiset of wanted looks: signature -> template instances not yet matched
+      // (two identical template rows need two live instances).
+      const want = new Map<string, IndicatorInstance[]>();
+      for (const inst of t.indicators) {
+        const sig = savedIndicatorSignature(inst, t.indicatorConfigs[inst.id], t.avwapAnchors[inst.id]);
+        const q = want.get(sig) ?? [];
+        q.push(inst);
+        want.set(sig, q);
       }
-    }
-    const added: IndicatorInstance[] = [];
-    for (const q of want.values()) {
-      for (const inst of q) {
-        const addedInst = addTemplateIndicator(chart, controller, scope, epic, t, inst);
-        if (addedInst) added.push(addedInst);
+      const kept: IndicatorInstance[] = [];
+      for (const inst of existing) {
+        const sig = savedIndicatorSignature(inst, existingCfgs[inst.id], loadAvwapAnchor(scope, epic, inst.id));
+        const q = want.get(sig);
+        if (q && q.length > 0) {
+          q.shift();
+          kept.push(inst);
+        } else {
+          removeIndicatorById(chart, scope, inst.id);
+          // Don't leave a placed anchor behind under a dead id for this epic.
+          if (inst.type === "AVWAP") saveAvwapAnchor(scope, epic, inst.id, 0);
+        }
       }
-    }
-    const full = [...kept, ...added];
-    saveIndicators(scope, full);
-    controller.indicators.set(full);
-    if (controller.subPanesHidden.value && added.some((a) => isSubPaneIndicator(a.type)))
-      controller.subPanesHidden.set(false);
+      const added: IndicatorInstance[] = [];
+      for (const q of want.values()) {
+        for (const inst of q) {
+          const addedInst = addTemplateIndicator(chart, controller, scope, epic, t, inst);
+          if (addedInst) added.push(addedInst);
+        }
+      }
+      const full = [...kept, ...added];
+      saveIndicators(scope, full);
+      controller.indicators.set(full);
+      if (controller.subPanesHidden.value && added.some((a) => isSubPaneIndicator(a.type)))
+        controller.subPanesHidden.set(false);
 
-    // --- drawings: the epic's set becomes exactly the template's -------------
-    // Order-sensitive signature compare skips the rewrite (and the id-minting
-    // rehydrate, which would drop selection) when the look is already exact.
-    const existingDrawings = loadDrawings(scope, epic);
-    const same =
-      existingDrawings.length === t.drawings.length &&
-      existingDrawings.every((d, i) => drawingSignature(d) === drawingSignature(t.drawings[i]));
-    if (!same) {
-      saveDrawings(scope, epic, t.drawings);
-      controller.overlays.rehydrate();
-      controller.coverDrawingAnchors?.();
-    }
+      // --- drawings: the epic's set becomes exactly the template's -------------
+      // Order-sensitive signature compare skips the rewrite (and the id-minting
+      // rehydrate, which would drop selection) when the look is already exact.
+      const existingDrawings = loadDrawings(scope, epic);
+      const same =
+        existingDrawings.length === t.drawings.length &&
+        existingDrawings.every((d, i) => drawingSignature(d) === drawingSignature(t.drawings[i]));
+      if (!same) {
+        saveDrawings(scope, epic, t.drawings);
+        controller.overlays.rehydrate();
+        controller.coverDrawingAnchors?.();
+      }
+    });
   });
 }
 

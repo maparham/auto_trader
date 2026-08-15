@@ -90,6 +90,8 @@ import {
   loadSnapshotMeta,
   deleteSnapshotMeta,
   loadFavoriteResolutions,
+  loadAvwapAnchor,
+  type IndicatorInstance,
   type SnapshotMeta,
   type AlertCondition,
   type AlertTrigger,
@@ -100,7 +102,14 @@ import {
   expandSubPanes,
   hydrateIndicators,
   getIndicatorsByPane,
+  syncIndicatorsFromStorage,
 } from "./lib/indicators";
+import {
+  registerHistory,
+  unregisterHistory,
+  partitionHistorySuffixes,
+  withHistorySuppressed,
+} from "./lib/history";
 import { onLayoutChanged } from "./lib/persist/layoutEvents";
 import { scheduleAutoSave, cancelAutoSave } from "./lib/templateAutosave";
 import {
@@ -1268,6 +1277,79 @@ export default function ChartCore({
   epicRef.current = symbol.epic;
   const resRef = useRef(period.resolution);
   resRef.current = period.resolution;
+
+  // --- undo/redo wiring (controller.history) ----------------------------------
+  // Placed here rather than beside the controller memo so the applier's reads of
+  // epicRef/resRef sit after their declarations.
+  //
+  // Unregister on unmount/remount so a stale controller never receives captures.
+  // The re-register on mount is not redundant: the constructor registers, but
+  // StrictMode double-invokes the useMemo, so the DISCARDED controller's manager
+  // can be the one left in the registry (captures would then route to an orphan
+  // and undo would do nothing in dev). Map.set is idempotent, and the identity
+  // guard inside unregisterHistory keeps the cleanup correct either way. It also
+  // covers Unlock: a cell constructed read-only never registered, and this effect
+  // re-runs (readOnly is re-asserted) once snapshotMeta is cleared.
+  useEffect(() => {
+    if (!controller.readOnly.value) registerHistory(scope, controller.history);
+    return () => unregisterHistory(scope, controller.history);
+  }, [controller, scope, snapView]);
+
+  // Live-apply restored storage after undo/redo. The applier receives the step's
+  // deltas; storage is already restored, so this only reconciles the live chart.
+  // Runs inside withHistorySuppressed: the reconcile's side-writes
+  // (removeIndicatorById's config delete) must not re-enter history.
+  useEffect(() => {
+    controller.history.setApplier((deltas) => {
+      const chart = chartRef.current;
+      if (!chart) return; // storage is restored; next rehydrate converges
+      const epic = epicRef.current;
+      const { drawings, indicators, avwapIds } = partitionHistorySuffixes(
+        deltas.map((d) => d.suffix),
+        epic,
+      );
+      // Which indicator instances need a live rebuild: ids whose config changed,
+      // plus ids whose position or type changed in an id-set-equal list delta
+      // (membership adds/removes are handled by the sync itself).
+      const rebuild = new Set<string>();
+      for (const d of deltas) {
+        if (d.suffix === "indicatorConfig") {
+          const a = (d.before ?? {}) as Record<string, unknown>;
+          const b = (d.after ?? {}) as Record<string, unknown>;
+          for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
+            if (JSON.stringify(a[id]) !== JSON.stringify(b[id])) rebuild.add(id);
+          }
+        } else if (d.suffix === "indicators") {
+          const a = (d.before ?? []) as IndicatorInstance[];
+          const b = (d.after ?? []) as IndicatorInstance[];
+          const posA = new Map(a.map((x, i) => [x.id, `${i}:${x.type}`]));
+          for (const [i, x] of b.entries()) {
+            const pa = posA.get(x.id);
+            if (pa !== undefined && pa !== `${i}:${x.type}`) rebuild.add(x.id);
+          }
+        }
+      }
+      withHistorySuppressed(() => {
+        if (drawings) {
+          overlays.rehydrate();
+          controller.coverDrawingAnchors?.();
+        }
+        if (indicators) {
+          syncIndicatorsFromStorage(chart, controller, scope, epic, resRef.current, rebuild);
+        }
+        for (const id of avwapIds) {
+          chart.overrideIndicator({ name: id, calcParams: [loadAvwapAnchor(scope, epic, id)] });
+        }
+      });
+    });
+    return () => controller.history.setApplier(null);
+  }, [controller, scope, overlays]);
+
+  // Cross-epic undo is out of scope: switching the cell's symbol clears history.
+  useEffect(() => {
+    controller.history.clear();
+  }, [controller, symbol.epic]);
+
   // Active broker, readable from once-mounted callbacks (scroll-back) without re-subscribing.
   const brokerIdRef = useRef(brokerId);
   brokerIdRef.current = brokerId;
@@ -3535,6 +3617,26 @@ export default function ChartCore({
     return () => document.removeEventListener("keydown", onKey);
   }, [focused, deleteSelectedDrawing, overlays]);
 
+  // Ctrl/Cmd+Z fallback at document level: same rationale as the Delete fallback
+  // above — the user just clicked a sidebar/toolbar button, focus left the wrap,
+  // and Ctrl+Z must still hit the app-focused cell. Same guards, verbatim.
+  useEffect(() => {
+    if (!focused) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k !== "z" && k !== "y") return;
+      if (e.defaultPrevented) return; // wrap handler already handled it
+      const t = e.target as HTMLElement;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return;
+      if (document.querySelector(".modal-backdrop") || t.closest?.(".floating-modal")) return;
+      const redo = k === "y" || (k === "z" && e.shiftKey);
+      if (redo ? controller.history.redo() : controller.history.undo()) e.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [focused, controller]);
+
   // Shared source of truth for the four price-level actions offered by both the
   // axis "+" menu and the empty-chart right-click menu. `price` is the level under
   // the cursor at the moment the menu opened.
@@ -3672,6 +3774,12 @@ export default function ChartCore({
           void pasteDrawing().then((did) => {
             if (!did) void pasteIndicator();
           });
+        } else if (k === "z") {
+          // preventDefault only when a step applied — never swallow text-field undo
+          // (the block already bailed for INPUT/TEXTAREA/SELECT/contentEditable above).
+          if (e.shiftKey ? controller.history.redo() : controller.history.undo()) e.preventDefault();
+        } else if (k === "y") {
+          if (controller.history.redo()) e.preventDefault();
         }
       }}
     >

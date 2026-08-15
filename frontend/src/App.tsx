@@ -145,6 +145,7 @@ import {
   type Workspace,
   type ChartSnapshot,
 } from "./lib/persist";
+import { clearHistoryForKey } from "./lib/history";
 import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
 import { loadSettings, saveSettings, chartColors, type Settings } from "./theme";
@@ -679,6 +680,10 @@ export default function App() {
   // it to localStorage before calling back), so we compare the resolved workspace:
   // remount only when our visible tabs actually changed.
   const onBackendPush = (key: string) => {
+    // Another tab/device edited this key: undoing over their change would silently
+    // revert it. Clear the owning cell's history (matches pendingUndo.sigAfter's
+    // philosophy for the tab-merge undo).
+    clearHistoryForKey(key);
     // A per-cell CONTENT change (an alert, drawing, or indicator on a cell we're ALSO
     // showing) never alters the tabs array, so the sameView check below treats it as
     // "not our view" and skips it — leaving our on-chart overlays stale until our next
