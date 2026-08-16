@@ -156,6 +156,7 @@ import { formatRemaining, resolveExpiry } from "./lib/alertUi";
 import { isSynthetic } from "./lib/syntheticRegistry";
 import type { ChartHandle, RangeReq, CenterReq } from "./chart/chartHandle";
 import { createChartDataFacade, type ChartDataFacade } from "./chart/chartDataFacade";
+import { applyFreeCrosshairX } from "./chart/freeCrosshair";
 import { applyScalePriceOnly } from "./chart/priceOnlyRange";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
 import { useRangeNavigation } from "./chart/useRangeNavigation";
@@ -1485,6 +1486,10 @@ export default function ChartCore({
     const dataFacade = createChartDataFacade();
     dataFacade.attach(chart);
     dataFacadeRef.current = dataFacade;
+    // Vertical crosshair line/label at the exact cursor pixel, not the snapped
+    // bar's center — otherwise a pan under a resting cursor drags the line
+    // along by up to a bar-width before it jumps back (see freeCrosshair.ts).
+    applyFreeCrosshairX(chart);
     // Seed the "scale price chart only" createRange override onto the live chart
     // before any render or indicator add, so the candle pane fits candles-only
     // from the first frame (see chart/priceOnlyRange.ts). The override persists on

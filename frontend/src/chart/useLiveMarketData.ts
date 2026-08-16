@@ -866,7 +866,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol.epic, period.resolution, scope]);
 
-  // Center pin: with preserve-center ON, a small diamond on the time axis marks
+  // Center pin: with preserve-center ON, a target glyph just above the time axis marks
   // the bar whose time is anchored (the one a TF change keeps centered and a
   // reload restores). Pure DOM over the axis — the same read as the capture
   // (readCenterBarTs), so the pin always shows exactly what would be preserved:
@@ -888,7 +888,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     const pin = document.createElement("div");
     pin.className = "center-pin";
     pin.style.cssText =
-      "position:absolute;bottom:4px;width:13px;height:13px;color:#2962ff;" +
+      "position:absolute;width:13px;height:13px;color:#2962ff;" +
       "pointer-events:none;z-index:40;display:none;line-height:0;";
     // Same target glyph as the DrawSidebar toggle button.
     pin.innerHTML =
@@ -917,18 +917,35 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         line.style.display = "none";
         return;
       }
-      const p = c.convertToPixel([{ timestamp: ts }], { paneId: "candle_pane", absolute: true });
-      const x = (Array.isArray(p) ? p[0] : p)?.x;
-      if (x == null || !isFinite(x)) {
+      // Draw at the center PIXEL, not the anchored bar's own x: the anchor is
+      // the bar under the screen center (within half a bar of it), and pinning
+      // to the bar makes the marker hop a bar-width every time a pan moves the
+      // next bar under the center. The one case where the anchor is NOT at the
+      // center is right-edge whitespace — readCenterBarTs clamps to the LAST
+      // bar — so follow that bar's x whenever it sits left of center.
+      const data = c.getDataList();
+      const lastTs = data[data.length - 1]?.timestamp;
+      const p =
+        lastTs != null
+          ? c.convertToPixel([{ timestamp: lastTs }], { paneId: "candle_pane", absolute: true })
+          : null;
+      const lastX = (Array.isArray(p) ? p[0] : p)?.x;
+      const centerX = (c.getSize("candle_pane", "main")?.width ?? 0) / 2;
+      const x = lastX != null && isFinite(lastX) ? Math.min(centerX, lastX) : centerX;
+      if (!(x > 0)) {
         pin.style.display = "none";
         line.style.display = "none";
         return;
       }
+      // The pin sits just above the time axis (clear of its labels); the guide
+      // line stops at the pin's top edge so it doesn't cut through the glyph.
+      const xAxisH = c.getSize("x_axis_pane", "root")?.height ?? 0;
       pin.style.display = "block";
       pin.style.left = `${Math.round(x) - 7}px`;
+      pin.style.bottom = `${xAxisH + 1}px`;
       line.style.display = "block";
       line.style.left = `${Math.round(x)}px`;
-      line.style.bottom = `${c.getSize("x_axis_pane", "root")?.height ?? 0}px`;
+      line.style.bottom = `${xAxisH + 14}px`;
     };
     // rAF-coalesced, except when the browser tab is hidden — rAF never fires
     // there (same gotcha as notify.ts) and the pin would wake up stale.
@@ -936,6 +953,9 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       if (raf != null) return;
       raf = document.hidden ? window.setTimeout(reposition, 0) : requestAnimationFrame(reposition);
     };
+    // rAF also frame-aligns the move with the candles: klinecharts v10 paints
+    // its canvases inside its own requestAnimationFrame, so a synchronous
+    // reposition here would land a frame AHEAD of the repaint.
     repositionPinRef.current = schedule;
     schedule();
     chart.subscribeAction("onScroll", schedule);
