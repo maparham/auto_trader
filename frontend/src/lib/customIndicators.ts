@@ -19,6 +19,7 @@ export * from "./indicators/timeHighlight";
 export * from "./indicators/pivots";
 export * from "./indicators/pivotBands";
 export * from "./indicators/pivotAnalysis";
+export * from "./indicators/srLevels";
 export * from "./indicators/curveLabels";
 export * from "./indicators/slope";
 export * from "./indicators/atr";
@@ -33,6 +34,7 @@ import { SESSIONS_TEMPLATE, registerSessionsAxis } from "./indicators/sessions";
 import { TIME_HIGHLIGHT_TEMPLATE } from "./indicators/timeHighlight";
 import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
 import { PIVOT_ANALYSIS_TEMPLATE } from "./indicators/pivotAnalysis";
+import { SR_LEVELS_TEMPLATE } from "./indicators/srLevels";
 import { SLOPE_TEMPLATE, SLOPE_ACCEL_TEMPLATE } from "./indicators/slope";
 import { ATR_TEMPLATE } from "./indicators/atr";
 import { CANDLE_PATTERNS_TEMPLATE } from "./indicators/candlePatterns";
@@ -54,6 +56,7 @@ export type CustomIndicatorType =
   | "TIME_HIGHLIGHT"
   | "PIVOT_BANDS"
   | "PIVOT_ANALYSIS"
+  | "SR_LEVELS"
   | "SLOPE"
   | "SLOPE_ACCEL"
   | "ATR"
@@ -71,6 +74,7 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   TIME_HIGHLIGHT: TIME_HIGHLIGHT_TEMPLATE,
   PIVOT_BANDS: PIVOT_BANDS_TEMPLATE,
   PIVOT_ANALYSIS: PIVOT_ANALYSIS_TEMPLATE,
+  SR_LEVELS: SR_LEVELS_TEMPLATE,
   SLOPE: SLOPE_TEMPLATE,
   SLOPE_ACCEL: SLOPE_ACCEL_TEMPLATE,
   ATR: ATR_TEMPLATE,
@@ -102,6 +106,7 @@ export const OVERLAY_INDICATORS = new Set([
   "PREV_HL",
   "PIVOT_BANDS",
   "PIVOT_ANALYSIS",
+  "SR_LEVELS",
   "TIME_HIGHLIGHT",
   "CANDLE_PATTERNS",
 ]);

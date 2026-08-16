@@ -14,6 +14,7 @@ from typing import Any
 from auto_trader.core.models import Candle
 from auto_trader.indicators import atr as _atr
 from auto_trader.indicators import slope as _slope
+from auto_trader.indicators import sr_levels as _sr
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         series=_atr.atr_pane_series,
         warmup=_atr.atr_warmup,
         timeframe=lambda cfg: None,
+    ),
+    "SR_LEVELS": IndicatorSeriesSpec(
+        parse_config=_sr.parse_sr_config,
+        outputs=_sr.sr_outputs,
+        series=_sr.sr_series,
+        warmup=_sr.sr_warmup,
+        timeframe=lambda cfg: cfg.timeframe,
     ),
     "SLOPE": IndicatorSeriesSpec(
         parse_config=_slope.parse_slope_config,

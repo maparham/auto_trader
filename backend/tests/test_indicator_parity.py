@@ -89,6 +89,18 @@ def test_volma(golden):
     assert_series_equal(sma_series(vols, 20), series["VOLMA_20"], "VOLMA_20")
 
 
+def test_sr_levels(golden):
+    from auto_trader.indicators.sr_levels import SrConfig, sr_series
+
+    candles, _, series = golden
+    cfg = SrConfig(pivot_len=5, atr_mult=0.5, min_touches=2, max_levels=8, max_bars=500)
+    for output, key in (("support", "SR_SUPPORT"), ("resistance", "SR_RESISTANCE")):
+        expected = series[key]
+        # Guard against a vacuous golden: the synthetic walk must form levels.
+        assert any(v is not None for v in expected), f"{key}: golden is all-None"
+        assert_series_equal(sr_series(cfg, output, candles, 1.0), expected, key)
+
+
 def test_avwap(golden):
     candles, anchor_ms, series = golden
     assert_series_equal(avwap_series(candles, anchor_ms), series["AVWAP"], "AVWAP")

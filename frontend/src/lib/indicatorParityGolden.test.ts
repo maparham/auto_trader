@@ -25,6 +25,7 @@ import { maSeries, sma, alignHtfToChart } from "./mtf";
 import { atrSeries } from "./atr";
 import { computeRsi } from "./indicators/rsi";
 import { vwapFrom } from "./indicators/vwap";
+import { computeSrLevels } from "./indicators/srLevels";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(HERE, "../../../backend/tests/fixtures/indicator_golden.json");
@@ -104,6 +105,11 @@ describe("indicator parity golden fixture", () => {
     const ema9Base = maSeries(candles, "ema", 9, {}).base;
     const ema9Slope3 = slopeOf(ema9Base, 3, 1);
 
+    // SR_LEVELS: config mirrored by test_indicator_parity.test_sr_levels.
+    const srPoints = computeSrLevels(candles, {
+      pivotLen: 5, atrMult: 0.5, minTouches: 2, maxLevels: 8, maxBars: 500,
+    }).points;
+
     const series: Record<string, Array<number | null>> = {
       EMA_9: toNull(ema9Base),
       EMA_21: toNull(maSeries(candles, "ema", 21, {}).base),
@@ -118,6 +124,8 @@ describe("indicator parity golden fixture", () => {
       AVWAP: toNull(vwapFrom(candles, start, {}).map((p) => p.vwap ?? null)),
       "EMA_9@HOUR_4": toNull(emaAtHour4),
       "EMA_9~3": toNull(ema9Slope3),
+      SR_SUPPORT: toNull(srPoints.map((p) => p.support ?? null)),
+      SR_RESISTANCE: toNull(srPoints.map((p) => p.resistance ?? null)),
     };
 
     const fixture = {

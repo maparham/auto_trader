@@ -17,7 +17,7 @@ import type { Chart, Indicator } from "klinecharts";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
 import { resolveInputs, isMovingAverage, SMOOTHING_TYPES } from "./lib/indicatorMeta";
-import { applyPivotBandsTimeframe, applySlopeTimeframe } from "./lib/mtfCoordinator";
+import { applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe } from "./lib/mtfCoordinator";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -46,11 +46,16 @@ import type {
   TimeHighlightExtend,
   PivotAnalysisExtend,
   PivotConnectorStyle,
+  SrLevelsExtend,
+  SrZoneStyle,
 } from "./lib/customIndicators";
 import {
   AVWAP_DEFAULT_BANDS,
   RSI_DIVERGENCE_DEFAULTS,
   RSI_SMOOTHING_DEFAULTS,
+  SR_ZONE_STYLE_DEFAULTS,
+  srZoneStyleOf,
+  parseSrConfig,
   RSI_STYLE_DEFAULTS,
   DEFAULT_SESSIONS,
   DEFAULT_TIME_WINDOWS,
@@ -168,6 +173,9 @@ export default function IndicatorSettings({
   // Pivots High/Low: draw-only connector styling (color/width/dash/arrowheads) in
   // the Style tab — no recompute, just an extendData override.
   const isPivotAnalysis = type === "PIVOT_ANALYSIS";
+  // S/R Levels: draw-only zone styling (colors + base opacity) in the Style tab;
+  // its two figure lines are draw-suppressed, so the generic line rows are hidden.
+  const isSrLevels = type === "SR_LEVELS";
   // Candle Patterns: figure-less main-pane overlay, no numeric calcParams. Its
   // whole config (pattern toggles, show-labels, colours) is a small extendData
   // object edited on the Inputs tab (colours included, unlike EMA/MA).
@@ -332,6 +340,11 @@ export default function IndicatorSettings({
     ((ind?.extendData ?? {}) as PivotAnalysisExtend).connector,
   );
   const [connector, setConnector] = useState<Required<PivotConnectorStyle>>(pivotConnector0);
+
+  // --- SR_LEVELS: zone colors + base opacity (draw-only, on extendData.zoneStyle) ---
+  const [srZone, setSrZone] = useState<SrZoneStyle>(() =>
+    srZoneStyleOf((ind?.extendData ?? {}) as SrLevelsExtend),
+  );
 
   // --- PREV_HL: per-instance timezone override + per-boundary length/agg (Inputs) ---
   // "chart" = follow the global chart axis zone; an IANA name buckets this
@@ -645,6 +658,8 @@ export default function IndicatorSettings({
     // Slope persists only the chosen timeframe (never the bulky HTF series);
     // refreshMtfIndicators refetches it on reload, like Pivot Bands/EMA/MA.
     if (isSlope && timeframe !== "chart") extendData.mtf = { timeframe };
+    // S/R Levels: same MTF persistence contract as Pivot Bands/Slope.
+    if (isSrLevels && timeframe !== "chart") extendData.mtf = { timeframe };
     if (isSlope) {
       // slopePeriod/smoothing/colorByDirection don't ride genExtend (they're not
       // meta-declared selects) — persist them explicitly so they survive reload.
@@ -665,6 +680,10 @@ export default function IndicatorSettings({
       if (JSON.stringify(connector) !== JSON.stringify(PIVOT_CONNECTOR_DEFAULTS)) {
         extendData.connector = connector;
       }
+    }
+    if (isSrLevels && JSON.stringify(srZone) !== JSON.stringify(SR_ZONE_STYLE_DEFAULTS)) {
+      // Zone style is draw-only; persist only when it differs from the defaults.
+      extendData.zoneStyle = srZone;
     }
     if (isAvwap) {
       avwapConfig(extendData, avwapSource, bandMode, bands);
@@ -738,7 +757,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt]);
 
   // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
   // setParam's isMa branch below, so it stays a shell-local binding.
@@ -771,6 +790,23 @@ export default function IndicatorSettings({
       name,
       paneId,
       { n, k, mode, source },
+      tf === "chart" ? null : tf,
+      brokerId,
+    );
+  }
+
+  // Push an S/R Levels config (chart-TF or MTF) through the coordinator, which
+  // refetches + recomputes the levels on the higher timeframe's native bars when
+  // one is set (mirrors applyPivotBands above). Params come from the explicit
+  // override so a calcParam change never races setState.
+  function applySrLevels(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
+    const tf = next.timeframe ?? timeframe;
+    void applySrLevelsTimeframe(
+      chart,
+      epic,
+      name,
+      paneId,
+      parseSrConfig(nextCp ?? calcParams),
       tf === "chart" ? null : tf,
       brokerId,
     );
@@ -869,6 +905,19 @@ export default function IndicatorSettings({
     applyPivotAnalysis(next);
   }
 
+  // SR_LEVELS zone style: draw-only, so a plain extendData override (merged over
+  // the live indicator's) is the whole live-update path — no recompute.
+  function patchSrZone(p: Partial<SrZoneStyle>): void {
+    const next = { ...srZone, ...p };
+    setSrZone(next);
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({
+      paneId,
+      name,
+      extendData: { ...((live?.extendData as object) ?? {}), zoneStyle: next },
+    });
+  }
+
   // Pivots High/Low connector: draw-only, so a plain extendData override (merged
   // over the live indicator's) is the whole live-update path — no recompute.
   function applyPivotAnalysis(next: Required<PivotConnectorStyle>): void {
@@ -916,6 +965,11 @@ export default function IndicatorSettings({
       // coordinator (which also writes calcParams).
       apply({ calcParams: nextCp });
       applyPivotBands({ n: nextCp[0], k: nextCp[1] });
+    } else if (isSrLevels && timeframe !== "chart") {
+      // Same contract as Pivot Bands: a param change under an active timeframe
+      // must recompute the stashed HTF levels, not just re-align them.
+      apply({ calcParams: nextCp });
+      applySrLevels({}, nextCp);
       // isSlope has no calcParam-sourced input left (MA Lengths is the dedicated
       // editor below, which writes calcParams + calls applySlope directly), so
       // this generic setParam path is never reached for SLOPE.
@@ -1860,11 +1914,49 @@ export default function IndicatorSettings({
                     />
                   </span>
                 </>
+              ) : isSrLevels ? (
+                <>
+                  {/* Higher-timeframe levels clustered on native HTF bars, aligned
+                      onto the chart bars (no lookahead), same as Pivot Bands. */}
+                  <div className="ind-row">
+                    <span className="ind-row-head">
+                      <label>Timeframe</label>
+                      <InfoTip
+                        title="Timeframe"
+                        text="Detect and cluster the levels on this timeframe instead of the chart's. A higher timeframe surfaces the bigger, slower zones (e.g. daily levels on a 5m chart)."
+                      />
+                    </span>
+                    <select
+                      value={timeframe}
+                      onChange={(e) => {
+                        setTimeframe(e.target.value);
+                        applySrLevels({ timeframe: e.target.value });
+                      }}
+                    >
+                      <option value="chart">Chart</option>
+                      {higherTimeframes.map((p) => (
+                        <option key={p.resolution} value={p.resolution}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input type="checkbox" checked disabled readOnly />
+                      <span>Wait for timeframe closes</span>
+                    </label>
+                    <InfoTip
+                      title="Wait for timeframe closes"
+                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                    />
+                  </span>
+                </>
               ) : (
                 <div className="ind-row">
                   <span className="ind-row-head">
                     <label>Timeframe</label>
-                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, and Slope." />
+                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, and S/R Levels." />
                   </span>
                   <select value="chart" disabled>
                     <option value="chart">Chart</option>
@@ -1898,7 +1990,7 @@ export default function IndicatorSettings({
                   "Day  High [color][size]  Low [color][size]" — halving the list.
                   The boundary is greyed when deactivated in the Inputs tab. */}
               {type === "PREV_HL" && <PrevHlStylePairs lines={lines} setLine={setLine} />}
-              {type !== "PREV_HL" && !isRsi &&
+              {type !== "PREV_HL" && !isRsi && !isSrLevels &&
                 styleRows.map((l) => {
                 // A band line whose multiplier is OFF in the Inputs tab can't draw,
                 // so disable (grey) its whole row — TV shows it but it does nothing.
@@ -1995,6 +2087,58 @@ export default function IndicatorSettings({
                     />
                     <span>Arrowheads</span>
                   </label>
+                </>
+              )}
+              {/* S/R Levels: zone tint per role + one shared base opacity (the
+                  touch-count ramp builds on it; editing either row's opacity
+                  updates both, like the pivot connector's shared width). */}
+              {isSrLevels && (
+                <>
+                  <div className="ind-group">Zones</div>
+                  <div className="ind-row ind-style-row">
+                    <span className="ind-row-head">
+                      <label>Support</label>
+                      <InfoTip
+                        title="Support zone"
+                        text="Tint for zones at or below the current close. Opacity is the base fill for a minimum-touch zone and is shared with resistance; stronger zones draw darker."
+                      />
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={srZone.supColor}
+                        onColor={(hex) => patchSrZone({ supColor: hex })}
+                        opacity={srZone.opacity}
+                        onOpacity={(a) => patchSrZone({ opacity: a })}
+                      />
+                    </div>
+                  </div>
+                  <div className="ind-row ind-style-row">
+                    <span className="ind-row-head">
+                      <label>Resistance</label>
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={srZone.resColor}
+                        onColor={(hex) => patchSrZone({ resColor: hex })}
+                        opacity={srZone.opacity}
+                        onOpacity={(a) => patchSrZone({ opacity: a })}
+                      />
+                    </div>
+                  </div>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input
+                        type="checkbox"
+                        checked={srZone.dimBroken}
+                        onChange={(e) => patchSrZone({ dimBroken: e.target.checked })}
+                      />
+                      <span>Dim broken levels</span>
+                    </label>
+                    <InfoTip
+                      title="Dim broken levels"
+                      text="Draw a zone at half opacity once price has closed through it since its last touch. Off: every zone renders at full strength."
+                    />
+                  </span>
                 </>
               )}
               {/* RSI Style — mirrors TradingView's RSI Style tab. Every row has a

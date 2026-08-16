@@ -305,6 +305,41 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Pivots High/Low [LuxAlgo]",
     desc: "Marks each confirmed fractal swing high/low, connects it to the previous same-type pivot with a Δ% / Δt label, and (optionally) carries the latest pivot high/low forward as a level line. Length sets the bars required each side of a swing; pivots confirm that many bars late (no repaint). Pivot high/low, Δ% and Δt are available as rule operands.",
   },
+  SR_LEVELS: {
+    inputs: [
+      {
+        ...num(0, "Pivot Length"),
+        tip: "Bars required each side of a swing before it counts as a pivot. Higher value uses only the more prominent swings (and confirms them later).",
+      },
+      {
+        ...num(1, "Zone Width (×ATR)", { min: 0.05, step: 0.05 }),
+        tip: "Cluster tolerance and zone half-height as a multiple of ATR(14). Pivots within this distance of a level merge into it.",
+      },
+      {
+        ...num(2, "Min Touches"),
+        tip: "Pivots a zone needs before it is drawn as a major level.",
+      },
+      {
+        ...num(3, "Max Levels"),
+        tip: "Keep only this many of the strongest (most-touched, most recent) levels.",
+      },
+      {
+        ...num(4, "Window (bars)"),
+        tip: "A level goes stale once its last touch is older than this many bars.",
+      },
+      {
+        key: "showMidline",
+        label: "Center line",
+        type: "boolean",
+        source: "extend",
+        field: "showMidline",
+        default: false,
+        tip: "Draw a dashed line through each zone's center price.",
+      },
+    ],
+    title: "Support / Resistance Levels",
+    desc: "Clusters confirmed fractal swing highs and lows into major support/resistance zones. Each zone's price is the average of its touches; opacity and the ×N tag show touch count. Zones below the current close tint green (support), above tint red (resistance). Nearest support and resistance are available as rule operands. Pivots confirm Pivot Length bars late (no repaint).",
+  },
   SESSIONS: {
     inputs: [],
     title: "Trading Sessions",

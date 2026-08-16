@@ -19,6 +19,13 @@ import {
   type PivotBandsSource,
 } from "./indicators/pivotBands";
 import {
+  computeSrLevels,
+  parseSrConfig,
+  SR_ATR_LEN,
+  type SrLevelsConfig,
+  type SrLevelsExtend,
+} from "./indicators/srLevels";
+import {
   slopeLineSeries,
   accelLineSeries,
   smoothSeries,
@@ -369,6 +376,84 @@ export async function applyPivotBandsTimeframe(
   chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
 }
 
+// S/R levels accumulate over the staleness window rather than converging like a
+// moving average, so the honest reach-back is the full window: ATR warm-up +
+// one pivot span + maxBars. Best-effort like PivotBands — a shallow HTF history
+// simply yields fewer levels.
+const srWarmup = (cfg: SrLevelsConfig) => SR_ATR_LEN + 2 * cfg.pivotLen + cfg.maxBars;
+
+/**
+ * Point S/R Levels at a higher timeframe (or back to the chart timeframe when
+ * `timeframe` is null/"chart"). Fetches the HTF candles, computes the per-bar
+ * nearest-support/resistance series AND the major-level list on them, and
+ * stashes both on extendData (levels keyed by TIMESTAMP so calc can map them
+ * onto whatever chart bars are loaded); calc aligns with waitClose semantics
+ * (no lookahead). Config comes from the caller, not re-read from live
+ * extendData, so a param change can't race the write.
+ */
+export async function applySrLevelsTimeframe(
+  chart: Chart,
+  epic: string,
+  name: string,
+  paneId: string,
+  config: SrLevelsConfig,
+  timeframe: string | null,
+  brokerId?: string,
+  oldestChartMs?: number,
+): Promise<void> {
+  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
+  const ind = getIndicator(chart, paneId, name) as { extendData?: SrLevelsExtend } | null;
+  const ext: SrLevelsExtend = { ...(ind?.extendData ?? {}) };
+  const calcParams = [config.pivotLen, config.atrMult, config.minTouches, config.maxLevels, config.maxBars];
+
+  if (!timeframe || timeframe === "chart") {
+    clearMtfRetry(chart, paneId, name);
+    ext.mtf = { timeframe: null };
+    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    return;
+  }
+
+  const { htf, htfMs, failed } = await fetchHtfBars(
+    chart,
+    epic,
+    timeframe,
+    srWarmup(config),
+    brokerId,
+    oldestChartMs,
+  );
+  const proceed = mtfFetchTail(
+    chart,
+    paneId,
+    name,
+    timeframe,
+    failed,
+    htf.length > 0,
+    ind?.extendData?.mtf,
+    ext,
+    calcParams,
+    () => applySrLevelsTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+  );
+  if (!proceed) return;
+  // Reuse the exact chart-TF math on the HTF bars: clustering, touch gating and
+  // the pivot-confirmation lag are all baked into the stashed series/levels.
+  const { points, levels } = computeSrLevels(htf, config);
+  ext.mtf = {
+    timeframe,
+    htfStarts: htf.map((b) => b.timestamp),
+    htfMs,
+    htfSupport: points.map((p) => p.support),
+    htfResistance: points.map((p) => p.resistance),
+    htfLevels: levels.map((lv) => ({
+      price: lv.price,
+      halfWidth: lv.halfWidth,
+      touches: lv.touches,
+      firstTs: htf[lv.firstIdx].timestamp,
+      lastTs: htf[lv.lastIdx].timestamp,
+    })),
+  };
+  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+}
+
 interface SlopeConfig {
   maType: MaKind;
   lengths: number[]; // calcParams — one MA length per line
@@ -593,6 +678,12 @@ export async function refreshMtfIndicators(
             brokerId,
             oldestChartMs,
           ),
+        );
+      } else if (type === "SR_LEVELS") {
+        const cfg = parseSrConfig(ind.calcParams);
+        if (covered(srWarmup(cfg))) return;
+        jobs.push(
+          applySrLevelsTimeframe(chart, epic, id, paneId, cfg, tf, brokerId, oldestChartMs),
         );
       } else if (type === "SLOPE") {
         const ext = ind.extendData ?? {};
