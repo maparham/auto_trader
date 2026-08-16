@@ -47,6 +47,42 @@ describe("metricRows", () => {
     expect(row?.value).toBe("−12.50"); // U+2212 minus, formatSignedMoney
     expect(row?.tone).toBe("neg");
   });
+
+  // Two trades that both hit the same fixed take-profit have near-zero P&L
+  // deviation, which drives SQN (and friends) to absurd values; the band words
+  // must not endorse that, so under 30 trades the verdict is "low sample".
+  it("flags Sharpe/Sortino/SQN as low sample under 30 trades instead of banding", () => {
+    const rows = metricRows(result({
+      summary: { net_pnl: 590, n_trades: 2, win_rate: 1, max_drawdown: 0 },
+      metrics: { ...result().metrics, sharpe: 2.77, sortino: 475.55, sqn: 133.68 },
+    }));
+    const byLabel = Object.fromEntries(rows.map(r => [r.label, r]));
+    for (const label of ["Sharpe", "Sortino", "SQN"]) {
+      expect(byLabel[label].verdict).toEqual({ label: "low sample", tone: "muted" });
+    }
+    // The value itself still shows; only the rating is withheld.
+    expect(byLabel["SQN"].value).toBe("133.68");
+  });
+
+  it("bands the ratios normally at 30+ trades", () => {
+    const rows = metricRows(result({
+      summary: { net_pnl: 590, n_trades: 30, win_rate: 0.5, max_drawdown: 0 },
+      metrics: { ...result().metrics, sharpe: 2.77, sortino: 2.5, sqn: 2.7 },
+    }));
+    const byLabel = Object.fromEntries(rows.map(r => [r.label, r]));
+    expect(byLabel["Sharpe"].verdict).toEqual({ label: "very good", tone: "good" });
+    expect(byLabel["Sortino"].verdict).toEqual({ label: "good", tone: "good" });
+    expect(byLabel["SQN"].verdict).toEqual({ label: "good", tone: "good" });
+  });
+
+  it("still shows no verdict for null ratios regardless of trade count", () => {
+    const rows = metricRows(result({
+      summary: { net_pnl: 0, n_trades: 2, win_rate: 1, max_drawdown: 0 },
+    }));
+    const byLabel = Object.fromEntries(rows.map(r => [r.label, r]));
+    expect(byLabel["SQN"].verdict).toBeUndefined();
+    expect(byLabel["Sortino"].verdict).toBeUndefined();
+  });
 });
 
 describe("legTable", () => {

@@ -4774,6 +4774,9 @@
 .bt-panel-stat-verdict.good { color: var(--pos); }
 .bt-panel-stat-verdict.mid { color: #d48806; }
 .bt-panel-stat-verdict.bad { color: var(--neg); }
+/* "low sample" under the statistical ratios when the run has too few trades to
+   band: deliberately faint so it reads as a caveat, not a rating. */
+.bt-panel-stat-verdict.muted { color: var(--text-faint); }
 /* Interpretation-scale table inside the metric ⓘ tooltip: verdict word (tinted
    to match the tile verdict it explains), its range in tabular mono, then a
    one-phrase reading of the band. All left-aligned; the tooltip frame widens

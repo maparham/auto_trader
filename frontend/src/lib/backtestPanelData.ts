@@ -12,7 +12,7 @@ export interface MetricRow {
   verdict?: MetricVerdict;
 }
 
-export type VerdictTone = "good" | "mid" | "bad";
+export type VerdictTone = "good" | "mid" | "bad" | "muted";
 
 export interface MetricVerdict {
   label: string;
@@ -83,6 +83,25 @@ export function verdictFor(label: string, value: number | null | undefined): Met
   if (!bands) return undefined;
   const band = bands.find((b) => value < b.upTo) ?? bands[bands.length - 1];
   return { label: band.label, tone: band.tone };
+}
+
+// Below this many trades the statistical ratios (Sharpe, Sortino, SQN) are
+// t-statistics with almost no degrees of freedom: two trades that both hit the
+// same fixed take-profit have near-zero P&L deviation, so SQN prints 100+ and
+// "superb" on pure noise. The conventional floor for reading them is ~30.
+export const MIN_SAMPLE_TRADES = 30;
+
+// Verdict for the sample-size-sensitive ratios: under MIN_SAMPLE_TRADES the
+// band words would lend authority the number doesn't have, so the verdict
+// becomes a muted "low sample" flag instead. The value itself still shows.
+export function sampledVerdictFor(
+  label: string,
+  value: number | null | undefined,
+  nTrades: number,
+): MetricVerdict | undefined {
+  if (value == null || !isFinite(value)) return undefined;
+  if (nTrades < MIN_SAMPLE_TRADES) return { label: "low sample", tone: "muted" };
+  return verdictFor(label, value);
 }
 
 export interface ScaleLine {
@@ -274,13 +293,13 @@ export function metricRows(res: PanelResult): MetricRow[] {
     label: "Sharpe",
     value: res.metrics.sharpe == null ? "-" : res.metrics.sharpe.toFixed(2),
     tone: "",
-    verdict: verdictFor("Sharpe", res.metrics.sharpe),
+    verdict: sampledVerdictFor("Sharpe", res.metrics.sharpe, res.summary.n_trades),
   });
   rows.push({
     label: "Sortino",
     value: res.metrics.sortino == null ? "-" : res.metrics.sortino.toFixed(2),
     tone: "",
-    verdict: verdictFor("Sortino", res.metrics.sortino),
+    verdict: sampledVerdictFor("Sortino", res.metrics.sortino, res.summary.n_trades),
   });
   rows.push({
     label: "Calmar",
@@ -297,7 +316,7 @@ export function metricRows(res: PanelResult): MetricRow[] {
     label: "SQN",
     value: res.metrics.sqn == null ? "-" : res.metrics.sqn.toFixed(2),
     tone: "",
-    verdict: verdictFor("SQN", res.metrics.sqn),
+    verdict: sampledVerdictFor("SQN", res.metrics.sqn, res.summary.n_trades),
   });
   rows.push({
     label: "Exposure %",
@@ -353,11 +372,11 @@ export const METRIC_INFO: Record<string, string> = {
   "Largest loss": "Biggest single losing trade. If it dwarfs the average loss, the stop discipline failed at least once; expect it to happen again live.",
   "Win streak": "Longest run of wins in a row. Mostly a psychology read; long streaks in a short run can also mean the entry only works in one regime.",
   "Loss streak": "Longest run of losses in a row. Ask: could you sit through this many losses live without abandoning the system?",
-  "Sharpe": "Annualized Sharpe ratio from daily equity returns. Treat with caution under 30 trades.",
-  "Sortino": "Like Sharpe but only penalizes downside volatility.",
+  "Sharpe": "Annualized Sharpe ratio from daily equity returns. Unrated under 30 trades: too little evidence to read.",
+  "Sortino": "Like Sharpe but only penalizes downside volatility. Unrated under 30 trades: with no losing stretches in the sample the downside estimate collapses and the ratio explodes.",
   "Calmar": "CAGR divided by max drawdown; return earned per unit of worst-case loss.",
   "CAGR %": "Compound annual growth rate of the equity curve. No universal good number: judge it against the drawdown taken to earn it (that's Calmar) and what buy-and-hold returned.",
-  "SQN": "System Quality Number: sqrt(trades) times expectancy over trade P&L deviation.",
+  "SQN": "System Quality Number: sqrt(trades) times expectancy over trade P&L deviation. Unrated under 30 trades: near-identical outcomes (like a fixed take-profit hit twice) shrink the deviation and inflate SQN on pure luck.",
   "Exposure %": "Share of the backtest period spent holding a position. Neither good nor bad alone: low exposure with the same return means capital was used efficiently; high exposure means returns lean on staying in the market.",
 };
 

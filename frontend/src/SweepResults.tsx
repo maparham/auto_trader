@@ -15,7 +15,7 @@ import { axisTicks, buildHeatIndex, cellKey, heatTier, type HeatTick } from "./l
 import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import Tooltip from "./components/Tooltip";
-import { rowWindow, verdictFor, type RowWindow } from "./lib/backtestPanelData";
+import { rowWindow, verdictFor, MIN_SAMPLE_TRADES, type RowWindow } from "./lib/backtestPanelData";
 import { useStableCallback } from "./lib/useStableCallback";
 import { metricTipLines } from "./components/metricScaleTip";
 import { fmtRunDuration, remainingEta } from "./lib/duration";
@@ -87,8 +87,12 @@ const SCALED_COLS: Partial<Record<MetricKey, string>> = {
   sqn: "SQN",
 };
 
-function verdictClass(key: MetricKey, v: number | null): string {
+function verdictClass(key: MetricKey, v: number | null, nTrades: number | null): string {
   const label = SCALED_COLS[key];
+  // Sharpe/SQN are sample statistics: below the trade floor their band colours
+  // would dress up noise (two identical wins band SQN "superb"), so leave the
+  // cell untinted. Profit factor keeps its tint; it claims no significance.
+  if ((key === "sharpe" || key === "sqn") && (nTrades ?? 0) < MIN_SAMPLE_TRADES) return "";
   const tone = label ? verdictFor(label, v)?.tone : undefined;
   return tone ? ` sweep-tone-${tone}` : "";
 }
@@ -573,7 +577,7 @@ export const SweepResults = memo(function SweepResults(props: {
                     const v = metricValue(row, c.key);
                     const isBest = v !== null && bestByCol[c.key] === v;
                     return (
-                      <td key={c.key} className={`sweep-c-num${isBest ? " sweep-best" : ""}${verdictClass(c.key, v)}`}>
+                      <td key={c.key} className={`sweep-c-num${isBest ? " sweep-best" : ""}${verdictClass(c.key, v, metricValue(row, "n_trades"))}`}>
                         {c.key === "plateau_score" && spikeSet.has(row) ? (
                           <span className="sweep-spike" aria-label="isolated peak">▲ {fmtMetric(c.key, v)}</span>
                         ) : (
