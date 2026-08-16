@@ -31,6 +31,7 @@
 // template kind is the same one-liner as indicators/ma.ts templateMaKind.
 import { slopeLengths, slopeOutputs } from "./indicators/slopeOutputs";
 import { atrOutputs } from "./atr";
+import { FVG_OUTPUTS } from "./indicators/fvgOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -129,6 +130,21 @@ export function chartIndicatorToExprToken(
       // outputs the backend's slope_outputs would reject.
       if (!slopeOutputs(calcParams, ext).includes(output)) return null;
       return `${opts.instanceId}.${output}`;
+    }
+    // FVG's four outputs are FIXED names, not lengths, so — unlike SLOPE — no
+    // retune can invalidate a ref: the params reshape the same four series. The
+    // clicked legend figure names the output directly (the figure keys ARE the
+    // backend's output names), and a row click with no figure takes bull_top,
+    // FVG_OUTPUTS[0]. The bare "FVG" id is ref-able because no expression
+    // function shares the name (mintInstanceId's refCollision check).
+    case "FVG": {
+      const id = opts?.instanceId;
+      if (!id) return null;
+      const key = opts?.figureKey;
+      const output = (FVG_OUTPUTS as readonly string[]).includes(key ?? "")
+        ? (key as string)
+        : FVG_OUTPUTS[0];
+      return `${id}.${output}`;
     }
     default:
       return null;

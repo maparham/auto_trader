@@ -161,3 +161,34 @@ describe("SLOPE instance references", () => {
     ).toBe("SLOPE.9");
   });
 });
+
+describe("FVG panes", () => {
+  it("emits the clicked legend figure as the output", () => {
+    expect(
+      chartIndicatorToExprToken("FVG", [0.25, 500, 10], {}, {
+        instanceId: "FVG",
+        figureKey: "bear_bottom",
+      }),
+    ).toBe("FVG.bear_bottom");
+  });
+
+  it("falls back to bull_top for a row click with no figure", () => {
+    expect(
+      chartIndicatorToExprToken("FVG", [0.25, 500, 10], {}, { instanceId: "FVG#a1b" }),
+    ).toBe("FVG#a1b.bull_top");
+    // An unknown figure key behaves like absence, as the option doc promises.
+    expect(
+      chartIndicatorToExprToken("FVG", [0.25, 500, 10], {}, { instanceId: "FVG", figureKey: "nope" }),
+    ).toBe("FVG.bull_top");
+  });
+
+  it("refuses without an instance id — there is nothing to reference", () => {
+    expect(chartIndicatorToExprToken("FVG", [0.25, 500, 10], {}, {})).toBeNull();
+  });
+
+  it("keeps the ref valid across a retune (params reshape the same outputs)", () => {
+    expect(
+      chartIndicatorToExprToken("FVG", [0, 50, 2], {}, { instanceId: "FVG", figureKey: "bull_top" }),
+    ).toBe("FVG.bull_top");
+  });
+});

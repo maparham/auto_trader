@@ -14,6 +14,8 @@
 import { normalizeSlopeUnit, slopeOutputs, slopeWarmup } from "./indicators/slopeOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { atrOutputs, atrWarmup, normalizeAtrSmoothing, normalizeAtrPctSource, ATR_SMOOTHING_LABEL, type AtrExtend } from "./atr";
+import { FVG_OUTPUTS, fvgWarmup, parseFvgConfig } from "./indicators/fvgOutputs";
+import type { FvgExtend } from "./indicators/fvg"; // erased at build; no runtime edge
 import type { ExprInstance } from "./expr/catalog";
 // Display vocabularies, both from klinecharts-free modules so this stays a pure,
 // node-testable bridge: mtf.ts type-imports klinecharts only, indicatorMeta.ts
@@ -25,7 +27,7 @@ import { SLOPE_UNIT_LABEL } from "./indicatorMeta";
  * list — mintInstanceId (indicators.ts) consults it to avoid minting ids that
  * collide with expr function names. The per-type branches in `exprInstancesFor`
  * and `exprWarmupByRef` below must stay in step with it. */
-export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set(["SLOPE", "ATR"]);
+export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set(["SLOPE", "ATR", "FVG"]);
 
 /** A live chart pane, flattened to just what the expression layer reads. */
 export interface LiveInstance {
@@ -134,8 +136,16 @@ export function synthesizeExprInstances(
     }
     // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
     // kept, as there), atrLength's 14 (single-length pane).
+    // FVG outputs are fixed names, not lengths, so nothing about the pane's
+    // params is recoverable from a ref — an empty list takes every default.
     const calcParams =
-      type === "ATR" ? [lengths[0] ?? 14] : lengths.length ? lengths.slice(0, 5) : [9];
+      type === "FVG"
+        ? []
+        : type === "ATR"
+          ? [lengths[0] ?? 14]
+          : lengths.length
+            ? lengths.slice(0, 5)
+            : [9];
     out[id] = {
       type,
       calcParams,
@@ -200,6 +210,9 @@ export function exprWarmupByRef(
     if (!inst) return 0;
     // One branch per EXPR_INSTANCE_TYPES member — keep the two in step.
     if (inst.type === "ATR") return atrWarmup(inst.calcParams, output);
+    // Every FVG output shares one floor (ATR warm-up + the pattern's two bars);
+    // an output this pane does not expose costs 0, like the other branches.
+    if (inst.type === "FVG") return (FVG_OUTPUTS as readonly string[]).includes(output) ? fvgWarmup() : 0;
     if (inst.type !== "SLOPE") return 0;
     return slopeWarmup(inst.calcParams, (inst.extendData ?? {}) as SlopeExtend, output);
   };
@@ -234,6 +247,19 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         // Smoothing plus the .to% output's divisor price — the SLOPE detail
         // convention: the popup says what the output names cannot.
         detail: `${ATR_SMOOTHING_LABEL[normalizeAtrSmoothing(ext.smoothing)]} · % of ${normalizeAtrPctSource(ext.pctSource)}`,
+      });
+      continue;
+    }
+    if (inst.type === "FVG") {
+      const ext = (inst.extendData ?? {}) as FvgExtend;
+      const cfg = parseFvgConfig(inst.calcParams);
+      out.push({
+        id: inst.id,
+        outputs: [...FVG_OUTPUTS],
+        timeframe: ext.mtf?.timeframe ?? null,
+        // The output names say which gap and which edge; what they cannot say is
+        // how selective the pane is — the SLOPE/ATR detail convention.
+        detail: `min ${cfg.minSize}x ATR · newest ${cfg.maxGaps}/side`,
       });
       continue;
     }

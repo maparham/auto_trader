@@ -173,3 +173,48 @@ describe("synthesizeExprInstances (legacy presets with no pane snapshot)", () =>
       .toEqual({ SLOPE: { type: "SLOPE", calcParams: [21, 9], extendData: { showAccel: true } } });
   });
 });
+
+describe("FVG instances", () => {
+  const live = [
+    { id: "FVG", type: "FVG", calcParams: [0.25, 500, 10], extendData: {} },
+    {
+      id: "FVG2",
+      type: "FVG",
+      calcParams: [0, 200, 3],
+      extendData: { mtf: { timeframe: "HOUR" } },
+    },
+  ];
+
+  it("lists FVG panes with their four fixed outputs and pinned timeframe", () => {
+    expect(exprInstancesFor(live).map((i) => [i.id, i.outputs, i.timeframe, i.detail])).toEqual([
+      [
+        "FVG",
+        ["bull_top", "bull_bottom", "bear_top", "bear_bottom"],
+        null,
+        "min 0.25x ATR · newest 10/side",
+      ],
+      [
+        "FVG2",
+        ["bull_top", "bull_bottom", "bear_top", "bear_bottom"],
+        "HOUR",
+        "min 0x ATR · newest 3/side",
+      ],
+    ]);
+  });
+
+  it("costs every real output the same warm-up floor, 0 for an unknown one", () => {
+    const warm = exprWarmupByRef(live);
+    expect(warm("FVG", "bull_top")).toBe(16);
+    expect(warm("FVG", "bear_bottom")).toBe(16);
+    expect(warm("FVG", "nope")).toBe(0);
+    expect(warm("nosuch", "bull_top")).toBe(0);
+  });
+
+  it("synthesizes a default pane for a ref with no stored snapshot", () => {
+    // FVG outputs are fixed names, so nothing about the params is recoverable —
+    // an empty calcParams list makes the backend take every default.
+    expect(synthesizeExprInstances(["FVG.bull_top > candle.close"], new Set())).toEqual({
+      FVG: { type: "FVG", calcParams: [], extendData: {} },
+    });
+  });
+});

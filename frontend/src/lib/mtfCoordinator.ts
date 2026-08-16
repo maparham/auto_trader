@@ -26,6 +26,13 @@ import {
   type SrLevelsExtend,
 } from "./indicators/srLevels";
 import {
+  computeFvg,
+  parseFvgConfig,
+  FVG_ATR_LEN,
+  type FvgConfig,
+  type FvgExtend,
+} from "./indicators/fvg";
+import {
   slopeLineSeries,
   accelLineSeries,
   smoothSeries,
@@ -454,6 +461,85 @@ export async function applySrLevelsTimeframe(
   chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
 }
 
+// Gaps persist over the staleness window rather than converging like a moving
+// average, so the honest reach-back is the full window: ATR warm-up + the two
+// bars the pattern spans + maxBars. Best-effort like S/R Levels — a shallow HTF
+// history simply yields fewer gaps.
+const fvgReachBack = (cfg: FvgConfig) => FVG_ATR_LEN + 2 + cfg.maxBars;
+
+/**
+ * Point FVG at a higher timeframe (or back to the chart timeframe when
+ * `timeframe` is null/"chart"). Fetches the HTF candles, computes the per-bar
+ * nearest-gap series AND the live gap list on them, and stashes both on
+ * extendData (gaps keyed by TIMESTAMP so calc can map them onto whatever chart
+ * bars are loaded); calc aligns with waitClose semantics (no lookahead). Config
+ * comes from the caller, not re-read from live extendData, so a param change
+ * can't race the write. Mirrors applySrLevelsTimeframe above.
+ */
+export async function applyFvgTimeframe(
+  chart: Chart,
+  epic: string,
+  name: string,
+  paneId: string,
+  config: FvgConfig,
+  timeframe: string | null,
+  brokerId?: string,
+  oldestChartMs?: number,
+): Promise<void> {
+  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
+  const ind = getIndicator(chart, paneId, name) as { extendData?: FvgExtend } | null;
+  const ext: FvgExtend = { ...(ind?.extendData ?? {}) };
+  const calcParams = [config.minSize, config.maxBars, config.maxGaps];
+
+  if (!timeframe || timeframe === "chart") {
+    clearMtfRetry(chart, paneId, name);
+    ext.mtf = { timeframe: null };
+    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    return;
+  }
+
+  const { htf, htfMs, failed } = await fetchHtfBars(
+    chart,
+    epic,
+    timeframe,
+    fvgReachBack(config),
+    brokerId,
+    oldestChartMs,
+  );
+  const proceed = mtfFetchTail(
+    chart,
+    paneId,
+    name,
+    timeframe,
+    failed,
+    htf.length > 0,
+    ind?.extendData?.mtf,
+    ext,
+    calcParams,
+    () => applyFvgTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+  );
+  if (!proceed) return;
+  // Reuse the exact chart-TF math on the HTF bars: detection, the size filter and
+  // wick-driven mitigation are all baked into the stashed series/gaps.
+  const { points, gaps } = computeFvg(htf, config);
+  ext.mtf = {
+    timeframe,
+    htfStarts: htf.map((b) => b.timestamp),
+    htfMs,
+    htfBullTop: points.map((p) => p.bullTop),
+    htfBullBottom: points.map((p) => p.bullBottom),
+    htfBearTop: points.map((p) => p.bearTop),
+    htfBearBottom: points.map((p) => p.bearBottom),
+    htfGaps: gaps.map((g) => ({
+      side: g.side,
+      top: g.top,
+      bottom: g.bottom,
+      createdTs: htf[g.createdIdx].timestamp,
+    })),
+  };
+  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+}
+
 interface SlopeConfig {
   maType: MaKind;
   lengths: number[]; // calcParams — one MA length per line
@@ -685,6 +771,10 @@ export async function refreshMtfIndicators(
         jobs.push(
           applySrLevelsTimeframe(chart, epic, id, paneId, cfg, tf, brokerId, oldestChartMs),
         );
+      } else if (type === "FVG") {
+        const cfg = parseFvgConfig(ind.calcParams);
+        if (covered(fvgReachBack(cfg))) return;
+        jobs.push(applyFvgTimeframe(chart, epic, id, paneId, cfg, tf, brokerId, oldestChartMs));
       } else if (type === "SLOPE") {
         const ext = ind.extendData ?? {};
         const lengths = slopeLengths(ind.calcParams);

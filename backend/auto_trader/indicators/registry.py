@@ -13,6 +13,7 @@ from typing import Any
 
 from auto_trader.core.models import Candle
 from auto_trader.indicators import atr as _atr
+from auto_trader.indicators import fvg as _fvg
 from auto_trader.indicators import slope as _slope
 from auto_trader.indicators import sr_levels as _sr
 
@@ -38,6 +39,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         series=_atr.atr_pane_series,
         warmup=_atr.atr_warmup,
         timeframe=lambda cfg: None,
+    ),
+    "FVG": IndicatorSeriesSpec(
+        parse_config=_fvg.parse_fvg_config,
+        outputs=_fvg.fvg_outputs,
+        series=_fvg.fvg_series,
+        warmup=_fvg.fvg_warmup,
+        timeframe=lambda cfg: cfg.timeframe,
     ),
     "SR_LEVELS": IndicatorSeriesSpec(
         parse_config=_sr.parse_sr_config,

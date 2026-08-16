@@ -17,7 +17,7 @@ import type { Chart, Indicator } from "klinecharts";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
 import { resolveInputs, isMovingAverage, SMOOTHING_TYPES } from "./lib/indicatorMeta";
-import { applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe } from "./lib/mtfCoordinator";
+import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe } from "./lib/mtfCoordinator";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -55,6 +55,11 @@ import {
   RSI_SMOOTHING_DEFAULTS,
   SR_ZONE_STYLE_DEFAULTS,
   srZoneStyleOf,
+  fvgZoneStyleOf,
+  parseFvgConfig,
+  FVG_ZONE_STYLE_DEFAULTS,
+  type FvgZoneStyle,
+  type FvgExtend,
   parseSrConfig,
   RSI_STYLE_DEFAULTS,
   DEFAULT_SESSIONS,
@@ -176,6 +181,10 @@ export default function IndicatorSettings({
   // S/R Levels: draw-only zone styling (colors + base opacity) in the Style tab;
   // its two figure lines are draw-suppressed, so the generic line rows are hidden.
   const isSrLevels = type === "SR_LEVELS";
+  // Fair Value Gaps: same shape as S/R Levels — MTF pin on the Inputs tab, zone
+  // colours + opacity in the Style tab, and its four figure lines are
+  // draw-suppressed, so the generic line rows are hidden.
+  const isFvg = type === "FVG";
   // Candle Patterns: figure-less main-pane overlay, no numeric calcParams. Its
   // whole config (pattern toggles, show-labels, colours) is a small extendData
   // object edited on the Inputs tab (colours included, unlike EMA/MA).
@@ -344,6 +353,11 @@ export default function IndicatorSettings({
   // --- SR_LEVELS: zone colors + base opacity (draw-only, on extendData.zoneStyle) ---
   const [srZone, setSrZone] = useState<SrZoneStyle>(() =>
     srZoneStyleOf((ind?.extendData ?? {}) as SrLevelsExtend),
+  );
+
+  // --- FVG: zone colors + fill opacity (draw-only, on extendData.zoneStyle) ---
+  const [fvgZone, setFvgZone] = useState<FvgZoneStyle>(() =>
+    fvgZoneStyleOf((ind?.extendData ?? {}) as FvgExtend),
   );
 
   // --- PREV_HL: per-instance timezone override + per-boundary length/agg (Inputs) ---
@@ -671,6 +685,8 @@ export default function IndicatorSettings({
     if (isSlope && timeframe !== "chart") extendData.mtf = { timeframe };
     // S/R Levels: same MTF persistence contract as Pivot Bands/Slope.
     if (isSrLevels && timeframe !== "chart") extendData.mtf = { timeframe };
+    // FVG: same MTF persistence contract as S/R Levels.
+    if (isFvg && timeframe !== "chart") extendData.mtf = { timeframe };
     if (isSlope) {
       // slopePeriod/smoothing/colorByDirection don't ride genExtend (they're not
       // meta-declared selects) — persist them explicitly so they survive reload.
@@ -695,6 +711,9 @@ export default function IndicatorSettings({
     if (isSrLevels && JSON.stringify(srZone) !== JSON.stringify(SR_ZONE_STYLE_DEFAULTS)) {
       // Zone style is draw-only; persist only when it differs from the defaults.
       extendData.zoneStyle = srZone;
+    }
+    if (isFvg && JSON.stringify(fvgZone) !== JSON.stringify(FVG_ZONE_STYLE_DEFAULTS)) {
+      extendData.zoneStyle = fvgZone;
     }
     if (isAvwap) {
       avwapConfig(extendData, avwapSource, bandMode, bands);
@@ -768,7 +787,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt]);
 
   // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
   // setParam's isMa branch below, so it stays a shell-local binding.
@@ -818,6 +837,23 @@ export default function IndicatorSettings({
       name,
       paneId,
       parseSrConfig(nextCp ?? calcParams),
+      tf === "chart" ? null : tf,
+      brokerId,
+    );
+  }
+
+  // Push an FVG config (chart-TF or MTF) through the coordinator, which refetches
+  // + recomputes the gaps on the higher timeframe's native bars when one is set
+  // (mirrors applySrLevels above). Params come from the explicit override so a
+  // calcParam change never races setState.
+  function applyFvg(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
+    const tf = next.timeframe ?? timeframe;
+    void applyFvgTimeframe(
+      chart,
+      epic,
+      name,
+      paneId,
+      parseFvgConfig(nextCp ?? calcParams),
       tf === "chart" ? null : tf,
       brokerId,
     );
@@ -929,6 +965,19 @@ export default function IndicatorSettings({
     });
   }
 
+  // FVG zone style: draw-only, so a plain extendData override (merged over the
+  // live indicator's) is the whole live-update path — no recompute.
+  function patchFvgZone(p: Partial<FvgZoneStyle>): void {
+    const next = { ...fvgZone, ...p };
+    setFvgZone(next);
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({
+      paneId,
+      name,
+      extendData: { ...((live?.extendData as object) ?? {}), zoneStyle: next },
+    });
+  }
+
   // Pivots High/Low connector: draw-only, so a plain extendData override (merged
   // over the live indicator's) is the whole live-update path — no recompute.
   function applyPivotAnalysis(next: Required<PivotConnectorStyle>): void {
@@ -976,6 +1025,11 @@ export default function IndicatorSettings({
       // coordinator (which also writes calcParams).
       apply({ calcParams: nextCp });
       applyPivotBands({ n: nextCp[0], k: nextCp[1] });
+    } else if (isFvg && timeframe !== "chart") {
+      // Same contract as S/R Levels: a param change under an active timeframe
+      // must recompute the stashed HTF gaps, not just re-align them.
+      apply({ calcParams: nextCp });
+      applyFvg({}, nextCp);
     } else if (isSrLevels && timeframe !== "chart") {
       // Same contract as Pivot Bands: a param change under an active timeframe
       // must recompute the stashed HTF levels, not just re-align them.
@@ -1961,11 +2015,48 @@ export default function IndicatorSettings({
                     />
                   </span>
                 </>
+              ) : isFvg ? (
+                <>
+                  {/* Higher-timeframe gaps detected on native HTF bars, aligned
+                      onto the chart bars (no lookahead), same as S/R Levels. */}
+                  <div className="ind-row">
+                    <span className="ind-row-head">
+                      <label>Timeframe</label>
+                      <InfoTip
+                        title="Timeframe"
+                        text="Detect the gaps on this timeframe instead of the chart's. A higher timeframe surfaces the bigger, slower imbalances (e.g. 1h gaps on a 5m chart)."
+                      />
+                    </span>
+                    <select
+                      value={timeframe}
+                      onChange={(e) => {
+                        setTimeframe(e.target.value);
+                        applyFvg({ timeframe: e.target.value });
+                      }}
+                    >
+                      {timeframeOptions.map((p) => (
+                        <option key={p.resolution} value={p.resolution}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input type="checkbox" checked disabled readOnly />
+                      <span>Wait for timeframe closes</span>
+                    </label>
+                    <InfoTip
+                      title="Wait for timeframe closes"
+                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                    />
+                  </span>
+                </>
               ) : (
                 <div className="ind-row">
                   <span className="ind-row-head">
                     <label>Timeframe</label>
-                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, and S/R Levels." />
+                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, S/R Levels, and FVG." />
                   </span>
                   <select value="chart" disabled>
                     <option value="chart">{chartOptionLabel}</option>
@@ -1999,7 +2090,7 @@ export default function IndicatorSettings({
                   "Day  High [color][size]  Low [color][size]" — halving the list.
                   The boundary is greyed when deactivated in the Inputs tab. */}
               {type === "PREV_HL" && <PrevHlStylePairs lines={lines} setLine={setLine} />}
-              {type !== "PREV_HL" && !isRsi && !isSrLevels &&
+              {type !== "PREV_HL" && !isRsi && !isSrLevels && !isFvg &&
                 styleRows.map((l) => {
                 // A band line whose multiplier is OFF in the Inputs tab can't draw,
                 // so disable (grey) its whole row — TV shows it but it does nothing.
@@ -2148,6 +2239,43 @@ export default function IndicatorSettings({
                       text="Draw a zone at half opacity once price has closed through it since its last touch. Off: every zone renders at full strength."
                     />
                   </span>
+                </>
+              )}
+              {/* FVG: zone tint per direction + one shared fill opacity (editing
+                  either row's opacity updates both, like the S/R zones above). */}
+              {isFvg && (
+                <>
+                  <div className="ind-group">Zones</div>
+                  <div className="ind-row ind-style-row">
+                    <span className="ind-row-head">
+                      <label>Bullish</label>
+                      <InfoTip
+                        title="Bullish gap"
+                        text="Tint for gaps below the current close. Opacity is the zone fill and is shared with bearish gaps."
+                      />
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={fvgZone.bullColor}
+                        onColor={(hex) => patchFvgZone({ bullColor: hex })}
+                        opacity={fvgZone.opacity}
+                        onOpacity={(a) => patchFvgZone({ opacity: a })}
+                      />
+                    </div>
+                  </div>
+                  <div className="ind-row ind-style-row">
+                    <span className="ind-row-head">
+                      <label>Bearish</label>
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={fvgZone.bearColor}
+                        onColor={(hex) => patchFvgZone({ bearColor: hex })}
+                        opacity={fvgZone.opacity}
+                        onOpacity={(a) => patchFvgZone({ opacity: a })}
+                      />
+                    </div>
+                  </div>
                 </>
               )}
               {/* RSI Style — mirrors TradingView's RSI Style tab. Every row has a

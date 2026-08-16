@@ -26,6 +26,7 @@ import { atrSeries } from "./atr";
 import { computeRsi } from "./indicators/rsi";
 import { vwapFrom } from "./indicators/vwap";
 import { computeSrLevels } from "./indicators/srLevels";
+import { computeFvg } from "./indicators/fvg";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(HERE, "../../../backend/tests/fixtures/indicator_golden.json");
@@ -110,6 +111,11 @@ describe("indicator parity golden fixture", () => {
       pivotLen: 5, atrMult: 0.5, minTouches: 2, maxLevels: 8, maxBars: 500,
     }).points;
 
+    // FVG: config mirrored by test_indicator_parity.test_fvg. minSize 0.25 keeps
+    // ~48 gaps over this walk — enough that every branch (shrink, full fill,
+    // expiry, the per-side cap) is exercised rather than a handful of zones.
+    const fvgPoints = computeFvg(candles, { minSize: 0.25, maxBars: 500, maxGaps: 10 }).points;
+
     const series: Record<string, Array<number | null>> = {
       EMA_9: toNull(ema9Base),
       EMA_21: toNull(maSeries(candles, "ema", 21, {}).base),
@@ -126,6 +132,10 @@ describe("indicator parity golden fixture", () => {
       "EMA_9~3": toNull(ema9Slope3),
       SR_SUPPORT: toNull(srPoints.map((p) => p.support ?? null)),
       SR_RESISTANCE: toNull(srPoints.map((p) => p.resistance ?? null)),
+      FVG_BULL_TOP: toNull(fvgPoints.map((p) => p.bullTop ?? null)),
+      FVG_BULL_BOTTOM: toNull(fvgPoints.map((p) => p.bullBottom ?? null)),
+      FVG_BEAR_TOP: toNull(fvgPoints.map((p) => p.bearTop ?? null)),
+      FVG_BEAR_BOTTOM: toNull(fvgPoints.map((p) => p.bearBottom ?? null)),
     };
 
     const fixture = {

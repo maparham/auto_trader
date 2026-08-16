@@ -101,6 +101,23 @@ def test_sr_levels(golden):
         assert_series_equal(sr_series(cfg, output, candles, 1.0), expected, key)
 
 
+def test_fvg(golden):
+    from auto_trader.indicators.fvg import FvgConfig, fvg_series
+
+    candles, _, series = golden
+    cfg = FvgConfig(min_size=0.25, max_bars=500, max_gaps=10)
+    for output, key in (
+        ("bull_top", "FVG_BULL_TOP"),
+        ("bull_bottom", "FVG_BULL_BOTTOM"),
+        ("bear_top", "FVG_BEAR_TOP"),
+        ("bear_bottom", "FVG_BEAR_BOTTOM"),
+    ):
+        expected = series[key]
+        # Guard against a vacuous golden: the synthetic walk must open gaps.
+        assert any(v is not None for v in expected), f"{key}: golden is all-None"
+        assert_series_equal(fvg_series(cfg, output, candles, 1.0), expected, key)
+
+
 def test_avwap(golden):
     candles, anchor_ms, series = golden
     assert_series_equal(avwap_series(candles, anchor_ms), series["AVWAP"], "AVWAP")

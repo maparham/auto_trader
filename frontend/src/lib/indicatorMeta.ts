@@ -340,6 +340,33 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Support / Resistance Levels",
     desc: "Clusters confirmed fractal swing highs and lows into major support/resistance zones. Each zone's price is the average of its touches; opacity and the ×N tag show touch count. Zones below the current close tint green (support), above tint red (resistance). Nearest support and resistance are available as rule operands. Pivots confirm Pivot Length bars late (no repaint).",
   },
+  FVG: {
+    inputs: [
+      {
+        ...num(0, "Min Size (×ATR)", { min: 0, step: 0.05 }),
+        tip: "Smallest gap kept, as a multiple of ATR(14) at the bar that confirmed it. Set to 0 to keep every gap.",
+      },
+      {
+        ...num(1, "Window (bars)"),
+        tip: "A gap expires this many bars after it formed, even if price never filled it.",
+      },
+      {
+        ...num(2, "Max Gaps"),
+        tip: "Keep only this many of the newest unfilled gaps on each side.",
+      },
+      {
+        key: "showMidline",
+        label: "Center line",
+        type: "boolean",
+        source: "extend",
+        field: "showMidline",
+        default: false,
+        tip: "Draw a dashed line through each zone's midpoint (the 50% level, ICT's consequent encroachment).",
+      },
+    ],
+    title: "Fair Value Gaps",
+    desc: "Marks 3-candle imbalances (a gap between the first bar's wick and the third bar's) as zones. A gap shrinks to its unfilled remainder as price trades back into it and disappears once price crosses its far edge, so only live imbalances stay on the chart. Bullish gaps tint green, bearish red. The nearest gap's edges on each side are available as rule operands. Gaps confirm on the third candle (no repaint).",
+  },
   SESSIONS: {
     inputs: [],
     title: "Trading Sessions",
