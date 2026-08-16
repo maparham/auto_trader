@@ -50,7 +50,7 @@ import { captureIndicatorAppearance, liveExprInstances } from "./lib/indicators"
 import { collectPortableInstances, rewriteConfigInstanceRefs } from "./lib/ruleClipboard";
 import { applyPortableInstances, useRuleClipboard } from "./lib/useRuleClipboard";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
-import { RESOLUTION_SECONDS, PERIOD_GROUPS } from "./lib/feed";
+import { RESOLUTION_SECONDS, PERIOD_GROUPS, periodByResolution } from "./lib/feed";
 import {
   type BacktestConfig,
   type RangeConfig,
@@ -2057,6 +2057,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   const pickerToMs =
     btMode === "walkforward" ? resolvedWindow.toMs : cfg.range.toMs ?? resolvedWindow.toMs;
 
+  // "Chart" follows the active chart timeframe — name it so the menu says which.
+  const chartTfLabel = periodByResolution(resolution)?.label;
+  const chartOptionLabel = chartTfLabel ? `Chart (${chartTfLabel})` : "Chart";
+
   const timeframeSelect = (
     <label className="bt-tf-inline">
       <span className="bt-tf-label">
@@ -2068,7 +2072,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         value={cfg.range.resolution ?? ""}
         onChange={(e) => setRange({ resolution: e.target.value || undefined })}
       >
-        <option value="">Chart</option>
+        <option value="">{chartOptionLabel}</option>
         {PERIOD_GROUPS.map((group) => {
           const periods = group.periods.filter((p) => !p.liveOnly);
           if (periods.length === 0) return null;
@@ -2382,7 +2386,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                             value={cfg.range.resolution ?? ""}
                             onChange={(e) => setRange({ resolution: e.target.value || undefined })}
                           >
-                            <option value="">Chart</option>
+                            <option value="">{chartOptionLabel}</option>
                             {PERIOD_GROUPS.map((group) => {
                               const periods = group.periods.filter((p) => !p.liveOnly);
                               if (periods.length === 0) return null;

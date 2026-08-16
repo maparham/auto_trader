@@ -67,7 +67,7 @@ import {
   PIVOT_CONNECTOR_DEFAULTS,
   resolvePivotConnector,
 } from "./lib/customIndicators";
-import { PERIODS, RESOLUTION_SECONDS } from "./lib/feed";
+import { periodByResolution, pinnableTimeframes, pinBelowChart } from "./lib/feed";
 import {
   saveIndicatorConfig,
   loadIndicatorConfigs,
@@ -561,11 +561,22 @@ export default function IndicatorSettings({
   );
   const setPrevHlAnchorInput = makeSetPrevHlAnchorInput(chart, paneId, name, prevHlTz, setPrevHlAnchorTs);
 
-  // Only timeframes strictly higher than the chart's qualify for MTF.
-  const chartSecs = RESOLUTION_SECONDS[chartResolution] ?? 0;
-  const higherTimeframes = PERIODS.filter(
-    (p) => (RESOLUTION_SECONDS[p.resolution] ?? 0) > chartSecs,
-  );
+  // "Chart" follows the active chart timeframe — name it so the menu says which.
+  const chartTfLabel = periodByResolution(chartResolution)?.label;
+  const chartOptionLabel = chartTfLabel ? `Chart (${chartTfLabel})` : "Chart";
+  // Pinnable: the chart's own timeframe or higher. A pin that dropped BELOW the
+  // chart (the chart timeframe was raised past it) isn't offered, but must stay
+  // visible and reselectable-away-from — flagged; it renders on chart bars.
+  const timeframeOptions = [
+    { resolution: "chart", label: chartOptionLabel },
+    ...(pinBelowChart(timeframe, chartResolution)
+      ? [{
+          resolution: timeframe,
+          label: `${periodByResolution(timeframe)?.label ?? timeframe} (below chart)`,
+        }]
+      : []),
+    ...pinnableTimeframes(chartResolution),
+  ];
 
   // Line-type figures, paired with their effective default colors so the Style
   // tab shows the colors actually on screen even when nothing's been overridden.
@@ -1273,7 +1284,7 @@ export default function IndicatorSettings({
               setSmoothLen={setSmoothLen}
               timeframe={timeframe}
               setTimeframe={setTimeframe}
-              higherTimeframes={higherTimeframes}
+              timeframeOptions={timeframeOptions}
               maType={maType}
               setMaType={setMaType}
               envelope={envelope}
@@ -1303,6 +1314,7 @@ export default function IndicatorSettings({
               rsiSource={rsiSource}
               rsiSmooth={rsiSmooth}
               setRsiExtend={setRsiExtend}
+              chartOptionLabel={chartOptionLabel}
             />
           )}
 
@@ -1857,8 +1869,7 @@ export default function IndicatorSettings({
                         applyPivotBands({ timeframe: e.target.value });
                       }}
                     >
-                      <option value="chart">Chart</option>
-                      {higherTimeframes.map((p) => (
+                      {timeframeOptions.map((p) => (
                         <option key={p.resolution} value={p.resolution}>
                           {p.label}
                         </option>
@@ -1895,8 +1906,7 @@ export default function IndicatorSettings({
                         applySlope({ timeframe: e.target.value });
                       }}
                     >
-                      <option value="chart">Chart</option>
-                      {higherTimeframes.map((p) => (
+                      {timeframeOptions.map((p) => (
                         <option key={p.resolution} value={p.resolution}>
                           {p.label}
                         </option>
@@ -1933,8 +1943,7 @@ export default function IndicatorSettings({
                         applySrLevels({ timeframe: e.target.value });
                       }}
                     >
-                      <option value="chart">Chart</option>
-                      {higherTimeframes.map((p) => (
+                      {timeframeOptions.map((p) => (
                         <option key={p.resolution} value={p.resolution}>
                           {p.label}
                         </option>
@@ -1959,7 +1968,7 @@ export default function IndicatorSettings({
                     <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, and S/R Levels." />
                   </span>
                   <select value="chart" disabled>
-                    <option value="chart">Chart</option>
+                    <option value="chart">{chartOptionLabel}</option>
                   </select>
                 </div>
               )}

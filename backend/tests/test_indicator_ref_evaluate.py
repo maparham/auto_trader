@@ -214,3 +214,19 @@ def test_atr_ref_pct_end_to_end_and_warmup():
     assert atr_warmup(cfg, "5") == 5
     assert atr_warmup(cfg, "5.to%") == 5
     assert atr_warmup(cfg, "bogus") == 0
+
+
+def test_a_pin_equal_to_the_run_timeframe_lags_one_bar_unlike_no_pin():
+    """Newly reachable: the chart now lets a pane be pinned to the chart's OWN
+    timeframe. That is NOT the same as leaving it unpinned — closed-bar
+    alignment means each bar reads the PREVIOUS bar's value, so the pin trades
+    one bar later. Locking this keeps the rule engine agreeing with the pane."""
+    base = mk(40)
+    unpinned = series_of(expr("SLOPE.5 > 0"), base, "HOUR", {}, INSTANCES)
+    pinned = series_of(expr("SLOPE.5 > 0"), base, "HOUR", {"HOUR": base},
+                       _pinned("HOUR"))
+
+    assert pinned[1:] == unpinned[:-1]
+    assert pinned[0] is None
+    # Not a no-op rename of the same series: the lag is real.
+    assert pinned != unpinned

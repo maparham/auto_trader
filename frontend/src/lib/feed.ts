@@ -117,6 +117,27 @@ export function periodByResolution(resolution: string): Period | undefined {
   return PERIOD_BY_RESOLUTION.get(resolution);
 }
 
+// Timeframes an indicator may pin to: the chart's own timeframe or higher. A
+// pin equal to the chart differs from "Chart" mode under wait-for-closes — it
+// updates only on bar close instead of tracking the forming bar.
+export function pinnableTimeframes(chartResolution: string): Period[] {
+  const chartSecs = RESOLUTION_SECONDS[chartResolution] ?? 0;
+  return PERIODS.filter((p) => (RESOLUTION_SECONDS[p.resolution] ?? 0) >= chartSecs);
+}
+
+// True when a pinned MTF timeframe is finer than the chart's — reachable by
+// raising the chart timeframe after pinning. The pin can't meaningfully render
+// there, so callers clamp the computation to chart bars (keeping the pin).
+export function pinBelowChart(
+  timeframe: string | null | undefined,
+  chartResolution: string,
+): boolean {
+  if (!timeframe || timeframe === "chart") return false;
+  const tfSecs = RESOLUTION_SECONDS[timeframe] ?? 0;
+  const chartSecs = RESOLUTION_SECONDS[chartResolution] ?? 0;
+  return tfSecs > 0 && chartSecs > 0 && tfSecs < chartSecs;
+}
+
 export interface Instrument {
   epic: string;
   name: string;

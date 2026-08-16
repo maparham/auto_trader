@@ -336,3 +336,35 @@ describe("nominalBarHours", () => {
   });
 
 });
+
+describe("MTF pin helpers", () => {
+  it("pinnableTimeframes includes the chart's own timeframe and everything higher", async () => {
+    const { pinnableTimeframes } = await import("./feed");
+    expect(pinnableTimeframes("HOUR").map((p) => p.resolution)).toEqual([
+      "HOUR",
+      "HOUR_4",
+      "DAY",
+      "WEEK",
+    ]);
+  });
+
+  it("pinnableTimeframes excludes lower timeframes", async () => {
+    const { pinnableTimeframes } = await import("./feed");
+    expect(pinnableTimeframes("WEEK").map((p) => p.resolution)).toEqual(["WEEK"]);
+  });
+
+  it("pinBelowChart flags a pin finer than the chart", async () => {
+    const { pinBelowChart } = await import("./feed");
+    expect(pinBelowChart("HOUR", "DAY")).toBe(true);
+  });
+
+  it("pinBelowChart is false for equal, higher, chart-follow, and unknown pins", async () => {
+    const { pinBelowChart } = await import("./feed");
+    expect(pinBelowChart("HOUR", "HOUR")).toBe(false);
+    expect(pinBelowChart("DAY", "HOUR")).toBe(false);
+    expect(pinBelowChart("chart", "DAY")).toBe(false);
+    expect(pinBelowChart(null, "DAY")).toBe(false);
+    expect(pinBelowChart(undefined, "DAY")).toBe(false);
+    expect(pinBelowChart("NOT_A_TF", "DAY")).toBe(false);
+  });
+});

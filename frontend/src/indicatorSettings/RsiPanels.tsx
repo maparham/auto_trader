@@ -34,12 +34,14 @@ export function RsiInputsPanel({
   rsiSource,
   rsiSmooth,
   setRsiExtend,
+  chartOptionLabel,
 }: {
   calcParams: number[];
   setParam: (index: number, value: number) => void;
   rsiSource: string;
   rsiSmooth: RsiSmoothing;
   setRsiExtend: (patch: { source?: string; smoothing?: RsiSmoothing }) => void;
+  chartOptionLabel: string;
 }) {
   return (
     <>
@@ -128,7 +130,7 @@ export function RsiInputsPanel({
           <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA and MA." />
         </span>
         <select value="chart" disabled>
-          <option value="chart">Chart</option>
+          <option value="chart">{chartOptionLabel}</option>
         </select>
       </div>
     </>

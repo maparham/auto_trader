@@ -115,7 +115,7 @@ export function MaInputsPanel({
   setSmoothLen,
   timeframe,
   setTimeframe,
-  higherTimeframes,
+  timeframeOptions,
   maType,
   setMaType,
   envelope,
@@ -134,7 +134,7 @@ export function MaInputsPanel({
   setSmoothLen: (n: number) => void;
   timeframe: string;
   setTimeframe: (tf: string) => void;
-  higherTimeframes: { resolution: string; label: string }[];
+  timeframeOptions: { resolution: string; label: string }[];
   maType: string;
   setMaType: (s: string) => void;
   envelope: boolean;
@@ -270,8 +270,7 @@ export function MaInputsPanel({
             applyMa({ timeframe: e.target.value });
           }}
         >
-          <option value="chart">Chart</option>
-          {higherTimeframes.map((p) => (
+          {timeframeOptions.map((p) => (
             <option key={p.resolution} value={p.resolution}>
               {p.label}
             </option>
