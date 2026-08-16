@@ -156,6 +156,28 @@ export function synthesizeExprInstances(
 }
 
 /**
+ * The panes `rows` reference that the chart no longer carries, as payloads
+ * synthesized from the refs themselves — what a run re-creates before it ships,
+ * so deleting a pane a rule uses costs the user a default pane rather than a
+ * failed run (the request would otherwise omit the entry and the backend would
+ * 422 with `unknown_indicator_ref`).
+ *
+ * Only the referenced MA lengths and the accel companion survive in a ref, so a
+ * re-created pane takes type defaults for everything else — MA kind, slope unit,
+ * ATR smoothing, and any timeframe pin. The caller says so out loud (the run
+ * toast) because those change the numbers the rule compares against.
+ *
+ * A live pane covers only its OWN id: same-type panes are independent instances,
+ * and `SLOPE2` is not served by `SLOPE` being on the chart.
+ */
+export function missingExprInstances(
+  live: readonly LiveInstance[],
+  rows: string[],
+): Record<string, ExprInstancePayload> {
+  return synthesizeExprInstances(rows, new Set(live.map((i) => i.id)));
+}
+
+/**
  * The `indicators` map for a request whose rule rows are `rows`: every live pane
  * a row references, and nothing else. A referenced id that is NOT on the chart is
  * skipped — the editor already flags that as `unknown_indicator_ref`, and the

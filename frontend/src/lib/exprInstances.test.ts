@@ -3,6 +3,7 @@ import {
   collectExprInstances,
   exprInstancesFor,
   exprWarmupByRef,
+  missingExprInstances,
   referencedInstanceIds,
   rewriteInstanceRefs,
   synthesizeExprInstances,
@@ -171,6 +172,32 @@ describe("synthesizeExprInstances (legacy presets with no pane snapshot)", () =>
   it("dedupes repeated lengths and keeps reference order", () => {
     expect(synthesizeExprInstances(["SLOPE.21 > 0 and SLOPE.9 > 0 and SLOPE.accel21 < 1"], new Set()))
       .toEqual({ SLOPE: { type: "SLOPE", calcParams: [21, 9], extendData: { showAccel: true } } });
+  });
+});
+
+describe("missingExprInstances (panes a run has to re-create)", () => {
+  it("is empty when every referenced pane is live", () => {
+    expect(missingExprInstances(LIVE, ["SLOPE.9 > 0", "SLOPE#a1b.50 < 0"])).toEqual({});
+  });
+
+  it("synthesizes only the referenced panes the chart no longer has", () => {
+    expect(missingExprInstances(LIVE, ["SLOPE.9 > 0 and SLOPE2.50 > SLOPE2.100"])).toEqual({
+      SLOPE2: { type: "SLOPE", calcParams: [50, 100], extendData: {} },
+    });
+  });
+
+  it("a live pane of the same TYPE does not cover a different id", () => {
+    expect(missingExprInstances(LIVE, ["ATR1.14 > 1"]))
+      .toEqual({ ATR1: { type: "ATR", calcParams: [14], extendData: {} } });
+  });
+
+  it("skips refs whose id names no known indicator type", () => {
+    expect(missingExprInstances(LIVE, ["SLOP2.9 > 0", "candle.close > 0"])).toEqual({});
+  });
+
+  it("an empty chart re-creates every referenced pane", () => {
+    expect(missingExprInstances([], ["SLOPE.accel50 > 0"]))
+      .toEqual({ SLOPE: { type: "SLOPE", calcParams: [50], extendData: { showAccel: true } } });
   });
 });
 

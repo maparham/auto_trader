@@ -31,12 +31,18 @@ import {
 /** Recreate `indicators` (a portable id→payload map) on the cell's chart —
  * reusing exact matches, minting fresh ids on conflicts — and return the
  * old→new id map for rewriting the expressions that referenced them. Shared by
- * rule paste and preset load. No chart (or a locked snapshot) returns an empty
- * map: rewriting with it is the identity, and a missing ref lints as unknown. */
+ * rule paste, preset load and the run-time repair of panes a rule references but
+ * the chart no longer has. No chart (or a locked snapshot) returns an empty
+ * map: rewriting with it is the identity, and a missing ref lints as unknown.
+ *
+ * `notice` overrides the toast copy: the repair path re-creates panes from the
+ * REFS (defaults for everything a ref can't carry), which is a different promise
+ * from paste/preset restoring captured settings, so it says its own sentence. */
 export function applyPortableInstances(
   opts: {
     controller?: ChartController | null;
     epic: string;
+    notice?: (addedIds: string[]) => string;
     resolution: string;
     brokerId?: string;
   },
@@ -62,7 +68,8 @@ export function applyPortableInstances(
     // reload path, so a recreated pinned pane renders its own timeframe. No-op
     // when nothing added is pinned.
     void refreshMtfIndicators(controller.chart, epic, brokerId).catch(() => {});
-    toast(`Added ${added.map((i) => i.id).join(", ")} to the chart`);
+    const addedIds = added.map((i) => i.id);
+    toast(opts.notice?.(addedIds) ?? `Added ${addedIds.join(", ")} to the chart`);
   }
   return idMap;
 }

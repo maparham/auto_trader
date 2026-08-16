@@ -83,8 +83,9 @@ import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
 import { startBacktestProgressPoller } from "./lib/backtestProgress";
 import type { BacktestRequest, ExprBacktestRequest, ExprRow, SweepRow } from "./api";
-import { collectExprInstances, exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
+import { collectExprInstances, exprInstancesFor, exprWarmupByRef, missingExprInstances } from "./lib/exprInstances";
 import { liveExprInstances } from "./lib/indicators";
+import { applyPortableInstances } from "./lib/useRuleClipboard";
 
 interface Props {
   controller: ChartController | null;
@@ -306,13 +307,61 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         return r.bars;
       };
 
-      // The chart's live panes, read ONCE: a row saying `SLOPE.9 > 0.5`
-      // names an output and restates none of the pane's settings, so the pane is
-      // the only place both the run's WARM-UP DEPTH (warmupRefs, used by every
-      // sizing call below) and the request's `indicators` map (exprIndicators,
-      // built further down from this same list) can come from. Read before
-      // sizing, not at request-build time, or the history ask would charge a
-      // referenced pane zero bars and the run would trade an unwarmed series.
+      // Coded exits are sent as expression rows (baseReq below) and rule-mode
+      // runs post whole { expr, enabled }[] groups. Defined here so the pane
+      // repair right below, the coded baseReq and the rule-mode exprReq/sweep
+      // branch all read the SAME rows.
+      const exprRows = (g: RuleGroup): ExprRow[] =>
+        g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
+      // Every row the run ships, for the reference scan below and the
+      // `indicators` map further down. effCfg, not cfg: a coded run's dormant
+      // rule-mode groups name panes this run never evaluates.
+      const allRunRows = [effCfg.longEntry, effCfg.longExit, effCfg.shortEntry, effCfg.shortExit]
+        .flatMap(exprRows);
+      const runRows = allRunRows.map((r) => r.expr);
+      // A rule can outlive the pane it names (the rules live in the config; the
+      // panes are chart state anyone can delete from the legend). Rather than
+      // let the request omit the entry and the backend 422 on
+      // `unknown_indicator_ref`, re-create the missing panes from the refs
+      // themselves — `SLOPE2.50 > SLOPE2.100` mints a SLOPE pane carrying the 50
+      // and 100 MAs. Only lengths and the accel companion survive in a ref, so
+      // everything else (MA kind, unit, ATR smoothing, any timeframe pin) takes
+      // defaults — hence the toast: the run proceeds, but the user is told the
+      // series was rebuilt from the rule text and not from their old settings.
+      // Presets are the lossless path (they snapshot the panes whole), which is
+      // what the notice points at.
+      // ENABLED rows only, unlike the `indicators` map below: the backend skips a
+      // disabled row before it ever compiles (api/expr_exec.py), so a disabled
+      // rule naming a dead pane costs the run nothing today — re-creating a pane
+      // for it would put a chart artifact in front of the user for a rule that
+      // isn't running.
+      if (chart) {
+        const missing = missingExprInstances(
+          liveExprInstances(chart),
+          allRunRows.filter((r) => r.enabled).map((r) => r.expr),
+        );
+        applyPortableInstances(
+          {
+            controller,
+            epic,
+            resolution: runResolution,
+            brokerId,
+            notice: (ids) =>
+              `Re-created ${ids.join(", ")} from the rules (default settings: ` +
+              `MA type, units and timeframe). Load a preset to restore the originals.`,
+          },
+          missing,
+        );
+      }
+      // The chart's live panes, read ONCE (AFTER the repair above, so a
+      // re-created pane is sized and shipped like any other): a row saying
+      // `SLOPE.9 > 0.5` names an output and restates none of the pane's
+      // settings, so the pane is the only place both the run's WARM-UP DEPTH
+      // (warmupRefs, used by every sizing call below) and the request's
+      // `indicators` map (exprIndicators, built further down from this same
+      // list) can come from. Read before sizing, not at request-build time, or
+      // the history ask would charge a referenced pane zero bars and the run
+      // would trade an unwarmed series.
       const live = chart ? liveExprInstances(chart) : [];
       const warmupRefs = {
         instances: exprInstancesFor(live),
@@ -437,25 +486,16 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
           `series ${(tSeries1 - tSeries0).toFixed(0)}ms (${Object.keys(series).length} series)`,
       );
       const tRun0 = performance.now();
-      // Coded exits are sent as expression rows (baseReq below) and rule-mode
-      // runs post whole { expr, enabled }[] groups. Defined here so both the
-      // coded baseReq and the rule-mode exprReq/sweep branch can reference it.
-      const exprRows = (g: RuleGroup): ExprRow[] =>
-        g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
       // The chart panes these rows reference ("SLOPE.9"), with their LIVE
       // settings — read off the chart rather than storage so a pane retuned a
-      // moment ago runs as it looks. Only referenced panes travel; a reference to
-      // a pane that is gone ships nothing (the editor already flags it as
-      // unknown, and inventing an entry would hide that). Both requests carry it:
-      // a coded run still posts THIS panel's exit rules as expressions.
-      const exprIndicators = chart
-        ? collectExprInstances(
-            live,
-            [effCfg.longEntry, effCfg.longExit, effCfg.shortEntry, effCfg.shortExit]
-              .flatMap(exprRows)
-              .map((r) => r.expr),
-          )
-        : undefined;
+      // moment ago runs as it looks. Only referenced panes travel. A referenced
+      // pane that is gone was re-created from the refs before `live` was read
+      // (see the repair above), so the only ids still missing here are ones no
+      // pane type can mint (a typo'd id) — those ship nothing and the backend
+      // reports them, which is the honest answer for a name that means nothing.
+      // Both requests carry the map: a coded run still posts THIS panel's exit
+      // rules as expressions.
+      const exprIndicators = chart ? collectExprInstances(live, runRows) : undefined;
       const baseReq: BacktestRequest = {
         epic,
         resolution: runResolution,
