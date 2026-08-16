@@ -25,6 +25,8 @@ const {
   liveExprInstances,
   exprInstancesFromChart,
   mintInstanceId,
+  isMintedInstanceId,
+  applyIndicator,
 } = await import("./indicators");
 
 // In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
@@ -580,5 +582,47 @@ describe("importExprInstances (rule-clipboard paste: recreate referenced panes)"
     expect(idMap).toEqual({ SLOPE: "SLOPE" });
     expect(added).toEqual([]);
     expect(inds).toHaveLength(1);
+  });
+});
+
+describe("isMintedInstanceId (keeps per-instance names out of the indicator menu)", () => {
+  // getSupportedIndicators() returns minted INSTANCE names ("FVG2") alongside the
+  // real types, because every 2nd+ instance is registered as its own template.
+  // The menu must be able to tell them apart — and it cannot do so by SHAPE,
+  // since mintInstanceId just appends a digit, so "FVG2" looks exactly like a
+  // type name. Getting this wrong lists instances as addable "types", and
+  // clicking one mints an instance OF that fake type ("FVG22"), which breeds.
+  function chartWith(existing: string[]) {
+    let seq = 0;
+    return {
+      getIndicators: () => existing.map((name) => ({ name, paneId: "candle_pane" })),
+      createIndicator: () => `pane_${++seq}`,
+      overrideIndicator: () => {},
+      setPaneOptions: () => {},
+      overrideYAxis: () => {},
+    } as unknown as Chart;
+  }
+
+  it("does not flag a TYPE, whose first instance takes the bare name", () => {
+    const first = addIndicatorInstance(chartWith([]), "tab.menu", "US100", "FVG");
+    expect(first!.id).toBe("FVG");
+    expect(isMintedInstanceId("FVG")).toBe(false);
+  });
+
+  it("flags the id minted for a second instance", () => {
+    const second = addIndicatorInstance(chartWith(["FVG"]), "tab.menu", "US100", "FVG");
+    expect(second!.id).toBe("FVG2");
+    expect(isMintedInstanceId("FVG2")).toBe(true);
+  });
+
+  it("flags a REHYDRATED instance id, which is registered without ever being minted", () => {
+    // A reload replays saved ids straight through applyIndicator — no mint call —
+    // so recording ids at the mint site would miss every instance after a refresh.
+    applyIndicator(chartWith([]), "tab.menu", "US100", { id: "FVG7", type: "FVG" });
+    expect(isMintedInstanceId("FVG7")).toBe(true);
+  });
+
+  it("still flags legacy '#'-suffixed ids from earlier builds", () => {
+    expect(isMintedInstanceId("EMA#a1b2c3")).toBe(true);
   });
 });

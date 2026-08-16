@@ -33,7 +33,7 @@ import {
 } from "./lib/persist";
 import { saveSnapshotOfChart } from "./lib/snapshotSave";
 import Snackbar from "./Snackbar";
-import { addIndicatorInstance, isSubPaneIndicator, isInternalIndicator } from "./lib/indicators";
+import { addIndicatorInstance, isSubPaneIndicator, isInternalIndicator, isMintedInstanceId } from "./lib/indicators";
 import {
   applySymbolTemplate,
   captureDefaultTemplate,
@@ -183,14 +183,17 @@ export default function Toolbar({
   // chart and reflects controller.indicators (see the active-set subscription).
 
   // Menu lists indicator TYPES (the registered base types), not live instances —
-  // per-instance template names (e.g. "EMA#a1b2") also appear in
-  // getSupportedIndicators() and must NOT leak into the menu. A type leaks in iff
-  // it has no "#": instance ids carry one.
+  // per-instance template names ("FVG2", legacy "EMA#a1b2") also appear in
+  // getSupportedIndicators() and must NOT leak into the menu. Ask the registry
+  // (isMintedInstanceId) rather than reading the NAME: mintInstanceId names the
+  // second instance `${type}2`, so "FVG2" is shape-indistinguishable from a type.
+  // The old "#"-only test predated numeric ids, so every 2nd+ instance leaked in
+  // as an addable "type" — and adding one minted an instance OF it ("FVG22").
   // Internal names are excluded: EQUITY (driven by the Backtest button), the
   // SLOPE_ACCEL base type and its "<parent>__accel" companion instances (driven
   // by the Slope's "Show acceleration pane" toggle, never added directly).
   const allIndicators = getSupportedIndicators()
-    .filter((n) => !n.includes("#"))
+    .filter((n) => !isMintedInstanceId(n))
     .filter((n) => n !== EQUITY_INDICATOR && n !== "SLOPE_ACCEL" && !isInternalIndicator(n));
   const matches = (n: string) => {
     const q = indFilter.toLowerCase();

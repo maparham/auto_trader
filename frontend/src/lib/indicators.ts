@@ -214,6 +214,24 @@ export const accelCompanionId = (parentId: string): string => `${parentId}${ACCE
 export const isInternalIndicator = (name: string): boolean =>
   INTERNAL_INDICATORS.has(name) || name.endsWith(ACCEL_SUFFIX);
 
+// Per-instance template names registered this session (see registerInstanceTemplate).
+const mintedInstanceIds = new Set<string>();
+
+/** Is `name` a per-INSTANCE template name rather than an indicator TYPE?
+ *
+ * The indicator menu lists types, but getSupportedIndicators() returns instance
+ * names too. They cannot be told apart by shape — mintInstanceId names the
+ * second instance `${type}2`, so "FVG2" is indistinguishable from a type called
+ * "FVG2" — so this asks the registry, which knows exactly what it registered.
+ * The legacy "<TYPE>#<rand>" form is also matched outright: those ids predate
+ * this bookkeeping and can appear in charts stored by earlier builds.
+ *
+ * Empty until instances register, which is precisely when their names start
+ * appearing in getSupportedIndicators() — the two populate in the same act, so
+ * a name can never leak in the window before it is recorded. */
+export const isMintedInstanceId = (name: string): boolean =>
+  mintedInstanceIds.has(name) || name.includes("#");
+
 // A reorderable sub-pane captured before teardown: its id, current height, and the
 // ordered indicator instances it holds (usually one; a multi-indicator pane moves whole).
 interface PaneSnapshot {
@@ -388,6 +406,16 @@ function cloneTemplateFromLive(
 //    instance of the same type (see cloneTemplateFromLive) — that's how RSI/MACD/…
 //    go multi-instance despite klinecharts hiding their templates.
 function registerInstanceTemplate(chart: Chart, type: string, id: string): boolean {
+  // An id that DIFFERS from its type is by definition a per-instance name
+  // ("FVG2", legacy "EMA#a1b2"), and every such name gets registered with
+  // klinecharts — so getSupportedIndicators() returns it next to the real types.
+  // Record it here, at the registration site, because that is the ONE place every
+  // instance passes through: a page reload replays saved ids straight into
+  // applyIndicator without minting, so recording at mintInstanceId would leave
+  // the set empty after every refresh. The first instance (id === type) is
+  // deliberately NOT recorded: it keeps the bare type name, which must stay
+  // listed as an addable type.
+  if (id !== type) mintedInstanceIds.add(id);
   if (isCustomType(type)) {
     // Copy `figures` AND `styles.lines` so each instance owns its own arrays. A bare
     // shallow spread shared one figures array / styles.lines reference across every
