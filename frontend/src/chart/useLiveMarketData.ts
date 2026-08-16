@@ -5,10 +5,10 @@
 // per-tick candles + drives the pills. Behavior is identical to the in-component
 // effect — every value the original read from ChartCore's closure is supplied
 // here via `handle.*`, a module import, or an explicit `deps` field.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type KLineData } from "klinecharts";
 import {
-  fetchRecent,
+  fetchRecentWithStatus,
   fetchRange,
   openLive,
   RESOLUTION_SECONDS,
@@ -18,6 +18,7 @@ import {
 import { coverHistoryRangeParallel } from "../lib/historyPaging";
 import type { PriceSide } from "../theme";
 import { synthPrecision } from "./chartPainters";
+import { nextHistoryRetryDelayMs, shouldKeepPaintedBars, shouldRetryHistory } from "./noDataPolicy";
 import { periodFromTf } from "./chartDataFacade";
 import {
   teardownArtifacts,
@@ -58,6 +59,9 @@ export interface LiveMarketDataDeps {
   setLastPrice: (p: number | null) => void;
   setHasData: (v: boolean) => void;
   setLoadError: (v: string | null) => void;
+  // The last load's degraded-serve marker (broker unreachable, cached bars
+  // served — see feed.CandlesResult); null = healthy/complete.
+  setDegraded: (v: string | null) => void;
   setErrorOpen: (v: boolean) => void;
   setFetchedPrecision: (p: number | null) => void;
   setSnapView: (m: SnapshotMeta | null) => void;
@@ -138,6 +142,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     setLastPrice,
     setHasData,
     setLoadError,
+    setDegraded,
     setErrorOpen,
     setFetchedPrecision,
     setSnapView,
@@ -177,6 +182,21 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
   // Called from the load effect's settle points, where the view moves without
   // any scroll/zoom action firing.
   const repositionPinRef = useRef<(() => void) | null>(null);
+  // History-load retry: a load that settles with ZERO bars (broker maintenance,
+  // backend reload, transient network failure) re-runs the whole load effect on
+  // a backoff — this is what makes the no-data banner's "Retrying automatically…"
+  // true. Recovery used to rely solely on a live tick arriving (line ~800), which
+  // never happens while the market is closed, so one transient failure latched
+  // the banner until a manual page reload. Bumping the nonce re-enters the effect
+  // below (it's in the deps), reusing the full load path — view restore, overlay
+  // rehydrate, live re-subscribe — with no duplicated logic.
+  const [retryNonce, setRetryNonce] = useState(0);
+  const retryAttemptRef = useRef(0);
+  const retrySeriesRef = useRef("");
+  // Nonce value the previous effect run saw: lets a run tell "I was triggered
+  // by the retry backoff" apart from an epic/TF/side change, so retry re-runs
+  // can hold the user's view steady (see keepCenter below).
+  const lastRetryNonceRef = useRef(0);
 
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
   useEffect(() => {
@@ -184,6 +204,16 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     const dataFacade = handle.dataFacadeRef.current;
     if (!chart || !dataFacade) return;
     let cancelled = false;
+    let retryTimer: number | null = null;
+    // A series switch starts the backoff over; a retry re-run (same series)
+    // keeps escalating it. sameSeriesRerun also gates keep-painted-on-empty
+    // below: only a re-run of the identical series may leave old bars on screen.
+    const seriesKey = `${brokerId}|${symbol.epic}|${period.resolution}|${priceSide}`;
+    const sameSeriesRerun = retrySeriesRef.current === seriesKey;
+    if (!sameSeriesRerun) {
+      retrySeriesRef.current = seriesKey;
+      retryAttemptRef.current = 0;
+    }
 
     // Center-preservation across a timeframe change: capture the bar at the
     // horizontal center of the view now, from the OLD (about-to-be-replaced)
@@ -216,12 +246,21 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // reads further down for the range/measure teardown.)
     const isEpicChange = prevEpicRef.current !== symbol.epic;
     const isResChange = prevResRef.current !== period.resolution;
+    // A backoff-retry re-run (empty or degraded load healing): same series, only
+    // the nonce moved. It must NOT snap the view to the live edge — during an
+    // outage the retry fires every 5-60s, and a user studying scrolled-back
+    // history would be yanked to the edge on every cycle. Unconditional (not
+    // gated on the preserve-center setting): that setting governs deliberate TF
+    // switches, while this is a background refresh the user never asked for.
+    const isRetryRun = retryNonce !== lastRetryNonceRef.current && !isEpicChange && !isResChange;
+    lastRetryNonceRef.current = retryNonce;
     const keepCenter =
-      isResChange &&
-      !isEpicChange &&
-      priorCenterTs != null &&
-      !handle.pendingRangeRef.current &&
-      loadSettings().preserveCenterOnTfChange;
+      (isResChange &&
+        !isEpicChange &&
+        priorCenterTs != null &&
+        !handle.pendingRangeRef.current &&
+        loadSettings().preserveCenterOnTfChange) ||
+      (isRetryRun && priorCenterTs != null && !handle.pendingRangeRef.current);
     // Fresh mount (page reload / cell open): restore the view position the
     // scroll/zoom subscription below last saved for this cell — same opt-in as
     // the TF-change preserve, and only when the saved epic+resolution still
@@ -275,7 +314,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         COVER_PAGE_BARS * COVER_MAX_WINDOWS;
     if (tooDeep) {
       const day = new Date(wantCenterTs!).toLocaleDateString();
-      toast(`${day} is too far back for ${period.label}. Showing the latest candles instead.`);
+      // Retry re-runs repeat on a 5-60s backoff — re-toasting the same notice
+      // every cycle would spam; the parked intent below still survives.
+      if (!isRetryRun)
+        toast(`${day} is too far back for ${period.label}. Showing the latest candles instead.`);
       // Park the unreached center so the NEXT timeframe change can restore it
       // (cleared on gesture / epic change / a switch that lands — see the ref).
       intendedCenterRef.current = wantCenterTs;
@@ -412,13 +454,17 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // it and persist() stays gated on the stale epic forever, silently dropping
       // every alert/drawing the user adds until they switch symbol again.
       let bars: KLineData[];
+      let degraded: string | null = null;
       try {
-        bars = await fetchRecent(symbol.epic, period.resolution, 500, priceSide, brokerId);
+        const loaded = await fetchRecentWithStatus(symbol.epic, period.resolution, 500, priceSide, brokerId);
+        bars = loaded.bars;
+        degraded = loaded.degraded;
       } catch (err) {
         console.warn(`[chart] initial load failed for ${symbol.epic}; continuing with no history`, err);
         bars = [];
         if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
       }
+      if (!cancelled) setDegraded(degraded);
       if (cancelled || !handle.chartRef.current) return;
       // This run owns the load — the saved-view restore is spent (see above).
       didInitRef.current = true;
@@ -461,15 +507,30 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         if (cancelled || !handle.chartRef.current) return;
         bars = merged;
       }
-      // Cursor starts at the oldest loaded bar; scroll-back requests older windows.
-      handle.cursorSecRef.current = bars.length
-        ? Math.floor(bars[0].timestamp / 1000)
-        : Math.floor(Date.now() / 1000);
-      // canLoadOlder arms left-edge scroll-back paging (the facade owns the v10
-      // flag translation; onLoadRequest answers the loads). Live-only (seconds)
-      // intervals have no history, so disable scroll-back there to avoid firing
-      // empty fetchRange windows that walk back for nothing.
-      dataFacade.setBars(bars, !period.liveOnly);
+      // A same-series re-run (a backoff retry, notably) that came back EMPTY
+      // keeps whatever is already painted — wiping a chart the user is looking
+      // at because one retry failed is strictly worse than stale bars under the
+      // stale pill (e.g. bars a parked range pick's walk paged in after an
+      // earlier empty load, or a degraded load's cached bars). A series SWITCH
+      // that fails still clears below: the old series must not masquerade as
+      // the new one. hasData stays false either way, so the banner + retry
+      // still own recovery.
+      const keepPainted = shouldKeepPaintedBars(
+        bars.length,
+        handle.chartRef.current.getDataList().length,
+        sameSeriesRerun,
+      );
+      if (!keepPainted) {
+        // Cursor starts at the oldest loaded bar; scroll-back requests older windows.
+        handle.cursorSecRef.current = bars.length
+          ? Math.floor(bars[0].timestamp / 1000)
+          : Math.floor(Date.now() / 1000);
+        // canLoadOlder arms left-edge scroll-back paging (the facade owns the v10
+        // flag translation; onLoadRequest answers the loads). Live-only (seconds)
+        // intervals have no history, so disable scroll-back there to avoid firing
+        // empty fetchRange windows that walk back for nothing.
+        dataFacade.setBars(bars, !period.liveOnly);
+      }
       if (isSynthetic(symbol.epic) && bars.length > 0) {
         const p = synthPrecision(bars[bars.length - 1].close);
         setFetchedPrecision(p);
@@ -480,6 +541,18 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // below flips hasData true. Native intervals with no history are genuinely
       // empty until proven otherwise.
       setHasData(bars.length > 0);
+      if (!shouldRetryHistory(bars.length, degraded)) {
+        retryAttemptRef.current = 0;
+      } else if (!period.liveOnly && !cancelled) {
+        // Live-only (seconds) intervals legitimately start empty (they fill from
+        // the stream) — everything else with no bars is a failed/empty load, and
+        // a DEGRADED load (cached bars served during a broker outage) is missing
+        // its tail: schedule a re-run either way so the series heals when the
+        // broker returns. The cleanup below clears the timer, so a series
+        // switch or unmount can't leak a stale retry.
+        const delay = nextHistoryRetryDelayMs(retryAttemptRef.current++);
+        retryTimer = window.setTimeout(() => setRetryNonce((n) => n + 1), delay);
+      }
       // Anchor the view. Default (reset-on-TF off): a pure timeframe change
       // keeps the previously-centered time centered, so the same moment stays
       // in view across timeframes (scrollTsToCenter clamps to the nearest
@@ -491,30 +564,35 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // re-applied first so the centered window spans what it did before.
       // centerTargetTs was decided up front (before setPeriod) so the view
       // could be held steady through the fetch too.
-      if (restoreView && restoreView.barSpace > 0) {
-        handle.chartRef.current.setBarSpace(restoreView.barSpace);
+      // keepPainted: the bars (and therefore the user's view onto them) were
+      // left untouched — repositioning would yank a view the user may be
+      // reading to the live edge for a load that applied nothing.
+      if (!keepPainted) {
+        if (restoreView && restoreView.barSpace > 0) {
+          handle.chartRef.current.setBarSpace(restoreView.barSpace);
+        }
+        if (centerTargetTs != null) {
+          scrollTsToCenter(handle.chartRef.current, centerTargetTs);
+          // Landed on the target — any parked too-deep intent is fulfilled (or
+          // superseded by this fresher preserve).
+          intendedCenterRef.current = null;
+        } else {
+          handle.chartRef.current.scrollToRealTime();
+        }
+        // Record the settled position (see captureViewPos): programmatic
+        // positioning fires no scroll action, so the subscription alone would
+        // leave the saved view stale after a TF/symbol switch. A too-deep switch
+        // persists the UNREACHED intended center, not the latest-candles view it
+        // fell back to, so a reload keeps the chosen center too.
+        captureViewPos(
+          handle.chartRef.current,
+          scope,
+          symbol.epic,
+          period.resolution,
+          tooDeep ? (intendedCenterRef.current ?? undefined) : undefined,
+        );
+        repositionPinRef.current?.();
       }
-      if (centerTargetTs != null) {
-        scrollTsToCenter(handle.chartRef.current, centerTargetTs);
-        // Landed on the target — any parked too-deep intent is fulfilled (or
-        // superseded by this fresher preserve).
-        intendedCenterRef.current = null;
-      } else {
-        handle.chartRef.current.scrollToRealTime();
-      }
-      // Record the settled position (see captureViewPos): programmatic
-      // positioning fires no scroll action, so the subscription alone would
-      // leave the saved view stale after a TF/symbol switch. A too-deep switch
-      // persists the UNREACHED intended center, not the latest-candles view it
-      // fell back to, so a reload keeps the chosen center too.
-      captureViewPos(
-        handle.chartRef.current,
-        scope,
-        symbol.epic,
-        period.resolution,
-        tooDeep ? (intendedCenterRef.current ?? undefined) : undefined,
-      );
-      repositionPinRef.current?.();
       // Rehydrate this symbol's saved drawings + alerts now that the data (and
       // therefore the timescale their points map onto) is loaded. Passing the
       // resolution makes rehydrate adopt it BEFORE points materialize — a
@@ -786,6 +864,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           // scroll/zoom action — keep the center pin from drifting stale.
           if (k.timestamp > lastTs) repositionPinRef.current?.();
           setHasData(true); // a flowing stream clears the no-data banner (React no-ops if unchanged)
+          // Deliberately NOT clearing `degraded` here: the stream can be healthy
+          // while REST history is blocked (WAF/429), and a tick gluing a now-bar
+          // onto a short cached tail is exactly the state the pill must keep
+          // naming. The healing retry loop clears it on the first non-degraded
+          // reload instead.
           setLastPrice(k.close);
           // Publish the price so the positions dock can mark P&L to market without
           // polling the server (see trading.setLivePrice / PositionsPanel).
@@ -808,11 +891,12 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
 
     return () => {
       cancelled = true;
+      if (retryTimer != null) window.clearTimeout(retryTimer);
       handle.wsRef.current?.close();
       handle.wsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol.epic, period.resolution, priceSide, brokerId]);
+  }, [symbol.epic, period.resolution, priceSide, brokerId, retryNonce]);
 
   // Persist the view position (centered bar time + zoom) on every user
   // pan/zoom, debounced, so a page reload can reopen the chart where the user
@@ -941,10 +1025,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // line stops at the pin's top edge so it doesn't cut through the glyph.
       const xAxisH = c.getSize("x_axis_pane", "root")?.height ?? 0;
       pin.style.display = "block";
-      pin.style.left = `${Math.round(x) - 7}px`;
+      pin.style.left = `${x - 7}px`;
       pin.style.bottom = `${xAxisH + 1}px`;
       line.style.display = "block";
-      line.style.left = `${Math.round(x)}px`;
+      line.style.left = `${x}px`;
       line.style.bottom = `${xAxisH + 14}px`;
     };
     // rAF-coalesced, except when the browser tab is hidden — rAF never fires

@@ -15,7 +15,8 @@ import {
 } from "./lib/backtest";
 import type { ChartController } from "./lib/chartController";
 import Tooltip from "./components/Tooltip";
-import { fetchRange, RESOLUTION_SECONDS, type Period } from "./lib/feed";
+import { fetchRangeWithStatus, RESOLUTION_SECONDS, type Period } from "./lib/feed";
+import { cachedRunNotice, emptyRangeError, warmupError } from "./lib/backtestDataHealth";
 import type { PriceSide } from "./theme";
 import { defaultBacktestConfig, type BacktestConfig, type RuleGroup } from "./lib/backtestConfig";
 import { resolveMask } from "./lib/backtestSchedule";
@@ -291,8 +292,19 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         } else windowToMs = trainToMs;
       }
       const toSec = Math.floor(windowToMs / 1000);
-      const fetchBars = (fromMs: number) =>
-        fetchRange(epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId, runCtl.signal);
+      // Each fetch covers the full [from, toSec] span and the depth-retry /
+      // widening walk keep whole results, so the run's data health is the
+      // degraded status of WHICHEVER fetch's bars were kept — not a sticky OR
+      // across attempts (a transient failure healed by a later fetch must not
+      // brand a healthy run "ran on cached candles"). Tracked per result array.
+      const degradedByResult = new WeakMap<object, string | null>();
+      const fetchBars = async (fromMs: number) => {
+        const r = await fetchRangeWithStatus(
+          epic, runResolution, Math.floor(Math.max(0, fromMs) / 1000), toSec, priceSide, brokerId, runCtl.signal,
+        );
+        degradedByResult.set(r.bars, r.degraded);
+        return r.bars;
+      };
 
       // The chart's live panes, read ONCE: a row saying `SLOPE.9 > 0.5`
       // names an output and restates none of the pane's settings, so the pane is
@@ -349,9 +361,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         fetchBars,
       );
 
+      // The kept result's health (see degradedByResult above).
+      const dataDegraded = degradedByResult.get(bars) ?? null;
+
       const tradeFromTime = Math.round(windowFromMs / 1000);
       if (!bars.some((k) => Math.round(k.timestamp / 1000) >= tradeFromTime)) {
-        setError("no candles in the selected range");
+        setError(emptyRangeError(dataDegraded));
         return;
       }
 
@@ -371,19 +386,36 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         if (warmup === 0 && bars.length > 0) {
           const firstBar = new Date(bars[0].timestamp).toISOString().slice(0, 10);
           setError(
-            `no history before the window: ${epic} ${runResolution} data starts ` +
-              `${firstBar}, after the range's From date. Move the range start past ` +
-              `that date (or switch to a data source with deeper history).`,
+            warmupError(
+              `no history before the window: ${epic} ${runResolution} data starts ` +
+                `${firstBar}, after the range's From date. Move the range start past ` +
+                `that date (or switch to a data source with deeper history).`,
+              dataDegraded,
+            ),
           );
           return;
         }
         setError(
-          `not enough history: ${warmup} of ${required} warm-up bars before the window. ` +
-            `Indicators can't be computed correctly here — start the range later, ` +
-            `raise the history depth, or shorten the longest indicator.`,
+          warmupError(
+            `not enough history: ${warmup} of ${required} warm-up bars before the window. ` +
+              `Indicators can't be computed correctly here — start the range later, ` +
+              `raise the history depth, or shorten the longest indicator.`,
+            dataDegraded,
+          ),
         );
         return;
       }
+
+      // Enough cached data to run despite a broker outage: proceed (the result
+      // is identical for the bars that exist), but say so — including the
+      // effective data end when the unreachable tail cut the range short.
+      const degradedNotice = cachedRunNotice(
+        dataDegraded,
+        bars.length ? bars[bars.length - 1].timestamp : null,
+        toSec,
+        resSeconds,
+      );
+      if (degradedNotice) toast(degradedNotice);
 
       // The backend recomputes every indicator/price/ATR series itself from the
       // rule expressions (and coded mode's strategy-file indicators run in

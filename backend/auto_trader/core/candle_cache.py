@@ -342,11 +342,17 @@ class CandleCache:
         *,
         now: float | None = None,
         chunk_bars: int = _BACKFILL_CHUNK_BARS,
+        degraded: dict | None = None,
     ) -> list[Candle]:
-        """Candles in [start, end]. Serializes per-key with recent() (see _key_lock)."""
+        """Candles in [start, end]. Serializes per-key with recent() (see _key_lock).
+
+        `degraded` (optional out-param): when a broker fetch failed but cached bars
+        were served anyway, degraded["reason"] is set to the error text — the
+        caller's signal that the result may be missing the unreachable portion."""
         async with self._key_lock(key):
             return await self._window(
-                key, res_seconds, start, end, fetch_range, now=now, chunk_bars=chunk_bars
+                key, res_seconds, start, end, fetch_range,
+                now=now, chunk_bars=chunk_bars, degraded=degraded,
             )
 
     async def _window(
@@ -359,6 +365,7 @@ class CandleCache:
         *,
         now: float | None = None,
         chunk_bars: int = _BACKFILL_CHUNK_BARS,
+        degraded: dict | None = None,
     ) -> list[Candle]:
         """Candles in [start, end]. Cache hit when the window is fully covered.
         Otherwise contiguous-backfill: fetch the gap below oldest down to `start`
@@ -375,6 +382,11 @@ class CandleCache:
         cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
         chunk_secs = res_seconds * max(1, chunk_bars)
         fetched_any = False
+        # Forward-fill and downward-backfill failures are tracked separately: an
+        # unreachable live edge (broker outage) must not abort the downward walk,
+        # which can still be served — often straight from cache or a healthier
+        # historical source. Each walk stops on ITS first error only.
+        fwd_err: Exception | None = None
         err: Exception | None = None
         # Fill any gap ABOVE newest first (an API client walking history
         # forward, or a window straddling the live edge — historically this
@@ -393,7 +405,7 @@ class CandleCache:
                         datetime.fromtimestamp(cur, tz=timezone.utc),
                         datetime.fromtimestamp(chunk_to, tz=timezone.utc))
                 except Exception as e:  # noqa: BLE001 — same contract as the walk below
-                    err = e
+                    fwd_err = e
                     break
                 fetched_any = True
                 await asyncio.to_thread(self._store_closed, key, chunk, cutoff)
@@ -441,8 +453,6 @@ class CandleCache:
                 "eta_s": None, "at": "", "updated_at": time.time(),
             }
         try:
-            # err from a failed forward fill skips the downward walk entirely:
-            # surface the failure (or the partial cache) promptly.
             while err is None and start < cursor:
                 chunk_from_ts = max(from_ts, int(cursor.timestamp()) - chunk_secs)
                 chunk_from = datetime.fromtimestamp(chunk_from_ts, tz=timezone.utc)
@@ -490,22 +500,46 @@ class CandleCache:
         if fetched_any:
             self._record_miss(key)
             self._record_last_fetch(key, now if now is not None else time.time())
-        # The backfill errored partway. If the chunks that DID land already cover the
-        # requested window, serve that partial data (real bars — the caller's cursor
-        # advance is legitimate). Otherwise the window is still unreached: surface the
-        # error rather than an empty 200. This matters because scroll-back requests a
-        # window at the BOTTOM of the gap while chunks fill top-down — a mid-gap failure
-        # leaves read_window empty even though top chunks succeeded. Returning [] here
-        # would be indistinguishable from genuine end-of-history and would trip the
-        # frontend's empty-streak latch (the very thing this guards against); a 5xx is
-        # treated as "retry the same window on next scroll". Progress persists: the
-        # landed chunks are already stored + covered, so the retry resumes deeper.
-        if err is not None:
-            cached = await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+        # A fill errored partway (either walk). If the bars that DID land (plus prior
+        # cache) give the window anything, serve that partial data and mark the call
+        # degraded — real bars beat a 5xx during an outage, and the caller can tell
+        # the result may be short. Otherwise the window is still unreached: surface
+        # the error rather than an empty 200. This matters because scroll-back
+        # requests a window at the BOTTOM of the gap while chunks fill top-down — a
+        # mid-gap failure leaves read_window empty even though top chunks succeeded.
+        # Returning [] here would be indistinguishable from genuine end-of-history
+        # and would trip the frontend's empty-streak latch (the very thing this
+        # guards against); a 5xx is treated as "retry the same window on next
+        # scroll". Progress persists: the landed chunks are already stored +
+        # covered, so the retry resumes deeper.
+        cached = await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+        first_err = err if err is not None else fwd_err
+        if first_err is not None:
             if cached:
+                if degraded is not None and not await self._window_closed_complete(
+                    key, from_ts, to_ts, cutoff, res_seconds
+                ):
+                    degraded["reason"] = str(first_err)
                 return cached
-            raise err
-        return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+            raise first_err
+        return cached
+
+    async def _window_closed_complete(
+        self, key: CandleKey, from_ts: int, to_ts: int, cutoff: int, res_seconds: int
+    ) -> bool:
+        """Whether coverage spans every CLOSED bar of [from_ts, to_ts]. A window
+        never contains the forming bar (only closed bars are stored), so a
+        request reaching past the closed edge is still complete once coverage
+        reaches the last closed bar's open (cutoff - res_seconds) — a failed
+        fetch whose only unserved content was the forming bar must not mark the
+        payload degraded, or every to_ts=now request during an outage would
+        carry a false 'missing data' signal (pill + retry churn) over a payload
+        missing nothing."""
+        need_hi = min(to_ts, cutoff - res_seconds)
+        if need_hi < from_ts:
+            return True  # entirely in the forming/future region: nothing closed to miss
+        cov = await asyncio.to_thread(self._coverage, key)
+        return cov is not None and cov[0] <= from_ts and cov[1] >= need_hi
 
     async def recent(
         self,
@@ -516,10 +550,16 @@ class CandleCache:
         *,
         tail: int = 3,
         now: float | None = None,
+        degraded: dict | None = None,
     ) -> list[Candle]:
-        """Most-recent `count` bars. Serializes per-key with window() (see _key_lock)."""
+        """Most-recent `count` bars. Serializes per-key with window() (see _key_lock).
+
+        `degraded` (optional out-param): same contract as window() — set when a
+        broker fetch failed and cached bars were served in its place."""
         async with self._key_lock(key):
-            return await self._recent(key, res_seconds, count, fetch_recent, tail=tail, now=now)
+            return await self._recent(
+                key, res_seconds, count, fetch_recent, tail=tail, now=now, degraded=degraded
+            )
 
     async def _recent(
         self,
@@ -530,6 +570,7 @@ class CandleCache:
         *,
         tail: int = 3,
         now: float | None = None,
+        degraded: dict | None = None,
     ) -> list[Candle]:
         """Most-recent `count` bars. Cold/short cache -> one full fetch. Warm cache
         -> a small `tail` fetch to anchor 'now' + carry the forming bar, with the
@@ -591,9 +632,11 @@ class CandleCache:
             # restarting from scratch on every retry.
             self._absorb_late(key, res_seconds, fetch_task)
             raise
-        except Exception:
+        except Exception as e:
             cached = await asyncio.to_thread(self._read_back, key, count, cutoff + res_seconds)
             if cached:
+                if degraded is not None:
+                    degraded["reason"] = str(e)
                 return cached
             raise
         self._record_last_fetch(key, now if now is not None else time.time())

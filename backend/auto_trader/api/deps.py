@@ -262,12 +262,18 @@ async def _fetch_symbol_candles(
     from_ts: int | None,
     to_ts: int | None,
     price_side: str,
+    degraded: dict | None = None,
 ) -> list[Candle]:
     """Fetch raw candles for one epic against one broker: seconds (tick recorder),
     derived (folded from cached base series), or native (cache/broker). Raises the
     same HTTPExceptions as before for bad brokers/windows/IG-derived; does NOT
     raise the native-path "no data at all" 404 — that decision stays with the
-    caller (a symbol's emptiness may or may not be fatal depending on context)."""
+    caller (a symbol's emptiness may or may not be fatal depending on context).
+
+    `degraded` (optional out-param, see CandleCache.window): set when the broker
+    fetch failed but the cache served bars anyway — the route turns it into the
+    X-Candles-Degraded response header so clients can tell "possibly short cached
+    data during an outage" apart from "this is all the data there is"."""
     # Resolve an unnamed broker BEFORE anything keys off broker_id (breaker,
     # candle cache, tick store) so an empty id never becomes a cache key.
     broker_id = broker_id or default_broker_id()
@@ -322,11 +328,12 @@ async def _fetch_symbol_candles(
             except (OverflowError, OSError, ValueError) as e:
                 raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
             base_bars = await CANDLE_CACHE.window(
-                base_key, base_seconds, start, end, fetch_range
+                base_key, base_seconds, start, end, fetch_range, degraded=degraded
             )
             return fold(base_bars, rule)
         base_bars = await CANDLE_CACHE.recent(
-            base_key, base_seconds, base_count_for(rule, bars), fetch_recent
+            base_key, base_seconds, base_count_for(rule, bars), fetch_recent,
+            degraded=degraded,
         )
         folded = fold(base_bars, rule)
         # Match the native path: only 404 when no window was requested at all (a
@@ -370,7 +377,11 @@ async def _fetch_symbol_candles(
             end = datetime.fromtimestamp(to_ts, tz=timezone.utc)
         except (OverflowError, OSError, ValueError) as e:
             raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
-        loaded = await CANDLE_CACHE.window(key, res_seconds, start, end, fetch_range)
+        loaded = await CANDLE_CACHE.window(
+            key, res_seconds, start, end, fetch_range, degraded=degraded
+        )
     else:
-        loaded = await CANDLE_CACHE.recent(key, res_seconds, bars, fetch_recent)
+        loaded = await CANDLE_CACHE.recent(
+            key, res_seconds, bars, fetch_recent, degraded=degraded
+        )
     return loaded

@@ -2,7 +2,16 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { installMemStorage } from "./testMemStorage";
 installMemStorage();
 
-import { fetchAllMarkets, fetchFavorites, fetchRecent, isFeedStale, nominalBarHours, openLive } from "./feed";
+import {
+  fetchAllMarkets,
+  fetchFavorites,
+  fetchRecent,
+  fetchRecentWithStatus,
+  fetchRangeWithStatus,
+  isFeedStale,
+  nominalBarHours,
+  openLive,
+} from "./feed";
 import { registerSynthetic } from "./syntheticRegistry";
 
 // The catalogue/favorites caches are module-level and keyed by broker; each test
@@ -100,6 +109,83 @@ describe("synthetic routing", () => {
     expect(onCandle).not.toHaveBeenCalled();
     expect(onStatus).toHaveBeenCalledWith("down");
     expect(() => h.close()).not.toThrow();
+  });
+});
+
+describe("degraded-aware candle fetches", () => {
+  const RAW = [{ time: "2026-07-11T00:00:00Z", open: 1, high: 1, low: 1, close: 1, volume: 0 }];
+
+  it("fetchRangeWithStatus marks a broker-outage status degraded instead of a bare empty page", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await fetchRangeWithStatus("US100", "MINUTE", 0, 600, "mid", "capital");
+    expect(r.bars).toEqual([]);
+    expect(r.degraded).toContain("503");
+  });
+
+  it("fetchRangeWithStatus carries the backend's error detail in the degraded reason", async () => {
+    // The backend's 503s carry actionable detail (e.g. the WAF "blocked by your
+    // network" message) — the degraded string must surface it, not a bare code.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      headers: new Headers({ "X-Broker-Blocked": "1" }),
+      json: () => Promise.resolve({ detail: "data fetch: blocked by your network (restricted internet connection)" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await fetchRangeWithStatus("US100", "MINUTE", 0, 600, "mid", "capital");
+    expect(r.bars).toEqual([]);
+    expect(r.degraded).toContain("blocked by your network");
+  });
+
+  it("fetchRangeWithStatus treats a 404/422 as genuine no-data, not degraded", async () => {
+    for (const status of [404, 422]) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status }));
+      const r = await fetchRangeWithStatus("US100", "MINUTE", 0, 600, "mid", "capital");
+      expect(r.bars).toEqual([]);
+      expect(r.degraded).toBeNull();
+    }
+  });
+
+  it("fetchRangeWithStatus surfaces the X-Candles-Degraded header on a 200 (short cached serve)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "X-Candles-Degraded": "broker offline" }),
+      json: () => Promise.resolve(RAW),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await fetchRangeWithStatus("US100", "MINUTE", 0, 600, "mid", "capital");
+    expect(r.bars.length).toBe(1);
+    expect(r.degraded).toBe("broker offline");
+  });
+
+  it("fetchRangeWithStatus reports a healthy 200 as not degraded", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: () => Promise.resolve(RAW),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await fetchRangeWithStatus("US100", "MINUTE", 0, 600, "mid", "capital");
+    expect(r.bars.length).toBe(1);
+    expect(r.degraded).toBeNull();
+  });
+
+  it("fetchRecentWithStatus surfaces the degraded header; fetchRecent keeps its plain shape", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "X-Candles-Degraded": "breaker open" }),
+      json: () => Promise.resolve(RAW),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await fetchRecentWithStatus("US100", "MINUTE", 500, "mid", "capital");
+    expect(r.bars.length).toBe(1);
+    expect(r.degraded).toBe("breaker open");
+    const plain = await fetchRecent("US100", "MINUTE", 500, "mid", "capital");
+    expect(plain.length).toBe(1);
   });
 });
 

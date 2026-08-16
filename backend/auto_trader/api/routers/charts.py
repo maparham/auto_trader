@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from auto_trader.brokers.capital_stream import SECONDS_INTERVALS
 from auto_trader.core.candle_aggregate import DERIVED, is_derived
@@ -25,6 +25,18 @@ from ..sweep_apply import candle_to_dto as _candle_dto
 router = APIRouter()
 
 
+def _mark_degraded(response: Response, degraded: dict) -> None:
+    """Stamp the degraded-serve marker header: the broker fetch failed but the
+    cache served bars anyway, so the payload may be missing the unreachable
+    portion (usually the most recent tail). Structural signal like
+    X-Broker-Blocked — clients key off presence, the value is a debug hint.
+    Header values must be latin-1: replace anything outside printable ASCII."""
+    reason = degraded.get("reason") or "broker fetch failed"
+    response.headers["X-Candles-Degraded"] = (
+        "".join(ch if " " <= ch <= "~" else "?" for ch in reason)[:200] or "1"
+    )
+
+
 @router.get("/api/candles", response_model=list[CandleDTO])
 async def candles(
     epic: str = Query("EURUSD"),
@@ -34,6 +46,7 @@ async def candles(
     to_ts: int | None = Query(None, description="window end, unix seconds"),
     price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
     broker_id: str = Depends(broker_query),
+    response: Response = None,
 ) -> list[CandleDTO]:
     """Candles for an epic. With from_ts/to_ts -> that date window (used by the
     chart's scroll-back). Without -> most-recent `bars` (weekend-proof).
@@ -42,7 +55,12 @@ async def candles(
     served from our own tick recorder (warmed while the epic is streamed) and
     extended live over the socket. Scroll-back (from_ts/to_ts) isn't supported
     for them — the chart disables it for live-only intervals."""
-    loaded = await deps._fetch_symbol_candles(broker_id, epic, resolution, bars, from_ts, to_ts, price_side)
+    degraded: dict = {}
+    loaded = await deps._fetch_symbol_candles(
+        broker_id, epic, resolution, bars, from_ts, to_ts, price_side, degraded=degraded
+    )
+    if degraded and response is not None:
+        _mark_degraded(response, degraded)
     # A date window may legitimately be empty (market closed); only 404 when no
     # window was requested at all (likely a bad epic). Seconds resolutions are
     # exempt: an epic that isn't currently streamed has no tick history yet, and
@@ -62,6 +80,7 @@ async def candles_synthetic(
     to_ts: int | None = Query(None),
     price_side: str = Query("mid", alias="priceSide", pattern="^(bid|mid|ask)$"),
     broker_id: str = Depends(broker_query),
+    response: Response = None,
 ) -> list[CandleDTO]:
     """Candles for a synthetic (arithmetic-combination) chart. Stateless: the raw
     expression is parsed here, each symbol is fetched via the shared candle path
@@ -75,12 +94,18 @@ async def candles_synthetic(
         raise HTTPException(422, "expression has no instruments")
 
     per_symbol: dict[str, list[Candle]] = {}
+    degraded: dict = {}
     for name in names:
         # Reuse the native/derived/cache path per symbol; a symbol-level HTTPException
-        # (unknown broker, IG-derived block) propagates unchanged.
+        # (unknown broker, IG-derived block) propagates unchanged. One shared
+        # degraded dict: ANY symbol served short from cache marks the combined
+        # result (the last reason wins — presence is the signal).
         per_symbol[name] = await deps._fetch_symbol_candles(
-            broker_id, name, resolution, bars, from_ts, to_ts, price_side
+            broker_id, name, resolution, bars, from_ts, to_ts, price_side,
+            degraded=degraded,
         )
+    if degraded and response is not None:
+        _mark_degraded(response, degraded)
 
     result = combine(node, per_symbol)
     if not result and from_ts is None:

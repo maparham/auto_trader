@@ -359,6 +359,119 @@ def test_window_above_gap_chunk_failure_keeps_coverage_contiguous(tmp_path):
     assert all(s >= cov[1] for s, _e in ok.range_calls), ok.range_calls
 
 
+class OutageAboveFetcher:
+    """Broker whose forward (at-or-above `down_from_ts`) calls fail — e.g. the live
+    edge is unreachable — while historical (below) ranges still serve. Models the
+    common outage shape where cached history exists but the tail can't be topped up
+    (here the 'history' still comes from the fetcher: a real outage fails both, but
+    a single fetcher can't show the downward walk ran unless it serves it)."""
+
+    def __init__(self, bars: list[Candle], down_from_ts: int):
+        self._bars = bars
+        self._down_from = down_from_ts
+        self.range_calls: list[tuple[int, int]] = []
+
+    async def range(self, start: datetime, end: datetime) -> list[Candle]:
+        s, e = int(start.timestamp()), int(end.timestamp())
+        self.range_calls.append((s, e))
+        if s >= self._down_from:
+            raise RuntimeError("broker offline")
+        return [b for b in self._bars if s <= int(b.time.timestamp()) <= e]
+
+
+def test_window_forward_topup_failure_still_backfills_below(tmp_path):
+    """A failed forward top-up (live edge unreachable) must not abort the downward
+    backfill: a window straddling both gaps still gets its below-oldest history,
+    instead of a silently truncated read of just the old coverage."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(1000, 2600, 100)]
+    # Warm coverage to [2000, 2500].
+    asyncio.run(cache.window(KEY, 100, _dt(2000), _dt(2500), FakeFetcher(src).range, now=10_000))
+    assert cache._coverage(KEY) == (2000, 2500)
+    # Request [1000, 2800]: forward fill (>=2500) fails, downward (<2000) serves.
+    f = OutageAboveFetcher(src, down_from_ts=2500)
+    out = asyncio.run(cache.window(KEY, 100, _dt(1000), _dt(2800), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in out] == list(range(1000, 2501, 100))
+    assert cache._coverage(KEY) == (1000, 2500)
+
+
+def test_window_degraded_set_when_fetch_fails_and_cache_serves(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(t, float(t)) for t in (100, 160, 220)], cutoff_ts=10_000)
+    boom = FakeFetcher(error=RuntimeError("breaker open"))
+    degraded: dict = {}
+    out = asyncio.run(
+        cache.window(KEY, 60, _dt(40), _dt(160), boom.range, now=10_000, degraded=degraded)
+    )
+    assert [int(c.time.timestamp()) for c in out] == [100, 160]
+    assert degraded.get("reason") == "breaker open"
+
+
+def test_window_degraded_unset_on_hit_and_on_successful_fetch(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    degraded: dict = {}
+    # Cold fill (successful fetch): not degraded.
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(280), FakeFetcher(src).range, now=10_000, degraded=degraded))
+    assert degraded == {}
+    # Pure cache hit: not degraded.
+    asyncio.run(cache.window(KEY, 60, _dt(160), _dt(220), FakeFetcher(src).range, now=10_000, degraded=degraded))
+    assert degraded == {}
+
+
+def test_window_not_degraded_when_only_forming_bar_unreachable(tmp_path):
+    """Every closed bar of the window is cached; the failed forward fetch could
+    only have supplied the forming bar (never cached anyway). The payload is
+    complete, so it must NOT be marked degraded — a false mark here puts the
+    outage pill + retry loop on every to_ts=now request during an outage."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    # res=60, now=2000 -> cutoff=1980, last closed bar ts=1920. Cache all of it.
+    cache._store_closed(KEY, [_c(t, float(t)) for t in range(960, 1921, 60)], cutoff_ts=1980)
+    assert cache._coverage(KEY) == (960, 1920)
+    boom = FakeFetcher(error=RuntimeError("broker offline"))
+    degraded: dict = {}
+    out = asyncio.run(
+        cache.window(KEY, 60, _dt(960), _dt(2000), boom.range, now=2000, degraded=degraded)
+    )
+    assert len(boom.range_calls) == 1  # the forward top-up WAS attempted and failed
+    assert [int(c.time.timestamp()) for c in out] == list(range(960, 1921, 60))
+    assert degraded == {}
+
+
+def test_window_degraded_when_closed_tail_missing(tmp_path):
+    """Same shape, but the cached tail is genuinely short (stale cache): the
+    failed forward fetch left real closed bars unserved -> degraded."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    # Cache stops at 1500; closed bars 1560..1920 exist upstream but are unreachable.
+    cache._store_closed(KEY, [_c(t, float(t)) for t in range(960, 1501, 60)], cutoff_ts=1980)
+    boom = FakeFetcher(error=RuntimeError("broker offline"))
+    degraded: dict = {}
+    out = asyncio.run(
+        cache.window(KEY, 60, _dt(960), _dt(2000), boom.range, now=2000, degraded=degraded)
+    )
+    assert [int(c.time.timestamp()) for c in out] == list(range(960, 1501, 60))
+    assert degraded.get("reason") == "broker offline"
+
+
+def test_recent_degraded_set_when_fetch_fails_and_cache_serves(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    asyncio.run(cache.recent(KEY, 60, 4, FakeFetcher(src).recent, tail=3, now=280))
+    boom = FakeFetcher(error=RuntimeError("offline"))
+    degraded: dict = {}
+    out = asyncio.run(cache.recent(KEY, 60, 3, boom.recent, tail=3, now=340, degraded=degraded))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160, 220]
+    assert degraded.get("reason") == "offline"
+
+
+def test_recent_degraded_unset_on_successful_fetch(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in (100, 160, 220, 280)]
+    degraded: dict = {}
+    asyncio.run(cache.recent(KEY, 60, 4, FakeFetcher(src).recent, tail=3, now=280, degraded=degraded))
+    assert degraded == {}
+
+
 def test_recent_cold_fetches_full_and_returns_with_forming(tmp_path):
     cache = CandleCache(str(tmp_path / "c.db"))
     # ts 280 is the forming bar (>= cutoff 240); 100/160/220 are closed.

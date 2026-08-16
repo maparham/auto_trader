@@ -441,14 +441,28 @@ export async function fetchMarketMeta(
   }
 }
 
-/** Most recent `bars` candles (no date window). Used for the initial load. */
-export async function fetchRecent(
+/**
+ * Candle payload plus the backend's degraded-serve marker: `degraded` carries
+ * the X-Candles-Degraded header (or a client-side classification) when the
+ * broker was unreachable and the bars came from the backend's candle cache —
+ * possibly missing the unreachable portion. null = a normal, complete answer.
+ */
+export type CandlesResult = { bars: KLineData[]; degraded: string | null };
+
+function degradedHeader(res: Response): string | null {
+  // Optional chaining: unit tests (and defensive callers) stub fetch with
+  // minimal response objects that may not carry headers at all.
+  return res.headers?.get("X-Candles-Degraded") ?? null;
+}
+
+/** fetchRecent, but keeping the degraded-serve marker (see CandlesResult). */
+export async function fetchRecentWithStatus(
   epic: string,
   resolution: string,
   bars = 500,
   priceSide: PriceSide = "mid",
   brokerId: string = DEFAULT_BROKER,
-): Promise<KLineData[]> {
+): Promise<CandlesResult> {
   const syn = getSynthetic(epic);
   if (syn) {
     const qs = new URLSearchParams({
@@ -459,8 +473,9 @@ export async function fetchRecent(
       broker: brokerId,
     });
     const res = await fetchWithTimeout(`${BASE}/api/candles/synthetic?${qs}`);
-    if (res.ok) return ((await res.json()) as RawCandle[]).map(toKLine);
-    if (res.status === 404) return [];
+    if (res.ok)
+      return { bars: ((await res.json()) as RawCandle[]).map(toKLine), degraded: degradedHeader(res) };
+    if (res.status === 404) return { bars: [], degraded: null };
     throw new Error(await errorDetail(res));
   }
   const qs = new URLSearchParams({
@@ -471,12 +486,24 @@ export async function fetchRecent(
     broker: brokerId,
   });
   const res = await fetchWithTimeout(`${BASE}/api/candles?${qs}`);
-  if (res.ok) return ((await res.json()) as RawCandle[]).map(toKLine);
+  if (res.ok)
+    return { bars: ((await res.json()) as RawCandle[]).map(toKLine), degraded: degradedHeader(res) };
   // 404 = no data for this epic (unknown / no history) — empty, not an error.
-  if (res.status === 404) return [];
+  if (res.status === 404) return { bars: [], degraded: null };
   // Anything else (e.g. 502 from a broker auth / maintenance failure) carries a
   // detail worth surfacing — throw it so the chart can show why it's blank.
   throw new Error(await errorDetail(res));
+}
+
+/** Most recent `bars` candles (no date window). Used for the initial load. */
+export async function fetchRecent(
+  epic: string,
+  resolution: string,
+  bars = 500,
+  priceSide: PriceSide = "mid",
+  brokerId: string = DEFAULT_BROKER,
+): Promise<KLineData[]> {
+  return (await fetchRecentWithStatus(epic, resolution, bars, priceSide, brokerId)).bars;
 }
 
 // History fetch timeout. A hung backend (broker maintenance) would otherwise leave
@@ -536,6 +563,21 @@ export async function fetchRangeStrict(
   brokerId: string = DEFAULT_BROKER,
   signal?: AbortSignal,
 ): Promise<KLineData[]> {
+  const res = await rangeResponse(epic, resolution, fromSec, toSec, priceSide, brokerId, signal);
+  if (!res.ok) throw new CandlesFetchError(res.status);
+  return ((await res.json()) as RawCandle[]).map(toKLine);
+}
+
+/** The raw /api/candles date-window request shared by the range variants. */
+async function rangeResponse(
+  epic: string,
+  resolution: string,
+  fromSec: number,
+  toSec: number,
+  priceSide: PriceSide,
+  brokerId: string,
+  signal?: AbortSignal,
+): Promise<Response> {
   const syn = getSynthetic(epic);
   const qs = syn
     ? new URLSearchParams({
@@ -554,9 +596,43 @@ export async function fetchRangeStrict(
         priceSide,
         broker: brokerId,
       });
-  const res = await fetch(`${BASE}/api/candles${syn ? "/synthetic" : ""}?${qs}`, { signal });
-  if (!res.ok) throw new CandlesFetchError(res.status);
-  return ((await res.json()) as RawCandle[]).map(toKLine);
+  return fetch(`${BASE}/api/candles${syn ? "/synthetic" : ""}?${qs}`, { signal });
+}
+
+/** Statuses that mean "the broker/backend path is unreachable right now" (retry
+ * later, data may exist) rather than "this data does not exist" (404/422). */
+function isOutageStatus(status: number): boolean {
+  return status >= 500 || status === 429;
+}
+
+/**
+ * Candles in [fromSec, toSec] with the degraded-serve marker kept (see
+ * CandlesResult): a 200 whose X-Candles-Degraded header is set (the backend
+ * served possibly-short cached bars during a broker outage) or an outage-status
+ * failure both come back as `degraded`, so callers can tell "broker down" apart
+ * from genuine end-of-history instead of seeing a bare empty page.
+ */
+export async function fetchRangeWithStatus(
+  epic: string,
+  resolution: string,
+  fromSec: number,
+  toSec: number,
+  priceSide: PriceSide = "mid",
+  brokerId: string = DEFAULT_BROKER,
+  signal?: AbortSignal,
+): Promise<CandlesResult> {
+  const res = await rangeResponse(epic, resolution, fromSec, toSec, priceSide, brokerId, signal);
+  if (!res.ok) {
+    if (!isOutageStatus(res.status)) return { bars: [], degraded: null };
+    // Surface the backend's own detail (e.g. the WAF "blocked by your network"
+    // message from X-Broker-Blocked 503s) — it's the actionable part; the bare
+    // status code is only the fallback for detail-less responses.
+    return {
+      bars: [],
+      degraded: await errorDetail(res, `broker unreachable (${res.status})`),
+    };
+  }
+  return { bars: ((await res.json()) as RawCandle[]).map(toKLine), degraded: degradedHeader(res) };
 }
 
 /** Candles in [fromSec, toSec], a failed response as an empty page. Used for
@@ -570,12 +646,8 @@ export async function fetchRange(
   brokerId: string = DEFAULT_BROKER,
   signal?: AbortSignal,
 ): Promise<KLineData[]> {
-  try {
-    return await fetchRangeStrict(epic, resolution, fromSec, toSec, priceSide, brokerId, signal);
-  } catch (e) {
-    if (e instanceof CandlesFetchError) return [];
-    throw e;
-  }
+  return (await fetchRangeWithStatus(epic, resolution, fromSec, toSec, priceSide, brokerId, signal))
+    .bars;
 }
 
 export type LiveStatus = "connecting" | "live" | "down";

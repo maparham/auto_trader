@@ -3019,6 +3019,18 @@
 @media (prefers-reduced-motion: reduce) {
   .chart-nodata-spinner { animation: none; }
 }
+/* Stale-data variant: a refresh failed but the previous series is still painted,
+   so a compact top-centre pill replaces the full card (which would wrongly claim
+   "no data" over visible candles). */
+.chart-stale-pill {
+  position: absolute; top: 34px; left: 50%; transform: translateX(-50%);
+  z-index: 12; display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 12px; white-space: nowrap;
+  font-size: 11.5px; color: var(--text-dim);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
+  pointer-events: none;
+}
 /* Indicator-selection cursor affordances (same !important-over-canvas trick as
    above, since klinecharts sets an inline crosshair cursor on its container):
    a hand over a selectable indicator curve, a normal arrow over the legend strip

@@ -159,6 +159,7 @@ import { createChartDataFacade, type ChartDataFacade } from "./chart/chartDataFa
 import { applyFreeCrosshairX } from "./chart/freeCrosshair";
 import { applyScalePriceOnly } from "./chart/priceOnlyRange";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
+import { classifyNoData, type NoDataKind } from "./chart/noDataPolicy";
 import { useRangeNavigation } from "./chart/useRangeNavigation";
 import { useChartPaint } from "./chart/useChartPaint";
 import { useIndicatorCommands } from "./chart/useIndicatorCommands";
@@ -847,13 +848,20 @@ export default function ChartCore({
   // the WS connects to OUR backend (which stays up), so it reports "live" even when
   // the upstream broker delivers nothing (maintenance / auth). A healthy load sets
   // hasData within ~1-2s, well under the grace, so this never flashes normally.
-  const [noData, setNoData] = useState(false);
+  // "empty" shows the full centred card (chart is blank); "stale" shows a compact
+  // pill instead — a failed REFRESH leaves the previous series painted, and a
+  // full-screen "No data to display" over a chart visibly full of candles is a lie.
+  const [noData, setNoData] = useState<NoDataKind | null>(null);
   // The backend's error detail from the last failed history load (e.g. a broker
   // 401/maintenance), shown in the no-data banner. null when the load just returned
   // empty (404 / closed market) with no error to report.
   const [loadError, setLoadError] = useState<string | null>(null);
   // Whether the (long) error detail is expanded in the banner.
   const [errorOpen, setErrorOpen] = useState(false);
+  // The last history load was served from the backend's candle cache because the
+  // broker was unreachable (may be missing the newest bars). Shown as a compact
+  // pill while bars are painted; cleared by a healthy load or a live tick.
+  const [degraded, setDegraded] = useState<string | null>(null);
   const [anchoring, setAnchoring] = useState(false);
   // True while the Measure ruler is armed — drives the crosshair cursor on the
   // chart container (mirrors `anchoring`), reset when a press consumes the arm.
@@ -1169,10 +1177,17 @@ export default function ChartCore({
   // false → this re-arms. Cleared the instant data arrives.
   useEffect(() => {
     if (hasData) {
-      setNoData(false);
+      setNoData(null);
       return;
     }
-    const t = setTimeout(() => setNoData(true), 6000);
+    const t = setTimeout(() => {
+      // Classify at fire time, from what's actually painted: some failed
+      // refreshes bail out before swapping bars in and leave the previous
+      // series' candles on screen — that state gets the compact stale pill,
+      // not the full "No data to display" card.
+      const painted = chartRef.current?.getDataList()?.length ?? 0;
+      setNoData(classifyNoData(painted));
+    }, 6000);
     return () => clearTimeout(t);
   }, [hasData, symbol.epic, period.resolution, brokerId]);
   // Authoritative display precision fetched per epic. Symbols persisted from the
@@ -3117,6 +3132,7 @@ export default function ChartCore({
     setLastPrice,
     setHasData,
     setLoadError,
+    setDegraded,
     setErrorOpen,
     setFetchedPrecision,
     setSnapView,
@@ -3867,7 +3883,7 @@ export default function ChartCore({
       {/* Data-unavailable banner: no candles after a grace period (broker maintenance,
           auth failure, offline, or an unknown epic). Generic on purpose — a 401 can't
           be told apart from expired creds, so we don't claim a specific cause. */}
-      {noData && (
+      {noData === "empty" && (
         <div className="chart-nodata" role="status">
           <div className="chart-nodata-card">
             <svg
@@ -3907,6 +3923,24 @@ export default function ChartCore({
               Retrying automatically…
             </span>
           </div>
+        </div>
+      )}
+      {/* Failed refresh with the previous series still painted: compact top pill
+          instead of the full card (see the noData state's rationale). */}
+      {noData === "stale" && (
+        <div className="chart-stale-pill" role="status">
+          <span className="chart-nodata-spinner" aria-hidden="true" />
+          Refresh failed: showing previously loaded data. Retrying automatically…
+        </div>
+      )}
+      {/* Degraded load: the backend served CACHED bars because the broker is
+          unreachable — the chart works, but the newest bars may be missing.
+          Suppressed while a noData banner is up (that state is worse and its
+          banner already explains itself). */}
+      {degraded && noData === null && hasData && (
+        <div className="chart-stale-pill" role="status">
+          <span className="chart-nodata-spinner" aria-hidden="true" />
+          Broker unreachable: showing cached data. Retrying automatically…
         </div>
       )}
 
