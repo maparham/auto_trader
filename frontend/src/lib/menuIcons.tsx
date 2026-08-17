@@ -168,6 +168,13 @@ export const MenuIcons = {
       <path d="M5 12l7 7 7-7" />
     </>,
   ),
+  // Inset: a small framed band inside a larger frame — the mode it names.
+  inset: svg(
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <rect x="6" y="14" width="12" height="3" rx="1" />
+    </>,
+  ),
   lock: svg(
     <>
       <rect x="5" y="11" width="14" height="10" rx="2" />

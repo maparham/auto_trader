@@ -35,6 +35,7 @@ import { sameInstanceConfig, type InstanceAppearance, type PortableInstancePaylo
 import { INDICATOR_SPECS, type ExprInstance } from "./expr/catalog";
 import { RESOLUTION_SECONDS } from "./feed";
 import type { SlopeExtend } from "./indicators/slope";
+import { INSET_CAPABLE, insetTemplate } from "./indicators/inset";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
 import {
@@ -84,6 +85,13 @@ export function getIndicatorsByPane(chart: Chart): Map<string, Map<string, Indic
 // sub-panes when the user adds one (seeing a nothing after adding would be confusing).
 export function isSubPaneIndicator(type: string): boolean {
   return !OVERLAY_INDICATORS.has(type);
+}
+
+// Instance-aware form of isSubPaneIndicator: an inset instance draws in the candle
+// pane, so it must not trigger the "auto-expand collapsed sub-panes" behavior that
+// exists to stop a freshly added pane indicator from landing invisible.
+export function isSubPaneInstance(inst: IndicatorInstance): boolean {
+  return isSubPaneIndicator(inst.type) && inst.inset !== true;
 }
 
 const CUSTOM_TYPES = Object.keys(BASE_TEMPLATES) as CustomIndicatorType[];
@@ -405,7 +413,12 @@ function cloneTemplateFromLive(
 //    instance, id === type). For a SECOND+ instance we clone the template off a live
 //    instance of the same type (see cloneTemplateFromLive) — that's how RSI/MACD/…
 //    go multi-instance despite klinecharts hiding their templates.
-function registerInstanceTemplate(chart: Chart, type: string, id: string): boolean {
+function registerInstanceTemplate(
+  chart: Chart,
+  type: string,
+  id: string,
+  inset = false,
+): boolean {
   // An id that DIFFERS from its type is by definition a per-instance name
   // ("FVG2", legacy "EMA#a1b2"), and every such name gets registered with
   // klinecharts — so getSupportedIndicators() returns it next to the real types.
@@ -423,7 +436,11 @@ function registerInstanceTemplate(chart: Chart, type: string, id: string): boole
     // MA_DEFAULT_LINE_STYLES are reused), so klinecharts' per-instance regenerateFigures
     // and per-instance style edits corrupted siblings. Mirrors the figure copy the
     // built-in path makes in cloneTemplateFromLive.
-    const base = BASE_TEMPLATES[type];
+    //
+    // Inset instances register the same template with an empty figure list and the
+    // band draw (lib/indicators/inset.ts). Re-registering under the same name is
+    // how a toggle swaps one for the other.
+    const base = (inset ? insetTemplate(type) : null) ?? BASE_TEMPLATES[type];
     const lines = base.styles?.lines;
     registerIndicator({
       ...base,
@@ -477,8 +494,13 @@ export function applyIndicator(
   },
 ): string | null {
   const { id, type } = inst;
-  if (!registerInstanceTemplate(chart, type, id)) return null;
-  const isOverlay = OVERLAY_INDICATORS.has(type);
+  // Inset: draw inside the candle pane's bottom band instead of opening a sub-pane.
+  // Gated on capability so a stale flag on a type we do not own is inert.
+  const inset = inst.inset === true && INSET_CAPABLE.has(type);
+  if (!registerInstanceTemplate(chart, type, id, inset)) return null;
+  // Placement-wise an inset instance IS a candle-pane overlay: same stack, same
+  // pane id, and no sub-pane sizing or y-axis gap.
+  const isOverlay = OVERLAY_INDICATORS.has(type) || inset;
   // Config resolution, in priority order:
   //  1. explicit config (Paste / Apply-preset injects a snapshot)
   //  2. this instance's own saved per-cell config
@@ -503,6 +525,11 @@ export function applyIndicator(
     ...(cfg?.extendData ?? {}),
     indType: type,
   };
+  // Derived from the instance, never trusted from the saved snapshot: a stale
+  // `inset` in a config, template or pasted payload must not resurrect the mode.
+  // Deleted rather than set false so non-inset payloads stay byte-identical.
+  if (inset) (extendData as { inset?: boolean }).inset = true;
+  else delete (extendData as { inset?: boolean }).inset;
   if (opts?.forceHidden && extendData.userVisible === undefined) {
     extendData.userVisible = cfg?.visible !== false;
   }
@@ -600,6 +627,17 @@ export function applyIndicator(
   return paneId;
 }
 
+// Strip the inset PLACEMENT marker off an extendData copy. The accel companion is
+// derived from its parent by spreading the parent's extendData, but the companion
+// always draws in its own sub-pane: carrying the parent's marker over would make
+// isInsetInstance (and the legend helpers that branch on it) treat a sub-pane
+// indicator as inset. Deleted rather than set false, matching applyIndicator, so a
+// non-inset payload stays byte-identical. Mutates the fresh copy it is handed.
+function withoutInset<T extends object>(ext: T): T {
+  delete (ext as { inset?: boolean }).inset;
+  return ext;
+}
+
 // Spawn/tear down a Slope's acceleration companion pane. The companion is DERIVED
 // state: the parent owns showAccel + the accel params, and nothing about the
 // companion is persisted, so there is exactly one source of truth. Remove-then-
@@ -635,7 +673,7 @@ export function syncAccelCompanion(chart: Chart, parentId: string): void {
   // The companion's config: accelThreshold lands on its `threshold` field so the
   // reused drawSlope + its auto-scale trick work with no branching. The mtf stash
   // is copied wholesale (computeAccelCalc reads htfAccelByLine).
-  const nextExt = { ...ext, indType: "SLOPE_ACCEL", threshold: ext.accelThreshold };
+  const nextExt = withoutInset({ ...ext, indType: "SLOPE_ACCEL", threshold: ext.accelThreshold });
 
   // In-place update when the companion already sits directly below the parent:
   // override it where it is (no remove-then-create) so a param/style/Cancel edit
@@ -722,11 +760,11 @@ export function mirrorAccelCompanion(
       ...(patch.visible !== undefined ? { visible: patch.visible } : {}),
       ...(patch.extendData
         ? {
-            extendData: {
+            extendData: withoutInset({
               ...patch.extendData,
               indType: "SLOPE_ACCEL",
               threshold: (patch.extendData as { accelThreshold?: unknown }).accelThreshold,
-            },
+            }),
           }
         : {}),
     },

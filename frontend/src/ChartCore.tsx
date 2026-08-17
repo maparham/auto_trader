@@ -87,12 +87,13 @@ import {
   saveLegendCollapsed,
   loadCandleHidden,
   saveCandleHidden,
+  loadInsetBand,
+  saveInsetBand,
   CONDITION_LABELS,
   loadSnapshotMeta,
   deleteSnapshotMeta,
   loadFavoriteResolutions,
   loadAvwapAnchor,
-  type IndicatorInstance,
   type SnapshotMeta,
   type AlertCondition,
   type AlertTrigger,
@@ -109,8 +110,11 @@ import {
   registerHistory,
   unregisterHistory,
   partitionHistorySuffixes,
+  rebuildIdsForDeltas,
   withHistorySuppressed,
 } from "./lib/history";
+import { setInsetBandFraction, type InsetBandBox } from "./lib/indicators/inset";
+import InsetBandResizer from "./InsetBandResizer";
 import { onLayoutChanged } from "./lib/persist/layoutEvents";
 import { scheduleAutoSave, cancelAutoSave } from "./lib/templateAutosave";
 import {
@@ -790,6 +794,11 @@ export default function ChartCore({
   // reposition when a separator is dragged (geometry, not just membership, changed).
   const [subPaneLegends, setSubPaneLegends] = useState<SubPaneLegendData[]>([]);
   const subPaneLegendsSigRef = useRef("");
+  // The inset band's legend card (the same card a sub-pane gets, positioned at the
+  // band's top edge) and the band's own geometry, which the resize handle sits on.
+  const [insetLegend, setInsetLegend] = useState<SubPaneLegendData | null>(null);
+  const [insetBand, setInsetBand] = useState<InsetBandBox | null>(null);
+  const insetLegendSigRef = useRef("");
   // Drop-indicator line's y-offset (relative to chart root) during a sub-pane drag;
   // null when no drag is in progress.
   const [paneDropTop, setPaneDropTop] = useState<number | null>(null);
@@ -1356,27 +1365,9 @@ export default function ChartCore({
         deltas.map((d) => d.suffix),
         epic,
       );
-      // Which indicator instances need a live rebuild: ids whose config changed,
-      // plus ids whose position or type changed in an id-set-equal list delta
-      // (membership adds/removes are handled by the sync itself).
-      const rebuild = new Set<string>();
-      for (const d of deltas) {
-        if (d.suffix === "indicatorConfig") {
-          const a = (d.before ?? {}) as Record<string, unknown>;
-          const b = (d.after ?? {}) as Record<string, unknown>;
-          for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
-            if (JSON.stringify(a[id]) !== JSON.stringify(b[id])) rebuild.add(id);
-          }
-        } else if (d.suffix === "indicators") {
-          const a = (d.before ?? []) as IndicatorInstance[];
-          const b = (d.after ?? []) as IndicatorInstance[];
-          const posA = new Map(a.map((x, i) => [x.id, `${i}:${x.type}`]));
-          for (const [i, x] of b.entries()) {
-            const pa = posA.get(x.id);
-            if (pa !== undefined && pa !== `${i}:${x.type}`) rebuild.add(x.id);
-          }
-        }
-      }
+      // Which indicator instances need a live rebuild (index, type AND inset
+      // placement all count as changes — see rebuildIdsForDeltas).
+      const rebuild = rebuildIdsForDeltas(deltas);
       withHistorySuppressed(() => {
         if (drawings) {
           overlays.rehydrate();
@@ -1531,6 +1522,11 @@ export default function ChartCore({
     const chart = init(el);
     if (!chart) return;
     chartRef.current = chart;
+    // The band height the user last dragged this cell to. Seeded before the first
+    // indicator is created, so an inset instance restored from storage paints at the
+    // right height on its first frame rather than snapping after it.
+    const savedBand = loadInsetBand(scope);
+    if (savedBand != null) setInsetBandFraction(chart, savedBand);
     // v10 data pipeline: the facade owns setDataLoader and replays our
     // push-based data (setBars/pushBar) as pull-based getBars/subscribeBar.
     const dataFacade = createChartDataFacade();
@@ -3318,6 +3314,8 @@ export default function ChartCore({
     setTradePills,
     setLegendRows,
     setSubPaneLegends,
+    setInsetLegend,
+    setInsetBand,
     timezone,
     theme,
     containerRef,
@@ -3348,6 +3346,7 @@ export default function ChartCore({
     curveLabelsRef,
     legendRowsSigRef,
     subPaneLegendsSigRef,
+    insetLegendSigRef,
     legendHandleRef,
     legendBarIdxRef,
     exitClustersRef,
@@ -4055,6 +4054,7 @@ export default function ChartCore({
         candleHidden={candleHidden}
         onToggleCandle={toggleCandleHidden}
         subPanes={subPaneLegends}
+        insetLegend={insetLegend}
         selectedName={selectedName}
         highlightedName={curveHoverNameState}
         handleRef={legendHandleRef}
@@ -4073,6 +4073,18 @@ export default function ChartCore({
         // symbol-search modal targets this cell's symbol.
         onChangeSymbol={requestSymbolSearch}
       />
+
+      {/* The inset band's resize handle, along its top edge. Rendered beside the
+          legend (same absolute coordinate basis as the cards) and only while a band
+          exists. */}
+      {insetBand && (
+        <InsetBandResizer
+          box={insetBand}
+          getChart={getChart}
+          onRepaint={() => handle.redrawRef.current()}
+          onCommit={(fraction) => saveInsetBand(scope, fraction)}
+        />
+      )}
 
       <HeatmapControls
         on={heatmap.on}

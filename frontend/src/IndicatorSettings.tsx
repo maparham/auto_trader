@@ -82,6 +82,7 @@ import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { requestIndicatorOverlayRepaint } from "./lib/signals";
 import { mirrorAccelCompanion, syncAccelCompanion, getIndicator } from "./lib/indicators";
+import { legendFiguresOf } from "./lib/indicators/inset";
 import ColorLineStylePicker from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
 import { cloneStyles } from "./lib/overlays";
@@ -595,7 +596,13 @@ export default function IndicatorSettings({
   // Line-type figures, paired with their effective default colors so the Style
   // tab shows the colors actually on screen even when nothing's been overridden.
   const lineDefs = useMemo<LineDraft[]>(() => {
-    const figures = (ind?.figures ?? []).filter((f) => f.type === "line");
+    // Through legendFiguresOf, not ind.figures: an inset instance is registered with
+    // an empty figure list (that is what keeps its values out of the price axis), so
+    // reading it directly would leave the Style tab with NO line-color rows and make
+    // an inset indicator unrecolorable. The helper falls back to the base template,
+    // whose line order is exactly the order `styles.lines` (and the band draw's own
+    // paintInsetLines loop) index by.
+    const figures = (ind ? legendFiguresOf(ind) : []).filter((f) => f.type === "line");
     const globalLines = chart.getStyles().indicator?.lines ?? [];
     const overrides = ind?.styles?.lines ?? [];
     // Friendly Style-tab labels for AVWAP's otherwise-untitled band figures

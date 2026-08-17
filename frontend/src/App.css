@@ -3181,6 +3181,25 @@
    stacked in their own column to its right (so the grip sits beside "RSI(14)", not
    on a line above it). */
 .sub-pane-legend { top: 0; padding-top: 2px; flex-direction: row; align-items: center; }
+
+/* The inset band's resize handle: a transparent strip straddling the band's top
+   edge, positioned inline by ChartCore from the band geometry. Invisible at rest
+   (the band already draws its own hairline lid there) and tinted on hover/drag so
+   the grab target is discoverable, like a pane separator. z 12 puts it just above
+   the sub-pane legend cards (11) and well below the candle legend (50). */
+.inset-band-resizer {
+  position: absolute;
+  height: 7px;
+  z-index: 12;
+  cursor: ns-resize;
+  background: transparent;
+  touch-action: none;
+}
+.inset-band-resizer:hover,
+.inset-band-resizer:active {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
 .sp-rows { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
 
 .sp-drag-handle {

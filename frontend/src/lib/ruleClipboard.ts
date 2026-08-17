@@ -222,6 +222,12 @@ function comparableExtend(extendData: unknown): unknown {
   // applyIndicator force-merges indType (== the type) into every live pane's
   // extendData; the type is compared explicitly, so its echo here is noise.
   delete rest.indType;
+  // inset is a placement/display marker (own sub-pane vs the candle pane's band),
+  // not part of what makes an indicator a DIFFERENT indicator: both spellings
+  // compute the same series. Leaving it in mismatches a live inset pane against a
+  // plain payload (and vice versa), so the paste mints a new id and duplicates the
+  // pane. Same class as templateSignatures' NON_IDENTIFYING_EXTEND_KEYS.
+  delete rest.inset;
   // An unpinned pane spells "chart timeframe" either as no mtf at all or as
   // mtf:{timeframe:null} depending on its editing history — same pane.
   const mtf = rest.mtf as { timeframe?: unknown } | undefined;

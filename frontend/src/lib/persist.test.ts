@@ -938,3 +938,69 @@ describe("backtest panel pinned", () => {
     expect(P.loadBacktestPanelPinned()).toBe(false);
   });
 });
+
+describe("indicator instance list", () => {
+  it("round-trips the inset flag", () => {
+    P.saveIndicators("tab.A", [
+      { id: "RSI", type: "RSI", inset: true },
+      { id: "ATR", type: "ATR" },
+    ]);
+    expect(P.loadIndicators("tab.A")).toEqual([
+      { id: "RSI", type: "RSI", inset: true },
+      { id: "ATR", type: "ATR" },
+    ]);
+  });
+
+  it("migrates the legacy string[] shape without an inset flag", () => {
+    localStorage.setItem("auto-trader.tab.A.indicators", JSON.stringify(["EMA", "RSI"]));
+    expect(P.loadIndicators("tab.A")).toEqual([
+      { id: "EMA", type: "EMA" },
+      { id: "RSI", type: "RSI" },
+    ]);
+  });
+
+  it("keeps a non-inset instance's loaded shape free of the key, so saved payloads stay byte-identical", () => {
+    P.saveIndicators("tab.A", [{ id: "MACD", type: "MACD" }]);
+    const [only] = P.loadIndicators("tab.A");
+    expect(Object.prototype.hasOwnProperty.call(only, "inset")).toBe(false);
+    expect(localStorage.getItem("auto-trader.tab.A.indicators")).toBe(
+      JSON.stringify([{ id: "MACD", type: "MACD" }]),
+    );
+  });
+
+  it("drops a stale inset:false rather than carrying a dead key forward", () => {
+    localStorage.setItem(
+      "auto-trader.tab.A.indicators",
+      JSON.stringify([{ id: "RSI", type: "RSI", inset: false }]),
+    );
+    expect(P.loadIndicators("tab.A")).toEqual([{ id: "RSI", type: "RSI" }]);
+  });
+});
+
+// The one rebuild used by loadIndicators, withInset (indicators/inset.ts) and
+// addTemplateIndicator (templates.ts). What it guarantees is BYTE-level: the
+// persisted list is compared as JSON by templateAutosave's sameTemplate, so key
+// order and the absence of `inset` are part of the contract, not cosmetics.
+describe("canonicalInstance", () => {
+  it("emits keys in declared order, because the payload is compared as JSON bytes", () => {
+    expect(JSON.stringify(P.canonicalInstance({ type: "RSI", id: "RSI2", inset: true }))).toBe(
+      '{"id":"RSI2","type":"RSI","inset":true}',
+    );
+  });
+
+  it("omits inset rather than writing false, so a non-inset instance matches older saves", () => {
+    expect(JSON.stringify(P.canonicalInstance({ id: "RSI", type: "RSI", inset: false }))).toBe(
+      '{"id":"RSI","type":"RSI"}',
+    );
+    expect(JSON.stringify(P.canonicalInstance({ id: "RSI", type: "RSI" }))).toBe(
+      '{"id":"RSI","type":"RSI"}',
+    );
+  });
+
+  it("drops fields that are not part of the persisted shape", () => {
+    // A live instance can arrive carrying extras (a spread of some richer object);
+    // only the declared fields are allowed into storage.
+    const extra = { id: "RSI", type: "RSI", paneId: "pane_1", visible: false } as never;
+    expect(P.canonicalInstance(extra)).toEqual({ id: "RSI", type: "RSI" });
+  });
+});
